@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, cast
 
 
+DEFAULT_PROOFS_DIR = Path("docs/papers/paper4_decision_quotient/proofs")
 DEFAULT_EXPORT_PATH = Path(
     "docs/papers/paper4_decision_quotient/proofs/arraydsl_primitives.json"
 )
 DEFAULT_OUTPUT_DIR = Path("dq_dock_engine/generated")
+DEFAULT_OUTPUT_PACKAGE = "dq_dock_engine.generated"
 
 
 @dataclass(frozen=True)
@@ -43,11 +47,23 @@ LOWERING_BODIES: Dict[str, str] = {
     "elem_binary_add": "return arr1 + arr2",
     "elem_binary_sub": "return arr1 - arr2",
     "norm": "return jnp.linalg.norm(arr)",
+    "row_wise_norm": "return jnp.linalg.norm(arr, axis=-1)",
     "distance": "return jnp.linalg.norm(arr1 - arr2)",
+    "row_wise_distance": "return jnp.linalg.norm(arr1 - arr2, axis=-1)",
+    "rigid_transform_3d": "w, x, y, z = quaternion[0], quaternion[1], quaternion[2], quaternion[3]\nR = jnp.array([[1 - 2 * y**2 - 2 * z**2, 2 * x * y - 2 * z * w, 2 * x * z + 2 * y * w], [2 * x * y + 2 * z * w, 1 - 2 * x**2 - 2 * z**2, 2 * y * z - 2 * x * w], [2 * x * z - 2 * y * w, 2 * y * z + 2 * x * w, 1 - 2 * x**2 - 2 * y**2]])\nreturn (coords @ R.T) + translation",
     "pairwise_distances": "return jnp.abs(coords1[:, None] - coords2[None, :])",
+    "pairwise_distances_3d": "return jnp.linalg.norm(coords1[:, None, :] - coords2[None, :, :], axis=-1)",
+    "minimum_image_pairwise_distances": "diff = coords1[:, None, :] - coords2[None, :, :]\nwrapped = diff - box_size * jnp.round(diff / box_size)\nreturn jnp.linalg.norm(wrapped, axis=-1)",
     "apply_cutoff": "return jnp.where(distances < rc, distances, 0.0)",
-    "lennard_jones": "safe_r = jnp.where(r == 0, 1.0, r)\nsr = sigma / safe_r\nenergy = 4.0 * epsilon * (sr ** 12 - sr ** 6)\nreturn jnp.where(r == 0, 0.0, energy)",
-    "sum_pair_potentials": "masked = applyCutoff(distances, rc)\nenergies = jax.vmap(lambda r: lennardJones(epsilon, sigma, r))(masked)\nreturn jnp.sum(energies)",
+    "lennard_jones": "safe_r = jnp.where(r > 1e-10, r, 1e-10)\ninv_r6 = (sigma / safe_r) ** 6\ninv_r12 = inv_r6 ** 2\npotential = 4.0 * epsilon * (inv_r12 - inv_r6)\nreturn jnp.where(r > 1e-10, potential, 1e12)",
+    "sum_pair_potentials": "masked = applyCutoff(distances, rc)\nreturn jnp.sum(lennardJones(epsilon, sigma, masked))",
+    "sum_pair_potentials_matrix": "masked = jnp.where(distances < rc, distances, 0.0)\nreturn jnp.sum(lennardJones(epsilon, sigma, masked))",
+    "sum_pair_potentials_3d": "distances = pairwiseDistances3D(coords1, coords2)\nreturn sumPairPotentialsMatrix(distances, rc, epsilon, sigma)",
+    "typed_lennard_jones_matrix": "safe_r = jnp.where(distances > 1e-10, distances, 1e-10)\ninv_r6 = (sigmas / safe_r) ** 6\ninv_r12 = inv_r6 ** 2\npotential = 4.0 * epsilons * (inv_r12 - inv_r6)\nreturn jnp.where(distances > 1e-10, potential, 1e12)",
+    "typed_lennard_jones_cutoff": "energies = typedLennardJonesMatrix(distances, epsilons, sigmas)\nreturn jnp.sum(jnp.where(distances < rc, energies, 0.0))",
+    "coulomb_cutoff": "charge_product = charges1[:, None] * charges2[None, :]\nwithin = (distances < rc) & (distances > 1e-10)\nsafe_r = jnp.where(within, distances, 1.0)\nreturn jnp.sum(jnp.where(within, charge_product / (dielectric * safe_r), 0.0))",
+    "upper_triangle_masked_sum": "upper = jnp.triu(jnp.ones_like(values, dtype=bool), k=1)\nreturn jnp.sum(jnp.where(upper & mask, values, 0.0))",
+    "ewald_real_space_kernel": "safe_r = jnp.where(distances > 1e-10, distances, 1e-10)\nreturn jnp.exp(-((alpha * safe_r) ** 2)) / safe_r",
 }
 
 
@@ -119,7 +135,7 @@ __all__ = [
 '''
 
 
-def _render_registry_module(primitives: List[PrimitiveIR]) -> str:
+def _render_registry_module(primitives: List[PrimitiveIR], package_name: str) -> str:
     imports = ",\n    ".join(primitive.name for primitive in primitives)
     registrations = []
     for primitive in primitives:
@@ -145,7 +161,7 @@ def _render_registry_module(primitives: List[PrimitiveIR]) -> str:
 from __future__ import annotations
 
 from dq_dock_engine.codegen.arraydsl_runtime import PrimitiveMetadata, PRIMITIVE_REGISTRY, register_primitive
-from dq_dock_engine.generated.arraydsl_primitives import (
+from {package_name}.arraydsl_primitives import (
     {imports},
 )
 from dq_dock_engine.proof_status import ProofStatus
@@ -160,7 +176,22 @@ ARRAYDSL_PRIMITIVES = tuple(PRIMITIVE_REGISTRY[name] for name in [
 '''
 
 
-def generate_modules(export_path: Path, output_dir: Path) -> List[Path]:
+def _render_init_module(primitives: List[PrimitiveIR]) -> str:
+    exported_names = ",\n    ".join(repr(primitive.name) for primitive in primitives)
+    return f'''"""Generated Lean-backed JAX wrappers."""
+
+
+__all__ = [
+    {exported_names}
+]
+'''
+
+
+def generate_modules(
+    export_path: Path,
+    output_dir: Path,
+    package_name: str = DEFAULT_OUTPUT_PACKAGE,
+) -> List[Path]:
     primitives = _load_export(export_path)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -168,13 +199,17 @@ def generate_modules(export_path: Path, output_dir: Path) -> List[Path]:
     primitives_path = output_dir / "arraydsl_primitives.py"
     registry_path = output_dir / "arraydsl_registry.py"
 
-    init_path.write_text('"""Generated Lean-backed JAX wrappers."""\n')
+    init_path.write_text(_render_init_module(primitives))
     primitives_path.write_text(_render_primitives_module(primitives))
-    registry_path.write_text(_render_registry_module(primitives))
+    registry_path.write_text(_render_registry_module(primitives, package_name))
     return [init_path, primitives_path, registry_path]
 
 
-def validate_generated_modules(export_path: Path, output_dir: Path) -> None:
+def validate_generated_modules(
+    export_path: Path,
+    output_dir: Path,
+    package_name: str = DEFAULT_OUTPUT_PACKAGE,
+) -> None:
     from dq_dock_engine.codegen.arraydsl_runtime import clear_registry
 
     primitives = _load_export(export_path)
@@ -193,22 +228,70 @@ def validate_generated_modules(export_path: Path, output_dir: Path) -> None:
         )
 
 
+def export_lean_ir(
+    proofs_dir: Path = DEFAULT_PROOFS_DIR,
+    export_path: Path = DEFAULT_EXPORT_PATH,
+) -> Path:
+    subprocess.run(
+        ["lake", "build", "arraydsl-export"],
+        cwd=proofs_dir,
+        check=True,
+    )
+    subprocess.run(
+        [
+            str((proofs_dir / ".lake" / "build" / "bin" / "arraydsl-export").resolve()),
+            str(export_path.resolve()),
+        ],
+        cwd=proofs_dir,
+        check=True,
+    )
+    if not export_path.exists():
+        raise FileNotFoundError(f"Lean export did not produce {export_path}")
+    return export_path
+
+
+def regenerate_bridge(
+    proofs_dir: Path = DEFAULT_PROOFS_DIR,
+    export_path: Path = DEFAULT_EXPORT_PATH,
+    output_dir: Path = DEFAULT_OUTPUT_DIR,
+    package_name: str = DEFAULT_OUTPUT_PACKAGE,
+    *,
+    run_validation: bool = True,
+) -> List[Path]:
+    export_lean_ir(proofs_dir=proofs_dir, export_path=export_path)
+    generated_paths = generate_modules(
+        export_path, output_dir, package_name=package_name
+    )
+    if run_validation:
+        validate_generated_modules(export_path, output_dir, package_name=package_name)
+    return generated_paths
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=DEFAULT_EXPORT_PATH)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--package-name", default=DEFAULT_OUTPUT_PACKAGE)
+    parser.add_argument("--export-from-lean", action="store_true")
     parser.add_argument("--check", action="store_true")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    generated_paths = generate_modules(args.input, args.output_dir)
+    export_path = args.input
+    if args.export_from_lean:
+        export_path = export_lean_ir(export_path=export_path)
+    generated_paths = generate_modules(
+        export_path, args.output_dir, package_name=args.package_name
+    )
     if args.check:
-        validate_generated_modules(args.input, args.output_dir)
+        validate_generated_modules(
+            export_path, args.output_dir, package_name=args.package_name
+        )
     for path in generated_paths:
         print(path)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

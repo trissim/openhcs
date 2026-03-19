@@ -23,6 +23,7 @@ import numpy as np
 from dq_dock_engine.proof_status import certified, heuristic, ProofStatus
 from dq_dock_engine.docking.core import ScoringEngine, ScoredPose, GapCertification
 from dq_dock_engine.physics.lattice_sum import optimal_cutoff, lj6_cutoff_error
+from dq_dock_engine.physics.kernels import typed_lennard_jones_matrix
 
 _EPSILON_KCAL_MOL = 0.086
 
@@ -154,11 +155,8 @@ def _score_certified_lj(
     in_range = dists < cutoff_safe
     dists_safe = jnp.where(in_range, dists, cutoff_safe)
 
-    sigma_over_r6 = (sigma_ij / dists_safe) ** 6
-    sigma_over_r12 = sigma_over_r6**2
-
-    # LJ with calibrated epsilon
-    lj_contrib = epsilon * (sigma_over_r12 - sigma_over_r6)
+    epsilon_matrix = jnp.full_like(dists_safe, epsilon / 4.0)
+    lj_contrib = typed_lennard_jones_matrix(dists_safe, epsilon_matrix, sigma_ij)
 
     # Zero out beyond-cutoff contributions
     energy = jnp.sum(jnp.where(in_range, lj_contrib, 0.0))

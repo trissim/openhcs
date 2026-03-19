@@ -27,7 +27,7 @@ def _load_payload(json_path: Path) -> dict:
 def _write_markdown_report(payload: dict, report_path: Path) -> None:
     summary = payload["summary"]
     dq_rows = payload["dq_dock"]
-    vina_rows = payload["vina"]
+    competitor_rows = payload["competitors"]
     excluded_rows = payload["excluded"]
 
     lines = [
@@ -37,21 +37,16 @@ def _write_markdown_report(payload: dict, report_path: Path) -> None:
         f"- Charge method: `{summary['charge_method']}`",
         f"- Requested complexes: `{summary['n_complexes_requested']}`",
         f"- Completed DQ-Dock complexes: `{summary['n_complexes_run']}`",
-        f"- Completed Vina complexes: `{summary['n_vina_completed']}`",
         f"- Excluded complexes: `{summary['n_complexes_excluded']}`",
         f"- Poses: `{summary['n_poses']}`",
         f"- Optimization steps: `{summary['n_opt_steps']}`",
         f"- Pocket-guided sampling: `{summary['use_pocket_guided']}`",
-        f"- Vina preparation: `{summary['vina_prep_protocol']}`",
-        f"- Competitors: `{', '.join(summary['competitors'])}`",
+        f"- Competitors: `{', '.join(item['display_name'] for item in summary['competitors'])}`",
         "",
         "## Summary",
         "",
         f"- DQ-Dock avg RMSD: `{summary['dq_avg_rmsd']}`",
         f"- DQ-Dock total time (s): `{summary['dq_total_time_s']}`",
-        f"- Vina avg top-pose RMSD: `{summary['vina_avg_top_rmsd']}`",
-        f"- Vina avg best-returned-mode RMSD: `{summary['vina_avg_best_mode_rmsd']}`",
-        f"- Vina total time (s): `{summary['vina_total_time_s']}`",
         f"- Total benchmark time (s): `{summary['total_benchmark_time_s']}`",
         "",
         "## DQ-Dock",
@@ -65,19 +60,38 @@ def _write_markdown_report(payload: dict, report_path: Path) -> None:
             f"| {row['pdb_id']} | {row['target_name']} | {row['rmsd']:.3f} | {row['time_s']:.3f} | {row['energy']:.3f} | {row['gap_proof']} | {row['native_rank']} | {row['energy_gap']} |"
         )
 
-    lines.extend(
-        [
-            "",
-            "## Vina",
-            "",
-            "| PDB | Target | Top RMSD | Best Returned RMSD | Time (s) | Affinity |",
-            "| --- | --- | ---: | ---: | ---: | ---: |",
-        ]
-    )
-    for row in vina_rows:
-        lines.append(
-            f"| {row['pdb_id']} | {row['target_name']} | {row['top_rmsd']:.3f} | {row['best_returned_mode_rmsd']:.3f} | {row['time_s']:.3f} | {row['affinity']:.3f} |"
+    for competitor in summary["competitors"]:
+        engine_id = competitor["engine_id"]
+        stats = summary["competitor_stats"][engine_id]
+        rows = [row for row in competitor_rows if row["engine_id"] == engine_id]
+        lines.extend(
+            [
+                "",
+                f"## {competitor['display_name']}",
+                "",
+                f"- Score: `{competitor['score_name']}`",
+                f"- Prep: `{competitor['prep_protocol']}`",
+                f"- Completed complexes: `{stats['n_completed']}`",
+                f"- Successful complexes: `{stats['n_successful']}`",
+                f"- Avg top RMSD: `{stats['avg_top_rmsd']}`",
+                f"- Avg best-returned RMSD: `{stats['avg_best_mode_rmsd']}`",
+                f"- Total time (s): `{stats['total_time_s']}`",
+                "",
+                "| PDB | Target | Status | Top RMSD | Best Returned RMSD | Time (s) | Score | Error |",
+                "| --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
+            ]
         )
+        for row in rows:
+            score = row["score"] if row["score"] is not None else "nan"
+            top_rmsd = row["top_rmsd"] if row["top_rmsd"] is not None else "nan"
+            best_rmsd = (
+                row["best_returned_mode_rmsd"]
+                if row["best_returned_mode_rmsd"] is not None
+                else "nan"
+            )
+            lines.append(
+                f"| {row['pdb_id']} | {row['target_name']} | {'success' if row['success'] else 'failure'} | {top_rmsd} | {best_rmsd} | {row['time_s']:.3f} | {score} | {row['error']} |"
+            )
 
     if excluded_rows:
         lines.extend(
@@ -97,34 +111,36 @@ def _write_markdown_report(payload: dict, report_path: Path) -> None:
 
 def _plot_rmsd(payload: dict, output_path: Path) -> None:
     dq_df = pd.DataFrame(payload["dq_dock"])
-    vina_df = pd.DataFrame(payload["vina"])
+    competitor_df = pd.DataFrame(payload["competitors"])
     if dq_df.empty:
         return
 
-    merged = dq_df[["pdb_id", "target_name", "rmsd"]].copy()
-    merged["DQ-Dock"] = merged.pop("rmsd")
-    if not vina_df.empty:
-        merged = merged.merge(
-            vina_df[["pdb_id", "top_rmsd", "best_returned_mode_rmsd"]],
-            on="pdb_id",
-            how="left",
-        )
-        merged["Vina top pose"] = merged.pop("top_rmsd")
-        merged["Vina best returned"] = merged.pop("best_returned_mode_rmsd")
-    merged["label"] = merged.apply(
+    dq_plot = dq_df[["pdb_id", "target_name", "rmsd"]].copy()
+    dq_plot["Method"] = "DQ-Dock"
+    dq_plot["RMSD"] = dq_plot.pop("rmsd")
+    frames = [dq_plot[["pdb_id", "target_name", "Method", "RMSD"]]]
+    if not competitor_df.empty:
+        successful_competitors = competitor_df[competitor_df["success"]].copy()
+        if not successful_competitors.empty:
+            top_plot = successful_competitors[
+                ["pdb_id", "target_name", "display_name", "top_rmsd"]
+            ].copy()
+            top_plot["Method"] = top_plot["display_name"] + " top"
+            top_plot["RMSD"] = top_plot.pop("top_rmsd")
+            best_plot = successful_competitors[
+                ["pdb_id", "target_name", "display_name", "best_returned_mode_rmsd"]
+            ].copy()
+            best_plot["Method"] = best_plot["display_name"] + " best"
+            best_plot["RMSD"] = best_plot.pop("best_returned_mode_rmsd")
+            frames.extend(
+                [
+                    top_plot[["pdb_id", "target_name", "Method", "RMSD"]],
+                    best_plot[["pdb_id", "target_name", "Method", "RMSD"]],
+                ]
+            )
+    plot_df = cast(pd.DataFrame, pd.concat(frames, ignore_index=True))
+    plot_df["label"] = plot_df.apply(
         lambda row: _graph_label(str(row["pdb_id"]), str(row["target_name"])), axis=1
-    )
-
-    plot_df = cast(
-        pd.DataFrame,
-        merged.melt(
-            id_vars=["pdb_id", "target_name", "label"],
-            value_vars=[
-                c for c in merged.columns if c not in {"pdb_id", "target_name", "label"}
-            ],
-            var_name="Method",
-            value_name="RMSD",
-        ),
     )
     plot_df = cast(pd.DataFrame, plot_df.dropna(subset=["RMSD"]))
     if plot_df.empty:
@@ -146,7 +162,7 @@ def _plot_rmsd(payload: dict, output_path: Path) -> None:
 
 def _plot_timing(payload: dict, output_path: Path, *, log_scale: bool) -> None:
     dq_df = pd.DataFrame(payload["dq_dock"])
-    vina_df = pd.DataFrame(payload["vina"])
+    competitor_df = pd.DataFrame(payload["competitors"])
     if dq_df.empty:
         return
 
@@ -157,15 +173,19 @@ def _plot_timing(payload: dict, output_path: Path, *, log_scale: bool) -> None:
         lambda row: _graph_label(str(row["pdb_id"]), str(row["target_name"])), axis=1
     )
     frames = [dq_plot]
-    if not vina_df.empty:
-        vina_plot = vina_df[["pdb_id", "time_s"]].copy()
-        vina_plot["Method"] = "Vina"
-        vina_plot["Time"] = vina_plot.pop("time_s")
-        vina_plot["label"] = vina_df.apply(
-            lambda row: _graph_label(str(row["pdb_id"]), str(row["target_name"])),
-            axis=1,
-        )
-        frames.append(vina_plot)
+    if not competitor_df.empty:
+        successful_competitors = competitor_df[competitor_df["success"]].copy()
+        if not successful_competitors.empty:
+            competitor_plot = successful_competitors[
+                ["pdb_id", "target_name", "display_name", "time_s"]
+            ].copy()
+            competitor_plot["Method"] = competitor_plot.pop("display_name")
+            competitor_plot["Time"] = competitor_plot.pop("time_s")
+            competitor_plot["label"] = competitor_plot.apply(
+                lambda row: _graph_label(str(row["pdb_id"]), str(row["target_name"])),
+                axis=1,
+            )
+            frames.append(competitor_plot[["pdb_id", "Method", "Time", "label"]])
     plot_df = cast(pd.DataFrame, pd.concat(frames, ignore_index=True))
 
     label_count = len(set(plot_df["label"].tolist()))
@@ -188,12 +208,13 @@ def _plot_timing(payload: dict, output_path: Path, *, log_scale: bool) -> None:
 
 def _plot_scatter(payload: dict, output_path: Path) -> None:
     dq_df = pd.DataFrame(payload["dq_dock"])
-    vina_df = pd.DataFrame(payload["vina"])
-    if dq_df.empty or vina_df.empty:
+    competitor_df = pd.DataFrame(payload["competitors"])
+    if dq_df.empty or competitor_df.empty:
         return
 
+    successful_competitors = competitor_df[competitor_df["success"]].copy()
     merged = dq_df[["pdb_id", "rmsd"]].merge(
-        vina_df[["pdb_id", "best_returned_mode_rmsd"]],
+        successful_competitors[["pdb_id", "display_name", "best_returned_mode_rmsd"]],
         on="pdb_id",
         how="inner",
     )
@@ -204,7 +225,13 @@ def _plot_scatter(payload: dict, output_path: Path) -> None:
         float(merged["rmsd"].max()), float(merged["best_returned_mode_rmsd"].max()), 2.0
     )
     plt.figure(figsize=(6.5, 6.5))
-    sns.scatterplot(data=merged, x="best_returned_mode_rmsd", y="rmsd", s=90)
+    sns.scatterplot(
+        data=merged,
+        x="best_returned_mode_rmsd",
+        y="rmsd",
+        hue="display_name",
+        s=90,
+    )
     for _, row in merged.iterrows():
         plt.text(
             float(row["best_returned_mode_rmsd"]),
@@ -213,9 +240,9 @@ def _plot_scatter(payload: dict, output_path: Path) -> None:
             fontsize=8,
         )
     plt.plot([0, limit], [0, limit], linestyle="--", color="gray")
-    plt.xlabel("Vina best returned RMSD (A)")
+    plt.xlabel("Competitor best returned RMSD (A)")
     plt.ylabel("DQ-Dock RMSD (A)")
-    plt.title("DQ-Dock vs Vina RMSD")
+    plt.title("DQ-Dock vs Competitor RMSD")
     plt.tight_layout()
     plt.savefig(output_path, dpi=220, bbox_inches="tight")
     plt.close()

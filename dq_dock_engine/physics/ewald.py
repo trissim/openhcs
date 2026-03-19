@@ -1,6 +1,10 @@
 import jax.numpy as jnp
 from jax import jit
-from .kernels import pairwise_distances, apply_cutoff, reduce_sum
+from .kernels import (
+    ewald_real_space_kernel,
+    minimum_image_pairwise_distances,
+    upper_triangle_masked_sum,
+)
 
 """
 Ewald Summation for long-range electrostatics.
@@ -36,7 +40,7 @@ def ewald_real_space_energy(
     alpha: float,
     cutoff: float,
     box_size: jnp.ndarray,
-) -> float:
+) -> jnp.ndarray:
     """
     Real-space Ewald sum — exponentially decaying.
 
@@ -45,23 +49,13 @@ def ewald_real_space_energy(
       - Decay: exp(-(αr)²) / r (exponential in αr)
       - Cutoff: HEURISTIC (convergence rate depends on α)
     """
-    diff = positions[:, None, :] - positions[None, :, :]
-    diff = diff - box_size * jnp.round(diff / box_size)
-    dists = jnp.linalg.norm(diff, axis=-1)
+    dists = minimum_image_pairwise_distances(positions, positions, box_size)
+    within_cutoff = dists < cutoff
 
-    n = positions.shape[0]
-    upper = jnp.triu(jnp.ones((n, n), dtype=bool), k=1)
-    within_cutoff = (dists < cutoff) & upper
-
-    r_safe = jnp.where(dists > 1e-10, dists, 1e-10)
-
-    # erfc(x) = 1 - erf(x), bounded by exp(-x²) for x > 0
-    # ewaldRealSpaceCore: exp(-(alpha*r)^2) / r
-    real_kernel = jnp.exp(-((alpha * r_safe) ** 2)) / r_safe
+    real_kernel = ewald_real_space_kernel(dists, alpha)
 
     charge_product = charges[:, None] * charges[None, :]
-
-    return jnp.sum(jnp.where(within_cutoff, charge_product * real_kernel, 0.0))
+    return upper_triangle_masked_sum(charge_product * real_kernel, within_cutoff)
 
 
 @conditionally_certified(
@@ -78,7 +72,7 @@ def ewald_reciprocal_energy(
     alpha: float,
     k_max: int,
     box_size: jnp.ndarray,
-) -> float:
+) -> jnp.ndarray:
     """
     Reciprocal-space (Fourier) Ewald sum.
 
@@ -113,7 +107,7 @@ def ewald_reciprocal_energy(
 
 @certified("EwaldSummation.lean")
 @jit
-def ewald_self_energy(charges: jnp.ndarray, alpha: float) -> float:
+def ewald_self_energy(charges: jnp.ndarray, alpha: float) -> jnp.ndarray:
     """
     Self-interaction correction: -α/√π Σ q_i².
 
@@ -130,7 +124,7 @@ def ewald_total(
     cutoff: float,
     k_max: int,
     box_size: jnp.ndarray,
-) -> float:
+) -> jnp.ndarray:
     """
     Full Ewald energy = real + reciprocal + self correction.
 

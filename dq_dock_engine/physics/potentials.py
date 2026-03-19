@@ -1,6 +1,12 @@
 import jax.numpy as jnp
 from jax import jit
-from .kernels import lennard_jones_potential, pairwise_distances, apply_cutoff
+from .kernels import (
+    apply_cutoff,
+    coulomb_cutoff,
+    lennard_jones_potential,
+    pairwise_distances,
+    typed_lennard_jones_cutoff,
+)
 from abc import ABC, abstractmethod
 
 """
@@ -19,7 +25,7 @@ class Potential(ABC):
     """ABC Contract: all potentials expose a single `energy` method."""
 
     @abstractmethod
-    def energy(self, q_a: jnp.ndarray, q_b: jnp.ndarray) -> float:
+    def energy(self, q_a: jnp.ndarray, q_b: jnp.ndarray) -> jnp.ndarray:
         """Compute total interaction energy between two atom sets."""
 
 
@@ -38,10 +44,13 @@ class LennardJones(Potential):
         self.sigma = sigma
         self.cutoff = cutoff
 
-    def energy(self, q_a: jnp.ndarray, q_b: jnp.ndarray) -> float:
+    def energy(self, q_a: jnp.ndarray, q_b: jnp.ndarray) -> jnp.ndarray:
         dists = pairwise_distances(q_a, q_b)
-        masked = apply_cutoff(dists, self.cutoff)
-        return jnp.sum(lennard_jones_potential(masked, self.epsilon, self.sigma))
+        epsilon_matrix = jnp.full_like(dists, self.epsilon)
+        sigma_matrix = jnp.full_like(dists, self.sigma)
+        return typed_lennard_jones_cutoff(
+            dists, epsilon_matrix, sigma_matrix, self.cutoff
+        )
 
 
 class Electrostatic(Potential):
@@ -61,12 +70,15 @@ class Electrostatic(Potential):
         self.charges_b = charges_b
         self.cutoff = cutoff
 
-    def energy(self, q_a: jnp.ndarray, q_b: jnp.ndarray) -> float:
+    def energy(self, q_a: jnp.ndarray, q_b: jnp.ndarray) -> jnp.ndarray:
         dists = pairwise_distances(q_a, q_b)
-        masked = apply_cutoff(dists, self.cutoff)
-        r_safe = jnp.where(masked > 1e-10, masked, 1e-10)
-        charge_product = self.charges_a[:, None] * self.charges_b[None, :]
-        return jnp.sum(jnp.where(masked > 0, charge_product / r_safe, 0.0))
+        return coulomb_cutoff(
+            self.charges_a,
+            self.charges_b,
+            dists,
+            self.cutoff,
+            1.0,
+        )
 
 
 class Hydrophobic(Potential):
@@ -83,7 +95,7 @@ class Hydrophobic(Potential):
         self.h_b = h_b
         self.cutoff = cutoff
 
-    def energy(self, q_a: jnp.ndarray, q_b: jnp.ndarray) -> float:
+    def energy(self, q_a: jnp.ndarray, q_b: jnp.ndarray) -> jnp.ndarray:
         dists = pairwise_distances(q_a, q_b)
         contact = jnp.where(dists < self.cutoff, 1.0, 0.0)
         return jnp.sum(self.h_a[:, None] * self.h_b[None, :] * contact)
@@ -99,5 +111,5 @@ class CompositePotential(Potential):
     def __init__(self, potentials: list[Potential]):
         self.potentials = potentials
 
-    def energy(self, q_a: jnp.ndarray, q_b: jnp.ndarray) -> float:
-        return sum(p.energy(q_a, q_b) for p in self.potentials)
+    def energy(self, q_a: jnp.ndarray, q_b: jnp.ndarray) -> jnp.ndarray:
+        return jnp.sum(jnp.stack([p.energy(q_a, q_b) for p in self.potentials]))
