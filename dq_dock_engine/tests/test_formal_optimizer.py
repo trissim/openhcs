@@ -1,27 +1,112 @@
 import jax
 import jax.numpy as jnp
 
+from pathlib import Path
+
+from dq_dock_engine.benchmark.benchmark_pdb import (
+    BENCHMARK_POCKET_RADIUS_ANGSTROMS,
+    BENCHMARK_PROTOCOL,
+    DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS,
+    benchmark_box_protocol_metadata,
+    derive_benchmark_box_size_from_pocket_radius,
+)
+from dq_dock_engine.docking.formal_handles import (
+    ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT,
+    ACTIVE_CERTIFIED_RUNTIME_HANDLES,
+    CP3,
+    CP2,
+    CP4,
+    CP5,
+    CP6,
+    FLO10,
+    FLO11,
+    FLO13,
+    FLO14,
+    FLO15,
+    FLO16,
+    FLO17,
+    FLO18,
+    FLO8,
+    FLO9,
+    selection_branch_membership_handle,
+    selection_theorem_handle,
+    selection_witness_handle,
+    belief_witness_handle,
+    STAGED_COARSE_TOP1_RUNTIME_CONTRACT,
+    STAGED_COARSE_PRUNING_HANDLES,
+    STAGED_SINGLETON_TOP1_RUNTIME_CONTRACT,
+    Top1PruningBranchName,
+    handle_bundle_from_contracts,
+    runtime_contract_record,
+    serialize_dataclass_record,
+    TK11,
+    TK12,
+)
 from dq_dock_engine.docking.core import DockingBox, LigandContext, ScoringEngine
 from dq_dock_engine.docking.formal_actions import create_certified_action_family
 from dq_dock_engine.docking.formal_belief import (
+    CertifiedBeliefWitness,
     CertifiedPriorSpec,
+    PosteriorUpdateBranch,
+    SelectionBranch,
+    belief_witness,
     build_prior,
+    posterior_update_witness,
+    selection_provenance,
+    selection_witness,
     select_admissible_action,
     update_posterior,
 )
 from dq_dock_engine.docking.formal_pruning import (
+    CertifiedSurvivorSetWitness,
+    StagedTop1Guarantee,
+    Top1PruningBranch,
+    certificate_of_top1_branch,
     certified_pruning_certificate,
+    certified_exact_singleton_winner_certificate,
+    certified_survivor_set_witness,
+    certified_top1_coarse_ambiguity_certificate,
     coarse_top1_ambiguity_mask,
+    has_exact_singleton_winner_proof_condition,
+    select_top1_pruning_branch,
+    staged_top1_guarantee_from_coarse_scores,
+    survivor_set_of_top1_branch,
 )
-from dq_dock_engine.docking.formal_optimizer import refine_poses_certified
+from dq_dock_engine.docking.formal_optimizer import (
+    StagedCertifiedDecisionState,
+    active_belief_witness,
+    active_optimizer_witness,
+    active_survivor_set_witness,
+    active_pruning_branch,
+    refine_poses_certified,
+    staged_decision_states_from_singleton_accept_round,
+)
 from dq_dock_engine.docking.formal_sampling import sample_certified_global_poses
 from dq_dock_engine.docking.formal_surrogates import (
+    FastSingletonAcceptRoundResult,
+    StagedSingletonAcceptRoundResult,
+    StagedTop1BranchSummary,
+    StagedTop1CostDiagnostic,
+    StagedTop1Decision,
+    StagedTop1RoundResult,
     score_exact_and_coarse_local_family,
+    staged_top1_cost_diagnostic,
+    try_adaptive_singleton_accept_round,
+    staged_top1_decision_from_scores,
+    staged_top1_round_from_coarse_scores,
+    summarize_staged_top1_round,
+    try_fast_singleton_accept_round,
+    try_staged_singleton_accept_round,
     select_exact_receptor_subset_for_local_family,
 )
 from dq_dock_engine.docking.pipeline import run_docking_pipeline
 from dq_dock_engine.docking_config import CERTIFIED_DOCKING, create_config
 from dq_dock_engine.docking.scoring import score_certified_batch
+from dq_dock_engine.codegen.formal_handle_codegen import (
+    DEFAULT_LEAN_PATH,
+    parse_alias_names,
+)
+from dq_dock_engine.generated import formal_handle_aliases
 
 
 def test_certified_action_family_has_noop_first_and_stable_size():
@@ -35,6 +120,92 @@ def test_certified_action_family_has_noop_first_and_stable_size():
     assert family.actions[0].is_noop is True
     assert family.actions[0].action_id == 0
     assert tuple(action.action_id for action in family.actions) == tuple(range(13))
+
+
+def test_benchmark_box_size_is_derived_from_pocket_radius_protocol():
+    assert (
+        derive_benchmark_box_size_from_pocket_radius(BENCHMARK_POCKET_RADIUS_ANGSTROMS)
+        == DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS
+    )
+
+
+def test_benchmark_box_protocol_metadata_marks_custom_override():
+    assert benchmark_box_protocol_metadata(BENCHMARK_PROTOCOL.box_size_a) == (
+        "pocket_radius_derived",
+        BENCHMARK_PROTOCOL.box_geometry_theorem,
+    )
+    assert benchmark_box_protocol_metadata(BENCHMARK_PROTOCOL.box_size_a + 1.0) == (
+        "custom_override",
+        None,
+    )
+
+
+def test_active_certified_runtime_theorem_bundle_tracks_exact_path():
+    assert CP2 in ACTIVE_CERTIFIED_RUNTIME_HANDLES.theorem_handles
+    assert FLO9 in ACTIVE_CERTIFIED_RUNTIME_HANDLES.theorem_handles
+    assert FLO8 in ACTIVE_CERTIFIED_RUNTIME_HANDLES.theorem_handles
+
+
+def test_generated_formal_handle_aliases_stay_in_sync_with_lean_source():
+    expected = tuple(parse_alias_names(DEFAULT_LEAN_PATH.read_text()))
+    assert tuple(formal_handle_aliases.__all__) == expected
+
+
+def test_active_certified_runtime_witness_bundle_tracks_exact_path_objects():
+    assert {CP4, FLO10, FLO13, FLO15}.issubset(
+        set(ACTIVE_CERTIFIED_RUNTIME_HANDLES.witness_handles)
+    )
+
+
+def test_runtime_contract_objects_track_active_and_staged_branches():
+    assert (
+        ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT.pruning_branch
+        == Top1PruningBranchName.EXACT_TOP1
+    )
+    assert ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT.optimizer_witness_handle == FLO15
+    assert (
+        STAGED_COARSE_TOP1_RUNTIME_CONTRACT.pruning_branch
+        == Top1PruningBranchName.TOP1_COARSE_AMBIGUITY_BAND
+    )
+    assert (
+        STAGED_SINGLETON_TOP1_RUNTIME_CONTRACT.pruning_branch
+        == Top1PruningBranchName.EXACT_SINGLETON_WINNER
+    )
+
+
+def test_runtime_contract_record_uses_generic_dataclass_serialization():
+    record = runtime_contract_record(ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT)
+
+    assert record == serialize_dataclass_record(ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT)
+    assert record["pruning_branch"] == Top1PruningBranchName.EXACT_TOP1.value
+    assert record["optimizer_witness_handle"] == FLO15
+
+
+def test_handle_bundles_are_derived_from_runtime_contracts():
+    active_bundle = handle_bundle_from_contracts(
+        ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT
+    )
+    staged_bundle = handle_bundle_from_contracts(
+        STAGED_COARSE_TOP1_RUNTIME_CONTRACT,
+        STAGED_SINGLETON_TOP1_RUNTIME_CONTRACT,
+        extra_theorem_handles=(CP3,),
+        extra_witness_handles=(FLO18,),
+    )
+
+    assert active_bundle == ACTIVE_CERTIFIED_RUNTIME_HANDLES
+    assert staged_bundle == STAGED_COARSE_PRUNING_HANDLES
+
+
+def test_staged_coarse_pruning_theorem_bundle_tracks_proved_branches():
+    assert {CP3, TK11, TK12}.issubset(
+        set(STAGED_COARSE_PRUNING_HANDLES.theorem_handles)
+    )
+
+
+def test_staged_coarse_pruning_witness_bundle_tracks_object_handles():
+    assert {CP5, CP6, FLO16, FLO17, FLO18}.issubset(
+        set(STAGED_COARSE_PRUNING_HANDLES.witness_handles)
+    )
 
 
 def test_bayes_update_normalizes_survivor_support():
@@ -73,6 +244,52 @@ def test_select_admissible_action_uses_first_ambiguity_member():
     assert selected == 1
 
 
+def test_selection_provenance_distinguishes_ambiguity_and_support_fallback():
+    ambiguity_rule = selection_provenance(
+        jnp.array([0.1, 0.6, 0.3]), jnp.array([False, True, True])
+    )
+    fallback_rule = selection_provenance(
+        jnp.array([0.0, 1.0, 0.0]), jnp.array([False, False, False])
+    )
+
+    assert ambiguity_rule == (
+        SelectionBranch.AMBIGUITY_BAND.value,
+        selection_branch_membership_handle(SelectionBranch.AMBIGUITY_BAND.value),
+    )
+    assert fallback_rule == (
+        SelectionBranch.SUPPORT_FALLBACK.value,
+        selection_branch_membership_handle(SelectionBranch.SUPPORT_FALLBACK.value),
+    )
+
+
+def test_branch_witness_helpers_use_branch_indexed_theorems():
+    pw = posterior_update_witness()
+    sw = selection_witness(
+        jnp.array([0.1, 0.6, 0.3]), jnp.array([False, True, True]), selected_action=1
+    )
+    bw = belief_witness(
+        jnp.array([0.1, 0.6, 0.3]), jnp.array([False, True, True]), selected_action=1
+    )
+
+    assert pw.branch == PosteriorUpdateBranch.SURVIVOR_CONDITIONING
+    assert pw.theorem_handle == FLO9
+    assert pw.witness_handle == FLO10
+    assert sw.branch == SelectionBranch.AMBIGUITY_BAND
+    assert sw.theorem_handle == selection_theorem_handle(
+        SelectionBranch.AMBIGUITY_BAND.value
+    )
+    assert sw.witness_handle == selection_witness_handle(
+        SelectionBranch.AMBIGUITY_BAND.value
+    )
+    assert sw.selected_action == 1
+    assert isinstance(bw, CertifiedBeliefWitness)
+    assert bw.posterior_update.theorem_handle == FLO9
+    assert bw.selection.theorem_handle == FLO8
+    assert bw.witness_handle == belief_witness_handle(
+        SelectionBranch.AMBIGUITY_BAND.value
+    )
+
+
 def test_certified_pruning_certificate_is_exact_when_delta_zero():
     exact_scores = jnp.array([0.2, 0.5, 0.3])
     coarse_scores = jnp.array([0.2, 0.5, 0.3])
@@ -82,6 +299,8 @@ def test_certified_pruning_certificate_is_exact_when_delta_zero():
     assert jnp.array_equal(cert.survivor_mask, cert.exact_top_k_mask)
     assert jnp.array_equal(cert.exact_ambiguity_mask, cert.exact_top_k_mask)
     assert jnp.array_equal(cert.coarse_ambiguity_mask, cert.exact_top_k_mask)
+    assert cert.rule == "exact_top1"
+    assert cert.theorem_handle == CP2
 
 
 def test_coarse_top1_ambiguity_band_contains_exact_winner_under_uniform_error():
@@ -92,6 +311,307 @@ def test_coarse_top1_ambiguity_band_contains_exact_winner_under_uniform_error():
     coarse_band = coarse_top1_ambiguity_mask(coarse_scores, delta)
 
     assert bool(coarse_band[0]) is True
+
+
+def test_certified_top1_coarse_ambiguity_certificate_uses_coarse_band():
+    exact_scores = jnp.array([0.0, 1.0, 2.0])
+    coarse_scores = jnp.array([0.1, 0.9, 2.1])
+    cert = certified_top1_coarse_ambiguity_certificate(
+        exact_scores=exact_scores,
+        coarse_scores=coarse_scores,
+        delta=0.1,
+    )
+
+    assert jnp.array_equal(cert.survivor_mask, cert.coarse_ambiguity_mask)
+    assert bool(cert.survivor_mask[0]) is True
+    assert cert.rule == "top1_coarse_ambiguity_band"
+    assert cert.theorem_handle == TK11
+
+
+def test_certified_singleton_winner_certificate_returns_single_winner():
+    exact_scores = jnp.array([0.0, 1.0, 2.0])
+    coarse_scores = jnp.array([0.0, 1.0, 2.0])
+    cert = certified_exact_singleton_winner_certificate(
+        exact_scores=exact_scores,
+        coarse_scores=coarse_scores,
+        delta=0.1,
+    )
+
+    assert int(jnp.sum(cert.survivor_mask.astype(jnp.int32))) == 1
+    assert bool(cert.survivor_mask[0]) is True
+    assert cert.rule == "exact_singleton_winner"
+    assert cert.theorem_handle == TK12
+
+
+def test_singleton_winner_proof_condition_tracks_pairwise_margin():
+    assert has_exact_singleton_winner_proof_condition(jnp.array([0.0, 1.0, 2.0]), 0.1)
+    assert not has_exact_singleton_winner_proof_condition(
+        jnp.array([0.0, 0.15, 2.0]), 0.1
+    )
+
+
+def test_top1_pruning_branch_selector_matches_proof_cases():
+    assert (
+        select_top1_pruning_branch(jnp.array([0.0, 1.0, 2.0]), 0.0)
+        == Top1PruningBranch.EXACT_TOP1
+    )
+    assert (
+        select_top1_pruning_branch(jnp.array([0.0, 1.0, 2.0]), 0.1)
+        == Top1PruningBranch.EXACT_SINGLETON_WINNER
+    )
+    assert (
+        select_top1_pruning_branch(jnp.array([0.0, 0.15, 2.0]), 0.1)
+        == Top1PruningBranch.TOP1_COARSE_AMBIGUITY_BAND
+    )
+
+
+def test_certificate_of_top1_branch_dispatches_to_exact_top1_and_singleton():
+    exact_scores = jnp.array([0.0, 1.0, 2.0])
+    coarse_scores = jnp.array([0.0, 1.0, 2.0])
+
+    exact_cert = certificate_of_top1_branch(
+        Top1PruningBranch.EXACT_TOP1, exact_scores, coarse_scores, delta=0.0
+    )
+    singleton_cert = certificate_of_top1_branch(
+        Top1PruningBranch.EXACT_SINGLETON_WINNER,
+        exact_scores,
+        coarse_scores,
+        delta=0.1,
+    )
+
+    assert exact_cert.theorem_handle == "CP2"
+    assert singleton_cert.theorem_handle == "TK12"
+
+
+def test_survivor_set_of_top1_branch_packages_branch_certificate():
+    witness = survivor_set_of_top1_branch(
+        Top1PruningBranch.TOP1_COARSE_AMBIGUITY_BAND,
+        exact_scores=jnp.array([0.0, 1.0, 2.0]),
+        coarse_scores=jnp.array([0.1, 0.9, 2.1]),
+        delta=0.1,
+    )
+
+    assert isinstance(witness, CertifiedSurvivorSetWitness)
+    assert witness.certificate.theorem_handle == "TK11"
+    assert witness.theorem_handle == "CP5"
+    assert jnp.array_equal(witness.survivor_mask, witness.certificate.survivor_mask)
+
+
+def test_staged_top1_decision_accepts_singleton_branch_without_exact_rescore():
+    decision = staged_top1_decision_from_scores(
+        exact_scores=jnp.array([0.0, 1.0, 2.0]),
+        coarse_scores=jnp.array([0.0, 1.0, 2.0]),
+        delta=0.1,
+    )
+
+    assert isinstance(decision, StagedTop1Decision)
+    assert decision.branch == Top1PruningBranch.EXACT_SINGLETON_WINNER
+    assert decision.accepted_without_exact_rescore is True
+    assert decision.survivor_set.theorem_handle == CP6
+
+
+def test_staged_top1_guarantee_certifies_singleton_without_exact_scores():
+    guarantee = staged_top1_guarantee_from_coarse_scores(
+        coarse_scores=jnp.array([0.0, 1.0, 2.0]),
+        delta=0.1,
+    )
+
+    assert isinstance(guarantee, StagedTop1Guarantee)
+    assert guarantee.branch == Top1PruningBranch.EXACT_SINGLETON_WINNER
+    assert guarantee.theorem_handle == TK12
+    assert guarantee.exact_winner_certified is True
+    assert int(jnp.sum(guarantee.survivor_mask.astype(jnp.int32))) == 1
+
+
+def test_staged_top1_guarantee_returns_band_when_margin_is_small():
+    guarantee = staged_top1_guarantee_from_coarse_scores(
+        coarse_scores=jnp.array([0.0, 0.15, 2.0]),
+        delta=0.1,
+    )
+
+    assert guarantee.branch == Top1PruningBranch.TOP1_COARSE_AMBIGUITY_BAND
+    assert guarantee.theorem_handle == TK11
+    assert guarantee.exact_winner_certified is False
+
+
+def test_staged_top1_decision_falls_back_to_band_when_margin_is_small():
+    decision = staged_top1_decision_from_scores(
+        exact_scores=jnp.array([0.0, 1.0, 2.0]),
+        coarse_scores=jnp.array([0.0, 0.15, 2.0]),
+        delta=0.1,
+    )
+
+    assert decision.branch == Top1PruningBranch.TOP1_COARSE_AMBIGUITY_BAND
+    assert decision.accepted_without_exact_rescore is False
+    assert decision.survivor_set.theorem_handle == CP5
+
+
+def test_staged_top1_round_from_coarse_scores_packages_all_pose_decisions():
+    round_result = staged_top1_round_from_coarse_scores(
+        coarse_scores=jnp.array([[0.0, 1.0, 2.0], [0.0, 0.15, 2.0]]),
+        delta=0.1,
+        retained_receptor_indices=jnp.array([0, 1], dtype=jnp.int32),
+    )
+
+    assert isinstance(round_result, StagedTop1RoundResult)
+    assert len(round_result.decisions) == 2
+    assert round_result.decisions[0].branch == Top1PruningBranch.EXACT_SINGLETON_WINNER
+    assert (
+        round_result.decisions[1].branch == Top1PruningBranch.TOP1_COARSE_AMBIGUITY_BAND
+    )
+
+
+def test_summarize_staged_top1_round_counts_branch_distribution():
+    round_result = staged_top1_round_from_coarse_scores(
+        coarse_scores=jnp.array([[0.0, 1.0, 2.0], [0.0, 0.15, 2.0]]),
+        delta=0.1,
+        retained_receptor_indices=jnp.array([0, 1], dtype=jnp.int32),
+    )
+    summary = summarize_staged_top1_round(round_result)
+
+    assert isinstance(summary, StagedTop1BranchSummary)
+    assert summary.singleton_count == 1
+    assert summary.ambiguity_band_count == 1
+    assert summary.total == 2
+    assert summary.singleton_fraction == 0.5
+
+
+def test_staged_top1_cost_diagnostic_reports_branch_and_retained_sizes():
+    candidate_batches = jnp.array(
+        [
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+        ],
+        dtype=jnp.float32,
+    )
+    diagnostic = staged_top1_cost_diagnostic(
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        candidate_batches=candidate_batches,
+        target_error=0.001,
+        coarse_target_error=0.004,
+        translation_step=0.5,
+    )
+
+    assert isinstance(diagnostic, StagedTop1CostDiagnostic)
+    assert diagnostic.exact_retained_atoms >= diagnostic.coarse_retained_atoms
+    assert diagnostic.branch_summary.total == 2
+
+
+def test_try_staged_singleton_accept_round_returns_result_or_clean_fallback():
+    candidate_batches = jnp.array(
+        [
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+        ],
+        dtype=jnp.float32,
+    )
+    result = try_staged_singleton_accept_round(
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        candidate_batches=candidate_batches,
+        target_error=0.001,
+        coarse_target_error=0.004,
+        translation_step=0.5,
+    )
+
+    assert result is None or isinstance(result, StagedSingletonAcceptRoundResult)
+
+
+def test_try_fast_singleton_accept_round_returns_result_or_clean_fallback():
+    candidate_batches = jnp.array(
+        [
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+        ],
+        dtype=jnp.float32,
+    )
+    result = try_fast_singleton_accept_round(
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        candidate_batches=candidate_batches,
+        target_error=0.001,
+        coarse_target_error=0.004,
+        translation_step=0.5,
+    )
+
+    assert result is None or isinstance(result, FastSingletonAcceptRoundResult)
+
+
+def test_try_adaptive_singleton_accept_round_returns_first_successful_target():
+    candidate_batches = jnp.array(
+        [
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+        ],
+        dtype=jnp.float32,
+    )
+    result = try_adaptive_singleton_accept_round(
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        candidate_batches=candidate_batches,
+        target_error=0.001,
+        coarse_target_errors=(0.05, 0.01, 0.004),
+        translation_step=0.5,
+    )
+
+    assert result is not None
+    assert isinstance(result, FastSingletonAcceptRoundResult)
+    assert result.coarse_target_error in {0.05, 0.01, 0.004}
+
+
+def test_staged_decision_states_from_singleton_accept_round_packages_pose_states():
+    candidate_batches = jnp.array(
+        [
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+        ],
+        dtype=jnp.float32,
+    )
+    result = try_fast_singleton_accept_round(
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        candidate_batches=candidate_batches,
+        target_error=0.001,
+        coarse_target_error=0.004,
+        translation_step=0.5,
+    )
+
+    assert result is not None
+    states = staged_decision_states_from_singleton_accept_round(result)
+    assert len(states) == 2
+    assert isinstance(states[0], StagedCertifiedDecisionState)
+    assert states[0].theorem_handle == TK12
+
+
+def test_certified_pruning_certificate_uses_singleton_fast_path_when_band_is_singleton():
+    exact_scores = jnp.array([0.0, 1.0, 2.0])
+    coarse_scores = jnp.array([0.0, 1.0, 2.0])
+    cert = certified_pruning_certificate(exact_scores, coarse_scores, k=1, delta=0.1)
+
+    assert int(jnp.sum(cert.survivor_mask.astype(jnp.int32))) == 1
+    assert bool(cert.survivor_mask[0]) is True
+    assert cert.rule == "exact_singleton_winner"
+    assert cert.theorem_handle == "TK12"
+
+
+def test_certified_survivor_set_witness_packages_certificate_and_mask():
+    witness = certified_survivor_set_witness(
+        exact_scores=jnp.array([0.0, 1.0, 2.0]),
+        coarse_scores=jnp.array([0.0, 1.0, 2.0]),
+        k=1,
+        delta=0.1,
+    )
+
+    assert isinstance(witness, CertifiedSurvivorSetWitness)
+    assert witness.certificate.theorem_handle == "TK12"
+    assert witness.theorem_handle == "CP6"
+    assert jnp.array_equal(witness.survivor_mask, witness.certificate.survivor_mask)
 
 
 def test_exact_receptor_subset_drops_far_atoms_outside_family_cutoff():
@@ -159,7 +679,33 @@ def test_refine_poses_certified_uses_finite_action_family_search():
 
     assert len(history) == 1
     belief = history[0][0].belief
+    pruning_certificate = history[0][0].pruning_certificate
     assert belief.selected_action != 0
+    assert belief.posterior_rule == PosteriorUpdateBranch.SURVIVOR_CONDITIONING.value
+    assert belief.posterior_theorem == "FLO9"
+    assert pruning_certificate.theorem_handle == "CP2"
+    assert pruning_certificate.rule == "exact_top1"
+    assert active_pruning_branch(history[0][0]) == Top1PruningBranch.EXACT_TOP1
+    assert (
+        active_survivor_set_witness(history[0][0]).certificate.theorem_handle == "CP2"
+    )
+    assert active_survivor_set_witness(history[0][0]).theorem_handle == "CP4"
+    assert (
+        active_belief_witness(history[0][0]).posterior_update.theorem_handle == "FLO9"
+    )
+    assert active_belief_witness(history[0][0]).selection.theorem_handle == FLO8
+    assert active_belief_witness(history[0][0]).witness_handle in {FLO13, FLO14}
+    optimizer_witness = active_optimizer_witness(history[0][0])
+    assert optimizer_witness.survivor_set.certificate.theorem_handle == CP2
+    assert optimizer_witness.survivor_set.theorem_handle == CP4
+    assert optimizer_witness.belief.posterior_update.theorem_handle == FLO9
+    assert optimizer_witness.theorem_handle == FLO15
+    assert optimizer_witness.branch_witness_handle == FLO18
+    assert belief.selected_action_rule in {
+        SelectionBranch.AMBIGUITY_BAND.value,
+        SelectionBranch.SUPPORT_FALLBACK.value,
+    }
+    assert belief.selected_action_theorem == "FLO8"
     assert refined_coords.shape == initial_coords.shape
     assert float(refined_coords[0, 0, 0]) < float(initial_coords[0, 0, 0])
 

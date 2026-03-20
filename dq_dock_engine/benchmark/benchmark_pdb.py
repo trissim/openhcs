@@ -57,6 +57,57 @@ from dq_dock_engine.benchmark.large_pdb_ids import (
     get_default_ligand_entries,
 )
 from dq_dock_engine.benchmark.redocking_report import render_redocking_report
+from dq_dock_engine.docking.formal_handles import (
+    ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT,
+    ACTIVE_CERTIFIED_RUNTIME_HANDLES,
+    SD10,
+    STAGED_COARSE_TOP1_RUNTIME_CONTRACT,
+    STAGED_COARSE_PRUNING_HANDLES,
+    STAGED_SINGLETON_TOP1_RUNTIME_CONTRACT,
+    runtime_contract_record,
+)
+
+
+BENCHMARK_POCKET_RADIUS_ANGSTROMS = 12.0
+
+
+def derive_benchmark_box_size_from_pocket_radius(pocket_radius: float) -> float:
+    """Derive the benchmark cubic box side from the declared pocket radius.
+
+    The benchmark protocol extracts pocket atoms inside a ball of radius
+    ``pocket_radius`` around the docking center. We choose a cubic search box
+    with the same numeric side length. Its half-diagonal is
+    ``sqrt(3) * pocket_radius / 2 <= pocket_radius``, so the search box stays
+    inside the declared pocket ball.
+    """
+    if pocket_radius <= 0:
+        raise ValueError("pocket_radius must be positive")
+    return pocket_radius
+
+
+def benchmark_box_protocol_metadata(box_size: float) -> tuple[str, str | None]:
+    if np.isclose(box_size, BENCHMARK_PROTOCOL.box_size_a):
+        return ("pocket_radius_derived", BENCHMARK_PROTOCOL.box_geometry_theorem)
+    return ("custom_override", None)
+
+
+DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS = derive_benchmark_box_size_from_pocket_radius(
+    BENCHMARK_POCKET_RADIUS_ANGSTROMS
+)
+
+
+@dataclass(frozen=True)
+class BenchmarkProtocol:
+    pocket_radius_a: float
+    box_size_a: float
+    box_geometry_theorem: str
+
+
+BENCHMARK_PROTOCOL = BenchmarkProtocol(
+    pocket_radius_a=BENCHMARK_POCKET_RADIUS_ANGSTROMS,
+    box_size_a=DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS,
+    box_geometry_theorem=SD10,
+)
 
 
 @dataclass(frozen=True)
@@ -84,6 +135,9 @@ class ComplexSummaryRow:
             "center_x": complex_entry.center[0],
             "center_y": complex_entry.center[1],
             "center_z": complex_entry.center[2],
+            "box_x": complex_entry.box_size[0],
+            "box_y": complex_entry.box_size[1],
+            "box_z": complex_entry.box_size[2],
             "ligand_atoms": self.ligand_atoms,
             "pocket_atoms": self.pocket_atoms,
             "score_name": "energy",
@@ -101,10 +155,18 @@ class ComplexSummaryRow:
             "error": None,
         }
 
-    def to_json_record(self, result: BenchmarkResult) -> dict[str, object]:
+    def to_json_record(
+        self, complex_entry: "PreparedBenchmarkComplex", result: BenchmarkResult
+    ) -> dict[str, object]:
         return {
             "pdb_id": self.pdb_id,
             "target_name": self.target_name,
+            "center_x": complex_entry.center[0],
+            "center_y": complex_entry.center[1],
+            "center_z": complex_entry.center[2],
+            "box_x": complex_entry.box_size[0],
+            "box_y": complex_entry.box_size[1],
+            "box_z": complex_entry.box_size[2],
             "ligand_atoms": self.ligand_atoms,
             "pocket_atoms": self.pocket_atoms,
             "rmsd": _safe_json_value(self.rmsd),
@@ -241,6 +303,9 @@ class CompetitorResultRow:
             "center_x": complex_entry.center[0],
             "center_y": complex_entry.center[1],
             "center_z": complex_entry.center[2],
+            "box_x": complex_entry.box_size[0],
+            "box_y": complex_entry.box_size[1],
+            "box_z": complex_entry.box_size[2],
             "ligand_atoms": None,
             "pocket_atoms": None,
             "score_name": self.score_name,
@@ -258,13 +323,21 @@ class CompetitorResultRow:
             "error": self.error,
         }
 
-    def to_json_record(self) -> dict[str, object]:
+    def to_json_record(
+        self, complex_entry: "PreparedBenchmarkComplex"
+    ) -> dict[str, object]:
         return {
             "engine_id": self.engine_id,
             "display_name": self.display_name,
             "score_name": self.score_name,
             "pdb_id": self.pdb_id,
             "target_name": self.target_name,
+            "center_x": complex_entry.center[0],
+            "center_y": complex_entry.center[1],
+            "center_z": complex_entry.center[2],
+            "box_x": complex_entry.box_size[0],
+            "box_y": complex_entry.box_size[1],
+            "box_z": complex_entry.box_size[2],
             "success": self.success,
             "top_rmsd": _safe_json_value(self.top_rmsd),
             "best_returned_mode_rmsd": _safe_json_value(self.best_mode_rmsd),
@@ -338,6 +411,7 @@ class BenchmarkState:
             n_complexes_requested=context.n_complexes_requested,
             n_poses=context.n_poses,
             n_opt_steps=context.n_opt_steps,
+            box_size=context.box_size,
             use_multi_stage=context.use_multi_stage,
             use_pocket_guided=context.use_pocket_guided,
             competitors=context.competitors,
@@ -584,7 +658,7 @@ def prepare_protein(pdb_path: Path) -> Path:
 def prepare_pocket_protein(
     protein_path: Path,
     center: tuple[float, float, float],
-    pocket_radius: float = 12.0,
+    pocket_radius: float = BENCHMARK_PROTOCOL.pocket_radius_a,
 ) -> Path:
     """Write a pocket-only receptor PDB matching the filtered docking arrays."""
     pocket_path = protein_path.parent / f"{protein_path.stem}_pocket.pdb"
@@ -661,7 +735,7 @@ def prepare_ligand(pdb_path: Path, preferred_resname: str | None = None) -> Path
 def prepare_benchmark_complex(
     complex_entry: BenchmarkComplex,
     pose_dir: Path,
-    box_size: float = 12.0,
+    box_size: float = BENCHMARK_PROTOCOL.box_size_a,
 ) -> PreparedBenchmarkComplex:
     receptor_pdb = prepare_protein(complex_entry.path)
     pocket_receptor_pdb = prepare_pocket_protein(receptor_pdb, complex_entry.center)
@@ -685,7 +759,7 @@ def prepare_benchmark_complex(
             prot_coords,
             prot_radii,
             np.array(complex_entry.center),
-            pocket_radius=12.0,
+            pocket_radius=BENCHMARK_PROTOCOL.pocket_radius_a,
             receptor_elements=prot_elements,
         ),
     )
@@ -1059,6 +1133,7 @@ def save_benchmark_results(
     n_complexes_requested: int,
     n_poses: int,
     n_opt_steps: int,
+    box_size: float,
     use_multi_stage: bool,
     use_pocket_guided: bool,
     competitors: tuple[CompetitorMetadata, ...],
@@ -1110,6 +1185,7 @@ def save_benchmark_results(
         )
         for metadata in competitors
     }
+    box_protocol_rule, box_protocol_theorem = benchmark_box_protocol_metadata(box_size)
 
     csv_rows: list[dict[str, object]] = []
     for pdb_id, row in dq_map.items():
@@ -1133,6 +1209,9 @@ def save_benchmark_results(
                 "center_x",
                 "center_y",
                 "center_z",
+                "box_x",
+                "box_y",
+                "box_z",
                 "ligand_atoms",
                 "pocket_atoms",
                 "score_name",
@@ -1163,6 +1242,21 @@ def save_benchmark_results(
         "n_complexes_excluded": len(excluded_rows),
         "n_poses": n_poses,
         "n_opt_steps": n_opt_steps,
+        "benchmark_pocket_radius_a": BENCHMARK_PROTOCOL.pocket_radius_a,
+        "benchmark_box_size_a": box_size,
+        "benchmark_box_protocol_rule": box_protocol_rule,
+        "benchmark_box_protocol_theorem": box_protocol_theorem,
+        "active_certified_runtime_theorems": ACTIVE_CERTIFIED_RUNTIME_HANDLES.theorem_handles,
+        "active_certified_runtime_witnesses": ACTIVE_CERTIFIED_RUNTIME_HANDLES.witness_handles,
+        "active_certified_runtime_contract": runtime_contract_record(
+            ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT
+        ),
+        "staged_coarse_pruning_theorems": STAGED_COARSE_PRUNING_HANDLES.theorem_handles,
+        "staged_coarse_pruning_witnesses": STAGED_COARSE_PRUNING_HANDLES.witness_handles,
+        "staged_coarse_runtime_contracts": [
+            runtime_contract_record(STAGED_COARSE_TOP1_RUNTIME_CONTRACT),
+            runtime_contract_record(STAGED_SINGLETON_TOP1_RUNTIME_CONTRACT),
+        ],
         "use_multi_stage": use_multi_stage,
         "use_pocket_guided": use_pocket_guided,
         "competitors": [
@@ -1187,8 +1281,13 @@ def save_benchmark_results(
 
     payload = {
         "summary": {k: _safe_json_value(v) for k, v in summary.items()},
-        "dq_dock": [row.to_json_record(dq_result_map[row.pdb_id]) for row in dq_rows],
-        "competitors": [row.to_json_record() for row in competitor_rows],
+        "dq_dock": [
+            row.to_json_record(complex_map[row.pdb_id], dq_result_map[row.pdb_id])
+            for row in dq_rows
+        ],
+        "competitors": [
+            row.to_json_record(complex_map[row.pdb_id]) for row in competitor_rows
+        ],
         "excluded": [
             {"pdb_id": row.pdb_id, "reason": row.reason} for row in excluded_rows
         ],
@@ -1266,7 +1365,7 @@ def run_dq_dock(
     optimizer_backend: "OptimizerBackend" = OptimizerBackend.FORMAL,
     retry_break_rmsd: float = 0.0,
     retry_preserve_seed: bool = False,
-    box_size: float = 12.0,
+    box_size: float = BENCHMARK_PROTOCOL.box_size_a,
 ) -> tuple[BenchmarkResult, np.ndarray | None]:
     """Run true DQ-Dock pipeline on complex using core infrastructure."""
     import os
@@ -1982,7 +2081,7 @@ def run_benchmark(
     charge_method=None,
     n_poses: int = 2000,
     n_opt_steps: int = 50,
-    box_size: float = 12.0,
+    box_size: float = BENCHMARK_PROTOCOL.box_size_a,
     use_multi_stage: bool = False,
     use_pocket_guided: bool | None = None,
     results_dir: Path = Path("benchmark_results"),
@@ -2225,8 +2324,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--box-size",
         type=float,
-        default=12.0,
-        help="Deterministic cubic docking box size in Angstroms (default: 12.0)",
+        default=BENCHMARK_PROTOCOL.box_size_a,
+        help="Deterministic cubic docking box size in Angstroms (default derives from benchmark pocket radius)",
     )
     parser.add_argument(
         "--use_multi_stage",

@@ -483,6 +483,36 @@ remove handwaving:
 
 These are small wrapper theorems around existing objects, not new foundations.
 
+Status update:
+
+- these wrappers are now implemented, and the active runtime additionally carries
+  branch-indexed provenance for:
+  - posterior update (`FLO9`)
+  - selection (`FLO8`)
+  - exact-path pruning (`CP2`)
+- the Python runtime now mirrors the Lean object layer with typed witness objects
+  for:
+  - survivor sets
+  - pruning branch certificates
+  - posterior update provenance
+  - selection provenance
+  - combined optimizer-state witnesses
+- combined optimizer-state witnesses now carry object-level theorem handles for
+  the active exact branch (`FLO15`) in addition to nested survivor/belief
+  provenance
+- benchmark metadata now distinguishes:
+  - theorem-level handles used by the active/staged runtime logic
+  - witness/object-level handles available in the active/staged runtime layer
+- these benchmark/runtime handle bundles are now derived from typed runtime
+  contract objects rather than maintained as independent handwritten lists
+- Python-side provenance serialization now uses generic dataclass/enum
+  serialization rather than handwritten field-by-field dict construction for the
+  runtime contract layer
+- tests increasingly validate provenance through the centralized handle helper
+  layer rather than by duplicating raw handle strings
+- Python handle aliases are now generated from `HandleAliases.lean`, and tests
+  enforce that the generated alias module stays in sync with the Lean source
+
 ## JAX / DSL implementation details
 
 ### DSL primitives already needed by this plan
@@ -750,8 +780,15 @@ Use a receptor-trimmed certified score:
 - `CoarseApproximation.shared_reference_uniformApprox_of_two_sided_bounds`
 - `NearTieBand.ambiguityBand_zero_eq_top1`
 - `SampledDockingCutoff.sampled_insideCutoff_sufficient`
+- `SampledDockingCutoff.cube_side_eq_radius_half_diagonal_le_radius`
+- `CertifiedPruning.certificate_of_exact_top1`
+- `CertifiedPruning.certificate_of_top1_branch`
 - `CertifiedPruning.certificate_of_top1_coarse_ambiguityBand`
 - `CertifiedPruning.certificate_of_exact_singleton_winner`
+- `CertifiedPruning.certifiedSurvivorSet_of_exact_top1`
+- `CertifiedPruning.certifiedSurvivorSet_of_top1_coarse_ambiguityBand`
+- `CertifiedPruning.certifiedSurvivorSet_of_exact_singleton_winner`
+- `FormalLocalOptimizer.normalize_supportConditioning_eq_bayesian_posterior`
 
 #### Runtime design
 
@@ -795,7 +832,10 @@ Current status:
 Benchmark note:
 
 - the `12A` box default is a deterministic benchmark/search-domain protocol
-  choice, not a new theorem about the certified optimizer itself
+  choice derived from the declared `12A` pocket radius
+- the proof obligation is only protocol geometry: a cube of side `R` has
+  half-diagonal `sqrt(3) * R / 2 <= R`, so the benchmark search box stays inside
+  the declared pocket ball (`SD10`)
 
 ### Next major certified speed project: two-cutoff survivor pruning
 
@@ -820,6 +860,10 @@ Theorem chain:
 Direct-accept branch now has a target proof object too:
 
 - `CertifiedPruning.certificate_of_exact_singleton_winner`
+
+Unified branch packaging is now available through:
+
+- `CertifiedPruning.certificate_of_top1_branch`
 
 Intended runtime flow:
 
@@ -851,7 +895,10 @@ These do not change the certified semantics:
 - exact-path fast path for survivor / ambiguity masks when `delta = 0` in
   `dq_dock_engine/docking/formal_optimizer.py`
 - exact-path shortcut is now backed directly by
-  `NearTieBand.ambiguityBand_zero_eq_top1`
+  `CertifiedPruning.certificate_of_exact_top1`, with
+  `NearTieBand.ambiguityBand_zero_eq_top1` as the underlying identity theorem
+- posterior updates in the active runtime are now tagged directly to
+  `FormalLocalOptimizer.normalize_supportConditioning_eq_bayesian_posterior`
 - host-side exact-support selection in `dq_dock_engine/docking/formal_surrogates.py`
 
 Current profile note:
@@ -863,6 +910,38 @@ Current profile note:
   `target_error = 0.001`, the certified cutoff is ~`29.3A` and >99% of retained
   receptor-ligand pairs are still in range, so a sparse exact pair enumerator is
   unlikely to be the next high-leverage optimization
+
+Staged coarse-runtime note:
+
+- a singleton direct-accept branch is now implemented as a staged helper and is
+  theorem-backed by the singleton-winner certificate path
+- on direct probes, the singleton condition fires for all tested local poses on
+  several benchmark complexes
+- however, the current coarse certified scorer is still only marginally cheaper
+  than the exact scorer, so the staged singleton helper is not yet faster than
+  the active exact round
+- this means the next runtime-performance leverage is a genuinely cheaper proved
+  coarse scorer, not more branch logic alone
+- after vectorizing the singleton branch helper and moving to a coarse-specific
+  retained support subset, the staged singleton path is now close enough to be a
+  serious candidate for future integration:
+  - `1hk4` exact round: ~`0.006s`
+  - `1hk4` fast singleton branch: ~`0.009s`
+  - branch coverage on key complexes is extremely high (`~99%` to `100%`
+    singleton-accept decisions on sampled local rounds)
+- the remaining blocker is now explicit in the code structure:
+  - branch logic and witness packaging are no longer the bottleneck
+  - a cheaper proved coarse scorer is the missing ingredient
+  - staged helper objects now exist for:
+    - coarse-only top-1 guarantees
+    - staged singleton-accept round results
+    - staged per-pose decision states
+- coarse-support diagnostics now show where the singleton path might pay off:
+  - singleton acceptance is nearly universal on tested local rounds
+  - but coarse retained support only shrinks materially on a subset of harder
+    cases (e.g. `1uwt`, `2ceq`)
+  - many easier cases keep the same retained receptor support under coarse and
+    exact target errors, so no speedup is available there from cutoff shrinkage
 - exact-support selection is justified at the proof level by the sampled
   inside-cutoff sufficiency bridge, even though the runtime currently uses a
   direct geometric filter rather than theorem-object construction

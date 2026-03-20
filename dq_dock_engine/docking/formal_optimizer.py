@@ -13,23 +13,45 @@ from dq_dock_engine.docking.formal_actions import (
     create_certified_action_family,
 )
 from dq_dock_engine.docking.formal_belief import (
+    CertifiedBeliefWitness,
     CertifiedBeliefState,
     CertifiedPriorSpec,
+    PosteriorUpdateBranch,
+    belief_witness,
     build_prior,
+    selection_provenance,
     select_admissible_actions,
     select_admissible_action,
     update_posterior_batch,
     update_posterior,
 )
+from dq_dock_engine.docking.formal_handles import (
+    CP1,
+    FLO18,
+    posterior_update_theorem_handle,
+    optimizer_branch_witness_handle,
+    selection_theorem_handle,
+    optimizer_witness_handle,
+    survivor_set_witness_handle,
+)
 from dq_dock_engine.docking.formal_pruning import (
+    CertifiedSurvivorSetWitness,
+    Top1PruningBranch,
     ambiguity_band_mask,
+    certified_pruning_certificate,
     certified_survivor_mask,
     CertifiedPruningCertificate,
     top_k_with_ties_mask,
 )
 from dq_dock_engine.docking.formal_surrogates import (
     CertifiedCoarseScoreBundle,
+    FastSingletonAcceptRoundResult,
+    StagedSingletonAcceptRoundResult,
     score_exact_and_coarse_round,
+)
+from dq_dock_engine.docking.formal_pruning import (
+    StagedTop1Guarantee,
+    staged_top1_guarantee_from_coarse_scores,
 )
 
 
@@ -39,6 +61,26 @@ class CertifiedOptimizerState:
     action_family: CertifiedActionFamily
     belief: CertifiedBeliefState
     retained_receptor_indices: jax.Array
+    pruning_certificate: CertifiedPruningCertificate
+
+
+@dataclass(frozen=True)
+class CertifiedOptimizerWitness:
+    survivor_set: CertifiedSurvivorSetWitness
+    belief: CertifiedBeliefWitness
+    theorem_handle: str
+    branch_witness_handle: str
+
+
+@dataclass(frozen=True)
+class StagedCertifiedDecisionState:
+    coords: jax.Array
+    selected_action: int
+    coarse_scores: jax.Array
+    delta: float
+    retained_receptor_indices: jax.Array
+    top1_guarantee: CertifiedSurvivorSetWitness | StagedTop1Guarantee
+    theorem_handle: str
 
 
 def _noop_is_unique_admissible_action(state: CertifiedOptimizerState) -> bool:
@@ -50,6 +92,76 @@ def _noop_is_unique_admissible_action(state: CertifiedOptimizerState) -> bool:
     )
 
 
+def active_pruning_branch(state: CertifiedOptimizerState) -> Top1PruningBranch:
+    return Top1PruningBranch(state.pruning_certificate.rule)
+
+
+def active_survivor_set_witness(
+    state: CertifiedOptimizerState,
+) -> CertifiedSurvivorSetWitness:
+    theorem_handle = survivor_set_witness_handle(active_pruning_branch(state).value)
+    return CertifiedSurvivorSetWitness(
+        survivor_mask=state.pruning_certificate.survivor_mask,
+        certificate=state.pruning_certificate,
+        theorem_handle=theorem_handle,
+    )
+
+
+def active_belief_witness(state: CertifiedOptimizerState) -> CertifiedBeliefWitness:
+    return belief_witness(
+        posterior=jnp.asarray(state.belief.posterior),
+        ambiguity_mask=jnp.asarray(state.belief.ambiguity_mask),
+        selected_action=state.belief.selected_action,
+    )
+
+
+def active_optimizer_witness(
+    state: CertifiedOptimizerState,
+) -> CertifiedOptimizerWitness:
+    theorem_handle = optimizer_witness_handle(active_pruning_branch(state).value)
+    return CertifiedOptimizerWitness(
+        survivor_set=active_survivor_set_witness(state),
+        belief=active_belief_witness(state),
+        theorem_handle=theorem_handle,
+        branch_witness_handle=optimizer_branch_witness_handle(),
+    )
+
+
+def staged_decision_states_from_singleton_accept_round(
+    round_result: StagedSingletonAcceptRoundResult | FastSingletonAcceptRoundResult,
+) -> tuple[StagedCertifiedDecisionState, ...]:
+    if isinstance(round_result, FastSingletonAcceptRoundResult):
+        return tuple(
+            StagedCertifiedDecisionState(
+                coords=round_result.next_coords[pose_index],
+                selected_action=int(round_result.selected_actions[pose_index]),
+                coarse_scores=round_result.coarse_scores[pose_index],
+                delta=round_result.delta,
+                retained_receptor_indices=round_result.retained_receptor_indices,
+                top1_guarantee=staged_top1_guarantee_from_coarse_scores(
+                    coarse_scores=jnp.asarray(round_result.coarse_scores[pose_index]),
+                    delta=round_result.delta,
+                ),
+                theorem_handle=round_result.theorem_handle,
+            )
+            for pose_index in range(round_result.coarse_scores.shape[0])
+        )
+    return tuple(
+        StagedCertifiedDecisionState(
+            coords=round_result.next_coords[pose_index],
+            selected_action=int(round_result.selected_actions[pose_index]),
+            coarse_scores=round_result.round_result.coarse_scores[pose_index],
+            delta=round_result.round_result.delta,
+            retained_receptor_indices=round_result.round_result.retained_receptor_indices,
+            top1_guarantee=round_result.round_result.decisions[pose_index].survivor_set,
+            theorem_handle=round_result.round_result.decisions[
+                pose_index
+            ].survivor_set.theorem_handle,
+        )
+        for pose_index in range(len(round_result.round_result.decisions))
+    )
+
+
 def _build_belief_state(
     bundle: CertifiedCoarseScoreBundle,
     prior_spec: CertifiedPriorSpec,
@@ -58,16 +170,23 @@ def _build_belief_state(
     prior = build_prior(prior_spec, len(bundle.exact_scores))
     posterior = update_posterior(prior, bundle.survivor_mask)
     selected_action = select_admissible_action(posterior, bundle.ambiguity_mask)
+    selected_action_rule, selected_action_theorem = selection_provenance(
+        posterior, bundle.ambiguity_mask
+    )
     return CertifiedBeliefState(
         prior_spec=prior_spec,
         prior=prior,
         posterior=posterior,
+        posterior_rule=PosteriorUpdateBranch.SURVIVOR_CONDITIONING.value,
+        posterior_theorem=posterior_update_theorem_handle(),
         coarse_scores=bundle.coarse_scores,
         exact_scores=bundle.exact_scores,
         exact_error_bound=bundle.exact_error_bound,
         survivor_mask=bundle.survivor_mask,
         ambiguity_mask=bundle.ambiguity_mask,
         selected_action=selected_action,
+        selected_action_rule=selected_action_rule,
+        selected_action_theorem=selection_theorem_handle(selected_action_rule),
         step_index=step_index,
     )
 
@@ -150,11 +269,9 @@ def _refine_round(
     next_coords_host = np.asarray(next_coords)
     states = []
     for pose_index in range(candidate_batches.shape[0]):
-        pruning_certificate = CertifiedPruningCertificate(
-            exact_top_k_mask=exact_top_k_host[pose_index],
-            exact_ambiguity_mask=ambiguity_masks_host[pose_index],
-            coarse_ambiguity_mask=ambiguity_masks_host[pose_index],
-            survivor_mask=survivor_masks_host[pose_index],
+        pruning_certificate = certified_pruning_certificate(
+            exact_scores=jnp.asarray(exact_scores_host[pose_index]),
+            coarse_scores=jnp.asarray(coarse_scores_host[pose_index]),
             k=1,
             delta=delta,
         )
@@ -169,16 +286,24 @@ def _refine_round(
             retained_receptor_indices=retained_indices,
             pruning_certificate=pruning_certificate,
         )
+        selected_action_rule, selected_action_theorem = selection_provenance(
+            jnp.asarray(posterior_host[pose_index]),
+            jnp.asarray(ambiguity_masks_host[pose_index]),
+        )
         belief = CertifiedBeliefState(
             prior_spec=prior_spec,
             prior=prior,
             posterior=posterior_host[pose_index],
+            posterior_rule=PosteriorUpdateBranch.SURVIVOR_CONDITIONING.value,
+            posterior_theorem=posterior_update_theorem_handle(),
             coarse_scores=bundle.coarse_scores,
             exact_scores=bundle.exact_scores,
             exact_error_bound=bundle.exact_error_bound,
             survivor_mask=bundle.survivor_mask,
             ambiguity_mask=bundle.ambiguity_mask,
             selected_action=int(selected_actions_host[pose_index]),
+            selected_action_rule=selected_action_rule,
+            selected_action_theorem=selection_theorem_handle(selected_action_rule),
             step_index=round_index,
         )
         states.append(
@@ -187,6 +312,7 @@ def _refine_round(
                 action_family=action_family,
                 belief=belief,
                 retained_receptor_indices=bundle.retained_receptor_indices,
+                pruning_certificate=pruning_certificate,
             )
         )
 

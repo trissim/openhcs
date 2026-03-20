@@ -28,6 +28,14 @@ from dq_dock_engine.physics.kernels import typed_lennard_jones_matrix
 _EPSILON_KCAL_MOL = 0.086
 
 
+def certified_lj_error_bound(
+    target_error: float,
+    epsilon: float = _EPSILON_KCAL_MOL,
+) -> float:
+    cutoff = optimal_cutoff(target_error, s=6.0)
+    return float(epsilon * lj6_cutoff_error(float(cutoff)))
+
+
 @dataclass(frozen=True)
 class CertifiedBatchResult:
     scores: jnp.ndarray

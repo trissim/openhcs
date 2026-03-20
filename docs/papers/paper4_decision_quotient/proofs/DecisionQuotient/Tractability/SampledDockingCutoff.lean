@@ -377,6 +377,22 @@ theorem sampled_insideCutoff_sufficient
         omega
   · exact hinj
 
+/-- A cubic benchmark box with side length equal to the declared pocket radius
+    fits inside that pocket ball, because its half-diagonal is at most the
+    radius. This is the protocol geometry behind deriving box size from the
+    benchmark pocket radius. -/
+theorem cube_side_eq_radius_half_diagonal_le_radius
+    (r : ℝ)
+    (hr : 0 ≤ r) :
+    Real.sqrt 3 * (r / 2) ≤ r := by
+  have hsqrt : Real.sqrt 3 ≤ (2 : ℝ) := by
+    have hsq : (Real.sqrt 3)^2 ≤ (2 : ℝ)^2 := by
+      rw [Real.sq_sqrt (by positivity)]
+      norm_num
+    have hnonneg : 0 ≤ Real.sqrt 3 := Real.sqrt_nonneg 3
+    nlinarith
+  nlinarith
+
 end SampledDockingCutoff
 end Tractability
 end DecisionQuotient

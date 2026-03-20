@@ -9,6 +9,7 @@ import DecisionQuotient.IntegrityCompetence
 import DecisionQuotient.Computation.ArrayDSL
 import DecisionQuotient.StochasticSequential.TemporalLearning
 import DecisionQuotient.Tractability.CertifiedPruning
+import DecisionQuotient.Tractability.FiniteTopK
 import DecisionQuotient.Tractability.NearTieBand
 
 namespace DecisionQuotient
@@ -18,6 +19,7 @@ namespace FormalLocalOptimizer
 open IntegrityCompetence
 open Computation.ArrayDSL
 open CertifiedPruning
+open FiniteTopK
 open NearTieBand
 open Classical
 
@@ -29,6 +31,36 @@ structure DeclaredFinitePrior (A : Type*) [Fintype A] where
   prob : A → ℝ
   nonneg : ∀ a, 0 ≤ prob a
   sum_one : Finset.univ.sum prob = 1
+
+/-- Explicit action-selection branches used by the runtime. -/
+inductive SelectionBranch where
+  | ambiguityBand
+  | supportFallback
+
+/-- Explicit posterior-update branch used by the runtime. -/
+inductive PosteriorUpdateBranch where
+  | survivorConditioning
+
+/-- Object-level witness for deterministic selection provenance. -/
+structure SelectionWitness (A : Type*) [DecidableEq A] where
+  branch : SelectionBranch
+  support : Finset A
+  choice : A
+  sound : choice ∈ support
+
+/-- Object-level witness for posterior-update provenance. -/
+structure PosteriorUpdateWitness where
+  branch : PosteriorUpdateBranch
+
+/-- Combined object-level witness for the active belief update. -/
+structure BeliefWitness (A : Type*) [DecidableEq A] where
+  posteriorUpdate : PosteriorUpdateWitness
+  selection : SelectionWitness A
+
+/-- Combined object-level witness for one optimizer step. -/
+structure OptimizerWitness (A : Type*) [DecidableEq A] where
+  survivorSet : CertifiedPruning.CertifiedSurvivorSet A
+  belief : BeliefWitness A
 
 /-- Support restriction of a finite prior along a certified survivor set. -/
 def restrictedPrior {A : Type*} [Fintype A] [DecidableEq A]
@@ -61,6 +93,16 @@ theorem deterministic_pick_mem_ambiguityBand
     (u : A → ℝ) (k : Nat) (hk : 0 < k) (eps : ℝ)
     (hBand : (ambiguityBand u k hk eps).Nonempty) :
     (ambiguityBand u k hk eps).min' hBand ∈ ambiguityBand u k hk eps := by
+  exact Finset.min'_mem _ _
+
+/-- Deterministic tie-breaking by selecting the minimum element of a nonempty
+    posterior support set stays inside that support set. This matches the
+    runtime fallback branch when the ambiguity band is empty. -/
+theorem deterministic_pick_mem_supportSet
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (support : Finset A)
+    (hSupport : support.Nonempty) :
+    support.min' hSupport ∈ support := by
   exact Finset.min'_mem _ _
 
 /-- Restricted prior places zero mass outside the declared survivor support. -/
@@ -131,6 +173,138 @@ theorem normalize_supportConditioning_eq_bayesian_posterior
   · have hFalse : mask i = false := by simp [h]
     rw [normalize_supportConditioning_zero_of_mask_false probs mask i hFalse]
     simp [DecisionQuotient.StochasticSequential.posterior, supportConditioning, h]
+
+/-- Branch-indexed selection membership theorem. -/
+theorem selection_branch_member
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (branch : SelectionBranch) :
+    match branch with
+    | .ambiguityBand =>
+        ∀ (u : A → ℝ) (k : Nat) (hk : 0 < k) (eps : ℝ)
+          (hBand : (ambiguityBand u k hk eps).Nonempty),
+          (ambiguityBand u k hk eps).min' hBand ∈ ambiguityBand u k hk eps
+    | .supportFallback =>
+        ∀ (support : Finset A) (hSupport : support.Nonempty),
+          support.min' hSupport ∈ support
+  := by
+  cases branch
+  · intro u k hk eps hBand
+    exact deterministic_pick_mem_ambiguityBand u k hk eps hBand
+  · intro support hSupport
+    exact deterministic_pick_mem_supportSet support hSupport
+
+/-- Branch-indexed posterior-update theorem. -/
+theorem posterior_update_branch_eq_bayesian_posterior
+    (branch : PosteriorUpdateBranch)
+    {n : ℕ}
+    (probs : MDArray n)
+    (mask : Fin n → Bool)
+    (i : Fin n) :
+    match branch with
+    | .survivorConditioning =>
+        normalizeProbabilityVector (supportConditioning probs mask) i =
+          DecisionQuotient.StochasticSequential.posterior
+            (fun j => probs j)
+            (fun j => if mask j then (1 : ℝ) else 0)
+            (reduce_sum (supportConditioning probs mask))
+            i := by
+  cases branch
+  exact normalize_supportConditioning_eq_bayesian_posterior probs mask i
+
+noncomputable def selectionWitness_of_ambiguityBand
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (u : A → ℝ) (k : Nat) (hk : 0 < k) (eps : ℝ)
+    (hBand : (ambiguityBand u k hk eps).Nonempty) :
+    SelectionWitness A :=
+  { branch := SelectionBranch.ambiguityBand
+    support := ambiguityBand u k hk eps
+    choice := (ambiguityBand u k hk eps).min' hBand
+    sound := deterministic_pick_mem_ambiguityBand u k hk eps hBand }
+
+noncomputable def selectionWitness_of_supportSet
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (support : Finset A)
+    (hSupport : support.Nonempty) :
+    SelectionWitness A :=
+  { branch := SelectionBranch.supportFallback
+    support := support
+    choice := support.min' hSupport
+    sound := deterministic_pick_mem_supportSet support hSupport }
+
+def posteriorUpdateWitness_of_survivorConditioning : PosteriorUpdateWitness :=
+  { branch := PosteriorUpdateBranch.survivorConditioning }
+
+noncomputable def beliefWitness_of_survivorConditioning_ambiguityBand
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (u : A → ℝ) (k : Nat) (hk : 0 < k) (eps : ℝ)
+    (hBand : (ambiguityBand u k hk eps).Nonempty) :
+    BeliefWitness A :=
+  { posteriorUpdate := posteriorUpdateWitness_of_survivorConditioning
+    selection := selectionWitness_of_ambiguityBand u k hk eps hBand }
+
+noncomputable def beliefWitness_of_survivorConditioning_supportSet
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (support : Finset A)
+    (hSupport : support.Nonempty) :
+    BeliefWitness A :=
+  { posteriorUpdate := posteriorUpdateWitness_of_survivorConditioning
+    selection := selectionWitness_of_supportSet support hSupport }
+
+noncomputable def optimizerWitness_of_exact_top1
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uExact : A → ℝ)
+    (hTop : (topKSet uExact 1).Nonempty) :
+    OptimizerWitness A :=
+  let hBand : (ambiguityBand uExact 1 (by omega) 0).Nonempty := by
+    rw [ambiguityBand_zero_eq_top1]
+    exact hTop
+  { survivorSet := CertifiedPruning.certifiedSurvivorSet_of_exact_top1 uExact
+    belief := beliefWitness_of_survivorConditioning_ambiguityBand uExact 1 (by omega) 0 hBand }
+
+noncomputable def optimizerWitness_of_top1_coarse_ambiguityBand
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uExact uCoarse : A → ℝ)
+    (delta : ℝ)
+    (hApprox : ∀ a, |uExact a - uCoarse a| ≤ delta)
+    (hDelta : 0 ≤ delta)
+    (hBand : (ambiguityBand uCoarse 1 (by omega) (2 * delta)).Nonempty) :
+    OptimizerWitness A :=
+  { survivorSet :=
+      CertifiedPruning.certifiedSurvivorSet_of_top1_coarse_ambiguityBand
+        uExact uCoarse delta hApprox hDelta
+    belief := beliefWitness_of_survivorConditioning_ambiguityBand uCoarse 1 (by omega) (2 * delta) hBand }
+
+noncomputable def optimizerWitness_of_exact_singleton_winner
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uExact uCoarse : A → ℝ)
+    (aStar : A)
+    (delta : ℝ)
+    (hApprox : ∀ x, |uExact x - uCoarse x| ≤ delta)
+    (hStrict : ∀ b, b ≠ aStar → RankingPreservation.PairwiseGap uCoarse aStar b > 2 * delta) :
+    OptimizerWitness A :=
+  { survivorSet :=
+      CertifiedPruning.certifiedSurvivorSet_of_exact_singleton_winner
+        uExact uCoarse aStar delta hApprox hStrict
+    belief := beliefWitness_of_survivorConditioning_supportSet ({aStar} : Finset A) (by simp) }
+
+noncomputable def optimizerWitness_of_top1_branch
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (branch : CertifiedPruning.Top1PruningBranch)
+    (uExact uCoarse : A → ℝ)
+    (aStar : A)
+    (delta : ℝ)
+    (hApprox : ∀ x, |uExact x - uCoarse x| ≤ delta)
+    (hDelta : 0 ≤ delta)
+    (hTop : (topKSet uExact 1).Nonempty)
+    (hBand : (ambiguityBand uCoarse 1 (by omega) (2 * delta)).Nonempty)
+    (hStrict : ∀ b, b ≠ aStar → RankingPreservation.PairwiseGap uCoarse aStar b > 2 * delta) :
+    OptimizerWitness A :=
+  match branch with
+  | .exactTop1 => optimizerWitness_of_exact_top1 uExact hTop
+  | .exactSingletonWinner =>
+      optimizerWitness_of_exact_singleton_winner uExact uCoarse aStar delta hApprox hStrict
+  | .top1CoarseAmbiguityBand =>
+      optimizerWitness_of_top1_coarse_ambiguityBand uExact uCoarse delta hApprox hDelta hBand
 
 end FormalLocalOptimizer
 end Tractability
