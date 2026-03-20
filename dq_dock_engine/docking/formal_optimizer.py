@@ -50,6 +50,7 @@ from dq_dock_engine.docking.formal_surrogates import (
     try_fast_singleton_accept_round,
     score_exact_and_coarse_round,
 )
+from dq_dock_engine.docking.scoring import CertifiedRealSpaceEwaldSpec
 from dq_dock_engine.docking.formal_pruning import (
     StagedTop1Guarantee,
     staged_top1_guarantee_from_coarse_scores,
@@ -195,6 +196,7 @@ def try_refine_round_singleton_staged(
     base_translation_step: float,
     base_rotation_step_rad: float,
     coarse_target_error: float = 0.004,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> tuple[jax.Array, tuple[StagedCertifiedDecisionState, ...]] | None:
     action_family = create_certified_action_family(
         translation_step=base_translation_step / (2**round_index),
@@ -210,6 +212,7 @@ def try_refine_round_singleton_staged(
         target_error=target_error,
         coarse_target_error=coarse_target_error,
         translation_step=action_family.translation_step,
+        electrostatics=electrostatics,
     )
     if staged_result is None:
         return None
@@ -229,6 +232,7 @@ def try_refine_round_singleton_minimal(
     base_translation_step: float,
     base_rotation_step_rad: float,
     coarse_target_error: float = 0.004,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> MinimalStagedRoundResult | None:
     action_family = create_certified_action_family(
         translation_step=base_translation_step / (2**round_index),
@@ -244,6 +248,7 @@ def try_refine_round_singleton_minimal(
         target_error=target_error,
         coarse_target_error=coarse_target_error,
         translation_step=action_family.translation_step,
+        electrostatics=electrostatics,
     )
     if staged_result is None:
         return None
@@ -265,6 +270,7 @@ def try_refine_poses_singleton_minimal(
     base_translation_step: float = 0.5,
     base_rotation_step_rad: float = jnp.pi / 12.0,
     coarse_target_error: float = 0.004,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> tuple[jax.Array, tuple[MinimalStagedRoundResult, ...]] | None:
     if n_rounds <= 0:
         raise ValueError("n_rounds must be positive")
@@ -281,6 +287,7 @@ def try_refine_poses_singleton_minimal(
             base_translation_step=base_translation_step,
             base_rotation_step_rad=base_rotation_step_rad,
             coarse_target_error=coarse_target_error,
+            electrostatics=electrostatics,
         )
         if result is None:
             return None
@@ -299,6 +306,7 @@ def diagnose_singleton_acceptance_schedule(
     base_translation_step: float = 0.5,
     base_rotation_step_rad: float = jnp.pi / 12.0,
     coarse_target_error: float = 0.004,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> StagedRoundAcceptanceDiagnostic:
     if n_rounds <= 0:
         raise ValueError("n_rounds must be positive")
@@ -315,6 +323,7 @@ def diagnose_singleton_acceptance_schedule(
             base_translation_step=base_translation_step,
             base_rotation_step_rad=base_rotation_step_rad,
             coarse_target_error=coarse_target_error,
+            electrostatics=electrostatics,
         )
         if result is None:
             return StagedRoundAcceptanceDiagnostic(
@@ -343,6 +352,7 @@ def refine_poses_singleton_then_exact(
     prior_spec: CertifiedPriorSpec | None = None,
     max_coarse_receptor_atoms: int = 64,
     coarse_target_error: float = 0.004,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> HybridSingletonRefinementResult:
     if n_rounds <= 0:
         raise ValueError("n_rounds must be positive")
@@ -363,6 +373,7 @@ def refine_poses_singleton_then_exact(
             base_translation_step=base_translation_step,
             base_rotation_step_rad=base_rotation_step_rad,
             coarse_target_error=coarse_target_error,
+            electrostatics=electrostatics,
         )
         if staged is None:
             break
@@ -383,6 +394,7 @@ def refine_poses_singleton_then_exact(
             base_rotation_step_rad=base_rotation_step_rad / (2**round_index),
             prior_spec=effective_prior_spec,
             max_coarse_receptor_atoms=max_coarse_receptor_atoms,
+            electrostatics=electrostatics,
         )
 
     return HybridSingletonRefinementResult(
@@ -449,6 +461,7 @@ def _refine_round(
     base_rotation_step_rad: float,
     prior_spec: CertifiedPriorSpec,
     max_coarse_receptor_atoms: int,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> tuple[jax.Array, tuple[CertifiedOptimizerState, ...]]:
     action_family = create_certified_action_family(
         translation_step=_translation_step_for_round(
@@ -473,6 +486,7 @@ def _refine_round(
         target_error=target_error,
         max_receptor_atoms=max_coarse_receptor_atoms,
         translation_step=action_family.translation_step,
+        electrostatics=electrostatics,
     )
     prior = build_prior(prior_spec, exact_scores_matrix.shape[1])
     exact_top_k_masks = jax.vmap(
@@ -569,6 +583,7 @@ def refine_poses_certified(
     base_rotation_step_rad: float = jnp.pi / 12.0,
     prior_spec: CertifiedPriorSpec | None = None,
     max_coarse_receptor_atoms: int = 64,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> tuple[jax.Array, tuple[tuple[CertifiedOptimizerState, ...], ...]]:
     if n_rounds <= 0:
         raise ValueError("n_rounds must be positive")
@@ -590,6 +605,7 @@ def refine_poses_certified(
             base_rotation_step_rad=float(base_rotation_step_rad),
             prior_spec=effective_prior_spec,
             max_coarse_receptor_atoms=max_coarse_receptor_atoms,
+            electrostatics=electrostatics,
         )
         history.append(states)
 

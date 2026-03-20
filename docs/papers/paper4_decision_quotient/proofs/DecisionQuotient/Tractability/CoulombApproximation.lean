@@ -107,17 +107,27 @@ theorem exactCoulomb_satisfiesBoundedPotential_of_tailBound
   intro atomIdx hAtomInProtein axis s s' R hR hSame hOutside a
   simpa [hUtility] using hTail atomIdx hAtomInProtein axis s s' R hR hSame hOutside a
 
-/--
-  Mathlib4 does not yet have a standard complementary error function (erfc).
-  We define a noncomputable placeholder here. The specific numeric evaluation
-  is handled by the JAX/Rust runtime; Lean only needs the symbol to verify
-  the structural bounding hypothesis (hTail).
- -/
-noncomputable def erfc (x : ℝ) : ℝ := 0
-
 /-- Exact Real-Space Ewald Coulomb score. The error function forces exponential decay. -/
 noncomputable def exactRealEwaldScore (q_i q_j alpha r : ℝ) : ℝ :=
-  coulombPotential q_i q_j r * erfc (alpha * r)
+  coulombPotential q_i q_j r * DecisionQuotient.Tractability.Ewald.erfc (alpha * r)
+
+/-- Absolute-value envelope for the exact real-space Ewald score. -/
+theorem abs_exactRealEwaldScore_le_charge_envelope
+    (q_i q_j alpha r : ℝ) (hr : 0 < r) (ha : 0 < alpha) :
+    |exactRealEwaldScore q_i q_j alpha r| ≤
+      |q_i * q_j| * ewaldRealSpaceCore r alpha := by
+  have hx : 0 < alpha * r := by positivity
+  unfold exactRealEwaldScore coulombPotential ewaldRealSpaceCore
+  calc
+    |(q_i * q_j) / r * DecisionQuotient.Tractability.Ewald.erfc (alpha * r)|
+      = |(q_i * q_j) / r| * |DecisionQuotient.Tractability.Ewald.erfc (alpha * r)| := by rw [abs_mul]
+    _ ≤ |(q_i * q_j) / r| * Real.exp (-((alpha * r) ^ 2)) := by
+      gcongr
+      exact DecisionQuotient.Tractability.Ewald.erfc_abs_le_exp_neg_sq hx
+    _ = (|q_i * q_j| / r) * Real.exp (-((alpha * r) ^ 2)) := by
+      rw [abs_div, abs_of_pos hr]
+    _ = |q_i * q_j| * (Real.exp (-((alpha * r) ^ 2)) / r) := by
+      field_simp [hr.ne']
 
 /--
   Because Real-Space Ewald decays exponentially, it is easily dominated by

@@ -909,6 +909,8 @@ abbrev CB1 := @Tractability.CoulombApproximation.coulombCutoffErrorRadius_spec
 abbrev CB2 := @Tractability.CoulombApproximation.exact_vs_cutoff_coulomb_uniformApprox
 abbrev CB3 := @Tractability.CoulombApproximation.exactCoulomb_satisfiesBoundedPotential_of_tailBound
 abbrev CB4 := @Tractability.CoulombApproximation.exactRealEwald_satisfiesBoundedPotential_of_tailBound
+abbrev CB5 := @Tractability.CoulombApproximation.abs_exactRealEwaldScore_le_charge_envelope
+abbrev CB6 := @Tractability.Ewald.ewaldRealSpaceCore_le_alpha_tail
 
 abbrev BP1 := @Tractability.finiteMinimumGap_le_strictUtilityGap
 abbrev BP2 := @Tractability.satisfiesBoundedPotential_of_tailBound_and_finiteGap
@@ -917,6 +919,7 @@ abbrev BP3 := @Tractability.large_cutoff_implies_bounded
 abbrev APX1 := @Tractability.CoarseApproximation.finiteUniformErrorRadius_witnesses_uniformApprox
 abbrev APX2 := @Tractability.CoarseApproximation.SampledDocking.SampledDockingProblem.finiteUniformErrorRadius_witnesses
 abbrev APX3 := @Tractability.CoarseApproximation.uniform_approx_implies_opt_invariance
+abbrev APX4 := @Tractability.CoarseApproximation.sum_uniformApprox
 
 abbrev SD1 := @Tractability.SampledDockingGap.strictUtilityGap_lifted_exact
 abbrev SD2 := @Tractability.SampledDockingGap.sampled_epsilon_margin_invariance

@@ -241,12 +241,15 @@ CB1 = "CB1"
 CB2 = "CB2"
 CB3 = "CB3"
 CB4 = "CB4"
+CB5 = "CB5"
+CB6 = "CB6"
 BP1 = "BP1"
 BP2 = "BP2"
 BP3 = "BP3"
 APX1 = "APX1"
 APX2 = "APX2"
 APX3 = "APX3"
+APX4 = "APX4"
 SD1 = "SD1"
 SD2 = "SD2"
 SD3 = "SD3"
@@ -931,12 +934,15 @@ __all__ = [
     "CB2",
     "CB3",
     "CB4",
+    "CB5",
+    "CB6",
     "BP1",
     "BP2",
     "BP3",
     "APX1",
     "APX2",
     "APX3",
+    "APX4",
     "SD1",
     "SD2",
     "SD3",

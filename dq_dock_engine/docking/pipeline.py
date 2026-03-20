@@ -22,15 +22,71 @@ from dq_dock_engine.docking.core import (
     NativeCertification,
     CertificationDecision,
 )
-from dq_dock_engine.docking.charges import ChargeMethod
-from dq_dock_engine.docking.scoring import route_scoring, score_certified_lj
+from dq_dock_engine.docking.charges import ChargeMethod, create_charge_assigner
+from dq_dock_engine.docking.scoring import (
+    CertifiedRealSpaceEwaldSpec,
+    route_scoring,
+    score_certified_lj,
+)
 from dq_dock_engine.docking.optimization import optimize_poses_batched
 from dq_dock_engine.docking_config import (
+    CertifiedScoringFamily,
     DockingConfig,
     DockingMode,
     FormalRoundStrategy,
     OptimizerBackend,
 )
+
+
+def _resolve_route_scoring_electrostatics(
+    effective_engine: ScoringEngine,
+    ligand_ctx: LigandContext,
+    receptor_elements: tuple[str, ...] | None,
+    charge_method: ChargeMethod | None,
+    receptor_file: str | Path | None,
+) -> CertifiedRealSpaceEwaldSpec | None:
+    if effective_engine != ScoringEngine.CERTIFIED_LJ_REALSPACE_EWALD:
+        return None
+
+    if charge_method is None:
+        raise ValueError(
+            "CERTIFIED_LJ_REALSPACE_EWALD requires an explicit ChargeMethod."
+        )
+
+    assigner = create_charge_assigner(charge_method)
+
+    if assigner.method == ChargeMethod.SIMPLE:
+        if receptor_elements is None:
+            raise ValueError("SIMPLE electrostatic scoring requires receptor_elements.")
+        if not ligand_ctx.elements and ligand_ctx.charges is None:
+            raise ValueError(
+                "SIMPLE electrostatic scoring requires ligand elements or precomputed ligand charges."
+            )
+        receptor_charges = assigner.assign(receptor_elements).charges
+        ligand_charges = (
+            ligand_ctx.charges
+            if ligand_ctx.charges is not None
+            else assigner.assign(ligand_ctx.elements).charges
+        )
+        return CertifiedRealSpaceEwaldSpec(
+            receptor_charges=receptor_charges,
+            ligand_charges=ligand_charges,
+        )
+
+    if receptor_file is None:
+        raise ValueError(
+            f"ChargeMethod {assigner.method.name} requires receptor_file for electrostatic scoring."
+        )
+    if ligand_ctx.charges is None:
+        raise ValueError(
+            f"ChargeMethod {assigner.method.name} requires precomputed ligand_ctx.charges for electrostatic scoring."
+        )
+
+    receptor_charges = assigner.assign(receptor_file).charges
+    return CertifiedRealSpaceEwaldSpec(
+        receptor_charges=receptor_charges,
+        ligand_charges=ligand_ctx.charges,
+    )
 
 
 def run_docking_pipeline(
@@ -82,7 +138,10 @@ def run_docking_pipeline(
     target_error = 0.001
     certified_family = None
     if config is not None and config.mode == DockingMode.CERTIFIED:
-        effective_engine = ScoringEngine.CERTIFIED_LJ
+        if config.certified_scoring_family == CertifiedScoringFamily.LJ:
+            effective_engine = ScoringEngine.CERTIFIED_LJ
+        else:
+            effective_engine = ScoringEngine.CERTIFIED_LJ_REALSPACE_EWALD
         target_error = config.target_error if config.target_error > 0 else 0.001
         scoring_kwargs["target_error"] = target_error
     else:
@@ -190,11 +249,19 @@ def run_docking_pipeline(
 
         final_scores = stage_results[-1].scores
     else:
+        electrostatics = _resolve_route_scoring_electrostatics(
+            effective_engine,
+            ligand_ctx,
+            receptor_elements,
+            charge_method,
+            receptor_file,
+        )
         kwargs = {
             "receptor_coords": protein_coords,
             "receptor_radii": receptor_radii,
             "ligand_radii": ligand_ctx.base_radii,
             "poses_coords": batched_coords,
+            "electrostatics": electrostatics,
             **scoring_kwargs,
         }
         final_scores = route_scoring(effective_engine, **kwargs)
@@ -271,6 +338,16 @@ def run_docking_pipeline(
             base_translation_step=translation_cell_width / 2.0,
             base_rotation_step_rad=float(jnp.pi / 2.0),
         )
+        formal_electrostatics = _resolve_route_scoring_electrostatics(
+            effective_engine,
+            ligand_ctx,
+            receptor_elements,
+            charge_method,
+            receptor_file,
+        )
+        refinement_kwargs.update(
+            electrostatics=formal_electrostatics,
+        )
         strategy = (
             config.formal_round_strategy
             if config is not None
@@ -299,11 +376,19 @@ def run_docking_pipeline(
         opt_coords = apply_poses(ligand_ctx, opt_vecs)
 
     # --- FINAL SCORING ---
+    electrostatics = _resolve_route_scoring_electrostatics(
+        effective_engine,
+        ligand_ctx,
+        receptor_elements,
+        charge_method,
+        receptor_file,
+    )
     kwargs = {
         "receptor_coords": protein_coords,
         "receptor_radii": receptor_radii,
         "ligand_radii": ligand_ctx.base_radii,
         "poses_coords": opt_coords,
+        "electrostatics": electrostatics,
     }
     final_scores = route_scoring(effective_engine, **kwargs)
 

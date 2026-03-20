@@ -75,6 +75,29 @@ theorem finiteUniformErrorRadius_witnesses_uniformApprox
   intro a s
   exact abs_diff_le_finiteUniformErrorRadius exactDP coarseDP a s
 
+/-- Pointwise utility sum of two decision problems on the same action/state space. -/
+def sumDecisionProblems {A : Type u} {S : Type v}
+    (dp1 dp2 : DecisionProblem A S) : DecisionProblem A S where
+  utility := fun a s => dp1.utility a s + dp2.utility a s
+
+/-- Uniform approximations compose under pointwise score addition. -/
+theorem sum_uniformApprox
+    {A : Type u} {S : Type v}
+    (exact1 coarse1 exact2 coarse2 : DecisionProblem A S)
+    (delta1 delta2 : ℝ)
+    (h1 : UniformUtilityApprox exact1 coarse1 delta1)
+    (h2 : UniformUtilityApprox exact2 coarse2 delta2) :
+    UniformUtilityApprox
+      (sumDecisionProblems exact1 exact2)
+      (sumDecisionProblems coarse1 coarse2)
+      (delta1 + delta2) := by
+  intro a s
+  simp [sumDecisionProblems]
+  rw [abs_le]
+  have h1' := abs_le.mp (h1 a s)
+  have h2' := abs_le.mp (h2 a s)
+  constructor <;> linarith [h1'.1, h1'.2, h2'.1, h2'.2]
+
 /-- If two score families both approximate a shared reference utility, then they
     approximate each other within the sum of their radii. -/
 theorem shared_reference_uniformApprox_of_two_sided_bounds

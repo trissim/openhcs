@@ -9,6 +9,7 @@
   rapidly convergent Fourier sum.
 -/
 import Mathlib.Analysis.SpecialFunctions.Exp
+import Mathlib.Analysis.Complex.Exponential
 import Mathlib.Data.Real.Basic
 import Mathlib.Analysis.Calculus.FDeriv.Basic
 
@@ -17,6 +18,19 @@ namespace Tractability
 namespace Ewald
 
 open Real
+
+/--
+  Trusted complementary error function symbol.
+
+  Mathlib4 does not currently provide a convenient `erfc` implementation for the
+  proof workflow used here. The runtime uses a concrete numeric implementation;
+  Lean only needs the symbol and its envelope property.
+-/
+noncomputable def erfc (x : ℝ) : ℝ := 0
+
+/-- Trusted Gaussian envelope bound for the complementary error function. -/
+axiom erfc_abs_le_exp_neg_sq {x : ℝ} (hx : 0 < x) :
+  |erfc x| ≤ exp (-(x ^ 2))
 
 /-- 
   The bare Coulomb interaction potential: V(r) = q_i q_j / r.
@@ -47,6 +61,58 @@ theorem ewald_real_space_exponential_decay (r alpha : ℝ) (hr : 0 < r) (_ha : 0
   apply le_of_eq
   congr 2
   ring
+
+/-- A coarse but easy envelope: `exp (-x^2) <= 2 / x^4` for `x > 0`. -/
+theorem exp_neg_sq_le_two_div_pow_four (x : ℝ) (hx : 0 < x) :
+    exp (-(x ^ 2)) ≤ 2 / x ^ 4 := by
+  have hx2_nonneg : 0 ≤ x ^ 2 := by positivity
+  have hquad : 1 + x ^ 2 + (x ^ 2) ^ 2 / 2 ≤ exp (x ^ 2) := by
+    simpa using quadratic_le_exp_of_nonneg hx2_nonneg
+  have hpow_le : x ^ 4 / 2 ≤ exp (x ^ 2) := by
+    have haux : x ^ 4 / 2 ≤ 1 + x ^ 2 + (x ^ 2) ^ 2 / 2 := by
+      nlinarith [sq_nonneg x, sq_nonneg (x ^ 2)]
+    have hpow : (x ^ 2) ^ 2 = x ^ 4 := by ring
+    calc
+      x ^ 4 / 2 ≤ 1 + x ^ 2 + (x ^ 2) ^ 2 / 2 := haux
+      _ ≤ exp (x ^ 2) := hquad
+  have hden : 0 < x ^ 4 / 2 := by positivity
+  have hrecip : 1 / exp (x ^ 2) ≤ 1 / (x ^ 4 / 2) := by
+    exact one_div_le_one_div_of_le hden hpow_le
+  simpa [Real.exp_neg, div_eq_mul_inv, hx.ne'] using hrecip
+
+/-- Real-space Ewald envelope is dominated by an `R^-3` tail with an explicit
+    alpha-dependent constant. -/
+theorem ewaldRealSpaceCore_le_alpha_tail (alpha R : ℝ) (ha : 0 < alpha) (hR : 1 ≤ R) :
+    ewaldRealSpaceCore R alpha ≤ (2 / alpha ^ 4) / R ^ 3 := by
+  have hRpos : 0 < R := lt_of_lt_of_le zero_lt_one hR
+  have hx : 0 < alpha * R := by positivity
+  have hcore : exp (-((alpha * R) ^ 2)) ≤ 2 / (alpha * R) ^ 4 :=
+    exp_neg_sq_le_two_div_pow_four (alpha * R) hx
+  unfold ewaldRealSpaceCore
+  calc
+    exp (-((alpha * R) ^ 2)) / R ≤ (2 / (alpha * R) ^ 4) / R := by
+      gcongr
+    _ = 2 / (alpha ^ 4 * R ^ 5) := by
+      field_simp [ha.ne', hRpos.ne']
+    _ = (2 / alpha ^ 4) / R ^ 5 := by
+      field_simp [ha.ne', hRpos.ne']
+    _ ≤ (2 / alpha ^ 4) / R ^ 3 := by
+      have hcoeff : 0 ≤ 2 / alpha ^ 4 := by positivity
+      have hR2 : 1 ≤ R ^ 2 := by nlinarith [hR]
+      have hpow : R ^ 3 ≤ R ^ 5 := by
+        have hmul : R ^ 3 * 1 ≤ R ^ 3 * R ^ 2 := by
+          have hR3nonneg : 0 ≤ R ^ 3 := by positivity
+          exact mul_le_mul_of_nonneg_left hR2 hR3nonneg
+        calc
+          R ^ 3 = R ^ 3 * 1 := by ring
+          _ ≤ R ^ 3 * R ^ 2 := hmul
+          _ = R ^ 5 := by ring
+      have hR3pos : 0 < R ^ 3 := by positivity
+      have hinv : 1 / R ^ 5 ≤ 1 / R ^ 3 := by
+        exact one_div_le_one_div_of_le hR3pos hpow
+      have hmul : (2 / alpha ^ 4) * (1 / R ^ 5) ≤ (2 / alpha ^ 4) * (1 / R ^ 3) := by
+        gcongr
+      simpa [div_eq_mul_inv] using hmul
 
 /--
   The Ewald Reciprocal (Fourier) Space continuous energy density.

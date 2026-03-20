@@ -18,9 +18,15 @@ import pathlib
 
 import jax
 import jax.numpy as jnp
+import jax.scipy.special as jsp
 import numpy as np
 
-from dq_dock_engine.proof_status import certified, heuristic, ProofStatus
+from dq_dock_engine.proof_status import (
+    certified,
+    conditionally_certified,
+    heuristic,
+    ProofStatus,
+)
 from dq_dock_engine.docking.core import ScoringEngine, ScoredPose, GapCertification
 from dq_dock_engine.physics.lattice_sum import optimal_cutoff, lj6_cutoff_error
 from dq_dock_engine.physics.kernels import typed_lennard_jones_matrix
@@ -34,6 +40,57 @@ def certified_lj_error_bound(
 ) -> float:
     cutoff = optimal_cutoff(target_error, s=6.0)
     return float(epsilon * lj6_cutoff_error(float(cutoff)))
+
+
+def certified_realspace_ewald_error_bound(
+    cutoff: float,
+    alpha: float,
+    charge_bound: float,
+) -> float:
+    if cutoff <= 0:
+        raise ValueError("cutoff must be positive")
+    if alpha <= 0:
+        raise ValueError("alpha must be positive")
+    if charge_bound < 0:
+        raise ValueError("charge_bound must be nonnegative")
+    return float(charge_bound * (2.0 / (alpha**4)) / (cutoff**3))
+
+
+@dataclass(frozen=True)
+class CertifiedRealSpaceEwaldSpec:
+    receptor_charges: jnp.ndarray
+    ligand_charges: jnp.ndarray
+    cutoff: float = 12.0
+    alpha: float = 0.2
+    dielectric: float = 4.0
+
+    def validate(self) -> None:
+        if self.cutoff <= 0:
+            raise ValueError("electrostatic cutoff must be positive")
+        if self.alpha <= 0:
+            raise ValueError("alpha must be positive")
+        if self.dielectric <= 0:
+            raise ValueError("dielectric must be positive")
+        if self.receptor_charges.ndim != 1:
+            raise ValueError("receptor_charges must be a 1D array")
+        if self.ligand_charges.ndim != 1:
+            raise ValueError("ligand_charges must be a 1D array")
+
+    def receptor_subset(self, indices: jnp.ndarray) -> "CertifiedRealSpaceEwaldSpec":
+        return CertifiedRealSpaceEwaldSpec(
+            receptor_charges=self.receptor_charges[indices],
+            ligand_charges=self.ligand_charges,
+            cutoff=self.cutoff,
+            alpha=self.alpha,
+            dielectric=self.dielectric,
+        )
+
+    def charge_bound(self) -> float:
+        return (
+            float(jnp.max(jnp.abs(self.receptor_charges)))
+            * float(jnp.max(jnp.abs(self.ligand_charges)))
+            / self.dielectric
+        )
 
 
 @dataclass(frozen=True)
@@ -62,6 +119,35 @@ class CertifiedBatchResult:
         return certifications
 
 
+def _score_certified_scores(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+    target_error: float,
+    epsilon: float,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None,
+) -> tuple[jnp.ndarray, float]:
+    if electrostatics is None:
+        return score_certified_lj(
+            receptor_coords,
+            poses_coords,
+            receptor_radii,
+            ligand_radii,
+            target_error=target_error,
+            epsilon=epsilon,
+        )
+    return score_certified_lj_realspace_ewald(
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        electrostatics=electrostatics,
+        target_error=target_error,
+        epsilon=epsilon,
+    )
+
+
 def score_certified_batch(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
@@ -69,14 +155,16 @@ def score_certified_batch(
     ligand_radii: jnp.ndarray,
     target_error: float = 0.001,
     epsilon: float = _EPSILON_KCAL_MOL,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> CertifiedBatchResult:
-    scores, error_bound = score_certified_lj(
+    scores, error_bound = _score_certified_scores(
         receptor_coords,
         poses_coords,
         receptor_radii,
         ligand_radii,
-        target_error=target_error,
-        epsilon=epsilon,
+        target_error,
+        epsilon,
+        electrostatics,
     )
     R = optimal_cutoff(target_error, s=6.0)
     return CertifiedBatchResult(
@@ -208,6 +296,30 @@ def _score_certified_lj_batch(
     return energies, error_bound
 
 
+@jax.jit
+def _score_realspace_ewald_batch(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    receptor_charges: jnp.ndarray,
+    ligand_charges: jnp.ndarray,
+    cutoff: jnp.ndarray,
+    alpha: float,
+    dielectric: float,
+) -> jnp.ndarray:
+    diffs = receptor_coords[None, :, None, :] - poses_coords[:, None, :, :]
+    dists = jnp.asarray(jnp.linalg.norm(diffs, axis=-1))
+
+    in_range = dists < cutoff
+    cutoff_safe = jnp.full_like(dists, cutoff)
+    dists_safe = jnp.where(in_range, jnp.maximum(dists, 1e-6), cutoff_safe)
+
+    charge_matrix = (
+        receptor_charges[None, :, None] * ligand_charges[None, None, :]
+    ) / dielectric
+    ewald_contrib = charge_matrix * jsp.erfc(alpha * dists_safe) / dists_safe
+    return jnp.sum(jnp.where(in_range, ewald_contrib, 0.0), axis=(1, 2))
+
+
 @certified("LatticeSum.lean::lj6_tail_bound")
 def score_certified_lj(
     receptor_coords: jnp.ndarray,
@@ -254,6 +366,54 @@ def score_certified_lj(
     error_bound = epsilon * lj6_cutoff_error(float(cutoff))
 
     return scores, error_bound
+
+
+@conditionally_certified(
+    "HandleAliases.lean::CB5; HandleAliases.lean::CB6; HandleAliases.lean::APX4",
+    assumptions=[
+        "Supplied receptor and ligand charges are fixed intended physical inputs",
+        "The exact-vs-cutoff real-space electrostatics theorem is still being exported as a dedicated handle",
+        "The 1e-6 minimum distance guard is a numerical safeguard against division by zero",
+    ],
+)
+def score_certified_lj_realspace_ewald(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+    electrostatics: CertifiedRealSpaceEwaldSpec,
+    target_error: float = 0.001,
+    epsilon: float = _EPSILON_KCAL_MOL,
+) -> tuple[jnp.ndarray, float]:
+    electrostatics.validate()
+
+    lj_cutoff = jnp.array(optimal_cutoff(target_error, s=6.0))
+    lj_scores, _ = _score_certified_lj_batch(
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        lj_cutoff,
+        epsilon,
+    )
+    ewald_scores = _score_realspace_ewald_batch(
+        receptor_coords,
+        poses_coords,
+        electrostatics.receptor_charges,
+        electrostatics.ligand_charges,
+        jnp.array(electrostatics.cutoff),
+        electrostatics.alpha,
+        electrostatics.dielectric,
+    )
+
+    error_bound = certified_lj_error_bound(
+        target_error, epsilon
+    ) + certified_realspace_ewald_error_bound(
+        electrostatics.cutoff,
+        electrostatics.alpha,
+        electrostatics.charge_bound(),
+    )
+    return lj_scores + ewald_scores, error_bound
 
 
 def _score_single_lj_scalar(
@@ -385,6 +545,8 @@ def route_scoring(engine: ScoringEngine, **kwargs) -> np.ndarray:
       - SMINA_EXACT: receptor_file, ligand_template, poses_coords
       - VINARDO: receptor_coords, poses_coords, receptor_radii, ligand_radii
       - SOFT_LJ: receptor_coords, poses_coords, receptor_radii, ligand_radii
+      - CERTIFIED_LJ_REALSPACE_EWALD: receptor_coords, poses_coords,
+        receptor_radii, ligand_radii, electrostatics
     """
     from dq_dock_engine.docking.scoring_vinardo import (
         create_scoring_backend,
@@ -439,6 +601,20 @@ def route_scoring(engine: ScoringEngine, **kwargs) -> np.ndarray:
                 kwargs["receptor_radii"],
                 kwargs["ligand_radii"],
                 target_error=target_error,
+            )
+            return np.array(scores)
+
+        case ScoringEngine.CERTIFIED_LJ_REALSPACE_EWALD:
+            target_error = kwargs.get("target_error", 0.001)
+            electrostatics: CertifiedRealSpaceEwaldSpec = kwargs["electrostatics"]
+            scores, error_bound = score_certified_lj_realspace_ewald(
+                kwargs["receptor_coords"],
+                kwargs["poses_coords"],
+                kwargs["receptor_radii"],
+                kwargs["ligand_radii"],
+                electrostatics=electrostatics,
+                target_error=target_error,
+                epsilon=kwargs.get("epsilon", _EPSILON_KCAL_MOL),
             )
             return np.array(scores)
 

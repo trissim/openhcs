@@ -16,7 +16,11 @@ from dq_dock_engine.docking.formal_pruning import (
 )
 from dq_dock_engine.docking.formal_handles import TK8, TK9A, TK12
 from dq_dock_engine.generated.formal_handle_aliases import TK8, TK9A
-from dq_dock_engine.docking.scoring import optimal_cutoff, score_certified_batch
+from dq_dock_engine.docking.scoring import (
+    CertifiedRealSpaceEwaldSpec,
+    optimal_cutoff,
+    score_certified_batch,
+)
 from dq_dock_engine.docking.scoring import certified_lj_error_bound
 
 
@@ -148,6 +152,17 @@ def two_cutoff_approximation_witness(
     )
 
 
+def _subset_electrostatics(
+    electrostatics: CertifiedRealSpaceEwaldSpec | None,
+    retained_indices: jax.Array,
+) -> CertifiedRealSpaceEwaldSpec | None:
+    return (
+        None
+        if electrostatics is None
+        else electrostatics.receptor_subset(retained_indices)
+    )
+
+
 def select_trimmed_receptor_subset(
     receptor_coords: jax.Array,
     reference_coords: jax.Array,
@@ -230,6 +245,7 @@ def score_exact_and_coarse_local_family(
     target_error: float,
     max_receptor_atoms: int,
     translation_step: float,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> CertifiedCoarseScoreBundle:
     retained_indices = select_exact_receptor_subset_for_local_family(
         receptor_coords=receptor_coords,
@@ -245,6 +261,7 @@ def score_exact_and_coarse_local_family(
         receptor_radii=receptor_radii[retained_indices],
         ligand_radii=ligand_radii,
         target_error=target_error,
+        electrostatics=_subset_electrostatics(electrostatics, retained_indices),
     )
     coarse_scores = exact_batch.scores
     delta = 0.0
@@ -275,6 +292,7 @@ def score_exact_and_coarse_round(
     target_error: float,
     max_receptor_atoms: int,
     translation_step: float,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> tuple[jax.Array, jax.Array, float, float, jax.Array]:
     n_poses, n_actions, n_atoms, _ = candidate_batches.shape
     flat_candidates = candidate_batches.reshape((n_poses * n_actions, n_atoms, 3))
@@ -292,6 +310,7 @@ def score_exact_and_coarse_round(
         receptor_radii=receptor_radii[retained_indices],
         ligand_radii=ligand_radii,
         target_error=target_error,
+        electrostatics=_subset_electrostatics(electrostatics, retained_indices),
     )
     exact_scores = exact_batch.scores.reshape((n_poses, n_actions))
     coarse_scores = exact_scores
@@ -380,6 +399,7 @@ def try_staged_singleton_accept_round(
     target_error: float,
     coarse_target_error: float,
     translation_step: float,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> StagedSingletonAcceptRoundResult | None:
     n_poses, n_actions, n_atoms, _ = candidate_batches.shape
     exact_retained_indices = select_exact_receptor_subset_for_local_family(
@@ -405,6 +425,7 @@ def try_staged_singleton_accept_round(
         receptor_radii=receptor_radii[coarse_retained_indices],
         ligand_radii=ligand_radii,
         target_error=coarse_target_error,
+        electrostatics=_subset_electrostatics(electrostatics, coarse_retained_indices),
     )
     coarse_scores = coarse_batch.scores.reshape((n_poses, n_actions))
     delta = two_cutoff_approximation_witness(
@@ -440,6 +461,7 @@ def try_fast_singleton_accept_round(
     target_error: float,
     coarse_target_error: float,
     translation_step: float,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> FastSingletonAcceptRoundResult | None:
     n_poses, n_actions, n_atoms, _ = candidate_batches.shape
     coarse_retained_indices = select_exact_receptor_subset_for_local_family(
@@ -457,6 +479,9 @@ def try_fast_singleton_accept_round(
         receptor_radii=receptor_radii[coarse_retained_indices],
         ligand_radii=ligand_radii,
         target_error=coarse_target_error,
+        electrostatics=None
+        if electrostatics is None
+        else electrostatics.receptor_subset(coarse_retained_indices),
     )
     coarse_scores = coarse_batch.scores.reshape((n_poses, n_actions))
     delta = two_cutoff_approximation_witness(
@@ -570,6 +595,7 @@ def try_adaptive_singleton_accept_round(
     target_error: float,
     coarse_target_errors: tuple[float, ...],
     translation_step: float,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> FastSingletonAcceptRoundResult | None:
     for coarse_target_error in coarse_target_errors:
         result = try_fast_singleton_accept_round(
@@ -580,6 +606,7 @@ def try_adaptive_singleton_accept_round(
             target_error=target_error,
             coarse_target_error=coarse_target_error,
             translation_step=translation_step,
+            electrostatics=electrostatics,
         )
         if result is not None:
             return result
@@ -594,6 +621,7 @@ def try_per_pose_fast_singleton_accept_round(
     target_error: float,
     coarse_target_error: float,
     translation_step: float,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> PerPoseFastSingletonAcceptRoundResult | None:
     n_poses, n_actions, _n_atoms, _ = candidate_batches.shape
     delta = two_cutoff_approximation_witness(
@@ -619,6 +647,9 @@ def try_per_pose_fast_singleton_accept_round(
             receptor_radii=receptor_radii[coarse_retained_indices],
             ligand_radii=ligand_radii,
             target_error=coarse_target_error,
+            electrostatics=_subset_electrostatics(
+                electrostatics, coarse_retained_indices
+            ),
         )
         coarse_scores = coarse_batch.scores
         guarantee = staged_top1_guarantee_from_coarse_scores(coarse_scores, delta)
@@ -649,6 +680,7 @@ def staged_top1_cost_diagnostic(
     target_error: float,
     coarse_target_error: float,
     translation_step: float,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> StagedTop1CostDiagnostic:
     exact_retained = select_exact_receptor_subset_for_local_family(
         receptor_coords=receptor_coords,
@@ -679,6 +711,7 @@ def staged_top1_cost_diagnostic(
         receptor_radii=receptor_radii[exact_retained],
         ligand_radii=ligand_radii,
         target_error=target_error,
+        electrostatics=_subset_electrostatics(electrostatics, exact_retained),
     )
     coarse_batch = score_certified_batch(
         receptor_coords=receptor_coords[coarse_retained],
@@ -686,6 +719,7 @@ def staged_top1_cost_diagnostic(
         receptor_radii=receptor_radii[coarse_retained],
         ligand_radii=ligand_radii,
         target_error=coarse_target_error,
+        electrostatics=_subset_electrostatics(electrostatics, coarse_retained),
     )
     coarse_scores = coarse_batch.scores.reshape(
         (candidate_batches.shape[0], candidate_batches.shape[1])

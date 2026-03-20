@@ -48,7 +48,11 @@ from dataclasses import dataclass
 from dq_dock_engine.docking.core import BenchmarkResult, ScoringEngine
 from dq_dock_engine.docking.pdb_io import parse_structure, build_receptor_arrays
 from dq_dock_engine.docking.metrics import compute_docking_rmsd_batched
-from dq_dock_engine.docking_config import CERTIFIED_DOCKING, OptimizerBackend
+from dq_dock_engine.docking_config import (
+    CERTIFIED_DOCKING,
+    CertifiedScoringFamily,
+    OptimizerBackend,
+)
 from dq_dock_engine.benchmark.large_pdb_ids import (
     BenchmarkScope,
     PDBEntry,
@@ -68,6 +72,7 @@ from dq_dock_engine.docking.formal_handles import (
     STAGED_SINGLETON_TOP1_RUNTIME_CONTRACT,
     handle_bundle_from_contracts,
     runtime_contract_record,
+    scoring_family_theorem_handles,
 )
 from dq_dock_engine.docking_config import FormalRoundStrategy
 
@@ -405,6 +410,7 @@ class PreparedDockingInputs:
 @dataclass(frozen=True)
 class BenchmarkExecutionContext:
     charge_method: object
+    certified_scoring_family: CertifiedScoringFamily
     complexes: tuple[PreparedBenchmarkComplex, ...]
     n_complexes_requested: int
     n_poses: int
@@ -449,6 +455,7 @@ class BenchmarkState:
         return save_benchmark_results(
             context.output_paths,
             charge_method_name=context.charge_method_name,
+            certified_scoring_family=context.certified_scoring_family,
             n_complexes_requested=context.n_complexes_requested,
             n_poses=context.n_poses,
             n_opt_steps=context.n_opt_steps,
@@ -683,15 +690,19 @@ def prepare_protein(pdb_path: Path) -> Path:
     """Prepare protein for Vina - use smina which handles PDB directly.
 
     Extracts only ATOM records (protein) from the PDB file.
+
+    Keep only blank / `A` alternate locations so the receptor arrays match the
+    benchmark competitor preparation path (`--default_altloc A`) and chemistry
+    tools like RDKit see the same atom set.
     """
     protein_path = pdb_path.parent / f"{pdb_path.stem}_protein.pdb"
     if protein_path.exists():
-        return protein_path
+        protein_path.unlink(missing_ok=True)
 
     with open(pdb_path) as f_in:
         with open(protein_path, "w") as f_out:
             for line in f_in:
-                if line.startswith("ATOM"):
+                if line.startswith("ATOM") and line[16] in (" ", "A"):
                     f_out.write(line)
 
     return protein_path
@@ -739,6 +750,9 @@ def prepare_pocket_protein(
 def prepare_ligand(pdb_path: Path, preferred_resname: str | None = None) -> Path:
     """Prepare ligand for Vina - extract primary ligand HETATM records from PDB file.
 
+    Keep only blank / `A` alternate locations so the extracted ligand matches the
+    atom set used by chemistry tools such as RDKit.
+
     Raises error if no ligand found in the PDB.
     """
     ligand_path = pdb_path.parent / f"{pdb_path.stem}_ligand.pdb"
@@ -756,6 +770,8 @@ def prepare_ligand(pdb_path: Path, preferred_resname: str | None = None) -> Path
     with open(pdb_path) as f:
         for line in f:
             if not line.startswith("HETATM"):
+                continue
+            if line[16] not in (" ", "A"):
                 continue
             chain_id = line[21].strip()
             residue_id = f"{line[22:26].strip()}{line[26].strip()}"
@@ -1175,6 +1191,7 @@ def save_benchmark_results(
     output_paths: BenchmarkOutputPaths,
     *,
     charge_method_name: str,
+    certified_scoring_family: CertifiedScoringFamily,
     n_complexes_requested: int,
     n_poses: int,
     n_opt_steps: int,
@@ -1233,7 +1250,10 @@ def save_benchmark_results(
     }
     box_protocol_rule, box_protocol_theorem = benchmark_box_protocol_metadata(box_size)
     active_runtime_contract = active_formal_runtime_contract(formal_round_strategy)
-    active_runtime_handles = handle_bundle_from_contracts(active_runtime_contract)
+    active_runtime_handles = handle_bundle_from_contracts(
+        active_runtime_contract,
+        extra_theorem_handles=scoring_family_theorem_handles(certified_scoring_family),
+    )
     staged_runtime_handles = handle_bundle_from_contracts(
         STAGED_COARSE_TOP1_RUNTIME_CONTRACT,
         STAGED_SINGLETON_TOP1_RUNTIME_CONTRACT,
@@ -1418,6 +1438,9 @@ def run_dq_dock(
     max_retries: int = 6,
     optimizer_backend: "OptimizerBackend" = OptimizerBackend.FORMAL,
     formal_round_strategy: FormalRoundStrategy = FormalRoundStrategy.SINGLETON_HYBRID,
+    certified_scoring_family: CertifiedScoringFamily = (
+        CertifiedScoringFamily.LJ_REALSPACE_EWALD
+    ),
     retry_break_rmsd: float = 0.0,
     retry_preserve_seed: bool = False,
     box_size: float = BENCHMARK_PROTOCOL.box_size_a,
@@ -1450,6 +1473,7 @@ def run_dq_dock(
         mode=mode_str,
         optimizer=optimizer_str,
         formal_round_strategy=formal_round_strategy,
+        certified_scoring_family=certified_scoring_family,
         target_error=0.001,
         min_energy_gap=0.0,
         use_external_scorer=False,
@@ -1465,7 +1489,10 @@ def run_dq_dock(
         ligand_elements = tuple(ligand_elements)
 
     ligand_charges = None
-    if use_multi_stage and ligand_elements is not None:
+    if (
+        use_multi_stage
+        or certified_scoring_family == CertifiedScoringFamily.LJ_REALSPACE_EWALD
+    ) and ligand_elements is not None:
         assigner = create_charge_assigner(charge_method)
         ligand_source = (
             ligand_elements if assigner.method.name == "SIMPLE" else ligand_file
@@ -1703,6 +1730,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine):
             receptor_elements=complex_entry.pocket_elements,
             optimizer_backend=context.optimizer_backend,
             formal_round_strategy=context.formal_round_strategy,
+            certified_scoring_family=context.certified_scoring_family,
             max_retries=context.max_retries,
             retry_break_rmsd=context.retry_break_rmsd,
             retry_preserve_seed=context.retry_preserve_seed,
@@ -2140,6 +2168,9 @@ def run_benchmark(
     n_opt_steps: int = 50,
     box_size: float = BENCHMARK_PROTOCOL.box_size_a,
     formal_round_strategy: FormalRoundStrategy = FormalRoundStrategy.SINGLETON_HYBRID,
+    certified_scoring_family: CertifiedScoringFamily = (
+        CertifiedScoringFamily.LJ_REALSPACE_EWALD
+    ),
     use_multi_stage: bool = False,
     use_pocket_guided: bool | None = None,
     results_dir: Path = Path("benchmark_results"),
@@ -2281,6 +2312,7 @@ def run_benchmark(
 
     context = BenchmarkExecutionContext(
         charge_method=charge_method,
+        certified_scoring_family=certified_scoring_family,
         complexes=tuple(prepared_complexes),
         n_complexes_requested=n_complexes,
         n_poses=n_poses,
@@ -2456,6 +2488,13 @@ if __name__ == "__main__":
         default="singleton_hybrid",
         help="Certified local-round strategy for the formal optimizer (default: singleton_hybrid)",
     )
+    parser.add_argument(
+        "--certified-scoring-family",
+        type=str,
+        choices=("lj", "lj_realspace_ewald"),
+        default="lj_realspace_ewald",
+        help="Certified scoring family for DQ-Dock formal mode (default: lj_realspace_ewald)",
+    )
     args = parser.parse_args()
 
     is_valid, warnings = CERTIFIED_DOCKING.validate()
@@ -2468,6 +2507,7 @@ if __name__ == "__main__":
         "simple": ChargeMethod.SIMPLE,
     }[args.charge_method]
     formal_round_strategy = FormalRoundStrategy(args.formal_round_strategy)
+    certified_scoring_family = CertifiedScoringFamily(args.certified_scoring_family)
 
     if args.dq_only:
         competitor_choice = "none"
@@ -2481,6 +2521,7 @@ if __name__ == "__main__":
         n_opt_steps=args.n_opt_steps,
         box_size=args.box_size,
         formal_round_strategy=formal_round_strategy,
+        certified_scoring_family=certified_scoring_family,
         use_multi_stage=args.use_multi_stage,
         use_pocket_guided=args.use_pocket_guided,
         results_dir=args.results_dir,

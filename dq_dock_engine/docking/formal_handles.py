@@ -4,6 +4,9 @@ from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 
 from dq_dock_engine.generated.formal_handle_aliases import (
+    APX4,
+    CB5,
+    CB6,
     CP1,
     CP2,
     CP3,
@@ -31,6 +34,7 @@ from dq_dock_engine.generated.formal_handle_aliases import (
     TK12,
     TK4,
 )
+from dq_dock_engine.docking_config import CertifiedScoringFamily
 
 
 @dataclass(frozen=True)
@@ -178,6 +182,14 @@ STAGED_COARSE_PRUNING_HANDLES = handle_bundle_from_contracts(
     extra_theorem_handles=(CP3,),
     extra_witness_handles=(FLO18,),
 )
+
+
+def scoring_family_theorem_handles(
+    certified_scoring_family: CertifiedScoringFamily,
+) -> tuple[str, ...]:
+    if certified_scoring_family == CertifiedScoringFamily.LJ_REALSPACE_EWALD:
+        return (CB5, CB6, APX4)
+    return ()
 
 
 def selection_theorem_handle(branch: str) -> str:

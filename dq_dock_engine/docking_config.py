@@ -34,6 +34,13 @@ class FormalRoundStrategy(Enum):
     SINGLETON_HYBRID = "singleton_hybrid"
 
 
+class CertifiedScoringFamily(Enum):
+    """Certified scoring family used by the formal/runtime path."""
+
+    LJ = "lj"
+    LJ_REALSPACE_EWALD = "lj_realspace_ewald"
+
+
 @dataclass(frozen=True)
 class DockingConfig:
     """
@@ -74,6 +81,11 @@ class DockingConfig:
 
     #: Which certified local-round strategy to use when optimizer_backend is FORMAL
     formal_round_strategy: FormalRoundStrategy = FormalRoundStrategy.SINGLETON_HYBRID
+
+    #: Certified physical score family for both route_scoring and formal rounds
+    certified_scoring_family: CertifiedScoringFamily = (
+        CertifiedScoringFamily.LJ_REALSPACE_EWALD
+    )
 
     def __post_init__(self) -> None:
         if (

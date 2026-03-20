@@ -18,6 +18,7 @@ class ScoringEngine(Enum):
     VINARDO = auto()
     SOFT_LJ = auto()
     CERTIFIED_LJ = auto()
+    CERTIFIED_LJ_REALSPACE_EWALD = auto()
 
 
 class FormalProofStatus(Enum):

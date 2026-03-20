@@ -119,8 +119,12 @@ from dq_dock_engine.docking.formal_surrogates import (
 )
 from dq_dock_engine.docking.pipeline import run_docking_pipeline
 from dq_dock_engine.docking_config import (
+    CertifiedScoringFamily,
     CERTIFIED_DOCKING,
+    DockingConfig,
+    DockingMode,
     FormalRoundStrategy,
+    OptimizerBackend,
     create_config,
 )
 from dq_dock_engine.docking.scoring import score_certified_batch
@@ -982,7 +986,11 @@ def test_certified_pipeline_does_not_call_heuristic_sampler(monkeypatch):
         n_poses=1,
         engine=ScoringEngine.INTERNAL_LJ,
         key=jax.random.PRNGKey(0),
-        config=CERTIFIED_DOCKING,
+        config=DockingConfig(
+            mode=DockingMode.CERTIFIED,
+            optimizer_backend=OptimizerBackend.FORMAL,
+            certified_scoring_family=CertifiedScoringFamily.LJ,
+        ),
         top_k=1,
         optimize=False,
         use_pocket_guided=True,
