@@ -24,6 +24,7 @@ import argparse
 from abc import ABC, abstractmethod
 import csv
 import json
+import math
 import os
 import subprocess
 import sys
@@ -59,26 +60,57 @@ from dq_dock_engine.benchmark.large_pdb_ids import (
 from dq_dock_engine.benchmark.redocking_report import render_redocking_report
 from dq_dock_engine.docking.formal_handles import (
     ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT,
-    ACTIVE_CERTIFIED_RUNTIME_HANDLES,
+    ACTIVE_SINGLETON_HYBRID_RUNTIME_CONTRACT,
+    CP3,
+    FLO18,
     SD10,
     STAGED_COARSE_TOP1_RUNTIME_CONTRACT,
-    STAGED_COARSE_PRUNING_HANDLES,
     STAGED_SINGLETON_TOP1_RUNTIME_CONTRACT,
+    handle_bundle_from_contracts,
     runtime_contract_record,
 )
+from dq_dock_engine.docking_config import FormalRoundStrategy
 
 
-BENCHMARK_POCKET_RADIUS_ANGSTROMS = 12.0
+DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS = 12.0
+
+
+def derive_benchmark_pocket_radius_from_box_size(box_size: float) -> float:
+    """Derive the pocket extraction sphere radius from the docking box size.
+
+    The formal benchmark protocol uses a cubic search box of side ``box_size``.
+    To guarantee the extracted pocket covers every atom the ligand can reach
+    during the search, we extract atoms inside a sphere of radius
+    ``box_size * sqrt(3) / 2`` — which is the half-diagonal of the cube.
+
+    This is proven by Lean theorem SD10
+    (``cube_side_eq_radius_half_diagonal_le_radius``), which shows that a
+    cube of side r fits inside a sphere of radius r because its half-diagonal
+    is ``sqrt(3) * r / 2 ≤ r``.
+
+    Previously the code used ``pocket_radius = box_size / 2`` (a 6A sphere for
+    a 12A box), which only covered atoms up to 6A from the center.  The ligand
+    can reach the box corner at ``10.4A`` from the center — beyond the
+    extraction boundary — so the truncated receptor produced wrong certified
+    rankings on pockets where the true optimum lies near the box edge.
+
+    Args:
+        box_size: Cubic search box side length in Angstroms.
+
+    Returns:
+        Pocket extraction sphere radius in Angstroms.  For the default
+        12A box this gives ``12 * sqrt(3) / 2 ≈ 10.39A``.
+    """
+    if box_size <= 0:
+        raise ValueError("box_size must be positive")
+    return box_size * math.sqrt(3.0) / 2.0
 
 
 def derive_benchmark_box_size_from_pocket_radius(pocket_radius: float) -> float:
-    """Derive the benchmark cubic box side from the declared pocket radius.
+    """Deprecated: prefer box_size as the independent parameter.
 
-    The benchmark protocol extracts pocket atoms inside a ball of radius
-    ``pocket_radius`` around the docking center. We choose a cubic search box
-    with the same numeric side length. Its half-diagonal is
-    ``sqrt(3) * pocket_radius / 2 <= pocket_radius``, so the search box stays
-    inside the declared pocket ball.
+    Reverse-derives the box side from a pocket radius.
+    Kept for CLI / benchmark compatibility only.
     """
     if pocket_radius <= 0:
         raise ValueError("pocket_radius must be positive")
@@ -87,25 +119,33 @@ def derive_benchmark_box_size_from_pocket_radius(pocket_radius: float) -> float:
 
 def benchmark_box_protocol_metadata(box_size: float) -> tuple[str, str | None]:
     if np.isclose(box_size, BENCHMARK_PROTOCOL.box_size_a):
-        return ("pocket_radius_derived", BENCHMARK_PROTOCOL.box_geometry_theorem)
+        return ("box_size_derived", BENCHMARK_PROTOCOL.box_geometry_theorem)
     return ("custom_override", None)
 
 
-DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS = derive_benchmark_box_size_from_pocket_radius(
-    BENCHMARK_POCKET_RADIUS_ANGSTROMS
+def active_formal_runtime_contract(formal_round_strategy: FormalRoundStrategy):
+    if formal_round_strategy == FormalRoundStrategy.EXACT:
+        return ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT
+    return ACTIVE_SINGLETON_HYBRID_RUNTIME_CONTRACT
+
+
+DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS = 12.0
+
+DERIVED_BENCHMARK_POCKET_RADIUS_ANGSTROMS = (
+    derive_benchmark_pocket_radius_from_box_size(DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS)
 )
 
 
 @dataclass(frozen=True)
 class BenchmarkProtocol:
-    pocket_radius_a: float
     box_size_a: float
+    pocket_radius_a: float
     box_geometry_theorem: str
 
 
 BENCHMARK_PROTOCOL = BenchmarkProtocol(
-    pocket_radius_a=BENCHMARK_POCKET_RADIUS_ANGSTROMS,
     box_size_a=DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS,
+    pocket_radius_a=DERIVED_BENCHMARK_POCKET_RADIUS_ANGSTROMS,
     box_geometry_theorem=SD10,
 )
 
@@ -370,6 +410,7 @@ class BenchmarkExecutionContext:
     n_poses: int
     n_opt_steps: int
     box_size: float
+    formal_round_strategy: FormalRoundStrategy
     use_multi_stage: bool
     use_pocket_guided: bool
     output_paths: BenchmarkOutputPaths
@@ -412,6 +453,7 @@ class BenchmarkState:
             n_poses=context.n_poses,
             n_opt_steps=context.n_opt_steps,
             box_size=context.box_size,
+            formal_round_strategy=context.formal_round_strategy,
             use_multi_stage=context.use_multi_stage,
             use_pocket_guided=context.use_pocket_guided,
             competitors=context.competitors,
@@ -737,8 +779,11 @@ def prepare_benchmark_complex(
     pose_dir: Path,
     box_size: float = BENCHMARK_PROTOCOL.box_size_a,
 ) -> PreparedBenchmarkComplex:
+    pocket_radius = derive_benchmark_pocket_radius_from_box_size(box_size)
     receptor_pdb = prepare_protein(complex_entry.path)
-    pocket_receptor_pdb = prepare_pocket_protein(receptor_pdb, complex_entry.center)
+    pocket_receptor_pdb = prepare_pocket_protein(
+        receptor_pdb, complex_entry.center, pocket_radius=pocket_radius
+    )
     ligand_pdb = prepare_ligand(
         complex_entry.path,
         preferred_resname=complex_entry.preferred_resname,
@@ -759,7 +804,7 @@ def prepare_benchmark_complex(
             prot_coords,
             prot_radii,
             np.array(complex_entry.center),
-            pocket_radius=BENCHMARK_PROTOCOL.pocket_radius_a,
+            pocket_radius=pocket_radius,
             receptor_elements=prot_elements,
         ),
     )
@@ -1134,6 +1179,7 @@ def save_benchmark_results(
     n_poses: int,
     n_opt_steps: int,
     box_size: float,
+    formal_round_strategy: FormalRoundStrategy,
     use_multi_stage: bool,
     use_pocket_guided: bool,
     competitors: tuple[CompetitorMetadata, ...],
@@ -1186,6 +1232,14 @@ def save_benchmark_results(
         for metadata in competitors
     }
     box_protocol_rule, box_protocol_theorem = benchmark_box_protocol_metadata(box_size)
+    active_runtime_contract = active_formal_runtime_contract(formal_round_strategy)
+    active_runtime_handles = handle_bundle_from_contracts(active_runtime_contract)
+    staged_runtime_handles = handle_bundle_from_contracts(
+        STAGED_COARSE_TOP1_RUNTIME_CONTRACT,
+        STAGED_SINGLETON_TOP1_RUNTIME_CONTRACT,
+        extra_theorem_handles=(CP3,),
+        extra_witness_handles=(FLO18,),
+    )
 
     csv_rows: list[dict[str, object]] = []
     for pdb_id, row in dq_map.items():
@@ -1246,13 +1300,13 @@ def save_benchmark_results(
         "benchmark_box_size_a": box_size,
         "benchmark_box_protocol_rule": box_protocol_rule,
         "benchmark_box_protocol_theorem": box_protocol_theorem,
-        "active_certified_runtime_theorems": ACTIVE_CERTIFIED_RUNTIME_HANDLES.theorem_handles,
-        "active_certified_runtime_witnesses": ACTIVE_CERTIFIED_RUNTIME_HANDLES.witness_handles,
+        "active_certified_runtime_theorems": active_runtime_handles.theorem_handles,
+        "active_certified_runtime_witnesses": active_runtime_handles.witness_handles,
         "active_certified_runtime_contract": runtime_contract_record(
-            ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT
+            active_runtime_contract
         ),
-        "staged_coarse_pruning_theorems": STAGED_COARSE_PRUNING_HANDLES.theorem_handles,
-        "staged_coarse_pruning_witnesses": STAGED_COARSE_PRUNING_HANDLES.witness_handles,
+        "staged_coarse_pruning_theorems": staged_runtime_handles.theorem_handles,
+        "staged_coarse_pruning_witnesses": staged_runtime_handles.witness_handles,
         "staged_coarse_runtime_contracts": [
             runtime_contract_record(STAGED_COARSE_TOP1_RUNTIME_CONTRACT),
             runtime_contract_record(STAGED_SINGLETON_TOP1_RUNTIME_CONTRACT),
@@ -1363,6 +1417,7 @@ def run_dq_dock(
     n_opt_steps: int = 50,
     max_retries: int = 6,
     optimizer_backend: "OptimizerBackend" = OptimizerBackend.FORMAL,
+    formal_round_strategy: FormalRoundStrategy = FormalRoundStrategy.SINGLETON_HYBRID,
     retry_break_rmsd: float = 0.0,
     retry_preserve_seed: bool = False,
     box_size: float = BENCHMARK_PROTOCOL.box_size_a,
@@ -1377,7 +1432,7 @@ def run_dq_dock(
         build_receptor_arrays,
     )
     from dq_dock_engine.docking.pipeline import run_docking_pipeline
-    from dq_dock_engine.docking_config import create_config
+    from dq_dock_engine.docking_config import FormalRoundStrategy, create_config
     from dq_dock_engine.docking.metrics import compute_docking_rmsd_batched
 
     start = time.time()
@@ -1394,6 +1449,7 @@ def run_dq_dock(
     docking_config = create_config(
         mode=mode_str,
         optimizer=optimizer_str,
+        formal_round_strategy=formal_round_strategy,
         target_error=0.001,
         min_energy_gap=0.0,
         use_external_scorer=False,
@@ -1646,6 +1702,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine):
             ligand_elements=complex_entry.ligand_elements,
             receptor_elements=complex_entry.pocket_elements,
             optimizer_backend=context.optimizer_backend,
+            formal_round_strategy=context.formal_round_strategy,
             max_retries=context.max_retries,
             retry_break_rmsd=context.retry_break_rmsd,
             retry_preserve_seed=context.retry_preserve_seed,
@@ -2082,6 +2139,7 @@ def run_benchmark(
     n_poses: int = 2000,
     n_opt_steps: int = 50,
     box_size: float = BENCHMARK_PROTOCOL.box_size_a,
+    formal_round_strategy: FormalRoundStrategy = FormalRoundStrategy.SINGLETON_HYBRID,
     use_multi_stage: bool = False,
     use_pocket_guided: bool | None = None,
     results_dir: Path = Path("benchmark_results"),
@@ -2228,6 +2286,7 @@ def run_benchmark(
         n_poses=n_poses,
         n_opt_steps=n_opt_steps,
         box_size=box_size,
+        formal_round_strategy=formal_round_strategy,
         use_multi_stage=use_multi_stage,
         use_pocket_guided=effective_pocket_guided,
         output_paths=output_paths,
@@ -2390,6 +2449,13 @@ if __name__ == "__main__":
         help="Optimizer backend for local pose refinement (default: formal). "
         "'formal' uses the multi-round certified optimizer.",
     )
+    parser.add_argument(
+        "--formal-round-strategy",
+        type=str,
+        choices=("singleton_hybrid", "exact"),
+        default="singleton_hybrid",
+        help="Certified local-round strategy for the formal optimizer (default: singleton_hybrid)",
+    )
     args = parser.parse_args()
 
     is_valid, warnings = CERTIFIED_DOCKING.validate()
@@ -2401,6 +2467,7 @@ if __name__ == "__main__":
         "gasteiger": ChargeMethod.GASTEIGER,
         "simple": ChargeMethod.SIMPLE,
     }[args.charge_method]
+    formal_round_strategy = FormalRoundStrategy(args.formal_round_strategy)
 
     if args.dq_only:
         competitor_choice = "none"
@@ -2413,6 +2480,7 @@ if __name__ == "__main__":
         n_poses=args.n_poses,
         n_opt_steps=args.n_opt_steps,
         box_size=args.box_size,
+        formal_round_strategy=formal_round_strategy,
         use_multi_stage=args.use_multi_stage,
         use_pocket_guided=args.use_pocket_guided,
         results_dir=args.results_dir,

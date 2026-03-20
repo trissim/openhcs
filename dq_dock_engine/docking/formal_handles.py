@@ -25,6 +25,8 @@ from dq_dock_engine.generated.formal_handle_aliases import (
     FLO9,
     SD10,
     TK1,
+    TK8,
+    TK9A,
     TK11,
     TK12,
     TK4,
@@ -40,7 +42,8 @@ class FormalHandleBundle:
 @dataclass(frozen=True)
 class CertifiedRuntimeContract:
     name: str
-    pruning_branch: "Top1PruningBranchName"
+    strategy: "CertifiedRuntimeStrategyName"
+    pruning_branch: "Top1PruningBranchName | None"
     pruning_certificate_handle: str
     survivor_set_witness_handle: str
     posterior_theorem_handle: str
@@ -62,8 +65,16 @@ class Top1PruningBranchName(str, Enum):
     TOP1_COARSE_AMBIGUITY_BAND = "top1_coarse_ambiguity_band"
 
 
+class CertifiedRuntimeStrategyName(str, Enum):
+    EXACT = "exact"
+    SINGLETON_HYBRID = "singleton_hybrid"
+    STAGED_COARSE_TOP1 = "staged_coarse_top1"
+    STAGED_SINGLETON_TOP1 = "staged_singleton_top1"
+
+
 ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT = CertifiedRuntimeContract(
     name="active_exact_certified_runtime",
+    strategy=CertifiedRuntimeStrategyName.EXACT,
     pruning_branch=Top1PruningBranchName.EXACT_TOP1,
     pruning_certificate_handle=CP2,
     survivor_set_witness_handle=CP4,
@@ -78,6 +89,7 @@ ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT = CertifiedRuntimeContract(
 
 STAGED_COARSE_TOP1_RUNTIME_CONTRACT = CertifiedRuntimeContract(
     name="staged_coarse_top1_runtime",
+    strategy=CertifiedRuntimeStrategyName.STAGED_COARSE_TOP1,
     pruning_branch=Top1PruningBranchName.TOP1_COARSE_AMBIGUITY_BAND,
     pruning_certificate_handle=TK11,
     survivor_set_witness_handle=CP5,
@@ -92,6 +104,7 @@ STAGED_COARSE_TOP1_RUNTIME_CONTRACT = CertifiedRuntimeContract(
 
 STAGED_SINGLETON_TOP1_RUNTIME_CONTRACT = CertifiedRuntimeContract(
     name="staged_singleton_top1_runtime",
+    strategy=CertifiedRuntimeStrategyName.STAGED_SINGLETON_TOP1,
     pruning_branch=Top1PruningBranchName.EXACT_SINGLETON_WINNER,
     pruning_certificate_handle=TK12,
     survivor_set_witness_handle=CP6,
@@ -101,6 +114,21 @@ STAGED_SINGLETON_TOP1_RUNTIME_CONTRACT = CertifiedRuntimeContract(
     selection_witness_handles=(FLO11, FLO12),
     belief_witness_handles=(FLO13, FLO14),
     optimizer_witness_handle=FLO17,
+)
+
+
+ACTIVE_SINGLETON_HYBRID_RUNTIME_CONTRACT = CertifiedRuntimeContract(
+    name="active_singleton_hybrid_certified_runtime",
+    strategy=CertifiedRuntimeStrategyName.SINGLETON_HYBRID,
+    pruning_branch=None,
+    pruning_certificate_handle=CP3,
+    survivor_set_witness_handle=CP6,
+    posterior_theorem_handle=FLO9,
+    posterior_witness_handle=FLO10,
+    selection_theorem_handle=FLO8,
+    selection_witness_handles=(FLO11, FLO12),
+    belief_witness_handles=(FLO13, FLO14),
+    optimizer_witness_handle=FLO18,
 )
 
 

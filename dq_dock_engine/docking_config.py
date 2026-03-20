@@ -27,6 +27,13 @@ class OptimizerBackend(Enum):
     FORMAL = "formal"
 
 
+class FormalRoundStrategy(Enum):
+    """Certified local-round strategy for the formal optimizer."""
+
+    EXACT = "exact"
+    SINGLETON_HYBRID = "singleton_hybrid"
+
+
 @dataclass(frozen=True)
 class DockingConfig:
     """
@@ -64,6 +71,9 @@ class DockingConfig:
 
     #: Which optimizer backend to use for local refinement
     optimizer_backend: OptimizerBackend = OptimizerBackend.GRADIENT
+
+    #: Which certified local-round strategy to use when optimizer_backend is FORMAL
+    formal_round_strategy: FormalRoundStrategy = FormalRoundStrategy.SINGLETON_HYBRID
 
     def __post_init__(self) -> None:
         if (
@@ -107,6 +117,7 @@ CERTIFIED_DOCKING = DockingConfig(
     min_energy_gap=0.0,
     use_external_scorer=False,
     optimizer_backend=OptimizerBackend.FORMAL,
+    formal_round_strategy=FormalRoundStrategy.SINGLETON_HYBRID,
 )
 
 CERTIFIED_DOCKING_FORMAL = DockingConfig(
@@ -115,6 +126,7 @@ CERTIFIED_DOCKING_FORMAL = DockingConfig(
     min_energy_gap=0.0,
     use_external_scorer=False,
     optimizer_backend=OptimizerBackend.FORMAL,
+    formal_round_strategy=FormalRoundStrategy.SINGLETON_HYBRID,
 )
 
 HEURISTIC_SCREENING = DockingConfig(
@@ -128,6 +140,7 @@ HEURISTIC_SCREENING = DockingConfig(
 def create_config(
     mode: Literal["certified", "heuristic"],
     optimizer: Literal["gradient", "formal"] = "formal",
+    formal_round_strategy: FormalRoundStrategy = FormalRoundStrategy.SINGLETON_HYBRID,
     **kwargs,
 ) -> DockingConfig:
     """Factory for creating docking configurations."""
@@ -135,7 +148,12 @@ def create_config(
     backend = (
         OptimizerBackend.FORMAL if optimizer == "formal" else OptimizerBackend.GRADIENT
     )
-    return DockingConfig(mode=mode_enum, optimizer_backend=backend, **kwargs)
+    return DockingConfig(
+        mode=mode_enum,
+        optimizer_backend=backend,
+        formal_round_strategy=formal_round_strategy,
+        **kwargs,
+    )
 
 
 def compute_certified_cutoff(target_error: float, exponent: float = 6.0) -> float:

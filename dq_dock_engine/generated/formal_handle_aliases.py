@@ -265,6 +265,7 @@ TK5 = "TK5"
 TK6 = "TK6"
 TK7 = "TK7"
 TK8 = "TK8"
+TK9A = "TK9A"
 TK9 = "TK9"
 TK10 = "TK10"
 TK11 = "TK11"
@@ -954,6 +955,7 @@ __all__ = [
     "TK6",
     "TK7",
     "TK8",
+    "TK9A",
     "TK9",
     "TK10",
     "TK11",

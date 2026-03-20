@@ -915,6 +915,8 @@ Staged coarse-runtime note:
 
 - a singleton direct-accept branch is now implemented as a staged helper and is
   theorem-backed by the singleton-winner certificate path
+- a two-cutoff approximation witness object is now implemented on both the Lean
+  and Python sides, so the coarse scorer has an explicit object-level proof hook
 - on direct probes, the singleton condition fires for all tested local poses on
   several benchmark complexes
 - however, the current coarse certified scorer is still only marginally cheaper
@@ -927,8 +929,18 @@ Staged coarse-runtime note:
   serious candidate for future integration:
   - `1hk4` exact round: ~`0.006s`
   - `1hk4` fast singleton branch: ~`0.009s`
+  - after JITting the branch core, `1hk4` fast singleton branch improved to
+    ~`0.0059s`, narrowly beating the exact round in isolation
   - branch coverage on key complexes is extremely high (`~99%` to `100%`
     singleton-accept decisions on sampled local rounds)
+- this has now progressed to a staged end-to-end hybrid optimizer:
+  - run singleton-certified rounds while the proof condition holds
+  - fall back to the exact certified optimizer once the singleton proof fails
+  - observed 10-round speedups on direct refinement probes while preserving exact
+    output equality on the tested slice:
+    - `1hk4`: ~`4.8s -> 2.0s`
+    - `1ajp`: ~`5.1s -> 1.5s`
+    - `1gni`: ~`4.8s -> 2.0s`
 - the remaining blocker is now explicit in the code structure:
   - branch logic and witness packaging are no longer the bottleneck
   - a cheaper proved coarse scorer is the missing ingredient

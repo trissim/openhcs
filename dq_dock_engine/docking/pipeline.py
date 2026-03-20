@@ -25,7 +25,12 @@ from dq_dock_engine.docking.core import (
 from dq_dock_engine.docking.charges import ChargeMethod
 from dq_dock_engine.docking.scoring import route_scoring, score_certified_lj
 from dq_dock_engine.docking.optimization import optimize_poses_batched
-from dq_dock_engine.docking_config import DockingConfig, DockingMode, OptimizerBackend
+from dq_dock_engine.docking_config import (
+    DockingConfig,
+    DockingMode,
+    FormalRoundStrategy,
+    OptimizerBackend,
+)
 
 
 def run_docking_pipeline(
@@ -241,7 +246,10 @@ def run_docking_pipeline(
             )
 
     if backend == OptimizerBackend.FORMAL:
-        from dq_dock_engine.docking.formal_optimizer import refine_poses_certified
+        from dq_dock_engine.docking.formal_optimizer import (
+            _run_exact_formal_refinement,
+            _run_singleton_hybrid_formal_refinement,
+        )
 
         initial_opt_vecs = PoseVector(
             translation=top_translations,
@@ -253,7 +261,7 @@ def run_docking_pipeline(
             translation_cell_width = float(jnp.min(box.size)) / float(
                 certified_family.lattice_resolution
             )
-        opt_coords, _ = refine_poses_certified(
+        refinement_kwargs = dict(
             coords_batch=initial_coords,
             receptor_coords=protein_coords,
             receptor_radii=receptor_radii,
@@ -263,6 +271,16 @@ def run_docking_pipeline(
             base_translation_step=translation_cell_width / 2.0,
             base_rotation_step_rad=float(jnp.pi / 2.0),
         )
+        strategy = (
+            config.formal_round_strategy
+            if config is not None
+            else FormalRoundStrategy.SINGLETON_HYBRID
+        )
+        formal_refiners = {
+            FormalRoundStrategy.EXACT: _run_exact_formal_refinement,
+            FormalRoundStrategy.SINGLETON_HYBRID: _run_singleton_hybrid_formal_refinement,
+        }
+        opt_coords = formal_refiners[strategy](**refinement_kwargs)
         opt_vecs = None
     else:
         opt_t, opt_q = optimize_poses_batched(

@@ -4,11 +4,12 @@ import jax.numpy as jnp
 from pathlib import Path
 
 from dq_dock_engine.benchmark.benchmark_pdb import (
-    BENCHMARK_POCKET_RADIUS_ANGSTROMS,
     BENCHMARK_PROTOCOL,
     DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS,
+    DERIVED_BENCHMARK_POCKET_RADIUS_ANGSTROMS,
+    active_formal_runtime_contract,
     benchmark_box_protocol_metadata,
-    derive_benchmark_box_size_from_pocket_radius,
+    derive_benchmark_pocket_radius_from_box_size,
 )
 from dq_dock_engine.docking.formal_handles import (
     ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT,
@@ -39,8 +40,10 @@ from dq_dock_engine.docking.formal_handles import (
     handle_bundle_from_contracts,
     runtime_contract_record,
     serialize_dataclass_record,
+    TK8,
     TK11,
     TK12,
+    TK9A,
 )
 from dq_dock_engine.docking.core import DockingBox, LigandContext, ScoringEngine
 from dq_dock_engine.docking.formal_actions import create_certified_action_family
@@ -73,34 +76,53 @@ from dq_dock_engine.docking.formal_pruning import (
     survivor_set_of_top1_branch,
 )
 from dq_dock_engine.docking.formal_optimizer import (
+    HybridSingletonRefinementResult,
+    MinimalStagedRoundResult,
+    StagedRoundAcceptanceDiagnostic,
     StagedCertifiedDecisionState,
     active_belief_witness,
     active_optimizer_witness,
     active_survivor_set_witness,
     active_pruning_branch,
+    refine_poses_singleton_then_exact,
     refine_poses_certified,
+    diagnose_singleton_acceptance_schedule,
     staged_decision_states_from_singleton_accept_round,
+    try_refine_poses_singleton_minimal,
+    try_refine_round_singleton_minimal,
+    try_refine_round_singleton_staged,
 )
 from dq_dock_engine.docking.formal_sampling import sample_certified_global_poses
 from dq_dock_engine.docking.formal_surrogates import (
     FastSingletonAcceptRoundResult,
+    PerPoseFastSingletonAcceptRoundResult,
+    StagedSingletonGateResult,
     StagedSingletonAcceptRoundResult,
     StagedTop1BranchSummary,
     StagedTop1CostDiagnostic,
     StagedTop1Decision,
     StagedTop1RoundResult,
+    TwoCutoffApproximationWitness,
     score_exact_and_coarse_local_family,
     staged_top1_cost_diagnostic,
     try_adaptive_singleton_accept_round,
     staged_top1_decision_from_scores,
     staged_top1_round_from_coarse_scores,
+    staged_singleton_gate,
     summarize_staged_top1_round,
+    two_cutoff_approximation_witness,
     try_fast_singleton_accept_round,
+    try_hybrid_singleton_accept_round,
+    try_per_pose_fast_singleton_accept_round,
     try_staged_singleton_accept_round,
     select_exact_receptor_subset_for_local_family,
 )
 from dq_dock_engine.docking.pipeline import run_docking_pipeline
-from dq_dock_engine.docking_config import CERTIFIED_DOCKING, create_config
+from dq_dock_engine.docking_config import (
+    CERTIFIED_DOCKING,
+    FormalRoundStrategy,
+    create_config,
+)
 from dq_dock_engine.docking.scoring import score_certified_batch
 from dq_dock_engine.codegen.formal_handle_codegen import (
     DEFAULT_LEAN_PATH,
@@ -122,16 +144,22 @@ def test_certified_action_family_has_noop_first_and_stable_size():
     assert tuple(action.action_id for action in family.actions) == tuple(range(13))
 
 
-def test_benchmark_box_size_is_derived_from_pocket_radius_protocol():
+def test_benchmark_pocket_radius_is_derived_from_box_size():
+    derived = derive_benchmark_pocket_radius_from_box_size(
+        DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS
+    )
+    assert derived == DERIVED_BENCHMARK_POCKET_RADIUS_ANGSTROMS
+    import math
+
     assert (
-        derive_benchmark_box_size_from_pocket_radius(BENCHMARK_POCKET_RADIUS_ANGSTROMS)
-        == DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS
+        abs(derived - DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS * math.sqrt(3.0) / 2.0)
+        < 1e-9
     )
 
 
-def test_benchmark_box_protocol_metadata_marks_custom_override():
+def test_benchmark_box_protocol_metadata_marks_box_size_derived():
     assert benchmark_box_protocol_metadata(BENCHMARK_PROTOCOL.box_size_a) == (
-        "pocket_radius_derived",
+        "box_size_derived",
         BENCHMARK_PROTOCOL.box_geometry_theorem,
     )
     assert benchmark_box_protocol_metadata(BENCHMARK_PROTOCOL.box_size_a + 1.0) == (
@@ -170,6 +198,17 @@ def test_runtime_contract_objects_track_active_and_staged_branches():
     assert (
         STAGED_SINGLETON_TOP1_RUNTIME_CONTRACT.pruning_branch
         == Top1PruningBranchName.EXACT_SINGLETON_WINNER
+    )
+
+
+def test_active_formal_runtime_contract_switches_on_strategy():
+    assert (
+        active_formal_runtime_contract(FormalRoundStrategy.EXACT)
+        == ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT
+    )
+    assert (
+        active_formal_runtime_contract(FormalRoundStrategy.SINGLETON_HYBRID).name
+        == "active_singleton_hybrid_certified_runtime"
     )
 
 
@@ -233,6 +272,11 @@ def test_certified_config_rejects_gradient_backend():
         assert "CERTIFIED mode requires OptimizerBackend.FORMAL" in str(exc)
         return
     raise AssertionError("certified gradient configuration should fail loudly")
+
+
+def test_certified_config_defaults_to_singleton_hybrid_round_strategy():
+    cfg = create_config(mode="certified", optimizer="formal")
+    assert cfg.formal_round_strategy == FormalRoundStrategy.SINGLETON_HYBRID
 
 
 def test_select_admissible_action_uses_first_ambiguity_member():
@@ -476,6 +520,17 @@ def test_summarize_staged_top1_round_counts_branch_distribution():
     assert summary.singleton_fraction == 0.5
 
 
+def test_two_cutoff_approximation_witness_packages_combined_delta():
+    witness = two_cutoff_approximation_witness(0.001, 0.004)
+
+    assert isinstance(witness, TwoCutoffApproximationWitness)
+    assert witness.theorem_handle == TK8
+    assert witness.witness_handle == TK9A
+    assert (
+        witness.combined_delta == witness.exact_error_bound + witness.coarse_error_bound
+    )
+
+
 def test_staged_top1_cost_diagnostic_reports_branch_and_retained_sizes():
     candidate_batches = jnp.array(
         [
@@ -564,6 +619,73 @@ def test_try_adaptive_singleton_accept_round_returns_first_successful_target():
     assert result.coarse_target_error in {0.05, 0.01, 0.004}
 
 
+def test_try_per_pose_fast_singleton_accept_round_returns_result_or_fallback():
+    candidate_batches = jnp.array(
+        [
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+        ],
+        dtype=jnp.float32,
+    )
+    result = try_per_pose_fast_singleton_accept_round(
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        candidate_batches=candidate_batches,
+        target_error=0.001,
+        coarse_target_error=0.004,
+        translation_step=0.5,
+    )
+
+    assert result is None or isinstance(result, PerPoseFastSingletonAcceptRoundResult)
+
+
+def test_try_hybrid_singleton_accept_round_returns_result_or_fallback():
+    candidate_batches = jnp.array(
+        [
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+        ],
+        dtype=jnp.float32,
+    )
+    result = try_hybrid_singleton_accept_round(
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        candidate_batches=candidate_batches,
+        target_error=0.001,
+        coarse_target_error=0.004,
+        translation_step=0.5,
+    )
+
+    assert result is None or isinstance(result, FastSingletonAcceptRoundResult)
+
+
+def test_staged_singleton_gate_packages_supports_and_optional_accept_result():
+    candidate_batches = jnp.array(
+        [
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+        ],
+        dtype=jnp.float32,
+    )
+    gate = staged_singleton_gate(
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        candidate_batches=candidate_batches,
+        target_error=0.001,
+        coarse_target_error=0.004,
+        translation_step=0.5,
+    )
+
+    assert isinstance(gate, StagedSingletonGateResult)
+    assert (
+        gate.exact_retained_receptor_indices.shape[0]
+        >= gate.coarse_retained_receptor_indices.shape[0]
+    )
+
+
 def test_staged_decision_states_from_singleton_accept_round_packages_pose_states():
     candidate_batches = jnp.array(
         [
@@ -587,6 +709,123 @@ def test_staged_decision_states_from_singleton_accept_round_packages_pose_states
     assert len(states) == 2
     assert isinstance(states[0], StagedCertifiedDecisionState)
     assert states[0].theorem_handle == TK12
+
+
+def test_try_refine_round_singleton_staged_returns_result_or_none():
+    coords_batch = jnp.array(
+        [
+            [[0.0, 0.0, 0.0]],
+            [[0.5, 0.0, 0.0]],
+        ],
+        dtype=jnp.float32,
+    )
+    result = try_refine_round_singleton_staged(
+        coords_batch=coords_batch,
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        target_error=0.001,
+        round_index=0,
+        base_translation_step=0.5,
+        base_rotation_step_rad=float(jnp.pi / 2.0),
+        coarse_target_error=0.004,
+    )
+
+    assert result is None or isinstance(result[1][0], StagedCertifiedDecisionState)
+
+
+def test_try_refine_round_singleton_minimal_returns_result_or_none():
+    coords_batch = jnp.array(
+        [
+            [[0.0, 0.0, 0.0]],
+            [[0.5, 0.0, 0.0]],
+        ],
+        dtype=jnp.float32,
+    )
+    result = try_refine_round_singleton_minimal(
+        coords_batch=coords_batch,
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        target_error=0.001,
+        round_index=0,
+        base_translation_step=0.5,
+        base_rotation_step_rad=float(jnp.pi / 2.0),
+        coarse_target_error=0.004,
+    )
+
+    assert result is None or isinstance(result, MinimalStagedRoundResult)
+
+
+def test_try_refine_poses_singleton_minimal_returns_result_or_none():
+    coords_batch = jnp.array(
+        [
+            [[0.0, 0.0, 0.0]],
+            [[0.5, 0.0, 0.0]],
+        ],
+        dtype=jnp.float32,
+    )
+    result = try_refine_poses_singleton_minimal(
+        coords_batch=coords_batch,
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        n_rounds=2,
+        target_error=0.001,
+        base_translation_step=0.5,
+        base_rotation_step_rad=float(jnp.pi / 2.0),
+        coarse_target_error=0.004,
+    )
+
+    assert result is None or isinstance(result[1][0], MinimalStagedRoundResult)
+
+
+def test_diagnose_singleton_acceptance_schedule_returns_diagnostic():
+    coords_batch = jnp.array(
+        [
+            [[0.0, 0.0, 0.0]],
+            [[0.5, 0.0, 0.0]],
+        ],
+        dtype=jnp.float32,
+    )
+    diagnostic = diagnose_singleton_acceptance_schedule(
+        coords_batch=coords_batch,
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        n_rounds=2,
+        target_error=0.001,
+        base_translation_step=0.5,
+        base_rotation_step_rad=float(jnp.pi / 2.0),
+        coarse_target_error=0.004,
+    )
+
+    assert isinstance(diagnostic, StagedRoundAcceptanceDiagnostic)
+    assert diagnostic.total_rounds == 2
+
+
+def test_refine_poses_singleton_then_exact_returns_hybrid_result():
+    coords_batch = jnp.array(
+        [
+            [[0.0, 0.0, 0.0]],
+            [[0.5, 0.0, 0.0]],
+        ],
+        dtype=jnp.float32,
+    )
+    result = refine_poses_singleton_then_exact(
+        coords_batch=coords_batch,
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        n_rounds=2,
+        target_error=0.001,
+        base_translation_step=0.5,
+        base_rotation_step_rad=float(jnp.pi / 2.0),
+        coarse_target_error=0.004,
+    )
+
+    assert isinstance(result, HybridSingletonRefinementResult)
+    assert result.coords.shape == coords_batch.shape
 
 
 def test_certified_pruning_certificate_uses_singleton_fast_path_when_band_is_singleton():

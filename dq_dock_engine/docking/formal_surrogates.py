@@ -14,7 +14,8 @@ from dq_dock_engine.docking.formal_pruning import (
     survivor_set_of_top1_branch,
     certified_pruning_certificate,
 )
-from dq_dock_engine.docking.formal_handles import TK12
+from dq_dock_engine.docking.formal_handles import TK8, TK9A, TK12
+from dq_dock_engine.generated.formal_handle_aliases import TK8, TK9A
 from dq_dock_engine.docking.scoring import optimal_cutoff, score_certified_batch
 from dq_dock_engine.docking.scoring import certified_lj_error_bound
 
@@ -69,6 +70,15 @@ class StagedTop1CostDiagnostic:
 
 
 @dataclass(frozen=True)
+class TwoCutoffApproximationWitness:
+    exact_error_bound: float
+    coarse_error_bound: float
+    combined_delta: float
+    theorem_handle: str
+    witness_handle: str
+
+
+@dataclass(frozen=True)
 class StagedSingletonAcceptRoundResult:
     selected_actions: jax.Array
     next_coords: jax.Array
@@ -84,6 +94,58 @@ class FastSingletonAcceptRoundResult:
     delta: float
     retained_receptor_indices: jax.Array
     theorem_handle: str
+
+
+@jax.jit
+def _fast_singleton_accept_core(
+    candidate_batches: jax.Array,
+    coarse_scores: jax.Array,
+    delta: float,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    best_scores = jnp.min(coarse_scores, axis=1, keepdims=True)
+    best_actions = jnp.argmin(coarse_scores, axis=1)
+    strict_mask = coarse_scores - best_scores > 2.0 * delta
+    strict_mask = strict_mask.at[jnp.arange(coarse_scores.shape[0]), best_actions].set(
+        True
+    )
+    accepted = jnp.all(strict_mask)
+    next_coords = candidate_batches[
+        jnp.arange(candidate_batches.shape[0]), best_actions
+    ]
+    return accepted, best_actions, next_coords
+
+
+@dataclass(frozen=True)
+class PerPoseFastSingletonAcceptRoundResult:
+    selected_actions: jax.Array
+    next_coords: jax.Array
+    coarse_scores: jax.Array
+    coarse_target_error: float
+    delta: float
+    retained_receptor_indices_per_pose: tuple[jax.Array, ...]
+    theorem_handle: str
+
+
+@dataclass(frozen=True)
+class StagedSingletonGateResult:
+    exact_retained_receptor_indices: jax.Array
+    coarse_retained_receptor_indices: jax.Array
+    singleton_accept_result: FastSingletonAcceptRoundResult | None
+
+
+def two_cutoff_approximation_witness(
+    target_error: float,
+    coarse_target_error: float,
+) -> TwoCutoffApproximationWitness:
+    exact_error_bound = certified_lj_error_bound(target_error)
+    coarse_error_bound = certified_lj_error_bound(coarse_target_error)
+    return TwoCutoffApproximationWitness(
+        exact_error_bound=exact_error_bound,
+        coarse_error_bound=coarse_error_bound,
+        combined_delta=exact_error_bound + coarse_error_bound,
+        theorem_handle=TK8,
+        witness_handle=TK9A,
+    )
 
 
 def select_trimmed_receptor_subset(
@@ -345,7 +407,9 @@ def try_staged_singleton_accept_round(
         target_error=coarse_target_error,
     )
     coarse_scores = coarse_batch.scores.reshape((n_poses, n_actions))
-    delta = certified_lj_error_bound(target_error) + coarse_batch.error_bound
+    delta = two_cutoff_approximation_witness(
+        target_error, coarse_target_error
+    ).combined_delta
     round_result = staged_top1_round_from_coarse_scores(
         coarse_scores=coarse_scores,
         delta=delta,
@@ -395,16 +459,17 @@ def try_fast_singleton_accept_round(
         target_error=coarse_target_error,
     )
     coarse_scores = coarse_batch.scores.reshape((n_poses, n_actions))
-    delta = certified_lj_error_bound(target_error) + coarse_batch.error_bound
+    delta = two_cutoff_approximation_witness(
+        target_error, coarse_target_error
+    ).combined_delta
 
-    best_scores = jnp.min(coarse_scores, axis=1, keepdims=True)
-    best_actions = jnp.argmin(coarse_scores, axis=1)
-    strict_mask = coarse_scores - best_scores > 2.0 * delta
-    strict_mask = strict_mask.at[jnp.arange(n_poses), best_actions].set(True)
-    if not bool(jnp.all(strict_mask)):
+    accepted, best_actions, next_coords = _fast_singleton_accept_core(
+        candidate_batches=candidate_batches,
+        coarse_scores=coarse_scores,
+        delta=delta,
+    )
+    if not bool(accepted):
         return None
-
-    next_coords = candidate_batches[jnp.arange(n_poses), best_actions]
     return FastSingletonAcceptRoundResult(
         selected_actions=best_actions,
         next_coords=next_coords,
@@ -413,6 +478,87 @@ def try_fast_singleton_accept_round(
         delta=delta,
         retained_receptor_indices=coarse_retained_indices,
         theorem_handle=TK12,
+    )
+
+
+def try_hybrid_singleton_accept_round(
+    receptor_coords: jax.Array,
+    receptor_radii: jax.Array,
+    ligand_radii: jax.Array,
+    candidate_batches: jax.Array,
+    target_error: float,
+    coarse_target_error: float,
+    translation_step: float,
+) -> FastSingletonAcceptRoundResult | None:
+    exact_retained_indices = select_exact_receptor_subset_for_local_family(
+        receptor_coords=receptor_coords,
+        receptor_radii=receptor_radii,
+        reference_coords_batch=candidate_batches[:, 0, :, :],
+        ligand_radii=ligand_radii,
+        translation_step=translation_step,
+        target_error=target_error,
+    )
+    coarse_retained_indices = select_exact_receptor_subset_for_local_family(
+        receptor_coords=receptor_coords,
+        receptor_radii=receptor_radii,
+        reference_coords_batch=candidate_batches[:, 0, :, :],
+        ligand_radii=ligand_radii,
+        translation_step=translation_step,
+        target_error=coarse_target_error,
+    )
+    if int(coarse_retained_indices.shape[0]) >= int(exact_retained_indices.shape[0]):
+        return None
+    return try_fast_singleton_accept_round(
+        receptor_coords=receptor_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_radii,
+        candidate_batches=candidate_batches,
+        target_error=target_error,
+        coarse_target_error=coarse_target_error,
+        translation_step=translation_step,
+    )
+
+
+def staged_singleton_gate(
+    receptor_coords: jax.Array,
+    receptor_radii: jax.Array,
+    ligand_radii: jax.Array,
+    candidate_batches: jax.Array,
+    target_error: float,
+    coarse_target_error: float,
+    translation_step: float,
+) -> StagedSingletonGateResult:
+    exact_retained_indices = select_exact_receptor_subset_for_local_family(
+        receptor_coords=receptor_coords,
+        receptor_radii=receptor_radii,
+        reference_coords_batch=candidate_batches[:, 0, :, :],
+        ligand_radii=ligand_radii,
+        translation_step=translation_step,
+        target_error=target_error,
+    )
+    coarse_retained_indices = select_exact_receptor_subset_for_local_family(
+        receptor_coords=receptor_coords,
+        receptor_radii=receptor_radii,
+        reference_coords_batch=candidate_batches[:, 0, :, :],
+        ligand_radii=ligand_radii,
+        translation_step=translation_step,
+        target_error=coarse_target_error,
+    )
+    singleton_accept_result = None
+    if int(coarse_retained_indices.shape[0]) < int(exact_retained_indices.shape[0]):
+        singleton_accept_result = try_fast_singleton_accept_round(
+            receptor_coords=receptor_coords,
+            receptor_radii=receptor_radii,
+            ligand_radii=ligand_radii,
+            candidate_batches=candidate_batches,
+            target_error=target_error,
+            coarse_target_error=coarse_target_error,
+            translation_step=translation_step,
+        )
+    return StagedSingletonGateResult(
+        exact_retained_receptor_indices=exact_retained_indices,
+        coarse_retained_receptor_indices=coarse_retained_indices,
+        singleton_accept_result=singleton_accept_result,
     )
 
 
@@ -438,6 +584,61 @@ def try_adaptive_singleton_accept_round(
         if result is not None:
             return result
     return None
+
+
+def try_per_pose_fast_singleton_accept_round(
+    receptor_coords: jax.Array,
+    receptor_radii: jax.Array,
+    ligand_radii: jax.Array,
+    candidate_batches: jax.Array,
+    target_error: float,
+    coarse_target_error: float,
+    translation_step: float,
+) -> PerPoseFastSingletonAcceptRoundResult | None:
+    n_poses, n_actions, _n_atoms, _ = candidate_batches.shape
+    delta = two_cutoff_approximation_witness(
+        target_error, coarse_target_error
+    ).combined_delta
+    selected_actions = []
+    next_coords = []
+    coarse_score_rows = []
+    retained_per_pose: list[jax.Array] = []
+
+    for pose_index in range(n_poses):
+        coarse_retained_indices = select_exact_receptor_subset_for_local_family(
+            receptor_coords=receptor_coords,
+            receptor_radii=receptor_radii,
+            reference_coords_batch=candidate_batches[pose_index, 0, :, :][None, :, :],
+            ligand_radii=ligand_radii,
+            translation_step=translation_step,
+            target_error=coarse_target_error,
+        )
+        coarse_batch = score_certified_batch(
+            receptor_coords=receptor_coords[coarse_retained_indices],
+            poses_coords=candidate_batches[pose_index],
+            receptor_radii=receptor_radii[coarse_retained_indices],
+            ligand_radii=ligand_radii,
+            target_error=coarse_target_error,
+        )
+        coarse_scores = coarse_batch.scores
+        guarantee = staged_top1_guarantee_from_coarse_scores(coarse_scores, delta)
+        if not guarantee.exact_winner_certified:
+            return None
+
+        selected_actions.append(guarantee.selected_action)
+        next_coords.append(candidate_batches[pose_index, guarantee.selected_action])
+        coarse_score_rows.append(coarse_scores)
+        retained_per_pose.append(coarse_retained_indices)
+
+    return PerPoseFastSingletonAcceptRoundResult(
+        selected_actions=jnp.array(selected_actions, dtype=jnp.int32),
+        next_coords=jnp.stack(next_coords, axis=0),
+        coarse_scores=jnp.stack(coarse_score_rows, axis=0),
+        coarse_target_error=coarse_target_error,
+        delta=delta,
+        retained_receptor_indices_per_pose=tuple(retained_per_pose),
+        theorem_handle=TK12,
+    )
 
 
 def staged_top1_cost_diagnostic(
@@ -489,7 +690,9 @@ def staged_top1_cost_diagnostic(
     coarse_scores = coarse_batch.scores.reshape(
         (candidate_batches.shape[0], candidate_batches.shape[1])
     )
-    delta = float(exact_batch.error_bound + coarse_batch.error_bound)
+    delta = two_cutoff_approximation_witness(
+        target_error, coarse_target_error
+    ).combined_delta
     summary = summarize_staged_top1_round(
         staged_top1_round_from_coarse_scores(
             coarse_scores=coarse_scores,

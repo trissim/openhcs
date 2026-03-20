@@ -47,6 +47,7 @@ from dq_dock_engine.docking.formal_surrogates import (
     CertifiedCoarseScoreBundle,
     FastSingletonAcceptRoundResult,
     StagedSingletonAcceptRoundResult,
+    try_fast_singleton_accept_round,
     score_exact_and_coarse_round,
 )
 from dq_dock_engine.docking.formal_pruning import (
@@ -81,6 +82,28 @@ class StagedCertifiedDecisionState:
     retained_receptor_indices: jax.Array
     top1_guarantee: CertifiedSurvivorSetWitness | StagedTop1Guarantee
     theorem_handle: str
+
+
+@dataclass(frozen=True)
+class MinimalStagedRoundResult:
+    next_coords: jax.Array
+    selected_actions: jax.Array
+    delta: float
+    theorem_handle: str
+
+
+@dataclass(frozen=True)
+class StagedRoundAcceptanceDiagnostic:
+    accepted_rounds: int
+    first_failed_round: int | None
+    total_rounds: int
+
+
+@dataclass(frozen=True)
+class HybridSingletonRefinementResult:
+    coords: jax.Array
+    singleton_round_history: tuple[MinimalStagedRoundResult, ...]
+    exact_round_history: tuple[tuple[CertifiedOptimizerState, ...], ...]
 
 
 def _noop_is_unique_admissible_action(state: CertifiedOptimizerState) -> bool:
@@ -160,6 +183,222 @@ def staged_decision_states_from_singleton_accept_round(
         )
         for pose_index in range(len(round_result.round_result.decisions))
     )
+
+
+def try_refine_round_singleton_staged(
+    coords_batch: jax.Array,
+    receptor_coords: jax.Array,
+    receptor_radii: jax.Array,
+    ligand_radii: jax.Array,
+    target_error: float,
+    round_index: int,
+    base_translation_step: float,
+    base_rotation_step_rad: float,
+    coarse_target_error: float = 0.004,
+) -> tuple[jax.Array, tuple[StagedCertifiedDecisionState, ...]] | None:
+    action_family = create_certified_action_family(
+        translation_step=base_translation_step / (2**round_index),
+        rotation_step_rad=base_rotation_step_rad / (2**round_index),
+        stencil_level=round_index,
+    )
+    candidate_batches = apply_action_family_batch(coords_batch, action_family)
+    staged_result = try_fast_singleton_accept_round(
+        receptor_coords=receptor_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_radii,
+        candidate_batches=candidate_batches,
+        target_error=target_error,
+        coarse_target_error=coarse_target_error,
+        translation_step=action_family.translation_step,
+    )
+    if staged_result is None:
+        return None
+    return (
+        staged_result.next_coords,
+        staged_decision_states_from_singleton_accept_round(staged_result),
+    )
+
+
+def try_refine_round_singleton_minimal(
+    coords_batch: jax.Array,
+    receptor_coords: jax.Array,
+    receptor_radii: jax.Array,
+    ligand_radii: jax.Array,
+    target_error: float,
+    round_index: int,
+    base_translation_step: float,
+    base_rotation_step_rad: float,
+    coarse_target_error: float = 0.004,
+) -> MinimalStagedRoundResult | None:
+    action_family = create_certified_action_family(
+        translation_step=base_translation_step / (2**round_index),
+        rotation_step_rad=base_rotation_step_rad / (2**round_index),
+        stencil_level=round_index,
+    )
+    candidate_batches = apply_action_family_batch(coords_batch, action_family)
+    staged_result = try_fast_singleton_accept_round(
+        receptor_coords=receptor_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_radii,
+        candidate_batches=candidate_batches,
+        target_error=target_error,
+        coarse_target_error=coarse_target_error,
+        translation_step=action_family.translation_step,
+    )
+    if staged_result is None:
+        return None
+    return MinimalStagedRoundResult(
+        next_coords=staged_result.next_coords,
+        selected_actions=staged_result.selected_actions,
+        delta=staged_result.delta,
+        theorem_handle=staged_result.theorem_handle,
+    )
+
+
+def try_refine_poses_singleton_minimal(
+    coords_batch: jax.Array,
+    receptor_coords: jax.Array,
+    receptor_radii: jax.Array,
+    ligand_radii: jax.Array,
+    n_rounds: int,
+    target_error: float,
+    base_translation_step: float = 0.5,
+    base_rotation_step_rad: float = jnp.pi / 12.0,
+    coarse_target_error: float = 0.004,
+) -> tuple[jax.Array, tuple[MinimalStagedRoundResult, ...]] | None:
+    if n_rounds <= 0:
+        raise ValueError("n_rounds must be positive")
+    current_coords = coords_batch
+    history: list[MinimalStagedRoundResult] = []
+    for round_index in range(n_rounds):
+        result = try_refine_round_singleton_minimal(
+            coords_batch=current_coords,
+            receptor_coords=receptor_coords,
+            receptor_radii=receptor_radii,
+            ligand_radii=ligand_radii,
+            target_error=target_error,
+            round_index=round_index,
+            base_translation_step=base_translation_step,
+            base_rotation_step_rad=base_rotation_step_rad,
+            coarse_target_error=coarse_target_error,
+        )
+        if result is None:
+            return None
+        current_coords = result.next_coords
+        history.append(result)
+    return current_coords, tuple(history)
+
+
+def diagnose_singleton_acceptance_schedule(
+    coords_batch: jax.Array,
+    receptor_coords: jax.Array,
+    receptor_radii: jax.Array,
+    ligand_radii: jax.Array,
+    n_rounds: int,
+    target_error: float,
+    base_translation_step: float = 0.5,
+    base_rotation_step_rad: float = jnp.pi / 12.0,
+    coarse_target_error: float = 0.004,
+) -> StagedRoundAcceptanceDiagnostic:
+    if n_rounds <= 0:
+        raise ValueError("n_rounds must be positive")
+    current_coords = coords_batch
+    accepted_rounds = 0
+    for round_index in range(n_rounds):
+        result = try_refine_round_singleton_minimal(
+            coords_batch=current_coords,
+            receptor_coords=receptor_coords,
+            receptor_radii=receptor_radii,
+            ligand_radii=ligand_radii,
+            target_error=target_error,
+            round_index=round_index,
+            base_translation_step=base_translation_step,
+            base_rotation_step_rad=base_rotation_step_rad,
+            coarse_target_error=coarse_target_error,
+        )
+        if result is None:
+            return StagedRoundAcceptanceDiagnostic(
+                accepted_rounds=accepted_rounds,
+                first_failed_round=round_index,
+                total_rounds=n_rounds,
+            )
+        accepted_rounds += 1
+        current_coords = result.next_coords
+    return StagedRoundAcceptanceDiagnostic(
+        accepted_rounds=accepted_rounds,
+        first_failed_round=None,
+        total_rounds=n_rounds,
+    )
+
+
+def refine_poses_singleton_then_exact(
+    coords_batch: jax.Array,
+    receptor_coords: jax.Array,
+    receptor_radii: jax.Array,
+    ligand_radii: jax.Array,
+    n_rounds: int,
+    target_error: float,
+    base_translation_step: float = 0.5,
+    base_rotation_step_rad: float = jnp.pi / 12.0,
+    prior_spec: CertifiedPriorSpec | None = None,
+    max_coarse_receptor_atoms: int = 64,
+    coarse_target_error: float = 0.004,
+) -> HybridSingletonRefinementResult:
+    if n_rounds <= 0:
+        raise ValueError("n_rounds must be positive")
+    effective_prior_spec = (
+        CertifiedPriorSpec(kind="uniform") if prior_spec is None else prior_spec
+    )
+    current_coords = coords_batch
+    singleton_history: list[MinimalStagedRoundResult] = []
+    round_index = 0
+    while round_index < n_rounds:
+        staged = try_refine_round_singleton_minimal(
+            coords_batch=current_coords,
+            receptor_coords=receptor_coords,
+            receptor_radii=receptor_radii,
+            ligand_radii=ligand_radii,
+            target_error=target_error,
+            round_index=round_index,
+            base_translation_step=base_translation_step,
+            base_rotation_step_rad=base_rotation_step_rad,
+            coarse_target_error=coarse_target_error,
+        )
+        if staged is None:
+            break
+        singleton_history.append(staged)
+        current_coords = staged.next_coords
+        round_index += 1
+
+    exact_history: tuple[tuple[CertifiedOptimizerState, ...], ...] = ()
+    if round_index < n_rounds:
+        current_coords, exact_history = refine_poses_certified(
+            coords_batch=current_coords,
+            receptor_coords=receptor_coords,
+            receptor_radii=receptor_radii,
+            ligand_radii=ligand_radii,
+            n_rounds=n_rounds - round_index,
+            target_error=target_error,
+            base_translation_step=base_translation_step / (2**round_index),
+            base_rotation_step_rad=base_rotation_step_rad / (2**round_index),
+            prior_spec=effective_prior_spec,
+            max_coarse_receptor_atoms=max_coarse_receptor_atoms,
+        )
+
+    return HybridSingletonRefinementResult(
+        coords=current_coords,
+        singleton_round_history=tuple(singleton_history),
+        exact_round_history=exact_history,
+    )
+
+
+def _run_exact_formal_refinement(**kwargs) -> jax.Array:
+    opt_coords, _ = refine_poses_certified(**kwargs)
+    return opt_coords
+
+
+def _run_singleton_hybrid_formal_refinement(**kwargs) -> jax.Array:
+    return refine_poses_singleton_then_exact(**kwargs).coords
 
 
 def _build_belief_state(

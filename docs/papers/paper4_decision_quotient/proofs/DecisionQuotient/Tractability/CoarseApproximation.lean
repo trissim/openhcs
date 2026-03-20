@@ -90,6 +90,35 @@ theorem shared_reference_uniformApprox_of_two_sided_bounds
   have hC := abs_le.mp (hCoarse a s)
   constructor <;> linarith
 
+/-- Object-level witness that an exact and coarse scorer share a common
+    reference approximation, yielding a combined uniform discrepancy bound. -/
+structure SharedReferenceApproxWitness
+    {A : Type u} {S : Type v}
+    (uRef exactDP coarseDP : DecisionProblem A S) where
+  deltaExact : ℝ
+  deltaCoarse : ℝ
+  deltaCombined : ℝ
+  exactApproxRef : UniformUtilityApprox uRef exactDP deltaExact
+  coarseApproxRef : UniformUtilityApprox uRef coarseDP deltaCoarse
+  combinedApprox : UniformUtilityApprox exactDP coarseDP deltaCombined
+
+/-- Construct the canonical shared-reference witness with the summed radius. -/
+def sharedReferenceApproxWitness
+    {A : Type u} {S : Type v}
+    (uRef exactDP coarseDP : DecisionProblem A S)
+    (deltaExact deltaCoarse : ℝ)
+    (hExact : UniformUtilityApprox uRef exactDP deltaExact)
+    (hCoarse : UniformUtilityApprox uRef coarseDP deltaCoarse) :
+    SharedReferenceApproxWitness uRef exactDP coarseDP :=
+  { deltaExact := deltaExact
+    deltaCoarse := deltaCoarse
+    deltaCombined := deltaExact + deltaCoarse
+    exactApproxRef := hExact
+    coarseApproxRef := hCoarse
+    combinedApprox :=
+      shared_reference_uniformApprox_of_two_sided_bounds
+        uRef exactDP coarseDP deltaExact deltaCoarse hExact hCoarse }
+
 /-- Sampled docking specialization: every finite sampled docking problem admits
     a canonical exact finite-domain discrepancy radius witnessing uniform
     approximation between its exact and coarse score families. -/
