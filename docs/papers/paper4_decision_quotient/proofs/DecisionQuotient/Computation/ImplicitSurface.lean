@@ -1,7 +1,10 @@
 /-
   Paper 4: Decision-Relevant Uncertainty
-
   Computation/ImplicitSurface.lean - Implicit Protein Surface via Distance Functions
+
+  DEPENDS ON: Geometry3D (Point3, distance, vector ops)
+  PROVIDES: Concavity definition, SurfacePoint, ConcaveRegion
+  USED BY: BoundingSphere, PocketDetection
 -/
 
 import Mathlib.Data.Real.Basic

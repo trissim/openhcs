@@ -1,7 +1,10 @@
 /-
   Paper 4: Decision-Relevant Uncertainty
-
   Computation/BoundingSphere.lean - Minimal Enclosing Sphere
+
+  DEPENDS ON: Geometry3D (Point3, distance, midpoint)
+  PROVIDES: Sphere, IsBounded, existence_minimal_bounding_sphere
+  USED BY: PocketDetection
 
   CRITICAL BRIDGE THEOREM:
   

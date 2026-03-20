@@ -1,7 +1,9 @@
 /-
   Paper 4: Decision-Relevant Uncertainty
-
   Computation/PocketDetection.lean - Pocket Detection as Decision Problem
+
+  DEPENDS ON: Geometry3D, ImplicitSurface, BoundingSphere
+  PROVIDES: PocketDetectionInput, DetectedPocket, regionToDetectedPocket
 
   KEY INSIGHT: Pocket detection is framed as a decision problem:
   
