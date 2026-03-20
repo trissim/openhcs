@@ -128,22 +128,47 @@ noncomputable def surfacePositionsToBindingSite
   let B := Classical.choose minimal_sphere_proof
   (B.center, B.radius)
 
-/-! ## 6. Two-Point Sphere (AXIOM 6) -/
+/-! ## 6. Two-Point Sphere (AXIOM 6 → THEOREM) -/
 
 /--
-  AXIOM 6: For 2 distinct support points, the sphere center is the midpoint.
+  THEOREM 6: For 2 distinct points, the sphere centered at midpoint with
+  radius = distance/2 encloses both points on its boundary.
   
-  The sphere centered at Geometry3D.midpoint(p,q) with radius=Geometry3D.distance(p,q)/2 
-  encloses both p and q. This is used in Ritter's algorithm.
+  Proof: Uses midpoint lemmas and positivity of distance for distinct points.
+  This is used in Ritter's algorithm for building bounding spheres.
 -/
-axiom sphere_from_two_points (p q : Point3) (hpq : p ≠ q) :
-    let center := Geometry3D.midpoint p q
-    let radius := Geometry3D.distance p q / 2
-    ∃ (hr : radius > 0),
-    let B : Sphere := { center := center, radius := radius, radius_pos := hr }
-    EnclosedIn {p, q} B ∧
-    OnBoundary p B ∧
-    OnBoundary q B
+theorem sphere_from_two_points (p q : Point3) (hpq : p ≠ q) :
+    ∃ B : Sphere,
+      B.center = Geometry3D.midpoint p q ∧
+      B.radius = Geometry3D.distance p q / 2 ∧
+      EnclosedIn ({p, q} : Set Point3) B ∧
+      OnBoundary p B ∧
+      OnBoundary q B := by
+  have hr : Geometry3D.distance p q / 2 > 0 := by
+    have hpos : Geometry3D.distance p q > 0 :=
+      Geometry3D.distance_pos_of_ne hpq
+    linarith
+
+  let B : Sphere := {
+    center := Geometry3D.midpoint p q
+    radius := Geometry3D.distance p q / 2
+    radius_pos := hr
+  }
+
+  refine ⟨B, rfl, rfl, ?_, ?_, ?_⟩
+
+  · intro x hx
+    have hx' : x = p ∨ x = q := by
+      simpa [Set.mem_insert_iff, Set.mem_singleton_iff] using hx
+    rcases hx' with hxp | hxq
+    · rw [hxp]
+      exact le_of_eq (Geometry3D.distance_midpoint_left p q)
+    · rw [hxq]
+      exact le_of_eq (Geometry3D.distance_midpoint_right p q)
+
+  · exact Geometry3D.distance_midpoint_left p q
+
+  · exact Geometry3D.distance_midpoint_right p q
 
 end BoundingSphere
 end Computation
