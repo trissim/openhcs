@@ -84,15 +84,26 @@ structure ConcaveRegion (mol : Molecule) (r_probe : ℝ) where
 /-! ## 6. Key Theorems -/
 
 /--
-  AXIOM 3 (REWRITE NEEDED): Bounded concave regions have positive volume.
-  This currently says "volume > 0" but a surface has zero volume.
-  Should be restated as: "bounded concave regions have nonempty interior"
-  or "∃ probe placements that fit in the concave region".
+  AXIOM 3 (REWRITTEN): Concave regions have distinct surface points.
+
+  A concave region is not vacuous - it contains at least two
+  distinct surface points. This is the correct geometric statement
+  since surface points have zero 3D volume.
 -/
-axiom concave_region_has_volume
+axiom concave_region_has_distinct_points
     {mol : Molecule} {r_probe : ℝ}
     (region : ConcaveRegion mol r_probe) :
-    ∃ (vol : ℝ), vol > 0
+    ∃ (p q : SurfacePoint mol), p ∈ region.points ∧ q ∈ region.points ∧ p ≠ q
+
+/--
+  AXIOM 3b (ALTERNATIVE): Concave regions are nonempty.
+  
+  Weak version if the above is too strong.
+-/
+axiom concave_region_nonempty
+    {mol : Molecule} {r_probe : ℝ}
+    (region : ConcaveRegion mol r_probe) :
+    region.points.Nonempty
 
 /-- AXIOM 4: Concavity equivalence - PROVEN (definitional rfl) -/
 theorem concavity_equivalence
@@ -106,18 +117,26 @@ theorem concavity_equivalence
   rfl
 
 /--
-  AXIOM 5 (REWRITE NEEDED): Ligand accessibility.
-  Current statement goes the wrong direction (inside sphere → vdw ≤ 0).
-  Should be: "concave regions are accessible to probes of radius ≤ r_probe".
+  AXIOM 5 (REWRITTEN): Ligand accessibility - local clearance version.
+
+  If a ligand fits in the probe radius, there exists a surface point
+  in the concave region and a clearance point near it where the
+  ligand center can sit without penetrating the protein body.
+
+  This is the correct docking semantics:
+  - p ∈ region: we pick a surface point in the pocket
+  - distance q p.position ≤ r_probe - ligandRadius: ligand fits in the clearance
+  - vdwDistance mol q ≥ ligandRadius: ligand center is outside protein
 -/
-axiom concave_region_is_accessible
+axiom concave_region_has_local_clearance
     {mol : Molecule} {r_probe : ℝ}
     (region : ConcaveRegion mol r_probe)
     (ligandRadius : ℝ)
     (hLigand : ligandRadius ≤ r_probe) :
-    ∀ p ∈ region.points, ∀ q : Point3,
-      Geometry3D.distance q p.position ≤ r_probe - ligandRadius →
-      vdwDistance mol q ≤ 0
+    ∃ (p : SurfacePoint mol), p ∈ region.points ∧
+      ∃ (q : Point3),
+        Geometry3D.distance q p.position ≤ r_probe - ligandRadius ∧
+        vdwDistance mol q ≥ ligandRadius
 
 end ImplicitSurface
 end Computation

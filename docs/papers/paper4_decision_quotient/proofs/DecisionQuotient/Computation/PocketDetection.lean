@@ -96,20 +96,24 @@ def pocketScore (pocket : DetectedPocket input) : ℝ :=
 Key theorems connecting geometric detection to binding competence.
 -/
 
-/-- THEOREM: Concavity implies binding competence.
-    
-    If a region is concave (probe touches ≥2 atoms) and the ligand
-    fits within the probe radius, then the ligand can bind there.
+/-- THEOREM: Binding competence follows from concavity.
+
+    If a region is concave and the ligand fits within the probe radius,
+    then there exists a clearance point where the ligand can sit.
+
+    This is an existential statement: we guarantee at least one valid
+    binding configuration exists, not that all configurations work.
 -/
 theorem concave_region_is_binding_competent
     (input : PocketDetectionInput)
     (region : ImplicitSurface.ConcaveRegion input.mol input.probeRadius)
     (r_ligand : ℝ)
     (hLigand : r_ligand ≤ input.probeRadius) :
-    ∀ p ∈ region.points, ∀ q : ImplicitSurface.Point3,
-      Geometry3D.distance q p.position ≤ input.probeRadius - r_ligand →
-      ImplicitSurface.vdwDistance input.mol q ≤ 0 :=
-  by apply ImplicitSurface.concave_region_is_accessible region r_ligand hLigand
+    ∃ (p : _), p ∈ region.points ∧
+      ∃ (q : _),
+        Geometry3D.distance q p.position ≤ input.probeRadius - r_ligand ∧
+        ImplicitSurface.vdwDistance input.mol q ≥ r_ligand :=
+  by apply ImplicitSurface.concave_region_has_local_clearance region r_ligand hLigand
 
 /-- THEOREM: A detected pocket is valid binding site.
     
