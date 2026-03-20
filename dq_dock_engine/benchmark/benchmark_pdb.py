@@ -22,9 +22,11 @@ Requirements:
 
 import argparse
 from abc import ABC, abstractmethod
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import csv
 import json
 import math
+import multiprocessing as mp
 import os
 import subprocess
 import sys
@@ -36,6 +38,7 @@ from typing import List, Literal, Optional, Sequence, cast
 import urllib.request
 import gzip
 import shutil
+from typing import Callable, Generic, Iterator, TypeVar
 
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
@@ -85,6 +88,7 @@ DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY = FormalRoundStrategy.SINGLETON_HYBRID
 DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY = CertifiedScoringFamily.LJ_REALSPACE_EWALD
 DEFAULT_BENCHMARK_USE_POCKET_GUIDED = True
 DEFAULT_BENCHMARK_USE_MULTI_STAGE = False
+DEFAULT_BENCHMARK_PROCESS_START_METHOD = "spawn"
 
 
 def derive_benchmark_pocket_radius_from_box_size(box_size: float) -> float:
@@ -264,6 +268,19 @@ class PreparedBenchmarkComplex:
 
 
 @dataclass(frozen=True)
+class BenchmarkParallelism:
+    max_workers: int = 1
+
+    def __post_init__(self) -> None:
+        if self.max_workers <= 0:
+            raise ValueError("max_workers must be positive")
+
+    @property
+    def is_parallel(self) -> bool:
+        return self.max_workers > 1
+
+
+@dataclass(frozen=True)
 class CompetitorStatistics:
     display_name: str
     score_name: str
@@ -418,6 +435,7 @@ class PreparedDockingInputs:
 class BenchmarkExecutionContext:
     charge_method: ChargeMethod
     certified_scoring_family: CertifiedScoringFamily
+    parallelism: BenchmarkParallelism
     complexes: tuple[PreparedBenchmarkComplex, ...]
     n_complexes_requested: int
     n_poses: int
@@ -441,6 +459,31 @@ class BenchmarkExecutionContext:
 
     def elapsed(self) -> float:
         return time.time() - self.bench_start
+
+
+JobType = TypeVar("JobType")
+ResultType = TypeVar("ResultType")
+
+
+def execute_benchmark_jobs(
+    jobs: Sequence[JobType],
+    *,
+    run_job: Callable[[JobType], ResultType],
+    parallelism: BenchmarkParallelism,
+) -> Iterator[ResultType]:
+    if not parallelism.is_parallel:
+        for job in jobs:
+            yield run_job(job)
+        return
+
+    mp_context = mp.get_context(DEFAULT_BENCHMARK_PROCESS_START_METHOD)
+    with ProcessPoolExecutor(
+        max_workers=parallelism.max_workers,
+        mp_context=mp_context,
+    ) as executor:
+        futures = [executor.submit(run_job, job) for job in jobs]
+        for future in as_completed(futures):
+            yield future.result()
 
 
 @dataclass
@@ -1685,6 +1728,61 @@ class BenchmarkEngine(ABC):
         """Print summary lines for this engine."""
 
 
+@dataclass(frozen=True)
+class DQDockBenchmarkJob:
+    complex_entry: PreparedBenchmarkComplex
+    charge_method: ChargeMethod
+    n_poses: int
+    n_opt_steps: int
+    use_multi_stage: bool
+    use_pocket_guided: bool
+    optimizer_backend: OptimizerBackend
+    formal_round_strategy: FormalRoundStrategy
+    certified_scoring_family: CertifiedScoringFamily
+    max_retries: int
+    retry_break_rmsd: float
+    retry_preserve_seed: bool
+    box_size: float
+
+
+@dataclass(frozen=True)
+class DQDockBenchmarkJobResult:
+    complex_entry: PreparedBenchmarkComplex
+    result: BenchmarkResult
+    dq_pose_coords: np.ndarray | None
+
+
+def run_dq_dock_benchmark_job(job: DQDockBenchmarkJob) -> DQDockBenchmarkJobResult:
+    result, dq_pose_coords = run_dq_dock(
+        job.complex_entry.pocket_coords,
+        job.complex_entry.pocket_radii,
+        job.complex_entry.ligand_coords,
+        job.complex_entry.ligand_radii,
+        job.complex_entry.center,
+        ligand_file=job.complex_entry.ligand_pdb,
+        receptor_file=job.complex_entry.pocket_receptor_pdb,
+        charge_method=job.charge_method,
+        n_poses=job.n_poses,
+        n_opt_steps=job.n_opt_steps,
+        use_multi_stage=job.use_multi_stage,
+        use_pocket_guided=job.use_pocket_guided,
+        ligand_elements=job.complex_entry.ligand_elements,
+        receptor_elements=job.complex_entry.pocket_elements,
+        optimizer_backend=job.optimizer_backend,
+        formal_round_strategy=job.formal_round_strategy,
+        certified_scoring_family=job.certified_scoring_family,
+        max_retries=job.max_retries,
+        retry_break_rmsd=job.retry_break_rmsd,
+        retry_preserve_seed=job.retry_preserve_seed,
+        box_size=job.box_size,
+    )
+    return DQDockBenchmarkJobResult(
+        complex_entry=job.complex_entry,
+        result=result,
+        dq_pose_coords=dq_pose_coords,
+    )
+
+
 class DQDockBenchmarkEngine(BenchmarkEngine):
     engine_id = "dq_dock"
     display_name = "DQ-Dock"
@@ -1695,52 +1793,52 @@ class DQDockBenchmarkEngine(BenchmarkEngine):
         )
         if context.use_pocket_guided and not context.use_multi_stage:
             mode_label = "pocket-guided picking"
-        return f"RUNNING DQ-DOCK ({context.n_poses} poses, {context.n_opt_steps} opt steps, {mode_label})"
+        worker_label = (
+            f", {context.parallelism.max_workers} workers"
+            if context.parallelism.is_parallel
+            else ""
+        )
+        return f"RUNNING DQ-DOCK ({context.n_poses} poses, {context.n_opt_steps} opt steps, {mode_label}{worker_label})"
 
-    def run_complex(
+    def run_all(
         self,
-        complex_entry: PreparedBenchmarkComplex,
+        complexes: Sequence[PreparedBenchmarkComplex],
         state: BenchmarkState,
         context: BenchmarkExecutionContext,
         excluded_rows: list[ExcludedComplexRow],
     ) -> None:
-        print(f"\n{complex_entry.pdb_id}:", flush=True)
+        if not self.is_available():
+            return
+        print("\n" + "=" * 70, flush=True)
+        print(self.section_title(context), flush=True)
+        print("=" * 70, flush=True)
 
+        jobs = tuple(
+            self._build_job(complex_entry, context) for complex_entry in complexes
+        )
+        for job_result in execute_benchmark_jobs(
+            jobs,
+            run_job=run_dq_dock_benchmark_job,
+            parallelism=context.parallelism,
+        ):
+            self._record_job_result(job_result, state, context, excluded_rows)
+
+    def _record_job_result(
+        self,
+        job_result: DQDockBenchmarkJobResult,
+        state: BenchmarkState,
+        context: BenchmarkExecutionContext,
+        excluded_rows: list[ExcludedComplexRow],
+    ) -> None:
+        complex_entry = job_result.complex_entry
+        result = job_result.result
+        dq_pose_coords = job_result.dq_pose_coords
+        print(f"\n{complex_entry.pdb_id}:", flush=True)
         print(
             f"  Ligand atoms: {len(complex_entry.ligand_coords)}, Pocket atoms: {len(complex_entry.pocket_coords)}",
             flush=True,
         )
-
-        result, dq_pose_coords = run_dq_dock(
-            complex_entry.pocket_coords,
-            complex_entry.pocket_radii,
-            complex_entry.ligand_coords,
-            complex_entry.ligand_radii,
-            complex_entry.center,
-            ligand_file=complex_entry.ligand_pdb,
-            receptor_file=complex_entry.pocket_receptor_pdb,
-            charge_method=context.charge_method,
-            n_poses=context.n_poses,
-            n_opt_steps=context.n_opt_steps,
-            use_multi_stage=context.use_multi_stage,
-            use_pocket_guided=context.use_pocket_guided,
-            ligand_elements=complex_entry.ligand_elements,
-            receptor_elements=complex_entry.pocket_elements,
-            optimizer_backend=context.optimizer_backend,
-            formal_round_strategy=context.formal_round_strategy,
-            certified_scoring_family=context.certified_scoring_family,
-            max_retries=context.max_retries,
-            retry_break_rmsd=context.retry_break_rmsd,
-            retry_preserve_seed=context.retry_preserve_seed,
-            box_size=context.box_size,
-        )
-
-        dq_pose_path: Path | None = None
-        if dq_pose_coords is not None:
-            dq_pose_path = context.pose_dir / f"{complex_entry.pdb_id}_dq_dock_pose.pdb"
-            save_pose_from_template(
-                dq_pose_coords, complex_entry.ligand_pdb, dq_pose_path
-            )
+        dq_pose_path = self._save_pose(complex_entry, context, dq_pose_coords)
 
         state.dq_results.append(result)
         state.dq_rows.append(
@@ -1780,6 +1878,55 @@ class DQDockBenchmarkEngine(BenchmarkEngine):
             context,
             excluded_rows=excluded_rows,
         )
+
+    def run_complex(
+        self,
+        complex_entry: PreparedBenchmarkComplex,
+        state: BenchmarkState,
+        context: BenchmarkExecutionContext,
+        excluded_rows: list[ExcludedComplexRow],
+    ) -> None:
+        self._record_job_result(
+            run_dq_dock_benchmark_job(self._build_job(complex_entry, context)),
+            state,
+            context,
+            excluded_rows,
+        )
+
+    def _build_job(
+        self,
+        complex_entry: PreparedBenchmarkComplex,
+        context: BenchmarkExecutionContext,
+    ) -> DQDockBenchmarkJob:
+        return DQDockBenchmarkJob(
+            complex_entry=complex_entry,
+            charge_method=context.charge_method,
+            n_poses=context.n_poses,
+            n_opt_steps=context.n_opt_steps,
+            use_multi_stage=context.use_multi_stage,
+            use_pocket_guided=context.use_pocket_guided,
+            optimizer_backend=context.optimizer_backend,
+            formal_round_strategy=context.formal_round_strategy,
+            certified_scoring_family=context.certified_scoring_family,
+            max_retries=context.max_retries,
+            retry_break_rmsd=context.retry_break_rmsd,
+            retry_preserve_seed=context.retry_preserve_seed,
+            box_size=context.box_size,
+        )
+
+    def _save_pose(
+        self,
+        complex_entry: PreparedBenchmarkComplex,
+        context: BenchmarkExecutionContext,
+        dq_pose_coords: np.ndarray | None,
+    ) -> Path | None:
+        dq_pose_path: Path | None = None
+        if dq_pose_coords is not None:
+            dq_pose_path = context.pose_dir / f"{complex_entry.pdb_id}_dq_dock_pose.pdb"
+            save_pose_from_template(
+                dq_pose_coords, complex_entry.ligand_pdb, dq_pose_path
+            )
+        return dq_pose_path
 
     def print_summary(
         self,
@@ -2173,6 +2320,7 @@ def run_benchmark(
     competitors: Literal["all", "none", "smina", "gnina"] = "all",
     dataset: Literal["curated", "casf2007"] = "casf2007",
     optimizer_backend: OptimizerBackend = DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
+    parallelism: BenchmarkParallelism = BenchmarkParallelism(),
     max_retries: int = 6,
     retry_break_rmsd: float = 0.0,
     retry_preserve_seed: bool = False,
@@ -2308,6 +2456,7 @@ def run_benchmark(
     context = BenchmarkExecutionContext(
         charge_method=charge_method,
         certified_scoring_family=certified_scoring_family,
+        parallelism=parallelism,
         complexes=tuple(prepared_complexes),
         n_complexes_requested=n_complexes,
         n_poses=n_poses,
@@ -2411,6 +2560,12 @@ if __name__ == "__main__":
         help="Directory for CSV/JSON benchmark outputs",
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of DQ-Dock worker processes across complexes (default: 1)",
+    )
+    parser.add_argument(
         "--competitors",
         type=str,
         choices=("all", "none", "smina", "gnina"),
@@ -2443,7 +2598,8 @@ if __name__ == "__main__":
         f"optimizer={DEFAULT_BENCHMARK_OPTIMIZER_BACKEND.name.lower()} "
         f"formal_round_strategy={DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY.value} "
         f"certified_scoring_family={DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY.value} "
-        f"pocket_guided={DEFAULT_BENCHMARK_USE_POCKET_GUIDED}",
+        f"pocket_guided={DEFAULT_BENCHMARK_USE_POCKET_GUIDED} "
+        f"workers={args.workers}",
         flush=True,
     )
 
@@ -2461,5 +2617,6 @@ if __name__ == "__main__":
         competitors=args.competitors,
         dataset=args.dataset,
         optimizer_backend=DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
+        parallelism=BenchmarkParallelism(max_workers=args.workers),
         max_retries=args.max_retries,
     )
