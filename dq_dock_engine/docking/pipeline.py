@@ -44,9 +44,20 @@ def _resolve_route_scoring_electrostatics(
     receptor_elements: tuple[str, ...] | None,
     charge_method: ChargeMethod | None,
     receptor_file: str | Path | None,
+    precomputed_receptor_charges: jnp.ndarray | None = None,
 ) -> CertifiedRealSpaceEwaldSpec | None:
     if effective_engine != ScoringEngine.CERTIFIED_LJ_REALSPACE_EWALD:
         return None
+
+    if precomputed_receptor_charges is not None:
+        if ligand_ctx.charges is None:
+            raise ValueError(
+                "Precomputed receptor charges require ligand_ctx.charges for electrostatic scoring."
+            )
+        return CertifiedRealSpaceEwaldSpec(
+            receptor_charges=precomputed_receptor_charges,
+            ligand_charges=ligand_ctx.charges,
+        )
 
     if charge_method is None:
         raise ValueError(
@@ -101,6 +112,7 @@ def run_docking_pipeline(
     *,
     charge_method: ChargeMethod | None = None,
     receptor_file: str | Path | None = None,
+    precomputed_receptor_charges: jnp.ndarray | None = None,
     config: DockingConfig | None = None,
     top_k: int = 10,
     optimize: bool = True,
@@ -255,6 +267,7 @@ def run_docking_pipeline(
             receptor_elements,
             charge_method,
             receptor_file,
+            precomputed_receptor_charges,
         )
         kwargs = {
             "receptor_coords": protein_coords,
@@ -328,7 +341,7 @@ def run_docking_pipeline(
             translation_cell_width = float(jnp.min(box.size)) / float(
                 certified_family.lattice_resolution
             )
-        refinement_kwargs = dict(
+        refinement_kwargs: dict[str, object] = dict(
             coords_batch=initial_coords,
             receptor_coords=protein_coords,
             receptor_radii=receptor_radii,
@@ -344,10 +357,9 @@ def run_docking_pipeline(
             receptor_elements,
             charge_method,
             receptor_file,
+            precomputed_receptor_charges,
         )
-        refinement_kwargs.update(
-            electrostatics=formal_electrostatics,
-        )
+        refinement_kwargs["electrostatics"] = formal_electrostatics
         strategy = (
             config.formal_round_strategy
             if config is not None
@@ -382,6 +394,7 @@ def run_docking_pipeline(
         receptor_elements,
         charge_method,
         receptor_file,
+        precomputed_receptor_charges,
     )
     kwargs = {
         "receptor_coords": protein_coords,

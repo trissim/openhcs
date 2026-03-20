@@ -4,9 +4,11 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import tempfile
+import jax.numpy as jnp
 
 from dq_dock_engine.benchmark import benchmark_pdb
 from dq_dock_engine.benchmark.redocking_report import render_redocking_report
+from dq_dock_engine.docking.charges import ChargeAssigner, ChargeMethod
 
 
 def test_benchmark_parallelism_rejects_non_positive_workers() -> None:
@@ -128,3 +130,31 @@ def test_render_redocking_report_tolerates_missing_gap_metrics() -> None:
 
     assert "1m0n" in markdown
     assert "n/a" in markdown
+
+
+def test_prepare_benchmark_electrostatics_surfaces_charge_failures() -> None:
+    class FailingChargeAssigner(ChargeAssigner):
+        @property
+        def method(self) -> ChargeMethod:
+            return ChargeMethod.GASTEIGER
+
+        def assign(self, source):
+            raise RuntimeError(
+                "RDKit produced non-finite Gasteiger charge at atom index 0"
+            )
+
+    try:
+        benchmark_pdb.prepare_benchmark_electrostatics(
+            assigner=FailingChargeAssigner(),
+            pdb_id="1m0n",
+            ligand_pdb=Path("ligand.pdb"),
+            ligand_elements=("C",),
+            ligand_atom_count=1,
+            pocket_receptor_pdb=Path("pocket.pdb"),
+            pocket_elements=("N",),
+            pocket_atom_count=1,
+        )
+    except RuntimeError as exc:
+        assert "non-finite Gasteiger charge" in str(exc)
+        return
+    raise AssertionError("expected raw charge preparation failure to bubble up")

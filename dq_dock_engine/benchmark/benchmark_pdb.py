@@ -78,7 +78,11 @@ from dq_dock_engine.docking.formal_handles import (
     runtime_contract_record,
     scoring_family_theorem_handles,
 )
-from dq_dock_engine.docking.charges import ChargeMethod, create_charge_assigner
+from dq_dock_engine.docking.charges import (
+    ChargeAssigner,
+    ChargeMethod,
+    create_charge_assigner,
+)
 from dq_dock_engine.docking_config import FormalRoundStrategy
 
 
@@ -262,10 +266,18 @@ class PreparedBenchmarkComplex:
     ligand_coords: np.ndarray
     ligand_radii: np.ndarray
     ligand_elements: tuple[str, ...]
+    ligand_charges: np.ndarray | None
     pocket_coords: np.ndarray
     pocket_radii: np.ndarray
     pocket_elements: tuple[str, ...]
+    pocket_charges: np.ndarray | None
     preferred_resname: str | None = None
+
+
+@dataclass(frozen=True)
+class PreparedBenchmarkElectrostatics:
+    ligand_charges: np.ndarray
+    pocket_charges: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -842,10 +854,60 @@ def prepare_ligand(pdb_path: Path, preferred_resname: str | None = None) -> Path
     return ligand_path
 
 
+def _charge_source(
+    assigner: ChargeAssigner,
+    *,
+    elements: tuple[str, ...],
+    pdb_path: Path,
+) -> tuple[str, ...] | Path:
+    return elements if assigner.method == ChargeMethod.SIMPLE else pdb_path
+
+
+def prepare_benchmark_electrostatics(
+    *,
+    assigner: ChargeAssigner,
+    pdb_id: str,
+    ligand_pdb: Path,
+    ligand_elements: tuple[str, ...],
+    ligand_atom_count: int,
+    pocket_receptor_pdb: Path,
+    pocket_elements: tuple[str, ...],
+    pocket_atom_count: int,
+) -> PreparedBenchmarkElectrostatics:
+    ligand_charges = np.asarray(
+        assigner.assign(
+            _charge_source(assigner, elements=ligand_elements, pdb_path=ligand_pdb)
+        ).charges
+    )
+    pocket_charges = np.asarray(
+        assigner.assign(
+            _charge_source(
+                assigner,
+                elements=pocket_elements,
+                pdb_path=pocket_receptor_pdb,
+            )
+        ).charges
+    )
+    if len(ligand_charges) != ligand_atom_count:
+        raise ValueError(
+            f"Ligand charge count mismatch for {pdb_id}: charges={len(ligand_charges)} atoms={ligand_atom_count}"
+        )
+    if len(pocket_charges) != pocket_atom_count:
+        raise ValueError(
+            f"Pocket charge count mismatch for {pdb_id}: charges={len(pocket_charges)} atoms={pocket_atom_count}"
+        )
+    return PreparedBenchmarkElectrostatics(
+        ligand_charges=ligand_charges,
+        pocket_charges=pocket_charges,
+    )
+
+
 def prepare_benchmark_complex(
     complex_entry: BenchmarkComplex,
     pose_dir: Path,
     box_size: float = BENCHMARK_PROTOCOL.box_size_a,
+    charge_assigner: ChargeAssigner | None = None,
+    certified_scoring_family: CertifiedScoringFamily = DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
 ) -> PreparedBenchmarkComplex:
     pocket_radius = derive_benchmark_pocket_radius_from_box_size(box_size)
     receptor_pdb = prepare_protein(complex_entry.path)
@@ -881,6 +943,26 @@ def prepare_benchmark_complex(
     if len(pocket_coords_np) == 0:
         raise ValueError("No protein atoms in pocket")
 
+    ligand_charges: np.ndarray | None = None
+    pocket_charges: np.ndarray | None = None
+    if certified_scoring_family == CertifiedScoringFamily.LJ_REALSPACE_EWALD:
+        if charge_assigner is None:
+            raise ValueError(
+                "Canonical electrostatic benchmark preparation requires an explicit ChargeAssigner."
+            )
+        electrostatics = prepare_benchmark_electrostatics(
+            assigner=charge_assigner,
+            pdb_id=complex_entry.pdb_id,
+            ligand_pdb=ligand_pdb,
+            ligand_elements=tuple(ligand_elements),
+            ligand_atom_count=len(ligand_coords),
+            pocket_receptor_pdb=pocket_receptor_pdb,
+            pocket_elements=tuple(pocket_elements),
+            pocket_atom_count=len(pocket_coords_np),
+        )
+        ligand_charges = electrostatics.ligand_charges
+        pocket_charges = electrostatics.pocket_charges
+
     receptor_view_pdb = pose_dir / f"{complex_entry.pdb_id}_receptor.pdb"
     native_ligand_view_pdb = pose_dir / f"{complex_entry.pdb_id}_native_ligand.pdb"
     copy_structure_for_viewing(receptor_pdb, receptor_view_pdb)
@@ -900,9 +982,11 @@ def prepare_benchmark_complex(
         ligand_coords=ligand_coords,
         ligand_radii=ligand_radii,
         ligand_elements=tuple(ligand_elements),
+        ligand_charges=ligand_charges,
         pocket_coords=pocket_coords_np,
         pocket_radii=pocket_radii_np,
         pocket_elements=tuple(pocket_elements),
+        pocket_charges=pocket_charges,
         preferred_resname=complex_entry.preferred_resname,
     )
 
@@ -1481,6 +1565,8 @@ def run_dq_dock(
     ligand_file: Path,
     receptor_file: Path,
     charge_method: ChargeMethod = DEFAULT_BENCHMARK_CHARGE_METHOD,
+    precomputed_ligand_charges: np.ndarray | None = None,
+    precomputed_receptor_charges: np.ndarray | None = None,
     n_poses: int = 2000,
     use_multi_stage: bool = DEFAULT_BENCHMARK_USE_MULTI_STAGE,
     use_pocket_guided: bool = DEFAULT_BENCHMARK_USE_POCKET_GUIDED,
@@ -1536,11 +1622,15 @@ def run_dq_dock(
         # ensure tuple input for assigner
         ligand_elements = tuple(ligand_elements)
 
-    ligand_charges = None
+    ligand_charges = precomputed_ligand_charges
     if (
-        use_multi_stage
-        or certified_scoring_family == CertifiedScoringFamily.LJ_REALSPACE_EWALD
-    ) and ligand_elements is not None:
+        ligand_charges is None
+        and (
+            use_multi_stage
+            or certified_scoring_family == CertifiedScoringFamily.LJ_REALSPACE_EWALD
+        )
+        and ligand_elements is not None
+    ):
         assigner = create_charge_assigner(charge_method)
         ligand_source = (
             ligand_elements if assigner.method.name == "SIMPLE" else ligand_file
@@ -1597,6 +1687,9 @@ def run_dq_dock(
                 n_opt_steps=n_opt_steps,
                 charge_method=charge_method,
                 receptor_file=receptor_file,
+                precomputed_receptor_charges=None
+                if precomputed_receptor_charges is None
+                else jnp.array(precomputed_receptor_charges),
                 receptor_elements=tuple(receptor_elements)
                 if receptor_elements is not None
                 else None,
@@ -1740,6 +1833,8 @@ class BenchmarkEngine(ABC):
 class DQDockBenchmarkJob:
     complex_entry: PreparedBenchmarkComplex
     charge_method: ChargeMethod
+    precomputed_ligand_charges: np.ndarray | None
+    precomputed_receptor_charges: np.ndarray | None
     n_poses: int
     n_opt_steps: int
     use_multi_stage: bool
@@ -1770,6 +1865,8 @@ def run_dq_dock_benchmark_job(job: DQDockBenchmarkJob) -> DQDockBenchmarkJobResu
         ligand_file=job.complex_entry.ligand_pdb,
         receptor_file=job.complex_entry.pocket_receptor_pdb,
         charge_method=job.charge_method,
+        precomputed_ligand_charges=job.precomputed_ligand_charges,
+        precomputed_receptor_charges=job.precomputed_receptor_charges,
         n_poses=job.n_poses,
         n_opt_steps=job.n_opt_steps,
         use_multi_stage=job.use_multi_stage,
@@ -1909,6 +2006,8 @@ class DQDockBenchmarkEngine(BenchmarkEngine):
         return DQDockBenchmarkJob(
             complex_entry=complex_entry,
             charge_method=context.charge_method,
+            precomputed_ligand_charges=complex_entry.ligand_charges,
+            precomputed_receptor_charges=complex_entry.pocket_charges,
             n_poses=context.n_poses,
             n_opt_steps=context.n_opt_steps,
             use_multi_stage=context.use_multi_stage,
@@ -2450,12 +2549,23 @@ def run_benchmark(
         print(f"Excluded during QC: {len(excluded_rows)}", flush=True)
 
     prepared_complexes: list[PreparedBenchmarkComplex] = []
+    charge_assigner = (
+        create_charge_assigner(charge_method)
+        if certified_scoring_family == CertifiedScoringFamily.LJ_REALSPACE_EWALD
+        else None
+    )
     for complex_entry in complexes:
         try:
             prepared_complexes.append(
-                prepare_benchmark_complex(complex_entry, pose_dir, box_size=box_size)
+                prepare_benchmark_complex(
+                    complex_entry,
+                    pose_dir,
+                    box_size=box_size,
+                    charge_assigner=charge_assigner,
+                    certified_scoring_family=certified_scoring_family,
+                )
             )
-        except ValueError as exc:
+        except (ValueError, RuntimeError, ImportError, FileNotFoundError) as exc:
             excluded_rows.append(
                 ExcludedComplexRow(pdb_id=complex_entry.pdb_id, reason=str(exc))
             )
