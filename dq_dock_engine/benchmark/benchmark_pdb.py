@@ -1506,8 +1506,7 @@ def save_benchmark_results(
     with open(json_path, "w") as f:
         json.dump(payload, f, indent=2)
 
-    if phase == "complete":
-        render_redocking_report(json_path)
+    render_redocking_report(json_path)
 
     return json_path, csv_path
 
