@@ -74,10 +74,17 @@ from dq_dock_engine.docking.formal_handles import (
     runtime_contract_record,
     scoring_family_theorem_handles,
 )
+from dq_dock_engine.docking.charges import ChargeMethod, create_charge_assigner
 from dq_dock_engine.docking_config import FormalRoundStrategy
 
 
 DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS = 12.0
+DEFAULT_BENCHMARK_CHARGE_METHOD = ChargeMethod.GASTEIGER
+DEFAULT_BENCHMARK_OPTIMIZER_BACKEND = OptimizerBackend.FORMAL
+DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY = FormalRoundStrategy.SINGLETON_HYBRID
+DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY = CertifiedScoringFamily.LJ_REALSPACE_EWALD
+DEFAULT_BENCHMARK_USE_POCKET_GUIDED = True
+DEFAULT_BENCHMARK_USE_MULTI_STAGE = False
 
 
 def derive_benchmark_pocket_radius_from_box_size(box_size: float) -> float:
@@ -409,7 +416,7 @@ class PreparedDockingInputs:
 
 @dataclass(frozen=True)
 class BenchmarkExecutionContext:
-    charge_method: object
+    charge_method: ChargeMethod
     certified_scoring_family: CertifiedScoringFamily
     complexes: tuple[PreparedBenchmarkComplex, ...]
     n_complexes_requested: int
@@ -430,11 +437,7 @@ class BenchmarkExecutionContext:
 
     @property
     def charge_method_name(self) -> str:
-        return (
-            "unknown"
-            if self.charge_method is None
-            else str(getattr(self.charge_method, "name")).lower()
-        )
+        return self.charge_method.name.lower()
 
     def elapsed(self) -> float:
         return time.time() - self.bench_start
@@ -1427,20 +1430,18 @@ def run_dq_dock(
     center: tuple,
     ligand_file: Path,
     receptor_file: Path,
-    charge_method,
+    charge_method: ChargeMethod = DEFAULT_BENCHMARK_CHARGE_METHOD,
     n_poses: int = 2000,
-    use_multi_stage: bool = False,
-    use_pocket_guided: bool = False,
+    use_multi_stage: bool = DEFAULT_BENCHMARK_USE_MULTI_STAGE,
+    use_pocket_guided: bool = DEFAULT_BENCHMARK_USE_POCKET_GUIDED,
     engine: ScoringEngine = ScoringEngine.INTERNAL_LJ,
     ligand_elements: list[str] | tuple[str, ...] | None = None,
     receptor_elements: list[str] | tuple[str, ...] | None = None,
     n_opt_steps: int = 50,
     max_retries: int = 6,
-    optimizer_backend: "OptimizerBackend" = OptimizerBackend.FORMAL,
-    formal_round_strategy: FormalRoundStrategy = FormalRoundStrategy.SINGLETON_HYBRID,
-    certified_scoring_family: CertifiedScoringFamily = (
-        CertifiedScoringFamily.LJ_REALSPACE_EWALD
-    ),
+    optimizer_backend: "OptimizerBackend" = DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
+    formal_round_strategy: FormalRoundStrategy = DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY,
+    certified_scoring_family: CertifiedScoringFamily = DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
     retry_break_rmsd: float = 0.0,
     retry_preserve_seed: bool = False,
     box_size: float = BENCHMARK_PROTOCOL.box_size_a,
@@ -1478,9 +1479,6 @@ def run_dq_dock(
         min_energy_gap=0.0,
         use_external_scorer=False,
     )
-
-    # Assign ligand elements/charges and build LigandContext
-    from dq_dock_engine.docking.charges import create_charge_assigner
 
     if ligand_elements is None:
         ligand_elements = None
@@ -2163,27 +2161,24 @@ To run this benchmark with GNINA comparisons:
 
 def run_benchmark(
     n_complexes: int = 10,
-    charge_method=None,
+    charge_method: ChargeMethod = DEFAULT_BENCHMARK_CHARGE_METHOD,
     n_poses: int = 2000,
     n_opt_steps: int = 50,
     box_size: float = BENCHMARK_PROTOCOL.box_size_a,
-    formal_round_strategy: FormalRoundStrategy = FormalRoundStrategy.SINGLETON_HYBRID,
-    certified_scoring_family: CertifiedScoringFamily = (
-        CertifiedScoringFamily.LJ_REALSPACE_EWALD
-    ),
-    use_multi_stage: bool = False,
-    use_pocket_guided: bool | None = None,
+    formal_round_strategy: FormalRoundStrategy = DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY,
+    certified_scoring_family: CertifiedScoringFamily = DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
+    use_multi_stage: bool = DEFAULT_BENCHMARK_USE_MULTI_STAGE,
+    use_pocket_guided: bool = DEFAULT_BENCHMARK_USE_POCKET_GUIDED,
     results_dir: Path = Path("benchmark_results"),
     competitors: Literal["all", "none", "smina", "gnina"] = "all",
-    dataset: Literal["curated", "casf2007"] = "curated",
-    optimizer_backend: OptimizerBackend = OptimizerBackend.FORMAL,
+    dataset: Literal["curated", "casf2007"] = "casf2007",
+    optimizer_backend: OptimizerBackend = DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
     max_retries: int = 6,
     retry_break_rmsd: float = 0.0,
     retry_preserve_seed: bool = False,
 ):
     """Run full benchmark."""
     bench_start = time.time()
-    effective_pocket_guided = True if use_pocket_guided is None else use_pocket_guided
 
     print("=" * 70, flush=True)
     print("REAL PDB DOCKING BENCHMARK", flush=True)
@@ -2320,7 +2315,7 @@ def run_benchmark(
         box_size=box_size,
         formal_round_strategy=formal_round_strategy,
         use_multi_stage=use_multi_stage,
-        use_pocket_guided=effective_pocket_guided,
+        use_pocket_guided=use_pocket_guided,
         output_paths=output_paths,
         pose_dir=pose_dir,
         competitors=competitor_metadata,
@@ -2387,18 +2382,9 @@ def run_benchmark(
 
 
 if __name__ == "__main__":
-    from dq_dock_engine.docking.charges import ChargeMethod
-
     parser = argparse.ArgumentParser(description="Real PDB docking benchmark")
     parser.add_argument(
         "--n_complexes", type=int, default=10, help="Number of complexes"
-    )
-    parser.add_argument(
-        "--charge_method",
-        type=str,
-        choices=("am1bcc", "gasteiger", "simple"),
-        required=True,
-        help="Charge assignment method for composite scoring",
     )
     parser.add_argument(
         "--n_poses",
@@ -2416,18 +2402,7 @@ if __name__ == "__main__":
         "--box-size",
         type=float,
         default=BENCHMARK_PROTOCOL.box_size_a,
-        help="Deterministic cubic docking box size in Angstroms (default derives from benchmark pocket radius)",
-    )
-    parser.add_argument(
-        "--use_multi_stage",
-        action="store_true",
-        help="Enable the slower multi-stage composite scoring pipeline",
-    )
-    parser.add_argument(
-        "--use_pocket_guided",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Use pocket-guided pose sampling (default: enabled)",
+        help="Certified cubic docking box size in Angstroms",
     )
     parser.add_argument(
         "--results_dir",
@@ -2436,17 +2411,11 @@ if __name__ == "__main__":
         help="Directory for CSV/JSON benchmark outputs",
     )
     parser.add_argument(
-        "--dq_only",
-        action="store_true",
-        help="Run only DQ-Dock and skip external competitor engines",
-    )
-    parser.add_argument(
         "--competitors",
         type=str,
         choices=("all", "none", "smina", "gnina"),
         default="all",
-        help="Which competitor engines to run (default: all). "
-        "'none' is same as --dq_only. 'smina'/'gnina' run that engine only.",
+        help="Which competitor engines to run alongside the canonical certified DQ-Dock path",
     )
     parser.add_argument(
         "--dataset",
@@ -2460,40 +2429,7 @@ if __name__ == "__main__":
         "--max-retries",
         type=int,
         default=6,
-        help="Maximum retry attempts for DQ-Dock (default: 6)",
-    )
-    parser.add_argument(
-        "--retry-break-rmsd",
-        type=float,
-        default=0.0,
-        help="Stop retrying if RMSD <= this value (0 disables)",
-    )
-    parser.add_argument(
-        "--retry-preserve-seed",
-        action="store_true",
-        help="Preserve the PRNG seed across retries (do not fold attempt index)",
-    )
-    parser.add_argument(
-        "--optimizer",
-        type=str,
-        choices=("gradient", "formal"),
-        default="formal",
-        help="Optimizer backend for local pose refinement (default: formal). "
-        "'formal' uses the multi-round certified optimizer.",
-    )
-    parser.add_argument(
-        "--formal-round-strategy",
-        type=str,
-        choices=("singleton_hybrid", "exact"),
-        default="singleton_hybrid",
-        help="Certified local-round strategy for the formal optimizer (default: singleton_hybrid)",
-    )
-    parser.add_argument(
-        "--certified-scoring-family",
-        type=str,
-        choices=("lj", "lj_realspace_ewald"),
-        default="lj_realspace_ewald",
-        help="Certified scoring family for DQ-Dock formal mode (default: lj_realspace_ewald)",
+        help="Maximum retry attempts for the canonical certified DQ-Dock run",
     )
     args = parser.parse_args()
 
@@ -2501,37 +2437,29 @@ if __name__ == "__main__":
     for warning in warnings:
         print(f"Config warning: {warning}")
 
-    charge_method = {
-        "am1bcc": ChargeMethod.AM1BCC,
-        "gasteiger": ChargeMethod.GASTEIGER,
-        "simple": ChargeMethod.SIMPLE,
-    }[args.charge_method]
-    formal_round_strategy = FormalRoundStrategy(args.formal_round_strategy)
-    certified_scoring_family = CertifiedScoringFamily(args.certified_scoring_family)
-
-    if args.dq_only:
-        competitor_choice = "none"
-    else:
-        competitor_choice = args.competitors
+    print("Using canonical certified benchmark path:", flush=True)
+    print(
+        f"  charge_method={DEFAULT_BENCHMARK_CHARGE_METHOD.name.lower()} "
+        f"optimizer={DEFAULT_BENCHMARK_OPTIMIZER_BACKEND.name.lower()} "
+        f"formal_round_strategy={DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY.value} "
+        f"certified_scoring_family={DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY.value} "
+        f"pocket_guided={DEFAULT_BENCHMARK_USE_POCKET_GUIDED}",
+        flush=True,
+    )
 
     run_benchmark(
         args.n_complexes,
-        charge_method=charge_method,
+        charge_method=DEFAULT_BENCHMARK_CHARGE_METHOD,
         n_poses=args.n_poses,
         n_opt_steps=args.n_opt_steps,
         box_size=args.box_size,
-        formal_round_strategy=formal_round_strategy,
-        certified_scoring_family=certified_scoring_family,
-        use_multi_stage=args.use_multi_stage,
-        use_pocket_guided=args.use_pocket_guided,
+        formal_round_strategy=DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY,
+        certified_scoring_family=DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
+        use_multi_stage=DEFAULT_BENCHMARK_USE_MULTI_STAGE,
+        use_pocket_guided=DEFAULT_BENCHMARK_USE_POCKET_GUIDED,
         results_dir=args.results_dir,
-        competitors=competitor_choice,
+        competitors=args.competitors,
         dataset=args.dataset,
-        optimizer_backend=OptimizerBackend.FORMAL
-        if args.optimizer == "formal"
-        else OptimizerBackend.GRADIENT,
-        # retry params
+        optimizer_backend=DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
         max_retries=args.max_retries,
-        retry_break_rmsd=args.retry_break_rmsd,
-        retry_preserve_seed=args.retry_preserve_seed,
     )
