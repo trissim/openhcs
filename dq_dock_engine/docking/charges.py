@@ -14,6 +14,7 @@ OpenHCS Compliance:
 
 from __future__ import annotations
 
+import math
 import subprocess
 import tempfile
 import shutil
@@ -159,7 +160,7 @@ class GasteigerChargeAssigner(ChargeAssigner):
             raise RuntimeError("RDKit failed to compute Gasteiger charges") from e
 
         charges = []
-        for atom in mol.GetAtoms():
+        for atom_index, atom in enumerate(mol.GetAtoms()):
             # RDKit stores Gasteiger charge as property '_GasteigerCharge'
             try:
                 q = atom.GetDoubleProp("_GasteigerCharge")
@@ -171,6 +172,10 @@ class GasteigerChargeAssigner(ChargeAssigner):
                     raise RuntimeError(
                         "RDKit did not produce per-atom Gasteiger charges"
                     )
+            if not math.isfinite(q):
+                raise RuntimeError(
+                    f"RDKit produced non-finite Gasteiger charge at atom index {atom_index}"
+                )
             charges.append(q)
 
         return ChargeResult(charges=jnp.array(charges), method=ChargeMethod.GASTEIGER)

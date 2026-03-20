@@ -39,6 +39,7 @@ import urllib.request
 import gzip
 import shutil
 from typing import Callable, Generic, Iterator, TypeVar
+import zlib
 
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
@@ -477,13 +478,18 @@ def execute_benchmark_jobs(
         return
 
     mp_context = mp.get_context(DEFAULT_BENCHMARK_PROCESS_START_METHOD)
-    with ProcessPoolExecutor(
+    executor = ProcessPoolExecutor(
         max_workers=parallelism.max_workers,
         mp_context=mp_context,
-    ) as executor:
+    )
+    try:
         futures = [executor.submit(run_job, job) for job in jobs]
         for future in as_completed(futures):
             yield future.result()
+    except BaseException:
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    executor.shutdown(wait=True)
 
 
 @dataclass
@@ -1198,7 +1204,7 @@ def compute_pose_rmsd(pose_coords: np.ndarray, native_coords: np.ndarray) -> flo
 def _safe_json_value(value: object) -> object:
     if isinstance(value, np.generic):
         return value.item()
-    if isinstance(value, float) and np.isnan(value):
+    if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
         return None
     return value
 
@@ -1416,7 +1422,8 @@ def save_benchmark_results(
     with open(json_path, "w") as f:
         json.dump(payload, f, indent=2)
 
-    render_redocking_report(json_path)
+    if phase == "complete":
+        render_redocking_report(json_path)
 
     return json_path, csv_path
 
@@ -1548,7 +1555,8 @@ def run_dq_dock(
         charges=np.asarray(ligand_charges) if ligand_charges is not None else None,
     )
 
-    base_key = jax.random.PRNGKey(42)
+    base_seed = zlib.adler32(str(ligand_file).encode("utf-8"))
+    base_key = jax.random.fold_in(jax.random.PRNGKey(42), base_seed)
     formal_status = "DQ-Dock"
     best_result: BenchmarkResult | None = None
     best_pose_coords: np.ndarray | None = None
@@ -1570,7 +1578,7 @@ def run_dq_dock(
                     else "GRADIENT"
                 )
                 print(
-                    f"    [Debug] Attempt {attempt + 1}/{max_retries} seed={k0:08x}-{k1:08x} backend={backend_name} n_poses={n_poses} n_opt_steps={n_opt_steps}",
+                    f"    [Debug] {ligand_file.stem} attempt {attempt + 1}/{max_retries} seed={k0:08x}-{k1:08x} backend={backend_name} n_poses={n_poses} n_opt_steps={n_opt_steps}",
                     flush=True,
                 )
             except Exception:

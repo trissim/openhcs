@@ -14,6 +14,22 @@ import pandas as pd
 import seaborn as sns
 
 
+def _fmt_number(value: object, digits: int = 3) -> str:
+    if value is None:
+        return "n/a"
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if pd.isna(numeric):
+        return "n/a"
+    return f"{numeric:.{digits}f}"
+
+
+def _fmt_text(value: object) -> str:
+    return "n/a" if value is None else str(value)
+
+
 def _graph_label(pdb_id: str, target_name: str) -> str:
     wrapped_target = textwrap.fill(target_name, width=16)
     return f"{pdb_id}\n{wrapped_target}"
@@ -57,7 +73,7 @@ def _write_markdown_report(payload: dict, report_path: Path) -> None:
 
     for row in dq_rows:
         lines.append(
-            f"| {row['pdb_id']} | {row['target_name']} | {row['rmsd']:.3f} | {row['time_s']:.3f} | {row['energy']:.3f} | {row['gap_proof']} | {row['native_rank']} | {row['energy_gap']} |"
+            f"| {row['pdb_id']} | {row['target_name']} | {_fmt_number(row['rmsd'])} | {_fmt_number(row['time_s'])} | {_fmt_number(row['energy'])} | {_fmt_text(row['gap_proof'])} | {_fmt_text(row['native_rank'])} | {_fmt_number(row['energy_gap'])} |"
         )
 
     for competitor in summary["competitors"]:
@@ -90,7 +106,7 @@ def _write_markdown_report(payload: dict, report_path: Path) -> None:
                 else "nan"
             )
             lines.append(
-                f"| {row['pdb_id']} | {row['target_name']} | {'success' if row['success'] else 'failure'} | {top_rmsd} | {best_rmsd} | {row['time_s']:.3f} | {score} | {row['error']} |"
+                f"| {row['pdb_id']} | {row['target_name']} | {'success' if row['success'] else 'failure'} | {_fmt_text(top_rmsd)} | {_fmt_text(best_rmsd)} | {_fmt_number(row['time_s'])} | {_fmt_text(score)} | {_fmt_text(row['error'])} |"
             )
 
     if excluded_rows:
