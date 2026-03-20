@@ -245,8 +245,8 @@ register_primitive(
         jax_symbol='argmax',
         lowering_kind='stable_argmax_masked',
         supports_grad=False,
-        proof_ref='DecisionQuotient.Tractability.FormalLocalOptimizer.deterministic_pick_mem_ambiguityBand',
-        proof_status=ProofStatus.CONDITIONALLY_CERTIFIED,
+        proof_ref=None,
+        proof_status=None,
         callable=stableArgmaxMasked,
     )
 )

@@ -6,12 +6,22 @@ from dq_dock_engine.docking.formal_actions import create_certified_action_family
 from dq_dock_engine.docking.formal_belief import (
     CertifiedPriorSpec,
     build_prior,
+    select_admissible_action,
     update_posterior,
+)
+from dq_dock_engine.docking.formal_pruning import (
+    certified_pruning_certificate,
+    coarse_top1_ambiguity_mask,
 )
 from dq_dock_engine.docking.formal_optimizer import refine_poses_certified
 from dq_dock_engine.docking.formal_sampling import sample_certified_global_poses
+from dq_dock_engine.docking.formal_surrogates import (
+    score_exact_and_coarse_local_family,
+    select_exact_receptor_subset_for_local_family,
+)
 from dq_dock_engine.docking.pipeline import run_docking_pipeline
-from dq_dock_engine.docking_config import CERTIFIED_DOCKING
+from dq_dock_engine.docking_config import CERTIFIED_DOCKING, create_config
+from dq_dock_engine.docking.scoring import score_certified_batch
 
 
 def test_certified_action_family_has_noop_first_and_stable_size():
@@ -43,6 +53,91 @@ def test_noop_biased_prior_is_explicit_and_normalized():
     assert jnp.isclose(jnp.sum(prior), 1.0)
     assert jnp.isclose(prior[0], 0.4)
     assert jnp.allclose(prior[1:], jnp.full((4,), 0.15))
+
+
+def test_certified_config_rejects_gradient_backend():
+    try:
+        create_config(mode="certified", optimizer="gradient")
+    except ValueError as exc:
+        assert "CERTIFIED mode requires OptimizerBackend.FORMAL" in str(exc)
+        return
+    raise AssertionError("certified gradient configuration should fail loudly")
+
+
+def test_select_admissible_action_uses_first_ambiguity_member():
+    posterior = jnp.array([0.1, 0.6, 0.3])
+    ambiguity_mask = jnp.array([False, True, True])
+
+    selected = select_admissible_action(posterior, ambiguity_mask)
+
+    assert selected == 1
+
+
+def test_certified_pruning_certificate_is_exact_when_delta_zero():
+    exact_scores = jnp.array([0.2, 0.5, 0.3])
+    coarse_scores = jnp.array([0.2, 0.5, 0.3])
+
+    cert = certified_pruning_certificate(exact_scores, coarse_scores, k=1, delta=0.0)
+
+    assert jnp.array_equal(cert.survivor_mask, cert.exact_top_k_mask)
+    assert jnp.array_equal(cert.exact_ambiguity_mask, cert.exact_top_k_mask)
+    assert jnp.array_equal(cert.coarse_ambiguity_mask, cert.exact_top_k_mask)
+
+
+def test_coarse_top1_ambiguity_band_contains_exact_winner_under_uniform_error():
+    exact_scores = jnp.array([0.0, 1.0, 2.0])
+    coarse_scores = jnp.array([0.1, 0.9, 2.1])
+    delta = 0.1
+
+    coarse_band = coarse_top1_ambiguity_mask(coarse_scores, delta)
+
+    assert bool(coarse_band[0]) is True
+
+
+def test_exact_receptor_subset_drops_far_atoms_outside_family_cutoff():
+    receptor_coords = jnp.array([[0.0, 0.0, 8.0], [0.0, 0.0, 40.0]])
+    receptor_radii = jnp.array([1.5, 1.5])
+    reference_coords_batch = jnp.array([[[0.0, 0.0, 0.0]]])
+    ligand_radii = jnp.array([1.5])
+
+    kept = select_exact_receptor_subset_for_local_family(
+        receptor_coords=receptor_coords,
+        receptor_radii=receptor_radii,
+        reference_coords_batch=reference_coords_batch,
+        ligand_radii=ligand_radii,
+        translation_step=0.5,
+        target_error=0.001,
+    )
+
+    assert jnp.array_equal(kept, jnp.array([0]))
+
+
+def test_exact_local_family_subset_preserves_scores_when_atoms_are_far():
+    receptor_coords = jnp.array([[0.0, 0.0, 8.0], [0.0, 0.0, 40.0]])
+    receptor_radii = jnp.array([1.5, 1.5])
+    ligand_radii = jnp.array([1.5])
+    candidate_coords = jnp.array([[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]]])
+
+    full_batch = score_certified_batch(
+        receptor_coords=receptor_coords,
+        poses_coords=candidate_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_radii,
+        target_error=0.001,
+    )
+    bundle = score_exact_and_coarse_local_family(
+        receptor_coords=receptor_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_radii,
+        candidate_coords=candidate_coords,
+        target_error=0.001,
+        max_receptor_atoms=64,
+        translation_step=0.5,
+    )
+
+    assert jnp.array_equal(bundle.retained_receptor_indices, jnp.array([0]))
+    assert jnp.allclose(bundle.exact_scores, full_batch.scores)
+    assert bundle.delta == 0.0
 
 
 def test_refine_poses_certified_uses_finite_action_family_search():

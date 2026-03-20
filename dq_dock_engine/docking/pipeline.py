@@ -75,6 +75,7 @@ def run_docking_pipeline(
     """
     # Determine effective engine based on config
     target_error = 0.001
+    certified_family = None
     if config is not None and config.mode == DockingMode.CERTIFIED:
         effective_engine = ScoringEngine.CERTIFIED_LJ
         target_error = config.target_error if config.target_error > 0 else 0.001
@@ -83,10 +84,17 @@ def run_docking_pipeline(
         effective_engine = engine
 
     # --- POSE GENERATION ---
+    certified_family = None
     if config is not None and config.mode == DockingMode.CERTIFIED:
-        from dq_dock_engine.docking.formal_sampling import sample_certified_global_poses
+        from dq_dock_engine.docking.formal_sampling import (
+            create_certified_global_action_family,
+        )
 
-        pose_vecs = sample_certified_global_poses(box, n_poses)
+        certified_family = create_certified_global_action_family(box, n_poses)
+        pose_vecs = PoseVector(
+            translation=certified_family.translations,
+            quaternion=certified_family.quaternions,
+        )
     elif use_pocket_guided:
         from dq_dock_engine.docking.pocket_sampling import (
             sample_intelligent_poses,
@@ -226,6 +234,12 @@ def run_docking_pipeline(
         config.optimizer_backend if config is not None else OptimizerBackend.GRADIENT
     )
 
+    if config is not None and config.mode == DockingMode.CERTIFIED:
+        if backend != OptimizerBackend.FORMAL:
+            raise ValueError(
+                "CERTIFIED mode requires the formal optimizer backend; gradient refinement is heuristic."
+            )
+
     if backend == OptimizerBackend.FORMAL:
         from dq_dock_engine.docking.formal_optimizer import refine_poses_certified
 
@@ -234,6 +248,11 @@ def run_docking_pipeline(
             quaternion=top_quaternions,
         )
         initial_coords = apply_poses(ligand_ctx, initial_opt_vecs)
+        translation_cell_width = 1.0
+        if certified_family is not None:
+            translation_cell_width = float(jnp.min(box.size)) / float(
+                certified_family.lattice_resolution
+            )
         opt_coords, _ = refine_poses_certified(
             coords_batch=initial_coords,
             receptor_coords=protein_coords,
@@ -241,6 +260,8 @@ def run_docking_pipeline(
             ligand_radii=ligand_ctx.base_radii,
             n_rounds=n_opt_steps,
             target_error=target_error,
+            base_translation_step=translation_cell_width / 2.0,
+            base_rotation_step_rad=float(jnp.pi / 2.0),
         )
         opt_vecs = None
     else:

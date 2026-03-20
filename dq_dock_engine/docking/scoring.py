@@ -146,7 +146,7 @@ def _score_certified_lj(
         (energy, error_bound) - both JAX arrays, calibrated to physical units
     """
     diffs = receptor_coords[:, None, :] - pose_coords[None, :, :]  # (N_rec, N_lig, 3)
-    dists = jnp.linalg.norm(diffs, axis=-1)  # (N_rec, N_lig)
+    dists = jnp.asarray(jnp.linalg.norm(diffs, axis=-1))  # (N_rec, N_lig)
 
     sigma_ij = receptor_radii[:, None] + ligand_radii[None:]  # (N_rec, N_lig)
 
@@ -166,6 +166,38 @@ def _score_certified_lj(
     error_bound = epsilon * M / (cutoff**3)
 
     return energy, error_bound
+
+
+@jax.jit
+def _score_certified_lj_batch(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+    cutoff: jnp.ndarray,
+    epsilon: float,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Batched certified LJ score with the same cutoff proof obligations."""
+    diffs = receptor_coords[None, :, None, :] - poses_coords[:, None, :, :]
+    dists = jnp.asarray(jnp.linalg.norm(diffs, axis=-1))
+
+    sigma_ij = receptor_radii[:, None] + ligand_radii[None, :]
+    cutoff_safe = jnp.maximum(cutoff, sigma_ij)[None, :, :]
+
+    in_range = dists < cutoff_safe
+    dists_safe = jnp.where(in_range, dists, cutoff_safe)
+
+    epsilon_matrix = jnp.full_like(dists_safe, epsilon / 4.0)
+    sigma_matrix = jnp.broadcast_to(sigma_ij[None, :, :], dists_safe.shape)
+    lj_contrib = jnp.asarray(
+        typed_lennard_jones_matrix(dists_safe, epsilon_matrix, sigma_matrix)
+    )
+
+    energies = jnp.sum(jnp.where(in_range, lj_contrib, 0.0), axis=(1, 2))
+
+    M = 4.0 * jnp.pi * 2.0
+    error_bound = epsilon * M / (cutoff**3)
+    return energies, error_bound
 
 
 @certified("LatticeSum.lean::lj6_tail_bound")
@@ -201,15 +233,14 @@ def score_certified_lj(
         is the Lean-proven upper bound on truncation error (kcal/mol).
     """
     cutoff = jnp.array(optimal_cutoff(target_error, s=6.0))
-
-    def score_one_pose(pose_coords):
-        energy, _ = _score_certified_lj(
-            receptor_coords, pose_coords, receptor_radii, ligand_radii, cutoff, epsilon
-        )
-        return energy
-
-    batched_score = jax.vmap(score_one_pose)
-    scores = batched_score(poses_coords)
+    scores, _ = _score_certified_lj_batch(
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        cutoff,
+        epsilon,
+    )
 
     # Compute error bound (same for all poses)
     error_bound = epsilon * lj6_cutoff_error(float(cutoff))

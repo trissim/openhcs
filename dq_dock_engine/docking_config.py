@@ -1,14 +1,4 @@
-"""
-Certified Docking Configuration
-==============================
-
-Two modes:
-1. CERTIFIED: Only Lean-proven algorithms + NIST empirical constants
-2. HEURISTIC: Uses ad-hoc approximations (fast screening only)
-
-The CERTIFIED mode is mathematically sound. The HEURISTIC mode
-may be faster but has no formal guarantee.
-"""
+"""Docking configuration with explicit certified/heuristic boundaries."""
 
 from enum import Enum
 from dataclasses import dataclass
@@ -75,6 +65,15 @@ class DockingConfig:
     #: Which optimizer backend to use for local refinement
     optimizer_backend: OptimizerBackend = OptimizerBackend.GRADIENT
 
+    def __post_init__(self) -> None:
+        if (
+            self.mode == DockingMode.CERTIFIED
+            and self.optimizer_backend != OptimizerBackend.FORMAL
+        ):
+            raise ValueError(
+                "CERTIFIED mode requires OptimizerBackend.FORMAL; gradient refinement is heuristic."
+            )
+
     @property
     def is_certified(self) -> bool:
         """True if running in certified mode."""
@@ -107,7 +106,7 @@ CERTIFIED_DOCKING = DockingConfig(
     target_error=0.001,
     min_energy_gap=0.0,
     use_external_scorer=False,
-    optimizer_backend=OptimizerBackend.GRADIENT,
+    optimizer_backend=OptimizerBackend.FORMAL,
 )
 
 CERTIFIED_DOCKING_FORMAL = DockingConfig(
@@ -128,7 +127,7 @@ HEURISTIC_SCREENING = DockingConfig(
 
 def create_config(
     mode: Literal["certified", "heuristic"],
-    optimizer: Literal["gradient", "formal"] = "gradient",
+    optimizer: Literal["gradient", "formal"] = "formal",
     **kwargs,
 ) -> DockingConfig:
     """Factory for creating docking configurations."""

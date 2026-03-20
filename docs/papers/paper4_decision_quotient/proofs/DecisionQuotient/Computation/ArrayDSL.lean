@@ -687,8 +687,8 @@ def exportPrimitives : List PrimitiveIR := [
     jaxSymbol := "argmax"
     supportsGrad := false
     leanSymbol := "DecisionQuotient.Computation.ArrayDSL.stableArgmaxMasked"
-    proofRef? := some "DecisionQuotient.Tractability.FormalLocalOptimizer.deterministic_pick_mem_ambiguityBand"
-    proofStatus? := some "CONDITIONALLY_CERTIFIED"
+    proofRef? := none
+    proofStatus? := none
   },
   {
     name := "axisAngleQuaternion"

@@ -934,6 +934,12 @@ abbrev TK3 := @Tractability.RankingPreservation.coarse_gap_positive_of_exact_gap
 abbrev TK4 := @Tractability.TopKPreservation.exact_topK_subset_survivorSet_of_margin
 abbrev TK5 := @Tractability.TopKPreservation.topK_preserved_of_boundary_gap
 abbrev TK6 := @Tractability.TopKPreservation.exclude_of_exact_below_threshold_margin
+abbrev TK7 := @Tractability.NearTieBand.exact_top1_subset_coarse_ambiguityBand_of_uniform_error
+abbrev TK8 := @Tractability.CoarseApproximation.shared_reference_uniformApprox_of_two_sided_bounds
+abbrev TK9 := @Tractability.NearTieBand.ambiguityBand_zero_eq_top1
+abbrev TK10 := @Tractability.SampledDockingCutoff.sampled_insideCutoff_sufficient
+abbrev TK11 := @Tractability.CertifiedPruning.certificate_of_top1_coarse_ambiguityBand
+abbrev TK12 := @Tractability.CertifiedPruning.certificate_of_exact_singleton_winner
 
 abbrev GD1 := @Tractability.GridMDInstances.gridMDState_sufficient_erase_irrelevant
 abbrev GD2 := @Tractability.GridConvergence.resolutionControlledApprox_implies_uniformApprox

@@ -9,7 +9,6 @@ import jax.numpy as jnp
 from dq_dock_engine.arraydsl import (
     noopBiasedProbabilityVectorLike,
     normalizeProbabilityVector,
-    stableArgmaxMasked,
     supportConditioning,
     uniformProbabilityVectorLike,
 )
@@ -59,7 +58,7 @@ def likelihood_from_survivor_mask(survivor_mask: jax.Array) -> jax.Array:
 
 
 def update_posterior(prior: jax.Array, survivor_mask: jax.Array) -> jax.Array:
-    weights = supportConditioning(prior, survivor_mask)
+    weights = jnp.asarray(supportConditioning(prior, survivor_mask))
     total_weight = float(jnp.sum(weights))
     if total_weight <= 0.0:
         raise ValueError(
@@ -68,7 +67,33 @@ def update_posterior(prior: jax.Array, survivor_mask: jax.Array) -> jax.Array:
     return normalizeProbabilityVector(weights)
 
 
+def _select_first_action(mask: jax.Array) -> int:
+    if not bool(jnp.any(mask)):
+        raise ValueError("Formal action selection requires a non-empty admissible set")
+    return int(jnp.argmax(mask.astype(jnp.int32)))
+
+
 def select_admissible_action(posterior: jax.Array, ambiguity_mask: jax.Array) -> int:
-    if bool(jnp.any(ambiguity_mask)):
-        return int(stableArgmaxMasked(posterior, ambiguity_mask))
-    return int(stableArgmaxMasked(posterior, jnp.ones_like(ambiguity_mask, dtype=bool)))
+    posterior_support = posterior > 0
+    ambiguity_support = jnp.logical_and(ambiguity_mask, posterior_support)
+    if bool(jnp.any(ambiguity_support)):
+        return _select_first_action(ambiguity_support)
+    return _select_first_action(posterior_support)
+
+
+def update_posterior_batch(prior: jax.Array, survivor_masks: jax.Array) -> jax.Array:
+    weights = jnp.where(survivor_masks, prior[None, :], 0.0)
+    normalizers = jnp.sum(weights, axis=1, keepdims=True)
+    return weights / normalizers
+
+
+def select_admissible_actions(
+    posterior_matrix: jax.Array, ambiguity_masks: jax.Array
+) -> jax.Array:
+    posterior_support = posterior_matrix > 0
+    ambiguity_support = jnp.logical_and(ambiguity_masks, posterior_support)
+    has_ambiguity = jnp.any(ambiguity_support, axis=1)
+    selected_masks = jnp.where(
+        has_ambiguity[:, None], ambiguity_support, posterior_support
+    )
+    return jnp.argmax(selected_masks.astype(jnp.int32), axis=1)

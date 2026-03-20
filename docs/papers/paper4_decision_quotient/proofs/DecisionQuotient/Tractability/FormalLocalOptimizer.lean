@@ -6,6 +6,8 @@
   to existing admissibility, pruning, and ambiguity-band machinery.
 -/
 import DecisionQuotient.IntegrityCompetence
+import DecisionQuotient.Computation.ArrayDSL
+import DecisionQuotient.StochasticSequential.TemporalLearning
 import DecisionQuotient.Tractability.CertifiedPruning
 import DecisionQuotient.Tractability.NearTieBand
 
@@ -14,6 +16,7 @@ namespace Tractability
 namespace FormalLocalOptimizer
 
 open IntegrityCompetence
+open Computation.ArrayDSL
 open CertifiedPruning
 open NearTieBand
 open Classical
@@ -79,6 +82,55 @@ theorem restrictedPrior_eq_prior_of_full_support
     restrictedPrior prior survivors = prior.prob := by
   funext a
   simp [restrictedPrior, hFull]
+
+/-- Normalized support restriction still assigns zero mass outside the declared
+    survivor mask. This is the runtime shape used by posterior updates. -/
+theorem normalize_supportConditioning_zero_of_mask_false
+    {n : ℕ}
+    (probs : MDArray n)
+    (mask : Fin n → Bool)
+    (i : Fin n)
+    (hFalse : mask i = false) :
+    normalizeProbabilityVector (supportConditioning probs mask) i = 0 := by
+  unfold normalizeProbabilityVector
+  change supportConditioning probs mask i / reduce_sum (supportConditioning probs mask) = 0
+  rw [supportConditioning_zero_of_mask_false probs mask i hFalse]
+  simp
+
+/-- Support restriction followed by normalization yields a unit-sum posterior
+    whenever the restricted support has positive total mass. -/
+theorem normalize_supportConditioning_sum_one
+    {n : ℕ}
+    (probs : MDArray n)
+    (mask : Fin n → Bool)
+    (hPos : 0 < reduce_sum (supportConditioning probs mask)) :
+    reduce_sum (normalizeProbabilityVector (supportConditioning probs mask)) = 1 := by
+  exact normalizeProbabilityVector_sum_one _ hPos
+
+/-- The runtime survivor-conditioning update is pointwise identical to a Bayesian
+    posterior with indicator likelihood and evidence equal to the restricted mass. -/
+theorem normalize_supportConditioning_eq_bayesian_posterior
+    {n : ℕ}
+    (probs : MDArray n)
+    (mask : Fin n → Bool)
+    (i : Fin n) :
+    normalizeProbabilityVector (supportConditioning probs mask) i =
+      DecisionQuotient.StochasticSequential.posterior
+        (fun j => probs j)
+        (fun j => if mask j then (1 : ℝ) else 0)
+        (reduce_sum (supportConditioning probs mask))
+        i := by
+  by_cases h : mask i
+  · have hNorm : normalizeProbabilityVector (supportConditioning probs mask) i =
+        probs i / reduce_sum (supportConditioning probs mask) := by
+      change (if mask i = true then probs i else 0) / reduce_sum (supportConditioning probs mask) =
+          probs i / reduce_sum (supportConditioning probs mask)
+      simp [h]
+    rw [hNorm]
+    simp [DecisionQuotient.StochasticSequential.posterior, h]
+  · have hFalse : mask i = false := by simp [h]
+    rw [normalize_supportConditioning_zero_of_mask_false probs mask i hFalse]
+    simp [DecisionQuotient.StochasticSequential.posterior, supportConditioning, h]
 
 end FormalLocalOptimizer
 end Tractability

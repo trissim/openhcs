@@ -134,6 +134,7 @@ class PreparedBenchmarkComplex:
     target_name: str
     path: Path
     center: tuple[float, float, float]
+    box_size: tuple[float, float, float]
     receptor_pdb: Path
     pocket_receptor_pdb: Path
     ligand_pdb: Path
@@ -295,6 +296,7 @@ class BenchmarkExecutionContext:
     n_complexes_requested: int
     n_poses: int
     n_opt_steps: int
+    box_size: float
     use_multi_stage: bool
     use_pocket_guided: bool
     output_paths: BenchmarkOutputPaths
@@ -628,7 +630,7 @@ def prepare_ligand(pdb_path: Path, preferred_resname: str | None = None) -> Path
     # Check if already extracted
     if ligand_path.exists():
         # Remove it if we are re-running to fix old bad extractions
-        ligand_path.unlink()
+        ligand_path.unlink(missing_ok=True)
 
     target_residue = detect_primary_ligand_residue(
         pdb_path, preferred_resname=preferred_resname
@@ -659,6 +661,7 @@ def prepare_ligand(pdb_path: Path, preferred_resname: str | None = None) -> Path
 def prepare_benchmark_complex(
     complex_entry: BenchmarkComplex,
     pose_dir: Path,
+    box_size: float = 12.0,
 ) -> PreparedBenchmarkComplex:
     receptor_pdb = prepare_protein(complex_entry.path)
     pocket_receptor_pdb = prepare_pocket_protein(receptor_pdb, complex_entry.center)
@@ -701,6 +704,7 @@ def prepare_benchmark_complex(
         target_name=complex_entry.target_name,
         path=complex_entry.path,
         center=complex_entry.center,
+        box_size=(box_size, box_size, box_size),
         receptor_pdb=receptor_pdb,
         pocket_receptor_pdb=pocket_receptor_pdb,
         ligand_pdb=ligand_pdb,
@@ -1259,9 +1263,10 @@ def run_dq_dock(
     receptor_elements: list[str] | tuple[str, ...] | None = None,
     n_opt_steps: int = 50,
     max_retries: int = 6,
-    optimizer_backend: "OptimizerBackend" = OptimizerBackend.GRADIENT,
+    optimizer_backend: "OptimizerBackend" = OptimizerBackend.FORMAL,
     retry_break_rmsd: float = 0.0,
     retry_preserve_seed: bool = False,
+    box_size: float = 12.0,
 ) -> tuple[BenchmarkResult, np.ndarray | None]:
     """Run true DQ-Dock pipeline on complex using core infrastructure."""
     import os
@@ -1279,13 +1284,16 @@ def run_dq_dock(
     start = time.time()
 
     center_jnp = jnp.array(center)
-    box = DockingBox(center=center_jnp, size=jnp.array([20.0, 20.0, 20.0]))
+    box = DockingBox(center=center_jnp, size=jnp.array([box_size, box_size, box_size]))
 
     optimizer_str = (
         "formal" if optimizer_backend == OptimizerBackend.FORMAL else "gradient"
     )
+    mode_str = (
+        "certified" if optimizer_backend == OptimizerBackend.FORMAL else "heuristic"
+    )
     docking_config = create_config(
-        mode="certified",
+        mode=mode_str,
         optimizer=optimizer_str,
         target_error=0.001,
         min_energy_gap=0.0,
@@ -1542,6 +1550,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine):
             max_retries=context.max_retries,
             retry_break_rmsd=context.retry_break_rmsd,
             retry_preserve_seed=context.retry_preserve_seed,
+            box_size=context.box_size,
         )
 
         dq_pose_path: Path | None = None
@@ -1886,11 +1895,11 @@ For now, we'll run DQ-Dock only on PDB files.
             "--center_z",
             str(complex_entry.center[2]),
             "--size_x",
-            "20",
+            str(complex_entry.box_size[0]),
             "--size_y",
-            "20",
+            str(complex_entry.box_size[1]),
             "--size_z",
-            "20",
+            str(complex_entry.box_size[2]),
             "--exhaustiveness",
             "64",
             "--num_modes",
@@ -1952,11 +1961,11 @@ To run this benchmark with GNINA comparisons:
             "--center_z",
             str(complex_entry.center[2]),
             "--size_x",
-            "20",
+            str(complex_entry.box_size[0]),
             "--size_y",
-            "20",
+            str(complex_entry.box_size[1]),
             "--size_z",
-            "20",
+            str(complex_entry.box_size[2]),
             "--exhaustiveness",
             "64",
             "--num_modes",
@@ -1973,12 +1982,13 @@ def run_benchmark(
     charge_method=None,
     n_poses: int = 2000,
     n_opt_steps: int = 50,
+    box_size: float = 12.0,
     use_multi_stage: bool = False,
     use_pocket_guided: bool | None = None,
     results_dir: Path = Path("benchmark_results"),
     competitors: Literal["all", "none", "smina", "gnina"] = "all",
     dataset: Literal["curated", "casf2007"] = "curated",
-    optimizer_backend: OptimizerBackend = OptimizerBackend.GRADIENT,
+    optimizer_backend: OptimizerBackend = OptimizerBackend.FORMAL,
     max_retries: int = 6,
     retry_break_rmsd: float = 0.0,
     retry_preserve_seed: bool = False,
@@ -2104,7 +2114,7 @@ def run_benchmark(
     for complex_entry in complexes:
         try:
             prepared_complexes.append(
-                prepare_benchmark_complex(complex_entry, pose_dir)
+                prepare_benchmark_complex(complex_entry, pose_dir, box_size=box_size)
             )
         except ValueError as exc:
             excluded_rows.append(
@@ -2118,6 +2128,7 @@ def run_benchmark(
         n_complexes_requested=n_complexes,
         n_poses=n_poses,
         n_opt_steps=n_opt_steps,
+        box_size=box_size,
         use_multi_stage=use_multi_stage,
         use_pocket_guided=effective_pocket_guided,
         output_paths=output_paths,
@@ -2212,6 +2223,12 @@ if __name__ == "__main__":
         help="Number of optimization steps per pose",
     )
     parser.add_argument(
+        "--box-size",
+        type=float,
+        default=12.0,
+        help="Deterministic cubic docking box size in Angstroms (default: 12.0)",
+    )
+    parser.add_argument(
         "--use_multi_stage",
         action="store_true",
         help="Enable the slower multi-stage composite scoring pipeline",
@@ -2270,8 +2287,8 @@ if __name__ == "__main__":
         "--optimizer",
         type=str,
         choices=("gradient", "formal"),
-        default="gradient",
-        help="Optimizer backend for local pose refinement (default: gradient). "
+        default="formal",
+        help="Optimizer backend for local pose refinement (default: formal). "
         "'formal' uses the multi-round certified optimizer.",
     )
     args = parser.parse_args()
@@ -2296,6 +2313,7 @@ if __name__ == "__main__":
         charge_method=charge_method,
         n_poses=args.n_poses,
         n_opt_steps=args.n_opt_steps,
+        box_size=args.box_size,
         use_multi_stage=args.use_multi_stage,
         use_pocket_guided=args.use_pocket_guided,
         results_dir=args.results_dir,

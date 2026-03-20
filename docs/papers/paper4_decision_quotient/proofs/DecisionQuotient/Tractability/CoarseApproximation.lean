@@ -75,6 +75,21 @@ theorem finiteUniformErrorRadius_witnesses_uniformApprox
   intro a s
   exact abs_diff_le_finiteUniformErrorRadius exactDP coarseDP a s
 
+/-- If two score families both approximate a shared reference utility, then they
+    approximate each other within the sum of their radii. -/
+theorem shared_reference_uniformApprox_of_two_sided_bounds
+    {A : Type u} {S : Type v}
+    (uRef exactDP coarseDP : DecisionProblem A S)
+    (deltaExact deltaCoarse : ℝ)
+    (hExact : UniformUtilityApprox uRef exactDP deltaExact)
+    (hCoarse : UniformUtilityApprox uRef coarseDP deltaCoarse) :
+    UniformUtilityApprox exactDP coarseDP (deltaExact + deltaCoarse) := by
+  intro a s
+  rw [abs_le]
+  have hE := abs_le.mp (hExact a s)
+  have hC := abs_le.mp (hCoarse a s)
+  constructor <;> linarith
+
 /-- Sampled docking specialization: every finite sampled docking problem admits
     a canonical exact finite-domain discrepancy radius witnessing uniform
     approximation between its exact and coarse score families. -/

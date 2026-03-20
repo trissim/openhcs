@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 import jax
 import jax.numpy as jnp
@@ -24,6 +25,8 @@ class CertifiedLocalAction:
 @dataclass(frozen=True)
 class CertifiedActionFamily:
     actions: tuple[CertifiedLocalAction, ...]
+    translation_deltas: jax.Array
+    quaternion_deltas: jax.Array
     translation_step: float
     rotation_step_rad: float
     stencil_level: int
@@ -39,16 +42,12 @@ def _axis_angle_to_quaternion(axis: jax.Array, angle_rad: float) -> jax.Array:
     return _normalize_quaternion(quat)
 
 
-def create_certified_action_family(
+@lru_cache(maxsize=128)
+def _cached_action_family(
     translation_step: float,
     rotation_step_rad: float,
     stencil_level: int,
 ) -> CertifiedActionFamily:
-    axes = (
-        jnp.array([1.0, 0.0, 0.0]),
-        jnp.array([0.0, 1.0, 0.0]),
-        jnp.array([0.0, 0.0, 1.0]),
-    )
     translations = tuple(
         jnp.asarray(localTranslationStencil3D(translation_step))[i] for i in range(6)
     )
@@ -84,11 +83,29 @@ def create_certified_action_family(
         )
         next_action_id += 1
 
+    actions_tuple = tuple(actions)
+
     return CertifiedActionFamily(
-        actions=tuple(actions),
+        actions=actions_tuple,
+        translation_deltas=jnp.stack(
+            [action.translation_delta for action in actions_tuple], axis=0
+        ),
+        quaternion_deltas=jnp.stack(
+            [action.quaternion_delta for action in actions_tuple], axis=0
+        ),
         translation_step=translation_step,
         rotation_step_rad=rotation_step_rad,
         stencil_level=stencil_level,
+    )
+
+
+def create_certified_action_family(
+    translation_step: float,
+    rotation_step_rad: float,
+    stencil_level: int,
+) -> CertifiedActionFamily:
+    return _cached_action_family(
+        float(translation_step), float(rotation_step_rad), int(stencil_level)
     )
 
 
@@ -103,20 +120,50 @@ def apply_local_action(
     return moved + center
 
 
-def apply_action_family(
+@jax.jit
+def _apply_action_family_arrays(
     coords: jax.Array,
-    action_family: CertifiedActionFamily,
+    translation_deltas: jax.Array,
+    quaternion_deltas: jax.Array,
 ) -> jax.Array:
-    translation_deltas = jnp.stack(
-        [action.translation_delta for action in action_family.actions], axis=0
-    )
-    quaternion_deltas = jnp.stack(
-        [action.quaternion_delta for action in action_family.actions], axis=0
-    )
+    center = jnp.mean(coords, axis=0)
+    centered = coords - center
 
     def apply_one(
         translation_delta: jax.Array, quaternion_delta: jax.Array
     ) -> jax.Array:
-        return apply_local_action(coords, translation_delta, quaternion_delta)
+        moved = rigid_transform_3d(centered, quaternion_delta, translation_delta)
+        return moved + center
 
     return jax.vmap(apply_one)(translation_deltas, quaternion_deltas)
+
+
+@jax.jit
+def _apply_action_family_batch_arrays(
+    coords_batch: jax.Array,
+    translation_deltas: jax.Array,
+    quaternion_deltas: jax.Array,
+) -> jax.Array:
+    return jax.vmap(_apply_action_family_arrays, in_axes=(0, None, None))(
+        coords_batch, translation_deltas, quaternion_deltas
+    )
+
+
+def apply_action_family(
+    coords: jax.Array,
+    action_family: CertifiedActionFamily,
+) -> jax.Array:
+    return _apply_action_family_arrays(
+        coords, action_family.translation_deltas, action_family.quaternion_deltas
+    )
+
+
+def apply_action_family_batch(
+    coords_batch: jax.Array,
+    action_family: CertifiedActionFamily,
+) -> jax.Array:
+    return _apply_action_family_batch_arrays(
+        coords_batch,
+        action_family.translation_deltas,
+        action_family.quaternion_deltas,
+    )

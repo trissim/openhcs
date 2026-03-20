@@ -576,7 +576,8 @@ Status: implemented in `dq_dock_engine/docking/pipeline.py`
 - if runtime/documentation still has handwaving around admissibility of the
   support-restriction update, add the small Lean wrappers named above
 
-Status: not yet implemented
+Status: implemented via wrapper theorems in
+`DecisionQuotient/Tractability/FormalLocalOptimizer.lean`
 
 ## Implemented runtime modules
 
@@ -603,10 +604,24 @@ Status: not yet implemented
   - posterior normalization
   - certified local action selection
   - certified pipeline avoids heuristic optimizer path
-- benchmark smoke test
-  - `1hvr`, `500` poses, `3` certified refinement rounds
-  - RMSD `0.40A`
-  - benchmark completed successfully end-to-end
+- benchmark validation
+  - `1hk4`, `1gni`, `1nhu`
+  - `2000` poses, `50` certified refinement rounds, `max-retries=1`
+  - average RMSD `1.03A` with the proof-aligned formal path
+- expanded benchmark validation
+  - `1hk4`, `1gni`, `1nhu`, `2d3z`, `2d3u`
+  - `2000` poses, `50` certified refinement rounds, `max-retries=1`
+  - average RMSD `1.12A`
+  - average certified runtime `3.63s` per complex after semantics-preserving
+     batched belief/certificate updates, host-side state materialization,
+     cached deterministic action families/tensors, exact-path mask reuse, and
+     host-side exact-support selection
+- benchmark protocol update
+  - deterministic cubic box size default changed from `20A` to `12A`
+  - on a 10-complex formal slice, average RMSD improved from `2.50A` to `0.81A`
+    with runtime essentially unchanged (`2.91s` -> `2.95s` per complex)
+  - on a 20-complex formal slice, the current baseline is `1.33A` average RMSD at
+    `2.62s` per complex
 
 ## DSL lowering follow-up
 
@@ -638,9 +653,10 @@ the higher-level action-family orchestration remains in Python.
    - we still need a small Lean theorem that support-restriction conditioning over
      a certified survivor set is an admissible update in the Paper 4 sense
 
-4. **Certified sampling outside local refinement is still heuristic**
-   - certified mode still enters the local optimizer from a heuristic sampled pose
-     family upstream in the pipeline
+4. **Certified sampling outside local refinement is still weak, not heuristic**
+   - certified mode now enters the local optimizer from a deterministic finite
+     sampled pose family upstream in the pipeline
+   - the remaining issue is support quality, not heuristic randomness
 
 ## Remaining honest caveat
 
@@ -730,6 +746,12 @@ Use a receptor-trimmed certified score:
 - `TopKPreservation.exact_topK_subset_survivorSet_of_margin`
 - `RankingPreservation.pairwise_order_preserved_of_uniform_error`
 - `NearTieBand.exact_topK_subset_ambiguityBand`
+- `NearTieBand.exact_top1_subset_coarse_ambiguityBand_of_uniform_error`
+- `CoarseApproximation.shared_reference_uniformApprox_of_two_sided_bounds`
+- `NearTieBand.ambiguityBand_zero_eq_top1`
+- `SampledDockingCutoff.sampled_insideCutoff_sufficient`
+- `CertifiedPruning.certificate_of_top1_coarse_ambiguityBand`
+- `CertifiedPruning.certificate_of_exact_singleton_winner`
 
 #### Runtime design
 
@@ -761,6 +783,89 @@ New module responsibilities:
   hoc masking
 - unit tests cover exact/coarse agreement on easy cases and nontrivial pruning on
   realistic cases
+
+Current status:
+
+- theorem scaffolding for coarse winner/ambiguity-band pruning is now present
+- active certified runtime still uses exact local-family scoring because the first
+  coarse-band implementations increased wall-clock time despite preserving RMSD
+- future coarse-path work should optimize kernel structure first, then re-enable
+  theorem-backed survivor-only exact rescoring
+
+Benchmark note:
+
+- the `12A` box default is a deterministic benchmark/search-domain protocol
+  choice, not a new theorem about the certified optimizer itself
+
+### Next major certified speed project: two-cutoff survivor pruning
+
+Goal: reduce exact local-family scoring cost without changing the certified
+decision rule.
+
+Design target:
+
+- `u_exact`: current exact certified LJ scorer with `target_error_exact`
+- `u_coarse`: same certified LJ scorer with a larger allowed error
+  `target_error_coarse > target_error_exact`
+- `delta = error_exact + error_coarse` via the shared-reference uniform
+  approximation theorem
+
+Theorem chain:
+
+- `CoarseApproximation.shared_reference_uniformApprox_of_two_sided_bounds`
+- `RankingPreservation.exact_strictOpt_of_coarse_strictOpt_margin`
+- `NearTieBand.exact_top1_subset_coarse_ambiguityBand_of_uniform_error`
+- `CertifiedPruning.certificate_of_top1_coarse_ambiguityBand`
+
+Direct-accept branch now has a target proof object too:
+
+- `CertifiedPruning.certificate_of_exact_singleton_winner`
+
+Intended runtime flow:
+
+1. coarse-score all local actions on the cheaper cutoff
+2. if coarse winner margin exceeds `2 * delta`, accept directly
+3. otherwise exact-score only the coarse ambiguity band survivors
+4. keep the whole path batched to avoid the earlier coarse-band slowdown
+
+Acceptance gate for re-entry:
+
+- must beat the active exact certified baseline (`~3.6s/complex` on the current
+  5-complex slice)
+- must preserve the current RMSD slice (`~1.12A` average)
+- must not introduce uncertified heuristics or hidden dynamic stopping rules
+
+### Active certified speedups now in use
+
+These do not change the certified semantics:
+
+- lattice-scaled certified local step sizes in `dq_dock_engine/docking/pipeline.py`
+- batched posterior update / admissible-action selection in
+  `dq_dock_engine/docking/formal_belief.py`
+- batched mask reuse in `dq_dock_engine/docking/formal_optimizer.py`
+- host-side optimizer state materialization to avoid repeated device slicing in
+  `dq_dock_engine/docking/formal_optimizer.py`
+- cached deterministic action-family construction in
+  `dq_dock_engine/docking/formal_actions.py`
+- cached stacked action tensors in `dq_dock_engine/docking/formal_actions.py`
+- exact-path fast path for survivor / ambiguity masks when `delta = 0` in
+  `dq_dock_engine/docking/formal_optimizer.py`
+- exact-path shortcut is now backed directly by
+  `NearTieBand.ambiguityBand_zero_eq_top1`
+- host-side exact-support selection in `dq_dock_engine/docking/formal_surrogates.py`
+
+Current profile note:
+
+- after these changes, the remaining dominant exact-path cost is the core exact
+  round scorer in `dq_dock_engine/docking/formal_surrogates.py`, not Python-side
+  bookkeeping
+- probing the exact cutoff regime on `1hk4` shows that with
+  `target_error = 0.001`, the certified cutoff is ~`29.3A` and >99% of retained
+  receptor-ligand pairs are still in range, so a sparse exact pair enumerator is
+  unlikely to be the next high-leverage optimization
+- exact-support selection is justified at the proof level by the sampled
+  inside-cutoff sufficiency bridge, even though the runtime currently uses a
+  direct geometric filter rather than theorem-object construction
 
 ### Gap 2 - Prior choice is explicit, not yet theorem-wrapped
 
