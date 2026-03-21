@@ -37,6 +37,39 @@ class CertificationDecision(Enum):
     UNCERTIFIED = auto()
 
 
+class SamplingStrategy(Enum):
+    """Pocket-guided sampling strategies."""
+
+    RANDOM = auto()
+    GUIDED = auto()
+    HYBRID = auto()
+
+    def keep_ratio(self) -> float:
+        match self:
+            case SamplingStrategy.RANDOM:
+                return 0.0
+            case SamplingStrategy.GUIDED:
+                return 1.0
+            case SamplingStrategy.HYBRID:
+                return 0.5
+
+    @staticmethod
+    def recommended() -> "SamplingStrategy":
+        return SamplingStrategy.HYBRID
+
+
+class CertifiedPocketFailureReason(Enum):
+    NO_LOCAL_REGION = auto()
+    NO_CERTIFIED_POCKET = auto()
+    NO_CERTIFIED_BINDING_SITE = auto()
+
+
+class BlindDockingExecutionPath(Enum):
+    STRICT_CERTIFIED = auto()
+    GEOMETRIC_FALLBACK = auto()
+    GENERIC_PIPELINE = auto()
+
+
 @dataclass(frozen=True)
 class GapCertification:
     decision: CertificationDecision
@@ -111,6 +144,9 @@ class BenchmarkResult:
     confidence: Optional[float] = None
     energy_gap: Optional[float] = None
     native_rank: Optional[int] = None
+    execution_path: Optional[BlindDockingExecutionPath] = None
+    certified_failure_reason: Optional[CertifiedPocketFailureReason] = None
+    theorem_handles: Tuple[str, ...] = ()
 
     @classmethod
     def from_certification(
@@ -121,6 +157,9 @@ class BenchmarkResult:
         n_atoms: int,
         formal_status: str,
         cert: Optional[Union[NativeCertification, GapCertification]] = None,
+        execution_path: Optional[BlindDockingExecutionPath] = None,
+        certified_failure_reason: Optional[CertifiedPocketFailureReason] = None,
+        theorem_handles: Tuple[str, ...] = (),
     ) -> "BenchmarkResult":
         kwargs = dict(
             success=True,
@@ -129,6 +168,9 @@ class BenchmarkResult:
             time=elapsed,
             n_atoms=n_atoms,
             formal_status=formal_status,
+            execution_path=execution_path,
+            certified_failure_reason=certified_failure_reason,
+            theorem_handles=theorem_handles,
         )
         if cert is not None:
             kwargs.update(
@@ -162,12 +204,25 @@ class CertifiedBindingSite:
 
 
 @dataclass(frozen=True)
+class GeometricBindingSite:
+    """Runtime geometric binding-site abstraction without theorem guarantees."""
+
+    center: jnp.ndarray  # shape (3,)
+    radius: float
+
+
+@dataclass(frozen=True)
 class CertifiedBlindDockingPlan:
     """Theorem-directed runtime plan for certified blind docking."""
 
     binding_site: Optional[CertifiedBindingSite]
     restricted_box: DockingBox
     restricted_atom_count: int
+    certified_pocket_found: bool
+    certified_failure_reason: Optional[CertifiedPocketFailureReason]
+    coarse_target_error: float
+    adaptive_coarse_target_errors: Optional[Tuple[float, ...]]
+    use_softened_coarse_prefilter: bool
     theorem_handles: Tuple[str, ...] = ()
 
 
@@ -176,6 +231,20 @@ class CertifiedBlindDockingResult:
     plan: CertifiedBlindDockingPlan
     poses: tuple[ScoredPose, ...]
     certification: Optional[Union[NativeCertification, GapCertification]] = None
+
+
+@dataclass(frozen=True)
+class GeometricBlindDockingPlan:
+    binding_site: Optional[GeometricBindingSite]
+    restricted_box: DockingBox
+    restricted_atom_count: int
+    sampling_strategy: SamplingStrategy = SamplingStrategy.HYBRID
+
+
+@dataclass(frozen=True)
+class GeometricBlindDockingResult:
+    plan: GeometricBlindDockingPlan
+    poses: tuple[ScoredPose, ...]
 
 
 @dataclass(frozen=True)

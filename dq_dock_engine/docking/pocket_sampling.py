@@ -15,43 +15,17 @@ import jax
 import jax.numpy as jnp
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum, auto
 
-from dq_dock_engine.docking.pocket_analysis import CertifiedDetectedPocket
+from dq_dock_engine.docking.core import SamplingStrategy
+from dq_dock_engine.docking.pocket_analysis import (
+    CertifiedDetectedPocket,
+    GeometricDetectedPocket,
+)
 
 
 # =============================================================================
 # SAMPLING STRATEGY ENUM (OpenHCS Pattern)
 # =============================================================================
-
-
-class SamplingStrategy(Enum):
-    """
-    Pocket-guided sampling strategies.
-
-    OpenHCS Compliance:
-    - Enum-driven behavior selection
-    - No string-based dispatch
-    """
-
-    RANDOM = auto()  # Pure random (baseline)
-    GUIDED = auto()  # Fully guided by pockets
-    HYBRID = auto()  # 50% guided, 50% random
-
-    def keep_ratio(self) -> float:
-        """Return guided sampling ratio."""
-        match self:
-            case SamplingStrategy.RANDOM:
-                return 0.0
-            case SamplingStrategy.GUIDED:
-                return 1.0
-            case SamplingStrategy.HYBRID:
-                return 0.5
-
-    @staticmethod
-    def recommended() -> SamplingStrategy:
-        """Literature-recommended default (Fpocket/DOCK6 style)."""
-        return SamplingStrategy.HYBRID
 
 
 # =============================================================================
@@ -722,3 +696,59 @@ def sample_intelligent_poses_from_certified_pocket(
         box_size,
     )
     return result.translations, result.quaternions
+
+
+def sample_intelligent_poses_from_geometric_pocket(
+    key: jax.Array,
+    n_poses: int,
+    geometric_pocket: GeometricDetectedPocket,
+    ligand_com: jnp.ndarray,
+    strategy: SamplingStrategy = SamplingStrategy.HYBRID,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    sampler = create_pocket_sampler()
+    box_extent = float(jnp.max(geometric_pocket.shape.extents))
+    box_size = max(2.0 * geometric_pocket.binding_site.radius, box_extent)
+
+    if strategy == SamplingStrategy.GUIDED:
+        guided = sampler._sample_guided_from_analysis(
+            key=key,
+            n_poses=n_poses,
+            pocket_coords=geometric_pocket.pocket_coords,
+            ligand_com=ligand_com,
+            pocket_shape=geometric_pocket.shape,
+            features=geometric_pocket.features,
+        )
+        return guided.translations, guided.quaternions
+
+    if strategy == SamplingStrategy.HYBRID:
+        n_guided = int(n_poses * strategy.keep_ratio())
+        n_random = n_poses - n_guided
+        key_guided, key_random = jax.random.split(key)
+        guided = sampler._sample_guided_from_analysis(
+            key=key_guided,
+            n_poses=n_guided,
+            pocket_coords=geometric_pocket.pocket_coords,
+            ligand_com=ligand_com,
+            pocket_shape=geometric_pocket.shape,
+            features=geometric_pocket.features,
+        )
+        random_result = sampler._sample_random(
+            key_random,
+            n_random,
+            ligand_com,
+            geometric_pocket.binding_site.center,
+            box_size,
+        )
+        return (
+            jnp.concatenate([guided.translations, random_result.translations]),
+            jnp.concatenate([guided.quaternions, random_result.quaternions]),
+        )
+
+    random_result = sampler._sample_random(
+        key,
+        n_poses,
+        ligand_com,
+        geometric_pocket.binding_site.center,
+        box_size,
+    )
+    return random_result.translations, random_result.quaternions

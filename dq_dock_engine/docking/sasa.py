@@ -187,6 +187,28 @@ def compute_sasa_single(
     return n_accessible * area_per_point
 
 
+def accessible_surface_points_single(
+    atom_position: jnp.ndarray,
+    atom_radius: float,
+    neighbor_positions: jnp.ndarray,
+    neighbor_radii: jnp.ndarray,
+    config: SASAConfig,
+) -> jnp.ndarray:
+    """Return the accessible surface samples used by Shrake-Rupley."""
+    directions = _fibonacci_sphere_points(config.n_points)
+    surface_points = atom_position + (atom_radius + config.probe_radius) * directions
+    accessible = jnp.ones(surface_points.shape[0], dtype=bool)
+
+    for i in range(neighbor_positions.shape[0]):
+        diffs = surface_points - neighbor_positions[i]
+        distances = jnp.linalg.norm(diffs, axis=1)
+        buried_threshold = neighbor_radii[i] + config.probe_radius
+        is_buried = distances < buried_threshold
+        accessible = accessible & ~is_buried
+
+    return surface_points[accessible]
+
+
 def compute_sasa_batch(
     positions: jnp.ndarray,
     radii: jnp.ndarray,

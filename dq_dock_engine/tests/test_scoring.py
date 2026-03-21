@@ -17,15 +17,18 @@ from dq_dock_engine.docking.core import ScoringEngine
 from dq_dock_engine.docking.core import LigandContext
 from dq_dock_engine.docking.core import DockingBox
 from dq_dock_engine.docking.core import CertifiedBindingSite
+from dq_dock_engine.docking.core import CertifiedPocketFailureReason
 from dq_dock_engine.docking.pocket_analysis import (
     CertifiedDetectedPocket,
     derive_certified_binding_site,
     detect_certified_pocket,
+    detect_geometric_pocket,
 )
 from dq_dock_engine.docking.pipeline import _resolve_route_scoring_electrostatics
 from dq_dock_engine.docking.pipeline import _apply_certified_binding_site_restriction
 from dq_dock_engine.docking.pipeline import _derive_certified_binding_site_from_box
 from dq_dock_engine.docking.pipeline import _prepare_certified_blind_docking
+from dq_dock_engine.docking.pipeline import run_geometric_blind_docking
 from dq_dock_engine.docking.pipeline import run_certified_blind_docking
 from dq_dock_engine.docking.pipeline import run_docking_pipeline
 from dq_dock_engine.docking.formal_sampling import (
@@ -33,6 +36,7 @@ from dq_dock_engine.docking.formal_sampling import (
 )
 from dq_dock_engine.docking.pocket_sampling import (
     sample_intelligent_poses_from_certified_pocket,
+    sample_intelligent_poses_from_geometric_pocket,
     SamplingStrategy,
 )
 from dq_dock_engine.docking.charges import ChargeMethod
@@ -423,40 +427,48 @@ def test_derive_certified_binding_site_returns_enclosing_site() -> None:
 
 def test_derive_certified_binding_site_from_box_uses_local_pocket_atoms() -> None:
     protein_coords = jnp.array(
-        [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [30.0, 0.0, 0.0]], dtype=jnp.float32
+        [
+            [-2.5, 0.0, 0.0],
+            [2.5, 0.0, 0.0],
+            [0.0, -2.5, 0.0],
+            [0.0, 2.5, 0.0],
+            [0.0, 0.0, -2.5],
+            [0.0, 0.0, 2.5],
+            [30.0, 0.0, 0.0],
+        ],
+        dtype=jnp.float32,
     )
     box = DockingBox(
         center=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
         size=jnp.array([8.0, 8.0, 8.0], dtype=jnp.float32),
     )
-    site = _derive_certified_binding_site_from_box(
+    site, reason = _derive_certified_binding_site_from_box(
         protein_coords,
-        jnp.array([1.7, 1.7, 1.7], dtype=jnp.float32),
+        jnp.array([1.7] * 7, dtype=jnp.float32),
         None,
         box,
     )
 
-    assert site is not None
-    assert isinstance(site, CertifiedDetectedPocket)
-    assert site.binding_site.radius < 10.0
-    np.testing.assert_allclose(
-        np.asarray(site.binding_site.center), np.asarray([1.0, 0.0, 0.0])
-    )
-    assert set(site.theorem_handles) == {"PD2", "PD3", "PD5", "BD1"}
+    assert site is None
+    assert reason is CertifiedPocketFailureReason.NO_CERTIFIED_POCKET
 
 
 def test_detect_certified_pocket_packages_geometry_and_binding_site() -> None:
     pocket_coords = jnp.array(
-        [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]], dtype=jnp.float32
+        [
+            [-2.5, 0.0, 0.0],
+            [2.5, 0.0, 0.0],
+            [0.0, -2.5, 0.0],
+            [0.0, 2.5, 0.0],
+            [0.0, 0.0, -2.5],
+            [0.0, 0.0, 2.5],
+        ],
+        dtype=jnp.float32,
     )
-    pocket_elements = ("C", "N", "O")
+    pocket_elements = ("C", "N", "O", "C", "N", "O")
     pocket = detect_certified_pocket(pocket_coords, pocket_elements)
 
-    assert pocket is not None
-    assert isinstance(pocket, CertifiedDetectedPocket)
-    assert pocket.pocket_coords.shape == pocket_coords.shape
-    assert pocket.binding_site.radius >= 0.0
-    assert set(pocket.theorem_handles) == {"PD2", "PD3", "PD5", "BD1"}
+    assert pocket is None
 
 
 def test_certified_binding_site_action_family_stays_inside_site_box() -> None:
@@ -477,15 +489,23 @@ def test_certified_binding_site_action_family_stays_inside_site_box() -> None:
 
 def test_sample_intelligent_poses_from_certified_pocket_uses_pocket_center() -> None:
     pocket_coords = jnp.array(
-        [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]], dtype=jnp.float32
+        [
+            [-2.5, 0.0, 0.0],
+            [2.5, 0.0, 0.0],
+            [0.0, -2.5, 0.0],
+            [0.0, 2.5, 0.0],
+            [0.0, 0.0, -2.5],
+            [0.0, 0.0, 2.5],
+        ],
+        dtype=jnp.float32,
     )
-    pocket = detect_certified_pocket(pocket_coords, ("C", "N", "O"))
+    pocket = detect_geometric_pocket(pocket_coords, ("C", "N", "O", "C", "N", "O"))
     assert pocket is not None
 
-    translations, quaternions = sample_intelligent_poses_from_certified_pocket(
+    translations, quaternions = sample_intelligent_poses_from_geometric_pocket(
         key=jax.random.PRNGKey(0),
         n_poses=16,
-        certified_pocket=pocket,
+        geometric_pocket=pocket,
         ligand_com=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
         strategy=SamplingStrategy.GUIDED,
     )
@@ -494,16 +514,6 @@ def test_sample_intelligent_poses_from_certified_pocket_uses_pocket_center() -> 
     assert quaternions.shape == (16, 4)
     mean_translation = jnp.mean(translations, axis=0)
     assert jnp.linalg.norm(mean_translation - pocket.binding_site.center) < 2.0
-    witness_centers = jnp.stack(
-        [w.probe_center for w in pocket.concavity_witnesses], axis=0
-    )
-    nearest = jnp.min(
-        jnp.linalg.norm(
-            translations[:, None, :] - witness_centers[None, :, :], axis=-1
-        ),
-        axis=1,
-    )
-    assert bool(jnp.any(nearest < 1.5))
 
 
 def test_prepare_certified_blind_docking_returns_theorem_directed_plan() -> None:
@@ -533,9 +543,10 @@ def test_prepare_certified_blind_docking_returns_theorem_directed_plan() -> None
         certified_binding_site=None,
     )
 
-    assert prep.plan.binding_site is not None
+    assert prep.plan.binding_site is None
+    assert prep.plan.certified_pocket_found is False
     assert prep.plan.restricted_atom_count == prep.protein_coords.shape[0]
-    assert set(prep.plan.theorem_handles) >= {"PD2", "PD3", "PD5", "BD1"}
+    assert prep.plan.theorem_handles == ()
 
 
 def test_run_certified_blind_docking_returns_plan_and_poses() -> None:
@@ -559,19 +570,92 @@ def test_run_certified_blind_docking_returns_plan_and_poses() -> None:
         certified_scoring_family=CertifiedScoringFamily.LJ,
     )
 
+    with np.testing.assert_raises(ValueError):
+        run_certified_blind_docking(
+            protein_coords=protein_coords,
+            receptor_radii=receptor_radii,
+            ligand_ctx=ligand_ctx,
+            box=box,
+            n_poses=8,
+            key=jax.random.PRNGKey(7),
+            config=config,
+            optimize=False,
+        )
+
+
+def test_run_certified_blind_docking_succeeds_when_certified_site_is_supplied() -> None:
+    protein_coords = jnp.array(
+        [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]], dtype=jnp.float32
+    )
+    receptor_radii = jnp.array([1.7, 1.7, 1.7], dtype=jnp.float32)
+    ligand_ctx = LigandContext(
+        base_coords=jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32),
+        base_radii=jnp.array([1.7], dtype=jnp.float32),
+        center_of_mass=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        elements=("C",),
+    )
+    box = DockingBox(
+        center=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        size=jnp.array([8.0, 8.0, 8.0], dtype=jnp.float32),
+    )
+    site = CertifiedBindingSite(
+        center=jnp.array([1.0, 1.0, 0.0], dtype=jnp.float32),
+        radius=3.0,
+        theorem_handles=("PD3", "PD5", "BD1"),
+    )
+    config = DockingConfig(
+        mode=DockingMode.CERTIFIED,
+        optimizer_backend=OptimizerBackend.FORMAL,
+        certified_scoring_family=CertifiedScoringFamily.LJ,
+        certified_binding_site=site,
+    )
+
     result = run_certified_blind_docking(
         protein_coords=protein_coords,
         receptor_radii=receptor_radii,
         ligand_ctx=ligand_ctx,
         box=box,
         n_poses=8,
-        key=jax.random.PRNGKey(7),
+        key=jax.random.PRNGKey(9),
         config=config,
         optimize=False,
     )
 
     assert result.plan.binding_site is not None
+    assert result.plan.certified_pocket_found is False
     assert len(result.poses) == 8
+
+
+def test_run_geometric_blind_docking_returns_explicit_geometric_plan() -> None:
+    protein_coords = jnp.array(
+        [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [30.0, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    receptor_radii = jnp.array([1.7, 1.7, 1.7, 1.7], dtype=jnp.float32)
+    ligand_ctx = LigandContext(
+        base_coords=jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32),
+        base_radii=jnp.array([1.7], dtype=jnp.float32),
+        center_of_mass=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        elements=("C",),
+    )
+    box = DockingBox(
+        center=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        size=jnp.array([8.0, 8.0, 8.0], dtype=jnp.float32),
+    )
+
+    result = run_geometric_blind_docking(
+        protein_coords=protein_coords,
+        receptor_radii=receptor_radii,
+        ligand_ctx=ligand_ctx,
+        box=box,
+        n_poses=8,
+        engine=ScoringEngine.CERTIFIED_LJ,
+        key=jax.random.PRNGKey(11),
+        optimize=False,
+    )
+
+    assert len(result.poses) == 8
+    assert result.plan.restricted_atom_count <= protein_coords.shape[0]
 
 
 def test_prepare_protein_filters_non_a_altlocs() -> None:

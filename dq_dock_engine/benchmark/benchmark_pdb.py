@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 Real PDB-based Docking Benchmark
 
@@ -39,6 +41,7 @@ import urllib.request
 import gzip
 import shutil
 from typing import Callable, Generic, Iterator, TypeVar
+from typing import TYPE_CHECKING
 import zlib
 
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
@@ -84,6 +87,18 @@ from dq_dock_engine.docking.charges import (
     create_charge_assigner,
 )
 from dq_dock_engine.docking_config import FormalRoundStrategy
+
+if TYPE_CHECKING:
+    from dq_dock_engine.docking.core import (
+        BlindDockingExecutionPath,
+        CertifiedPocketFailureReason,
+        DockingBox,
+        GapCertification,
+        LigandContext,
+        NativeCertification,
+        ScoringEngine,
+    )
+    from dq_dock_engine.docking_config import DockingConfig
 
 
 DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS = 12.0
@@ -144,6 +159,19 @@ def benchmark_box_protocol_metadata(box_size: float) -> tuple[str, str | None]:
     return ("custom_override", None)
 
 
+def _ligand_receptor_runtime_args(
+    *,
+    receptor_elements: list[str] | tuple[str, ...] | None,
+    precomputed_receptor_charges: np.ndarray | None,
+) -> tuple[tuple[str, ...] | None, jnp.ndarray | None]:
+    return (
+        tuple(receptor_elements) if receptor_elements is not None else None,
+        None
+        if precomputed_receptor_charges is None
+        else jnp.array(precomputed_receptor_charges),
+    )
+
+
 def active_formal_runtime_contract(formal_round_strategy: FormalRoundStrategy):
     if formal_round_strategy == FormalRoundStrategy.EXACT:
         return ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT
@@ -169,6 +197,98 @@ BENCHMARK_PROTOCOL = BenchmarkProtocol(
     pocket_radius_a=DERIVED_BENCHMARK_POCKET_RADIUS_ANGSTROMS,
     box_geometry_theorem=SD10,
 )
+
+
+@dataclass(frozen=True)
+class BlindDockingExecutionOutcome:
+    poses: list
+    certification: "NativeCertification | GapCertification | None"
+    execution_path: "BlindDockingExecutionPath"
+    certified_failure_reason: "CertifiedPocketFailureReason | None"
+    theorem_handles: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BlindDockingAttemptSpec:
+    protein_coords: jnp.ndarray
+    receptor_radii: jnp.ndarray
+    ligand_ctx: LigandContext
+    box: DockingBox
+    n_poses: int
+    key: jax.Array
+    charge_method: ChargeMethod
+    receptor_file: Path
+    precomputed_receptor_charges: jnp.ndarray | None
+    receptor_elements: tuple[str, ...] | None
+    config: DockingConfig
+    top_k: int
+    optimize: bool
+    n_opt_steps: int
+    include_native: bool
+    engine: ScoringEngine
+    use_pocket_guided: bool
+    use_multi_stage: bool
+
+    def run_certified(self, runner):
+        return runner(
+            protein_coords=self.protein_coords,
+            receptor_radii=self.receptor_radii,
+            ligand_ctx=self.ligand_ctx,
+            box=self.box,
+            n_poses=self.n_poses,
+            key=self.key,
+            charge_method=self.charge_method,
+            receptor_file=self.receptor_file,
+            precomputed_receptor_charges=self.precomputed_receptor_charges,
+            receptor_elements=self.receptor_elements,
+            config=self.config,
+            top_k=self.top_k,
+            optimize=self.optimize,
+            n_opt_steps=self.n_opt_steps,
+            include_native=self.include_native,
+        )
+
+    def run_geometric(self, runner):
+        return runner(
+            protein_coords=self.protein_coords,
+            receptor_radii=self.receptor_radii,
+            ligand_ctx=self.ligand_ctx,
+            box=self.box,
+            n_poses=self.n_poses,
+            engine=self.engine,
+            key=self.key,
+            charge_method=self.charge_method,
+            receptor_file=self.receptor_file,
+            precomputed_receptor_charges=self.precomputed_receptor_charges,
+            receptor_elements=self.receptor_elements,
+            config=self.config,
+            top_k=self.top_k,
+            optimize=self.optimize,
+            n_opt_steps=self.n_opt_steps,
+            include_native=self.include_native,
+        )
+
+    def run_pipeline(self, runner):
+        return runner(
+            protein_coords=self.protein_coords,
+            receptor_radii=self.receptor_radii,
+            ligand_ctx=self.ligand_ctx,
+            box=self.box,
+            n_poses=self.n_poses,
+            engine=self.engine,
+            key=self.key,
+            top_k=self.top_k,
+            optimize=self.optimize,
+            n_opt_steps=self.n_opt_steps,
+            charge_method=self.charge_method,
+            receptor_file=self.receptor_file,
+            precomputed_receptor_charges=self.precomputed_receptor_charges,
+            receptor_elements=self.receptor_elements,
+            config=self.config,
+            use_pocket_guided=self.use_pocket_guided,
+            use_multi_stage=self.use_multi_stage,
+            include_native=self.include_native,
+        )
 
 
 @dataclass(frozen=True)
@@ -208,6 +328,12 @@ class ComplexSummaryRow:
             "time_s": self.time,
             "pose_pdb": self.dq_pose_pdb,
             "gap_proof": format_gap_proof_label(result.certified),
+            "execution_path": None
+            if result.execution_path is None
+            else result.execution_path.name,
+            "certified_failure_reason": None
+            if result.certified_failure_reason is None
+            else result.certified_failure_reason.name,
             "native_rank": result.native_rank,
             "energy_gap": result.energy_gap,
             "receptor_pdb": self.receptor_pdb,
@@ -237,6 +363,12 @@ class ComplexSummaryRow:
             "receptor_pdb": self.receptor_pdb,
             "native_ligand_pdb": self.native_ligand_pdb,
             "gap_proof": format_gap_proof_label(result.certified),
+            "execution_path": None
+            if result.execution_path is None
+            else result.execution_path.name,
+            "certified_failure_reason": None
+            if result.certified_failure_reason is None
+            else result.certified_failure_reason.name,
             "native_rank": _safe_json_value(result.native_rank),
             "energy_gap": _safe_json_value(result.energy_gap),
         }
@@ -1606,13 +1738,26 @@ def run_dq_dock(
     import os
 
     os.environ.setdefault("TF_CUDNN_DETERMINISTIC", "1")
-    from dq_dock_engine.docking.core import DockingBox, ScoringEngine
+    from dq_dock_engine.docking.core import (
+        BlindDockingExecutionPath,
+        CertifiedPocketFailureReason,
+        DockingBox,
+        ScoringEngine,
+    )
     from dq_dock_engine.docking.pdb_io import (
         build_ligand_context,
         build_receptor_arrays,
     )
-    from dq_dock_engine.docking.pipeline import run_docking_pipeline
-    from dq_dock_engine.docking_config import FormalRoundStrategy, create_config
+    from dq_dock_engine.docking.pipeline import (
+        run_certified_blind_docking,
+        run_docking_pipeline,
+        run_geometric_blind_docking,
+    )
+    from dq_dock_engine.docking_config import (
+        DockingMode,
+        FormalRoundStrategy,
+        create_config,
+    )
     from dq_dock_engine.docking.metrics import compute_docking_rmsd_batched
 
     start = time.time()
@@ -1665,60 +1810,95 @@ def run_dq_dock(
         charges=np.asarray(ligand_charges) if ligand_charges is not None else None,
     )
 
+    runtime_receptor_elements, runtime_receptor_charges = _ligand_receptor_runtime_args(
+        receptor_elements=receptor_elements,
+        precomputed_receptor_charges=precomputed_receptor_charges,
+    )
+
+    def execute_attempt(attempt_key: jax.Array) -> BlindDockingExecutionOutcome:
+        spec = BlindDockingAttemptSpec(
+            protein_coords=jnp.array(pocket_coords),
+            receptor_radii=jnp.array(pocket_radii),
+            ligand_ctx=ligand_ctx,
+            box=box,
+            n_poses=n_poses,
+            key=attempt_key,
+            charge_method=charge_method,
+            receptor_file=receptor_file,
+            precomputed_receptor_charges=runtime_receptor_charges,
+            receptor_elements=runtime_receptor_elements,
+            config=docking_config,
+            top_k=1,
+            optimize=True,
+            n_opt_steps=n_opt_steps,
+            include_native=True,
+            engine=engine,
+            use_pocket_guided=use_pocket_guided,
+            use_multi_stage=use_multi_stage,
+        )
+        if docking_config.mode == DockingMode.CERTIFIED and use_pocket_guided:
+            blind_result = spec.run_certified(run_certified_blind_docking)
+            return BlindDockingExecutionOutcome(
+                poses=list(blind_result.poses),
+                certification=blind_result.certification,
+                execution_path=BlindDockingExecutionPath.STRICT_CERTIFIED,
+                certified_failure_reason=blind_result.plan.certified_failure_reason,
+                theorem_handles=blind_result.plan.theorem_handles,
+            )
+
+        if use_pocket_guided:
+            blind_result = spec.run_geometric(run_geometric_blind_docking)
+            return BlindDockingExecutionOutcome(
+                poses=list(blind_result.poses),
+                certification=None,
+                execution_path=BlindDockingExecutionPath.GEOMETRIC_FALLBACK,
+                certified_failure_reason=None,
+                theorem_handles=(),
+            )
+
+        result_tuple = spec.run_pipeline(run_docking_pipeline)
+        return BlindDockingExecutionOutcome(
+            poses=list(result_tuple[0]),
+            certification=result_tuple[1],
+            execution_path=BlindDockingExecutionPath.GENERIC_PIPELINE,
+            certified_failure_reason=None,
+            theorem_handles=(),
+        )
+
     base_seed = zlib.adler32(str(ligand_file).encode("utf-8"))
     base_key = jax.random.fold_in(jax.random.PRNGKey(42), base_seed)
     formal_status = "DQ-Dock"
     best_result: BenchmarkResult | None = None
     best_pose_coords: np.ndarray | None = None
+    execution_path = BlindDockingExecutionPath.GENERIC_PIPELINE
+    certified_failure_reason = None
+    theorem_handles: tuple[str, ...] = ()
 
     for attempt in range(max_retries):
+        execution_path = BlindDockingExecutionPath.GENERIC_PIPELINE
+        certified_failure_reason = None
+        theorem_handles = ()
         try:
             if retry_preserve_seed:
                 attempt_key = base_key
             else:
                 attempt_key = jax.random.fold_in(base_key, attempt)
-            # Debug: print per-attempt PRNG key and budgets to help trace sampling variance
-            try:
-                key_parts = jax.random.key_data(attempt_key)
-                k0 = int(key_parts[0])
-                k1 = int(key_parts[1])
-                backend_name = (
-                    optimizer_backend.name
-                    if optimizer_backend is not None
-                    else "GRADIENT"
-                )
-                print(
-                    f"    [Debug] {ligand_file.stem} attempt {attempt + 1}/{max_retries} seed={k0:08x}-{k1:08x} backend={backend_name} n_poses={n_poses} n_opt_steps={n_opt_steps}",
-                    flush=True,
-                )
-            except Exception:
-                # Best effort only; don't fail the run for logging issues
-                pass
-            result_tuple = run_docking_pipeline(
-                protein_coords=jnp.array(pocket_coords),
-                receptor_radii=jnp.array(pocket_radii),
-                ligand_ctx=ligand_ctx,
-                box=box,
-                n_poses=n_poses,
-                engine=engine,
-                key=attempt_key,
-                top_k=1,
-                optimize=True,
-                n_opt_steps=n_opt_steps,
-                charge_method=charge_method,
-                receptor_file=receptor_file,
-                precomputed_receptor_charges=None
-                if precomputed_receptor_charges is None
-                else jnp.array(precomputed_receptor_charges),
-                receptor_elements=tuple(receptor_elements)
-                if receptor_elements is not None
-                else None,
-                config=docking_config,
-                use_pocket_guided=use_pocket_guided,
-                use_multi_stage=use_multi_stage,
-                include_native=True,
+            key_parts = jax.random.key_data(attempt_key)
+            k0 = int(key_parts[0])
+            k1 = int(key_parts[1])
+            backend_name = (
+                optimizer_backend.name if optimizer_backend is not None else "GRADIENT"
             )
-            best_poses, cert = result_tuple[0], result_tuple[1]
+            print(
+                f"    [Debug] {ligand_file.stem} attempt {attempt + 1}/{max_retries} seed={k0:08x}-{k1:08x} backend={backend_name} n_poses={n_poses} n_opt_steps={n_opt_steps}",
+                flush=True,
+            )
+
+            execution = execute_attempt(attempt_key)
+            best_poses, cert = execution.poses, execution.certification
+            execution_path = execution.execution_path
+            certified_failure_reason = execution.certified_failure_reason
+            theorem_handles = execution.theorem_handles
 
             if not best_poses:
                 if attempt < max_retries - 1:
@@ -1735,6 +1915,9 @@ def run_dq_dock(
                     time=time.time() - start,
                     n_atoms=0,
                     formal_status=formal_status,
+                    execution_path=execution_path,
+                    certified_failure_reason=certified_failure_reason,
+                    theorem_handles=theorem_handles,
                 ), None
 
             elapsed = time.time() - start
@@ -1750,6 +1933,9 @@ def run_dq_dock(
                 n_atoms=len(pocket_coords) + len(ligand_coords),
                 formal_status=formal_status,
                 cert=cert,
+                execution_path=execution_path,
+                certified_failure_reason=certified_failure_reason,
+                theorem_handles=theorem_handles,
             )
 
             if best_result is None or attempt_result.rmsd < best_result.rmsd:
@@ -1771,6 +1957,26 @@ def run_dq_dock(
                 )
                 continue
         except Exception as e:
+            if (
+                docking_config.mode == DockingMode.CERTIFIED
+                and use_pocket_guided
+                and "Certified blind docking could not derive a theorem-backed pocket/binding-site plan"
+                in str(e)
+            ):
+                reason = CertifiedPocketFailureReason.NO_CERTIFIED_POCKET
+                if "NO_LOCAL_REGION" in str(e):
+                    reason = CertifiedPocketFailureReason.NO_LOCAL_REGION
+                return BenchmarkResult(
+                    success=False,
+                    energy=0.0,
+                    rmsd=0.0,
+                    time=time.time() - start,
+                    n_atoms=0,
+                    formal_status=formal_status,
+                    execution_path=BlindDockingExecutionPath.STRICT_CERTIFIED,
+                    certified_failure_reason=reason,
+                    theorem_handles=(),
+                ), None
             if attempt < max_retries - 1:
                 n_poses *= 2
                 n_opt_steps *= 2
@@ -1785,6 +1991,9 @@ def run_dq_dock(
                 time=time.time() - start,
                 n_atoms=0,
                 formal_status=formal_status,
+                execution_path=execution_path,
+                certified_failure_reason=certified_failure_reason,
+                theorem_handles=theorem_handles,
             ), None
 
     if best_result is None:
@@ -1795,6 +2004,7 @@ def run_dq_dock(
             time=time.time() - start,
             n_atoms=0,
             formal_status=formal_status,
+            execution_path=BlindDockingExecutionPath.GENERIC_PIPELINE,
         ), None
 
     return best_result, best_pose_coords

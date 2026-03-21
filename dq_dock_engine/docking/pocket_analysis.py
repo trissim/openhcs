@@ -18,8 +18,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from dq_dock_engine.docking.core import CertifiedBindingSite
-from dq_dock_engine.docking.sasa import get_solvation_params
+from dq_dock_engine.docking.core import CertifiedBindingSite, GeometricBindingSite
+from dq_dock_engine.docking.sasa import (
+    accessible_surface_points_single,
+    create_sasa_config,
+    get_solvation_params,
+)
 from dq_dock_engine.proof_status import conditionally_certified
 
 
@@ -155,6 +159,7 @@ class CertifiedSurfacePoint:
     defining_atom_index: int
     defining_atom_radius: float
     cavity_normal: jnp.ndarray
+    vdw_distance: float
 
 
 @dataclass(frozen=True)
@@ -164,6 +169,20 @@ class ConcavityWitness:
     epsilon: float
     intersecting_atom_indices: tuple[int, ...]
     theorem_handles: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class RuntimeImplicitAtom:
+    index: int
+    position: jnp.ndarray
+    radius: float
+
+
+@dataclass(frozen=True)
+class RuntimeConcaveRegion:
+    surface_points: tuple[CertifiedSurfacePoint, ...]
+    witnesses: tuple[ConcavityWitness, ...]
+    probe_radius: float
 
 
 @dataclass(frozen=True)
@@ -177,13 +196,27 @@ class CertifiedDetectedPocket:
 
     pocket_coords: jnp.ndarray
     pocket_elements: tuple[str, ...]
+    atoms: tuple[RuntimeImplicitAtom, ...]
     shape: PocketShape
     accessibility: jnp.ndarray
     features: tuple[PharmacophoreFeature, ...]
     surface_points: tuple[CertifiedSurfacePoint, ...]
     concavity_witnesses: tuple[ConcavityWitness, ...]
+    concave_region: RuntimeConcaveRegion
     binding_site: CertifiedBindingSite
     theorem_handles: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class GeometricDetectedPocket:
+    pocket_coords: jnp.ndarray
+    pocket_elements: tuple[str, ...]
+    atoms: tuple[RuntimeImplicitAtom, ...]
+    shape: PocketShape
+    accessibility: jnp.ndarray
+    features: tuple[PharmacophoreFeature, ...]
+    surface_points: tuple[CertifiedSurfacePoint, ...]
+    binding_site: GeometricBindingSite
 
 
 # =============================================================================
@@ -272,7 +305,86 @@ def _default_pocket_radii(pocket_elements: tuple[str, ...]) -> jnp.ndarray:
     return jnp.asarray(radii, dtype=jnp.float32)
 
 
+def build_runtime_implicit_atoms(
+    pocket_coords: jnp.ndarray,
+    pocket_radii: jnp.ndarray,
+) -> tuple[RuntimeImplicitAtom, ...]:
+    return tuple(
+        RuntimeImplicitAtom(
+            index=int(i), position=pocket_coords[i], radius=float(pocket_radii[i])
+        )
+        for i in range(pocket_coords.shape[0])
+    )
+
+
+def vdw_distance(
+    pocket_coords: jnp.ndarray,
+    pocket_radii: jnp.ndarray,
+    point: jnp.ndarray,
+) -> float:
+    if pocket_coords.shape[0] == 0:
+        return float("inf")
+    distances = jnp.linalg.norm(pocket_coords - point, axis=1) - pocket_radii
+    return float(jnp.min(distances))
+
+
+def intersecting_atom_count(
+    pocket_coords: jnp.ndarray,
+    pocket_radii: jnp.ndarray,
+    probe_center: jnp.ndarray,
+    probe_radius: float,
+) -> int:
+    return len(
+        intersecting_atom_indices(
+            pocket_coords,
+            pocket_radii,
+            probe_center,
+            probe_radius,
+        )
+    )
+
+
 def derive_surface_points(
+    pocket_coords: jnp.ndarray,
+    pocket_radii: jnp.ndarray,
+    pocket_center: jnp.ndarray,
+    probe_radius: float,
+) -> tuple[CertifiedSurfacePoint, ...]:
+    surface_points: list[CertifiedSurfacePoint] = []
+    sasa_config = create_sasa_config(probe_radius=probe_radius)
+    for idx in range(pocket_coords.shape[0]):
+        atom_position = pocket_coords[idx]
+        atom_radius = float(pocket_radii[idx])
+        neighbor_mask = jnp.arange(pocket_coords.shape[0]) != idx
+        accessible_points = accessible_surface_points_single(
+            atom_position=atom_position,
+            atom_radius=atom_radius,
+            neighbor_positions=pocket_coords[neighbor_mask],
+            neighbor_radii=pocket_radii[neighbor_mask],
+            config=sasa_config,
+        )
+        if accessible_points.shape[0] == 0:
+            cavity_normal = _safe_normalize(pocket_center - atom_position)
+            surface_position = atom_position + atom_radius * cavity_normal
+        else:
+            scores = jnp.linalg.norm(accessible_points - pocket_center, axis=1)
+            best_idx = int(jnp.argmin(scores))
+            surface_position = accessible_points[best_idx]
+            cavity_normal = _safe_normalize(surface_position - atom_position)
+        signed_distance = vdw_distance(pocket_coords, pocket_radii, surface_position)
+        surface_points.append(
+            CertifiedSurfacePoint(
+                position=surface_position,
+                defining_atom_index=idx,
+                defining_atom_radius=atom_radius,
+                cavity_normal=cavity_normal,
+                vdw_distance=signed_distance,
+            )
+        )
+    return tuple(surface_points)
+
+
+def derive_radial_surface_points(
     pocket_coords: jnp.ndarray,
     pocket_radii: jnp.ndarray,
     pocket_center: jnp.ndarray,
@@ -283,12 +395,14 @@ def derive_surface_points(
         atom_radius = float(pocket_radii[idx])
         cavity_normal = _safe_normalize(pocket_center - atom_position)
         surface_position = atom_position + atom_radius * cavity_normal
+        signed_distance = vdw_distance(pocket_coords, pocket_radii, surface_position)
         surface_points.append(
             CertifiedSurfacePoint(
                 position=surface_position,
                 defining_atom_index=idx,
                 defining_atom_radius=atom_radius,
                 cavity_normal=cavity_normal,
+                vdw_distance=signed_distance,
             )
         )
     return tuple(surface_points)
@@ -386,6 +500,7 @@ def detect_certified_pocket(
     pocket_radii = (
         _default_pocket_radii(pocket_elements) if pocket_radii is None else pocket_radii
     )
+    atoms = build_runtime_implicit_atoms(pocket_coords, pocket_radii)
 
     accessibility = compute_accessibility_batch(pocket_coords, config)
     features = detect_pharmacophore_features(
@@ -399,6 +514,7 @@ def detect_certified_pocket(
         pocket_coords,
         pocket_radii,
         shape.center_of_mass,
+        config.probe_radius,
     )
     concavity_witnesses = detect_concavity_witnesses(
         surface_points,
@@ -409,6 +525,11 @@ def detect_certified_pocket(
     )
     if len(concavity_witnesses) == 0:
         return None
+    concave_region = RuntimeConcaveRegion(
+        surface_points=surface_points,
+        witnesses=concavity_witnesses,
+        probe_radius=config.probe_radius,
+    )
     binding_site = derive_certified_binding_site(
         pocket_coords,
         radius_margin=radius_margin,
@@ -419,13 +540,72 @@ def detect_certified_pocket(
     return CertifiedDetectedPocket(
         pocket_coords=pocket_coords,
         pocket_elements=pocket_elements,
+        atoms=atoms,
         shape=shape,
         accessibility=accessibility,
         features=features,
         surface_points=surface_points,
         concavity_witnesses=concavity_witnesses,
+        concave_region=concave_region,
         binding_site=binding_site,
         theorem_handles=("PD2", "PD3", "PD5", "BD1"),
+    )
+
+
+def detect_geometric_pocket(
+    pocket_coords: jnp.ndarray,
+    pocket_elements: tuple[str, ...],
+    config: PocketAnalysisConfig | None = None,
+    pocket_radii: jnp.ndarray | None = None,
+    radius_margin: float = 0.0,
+) -> GeometricDetectedPocket | None:
+    """
+    Geometric fallback detector for runtime use outside the strict certified path.
+
+    Unlike `detect_certified_pocket`, this accepts purely geometric pocket regions
+    even when the stricter concavity witness construction fails.
+    """
+    if pocket_coords.shape[0] == 0:
+        return None
+
+    config = ACCESSIBILITY_CONFIG if config is None else config
+    pocket_radii = (
+        _default_pocket_radii(pocket_elements) if pocket_radii is None else pocket_radii
+    )
+    atoms = build_runtime_implicit_atoms(pocket_coords, pocket_radii)
+    accessibility = compute_accessibility_batch(pocket_coords, config)
+    features = detect_pharmacophore_features(
+        pocket_coords,
+        pocket_elements,
+        accessibility,
+        config,
+    )
+    shape = compute_pocket_shape(pocket_coords)
+    surface_points = derive_radial_surface_points(
+        pocket_coords,
+        pocket_radii,
+        shape.center_of_mass,
+    )
+    certified_site = derive_certified_binding_site(
+        pocket_coords,
+        radius_margin=radius_margin,
+    )
+    if certified_site is None:
+        return None
+    binding_site = GeometricBindingSite(
+        center=certified_site.center,
+        radius=certified_site.radius,
+    )
+
+    return GeometricDetectedPocket(
+        pocket_coords=pocket_coords,
+        pocket_elements=pocket_elements,
+        atoms=atoms,
+        shape=shape,
+        accessibility=accessibility,
+        features=features,
+        surface_points=surface_points,
+        binding_site=binding_site,
     )
 
 

@@ -17,8 +17,13 @@ from dq_dock_engine.docking.core import (
     CertifiedBindingSite,
     CertifiedBlindDockingResult,
     CertifiedBlindDockingPlan,
+    CertifiedPocketFailureReason,
     DockingBox,
+    GeometricBindingSite,
+    GeometricBlindDockingPlan,
+    GeometricBlindDockingResult,
     LigandContext,
+    SamplingStrategy,
     ScoringEngine,
     ScoredPose,
     PoseVector,
@@ -34,7 +39,9 @@ from dq_dock_engine.docking.scoring import (
 )
 from dq_dock_engine.docking.pocket_analysis import (
     CertifiedDetectedPocket,
+    GeometricDetectedPocket,
     detect_certified_pocket,
+    detect_geometric_pocket,
 )
 from dq_dock_engine.docking.pocket_sampling import (
     extract_local_pocket_region,
@@ -71,6 +78,17 @@ class CertifiedPocketPreparation:
     plan: CertifiedBlindDockingPlan
 
 
+@dataclass(frozen=True)
+class GeometricPocketPreparation:
+    protein_coords: jnp.ndarray
+    receptor_radii: jnp.ndarray
+    receptor_elements: tuple[str, ...] | None
+    precomputed_receptor_charges: jnp.ndarray | None
+    box: DockingBox
+    detected_pocket: GeometricDetectedPocket | None
+    plan: GeometricBlindDockingPlan
+
+
 def _ligand_extent_radius(ligand_ctx: LigandContext) -> float:
     centered = ligand_ctx.base_coords - ligand_ctx.center_of_mass
     if centered.shape[0] == 0:
@@ -78,14 +96,14 @@ def _ligand_extent_radius(ligand_ctx: LigandContext) -> float:
     return float(jnp.max(jnp.linalg.norm(centered, axis=1)))
 
 
-def _apply_certified_binding_site_restriction(
+def _apply_binding_site_restriction_impl(
     protein_coords: jnp.ndarray,
     receptor_radii: jnp.ndarray,
     receptor_elements: tuple[str, ...] | None,
     precomputed_receptor_charges: jnp.ndarray | None,
     ligand_ctx: LigandContext,
     box: DockingBox,
-    binding_site: CertifiedBindingSite,
+    binding_site: CertifiedBindingSite | GeometricBindingSite,
     target_error: float,
 ) -> tuple[
     jnp.ndarray,
@@ -135,12 +153,91 @@ def _apply_certified_binding_site_restriction(
     )
 
 
+def _apply_certified_binding_site_restriction(
+    protein_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    receptor_elements: tuple[str, ...] | None,
+    precomputed_receptor_charges: jnp.ndarray | None,
+    ligand_ctx: LigandContext,
+    box: DockingBox,
+    binding_site: CertifiedBindingSite,
+    target_error: float,
+) -> tuple[
+    jnp.ndarray,
+    jnp.ndarray,
+    tuple[str, ...] | None,
+    jnp.ndarray | None,
+    DockingBox,
+]:
+    return _apply_binding_site_restriction_impl(
+        protein_coords=protein_coords,
+        receptor_radii=receptor_radii,
+        receptor_elements=receptor_elements,
+        precomputed_receptor_charges=precomputed_receptor_charges,
+        ligand_ctx=ligand_ctx,
+        box=box,
+        binding_site=binding_site,
+        target_error=target_error,
+    )
+
+
+def _apply_geometric_binding_site_restriction(
+    protein_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    receptor_elements: tuple[str, ...] | None,
+    precomputed_receptor_charges: jnp.ndarray | None,
+    ligand_ctx: LigandContext,
+    box: DockingBox,
+    binding_site: GeometricBindingSite,
+    target_error: float,
+) -> tuple[
+    jnp.ndarray,
+    jnp.ndarray,
+    tuple[str, ...] | None,
+    jnp.ndarray | None,
+    DockingBox,
+]:
+    return _apply_binding_site_restriction_impl(
+        protein_coords=protein_coords,
+        receptor_radii=receptor_radii,
+        receptor_elements=receptor_elements,
+        precomputed_receptor_charges=precomputed_receptor_charges,
+        ligand_ctx=ligand_ctx,
+        box=box,
+        binding_site=binding_site,
+        target_error=target_error,
+    )
+
+
 def _derive_certified_binding_site_from_box(
     protein_coords: jnp.ndarray,
     receptor_radii: jnp.ndarray,
     receptor_elements: tuple[str, ...] | None,
     box: DockingBox,
-) -> CertifiedDetectedPocket | None:
+) -> tuple[CertifiedDetectedPocket | None, CertifiedPocketFailureReason | None]:
+    region = extract_local_pocket_region_view(
+        protein_coords=protein_coords,
+        receptor_elements=receptor_elements,
+        box_center=box.center,
+        box_size=float(jnp.max(box.size)),
+    )
+    if region.coords.shape[0] == 0:
+        return None, CertifiedPocketFailureReason.NO_LOCAL_REGION
+    pocket_radii = receptor_radii[region.indices]
+    pocket = detect_certified_pocket(
+        region.coords, region.elements, pocket_radii=pocket_radii
+    )
+    if pocket is None:
+        return None, CertifiedPocketFailureReason.NO_CERTIFIED_POCKET
+    return pocket, None
+
+
+def _derive_geometric_pocket_from_box(
+    protein_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    receptor_elements: tuple[str, ...] | None,
+    box: DockingBox,
+) -> GeometricDetectedPocket | None:
     region = extract_local_pocket_region_view(
         protein_coords=protein_coords,
         receptor_elements=receptor_elements,
@@ -148,8 +245,10 @@ def _derive_certified_binding_site_from_box(
         box_size=float(jnp.max(box.size)),
     )
     pocket_radii = receptor_radii[region.indices]
-    return detect_certified_pocket(
-        region.coords, region.elements, pocket_radii=pocket_radii
+    return detect_geometric_pocket(
+        region.coords,
+        region.elements,
+        pocket_radii=pocket_radii,
     )
 
 
@@ -177,41 +276,74 @@ def _create_certified_pose_vectors(
     return CertifiedPoseGeneration(pose_vecs=pose_vecs, family=certified_family)
 
 
-def _sample_pocket_guided_pose_vectors(
+def _sample_box_guided_pose_vectors(
     key: jax.Array,
     box: DockingBox,
     n_poses: int,
     protein_coords: jnp.ndarray,
     receptor_elements: tuple[str, ...] | None,
     ligand_ctx: LigandContext,
-    certified_detected_pocket: CertifiedDetectedPocket | None,
 ) -> tuple[jax.Array, PoseVector]:
     from dq_dock_engine.docking.pocket_sampling import (
         sample_intelligent_poses,
+        SamplingStrategy,
+    )
+
+    key_samp, next_key = jax.random.split(key)
+    translations, quaternions = sample_intelligent_poses(
+        key=key_samp,
+        box_center=box.center,
+        box_size=float(box.size[0]),
+        n_poses=n_poses,
+        protein_coords=protein_coords,
+        receptor_elements=receptor_elements,
+        ligand_com=ligand_ctx.center_of_mass,
+        strategy=SamplingStrategy.HYBRID,
+    )
+    return next_key, PoseVector(translation=translations, quaternion=quaternions)
+
+
+def _sample_certified_pocket_guided_pose_vectors(
+    key: jax.Array,
+    n_poses: int,
+    certified_detected_pocket: CertifiedDetectedPocket,
+    ligand_ctx: LigandContext,
+) -> tuple[jax.Array, PoseVector]:
+    from dq_dock_engine.docking.pocket_sampling import (
         sample_intelligent_poses_from_certified_pocket,
         SamplingStrategy,
     )
 
     key_samp, next_key = jax.random.split(key)
-    if certified_detected_pocket is not None:
-        translations, quaternions = sample_intelligent_poses_from_certified_pocket(
-            key=key_samp,
-            n_poses=n_poses,
-            certified_pocket=certified_detected_pocket,
-            ligand_com=ligand_ctx.center_of_mass,
-            strategy=SamplingStrategy.HYBRID,
-        )
-    else:
-        translations, quaternions = sample_intelligent_poses(
-            key=key_samp,
-            box_center=box.center,
-            box_size=float(box.size[0]),
-            n_poses=n_poses,
-            protein_coords=protein_coords,
-            receptor_elements=receptor_elements,
-            ligand_com=ligand_ctx.center_of_mass,
-            strategy=SamplingStrategy.HYBRID,
-        )
+    translations, quaternions = sample_intelligent_poses_from_certified_pocket(
+        key=key_samp,
+        n_poses=n_poses,
+        certified_pocket=certified_detected_pocket,
+        ligand_com=ligand_ctx.center_of_mass,
+        strategy=SamplingStrategy.HYBRID,
+    )
+    return next_key, PoseVector(translation=translations, quaternion=quaternions)
+
+
+def _sample_geometric_pocket_guided_pose_vectors(
+    key: jax.Array,
+    n_poses: int,
+    geometric_detected_pocket: GeometricDetectedPocket,
+    ligand_ctx: LigandContext,
+) -> tuple[jax.Array, PoseVector]:
+    from dq_dock_engine.docking.pocket_sampling import (
+        sample_intelligent_poses_from_geometric_pocket,
+        SamplingStrategy,
+    )
+
+    key_samp, next_key = jax.random.split(key)
+    translations, quaternions = sample_intelligent_poses_from_geometric_pocket(
+        key=key_samp,
+        n_poses=n_poses,
+        geometric_pocket=geometric_detected_pocket,
+        ligand_com=ligand_ctx.center_of_mass,
+        strategy=SamplingStrategy.HYBRID,
+    )
     return next_key, PoseVector(translation=translations, quaternion=quaternions)
 
 
@@ -224,11 +356,15 @@ def _prepare_certified_blind_docking(
     box: DockingBox,
     target_error: float,
     certified_binding_site: CertifiedBindingSite | None,
+    coarse_target_error: float = 0.004,
+    adaptive_coarse_target_errors: tuple[float, ...] | None = None,
+    use_softened_coarse_prefilter: bool = False,
 ) -> CertifiedPocketPreparation:
     detected_pocket: CertifiedDetectedPocket | None = None
     binding_site = certified_binding_site
+    failure_reason: CertifiedPocketFailureReason | None = None
     if binding_site is None:
-        detected_pocket = _derive_certified_binding_site_from_box(
+        detected_pocket, failure_reason = _derive_certified_binding_site_from_box(
             protein_coords=protein_coords,
             receptor_radii=receptor_radii,
             receptor_elements=receptor_elements,
@@ -269,9 +405,69 @@ def _prepare_certified_blind_docking(
         binding_site=binding_site,
         restricted_box=restricted_box,
         restricted_atom_count=int(restricted_coords.shape[0]),
+        certified_pocket_found=detected_pocket is not None,
+        certified_failure_reason=failure_reason,
+        coarse_target_error=coarse_target_error,
+        adaptive_coarse_target_errors=adaptive_coarse_target_errors,
+        use_softened_coarse_prefilter=use_softened_coarse_prefilter,
         theorem_handles=theorem_handles,
     )
     return CertifiedPocketPreparation(
+        protein_coords=restricted_coords,
+        receptor_radii=restricted_radii,
+        receptor_elements=restricted_elements,
+        precomputed_receptor_charges=restricted_charges,
+        box=restricted_box,
+        detected_pocket=detected_pocket,
+        plan=plan,
+    )
+
+
+def _prepare_geometric_blind_docking(
+    protein_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    receptor_elements: tuple[str, ...] | None,
+    precomputed_receptor_charges: jnp.ndarray | None,
+    ligand_ctx: LigandContext,
+    box: DockingBox,
+    target_error: float,
+) -> GeometricPocketPreparation:
+    detected_pocket = _derive_geometric_pocket_from_box(
+        protein_coords=protein_coords,
+        receptor_radii=receptor_radii,
+        receptor_elements=receptor_elements,
+        box=box,
+    )
+    binding_site = None if detected_pocket is None else detected_pocket.binding_site
+    restricted_box = box
+    restricted_coords = protein_coords
+    restricted_radii = receptor_radii
+    restricted_elements = receptor_elements
+    restricted_charges = precomputed_receptor_charges
+    if binding_site is not None:
+        (
+            restricted_coords,
+            restricted_radii,
+            restricted_elements,
+            restricted_charges,
+            restricted_box,
+        ) = _apply_geometric_binding_site_restriction(
+            protein_coords=protein_coords,
+            receptor_radii=receptor_radii,
+            receptor_elements=receptor_elements,
+            precomputed_receptor_charges=precomputed_receptor_charges,
+            ligand_ctx=ligand_ctx,
+            box=box,
+            binding_site=binding_site,
+            target_error=target_error,
+        )
+    plan = GeometricBlindDockingPlan(
+        binding_site=binding_site,
+        restricted_box=restricted_box,
+        restricted_atom_count=int(restricted_coords.shape[0]),
+        sampling_strategy=SamplingStrategy.HYBRID,
+    )
+    return GeometricPocketPreparation(
         protein_coords=restricted_coords,
         receptor_radii=restricted_radii,
         receptor_elements=restricted_elements,
@@ -411,6 +607,9 @@ def run_docking_pipeline(
             box=box,
             target_error=target_error,
             certified_binding_site=config.certified_binding_site,
+            coarse_target_error=config.coarse_target_error,
+            adaptive_coarse_target_errors=config.adaptive_coarse_target_errors,
+            use_softened_coarse_prefilter=config.use_softened_coarse_prefilter,
         )
         protein_coords = certified_pocket_prep.protein_coords
         receptor_radii = certified_pocket_prep.receptor_radii
@@ -435,14 +634,39 @@ def run_docking_pipeline(
         pose_vecs = certified_generation.pose_vecs
         certified_family = certified_generation.family
     elif use_pocket_guided:
-        key, pose_vecs = _sample_pocket_guided_pose_vectors(
-            key=key,
-            box=box,
-            n_poses=n_poses,
+        geometric_pocket_prep = _prepare_geometric_blind_docking(
             protein_coords=protein_coords,
+            receptor_radii=receptor_radii,
             receptor_elements=receptor_elements,
+            precomputed_receptor_charges=precomputed_receptor_charges,
             ligand_ctx=ligand_ctx,
-            certified_detected_pocket=certified_detected_pocket,
+            box=box,
+            target_error=target_error,
+        )
+        protein_coords = geometric_pocket_prep.protein_coords
+        receptor_radii = geometric_pocket_prep.receptor_radii
+        receptor_elements = geometric_pocket_prep.receptor_elements
+        precomputed_receptor_charges = (
+            geometric_pocket_prep.precomputed_receptor_charges
+        )
+        box = geometric_pocket_prep.box
+        geometric_detected_pocket = geometric_pocket_prep.detected_pocket
+        key, pose_vecs = (
+            _sample_geometric_pocket_guided_pose_vectors(
+                key=key,
+                n_poses=n_poses,
+                geometric_detected_pocket=geometric_detected_pocket,
+                ligand_ctx=ligand_ctx,
+            )
+            if geometric_detected_pocket is not None
+            else _sample_box_guided_pose_vectors(
+                key=key,
+                box=box,
+                n_poses=n_poses,
+                protein_coords=protein_coords,
+                receptor_elements=receptor_elements,
+                ligand_ctx=ligand_ctx,
+            )
         )
     else:
         from dq_dock_engine.docking.placement import sample_random_poses
@@ -736,7 +960,15 @@ def run_certified_blind_docking(
         box=box,
         target_error=target_error,
         certified_binding_site=effective_config.certified_binding_site,
+        coarse_target_error=effective_config.coarse_target_error,
+        adaptive_coarse_target_errors=effective_config.adaptive_coarse_target_errors,
+        use_softened_coarse_prefilter=effective_config.use_softened_coarse_prefilter,
     )
+    if not prep.plan.certified_pocket_found and prep.plan.binding_site is None:
+        raise ValueError(
+            "Certified blind docking could not derive a theorem-backed pocket/binding-site plan"
+            f" ({prep.plan.certified_failure_reason.name if prep.plan.certified_failure_reason is not None else 'UNKNOWN'})."
+        )
     poses, certification = run_docking_pipeline(
         protein_coords=protein_coords,
         receptor_radii=receptor_radii,
@@ -763,6 +995,64 @@ def run_certified_blind_docking(
         poses=tuple(poses),
         certification=certification,
     )
+
+
+def run_geometric_blind_docking(
+    protein_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    ligand_ctx: LigandContext,
+    box: DockingBox,
+    n_poses: int,
+    engine: ScoringEngine,
+    key: jax.Array,
+    receptor_elements: tuple[str, ...] | None = None,
+    *,
+    charge_method: ChargeMethod | None = None,
+    receptor_file: str | Path | None = None,
+    precomputed_receptor_charges: jnp.ndarray | None = None,
+    config: DockingConfig | None = None,
+    top_k: int = 10,
+    optimize: bool = True,
+    n_opt_steps: int = 50,
+    top_k_to_optimize: int = 200,
+    include_native: bool = False,
+    **scoring_kwargs,
+) -> GeometricBlindDockingResult:
+    prep = _prepare_geometric_blind_docking(
+        protein_coords=protein_coords,
+        receptor_radii=receptor_radii,
+        receptor_elements=receptor_elements,
+        precomputed_receptor_charges=precomputed_receptor_charges,
+        ligand_ctx=ligand_ctx,
+        box=box,
+        target_error=(
+            config.target_error
+            if config is not None and config.target_error > 0
+            else 0.001
+        ),
+    )
+    poses, _ = run_docking_pipeline(
+        protein_coords=protein_coords,
+        receptor_radii=receptor_radii,
+        ligand_ctx=ligand_ctx,
+        box=box,
+        n_poses=n_poses,
+        engine=engine,
+        key=key,
+        receptor_elements=receptor_elements,
+        charge_method=charge_method,
+        receptor_file=receptor_file,
+        precomputed_receptor_charges=precomputed_receptor_charges,
+        config=config,
+        top_k=top_k,
+        optimize=optimize,
+        n_opt_steps=n_opt_steps,
+        top_k_to_optimize=top_k_to_optimize,
+        use_pocket_guided=True,
+        include_native=include_native,
+        **scoring_kwargs,
+    )
+    return GeometricBlindDockingResult(plan=prep.plan, poses=tuple(poses))
 
 
 def _compute_native_certification(
