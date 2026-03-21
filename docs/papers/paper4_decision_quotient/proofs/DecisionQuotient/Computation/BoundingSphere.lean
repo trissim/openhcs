@@ -3,13 +3,13 @@
   Computation/BoundingSphere.lean - Minimal Enclosing Sphere
 
   DEPENDS ON: Geometry3D (Point3, distance, midpoint)
-  PROVIDES: Sphere, IsBounded, existence_minimal_bounding_sphere
+  PROVIDES: Sphere, IsBounded, existence_bounding_sphere
   USED BY: PocketDetection
 
   CRITICAL BRIDGE THEOREM:
   
   This file proves that any bounded set of points (including concave regions)
-  has a minimal enclosing sphere. This connects:
+  has an enclosing sphere. This connects:
   
     ConcaveRegion → BoundingSphere → MolecularSrank.BindingSite
     
@@ -21,8 +21,8 @@
   Binding sites are defined as (center, radius), i.e., a sphere.
   But a concave surface region is NOT a perfect sphere.
   
-  Solution: Prove that any bounded set has a minimal enclosing sphere.
-  This sphere becomes the BindingSite.
+  Solution: Prove that any bounded set has an enclosing sphere.
+  This sphere becomes the BindingSite abstraction.
 
   ## Approach
   
@@ -77,9 +77,10 @@ def OnBoundary (p : Point3) (B : Sphere) : Prop :=
 def IsBounded (S : Set Point3) : Prop :=
   ∃ R : ℝ, ∀ p ∈ S, Geometry3D.distance p (0, 0, 0) ≤ R
 
-/-! ## 4. Minimal Enclosing Sphere -/
+/-! ## 4. Enclosing Spheres -/
 
-/-- A sphere is minimal if no other enclosing sphere is strictly smaller -/
+/-- A sphere is minimal if no other enclosing sphere is strictly smaller.
+    Retained as a future strengthening, but not needed by the current pipeline. -/
 def IsMinimal (B : Sphere) (S : Set Point3) : Prop :=
   EnclosedIn S B ∧ ∀ B' : Sphere, EnclosedIn S B' → B'.radius ≥ B.radius
 
@@ -90,45 +91,52 @@ def SupportPoints (B : Sphere) (S : Set Point3) : Set Point3 :=
 /-! ## 5. Bridge to Surface Regions -/
 
 /--
-  AXIOM 2: Any bounded set has a minimal enclosing sphere.
-  
-  This relies on the strict convexity of the Euclidean norm and compactness.
-  We declare this as an axiom to serve as the geometric foundation for 
-  pocket detection without requiring a detour into deep convex analysis.
+  THEOREM: Any bounded set has an enclosing sphere.
+
+  For the current pocket-detection pipeline, existence of some enclosing sphere
+  is sufficient. A minimal enclosing sphere is a stronger future refinement.
 -/
-axiom existence_minimal_bounding_sphere
+theorem existence_bounding_sphere
     (S : Set Point3)
     (hBounded : IsBounded S) :
-    ∃ B : Sphere, IsMinimal B S
+    ∃ B : Sphere, EnclosedIn S B := by
+  rcases hBounded with ⟨R, hR⟩
+  refine ⟨{
+    center := (0, 0, 0)
+    radius := max R 1
+    radius_pos := by positivity
+  }, ?_⟩
+  intro p hp
+  have hpR : Geometry3D.distance p (0, 0, 0) ≤ R := hR p hp
+  exact le_trans hpR (le_max_left R 1)
 
 /--
-  THEOREM (BRIDGE): Every bounded surface region has a minimal enclosing sphere.
-  
-  This is the KEY connection between:
-  - Surface geometry (concave regions from ImplicitSurface)
-  - Binding sites (center + radius)
+  THEOREM (BRIDGE): Every bounded surface region has an enclosing sphere.
+
+  This is the key connection between surface geometry and binding-site style
+  center/radius abstractions used downstream.
 -/
 theorem surface_region_has_bounding_sphere
     (positions : Set Point3)
     (hBounded : IsBounded positions) :
-    ∃ B : Sphere, IsMinimal B positions :=
-  existence_minimal_bounding_sphere positions hBounded
+    ∃ B : Sphere, EnclosedIn positions B :=
+  existence_bounding_sphere positions hBounded
 
 /--
   Extract binding site center and radius from surface positions.
-  
-  Uses classical choice to extract the mathematically guaranteed minimal sphere,
-  then unpacks it into the (center, radius) format required by MolecularSrank.
+
+  Uses classical choice to extract an enclosing sphere, then unpacks it into
+  the `(center, radius)` format required downstream.
 -/
 noncomputable def surfacePositionsToBindingSite
     (positions : Set Point3)
     (hBounded : IsBounded positions) :
     Point3 × ℝ :=
-  let minimal_sphere_proof := surface_region_has_bounding_sphere positions hBounded
-  let B := Classical.choose minimal_sphere_proof
+  let sphere_proof := surface_region_has_bounding_sphere positions hBounded
+  let B := Classical.choose sphere_proof
   (B.center, B.radius)
 
-/-! ## 6. Two-Point Sphere (AXIOM 6 → THEOREM) -/
+/-! ## 6. Two-Point Sphere -/
 
 /--
   THEOREM 6: For 2 distinct points, the sphere centered at midpoint with

@@ -12,7 +12,7 @@
     
   This connects to:
   - ImplicitSurface: surface representation, concave regions
-  - BoundingSphere: minimal enclosing sphere
+  - BoundingSphere: enclosing sphere construction
 
   ## Design
   
@@ -25,6 +25,7 @@
 import DecisionQuotient.Computation.Geometry3D
 import DecisionQuotient.Computation.ImplicitSurface
 import DecisionQuotient.Computation.BoundingSphere
+import DecisionQuotient.Tractability.MolecularSrank
 import Mathlib.Data.Real.Basic
 import Mathlib.Topology.MetricSpace.Basic
 import Mathlib.Tactic
@@ -69,7 +70,7 @@ A detected pocket includes the concave region AND the bounding sphere.
     
     This structure includes:
     1. The concave surface region (from ImplicitSurface)
-    2. The minimal enclosing sphere (from BoundingSphere)
+    2. An enclosing sphere (from BoundingSphere)
     3. Proof that the region is binding-competent
 -/
 structure DetectedPocket (input : PocketDetectionInput) where
@@ -110,12 +111,13 @@ theorem concave_region_is_binding_competent
     (input : PocketDetectionInput)
     (region : ImplicitSurface.ConcaveRegion input.mol input.probeRadius)
     (r_ligand : ℝ)
-    (hLigand : r_ligand ≤ input.probeRadius) :
+    (hLigand : r_ligand ≤ input.probeRadius)
+    (hClear : ImplicitSurface.HasLocalClearance region r_ligand hLigand) :
     ∃ (p : _), p ∈ region.points ∧
       ∃ (q : _),
         Geometry3D.distance q p.position ≤ input.probeRadius - r_ligand ∧
         ImplicitSurface.vdwDistance input.mol q ≥ r_ligand :=
-  by apply ImplicitSurface.concave_region_has_local_clearance region r_ligand hLigand
+  hClear
 
 /-- THEOREM: A detected pocket is valid binding site.
     
@@ -134,8 +136,8 @@ to structural rank theorems for tractability analysis.
 -/
 
 /-- Detected pocket provides binding site parameters.
-    
-    Returns (center, radius) tuple for use in tractability analysis.
+     
+     Returns (center, radius) tuple for use in tractability analysis.
 -/
 def detected_pocket_to_binding_params
     (input : PocketDetectionInput)
@@ -143,11 +145,111 @@ def detected_pocket_to_binding_params
     ImplicitSurface.Point3 × ℝ :=  -- (center, radius)
   (pocket.boundingSphere.center, pocket.boundingSphere.radius)
 
+/--
+  Convert a detected pocket into the `BindingSite` structure used by
+  `Tractability.MolecularSrank`.
+-/
+def detected_pocket_to_binding_site
+    (input : PocketDetectionInput)
+    (pocket : DetectedPocket input) :
+    Tractability.MolecularSrank.BindingSite :=
+  {
+    center := pocket.boundingSphere.center
+    radius := pocket.boundingSphere.radius
+  }
+
+/--
+  Convert an `ImplicitSurface.Atom` into the atom representation used by
+  `MolecularSrank`. This preserves geometry and fills in non-geometric fields
+  with neutral defaults until richer chemistry is connected.
+-/
+def to_molecular_srank_atom
+    (index : ℕ)
+    (atom : ImplicitSurface.Atom) :
+    Tractability.MolecularSrank.Atom :=
+  {
+    index := index
+    position := atom.position
+    charge := 0
+    mass := 1
+  }
+
+/-- Convert a protein molecule into the `MolecularSrank` representation. -/
+def to_molecular_srank_molecule
+    (mol : ImplicitSurface.Molecule) :
+    Tractability.MolecularSrank.Molecule :=
+  {
+    atoms := mol.mapIdx to_molecular_srank_atom
+    numAtoms := mol.length
+    size_eq := by simp
+  }
+
+/--
+  Build an `MDBindingProblem` from a detected pocket.
+
+  This is the concrete bridge from pocket detection into the structural-rank
+  tractability layer. The ligand model and scoring utility remain parameters,
+  since pocket detection itself only certifies the binding site geometry.
+-/
+def detected_pocket_to_md_binding_problem
+    (input : PocketDetectionInput)
+    (pocket : DetectedPocket input)
+    (ligand : Tractability.MolecularSrank.Molecule)
+    (cutoff : ℝ)
+    (utility : Tractability.MolecularSrank.MDAction → Tractability.MolecularSrank.MDState → ℝ) :
+    Tractability.MolecularSrank.MDBindingProblem :=
+  {
+    protein := to_molecular_srank_molecule input.mol
+    ligand := ligand
+    bindingSite := detected_pocket_to_binding_site input pocket
+    cutoff := cutoff
+    utility := utility
+  }
+
+/-- The MDBindingProblem bridge preserves the detected binding-site geometry. -/
+theorem detected_pocket_to_md_binding_problem_binding_site
+    (input : PocketDetectionInput)
+    (pocket : DetectedPocket input)
+    (ligand : Tractability.MolecularSrank.Molecule)
+    (cutoff : ℝ)
+    (utility : Tractability.MolecularSrank.MDAction → Tractability.MolecularSrank.MDState → ℝ) :
+    (detected_pocket_to_md_binding_problem input pocket ligand cutoff utility).bindingSite =
+      detected_pocket_to_binding_site input pocket :=
+  rfl
+
+/--
+  A detected pocket inherits the molecular-docking structural-rank bound once
+  it is packaged as an `MDBindingProblem`.
+-/
+theorem detected_pocket_md_srank_bound
+    (input : PocketDetectionInput)
+    (pocket : DetectedPocket input)
+    (ligand : Tractability.MolecularSrank.Molecule)
+    (cutoff : ℝ)
+    (utility : Tractability.MolecularSrank.MDAction → Tractability.MolecularSrank.MDState → ℝ)
+    [Fintype Tractability.MolecularSrank.MDAction]
+    (prob : Tractability.MolecularSrank.MDBindingProblem)
+    (hProb : prob = detected_pocket_to_md_binding_problem input pocket ligand cutoff utility)
+    (hStrictAll : ∀ s, ∃ a,
+      Tractability.StrictOpt prob.toDecisionProblem a s)
+    (hBounded : Tractability.MolecularSrank.OutsideCutoffApproximationBounded prob) :
+    @DecisionProblem.srank
+      Tractability.MolecularSrank.MDAction
+      Tractability.MolecularSrank.MDState
+      (Tractability.MolecularSrank.numMDCoordinates prob)
+      (Tractability.MolecularSrank.mdCoordinateSpaceStruct prob)
+      prob.toDecisionProblem ≤
+      3 * Tractability.MolecularSrank.numRelevantAtoms prob
+      + 3 * ligand.numAtoms := by
+  subst prob
+  simpa using Tractability.MolecularSrank.md_srank_bound
+    (detected_pocket_to_md_binding_problem input pocket ligand cutoff utility)
+    hStrictAll hBounded
+
 /-! ## 6. The Critical Bridge: Region to Pocket
 
 This is where the entire pipeline comes together. We take a geometric 
-surface concavity and mathematically package it into a bounding sphere 
-using the axioms we defined earlier.
+surface concavity and mathematically package it into a bounding sphere.
 -/
 
 
@@ -180,8 +282,8 @@ theorem concave_region_is_bounded
 /-- 
   Convert a raw geometric ConcaveRegion into a formalized DetectedPocket.
   
-  This uses the `existence_minimal_bounding_sphere` axiom to guarantee that 
-  the complex cavity fits perfectly inside a sphere, extracting the center 
+  This uses the enclosing-sphere theorem to guarantee that 
+  the complex cavity fits inside a sphere, extracting the center 
   and radius needed by the molecular docking optimizer.
 -/
 noncomputable def regionToDetectedPocket
@@ -194,18 +296,18 @@ noncomputable def regionToDetectedPocket
   -- 2. Prove the set of points is bounded
   let hBounded := concave_region_is_bounded input region
   
-  -- 3. Apply the BoundingSphere Axiom to get the minimal sphere
-  let minimal_sphere_proof := BoundingSphere.existence_minimal_bounding_sphere S hBounded
+  -- 3. Apply the bounding-sphere theorem to get an enclosing sphere
+  let sphere_proof := BoundingSphere.existence_bounding_sphere S hBounded
   
   -- 4. Unpack the sphere and the proof that it encloses the points
-  let B := Classical.choose minimal_sphere_proof
-  let is_minimal := Classical.choose_spec minimal_sphere_proof
+  let B := Classical.choose sphere_proof
+  let encloses := Classical.choose_spec sphere_proof
   
   -- 5. Package it all into the final DetectedPocket structure
   {
     concaveRegion := region,
     boundingSphere := B,
-    sphereEnclosesRegion := is_minimal.1
+    sphereEnclosesRegion := encloses
   }
 
 end PocketDetection

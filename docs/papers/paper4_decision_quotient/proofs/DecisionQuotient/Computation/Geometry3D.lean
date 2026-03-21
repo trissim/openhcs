@@ -3,7 +3,7 @@
   Computation/Geometry3D.lean - Shared 3D Euclidean Geometry
 
   SHARED FOUNDATION: All geometry files depend on this.
-  - Geometry3D.lean: shared Point3, distance, vector ops + axioms
+  - Geometry3D.lean: shared Point3, distance, vector ops + core lemmas
   - ImplicitSurface.lean: defines concavity and surface regions
   - BoundingSphere.lean: enclosing spheres over shared Point3
   - PocketDetection.lean: bridges concave regions to bounded search regions
@@ -15,6 +15,7 @@
 import Mathlib.Data.Real.Basic
 import Mathlib.Analysis.SpecialFunctions.Sqrt
 import Mathlib.Tactic
+import DecisionQuotient.Computation.ArrayDSL
 
 namespace DecisionQuotient.Computation.Geometry3D
 
@@ -51,6 +52,10 @@ def smul (c : ℝ) (p : Point3) : Point3 :=
 /-- Midpoint of two points -/
 noncomputable def midpoint (p q : Point3) : Point3 :=
   smul (1/2) (add p q)
+
+/-- Embed tuple-based points into the Euclidean-space representation used by ArrayDSL. -/
+noncomputable def toMDArray3 (p : Point3) : ArrayDSL.MDArray 3 :=
+  ArrayDSL.mkMDArray (fun i => match i.1 with | 0 => p.1 | 1 => p.2.1 | _ => p.2.2)
 
 ------------------------------------------------------------
 -- GEOMETRIC FACTS (proved from Real.sqrt properties)
@@ -104,18 +109,41 @@ lemma distance_pos_of_ne {p q : Point3} (h : p ≠ q) :
     simpa [eq_comm] using hne
   exact lt_of_le_of_ne hnonneg h0ne
 
+/-- Tuple distance agrees with the Euclidean-space distance from ArrayDSL. -/
+lemma distance_eq_mdarray_distance (p q : Point3) :
+    distance p q = ArrayDSL.distance (toMDArray3 p) (toMDArray3 q) := by
+  unfold distance ArrayDSL.distance toMDArray3
+  rw [EuclideanSpace.dist_eq]
+  rw [Fin.sum_univ_three]
+  simp [ArrayDSL.mkMDArray, Real.dist_eq]
+
 /-- Triangle inequality for Euclidean distance -/
-axiom distance_triangle
+theorem distance_triangle
   (p q r : Point3) :
-  distance p r ≤ distance p q + distance q r
+  distance p r ≤ distance p q + distance q r := by
+  rw [distance_eq_mdarray_distance, distance_eq_mdarray_distance, distance_eq_mdarray_distance]
+  exact ArrayDSL.distance_triangle_bound (toMDArray3 p) (toMDArray3 q) (toMDArray3 r)
 
 ------------------------------------------------------------
 -- ALGEBRA HELPERS (for midpoint proofs)
 ------------------------------------------------------------
 
 /-- sqrt(x/4) = sqrt(x)/2 for non-negative x -/
-axiom sqrt_div_four (x : ℝ) (hx : 0 ≤ x) :
-    Real.sqrt (x / 4) = Real.sqrt x / 2
+lemma sqrt_div_four (x : ℝ) (hx : 0 ≤ x) :
+    Real.sqrt (x / 4) = Real.sqrt x / 2 := by
+  have hrepr : x / 4 = x * ((1 / 2 : ℝ) * (1 / 2 : ℝ)) := by ring
+  rw [hrepr]
+  have hmul :
+      Real.sqrt (x * ((1 / 2 : ℝ) * (1 / 2 : ℝ))) =
+      Real.sqrt x * Real.sqrt ((1 / 2 : ℝ) * (1 / 2 : ℝ)) := by
+    simpa using (Real.sqrt_mul hx (((1 / 2 : ℝ) * (1 / 2 : ℝ))))
+  rw [hmul]
+  have hs : Real.sqrt ((1 / 2 : ℝ) * (1 / 2 : ℝ)) = (1 / 2 : ℝ) := by
+    have hsq : ((1 / 2 : ℝ) * (1 / 2 : ℝ)) = (1 / 2 : ℝ) ^ 2 := by ring
+    rw [hsq, Real.sqrt_sq_eq_abs]
+    norm_num
+  rw [hs]
+  ring
 
 /-- Midpoint distance lemma (left): distance from p to midpoint(p,q) -/
 lemma distance_midpoint_left (p q : Point3) :

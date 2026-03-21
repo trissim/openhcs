@@ -74,6 +74,8 @@ import DecisionQuotient.Tractability.NearTieBand
 import DecisionQuotient.Tractability.RankingPreservation
 import DecisionQuotient.Tractability.TopKPreservation
 import DecisionQuotient.Tractability.MolecularSrank
+import DecisionQuotient.Tractability.BlindDockingTractability
+import DecisionQuotient.Computation.PocketDetection
 import DecisionQuotient.Information
 import DecisionQuotient.Information.RateDistortion
 import DecisionQuotient.Information.RDSrank
@@ -897,6 +899,15 @@ abbrev MD4 := @Tractability.MolecularSrank.small_pocket_low_srank
 abbrev MD5 := @Tractability.MolecularSrank.docking_small_pocket_bound
 abbrev MD6 := @Tractability.MolecularSrank.md_srank_matches_dq_definition
 abbrev MD7 := @Tractability.MolecularSrank.md_thermodynamic_lower_bound
+
+abbrev PD1 := @Computation.PocketDetection.concave_region_is_bounded
+noncomputable abbrev PD2 := @Computation.PocketDetection.regionToDetectedPocket
+abbrev PD3 := @Computation.PocketDetection.detected_pocket_to_binding_site
+noncomputable abbrev PD4 := @Computation.PocketDetection.detected_pocket_to_md_binding_problem
+noncomputable abbrev PD5 := @Computation.PocketDetection.detected_pocket_md_srank_bound
+
+abbrev BD1 := @Tractability.BlindDocking.guided_docking_srank_bounded_of_detected_pocket
+abbrev BD2 := @Tractability.BlindDocking.blind_docking_tractable_of_detected_pocket
 
 abbrev LJ1 := @Tractability.LJApproximation.ljCutoffErrorRadius_spec
 abbrev LJ2 := @Tractability.LJApproximation.exact_vs_cutoff_lj_uniformApprox

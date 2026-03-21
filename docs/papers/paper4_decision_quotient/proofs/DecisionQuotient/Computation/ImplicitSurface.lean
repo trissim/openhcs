@@ -87,26 +87,17 @@ structure ConcaveRegion (mol : Molecule) (r_probe : ℝ) where
 /-! ## 6. Key Theorems -/
 
 /--
-  AXIOM 3 (REWRITTEN): Concave regions have distinct surface points.
+  THEOREM 3 (WEAKENED): Concave regions are nonempty.
 
-  A concave region is not vacuous - it contains at least two
-  distinct surface points. This is the correct geometric statement
-  since surface points have zero 3D volume.
--/
-axiom concave_region_has_distinct_points
+  This is the correct consequence of the current structure fields.
+  The stronger "two distinct points" claim does not follow from
+  connectedness + boundedness alone, since a singleton is connected.
+--/
+theorem concave_region_nonempty
     {mol : Molecule} {r_probe : ℝ}
     (region : ConcaveRegion mol r_probe) :
-    ∃ (p q : SurfacePoint mol), p ∈ region.points ∧ q ∈ region.points ∧ p ≠ q
-
-/--
-  AXIOM 3b (ALTERNATIVE): Concave regions are nonempty.
-  
-  Weak version if the above is too strong.
--/
-axiom concave_region_nonempty
-    {mol : Molecule} {r_probe : ℝ}
-    (region : ConcaveRegion mol r_probe) :
-    region.points.Nonempty
+    region.points.Nonempty := by
+  exact Set.image_nonempty.mp region.connected.nonempty
 
 /-- AXIOM 4: Concavity equivalence - PROVEN (definitional rfl) -/
 theorem concavity_equivalence
@@ -120,22 +111,17 @@ theorem concavity_equivalence
   rfl
 
 /--
-  AXIOM 5 (REWRITTEN): Ligand accessibility - local clearance version.
+  Local clearance property for a concave region.
 
-  If a ligand fits in the probe radius, there exists a surface point
-  in the concave region and a clearance point near it where the
-  ligand center can sit without penetrating the protein body.
-
-  This is the correct docking semantics:
-  - p ∈ region: we pick a surface point in the pocket
-  - distance q p.position ≤ r_probe - ligandRadius: ligand fits in the clearance
-  - vdwDistance mol q ≥ ligandRadius: ligand center is outside protein
+  This packages the geometric condition needed for ligand placement without
+  asserting it as a global axiom. Downstream theorems can assume or prove this
+  property explicitly.
 -/
-axiom concave_region_has_local_clearance
+def HasLocalClearance
     {mol : Molecule} {r_probe : ℝ}
     (region : ConcaveRegion mol r_probe)
     (ligandRadius : ℝ)
-    (hLigand : ligandRadius ≤ r_probe) :
+    (_hLigand : ligandRadius ≤ r_probe) : Prop :=
     ∃ (p : SurfacePoint mol), p ∈ region.points ∧
       ∃ (q : Point3),
         Geometry3D.distance q p.position ≤ r_probe - ligandRadius ∧
