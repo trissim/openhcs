@@ -49,6 +49,7 @@ from dq_dock_engine.docking.formal_surrogates import (
     PerPoseFastSingletonAcceptRoundResult,
     StagedSingletonAcceptRoundResult,
     try_adaptive_singleton_accept_round,
+    try_adaptive_per_pose_singleton_accept_round,
     try_fast_singleton_accept_round,
     try_per_pose_fast_singleton_accept_round,
     score_exact_and_coarse_round,
@@ -467,15 +468,28 @@ def refine_poses_singleton_then_exact(
                 stencil_level=round_index,
             )
             candidate_batches = apply_action_family_batch(current_coords, action_family)
-            per_pose = try_per_pose_fast_singleton_accept_round(
-                receptor_coords=receptor_coords,
-                receptor_radii=receptor_radii,
-                ligand_radii=ligand_radii,
-                candidate_batches=candidate_batches,
-                target_error=target_error,
-                coarse_target_error=coarse_target_error,
-                translation_step=action_family.translation_step,
-                electrostatics=electrostatics,
+            per_pose = (
+                try_adaptive_per_pose_singleton_accept_round(
+                    receptor_coords=receptor_coords,
+                    receptor_radii=receptor_radii,
+                    ligand_radii=ligand_radii,
+                    candidate_batches=candidate_batches,
+                    target_error=target_error,
+                    coarse_target_errors=adaptive_coarse_target_errors,
+                    translation_step=action_family.translation_step,
+                    electrostatics=electrostatics,
+                )
+                if adaptive_coarse_target_errors is not None
+                else try_per_pose_fast_singleton_accept_round(
+                    receptor_coords=receptor_coords,
+                    receptor_radii=receptor_radii,
+                    ligand_radii=ligand_radii,
+                    candidate_batches=candidate_batches,
+                    target_error=target_error,
+                    coarse_target_error=coarse_target_error,
+                    translation_step=action_family.translation_step,
+                    electrostatics=electrostatics,
+                )
             )
             if per_pose is None:
                 break

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 from dq_dock_engine.docking.core import CertifiedBindingSite
+from dq_dock_engine.docking.sasa import get_solvation_params
 from dq_dock_engine.proof_status import conditionally_certified
 
 
@@ -148,6 +149,43 @@ class PocketAnalysisResult:
     all_features: tuple[PharmacophoreFeature, ...]
 
 
+@dataclass(frozen=True)
+class CertifiedSurfacePoint:
+    position: jnp.ndarray
+    defining_atom_index: int
+    defining_atom_radius: float
+    cavity_normal: jnp.ndarray
+
+
+@dataclass(frozen=True)
+class ConcavityWitness:
+    surface_point_index: int
+    probe_center: jnp.ndarray
+    epsilon: float
+    intersecting_atom_indices: tuple[int, ...]
+    theorem_handles: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CertifiedDetectedPocket:
+    """
+    Runtime approximation of a theorem-backed detected pocket.
+
+    This packages the local pocket geometry used for sampling/restriction with
+    the conservative certified binding-site abstraction consumed downstream.
+    """
+
+    pocket_coords: jnp.ndarray
+    pocket_elements: tuple[str, ...]
+    shape: PocketShape
+    accessibility: jnp.ndarray
+    features: tuple[PharmacophoreFeature, ...]
+    surface_points: tuple[CertifiedSurfacePoint, ...]
+    concavity_witnesses: tuple[ConcavityWitness, ...]
+    binding_site: CertifiedBindingSite
+    theorem_handles: tuple[str, ...] = ()
+
+
 # =============================================================================
 # ABC CONTRACT FOR POCKET ANALYZERS
 # =============================================================================
@@ -220,6 +258,83 @@ def compute_pocket_shape(pocket_coords: jnp.ndarray) -> PocketShape:
     )
 
 
+def _safe_normalize(v: jnp.ndarray) -> jnp.ndarray:
+    norm = jnp.linalg.norm(v)
+    if float(norm) > 1e-8:
+        return v / norm
+    return jnp.array([1.0, 0.0, 0.0], dtype=v.dtype)
+
+
+def _default_pocket_radii(pocket_elements: tuple[str, ...]) -> jnp.ndarray:
+    if len(pocket_elements) == 0:
+        return jnp.zeros((0,), dtype=jnp.float32)
+    radii = [get_solvation_params(elem).radius for elem in pocket_elements]
+    return jnp.asarray(radii, dtype=jnp.float32)
+
+
+def derive_surface_points(
+    pocket_coords: jnp.ndarray,
+    pocket_radii: jnp.ndarray,
+    pocket_center: jnp.ndarray,
+) -> tuple[CertifiedSurfacePoint, ...]:
+    surface_points: list[CertifiedSurfacePoint] = []
+    for idx in range(pocket_coords.shape[0]):
+        atom_position = pocket_coords[idx]
+        atom_radius = float(pocket_radii[idx])
+        cavity_normal = _safe_normalize(pocket_center - atom_position)
+        surface_position = atom_position + atom_radius * cavity_normal
+        surface_points.append(
+            CertifiedSurfacePoint(
+                position=surface_position,
+                defining_atom_index=idx,
+                defining_atom_radius=atom_radius,
+                cavity_normal=cavity_normal,
+            )
+        )
+    return tuple(surface_points)
+
+
+def intersecting_atom_indices(
+    pocket_coords: jnp.ndarray,
+    pocket_radii: jnp.ndarray,
+    probe_center: jnp.ndarray,
+    probe_radius: float,
+) -> tuple[int, ...]:
+    distances = jnp.linalg.norm(pocket_coords - probe_center, axis=1)
+    threshold = pocket_radii + probe_radius
+    mask = distances < threshold
+    return tuple(int(i) for i in jnp.nonzero(mask, size=int(jnp.sum(mask)))[0])
+
+
+def detect_concavity_witnesses(
+    surface_points: tuple[CertifiedSurfacePoint, ...],
+    pocket_coords: jnp.ndarray,
+    pocket_radii: jnp.ndarray,
+    probe_radius: float,
+    epsilon: float,
+) -> tuple[ConcavityWitness, ...]:
+    witnesses: list[ConcavityWitness] = []
+    for surface_index, surface_point in enumerate(surface_points):
+        probe_center = surface_point.position + epsilon * surface_point.cavity_normal
+        intersecting = intersecting_atom_indices(
+            pocket_coords,
+            pocket_radii,
+            probe_center,
+            probe_radius,
+        )
+        if len(intersecting) >= 2:
+            witnesses.append(
+                ConcavityWitness(
+                    surface_point_index=surface_index,
+                    probe_center=probe_center,
+                    epsilon=epsilon,
+                    intersecting_atom_indices=intersecting,
+                    theorem_handles=("PD2",),
+                )
+            )
+    return tuple(witnesses)
+
+
 @conditionally_certified(
     "HandleAliases.lean::PD3; HandleAliases.lean::PD5; HandleAliases.lean::BD1",
     assumptions=[
@@ -247,6 +362,70 @@ def derive_certified_binding_site(
         center=shape.center_of_mass,
         radius=radius,
         theorem_handles=("PD3", "PD5", "BD1"),
+    )
+
+
+@conditionally_certified(
+    "HandleAliases.lean::PD2; HandleAliases.lean::PD3; HandleAliases.lean::PD5; HandleAliases.lean::BD1",
+    assumptions=[
+        "the supplied pocket_coords and pocket_elements come from a runtime detector aligned with a theorem-backed concave region",
+        "the accessibility and pharmacophore computations preserve the local pocket support used by the certified binding-site abstraction",
+    ],
+)
+def detect_certified_pocket(
+    pocket_coords: jnp.ndarray,
+    pocket_elements: tuple[str, ...],
+    config: PocketAnalysisConfig | None = None,
+    pocket_radii: jnp.ndarray | None = None,
+    radius_margin: float = 0.0,
+) -> CertifiedDetectedPocket | None:
+    if pocket_coords.shape[0] == 0:
+        return None
+
+    config = ACCESSIBILITY_CONFIG if config is None else config
+    pocket_radii = (
+        _default_pocket_radii(pocket_elements) if pocket_radii is None else pocket_radii
+    )
+
+    accessibility = compute_accessibility_batch(pocket_coords, config)
+    features = detect_pharmacophore_features(
+        pocket_coords,
+        pocket_elements,
+        accessibility,
+        config,
+    )
+    shape = compute_pocket_shape(pocket_coords)
+    surface_points = derive_surface_points(
+        pocket_coords,
+        pocket_radii,
+        shape.center_of_mass,
+    )
+    concavity_witnesses = detect_concavity_witnesses(
+        surface_points,
+        pocket_coords,
+        pocket_radii,
+        config.probe_radius,
+        epsilon=config.probe_radius / 2.0,
+    )
+    if len(concavity_witnesses) == 0:
+        return None
+    binding_site = derive_certified_binding_site(
+        pocket_coords,
+        radius_margin=radius_margin,
+    )
+    if binding_site is None:
+        return None
+
+    return CertifiedDetectedPocket(
+        pocket_coords=pocket_coords,
+        pocket_elements=pocket_elements,
+        shape=shape,
+        accessibility=accessibility,
+        features=features,
+        surface_points=surface_points,
+        concavity_witnesses=concavity_witnesses,
+        binding_site=binding_site,
+        theorem_handles=("PD2", "PD3", "PD5", "BD1"),
     )
 
 

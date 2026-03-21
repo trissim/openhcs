@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 from dq_dock_engine.arraydsl import quaternionDictionary8
-from dq_dock_engine.docking.core import DockingBox, PoseVector
+from dq_dock_engine.docking.core import CertifiedBindingSite, DockingBox, PoseVector
 
 
 @dataclass(frozen=True)
@@ -62,6 +62,17 @@ def create_certified_global_action_family(
         lattice_resolution=resolution,
         quaternion_count=n_quaternions,
     )
+
+
+def create_certified_binding_site_action_family(
+    binding_site: CertifiedBindingSite,
+    n_poses: int,
+) -> CertifiedGlobalActionFamily:
+    box = DockingBox(
+        center=binding_site.center,
+        size=jnp.full((3,), 2.0 * binding_site.radius),
+    )
+    return create_certified_global_action_family(box, n_poses)
 
 
 def sample_certified_global_poses(box: DockingBox, n_poses: int) -> PoseVector:

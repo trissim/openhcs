@@ -17,6 +17,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 
+from dq_dock_engine.docking.pocket_analysis import CertifiedDetectedPocket
+
 
 # =============================================================================
 # SAMPLING STRATEGY ENUM (OpenHCS Pattern)
@@ -94,6 +96,13 @@ class SamplingResult:
     n_guided: int
     n_random: int
     templates_used: int
+
+
+@dataclass(frozen=True)
+class LocalPocketRegion:
+    coords: jnp.ndarray
+    elements: tuple[str, ...]
+    indices: jnp.ndarray
 
 
 # =============================================================================
@@ -288,6 +297,46 @@ def sample_biased_rotations(
     return _sample_rotations_vmap(keys, rot_biases, rot_stds)
 
 
+def extract_local_pocket_region_view(
+    protein_coords: jnp.ndarray,
+    receptor_elements: tuple[str, ...] | None,
+    box_center: jnp.ndarray,
+    box_size: float,
+) -> LocalPocketRegion:
+    """Extract the local pocket region inside a spherical box neighborhood."""
+    pocket_radius = box_size / 2.0
+    distances = jnp.linalg.norm(protein_coords - box_center, axis=1)
+    pocket_mask = distances < pocket_radius
+    pocket_indices = jnp.nonzero(pocket_mask, size=int(jnp.sum(pocket_mask)))[0]
+    pocket_coords = protein_coords[pocket_indices]
+
+    if receptor_elements is None:
+        pocket_elements = tuple(["C"] * len(pocket_coords))
+    else:
+        pocket_elements = tuple(receptor_elements[int(i)] for i in pocket_indices)
+
+    return LocalPocketRegion(
+        coords=pocket_coords,
+        elements=pocket_elements,
+        indices=pocket_indices,
+    )
+
+
+def extract_local_pocket_region(
+    protein_coords: jnp.ndarray,
+    receptor_elements: tuple[str, ...] | None,
+    box_center: jnp.ndarray,
+    box_size: float,
+) -> tuple[jnp.ndarray, tuple[str, ...]]:
+    region = extract_local_pocket_region_view(
+        protein_coords=protein_coords,
+        receptor_elements=receptor_elements,
+        box_center=box_center,
+        box_size=box_size,
+    )
+    return region.coords, region.elements
+
+
 # =============================================================================
 # POCKET-GUIDED SAMPLER IMPLEMENTATION
 # =============================================================================
@@ -425,6 +474,26 @@ class PocketGuidedSampler(PocketSampler):
 
         pocket_shape = compute_pocket_shape(pocket_coords)
 
+        return self._sample_guided_from_analysis(
+            key=key,
+            n_poses=n_poses,
+            pocket_coords=pocket_coords,
+            ligand_com=ligand_com,
+            pocket_shape=pocket_shape,
+            features=features,
+        )
+
+    def _sample_guided_from_analysis(
+        self,
+        key: jax.Array,
+        n_poses: int,
+        pocket_coords: jnp.ndarray,
+        ligand_com: jnp.ndarray,
+        pocket_shape,
+        features,
+    ) -> SamplingResult:
+        """Pocket-guided sampling using precomputed analysis artifacts."""
+
         templates, template_weights = self._generate_templates(
             pocket_coords, pocket_shape, features
         )
@@ -479,6 +548,38 @@ class PocketGuidedSampler(PocketSampler):
         normalized_weights = jnp.array([w / total_weight for w in weights])
 
         return tuple(all_templates), normalized_weights
+
+    def _generate_templates_from_certified_pocket(
+        self,
+        certified_pocket: CertifiedDetectedPocket,
+    ) -> tuple[tuple[PoseTemplate, ...], jnp.ndarray]:
+        templates: list[PoseTemplate] = []
+        weights: list[float] = []
+        if len(certified_pocket.concavity_witnesses) == 0:
+            return self._generate_templates(
+                certified_pocket.pocket_coords,
+                certified_pocket.shape,
+                certified_pocket.features,
+            )
+
+        for witness in certified_pocket.concavity_witnesses:
+            surface_point = certified_pocket.surface_points[witness.surface_point_index]
+            rotation = _axis_angle_to_quaternion(
+                surface_point.cavity_normal,
+                0.0,
+            )
+            templates.append(
+                PoseTemplate(
+                    translation=witness.probe_center,
+                    rotation_bias=rotation,
+                    uncertainty=(self._trans_std, self._rot_std),
+                )
+            )
+            weights.append(float(len(witness.intersecting_atom_indices)))
+
+        total_weight = sum(weights)
+        normalized_weights = jnp.array([w / total_weight for w in weights])
+        return tuple(templates), normalized_weights
 
 
 # =============================================================================
@@ -539,18 +640,13 @@ def sample_intelligent_poses(
     Returns:
         (translations, quaternions) tuple
     """
-    pocket_radius = box_size / 2.0
-
-    distances = jnp.linalg.norm(protein_coords - box_center, axis=1)
-    pocket_mask = distances < pocket_radius
-    pocket_coords = protein_coords[pocket_mask]
-
-    if receptor_elements is None:
-        pocket_elements = tuple(["C"] * len(pocket_coords))
-    else:
-        pocket_elements = tuple(
-            element for element, keep in zip(receptor_elements, pocket_mask) if keep
-        )
+    region = extract_local_pocket_region_view(
+        protein_coords=protein_coords,
+        receptor_elements=receptor_elements,
+        box_center=box_center,
+        box_size=box_size,
+    )
+    pocket_coords, pocket_elements = region.coords, region.elements
 
     sampler = create_pocket_sampler()
 
@@ -565,4 +661,64 @@ def sample_intelligent_poses(
         box_size=box_size,
     )
 
+    return result.translations, result.quaternions
+
+
+def sample_intelligent_poses_from_certified_pocket(
+    key: jax.Array,
+    n_poses: int,
+    certified_pocket: CertifiedDetectedPocket,
+    ligand_com: jnp.ndarray,
+    strategy: SamplingStrategy = SamplingStrategy.HYBRID,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """
+    Intelligent pose sampling driven by a certified detected pocket object.
+    """
+    sampler = create_pocket_sampler()
+    box_extent = float(jnp.max(certified_pocket.shape.extents))
+    box_size = max(2.0 * certified_pocket.binding_site.radius, box_extent)
+    templates, template_weights = sampler._generate_templates_from_certified_pocket(
+        certified_pocket
+    )
+
+    if strategy == SamplingStrategy.GUIDED:
+        key_trans, key_rot = jax.random.split(key)
+        indices = _select_template_indices(key_trans, template_weights, n_poses)
+        translations = sample_biased_translations(
+            key_trans, templates, template_weights, n_poses
+        )
+        quaternions = sample_biased_rotations(key_rot, templates, indices, n_poses)
+        return translations, quaternions
+
+    if strategy == SamplingStrategy.HYBRID:
+        n_guided = int(n_poses * strategy.keep_ratio())
+        n_random = n_poses - n_guided
+        key_guided, key_random = jax.random.split(key)
+        key_guided_trans, key_guided_rot = jax.random.split(key_guided)
+        indices = _select_template_indices(key_guided_trans, template_weights, n_guided)
+        guided_translations = sample_biased_translations(
+            key_guided_trans, templates, template_weights, n_guided
+        )
+        guided_quaternions = sample_biased_rotations(
+            key_guided_rot, templates, indices, n_guided
+        )
+        random_result = sampler._sample_random(
+            key_random,
+            n_random,
+            ligand_com,
+            certified_pocket.binding_site.center,
+            box_size,
+        )
+        return (
+            jnp.concatenate([guided_translations, random_result.translations]),
+            jnp.concatenate([guided_quaternions, random_result.quaternions]),
+        )
+
+    result = sampler._sample_random(
+        key,
+        n_poses,
+        ligand_com,
+        certified_pocket.binding_site.center,
+        box_size,
+    )
     return result.translations, result.quaternions

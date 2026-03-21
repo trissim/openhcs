@@ -770,6 +770,32 @@ def try_per_pose_fast_singleton_accept_round(
     )
 
 
+def try_adaptive_per_pose_singleton_accept_round(
+    receptor_coords: jax.Array,
+    receptor_radii: jax.Array,
+    ligand_radii: jax.Array,
+    candidate_batches: jax.Array,
+    target_error: float,
+    coarse_target_errors: tuple[float, ...],
+    translation_step: float,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
+) -> PerPoseFastSingletonAcceptRoundResult | None:
+    for coarse_target_error in coarse_target_errors:
+        result = try_per_pose_fast_singleton_accept_round(
+            receptor_coords=receptor_coords,
+            receptor_radii=receptor_radii,
+            ligand_radii=ligand_radii,
+            candidate_batches=candidate_batches,
+            target_error=target_error,
+            coarse_target_error=coarse_target_error,
+            translation_step=translation_step,
+            electrostatics=electrostatics,
+        )
+        if result is not None:
+            return result
+    return None
+
+
 def staged_top1_cost_diagnostic(
     receptor_coords: jax.Array,
     receptor_radii: jax.Array,

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Core OpenHCS Domain Types for Pose Prediction.
 
@@ -157,6 +159,23 @@ class CertifiedBindingSite:
     center: jnp.ndarray  # shape (3,)
     radius: float
     theorem_handles: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CertifiedBlindDockingPlan:
+    """Theorem-directed runtime plan for certified blind docking."""
+
+    binding_site: Optional[CertifiedBindingSite]
+    restricted_box: DockingBox
+    restricted_atom_count: int
+    theorem_handles: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CertifiedBlindDockingResult:
+    plan: CertifiedBlindDockingPlan
+    poses: tuple[ScoredPose, ...]
+    certification: Optional[Union[NativeCertification, GapCertification]] = None
 
 
 @dataclass(frozen=True)

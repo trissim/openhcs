@@ -120,6 +120,7 @@ from dq_dock_engine.docking.formal_surrogates import (
     score_exact_and_coarse_local_family,
     staged_top1_cost_diagnostic,
     try_adaptive_singleton_accept_round,
+    try_adaptive_per_pose_singleton_accept_round,
     staged_top1_decision_from_scores,
     staged_top1_round_from_coarse_scores,
     staged_singleton_gate,
@@ -671,6 +672,29 @@ def test_try_per_pose_fast_singleton_accept_round_returns_result_or_fallback():
     )
 
     assert result is None or isinstance(result, PerPoseFastSingletonAcceptRoundResult)
+
+
+def test_try_adaptive_per_pose_fast_singleton_accept_round_returns_first_successful_target():
+    candidate_batches = jnp.array(
+        [
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+            [[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]], [[1.0, 0.0, 0.0]]],
+        ],
+        dtype=jnp.float32,
+    )
+    result = try_adaptive_per_pose_singleton_accept_round(
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        candidate_batches=candidate_batches,
+        target_error=0.001,
+        coarse_target_errors=(0.05, 0.01, 0.004),
+        translation_step=0.5,
+    )
+
+    assert result is not None
+    assert isinstance(result, PerPoseFastSingletonAcceptRoundResult)
+    assert result.coarse_target_error in {0.05, 0.01, 0.004}
 
 
 def test_minimal_round_from_per_pose_singleton_accept_preserves_round_payload():
