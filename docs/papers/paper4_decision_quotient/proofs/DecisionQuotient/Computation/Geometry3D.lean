@@ -13,6 +13,7 @@
 -/
 
 import Mathlib.Data.Real.Basic
+import Mathlib.Analysis.SpecialFunctions.Sqrt
 import Mathlib.Tactic
 
 namespace DecisionQuotient.Computation.Geometry3D
@@ -52,18 +53,44 @@ noncomputable def midpoint (p q : Point3) : Point3 :=
   smul (1/2) (add p q)
 
 ------------------------------------------------------------
--- GEOMETRIC FACTS (proved or axiomatized)
+-- GEOMETRIC FACTS (proved from Real.sqrt properties)
 ------------------------------------------------------------
 
-/-- Distance zero iff points equal -/
-axiom distance_eq_zero_iff
-  (p q : Point3) :
-  distance p q = 0 ↔ p = q
-
 /-- Distance is nonnegative -/
-axiom distance_nonneg
-  (p q : Point3) :
-  0 ≤ distance p q
+lemma distance_nonneg (p q : Point3) : 0 ≤ distance p q := by
+  unfold distance
+  exact Real.sqrt_nonneg _
+
+/-- Distance is symmetric -/
+lemma distance_sym (p q : Point3) : distance p q = distance q p := by
+  unfold distance
+  congr 1 <;> ring
+
+/-- Distance zero iff points equal -/
+lemma distance_eq_zero_iff (p q : Point3) : distance p q = 0 ↔ p = q := by
+  rcases p with ⟨px, py, pz⟩
+  rcases q with ⟨qx, qy, qz⟩
+  constructor
+  · intro h
+    unfold distance at h
+    have hle : (px - qx)^2 + (py - qy)^2 + (pz - qz)^2 ≤ 0 := by
+      have hsqrt := (Real.sqrt_eq_zero').mp h
+      exact hsqrt
+    have hge : 0 ≤ (px - qx)^2 + (py - qy)^2 + (pz - qz)^2 := by
+      nlinarith [sq_nonneg (px - qx), sq_nonneg (py - qy), sq_nonneg (pz - qz)]
+    have hsum : (px - qx)^2 + (py - qy)^2 + (pz - qz)^2 = 0 := by
+      linarith
+    have hx0 : (px - qx)^2 = 0 := by nlinarith
+    have hy0 : (py - qy)^2 = 0 := by nlinarith
+    have hz0 : (pz - qz)^2 = 0 := by nlinarith
+    have hx : px = qx := by nlinarith
+    have hy : py = qy := by nlinarith
+    have hz : pz = qz := by nlinarith
+    simp [hx, hy, hz]
+  · intro h
+    cases h
+    unfold distance
+    norm_num
 
 /-- Positive distance for distinct points -/
 lemma distance_pos_of_ne {p q : Point3} (h : p ≠ q) :
