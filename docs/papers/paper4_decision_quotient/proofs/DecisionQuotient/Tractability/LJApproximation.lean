@@ -8,6 +8,7 @@
 import DecisionQuotient.Computation.ArrayDSL
 import DecisionQuotient.Tractability.CoarseApproximation
 import DecisionQuotient.Tractability.CutoffEpsilon
+import DecisionQuotient.Tractability.FormalLocalOptimizer
 import DecisionQuotient.Tractability.LatticeSum
 import Mathlib.Data.Finset.Max
 
@@ -19,6 +20,8 @@ open Computation.ArrayDSL
 open CoarseApproximation
 open CertifiedPruning
 open FiniteTopK
+open NearTieBand
+open FormalLocalOptimizer
 open Tractability
 open LatticeSum
 open Classical
@@ -144,6 +147,73 @@ theorem exact_vs_cutoff_lj_opt_invariance {A : Type u} {S : Type v}
       (ljCutoffErrorRadius distance ε σ rc)
       (exact_vs_cutoff_lj_uniformApprox distance ε σ rc)
       s aStar hDelta hStrict hBound
+
+theorem ljCutoffErrorRadius_nonneg {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ) (ε σ rc : ℝ) :
+    0 ≤ ljCutoffErrorRadius distance ε σ rc := by
+  rcases ‹Nonempty A› with ⟨a⟩
+  rcases ‹Nonempty S› with ⟨s⟩
+  exact le_trans (abs_nonneg _) (ljCutoffErrorRadius_spec distance ε σ rc a s)
+
+/--
+  Exact-vs-cutoff Lennard-Jones induces a theorem-backed certified top-1 survivor
+  set at every sampled state.
+-/
+noncomputable def exact_vs_cutoff_lj_certified_top1
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ) (ε σ rc : ℝ) (s : S) :
+    CertifiedSurvivorSet A :=
+  certified_top1_survivor_set_of_uniformApprox
+    (fun a => exactLJDecisionProblem distance ε σ |>.utility a s)
+    (fun a => cutoffLJDecisionProblem distance ε σ rc |>.utility a s)
+    (ljCutoffErrorRadius distance ε σ rc)
+    (fun a => exact_vs_cutoff_lj_uniformApprox distance ε σ rc a s)
+    (ljCutoffErrorRadius_nonneg distance ε σ rc)
+
+/-- Soundness of the exact-vs-cutoff LJ certified top-1 survivor set. -/
+theorem exact_vs_cutoff_lj_certified_top1_sound
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ) (ε σ rc : ℝ) (s : S) :
+    (certificate_of_top1_coarse_ambiguityBand
+      (fun a => exactLJDecisionProblem distance ε σ |>.utility a s)
+      (fun a => cutoffLJDecisionProblem distance ε σ rc |>.utility a s)
+      (ljCutoffErrorRadius distance ε σ rc)
+      (fun a => exact_vs_cutoff_lj_uniformApprox distance ε σ rc a s)
+      (ljCutoffErrorRadius_nonneg distance ε σ rc)).exactTopK
+      ⊆ (exact_vs_cutoff_lj_certified_top1 distance ε σ rc s).survivors := by
+  simpa [exact_vs_cutoff_lj_certified_top1]
+    using certified_top1_survivor_set_of_uniformApprox_sound
+      (fun a => exactLJDecisionProblem distance ε σ |>.utility a s)
+      (fun a => cutoffLJDecisionProblem distance ε σ rc |>.utility a s)
+      (ljCutoffErrorRadius distance ε σ rc)
+      (fun a => exact_vs_cutoff_lj_uniformApprox distance ε σ rc a s)
+      (ljCutoffErrorRadius_nonneg distance ε σ rc)
+
+/--
+  Exact-vs-cutoff Lennard-Jones also yields a runtime-facing optimizer witness
+  for the ambiguity-band selection branch.
+-/
+noncomputable def exact_vs_cutoff_lj_coherent_optimizer_witness
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (distance : A → S → ℝ) (ε σ rc : ℝ) (s : S) :
+    CoherentOptimizerWitness A :=
+  coherent_optimizer_witness_of_uniformApprox_top1
+    (fun a => exactLJDecisionProblem distance ε σ |>.utility a s)
+    (fun a => cutoffLJDecisionProblem distance ε σ rc |>.utility a s)
+    (ljCutoffErrorRadius distance ε σ rc)
+    (fun a => exact_vs_cutoff_lj_uniformApprox distance ε σ rc a s)
+    (ljCutoffErrorRadius_nonneg distance ε σ rc)
+
+noncomputable def exact_vs_cutoff_lj_optimizer_witness
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (distance : A → S → ℝ) (ε σ rc : ℝ) (s : S) :
+    OptimizerWitness A :=
+  (exact_vs_cutoff_lj_coherent_optimizer_witness distance ε σ rc s).toOptimizerWitness
 
 noncomputable def exact_vs_cutoff_lj_pruning_certificate {A : Type u}
     [Fintype A] [DecidableEq A] [Nonempty A]

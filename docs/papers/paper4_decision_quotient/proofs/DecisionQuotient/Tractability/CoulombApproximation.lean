@@ -7,6 +7,7 @@
 import DecisionQuotient.Tractability.EwaldSummation
 import DecisionQuotient.Tractability.CoarseApproximation
 import DecisionQuotient.Tractability.CutoffEpsilon
+import DecisionQuotient.Tractability.FormalLocalOptimizer
 import DecisionQuotient.Tractability.LatticeSum
 import Mathlib.Data.Finset.Max
 
@@ -18,6 +19,8 @@ open Ewald
 open CoarseApproximation
 open CertifiedPruning
 open FiniteTopK
+open NearTieBand
+open FormalLocalOptimizer
 open LatticeSum
 open Classical
 
@@ -79,6 +82,63 @@ theorem exact_vs_cutoff_coulomb_uniformApprox {A : Type u} {S : Type v}
   simpa [exactCoulombDecisionProblem, cutoffCoulombDecisionProblem] using
     coulombCutoffErrorRadius_spec q_i q_j rc distance a s
 
+theorem coulombCutoffErrorRadius_nonneg {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (q_i q_j rc : ℝ) (distance : A → S → ℝ) :
+    0 ≤ coulombCutoffErrorRadius q_i q_j rc distance := by
+  rcases ‹Nonempty A› with ⟨a⟩
+  rcases ‹Nonempty S› with ⟨s⟩
+  exact le_trans (abs_nonneg _) (coulombCutoffErrorRadius_spec q_i q_j rc distance a s)
+
+/-- Exact-vs-cutoff Coulomb induces a theorem-backed certified top-1 survivor set. -/
+noncomputable def exact_vs_cutoff_coulomb_certified_top1 {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (q_i q_j rc : ℝ) (distance : A → S → ℝ) (s : S) :
+    CertifiedSurvivorSet A :=
+  certified_top1_survivor_set_of_uniformApprox
+    (fun a => exactCoulombDecisionProblem q_i q_j distance |>.utility a s)
+    (fun a => cutoffCoulombDecisionProblem q_i q_j rc distance |>.utility a s)
+    (coulombCutoffErrorRadius q_i q_j rc distance)
+    (fun a => exact_vs_cutoff_coulomb_uniformApprox q_i q_j rc distance a s)
+    (coulombCutoffErrorRadius_nonneg q_i q_j rc distance)
+
+/-- Soundness of the exact-vs-cutoff Coulomb certified top-1 survivor set. -/
+theorem exact_vs_cutoff_coulomb_certified_top1_sound {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (q_i q_j rc : ℝ) (distance : A → S → ℝ) (s : S) :
+    (certificate_of_top1_coarse_ambiguityBand
+      (fun a => exactCoulombDecisionProblem q_i q_j distance |>.utility a s)
+      (fun a => cutoffCoulombDecisionProblem q_i q_j rc distance |>.utility a s)
+      (coulombCutoffErrorRadius q_i q_j rc distance)
+      (fun a => exact_vs_cutoff_coulomb_uniformApprox q_i q_j rc distance a s)
+      (coulombCutoffErrorRadius_nonneg q_i q_j rc distance)).exactTopK
+      ⊆ (exact_vs_cutoff_coulomb_certified_top1 q_i q_j rc distance s).survivors := by
+  simpa [exact_vs_cutoff_coulomb_certified_top1]
+    using certified_top1_survivor_set_of_uniformApprox_sound
+      (fun a => exactCoulombDecisionProblem q_i q_j distance |>.utility a s)
+      (fun a => cutoffCoulombDecisionProblem q_i q_j rc distance |>.utility a s)
+      (coulombCutoffErrorRadius q_i q_j rc distance)
+      (fun a => exact_vs_cutoff_coulomb_uniformApprox q_i q_j rc distance a s)
+      (coulombCutoffErrorRadius_nonneg q_i q_j rc distance)
+
+/-- Exact-vs-cutoff Coulomb yields a runtime-facing optimizer witness. -/
+noncomputable def exact_vs_cutoff_coulomb_coherent_optimizer_witness {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (q_i q_j rc : ℝ) (distance : A → S → ℝ) (s : S) :
+    CoherentOptimizerWitness A :=
+  coherent_optimizer_witness_of_uniformApprox_top1
+    (fun a => exactCoulombDecisionProblem q_i q_j distance |>.utility a s)
+    (fun a => cutoffCoulombDecisionProblem q_i q_j rc distance |>.utility a s)
+    (coulombCutoffErrorRadius q_i q_j rc distance)
+    (fun a => exact_vs_cutoff_coulomb_uniformApprox q_i q_j rc distance a s)
+    (coulombCutoffErrorRadius_nonneg q_i q_j rc distance)
+
+noncomputable def exact_vs_cutoff_coulomb_optimizer_witness {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (q_i q_j rc : ℝ) (distance : A → S → ℝ) (s : S) :
+    OptimizerWitness A :=
+  (exact_vs_cutoff_coulomb_coherent_optimizer_witness q_i q_j rc distance s).toOptimizerWitness
+
 /-- Coulomb-family packaging theorem: once a Coulomb tail perturbation bound is
     proved for the chosen utility, the finite-gap theorem yields an explicit
     `SatisfiesBoundedPotential` witness. -/
@@ -128,6 +188,169 @@ theorem abs_exactRealEwaldScore_le_charge_envelope
       rw [abs_div, abs_of_pos hr]
     _ = |q_i * q_j| * (Real.exp (-((alpha * r) ^ 2)) / r) := by
       field_simp [hr.ne']
+
+/-- Explicit far-field error bound for the real-space Ewald correction. -/
+noncomputable def realEwaldFarFieldErrorBound (q_i q_j alpha R : ℝ) : ℝ :=
+  |q_i * q_j| * ((2 / alpha ^ 4) / R ^ 3)
+
+theorem realEwaldFarFieldErrorBound_nonneg
+    (q_i q_j alpha R : ℝ) (ha : 0 < alpha) (hR : 1 ≤ R) :
+    0 ≤ realEwaldFarFieldErrorBound q_i q_j alpha R := by
+  unfold realEwaldFarFieldErrorBound
+  positivity
+
+/--
+  On any fixed state whose sampled distances all lie beyond a far-field radius
+  `R`, the real-space Ewald correction is uniformly bounded by an explicit
+  alpha-dependent tail term.
+-/
+theorem exactRealEwaldScore_far_field_bound
+    {A : Type u} {S : Type v}
+    (distance : A → S → ℝ)
+    (q_i q_j alpha R : ℝ)
+    (s : S)
+    (ha : 0 < alpha)
+    (hR : 1 ≤ R)
+    (hFar : ∀ a, R ≤ distance a s) :
+    ∀ a, |exactRealEwaldScore q_i q_j alpha (distance a s)| ≤ realEwaldFarFieldErrorBound q_i q_j alpha R := by
+  intro a
+  have hdist_ge_one : 1 ≤ distance a s := le_trans hR (hFar a)
+  have hdist_pos : 0 < distance a s := lt_of_lt_of_le zero_lt_one hdist_ge_one
+  have hEnv := abs_exactRealEwaldScore_le_charge_envelope q_i q_j alpha (distance a s) hdist_pos ha
+  have hTailPoint : ewaldRealSpaceCore (distance a s) alpha ≤ (2 / alpha ^ 4) / (distance a s) ^ 3 := by
+    simpa using ewaldRealSpaceCore_le_alpha_tail alpha (distance a s) ha hdist_ge_one
+  have hMulTail :
+      |q_i * q_j| * ewaldRealSpaceCore (distance a s) alpha ≤
+      |q_i * q_j| * ((2 / alpha ^ 4) / (distance a s) ^ 3) := by
+    gcongr
+  have hPow : R ^ 3 ≤ (distance a s) ^ 3 := by
+    have hDiff : 0 ≤ distance a s - R := by linarith [hFar a]
+    have hSum : 0 ≤ (distance a s) ^ 2 + distance a s * R + R ^ 2 := by positivity
+    have hCubeDiff : 0 ≤ (distance a s) ^ 3 - R ^ 3 := by
+      have hFact : (distance a s) ^ 3 - R ^ 3 =
+          (distance a s - R) * ((distance a s) ^ 2 + distance a s * R + R ^ 2) := by ring
+      rw [hFact]
+      exact mul_nonneg hDiff hSum
+    linarith
+  have hR3pos : 0 < R ^ 3 := by positivity
+  have hInv : 1 / (distance a s) ^ 3 ≤ 1 / R ^ 3 := by
+    exact one_div_le_one_div_of_le hR3pos hPow
+  have hCoeffNonneg : 0 ≤ 2 / alpha ^ 4 := by positivity
+  have hFrac : ((2 / alpha ^ 4) / (distance a s) ^ 3) ≤ ((2 / alpha ^ 4) / R ^ 3) := by
+    simpa [div_eq_mul_inv] using mul_le_mul_of_nonneg_left hInv hCoeffNonneg
+  have hAbsCoeff : 0 ≤ |q_i * q_j| := abs_nonneg _
+  have hFinalMul :
+      |q_i * q_j| * ((2 / alpha ^ 4) / (distance a s) ^ 3) ≤
+      |q_i * q_j| * ((2 / alpha ^ 4) / R ^ 3) := by
+    gcongr
+  calc
+    |exactRealEwaldScore q_i q_j alpha (distance a s)|
+        ≤ |q_i * q_j| * ewaldRealSpaceCore (distance a s) alpha := hEnv
+    _ ≤ |q_i * q_j| * ((2 / alpha ^ 4) / (distance a s) ^ 3) := hMulTail
+    _ ≤ |q_i * q_j| * ((2 / alpha ^ 4) / R ^ 3) := hFinalMul
+
+/--
+  Adding the far-field Ewald correction to a base scorer stays within an explicit
+  uniform radius of the base scorer on the chosen state.
+-/
+theorem additive_exactRealEwald_uniform_error_at_state
+    {A : Type u} {S : Type v}
+    (uBase : A → S → ℝ)
+    (distance : A → S → ℝ)
+    (q_i q_j alpha R : ℝ)
+    (s : S)
+    (ha : 0 < alpha)
+    (hR : 1 ≤ R)
+    (hFar : ∀ a, R ≤ distance a s) :
+    ∀ a,
+      |((uBase a s + exactRealEwaldScore q_i q_j alpha (distance a s)) - uBase a s)|
+        ≤ realEwaldFarFieldErrorBound q_i q_j alpha R := by
+  intro a
+  simpa [sub_eq_add_neg, add_assoc] using
+    exactRealEwaldScore_far_field_bound distance q_i q_j alpha R s ha hR hFar a
+
+/--
+  A far-field Ewald correction yields a theorem-backed certified top-1 survivor
+  set around any chosen base scorer.
+-/
+noncomputable def additive_exactRealEwald_certified_top1
+    {A : Type u} {S : Type v}
+    [Fintype A] [DecidableEq A] [Nonempty A]
+    (uBase : A → S → ℝ)
+    (distance : A → S → ℝ)
+    (q_i q_j alpha R : ℝ)
+    (s : S)
+    (ha : 0 < alpha)
+    (hR : 1 ≤ R)
+    (hFar : ∀ a, R ≤ distance a s) :
+    CertifiedSurvivorSet A :=
+  certified_top1_survivor_set_of_uniformApprox
+    (fun a => uBase a s + exactRealEwaldScore q_i q_j alpha (distance a s))
+    (fun a => uBase a s)
+    (realEwaldFarFieldErrorBound q_i q_j alpha R)
+    (additive_exactRealEwald_uniform_error_at_state uBase distance q_i q_j alpha R s ha hR hFar)
+    (realEwaldFarFieldErrorBound_nonneg q_i q_j alpha R ha hR)
+
+/-- Soundness of the additive far-field Ewald certified top-1 survivor set. -/
+theorem additive_exactRealEwald_certified_top1_sound
+    {A : Type u} {S : Type v}
+    [Fintype A] [DecidableEq A] [Nonempty A]
+    (uBase : A → S → ℝ)
+    (distance : A → S → ℝ)
+    (q_i q_j alpha R : ℝ)
+    (s : S)
+    (ha : 0 < alpha)
+    (hR : 1 ≤ R)
+    (hFar : ∀ a, R ≤ distance a s) :
+    (certificate_of_top1_coarse_ambiguityBand
+      (fun a => uBase a s + exactRealEwaldScore q_i q_j alpha (distance a s))
+      (fun a => uBase a s)
+      (realEwaldFarFieldErrorBound q_i q_j alpha R)
+      (additive_exactRealEwald_uniform_error_at_state uBase distance q_i q_j alpha R s ha hR hFar)
+      (realEwaldFarFieldErrorBound_nonneg q_i q_j alpha R ha hR)).exactTopK
+      ⊆ (additive_exactRealEwald_certified_top1 uBase distance q_i q_j alpha R s ha hR hFar).survivors := by
+  simpa [additive_exactRealEwald_certified_top1]
+    using certified_top1_survivor_set_of_uniformApprox_sound
+      (fun a => uBase a s + exactRealEwaldScore q_i q_j alpha (distance a s))
+      (fun a => uBase a s)
+      (realEwaldFarFieldErrorBound q_i q_j alpha R)
+      (additive_exactRealEwald_uniform_error_at_state uBase distance q_i q_j alpha R s ha hR hFar)
+      (realEwaldFarFieldErrorBound_nonneg q_i q_j alpha R ha hR)
+
+/--
+  The far-field Ewald correction also yields a runtime-facing optimizer witness
+  over the base scorer's ambiguity band.
+-/
+noncomputable def additive_exactRealEwald_coherent_optimizer_witness
+    {A : Type u} {S : Type v}
+    [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uBase : A → S → ℝ)
+    (distance : A → S → ℝ)
+    (q_i q_j alpha R : ℝ)
+    (s : S)
+    (ha : 0 < alpha)
+    (hR : 1 ≤ R)
+    (hFar : ∀ a, R ≤ distance a s) :
+    CoherentOptimizerWitness A :=
+  coherent_optimizer_witness_of_uniformApprox_top1
+    (fun a => uBase a s + exactRealEwaldScore q_i q_j alpha (distance a s))
+    (fun a => uBase a s)
+    (realEwaldFarFieldErrorBound q_i q_j alpha R)
+    (additive_exactRealEwald_uniform_error_at_state uBase distance q_i q_j alpha R s ha hR hFar)
+    (realEwaldFarFieldErrorBound_nonneg q_i q_j alpha R ha hR)
+
+noncomputable def additive_exactRealEwald_optimizer_witness
+    {A : Type u} {S : Type v}
+    [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uBase : A → S → ℝ)
+    (distance : A → S → ℝ)
+    (q_i q_j alpha R : ℝ)
+    (s : S)
+    (ha : 0 < alpha)
+    (hR : 1 ≤ R)
+    (hFar : ∀ a, R ≤ distance a s) :
+    OptimizerWitness A :=
+  (additive_exactRealEwald_coherent_optimizer_witness uBase distance q_i q_j alpha R s ha hR hFar).toOptimizerWitness
 
 /--
   Because Real-Space Ewald decays exponentially, it is easily dominated by

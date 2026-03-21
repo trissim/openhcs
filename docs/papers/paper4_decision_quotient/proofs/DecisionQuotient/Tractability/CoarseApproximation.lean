@@ -7,6 +7,8 @@
 -/
 import DecisionQuotient.Tractability.CertifiedPruning
 import DecisionQuotient.Tractability.DiscretizedState
+import DecisionQuotient.Tractability.FormalLocalOptimizer
+import DecisionQuotient.Tractability.NearTieBand
 import DecisionQuotient.Tractability.SampledDockingGap
 
 namespace DecisionQuotient
@@ -16,6 +18,8 @@ namespace CoarseApproximation
 open SampledDockingGap
 open CertifiedPruning
 open FiniteTopK
+open NearTieBand
+open FormalLocalOptimizer
 open Classical
 
 universe u v
@@ -177,6 +181,80 @@ noncomputable def uniform_approx_pruning_certificate
     (hMargin : ∀ a, a ∈ topKWithTies uExact k → tau + delta ≤ uExact a) :
     PruningCertificate A :=
   certificate_of_topK_margin uExact uCoarse k tau delta hApprox hMargin
+
+/-- Generic top-1 certified survivor set induced by a uniform approximation radius. -/
+noncomputable def certified_top1_survivor_set_of_uniformApprox
+    {A : Type u} [Fintype A] [DecidableEq A] [Nonempty A]
+    (uExact uCoarse : A → ℝ)
+    (delta : ℝ)
+    (hApprox : ∀ a, |uExact a - uCoarse a| ≤ delta)
+    (hDelta : 0 ≤ delta) :
+    CertifiedSurvivorSet A :=
+  certifiedSurvivorSet_of_top1_coarse_ambiguityBand uExact uCoarse delta hApprox hDelta
+
+/-- Soundness of the generic top-1 certified survivor set. -/
+theorem certified_top1_survivor_set_of_uniformApprox_sound
+    {A : Type u} [Fintype A] [DecidableEq A] [Nonempty A]
+    (uExact uCoarse : A → ℝ)
+    (delta : ℝ)
+    (hApprox : ∀ a, |uExact a - uCoarse a| ≤ delta)
+    (hDelta : 0 ≤ delta) :
+    (certificate_of_top1_coarse_ambiguityBand uExact uCoarse delta hApprox hDelta).exactTopK ⊆
+      (certified_top1_survivor_set_of_uniformApprox uExact uCoarse delta hApprox hDelta).survivors := by
+  simpa [certified_top1_survivor_set_of_uniformApprox]
+    using certificate_top1_coarse_ambiguityBand_sound uExact uCoarse delta hApprox hDelta
+
+/--
+  Generic optimizer witness induced by a uniform approximation radius.
+  The witness uses the ambiguity-band selection branch on the coarse score.
+-/
+noncomputable def coherent_optimizer_witness_of_uniformApprox_top1
+    {A : Type u} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uExact uCoarse : A → ℝ)
+    (delta : ℝ)
+    (hApprox : ∀ a, |uExact a - uCoarse a| ≤ delta)
+    (hDelta : 0 ≤ delta) :
+    CoherentOptimizerWitness A := by
+  have hBand : (ambiguityBand uCoarse 1 (by omega) (2 * delta)).Nonempty := by
+    rcases topKSet_nonempty uExact (k := 1) (by omega) with ⟨a0, ha0⟩
+    refine ⟨a0, ?_⟩
+    exact exact_top1_subset_coarse_ambiguityBand_of_uniform_error uExact uCoarse delta hApprox hDelta ha0
+  exact coherentOptimizerWitness_of_top1_coarse_ambiguityBand uExact uCoarse delta hApprox hDelta hBand
+
+/--
+  Generic optimizer witness induced by a uniform approximation radius.
+  The witness uses the ambiguity-band selection branch on the coarse score.
+-/
+noncomputable def optimizer_witness_of_uniformApprox_top1
+    {A : Type u} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uExact uCoarse : A → ℝ)
+    (delta : ℝ)
+    (hApprox : ∀ a, |uExact a - uCoarse a| ≤ delta)
+    (hDelta : 0 ≤ delta) :
+    OptimizerWitness A :=
+  (coherent_optimizer_witness_of_uniformApprox_top1 uExact uCoarse delta hApprox hDelta).toOptimizerWitness
+
+/-- In the coherent uniform-approximation witness, every exact top-1 action survives in runtime support. -/
+theorem coherent_uniformApprox_exactTop1_subset_support
+    {A : Type u} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uExact uCoarse : A → ℝ)
+    (delta : ℝ)
+    (hApprox : ∀ a, |uExact a - uCoarse a| ≤ delta)
+    (hDelta : 0 ≤ delta) :
+    (coherent_optimizer_witness_of_uniformApprox_top1 uExact uCoarse delta hApprox hDelta).survivorSet.certificate.exactTopK
+      ⊆ (coherent_optimizer_witness_of_uniformApprox_top1 uExact uCoarse delta hApprox hDelta).belief.selection.support :=
+  (coherent_optimizer_witness_of_uniformApprox_top1 uExact uCoarse delta hApprox hDelta).exactTopK_subset_support
+
+/-- In the coherent uniform-approximation witness, the chosen action lies in the certified survivor set. -/
+theorem coherent_uniformApprox_choice_mem_survivors
+    {A : Type u} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uExact uCoarse : A → ℝ)
+    (delta : ℝ)
+    (hApprox : ∀ a, |uExact a - uCoarse a| ≤ delta)
+    (hDelta : 0 ≤ delta) :
+    (coherent_optimizer_witness_of_uniformApprox_top1 uExact uCoarse delta hApprox hDelta).belief.selection.choice
+      ∈ (coherent_optimizer_witness_of_uniformApprox_top1 uExact uCoarse delta hApprox hDelta).survivorSet.survivors :=
+  (coherent_optimizer_witness_of_uniformApprox_top1 uExact uCoarse delta hApprox hDelta).choice_mem_survivors
 
 end CoarseApproximation
 end Tractability

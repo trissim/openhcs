@@ -25,7 +25,6 @@
 import DecisionQuotient.Computation.Geometry3D
 import DecisionQuotient.Computation.ImplicitSurface
 import DecisionQuotient.Computation.BoundingSphere
-import DecisionQuotient.Tractability.MolecularSrank
 import Mathlib.Data.Real.Basic
 import Mathlib.Topology.MetricSpace.Basic
 import Mathlib.Tactic
@@ -129,10 +128,11 @@ theorem detected_pocket_is_valid_binding_site
     pocket.boundingSphere.radius > 0 :=
   pocket.boundingSphere.radius_pos
 
-/-! ## 5. Rank Bounds Connection
+/-! ## 5. Binding-Site Parameters
 
-The bounding sphere gives us (center, radius), which can connect
-to structural rank theorems for tractability analysis.
+The bounding sphere gives us `(center, radius)` data. The richer tractability
+bridge from detected pockets into `MolecularSrank` lives in
+`Tractability/PocketDockingBridge.lean`.
 -/
 
 /-- Detected pocket provides binding site parameters.
@@ -144,107 +144,6 @@ def detected_pocket_to_binding_params
     (pocket : DetectedPocket input) :
     ImplicitSurface.Point3 × ℝ :=  -- (center, radius)
   (pocket.boundingSphere.center, pocket.boundingSphere.radius)
-
-/--
-  Convert a detected pocket into the `BindingSite` structure used by
-  `Tractability.MolecularSrank`.
--/
-def detected_pocket_to_binding_site
-    (input : PocketDetectionInput)
-    (pocket : DetectedPocket input) :
-    Tractability.MolecularSrank.BindingSite :=
-  {
-    center := pocket.boundingSphere.center
-    radius := pocket.boundingSphere.radius
-  }
-
-/--
-  Convert an `ImplicitSurface.Atom` into the atom representation used by
-  `MolecularSrank`. This preserves geometry and fills in non-geometric fields
-  with neutral defaults until richer chemistry is connected.
--/
-def to_molecular_srank_atom
-    (index : ℕ)
-    (atom : ImplicitSurface.Atom) :
-    Tractability.MolecularSrank.Atom :=
-  {
-    index := index
-    position := atom.position
-    charge := 0
-    mass := 1
-  }
-
-/-- Convert a protein molecule into the `MolecularSrank` representation. -/
-def to_molecular_srank_molecule
-    (mol : ImplicitSurface.Molecule) :
-    Tractability.MolecularSrank.Molecule :=
-  {
-    atoms := mol.mapIdx to_molecular_srank_atom
-    numAtoms := mol.length
-    size_eq := by simp
-  }
-
-/--
-  Build an `MDBindingProblem` from a detected pocket.
-
-  This is the concrete bridge from pocket detection into the structural-rank
-  tractability layer. The ligand model and scoring utility remain parameters,
-  since pocket detection itself only certifies the binding site geometry.
--/
-def detected_pocket_to_md_binding_problem
-    (input : PocketDetectionInput)
-    (pocket : DetectedPocket input)
-    (ligand : Tractability.MolecularSrank.Molecule)
-    (cutoff : ℝ)
-    (utility : Tractability.MolecularSrank.MDAction → Tractability.MolecularSrank.MDState → ℝ) :
-    Tractability.MolecularSrank.MDBindingProblem :=
-  {
-    protein := to_molecular_srank_molecule input.mol
-    ligand := ligand
-    bindingSite := detected_pocket_to_binding_site input pocket
-    cutoff := cutoff
-    utility := utility
-  }
-
-/-- The MDBindingProblem bridge preserves the detected binding-site geometry. -/
-theorem detected_pocket_to_md_binding_problem_binding_site
-    (input : PocketDetectionInput)
-    (pocket : DetectedPocket input)
-    (ligand : Tractability.MolecularSrank.Molecule)
-    (cutoff : ℝ)
-    (utility : Tractability.MolecularSrank.MDAction → Tractability.MolecularSrank.MDState → ℝ) :
-    (detected_pocket_to_md_binding_problem input pocket ligand cutoff utility).bindingSite =
-      detected_pocket_to_binding_site input pocket :=
-  rfl
-
-/--
-  A detected pocket inherits the molecular-docking structural-rank bound once
-  it is packaged as an `MDBindingProblem`.
--/
-theorem detected_pocket_md_srank_bound
-    (input : PocketDetectionInput)
-    (pocket : DetectedPocket input)
-    (ligand : Tractability.MolecularSrank.Molecule)
-    (cutoff : ℝ)
-    (utility : Tractability.MolecularSrank.MDAction → Tractability.MolecularSrank.MDState → ℝ)
-    [Fintype Tractability.MolecularSrank.MDAction]
-    (prob : Tractability.MolecularSrank.MDBindingProblem)
-    (hProb : prob = detected_pocket_to_md_binding_problem input pocket ligand cutoff utility)
-    (hStrictAll : ∀ s, ∃ a,
-      Tractability.StrictOpt prob.toDecisionProblem a s)
-    (hBounded : Tractability.MolecularSrank.OutsideCutoffApproximationBounded prob) :
-    @DecisionProblem.srank
-      Tractability.MolecularSrank.MDAction
-      Tractability.MolecularSrank.MDState
-      (Tractability.MolecularSrank.numMDCoordinates prob)
-      (Tractability.MolecularSrank.mdCoordinateSpaceStruct prob)
-      prob.toDecisionProblem ≤
-      3 * Tractability.MolecularSrank.numRelevantAtoms prob
-      + 3 * ligand.numAtoms := by
-  subst prob
-  simpa using Tractability.MolecularSrank.md_srank_bound
-    (detected_pocket_to_md_binding_problem input pocket ligand cutoff utility)
-    hStrictAll hBounded
 
 /-! ## 6. The Critical Bridge: Region to Pocket
 

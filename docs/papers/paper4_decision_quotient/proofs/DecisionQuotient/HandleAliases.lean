@@ -75,6 +75,7 @@ import DecisionQuotient.Tractability.RankingPreservation
 import DecisionQuotient.Tractability.TopKPreservation
 import DecisionQuotient.Tractability.MolecularSrank
 import DecisionQuotient.Tractability.BlindDockingTractability
+import DecisionQuotient.Tractability.PocketDockingBridge
 import DecisionQuotient.Computation.PocketDetection
 import DecisionQuotient.Information
 import DecisionQuotient.Information.RateDistortion
@@ -902,12 +903,20 @@ abbrev MD7 := @Tractability.MolecularSrank.md_thermodynamic_lower_bound
 
 abbrev PD1 := @Computation.PocketDetection.concave_region_is_bounded
 noncomputable abbrev PD2 := @Computation.PocketDetection.regionToDetectedPocket
-abbrev PD3 := @Computation.PocketDetection.detected_pocket_to_binding_site
-noncomputable abbrev PD4 := @Computation.PocketDetection.detected_pocket_to_md_binding_problem
-noncomputable abbrev PD5 := @Computation.PocketDetection.detected_pocket_md_srank_bound
+abbrev PD3 := @Tractability.PocketDockingBridge.detected_pocket_to_binding_site
+noncomputable abbrev PD4 := @Tractability.PocketDockingBridge.detected_pocket_to_md_binding_problem
+noncomputable abbrev PD5 := @Tractability.PocketDockingBridge.detected_pocket_md_srank_bound
 
 abbrev BD1 := @Tractability.BlindDocking.guided_docking_srank_bounded_of_detected_pocket
 abbrev BD2 := @Tractability.BlindDocking.blind_docking_tractable_of_detected_pocket
+abbrev BD3 := @Tractability.BlindDocking.sampled_guided_docking_srank_bound_of_detected_pocket
+abbrev BD4 := @Tractability.BlindDocking.guided_docking_small_pocket_bound_of_detected_pocket
+noncomputable abbrev BD5 := @Tractability.BlindDocking.certified_top1_survivor_set_of_detected_pocket
+abbrev BD6 := @Tractability.BlindDocking.certified_top1_survivor_set_of_detected_pocket_sound
+noncomputable abbrev BD7 := @Tractability.BlindDocking.sampled_docking_certified_top1_of_finite_uniform_error
+abbrev BD8 := @Tractability.BlindDocking.sampled_docking_certified_top1_of_finite_uniform_error_sound
+noncomputable abbrev BD9 := @Tractability.BlindDocking.sampled_docking_optimizer_witness_of_finite_uniform_error
+noncomputable abbrev BD10 := @Tractability.BlindDocking.sampled_docking_coherent_optimizer_witness_of_finite_uniform_error
 
 abbrev LJ1 := @Tractability.LJApproximation.ljCutoffErrorRadius_spec
 abbrev LJ2 := @Tractability.LJApproximation.exact_vs_cutoff_lj_uniformApprox
@@ -915,6 +924,14 @@ abbrev LJ3 := @Tractability.LJApproximation.exact_vs_cutoff_lj_opt_invariance
 abbrev LJ4 := @Tractability.LJApproximation.exactLJ_is_BoundedPotential
 abbrev LJ5 := @Tractability.SoftLJApproximation.ljSofteningErrorRadius_spec
 abbrev LJ6 := @Tractability.SoftLJApproximation.exact_vs_softened_lj_uniformApprox
+abbrev LJ7 := @Tractability.LJApproximation.exact_vs_cutoff_lj_certified_top1_sound
+noncomputable abbrev LJ8 := @Tractability.LJApproximation.exact_vs_cutoff_lj_certified_top1
+noncomputable abbrev LJ9 := @Tractability.LJApproximation.exact_vs_cutoff_lj_optimizer_witness
+noncomputable abbrev LJ13 := @Tractability.LJApproximation.exact_vs_cutoff_lj_coherent_optimizer_witness
+abbrev LJ10 := @Tractability.SoftLJApproximation.exact_vs_softened_lj_certified_top1_sound
+noncomputable abbrev LJ11 := @Tractability.SoftLJApproximation.exact_vs_softened_lj_certified_top1
+noncomputable abbrev LJ12 := @Tractability.SoftLJApproximation.exact_vs_softened_lj_optimizer_witness
+noncomputable abbrev LJ14 := @Tractability.SoftLJApproximation.exact_vs_softened_lj_coherent_optimizer_witness
 
 abbrev CB1 := @Tractability.CoulombApproximation.coulombCutoffErrorRadius_spec
 abbrev CB2 := @Tractability.CoulombApproximation.exact_vs_cutoff_coulomb_uniformApprox
@@ -922,6 +939,14 @@ abbrev CB3 := @Tractability.CoulombApproximation.exactCoulomb_satisfiesBoundedPo
 abbrev CB4 := @Tractability.CoulombApproximation.exactRealEwald_satisfiesBoundedPotential_of_tailBound
 abbrev CB5 := @Tractability.CoulombApproximation.abs_exactRealEwaldScore_le_charge_envelope
 abbrev CB6 := @Tractability.Ewald.ewaldRealSpaceCore_le_alpha_tail
+abbrev CB7 := @Tractability.CoulombApproximation.exact_vs_cutoff_coulomb_certified_top1_sound
+noncomputable abbrev CB8 := @Tractability.CoulombApproximation.exact_vs_cutoff_coulomb_certified_top1
+noncomputable abbrev CB9 := @Tractability.CoulombApproximation.exact_vs_cutoff_coulomb_optimizer_witness
+abbrev CB10 := @Tractability.CoulombApproximation.additive_exactRealEwald_certified_top1_sound
+noncomputable abbrev CB11 := @Tractability.CoulombApproximation.additive_exactRealEwald_certified_top1
+noncomputable abbrev CB12 := @Tractability.CoulombApproximation.additive_exactRealEwald_optimizer_witness
+noncomputable abbrev CB13 := @Tractability.CoulombApproximation.exact_vs_cutoff_coulomb_coherent_optimizer_witness
+noncomputable abbrev CB14 := @Tractability.CoulombApproximation.additive_exactRealEwald_coherent_optimizer_witness
 
 abbrev BP1 := @Tractability.finiteMinimumGap_le_strictUtilityGap
 abbrev BP2 := @Tractability.satisfiesBoundedPotential_of_tailBound_and_finiteGap
@@ -930,6 +955,12 @@ abbrev BP3 := @Tractability.large_cutoff_implies_bounded
 abbrev APX1 := @Tractability.CoarseApproximation.finiteUniformErrorRadius_witnesses_uniformApprox
 abbrev APX2 := @Tractability.CoarseApproximation.SampledDocking.SampledDockingProblem.finiteUniformErrorRadius_witnesses
 abbrev APX3 := @Tractability.CoarseApproximation.uniform_approx_implies_opt_invariance
+noncomputable abbrev APX10 := @Tractability.CoarseApproximation.coherent_optimizer_witness_of_uniformApprox_top1
+abbrev APX11 := @Tractability.CoarseApproximation.coherent_uniformApprox_exactTop1_subset_support
+abbrev APX12 := @Tractability.CoarseApproximation.coherent_uniformApprox_choice_mem_survivors
+noncomputable abbrev APX7 := @Tractability.GridConvergence.resolutionControlledApprox_certified_top1
+abbrev APX8 := @Tractability.GridConvergence.resolutionControlledApprox_certified_top1_sound
+noncomputable abbrev APX9 := @Tractability.GridConvergence.resolutionControlledApprox_optimizer_witness
 abbrev APX4 := @Tractability.CoarseApproximation.sum_uniformApprox
 
 abbrev SD1 := @Tractability.SampledDockingGap.strictUtilityGap_lifted_exact

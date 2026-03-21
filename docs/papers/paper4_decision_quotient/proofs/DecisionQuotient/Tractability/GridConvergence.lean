@@ -8,6 +8,9 @@
   `UniformUtilityApprox` theorem.
 -/
 import DecisionQuotient.Tractability.CoarseApproximation
+import DecisionQuotient.Tractability.CertifiedPruning
+import DecisionQuotient.Tractability.NearTieBand
+import DecisionQuotient.Tractability.FormalLocalOptimizer
 import Mathlib.Data.Real.Basic
 
 namespace DecisionQuotient
@@ -15,6 +18,10 @@ namespace Tractability
 namespace GridConvergence
 
 open CoarseApproximation
+open CertifiedPruning
+open FiniteTopK
+open NearTieBand
+open FormalLocalOptimizer
 
 universe u v
 
@@ -75,6 +82,93 @@ theorem lipschitzUtilityApprox_implies_resolutionControlled
   have h2 : L * stateError sGrid ≤ L * res := by
     exact mul_le_mul_of_nonneg_left (hState sGrid) hL
   exact h1.trans h2
+
+/--
+  Resolution-controlled approximation yields a theorem-backed certified top-1
+  survivor set on the grid state space.
+-/
+noncomputable def resolutionControlledApprox_certified_top1
+    {A : Type u} {Scont : Type v} {Sgrid : Type v}
+    [Fintype A] [Fintype Sgrid] [DecidableEq A] [Nonempty A]
+    (uCont : A → Scont → ℝ)
+    (uGrid : A → Sgrid → ℝ)
+    (lift : Sgrid → Scont)
+    (eps : ℝ → ℝ)
+    (res : ℝ)
+    (sGrid : Sgrid)
+    (hApprox : ResolutionControlledApprox uCont uGrid lift eps res)
+    (hEps : 0 ≤ eps res) :
+    CertifiedSurvivorSet A :=
+  certifiedSurvivorSet_of_top1_coarse_ambiguityBand
+    (fun a => uCont a (lift sGrid))
+    (fun a => uGrid a sGrid)
+    (eps res)
+    (fun a => hApprox a sGrid)
+    hEps
+
+/-- Soundness of the resolution-controlled certified top-1 survivor set. -/
+theorem resolutionControlledApprox_certified_top1_sound
+    {A : Type u} {Scont : Type v} {Sgrid : Type v}
+    [Fintype A] [Fintype Sgrid] [DecidableEq A] [Nonempty A]
+    (uCont : A → Scont → ℝ)
+    (uGrid : A → Sgrid → ℝ)
+    (lift : Sgrid → Scont)
+    (eps : ℝ → ℝ)
+    (res : ℝ)
+    (sGrid : Sgrid)
+    (hApprox : ResolutionControlledApprox uCont uGrid lift eps res)
+    (hEps : 0 ≤ eps res) :
+    (certificate_of_top1_coarse_ambiguityBand
+      (fun a => uCont a (lift sGrid))
+      (fun a => uGrid a sGrid)
+      (eps res)
+      (fun a => hApprox a sGrid)
+      hEps).exactTopK
+      ⊆ (resolutionControlledApprox_certified_top1 uCont uGrid lift eps res sGrid hApprox hEps).survivors := by
+  simpa [resolutionControlledApprox_certified_top1]
+    using certificate_top1_coarse_ambiguityBand_sound
+      (fun a => uCont a (lift sGrid))
+      (fun a => uGrid a sGrid)
+      (eps res)
+      (fun a => hApprox a sGrid)
+      hEps
+
+/--
+  Resolution-controlled approximation also yields a runtime-facing optimizer
+  witness on the grid state space.
+-/
+noncomputable def resolutionControlledApprox_coherent_optimizer_witness
+    {A : Type u} {Scont : Type v} {Sgrid : Type v}
+    [Fintype A] [Fintype Sgrid] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uCont : A → Scont → ℝ)
+    (uGrid : A → Sgrid → ℝ)
+    (lift : Sgrid → Scont)
+    (eps : ℝ → ℝ)
+    (res : ℝ)
+    (sGrid : Sgrid)
+    (hApprox : ResolutionControlledApprox uCont uGrid lift eps res)
+    (hEps : 0 ≤ eps res) :
+    CoherentOptimizerWitness A :=
+  coherent_optimizer_witness_of_uniformApprox_top1
+    (fun a => uCont a (lift sGrid))
+    (fun a => uGrid a sGrid)
+    (eps res)
+    (fun a => hApprox a sGrid)
+    hEps
+
+noncomputable def resolutionControlledApprox_optimizer_witness
+    {A : Type u} {Scont : Type v} {Sgrid : Type v}
+    [Fintype A] [Fintype Sgrid] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uCont : A → Scont → ℝ)
+    (uGrid : A → Sgrid → ℝ)
+    (lift : Sgrid → Scont)
+    (eps : ℝ → ℝ)
+    (res : ℝ)
+    (sGrid : Sgrid)
+    (hApprox : ResolutionControlledApprox uCont uGrid lift eps res)
+    (hEps : 0 ≤ eps res) :
+    OptimizerWitness A :=
+  (resolutionControlledApprox_coherent_optimizer_witness uCont uGrid lift eps res sGrid hApprox hEps).toOptimizerWitness
 
 end GridConvergence
 end Tractability

@@ -13,6 +13,10 @@ namespace SoftLJApproximation
 
 open LJApproximation
 open CoarseApproximation
+open CertifiedPruning
+open FiniteTopK
+open NearTieBand
+open FormalLocalOptimizer
 open Classical
 
 universe u v
@@ -67,6 +71,67 @@ theorem exact_vs_softened_lj_uniformApprox {A : Type u} {S : Type v}
   intro a s
   simpa [exactLJDecisionProblem, softenedLJDecisionProblem] using
     ljSofteningErrorRadius_spec distance ε σ rSoft a s
+
+theorem ljSofteningErrorRadius_nonneg {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ) (ε σ rSoft : ℝ) :
+    0 ≤ ljSofteningErrorRadius distance ε σ rSoft := by
+  rcases ‹Nonempty A› with ⟨a⟩
+  rcases ‹Nonempty S› with ⟨s⟩
+  exact le_trans (abs_nonneg _) (ljSofteningErrorRadius_spec distance ε σ rSoft a s)
+
+/-- Exact-vs-softened LJ induces a theorem-backed certified top-1 survivor set. -/
+noncomputable def exact_vs_softened_lj_certified_top1
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ) (ε σ rSoft : ℝ) (s : S) :
+    CertifiedSurvivorSet A :=
+  certified_top1_survivor_set_of_uniformApprox
+    (fun a => exactLJDecisionProblem distance ε σ |>.utility a s)
+    (fun a => softenedLJDecisionProblem distance ε σ rSoft |>.utility a s)
+    (ljSofteningErrorRadius distance ε σ rSoft)
+    (fun a => exact_vs_softened_lj_uniformApprox distance ε σ rSoft a s)
+    (ljSofteningErrorRadius_nonneg distance ε σ rSoft)
+
+/-- Soundness of the exact-vs-softened LJ certified top-1 survivor set. -/
+theorem exact_vs_softened_lj_certified_top1_sound
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ) (ε σ rSoft : ℝ) (s : S) :
+    (certificate_of_top1_coarse_ambiguityBand
+      (fun a => exactLJDecisionProblem distance ε σ |>.utility a s)
+      (fun a => softenedLJDecisionProblem distance ε σ rSoft |>.utility a s)
+      (ljSofteningErrorRadius distance ε σ rSoft)
+      (fun a => exact_vs_softened_lj_uniformApprox distance ε σ rSoft a s)
+      (ljSofteningErrorRadius_nonneg distance ε σ rSoft)).exactTopK
+      ⊆ (exact_vs_softened_lj_certified_top1 distance ε σ rSoft s).survivors := by
+  simpa [exact_vs_softened_lj_certified_top1]
+    using certified_top1_survivor_set_of_uniformApprox_sound
+      (fun a => exactLJDecisionProblem distance ε σ |>.utility a s)
+      (fun a => softenedLJDecisionProblem distance ε σ rSoft |>.utility a s)
+      (ljSofteningErrorRadius distance ε σ rSoft)
+      (fun a => exact_vs_softened_lj_uniformApprox distance ε σ rSoft a s)
+      (ljSofteningErrorRadius_nonneg distance ε σ rSoft)
+
+/-- Exact-vs-softened LJ yields a runtime-facing optimizer witness. -/
+noncomputable def exact_vs_softened_lj_coherent_optimizer_witness
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (distance : A → S → ℝ) (ε σ rSoft : ℝ) (s : S) :
+    CoherentOptimizerWitness A :=
+  coherent_optimizer_witness_of_uniformApprox_top1
+    (fun a => exactLJDecisionProblem distance ε σ |>.utility a s)
+    (fun a => softenedLJDecisionProblem distance ε σ rSoft |>.utility a s)
+    (ljSofteningErrorRadius distance ε σ rSoft)
+    (fun a => exact_vs_softened_lj_uniformApprox distance ε σ rSoft a s)
+    (ljSofteningErrorRadius_nonneg distance ε σ rSoft)
+
+noncomputable def exact_vs_softened_lj_optimizer_witness
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (distance : A → S → ℝ) (ε σ rSoft : ℝ) (s : S) :
+    OptimizerWitness A :=
+  (exact_vs_softened_lj_coherent_optimizer_witness distance ε σ rSoft s).toOptimizerWitness
 
 end SoftLJApproximation
 end Tractability

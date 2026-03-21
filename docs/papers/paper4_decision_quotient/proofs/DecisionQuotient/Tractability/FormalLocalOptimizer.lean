@@ -62,6 +62,41 @@ structure OptimizerWitness (A : Type*) [DecidableEq A] where
   survivorSet : CertifiedPruning.CertifiedSurvivorSet A
   belief : BeliefWitness A
 
+/--
+  Strengthened optimizer witness ensuring that the selected support used by the
+  runtime is exactly the certified survivor set produced by the pruning layer.
+  This rules out category errors where a witness mixes unrelated supports.
+-/
+structure CoherentOptimizerWitness (A : Type*) [DecidableEq A] where
+  survivorSet : CertifiedPruning.CertifiedSurvivorSet A
+  belief : BeliefWitness A
+  support_eq : belief.selection.support = survivorSet.survivors
+
+/-- Forget the coherence proof and recover the original optimizer witness. -/
+def CoherentOptimizerWitness.toOptimizerWitness
+    {A : Type*} [DecidableEq A]
+    (w : CoherentOptimizerWitness A) :
+    OptimizerWitness A :=
+  { survivorSet := w.survivorSet, belief := w.belief }
+
+/-- In a coherent witness, every certified exact top-k action lies in the runtime support. -/
+theorem CoherentOptimizerWitness.exactTopK_subset_support
+    {A : Type*} [DecidableEq A]
+    (w : CoherentOptimizerWitness A) :
+    w.survivorSet.certificate.exactTopK ⊆ w.belief.selection.support := by
+  intro a ha
+  rw [w.support_eq]
+  rw [w.survivorSet.survivors_eq]
+  exact w.survivorSet.certificate.sound ha
+
+/-- In a coherent witness, the chosen action lies in the certified survivor set. -/
+theorem CoherentOptimizerWitness.choice_mem_survivors
+    {A : Type*} [DecidableEq A]
+    (w : CoherentOptimizerWitness A) :
+    w.belief.selection.choice ∈ w.survivorSet.survivors := by
+  rw [← w.support_eq]
+  exact w.belief.selection.sound
+
 /-- Support restriction of a finite prior along a certified survivor set. -/
 def restrictedPrior {A : Type*} [Fintype A] [DecidableEq A]
     (prior : DeclaredFinitePrior A)
@@ -261,6 +296,21 @@ noncomputable def optimizerWitness_of_exact_top1
   { survivorSet := CertifiedPruning.certifiedSurvivorSet_of_exact_top1 uExact
     belief := beliefWitness_of_survivorConditioning_ambiguityBand uExact 1 (by omega) 0 hBand }
 
+noncomputable def coherentOptimizerWitness_of_exact_top1
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uExact : A → ℝ)
+    (hTop : (topKSet uExact 1).Nonempty) :
+    CoherentOptimizerWitness A :=
+  let hBand : (ambiguityBand uExact 1 (by omega) 0).Nonempty := by
+    rw [ambiguityBand_zero_eq_top1]
+    exact hTop
+  { survivorSet := CertifiedPruning.certifiedSurvivorSet_of_exact_top1 uExact
+    belief := beliefWitness_of_survivorConditioning_ambiguityBand uExact 1 (by omega) 0 hBand
+    support_eq := by
+      change ambiguityBand uExact 1 (by omega) 0 =
+        (CertifiedPruning.certificate_of_exact_top1 uExact).survivors
+      simp [CertifiedPruning.certificate_of_exact_top1, NearTieBand.ambiguityBand_zero_eq_top1] }
+
 noncomputable def optimizerWitness_of_top1_coarse_ambiguityBand
     {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
     (uExact uCoarse : A → ℝ)
@@ -274,6 +324,23 @@ noncomputable def optimizerWitness_of_top1_coarse_ambiguityBand
         uExact uCoarse delta hApprox hDelta
     belief := beliefWitness_of_survivorConditioning_ambiguityBand uCoarse 1 (by omega) (2 * delta) hBand }
 
+noncomputable def coherentOptimizerWitness_of_top1_coarse_ambiguityBand
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uExact uCoarse : A → ℝ)
+    (delta : ℝ)
+    (hApprox : ∀ a, |uExact a - uCoarse a| ≤ delta)
+    (hDelta : 0 ≤ delta)
+    (hBand : (ambiguityBand uCoarse 1 (by omega) (2 * delta)).Nonempty) :
+    CoherentOptimizerWitness A :=
+  { survivorSet :=
+      CertifiedPruning.certifiedSurvivorSet_of_top1_coarse_ambiguityBand
+        uExact uCoarse delta hApprox hDelta
+    belief := beliefWitness_of_survivorConditioning_ambiguityBand uCoarse 1 (by omega) (2 * delta) hBand
+    support_eq := by
+      change ambiguityBand uCoarse 1 (by omega) (2 * delta) =
+        (CertifiedPruning.certificate_of_top1_coarse_ambiguityBand uExact uCoarse delta hApprox hDelta).survivors
+      rfl }
+
 noncomputable def optimizerWitness_of_exact_singleton_winner
     {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
     (uExact uCoarse : A → ℝ)
@@ -286,6 +353,23 @@ noncomputable def optimizerWitness_of_exact_singleton_winner
       CertifiedPruning.certifiedSurvivorSet_of_exact_singleton_winner
         uExact uCoarse aStar delta hApprox hStrict
     belief := beliefWitness_of_survivorConditioning_supportSet ({aStar} : Finset A) (by simp) }
+
+noncomputable def coherentOptimizerWitness_of_exact_singleton_winner
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uExact uCoarse : A → ℝ)
+    (aStar : A)
+    (delta : ℝ)
+    (hApprox : ∀ x, |uExact x - uCoarse x| ≤ delta)
+    (hStrict : ∀ b, b ≠ aStar → RankingPreservation.PairwiseGap uCoarse aStar b > 2 * delta) :
+    CoherentOptimizerWitness A :=
+  { survivorSet :=
+      CertifiedPruning.certifiedSurvivorSet_of_exact_singleton_winner
+        uExact uCoarse aStar delta hApprox hStrict
+    belief := beliefWitness_of_survivorConditioning_supportSet ({aStar} : Finset A) (by simp)
+    support_eq := by
+      change ({aStar} : Finset A) =
+        (CertifiedPruning.certificate_of_exact_singleton_winner uExact uCoarse aStar delta hApprox hStrict).survivors
+      rfl }
 
 noncomputable def optimizerWitness_of_top1_branch
     {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
