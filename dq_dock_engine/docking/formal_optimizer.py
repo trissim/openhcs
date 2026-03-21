@@ -72,6 +72,8 @@ class CertifiedOptimizerWitness:
     belief: CertifiedBeliefWitness
     theorem_handle: str
     branch_witness_handle: str
+    support_matches_survivors: bool
+    coherence_theorem_handles: tuple[str, str]
 
 
 @dataclass(frozen=True)
@@ -143,11 +145,23 @@ def active_optimizer_witness(
     state: CertifiedOptimizerState,
 ) -> CertifiedOptimizerWitness:
     theorem_handle = optimizer_witness_handle(active_pruning_branch(state).value)
+    posterior_support = jnp.asarray(state.belief.posterior > 0)
+    ambiguity_support = jnp.logical_and(
+        jnp.asarray(state.belief.ambiguity_mask), posterior_support
+    )
+    selection_support = (
+        ambiguity_support if bool(jnp.any(ambiguity_support)) else posterior_support
+    )
+    survivor_mask = jnp.asarray(state.pruning_certificate.survivor_mask)
     return CertifiedOptimizerWitness(
         survivor_set=active_survivor_set_witness(state),
         belief=active_belief_witness(state),
         theorem_handle=theorem_handle,
         branch_witness_handle=optimizer_branch_witness_handle(),
+        support_matches_survivors=bool(
+            jnp.array_equal(selection_support, survivor_mask)
+        ),
+        coherence_theorem_handles=("APX11", "APX12"),
     )
 
 
@@ -196,6 +210,7 @@ def try_refine_round_singleton_staged(
     base_translation_step: float,
     base_rotation_step_rad: float,
     coarse_target_error: float = 0.004,
+    use_softened_coarse: bool = False,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> tuple[jax.Array, tuple[StagedCertifiedDecisionState, ...]] | None:
     action_family = create_certified_action_family(
@@ -212,6 +227,7 @@ def try_refine_round_singleton_staged(
         target_error=target_error,
         coarse_target_error=coarse_target_error,
         translation_step=action_family.translation_step,
+        use_softened_coarse=use_softened_coarse,
         electrostatics=electrostatics,
     )
     if staged_result is None:
@@ -232,6 +248,7 @@ def try_refine_round_singleton_minimal(
     base_translation_step: float,
     base_rotation_step_rad: float,
     coarse_target_error: float = 0.004,
+    use_softened_coarse: bool = False,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> MinimalStagedRoundResult | None:
     action_family = create_certified_action_family(
@@ -248,6 +265,7 @@ def try_refine_round_singleton_minimal(
         target_error=target_error,
         coarse_target_error=coarse_target_error,
         translation_step=action_family.translation_step,
+        use_softened_coarse=use_softened_coarse,
         electrostatics=electrostatics,
     )
     if staged_result is None:
@@ -270,6 +288,7 @@ def try_refine_poses_singleton_minimal(
     base_translation_step: float = 0.5,
     base_rotation_step_rad: float = jnp.pi / 12.0,
     coarse_target_error: float = 0.004,
+    use_softened_coarse: bool = False,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> tuple[jax.Array, tuple[MinimalStagedRoundResult, ...]] | None:
     if n_rounds <= 0:
@@ -287,6 +306,7 @@ def try_refine_poses_singleton_minimal(
             base_translation_step=base_translation_step,
             base_rotation_step_rad=base_rotation_step_rad,
             coarse_target_error=coarse_target_error,
+            use_softened_coarse=use_softened_coarse,
             electrostatics=electrostatics,
         )
         if result is None:
@@ -306,6 +326,7 @@ def diagnose_singleton_acceptance_schedule(
     base_translation_step: float = 0.5,
     base_rotation_step_rad: float = jnp.pi / 12.0,
     coarse_target_error: float = 0.004,
+    use_softened_coarse: bool = False,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> StagedRoundAcceptanceDiagnostic:
     if n_rounds <= 0:
@@ -323,6 +344,7 @@ def diagnose_singleton_acceptance_schedule(
             base_translation_step=base_translation_step,
             base_rotation_step_rad=base_rotation_step_rad,
             coarse_target_error=coarse_target_error,
+            use_softened_coarse=use_softened_coarse,
             electrostatics=electrostatics,
         )
         if result is None:
@@ -352,6 +374,7 @@ def refine_poses_singleton_then_exact(
     prior_spec: CertifiedPriorSpec | None = None,
     max_coarse_receptor_atoms: int = 64,
     coarse_target_error: float = 0.004,
+    use_softened_coarse: bool = False,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> HybridSingletonRefinementResult:
     if n_rounds <= 0:
@@ -373,6 +396,7 @@ def refine_poses_singleton_then_exact(
             base_translation_step=base_translation_step,
             base_rotation_step_rad=base_rotation_step_rad,
             coarse_target_error=coarse_target_error,
+            use_softened_coarse=use_softened_coarse,
             electrostatics=electrostatics,
         )
         if staged is None:
@@ -394,6 +418,8 @@ def refine_poses_singleton_then_exact(
             base_rotation_step_rad=base_rotation_step_rad / (2**round_index),
             prior_spec=effective_prior_spec,
             max_coarse_receptor_atoms=max_coarse_receptor_atoms,
+            coarse_target_error=coarse_target_error,
+            use_softened_coarse=use_softened_coarse,
             electrostatics=electrostatics,
         )
 
@@ -456,12 +482,14 @@ def _refine_round(
     receptor_radii: jax.Array,
     ligand_radii: jax.Array,
     target_error: float,
+    coarse_target_error: float,
     round_index: int,
     base_translation_step: float,
     base_rotation_step_rad: float,
     prior_spec: CertifiedPriorSpec,
     max_coarse_receptor_atoms: int,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
+    use_softened_coarse: bool = False,
 ) -> tuple[jax.Array, tuple[CertifiedOptimizerState, ...]]:
     action_family = create_certified_action_family(
         translation_step=_translation_step_for_round(
@@ -484,39 +512,48 @@ def _refine_round(
         ligand_radii=ligand_radii,
         candidate_batches=candidate_batches,
         target_error=target_error,
+        coarse_target_error=coarse_target_error,
         max_receptor_atoms=max_coarse_receptor_atoms,
         translation_step=action_family.translation_step,
         electrostatics=electrostatics,
+        use_softened_coarse=use_softened_coarse,
     )
     prior = build_prior(prior_spec, exact_scores_matrix.shape[1])
-    exact_top_k_masks = jax.vmap(
-        lambda exact_scores: top_k_with_ties_mask(exact_scores, k=1)
-    )(exact_scores_matrix)
+    exact_scores_host = np.asarray(exact_scores_matrix)
+    coarse_scores_host = np.asarray(coarse_scores_matrix)
+    exact_top_k_host = np.asarray(
+        [top_k_with_ties_mask(jnp.asarray(row), k=1) for row in exact_scores_host]
+    )
     if delta <= 0.0:
-        survivor_masks = exact_top_k_masks
-        ambiguity_masks = exact_top_k_masks
+        survivor_masks_host = exact_top_k_host
+        ambiguity_masks_host = exact_top_k_host
     else:
-        survivor_masks = jax.vmap(
-            lambda exact_scores, coarse_scores: certified_survivor_mask(
-                exact_scores=exact_scores,
-                coarse_scores=coarse_scores,
-                k=1,
-                delta=delta,
-            )
-        )(exact_scores_matrix, coarse_scores_matrix)
-        ambiguity_masks = jax.vmap(
-            lambda exact_scores: ambiguity_band_mask(exact_scores, k=1, epsilon=delta)
-        )(exact_scores_matrix)
+        survivor_masks_host = np.asarray(
+            [
+                certified_survivor_mask(
+                    exact_scores=jnp.asarray(exact_row),
+                    coarse_scores=jnp.asarray(coarse_row),
+                    k=1,
+                    delta=delta,
+                )
+                for exact_row, coarse_row in zip(
+                    exact_scores_host, coarse_scores_host, strict=True
+                )
+            ]
+        )
+        ambiguity_masks_host = np.asarray(
+            [
+                ambiguity_band_mask(jnp.asarray(exact_row), k=1, epsilon=delta)
+                for exact_row in exact_scores_host
+            ]
+        )
+    survivor_masks = jnp.asarray(survivor_masks_host)
+    ambiguity_masks = jnp.asarray(ambiguity_masks_host)
     posterior_matrix = update_posterior_batch(prior, survivor_masks)
     selected_actions = select_admissible_actions(posterior_matrix, ambiguity_masks)
     next_coords = candidate_batches[
         jnp.arange(candidate_batches.shape[0]), selected_actions
     ]
-    exact_scores_host = np.asarray(exact_scores_matrix)
-    coarse_scores_host = np.asarray(coarse_scores_matrix)
-    exact_top_k_host = np.asarray(exact_top_k_masks)
-    survivor_masks_host = np.asarray(survivor_masks)
-    ambiguity_masks_host = np.asarray(ambiguity_masks)
     posterior_host = np.asarray(posterior_matrix)
     selected_actions_host = np.asarray(selected_actions)
     next_coords_host = np.asarray(next_coords)
@@ -579,11 +616,13 @@ def refine_poses_certified(
     ligand_radii: jax.Array,
     n_rounds: int,
     target_error: float,
+    coarse_target_error: float = 0.004,
     base_translation_step: float = 0.5,
     base_rotation_step_rad: float = jnp.pi / 12.0,
     prior_spec: CertifiedPriorSpec | None = None,
     max_coarse_receptor_atoms: int = 64,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
+    use_softened_coarse: bool = False,
 ) -> tuple[jax.Array, tuple[tuple[CertifiedOptimizerState, ...], ...]]:
     if n_rounds <= 0:
         raise ValueError("n_rounds must be positive")
@@ -600,12 +639,14 @@ def refine_poses_certified(
             receptor_radii=receptor_radii,
             ligand_radii=ligand_radii,
             target_error=target_error,
+            coarse_target_error=coarse_target_error,
             round_index=round_index,
             base_translation_step=base_translation_step,
             base_rotation_step_rad=float(base_rotation_step_rad),
             prior_spec=effective_prior_spec,
             max_coarse_receptor_atoms=max_coarse_receptor_atoms,
             electrostatics=electrostatics,
+            use_softened_coarse=use_softened_coarse,
         )
         history.append(states)
 

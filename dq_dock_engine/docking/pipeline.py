@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from dq_dock_engine.docking.core import (
+    CertifiedBindingSite,
     DockingBox,
     LigandContext,
     ScoringEngine,
@@ -31,11 +32,76 @@ from dq_dock_engine.docking.scoring import (
 from dq_dock_engine.docking.optimization import optimize_poses_batched
 from dq_dock_engine.docking_config import (
     CertifiedScoringFamily,
+    compute_certified_cutoff,
     DockingConfig,
     DockingMode,
     FormalRoundStrategy,
     OptimizerBackend,
 )
+
+
+def _ligand_extent_radius(ligand_ctx: LigandContext) -> float:
+    centered = ligand_ctx.base_coords - ligand_ctx.center_of_mass
+    if centered.shape[0] == 0:
+        return 0.0
+    return float(jnp.max(jnp.linalg.norm(centered, axis=1)))
+
+
+def _apply_certified_binding_site_restriction(
+    protein_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    receptor_elements: tuple[str, ...] | None,
+    precomputed_receptor_charges: jnp.ndarray | None,
+    ligand_ctx: LigandContext,
+    box: DockingBox,
+    binding_site: CertifiedBindingSite,
+    target_error: float,
+) -> tuple[
+    jnp.ndarray,
+    jnp.ndarray,
+    tuple[str, ...] | None,
+    jnp.ndarray | None,
+    DockingBox,
+]:
+    interaction_cutoff = compute_certified_cutoff(target_error)
+    restriction_radius = (
+        binding_site.radius + interaction_cutoff + _ligand_extent_radius(ligand_ctx)
+    )
+    distances = jnp.linalg.norm(protein_coords - binding_site.center, axis=1)
+    keep_mask = distances <= restriction_radius
+    if not bool(jnp.any(keep_mask)):
+        return (
+            protein_coords,
+            receptor_radii,
+            receptor_elements,
+            precomputed_receptor_charges,
+            box,
+        )
+
+    kept_indices = jnp.nonzero(keep_mask, size=int(jnp.sum(keep_mask)))[0]
+    restricted_coords = protein_coords[kept_indices]
+    restricted_radii = receptor_radii[kept_indices]
+    restricted_elements = (
+        None
+        if receptor_elements is None
+        else tuple(receptor_elements[int(i)] for i in np.asarray(kept_indices))
+    )
+    restricted_charges = (
+        None
+        if precomputed_receptor_charges is None
+        else precomputed_receptor_charges[kept_indices]
+    )
+    restricted_box = DockingBox(
+        center=binding_site.center,
+        size=jnp.full((3,), 2.0 * binding_site.radius),
+    )
+    return (
+        restricted_coords,
+        restricted_radii,
+        restricted_elements,
+        restricted_charges,
+        restricted_box,
+    )
 
 
 def _resolve_route_scoring_electrostatics(
@@ -156,6 +222,23 @@ def run_docking_pipeline(
             effective_engine = ScoringEngine.CERTIFIED_LJ_REALSPACE_EWALD
         target_error = config.target_error if config.target_error > 0 else 0.001
         scoring_kwargs["target_error"] = target_error
+        if config.certified_binding_site is not None:
+            (
+                protein_coords,
+                receptor_radii,
+                receptor_elements,
+                precomputed_receptor_charges,
+                box,
+            ) = _apply_certified_binding_site_restriction(
+                protein_coords=protein_coords,
+                receptor_radii=receptor_radii,
+                receptor_elements=receptor_elements,
+                precomputed_receptor_charges=precomputed_receptor_charges,
+                ligand_ctx=ligand_ctx,
+                box=box,
+                binding_site=config.certified_binding_site,
+                target_error=target_error,
+            )
     else:
         effective_engine = engine
 
@@ -348,6 +431,12 @@ def run_docking_pipeline(
             ligand_radii=ligand_ctx.base_radii,
             n_rounds=n_opt_steps,
             target_error=target_error,
+            coarse_target_error=(
+                config.coarse_target_error if config is not None else 0.004
+            ),
+            use_softened_coarse=(
+                config.use_softened_coarse_prefilter if config is not None else False
+            ),
             base_translation_step=translation_cell_width / 2.0,
             base_rotation_step_rad=float(jnp.pi / 2.0),
         )

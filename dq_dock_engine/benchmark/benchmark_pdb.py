@@ -460,6 +460,7 @@ class BenchmarkExecutionContext:
     output_paths: BenchmarkOutputPaths
     pose_dir: Path
     competitors: tuple[CompetitorMetadata, ...]
+    attempt_timeout_seconds: float | None
     bench_start: float
     optimizer_backend: "OptimizerBackend"
     max_retries: int
@@ -525,6 +526,7 @@ class BenchmarkState:
             n_opt_steps=context.n_opt_steps,
             box_size=context.box_size,
             formal_round_strategy=context.formal_round_strategy,
+            attempt_timeout_seconds=context.attempt_timeout_seconds,
             use_multi_stage=context.use_multi_stage,
             use_pocket_guided=context.use_pocket_guided,
             competitors=context.competitors,
@@ -1333,6 +1335,7 @@ def save_benchmark_results(
     n_opt_steps: int,
     box_size: float,
     formal_round_strategy: FormalRoundStrategy,
+    attempt_timeout_seconds: float | None,
     use_multi_stage: bool,
     use_pocket_guided: bool,
     competitors: tuple[CompetitorMetadata, ...],
@@ -1452,6 +1455,8 @@ def save_benchmark_results(
         "n_complexes_excluded": len(excluded_rows),
         "n_poses": n_poses,
         "n_opt_steps": n_opt_steps,
+        "formal_round_strategy": formal_round_strategy.value,
+        "attempt_timeout_seconds": attempt_timeout_seconds,
         "benchmark_pocket_radius_a": BENCHMARK_PROTOCOL.pocket_radius_a,
         "benchmark_box_size_a": box_size,
         "benchmark_box_protocol_rule": box_protocol_rule,
@@ -1514,6 +1519,7 @@ def save_benchmark_results(
 def run_cli_docking(
     command: list[str],
     saved_output_pdb: Path | None = None,
+    timeout_seconds: float | None = None,
 ) -> DockingRunResult:
     """Run one external docking command with Vina-style stdout/PDB output."""
     # Use a safe temp file path
@@ -1525,7 +1531,12 @@ def run_cli_docking(
 
     start = time.time()
     try:
-        result = subprocess.run(command_with_output, capture_output=True, text=True)
+        result = subprocess.run(
+            command_with_output,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
         elapsed = time.time() - start
 
         if result.returncode != 0:
@@ -1547,6 +1558,16 @@ def run_cli_docking(
             time=elapsed,
             top_coords=top_coords,
             model_coords=models,
+        )
+    except subprocess.TimeoutExpired:
+        return DockingRunResult(
+            success=False,
+            error=(
+                f"timeout after {timeout_seconds:.1f}s"
+                if timeout_seconds is not None
+                else "timeout"
+            ),
+            time=time.time() - start,
         )
     except Exception as e:
         return DockingRunResult(success=False, error=str(e), time=time.time() - start)
@@ -1887,6 +1908,48 @@ def run_dq_dock_benchmark_job(job: DQDockBenchmarkJob) -> DQDockBenchmarkJobResu
     )
 
 
+def _dq_job_worker(
+    job: DQDockBenchmarkJob,
+    queue: mp.Queue,
+) -> None:
+    try:
+        queue.put(run_dq_dock_benchmark_job(job))
+    except BaseException as exc:  # pragma: no cover - subprocess boundary
+        queue.put(exc)
+
+
+def run_dq_dock_benchmark_job_with_timeout(
+    job: DQDockBenchmarkJob,
+    timeout_seconds: float,
+) -> DQDockBenchmarkJobResult:
+    ctx = mp.get_context(DEFAULT_BENCHMARK_PROCESS_START_METHOD)
+    queue: mp.Queue = ctx.Queue()
+    process = ctx.Process(target=_dq_job_worker, args=(job, queue))
+    process.start()
+    process.join(timeout_seconds)
+    if process.is_alive():
+        process.terminate()
+        process.join()
+        return DQDockBenchmarkJobResult(
+            complex_entry=job.complex_entry,
+            result=BenchmarkResult(
+                success=False,
+                energy=0.0,
+                rmsd=0.0,
+                time=timeout_seconds,
+                n_atoms=0,
+                formal_status=f"timeout after {timeout_seconds:.1f}s",
+            ),
+            dq_pose_coords=None,
+        )
+    payload = queue.get() if not queue.empty() else None
+    if isinstance(payload, BaseException):
+        raise payload
+    if payload is None:
+        raise RuntimeError("DQ-Dock timeout worker exited without returning a result")
+    return payload
+
+
 class DQDockBenchmarkEngine(BenchmarkEngine):
     engine_id = "dq_dock"
     display_name = "DQ-Dock"
@@ -1920,9 +1983,15 @@ class DQDockBenchmarkEngine(BenchmarkEngine):
         jobs = tuple(
             self._build_job(complex_entry, context) for complex_entry in complexes
         )
+        timeout_seconds = context.attempt_timeout_seconds
+        run_job = (
+            (lambda job: run_dq_dock_benchmark_job_with_timeout(job, timeout_seconds))
+            if timeout_seconds is not None
+            else run_dq_dock_benchmark_job
+        )
         for job_result in execute_benchmark_jobs(
             jobs,
-            run_job=run_dq_dock_benchmark_job,
+            run_job=run_job,
             parallelism=context.parallelism,
         ):
             self._record_job_result(job_result, state, context, excluded_rows)
@@ -2168,7 +2237,11 @@ class CLIDockingBenchmarkEngine(BenchmarkEngine):
                     complex_entry,
                     pose_output_path,
                 )
-                result = run_cli_docking(command, pose_output_path)
+                result = run_cli_docking(
+                    command,
+                    pose_output_path,
+                    timeout_seconds=context.attempt_timeout_seconds,
+                )
                 if not result.success or result.score is None:
                     error_msg = result.error or f"{self.display_name} run failed"
                     print(
@@ -2427,6 +2500,7 @@ def run_benchmark(
     dataset: Literal["curated", "casf2007"] = "casf2007",
     optimizer_backend: OptimizerBackend = DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
     parallelism: BenchmarkParallelism = BenchmarkParallelism(),
+    attempt_timeout_seconds: float | None = None,
     max_retries: int = 6,
     retry_break_rmsd: float = 0.0,
     retry_preserve_seed: bool = False,
@@ -2585,6 +2659,7 @@ def run_benchmark(
         output_paths=output_paths,
         pose_dir=pose_dir,
         competitors=competitor_metadata,
+        attempt_timeout_seconds=attempt_timeout_seconds,
         bench_start=bench_start,
         optimizer_backend=optimizer_backend,
         max_retries=max_retries,
@@ -2645,6 +2720,12 @@ def run_benchmark(
     print(
         f"  Scatter Plot: {json_path.with_suffix('').with_name(json_path.stem + '_scatter.png')}"
     )
+    print(
+        f"  Pose Comparison Figures: {json_path.with_suffix('').with_name(json_path.stem + '_pose_figures')}"
+    )
+    print(
+        f"  PyMOL 3D Figures: {json_path.with_suffix('').with_name(json_path.stem + '_pymol')} (front: *_3d.png, side: *_3d_side.png)"
+    )
 
 
 if __name__ == "__main__":
@@ -2690,6 +2771,12 @@ if __name__ == "__main__":
         help="Which competitor engines to run alongside the canonical certified DQ-Dock path",
     )
     parser.add_argument(
+        "--attempt-timeout-seconds",
+        type=float,
+        default=None,
+        help="Skip any docking attempt if it exceeds this timeout in seconds",
+    )
+    parser.add_argument(
         "--dataset",
         type=str,
         choices=("curated", "casf2007"),
@@ -2732,6 +2819,7 @@ if __name__ == "__main__":
         use_pocket_guided=DEFAULT_BENCHMARK_USE_POCKET_GUIDED,
         results_dir=args.results_dir,
         competitors=args.competitors,
+        attempt_timeout_seconds=args.attempt_timeout_seconds,
         dataset=args.dataset,
         optimizer_backend=DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
         parallelism=BenchmarkParallelism(max_workers=args.workers),

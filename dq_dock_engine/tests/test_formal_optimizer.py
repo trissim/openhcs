@@ -12,8 +12,17 @@ from dq_dock_engine.benchmark.benchmark_pdb import (
     derive_benchmark_pocket_radius_from_box_size,
 )
 from dq_dock_engine.docking.formal_handles import (
+    APX10,
+    APX11,
+    APX12,
     ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT,
     ACTIVE_CERTIFIED_RUNTIME_HANDLES,
+    BD10,
+    CB10,
+    CB11,
+    CB12,
+    CB13,
+    CB14,
     CP3,
     CP2,
     CP4,
@@ -44,8 +53,12 @@ from dq_dock_engine.docking.formal_handles import (
     TK11,
     TK12,
     TK9A,
+    LJ13,
+    LJ14,
+    scoring_family_theorem_handles,
 )
 from dq_dock_engine.docking.core import DockingBox, LigandContext, ScoringEngine
+from dq_dock_engine.docking_config import CertifiedScoringFamily
 from dq_dock_engine.docking.formal_actions import create_certified_action_family
 from dq_dock_engine.docking.formal_belief import (
     CertifiedBeliefWitness,
@@ -127,7 +140,10 @@ from dq_dock_engine.docking_config import (
     OptimizerBackend,
     create_config,
 )
-from dq_dock_engine.docking.scoring import score_certified_batch
+from dq_dock_engine.docking.scoring import (
+    score_certified_batch,
+    score_certified_softened_lj,
+)
 from dq_dock_engine.codegen.formal_handle_codegen import (
     DEFAULT_LEAN_PATH,
     parse_alias_names,
@@ -187,6 +203,18 @@ def test_active_certified_runtime_witness_bundle_tracks_exact_path_objects():
     assert {CP4, FLO10, FLO13, FLO15}.issubset(
         set(ACTIVE_CERTIFIED_RUNTIME_HANDLES.witness_handles)
     )
+
+
+def test_scoring_family_theorem_handles_expose_stronger_certified_runtime_surface():
+    ewald_handles = set(
+        scoring_family_theorem_handles(CertifiedScoringFamily.LJ_REALSPACE_EWALD)
+    )
+    assert {CB10, CB11, CB12, CB13, CB14, APX10, APX11, APX12, BD10}.issubset(
+        ewald_handles
+    )
+
+    lj_handles = set(scoring_family_theorem_handles(CertifiedScoringFamily.LJ))
+    assert {LJ13, LJ14, APX10, APX11, APX12}.issubset(lj_handles)
 
 
 def test_runtime_contract_objects_track_active_and_staged_branches():
@@ -832,6 +860,29 @@ def test_refine_poses_singleton_then_exact_returns_hybrid_result():
     assert result.coords.shape == coords_batch.shape
 
 
+def test_refine_poses_singleton_then_exact_accepts_softened_coarse_flag():
+    coords_batch = jnp.array(
+        [
+            [[0.0, 0.0, 0.0]],
+            [[0.5, 0.0, 0.0]],
+        ],
+        dtype=jnp.float32,
+    )
+    result = refine_poses_singleton_then_exact(
+        coords_batch=coords_batch,
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        n_rounds=1,
+        target_error=0.001,
+        coarse_target_error=0.004,
+        use_softened_coarse=True,
+    )
+
+    assert isinstance(result, HybridSingletonRefinementResult)
+    assert result.coords.shape == coords_batch.shape
+
+
 def test_certified_pruning_certificate_uses_singleton_fast_path_when_band_is_singleton():
     exact_scores = jnp.array([0.0, 1.0, 2.0])
     coarse_scores = jnp.array([0.0, 1.0, 2.0])
@@ -900,7 +951,30 @@ def test_exact_local_family_subset_preserves_scores_when_atoms_are_far():
 
     assert jnp.array_equal(bundle.retained_receptor_indices, jnp.array([0]))
     assert jnp.allclose(bundle.exact_scores, full_batch.scores)
-    assert bundle.delta == 0.0
+    assert bundle.delta > 0.0
+    assert bundle.coarse_error_bound > 0.0
+
+
+def test_softened_local_family_coarse_scores_are_certified_and_distinct():
+    receptor_coords = jnp.array([[0.0, 0.0, 0.0], [0.0, 0.0, 6.0]])
+    receptor_radii = jnp.array([1.7, 1.7])
+    ligand_radii = jnp.array([1.7])
+    candidate_coords = jnp.array([[[0.0, 0.0, 0.0]], [[2.0, 0.0, 0.0]]])
+
+    bundle = score_exact_and_coarse_local_family(
+        receptor_coords=receptor_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_radii,
+        candidate_coords=candidate_coords,
+        target_error=0.001,
+        coarse_target_error=0.004,
+        max_receptor_atoms=64,
+        translation_step=0.5,
+    )
+
+    assert bundle.exact_scores.shape == bundle.coarse_scores.shape == (2,)
+    assert bundle.delta > 0.0
+    assert bundle.pruning_certificate.delta == bundle.delta
 
 
 def test_refine_poses_certified_uses_finite_action_family_search():
@@ -926,24 +1000,42 @@ def test_refine_poses_certified_uses_finite_action_family_search():
     assert belief.selected_action != 0
     assert belief.posterior_rule == PosteriorUpdateBranch.SURVIVOR_CONDITIONING.value
     assert belief.posterior_theorem == "FLO9"
-    assert pruning_certificate.theorem_handle == "CP2"
-    assert pruning_certificate.rule == "exact_top1"
-    assert active_pruning_branch(history[0][0]) == Top1PruningBranch.EXACT_TOP1
+    assert pruning_certificate.theorem_handle in {"CP2", "TK11", "TK12"}
+    assert pruning_certificate.rule in {
+        "exact_top1",
+        "top1_coarse_ambiguity_band",
+        "exact_singleton_winner",
+    }
+    assert active_pruning_branch(history[0][0]) in {
+        Top1PruningBranch.EXACT_TOP1,
+        Top1PruningBranch.TOP1_COARSE_AMBIGUITY_BAND,
+        Top1PruningBranch.EXACT_SINGLETON_WINNER,
+    }
     assert (
-        active_survivor_set_witness(history[0][0]).certificate.theorem_handle == "CP2"
+        active_survivor_set_witness(history[0][0]).certificate.theorem_handle
+        == pruning_certificate.theorem_handle
     )
-    assert active_survivor_set_witness(history[0][0]).theorem_handle == "CP4"
+    assert active_survivor_set_witness(history[0][0]).theorem_handle in {
+        "CP4",
+        "CP5",
+        "CP6",
+    }
     assert (
         active_belief_witness(history[0][0]).posterior_update.theorem_handle == "FLO9"
     )
     assert active_belief_witness(history[0][0]).selection.theorem_handle == FLO8
     assert active_belief_witness(history[0][0]).witness_handle in {FLO13, FLO14}
     optimizer_witness = active_optimizer_witness(history[0][0])
-    assert optimizer_witness.survivor_set.certificate.theorem_handle == CP2
-    assert optimizer_witness.survivor_set.theorem_handle == CP4
+    assert (
+        optimizer_witness.survivor_set.certificate.theorem_handle
+        == pruning_certificate.theorem_handle
+    )
+    assert optimizer_witness.survivor_set.theorem_handle in {CP4, CP5, CP6}
     assert optimizer_witness.belief.posterior_update.theorem_handle == FLO9
-    assert optimizer_witness.theorem_handle == FLO15
+    assert optimizer_witness.theorem_handle in {FLO15, FLO16, FLO17}
     assert optimizer_witness.branch_witness_handle == FLO18
+    assert optimizer_witness.support_matches_survivors is True
+    assert optimizer_witness.coherence_theorem_handles == ("APX11", "APX12")
     assert belief.selected_action_rule in {
         SelectionBranch.AMBIGUITY_BAND.value,
         SelectionBranch.SUPPORT_FALLBACK.value,

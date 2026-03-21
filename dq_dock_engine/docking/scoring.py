@@ -119,6 +119,15 @@ class CertifiedBatchResult:
         return certifications
 
 
+@dataclass(frozen=True)
+class CertifiedSoftenedBatchResult:
+    scores: jnp.ndarray
+    softening_error_bound: float
+    target_error: float
+    cutoff_radius: float
+    softening_radius: float
+
+
 def _score_certified_scores(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
@@ -146,6 +155,15 @@ def _score_certified_scores(
         target_error=target_error,
         epsilon=epsilon,
     )
+
+
+def _default_softening_radius(
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+) -> float:
+    receptor_min = float(jnp.min(receptor_radii))
+    ligand_min = float(jnp.min(ligand_radii))
+    return 0.5 * (receptor_min + ligand_min)
 
 
 def score_certified_batch(
@@ -297,6 +315,42 @@ def _score_certified_lj_batch(
 
 
 @jax.jit
+def _score_certified_softened_lj_batch(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+    cutoff: jnp.ndarray,
+    epsilon: float,
+    softening_radius: float,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    diffs = receptor_coords[None, :, None, :] - poses_coords[:, None, :, :]
+    dists = jnp.asarray(jnp.linalg.norm(diffs, axis=-1))
+
+    sigma_ij = receptor_radii[:, None] + ligand_radii[None, :]
+    cutoff_safe = jnp.maximum(cutoff, sigma_ij)[None, :, :]
+
+    in_range = dists < cutoff_safe
+    dists_exact = jnp.where(in_range, dists, cutoff_safe)
+    dists_soft = jnp.maximum(dists_exact, softening_radius)
+
+    epsilon_matrix = jnp.full_like(dists_exact, epsilon / 4.0)
+    sigma_matrix = jnp.broadcast_to(sigma_ij[None, :, :], dists_exact.shape)
+    exact_contrib = jnp.asarray(
+        typed_lennard_jones_matrix(dists_exact, epsilon_matrix, sigma_matrix)
+    )
+    softened_contrib = jnp.asarray(
+        typed_lennard_jones_matrix(dists_soft, epsilon_matrix, sigma_matrix)
+    )
+
+    exact_masked = jnp.where(in_range, exact_contrib, 0.0)
+    softened_masked = jnp.where(in_range, softened_contrib, 0.0)
+    energies = jnp.sum(softened_masked, axis=(1, 2))
+    error_bound = jnp.max(jnp.sum(jnp.abs(exact_masked - softened_masked), axis=(1, 2)))
+    return energies, error_bound
+
+
+@jax.jit
 def _score_realspace_ewald_batch(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
@@ -369,10 +423,95 @@ def score_certified_lj(
 
 
 @conditionally_certified(
-    "HandleAliases.lean::CB5; HandleAliases.lean::CB6; HandleAliases.lean::APX4",
+    "HandleAliases.lean::LJ10; HandleAliases.lean::LJ11; HandleAliases.lean::LJ12; HandleAliases.lean::APX10; HandleAliases.lean::APX11; HandleAliases.lean::APX12",
+    assumptions=[
+        "Softened LJ matches exact LJ outside the chosen softening radius",
+        "The runtime uses the exact same max(r, rSoft) softening form as the Lean theorem",
+    ],
+)
+def score_certified_softened_lj(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+    target_error: float = 0.001,
+    epsilon: float = _EPSILON_KCAL_MOL,
+    softening_radius: float | None = None,
+) -> CertifiedSoftenedBatchResult:
+    cutoff = jnp.array(optimal_cutoff(target_error, s=6.0))
+    r_soft = (
+        _default_softening_radius(receptor_radii, ligand_radii)
+        if softening_radius is None
+        else float(softening_radius)
+    )
+    scores, softening_error_bound = _score_certified_softened_lj_batch(
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        cutoff,
+        epsilon,
+        r_soft,
+    )
+    return CertifiedSoftenedBatchResult(
+        scores=scores,
+        softening_error_bound=float(softening_error_bound),
+        target_error=target_error,
+        cutoff_radius=float(cutoff),
+        softening_radius=r_soft,
+    )
+
+
+@conditionally_certified(
+    "HandleAliases.lean::CB10; HandleAliases.lean::CB11; HandleAliases.lean::CB12; HandleAliases.lean::LJ10; HandleAliases.lean::LJ11; HandleAliases.lean::LJ12; HandleAliases.lean::APX10; HandleAliases.lean::APX11; HandleAliases.lean::APX12",
+    assumptions=[
+        "The electrostatic term is identical in exact and coarse modes, so the certified delta comes entirely from the softened LJ term",
+        "Softened LJ matches the Lean exact-vs-softened scoring family on the shared receptor/pose geometry",
+    ],
+)
+def score_certified_softened_lj_realspace_ewald(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+    electrostatics: CertifiedRealSpaceEwaldSpec,
+    target_error: float = 0.001,
+    epsilon: float = _EPSILON_KCAL_MOL,
+    softening_radius: float | None = None,
+) -> CertifiedSoftenedBatchResult:
+    electrostatics.validate()
+    softened_batch = score_certified_softened_lj(
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        target_error=target_error,
+        epsilon=epsilon,
+        softening_radius=softening_radius,
+    )
+    ewald_scores = _score_realspace_ewald_batch(
+        receptor_coords,
+        poses_coords,
+        electrostatics.receptor_charges,
+        electrostatics.ligand_charges,
+        jnp.array(electrostatics.cutoff),
+        electrostatics.alpha,
+        electrostatics.dielectric,
+    )
+    return CertifiedSoftenedBatchResult(
+        scores=softened_batch.scores + ewald_scores,
+        softening_error_bound=softened_batch.softening_error_bound,
+        target_error=target_error,
+        cutoff_radius=softened_batch.cutoff_radius,
+        softening_radius=softened_batch.softening_radius,
+    )
+
+
+@conditionally_certified(
+    "HandleAliases.lean::CB5; HandleAliases.lean::CB6; HandleAliases.lean::CB10; HandleAliases.lean::CB11; HandleAliases.lean::CB12; HandleAliases.lean::CB13; HandleAliases.lean::CB14; HandleAliases.lean::APX10; HandleAliases.lean::APX11; HandleAliases.lean::APX12; HandleAliases.lean::BD10",
     assumptions=[
         "Supplied receptor and ligand charges are fixed intended physical inputs",
-        "The exact-vs-cutoff real-space electrostatics theorem is still being exported as a dedicated handle",
+        "The runtime uses the same coarse-vs-exact decomposition as the exported Ewald far-field correction theorems",
         "The 1e-6 minimum distance guard is a numerical safeguard against division by zero",
     ],
 )

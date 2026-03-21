@@ -12,7 +12,7 @@ DEFAULT_LEAN_PATH = Path(
 )
 DEFAULT_OUTPUT_PATH = Path("dq_dock_engine/generated/formal_handle_aliases.py")
 
-ABBREV_RE = re.compile(r"^abbrev\s+([A-Z0-9_]+)\s*:=")
+ABBREV_RE = re.compile(r"^(?:noncomputable\s+)?abbrev\s+([A-Z0-9_]+)\s*:=")
 
 
 def parse_alias_names(lean_text: str) -> list[str]:

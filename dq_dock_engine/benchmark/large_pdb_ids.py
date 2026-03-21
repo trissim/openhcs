@@ -269,6 +269,39 @@ def _load_casf_resolutions() -> dict[str, float]:
     return {k: float(v) for k, v in raw.items()}
 
 
+def _extract_pdb_title(pdb_path: Path, max_length: int = 60) -> str:
+    """Extract protein title from PDB file TITLE lines.
+
+    Reads consecutive TITLE records from the PDB file, concatenates them,
+    and truncates to max_length without cutting words in half.
+    """
+    if not pdb_path.exists():
+        return pdb_path.stem
+
+    title_parts: list[str] = []
+    with open(pdb_path) as f:
+        for line in f:
+            if line.startswith("TITLE"):
+                title_parts.append(line[10:].strip())
+            elif title_parts and not line.startswith("TITLE"):
+                break
+
+    if not title_parts:
+        return pdb_path.stem
+
+    full_title = " ".join(title_parts)
+
+    if len(full_title) <= max_length:
+        return full_title
+
+    truncated = full_title[:max_length]
+    last_space = truncated.rfind(" ")
+    if last_space > max_length * 0.5:
+        truncated = truncated[:last_space]
+
+    return truncated.strip()
+
+
 def get_casf_2007_entries() -> list[PDBEntry]:
     """Return CASF-2007 as PDBEntry objects for the benchmark runner.
 
@@ -312,7 +345,7 @@ def get_casf_2007_entries() -> list[PDBEntry]:
 
         entry = PDBEntry(
             pdb_id=pdb_id,
-            target_name=f"CASF-{pdb_id}",
+            target_name=_extract_pdb_title(pdb_path),
             resolution=resolutions.get(pdb_id),
             scope=BenchmarkScope.LIGAND,
         )

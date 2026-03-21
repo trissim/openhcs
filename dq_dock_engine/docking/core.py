@@ -151,6 +151,15 @@ class DockingBox:
 
 
 @dataclass(frozen=True)
+class CertifiedBindingSite:
+    """Runtime representation of a theorem-backed binding site."""
+
+    center: jnp.ndarray  # shape (3,)
+    radius: float
+    theorem_handles: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class LigandContext:
     """Immutable context for a ligand prior to geometric transformation."""
 

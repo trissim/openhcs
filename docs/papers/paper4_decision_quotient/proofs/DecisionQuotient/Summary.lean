@@ -182,6 +182,65 @@ noncomputable def sampled_docking_coherent_optimizer_witness
       (DecisionQuotient.Tractability.SampledDocking.SupportedAction prob.samples) :=
   DecisionQuotient.Tractability.BlindDocking.sampled_docking_coherent_optimizer_witness_of_finite_uniform_error prob s
 
+/-- Exact-vs-cutoff Lennard-Jones coherent optimizer witness alias. -/
+noncomputable def lj_cutoff_coherent_optimizer_witness
+    {A S : Type*}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (distance : A → S → ℝ) (ε σ rc : ℝ) (s : S) :
+    DecisionQuotient.Tractability.FormalLocalOptimizer.CoherentOptimizerWitness A :=
+  DecisionQuotient.Tractability.LJApproximation.exact_vs_cutoff_lj_coherent_optimizer_witness distance ε σ rc s
+
+/-- Exact-vs-softened Lennard-Jones coherent optimizer witness alias. -/
+noncomputable def lj_softened_coherent_optimizer_witness
+    {A S : Type*}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (distance : A → S → ℝ) (ε σ rSoft : ℝ) (s : S) :
+    DecisionQuotient.Tractability.FormalLocalOptimizer.CoherentOptimizerWitness A :=
+  DecisionQuotient.Tractability.SoftLJApproximation.exact_vs_softened_lj_coherent_optimizer_witness distance ε σ rSoft s
+
+/-- Exact-vs-cutoff Coulomb coherent optimizer witness alias. -/
+noncomputable def coulomb_cutoff_coherent_optimizer_witness
+    {A S : Type*}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (q_i q_j rc : ℝ) (distance : A → S → ℝ) (s : S) :
+    DecisionQuotient.Tractability.FormalLocalOptimizer.CoherentOptimizerWitness A :=
+  DecisionQuotient.Tractability.CoulombApproximation.exact_vs_cutoff_coulomb_coherent_optimizer_witness q_i q_j rc distance s
+
+/-- Far-field Ewald correction coherent optimizer witness alias over a base scorer. -/
+noncomputable def ewald_far_field_coherent_optimizer_witness
+    {A S : Type*}
+    [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uBase : A → S → ℝ)
+    (distance : A → S → ℝ)
+    (q_i q_j alpha R : ℝ)
+    (s : S)
+    (ha : 0 < alpha)
+    (hR : 1 ≤ R)
+    (hFar : ∀ a, R ≤ distance a s) :
+    DecisionQuotient.Tractability.FormalLocalOptimizer.CoherentOptimizerWitness A :=
+  DecisionQuotient.Tractability.CoulombApproximation.additive_exactRealEwald_coherent_optimizer_witness
+    uBase distance q_i q_j alpha R s ha hR hFar
+
+/-- Grid-convergence coherent optimizer witness alias. -/
+noncomputable def grid_convergence_coherent_optimizer_witness
+    {A Scont Sgrid : Type*}
+    [Fintype A] [Fintype Sgrid] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uCont : A → Scont → ℝ)
+    (uGrid : A → Sgrid → ℝ)
+    (lift : Sgrid → Scont)
+    (eps : ℝ → ℝ)
+    (res : ℝ)
+    (sGrid : Sgrid)
+    (hApprox : ∀ a sGrid', |uCont a (lift sGrid') - uGrid a sGrid'| ≤ eps res)
+    (hEps : 0 ≤ eps res) :
+    DecisionQuotient.Tractability.FormalLocalOptimizer.CoherentOptimizerWitness A :=
+  DecisionQuotient.Tractability.CoarseApproximation.coherent_optimizer_witness_of_uniformApprox_top1
+    (fun a => uCont a (lift sGrid))
+    (fun a => uGrid a sGrid)
+    (eps res)
+    (fun a => hApprox a sGrid)
+    hEps
+
 /-- Exact-vs-cutoff Lennard-Jones certified top-1 survivor set alias. -/
 noncomputable def lj_cutoff_certified_top1
     {A S : Type*}

@@ -4,9 +4,18 @@ from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 
 from dq_dock_engine.generated.formal_handle_aliases import (
+    APX10,
+    APX11,
+    APX12,
     APX4,
+    BD10,
     CB5,
     CB6,
+    CB10,
+    CB11,
+    CB12,
+    CB13,
+    CB14,
     CP1,
     CP2,
     CP3,
@@ -26,6 +35,11 @@ from dq_dock_engine.generated.formal_handle_aliases import (
     FLO4,
     FLO8,
     FLO9,
+    LJ13,
+    LJ14,
+    LJ10,
+    LJ11,
+    LJ12,
     SD10,
     TK1,
     TK8,
@@ -188,7 +202,24 @@ def scoring_family_theorem_handles(
     certified_scoring_family: CertifiedScoringFamily,
 ) -> tuple[str, ...]:
     if certified_scoring_family == CertifiedScoringFamily.LJ_REALSPACE_EWALD:
-        return (CB5, CB6, APX4)
+        return (
+            CB5,
+            CB6,
+            CB10,
+            CB11,
+            CB12,
+            CB13,
+            CB14,
+            LJ10,
+            LJ11,
+            LJ12,
+            APX10,
+            APX11,
+            APX12,
+            BD10,
+        )
+    if certified_scoring_family == CertifiedScoringFamily.LJ:
+        return (LJ10, LJ11, LJ12, LJ13, LJ14, APX10, APX11, APX12)
     return ()
 
 

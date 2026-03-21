@@ -9,12 +9,16 @@ from dq_dock_engine.docking.scoring import (
     route_scoring,
     score_certified_batch,
     score_certified_lj,
+    score_certified_softened_lj,
+    score_certified_softened_lj_realspace_ewald,
     score_certified_lj_realspace_ewald,
 )
 from dq_dock_engine.docking.core import ScoringEngine
 from dq_dock_engine.docking.core import LigandContext
 from dq_dock_engine.docking.core import DockingBox
+from dq_dock_engine.docking.core import CertifiedBindingSite
 from dq_dock_engine.docking.pipeline import _resolve_route_scoring_electrostatics
+from dq_dock_engine.docking.pipeline import _apply_certified_binding_site_restriction
 from dq_dock_engine.docking.pipeline import run_docking_pipeline
 from dq_dock_engine.docking.charges import ChargeMethod
 from dq_dock_engine.docking_config import (
@@ -156,6 +160,22 @@ def test_certified_config_defaults_to_realspace_ewald_family() -> None:
         optimizer_backend=OptimizerBackend.FORMAL,
     )
     assert config.certified_scoring_family == CertifiedScoringFamily.LJ_REALSPACE_EWALD
+    assert config.coarse_target_error == 0.004
+    assert config.use_softened_coarse_prefilter is False
+
+
+def test_certified_config_validate_rejects_bad_coarse_target_error() -> None:
+    config = DockingConfig(
+        mode=DockingMode.CERTIFIED,
+        optimizer_backend=OptimizerBackend.FORMAL,
+        target_error=0.001,
+        coarse_target_error=0.0,
+    )
+    valid, warnings = config.validate()
+    assert valid is False
+    assert any(
+        "coarse_target_error must be positive" in warning for warning in warnings
+    )
 
 
 def test_score_certified_batch_uses_composite_path_when_charges_present() -> None:
@@ -179,6 +199,52 @@ def test_score_certified_batch_uses_composite_path_when_charges_present() -> Non
     assert batch.scores.shape == (1,)
     assert np.isfinite(float(batch.scores[0]))
     assert np.isfinite(batch.error_bound)
+
+
+def test_certified_softened_lj_matches_exact_when_outside_softening_radius() -> None:
+    receptor_coords = jnp.array([[0.0, 0.0, 0.0]])
+    poses_coords = jnp.array([[[3.0, 0.0, 0.0]]])
+    receptor_radii = jnp.array([1.7])
+    ligand_radii = jnp.array([1.7])
+
+    exact_scores, _ = score_certified_lj(
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+    )
+    softened = score_certified_softened_lj(
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        softening_radius=0.5,
+    )
+
+    np.testing.assert_allclose(np.asarray(softened.scores), np.asarray(exact_scores))
+    assert softened.softening_error_bound == 0.0
+
+
+def test_certified_softened_lj_realspace_ewald_stays_finite_for_overlap() -> None:
+    receptor_coords = jnp.array([[0.0, 0.0, 0.0]])
+    poses_coords = jnp.array([[[0.0, 0.0, 0.0]]])
+    receptor_radii = jnp.array([1.7])
+    ligand_radii = jnp.array([1.7])
+    electrostatics = CertifiedRealSpaceEwaldSpec(
+        receptor_charges=jnp.array([1.0]),
+        ligand_charges=jnp.array([-1.0]),
+    )
+
+    softened = score_certified_softened_lj_realspace_ewald(
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        electrostatics=electrostatics,
+    )
+
+    assert np.isfinite(float(softened.scores[0]))
+    assert softened.softening_error_bound >= 0.0
 
 
 def test_certified_pipeline_accepts_realspace_ewald_scoring_family() -> None:
@@ -221,6 +287,63 @@ def test_certified_pipeline_accepts_realspace_ewald_scoring_family() -> None:
 
     assert len(poses) == 1
     assert np.isfinite(poses[0].energy)
+
+
+def test_certified_binding_site_restriction_shrinks_box_and_receptor_subset() -> None:
+    protein_coords = jnp.array(
+        [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [50.0, 0.0, 0.0]], dtype=jnp.float32
+    )
+    receptor_radii = jnp.array([1.7, 1.7, 1.7], dtype=jnp.float32)
+    receptor_elements = ("C", "N", "O")
+    receptor_charges = jnp.array([0.1, -0.2, 0.3], dtype=jnp.float32)
+    ligand_ctx = LigandContext(
+        base_coords=jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32),
+        base_radii=jnp.array([1.7], dtype=jnp.float32),
+        center_of_mass=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        elements=("C",),
+    )
+    box = DockingBox(
+        center=jnp.array([10.0, 0.0, 0.0], dtype=jnp.float32),
+        size=jnp.array([20.0, 20.0, 20.0], dtype=jnp.float32),
+    )
+    binding_site = CertifiedBindingSite(
+        center=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        radius=3.0,
+        theorem_handles=("PD3", "PD5"),
+    )
+
+    (
+        restricted_coords,
+        restricted_radii,
+        restricted_elements,
+        restricted_charges,
+        restricted_box,
+    ) = _apply_certified_binding_site_restriction(
+        protein_coords=protein_coords,
+        receptor_radii=receptor_radii,
+        receptor_elements=receptor_elements,
+        precomputed_receptor_charges=receptor_charges,
+        ligand_ctx=ligand_ctx,
+        box=box,
+        binding_site=binding_site,
+        target_error=0.001,
+    )
+
+    assert restricted_coords.shape[0] < protein_coords.shape[0]
+    np.testing.assert_allclose(
+        np.asarray(restricted_box.center), np.asarray(binding_site.center)
+    )
+    np.testing.assert_allclose(
+        np.asarray(restricted_box.size), np.asarray([6.0, 6.0, 6.0])
+    )
+    assert (
+        restricted_elements is not None
+        and len(restricted_elements) == restricted_coords.shape[0]
+    )
+    assert (
+        restricted_charges is not None
+        and restricted_charges.shape[0] == restricted_coords.shape[0]
+    )
 
 
 def test_prepare_protein_filters_non_a_altlocs() -> None:

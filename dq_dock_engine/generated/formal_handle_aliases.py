@@ -231,24 +231,61 @@ MD4 = "MD4"
 MD5 = "MD5"
 MD6 = "MD6"
 MD7 = "MD7"
+PD1 = "PD1"
+PD2 = "PD2"
+PD3 = "PD3"
+PD4 = "PD4"
+PD5 = "PD5"
+BD1 = "BD1"
+BD2 = "BD2"
+BD3 = "BD3"
+BD4 = "BD4"
+BD5 = "BD5"
+BD6 = "BD6"
+BD7 = "BD7"
+BD8 = "BD8"
+BD9 = "BD9"
+BD10 = "BD10"
 LJ1 = "LJ1"
 LJ2 = "LJ2"
 LJ3 = "LJ3"
 LJ4 = "LJ4"
 LJ5 = "LJ5"
 LJ6 = "LJ6"
+LJ7 = "LJ7"
+LJ8 = "LJ8"
+LJ9 = "LJ9"
+LJ13 = "LJ13"
+LJ10 = "LJ10"
+LJ11 = "LJ11"
+LJ12 = "LJ12"
+LJ14 = "LJ14"
 CB1 = "CB1"
 CB2 = "CB2"
 CB3 = "CB3"
 CB4 = "CB4"
 CB5 = "CB5"
 CB6 = "CB6"
+CB7 = "CB7"
+CB8 = "CB8"
+CB9 = "CB9"
+CB10 = "CB10"
+CB11 = "CB11"
+CB12 = "CB12"
+CB13 = "CB13"
+CB14 = "CB14"
 BP1 = "BP1"
 BP2 = "BP2"
 BP3 = "BP3"
 APX1 = "APX1"
 APX2 = "APX2"
 APX3 = "APX3"
+APX10 = "APX10"
+APX11 = "APX11"
+APX12 = "APX12"
+APX7 = "APX7"
+APX8 = "APX8"
+APX9 = "APX9"
 APX4 = "APX4"
 SD1 = "SD1"
 SD2 = "SD2"
@@ -434,9 +471,14 @@ FN12 = "FN12"
 FN14 = "FN14"
 FN15 = "FN15"
 FN16 = "FN16"
+FI1 = "FI1"
+FI2 = "FI2"
 FI3 = "FI3"
+FI4 = "FI4"
+FI5 = "FI5"
 FI6 = "FI6"
 FI7 = "FI7"
+TL1 = "TL1"
 TL2 = "TL2"
 TL3 = "TL3"
 TL4 = "TL4"
@@ -478,12 +520,14 @@ BA8 = "BA8"
 BA9 = "BA9"
 BA10 = "BA10"
 IT1 = "IT1"
+IT2 = "IT2"
 IT3 = "IT3"
 IT4 = "IT4"
 IT5 = "IT5"
 IT6 = "IT6"
 EI1 = "EI1"
 EI2 = "EI2"
+EI3 = "EI3"
 EI4 = "EI4"
 EI5 = "EI5"
 FS1 = "FS1"
@@ -500,6 +544,7 @@ QT1 = "QT1"
 QT2 = "QT2"
 QT3 = "QT3"
 QT4 = "QT4"
+QT5 = "QT5"
 QT6 = "QT6"
 QT7 = "QT7"
 AB1 = "AB1"
@@ -924,24 +969,61 @@ __all__ = [
     "MD5",
     "MD6",
     "MD7",
+    "PD1",
+    "PD2",
+    "PD3",
+    "PD4",
+    "PD5",
+    "BD1",
+    "BD2",
+    "BD3",
+    "BD4",
+    "BD5",
+    "BD6",
+    "BD7",
+    "BD8",
+    "BD9",
+    "BD10",
     "LJ1",
     "LJ2",
     "LJ3",
     "LJ4",
     "LJ5",
     "LJ6",
+    "LJ7",
+    "LJ8",
+    "LJ9",
+    "LJ13",
+    "LJ10",
+    "LJ11",
+    "LJ12",
+    "LJ14",
     "CB1",
     "CB2",
     "CB3",
     "CB4",
     "CB5",
     "CB6",
+    "CB7",
+    "CB8",
+    "CB9",
+    "CB10",
+    "CB11",
+    "CB12",
+    "CB13",
+    "CB14",
     "BP1",
     "BP2",
     "BP3",
     "APX1",
     "APX2",
     "APX3",
+    "APX10",
+    "APX11",
+    "APX12",
+    "APX7",
+    "APX8",
+    "APX9",
     "APX4",
     "SD1",
     "SD2",
@@ -1127,9 +1209,14 @@ __all__ = [
     "FN14",
     "FN15",
     "FN16",
+    "FI1",
+    "FI2",
     "FI3",
+    "FI4",
+    "FI5",
     "FI6",
     "FI7",
+    "TL1",
     "TL2",
     "TL3",
     "TL4",
@@ -1171,12 +1258,14 @@ __all__ = [
     "BA9",
     "BA10",
     "IT1",
+    "IT2",
     "IT3",
     "IT4",
     "IT5",
     "IT6",
     "EI1",
     "EI2",
+    "EI3",
     "EI4",
     "EI5",
     "FS1",
@@ -1193,6 +1282,7 @@ __all__ = [
     "QT2",
     "QT3",
     "QT4",
+    "QT5",
     "QT6",
     "QT7",
     "AB1",

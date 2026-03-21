@@ -4,6 +4,7 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Literal
 
+from dq_dock_engine.docking.core import CertifiedBindingSite
 from dq_dock_engine.proof_status import ProofStatus
 
 
@@ -82,10 +83,23 @@ class DockingConfig:
     #: Which certified local-round strategy to use when optimizer_backend is FORMAL
     formal_round_strategy: FormalRoundStrategy = FormalRoundStrategy.SINGLETON_HYBRID
 
+    #: Certified coarse surrogate error budget used by formal round pruning.
+    #: Larger values shrink the certified cutoff and can reduce compute.
+    coarse_target_error: float = 0.004
+
+    #: Optional theorem-backed softened-LJ coarse prefilter.
+    #: Disabled by default because the current aggregate softening bound is often
+    #: too conservative to improve pruning in practice.
+    use_softened_coarse_prefilter: bool = False
+
     #: Certified physical score family for both route_scoring and formal rounds
     certified_scoring_family: CertifiedScoringFamily = (
         CertifiedScoringFamily.LJ_REALSPACE_EWALD
     )
+
+    #: Optional theorem-backed binding site used to restrict blind docking to a
+    #: certified pocket region.
+    certified_binding_site: CertifiedBindingSite | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -118,6 +132,12 @@ class DockingConfig:
                 )
             if self.target_error <= 0:
                 warnings.append("CERTIFIED mode: target_error must be positive.")
+            if self.coarse_target_error <= 0:
+                warnings.append("CERTIFIED mode: coarse_target_error must be positive.")
+            if self.coarse_target_error < self.target_error:
+                warnings.append(
+                    "CERTIFIED mode: coarse_target_error < target_error tightens the surrogate instead of coarsening it."
+                )
 
         return len(warnings) == 0, warnings
 
