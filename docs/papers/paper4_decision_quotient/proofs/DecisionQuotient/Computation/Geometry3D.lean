@@ -109,13 +109,50 @@ axiom distance_triangle
   (p q r : Point3) :
   distance p r ≤ distance p q + distance q r
 
+------------------------------------------------------------
+-- ALGEBRA HELPERS (for midpoint proofs)
+------------------------------------------------------------
+
+/-- sqrt(x/4) = sqrt(x)/2 for non-negative x -/
+axiom sqrt_div_four (x : ℝ) (hx : 0 ≤ x) :
+    Real.sqrt (x / 4) = Real.sqrt x / 2
+
 /-- Midpoint distance lemma (left): distance from p to midpoint(p,q) -/
-axiom distance_midpoint_left (p q : Point3) :
-    distance p (midpoint p q) = distance p q / 2
+lemma distance_midpoint_left (p q : Point3) :
+    distance p (midpoint p q) = distance p q / 2 := by
+  rcases p with ⟨px, py, pz⟩
+  rcases q with ⟨qx, qy, qz⟩
+  unfold distance midpoint smul add
+  have hx : px - (1 / 2 * (px + qx)) = (px - qx) / 2 := by ring
+  have hy : py - (1 / 2 * (py + qy)) = (py - qy) / 2 := by ring
+  have hz : pz - (1 / 2 * (pz + qz)) = (pz - qz) / 2 := by ring
+  rw [hx, hy, hz]
+  have hsq :
+      ((px - qx) / 2)^2 + ((py - qy) / 2)^2 + ((pz - qz) / 2)^2
+      =
+      ((px - qx)^2 + (py - qy)^2 + (pz - qz)^2) / 4 := by
+    ring
+  rw [hsq]
+  have hsq2 : 0 ≤ (px - qx)^2 + (py - qy)^2 + (pz - qz)^2 := by
+    nlinarith [sq_nonneg (px - qx), sq_nonneg (py - qy), sq_nonneg (pz - qz)]
+  have hsqrt := sqrt_div_four ((px - qx)^2 + (py - qy)^2 + (pz - qz)^2) hsq2
+  exact hsqrt
+
+/-- Midpoint symmetry -/
+lemma midpoint_comm (p q : Point3) : midpoint p q = midpoint q p := by
+  rcases p with ⟨px, py, pz⟩
+  rcases q with ⟨qx, qy, qz⟩
+  unfold midpoint smul add
+  ext <;> ring
 
 /-- Midpoint distance lemma (right): distance from q to midpoint(p,q) -/
-axiom distance_midpoint_right (p q : Point3) :
-    distance q (midpoint p q) = distance p q / 2
+lemma distance_midpoint_right (p q : Point3) :
+    distance q (midpoint p q) = distance p q / 2 := by
+  calc
+    distance q (midpoint p q)
+        = distance q (midpoint q p) := by rw [midpoint_comm]
+    _ = distance q p / 2 := distance_midpoint_left q p
+    _ = distance p q / 2 := by rw [distance_sym]
 
 end Geometry3D
 end Computation
