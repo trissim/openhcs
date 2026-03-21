@@ -18,6 +18,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 
+from dq_dock_engine.docking.core import CertifiedBindingSite
+from dq_dock_engine.proof_status import conditionally_certified
+
 
 # =============================================================================
 # ENUM-DRIVEN FEATURE TYPES
@@ -214,6 +217,36 @@ def compute_pocket_shape(pocket_coords: jnp.ndarray) -> PocketShape:
         volume=float(volume),
         concavity=float(concavity),
         openness=openness,
+    )
+
+
+@conditionally_certified(
+    "HandleAliases.lean::PD3; HandleAliases.lean::PD5; HandleAliases.lean::BD1",
+    assumptions=[
+        "pocket_coords approximate a theorem-backed detected pocket region",
+        "the explicit center-of-mass enclosing radius is used as a conservative binding-site abstraction",
+    ],
+)
+def derive_certified_binding_site(
+    pocket_coords: jnp.ndarray,
+    radius_margin: float = 0.0,
+) -> CertifiedBindingSite | None:
+    """
+    Derive a conservative certified binding-site abstraction from pocket geometry.
+
+    The center is the pocket center of mass and the radius is the maximum sampled
+    distance to that center plus an optional safety margin.
+    """
+    if pocket_coords.shape[0] == 0:
+        return None
+
+    shape = compute_pocket_shape(pocket_coords)
+    distances = jnp.linalg.norm(pocket_coords - shape.center_of_mass, axis=1)
+    radius = float(jnp.max(distances) + radius_margin)
+    return CertifiedBindingSite(
+        center=shape.center_of_mass,
+        radius=radius,
+        theorem_handles=("PD3", "PD5", "BD1"),
     )
 
 

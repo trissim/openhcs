@@ -17,8 +17,10 @@ from dq_dock_engine.docking.core import ScoringEngine
 from dq_dock_engine.docking.core import LigandContext
 from dq_dock_engine.docking.core import DockingBox
 from dq_dock_engine.docking.core import CertifiedBindingSite
+from dq_dock_engine.docking.pocket_analysis import derive_certified_binding_site
 from dq_dock_engine.docking.pipeline import _resolve_route_scoring_electrostatics
 from dq_dock_engine.docking.pipeline import _apply_certified_binding_site_restriction
+from dq_dock_engine.docking.pipeline import _derive_certified_binding_site_from_box
 from dq_dock_engine.docking.pipeline import run_docking_pipeline
 from dq_dock_engine.docking.charges import ChargeMethod
 from dq_dock_engine.docking_config import (
@@ -176,6 +178,17 @@ def test_certified_config_validate_rejects_bad_coarse_target_error() -> None:
     assert any(
         "coarse_target_error must be positive" in warning for warning in warnings
     )
+
+
+def test_certified_config_accepts_adaptive_coarse_schedule() -> None:
+    config = DockingConfig(
+        mode=DockingMode.CERTIFIED,
+        optimizer_backend=OptimizerBackend.FORMAL,
+        adaptive_coarse_target_errors=(0.05, 0.01, 0.004),
+    )
+    valid, warnings = config.validate()
+    assert valid is True
+    assert warnings == []
 
 
 def test_score_certified_batch_uses_composite_path_when_charges_present() -> None:
@@ -344,6 +357,33 @@ def test_certified_binding_site_restriction_shrinks_box_and_receptor_subset() ->
         restricted_charges is not None
         and restricted_charges.shape[0] == restricted_coords.shape[0]
     )
+
+
+def test_derive_certified_binding_site_returns_enclosing_site() -> None:
+    pocket_coords = jnp.array(
+        [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]], dtype=jnp.float32
+    )
+    site = derive_certified_binding_site(pocket_coords)
+
+    assert site is not None
+    distances = jnp.linalg.norm(pocket_coords - site.center, axis=1)
+    assert bool(jnp.all(distances <= site.radius + 1e-6))
+    assert set(site.theorem_handles) == {"PD3", "PD5", "BD1"}
+
+
+def test_derive_certified_binding_site_from_box_uses_local_pocket_atoms() -> None:
+    protein_coords = jnp.array(
+        [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [30.0, 0.0, 0.0]], dtype=jnp.float32
+    )
+    box = DockingBox(
+        center=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        size=jnp.array([8.0, 8.0, 8.0], dtype=jnp.float32),
+    )
+    site = _derive_certified_binding_site_from_box(protein_coords, box)
+
+    assert site is not None
+    assert site.radius < 10.0
+    np.testing.assert_allclose(np.asarray(site.center), np.asarray([1.0, 0.0, 0.0]))
 
 
 def test_prepare_protein_filters_non_a_altlocs() -> None:

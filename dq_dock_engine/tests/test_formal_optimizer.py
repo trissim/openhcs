@@ -93,6 +93,7 @@ from dq_dock_engine.docking.formal_optimizer import (
     MinimalStagedRoundResult,
     StagedRoundAcceptanceDiagnostic,
     StagedCertifiedDecisionState,
+    _minimal_round_from_per_pose_singleton_accept,
     active_belief_witness,
     active_optimizer_witness,
     active_survivor_set_witness,
@@ -672,6 +673,29 @@ def test_try_per_pose_fast_singleton_accept_round_returns_result_or_fallback():
     assert result is None or isinstance(result, PerPoseFastSingletonAcceptRoundResult)
 
 
+def test_minimal_round_from_per_pose_singleton_accept_preserves_round_payload():
+    round_result = PerPoseFastSingletonAcceptRoundResult(
+        selected_actions=jnp.array([1, 0], dtype=jnp.int32),
+        next_coords=jnp.array(
+            [[[0.0, 0.0, 0.0]], [[1.0, 0.0, 0.0]]], dtype=jnp.float32
+        ),
+        coarse_scores=jnp.array([[0.0, 1.0], [0.0, 2.0]], dtype=jnp.float32),
+        coarse_target_error=0.004,
+        delta=0.01,
+        retained_receptor_indices_per_pose=(
+            jnp.array([0, 1], dtype=jnp.int32),
+            jnp.array([0], dtype=jnp.int32),
+        ),
+        theorem_handle=TK12,
+    )
+
+    minimal = _minimal_round_from_per_pose_singleton_accept(round_result)
+    assert jnp.array_equal(minimal.selected_actions, round_result.selected_actions)
+    assert jnp.array_equal(minimal.next_coords, round_result.next_coords)
+    assert minimal.delta == round_result.delta
+    assert minimal.theorem_handle == TK12
+
+
 def test_try_hybrid_singleton_accept_round_returns_result_or_fallback():
     candidate_batches = jnp.array(
         [
@@ -877,6 +901,28 @@ def test_refine_poses_singleton_then_exact_accepts_softened_coarse_flag():
         target_error=0.001,
         coarse_target_error=0.004,
         use_softened_coarse=True,
+    )
+
+    assert isinstance(result, HybridSingletonRefinementResult)
+    assert result.coords.shape == coords_batch.shape
+
+
+def test_refine_poses_singleton_then_exact_accepts_adaptive_coarse_schedule():
+    coords_batch = jnp.array(
+        [
+            [[0.0, 0.0, 0.0]],
+            [[0.5, 0.0, 0.0]],
+        ],
+        dtype=jnp.float32,
+    )
+    result = refine_poses_singleton_then_exact(
+        coords_batch=coords_batch,
+        receptor_coords=jnp.array([[3.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.0], dtype=jnp.float32),
+        ligand_radii=jnp.array([1.0], dtype=jnp.float32),
+        n_rounds=1,
+        target_error=0.001,
+        adaptive_coarse_target_errors=(0.05, 0.01, 0.004),
     )
 
     assert isinstance(result, HybridSingletonRefinementResult)

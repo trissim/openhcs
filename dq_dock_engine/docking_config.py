@@ -92,6 +92,11 @@ class DockingConfig:
     #: too conservative to improve pruning in practice.
     use_softened_coarse_prefilter: bool = False
 
+    #: Optional adaptive certified coarse schedule for singleton acceptance.
+    #: Tried from loosest to tightest until a theorem-backed singleton decision
+    #: succeeds, then the exact fallback handles the remainder.
+    adaptive_coarse_target_errors: tuple[float, ...] | None = (0.05, 0.01, 0.004)
+
     #: Certified physical score family for both route_scoring and formal rounds
     certified_scoring_family: CertifiedScoringFamily = (
         CertifiedScoringFamily.LJ_REALSPACE_EWALD
@@ -138,6 +143,15 @@ class DockingConfig:
                 warnings.append(
                     "CERTIFIED mode: coarse_target_error < target_error tightens the surrogate instead of coarsening it."
                 )
+            if self.adaptive_coarse_target_errors is not None:
+                if len(self.adaptive_coarse_target_errors) == 0:
+                    warnings.append(
+                        "CERTIFIED mode: adaptive_coarse_target_errors cannot be empty."
+                    )
+                elif any(err <= 0 for err in self.adaptive_coarse_target_errors):
+                    warnings.append(
+                        "CERTIFIED mode: adaptive_coarse_target_errors entries must be positive."
+                    )
 
         return len(warnings) == 0, warnings
 

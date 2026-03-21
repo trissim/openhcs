@@ -29,6 +29,7 @@ from dq_dock_engine.docking.scoring import (
     route_scoring,
     score_certified_lj,
 )
+from dq_dock_engine.docking.pocket_analysis import derive_certified_binding_site
 from dq_dock_engine.docking.optimization import optimize_poses_batched
 from dq_dock_engine.docking_config import (
     CertifiedScoringFamily,
@@ -102,6 +103,18 @@ def _apply_certified_binding_site_restriction(
         restricted_charges,
         restricted_box,
     )
+
+
+def _derive_certified_binding_site_from_box(
+    protein_coords: jnp.ndarray,
+    box: DockingBox,
+) -> CertifiedBindingSite | None:
+    pocket_radius = float(jnp.max(box.size) / 2.0)
+    distances = jnp.linalg.norm(protein_coords - box.center, axis=1)
+    pocket_coords = protein_coords[distances < pocket_radius]
+    if pocket_coords.shape[0] == 0:
+        return None
+    return derive_certified_binding_site(pocket_coords)
 
 
 def _resolve_route_scoring_electrostatics(
@@ -222,7 +235,13 @@ def run_docking_pipeline(
             effective_engine = ScoringEngine.CERTIFIED_LJ_REALSPACE_EWALD
         target_error = config.target_error if config.target_error > 0 else 0.001
         scoring_kwargs["target_error"] = target_error
-        if config.certified_binding_site is not None:
+        certified_binding_site = config.certified_binding_site
+        if certified_binding_site is None and use_pocket_guided:
+            certified_binding_site = _derive_certified_binding_site_from_box(
+                protein_coords=protein_coords,
+                box=box,
+            )
+        if certified_binding_site is not None:
             (
                 protein_coords,
                 receptor_radii,
@@ -236,7 +255,7 @@ def run_docking_pipeline(
                 precomputed_receptor_charges=precomputed_receptor_charges,
                 ligand_ctx=ligand_ctx,
                 box=box,
-                binding_site=config.certified_binding_site,
+                binding_site=certified_binding_site,
                 target_error=target_error,
             )
     else:
@@ -433,6 +452,9 @@ def run_docking_pipeline(
             target_error=target_error,
             coarse_target_error=(
                 config.coarse_target_error if config is not None else 0.004
+            ),
+            adaptive_coarse_target_errors=(
+                config.adaptive_coarse_target_errors if config is not None else None
             ),
             use_softened_coarse=(
                 config.use_softened_coarse_prefilter if config is not None else False

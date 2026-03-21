@@ -46,8 +46,11 @@ from dq_dock_engine.docking.formal_pruning import (
 from dq_dock_engine.docking.formal_surrogates import (
     CertifiedCoarseScoreBundle,
     FastSingletonAcceptRoundResult,
+    PerPoseFastSingletonAcceptRoundResult,
     StagedSingletonAcceptRoundResult,
+    try_adaptive_singleton_accept_round,
     try_fast_singleton_accept_round,
+    try_per_pose_fast_singleton_accept_round,
     score_exact_and_coarse_round,
 )
 from dq_dock_engine.docking.scoring import CertifiedRealSpaceEwaldSpec
@@ -200,6 +203,54 @@ def staged_decision_states_from_singleton_accept_round(
     )
 
 
+def _minimal_round_from_per_pose_singleton_accept(
+    round_result: PerPoseFastSingletonAcceptRoundResult,
+) -> MinimalStagedRoundResult:
+    return MinimalStagedRoundResult(
+        next_coords=round_result.next_coords,
+        selected_actions=round_result.selected_actions,
+        delta=round_result.delta,
+        theorem_handle=round_result.theorem_handle,
+    )
+
+
+def _try_singleton_accept(
+    receptor_coords: jax.Array,
+    receptor_radii: jax.Array,
+    ligand_radii: jax.Array,
+    candidate_batches: jax.Array,
+    target_error: float,
+    coarse_target_error: float,
+    adaptive_coarse_target_errors: tuple[float, ...] | None,
+    translation_step: float,
+    use_softened_coarse: bool,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None,
+) -> FastSingletonAcceptRoundResult | None:
+    if adaptive_coarse_target_errors is not None:
+        return try_adaptive_singleton_accept_round(
+            receptor_coords=receptor_coords,
+            receptor_radii=receptor_radii,
+            ligand_radii=ligand_radii,
+            candidate_batches=candidate_batches,
+            target_error=target_error,
+            coarse_target_errors=adaptive_coarse_target_errors,
+            translation_step=translation_step,
+            electrostatics=electrostatics,
+        )
+
+    return try_fast_singleton_accept_round(
+        receptor_coords=receptor_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_radii,
+        candidate_batches=candidate_batches,
+        target_error=target_error,
+        coarse_target_error=coarse_target_error,
+        translation_step=translation_step,
+        use_softened_coarse=use_softened_coarse,
+        electrostatics=electrostatics,
+    )
+
+
 def try_refine_round_singleton_staged(
     coords_batch: jax.Array,
     receptor_coords: jax.Array,
@@ -210,6 +261,7 @@ def try_refine_round_singleton_staged(
     base_translation_step: float,
     base_rotation_step_rad: float,
     coarse_target_error: float = 0.004,
+    adaptive_coarse_target_errors: tuple[float, ...] | None = None,
     use_softened_coarse: bool = False,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> tuple[jax.Array, tuple[StagedCertifiedDecisionState, ...]] | None:
@@ -219,13 +271,14 @@ def try_refine_round_singleton_staged(
         stencil_level=round_index,
     )
     candidate_batches = apply_action_family_batch(coords_batch, action_family)
-    staged_result = try_fast_singleton_accept_round(
+    staged_result = _try_singleton_accept(
         receptor_coords=receptor_coords,
         receptor_radii=receptor_radii,
         ligand_radii=ligand_radii,
         candidate_batches=candidate_batches,
         target_error=target_error,
         coarse_target_error=coarse_target_error,
+        adaptive_coarse_target_errors=adaptive_coarse_target_errors,
         translation_step=action_family.translation_step,
         use_softened_coarse=use_softened_coarse,
         electrostatics=electrostatics,
@@ -248,6 +301,7 @@ def try_refine_round_singleton_minimal(
     base_translation_step: float,
     base_rotation_step_rad: float,
     coarse_target_error: float = 0.004,
+    adaptive_coarse_target_errors: tuple[float, ...] | None = None,
     use_softened_coarse: bool = False,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> MinimalStagedRoundResult | None:
@@ -257,13 +311,14 @@ def try_refine_round_singleton_minimal(
         stencil_level=round_index,
     )
     candidate_batches = apply_action_family_batch(coords_batch, action_family)
-    staged_result = try_fast_singleton_accept_round(
+    staged_result = _try_singleton_accept(
         receptor_coords=receptor_coords,
         receptor_radii=receptor_radii,
         ligand_radii=ligand_radii,
         candidate_batches=candidate_batches,
         target_error=target_error,
         coarse_target_error=coarse_target_error,
+        adaptive_coarse_target_errors=adaptive_coarse_target_errors,
         translation_step=action_family.translation_step,
         use_softened_coarse=use_softened_coarse,
         electrostatics=electrostatics,
@@ -288,6 +343,7 @@ def try_refine_poses_singleton_minimal(
     base_translation_step: float = 0.5,
     base_rotation_step_rad: float = jnp.pi / 12.0,
     coarse_target_error: float = 0.004,
+    adaptive_coarse_target_errors: tuple[float, ...] | None = None,
     use_softened_coarse: bool = False,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> tuple[jax.Array, tuple[MinimalStagedRoundResult, ...]] | None:
@@ -306,6 +362,7 @@ def try_refine_poses_singleton_minimal(
             base_translation_step=base_translation_step,
             base_rotation_step_rad=base_rotation_step_rad,
             coarse_target_error=coarse_target_error,
+            adaptive_coarse_target_errors=adaptive_coarse_target_errors,
             use_softened_coarse=use_softened_coarse,
             electrostatics=electrostatics,
         )
@@ -326,6 +383,7 @@ def diagnose_singleton_acceptance_schedule(
     base_translation_step: float = 0.5,
     base_rotation_step_rad: float = jnp.pi / 12.0,
     coarse_target_error: float = 0.004,
+    adaptive_coarse_target_errors: tuple[float, ...] | None = None,
     use_softened_coarse: bool = False,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> StagedRoundAcceptanceDiagnostic:
@@ -344,6 +402,7 @@ def diagnose_singleton_acceptance_schedule(
             base_translation_step=base_translation_step,
             base_rotation_step_rad=base_rotation_step_rad,
             coarse_target_error=coarse_target_error,
+            adaptive_coarse_target_errors=adaptive_coarse_target_errors,
             use_softened_coarse=use_softened_coarse,
             electrostatics=electrostatics,
         )
@@ -374,6 +433,7 @@ def refine_poses_singleton_then_exact(
     prior_spec: CertifiedPriorSpec | None = None,
     max_coarse_receptor_atoms: int = 64,
     coarse_target_error: float = 0.004,
+    adaptive_coarse_target_errors: tuple[float, ...] | None = None,
     use_softened_coarse: bool = False,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> HybridSingletonRefinementResult:
@@ -396,11 +456,30 @@ def refine_poses_singleton_then_exact(
             base_translation_step=base_translation_step,
             base_rotation_step_rad=base_rotation_step_rad,
             coarse_target_error=coarse_target_error,
+            adaptive_coarse_target_errors=adaptive_coarse_target_errors,
             use_softened_coarse=use_softened_coarse,
             electrostatics=electrostatics,
         )
         if staged is None:
-            break
+            action_family = create_certified_action_family(
+                translation_step=base_translation_step / (2**round_index),
+                rotation_step_rad=base_rotation_step_rad / (2**round_index),
+                stencil_level=round_index,
+            )
+            candidate_batches = apply_action_family_batch(current_coords, action_family)
+            per_pose = try_per_pose_fast_singleton_accept_round(
+                receptor_coords=receptor_coords,
+                receptor_radii=receptor_radii,
+                ligand_radii=ligand_radii,
+                candidate_batches=candidate_batches,
+                target_error=target_error,
+                coarse_target_error=coarse_target_error,
+                translation_step=action_family.translation_step,
+                electrostatics=electrostatics,
+            )
+            if per_pose is None:
+                break
+            staged = _minimal_round_from_per_pose_singleton_accept(per_pose)
         singleton_history.append(staged)
         current_coords = staged.next_coords
         round_index += 1
