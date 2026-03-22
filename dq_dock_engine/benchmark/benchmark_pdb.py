@@ -850,6 +850,10 @@ class LigandResidue:
     chain_id: str
     residue_id: str
     atom_count: int
+    # Additional HETATM residues covalently bonded to the primary residue
+    # (e.g. the other half of a multi-residue ligand like a dipeptide).
+    # Stored as (resname, chain_id, residue_id) triples.
+    bonded_residues: tuple[tuple[str, str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -889,6 +893,61 @@ def format_gap_proof_label(certified: bool | None) -> str | None:
     return "proved" if certified else "inconclusive"
 
 
+def _parse_hetatm_residue_coords(
+    pdb_path: Path,
+) -> dict[tuple[str, str, str], list[tuple[float, float, float]]]:
+    """Return per-residue atom coordinates for all non-water HETATM records."""
+    coords: dict[tuple[str, str, str], list[tuple[float, float, float]]] = {}
+    with open(pdb_path) as f:
+        for line in f:
+            if not line.startswith("HETATM"):
+                continue
+            resname = line[17:20].strip()
+            if resname in {"HOH", "DOD", "WAT"}:
+                continue
+            chain_id = line[21].strip()
+            residue_id = f"{line[22:26].strip()}{line[26].strip()}"
+            key = (resname, chain_id, residue_id)
+            try:
+                x, y, z = float(line[30:38]), float(line[38:46]), float(line[46:54])
+            except ValueError:
+                continue
+            coords.setdefault(key, []).append((x, y, z))
+    return coords
+
+
+_COVALENT_BOND_DISTANCE_A = 1.8
+
+
+def _find_covalently_bonded_hetatm_residues(
+    residue_coords: dict[tuple[str, str, str], list[tuple[float, float, float]]],
+    start: tuple[str, str, str],
+) -> frozenset[tuple[str, str, str]]:
+    """Flood-fill to find all HETATM residues covalently bonded to `start`.
+
+    Two residues are considered bonded if any pair of their atoms is within
+    ``_COVALENT_BOND_DISTANCE_A`` of each other.  Returns the full connected
+    component including ``start``.
+    """
+    visited: set[tuple[str, str, str]] = {start}
+    queue: list[tuple[str, str, str]] = [start]
+    all_keys = list(residue_coords.keys())
+    while queue:
+        current = queue.pop()
+        current_arr = np.array(residue_coords[current])
+        for other in all_keys:
+            if other in visited:
+                continue
+            other_arr = np.array(residue_coords[other])
+            # Compute minimum inter-residue distance via broadcasting
+            diffs = current_arr[:, None, :] - other_arr[None, :, :]
+            min_dist = float(np.sqrt((diffs**2).sum(axis=-1)).min())
+            if min_dist <= _COVALENT_BOND_DISTANCE_A:
+                visited.add(other)
+                queue.append(other)
+    return frozenset(visited)
+
+
 def _non_water_hetatm_residue_counts(pdb_path: Path) -> dict[tuple[str, str, str], int]:
     counts: dict[tuple[str, str, str], int] = {}
     with open(pdb_path) as f:
@@ -919,14 +978,25 @@ def detect_primary_ligand_residue(
             raise ValueError(
                 f"Preferred ligand residue {preferred_resname} not found in {pdb_path}"
             )
-    (resname, chain_id, residue_id), atom_count = max(
+    (resname, chain_id, residue_id), _ = max(
         counts.items(), key=lambda x: x[1]
     )
+    primary_key = (resname, chain_id, residue_id)
+
+    # Detect multi-residue ligands (e.g. dipeptides) by flood-filling covalent bonds
+    residue_coords = _parse_hetatm_residue_coords(pdb_path)
+    bonded_group = _find_covalently_bonded_hetatm_residues(residue_coords, primary_key)
+    bonded_residues = tuple(
+        sorted(key for key in bonded_group if key != primary_key)
+    )
+    total_atom_count = sum(counts.get(key, 0) for key in bonded_group)
+
     return LigandResidue(
         resname=resname,
         chain_id=chain_id,
         residue_id=residue_id,
-        atom_count=atom_count,
+        atom_count=total_atom_count,
+        bonded_residues=bonded_residues,
     )
 
 
@@ -969,12 +1039,18 @@ def has_covalent_contact(protein_path: Path, ligand_path: Path) -> bool:
     return bool(np.any(distances < COVALENT_DISTANCE_ANGSTROMS))
 
 
-def _residue_key_from_ligand_residue(ligand_residue: LigandResidue) -> ResidueKey:
-    return ResidueKey(
-        resname=ligand_residue.resname,
-        chain_id=ligand_residue.chain_id,
-        residue_id=ligand_residue.residue_id,
-    )
+def _ligand_residue_keys(ligand_residue: LigandResidue) -> frozenset[ResidueKey]:
+    """Return all ResidueKeys belonging to this ligand (primary + bonded residues)."""
+    keys: set[ResidueKey] = {
+        ResidueKey(
+            resname=ligand_residue.resname,
+            chain_id=ligand_residue.chain_id,
+            residue_id=ligand_residue.residue_id,
+        )
+    }
+    for resname, chain_id, residue_id in ligand_residue.bonded_residues:
+        keys.add(ResidueKey(resname=resname, chain_id=chain_id, residue_id=residue_id))
+    return frozenset(keys)
 
 
 def screen_complex(
@@ -1050,7 +1126,7 @@ def screen_complex(
         pdb_path,
         center=center,
         pocket_radius=BENCHMARK_PROTOCOL.pocket_radius_a,
-        primary_ligand=_residue_key_from_ligand_residue(ligand_residue),
+        primary_ligand=_ligand_residue_keys(ligand_residue),
         policy=policy,
         receptor_output_path=pdb_path.parent / f"{pdb_path.stem}_protein.pdb",
         pocket_output_path=pdb_path.parent / f"{pdb_path.stem}_protein_pocket.pdb",
@@ -1272,6 +1348,11 @@ def prepare_ligand(pdb_path: Path, preferred_resname: str | None = None) -> Path
     target_residue = detect_primary_ligand_residue(
         pdb_path, preferred_resname=preferred_resname
     )
+    # Collect all (resname, chain_id, residue_id) keys for the full ligand group
+    target_keys: set[tuple[str, str, str]] = {
+        (target_residue.resname, target_residue.chain_id, target_residue.residue_id)
+    }
+    target_keys.update(target_residue.bonded_residues)
 
     ligand_lines = []
     with open(pdb_path) as f:
@@ -1282,11 +1363,8 @@ def prepare_ligand(pdb_path: Path, preferred_resname: str | None = None) -> Path
                 continue
             chain_id = line[21].strip()
             residue_id = f"{line[22:26].strip()}{line[26].strip()}"
-            if (
-                line[17:20].strip() == target_residue.resname
-                and chain_id == target_residue.chain_id
-                and residue_id == target_residue.residue_id
-            ):
+            resname = line[17:20].strip()
+            if (resname, chain_id, residue_id) in target_keys:
                 ligand_lines.append(line)
 
     if not ligand_lines:
@@ -1366,7 +1444,7 @@ def prepare_benchmark_complex(
             complex_entry.path,
             center=complex_entry.center,
             pocket_radius=pocket_radius,
-            primary_ligand=_residue_key_from_ligand_residue(ligand_residue),
+            primary_ligand=_ligand_residue_keys(ligand_residue),
             policy=EssentialSiteComponentsPolicy(),
             receptor_output_path=complex_entry.path.parent
             / f"{complex_entry.path.stem}_protein.pdb",
@@ -2820,7 +2898,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
             "dq_dock",
             context,
             excluded_rows=excluded_rows,
-            render_report=False,
+            render_report=True,
         )
         checkpoint_elapsed = time.perf_counter() - checkpoint_start
         wall_time = dock_time + pose_save_elapsed + checkpoint_elapsed
@@ -3146,7 +3224,7 @@ class CLIDockingBenchmarkEngine(BenchmarkEngine[CompetitorResultRow]):
             self.engine_id,
             context,
             excluded_rows,
-            render_report=False,
+            render_report=True,
         )
 
     def print_summary(
@@ -3457,7 +3535,7 @@ def run_benchmark(
         retry_preserve_seed=retry_preserve_seed,
     )
     state = BenchmarkState(dq_results=[], dq_rows=[], competitor_rows=[])
-    state.save("curation", context, excluded_rows, render_report=False)
+    state.save("curation", context, excluded_rows, render_report=True)
 
     if not prepared_complexes:
         print("❌ No complexes downloaded")
