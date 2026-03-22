@@ -67,6 +67,7 @@ import DecisionQuotient.Tractability.NonbondedApproximation
 import DecisionQuotient.Tractability.DirectionalHBondApproximation
 import DecisionQuotient.Tractability.SignInvariance
 import DecisionQuotient.Tractability.RichChemistryApproximation
+import DecisionQuotient.Tractability.MetalCoordinationApproximation
 import DecisionQuotient.Tractability.TopKLoweringBridge
 import DecisionQuotient.Tractability.SupportExpansion
 import DecisionQuotient.Tractability.CoarseApproximation
@@ -84,6 +85,10 @@ import DecisionQuotient.Tractability.TopKPreservation
 import DecisionQuotient.Tractability.MolecularSrank
 import DecisionQuotient.Tractability.BlindDockingTractability
 import DecisionQuotient.Tractability.PocketDockingBridge
+import DecisionQuotient.Tractability.GaussianDecayBounds
+import DecisionQuotient.Tractability.ThermalFluctuationBounds
+import DecisionQuotient.Tractability.LipschitzStepBounds
+import DecisionQuotient.Tractability.DielectricBounds
 import DecisionQuotient.Computation.PocketDetection
 import DecisionQuotient.Information
 import DecisionQuotient.Information.RateDistortion
@@ -1030,6 +1035,21 @@ noncomputable abbrev AR8 := @Tractability.RichChemistryApproximation.exact_vs_co
 noncomputable abbrev AR9 := @Tractability.RichChemistryApproximation.exact_vs_coarse_attractiveRichChemistry_optimizer_witness
 noncomputable abbrev AR10 := @Tractability.RichChemistryApproximation.exact_vs_coarse_attractiveRichChemistry_coherent_optimizer_witness
 
+/-! ## Metal Coordination (MC) handles -/ 
+-- MC1-MC5: metal coordination (attractive = positive contribution)
+-- MC6-MC10: attractive metal coordination (negative of bounded surrogate)
+abbrev MC1 := @Tractability.MetalCoordinationApproximation.exact_vs_cutoff_metalCoordination_uniformApprox
+abbrev MC2 := @Tractability.MetalCoordinationApproximation.exact_vs_cutoff_metalCoordination_certified_top1_sound
+noncomputable abbrev MC3 := @Tractability.MetalCoordinationApproximation.exact_vs_cutoff_metalCoordination_certified_top1
+noncomputable abbrev MC4 := @Tractability.MetalCoordinationApproximation.exact_vs_cutoff_metalCoordination_optimizer_witness
+noncomputable abbrev MC5 := @Tractability.MetalCoordinationApproximation.exact_vs_cutoff_metalCoordination_coherent_optimizer_witness
+-- MC6-MC10: attractive metal coordination (negative = penalty for being far from ideal distance)
+abbrev MC6 := @Tractability.MetalCoordinationApproximation.exact_vs_cutoff_attractiveMetalCoordination_uniformApprox
+abbrev MC7 := @Tractability.MetalCoordinationApproximation.exact_vs_cutoff_attractiveMetalCoordination_certified_top1_sound
+noncomputable abbrev MC8 := @Tractability.MetalCoordinationApproximation.exact_vs_cutoff_attractiveMetalCoordination_certified_top1
+noncomputable abbrev MC9 := @Tractability.MetalCoordinationApproximation.exact_vs_cutoff_attractiveMetalCoordination_optimizer_witness
+noncomputable abbrev MC10 := @Tractability.MetalCoordinationApproximation.exact_vs_cutoff_attractiveMetalCoordination_coherent_optimizer_witness
+
 abbrev BP1 := @Tractability.finiteMinimumGap_le_strictUtilityGap
 abbrev BP2 := @Tractability.satisfiesBoundedPotential_of_tailBound_and_finiteGap
 abbrev BP3 := @Tractability.large_cutoff_implies_bounded
@@ -1860,5 +1880,67 @@ abbrev EX1 := @Examples.pomdp_reduction_to_preservation
 abbrev EX2 := @Examples.hyperparam_reduction_to_static
 -- EX3: Concrete toy POMDP example (full opt at s1 contains a)
 abbrev EX3 := @Examples.toy_full_opt_s1_contains_a
+
+/-! ## Gaussian Decay Bounds (GD) handles
+    GaussianDecayBounds.lean - Optimal cutoff for contact surrogate
+-/
+
+-- GD1: Gaussian tail bound
+abbrev GD1 := @Tractability.GaussianDecayBounds.gaussian_tail_bound
+-- GD2: Gaussian exp bound for error
+abbrev GD2 := @Tractability.GaussianDecayBounds.gaussian_exp_bound
+-- GD3: Minimum cutoff formula R = √(ln(W/ε))/β
+noncomputable abbrev GD3 := @Tractability.GaussianDecayBounds.gaussianMinCutoff
+-- GD4: Minimum cutoff is sufficient
+abbrev GD4 := @Tractability.GaussianDecayBounds.gaussianMinCutoff_sufficient
+-- GD5: Minimum cutoff is tight (achieves exactly ε)
+abbrev GD5 := @Tractability.GaussianDecayBounds.gaussianMinCutoff_tight
+-- GD6: Minimum cutoff is optimal (any smaller has error > ε)
+abbrev GD6 := @Tractability.GaussianDecayBounds.gaussianMinCutoff_optimal
+
+/-! ## Thermal Fluctuation Bounds (TF) handles
+    ThermalFluctuationBounds.lean - Statistical mechanics derivation of σ
+-/
+
+-- TF1: Thermal width formula σ = √(kT/k)
+noncomputable abbrev TF1 := @Tractability.ThermalFluctuationBounds.thermalWidth
+-- TF2: Thermal width is positive
+abbrev TF2 := @Tractability.ThermalFluctuationBounds.thermalWidth_pos
+-- TF3: H-bond width derived from equipartition
+noncomputable abbrev TF3 := @Tractability.ThermalFluctuationBounds.σ_hbond
+-- TF4: Metal coordination width derived from equipartition
+noncomputable abbrev TF4 := @Tractability.ThermalFluctuationBounds.σ_metal
+-- TF5: Stiffer bonds give smaller widths
+abbrev TF5 := @Tractability.ThermalFluctuationBounds.stiffer_bond_smaller_width
+-- TF6: Higher temperature gives larger widths
+abbrev TF6 := @Tractability.ThermalFluctuationBounds.higher_temp_larger_width
+-- TF7: Metal to H-bond width ratio
+abbrev TF7 := @Tractability.ThermalFluctuationBounds.metal_to_hbond_width_ratio
+
+/-! ## Lipschitz Step Bounds (LS) handles
+    LipschitzStepBounds.lean - Optimizer step derivation from Lipschitz continuity
+-/
+
+-- LS1: Lipschitz step bound: Δ ≤ ε/L guarantees L×Δ ≤ ε
+abbrev LS1 := @Tractability.LipschitzStepBounds.lipschitz_step_bound
+-- LS2: Optimal translation step formula
+noncomputable abbrev LS2 := @Tractability.LipschitzStepBounds.optimalTranslationStep
+-- LS3: Optimal step achieves exactly the budget
+abbrev LS3 := @Tractability.LipschitzStepBounds.optimalTranslationStep_achieves_budget
+-- LS4: Descent bounded change theorem
+abbrev LS4 := @Tractability.LipschitzStepBounds.descent_bounded_change
+
+/-! ## Dielectric Bounds (DB) handles
+    DielectricBounds.lean - Kirkwood-Fröhlich theory for effective dielectric
+-/
+
+-- DB1: Kirkwood effective dielectric formula
+noncomputable abbrev DB1 := @Tractability.DielectricBounds.kirkwoodEffectiveDielectric
+-- DB2: Implementation dielectric (ε = 4.0) is in valid range [2, 80]
+abbrev DB2 := @Tractability.DielectricBounds.implemented_in_valid_range
+-- DB3: Sigmoidal distance-dependent dielectric model
+noncomputable abbrev DB3 := @Tractability.DielectricBounds.sigmoidalDielectric
+-- DB4: Screening length scaling with dielectric
+noncomputable abbrev DB4 := @Tractability.DielectricBounds.screeningLength_from_dielectric
 
 end DecisionQuotient

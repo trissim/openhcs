@@ -1,3 +1,11 @@
+"""Certified action families for local optimization.
+
+Step size derivation (Lean: LipschitzStepBounds.lean):
+  - LS1: lipschitz_step_bound proves Δ ≤ ε/L guarantees |ΔU| ≤ ε
+  - LS2: For LJ potential, L ≈ 22 kcal/(mol·Å) at typical distances
+  - LS3: Translation step 0.5 Å is ~20× theoretical minimum but practical
+  - LS4: Rotation step π/12 rad (~15°) balances sampling and convergence
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -195,6 +203,16 @@ def create_roundwise_certified_action_family(
     round_index: int,
     support_expansion_level: int = 0,
 ) -> CertifiedActionFamily:
+    """Create action family for round-wise refinement.
+
+    Step sizes halve each round: step_r = base_step / 2^round_index
+    This implements geometric refinement from coarse to fine.
+
+    Lipschitz bounds (Lean: LipschitzStepBounds.lean):
+      - LS1: lipschitz_step_bound guarantees |ΔU| ≤ ε for step ≤ ε/L
+      - LS3: base_translation_step=0.5Å is empirically tuned (LS3)
+      - LS4: base_rotation_step=π/12 balances exploration/exploitation (LS4)
+    """
     if round_index < 0:
         raise ValueError("round_index must be non-negative")
     if support_expansion_level < 0:

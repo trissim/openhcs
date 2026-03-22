@@ -2,6 +2,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+import dq_dock_engine.docking.scoring as scoring
+
 from dq_dock_engine.docking.formal_handles import (
     attractive_directional_hbond_theorem_handles,
     contact_surrogate_theorem_handles,
@@ -81,6 +83,33 @@ def _toy_geometry():
         ligand_radii,
         plan,
     )
+
+
+def _toy_geometry_with_inactive_optional_terms():
+    receptor_coords, poses_coords, receptor_radii, ligand_radii, plan = _toy_geometry()
+    inactive_hbond = CertifiedDirectionalHBondSpec(
+        receptor_directions=plan.directional_hbond.receptor_directions,
+        ligand_neighbor_indices=plan.directional_hbond.ligand_neighbor_indices,
+        receptor_strengths=jnp.zeros_like(plan.directional_hbond.receptor_strengths),
+        ligand_strengths=plan.directional_hbond.ligand_strengths,
+        ideal_distance=plan.directional_hbond.ideal_distance,
+        distance_width=plan.directional_hbond.distance_width,
+        cutoff=9.0,
+    )
+    inactive_metal = CertifiedMetalCoordinationSpec(
+        receptor_strengths=jnp.zeros_like(plan.metal_coordination.receptor_strengths),
+        ligand_strengths=plan.metal_coordination.ligand_strengths,
+        ideal_distance=plan.metal_coordination.ideal_distance,
+        distance_width=plan.metal_coordination.distance_width,
+        cutoff=11.0,
+    )
+    inactive_plan = CertifiedRichChemistryPlan(
+        screened_coulomb=plan.screened_coulomb,
+        contact=plan.contact,
+        directional_hbond=inactive_hbond,
+        metal_coordination=inactive_metal,
+    )
+    return receptor_coords, poses_coords, receptor_radii, ligand_radii, inactive_plan
 
 
 def test_new_chemistry_handle_helpers_surface_new_theorem_families() -> None:
@@ -229,6 +258,92 @@ def test_rich_chemistry_composes_nonbonded_with_attractive_polar_energy() -> Non
         np.asarray(rich_batch.scores),
         np.asarray(nonbonded_batch.scores) + np.asarray(polar_batch.scores),
     )
+
+
+def test_inactive_directional_hbond_short_circuits_without_kernel_calls(
+    monkeypatch,
+) -> None:
+    receptor_coords, poses_coords, _receptor_radii, _ligand_radii, plan = (
+        _toy_geometry_with_inactive_optional_terms()
+    )
+
+    assert not bool(plan.directional_hbond.is_active)
+
+    def _should_not_run(*args, **kwargs):
+        raise AssertionError("inactive directional hbond spec should short-circuit")
+
+    monkeypatch.setattr(scoring, "_score_directional_hbond_exact_batch", _should_not_run)
+    monkeypatch.setattr(scoring, "_score_directional_hbond_cutoff_batch", _should_not_run)
+
+    batch = score_certified_directional_hbond_batch(
+        receptor_coords, poses_coords, plan.directional_hbond
+    )
+
+    np.testing.assert_allclose(np.asarray(batch.scores), np.zeros(poses_coords.shape[0]))
+    assert float(batch.error_bound) == 0.0
+    assert float(batch.target_error) == 0.0
+    assert float(batch.cutoff_radius) == 0.0
+
+
+def test_inactive_rich_chemistry_terms_are_jit_safe_and_structurally_absent() -> None:
+    receptor_coords, poses_coords, _receptor_radii, _ligand_radii, plan = (
+        _toy_geometry_with_inactive_optional_terms()
+    )
+    contact_batch = score_certified_contact_batch(
+        receptor_coords, poses_coords, plan.contact
+    )
+
+    assert not bool(plan.has_active_directional_hbond)
+    assert not bool(plan.has_active_metal_coordination)
+
+    @jax.jit
+    def run_inactive():
+        hbond_batch = score_certified_directional_hbond_batch(
+            receptor_coords, poses_coords, plan.directional_hbond
+        )
+        metal_batch = score_certified_metal_coordination_batch(
+            receptor_coords, poses_coords, plan.metal_coordination
+        )
+        polar_batch = score_certified_polar_surrogate_batch(
+            receptor_coords, poses_coords, plan
+        )
+        return (
+            hbond_batch.scores,
+            hbond_batch.error_bound,
+            hbond_batch.cutoff_radius,
+            metal_batch.scores,
+            metal_batch.error_bound,
+            metal_batch.cutoff_radius,
+            polar_batch.scores,
+            polar_batch.error_bound,
+            polar_batch.cutoff_radius,
+        )
+
+    (
+        hbond_scores,
+        hbond_error_bound,
+        hbond_cutoff_radius,
+        metal_scores,
+        metal_error_bound,
+        metal_cutoff_radius,
+        polar_scores,
+        polar_error_bound,
+        polar_cutoff_radius,
+    ) = run_inactive()
+
+    np.testing.assert_allclose(np.asarray(hbond_scores), np.zeros(poses_coords.shape[0]))
+    np.testing.assert_allclose(np.asarray(metal_scores), np.zeros(poses_coords.shape[0]))
+    np.testing.assert_allclose(
+        np.asarray(polar_scores),
+        -np.asarray(contact_batch.scores),
+        atol=1e-5,
+    )
+    assert float(hbond_error_bound) == 0.0
+    assert float(hbond_cutoff_radius) == 0.0
+    assert float(metal_error_bound) == 0.0
+    assert float(metal_cutoff_radius) == 0.0
+    assert np.isclose(float(polar_error_bound), float(contact_batch.error_bound))
+    assert np.isclose(float(polar_cutoff_radius), float(contact_batch.cutoff_radius))
 
 
 def test_build_directional_hbond_spec_handles_small_receptor_neighbor_sets() -> None:

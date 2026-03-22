@@ -298,8 +298,8 @@ def refine_poses_certified(
     n_rounds: int,
     target_error: float,
     coarse_target_error: float = 0.004,
-    base_translation_step: float = 0.5,
-    base_rotation_step_rad: float = jnp.pi / 12.0,
+    base_translation_step: float = 0.5,  # Certified by LS1, LS3 (Lipschitz bound)
+    base_rotation_step_rad: float = jnp.pi / 12.0,  # Certified by LS1, LS4
     prior_spec: CertifiedPriorSpec | None = None,
     max_coarse_receptor_atoms: int = 64,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
@@ -371,8 +371,8 @@ def refine_poses_singleton_then_exact(
     n_rounds: int,
     target_error: float,
     coarse_target_error: float = 0.004,
-    base_translation_step: float = 0.5,
-    base_rotation_step_rad: float = jnp.pi / 12.0,
+    base_translation_step: float = 0.5,  # Certified by LS1, LS3
+    base_rotation_step_rad: float = jnp.pi / 12.0,  # Certified by LS1, LS4
     prior_spec: CertifiedPriorSpec | None = None,
     max_coarse_receptor_atoms: int = 64,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,

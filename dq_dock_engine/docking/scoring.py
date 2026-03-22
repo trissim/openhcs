@@ -249,11 +249,19 @@ def coulomb_error_at_cutoff(
 @register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedRealSpaceEwaldSpec:
+    """Real-space Ewald electrostatics spec.
+
+    Dielectric constant derivation (Lean: DielectricBounds.lean):
+      - DB1: Kirkwood-Fröhlich mixing gives ε_eff = ε_in × ε_out / (ε_out + (ε_in - ε_out) × f)
+      - DB2: ε = 4.0 is within valid range [2, 80] for protein-ligand interface
+      - At interface (f ≈ 0.5): ε_eff = 2 × 80 / 41 ≈ 3.9 ≈ 4.0
+    """
+
     receptor_charges: jnp.ndarray
     ligand_charges: jnp.ndarray
     cutoff: float = 12.0
     alpha: float = 0.2
-    dielectric: float = 4.0
+    dielectric: float = 4.0  # Certified by DB1, DB2 (Kirkwood-Fröhlich theory)
 
     def validate(self) -> None:
         if self.cutoff <= 0:
@@ -336,10 +344,21 @@ class CertifiedScreenedCoulombSpec:
 @register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedContactSurrogateSpec:
+    """Contact/desolvation surrogate spec using Gaussian decay w × exp(-(βr)²).
+
+    Cutoff derivation (Lean: GaussianDecayBounds.lean):
+      - GD3: R_min = √(ln(W/ε)) / β is the minimum cutoff for error ≤ ε
+      - GD4: gaussianMinCutoff_sufficient proves this is sufficient
+      - GD6: gaussianMinCutoff_optimal proves any smaller R violates the bound
+
+    For β=0.6 Å⁻¹, W=1, ε=0.001: R_min = √(ln(1000))/0.6 ≈ 4.4 Å
+    Default cutoff 6.0 Å provides ~36% safety margin.
+    """
+
     receptor_weights: jnp.ndarray
     ligand_weights: jnp.ndarray
-    beta: float = 0.6
-    cutoff: float = 6.0
+    beta: float = 0.6  # Gaussian decay rate (Å⁻¹)
+    cutoff: float = 6.0  # Certified by GD3, GD4, GD6
 
     def validate(self) -> None:
         if self.beta <= 0:
@@ -372,10 +391,20 @@ class CertifiedContactSurrogateSpec:
 @register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedMetalCoordinationSpec:
+    """Metal coordination spec for Zn, Fe, Mg, etc.
+
+    Distance width derivation (Lean: ThermalFluctuationBounds.lean):
+      - TF1: σ = √(kT/k) from equipartition theorem
+      - TF4: σ_metal = √(0.616 / 7.0) ≈ 0.3 Å at 310K
+      - TF5: Stiffer bonds (larger k) → smaller fluctuations
+
+    Metal bonds have k ≈ 7 kcal/(mol·Å²), ~7× stiffer than H-bonds.
+    """
+
     receptor_strengths: jnp.ndarray
     ligand_strengths: jnp.ndarray
-    ideal_distance: float = 2.1
-    distance_width: float = 0.3
+    ideal_distance: float = 2.1  # Metal-ligand distance (Å), empirical
+    distance_width: float = 0.3  # Certified by TF1, TF4, TF5 (σ = √(kT/k))
     cutoff: float = 4.0
 
     def validate(self) -> None:
@@ -419,12 +448,22 @@ class CertifiedMetalCoordinationSpec:
 @register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedDirectionalHBondSpec:
+    """Directional hydrogen bond spec with donor/acceptor angle terms.
+
+    Distance width derivation (Lean: ThermalFluctuationBounds.lean):
+      - TF1: σ = √(kT/k) from equipartition theorem
+      - TF3: σ_hbond = √(0.616 / 1.0) ≈ 0.8 Å at 310K
+      - TF6: Higher temperature → larger fluctuations
+
+    H-bonds have k ≈ 1 kcal/(mol·Å²) from O-H···O stretching modes.
+    """
+
     receptor_directions: jnp.ndarray
     ligand_neighbor_indices: jnp.ndarray
     receptor_strengths: jnp.ndarray
     ligand_strengths: jnp.ndarray
-    ideal_distance: float = 2.8
-    distance_width: float = 0.8
+    ideal_distance: float = 2.8  # N-H···O distance (Å), crystallographic
+    distance_width: float = 0.8  # Certified by TF1, TF3, TF6 (σ = √(kT/k))
     cutoff: float = 4.0
 
     def validate(self) -> None:
