@@ -341,6 +341,66 @@ AR7 = "AR7"
 AR8 = "AR8"
 AR9 = "AR9"
 AR10 = "AR10"
+MC1 = "MC1"
+MC2 = "MC2"
+MC3 = "MC3"
+MC4 = "MC4"
+MC5 = "MC5"
+MC6 = "MC6"
+MC7 = "MC7"
+MC8 = "MC8"
+MC9 = "MC9"
+MC10 = "MC10"
+PP1 = "PP1"
+PP2 = "PP2"
+PP3 = "PP3"
+PP4 = "PP4"
+PP5 = "PP5"
+PP6 = "PP6"
+PP7 = "PP7"
+PP8 = "PP8"
+PP9 = "PP9"
+PP10 = "PP10"
+PC1 = "PC1"
+PC2 = "PC2"
+PC3 = "PC3"
+PC4 = "PC4"
+PC5 = "PC5"
+PC6 = "PC6"
+PC7 = "PC7"
+PC8 = "PC8"
+PC9 = "PC9"
+PC10 = "PC10"
+XB1 = "XB1"
+XB2 = "XB2"
+XB3 = "XB3"
+XB4 = "XB4"
+XB5 = "XB5"
+XB6 = "XB6"
+XB7 = "XB7"
+XB8 = "XB8"
+XB9 = "XB9"
+XB10 = "XB10"
+WB1 = "WB1"
+WB2 = "WB2"
+WB3 = "WB3"
+WB4 = "WB4"
+WB5 = "WB5"
+WB6 = "WB6"
+WB7 = "WB7"
+WB8 = "WB8"
+WB9 = "WB9"
+WB10 = "WB10"
+XR1 = "XR1"
+XR2 = "XR2"
+XR3 = "XR3"
+XR4 = "XR4"
+XR5 = "XR5"
+XR6 = "XR6"
+XR7 = "XR7"
+XR8 = "XR8"
+XR9 = "XR9"
+XR10 = "XR10"
 BP1 = "BP1"
 BP2 = "BP2"
 BP3 = "BP3"
@@ -814,6 +874,27 @@ SSV3 = "SSV3"
 EX1 = "EX1"
 EX2 = "EX2"
 EX3 = "EX3"
+GD1 = "GD1"
+GD2 = "GD2"
+GD3 = "GD3"
+GD4 = "GD4"
+GD5 = "GD5"
+GD6 = "GD6"
+TF1 = "TF1"
+TF2 = "TF2"
+TF3 = "TF3"
+TF4 = "TF4"
+TF5 = "TF5"
+TF6 = "TF6"
+TF7 = "TF7"
+LS1 = "LS1"
+LS2 = "LS2"
+LS3 = "LS3"
+LS4 = "LS4"
+DB1 = "DB1"
+DB2 = "DB2"
+DB3 = "DB3"
+DB4 = "DB4"
 
 __all__ = [
     "DC1",
@@ -1155,6 +1236,66 @@ __all__ = [
     "AR8",
     "AR9",
     "AR10",
+    "MC1",
+    "MC2",
+    "MC3",
+    "MC4",
+    "MC5",
+    "MC6",
+    "MC7",
+    "MC8",
+    "MC9",
+    "MC10",
+    "PP1",
+    "PP2",
+    "PP3",
+    "PP4",
+    "PP5",
+    "PP6",
+    "PP7",
+    "PP8",
+    "PP9",
+    "PP10",
+    "PC1",
+    "PC2",
+    "PC3",
+    "PC4",
+    "PC5",
+    "PC6",
+    "PC7",
+    "PC8",
+    "PC9",
+    "PC10",
+    "XB1",
+    "XB2",
+    "XB3",
+    "XB4",
+    "XB5",
+    "XB6",
+    "XB7",
+    "XB8",
+    "XB9",
+    "XB10",
+    "WB1",
+    "WB2",
+    "WB3",
+    "WB4",
+    "WB5",
+    "WB6",
+    "WB7",
+    "WB8",
+    "WB9",
+    "WB10",
+    "XR1",
+    "XR2",
+    "XR3",
+    "XR4",
+    "XR5",
+    "XR6",
+    "XR7",
+    "XR8",
+    "XR9",
+    "XR10",
     "BP1",
     "BP2",
     "BP3",
@@ -1628,4 +1769,25 @@ __all__ = [
     "EX1",
     "EX2",
     "EX3",
+    "GD1",
+    "GD2",
+    "GD3",
+    "GD4",
+    "GD5",
+    "GD6",
+    "TF1",
+    "TF2",
+    "TF3",
+    "TF4",
+    "TF5",
+    "TF6",
+    "TF7",
+    "LS1",
+    "LS2",
+    "LS3",
+    "LS4",
+    "DB1",
+    "DB2",
+    "DB3",
+    "DB4",
 ]

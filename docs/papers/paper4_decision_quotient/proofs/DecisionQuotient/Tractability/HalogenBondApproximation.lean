@@ -14,7 +14,9 @@ namespace HalogenBondApproximation
 
 open DirectionalHBondApproximation
 
-abbrev halogenBondScore := directionalHBondScore
+universe u v
+
+noncomputable abbrev halogenBondScore := directionalHBondScore
 
 noncomputable abbrev halogenBondDecisionProblem {A : Type u} {S : Type v}
     (radial donor acceptor : A → S → ℝ) : DecisionProblem A S :=

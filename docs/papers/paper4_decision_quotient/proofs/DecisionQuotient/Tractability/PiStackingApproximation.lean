@@ -14,7 +14,9 @@ namespace PiStackingApproximation
 
 open DirectionalHBondApproximation
 
-abbrev piStackingScore := directionalHBondScore
+universe u v
+
+noncomputable abbrev piStackingScore := directionalHBondScore
 
 noncomputable abbrev piStackingDecisionProblem {A : Type u} {S : Type v}
     (radial face offset : A → S → ℝ) : DecisionProblem A S :=

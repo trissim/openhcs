@@ -14,7 +14,9 @@ namespace WaterMediatedHBondApproximation
 
 open DirectionalHBondApproximation
 
-abbrev waterMediatedHBondScore := directionalHBondScore
+universe u v
+
+noncomputable abbrev waterMediatedHBondScore := directionalHBondScore
 
 noncomputable abbrev waterMediatedHBondDecisionProblem {A : Type u} {S : Type v}
     (radial water ligand : A → S → ℝ) : DecisionProblem A S :=

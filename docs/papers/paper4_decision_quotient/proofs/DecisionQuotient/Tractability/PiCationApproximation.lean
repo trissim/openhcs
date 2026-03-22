@@ -13,7 +13,9 @@ namespace PiCationApproximation
 
 open DirectionalHBondApproximation
 
-abbrev piCationScore := directionalHBondScore
+universe u v
+
+noncomputable abbrev piCationScore := directionalHBondScore
 
 noncomputable abbrev piCationDecisionProblem {A : Type u} {S : Type v}
     (radial plane cation : A → S → ℝ) : DecisionProblem A S :=

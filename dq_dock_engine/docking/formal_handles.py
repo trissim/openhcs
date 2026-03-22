@@ -2,129 +2,45 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
+import re
 
-from dq_dock_engine.generated.formal_handle_aliases import (
-    AH1,
-    AH2,
-    AH3,
-    AH4,
-    AH5,
-    AH6,
-    AH7,
-    AH8,
-    APX10,
-    APX11,
-    APX12,
-    APX4,
-    AR1,
-    AR2,
-    AR3,
-    AR4,
-    AR5,
-    AR6,
-    AR7,
-    AR8,
-    AR9,
-    AR10,
-    BD10,
-    CT1,
-    CT2,
-    CT3,
-    CT4,
-    CT5,
-    CT6,
-    CB5,
-    CB6,
-    CB10,
-    CB11,
-    CB12,
-    CB13,
-    CB14,
-    CP1,
-    CP2,
-    CP3,
-    CP4,
-    CP5,
-    CP6,
-    FLO10,
-    FLO11,
-    FLO12,
-    FLO13,
-    FLO14,
-    FLO15,
-    FLO16,
-    FLO17,
-    FLO18,
-    FLO3,
-    FLO4,
-    FLO8,
-    FLO9,
-    HB1,
-    HB2,
-    HB3,
-    HB4,
-    HB5,
-    HB6,
-    HB7,
-    HB8,
-    HB9,
-    HB10,
-    HB11,
-    HB12,
-    LJ13,
-    LJ14,
-    LJ10,
-    LJ11,
-    LJ12,
-    NB1,
-    NB2,
-    NB3,
-    NB4,
-    NB5,
-    NB6,
-    NB7,
-    NB8,
-    NB9,
-    NB10,
-    NG1,
-    NG2,
-    NG3,
-    NG4,
-    NG5,
-    RC1,
-    RC2,
-    RC3,
-    RC4,
-    RC5,
-    RC6,
-    RC7,
-    RC8,
-    RC9,
-    RC10,
-    SC1,
-    SC2,
-    SC3,
-    SC4,
-    SC5,
-    SC6,
-    SH1,
-    SH2,
-    SH3,
-    SH4,
-    SH5,
-    SH6,
-    SD10,
-    TK1,
-    TK13,
-    TK14,
-    TK15,
-    TK8,
-    TK9A,
-    TK11,
-    TK12,
-    TK4,
-)
+from dq_dock_engine.generated import formal_handle_aliases as _formal_handle_aliases
 from dq_dock_engine.docking_config import CertifiedScoringFamily
+
+
+for _name in _formal_handle_aliases.__all__:
+    globals()[_name] = getattr(_formal_handle_aliases, _name)
+
+
+_HANDLE_NAME_RE = re.compile(r"^([A-Z_]+?)(\d+|[A-Z]\d+)?$")
+
+
+def _handle_sort_key(handle: str) -> tuple[str, int, str]:
+    match = _HANDLE_NAME_RE.match(handle)
+    if match is None:
+        return (handle, -1, "")
+    prefix, suffix = match.groups()
+    if suffix is None:
+        return (prefix, -1, "")
+    numeric = "".join(ch for ch in suffix if ch.isdigit())
+    return (prefix, int(numeric) if numeric else -1, suffix)
+
+
+def _prefixed_handles(prefix: str) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            (
+                name
+                for name in _formal_handle_aliases.__all__
+                if name.startswith(prefix)
+            ),
+            key=_handle_sort_key,
+        )
+    )
+
+
+def _selected_handles(*names: str) -> tuple[str, ...]:
+    return names
 
 
 @dataclass(frozen=True)
@@ -300,47 +216,95 @@ def scoring_family_theorem_handles(
 
 
 def contact_surrogate_theorem_handles() -> tuple[str, ...]:
-    return (CT1, CT2, CT3, CT4, CT5, CT6)
+    return _prefixed_handles("CT")
 
 
 def screened_coulomb_theorem_handles() -> tuple[str, ...]:
-    return (SC1, SC2, SC3, SC4, SC5, SC6)
+    return _prefixed_handles("SC")
 
 
 def additive_nonbonded_theorem_handles() -> tuple[str, ...]:
-    return (NB1, NB2, NB3, NB4, NB5, NB6, NB7, NB8, NB9, NB10)
+    return _prefixed_handles("NB")
 
 
 def directional_hbond_theorem_handles() -> tuple[str, ...]:
-    return (HB1, HB2, HB3, HB4, HB5, HB6, HB7, HB8)
+    return _selected_handles(HB1, HB2, HB3, HB4, HB5, HB6, HB7, HB8)
 
 
 def directional_hbond_finite_theorem_handles() -> tuple[str, ...]:
-    return (HB1, HB9, HB10, HB11, HB12)
+    return _selected_handles(HB1, HB9, HB10, HB11, HB12)
 
 
 def attractive_directional_hbond_theorem_handles() -> tuple[str, ...]:
-    return (AH1, AH2, AH3, AH4, AH5, AH6, AH7, AH8)
+    return _prefixed_handles("AH")
 
 
 def negation_invariance_theorem_handles() -> tuple[str, ...]:
-    return (NG1, NG2, NG3, NG4, NG5)
+    return _prefixed_handles("NG")
 
 
 def rich_chemistry_theorem_handles() -> tuple[str, ...]:
-    return (AR1, AR2, AR3, AR4, AR5, AR6, AR7, AR8, AR9, AR10)
+    return _prefixed_handles("AR")
 
 
 def positive_rich_chemistry_theorem_handles() -> tuple[str, ...]:
-    return (RC1, RC2, RC3, RC4, RC5, RC6, RC7, RC8, RC9, RC10)
+    return _prefixed_handles("RC")
+
+
+def metal_coordination_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(MC1, MC2, MC3, MC4, MC5)
+
+
+def attractive_metal_coordination_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(MC6, MC7, MC8, MC9, MC10)
+
+
+def pi_stacking_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(PP1, PP2, PP3, PP4, PP5)
+
+
+def attractive_pi_stacking_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(PP6, PP7, PP8, PP9, PP10)
+
+
+def pi_cation_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(PC1, PC2, PC3, PC4, PC5)
+
+
+def attractive_pi_cation_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(PC6, PC7, PC8, PC9, PC10)
+
+
+def halogen_bond_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(XB1, XB2, XB3, XB4, XB5)
+
+
+def attractive_halogen_bond_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(XB6, XB7, XB8, XB9, XB10)
+
+
+def water_mediated_hbond_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(WB1, WB2, WB3, WB4, WB5)
+
+
+def attractive_water_mediated_hbond_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(WB6, WB7, WB8, WB9, WB10)
+
+
+def attractive_extended_chemistry_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(XR1, XR2, XR3, XR4, XR5)
+
+
+def extended_rich_chemistry_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(XR6, XR7, XR8, XR9, XR10)
 
 
 def topk_bridge_theorem_handles() -> tuple[str, ...]:
-    return (TK13, TK14, TK15)
+    return _selected_handles(TK13, TK14, TK15)
 
 
 def support_expansion_theorem_handles() -> tuple[str, ...]:
-    return (SH1, SH2, SH3, SH4, SH5, SH6)
+    return _prefixed_handles("SH")
 
 
 def selection_theorem_handle(branch: str) -> str:

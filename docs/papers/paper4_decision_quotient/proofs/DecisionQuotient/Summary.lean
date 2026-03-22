@@ -27,9 +27,14 @@ import DecisionQuotient.Tractability.ContactApproximation
 import DecisionQuotient.Tractability.ScreenedCoulombApproximation
 import DecisionQuotient.Tractability.NonbondedApproximation
 import DecisionQuotient.Tractability.DirectionalHBondApproximation
+import DecisionQuotient.Tractability.PiStackingApproximation
+import DecisionQuotient.Tractability.PiCationApproximation
+import DecisionQuotient.Tractability.HalogenBondApproximation
+import DecisionQuotient.Tractability.WaterMediatedHBondApproximation
 import DecisionQuotient.Tractability.SignInvariance
 import DecisionQuotient.Tractability.MetalCoordinationApproximation
 import DecisionQuotient.Tractability.RichChemistryApproximation
+import DecisionQuotient.Tractability.ExtendedRichChemistryApproximation
 import DecisionQuotient.Tractability.TopKLoweringBridge
 import DecisionQuotient.Tractability.SupportExpansion
 import DecisionQuotient.Tractability.GridConvergence
@@ -493,6 +498,68 @@ noncomputable def attractive_rich_chemistry_certified_top1
   DecisionQuotient.Tractability.RichChemistryApproximation.exact_vs_coarse_attractiveRichChemistry_certified_top1
     distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
     radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
+
+/-- Exact-vs-coarse attractive extended chemistry certified top-1 survivor set alias. -/
+noncomputable def attractive_extended_chemistry_certified_top1
+    {A S : Type*}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ)
+    (w β rcCT : ℝ)
+    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
+    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (metalW metalIdeal metalWidth metalRc : ℝ)
+    (metalDistance : A → S → ℝ)
+    (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
+    (ppRadialCoarse ppFaceCoarse ppOffsetCoarse : A → S → ℝ)
+    (pcRadialExact pcPlaneExact pcCationExact : A → S → ℝ)
+    (pcRadialCoarse pcPlaneCoarse pcCationCoarse : A → S → ℝ)
+    (xbRadialExact xbDonorExact xbAcceptorExact : A → S → ℝ)
+    (xbRadialCoarse xbDonorCoarse xbAcceptorCoarse : A → S → ℝ)
+    (wbRadialExact wbWaterExact wbLigandExact : A → S → ℝ)
+    (wbRadialCoarse wbWaterCoarse wbLigandCoarse : A → S → ℝ)
+    (s : S) :
+    DecisionQuotient.Tractability.CertifiedPruning.CertifiedSurvivorSet A :=
+  DecisionQuotient.Tractability.ExtendedRichChemistryApproximation.exact_vs_coarse_attractiveExtendedChemistry_certified_top1
+    distance w β rcCT
+    polarRadialExact polarDonorExact polarAcceptorExact
+    polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+    metalW metalIdeal metalWidth metalRc metalDistance
+    ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
+    pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
+    xbRadialExact xbDonorExact xbAcceptorExact xbRadialCoarse xbDonorCoarse xbAcceptorCoarse
+    wbRadialExact wbWaterExact wbLigandExact wbRadialCoarse wbWaterCoarse wbLigandCoarse s
+
+/-- Exact-vs-coarse extended rich chemistry certified top-1 survivor set alias. -/
+noncomputable def extended_rich_chemistry_certified_top1
+    {A S : Type*}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ)
+    (ε σ rcLJ q_i q_j κ rcSC : ℝ)
+    (w β rcCT : ℝ)
+    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
+    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (metalW metalIdeal metalWidth metalRc : ℝ)
+    (metalDistance : A → S → ℝ)
+    (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
+    (ppRadialCoarse ppFaceCoarse ppOffsetCoarse : A → S → ℝ)
+    (pcRadialExact pcPlaneExact pcCationExact : A → S → ℝ)
+    (pcRadialCoarse pcPlaneCoarse pcCationCoarse : A → S → ℝ)
+    (xbRadialExact xbDonorExact xbAcceptorExact : A → S → ℝ)
+    (xbRadialCoarse xbDonorCoarse xbAcceptorCoarse : A → S → ℝ)
+    (wbRadialExact wbWaterExact wbLigandExact : A → S → ℝ)
+    (wbRadialCoarse wbWaterCoarse wbLigandCoarse : A → S → ℝ)
+    (s : S) :
+    DecisionQuotient.Tractability.CertifiedPruning.CertifiedSurvivorSet A :=
+  DecisionQuotient.Tractability.ExtendedRichChemistryApproximation.exact_vs_coarse_extendedRichChemistry_certified_top1
+    distance ε σ rcLJ q_i q_j κ rcSC
+    w β rcCT
+    polarRadialExact polarDonorExact polarAcceptorExact
+    polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+    metalW metalIdeal metalWidth metalRc metalDistance
+    ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
+    pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
+    xbRadialExact xbDonorExact xbAcceptorExact xbRadialCoarse xbDonorCoarse xbAcceptorCoarse
+    wbRadialExact wbWaterExact wbLigandExact wbRadialCoarse wbWaterCoarse wbLigandCoarse s
 
 /-- Exact-vs-cutoff attractive metal coordination certified top-1 survivor set alias. -/
 noncomputable def attractive_metal_coordination_cutoff_certified_top1

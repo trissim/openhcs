@@ -297,7 +297,7 @@ class ReceptorPreparationPolicy(ABC):
         self,
         residue: ResidueKey,
         records: Sequence[PDBAtomRecord],
-        primary_ligand: ResidueKey,
+        primary_ligand: frozenset[ResidueKey],
     ) -> ReceptorComponentRole:
         """Classify the residue-level component role."""
 
@@ -316,7 +316,7 @@ class ProteinOnlyReceptorPolicy(ReceptorPreparationPolicy):
         self,
         residue: ResidueKey,
         records: Sequence[PDBAtomRecord],
-        primary_ligand: ResidueKey,
+        primary_ligand: frozenset[ResidueKey],
     ) -> ReceptorComponentRole:
         del residue, primary_ligand
         if any(record.record_name == "ATOM" for record in records):
@@ -334,9 +334,9 @@ class EssentialSiteComponentsPolicy(ReceptorPreparationPolicy):
         self,
         residue: ResidueKey,
         records: Sequence[PDBAtomRecord],
-        primary_ligand: ResidueKey,
+        primary_ligand: frozenset[ResidueKey],
     ) -> ReceptorComponentRole:
-        if residue == primary_ligand:
+        if residue in primary_ligand:
             return ReceptorComponentRole.PRIMARY_LIGAND
         if any(record.record_name == "ATOM" for record in records):
             return ReceptorComponentRole.POLYMER
@@ -437,7 +437,7 @@ def _component_from_records(
     records: Sequence[PDBAtomRecord],
     *,
     policy: ReceptorPreparationPolicy,
-    primary_ligand: ResidueKey,
+    primary_ligand: frozenset[ResidueKey],
 ) -> ReceptorComponent:
     return ReceptorComponent(
         residue=residue,
@@ -459,7 +459,7 @@ def prepare_receptor_system(
     *,
     center: tuple[float, float, float],
     pocket_radius: float,
-    primary_ligand: ResidueKey,
+    primary_ligand: frozenset[ResidueKey],
     policy: ReceptorPreparationPolicy,
     receptor_output_path: Path | None = None,
     pocket_output_path: Path | None = None,
@@ -731,7 +731,7 @@ def prepare_protein_only_receptor(
         pdb_path,
         center=(0.0, 0.0, 0.0),
         pocket_radius=float("inf"),
-        primary_ligand=protein_only_residue_key(),
+        primary_ligand=frozenset({protein_only_residue_key()}),
         policy=ProteinOnlyReceptorPolicy(),
         receptor_output_path=output_path,
         pocket_output_path=(
@@ -754,7 +754,7 @@ def prepare_protein_only_pocket(
         pdb_path,
         center=center,
         pocket_radius=pocket_radius,
-        primary_ligand=protein_only_residue_key(),
+        primary_ligand=frozenset({protein_only_residue_key()}),
         policy=ProteinOnlyReceptorPolicy(),
         receptor_output_path=(
             pdb_path.parent / f"{pdb_path.stem}_protein_only_source.pdb"
