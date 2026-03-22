@@ -8,4 +8,53 @@ Engineering corollary. If the same semantic parameter sequence appears in multip
 
 Tooling suggestion. A lightweight linter may enumerate candidate fibers by hashing parameter-type sequences and presenting groups with |\pi^{-1}(s)|>1 for developer review. This scan is conservative under finite-precision type representations and is an automatic instantiation of the Paper~1 counting law.
 
+Template Method payoff. When factoring signatures into an abstract base class (ABC), move the shared pre/post logic into a single concrete method on the ABC and expose only the minimal varying behavior as abstract hook(s) that concrete classes override. This is the Template Method pattern: it concentrates behavioral degrees of freedom into small hooks, so derivation/SSOT arguments (Paper~2) become straightforward to apply and the information burden quantified in Paper~1 drops because callers observe a single canonical interface.
+
+Minimal example (before / after): the `process` method is the concrete template; subclasses override `_handle` as the hook that varies. Shared sanitization and logging live once in the ABC, so changes affect all implementations at once.
+
+\begin{verbatim}
+# before: duplicated pre/post logic in each concrete class
+class AProcessor:
+    def process(self, data: dict) -> str:
+        clean = sanitize(data)
+        out = do_specific(clean)
+        log_result(out)
+        return out
+
+class BProcessor:
+    def process(self, data: dict) -> str:
+        clean = sanitize(data)
+        out = do_other(clean)
+        log_result(out)
+        return out
+
+# after: Template Method. shared logic moved into ABC; varying step is a hook
+from abc import ABC, abstractmethod
+
+class Processor(ABC):
+    def process(self, data: dict) -> str:            # concrete, caller-visible
+        clean = self._sanitize(data)                # common pre
+        out = self._handle(clean)                   # hook — override
+        self._log_result(out)                       # common post
+        return out
+
+    def _sanitize(self, data: dict) -> dict:
+        ...
+
+    def _log_result(self, out: str) -> None:
+        ...
+
+    @abstractmethod
+    def _handle(self, clean: dict) -> str:
+        pass
+
+class AProcessor(Processor):
+    def _handle(self, clean: dict) -> str:
+        return do_specific(clean)
+
+class BProcessor(Processor):
+    def _handle(self, clean: dict) -> str:
+        return do_other(clean)
+\end{verbatim}
+
 \leanmeta{\LH{INF1}, \LH{DER2}}
