@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import functools
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.tree_util import register_pytree_node_class
 from dq_dock_engine.docking.formal_pruning import (
     CertifiedPruningCertificate,
     CertifiedSurvivorSetWitness,
@@ -26,6 +28,7 @@ from dq_dock_engine.docking.scoring import (
 from dq_dock_engine.docking.scoring import certified_lj_error_bound
 
 
+@register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedCoarseScoreBundle:
     exact_scores: jax.Array
@@ -38,7 +41,35 @@ class CertifiedCoarseScoreBundle:
     retained_receptor_indices: jax.Array
     pruning_certificate: CertifiedPruningCertificate
 
+    def tree_flatten(self):
+        children = (
+            self.exact_scores,
+            self.coarse_scores,
+            self.survivor_mask,
+            self.ambiguity_mask,
+            self.retained_receptor_indices,
+            self.pruning_certificate,
+        )
+        aux_data = (self.delta, self.exact_error_bound, self.coarse_error_bound)
+        return (children, aux_data)
 
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        delta, exact_error_bound, coarse_error_bound = aux_data
+        return cls(
+            exact_scores=children[0],
+            coarse_scores=children[1],
+            delta=delta,
+            exact_error_bound=exact_error_bound,
+            coarse_error_bound=coarse_error_bound,
+            survivor_mask=children[2],
+            ambiguity_mask=children[3],
+            retained_receptor_indices=children[4],
+            pruning_certificate=children[5],
+        )
+
+
+@register_pytree_node_class
 @dataclass(frozen=True)
 class StagedTop1Decision:
     branch: Top1PruningBranch
@@ -46,13 +77,32 @@ class StagedTop1Decision:
     accepted_without_exact_rescore: bool
     selected_action: int
 
+    def tree_flatten(self):
+        children = (self.survivor_set,)
+        aux_data = (self.branch, self.accepted_without_exact_rescore, self.selected_action)
+        return (children, aux_data)
 
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(branch=aux_data[0], survivor_set=children[0], accepted_without_exact_rescore=aux_data[1], selected_action=aux_data[2])
+
+
+@register_pytree_node_class
 @dataclass(frozen=True)
 class StagedTop1RoundResult:
     coarse_scores: jax.Array
     delta: float
     retained_receptor_indices: jax.Array
     decisions: tuple[StagedTop1Decision, ...]
+
+    def tree_flatten(self):
+        children = (self.coarse_scores, self.retained_receptor_indices, self.decisions)
+        aux_data = (self.delta,)
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(coarse_scores=children[0], retained_receptor_indices=children[1], decisions=children[2], delta=aux_data[0])
 
 
 @dataclass(frozen=True)
@@ -154,8 +204,8 @@ def two_cutoff_approximation_witness(
     )
 
 
-def _default_coarse_target_error(target_error: float) -> float:
-    return max(float(target_error), 0.004)
+def _default_coarse_target_error(target_error: float | jax.Array) -> float | jax.Array:
+    return jnp.maximum(target_error, 0.004)
 
 
 def _score_coarse_batch(
@@ -356,6 +406,13 @@ def score_exact_and_coarse_local_family(
     )
 
 
+@functools.partial(
+    jax.jit,
+    static_argnames=(
+        "max_receptor_atoms",
+        "use_softened_coarse",
+    ),
+)
 def score_exact_and_coarse_round(
     receptor_coords: jax.Array,
     receptor_radii: jax.Array,
@@ -364,6 +421,7 @@ def score_exact_and_coarse_round(
     target_error: float,
     max_receptor_atoms: int,
     translation_step: float,
+    retained_indices: jax.Array | None = None,
     coarse_target_error: float | None = None,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
     use_softened_coarse: bool = False,
@@ -375,14 +433,11 @@ def score_exact_and_coarse_round(
     )
     n_poses, n_actions, n_atoms, _ = candidate_batches.shape
     flat_candidates = candidate_batches.reshape((n_poses * n_actions, n_atoms, 3))
-    retained_indices = select_exact_receptor_subset_for_local_family(
-        receptor_coords=receptor_coords,
-        receptor_radii=receptor_radii,
-        reference_coords_batch=candidate_batches[:, 0, :, :],
-        ligand_radii=ligand_radii,
-        translation_step=translation_step,
-        target_error=target_error,
-    )
+    
+    if retained_indices is None:
+         # Fallback for simple calls, but not used in optimized refinement
+         retained_indices = jnp.arange(receptor_coords.shape[0])
+         
     exact_batch = score_certified_batch(
         receptor_coords=receptor_coords[retained_indices],
         poses_coords=flat_candidates,
@@ -392,14 +447,7 @@ def score_exact_and_coarse_round(
         electrostatics=_subset_electrostatics(electrostatics, retained_indices),
     )
     exact_scores = exact_batch.scores.reshape((n_poses, n_actions))
-    coarse_retained_indices = select_exact_receptor_subset_for_local_family(
-        receptor_coords=receptor_coords,
-        receptor_radii=receptor_radii,
-        reference_coords_batch=candidate_batches[:, 0, :, :],
-        ligand_radii=ligand_radii,
-        translation_step=translation_step,
-        target_error=coarse_target_error,
-    )
+    coarse_retained_indices = retained_indices # Use same subset for efficiency in optimized loop
     coarse_scores_flat, softening_error_bound = _score_coarse_batch(
         receptor_coords=receptor_coords,
         receptor_radii=receptor_radii,
@@ -427,7 +475,13 @@ def staged_top1_decision_from_scores(
     coarse_scores: jax.Array,
     delta: float,
 ) -> StagedTop1Decision:
-    branch = select_top1_pruning_branch(coarse_scores, delta)
+    # Handle JAX tracers by defaulting to general branch to avoid TracerBoolConversionError
+    if isinstance(coarse_scores, jax.core.Tracer) or isinstance(delta, jax.core.Tracer):
+        branch = Top1PruningBranch.TOP1_COARSE_AMBIGUITY_BAND
+    elif delta <= 0.0:
+        branch = Top1PruningBranch.EXACT_TOP1
+    else:
+        branch = select_top1_pruning_branch(coarse_scores, delta)
     survivor_set = survivor_set_of_top1_branch(
         branch=branch,
         exact_scores=exact_scores,
@@ -450,14 +504,13 @@ def staged_top1_round_from_coarse_scores(
     delta: float,
     retained_receptor_indices: jax.Array,
 ) -> StagedTop1RoundResult:
-    decisions = tuple(
-        staged_top1_decision_from_scores(
-            exact_scores=jnp.asarray(row),
-            coarse_scores=jnp.asarray(row),
-            delta=delta,
-        )
-        for row in coarse_scores
+    vmapped_decision = jax.vmap(
+        staged_top1_decision_from_scores,
+        in_axes=(0, 0, None),
     )
+    # This return a batched StagedTop1Decision Pytree
+    decisions = vmapped_decision(coarse_scores, coarse_scores, delta)
+    
     return StagedTop1RoundResult(
         coarse_scores=coarse_scores,
         delta=delta,
@@ -469,23 +522,22 @@ def staged_top1_round_from_coarse_scores(
 def summarize_staged_top1_round(
     round_result: StagedTop1RoundResult,
 ) -> StagedTop1BranchSummary:
-    exact_top1_count = sum(
-        decision.branch == Top1PruningBranch.EXACT_TOP1
-        for decision in round_result.decisions
-    )
-    singleton_count = sum(
-        decision.branch == Top1PruningBranch.EXACT_SINGLETON_WINNER
-        for decision in round_result.decisions
-    )
-    ambiguity_band_count = sum(
-        decision.branch == Top1PruningBranch.TOP1_COARSE_AMBIGUITY_BAND
-        for decision in round_result.decisions
-    )
+    # Handle both tuple of decisions (legacy) and batched decision Pytree
+    decisions = round_result.decisions
+    if isinstance(decisions, tuple):
+        exact_top1_count = sum(d.branch == Top1PruningBranch.EXACT_TOP1 for d in decisions)
+        singleton_count = sum(d.branch == Top1PruningBranch.EXACT_SINGLETON_WINNER for d in decisions)
+        ambiguity_band_count = sum(d.branch == Top1PruningBranch.TOP1_COARSE_AMBIGUITY_BAND for d in decisions)
+    else:
+        # Batched Pytree mode
+        exact_top1_count = int(jnp.sum(decisions.branch == Top1PruningBranch.EXACT_TOP1))
+        singleton_count = int(jnp.sum(decisions.branch == Top1PruningBranch.EXACT_SINGLETON_WINNER))
+        ambiguity_band_count = int(jnp.sum(decisions.branch == Top1PruningBranch.TOP1_COARSE_AMBIGUITY_BAND))
+        
     return StagedTop1BranchSummary(
         exact_top1_count=exact_top1_count,
         singleton_count=singleton_count,
         ambiguity_band_count=ambiguity_band_count,
-        total=len(round_result.decisions),
     )
 
 

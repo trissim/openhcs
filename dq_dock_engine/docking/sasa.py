@@ -13,6 +13,7 @@ OpenHCS Compliance:
 
 from __future__ import annotations
 
+import functools
 import jax
 import jax.numpy as jnp
 from dataclasses import dataclass
@@ -187,6 +188,27 @@ def compute_sasa_single(
     return n_accessible * area_per_point
 
 
+@functools.partial(jax.jit, static_argnames=['n_points'])
+def _accessible_mask_single(
+    atom_position: jnp.ndarray,
+    atom_radius: float,
+    neighbor_positions: jnp.ndarray,
+    neighbor_radii: jnp.ndarray,
+    probe_radius: float,
+    n_points: int,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    directions = _fibonacci_sphere_points(n_points)
+    surface_points = atom_position + (atom_radius + probe_radius) * directions
+    
+    diffs = surface_points[:, None, :] - neighbor_positions[None, :, :]
+    distances = jnp.linalg.norm(diffs, axis=-1)
+    
+    buried_threshold = neighbor_radii[None, :] + probe_radius
+    is_buried = distances < buried_threshold
+    
+    accessible = ~jnp.any(is_buried, axis=1)
+    return accessible, surface_points
+
 def accessible_surface_points_single(
     atom_position: jnp.ndarray,
     atom_radius: float,
@@ -195,19 +217,45 @@ def accessible_surface_points_single(
     config: SASAConfig,
 ) -> jnp.ndarray:
     """Return the accessible surface samples used by Shrake-Rupley."""
-    directions = _fibonacci_sphere_points(config.n_points)
-    surface_points = atom_position + (atom_radius + config.probe_radius) * directions
-    accessible = jnp.ones(surface_points.shape[0], dtype=bool)
-
-    for i in range(neighbor_positions.shape[0]):
-        diffs = surface_points - neighbor_positions[i]
-        distances = jnp.linalg.norm(diffs, axis=1)
-        buried_threshold = neighbor_radii[i] + config.probe_radius
-        is_buried = distances < buried_threshold
-        accessible = accessible & ~is_buried
-
+    accessible, surface_points = _accessible_mask_single(
+        atom_position, atom_radius, neighbor_positions, neighbor_radii, 
+        config.probe_radius, config.n_points
+    )
     return surface_points[accessible]
 
+
+@functools.partial(jax.jit, static_argnames=['n_points'])
+def _compute_sasa_batch_jitted(
+    positions: jnp.ndarray,
+    radii: jnp.ndarray,
+    sigmas: jnp.ndarray,
+    probe_radius: float,
+    n_points: int,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    directions = _fibonacci_sphere_points(n_points)
+    
+    def process_atom(i):
+        atom_pos = positions[i]
+        atom_rad = radii[i]
+        surf_pts = atom_pos + (atom_rad + probe_radius) * directions
+        
+        diffs = surf_pts[:, None, :] - positions[None, :, :]
+        dists = jnp.linalg.norm(diffs, axis=-1)
+        
+        buried_threshold = radii[None, :] + probe_radius
+        is_buried = dists < buried_threshold
+        is_buried = is_buried.at[:, i].set(False)
+        
+        accessible = ~jnp.any(is_buried, axis=1)
+        n_accessible = jnp.sum(accessible)
+        
+        sphere_area = 4.0 * jnp.pi * (atom_rad + probe_radius)**2
+        sasa = n_accessible * (sphere_area / n_points)
+        solv = sigmas[i] * sasa / 1000.0
+        return sasa, solv
+
+    sasa_vals, solv_vals = jax.vmap(process_atom)(jnp.arange(positions.shape[0]))
+    return sasa_vals, solv_vals
 
 def compute_sasa_batch(
     positions: jnp.ndarray,
@@ -223,32 +271,10 @@ def compute_sasa_batch(
     - Explicit config dependency
     - Tuple inputs (immutable)
     """
-    n_atoms = positions.shape[0]
-    sasa_values = []
-    solvation_energies = []
-
-    for i in range(n_atoms):
-        elem = elements[i]
-        atom_config = get_solvation_params(elem)
-
-        neighbor_mask = jnp.arange(n_atoms) != i
-        neighbor_positions = positions[neighbor_mask]
-        neighbor_radii_i = radii[neighbor_mask]
-
-        sasa = compute_sasa_single(
-            positions[i],
-            atom_config.radius,
-            neighbor_positions,
-            neighbor_radii_i,
-            config,
-        )
-
-        solvation_e = atom_config.sigma * sasa / 1000.0
-
-        sasa_values.append(sasa)
-        solvation_energies.append(solvation_e)
-
-    return (jnp.array(sasa_values), jnp.array(solvation_energies))
+    sigmas = jnp.array([get_solvation_params(e).sigma for e in elements])
+    return _compute_sasa_batch_jitted(
+        positions, radii, sigmas, config.probe_radius, config.n_points
+    )
 
 
 def delta_sasa_energy(

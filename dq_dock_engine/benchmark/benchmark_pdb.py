@@ -222,6 +222,7 @@ class BlindDockingAttemptSpec:
     receptor_elements: tuple[str, ...] | None
     config: DockingConfig
     top_k: int
+    top_k_to_optimize: int
     optimize: bool
     n_opt_steps: int
     include_native: bool
@@ -243,6 +244,7 @@ class BlindDockingAttemptSpec:
             receptor_elements=self.receptor_elements,
             config=self.config,
             top_k=self.top_k,
+            top_k_to_optimize=self.top_k_to_optimize,
             optimize=self.optimize,
             n_opt_steps=self.n_opt_steps,
             include_native=self.include_native,
@@ -263,6 +265,7 @@ class BlindDockingAttemptSpec:
             receptor_elements=self.receptor_elements,
             config=self.config,
             top_k=self.top_k,
+            top_k_to_optimize=self.top_k_to_optimize,
             optimize=self.optimize,
             n_opt_steps=self.n_opt_steps,
             include_native=self.include_native,
@@ -278,6 +281,7 @@ class BlindDockingAttemptSpec:
             engine=self.engine,
             key=self.key,
             top_k=self.top_k,
+            top_k_to_optimize=self.top_k_to_optimize,
             optimize=self.optimize,
             n_opt_steps=self.n_opt_steps,
             charge_method=self.charge_method,
@@ -1829,6 +1833,7 @@ def run_dq_dock(
             receptor_elements=runtime_receptor_elements,
             config=docking_config,
             top_k=1,
+            top_k_to_optimize=1,
             optimize=True,
             n_opt_steps=n_opt_steps,
             include_native=True,
@@ -1921,6 +1926,8 @@ def run_dq_dock(
                 ), None
 
             elapsed = time.time() - start
+            if not best_poses:
+                raise ValueError("No poses returned by docking pipeline")
             best_pose = best_poses[0]
             pose_jnp = jnp.expand_dims(best_pose.coords, axis=0)
             native_jnp = jnp.array(ligand_coords)
@@ -1978,6 +1985,9 @@ def run_dq_dock(
                     theorem_handles=(),
                 ), None
             if attempt < max_retries - 1:
+                import traceback
+
+                traceback.print_exc()
                 n_poses *= 2
                 n_opt_steps *= 2
                 print(

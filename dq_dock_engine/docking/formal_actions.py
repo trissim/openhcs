@@ -5,6 +5,7 @@ from functools import lru_cache
 
 import jax
 import jax.numpy as jnp
+from jax.tree_util import register_pytree_node_class
 
 from dq_dock_engine.arraydsl import (
     axisAngleQuaternion,
@@ -14,6 +15,7 @@ from dq_dock_engine.arraydsl import (
 from dq_dock_engine.physics.kernels import rigid_transform_3d
 
 
+@register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedLocalAction:
     action_id: int
@@ -21,7 +23,17 @@ class CertifiedLocalAction:
     quaternion_delta: jax.Array
     is_noop: bool = False
 
+    def tree_flatten(self):
+        children = (self.translation_delta, self.quaternion_delta)
+        aux_data = (self.action_id, self.is_noop)
+        return (children, aux_data)
 
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(action_id=aux_data[0], translation_delta=children[0], quaternion_delta=children[1], is_noop=aux_data[1])
+
+
+@register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedActionFamily:
     actions: tuple[CertifiedLocalAction, ...]
@@ -30,6 +42,15 @@ class CertifiedActionFamily:
     translation_step: float
     rotation_step_rad: float
     stencil_level: int
+
+    def tree_flatten(self):
+        children = (self.actions, self.translation_deltas, self.quaternion_deltas)
+        aux_data = (self.translation_step, self.rotation_step_rad, self.stencil_level)
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children, *aux_data)
 
 
 def _normalize_quaternion(quaternion: jax.Array) -> jax.Array:

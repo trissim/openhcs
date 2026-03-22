@@ -9,7 +9,9 @@ Enforces strict immutability, frozen dataclass structures.
 from enum import Enum, auto
 from dataclasses import dataclass
 from typing import Tuple, Optional, Union
+import jax
 import jax.numpy as jnp
+from jax.tree_util import register_pytree_node_class
 
 
 class ScoringEngine(Enum):
@@ -183,6 +185,7 @@ class BenchmarkResult:
         return cls(**kwargs)
 
 
+@register_pytree_node_class
 @dataclass(frozen=True)
 class DockingBox:
     """Bounding box for geometric constraints."""
@@ -193,7 +196,17 @@ class DockingBox:
     def validate(self) -> bool:
         return self.center.shape == (3,) and self.size.shape == (3,)
 
+    def tree_flatten(self):
+        children = (self.center, self.size)
+        aux_data = None
+        return (children, aux_data)
 
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+
+@register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedBindingSite:
     """Runtime representation of a theorem-backed binding site."""
@@ -201,6 +214,15 @@ class CertifiedBindingSite:
     center: jnp.ndarray  # shape (3,)
     radius: float
     theorem_handles: Tuple[str, ...] = ()
+
+    def tree_flatten(self):
+        children = (self.center, self.radius)
+        aux_data = (self.theorem_handles,)
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children, *aux_data)
 
 
 @dataclass(frozen=True)
@@ -247,6 +269,7 @@ class GeometricBlindDockingResult:
     poses: tuple[ScoredPose, ...]
 
 
+@register_pytree_node_class
 @dataclass(frozen=True)
 class LigandContext:
     """Immutable context for a ligand prior to geometric transformation."""
@@ -259,13 +282,40 @@ class LigandContext:
     # Optional per-atom partial charges (shape (N,)). None if not assigned.
     charges: Optional[jnp.ndarray] = None
 
+    def tree_flatten(self):
+        children = (self.base_coords, self.base_radii, self.center_of_mass, self.charges)
+        aux_data = (self.elements,)
+        return (children, aux_data)
 
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        base_coords, base_radii, center_of_mass, charges = children
+        elements = aux_data[0]
+        return cls(
+            base_coords=base_coords,
+            base_radii=base_radii,
+            center_of_mass=center_of_mass,
+            elements=elements,
+            charges=charges,
+        )
+
+
+@register_pytree_node_class
 @dataclass(frozen=True)
 class PoseVector:
     """Represents a batched set of rigid transformations."""
 
     translation: jnp.ndarray  # shape (N_poses, 3)
     quaternion: jnp.ndarray  # shape (N_poses, 4)
+
+    def tree_flatten(self):
+        children = (self.translation, self.quaternion)
+        aux_data = None
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
 
 
 @dataclass(frozen=True)

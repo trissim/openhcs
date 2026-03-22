@@ -13,6 +13,7 @@ from dq_dock_engine.arraydsl import (
     supportConditioning,
     uniformProbabilityVectorLike,
 )
+from jax.tree_util import register_pytree_node_class
 from dq_dock_engine.docking.formal_handles import (
     belief_witness_handle,
     posterior_update_theorem_handle,
@@ -32,6 +33,7 @@ class PosteriorUpdateBranch(str, Enum):
     SURVIVOR_CONDITIONING = "survivor_conditioning"
 
 
+@register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedBeliefState:
     prior_spec: "CertifiedPriorSpec"
@@ -48,6 +50,31 @@ class CertifiedBeliefState:
     selected_action_rule: str
     selected_action_theorem: str
     step_index: int
+
+    def tree_flatten(self):
+        children = (self.prior, self.posterior, self.coarse_scores, self.exact_scores, self.survivor_mask, self.ambiguity_mask, self.prior_spec)
+        aux_data = (self.posterior_rule, self.posterior_theorem, self.exact_error_bound, self.selected_action, self.selected_action_rule, self.selected_action_theorem, self.step_index)
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        prior, posterior, coarse_scores, exact_scores, survivor_mask, ambiguity_mask, prior_spec = children
+        return cls(
+            prior_spec=prior_spec,
+            prior=prior,
+            posterior=posterior,
+            posterior_rule=aux_data[0],
+            posterior_theorem=aux_data[1],
+            coarse_scores=coarse_scores,
+            exact_scores=exact_scores,
+            exact_error_bound=aux_data[2],
+            survivor_mask=survivor_mask,
+            ambiguity_mask=ambiguity_mask,
+            selected_action=aux_data[3],
+            selected_action_rule=aux_data[4],
+            selected_action_theorem=aux_data[5],
+            step_index=aux_data[6],
+        )
 
 
 @dataclass(frozen=True)
@@ -72,10 +99,20 @@ class CertifiedBeliefWitness:
     witness_handle: str
 
 
+@register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedPriorSpec:
     kind: Literal["uniform", "noop_biased"]
     noop_mass: float = 0.0
+
+    def tree_flatten(self):
+        children = ()
+        aux_data = (self.kind, self.noop_mass)
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(kind=aux_data[0], noop_mass=aux_data[1])
 
 
 def build_prior(prior_spec: CertifiedPriorSpec, n_actions: int) -> jax.Array:

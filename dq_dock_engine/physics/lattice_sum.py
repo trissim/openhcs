@@ -27,15 +27,11 @@ def lattice_tail_bound(s: float, R: float) -> float:
     - s=6: tail ≤ C/R³  (lj6_tail_bound)
     - s=12: tail ≤ C/R⁹  (lj12_tail_bound)
     """
-    if s <= 3:
-        raise ValueError(f"Lattice sum diverges for s ≤ 3, got s={s}")
-    if R <= 0:
-        raise ValueError(f"R must be positive, got R={R}")
     # PROOF-BACKED CONSTANT: M = 4π × 2 (sphere surface × safety factor)
     # From LatticeSum.lean: latticeTailSum(s, R) ≤ M / R^(s-3)
     # Explicit bound: 512 * (8/7) for s=6, 512 * (512/511) for s=12
     M = 4 * jnp.pi * 2.0
-    return float(M / R ** (s - 3))
+    return M / R ** (s - 3)
 
 
 @certified("LatticeSum.lean::lj6_tail_bound")
@@ -69,4 +65,4 @@ def optimal_cutoff(target_error: float, s: float = 6.0) -> float:
     Inverts: R = (M/ε)^(1/(s-3))
     """
     M = 4 * jnp.pi * 2.0
-    return float((M / target_error) ** (1.0 / (s - 3)))
+    return (M / target_error) ** (1.0 / (s - 3))

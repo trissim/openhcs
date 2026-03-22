@@ -6,6 +6,7 @@ from enum import Enum
 import jax
 import jax.numpy as jnp
 
+from jax.tree_util import register_pytree_node_class
 from dq_dock_engine.arraydsl import ambiguityBandMask, topKWithTiesMask
 from dq_dock_engine.docking.formal_handles import (
     CP1,
@@ -18,6 +19,7 @@ from dq_dock_engine.docking.formal_handles import (
 )
 
 
+@register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedPruningCertificate:
     exact_top_k_mask: jax.Array
@@ -29,12 +31,31 @@ class CertifiedPruningCertificate:
     rule: str
     theorem_handle: str
 
+    def tree_flatten(self):
+        children = (self.exact_top_k_mask, self.exact_ambiguity_mask, self.coarse_ambiguity_mask, self.survivor_mask)
+        aux_data = (self.k, self.delta, self.rule, self.theorem_handle)
+        return (children, aux_data)
 
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children, *aux_data)
+
+
+@register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedSurvivorSetWitness:
     survivor_mask: jax.Array
     certificate: CertifiedPruningCertificate
     theorem_handle: str
+
+    def tree_flatten(self):
+        children = (self.survivor_mask, self.certificate)
+        aux_data = (self.theorem_handle,)
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children, *aux_data)
 
 
 @dataclass(frozen=True)
@@ -94,14 +115,27 @@ def coarse_top1_pairwise_margin_mask(
 def has_exact_singleton_winner_proof_condition(
     coarse_scores: jax.Array, delta: float
 ) -> bool:
-    strict_mask = coarse_top1_pairwise_margin_mask(coarse_scores, delta)
-    return bool(jnp.all(strict_mask))
+    # Handle JAX tracers by defaulting to false (general branch)
+    if isinstance(coarse_scores, jax.core.Tracer) or isinstance(delta, jax.core.Tracer):
+        return False
+        
+    if len(coarse_scores) <= 1:
+        return True
+    sorted_scores = jnp.sort(coarse_scores)
+    gap = sorted_scores[1] - sorted_scores[0]
+    # No bool() cast needed here if we're not in JIT, 
+    # and we already handled the tracer case above.
+    return gap > 2.0 * delta
 
 
 def select_top1_pruning_branch(
     coarse_scores: jax.Array,
     delta: float,
 ) -> Top1PruningBranch:
+    # Handle JAX tracers by defaulting to general branch
+    if isinstance(coarse_scores, jax.core.Tracer) or isinstance(delta, jax.core.Tracer):
+        return Top1PruningBranch.TOP1_COARSE_AMBIGUITY_BAND
+        
     if delta <= 0:
         return Top1PruningBranch.EXACT_TOP1
     if has_exact_singleton_winner_proof_condition(coarse_scores, delta):

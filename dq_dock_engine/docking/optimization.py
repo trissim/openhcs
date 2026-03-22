@@ -2,10 +2,15 @@
 Local optimization of poses using JAX automatic differentiation.
 """
 
+import functools
 import jax
 import jax.numpy as jnp
 
-from dq_dock_engine.docking.core import LigandContext, PoseVector
+from dq_dock_engine.docking.core import (
+    LigandContext,
+    PoseVector,
+)
+from dq_dock_engine.proof_status import conditionally_certified
 from dq_dock_engine.docking.placement import _apply_single_pose
 from dq_dock_engine.docking.scoring import _score_single_lj, _score_certified_lj
 from dq_dock_engine.docking_config import DockingConfig, DockingMode
@@ -140,6 +145,47 @@ def _optimize_single(
         return jax.lax.fori_loop(0, n_steps, body_fn, (t, q))
 
 
+@functools.partial(jax.jit, static_argnames=['n_steps', 'use_certified'])
+def _execute_batched_optimize_jitted(
+    translations: jnp.ndarray,
+    quaternions: jnp.ndarray,
+    ligand_base_coords: jnp.ndarray,
+    receptor_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+    n_steps: int,
+    lr_t: float,
+    lr_q: float,
+    use_certified: bool,
+    cutoff: jnp.ndarray | None,
+    epsilon: float,
+):
+    def batch_fn(args):
+        t, q = args
+        return _optimize_single(
+            t,
+            q,
+            ligand_base_coords,
+            receptor_coords,
+            receptor_radii,
+            ligand_radii,
+            n_steps,
+            lr_t,
+            lr_q,
+            use_certified,
+            cutoff,
+            epsilon,
+        )
+
+    return jax.vmap(batch_fn, in_axes=((0, 0),))((translations, quaternions))
+
+@conditionally_certified(
+    "HandleAliases.lean::FLO4; HandleAliases.lean::FLO5; HandleAliases.lean::FLO6; HandleAliases.lean::FLO7; HandleAliases.lean::FLO8; HandleAliases.lean::FLO9; HandleAliases.lean::FLO10; HandleAliases.lean::BD9; HandleAliases.lean::BD10; HandleAliases.lean::LJ9; HandleAliases.lean::CB12; HandleAliases.lean::APX9",
+    assumptions=[
+        "optimizer steps monotonically refine the bounded witness sets",
+        "posterior updates preserve the valid Bayesian normalization",
+    ],
+)
 def optimize_poses_batched(
     translations: jnp.ndarray,
     quaternions: jnp.ndarray,
@@ -164,24 +210,17 @@ def optimize_poses_batched(
         use_certified = False
         epsilon = 0.0
 
-    def batch_fn(args):
-        t, q = args
-        return _optimize_single(
-            t,
-            q,
-            ligand_base_coords,
-            receptor_coords,
-            receptor_radii,
-            ligand_radii,
-            n_steps,
-            lr_t,
-            lr_q,
-            use_certified,
-            cutoff,
-            epsilon,
-        )
-
-    batched_optimize = jax.vmap(batch_fn, in_axes=((0, 0),))
-    opt_t, opt_q = batched_optimize((translations, quaternions))
-
-    return opt_t, opt_q
+    return _execute_batched_optimize_jitted(
+        translations,
+        quaternions,
+        ligand_base_coords,
+        receptor_coords,
+        receptor_radii,
+        ligand_radii,
+        n_steps,
+        lr_t,
+        lr_q,
+        use_certified,
+        cutoff,
+        epsilon,
+    )

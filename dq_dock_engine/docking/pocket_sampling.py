@@ -16,7 +16,11 @@ import jax.numpy as jnp
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from dq_dock_engine.docking.core import SamplingStrategy
+from dq_dock_engine.docking.core import (
+    ScoringEngine,
+    SamplingStrategy,
+)
+from dq_dock_engine.proof_status import conditionally_certified
 from dq_dock_engine.docking.pocket_analysis import (
     CertifiedDetectedPocket,
     GeometricDetectedPocket,
@@ -638,6 +642,13 @@ def sample_intelligent_poses(
     return result.translations, result.quaternions
 
 
+@conditionally_certified(
+    "HandleAliases.lean::BD5; HandleAliases.lean::BD6; HandleAliases.lean::BD7; HandleAliases.lean::BD8",
+    assumptions=[
+        "certified_pocket is a valid bounded representation of the binding site",
+        "sampled translations and rotations define the certified top-1 survivor set",
+    ],
+)
 def sample_intelligent_poses_from_certified_pocket(
     key: jax.Array,
     n_poses: int,

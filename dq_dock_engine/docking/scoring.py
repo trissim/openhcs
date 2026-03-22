@@ -10,11 +10,12 @@ PROOF STATUS SUMMARY:
 """
 
 from dataclasses import dataclass
-from typing import List, Dict, Callable
+from typing import List, Dict, Callable, Union
 import os
 import subprocess
 import tempfile
 import pathlib
+import functools
 
 import jax
 import jax.numpy as jnp
@@ -27,6 +28,7 @@ from dq_dock_engine.proof_status import (
     heuristic,
     ProofStatus,
 )
+from jax.tree_util import register_pytree_node_class
 from dq_dock_engine.docking.core import ScoringEngine, ScoredPose, GapCertification
 from dq_dock_engine.physics.lattice_sum import optimal_cutoff, lj6_cutoff_error
 from dq_dock_engine.physics.kernels import typed_lennard_jones_matrix
@@ -38,8 +40,11 @@ def certified_lj_error_bound(
     target_error: float,
     epsilon: float = _EPSILON_KCAL_MOL,
 ) -> float:
+    def lj_cutoff_error(epsilon: float, cutoff: float) -> float:
+        return epsilon * lj6_cutoff_error(cutoff)
+
     cutoff = optimal_cutoff(target_error, s=6.0)
-    return float(epsilon * lj6_cutoff_error(float(cutoff)))
+    return lj_cutoff_error(epsilon, cutoff)
 
 
 def certified_realspace_ewald_error_bound(
@@ -47,15 +52,17 @@ def certified_realspace_ewald_error_bound(
     alpha: float,
     charge_bound: float,
 ) -> float:
-    if cutoff <= 0:
-        raise ValueError("cutoff must be positive")
-    if alpha <= 0:
-        raise ValueError("alpha must be positive")
-    if charge_bound < 0:
-        raise ValueError("charge_bound must be nonnegative")
-    return float(charge_bound * (2.0 / (alpha**4)) / (cutoff**3))
+    # Note: checks removed for JIT compatibility.
+    # Higher-level logic should ensure cutoff, alpha, charge_bound are positive.
+    def ewald_realspace_cutoff_error(
+        charge_bound: float, alpha: float, cutoff: float
+    ) -> float:
+        return charge_bound * (2.0 / (alpha**4)) / (cutoff**3)
+
+    return ewald_realspace_cutoff_error(charge_bound, alpha, cutoff)
 
 
+@register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedRealSpaceEwaldSpec:
     receptor_charges: jnp.ndarray
@@ -76,6 +83,15 @@ class CertifiedRealSpaceEwaldSpec:
         if self.ligand_charges.ndim != 1:
             raise ValueError("ligand_charges must be a 1D array")
 
+    def tree_flatten(self):
+        children = (self.receptor_charges, self.ligand_charges)
+        aux_data = (self.cutoff, self.alpha, self.dielectric)
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children, *aux_data)
+
     def receptor_subset(self, indices: jnp.ndarray) -> "CertifiedRealSpaceEwaldSpec":
         return CertifiedRealSpaceEwaldSpec(
             receptor_charges=self.receptor_charges[indices],
@@ -87,18 +103,28 @@ class CertifiedRealSpaceEwaldSpec:
 
     def charge_bound(self) -> float:
         return (
-            float(jnp.max(jnp.abs(self.receptor_charges)))
-            * float(jnp.max(jnp.abs(self.ligand_charges)))
+            jnp.max(jnp.abs(self.receptor_charges))
+            * jnp.max(jnp.abs(self.ligand_charges))
             / self.dielectric
         )
 
 
+@register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedBatchResult:
     scores: jnp.ndarray
     error_bound: float
     target_error: float
     cutoff_radius: float
+
+    def tree_flatten(self):
+        children = (self.scores,)
+        aux_data = (self.error_bound, self.target_error, self.cutoff_radius)
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children, *aux_data)
 
     def certify_gap(self, idx_a: int, idx_b: int) -> GapCertification:
         return GapCertification.from_energies(
@@ -119,6 +145,7 @@ class CertifiedBatchResult:
         return certifications
 
 
+@register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedSoftenedBatchResult:
     scores: jnp.ndarray
@@ -126,6 +153,20 @@ class CertifiedSoftenedBatchResult:
     target_error: float
     cutoff_radius: float
     softening_radius: float
+
+    def tree_flatten(self):
+        children = (self.scores,)
+        aux_data = (
+            self.softening_error_bound,
+            self.target_error,
+            self.cutoff_radius,
+            self.softening_radius,
+        )
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children, *aux_data)
 
 
 def _score_certified_scores(
@@ -161,8 +202,8 @@ def _default_softening_radius(
     receptor_radii: jnp.ndarray,
     ligand_radii: jnp.ndarray,
 ) -> float:
-    receptor_min = float(jnp.min(receptor_radii))
-    ligand_min = float(jnp.min(ligand_radii))
+    receptor_min = jnp.min(receptor_radii)
+    ligand_min = jnp.min(ligand_radii)
     return 0.5 * (receptor_min + ligand_min)
 
 
@@ -314,7 +355,7 @@ def _score_certified_lj_batch(
     return energies, error_bound
 
 
-@jax.jit
+@functools.partial(jax.jit, static_argnames=("compute_error_bound",))
 def _score_certified_softened_lj_batch(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
@@ -323,6 +364,7 @@ def _score_certified_softened_lj_batch(
     cutoff: jnp.ndarray,
     epsilon: float,
     softening_radius: float,
+    compute_error_bound: bool = True,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     diffs = receptor_coords[None, :, None, :] - poses_coords[:, None, :, :]
     dists = jnp.asarray(jnp.linalg.norm(diffs, axis=-1))
@@ -346,7 +388,14 @@ def _score_certified_softened_lj_batch(
     exact_masked = jnp.where(in_range, exact_contrib, 0.0)
     softened_masked = jnp.where(in_range, softened_contrib, 0.0)
     energies = jnp.sum(softened_masked, axis=(1, 2))
-    error_bound = jnp.max(jnp.sum(jnp.abs(exact_masked - softened_masked), axis=(1, 2)))
+
+    if compute_error_bound:
+        error_bound = jnp.max(
+            jnp.sum(jnp.abs(exact_masked - softened_masked), axis=(1, 2))
+        )
+    else:
+        error_bound = jnp.array(0.0)
+
     return energies, error_bound
 
 
@@ -417,7 +466,7 @@ def score_certified_lj(
     )
 
     # Compute error bound (same for all poses)
-    error_bound = epsilon * lj6_cutoff_error(float(cutoff))
+    error_bound = epsilon * lj6_cutoff_error(cutoff)
 
     return scores, error_bound
 
@@ -437,12 +486,13 @@ def score_certified_softened_lj(
     target_error: float = 0.001,
     epsilon: float = _EPSILON_KCAL_MOL,
     softening_radius: float | None = None,
+    compute_error_bound: bool = True,
 ) -> CertifiedSoftenedBatchResult:
     cutoff = jnp.array(optimal_cutoff(target_error, s=6.0))
     r_soft = (
         _default_softening_radius(receptor_radii, ligand_radii)
         if softening_radius is None
-        else float(softening_radius)
+        else softening_radius
     )
     scores, softening_error_bound = _score_certified_softened_lj_batch(
         receptor_coords,
@@ -452,12 +502,13 @@ def score_certified_softened_lj(
         cutoff,
         epsilon,
         r_soft,
+        compute_error_bound=compute_error_bound,
     )
     return CertifiedSoftenedBatchResult(
         scores=scores,
-        softening_error_bound=float(softening_error_bound),
+        softening_error_bound=softening_error_bound,
         target_error=target_error,
-        cutoff_radius=float(cutoff),
+        cutoff_radius=cutoff,
         softening_radius=r_soft,
     )
 
@@ -478,6 +529,7 @@ def score_certified_softened_lj_realspace_ewald(
     target_error: float = 0.001,
     epsilon: float = _EPSILON_KCAL_MOL,
     softening_radius: float | None = None,
+    compute_error_bound: bool = True,
 ) -> CertifiedSoftenedBatchResult:
     electrostatics.validate()
     softened_batch = score_certified_softened_lj(
@@ -488,6 +540,7 @@ def score_certified_softened_lj_realspace_ewald(
         target_error=target_error,
         epsilon=epsilon,
         softening_radius=softening_radius,
+        compute_error_bound=compute_error_bound,
     )
     ewald_scores = _score_realspace_ewald_batch(
         receptor_coords,

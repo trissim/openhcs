@@ -2,7 +2,9 @@
 
 from enum import Enum
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Tuple, Optional
+
+from jax.tree_util import register_pytree_node_class
 
 from dq_dock_engine.docking.core import CertifiedBindingSite
 from dq_dock_engine.proof_status import ProofStatus
@@ -42,24 +44,11 @@ class CertifiedScoringFamily(Enum):
     LJ_REALSPACE_EWALD = "lj_realspace_ewald"
 
 
+@register_pytree_node_class
 @dataclass(frozen=True)
 class DockingConfig:
     """
     Configuration for molecular docking with proof status awareness.
-
-    Modes:
-    -----
-    CERTIFIED:
-        - Lattice-bounded LJ cutoff errors
-        - Ewald electrostatics (conditionally certified)
-        - NIST VdW radii
-        - NO ad-hoc scoring weights
-        - NO external binaries
-
-    HEURISTIC:
-        - Ad-hoc LJ weights (4.0, 0.4)
-        - Optional SMINA/Vina for "ground truth"
-        - May use different cutoff strategies
     """
 
     mode: DockingMode
@@ -95,16 +84,59 @@ class DockingConfig:
     #: Optional adaptive certified coarse schedule for singleton acceptance.
     #: Tried from loosest to tightest until a theorem-backed singleton decision
     #: succeeds, then the exact fallback handles the remainder.
-    adaptive_coarse_target_errors: tuple[float, ...] | None = (0.05, 0.01, 0.004)
+    adaptive_coarse_target_errors: Tuple[float, ...] | None = (0.05, 0.01, 0.004)
 
     #: Certified physical score family for both route_scoring and formal rounds
     certified_scoring_family: CertifiedScoringFamily = (
         CertifiedScoringFamily.LJ_REALSPACE_EWALD
     )
 
+    #: Fixed padding limits for JAX JIT stability. 
+    #: All receptor/ligand atom sets are padded to these sizes with ghost atoms.
+    max_receptor_atoms: int = 1024
+    max_ligand_atoms: int = 128
+
     #: Optional theorem-backed binding site used to restrict blind docking to a
     #: certified pocket region.
     certified_binding_site: CertifiedBindingSite | None = None
+
+    def tree_flatten(self):
+        children = (
+            self.target_error,
+            self.min_energy_gap,
+            self.coarse_target_error,
+            self.certified_binding_site,
+        )
+        aux_data = (
+            self.mode,
+            self.use_external_scorer,
+            self.optimizer_backend,
+            self.formal_round_strategy,
+            self.use_softened_coarse_prefilter,
+            self.adaptive_coarse_target_errors,
+            self.certified_scoring_family,
+            self.max_receptor_atoms,
+            self.max_ligand_atoms,
+        )
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(
+            mode=aux_data[0],
+            target_error=children[0],
+            min_energy_gap=children[1],
+            use_external_scorer=aux_data[1],
+            optimizer_backend=aux_data[2],
+            formal_round_strategy=aux_data[3],
+            coarse_target_error=children[2],
+            use_softened_coarse_prefilter=aux_data[4],
+            adaptive_coarse_target_errors=aux_data[5],
+            certified_scoring_family=aux_data[6],
+            certified_binding_site=children[3],
+            max_receptor_atoms=aux_data[7],
+            max_ligand_atoms=aux_data[8],
+        )
 
     def __post_init__(self) -> None:
         if (
