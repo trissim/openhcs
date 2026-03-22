@@ -4,10 +4,28 @@ from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 
 from dq_dock_engine.generated.formal_handle_aliases import (
+    AH1,
+    AH2,
+    AH3,
+    AH4,
+    AH5,
+    AH6,
+    AH7,
+    AH8,
     APX10,
     APX11,
     APX12,
     APX4,
+    AR1,
+    AR2,
+    AR3,
+    AR4,
+    AR5,
+    AR6,
+    AR7,
+    AR8,
+    AR9,
+    AR10,
     BD10,
     CT1,
     CT2,
@@ -68,6 +86,11 @@ from dq_dock_engine.generated.formal_handle_aliases import (
     NB8,
     NB9,
     NB10,
+    NG1,
+    NG2,
+    NG3,
+    NG4,
+    NG5,
     RC1,
     RC2,
     RC3,
@@ -84,8 +107,17 @@ from dq_dock_engine.generated.formal_handle_aliases import (
     SC4,
     SC5,
     SC6,
+    SH1,
+    SH2,
+    SH3,
+    SH4,
+    SH5,
+    SH6,
     SD10,
     TK1,
+    TK13,
+    TK14,
+    TK15,
     TK8,
     TK9A,
     TK11,
@@ -287,8 +319,28 @@ def directional_hbond_finite_theorem_handles() -> tuple[str, ...]:
     return (HB1, HB9, HB10, HB11, HB12)
 
 
+def attractive_directional_hbond_theorem_handles() -> tuple[str, ...]:
+    return (AH1, AH2, AH3, AH4, AH5, AH6, AH7, AH8)
+
+
+def negation_invariance_theorem_handles() -> tuple[str, ...]:
+    return (NG1, NG2, NG3, NG4, NG5)
+
+
 def rich_chemistry_theorem_handles() -> tuple[str, ...]:
+    return (AR1, AR2, AR3, AR4, AR5, AR6, AR7, AR8, AR9, AR10)
+
+
+def positive_rich_chemistry_theorem_handles() -> tuple[str, ...]:
     return (RC1, RC2, RC3, RC4, RC5, RC6, RC7, RC8, RC9, RC10)
+
+
+def topk_bridge_theorem_handles() -> tuple[str, ...]:
+    return (TK13, TK14, TK15)
+
+
+def support_expansion_theorem_handles() -> tuple[str, ...]:
+    return (SH1, SH2, SH3, SH4, SH5, SH6)
 
 
 def selection_theorem_handle(branch: str) -> str:

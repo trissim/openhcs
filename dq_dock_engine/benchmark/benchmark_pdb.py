@@ -73,7 +73,18 @@ from dq_dock_engine.docking.pipeline import (
     run_docking_pipeline_request,
     run_geometric_blind_docking_request,
 )
-from dq_dock_engine.docking.pdb_io import parse_structure, build_receptor_arrays
+from dq_dock_engine.docking.pdb_io import parse_structure
+from dq_dock_engine.docking.receptor_preparation import (
+    EssentialSiteComponentsPolicy,
+    PreparedReceptorSystem,
+    ReceptorChemistryPlan,
+    prepare_protein_only_pocket,
+    prepare_protein_only_receptor,
+    ResidueKey,
+    assess_receptor_compatibility,
+    BenchmarkChemistryProtocol,
+    prepare_receptor_system,
+)
 from dq_dock_engine.docking.metrics import compute_docking_rmsd_batched
 from dq_dock_engine.docking_config import (
     CERTIFIED_DOCKING,
@@ -512,6 +523,9 @@ class BenchmarkComplex:
     path: Path
     center: tuple[float, float, float]
     preferred_resname: str | None = None
+    ligand_residue: LigandResidue | None = None
+    receptor_system: PreparedReceptorSystem | None = None
+    chemistry_plan: ReceptorChemistryPlan | None = None
 
 
 @dataclass(frozen=True)
@@ -535,6 +549,9 @@ class PreparedBenchmarkComplex:
     pocket_elements: tuple[str, ...]
     pocket_charges: np.ndarray | None
     preferred_resname: str | None = None
+    receptor_system: PreparedReceptorSystem | None = None
+    charge_method: ChargeMethod = DEFAULT_BENCHMARK_CHARGE_METHOD
+    chemistry_protocol_name: str = "standard"
 
 
 @dataclass(frozen=True)
@@ -839,6 +856,9 @@ class ScreeningDecision:
     accepted: bool
     reasons: tuple[str, ...]
     ligand_residue: LigandResidue | None = None
+    receptor_system: PreparedReceptorSystem | None = None
+    chemistry_plan: ReceptorChemistryPlan | None = None
+    center: tuple[float, float, float] | None = None
     heavy_atom_count: int = 0
     resolution: float | None = None
     model_count: int = 1
@@ -948,10 +968,26 @@ def has_covalent_contact(protein_path: Path, ligand_path: Path) -> bool:
     return bool(np.any(distances < COVALENT_DISTANCE_ANGSTROMS))
 
 
+def _residue_key_from_ligand_residue(ligand_residue: LigandResidue) -> ResidueKey:
+    return ResidueKey(
+        resname=ligand_residue.resname,
+        chain_id=ligand_residue.chain_id,
+        residue_id=ligand_residue.residue_id,
+    )
+
+
 def screen_complex(
-    entry: PDBEntry, pdb_path: Path, protein_path: Path
+    entry: PDBEntry,
+    pdb_path: Path,
+    protein_path: Path | None = None,
+    *,
+    charge_method: ChargeMethod = DEFAULT_BENCHMARK_CHARGE_METHOD,
+    certified_scoring_family: CertifiedScoringFamily = DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
+    receptor_policy: EssentialSiteComponentsPolicy | None = None,
 ) -> ScreeningDecision:
     reasons: list[str] = []
+    center: tuple[float, float, float] | None = None
+    receptor_system: PreparedReceptorSystem | None = None
 
     if entry.scope != BenchmarkScope.LIGAND:
         reasons.append(f"scope={entry.scope.value} is out of scope for ligand docking")
@@ -979,6 +1015,8 @@ def screen_complex(
             accepted=False,
             reasons=tuple(reasons),
             ligand_residue=None,
+            receptor_system=None,
+            center=None,
             heavy_atom_count=0,
             resolution=resolution,
             model_count=model_count,
@@ -994,16 +1032,42 @@ def screen_complex(
             f"ligand residue {ligand_residue.resname} is a metal-only species"
         )
 
+    center = find_docking_center(pdb_path, preferred_resname=entry.preferred_resname)
     ligand_path = prepare_ligand(pdb_path, preferred_resname=entry.preferred_resname)
-    if has_covalent_contact(protein_path, ligand_path):
+    receptor_path = (
+        protein_path if protein_path is not None else prepare_protein(pdb_path)
+    )
+    if has_covalent_contact(receptor_path, ligand_path):
         reasons.append(
             f"minimum protein-ligand distance is below {COVALENT_DISTANCE_ANGSTROMS:.2f}A"
         )
+
+    policy = (
+        EssentialSiteComponentsPolicy() if receptor_policy is None else receptor_policy
+    )
+    receptor_system = prepare_receptor_system(
+        pdb_path,
+        center=center,
+        pocket_radius=BENCHMARK_PROTOCOL.pocket_radius_a,
+        primary_ligand=_residue_key_from_ligand_residue(ligand_residue),
+        policy=policy,
+        receptor_output_path=pdb_path.parent / f"{pdb_path.stem}_protein.pdb",
+        pocket_output_path=pdb_path.parent / f"{pdb_path.stem}_protein_pocket.pdb",
+    )
+    chemistry_plan = BenchmarkChemistryProtocol.derive_plan(
+        receptor_system,
+        requested_charge_method=charge_method,
+        certified_scoring_family=certified_scoring_family,
+    )
+    reasons.extend(chemistry_plan.compatibility.reasons)
 
     return ScreeningDecision(
         accepted=not reasons,
         reasons=tuple(reasons),
         ligand_residue=ligand_residue,
+        receptor_system=receptor_system,
+        chemistry_plan=chemistry_plan,
+        center=center,
         heavy_atom_count=ligand_residue.atom_count,
         resolution=resolution,
         model_count=model_count,
@@ -1054,7 +1118,9 @@ def load_explicit_pdb_ids(
     if not raw_ids:
         return ()
 
-    invalid_ids = [pdb_id for pdb_id in raw_ids if len(pdb_id) != 4 or not pdb_id.isalnum()]
+    invalid_ids = [
+        pdb_id for pdb_id in raw_ids if len(pdb_id) != 4 or not pdb_id.isalnum()
+    ]
     if invalid_ids:
         raise ValueError(
             "PDB IDs must be 4-character alphanumeric codes: "
@@ -1167,25 +1233,10 @@ def hydrate_selected_benchmark_entry(
 
 
 def prepare_protein(pdb_path: Path) -> Path:
-    """Prepare protein for Vina - use smina which handles PDB directly.
-
-    Extracts only ATOM records (protein) from the PDB file.
-
-    Keep only blank / `A` alternate locations so the receptor arrays match the
-    benchmark competitor preparation path (`--default_altloc A`) and chemistry
-    tools like RDKit see the same atom set.
-    """
     protein_path = pdb_path.parent / f"{pdb_path.stem}_protein.pdb"
     if protein_path.exists():
         protein_path.unlink(missing_ok=True)
-
-    with open(pdb_path) as f_in:
-        with open(protein_path, "w") as f_out:
-            for line in f_in:
-                if line.startswith("ATOM") and line[16] in (" ", "A"):
-                    f_out.write(line)
-
-    return protein_path
+    return prepare_protein_only_receptor(pdb_path, output_path=protein_path)
 
 
 def prepare_pocket_protein(
@@ -1193,38 +1244,13 @@ def prepare_pocket_protein(
     center: tuple[float, float, float],
     pocket_radius: float = BENCHMARK_PROTOCOL.pocket_radius_a,
 ) -> Path:
-    """Write a pocket-only receptor PDB matching the filtered docking arrays."""
     pocket_path = protein_path.parent / f"{protein_path.stem}_pocket.pdb"
-
-    center_array = np.array(center, dtype=float)
-    pocket_lines: list[str] = []
-
-    with open(protein_path) as f_in:
-        for line in f_in:
-            if not line.startswith("ATOM"):
-                continue
-            try:
-                coord = np.array(
-                    [
-                        float(line[30:38]),
-                        float(line[38:46]),
-                        float(line[46:54]),
-                    ],
-                    dtype=float,
-                )
-            except ValueError:
-                continue
-
-            if np.linalg.norm(coord - center_array) < pocket_radius:
-                pocket_lines.append(line)
-
-    if not pocket_lines:
-        raise ValueError(f"No pocket atoms found in {protein_path}")
-
-    with open(pocket_path, "w") as f_out:
-        f_out.writelines(pocket_lines)
-
-    return pocket_path
+    return prepare_protein_only_pocket(
+        protein_path,
+        center=center,
+        pocket_radius=pocket_radius,
+        output_path=pocket_path,
+    )
 
 
 def prepare_ligand(pdb_path: Path, preferred_resname: str | None = None) -> Path:
@@ -1322,14 +1348,39 @@ def prepare_benchmark_complex(
     complex_entry: BenchmarkComplex,
     pose_dir: Path,
     box_size: float = BENCHMARK_PROTOCOL.box_size_a,
-    charge_assigner: ChargeAssigner | None = None,
     certified_scoring_family: CertifiedScoringFamily = DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
 ) -> PreparedBenchmarkComplex:
     pocket_radius = derive_benchmark_pocket_radius_from_box_size(box_size)
-    receptor_pdb = prepare_protein(complex_entry.path)
-    pocket_receptor_pdb = prepare_pocket_protein(
-        receptor_pdb, complex_entry.center, pocket_radius=pocket_radius
-    )
+    receptor_system = complex_entry.receptor_system
+    if receptor_system is None:
+        ligand_residue = (
+            complex_entry.ligand_residue
+            if complex_entry.ligand_residue is not None
+            else detect_primary_ligand_residue(
+                complex_entry.path,
+                preferred_resname=complex_entry.preferred_resname,
+            )
+        )
+        receptor_system = prepare_receptor_system(
+            complex_entry.path,
+            center=complex_entry.center,
+            pocket_radius=pocket_radius,
+            primary_ligand=_residue_key_from_ligand_residue(ligand_residue),
+            policy=EssentialSiteComponentsPolicy(),
+            receptor_output_path=complex_entry.path.parent
+            / f"{complex_entry.path.stem}_protein.pdb",
+            pocket_output_path=complex_entry.path.parent
+            / f"{complex_entry.path.stem}_protein_pocket.pdb",
+        )
+    receptor_pdb = receptor_system.receptor_pdb
+    pocket_receptor_pdb = receptor_system.pocket_receptor_pdb
+    chemistry_plan = complex_entry.chemistry_plan
+    if chemistry_plan is None:
+        chemistry_plan = BenchmarkChemistryProtocol.derive_plan(
+            receptor_system,
+            requested_charge_method=DEFAULT_BENCHMARK_CHARGE_METHOD,
+            certified_scoring_family=certified_scoring_family,
+        )
     ligand_pdb = prepare_ligand(
         complex_entry.path,
         preferred_resname=complex_entry.preferred_resname,
@@ -1339,33 +1390,16 @@ def prepare_benchmark_complex(
         tuple[np.ndarray, np.ndarray, list[str]],
         parse_structure(ligand_pdb, return_elements=True),
     )
-    prot_coords, prot_radii, prot_elements = cast(
-        tuple[np.ndarray, np.ndarray, list[str]],
-        parse_structure(receptor_pdb, return_elements=True),
-    )
-
-    pocket_coords, pocket_radii, pocket_elements = cast(
-        tuple[jnp.ndarray, jnp.ndarray, list[str]],
-        build_receptor_arrays(
-            prot_coords,
-            prot_radii,
-            np.array(complex_entry.center),
-            pocket_radius=pocket_radius,
-            receptor_elements=prot_elements,
-        ),
-    )
-    pocket_coords_np = np.asarray(pocket_coords)
-    pocket_radii_np = np.asarray(pocket_radii)
+    pocket_coords_np = np.asarray(receptor_system.pocket_coords)
+    pocket_radii_np = np.asarray(receptor_system.pocket_radii)
+    pocket_elements = list(receptor_system.pocket_elements)
     if len(pocket_coords_np) == 0:
         raise ValueError("No protein atoms in pocket")
 
     ligand_charges: np.ndarray | None = None
     pocket_charges: np.ndarray | None = None
     if certified_scoring_family == CertifiedScoringFamily.LJ_REALSPACE_EWALD:
-        if charge_assigner is None:
-            raise ValueError(
-                "Canonical electrostatic benchmark preparation requires an explicit ChargeAssigner."
-            )
+        charge_assigner = create_charge_assigner(chemistry_plan.charge_method)
         electrostatics = prepare_benchmark_electrostatics(
             assigner=charge_assigner,
             pdb_id=complex_entry.pdb_id,
@@ -1404,6 +1438,9 @@ def prepare_benchmark_complex(
         pocket_elements=tuple(pocket_elements),
         pocket_charges=pocket_charges,
         preferred_resname=complex_entry.preferred_resname,
+        receptor_system=receptor_system,
+        charge_method=chemistry_plan.charge_method,
+        chemistry_protocol_name=chemistry_plan.protocol_name,
     )
 
 
@@ -2291,7 +2328,9 @@ def run_dq_dock(
                     )
                     continue
                 return finalize_attempt_failure(
-                    build_failure_result(error="ValueError: No poses returned by docking pipeline")
+                    build_failure_result(
+                        error="ValueError: No poses returned by docking pipeline"
+                    )
                 )
 
             elapsed = time.time() - start
@@ -2527,7 +2566,7 @@ def run_dq_dock_benchmark_job_with_timeout(
                 time=timeout_seconds,
                 n_atoms=0,
                 formal_status=f"timeout after {timeout_seconds:.1f}s",
-                    error=f"timeout after {timeout_seconds:.1f}s",
+                error=f"timeout after {timeout_seconds:.1f}s",
             ),
             dq_pose_coords=None,
         )
@@ -2676,7 +2715,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
     ) -> DQDockBenchmarkJob:
         return DQDockBenchmarkJob(
             complex_entry=complex_entry,
-            charge_method=context.charge_method,
+            charge_method=complex_entry.charge_method,
             precomputed_ligand_charges=complex_entry.ligand_charges,
             precomputed_receptor_charges=complex_entry.pocket_charges,
             n_poses=context.n_poses,
@@ -2726,7 +2765,9 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
                 )
 
         if state.dq_results:
-            successful_results = [result for result in state.dq_results if result.success]
+            successful_results = [
+                result for result in state.dq_results if result.success
+            ]
             avg_time = np.mean([r.time for r in state.dq_results])
             avg_dock_time = np.mean([r.dock_time_s or r.time for r in state.dq_results])
             min_time = np.min([r.time for r in state.dq_results])
@@ -3175,7 +3216,13 @@ def run_benchmark(
         )
         try:
             protein_path = prepare_protein(pdb_path)
-            screening = screen_complex(hydrated_entry, pdb_path, protein_path)
+            screening = screen_complex(
+                hydrated_entry,
+                pdb_path,
+                protein_path,
+                charge_method=charge_method,
+                certified_scoring_family=certified_scoring_family,
+            )
             if not screening.accepted:
                 reason = "; ".join(screening.reasons)
                 excluded_rows.append(
@@ -3184,14 +3231,13 @@ def run_benchmark(
                 print(f"  {entry.pdb_id}: excluded ({reason})", flush=True)
                 continue
 
-            center = find_docking_center(
-                pdb_path,
-                preferred_resname=hydrated_entry.preferred_resname,
-            )
+            if screening.center is None:
+                raise ValueError(
+                    f"Screening did not provide a docking center for {entry.pdb_id}"
+                )
+            center = screening.center
         except ValueError as e:
-            excluded_rows.append(
-                ExcludedComplexRow(pdb_id=entry.pdb_id, reason=str(e))
-            )
+            excluded_rows.append(ExcludedComplexRow(pdb_id=entry.pdb_id, reason=str(e)))
             print(f"  {entry.pdb_id}: excluded ({e})", flush=True)
             continue
 
@@ -3202,6 +3248,9 @@ def run_benchmark(
                 path=pdb_path,
                 center=center,
                 preferred_resname=hydrated_entry.preferred_resname,
+                ligand_residue=screening.ligand_residue,
+                receptor_system=screening.receptor_system,
+                chemistry_plan=screening.chemistry_plan,
             )
         )
         print(
@@ -3213,11 +3262,6 @@ def run_benchmark(
         print(f"Excluded during QC: {len(excluded_rows)}", flush=True)
 
     prepared_complexes: list[PreparedBenchmarkComplex] = []
-    charge_assigner = (
-        create_charge_assigner(charge_method)
-        if certified_scoring_family == CertifiedScoringFamily.LJ_REALSPACE_EWALD
-        else None
-    )
     for complex_entry in complexes:
         try:
             prepared_complexes.append(
@@ -3225,7 +3269,6 @@ def run_benchmark(
                     complex_entry,
                     pose_dir,
                     box_size=box_size,
-                    charge_assigner=charge_assigner,
                     certified_scoring_family=certified_scoring_family,
                 )
             )

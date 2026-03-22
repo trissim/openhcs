@@ -1,15 +1,22 @@
 import jax
 import jax.numpy as jnp
 
-from dq_dock_engine.docking.formal_belief import CertifiedBeliefState, CertifiedPriorSpec
+from dq_dock_engine.docking.formal_belief import (
+    CertifiedBeliefState,
+    CertifiedPriorSpec,
+)
 from dq_dock_engine.docking.formal_optimizer import (
     CertifiedOptimizerState,
     refine_poses_certified,
 )
-from dq_dock_engine.docking.formal_actions import create_roundwise_certified_action_family
+from dq_dock_engine.docking.formal_actions import (
+    create_roundwise_certified_action_family,
+)
 
 
-def _fake_state(selected_action: int, ambiguity_mask: jax.Array) -> CertifiedOptimizerState:
+def _fake_state(
+    selected_action: int, ambiguity_mask: jax.Array
+) -> CertifiedOptimizerState:
     prior = jnp.array([0.5, 0.5], dtype=jnp.float32)
     belief = CertifiedBeliefState(
         prior_spec=CertifiedPriorSpec(kind="uniform"),
@@ -50,12 +57,15 @@ def test_roundwise_action_family_carries_forward_coarser_shells():
     assert len(family.actions) == 37
     assert family.actions[0].is_noop is True
     assert tuple(action.action_id for action in family.actions) == tuple(range(37))
+    assert {"SH1", "SH6"}.issubset(set(family.theorem_handles))
 
 
 def test_refine_poses_certified_escalates_then_resets_support_expansion(monkeypatch):
     recorded_levels: list[int] = []
 
-    def fake_refine_round(*, coords_batch, round_index, support_expansion_level, **kwargs):
+    def fake_refine_round(
+        *, coords_batch, round_index, support_expansion_level, **kwargs
+    ):
         recorded_levels.append(support_expansion_level)
         if round_index == 0:
             return coords_batch, (_fake_state(1, jnp.array([True, True])),)

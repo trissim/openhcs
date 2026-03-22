@@ -242,9 +242,7 @@ def test_save_benchmark_results_preserves_failed_dq_errors_and_excludes_failed_r
     payload = json.loads(output_paths.json_path.read_text())
 
     failed_csv_row = next(row for row in rows if row["pdb_id"] == "2def")
-    failed_json_row = next(
-        row for row in payload["dq_dock"] if row["pdb_id"] == "2def"
-    )
+    failed_json_row = next(row for row in payload["dq_dock"] if row["pdb_id"] == "2def")
 
     assert payload["summary"]["dq_avg_rmsd"] == 1.5
     assert payload["summary"]["top_k_to_optimize"] == 7
@@ -331,7 +329,9 @@ def test_run_dq_dock_benchmark_job_passes_top_k_and_rich_rescoring_flag(
     assert result.result.success is True
 
 
-def test_run_dq_dock_threads_rich_exact_rescoring_into_config(monkeypatch, tmp_path) -> None:
+def test_run_dq_dock_threads_rich_exact_rescoring_into_config(
+    monkeypatch, tmp_path
+) -> None:
     receptor_pdb = tmp_path / "receptor.pdb"
     ligand_pdb = tmp_path / "ligand.pdb"
     receptor_pdb.write_text("")
@@ -437,7 +437,9 @@ def test_run_dq_dock_uses_canonical_top_k_to_optimize_default(
     assert result.success is True
 
 
-def test_redocking_report_excludes_failed_dq_rows_from_rmsd_and_scatter(monkeypatch, tmp_path) -> None:
+def test_redocking_report_excludes_failed_dq_rows_from_rmsd_and_scatter(
+    monkeypatch, tmp_path
+) -> None:
     payload = {
         "summary": {
             "phase": "complete",
@@ -773,7 +775,8 @@ def test_run_benchmark_explicit_pdb_ids_override_dataset_and_use_qc(
         pdb_path.write_text(f"TITLE     Example target {pdb_id.upper()}\n")
         return pdb_path
 
-    def fake_screen_complex(entry, pdb_path: Path, protein_path: Path):
+    def fake_screen_complex(entry, pdb_path: Path, protein_path: Path, **kwargs):
+        del kwargs
         seen_screened_entries.append((entry.pdb_id, entry.target_name))
         return benchmark_pdb.ScreeningDecision(
             accepted=False,

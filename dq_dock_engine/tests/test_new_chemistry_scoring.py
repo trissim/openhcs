@@ -3,10 +3,14 @@ import jax.numpy as jnp
 import numpy as np
 
 from dq_dock_engine.docking.formal_handles import (
+    attractive_directional_hbond_theorem_handles,
     contact_surrogate_theorem_handles,
     directional_hbond_finite_theorem_handles,
+    negation_invariance_theorem_handles,
     rich_chemistry_theorem_handles,
     screened_coulomb_theorem_handles,
+    support_expansion_theorem_handles,
+    topk_bridge_theorem_handles,
 )
 from dq_dock_engine.docking.scoring import (
     CertifiedContactSurrogateSpec,
@@ -50,9 +54,7 @@ def _toy_geometry():
         receptor_directions=jnp.array(
             [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float32
         ),
-        ligand_neighbor_indices=jnp.array(
-            [[0, 1], [0, 1]], dtype=jnp.int32
-        ),
+        ligand_neighbor_indices=jnp.array([[0, 1], [0, 1]], dtype=jnp.int32),
         receptor_strengths=jnp.array([0.8, 0.6], dtype=jnp.float32),
         ligand_strengths=jnp.array([0.9, 0.7], dtype=jnp.float32),
         ideal_distance=2.8,
@@ -83,7 +85,11 @@ def test_new_chemistry_handle_helpers_surface_new_theorem_families() -> None:
     assert {"HB1", "HB9", "HB10", "HB11", "HB12"}.issubset(
         set(directional_hbond_finite_theorem_handles())
     )
-    assert {"RC1", "RC10"}.issubset(set(rich_chemistry_theorem_handles()))
+    assert {"AH1", "AH8"}.issubset(set(attractive_directional_hbond_theorem_handles()))
+    assert {"NG1", "NG5"}.issubset(set(negation_invariance_theorem_handles()))
+    assert {"AR1", "AR10"}.issubset(set(rich_chemistry_theorem_handles()))
+    assert {"TK13", "TK15"}.issubset(set(topk_bridge_theorem_handles()))
+    assert {"SH1", "SH6"}.issubset(set(support_expansion_theorem_handles()))
 
 
 def test_new_chemistry_scoring_helpers_are_jit_safe() -> None:
@@ -156,7 +162,9 @@ def test_polar_surrogate_is_attractive_negative_energy() -> None:
         hbond,
     ) = _toy_geometry()
 
-    contact_batch = score_certified_contact_batch(receptor_coords, poses_coords, contact)
+    contact_batch = score_certified_contact_batch(
+        receptor_coords, poses_coords, contact
+    )
     hbond_batch = score_certified_directional_hbond_batch(
         receptor_coords, poses_coords, hbond
     )
@@ -166,10 +174,7 @@ def test_polar_surrogate_is_attractive_negative_energy() -> None:
 
     np.testing.assert_allclose(
         np.asarray(polar_batch.scores),
-        -(
-            np.asarray(contact_batch.scores)
-            + np.asarray(hbond_batch.scores)
-        ),
+        -(np.asarray(contact_batch.scores) + np.asarray(hbond_batch.scores)),
     )
     assert np.isclose(
         float(polar_batch.error_bound),

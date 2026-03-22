@@ -65,7 +65,10 @@ import DecisionQuotient.Tractability.ContactApproximation
 import DecisionQuotient.Tractability.ScreenedCoulombApproximation
 import DecisionQuotient.Tractability.NonbondedApproximation
 import DecisionQuotient.Tractability.DirectionalHBondApproximation
+import DecisionQuotient.Tractability.SignInvariance
 import DecisionQuotient.Tractability.RichChemistryApproximation
+import DecisionQuotient.Tractability.TopKLoweringBridge
+import DecisionQuotient.Tractability.SupportExpansion
 import DecisionQuotient.Tractability.CoarseApproximation
 import DecisionQuotient.Tractability.CertifiedPruning
 import DecisionQuotient.Tractability.SampledDocking
@@ -990,6 +993,20 @@ abbrev HB9 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_direct
 noncomputable abbrev HB10 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_directionalHBond_certified_top1
 noncomputable abbrev HB11 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_directionalHBond_optimizer_witness
 noncomputable abbrev HB12 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_directionalHBond_coherent_optimizer_witness
+abbrev AH1 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_uniformApprox
+abbrev AH2 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_certified_top1_sound
+noncomputable abbrev AH3 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_certified_top1
+noncomputable abbrev AH4 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_optimizer_witness
+noncomputable abbrev AH5 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_coherent_optimizer_witness
+abbrev AH6 := @Tractability.DirectionalHBondApproximation.attractiveDirectionalHBond_resolutionControlledApprox
+noncomputable abbrev AH7 := @Tractability.DirectionalHBondApproximation.attractiveDirectionalHBond_resolutionControlled_certified_top1
+noncomputable abbrev AH8 := @Tractability.DirectionalHBondApproximation.attractiveDirectionalHBond_resolutionControlled_coherent_optimizer_witness
+
+abbrev NG1 := @Tractability.SignInvariance.neg_utility_uniformApprox
+abbrev NG2 := @Tractability.SignInvariance.certified_top1_survivor_set_of_negated_uniformApprox_sound
+noncomputable abbrev NG3 := @Tractability.SignInvariance.certified_top1_survivor_set_of_negated_uniformApprox
+noncomputable abbrev NG4 := @Tractability.SignInvariance.optimizer_witness_of_negated_uniformApprox_top1
+noncomputable abbrev NG5 := @Tractability.SignInvariance.coherent_optimizer_witness_of_negated_uniformApprox_top1
 
 abbrev RC1 := @Tractability.RichChemistryApproximation.exact_vs_coarse_polarSurrogate_uniformApprox
 abbrev RC2 := @Tractability.RichChemistryApproximation.exact_vs_coarse_polarSurrogate_certified_top1_sound
@@ -1001,6 +1018,17 @@ abbrev RC7 := @Tractability.RichChemistryApproximation.exact_vs_coarse_richChemi
 noncomputable abbrev RC8 := @Tractability.RichChemistryApproximation.exact_vs_coarse_richChemistry_certified_top1
 noncomputable abbrev RC9 := @Tractability.RichChemistryApproximation.exact_vs_coarse_richChemistry_optimizer_witness
 noncomputable abbrev RC10 := @Tractability.RichChemistryApproximation.exact_vs_coarse_richChemistry_coherent_optimizer_witness
+
+abbrev AR1 := @Tractability.RichChemistryApproximation.exact_vs_coarse_attractivePolarSurrogate_uniformApprox
+abbrev AR2 := @Tractability.RichChemistryApproximation.exact_vs_coarse_attractivePolarSurrogate_certified_top1_sound
+noncomputable abbrev AR3 := @Tractability.RichChemistryApproximation.exact_vs_coarse_attractivePolarSurrogate_certified_top1
+noncomputable abbrev AR4 := @Tractability.RichChemistryApproximation.exact_vs_coarse_attractivePolarSurrogate_optimizer_witness
+noncomputable abbrev AR5 := @Tractability.RichChemistryApproximation.exact_vs_coarse_attractivePolarSurrogate_coherent_optimizer_witness
+abbrev AR6 := @Tractability.RichChemistryApproximation.exact_vs_coarse_attractiveRichChemistry_uniformApprox
+abbrev AR7 := @Tractability.RichChemistryApproximation.exact_vs_coarse_attractiveRichChemistry_certified_top1_sound
+noncomputable abbrev AR8 := @Tractability.RichChemistryApproximation.exact_vs_coarse_attractiveRichChemistry_certified_top1
+noncomputable abbrev AR9 := @Tractability.RichChemistryApproximation.exact_vs_coarse_attractiveRichChemistry_optimizer_witness
+noncomputable abbrev AR10 := @Tractability.RichChemistryApproximation.exact_vs_coarse_attractiveRichChemistry_coherent_optimizer_witness
 
 abbrev BP1 := @Tractability.finiteMinimumGap_le_strictUtilityGap
 abbrev BP2 := @Tractability.satisfiesBoundedPotential_of_tailBound_and_finiteGap
@@ -1041,6 +1069,16 @@ abbrev TK9 := @Tractability.NearTieBand.ambiguityBand_zero_eq_top1
 abbrev TK10 := @Tractability.SampledDockingCutoff.sampled_insideCutoff_sufficient
 noncomputable abbrev TK11 := @Tractability.CertifiedPruning.certificate_of_top1_coarse_ambiguityBand
 noncomputable abbrev TK12 := @Tractability.CertifiedPruning.certificate_of_exact_singleton_winner
+abbrev TK13 := @Tractability.FiniteTopK.mem_topKSet_iff_kthUtility_le
+abbrev TK14 := @Tractability.FiniteTopK.topKSet_eq_survivorSet_at_kthUtility
+abbrev TK15 := @Tractability.TopKLoweringBridge.thresholdTopKWithTiesMask_eq_topKWithTiesMask
+
+abbrev SH1 := @Tractability.SupportExpansion.roundIndex_mem_supportShellLevels
+abbrev SH2 := @Tractability.SupportExpansion.coarsestShell_mem_supportShellLevels
+abbrev SH3 := @Tractability.SupportExpansion.supportShellLevels_card
+abbrev SH4 := @Tractability.SupportExpansion.supportShellLevels_monotone
+abbrev SH5 := @Tractability.SupportExpansion.supportShellLevels_max'
+abbrev SH6 := @Tractability.SupportExpansion.mergedActionCount_eq
 
 abbrev GD1 := @Tractability.GridMDInstances.gridMDState_sufficient_erase_irrelevant
 abbrev GD2 := @Tractability.GridConvergence.resolutionControlledApprox_implies_uniformApprox

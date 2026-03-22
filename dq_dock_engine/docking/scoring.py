@@ -647,12 +647,12 @@ def _directional_hbond_pair_terms(
     unit_vectors = diffs / jnp.maximum(dists[..., None], 1e-6)
 
     receptor_dirs = _normalize_direction_vectors(receptor_directions)
-    
+
     # Calculate ligand directions from neighbors
     neighbor_coords = poses_coords[:, ligand_neighbor_indices, :]  # (B, N_lig, k, 3)
     mean_neighbor_coords = jnp.mean(neighbor_coords, axis=2)  # (B, N_lig, 3)
     ligand_directions = poses_coords - mean_neighbor_coords
-    
+
     ligand_dirs = _normalize_direction_vectors(ligand_directions)
     receptor_dirs_expanded = receptor_dirs[None, :, None, :]
     ligand_dirs_expanded = ligand_dirs[:, None, :, :]
@@ -851,7 +851,7 @@ def score_certified_directional_hbond_batch(
 
 
 @conditionally_certified(
-    "HandleAliases.lean::RC1; HandleAliases.lean::RC2; HandleAliases.lean::RC3; HandleAliases.lean::RC4; HandleAliases.lean::RC5",
+    "HandleAliases.lean::AR1; HandleAliases.lean::AR2; HandleAliases.lean::AR3; HandleAliases.lean::AR4; HandleAliases.lean::AR5",
     assumptions=[
         "The attractive runtime polar energy is exactly the negative sum of the certified contact surrogate and the certified directional H-bond surrogate signals",
         "The combined error bound is the sum of the finite-batch contact and directional H-bond discrepancy bounds",
@@ -925,7 +925,7 @@ def score_certified_lj_screened_coulomb_batch(
 
 
 @conditionally_certified(
-    "HandleAliases.lean::RC6; HandleAliases.lean::RC7; HandleAliases.lean::RC8; HandleAliases.lean::RC9; HandleAliases.lean::RC10",
+    "HandleAliases.lean::AR6; HandleAliases.lean::AR7; HandleAliases.lean::AR8; HandleAliases.lean::AR9; HandleAliases.lean::AR10",
     assumptions=[
         "The additive runtime score is exactly the sum of the certified LJ+screened-Coulomb term and the certified polar surrogate term",
         "The combined error bound is the sum of the certified nonbonded bound and the certified polar surrogate batch discrepancy bound",

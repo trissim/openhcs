@@ -27,7 +27,10 @@ import DecisionQuotient.Tractability.ContactApproximation
 import DecisionQuotient.Tractability.ScreenedCoulombApproximation
 import DecisionQuotient.Tractability.NonbondedApproximation
 import DecisionQuotient.Tractability.DirectionalHBondApproximation
+import DecisionQuotient.Tractability.SignInvariance
 import DecisionQuotient.Tractability.RichChemistryApproximation
+import DecisionQuotient.Tractability.TopKLoweringBridge
+import DecisionQuotient.Tractability.SupportExpansion
 import DecisionQuotient.Tractability.GridConvergence
 import DecisionQuotient.Tractability.CoarseApproximation
 import DecisionQuotient.Dichotomy
@@ -247,29 +250,6 @@ noncomputable def lj_screened_coulomb_cutoff_coherent_optimizer_witness
   DecisionQuotient.Tractability.NonbondedApproximation.exact_vs_cutoff_lj_screened_coulomb_coherent_optimizer_witness
     distance ε σ rcLJ q_i q_j κ rcSC s
 
-/-- Resolution-controlled directional H-bond coherent optimizer witness alias. -/
-noncomputable def directional_hbond_resolution_coherent_optimizer_witness
-    {A Scont Sgrid : Type*}
-    [Fintype A] [Fintype Sgrid] [DecidableEq A] [Nonempty A] [LinearOrder A]
-    (radialCont donorCont acceptorCont : A → Scont → ℝ)
-    (radialGrid donorGrid acceptorGrid : A → Sgrid → ℝ)
-    (lift : Sgrid → Scont)
-    (stateError : Sgrid → ℝ)
-    (Lr Ld La res : ℝ)
-    (sGrid : Sgrid)
-    (hApprox : DecisionQuotient.Tractability.GridConvergence.ResolutionControlledApprox
-      (fun a s => DecisionQuotient.Tractability.DirectionalHBondApproximation.directionalHBondScore
-        (radialCont a s) (donorCont a s) (acceptorCont a s))
-      (fun a sGrid => DecisionQuotient.Tractability.DirectionalHBondApproximation.directionalHBondScore
-        (radialGrid a sGrid) (donorGrid a sGrid) (acceptorGrid a sGrid))
-      lift (fun r => (Lr + Ld + La) * r) res)
-    (hL : 0 ≤ Lr + Ld + La)
-    (hRes : 0 ≤ res) :
-    DecisionQuotient.Tractability.FormalLocalOptimizer.CoherentOptimizerWitness A :=
-  DecisionQuotient.Tractability.DirectionalHBondApproximation.directionalHBond_resolutionControlled_coherent_optimizer_witness
-    radialCont donorCont acceptorCont radialGrid donorGrid acceptorGrid
-    lift stateError Lr Ld La res sGrid hApprox hL hRes
-
 /-- Generic finite exact-vs-coarse directional H-bond coherent optimizer witness alias. -/
 noncomputable def directional_hbond_finite_coherent_optimizer_witness
     {A S : Type*}
@@ -293,6 +273,56 @@ noncomputable def rich_chemistry_coherent_optimizer_witness
     DecisionQuotient.Tractability.FormalLocalOptimizer.CoherentOptimizerWitness A :=
   DecisionQuotient.Tractability.RichChemistryApproximation.exact_vs_coarse_richChemistry_coherent_optimizer_witness
     distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+    radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
+
+/-- Generic negation-preserving coherent optimizer witness alias. -/
+noncomputable def negated_uniform_coherent_optimizer_witness
+    {A : Type*}
+    [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uExact uCoarse : A → ℝ)
+    (delta : ℝ)
+    (hApprox : ∀ a, |uExact a - uCoarse a| ≤ delta)
+    (hDelta : 0 ≤ delta) :
+    DecisionQuotient.Tractability.FormalLocalOptimizer.CoherentOptimizerWitness A :=
+  DecisionQuotient.Tractability.SignInvariance.coherent_optimizer_witness_of_negated_uniformApprox_top1
+    uExact uCoarse delta hApprox hDelta
+
+/-- Exact-vs-coarse attractive polar surrogate coherent optimizer witness alias. -/
+noncomputable def attractive_polar_surrogate_coherent_optimizer_witness
+    {A S : Type*}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (distance : A → S → ℝ)
+    (w β rc : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) :
+    DecisionQuotient.Tractability.FormalLocalOptimizer.CoherentOptimizerWitness A :=
+  DecisionQuotient.Tractability.RichChemistryApproximation.exact_vs_coarse_attractivePolarSurrogate_coherent_optimizer_witness
+    distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
+
+/-- Exact-vs-coarse attractive rich chemistry coherent optimizer witness alias. -/
+noncomputable def attractive_rich_chemistry_coherent_optimizer_witness
+    {A S : Type*}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (distance : A → S → ℝ)
+    (ε σ rcLJ q_i q_j κ rcSC w β rcCT : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) :
+    DecisionQuotient.Tractability.FormalLocalOptimizer.CoherentOptimizerWitness A :=
+  DecisionQuotient.Tractability.RichChemistryApproximation.exact_vs_coarse_attractiveRichChemistry_coherent_optimizer_witness
+    distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+    radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
+
+/-- Exact-vs-coarse attractive directional H-bond coherent optimizer witness alias. -/
+noncomputable def attractive_directional_hbond_finite_coherent_optimizer_witness
+    {A S : Type*}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) :
+    DecisionQuotient.Tractability.FormalLocalOptimizer.CoherentOptimizerWitness A :=
+  DecisionQuotient.Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_coherent_optimizer_witness
     radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
 
 /-- Far-field Ewald correction coherent optimizer witness alias over a base scorer. -/
@@ -390,29 +420,6 @@ noncomputable def lj_screened_coulomb_cutoff_certified_top1
   DecisionQuotient.Tractability.NonbondedApproximation.exact_vs_cutoff_lj_screened_coulomb_certified_top1
     distance ε σ rcLJ q_i q_j κ rcSC s
 
-/-- Resolution-controlled directional H-bond certified top-1 survivor set alias. -/
-noncomputable def directional_hbond_resolution_certified_top1
-    {A Scont Sgrid : Type*}
-    [Fintype A] [Fintype Sgrid] [DecidableEq A] [Nonempty A]
-    (radialCont donorCont acceptorCont : A → Scont → ℝ)
-    (radialGrid donorGrid acceptorGrid : A → Sgrid → ℝ)
-    (lift : Sgrid → Scont)
-    (stateError : Sgrid → ℝ)
-    (Lr Ld La res : ℝ)
-    (sGrid : Sgrid)
-    (hApprox : DecisionQuotient.Tractability.GridConvergence.ResolutionControlledApprox
-      (fun a s => DecisionQuotient.Tractability.DirectionalHBondApproximation.directionalHBondScore
-        (radialCont a s) (donorCont a s) (acceptorCont a s))
-      (fun a sGrid => DecisionQuotient.Tractability.DirectionalHBondApproximation.directionalHBondScore
-        (radialGrid a sGrid) (donorGrid a sGrid) (acceptorGrid a sGrid))
-      lift (fun r => (Lr + Ld + La) * r) res)
-    (hL : 0 ≤ Lr + Ld + La)
-    (hRes : 0 ≤ res) :
-    DecisionQuotient.Tractability.CertifiedPruning.CertifiedSurvivorSet A :=
-  DecisionQuotient.Tractability.DirectionalHBondApproximation.directionalHBond_resolutionControlled_certified_top1
-    radialCont donorCont acceptorCont radialGrid donorGrid acceptorGrid
-    lift stateError Lr Ld La res sGrid hApprox hL hRes
-
 /-- Generic finite exact-vs-coarse directional H-bond certified top-1 survivor set alias. -/
 noncomputable def directional_hbond_finite_certified_top1
     {A S : Type*}
@@ -436,6 +443,56 @@ noncomputable def rich_chemistry_certified_top1
     DecisionQuotient.Tractability.CertifiedPruning.CertifiedSurvivorSet A :=
   DecisionQuotient.Tractability.RichChemistryApproximation.exact_vs_coarse_richChemistry_certified_top1
     distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+    radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
+
+/-- Generic negation-preserving certified top-1 survivor set alias. -/
+noncomputable def negated_uniform_certified_top1
+    {A : Type*}
+    [Fintype A] [DecidableEq A] [Nonempty A]
+    (uExact uCoarse : A → ℝ)
+    (delta : ℝ)
+    (hApprox : ∀ a, |uExact a - uCoarse a| ≤ delta)
+    (hDelta : 0 ≤ delta) :
+    DecisionQuotient.Tractability.CertifiedPruning.CertifiedSurvivorSet A :=
+  DecisionQuotient.Tractability.SignInvariance.certified_top1_survivor_set_of_negated_uniformApprox
+    uExact uCoarse delta hApprox hDelta
+
+/-- Exact-vs-coarse attractive polar surrogate certified top-1 survivor set alias. -/
+noncomputable def attractive_polar_surrogate_certified_top1
+    {A S : Type*}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ)
+    (w β rc : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) :
+    DecisionQuotient.Tractability.CertifiedPruning.CertifiedSurvivorSet A :=
+  DecisionQuotient.Tractability.RichChemistryApproximation.exact_vs_coarse_attractivePolarSurrogate_certified_top1
+    distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
+
+/-- Exact-vs-coarse attractive rich chemistry certified top-1 survivor set alias. -/
+noncomputable def attractive_rich_chemistry_certified_top1
+    {A S : Type*}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ)
+    (ε σ rcLJ q_i q_j κ rcSC w β rcCT : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) :
+    DecisionQuotient.Tractability.CertifiedPruning.CertifiedSurvivorSet A :=
+  DecisionQuotient.Tractability.RichChemistryApproximation.exact_vs_coarse_attractiveRichChemistry_certified_top1
+    distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+    radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
+
+/-- Exact-vs-coarse attractive directional H-bond certified top-1 survivor set alias. -/
+noncomputable def attractive_directional_hbond_finite_certified_top1
+    {A S : Type*}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) :
+    DecisionQuotient.Tractability.CertifiedPruning.CertifiedSurvivorSet A :=
+  DecisionQuotient.Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_certified_top1
     radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
 
 /-- Far-field Ewald correction certified top-1 survivor set alias over a base scorer. -/

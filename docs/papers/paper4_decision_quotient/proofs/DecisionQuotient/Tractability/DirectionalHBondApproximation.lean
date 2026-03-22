@@ -8,6 +8,7 @@
   itself Lipschitz with the sum of the factor constants.
 -/
 import DecisionQuotient.Tractability.GridConvergence
+import DecisionQuotient.Tractability.SignInvariance
 import Mathlib.Data.Real.Basic
 
 namespace DecisionQuotient
@@ -20,6 +21,7 @@ open FiniteTopK
 open NearTieBand
 open FormalLocalOptimizer
 open GridConvergence
+open SignInvariance
 
 universe u v
 
@@ -226,6 +228,91 @@ noncomputable def exact_vs_coarse_directionalHBond_optimizer_witness
   (exact_vs_coarse_directionalHBond_coherent_optimizer_witness
     radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s).toOptimizerWitness
 
+/-- Attractive directional H-bond energy family with fixed precomputed factor fields. -/
+noncomputable def attractiveDirectionalHBondDecisionProblem {A : Type u} {S : Type v}
+    (radial donorAngle acceptorAngle : A → S → ℝ) : DecisionProblem A S :=
+  negDecisionProblem <| directionalHBondDecisionProblem radial donorAngle acceptorAngle
+
+theorem exact_vs_coarse_attractiveDirectionalHBond_uniformApprox
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ) :
+    UniformUtilityApprox
+      (attractiveDirectionalHBondDecisionProblem radialExact donorExact acceptorExact)
+      (attractiveDirectionalHBondDecisionProblem radialCoarse donorCoarse acceptorCoarse)
+      (finiteDirectionalHBondErrorRadius radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse) := by
+  unfold attractiveDirectionalHBondDecisionProblem
+  exact neg_uniformApprox
+    (directionalHBondDecisionProblem radialExact donorExact acceptorExact)
+    (directionalHBondDecisionProblem radialCoarse donorCoarse acceptorCoarse)
+    (finiteDirectionalHBondErrorRadius radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+    (finiteDirectionalHBondErrorRadius_witnesses_uniformApprox radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+
+noncomputable def exact_vs_coarse_attractiveDirectionalHBond_certified_top1
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) : CertifiedSurvivorSet A :=
+  certified_top1_survivor_set_of_negated_uniformApprox
+    (fun a => directionalHBondDecisionProblem radialExact donorExact acceptorExact |>.utility a s)
+    (fun a => directionalHBondDecisionProblem radialCoarse donorCoarse acceptorCoarse |>.utility a s)
+    (finiteDirectionalHBondErrorRadius radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+    (fun a => finiteDirectionalHBondErrorRadius_witnesses_uniformApprox
+      radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse a s)
+    (finiteDirectionalHBondErrorRadius_nonneg radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+
+theorem exact_vs_coarse_attractiveDirectionalHBond_certified_top1_sound
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) :
+    (certificate_of_top1_coarse_ambiguityBand
+      (negUtility <| fun a => directionalHBondDecisionProblem radialExact donorExact acceptorExact |>.utility a s)
+      (negUtility <| fun a => directionalHBondDecisionProblem radialCoarse donorCoarse acceptorCoarse |>.utility a s)
+      (finiteDirectionalHBondErrorRadius radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+      (neg_utility_uniformApprox
+        (fun a => directionalHBondDecisionProblem radialExact donorExact acceptorExact |>.utility a s)
+        (fun a => directionalHBondDecisionProblem radialCoarse donorCoarse acceptorCoarse |>.utility a s)
+        (finiteDirectionalHBondErrorRadius radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+        (fun a => finiteDirectionalHBondErrorRadius_witnesses_uniformApprox
+          radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse a s))
+      (finiteDirectionalHBondErrorRadius_nonneg radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)).exactTopK
+      ⊆ (exact_vs_coarse_attractiveDirectionalHBond_certified_top1 radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s).survivors := by
+  simpa [exact_vs_coarse_attractiveDirectionalHBond_certified_top1]
+    using certified_top1_survivor_set_of_negated_uniformApprox_sound
+      (fun a => directionalHBondDecisionProblem radialExact donorExact acceptorExact |>.utility a s)
+      (fun a => directionalHBondDecisionProblem radialCoarse donorCoarse acceptorCoarse |>.utility a s)
+      (finiteDirectionalHBondErrorRadius radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+      (fun a => finiteDirectionalHBondErrorRadius_witnesses_uniformApprox
+        radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse a s)
+      (finiteDirectionalHBondErrorRadius_nonneg radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+
+noncomputable def exact_vs_coarse_attractiveDirectionalHBond_coherent_optimizer_witness
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) : CoherentOptimizerWitness A :=
+  coherent_optimizer_witness_of_negated_uniformApprox_top1
+    (fun a => directionalHBondDecisionProblem radialExact donorExact acceptorExact |>.utility a s)
+    (fun a => directionalHBondDecisionProblem radialCoarse donorCoarse acceptorCoarse |>.utility a s)
+    (finiteDirectionalHBondErrorRadius radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+    (fun a => finiteDirectionalHBondErrorRadius_witnesses_uniformApprox
+      radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse a s)
+    (finiteDirectionalHBondErrorRadius_nonneg radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+
+noncomputable def exact_vs_coarse_attractiveDirectionalHBond_optimizer_witness
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) : OptimizerWitness A :=
+  (exact_vs_coarse_attractiveDirectionalHBond_coherent_optimizer_witness
+    radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s).toOptimizerWitness
+
 /-- Factor-wise Lipschitz bounds over a grid lift imply a Lipschitz bound for the full directional H-bond surrogate. -/
 theorem directionalHBond_lipschitzUtilityApprox
     {A : Type u} {Scont : Type v} {Sgrid : Type v}
@@ -386,6 +473,92 @@ noncomputable def directionalHBond_resolutionControlled_optimizer_witness
     (hRes : 0 ≤ res) :
     OptimizerWitness A :=
   (directionalHBond_resolutionControlled_coherent_optimizer_witness
+    radialCont donorCont acceptorCont radialGrid donorGrid acceptorGrid
+    lift stateError Lr Ld La res sGrid hApprox hL hRes).toOptimizerWitness
+
+theorem attractiveDirectionalHBond_resolutionControlledApprox
+    {A : Type u} {Scont : Type v} {Sgrid : Type v}
+    (radialCont donorCont acceptorCont : A → Scont → ℝ)
+    (radialGrid donorGrid acceptorGrid : A → Sgrid → ℝ)
+    (lift : Sgrid → Scont)
+    (stateError : Sgrid → ℝ)
+    (Lr Ld La res : ℝ)
+    (hApprox : ResolutionControlledApprox
+      (fun a s => directionalHBondScore (radialCont a s) (donorCont a s) (acceptorCont a s))
+      (fun a sGrid => directionalHBondScore (radialGrid a sGrid) (donorGrid a sGrid) (acceptorGrid a sGrid))
+      lift (fun r => (Lr + Ld + La) * r) res) :
+    ResolutionControlledApprox
+      (fun a s => -(directionalHBondScore (radialCont a s) (donorCont a s) (acceptorCont a s)))
+      (fun a sGrid => -(directionalHBondScore (radialGrid a sGrid) (donorGrid a sGrid) (acceptorGrid a sGrid)))
+      lift (fun r => (Lr + Ld + La) * r) res := by
+  exact neg_resolutionControlledApprox
+    (fun a s => directionalHBondScore (radialCont a s) (donorCont a s) (acceptorCont a s))
+    (fun a sGrid => directionalHBondScore (radialGrid a sGrid) (donorGrid a sGrid) (acceptorGrid a sGrid))
+    lift (fun r => (Lr + Ld + La) * r) res hApprox
+
+noncomputable def attractiveDirectionalHBond_resolutionControlled_certified_top1
+    {A : Type u} {Scont : Type v} {Sgrid : Type v}
+    [Fintype A] [Fintype Sgrid] [DecidableEq A] [Nonempty A]
+    (radialCont donorCont acceptorCont : A → Scont → ℝ)
+    (radialGrid donorGrid acceptorGrid : A → Sgrid → ℝ)
+    (lift : Sgrid → Scont)
+    (stateError : Sgrid → ℝ)
+    (Lr Ld La res : ℝ)
+    (sGrid : Sgrid)
+    (hApprox : ResolutionControlledApprox
+      (fun a s => directionalHBondScore (radialCont a s) (donorCont a s) (acceptorCont a s))
+      (fun a sGrid => directionalHBondScore (radialGrid a sGrid) (donorGrid a sGrid) (acceptorGrid a sGrid))
+      lift (fun r => (Lr + Ld + La) * r) res)
+    (hL : 0 ≤ Lr + Ld + La)
+    (hRes : 0 ≤ res) :
+    CertifiedSurvivorSet A :=
+  resolutionControlledApprox_certified_top1
+    (fun a s => -(directionalHBondScore (radialCont a s) (donorCont a s) (acceptorCont a s)))
+    (fun a sGrid => -(directionalHBondScore (radialGrid a sGrid) (donorGrid a sGrid) (acceptorGrid a sGrid)))
+    lift (fun r => (Lr + Ld + La) * r) res sGrid
+    (attractiveDirectionalHBond_resolutionControlledApprox radialCont donorCont acceptorCont radialGrid donorGrid acceptorGrid lift stateError Lr Ld La res hApprox)
+    (mul_nonneg hL hRes)
+
+noncomputable def attractiveDirectionalHBond_resolutionControlled_coherent_optimizer_witness
+    {A : Type u} {Scont : Type v} {Sgrid : Type v}
+    [Fintype A] [Fintype Sgrid] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (radialCont donorCont acceptorCont : A → Scont → ℝ)
+    (radialGrid donorGrid acceptorGrid : A → Sgrid → ℝ)
+    (lift : Sgrid → Scont)
+    (stateError : Sgrid → ℝ)
+    (Lr Ld La res : ℝ)
+    (sGrid : Sgrid)
+    (hApprox : ResolutionControlledApprox
+      (fun a s => directionalHBondScore (radialCont a s) (donorCont a s) (acceptorCont a s))
+      (fun a sGrid => directionalHBondScore (radialGrid a sGrid) (donorGrid a sGrid) (acceptorGrid a sGrid))
+      lift (fun r => (Lr + Ld + La) * r) res)
+    (hL : 0 ≤ Lr + Ld + La)
+    (hRes : 0 ≤ res) :
+    CoherentOptimizerWitness A :=
+  resolutionControlledApprox_coherent_optimizer_witness
+    (fun a s => -(directionalHBondScore (radialCont a s) (donorCont a s) (acceptorCont a s)))
+    (fun a sGrid => -(directionalHBondScore (radialGrid a sGrid) (donorGrid a sGrid) (acceptorGrid a sGrid)))
+    lift (fun r => (Lr + Ld + La) * r) res sGrid
+    (attractiveDirectionalHBond_resolutionControlledApprox radialCont donorCont acceptorCont radialGrid donorGrid acceptorGrid lift stateError Lr Ld La res hApprox)
+    (mul_nonneg hL hRes)
+
+noncomputable def attractiveDirectionalHBond_resolutionControlled_optimizer_witness
+    {A : Type u} {Scont : Type v} {Sgrid : Type v}
+    [Fintype A] [Fintype Sgrid] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (radialCont donorCont acceptorCont : A → Scont → ℝ)
+    (radialGrid donorGrid acceptorGrid : A → Sgrid → ℝ)
+    (lift : Sgrid → Scont)
+    (stateError : Sgrid → ℝ)
+    (Lr Ld La res : ℝ)
+    (sGrid : Sgrid)
+    (hApprox : ResolutionControlledApprox
+      (fun a s => directionalHBondScore (radialCont a s) (donorCont a s) (acceptorCont a s))
+      (fun a sGrid => directionalHBondScore (radialGrid a sGrid) (donorGrid a sGrid) (acceptorGrid a sGrid))
+      lift (fun r => (Lr + Ld + La) * r) res)
+    (hL : 0 ≤ Lr + Ld + La)
+    (hRes : 0 ≤ res) :
+    OptimizerWitness A :=
+  (attractiveDirectionalHBond_resolutionControlled_coherent_optimizer_witness
     radialCont donorCont acceptorCont radialGrid donorGrid acceptorGrid
     lift stateError Lr Ld La res sGrid hApprox hL hRes).toOptimizerWitness
 

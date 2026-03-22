@@ -126,6 +126,56 @@ theorem topKSet_subset_survivorSet_of_le_kthUtility (u : A → ℝ) [Nonempty A]
   rw [mem_survivorSet_iff]
   exact le_trans hTau (kthUtility_le_of_mem_topKSet u k hk a ha)
 
+theorem strictBetterCount_mono_of_utility_le (u : A → ℝ) {a b : A}
+    (hUtility : u b ≤ u a) :
+    strictBetterCount u a ≤ strictBetterCount u b := by
+  classical
+  unfold strictBetterCount
+  refine Finset.card_le_card ?_
+  intro c hc
+  simp only [Finset.mem_filter, Finset.mem_univ, true_and] at hc ⊢
+  exact lt_of_le_of_lt hUtility hc
+
+theorem lt_kthUtility_of_not_mem_topKSet (u : A → ℝ) [Nonempty A]
+    (k : Nat) (hk : 0 < k) (a : A)
+    (ha : a ∉ topKSet u k) :
+    u a < kthUtility u k hk := by
+  classical
+  have hCount : k ≤ strictBetterCount u a := by
+    rw [topKSet, not_mem_topKWithTies_iff] at ha
+    exact ha
+  by_contra hNot
+  have hKthLe : kthUtility u k hk ≤ u a := le_of_not_gt hNot
+  have hTopMem : kthUtility u k hk ∈ (topKSet u k).image u := by
+    unfold kthUtility
+    exact Finset.min'_mem _ _
+  rcases Finset.mem_image.mp hTopMem with ⟨b, hbTop, hbEq⟩
+  have hUtility : u b ≤ u a := by
+    simpa [hbEq] using hKthLe
+  have hCountB : k ≤ strictBetterCount u b :=
+    le_trans hCount (strictBetterCount_mono_of_utility_le u hUtility)
+  have hbCount : strictBetterCount u b < k := by
+    rw [mem_topKSet_iff] at hbTop
+    exact hbTop
+  omega
+
+theorem mem_topKSet_iff_kthUtility_le (u : A → ℝ) [Nonempty A]
+    (k : Nat) (hk : 0 < k) (a : A) :
+    a ∈ topKSet u k ↔ kthUtility u k hk ≤ u a := by
+  constructor
+  · intro ha
+    exact kthUtility_le_of_mem_topKSet u k hk a ha
+  · intro hLe
+    by_contra ha
+    have hLt : u a < kthUtility u k hk := lt_kthUtility_of_not_mem_topKSet u k hk a ha
+    linarith
+
+theorem topKSet_eq_survivorSet_at_kthUtility (u : A → ℝ) [Nonempty A]
+    (k : Nat) (hk : 0 < k) :
+    topKSet u k = survivorSet u (kthUtility u k hk) := by
+  ext a
+  rw [mem_survivorSet_iff, mem_topKSet_iff_kthUtility_le u k hk a]
+
 end FiniteTopK
 end Tractability
 end DecisionQuotient

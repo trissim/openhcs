@@ -308,6 +308,19 @@ HB9 = "HB9"
 HB10 = "HB10"
 HB11 = "HB11"
 HB12 = "HB12"
+AH1 = "AH1"
+AH2 = "AH2"
+AH3 = "AH3"
+AH4 = "AH4"
+AH5 = "AH5"
+AH6 = "AH6"
+AH7 = "AH7"
+AH8 = "AH8"
+NG1 = "NG1"
+NG2 = "NG2"
+NG3 = "NG3"
+NG4 = "NG4"
+NG5 = "NG5"
 RC1 = "RC1"
 RC2 = "RC2"
 RC3 = "RC3"
@@ -318,6 +331,16 @@ RC7 = "RC7"
 RC8 = "RC8"
 RC9 = "RC9"
 RC10 = "RC10"
+AR1 = "AR1"
+AR2 = "AR2"
+AR3 = "AR3"
+AR4 = "AR4"
+AR5 = "AR5"
+AR6 = "AR6"
+AR7 = "AR7"
+AR8 = "AR8"
+AR9 = "AR9"
+AR10 = "AR10"
 BP1 = "BP1"
 BP2 = "BP2"
 BP3 = "BP3"
@@ -354,6 +377,15 @@ TK9 = "TK9"
 TK10 = "TK10"
 TK11 = "TK11"
 TK12 = "TK12"
+TK13 = "TK13"
+TK14 = "TK14"
+TK15 = "TK15"
+SH1 = "SH1"
+SH2 = "SH2"
+SH3 = "SH3"
+SH4 = "SH4"
+SH5 = "SH5"
+SH6 = "SH6"
 GD1 = "GD1"
 GD2 = "GD2"
 GD3 = "GD3"
@@ -1090,6 +1122,19 @@ __all__ = [
     "HB10",
     "HB11",
     "HB12",
+    "AH1",
+    "AH2",
+    "AH3",
+    "AH4",
+    "AH5",
+    "AH6",
+    "AH7",
+    "AH8",
+    "NG1",
+    "NG2",
+    "NG3",
+    "NG4",
+    "NG5",
     "RC1",
     "RC2",
     "RC3",
@@ -1100,6 +1145,16 @@ __all__ = [
     "RC8",
     "RC9",
     "RC10",
+    "AR1",
+    "AR2",
+    "AR3",
+    "AR4",
+    "AR5",
+    "AR6",
+    "AR7",
+    "AR8",
+    "AR9",
+    "AR10",
     "BP1",
     "BP2",
     "BP3",
@@ -1136,6 +1191,15 @@ __all__ = [
     "TK10",
     "TK11",
     "TK12",
+    "TK13",
+    "TK14",
+    "TK15",
+    "SH1",
+    "SH2",
+    "SH3",
+    "SH4",
+    "SH5",
+    "SH6",
     "GD1",
     "GD2",
     "GD3",

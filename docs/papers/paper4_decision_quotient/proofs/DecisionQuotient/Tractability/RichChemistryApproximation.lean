@@ -10,6 +10,7 @@
 import DecisionQuotient.Tractability.NonbondedApproximation
 import DecisionQuotient.Tractability.ContactApproximation
 import DecisionQuotient.Tractability.DirectionalHBondApproximation
+import DecisionQuotient.Tractability.SignInvariance
 
 namespace DecisionQuotient
 namespace Tractability
@@ -23,6 +24,7 @@ open FormalLocalOptimizer
 open NonbondedApproximation
 open ContactApproximation
 open DirectionalHBondApproximation
+open SignInvariance
 
 universe u v
 
@@ -162,6 +164,139 @@ noncomputable def exact_vs_coarse_polarSurrogate_optimizer_witness {A : Type u} 
     (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
     (s : S) : OptimizerWitness A :=
   (exact_vs_coarse_polarSurrogate_coherent_optimizer_witness
+    distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s).toOptimizerWitness
+
+/-- Attractive polar energy family: the negative of the positive contact/H-bond compatibility surrogate. -/
+noncomputable def exactAttractivePolarSurrogateDecisionProblem {A : Type u} {S : Type v}
+    (distance : A → S → ℝ)
+    (w β : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ) : DecisionProblem A S :=
+  negDecisionProblem <|
+    exactPolarSurrogateDecisionProblem distance w β radialExact donorExact acceptorExact
+
+noncomputable def coarseAttractivePolarSurrogateDecisionProblem {A : Type u} {S : Type v}
+    (distance : A → S → ℝ)
+    (w β rc : ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ) : DecisionProblem A S :=
+  negDecisionProblem <|
+    coarsePolarSurrogateDecisionProblem distance w β rc radialCoarse donorCoarse acceptorCoarse
+
+noncomputable def attractivePolarSurrogateErrorRadius {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ)
+    (w β rc : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ) : ℝ :=
+  polarSurrogateErrorRadius
+    distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse
+
+theorem exact_vs_coarse_attractivePolarSurrogate_uniformApprox {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ)
+    (w β rc : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ) :
+    UniformUtilityApprox
+      (exactAttractivePolarSurrogateDecisionProblem distance w β radialExact donorExact acceptorExact)
+      (coarseAttractivePolarSurrogateDecisionProblem distance w β rc radialCoarse donorCoarse acceptorCoarse)
+      (attractivePolarSurrogateErrorRadius
+        distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse) := by
+  unfold exactAttractivePolarSurrogateDecisionProblem coarseAttractivePolarSurrogateDecisionProblem attractivePolarSurrogateErrorRadius
+  exact neg_uniformApprox
+    (exactPolarSurrogateDecisionProblem distance w β radialExact donorExact acceptorExact)
+    (coarsePolarSurrogateDecisionProblem distance w β rc radialCoarse donorCoarse acceptorCoarse)
+    (polarSurrogateErrorRadius
+      distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+    (exact_vs_coarse_polarSurrogate_uniformApprox
+      distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+
+theorem attractivePolarSurrogateErrorRadius_nonneg {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ)
+    (w β rc : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ) :
+    0 ≤ attractivePolarSurrogateErrorRadius
+      distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse := by
+  exact polarSurrogateErrorRadius_nonneg
+    distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse
+
+noncomputable def exact_vs_coarse_attractivePolarSurrogate_certified_top1 {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ)
+    (w β rc : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) : CertifiedSurvivorSet A :=
+  certified_top1_survivor_set_of_negated_uniformApprox
+    (fun a => exactPolarSurrogateDecisionProblem distance w β radialExact donorExact acceptorExact |>.utility a s)
+    (fun a => coarsePolarSurrogateDecisionProblem distance w β rc radialCoarse donorCoarse acceptorCoarse |>.utility a s)
+    (attractivePolarSurrogateErrorRadius
+      distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+    (fun a => exact_vs_coarse_polarSurrogate_uniformApprox
+      distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse a s)
+    (attractivePolarSurrogateErrorRadius_nonneg
+      distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+
+theorem exact_vs_coarse_attractivePolarSurrogate_certified_top1_sound {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ)
+    (w β rc : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) :
+    (certificate_of_top1_coarse_ambiguityBand
+      (negUtility <| fun a => exactPolarSurrogateDecisionProblem distance w β radialExact donorExact acceptorExact |>.utility a s)
+      (negUtility <| fun a => coarsePolarSurrogateDecisionProblem distance w β rc radialCoarse donorCoarse acceptorCoarse |>.utility a s)
+      (attractivePolarSurrogateErrorRadius
+        distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+      (neg_utility_uniformApprox
+        (fun a => exactPolarSurrogateDecisionProblem distance w β radialExact donorExact acceptorExact |>.utility a s)
+        (fun a => coarsePolarSurrogateDecisionProblem distance w β rc radialCoarse donorCoarse acceptorCoarse |>.utility a s)
+        (attractivePolarSurrogateErrorRadius
+          distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+        (fun a => exact_vs_coarse_polarSurrogate_uniformApprox
+          distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse a s))
+      (attractivePolarSurrogateErrorRadius_nonneg
+        distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)).exactTopK
+      ⊆ (exact_vs_coarse_attractivePolarSurrogate_certified_top1
+        distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s).survivors := by
+  simpa [exact_vs_coarse_attractivePolarSurrogate_certified_top1]
+    using certified_top1_survivor_set_of_negated_uniformApprox_sound
+      (fun a => exactPolarSurrogateDecisionProblem distance w β radialExact donorExact acceptorExact |>.utility a s)
+      (fun a => coarsePolarSurrogateDecisionProblem distance w β rc radialCoarse donorCoarse acceptorCoarse |>.utility a s)
+      (attractivePolarSurrogateErrorRadius
+        distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+      (fun a => exact_vs_coarse_polarSurrogate_uniformApprox
+        distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse a s)
+      (attractivePolarSurrogateErrorRadius_nonneg
+        distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+
+noncomputable def exact_vs_coarse_attractivePolarSurrogate_coherent_optimizer_witness {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (distance : A → S → ℝ)
+    (w β rc : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) : CoherentOptimizerWitness A :=
+  coherent_optimizer_witness_of_negated_uniformApprox_top1
+    (fun a => exactPolarSurrogateDecisionProblem distance w β radialExact donorExact acceptorExact |>.utility a s)
+    (fun a => coarsePolarSurrogateDecisionProblem distance w β rc radialCoarse donorCoarse acceptorCoarse |>.utility a s)
+    (attractivePolarSurrogateErrorRadius
+      distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+    (fun a => exact_vs_coarse_polarSurrogate_uniformApprox
+      distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse a s)
+    (attractivePolarSurrogateErrorRadius_nonneg
+      distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+
+noncomputable def exact_vs_coarse_attractivePolarSurrogate_optimizer_witness {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (distance : A → S → ℝ)
+    (w β rc : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) : OptimizerWitness A :=
+  (exact_vs_coarse_attractivePolarSurrogate_coherent_optimizer_witness
     distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s).toOptimizerWitness
 
 /-- Full exact/coarse rich chemistry family: LJ + screened Coulomb + contact + directional H-bond. -/
@@ -315,6 +450,157 @@ noncomputable def exact_vs_coarse_richChemistry_optimizer_witness {A : Type u} {
     (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
     (s : S) : OptimizerWitness A :=
   (exact_vs_coarse_richChemistry_coherent_optimizer_witness
+    distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+    radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s).toOptimizerWitness
+
+/-- Full exact/coarse attractive rich chemistry family: LJ + screened Coulomb + attractive polar surrogate. -/
+noncomputable def exactAttractiveRichChemistryDecisionProblem {A : Type u} {S : Type v}
+    (distance : A → S → ℝ)
+    (ε σ q_i q_j κ w β : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ) : DecisionProblem A S :=
+  sumDecisionProblems
+    (exactLJScreenedCoulombDecisionProblem distance ε σ q_i q_j κ)
+    (exactAttractivePolarSurrogateDecisionProblem distance w β radialExact donorExact acceptorExact)
+
+noncomputable def coarseAttractiveRichChemistryDecisionProblem {A : Type u} {S : Type v}
+    (distance : A → S → ℝ)
+    (ε σ rcLJ q_i q_j κ rcSC w β rcCT : ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ) : DecisionProblem A S :=
+  sumDecisionProblems
+    (cutoffLJScreenedCoulombDecisionProblem distance ε σ rcLJ q_i q_j κ rcSC)
+    (coarseAttractivePolarSurrogateDecisionProblem distance w β rcCT radialCoarse donorCoarse acceptorCoarse)
+
+noncomputable def attractiveRichChemistryErrorRadius {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ)
+    (ε σ rcLJ q_i q_j κ rcSC w β rcCT : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ) : ℝ :=
+  richChemistryErrorRadius
+    distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+    radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse
+
+theorem exact_vs_coarse_attractiveRichChemistry_uniformApprox {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ)
+    (ε σ rcLJ q_i q_j κ rcSC w β rcCT : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ) :
+    UniformUtilityApprox
+      (exactAttractiveRichChemistryDecisionProblem distance ε σ q_i q_j κ w β radialExact donorExact acceptorExact)
+      (coarseAttractiveRichChemistryDecisionProblem distance ε σ rcLJ q_i q_j κ rcSC w β rcCT radialCoarse donorCoarse acceptorCoarse)
+      (attractiveRichChemistryErrorRadius
+        distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+        radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse) := by
+  unfold exactAttractiveRichChemistryDecisionProblem coarseAttractiveRichChemistryDecisionProblem attractiveRichChemistryErrorRadius
+  exact sum_uniformApprox
+    (exactLJScreenedCoulombDecisionProblem distance ε σ q_i q_j κ)
+    (cutoffLJScreenedCoulombDecisionProblem distance ε σ rcLJ q_i q_j κ rcSC)
+    (exactAttractivePolarSurrogateDecisionProblem distance w β radialExact donorExact acceptorExact)
+    (coarseAttractivePolarSurrogateDecisionProblem distance w β rcCT radialCoarse donorCoarse acceptorCoarse)
+    (ljScreenedCoulombCutoffErrorRadius distance ε σ rcLJ q_i q_j κ rcSC)
+    (attractivePolarSurrogateErrorRadius
+      distance w β rcCT radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+    (exact_vs_cutoff_lj_screened_coulomb_uniformApprox distance ε σ rcLJ q_i q_j κ rcSC)
+    (exact_vs_coarse_attractivePolarSurrogate_uniformApprox
+      distance w β rcCT radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+
+theorem attractiveRichChemistryErrorRadius_nonneg {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ)
+    (ε σ rcLJ q_i q_j κ rcSC w β rcCT : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ) :
+    0 ≤ attractiveRichChemistryErrorRadius
+      distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+      radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse := by
+  exact richChemistryErrorRadius_nonneg
+    distance ε σ rcLJ q_i q_j κ rcSC w β rcCT radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse
+
+noncomputable def exact_vs_coarse_attractiveRichChemistry_certified_top1 {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ)
+    (ε σ rcLJ q_i q_j κ rcSC w β rcCT : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) : CertifiedSurvivorSet A :=
+  certified_top1_survivor_set_of_uniformApprox
+    (fun a => exactAttractiveRichChemistryDecisionProblem distance ε σ q_i q_j κ w β radialExact donorExact acceptorExact |>.utility a s)
+    (fun a => coarseAttractiveRichChemistryDecisionProblem distance ε σ rcLJ q_i q_j κ rcSC w β rcCT radialCoarse donorCoarse acceptorCoarse |>.utility a s)
+    (attractiveRichChemistryErrorRadius
+      distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+      radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+    (fun a => exact_vs_coarse_attractiveRichChemistry_uniformApprox
+      distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+      radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse a s)
+    (attractiveRichChemistryErrorRadius_nonneg
+      distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+      radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+
+theorem exact_vs_coarse_attractiveRichChemistry_certified_top1_sound {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ)
+    (ε σ rcLJ q_i q_j κ rcSC w β rcCT : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) :
+    (certificate_of_top1_coarse_ambiguityBand
+      (fun a => exactAttractiveRichChemistryDecisionProblem distance ε σ q_i q_j κ w β radialExact donorExact acceptorExact |>.utility a s)
+      (fun a => coarseAttractiveRichChemistryDecisionProblem distance ε σ rcLJ q_i q_j κ rcSC w β rcCT radialCoarse donorCoarse acceptorCoarse |>.utility a s)
+      (attractiveRichChemistryErrorRadius
+        distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+        radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+      (fun a => exact_vs_coarse_attractiveRichChemistry_uniformApprox
+        distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+        radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse a s)
+      (attractiveRichChemistryErrorRadius_nonneg
+        distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+        radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)).exactTopK
+      ⊆ (exact_vs_coarse_attractiveRichChemistry_certified_top1
+        distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+        radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s).survivors := by
+  simpa [exact_vs_coarse_attractiveRichChemistry_certified_top1]
+    using certified_top1_survivor_set_of_uniformApprox_sound
+      (fun a => exactAttractiveRichChemistryDecisionProblem distance ε σ q_i q_j κ w β radialExact donorExact acceptorExact |>.utility a s)
+      (fun a => coarseAttractiveRichChemistryDecisionProblem distance ε σ rcLJ q_i q_j κ rcSC w β rcCT radialCoarse donorCoarse acceptorCoarse |>.utility a s)
+      (attractiveRichChemistryErrorRadius
+        distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+        radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+      (fun a => exact_vs_coarse_attractiveRichChemistry_uniformApprox
+        distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+        radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse a s)
+      (attractiveRichChemistryErrorRadius_nonneg
+        distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+        radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+
+noncomputable def exact_vs_coarse_attractiveRichChemistry_coherent_optimizer_witness {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (distance : A → S → ℝ)
+    (ε σ rcLJ q_i q_j κ rcSC w β rcCT : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) : CoherentOptimizerWitness A :=
+  coherent_optimizer_witness_of_uniformApprox_top1
+    (fun a => exactAttractiveRichChemistryDecisionProblem distance ε σ q_i q_j κ w β radialExact donorExact acceptorExact |>.utility a s)
+    (fun a => coarseAttractiveRichChemistryDecisionProblem distance ε σ rcLJ q_i q_j κ rcSC w β rcCT radialCoarse donorCoarse acceptorCoarse |>.utility a s)
+    (attractiveRichChemistryErrorRadius
+      distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+      radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+    (fun a => exact_vs_coarse_attractiveRichChemistry_uniformApprox
+      distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+      radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse a s)
+    (attractiveRichChemistryErrorRadius_nonneg
+      distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
+      radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse)
+
+noncomputable def exact_vs_coarse_attractiveRichChemistry_optimizer_witness {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
+    (distance : A → S → ℝ)
+    (ε σ rcLJ q_i q_j κ rcSC w β rcCT : ℝ)
+    (radialExact donorExact acceptorExact : A → S → ℝ)
+    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (s : S) : OptimizerWitness A :=
+  (exact_vs_coarse_attractiveRichChemistry_coherent_optimizer_witness
     distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
     radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s).toOptimizerWitness
 

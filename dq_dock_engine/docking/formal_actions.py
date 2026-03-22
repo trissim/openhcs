@@ -12,6 +12,7 @@ from dq_dock_engine.arraydsl import (
     localRotationStencil3D,
     localTranslationStencil3D,
 )
+from dq_dock_engine.docking.formal_handles import support_expansion_theorem_handles
 from dq_dock_engine.physics.kernels import rigid_transform_3d
 
 
@@ -30,7 +31,12 @@ class CertifiedLocalAction:
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        return cls(action_id=aux_data[0], translation_delta=children[0], quaternion_delta=children[1], is_noop=aux_data[1])
+        return cls(
+            action_id=aux_data[0],
+            translation_delta=children[0],
+            quaternion_delta=children[1],
+            is_noop=aux_data[1],
+        )
 
 
 @register_pytree_node_class
@@ -43,6 +49,7 @@ class CertifiedActionFamily:
     rotation_step_rad: float
     stencil_level: int
     support_shell_levels: tuple[int, ...]
+    theorem_handles: tuple[str, ...] = ()
 
     def tree_flatten(self):
         children = (self.actions, self.translation_deltas, self.quaternion_deltas)
@@ -51,6 +58,7 @@ class CertifiedActionFamily:
             self.rotation_step_rad,
             self.stencil_level,
             self.support_shell_levels,
+            self.theorem_handles,
         )
         return (children, aux_data)
 
@@ -124,6 +132,7 @@ def _cached_action_family(
         rotation_step_rad=rotation_step_rad,
         stencil_level=stencil_level,
         support_shell_levels=(stencil_level,),
+        theorem_handles=support_expansion_theorem_handles(),
     )
 
 
@@ -176,6 +185,7 @@ def merge_certified_action_families(
         rotation_step_rad=max(family.rotation_step_rad for family in families),
         stencil_level=max(merged_shell_levels),
         support_shell_levels=tuple(merged_shell_levels),
+        theorem_handles=support_expansion_theorem_handles(),
     )
 
 
@@ -191,9 +201,7 @@ def create_roundwise_certified_action_family(
         raise ValueError("support_expansion_level must be non-negative")
 
     coarser_shell_count = min(round_index, support_expansion_level)
-    shell_levels = tuple(
-        range(round_index, round_index - coarser_shell_count - 1, -1)
-    )
+    shell_levels = tuple(range(round_index, round_index - coarser_shell_count - 1, -1))
     families = tuple(
         create_certified_action_family(
             translation_step=base_translation_step / (2**shell_level),
