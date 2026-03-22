@@ -60,7 +60,7 @@ theorem thermalWidth_pos (kT k : ℝ) (hkT_pos : 0 < kT) (hk_pos : 0 < k) :
     0 < thermalWidth kT k := by
   unfold thermalWidth
   rw [sqrt_pos]
-  exact div_nonneg (le_of_lt hkT_pos) (le_of_lt hk_pos)
+  exact div_pos hkT_pos hk_pos
 
 /-- For H-bonds at physiological temperature:
     σ_hbond = √(0.616 / 1.0) ≈ 0.785 ≈ 0.8 Å -/
@@ -85,8 +85,9 @@ theorem harmonicBoltzmann_as_gaussian
   congr 1
   have h_sq : (sqrt (kT / k)) ^ 2 = kT / k := sq_sqrt (div_nonneg (le_of_lt hkT_pos) (le_of_lt hk_pos))
   rw [h_sq]
-  field_simp
-  ring
+  have hk_ne : k ≠ 0 := ne_of_gt hk_pos
+  have hkT_ne : kT ≠ 0 := ne_of_gt hkT_pos
+  field_simp [hk_ne, hkT_ne]
 
 /-! ### Derivation of Implementation Values -/
 
@@ -126,12 +127,15 @@ theorem metal_to_hbond_width_ratio
   unfold thermalWidth
   have hk_hbond_pos : 0 < k_hbond := by unfold k_hbond; positivity
   have hk_metal_pos : 0 < k_metal := by unfold k_metal; positivity
-  rw [sqrt_div (le_of_lt hkT_pos), sqrt_div (le_of_lt hkT_pos)]
-  have h1 : sqrt kT / sqrt k_metal / (sqrt kT / sqrt k_hbond) = 
-            sqrt k_hbond / sqrt k_metal := by
-    field_simp
-    ring
-  rw [h1, sqrt_div (le_of_lt hk_hbond_pos)]
+  have hkT_nonneg := le_of_lt hkT_pos
+  have hk_hbond_nonneg := le_of_lt hk_hbond_pos
+  have hk_metal_nonneg := le_of_lt hk_metal_pos
+  have hsqrt_kT_ne : sqrt kT ≠ 0 := ne_of_gt (sqrt_pos.mpr hkT_pos)
+  have hsqrt_hbond_ne : sqrt k_hbond ≠ 0 := ne_of_gt (sqrt_pos.mpr hk_hbond_pos)
+  have hsqrt_metal_ne : sqrt k_metal ≠ 0 := ne_of_gt (sqrt_pos.mpr hk_metal_pos)
+  rw [sqrt_div hkT_nonneg, sqrt_div hkT_nonneg]
+  rw [sqrt_div hk_hbond_nonneg]
+  field_simp [hsqrt_kT_ne, hsqrt_hbond_ne, hsqrt_metal_ne]
 
 /-! ### Numerical Verification (for documentation)
 

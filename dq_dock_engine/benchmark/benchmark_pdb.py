@@ -31,6 +31,7 @@ import json
 import math
 import multiprocessing as mp
 import os
+import queue
 import subprocess
 import sys
 import tempfile
@@ -41,7 +42,7 @@ from typing import List, Literal, Optional, Sequence, Union, cast
 import urllib.request
 import gzip
 import shutil
-from typing import Callable, Generic, Iterator, TypeVar
+from typing import Any, Callable, Generic, Iterator, TypeVar
 from typing import TYPE_CHECKING
 import zlib
 
@@ -2545,6 +2546,39 @@ def _dq_job_worker(
         queue.put(exc)
 
 
+def _dq_job_worker_loop(
+    job_queue: mp.Queue,
+    result_queue: mp.Queue,
+) -> None:
+    while True:
+        job = job_queue.get()
+        if job is None:
+            return
+        try:
+            result_queue.put(("result", run_dq_dock_benchmark_job(job)))
+        except BaseException as exc:  # pragma: no cover - subprocess boundary
+            result_queue.put(("error", exc))
+
+
+def _timed_out_dq_job_result(
+    job: DQDockBenchmarkJob,
+    timeout_seconds: float,
+) -> DQDockBenchmarkJobResult:
+    return DQDockBenchmarkJobResult(
+        complex_entry=job.complex_entry,
+        result=BenchmarkResult(
+            success=False,
+            energy=0.0,
+            rmsd=0.0,
+            time=timeout_seconds,
+            n_atoms=0,
+            formal_status=f"timeout after {timeout_seconds:.1f}s",
+            error=f"timeout after {timeout_seconds:.1f}s",
+        ),
+        dq_pose_coords=None,
+    )
+
+
 def run_dq_dock_benchmark_job_with_timeout(
     job: DQDockBenchmarkJob,
     timeout_seconds: float,
@@ -2557,25 +2591,143 @@ def run_dq_dock_benchmark_job_with_timeout(
     if process.is_alive():
         process.terminate()
         process.join()
-        return DQDockBenchmarkJobResult(
-            complex_entry=job.complex_entry,
-            result=BenchmarkResult(
-                success=False,
-                energy=0.0,
-                rmsd=0.0,
-                time=timeout_seconds,
-                n_atoms=0,
-                formal_status=f"timeout after {timeout_seconds:.1f}s",
-                error=f"timeout after {timeout_seconds:.1f}s",
-            ),
-            dq_pose_coords=None,
-        )
+        return _timed_out_dq_job_result(job, timeout_seconds)
     payload = queue.get() if not queue.empty() else None
     if isinstance(payload, BaseException):
         raise payload
     if payload is None:
         raise RuntimeError("DQ-Dock timeout worker exited without returning a result")
     return payload
+
+
+class _PersistentDQDockTimeoutWorker:
+    def __init__(self, ctx: Any):
+        self._ctx = ctx
+        self._job_queue: mp.Queue = ctx.Queue()
+        self._result_queue: mp.Queue = ctx.Queue()
+        self._process: mp.Process | None = None
+        self._current_job: DQDockBenchmarkJob | None = None
+        self._job_started_at: float | None = None
+        self.start()
+
+    @property
+    def current_job(self) -> DQDockBenchmarkJob | None:
+        return self._current_job
+
+    @property
+    def job_started_at(self) -> float | None:
+        return self._job_started_at
+
+    @property
+    def is_idle(self) -> bool:
+        return self._current_job is None
+
+    def start(self) -> None:
+        process = self._ctx.Process(
+            target=_dq_job_worker_loop,
+            args=(self._job_queue, self._result_queue),
+        )
+        process.start()
+        self._process = process
+
+    def restart(self) -> None:
+        self.stop()
+        self._job_queue = self._ctx.Queue()
+        self._result_queue = self._ctx.Queue()
+        self._current_job = None
+        self._job_started_at = None
+        self.start()
+
+    def stop(self) -> None:
+        if self._process is None:
+            return
+        if self._process.is_alive():
+            try:
+                self._job_queue.put(None)
+                self._process.join(timeout=1.0)
+            except BaseException:
+                pass
+        if self._process.is_alive():
+            self._process.terminate()
+            self._process.join()
+        self._process = None
+
+    def submit(self, job: DQDockBenchmarkJob) -> None:
+        if not self.is_idle:
+            raise RuntimeError("cannot submit a new job to a busy timeout worker")
+        self._current_job = job
+        self._job_started_at = time.monotonic()
+        self._job_queue.put(job)
+
+    def poll_result(self) -> DQDockBenchmarkJobResult | BaseException | None:
+        try:
+            kind, payload = self._result_queue.get_nowait()
+        except queue.Empty:
+            return None
+        self._current_job = None
+        self._job_started_at = None
+        if kind == "error":
+            return cast(BaseException, payload)
+        return cast(DQDockBenchmarkJobResult, payload)
+
+    def has_timed_out(self, timeout_seconds: float) -> bool:
+        if self._current_job is None or self._job_started_at is None:
+            return False
+        return (time.monotonic() - self._job_started_at) > timeout_seconds
+
+
+def iter_dq_dock_benchmark_jobs_with_persistent_timeout(
+    jobs: Sequence[DQDockBenchmarkJob],
+    *,
+    timeout_seconds: float,
+    parallelism: BenchmarkParallelism,
+) -> Iterator[DQDockBenchmarkJobResult]:
+    ctx = mp.get_context(DEFAULT_BENCHMARK_PROCESS_START_METHOD)
+    worker_count = parallelism.max_workers if parallelism.is_parallel else 1
+    workers = [_PersistentDQDockTimeoutWorker(ctx) for _ in range(worker_count)]
+    pending_jobs = iter(jobs)
+    active_workers = 0
+
+    def try_submit(worker: _PersistentDQDockTimeoutWorker) -> bool:
+        nonlocal active_workers
+        if not worker.is_idle:
+            return False
+        try:
+            job = next(pending_jobs)
+        except StopIteration:
+            return False
+        worker.submit(job)
+        active_workers += 1
+        return True
+
+    try:
+        for worker in workers:
+            try_submit(worker)
+        while active_workers > 0:
+            progressed = False
+            for worker in workers:
+                payload = worker.poll_result()
+                if payload is not None:
+                    active_workers -= 1
+                    progressed = True
+                    if isinstance(payload, BaseException):
+                        raise payload
+                    yield payload
+                    try_submit(worker)
+                    continue
+                current_job = worker.current_job
+                if current_job is not None and worker.has_timed_out(timeout_seconds):
+                    active_workers -= 1
+                    progressed = True
+                    timed_out_job = current_job
+                    worker.restart()
+                    yield _timed_out_dq_job_result(timed_out_job, timeout_seconds)
+                    try_submit(worker)
+            if not progressed:
+                time.sleep(0.05)
+    finally:
+        for worker in workers:
+            worker.stop()
 
 
 class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
@@ -2604,14 +2756,16 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
             self._build_job(complex_entry, context) for complex_entry in complexes
         )
         timeout_seconds = context.attempt_timeout_seconds
-        run_job = (
-            (lambda job: run_dq_dock_benchmark_job_with_timeout(job, timeout_seconds))
-            if timeout_seconds is not None
-            else run_dq_dock_benchmark_job
-        )
+        if timeout_seconds is not None:
+            yield from iter_dq_dock_benchmark_jobs_with_persistent_timeout(
+                jobs,
+                timeout_seconds=timeout_seconds,
+                parallelism=context.parallelism,
+            )
+            return
         for job_result in execute_benchmark_jobs(
             jobs,
-            run_job=run_job,
+            run_job=run_dq_dock_benchmark_job,
             parallelism=context.parallelism,
         ):
             yield job_result

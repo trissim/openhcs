@@ -9,7 +9,8 @@ PROOF STATUS SUMMARY:
   - route_scoring: HEURISTIC (dispatch only)
 """
 
-from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import List, Dict, Callable, Union
 import os
 import subprocess
@@ -90,7 +91,9 @@ def certified_realspace_ewald_error_bound(
 # This provides PHYSICAL justification for why 12Å works for non-metal systems:
 # they're not pure Coulomb, they're weakly screened Coulomb.
 
-KAPPA_PHYSIOLOGICAL = 0.128  # Å⁻¹, Debye-Hückel screening at physiological ionic strength
+KAPPA_PHYSIOLOGICAL = (
+    0.128  # Å⁻¹, Debye-Hückel screening at physiological ionic strength
+)
 
 
 def screened_coulomb_min_cutoff(
@@ -341,9 +344,47 @@ class CertifiedScreenedCoulombSpec:
         )
 
 
+class CertifiedOptionalInteractionTerm(ABC):
+    @abstractmethod
+    def validate(self) -> None:
+        """Fail-loud validation for the interaction term."""
+
+    @abstractmethod
+    def receptor_subset(
+        self, indices: jnp.ndarray
+    ) -> "CertifiedOptionalInteractionTerm":
+        """Return the term restricted to a retained receptor subset."""
+
+    @property
+    @abstractmethod
+    def is_active(self) -> jnp.ndarray:
+        """Whether this optional interaction contributes non-zero signal."""
+
+    @property
+    @abstractmethod
+    def cutoff_radius(self) -> float:
+        """Certified cutoff radius for the coarse interaction family."""
+
+    @abstractmethod
+    def exact_scores(
+        self,
+        receptor_coords: jnp.ndarray,
+        poses_coords: jnp.ndarray,
+    ) -> jnp.ndarray:
+        """Return exact batched scores for this interaction family."""
+
+    @abstractmethod
+    def cutoff_scores(
+        self,
+        receptor_coords: jnp.ndarray,
+        poses_coords: jnp.ndarray,
+    ) -> jnp.ndarray:
+        """Return cutoff batched scores for this interaction family."""
+
+
 @register_pytree_node_class
 @dataclass(frozen=True)
-class CertifiedContactSurrogateSpec:
+class CertifiedContactSurrogateSpec(CertifiedOptionalInteractionTerm):
     """Contact/desolvation surrogate spec using Gaussian decay w × exp(-(βr)²).
 
     Cutoff derivation (Lean: GaussianDecayBounds.lean):
@@ -387,10 +428,48 @@ class CertifiedContactSurrogateSpec:
             cutoff=self.cutoff,
         )
 
+    @property
+    def is_active(self) -> jnp.ndarray:
+        return jnp.logical_and(
+            jnp.any(self.receptor_weights != 0.0),
+            jnp.any(self.ligand_weights != 0.0),
+        )
+
+    @property
+    def cutoff_radius(self) -> float:
+        return self.cutoff
+
+    def exact_scores(
+        self,
+        receptor_coords: jnp.ndarray,
+        poses_coords: jnp.ndarray,
+    ) -> jnp.ndarray:
+        return _score_contact_exact_batch(
+            receptor_coords,
+            poses_coords,
+            self.receptor_weights,
+            self.ligand_weights,
+            self.beta,
+        )
+
+    def cutoff_scores(
+        self,
+        receptor_coords: jnp.ndarray,
+        poses_coords: jnp.ndarray,
+    ) -> jnp.ndarray:
+        return _score_contact_cutoff_batch(
+            receptor_coords,
+            poses_coords,
+            self.receptor_weights,
+            self.ligand_weights,
+            self.beta,
+            self.cutoff,
+        )
+
 
 @register_pytree_node_class
 @dataclass(frozen=True)
-class CertifiedMetalCoordinationSpec:
+class CertifiedMetalCoordinationSpec(CertifiedOptionalInteractionTerm):
     """Metal coordination spec for Zn, Fe, Mg, etc.
 
     Distance width derivation (Lean: ThermalFluctuationBounds.lean):
@@ -444,10 +523,43 @@ class CertifiedMetalCoordinationSpec:
             jnp.any(self.ligand_strengths != 0.0),
         )
 
+    @property
+    def cutoff_radius(self) -> float:
+        return self.cutoff
+
+    def exact_scores(
+        self,
+        receptor_coords: jnp.ndarray,
+        poses_coords: jnp.ndarray,
+    ) -> jnp.ndarray:
+        return _score_metal_coordination_exact_batch(
+            receptor_coords,
+            poses_coords,
+            self.receptor_strengths,
+            self.ligand_strengths,
+            self.ideal_distance,
+            self.distance_width,
+        )
+
+    def cutoff_scores(
+        self,
+        receptor_coords: jnp.ndarray,
+        poses_coords: jnp.ndarray,
+    ) -> jnp.ndarray:
+        return _score_metal_coordination_cutoff_batch(
+            receptor_coords,
+            poses_coords,
+            self.receptor_strengths,
+            self.ligand_strengths,
+            self.ideal_distance,
+            self.distance_width,
+            self.cutoff,
+        )
+
 
 @register_pytree_node_class
 @dataclass(frozen=True)
-class CertifiedDirectionalHBondSpec:
+class CertifiedDirectionalHBondSpec(CertifiedOptionalInteractionTerm):
     """Directional hydrogen bond spec with donor/acceptor angle terms.
 
     Distance width derivation (Lean: ThermalFluctuationBounds.lean):
@@ -514,6 +626,70 @@ class CertifiedDirectionalHBondSpec:
             jnp.any(self.ligand_strengths != 0.0),
         )
 
+    @property
+    def cutoff_radius(self) -> float:
+        return self.cutoff
+
+    def exact_scores(
+        self,
+        receptor_coords: jnp.ndarray,
+        poses_coords: jnp.ndarray,
+    ) -> jnp.ndarray:
+        return _score_directional_hbond_exact_batch(
+            receptor_coords,
+            poses_coords,
+            self.receptor_directions,
+            self.ligand_neighbor_indices,
+            self.receptor_strengths,
+            self.ligand_strengths,
+            self.ideal_distance,
+            self.distance_width,
+        )
+
+    def cutoff_scores(
+        self,
+        receptor_coords: jnp.ndarray,
+        poses_coords: jnp.ndarray,
+    ) -> jnp.ndarray:
+        return _score_directional_hbond_cutoff_batch(
+            receptor_coords,
+            poses_coords,
+            self.receptor_directions,
+            self.ligand_neighbor_indices,
+            self.receptor_strengths,
+            self.ligand_strengths,
+            self.ideal_distance,
+            self.distance_width,
+            self.cutoff,
+        )
+
+
+@register_pytree_node_class
+@dataclass(frozen=True)
+class CertifiedExtendedInteractionBundle:
+    terms: tuple[CertifiedOptionalInteractionTerm, ...] = ()
+
+    def tree_flatten(self):
+        return ((self.terms,), None)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        del aux_data
+        return cls(*children)
+
+    def receptor_subset(
+        self, indices: jnp.ndarray
+    ) -> "CertifiedExtendedInteractionBundle":
+        return CertifiedExtendedInteractionBundle(
+            terms=tuple(term.receptor_subset(indices) for term in self.terms),
+        )
+
+    @property
+    def has_active_terms(self) -> jnp.ndarray:
+        if not self.terms:
+            return jnp.array(False)
+        return jnp.any(jnp.stack([term.is_active for term in self.terms], axis=0))
+
 
 @register_pytree_node_class
 @dataclass(frozen=True)
@@ -522,6 +698,9 @@ class CertifiedRichChemistryPlan:
     contact: CertifiedContactSurrogateSpec
     directional_hbond: CertifiedDirectionalHBondSpec
     metal_coordination: CertifiedMetalCoordinationSpec
+    extended_terms: CertifiedExtendedInteractionBundle = field(
+        default_factory=CertifiedExtendedInteractionBundle
+    )
 
     def tree_flatten(self):
         children = (
@@ -529,6 +708,7 @@ class CertifiedRichChemistryPlan:
             self.contact,
             self.directional_hbond,
             self.metal_coordination,
+            self.extended_terms,
         )
         return (children, None)
 
@@ -543,6 +723,7 @@ class CertifiedRichChemistryPlan:
             contact=self.contact.receptor_subset(indices),
             directional_hbond=self.directional_hbond.receptor_subset(indices),
             metal_coordination=self.metal_coordination.receptor_subset(indices),
+            extended_terms=self.extended_terms.receptor_subset(indices),
         )
 
     @property
@@ -552,6 +733,10 @@ class CertifiedRichChemistryPlan:
     @property
     def has_active_metal_coordination(self) -> jnp.ndarray:
         return self.metal_coordination.is_active
+
+    @property
+    def has_active_extended_terms(self) -> jnp.ndarray:
+        return self.extended_terms.has_active_terms
 
 
 @register_pytree_node_class
@@ -620,6 +805,65 @@ def _branch_on_activity(
             lambda _: inactive_fn(),
             operand=None,
         )
+
+
+def _score_certified_interaction_active_batch(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    interaction_term: CertifiedOptionalInteractionTerm,
+) -> CertifiedBatchResult:
+    exact_scores = interaction_term.exact_scores(receptor_coords, poses_coords)
+    coarse_scores = interaction_term.cutoff_scores(receptor_coords, poses_coords)
+    error_bound = jnp.max(jnp.abs(exact_scores - coarse_scores))
+    cutoff_radius = jnp.array(interaction_term.cutoff_radius, dtype=poses_coords.dtype)
+    return CertifiedBatchResult(
+        scores=coarse_scores,
+        error_bound=error_bound,
+        target_error=error_bound,
+        cutoff_radius=cutoff_radius,
+    )
+
+
+def _score_certified_optional_interaction_batch(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    interaction_term: CertifiedOptionalInteractionTerm,
+) -> CertifiedBatchResult:
+    interaction_term.validate()
+    return _branch_on_activity(
+        interaction_term.is_active,
+        active_fn=lambda: _score_certified_interaction_active_batch(
+            receptor_coords,
+            poses_coords,
+            interaction_term,
+        ),
+        inactive_fn=lambda: _zero_certified_batch_result(poses_coords),
+    )
+
+
+def _score_certified_extended_interaction_bundle_batch(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    bundle: CertifiedExtendedInteractionBundle,
+) -> CertifiedBatchResult:
+    if not bundle.terms:
+        return _zero_certified_batch_result(poses_coords)
+    batches = tuple(
+        _score_certified_optional_interaction_batch(
+            receptor_coords,
+            poses_coords,
+            term,
+        )
+        for term in bundle.terms
+    )
+    return CertifiedBatchResult(
+        scores=jnp.sum(jnp.stack([batch.scores for batch in batches], axis=0), axis=0),
+        error_bound=sum(batch.error_bound for batch in batches),
+        target_error=sum(batch.target_error for batch in batches),
+        cutoff_radius=jnp.max(
+            jnp.stack([jnp.asarray(batch.cutoff_radius) for batch in batches], axis=0)
+        ),
+    )
 
 
 @register_pytree_node_class
@@ -987,7 +1231,9 @@ def _score_metal_coordination_exact_batch(
     diffs = receptor_coords[None, :, None, :] - poses_coords[:, None, :, :]
     dists = jnp.asarray(jnp.linalg.norm(diffs, axis=-1))
     weight_matrix = receptor_strengths[None, :, None] * ligand_strengths[None, None, :]
-    contrib = weight_matrix * jnp.exp(-(((dists - ideal_distance) / distance_width) ** 2))
+    contrib = weight_matrix * jnp.exp(
+        -(((dists - ideal_distance) / distance_width) ** 2)
+    )
     return -jnp.sum(contrib, axis=(1, 2))
 
 
@@ -1005,7 +1251,9 @@ def _score_metal_coordination_cutoff_batch(
     dists = jnp.asarray(jnp.linalg.norm(diffs, axis=-1))
     in_range = dists < cutoff
     weight_matrix = receptor_strengths[None, :, None] * ligand_strengths[None, None, :]
-    contrib = weight_matrix * jnp.exp(-(((dists - ideal_distance) / distance_width) ** 2))
+    contrib = weight_matrix * jnp.exp(
+        -(((dists - ideal_distance) / distance_width) ** 2)
+    )
     return -jnp.sum(jnp.where(in_range, contrib, 0.0), axis=(1, 2))
 
 
@@ -1164,94 +1412,10 @@ def score_certified_contact_batch(
     poses_coords: jnp.ndarray,
     contact_spec: CertifiedContactSurrogateSpec,
 ) -> CertifiedBatchResult:
-    contact_spec.validate()
-    exact_scores = _score_contact_exact_batch(
+    return _score_certified_optional_interaction_batch(
         receptor_coords,
         poses_coords,
-        contact_spec.receptor_weights,
-        contact_spec.ligand_weights,
-        contact_spec.beta,
-    )
-    coarse_scores = _score_contact_cutoff_batch(
-        receptor_coords,
-        poses_coords,
-        contact_spec.receptor_weights,
-        contact_spec.ligand_weights,
-        contact_spec.beta,
-        contact_spec.cutoff,
-    )
-    error_bound = jnp.max(jnp.abs(exact_scores - coarse_scores))
-    return CertifiedBatchResult(
-        scores=coarse_scores,
-        error_bound=error_bound,
-        target_error=error_bound,
-        cutoff_radius=contact_spec.cutoff,
-    )
-
-
-def _score_certified_metal_coordination_active_batch(
-    receptor_coords: jnp.ndarray,
-    poses_coords: jnp.ndarray,
-    metal_spec: CertifiedMetalCoordinationSpec,
-) -> CertifiedBatchResult:
-    exact_scores = _score_metal_coordination_exact_batch(
-        receptor_coords,
-        poses_coords,
-        metal_spec.receptor_strengths,
-        metal_spec.ligand_strengths,
-        metal_spec.ideal_distance,
-        metal_spec.distance_width,
-    )
-    coarse_scores = _score_metal_coordination_cutoff_batch(
-        receptor_coords,
-        poses_coords,
-        metal_spec.receptor_strengths,
-        metal_spec.ligand_strengths,
-        metal_spec.ideal_distance,
-        metal_spec.distance_width,
-        metal_spec.cutoff,
-    )
-    error_bound = jnp.max(jnp.abs(exact_scores - coarse_scores))
-    return CertifiedBatchResult(
-        scores=coarse_scores,
-        error_bound=error_bound,
-        target_error=error_bound,
-        cutoff_radius=jnp.array(metal_spec.cutoff, dtype=poses_coords.dtype),
-    )
-
-
-def _score_certified_directional_hbond_active_batch(
-    receptor_coords: jnp.ndarray,
-    poses_coords: jnp.ndarray,
-    hbond_spec: CertifiedDirectionalHBondSpec,
-) -> CertifiedBatchResult:
-    exact_scores = _score_directional_hbond_exact_batch(
-        receptor_coords,
-        poses_coords,
-        hbond_spec.receptor_directions,
-        hbond_spec.ligand_neighbor_indices,
-        hbond_spec.receptor_strengths,
-        hbond_spec.ligand_strengths,
-        hbond_spec.ideal_distance,
-        hbond_spec.distance_width,
-    )
-    coarse_scores = _score_directional_hbond_cutoff_batch(
-        receptor_coords,
-        poses_coords,
-        hbond_spec.receptor_directions,
-        hbond_spec.ligand_neighbor_indices,
-        hbond_spec.receptor_strengths,
-        hbond_spec.ligand_strengths,
-        hbond_spec.ideal_distance,
-        hbond_spec.distance_width,
-        hbond_spec.cutoff,
-    )
-    error_bound = jnp.max(jnp.abs(exact_scores - coarse_scores))
-    return CertifiedBatchResult(
-        scores=coarse_scores,
-        error_bound=error_bound,
-        target_error=error_bound,
-        cutoff_radius=jnp.array(hbond_spec.cutoff, dtype=poses_coords.dtype),
+        contact_spec,
     )
 
 
@@ -1267,15 +1431,10 @@ def score_certified_metal_coordination_batch(
     poses_coords: jnp.ndarray,
     metal_spec: CertifiedMetalCoordinationSpec,
 ) -> CertifiedBatchResult:
-    metal_spec.validate()
-    return _branch_on_activity(
-        metal_spec.is_active,
-        active_fn=lambda: _score_certified_metal_coordination_active_batch(
-            receptor_coords,
-            poses_coords,
-            metal_spec,
-        ),
-        inactive_fn=lambda: _zero_certified_batch_result(poses_coords),
+    return _score_certified_optional_interaction_batch(
+        receptor_coords,
+        poses_coords,
+        metal_spec,
     )
 
 
@@ -1292,15 +1451,10 @@ def score_certified_directional_hbond_batch(
     poses_coords: jnp.ndarray,
     hbond_spec: CertifiedDirectionalHBondSpec,
 ) -> CertifiedBatchResult:
-    hbond_spec.validate()
-    return _branch_on_activity(
-        hbond_spec.is_active,
-        active_fn=lambda: _score_certified_directional_hbond_active_batch(
-            receptor_coords,
-            poses_coords,
-            hbond_spec,
-        ),
-        inactive_fn=lambda: _zero_certified_batch_result(poses_coords),
+    return _score_certified_optional_interaction_batch(
+        receptor_coords,
+        poses_coords,
+        hbond_spec,
     )
 
 
@@ -1333,8 +1487,12 @@ def score_certified_polar_surrogate_batch(
     )
     return CertifiedBatchResult(
         scores=-(contact_batch.scores + hbond_batch.scores) + metal_batch.scores,
-        error_bound=contact_batch.error_bound + hbond_batch.error_bound + metal_batch.error_bound,
-        target_error=contact_batch.error_bound + hbond_batch.error_bound + metal_batch.error_bound,
+        error_bound=contact_batch.error_bound
+        + hbond_batch.error_bound
+        + metal_batch.error_bound,
+        target_error=contact_batch.error_bound
+        + hbond_batch.error_bound
+        + metal_batch.error_bound,
         cutoff_radius=jnp.maximum(
             jnp.maximum(
                 contact_batch.cutoff_radius,
@@ -1458,7 +1616,9 @@ def score_certified_softened_rich_chemistry_batch(
         scores=nonbonded_softened.scores + polar_batch.scores,
         softening_error_bound=nonbonded_softened.softening_error_bound,
         target_error=target_error,
-        cutoff_radius=jnp.maximum(nonbonded_softened.cutoff_radius, polar_batch.cutoff_radius),
+        cutoff_radius=jnp.maximum(
+            nonbonded_softened.cutoff_radius, polar_batch.cutoff_radius
+        ),
         softening_radius=nonbonded_softened.softening_radius,
     )
 

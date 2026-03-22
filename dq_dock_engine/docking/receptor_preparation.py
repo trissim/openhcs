@@ -31,6 +31,7 @@ class ResidueKey:
 class PDBAtomRecord:
     line: str
     record_name: str
+    atom_name: str
     residue: ResidueKey
     element: str
     coord: np.ndarray
@@ -396,6 +397,7 @@ def _iter_atom_records(pdb_path: Path) -> tuple[PDBAtomRecord, ...]:
                 PDBAtomRecord(
                     line=line,
                     record_name=line[:6].strip(),
+                    atom_name=line[12:16].strip(),
                     residue=ResidueKey(
                         resname=line[17:20].strip(),
                         chain_id=line[21].strip(),
@@ -408,6 +410,10 @@ def _iter_atom_records(pdb_path: Path) -> tuple[PDBAtomRecord, ...]:
     return tuple(records)
 
 
+def iter_atom_records(pdb_path: Path) -> tuple[PDBAtomRecord, ...]:
+    return _iter_atom_records(pdb_path)
+
+
 def _group_records_by_residue(
     records: Sequence[PDBAtomRecord],
 ) -> dict[ResidueKey, list[PDBAtomRecord]]:
@@ -415,6 +421,15 @@ def _group_records_by_residue(
     for record in records:
         grouped.setdefault(record.residue, []).append(record)
     return grouped
+
+
+def group_atom_records_by_residue(
+    records: Sequence[PDBAtomRecord],
+) -> dict[ResidueKey, tuple[PDBAtomRecord, ...]]:
+    return {
+        residue: tuple(residue_records)
+        for residue, residue_records in _group_records_by_residue(records).items()
+    }
 
 
 def _component_from_records(

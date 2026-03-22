@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import numpy as np
 from dataclasses import dataclass
+from pathlib import Path
 
 from dq_dock_engine.docking.receptor_preparation import METAL_ELEMENTS
 from dq_dock_engine.docking.scoring import (
@@ -42,6 +43,7 @@ _DEFAULT_ELECTROSTATIC_TARGET_ERROR = 0.5
 
 KAPPA_METAL = 1.0  # Å⁻¹, derived from 5% second-shell suppression requirement
 
+
 def find_k_nearest_neighbors(coords: np.ndarray, k: int) -> np.ndarray:
     diffs = coords[:, None, :] - coords[None, :, :]
     dists = np.linalg.norm(diffs, axis=-1)
@@ -50,12 +52,13 @@ def find_k_nearest_neighbors(coords: np.ndarray, k: int) -> np.ndarray:
         return np.tile(np.arange(dists.shape[0]), (dists.shape[0], 1))[:, :k]
     return np.argsort(dists, axis=-1)[:, :k]
 
+
 def build_screened_coulomb_spec(
     receptor_charges: np.ndarray,
     ligand_charges: np.ndarray,
     kappa: float = 1.0,  # Å⁻¹, see ScreenedCoulombApproximation.lean
     cutoff: float = 8.0,  # Å, use _derive_electrostatic_cutoff for optimal
-    dielectric: float = 4.0  # Certified by DB1, DB2
+    dielectric: float = 4.0,  # Certified by DB1, DB2
 ) -> CertifiedScreenedCoulombSpec:
     """Build screened Coulomb spec with derived parameters.
 
@@ -70,11 +73,12 @@ def build_screened_coulomb_spec(
         dielectric=dielectric,
     )
 
+
 def build_contact_surrogate_spec(
     receptor_elements: tuple[str, ...],
     ligand_elements: tuple[str, ...],
     beta: float = 0.6,  # Å⁻¹, Gaussian decay rate
-    cutoff: float = 6.0  # Certified by GD3, GD4, GD6
+    cutoff: float = 6.0,  # Certified by GD3, GD4, GD6
 ) -> CertifiedContactSurrogateSpec:
     """Build contact surrogate spec.
 
@@ -82,14 +86,19 @@ def build_contact_surrogate_spec(
       R_min = √(ln(W/ε)) / β for error ≤ ε
     """
     polars = {"N", "O", "S", "F", "Cl", "Br", "I"}
-    r_weights = np.array([1.0 if e in polars else 0.5 for e in receptor_elements], dtype=np.float32)
-    l_weights = np.array([1.0 if e in polars else 0.5 for e in ligand_elements], dtype=np.float32)
+    r_weights = np.array(
+        [1.0 if e in polars else 0.5 for e in receptor_elements], dtype=np.float32
+    )
+    l_weights = np.array(
+        [1.0 if e in polars else 0.5 for e in ligand_elements], dtype=np.float32
+    )
     return CertifiedContactSurrogateSpec(
         receptor_weights=jnp.array(r_weights),
         ligand_weights=jnp.array(l_weights),
         beta=beta,
         cutoff=cutoff,
     )
+
 
 def build_directional_hbond_spec(
     receptor_coords: np.ndarray,
@@ -98,7 +107,7 @@ def build_directional_hbond_spec(
     ligand_elements: tuple[str, ...],
     ideal_distance: float = 2.8,  # N-H···O distance (Å), crystallographic
     distance_width: float = 0.8,  # Certified by TF1, TF3, TF6
-    cutoff: float = 4.0
+    cutoff: float = 4.0,
 ) -> CertifiedDirectionalHBondSpec:
     """Build directional H-bond spec.
 
@@ -106,11 +115,15 @@ def build_directional_hbond_spec(
       σ = √(kT/k) ≈ 0.8 Å at 310K with k ≈ 1 kcal/(mol·Å²)
     """
     polars = {"N", "O", "F"}
-    
+
     # 1. Strengths (1.0 for polar, 0.0 otherwise)
-    r_strengths = np.array([1.0 if e in polars else 0.0 for e in receptor_elements], dtype=np.float32)
-    l_strengths = np.array([1.0 if e in polars else 0.0 for e in ligand_elements], dtype=np.float32)
-    
+    r_strengths = np.array(
+        [1.0 if e in polars else 0.0 for e in receptor_elements], dtype=np.float32
+    )
+    l_strengths = np.array(
+        [1.0 if e in polars else 0.0 for e in ligand_elements], dtype=np.float32
+    )
+
     # 2. Receptor directions (rigid, so precomputed)
     if receptor_coords.shape[0] > 0:
         r_neighbors = find_k_nearest_neighbors(receptor_coords, k=3)
@@ -121,13 +134,13 @@ def build_directional_hbond_spec(
         r_directions = np.where(r_norms > 1e-6, r_directions / r_norms, 0.0)
     else:
         r_directions = np.zeros((0, 3))
-    
+
     # 3. Ligand neighbor indices
     if ligand_coords.shape[0] > 0:
         l_neighbors = find_k_nearest_neighbors(ligand_coords, k=3)
     else:
         l_neighbors = np.zeros((0, 3), dtype=np.int32)
-    
+
     return CertifiedDirectionalHBondSpec(
         receptor_directions=jnp.array(r_directions, dtype=jnp.float32),
         ligand_neighbor_indices=jnp.array(l_neighbors, dtype=jnp.int32),
@@ -138,9 +151,9 @@ def build_directional_hbond_spec(
         cutoff=cutoff,
     )
 
+
 def build_metal_coordination_spec(
-    receptor_elements: tuple[str, ...],
-    ligand_elements: tuple[str, ...]
+    receptor_elements: tuple[str, ...], ligand_elements: tuple[str, ...]
 ) -> CertifiedMetalCoordinationSpec:
     """Build metal coordination spec for Zn, Fe, Mg, etc.
 
@@ -148,12 +161,18 @@ def build_metal_coordination_spec(
     (equipartition theorem with k ≈ 7 kcal/(mol·Å²) for metal bonds).
     """
     polars = {"N", "O", "S"}
-    r_strengths = np.array([50.0 if e in METAL_ELEMENTS else 0.0 for e in receptor_elements], dtype=np.float32)
-    l_strengths = np.array([1.0 if e in polars else 0.0 for e in ligand_elements], dtype=np.float32)
+    r_strengths = np.array(
+        [50.0 if e in METAL_ELEMENTS else 0.0 for e in receptor_elements],
+        dtype=np.float32,
+    )
+    l_strengths = np.array(
+        [1.0 if e in polars else 0.0 for e in ligand_elements], dtype=np.float32
+    )
     return CertifiedMetalCoordinationSpec(
         receptor_strengths=jnp.array(r_strengths),
         ligand_strengths=jnp.array(l_strengths),
     )
+
 
 def _derive_electrostatic_cutoff(
     receptor_charges: np.ndarray,
@@ -182,8 +201,12 @@ def _derive_electrostatic_cutoff(
         Minimum cutoff radius (Å)
     """
     # Compute max charge product bound
-    max_receptor_charge = float(np.max(np.abs(receptor_charges))) if len(receptor_charges) > 0 else 1.0
-    max_ligand_charge = float(np.max(np.abs(ligand_charges))) if len(ligand_charges) > 0 else 1.0
+    max_receptor_charge = (
+        float(np.max(np.abs(receptor_charges))) if len(receptor_charges) > 0 else 1.0
+    )
+    max_ligand_charge = (
+        float(np.max(np.abs(ligand_charges))) if len(ligand_charges) > 0 else 1.0
+    )
     n_pairs = len(receptor_charges) * len(ligand_charges)
     max_charge_product = max_receptor_charge * max_ligand_charge
 
@@ -240,7 +263,11 @@ def build_all_rich_chemistry_specs(
     # - κ=1.0 for metals: screened Coulomb with metal coordination signal
     kappa = 1.0 if has_metals else 0.0
 
-    ligand_charges = ligand_ctx.charges if ligand_ctx.charges is not None else np.zeros((ligand_ctx.base_coords.shape[0],))
+    ligand_charges = (
+        ligand_ctx.charges
+        if ligand_ctx.charges is not None
+        else np.zeros((ligand_ctx.base_coords.shape[0],))
+    )
 
     # Formally derived cutoff from tail bound theorems
     cutoff = _derive_electrostatic_cutoff(
@@ -250,11 +277,12 @@ def build_all_rich_chemistry_specs(
         target_error=target_electrostatic_error,
     )
 
-    screened = build_screened_coulomb_spec(receptor_charges, ligand_charges, kappa=kappa, cutoff=cutoff)
+    screened = build_screened_coulomb_spec(
+        receptor_charges, ligand_charges, kappa=kappa, cutoff=cutoff
+    )
     contact = build_contact_surrogate_spec(receptor_elements, ligand_ctx.elements)
     hbond = build_directional_hbond_spec(
-        receptor_coords, receptor_elements,
-        ligand_ctx.base_coords, ligand_ctx.elements
+        receptor_coords, receptor_elements, ligand_ctx.base_coords, ligand_ctx.elements
     )
     metal = build_metal_coordination_spec(receptor_elements, ligand_ctx.elements)
     return CertifiedRichChemistryPlan(

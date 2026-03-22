@@ -45,12 +45,11 @@ theorem gaussian_tail_bound
   apply mul_le_mul_of_nonneg_left _ (abs_nonneg w)
   apply exp_le_exp_of_le
   have h1 : (β * R) ^ 2 ≤ (β * r) ^ 2 := by
-    apply sq_le_sq'
-    · have := mul_nonneg (le_of_lt hβ_pos) (le_of_lt hR_pos)
-      have hr_nonneg : 0 ≤ r := le_trans (le_of_lt hR_pos) hr_ge_R
-      have hβr_nonneg := mul_nonneg (le_of_lt hβ_pos) hr_nonneg
-      linarith [mul_nonneg (le_of_lt hβ_pos) hr_ge_R]
-    · exact mul_le_mul_of_nonneg_left hr_ge_R (le_of_lt hβ_pos)
+    have hr_nonneg : 0 ≤ r := le_trans (le_of_lt hR_pos) hr_ge_R
+    have hβR_nonneg : 0 ≤ β * R := mul_nonneg (le_of_lt hβ_pos) (le_of_lt hR_pos)
+    have hβr_nonneg : 0 ≤ β * r := mul_nonneg (le_of_lt hβ_pos) hr_nonneg
+    have hβr_ge_βR : β * R ≤ β * r := mul_le_mul_of_nonneg_left hr_ge_R (le_of_lt hβ_pos)
+    exact sq_le_sq' (by linarith) hβr_ge_βR
   linarith
 
 /-- Error bound: W × exp(-(βR)²) ≤ ε when R ≥ √(ln(W/ε)) / β -/
@@ -67,16 +66,15 @@ theorem gaussian_exp_bound
            _ = β * R := by ring
     by_cases h_log_nonneg : 0 ≤ log (W / ε)
     · have h2 : (sqrt (log (W / ε))) ^ 2 = log (W / ε) := sq_sqrt h_log_nonneg
+      have hR_nonneg : 0 ≤ R := by
+        have hsqrt_nonneg : 0 ≤ sqrt (log (W / ε)) / β := by positivity
+        linarith
+      have hβR_nonneg : 0 ≤ β * R := mul_nonneg (le_of_lt hβ_pos) hR_nonneg
       calc log (W / ε) = (sqrt (log (W / ε))) ^ 2 := h2.symm
            _ ≤ (β * R) ^ 2 := by
-               apply sq_le_sq'
-               · have hβR_nonneg : 0 ≤ β * R := by
-                   have hR_nonneg : 0 ≤ R := by
-                     have hsqrt_nonneg : 0 ≤ sqrt (log (W / ε)) / β := by positivity
-                     linarith
-                   exact mul_nonneg (le_of_lt hβ_pos) hR_nonneg
-                 linarith
-               · exact h1
+               apply sq_le_sq' _ h1
+               have hsqrt_nonneg : 0 ≤ sqrt (log (W / ε)) := sqrt_nonneg _
+               linarith
     · push_neg at h_log_nonneg
       have : (β * R) ^ 2 ≥ 0 := sq_nonneg _
       linarith
@@ -121,31 +119,30 @@ theorem gaussianMinCutoff_tight
      _ = ε := by field_simp
 
 /-- OPTIMALITY: The derived cutoff is the MINIMUM R achieving error ≤ ε.
-    Any R < √(ln(W/ε))/β will have error > ε. -/
+    Any 0 ≤ R < √(ln(W/ε))/β will have error > ε.
+    Requires W > ε (i.e., log(W/ε) > 0) for the cutoff to be positive.
+    The R ≥ 0 constraint is physically meaningful: distances are non-negative. -/
 theorem gaussianMinCutoff_optimal
     (W ε β R : ℝ) (hW_pos : 0 < W) (hε_pos : 0 < ε) (hβ_pos : 0 < β)
-    (h_log_nonneg : 0 ≤ log (W / ε))
+    (hR_nonneg : 0 ≤ R)
+    (h_log_pos : 0 < log (W / ε))
     (hR_lt : R < gaussianMinCutoff W ε β) :
     ε < W * exp (-(β * R) ^ 2) := by
   unfold gaussianMinCutoff at hR_lt
   have h_arg_pos : 0 < W / ε := by positivity
+  have h_log_nonneg : 0 ≤ log (W / ε) := le_of_lt h_log_pos
   have h_sq_lt : (β * R) ^ 2 < log (W / ε) := by
+    have hsqrt_pos : 0 < sqrt (log (W / ε)) := sqrt_pos.mpr h_log_pos
     have h1 : β * R < sqrt (log (W / ε)) := by
       calc β * R = R * β := by ring
            _ < sqrt (log (W / ε)) / β * β := by
                apply mul_lt_mul_of_pos_right hR_lt hβ_pos
            _ = sqrt (log (W / ε)) := by field_simp
+    have hβR_nonneg : 0 ≤ β * R := mul_nonneg (le_of_lt hβ_pos) hR_nonneg
     have h2 : (β * R) ^ 2 < (sqrt (log (W / ε))) ^ 2 := by
-      apply sq_lt_sq'
-      · have hβR_nonneg : 0 ≤ β * R := by
-          by_contra h_neg
-          push_neg at h_neg
-          have hsqrt_pos : 0 < sqrt (log (W / ε)) := by
-            rw [sqrt_pos]
-            exact h_log_nonneg
-          linarith
-        linarith
-      · exact h1
+      apply sq_lt_sq' _ h1
+      have hsqrt_nonneg : 0 ≤ sqrt (log (W / ε)) := sqrt_nonneg _
+      linarith
     rw [sq_sqrt h_log_nonneg] at h2
     exact h2
   have h_exp_gt : ε / W < exp (-(β * R) ^ 2) := by
