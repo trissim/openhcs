@@ -48,8 +48,8 @@ def _toy_geometry():
         receptor_directions=jnp.array(
             [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float32
         ),
-        ligand_directions=jnp.array(
-            [[-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]], dtype=jnp.float32
+        ligand_neighbor_indices=jnp.array(
+            [[0, 1], [0, 1]], dtype=jnp.int32
         ),
         receptor_strengths=jnp.array([0.8, 0.6], dtype=jnp.float32),
         ligand_strengths=jnp.array([0.9, 0.7], dtype=jnp.float32),

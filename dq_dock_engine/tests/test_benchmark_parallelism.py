@@ -303,3 +303,103 @@ def test_generate_pose_comparison_figures_writes_png() -> None:
 
         assert "1abc" in outputs
         assert outputs["1abc"].exists()
+
+
+def test_load_explicit_pdb_ids_combines_cli_and_file_sources(tmp_path) -> None:
+    pdb_file = tmp_path / "pdb_ids.txt"
+    pdb_file.write_text("# comment\n3ghi 4JKL\n")
+
+    pdb_ids = benchmark_pdb.load_explicit_pdb_ids("1ABC, 2Def", pdb_file)
+
+    assert pdb_ids == ("1abc", "2def", "3ghi", "4jkl")
+
+
+def test_load_explicit_pdb_ids_rejects_duplicates(tmp_path) -> None:
+    pdb_file = tmp_path / "pdb_ids.txt"
+    pdb_file.write_text("2def\n")
+
+    try:
+        benchmark_pdb.load_explicit_pdb_ids("1abc, 2def", pdb_file)
+    except ValueError as exc:
+        assert "Duplicate explicit PDB IDs are not allowed" in str(exc)
+        assert "2def" in str(exc)
+        return
+    raise AssertionError("expected duplicate explicit PDB IDs to fail loudly")
+
+
+def test_derive_benchmark_target_selection_prefers_explicit_ids(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    selection = benchmark_pdb.derive_benchmark_target_selection(
+        dataset="casf2007",
+        n_complexes=99,
+        explicit_pdb_ids=("1abc", "2def"),
+    )
+
+    assert selection.mode == benchmark_pdb.BenchmarkTargetSelectionMode.EXPLICIT_PDB_IDS
+    assert selection.label == "explicit PDB IDs"
+    assert selection.cache_dir == Path("pdb_cache")
+    assert selection.n_complexes_requested == 2
+    assert [entry.pdb_id for entry in selection.entries] == ["1abc", "2def"]
+    assert [entry.target_name for entry in selection.entries] == ["1abc", "2def"]
+
+
+def test_run_benchmark_explicit_pdb_ids_override_dataset_and_use_qc(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    seen_screened_entries: list[tuple[str, str]] = []
+    save_calls: list[tuple[str, int, list[str]]] = []
+
+    def fail_dataset_path(*args, **kwargs):
+        raise AssertionError("dataset selection path should not be used")
+
+    def fake_download_pdb(pdb_id: str, cache_dir: Path) -> Path:
+        cache_dir.mkdir(exist_ok=True)
+        pdb_path = cache_dir / f"{pdb_id}.pdb"
+        pdb_path.write_text(f"TITLE     Example target {pdb_id.upper()}\n")
+        return pdb_path
+
+    def fake_screen_complex(entry, pdb_path: Path, protein_path: Path):
+        seen_screened_entries.append((entry.pdb_id, entry.target_name))
+        return benchmark_pdb.ScreeningDecision(
+            accepted=False,
+            reasons=("qc failed",),
+        )
+
+    def fake_save(self, phase, context, excluded_rows, *, render_report=False):
+        save_calls.append(
+            (
+                phase,
+                context.n_complexes_requested,
+                [row.pdb_id for row in excluded_rows],
+            )
+        )
+        return (tmp_path / "results.json", tmp_path / "results.csv")
+
+    monkeypatch.setattr(benchmark_pdb, "get_casf_2007_ids", fail_dataset_path)
+    monkeypatch.setattr(benchmark_pdb, "download_pdb", fake_download_pdb)
+    monkeypatch.setattr(
+        benchmark_pdb,
+        "prepare_protein",
+        lambda pdb_path: pdb_path.with_name(f"{pdb_path.stem}_protein.pdb"),
+    )
+    monkeypatch.setattr(benchmark_pdb, "screen_complex", fake_screen_complex)
+    monkeypatch.setattr(benchmark_pdb, "create_charge_assigner", lambda method: None)
+    monkeypatch.setattr(benchmark_pdb.BenchmarkState, "save", fake_save)
+
+    benchmark_pdb.run_benchmark(
+        n_complexes=99,
+        dataset="casf2007",
+        pdb_ids=("1abc", "2def"),
+        competitors="none",
+        results_dir=tmp_path / "benchmark_results",
+    )
+
+    assert seen_screened_entries == [
+        ("1abc", "Example target 1ABC"),
+        ("2def", "Example target 2DEF"),
+    ]
+    assert save_calls == [("curation", 2, ["1abc", "2def"])]

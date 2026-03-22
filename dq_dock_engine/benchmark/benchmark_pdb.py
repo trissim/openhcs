@@ -26,6 +26,7 @@ import argparse
 from abc import ABC, abstractmethod
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import csv
+from enum import Enum
 import json
 import math
 import multiprocessing as mp
@@ -36,7 +37,7 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Literal, Optional, Sequence, cast
+from typing import List, Literal, Optional, Sequence, Union, cast
 import urllib.request
 import gzip
 import shutil
@@ -50,19 +51,40 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
 import jax
 import jax.numpy as jnp
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from dq_dock_engine.docking.core import BenchmarkResult, ScoringEngine
+from dq_dock_engine.docking.core import (
+    BenchmarkResult,
+    BlindDockingExecutionPath,
+    CertifiedBlindDockingResult,
+    GapCertification,
+    GeometricBlindDockingResult,
+    NativeCertification,
+    ScoringEngine,
+    ScoredPose,
+)
+from dq_dock_engine.docking.pipeline import (
+    CertifiedBlindDockingRequest,
+    DockingRequestBase,
+    GeometricBlindDockingRequest,
+    PipelineDockingRequest,
+    derive_request,
+    run_certified_blind_docking_request,
+    run_docking_pipeline_request,
+    run_geometric_blind_docking_request,
+)
 from dq_dock_engine.docking.pdb_io import parse_structure, build_receptor_arrays
 from dq_dock_engine.docking.metrics import compute_docking_rmsd_batched
 from dq_dock_engine.docking_config import (
     CERTIFIED_DOCKING,
     CertifiedScoringFamily,
+    DockingMode,
     OptimizerBackend,
 )
 from dq_dock_engine.benchmark.large_pdb_ids import (
     BenchmarkScope,
     PDBEntry,
+    _extract_pdb_title,
     get_benchmark_entries,
     get_casf_2007_entries,
     get_casf_2007_ids,
@@ -199,6 +221,20 @@ BENCHMARK_PROTOCOL = BenchmarkProtocol(
 )
 
 
+class BenchmarkTargetSelectionMode(Enum):
+    DATASET = "dataset"
+    EXPLICIT_PDB_IDS = "explicit_pdb_ids"
+
+
+@dataclass(frozen=True)
+class BenchmarkTargetSelection:
+    mode: BenchmarkTargetSelectionMode
+    label: str
+    cache_dir: Path
+    n_complexes_requested: int
+    entries: tuple[PDBEntry, ...]
+
+
 @dataclass(frozen=True)
 class BlindDockingExecutionOutcome:
     poses: list
@@ -209,90 +245,160 @@ class BlindDockingExecutionOutcome:
 
 
 @dataclass(frozen=True)
-class BlindDockingAttemptSpec:
-    protein_coords: jnp.ndarray
-    receptor_radii: jnp.ndarray
-    ligand_ctx: LigandContext
-    box: DockingBox
-    n_poses: int
-    key: jax.Array
-    charge_method: ChargeMethod
-    receptor_file: Path
-    precomputed_receptor_charges: jnp.ndarray | None
-    receptor_elements: tuple[str, ...] | None
-    config: DockingConfig
-    top_k: int
-    top_k_to_optimize: int
-    optimize: bool
-    n_opt_steps: int
-    include_native: bool
+class BlindDockingAttemptContext(DockingRequestBase):
     engine: ScoringEngine
-    use_pocket_guided: bool
     use_multi_stage: bool
 
-    def run_certified(self, runner):
-        return runner(
-            protein_coords=self.protein_coords,
-            receptor_radii=self.receptor_radii,
-            ligand_ctx=self.ligand_ctx,
-            box=self.box,
-            n_poses=self.n_poses,
-            key=self.key,
-            charge_method=self.charge_method,
-            receptor_file=self.receptor_file,
-            precomputed_receptor_charges=self.precomputed_receptor_charges,
-            receptor_elements=self.receptor_elements,
-            config=self.config,
-            top_k=self.top_k,
-            top_k_to_optimize=self.top_k_to_optimize,
-            optimize=self.optimize,
-            n_opt_steps=self.n_opt_steps,
-            include_native=self.include_native,
+
+RequestT = TypeVar("RequestT", bound=DockingRequestBase)
+ExecutionT = TypeVar("ExecutionT")
+
+
+class BlindDockingExecutor(ABC):
+    execution_path: BlindDockingExecutionPath
+
+    @abstractmethod
+    def execute(
+        self, context: BlindDockingAttemptContext
+    ) -> BlindDockingExecutionOutcome:
+        """Execute one blind-docking attempt."""
+
+
+class RequestBlindDockingExecutor(
+    BlindDockingExecutor,
+    Generic[RequestT, ExecutionT],
+    ABC,
+):
+    request_type: type[RequestT]
+
+    def execute(
+        self, context: BlindDockingAttemptContext
+    ) -> BlindDockingExecutionOutcome:
+        request = derive_request(
+            self.request_type,
+            context,
+            **self.derived_request_kwargs(context),
+        )
+        return self.build_outcome(self.run_request(request))
+
+    def derived_request_kwargs(
+        self, context: BlindDockingAttemptContext
+    ) -> dict[str, object]:
+        return {}
+
+    @abstractmethod
+    def run_request(self, request: RequestT) -> ExecutionT:
+        """Execute the concrete pipeline request."""
+
+    @abstractmethod
+    def build_outcome(self, execution: ExecutionT) -> BlindDockingExecutionOutcome:
+        """Lift the concrete execution result into the benchmark outcome."""
+
+
+class StrictCertifiedBlindDockingExecutor(
+    RequestBlindDockingExecutor[
+        CertifiedBlindDockingRequest,
+        CertifiedBlindDockingResult,
+    ]
+):
+    execution_path = BlindDockingExecutionPath.STRICT_CERTIFIED
+    request_type = CertifiedBlindDockingRequest
+
+    def run_request(
+        self, request: CertifiedBlindDockingRequest
+    ) -> CertifiedBlindDockingResult:
+        blind_result = run_certified_blind_docking_request(request)
+        return blind_result
+
+    def build_outcome(
+        self, execution: CertifiedBlindDockingResult
+    ) -> BlindDockingExecutionOutcome:
+        blind_result = execution
+        return BlindDockingExecutionOutcome(
+            poses=list(blind_result.poses),
+            certification=blind_result.certification,
+            execution_path=BlindDockingExecutionPath.STRICT_CERTIFIED,
+            certified_failure_reason=blind_result.plan.certified_failure_reason,
+            theorem_handles=blind_result.plan.theorem_handles,
         )
 
-    def run_geometric(self, runner):
-        return runner(
-            protein_coords=self.protein_coords,
-            receptor_radii=self.receptor_radii,
-            ligand_ctx=self.ligand_ctx,
-            box=self.box,
-            n_poses=self.n_poses,
-            engine=self.engine,
-            key=self.key,
-            charge_method=self.charge_method,
-            receptor_file=self.receptor_file,
-            precomputed_receptor_charges=self.precomputed_receptor_charges,
-            receptor_elements=self.receptor_elements,
-            config=self.config,
-            top_k=self.top_k,
-            top_k_to_optimize=self.top_k_to_optimize,
-            optimize=self.optimize,
-            n_opt_steps=self.n_opt_steps,
-            include_native=self.include_native,
+
+class GeometricBlindDockingExecutor(
+    RequestBlindDockingExecutor[
+        GeometricBlindDockingRequest,
+        GeometricBlindDockingResult,
+    ]
+):
+    execution_path = BlindDockingExecutionPath.GEOMETRIC_FALLBACK
+    request_type = GeometricBlindDockingRequest
+
+    def run_request(
+        self, request: GeometricBlindDockingRequest
+    ) -> GeometricBlindDockingResult:
+        blind_result = run_geometric_blind_docking_request(request)
+        return blind_result
+
+    def build_outcome(
+        self, execution: GeometricBlindDockingResult
+    ) -> BlindDockingExecutionOutcome:
+        blind_result = execution
+        return BlindDockingExecutionOutcome(
+            poses=list(blind_result.poses),
+            certification=None,
+            execution_path=BlindDockingExecutionPath.GEOMETRIC_FALLBACK,
+            certified_failure_reason=None,
+            theorem_handles=(),
         )
 
-    def run_pipeline(self, runner):
-        return runner(
-            protein_coords=self.protein_coords,
-            receptor_radii=self.receptor_radii,
-            ligand_ctx=self.ligand_ctx,
-            box=self.box,
-            n_poses=self.n_poses,
-            engine=self.engine,
-            key=self.key,
-            top_k=self.top_k,
-            top_k_to_optimize=self.top_k_to_optimize,
-            optimize=self.optimize,
-            n_opt_steps=self.n_opt_steps,
-            charge_method=self.charge_method,
-            receptor_file=self.receptor_file,
-            precomputed_receptor_charges=self.precomputed_receptor_charges,
-            receptor_elements=self.receptor_elements,
-            config=self.config,
-            use_pocket_guided=self.use_pocket_guided,
-            use_multi_stage=self.use_multi_stage,
-            include_native=self.include_native,
+
+class GenericPipelineBlindDockingExecutor(
+    RequestBlindDockingExecutor[
+        PipelineDockingRequest,
+        tuple[List[ScoredPose], Union[NativeCertification, GapCertification, None]],
+    ]
+):
+    execution_path = BlindDockingExecutionPath.GENERIC_PIPELINE
+    request_type = PipelineDockingRequest
+
+    def derived_request_kwargs(
+        self, context: BlindDockingAttemptContext
+    ) -> dict[str, object]:
+        return {
+            "use_pocket_guided": False,
+            "use_multi_stage": context.use_multi_stage,
+        }
+
+    def run_request(
+        self, request: PipelineDockingRequest
+    ) -> tuple[List[ScoredPose], Union[NativeCertification, GapCertification, None]]:
+        return run_docking_pipeline_request(request)
+
+    def build_outcome(
+        self,
+        execution: tuple[
+            List[ScoredPose], Union[NativeCertification, GapCertification, None]
+        ],
+    ) -> BlindDockingExecutionOutcome:
+        poses, certification = execution
+        return BlindDockingExecutionOutcome(
+            poses=list(poses),
+            certification=certification,
+            execution_path=BlindDockingExecutionPath.GENERIC_PIPELINE,
+            certified_failure_reason=None,
+            theorem_handles=(),
         )
+
+
+def derive_blind_docking_executor(
+    docking_mode: "DockingMode",
+    *,
+    use_pocket_guided: bool,
+) -> BlindDockingExecutor:
+    if docking_mode == DockingMode.CERTIFIED and use_pocket_guided:
+        return StrictCertifiedBlindDockingExecutor()
+    if use_pocket_guided:
+        return GeometricBlindDockingExecutor()
+    return GenericPipelineBlindDockingExecutor()
 
 
 @dataclass(frozen=True)
@@ -303,6 +409,7 @@ class ComplexSummaryRow:
     pocket_atoms: int
     rmsd: float
     time: float
+    dock_time: float | None = None
     dq_pose_pdb: str | None = None
     receptor_pdb: str | None = None
     native_ligand_pdb: str | None = None
@@ -330,6 +437,9 @@ class ComplexSummaryRow:
             "top_rmsd": self.rmsd,
             "best_mode_rmsd": self.rmsd,
             "time_s": self.time,
+            "dock_time_s": _safe_json_value(result.dock_time_s),
+            "checkpoint_time_s": _safe_json_value(result.checkpoint_time_s),
+            "total_wall_time_s": _safe_json_value(result.total_wall_time_s),
             "pose_pdb": self.dq_pose_pdb,
             "gap_proof": format_gap_proof_label(result.certified),
             "execution_path": None
@@ -362,6 +472,9 @@ class ComplexSummaryRow:
             "pocket_atoms": self.pocket_atoms,
             "rmsd": _safe_json_value(self.rmsd),
             "time_s": _safe_json_value(self.time),
+            "dock_time_s": _safe_json_value(result.dock_time_s),
+            "checkpoint_time_s": _safe_json_value(result.checkpoint_time_s),
+            "total_wall_time_s": _safe_json_value(result.total_wall_time_s),
             "energy": _safe_json_value(result.energy),
             "pose_pdb": self.dq_pose_pdb,
             "receptor_pdb": self.receptor_pdb,
@@ -531,6 +644,9 @@ class CompetitorResultRow:
             "top_rmsd": self.top_rmsd,
             "best_mode_rmsd": self.best_mode_rmsd,
             "time_s": self.time,
+            "dock_time_s": None,
+            "checkpoint_time_s": None,
+            "total_wall_time_s": self.time,
             "pose_pdb": self.pose_pdb,
             "gap_proof": None,
             "native_rank": None,
@@ -560,6 +676,9 @@ class CompetitorResultRow:
             "top_rmsd": _safe_json_value(self.top_rmsd),
             "best_returned_mode_rmsd": _safe_json_value(self.best_mode_rmsd),
             "time_s": _safe_json_value(self.time),
+            "dock_time_s": None,
+            "checkpoint_time_s": None,
+            "total_wall_time_s": _safe_json_value(self.time),
             "score": _safe_json_value(self.score),
             "pose_pdb": self.pose_pdb,
             "error": self.error,
@@ -581,27 +700,32 @@ class PreparedDockingInputs:
 
 
 @dataclass(frozen=True)
-class BenchmarkExecutionContext:
+class DQDockExecutionOptions:
     charge_method: ChargeMethod
     certified_scoring_family: CertifiedScoringFamily
-    parallelism: BenchmarkParallelism
-    complexes: tuple[PreparedBenchmarkComplex, ...]
-    n_complexes_requested: int
     n_poses: int
     n_opt_steps: int
     box_size: float
     formal_round_strategy: FormalRoundStrategy
     use_multi_stage: bool
     use_pocket_guided: bool
+    use_rich_exact_rescoring: bool
+    optimizer_backend: "OptimizerBackend"
+    max_retries: int
+    retry_break_rmsd: float
+    retry_preserve_seed: bool
+
+
+@dataclass(frozen=True)
+class BenchmarkExecutionContext(DQDockExecutionOptions):
+    parallelism: BenchmarkParallelism
+    complexes: tuple[PreparedBenchmarkComplex, ...]
+    n_complexes_requested: int
     output_paths: BenchmarkOutputPaths
     pose_dir: Path
     competitors: tuple[CompetitorMetadata, ...]
     attempt_timeout_seconds: float | None
     bench_start: float
-    optimizer_backend: "OptimizerBackend"
-    max_retries: int
-    retry_break_rmsd: float
-    retry_preserve_seed: bool
 
     @property
     def charge_method_name(self) -> str:
@@ -652,6 +776,8 @@ class BenchmarkState:
         phase: str,
         context: "BenchmarkExecutionContext",
         excluded_rows: list["ExcludedComplexRow"],
+        *,
+        render_report: bool = False,
     ) -> tuple[Path, Path]:
         return save_benchmark_results(
             context.output_paths,
@@ -665,6 +791,7 @@ class BenchmarkState:
             attempt_timeout_seconds=context.attempt_timeout_seconds,
             use_multi_stage=context.use_multi_stage,
             use_pocket_guided=context.use_pocket_guided,
+            use_rich_exact_rescoring=context.use_rich_exact_rescoring,
             competitors=context.competitors,
             bench_elapsed=context.elapsed(),
             phase=phase,
@@ -673,6 +800,7 @@ class BenchmarkState:
             dq_results=self.dq_results,
             competitor_rows=self.competitor_rows,
             excluded_rows=excluded_rows,
+            render_report=render_report,
         )
 
 
@@ -886,6 +1014,140 @@ def download_pdb(pdb_id: str, cache_dir: Path) -> Path | None:
     except Exception as e:
         print(f"  ⚠️  Failed to download {pdb_id}: {e}")
         return None
+
+
+def _iter_pdb_id_tokens(raw_text: str) -> Iterator[str]:
+    for raw_line in raw_text.splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        for token in line.replace(",", " ").split():
+            pdb_id = token.strip().lower()
+            if pdb_id:
+                yield pdb_id
+
+
+def load_explicit_pdb_ids(
+    pdb_ids_text: str | None = None, pdb_file: Path | None = None
+) -> tuple[str, ...]:
+    raw_ids: list[str] = []
+    if pdb_ids_text is not None:
+        raw_ids.extend(_iter_pdb_id_tokens(pdb_ids_text))
+    if pdb_file is not None:
+        raw_ids.extend(_iter_pdb_id_tokens(pdb_file.read_text()))
+    if not raw_ids:
+        return ()
+
+    invalid_ids = [pdb_id for pdb_id in raw_ids if len(pdb_id) != 4 or not pdb_id.isalnum()]
+    if invalid_ids:
+        raise ValueError(
+            "PDB IDs must be 4-character alphanumeric codes: "
+            + ", ".join(sorted(set(invalid_ids)))
+        )
+
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    normalized_ids: list[str] = []
+    for pdb_id in raw_ids:
+        if pdb_id in seen:
+            duplicates.append(pdb_id)
+            continue
+        seen.add(pdb_id)
+        normalized_ids.append(pdb_id)
+    if duplicates:
+        raise ValueError(
+            "Duplicate explicit PDB IDs are not allowed: "
+            + ", ".join(sorted(set(duplicates)))
+        )
+
+    return tuple(normalized_ids)
+
+
+def build_explicit_pdb_entries(pdb_ids: Sequence[str]) -> tuple[PDBEntry, ...]:
+    return tuple(
+        PDBEntry(
+            pdb_id=pdb_id,
+            target_name=pdb_id,
+            category="explicit",
+            scope=BenchmarkScope.LIGAND,
+            include_by_default=False,
+        )
+        for pdb_id in pdb_ids
+    )
+
+
+def derive_benchmark_target_selection(
+    *,
+    dataset: Literal["curated", "casf2007"],
+    n_complexes: int,
+    explicit_pdb_ids: Sequence[str] = (),
+) -> BenchmarkTargetSelection:
+    if explicit_pdb_ids:
+        cache_dir = Path("./pdb_cache")
+        cache_dir.mkdir(exist_ok=True)
+        return BenchmarkTargetSelection(
+            mode=BenchmarkTargetSelectionMode.EXPLICIT_PDB_IDS,
+            label="explicit PDB IDs",
+            cache_dir=cache_dir,
+            n_complexes_requested=len(explicit_pdb_ids),
+            entries=build_explicit_pdb_entries(explicit_pdb_ids),
+        )
+
+    if dataset == "casf2007":
+        cache_dir = Path("./casf2007_pdb_cache")
+        cache_dir.mkdir(exist_ok=True)
+        print("Downloading CASF-2007 PDBs to cache...", flush=True)
+        casf_ids = get_casf_2007_ids()
+        for pdb_id in casf_ids:
+            pdb_path = cache_dir / f"{pdb_id}.pdb"
+            if not pdb_path.exists():
+                download_pdb(pdb_id, cache_dir)
+                print(f"  Downloaded {pdb_id}", flush=True)
+        print(f"CASF-2007 PDBs cached: {len(casf_ids)}", flush=True)
+        available_entries = tuple(get_casf_2007_entries())
+        print(
+            f"CASF-2007 QC-passed: {len(available_entries)} / {len(casf_ids)}",
+            flush=True,
+        )
+        return BenchmarkTargetSelection(
+            mode=BenchmarkTargetSelectionMode.DATASET,
+            label="casf2007 dataset",
+            cache_dir=cache_dir,
+            n_complexes_requested=n_complexes,
+            entries=available_entries[:n_complexes],
+        )
+
+    cache_dir = Path("./pdb_cache")
+    cache_dir.mkdir(exist_ok=True)
+    dataset_exclusions = [
+        entry
+        for entry in get_benchmark_entries()
+        if entry.scope == BenchmarkScope.LIGAND
+        and not entry.include_by_default
+        and entry.exclusion_reason is not None
+    ]
+    if dataset_exclusions:
+        print("Configured dataset exclusions:", flush=True)
+        for entry in dataset_exclusions:
+            print(f"  {entry.pdb_id}: {entry.exclusion_reason}", flush=True)
+    available_entries = tuple(get_default_ligand_entries())
+    return BenchmarkTargetSelection(
+        mode=BenchmarkTargetSelectionMode.DATASET,
+        label="curated dataset",
+        cache_dir=cache_dir,
+        n_complexes_requested=n_complexes,
+        entries=available_entries[:n_complexes],
+    )
+
+
+def hydrate_selected_benchmark_entry(
+    entry: PDBEntry,
+    pdb_path: Path,
+    selection_mode: BenchmarkTargetSelectionMode,
+) -> PDBEntry:
+    if selection_mode != BenchmarkTargetSelectionMode.EXPLICIT_PDB_IDS:
+        return entry
+    return replace(entry, target_name=_extract_pdb_title(pdb_path))
 
 
 def prepare_protein(pdb_path: Path) -> Path:
@@ -1237,13 +1499,10 @@ class DirectPDBPreparationStrategy(DockingPreparationStrategy):
         )
 
 
-class MeekoPDBQTPreparationStrategy(DockingPreparationStrategy):
+class PDBQTPreparationStrategy(DockingPreparationStrategy, ABC):
     def __init__(self, receptor_tool: str, ligand_tool: str):
         self.receptor_tool = receptor_tool
         self.ligand_tool = ligand_tool
-
-    def protocol_label(self) -> str:
-        return "meeko_pdbqt"
 
     def prepare_inputs(
         self,
@@ -1253,9 +1512,64 @@ class MeekoPDBQTPreparationStrategy(DockingPreparationStrategy):
         temp_dir = Path(tempfile.mkdtemp(prefix="vina_prep_"))
         receptor_pdbqt = temp_dir / f"{receptor_pdb.stem}.pdbqt"
         ligand_pdbqt = temp_dir / f"{ligand_pdb.stem}.pdbqt"
+        ligand_source = self.prepare_ligand_source(ligand_pdb, temp_dir)
+        subprocess.run(
+            self.build_receptor_command(receptor_pdb, receptor_pdbqt, temp_dir),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            self.build_ligand_command(ligand_source, ligand_pdbqt, temp_dir),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return PreparedDockingInputs(
+            protocol_label=self.protocol_label(),
+            receptor_path=receptor_pdbqt,
+            ligand_path=ligand_pdbqt,
+            cleanup_dir=temp_dir,
+        )
+
+    def prepare_ligand_source(self, ligand_pdb: Path, temp_dir: Path) -> Path:
+        return ligand_pdb
+
+    @abstractmethod
+    def build_receptor_command(
+        self,
+        receptor_pdb: Path,
+        receptor_pdbqt: Path,
+        temp_dir: Path,
+    ) -> list[str]:
+        """Build the receptor preparation command."""
+
+    @abstractmethod
+    def build_ligand_command(
+        self,
+        ligand_source: Path,
+        ligand_pdbqt: Path,
+        temp_dir: Path,
+    ) -> list[str]:
+        """Build the ligand preparation command."""
+
+
+class MeekoPDBQTPreparationStrategy(PDBQTPreparationStrategy):
+    def protocol_label(self) -> str:
+        return "meeko_pdbqt"
+
+    def prepare_ligand_source(self, ligand_pdb: Path, temp_dir: Path) -> Path:
         ligand_sdf = temp_dir / f"{ligand_pdb.stem}.sdf"
         convert_ligand_pdb_to_sdf(ligand_pdb, ligand_sdf)
-        receptor_cmd = [
+        return ligand_sdf
+
+    def build_receptor_command(
+        self,
+        receptor_pdb: Path,
+        receptor_pdbqt: Path,
+        temp_dir: Path,
+    ) -> list[str]:
+        return [
             self.receptor_tool,
             "--read_pdb",
             str(receptor_pdb),
@@ -1267,40 +1581,33 @@ class MeekoPDBQTPreparationStrategy(DockingPreparationStrategy):
             "--default_altloc",
             "A",
         ]
-        ligand_cmd = [
+
+    def build_ligand_command(
+        self,
+        ligand_source: Path,
+        ligand_pdbqt: Path,
+        temp_dir: Path,
+    ) -> list[str]:
+        return [
             self.ligand_tool,
             "-i",
-            str(ligand_sdf),
+            str(ligand_source),
             "-o",
             str(ligand_pdbqt),
         ]
-        subprocess.run(receptor_cmd, check=True, capture_output=True, text=True)
-        subprocess.run(ligand_cmd, check=True, capture_output=True, text=True)
-        return PreparedDockingInputs(
-            protocol_label=self.protocol_label(),
-            receptor_path=receptor_pdbqt,
-            ligand_path=ligand_pdbqt,
-            cleanup_dir=temp_dir,
-        )
 
 
-class AutoDockToolsPDBQTPreparationStrategy(DockingPreparationStrategy):
-    def __init__(self, receptor_tool: str, ligand_tool: str):
-        self.receptor_tool = receptor_tool
-        self.ligand_tool = ligand_tool
-
+class AutoDockToolsPDBQTPreparationStrategy(PDBQTPreparationStrategy):
     def protocol_label(self) -> str:
         return "autodocktools_pdbqt"
 
-    def prepare_inputs(
+    def build_receptor_command(
         self,
         receptor_pdb: Path,
-        ligand_pdb: Path,
-    ) -> PreparedDockingInputs:
-        temp_dir = Path(tempfile.mkdtemp(prefix="vina_prep_"))
-        receptor_pdbqt = temp_dir / f"{receptor_pdb.stem}.pdbqt"
-        ligand_pdbqt = temp_dir / f"{ligand_pdb.stem}.pdbqt"
-        receptor_cmd = [
+        receptor_pdbqt: Path,
+        temp_dir: Path,
+    ) -> list[str]:
+        return [
             self.receptor_tool,
             "-r",
             str(receptor_pdb),
@@ -1309,23 +1616,22 @@ class AutoDockToolsPDBQTPreparationStrategy(DockingPreparationStrategy):
             "-A",
             "checkhydrogens",
         ]
-        ligand_cmd = [
+
+    def build_ligand_command(
+        self,
+        ligand_source: Path,
+        ligand_pdbqt: Path,
+        temp_dir: Path,
+    ) -> list[str]:
+        return [
             self.ligand_tool,
             "-l",
-            str(ligand_pdb),
+            str(ligand_source),
             "-o",
             str(ligand_pdbqt),
             "-A",
             "checkhydrogens",
         ]
-        subprocess.run(receptor_cmd, check=True, capture_output=True, text=True)
-        subprocess.run(ligand_cmd, check=True, capture_output=True, text=True)
-        return PreparedDockingInputs(
-            protocol_label=self.protocol_label(),
-            receptor_path=receptor_pdbqt,
-            ligand_path=ligand_pdbqt,
-            cleanup_dir=temp_dir,
-        )
 
 
 def detect_pdbqt_preparation_strategies() -> tuple[DockingPreparationStrategy, ...]:
@@ -1474,6 +1780,7 @@ def save_benchmark_results(
     attempt_timeout_seconds: float | None,
     use_multi_stage: bool,
     use_pocket_guided: bool,
+    use_rich_exact_rescoring: bool,
     competitors: tuple[CompetitorMetadata, ...],
     bench_elapsed: float,
     phase: str,
@@ -1482,6 +1789,7 @@ def save_benchmark_results(
     dq_results: list[BenchmarkResult],
     competitor_rows: list[CompetitorResultRow],
     excluded_rows: list[ExcludedComplexRow],
+    render_report: bool = False,
 ) -> tuple[Path, Path]:
     json_path = output_paths.json_path
     csv_path = output_paths.csv_path
@@ -1568,6 +1876,9 @@ def save_benchmark_results(
                 "top_rmsd",
                 "best_mode_rmsd",
                 "time_s",
+                "dock_time_s",
+                "checkpoint_time_s",
+                "total_wall_time_s",
                 "pose_pdb",
                 "gap_proof",
                 "native_rank",
@@ -1610,6 +1921,7 @@ def save_benchmark_results(
         ],
         "use_multi_stage": use_multi_stage,
         "use_pocket_guided": use_pocket_guided,
+        "use_rich_exact_rescoring": use_rich_exact_rescoring,
         "competitors": [
             {
                 "engine_id": metadata.engine_id,
@@ -1628,6 +1940,12 @@ def save_benchmark_results(
         if not dq_rows
         else float(np.mean([row.rmsd for row in dq_rows])),
         "dq_total_time_s": float(sum(row.time for row in dq_rows)),
+        "dq_total_dock_time_s": float(
+            sum(result.dock_time_s or result.time for result in dq_results)
+        ),
+        "dq_total_checkpoint_time_s": float(
+            sum(result.checkpoint_time_s or 0.0 for result in dq_results)
+        ),
     }
 
     payload = {
@@ -1647,7 +1965,8 @@ def save_benchmark_results(
     with open(json_path, "w") as f:
         json.dump(payload, f, indent=2)
 
-    render_redocking_report(json_path)
+    if render_report:
+        render_redocking_report(json_path)
 
     return json_path, csv_path
 
@@ -1743,7 +2062,6 @@ def run_dq_dock(
 
     os.environ.setdefault("TF_CUDNN_DETERMINISTIC", "1")
     from dq_dock_engine.docking.core import (
-        BlindDockingExecutionPath,
         CertifiedPocketFailureReason,
         DockingBox,
         ScoringEngine,
@@ -1752,13 +2070,7 @@ def run_dq_dock(
         build_ligand_context,
         build_receptor_arrays,
     )
-    from dq_dock_engine.docking.pipeline import (
-        run_certified_blind_docking,
-        run_docking_pipeline,
-        run_geometric_blind_docking,
-    )
     from dq_dock_engine.docking_config import (
-        DockingMode,
         FormalRoundStrategy,
         create_config,
     )
@@ -1818,56 +2130,46 @@ def run_dq_dock(
         receptor_elements=receptor_elements,
         precomputed_receptor_charges=precomputed_receptor_charges,
     )
+    runtime_protein_coords = jnp.array(pocket_coords)
+    runtime_receptor_radii = jnp.array(pocket_radii)
+    attempt_executor = derive_blind_docking_executor(
+        docking_config.mode,
+        use_pocket_guided=use_pocket_guided,
+    )
+
+    def finalize_attempt_failure(
+        failure_result: BenchmarkResult,
+    ) -> tuple[BenchmarkResult, np.ndarray | None]:
+        if best_result is not None:
+            print(
+                "    [Info] Preserving best successful retry result after a later failed attempt.",
+                flush=True,
+            )
+            return best_result, best_pose_coords
+        return failure_result, None
 
     def execute_attempt(attempt_key: jax.Array) -> BlindDockingExecutionOutcome:
-        spec = BlindDockingAttemptSpec(
-            protein_coords=jnp.array(pocket_coords),
-            receptor_radii=jnp.array(pocket_radii),
-            ligand_ctx=ligand_ctx,
-            box=box,
-            n_poses=n_poses,
-            key=attempt_key,
-            charge_method=charge_method,
-            receptor_file=receptor_file,
-            precomputed_receptor_charges=runtime_receptor_charges,
-            receptor_elements=runtime_receptor_elements,
-            config=docking_config,
-            top_k=1,
-            top_k_to_optimize=1,
-            optimize=True,
-            n_opt_steps=n_opt_steps,
-            include_native=True,
-            engine=engine,
-            use_pocket_guided=use_pocket_guided,
-            use_multi_stage=use_multi_stage,
-        )
-        if docking_config.mode == DockingMode.CERTIFIED and use_pocket_guided:
-            blind_result = spec.run_certified(run_certified_blind_docking)
-            return BlindDockingExecutionOutcome(
-                poses=list(blind_result.poses),
-                certification=blind_result.certification,
-                execution_path=BlindDockingExecutionPath.STRICT_CERTIFIED,
-                certified_failure_reason=blind_result.plan.certified_failure_reason,
-                theorem_handles=blind_result.plan.theorem_handles,
+        return attempt_executor.execute(
+            BlindDockingAttemptContext(
+                protein_coords=runtime_protein_coords,
+                receptor_radii=runtime_receptor_radii,
+                ligand_ctx=ligand_ctx,
+                box=box,
+                n_poses=n_poses,
+                key=attempt_key,
+                charge_method=charge_method,
+                receptor_file=receptor_file,
+                precomputed_receptor_charges=runtime_receptor_charges,
+                receptor_elements=runtime_receptor_elements,
+                config=docking_config,
+                top_k=1,
+                optimize=True,
+                n_opt_steps=n_opt_steps,
+                top_k_to_optimize=1,
+                include_native=True,
+                engine=engine,
+                use_multi_stage=use_multi_stage,
             )
-
-        if use_pocket_guided:
-            blind_result = spec.run_geometric(run_geometric_blind_docking)
-            return BlindDockingExecutionOutcome(
-                poses=list(blind_result.poses),
-                certification=None,
-                execution_path=BlindDockingExecutionPath.GEOMETRIC_FALLBACK,
-                certified_failure_reason=None,
-                theorem_handles=(),
-            )
-
-        result_tuple = spec.run_pipeline(run_docking_pipeline)
-        return BlindDockingExecutionOutcome(
-            poses=list(result_tuple[0]),
-            certification=result_tuple[1],
-            execution_path=BlindDockingExecutionPath.GENERIC_PIPELINE,
-            certified_failure_reason=None,
-            theorem_handles=(),
         )
 
     base_seed = zlib.adler32(str(ligand_file).encode("utf-8"))
@@ -1913,17 +2215,19 @@ def run_dq_dock(
                         f"    [Retry {attempt + 2}/{max_retries}] n_poses={n_poses}, n_opt_steps={n_opt_steps} (no poses)"
                     )
                     continue
-                return BenchmarkResult(
-                    success=False,
-                    energy=0.0,
-                    rmsd=0.0,
-                    time=time.time() - start,
-                    n_atoms=0,
-                    formal_status=formal_status,
-                    execution_path=execution_path,
-                    certified_failure_reason=certified_failure_reason,
-                    theorem_handles=theorem_handles,
-                ), None
+                return finalize_attempt_failure(
+                    BenchmarkResult(
+                        success=False,
+                        energy=0.0,
+                        rmsd=0.0,
+                        time=time.time() - start,
+                        n_atoms=0,
+                        formal_status=formal_status,
+                        execution_path=execution_path,
+                        certified_failure_reason=certified_failure_reason,
+                        theorem_handles=theorem_handles,
+                    )
+                )
 
             elapsed = time.time() - start
             if not best_poses:
@@ -1973,17 +2277,19 @@ def run_dq_dock(
                 reason = CertifiedPocketFailureReason.NO_CERTIFIED_POCKET
                 if "NO_LOCAL_REGION" in str(e):
                     reason = CertifiedPocketFailureReason.NO_LOCAL_REGION
-                return BenchmarkResult(
-                    success=False,
-                    energy=0.0,
-                    rmsd=0.0,
-                    time=time.time() - start,
-                    n_atoms=0,
-                    formal_status=formal_status,
-                    execution_path=BlindDockingExecutionPath.STRICT_CERTIFIED,
-                    certified_failure_reason=reason,
-                    theorem_handles=(),
-                ), None
+                return finalize_attempt_failure(
+                    BenchmarkResult(
+                        success=False,
+                        energy=0.0,
+                        rmsd=0.0,
+                        time=time.time() - start,
+                        n_atoms=0,
+                        formal_status=formal_status,
+                        execution_path=BlindDockingExecutionPath.STRICT_CERTIFIED,
+                        certified_failure_reason=reason,
+                        theorem_handles=(),
+                    )
+                )
             if attempt < max_retries - 1:
                 import traceback
 
@@ -1994,17 +2300,19 @@ def run_dq_dock(
                     f"    [Retry {attempt + 2}/{max_retries}] n_poses={n_poses}, n_opt_steps={n_opt_steps} (exception: {e})"
                 )
                 continue
-            return BenchmarkResult(
-                success=False,
-                energy=0.0,
-                rmsd=0.0,
-                time=time.time() - start,
-                n_atoms=0,
-                formal_status=formal_status,
-                execution_path=execution_path,
-                certified_failure_reason=certified_failure_reason,
-                theorem_handles=theorem_handles,
-            ), None
+            return finalize_attempt_failure(
+                BenchmarkResult(
+                    success=False,
+                    energy=0.0,
+                    rmsd=0.0,
+                    time=time.time() - start,
+                    n_atoms=0,
+                    formal_status=formal_status,
+                    execution_path=execution_path,
+                    certified_failure_reason=certified_failure_reason,
+                    theorem_handles=theorem_handles,
+                )
+            )
 
     if best_result is None:
         return BenchmarkResult(
@@ -2020,7 +2328,10 @@ def run_dq_dock(
     return best_result, best_pose_coords
 
 
-class BenchmarkEngine(ABC):
+EngineRunT = TypeVar("EngineRunT")
+
+
+class BenchmarkEngine(ABC, Generic[EngineRunT]):
     engine_id: str
     display_name: str
     include_in_competitors: bool = False
@@ -2035,6 +2346,11 @@ class BenchmarkEngine(ABC):
     def section_title(self, context: BenchmarkExecutionContext) -> str:
         """Human-readable section title for this engine."""
 
+    def _print_section_header(self, context: BenchmarkExecutionContext) -> None:
+        print("\n" + "=" * 70, flush=True)
+        print(self.section_title(context), flush=True)
+        print("=" * 70, flush=True)
+
     def run_all(
         self,
         complexes: Sequence[PreparedBenchmarkComplex],
@@ -2044,21 +2360,35 @@ class BenchmarkEngine(ABC):
     ) -> None:
         if not self.is_available():
             return
-        print("\n" + "=" * 70, flush=True)
-        print(self.section_title(context), flush=True)
-        print("=" * 70, flush=True)
+        self._print_section_header(context)
+        for run_result in self.iter_run_results(complexes, context):
+            self.record_run_result(run_result, state, context, excluded_rows)
+
+    def iter_run_results(
+        self,
+        complexes: Sequence[PreparedBenchmarkComplex],
+        context: BenchmarkExecutionContext,
+    ) -> Iterator[EngineRunT]:
         for complex_entry in complexes:
-            self.run_complex(complex_entry, state, context, excluded_rows)
+            yield self.run_single(complex_entry, context)
 
     @abstractmethod
-    def run_complex(
+    def run_single(
         self,
         complex_entry: PreparedBenchmarkComplex,
+        context: BenchmarkExecutionContext,
+    ) -> EngineRunT:
+        """Run one complex and return the engine-specific result record."""
+
+    @abstractmethod
+    def record_run_result(
+        self,
+        run_result: EngineRunT,
         state: BenchmarkState,
         context: BenchmarkExecutionContext,
         excluded_rows: list[ExcludedComplexRow],
     ) -> None:
-        """Run one complex and update benchmark state."""
+        """Fold a completed result into benchmark state."""
 
     @abstractmethod
     def print_summary(
@@ -2070,22 +2400,10 @@ class BenchmarkEngine(ABC):
 
 
 @dataclass(frozen=True)
-class DQDockBenchmarkJob:
+class DQDockBenchmarkJob(DQDockExecutionOptions):
     complex_entry: PreparedBenchmarkComplex
-    charge_method: ChargeMethod
     precomputed_ligand_charges: np.ndarray | None
     precomputed_receptor_charges: np.ndarray | None
-    n_poses: int
-    n_opt_steps: int
-    use_multi_stage: bool
-    use_pocket_guided: bool
-    optimizer_backend: OptimizerBackend
-    formal_round_strategy: FormalRoundStrategy
-    certified_scoring_family: CertifiedScoringFamily
-    max_retries: int
-    retry_break_rmsd: float
-    retry_preserve_seed: bool
-    box_size: float
 
 
 @dataclass(frozen=True)
@@ -2170,7 +2488,7 @@ def run_dq_dock_benchmark_job_with_timeout(
     return payload
 
 
-class DQDockBenchmarkEngine(BenchmarkEngine):
+class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
     engine_id = "dq_dock"
     display_name = "DQ-Dock"
 
@@ -2187,19 +2505,11 @@ class DQDockBenchmarkEngine(BenchmarkEngine):
         )
         return f"RUNNING DQ-DOCK ({context.n_poses} poses, {context.n_opt_steps} opt steps, {mode_label}{worker_label})"
 
-    def run_all(
+    def iter_run_results(
         self,
         complexes: Sequence[PreparedBenchmarkComplex],
-        state: BenchmarkState,
         context: BenchmarkExecutionContext,
-        excluded_rows: list[ExcludedComplexRow],
-    ) -> None:
-        if not self.is_available():
-            return
-        print("\n" + "=" * 70, flush=True)
-        print(self.section_title(context), flush=True)
-        print("=" * 70, flush=True)
-
+    ) -> Iterator[DQDockBenchmarkJobResult]:
         jobs = tuple(
             self._build_job(complex_entry, context) for complex_entry in complexes
         )
@@ -2214,25 +2524,37 @@ class DQDockBenchmarkEngine(BenchmarkEngine):
             run_job=run_job,
             parallelism=context.parallelism,
         ):
-            self._record_job_result(job_result, state, context, excluded_rows)
+            yield job_result
 
-    def _record_job_result(
+    def run_single(
         self,
-        job_result: DQDockBenchmarkJobResult,
+        complex_entry: PreparedBenchmarkComplex,
+        context: BenchmarkExecutionContext,
+    ) -> DQDockBenchmarkJobResult:
+        return run_dq_dock_benchmark_job(self._build_job(complex_entry, context))
+
+    def record_run_result(
+        self,
+        run_result: DQDockBenchmarkJobResult,
         state: BenchmarkState,
         context: BenchmarkExecutionContext,
         excluded_rows: list[ExcludedComplexRow],
     ) -> None:
-        complex_entry = job_result.complex_entry
-        result = job_result.result
-        dq_pose_coords = job_result.dq_pose_coords
+        complex_entry = run_result.complex_entry
+        result = run_result.result
+        dq_pose_coords = run_result.dq_pose_coords
         print(f"\n{complex_entry.pdb_id}:", flush=True)
         print(
             f"  Ligand atoms: {len(complex_entry.ligand_coords)}, Pocket atoms: {len(complex_entry.pocket_coords)}",
             flush=True,
         )
+        pose_save_start = time.perf_counter()
         dq_pose_path = self._save_pose(complex_entry, context, dq_pose_coords)
+        pose_save_elapsed = time.perf_counter() - pose_save_start
 
+        dock_time = (
+            result.dock_time_s if result.dock_time_s is not None else result.time
+        )
         state.dq_results.append(result)
         state.dq_rows.append(
             ComplexSummaryRow(
@@ -2242,49 +2564,54 @@ class DQDockBenchmarkEngine(BenchmarkEngine):
                 pocket_atoms=len(complex_entry.pocket_coords),
                 rmsd=result.rmsd,
                 time=result.time,
+                dock_time=dock_time,
                 dq_pose_pdb=None if dq_pose_path is None else str(dq_pose_path),
                 receptor_pdb=str(complex_entry.receptor_view_pdb),
                 native_ligand_pdb=str(complex_entry.native_ligand_view_pdb),
             )
         )
 
-        print(
-            f"  Best Energy: {result.energy:.2f} kcal/mol, Sampled Pose RMSD: {result.rmsd:.2f}A, Time: {result.time:.2f}s"
-        )
-        print("  DQ-Dock Redocking", end="")
-        gap_proof = format_gap_proof_label(result.certified)
-        if gap_proof is not None:
-            print(f", Gap Proof: {gap_proof}", end="")
-            if result.native_rank is not None:
-                print(f", Native Rank: {result.native_rank}", end="")
-            if result.energy_gap is not None:
-                print(f", Energy Gap: {result.energy_gap:.4f}", end="")
-        print()
-        if result.native_rank is not None:
-            print(
-                "  Gap proof compares native pre-optimization energy against sampled poses.",
-                flush=True,
-            )
-
+        checkpoint_start = time.perf_counter()
         state.save(
             "dq_dock",
             context,
             excluded_rows=excluded_rows,
+            render_report=False,
+        )
+        checkpoint_elapsed = time.perf_counter() - checkpoint_start
+        wall_time = dock_time + pose_save_elapsed + checkpoint_elapsed
+        finalized_result = replace(
+            result,
+            time=wall_time,
+            dock_time_s=dock_time,
+            checkpoint_time_s=checkpoint_elapsed,
+            total_wall_time_s=wall_time,
+        )
+        state.dq_results[-1] = finalized_result
+        state.dq_rows[-1] = replace(
+            state.dq_rows[-1],
+            time=wall_time,
+            dock_time=dock_time,
         )
 
-    def run_complex(
-        self,
-        complex_entry: PreparedBenchmarkComplex,
-        state: BenchmarkState,
-        context: BenchmarkExecutionContext,
-        excluded_rows: list[ExcludedComplexRow],
-    ) -> None:
-        self._record_job_result(
-            run_dq_dock_benchmark_job(self._build_job(complex_entry, context)),
-            state,
-            context,
-            excluded_rows,
+        print(
+            f"  Best Energy: {finalized_result.energy:.2f} kcal/mol, Sampled Pose RMSD: {finalized_result.rmsd:.2f}A, Dock: {dock_time:.2f}s, Wall: {wall_time:.2f}s"
         )
+        print("  DQ-Dock Redocking", end="")
+        gap_proof = format_gap_proof_label(finalized_result.certified)
+        if gap_proof is not None:
+            print(f", Gap Proof: {gap_proof}", end="")
+            if finalized_result.native_rank is not None:
+                print(f", Native Rank: {finalized_result.native_rank}", end="")
+            if finalized_result.energy_gap is not None:
+                print(f", Energy Gap: {finalized_result.energy_gap:.4f}", end="")
+        print()
+        print(f"  Checkpoint save time: {checkpoint_elapsed:.2f}s", flush=True)
+        if finalized_result.native_rank is not None:
+            print(
+                "  Gap proof compares native pre-optimization energy against sampled poses.",
+                flush=True,
+            )
 
     def _build_job(
         self,
@@ -2300,6 +2627,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine):
             n_opt_steps=context.n_opt_steps,
             use_multi_stage=context.use_multi_stage,
             use_pocket_guided=context.use_pocket_guided,
+            use_rich_exact_rescoring=context.use_rich_exact_rescoring,
             optimizer_backend=context.optimizer_backend,
             formal_round_strategy=context.formal_round_strategy,
             certified_scoring_family=context.certified_scoring_family,
@@ -2331,26 +2659,33 @@ class DQDockBenchmarkEngine(BenchmarkEngine):
         if state.dq_rows:
             print("\nDQ-Dock Per-Complex")
             print("-" * 70)
-            print(f"{'PDB':<8} {'Ligand':<8} {'Pocket':<8} {'RMSD':<10} {'Time':<10}")
+            print(
+                f"{'PDB':<8} {'Ligand':<8} {'Pocket':<8} {'RMSD':<10} {'Dock':<10} {'Wall':<10}"
+            )
             for row in state.dq_rows:
                 print(
-                    f"{row.pdb_id:<8} {row.ligand_atoms:<8} {row.pocket_atoms:<8} {row.rmsd:<10.2f} {row.time:<10.2f}"
+                    f"{row.pdb_id:<8} {row.ligand_atoms:<8} {row.pocket_atoms:<8} {row.rmsd:<10.2f} {(row.dock_time or float('nan')):<10.2f} {row.time:<10.2f}"
                 )
 
         if state.dq_results:
             avg_time = np.mean([r.time for r in state.dq_results])
+            avg_dock_time = np.mean([r.dock_time_s or r.time for r in state.dq_results])
             avg_rmsd = np.mean([r.rmsd for r in state.dq_results])
             min_time = np.min([r.time for r in state.dq_results])
             max_time = np.max([r.time for r in state.dq_results])
             dq_total = sum(r.time for r in state.dq_results)
+            dq_total_dock = sum(r.dock_time_s or r.time for r in state.dq_results)
             print(
                 f"{self.display_name:<20} {avg_time:<12.2f} {dq_total:<12.2f} {len(state.dq_results)}/{len(complexes)}"
             )
             print(f"  Avg RMSD: {avg_rmsd:.2f}A")
+            print(
+                f"  Avg dock time: {avg_dock_time:.2f}s, Total dock time: {dq_total_dock:.2f}s"
+            )
             print(f"  Time range: {min_time:.2f}s - {max_time:.2f}s per complex")
 
 
-class CLIDockingBenchmarkEngine(BenchmarkEngine):
+class CLIDockingBenchmarkEngine(BenchmarkEngine[CompetitorResultRow]):
     include_in_competitors = True
 
     def __init__(
@@ -2426,15 +2761,22 @@ class CLIDockingBenchmarkEngine(BenchmarkEngine):
     ) -> list[str]:
         """Build the CLI command for one docking run."""
 
-    def run_complex(
+    def run_single(
         self,
         complex_entry: PreparedBenchmarkComplex,
-        state: BenchmarkState,
         context: BenchmarkExecutionContext,
-        excluded_rows: list[ExcludedComplexRow],
-    ) -> None:
+    ) -> CompetitorResultRow:
         if self.binary_path is None:
-            return
+            return CompetitorResultRow(
+                engine_id=self.engine_id,
+                display_name=self.display_name,
+                score_name=self.score_name(),
+                pdb_id=complex_entry.pdb_id,
+                target_name=complex_entry.target_name,
+                success=False,
+                time=0.0,
+                error=f"{self.display_name} is unavailable",
+            )
         print(f"\n{complex_entry.pdb_id}...", flush=True)
 
         pose_output_path = (
@@ -2533,8 +2875,22 @@ class CLIDockingBenchmarkEngine(BenchmarkEngine):
                 time=0.0,
                 error=f"{self.display_name} produced no result",
             )
-        state.competitor_rows.append(final_row)
-        state.save(self.engine_id, context, excluded_rows)
+        return final_row
+
+    def record_run_result(
+        self,
+        run_result: CompetitorResultRow,
+        state: BenchmarkState,
+        context: BenchmarkExecutionContext,
+        excluded_rows: list[ExcludedComplexRow],
+    ) -> None:
+        state.competitor_rows.append(run_result)
+        state.save(
+            self.engine_id,
+            context,
+            excluded_rows,
+            render_report=False,
+        )
 
     def print_summary(
         self,
@@ -2564,14 +2920,7 @@ class CLIDockingBenchmarkEngine(BenchmarkEngine):
             print(f"  Avg best-returned RMSD: {avg_best_mode_rmsd:.2f}A")
 
 
-class SminaBenchmarkEngine(CLIDockingBenchmarkEngine):
-    engine_id = "smina"
-    display_name = "Vina"
-
-    @classmethod
-    def candidate_binary_names(cls) -> tuple[str, ...]:
-        return ("smina", "vina", "autodock_vina")
-
+class VinaLikeBenchmarkEngine(CLIDockingBenchmarkEngine):
     @classmethod
     def preparation_strategies(cls) -> tuple[DockingPreparationStrategy, ...]:
         return (DirectPDBPreparationStrategy(),)
@@ -2579,6 +2928,54 @@ class SminaBenchmarkEngine(CLIDockingBenchmarkEngine):
     @classmethod
     def score_name(cls) -> str:
         return "affinity"
+
+    def build_command(
+        self,
+        prepared_inputs: PreparedDockingInputs,
+        complex_entry: PreparedBenchmarkComplex,
+        output_path: Path,
+    ) -> list[str]:
+        assert self.binary_path is not None
+        return [
+            self.binary_path,
+            "--receptor",
+            str(prepared_inputs.receptor_path),
+            "--ligand",
+            str(prepared_inputs.ligand_path),
+            "--center_x",
+            str(complex_entry.center[0]),
+            "--center_y",
+            str(complex_entry.center[1]),
+            "--center_z",
+            str(complex_entry.center[2]),
+            "--size_x",
+            str(complex_entry.box_size[0]),
+            "--size_y",
+            str(complex_entry.box_size[1]),
+            "--size_z",
+            str(complex_entry.box_size[2]),
+            "--exhaustiveness",
+            "64",
+            "--num_modes",
+            "20",
+            *self.additional_cli_flags(),
+            "--min_rmsd_filter",
+            "0.5",
+            "--seed",
+            "42",
+        ]
+
+    def additional_cli_flags(self) -> tuple[str, ...]:
+        return ()
+
+
+class SminaBenchmarkEngine(VinaLikeBenchmarkEngine):
+    engine_id = "smina"
+    display_name = "Vina"
+
+    @classmethod
+    def candidate_binary_names(cls) -> tuple[str, ...]:
+        return ("smina", "vina", "autodock_vina")
 
     @classmethod
     def installation_message(cls) -> str:
@@ -2603,59 +3000,17 @@ For now, we'll run DQ-Dock only on PDB files.
     def section_title(self, context: BenchmarkExecutionContext) -> str:
         return "RUNNING SMINA/VINA"
 
-    def build_command(
-        self,
-        prepared_inputs: PreparedDockingInputs,
-        complex_entry: PreparedBenchmarkComplex,
-        output_path: Path,
-    ) -> list[str]:
-        assert self.binary_path is not None
-        return [
-            self.binary_path,
-            "--receptor",
-            str(prepared_inputs.receptor_path),
-            "--ligand",
-            str(prepared_inputs.ligand_path),
-            "--center_x",
-            str(complex_entry.center[0]),
-            "--center_y",
-            str(complex_entry.center[1]),
-            "--center_z",
-            str(complex_entry.center[2]),
-            "--size_x",
-            str(complex_entry.box_size[0]),
-            "--size_y",
-            str(complex_entry.box_size[1]),
-            "--size_z",
-            str(complex_entry.box_size[2]),
-            "--exhaustiveness",
-            "64",
-            "--num_modes",
-            "20",
-            "--energy_range",
-            "12.0",
-            "--min_rmsd_filter",
-            "0.5",
-            "--seed",
-            "42",
-        ]
+    def additional_cli_flags(self) -> tuple[str, ...]:
+        return ("--energy_range", "12.0")
 
 
-class GninaBenchmarkEngine(CLIDockingBenchmarkEngine):
+class GninaBenchmarkEngine(VinaLikeBenchmarkEngine):
     engine_id = "gnina"
     display_name = "GNINA"
 
     @classmethod
     def candidate_binary_names(cls) -> tuple[str, ...]:
         return ("gnina",)
-
-    @classmethod
-    def preparation_strategies(cls) -> tuple[DockingPreparationStrategy, ...]:
-        return (DirectPDBPreparationStrategy(),)
-
-    @classmethod
-    def score_name(cls) -> str:
-        return "affinity"
 
     @classmethod
     def installation_message(cls) -> str:
@@ -2669,41 +3024,6 @@ To run this benchmark with GNINA comparisons:
 3. Re-run this benchmark
 """
 
-    def build_command(
-        self,
-        prepared_inputs: PreparedDockingInputs,
-        complex_entry: PreparedBenchmarkComplex,
-        output_path: Path,
-    ) -> list[str]:
-        assert self.binary_path is not None
-        return [
-            self.binary_path,
-            "--receptor",
-            str(prepared_inputs.receptor_path),
-            "--ligand",
-            str(prepared_inputs.ligand_path),
-            "--center_x",
-            str(complex_entry.center[0]),
-            "--center_y",
-            str(complex_entry.center[1]),
-            "--center_z",
-            str(complex_entry.center[2]),
-            "--size_x",
-            str(complex_entry.box_size[0]),
-            "--size_y",
-            str(complex_entry.box_size[1]),
-            "--size_z",
-            str(complex_entry.box_size[2]),
-            "--exhaustiveness",
-            "64",
-            "--num_modes",
-            "20",
-            "--min_rmsd_filter",
-            "0.5",
-            "--seed",
-            "42",
-        ]
-
 
 def run_benchmark(
     n_complexes: int = 10,
@@ -2715,9 +3035,11 @@ def run_benchmark(
     certified_scoring_family: CertifiedScoringFamily = DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
     use_multi_stage: bool = DEFAULT_BENCHMARK_USE_MULTI_STAGE,
     use_pocket_guided: bool = DEFAULT_BENCHMARK_USE_POCKET_GUIDED,
+    use_rich_exact_rescoring: bool = True,
     results_dir: Path = Path("benchmark_results"),
     competitors: Literal["all", "none", "smina", "gnina"] = "all",
     dataset: Literal["curated", "casf2007"] = "casf2007",
+    pdb_ids: Sequence[str] = (),
     optimizer_backend: OptimizerBackend = DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
     parallelism: BenchmarkParallelism = BenchmarkParallelism(),
     attempt_timeout_seconds: float | None = None,
@@ -2747,11 +3069,6 @@ def run_benchmark(
     for engine in engines:
         engine.announce()
 
-    cache_dir = Path("./pdb_cache")
-    if dataset == "casf2007":
-        cache_dir = Path("./casf2007_pdb_cache")
-    cache_dir.mkdir(exist_ok=True)
-
     output_paths = create_benchmark_output_paths(results_dir)
     pose_dir = benchmark_pose_dir(output_paths)
     # Ensure pose output directory exists before any per-complex writes
@@ -2761,9 +3078,15 @@ def run_benchmark(
         for engine in engines
         if engine.include_in_competitors and engine.is_available()
     )
+    selection = derive_benchmark_target_selection(
+        dataset=dataset,
+        n_complexes=n_complexes,
+        explicit_pdb_ids=pdb_ids,
+    )
+    cache_dir = selection.cache_dir
 
     print(
-        f"\nPreparing {dataset} dataset ({n_complexes} complexes)...",
+        f"\nPreparing {selection.label} ({selection.n_complexes_requested} complexes)...",
         flush=True,
     )
     print(f"Live Results JSON: {output_paths.json_path}", flush=True)
@@ -2771,71 +3094,56 @@ def run_benchmark(
     complexes: list[BenchmarkComplex] = []
     excluded_rows: list[ExcludedComplexRow] = []
 
-    if dataset == "casf2007":
-        print("Downloading CASF-2007 PDBs to cache...", flush=True)
-        casf_ids = get_casf_2007_ids()
-        for pdb_id in casf_ids:
-            pdb_path = cache_dir / f"{pdb_id}.pdb"
-            if not pdb_path.exists():
-                download_pdb(pdb_id, cache_dir)
-                print(f"  Downloaded {pdb_id}", flush=True)
-        print(f"CASF-2007 PDBs cached: {len(casf_ids)}", flush=True)
-        available_entries = get_casf_2007_entries()
-        print(
-            f"CASF-2007 QC-passed: {len(available_entries)} / {len(casf_ids)}",
-            flush=True,
-        )
-    else:
-        dataset_exclusions = [
-            entry
-            for entry in get_benchmark_entries()
-            if entry.scope == BenchmarkScope.LIGAND
-            and not entry.include_by_default
-            and entry.exclusion_reason is not None
-        ]
-        if dataset_exclusions:
-            print("Configured dataset exclusions:", flush=True)
-            for entry in dataset_exclusions:
-                print(f"  {entry.pdb_id}: {entry.exclusion_reason}", flush=True)
-        available_entries = get_default_ligand_entries()
-
-    for entry in available_entries:
-        if len(complexes) >= n_complexes:
-            break
+    for entry in selection.entries:
         pdb_path = download_pdb(entry.pdb_id, cache_dir)
-        if pdb_path:
-            try:
-                protein_path = prepare_protein(pdb_path)
-                screening = screen_complex(entry, pdb_path, protein_path)
-                if not screening.accepted:
-                    reason = "; ".join(screening.reasons)
-                    excluded_rows.append(
-                        ExcludedComplexRow(pdb_id=entry.pdb_id, reason=reason)
-                    )
-                    print(f"  {entry.pdb_id}: excluded ({reason})", flush=True)
-                    continue
-
-                center = find_docking_center(
-                    pdb_path, preferred_resname=entry.preferred_resname
-                )
-            except ValueError as e:
-                excluded_rows.append(
-                    ExcludedComplexRow(pdb_id=entry.pdb_id, reason=str(e))
-                )
-                print(f"  {entry.pdb_id}: excluded ({e})", flush=True)
-                continue
-            complexes.append(
-                BenchmarkComplex(
+        if pdb_path is None:
+            excluded_rows.append(
+                ExcludedComplexRow(
                     pdb_id=entry.pdb_id,
-                    target_name=entry.target_name,
-                    path=pdb_path,
-                    center=center,
-                    preferred_resname=entry.preferred_resname,
+                    reason="failed to download PDB from RCSB",
                 )
             )
-            print(
-                f"  {entry.pdb_id}: center = ({center[0]:.1f}, {center[1]:.1f}, {center[2]:.1f})"
+            continue
+
+        hydrated_entry = hydrate_selected_benchmark_entry(
+            entry,
+            pdb_path,
+            selection.mode,
+        )
+        try:
+            protein_path = prepare_protein(pdb_path)
+            screening = screen_complex(hydrated_entry, pdb_path, protein_path)
+            if not screening.accepted:
+                reason = "; ".join(screening.reasons)
+                excluded_rows.append(
+                    ExcludedComplexRow(pdb_id=entry.pdb_id, reason=reason)
+                )
+                print(f"  {entry.pdb_id}: excluded ({reason})", flush=True)
+                continue
+
+            center = find_docking_center(
+                pdb_path,
+                preferred_resname=hydrated_entry.preferred_resname,
             )
+        except ValueError as e:
+            excluded_rows.append(
+                ExcludedComplexRow(pdb_id=entry.pdb_id, reason=str(e))
+            )
+            print(f"  {entry.pdb_id}: excluded ({e})", flush=True)
+            continue
+
+        complexes.append(
+            BenchmarkComplex(
+                pdb_id=hydrated_entry.pdb_id,
+                target_name=hydrated_entry.target_name,
+                path=pdb_path,
+                center=center,
+                preferred_resname=hydrated_entry.preferred_resname,
+            )
+        )
+        print(
+            f"  {entry.pdb_id}: center = ({center[0]:.1f}, {center[1]:.1f}, {center[2]:.1f})"
+        )
 
     print(f"\nDownloaded {len(complexes)} complexes", flush=True)
     if excluded_rows:
@@ -2869,13 +3177,14 @@ def run_benchmark(
         certified_scoring_family=certified_scoring_family,
         parallelism=parallelism,
         complexes=tuple(prepared_complexes),
-        n_complexes_requested=n_complexes,
+        n_complexes_requested=selection.n_complexes_requested,
         n_poses=n_poses,
         n_opt_steps=n_opt_steps,
         box_size=box_size,
         formal_round_strategy=formal_round_strategy,
         use_multi_stage=use_multi_stage,
         use_pocket_guided=use_pocket_guided,
+        use_rich_exact_rescoring=use_rich_exact_rescoring,
         output_paths=output_paths,
         pose_dir=pose_dir,
         competitors=competitor_metadata,
@@ -2887,7 +3196,7 @@ def run_benchmark(
         retry_preserve_seed=retry_preserve_seed,
     )
     state = BenchmarkState(dq_results=[], dq_rows=[], competitor_rows=[])
-    state.save("curation", context, excluded_rows)
+    state.save("curation", context, excluded_rows, render_report=False)
 
     if not prepared_complexes:
         print("❌ No complexes downloaded")
@@ -2921,7 +3230,12 @@ def run_benchmark(
     )
     print(f"  {len(excluded_rows)} complexes excluded by QC")
 
-    json_path, csv_path = state.save("complete", context, excluded_rows)
+    json_path, csv_path = state.save(
+        "complete",
+        context,
+        excluded_rows,
+        render_report=True,
+    )
     print(f"  Results JSON: {json_path}")
     print(f"  Results CSV: {csv_path}")
     print(f"  Pose Files: {pose_dir}")
@@ -2984,6 +3298,12 @@ if __name__ == "__main__":
         help="Number of DQ-Dock worker processes across complexes (default: 1)",
     )
     parser.add_argument(
+        "--no_rich_exact_rescoring",
+        action="store_false",
+        dest="use_rich_exact_rescoring",
+        help="Disable rich chemistry rescoring",
+    )
+    parser.add_argument(
         "--competitors",
         type=str,
         choices=("all", "none", "smina", "gnina"),
@@ -3005,12 +3325,25 @@ if __name__ == "__main__":
         "'casf2007' uses the 195-entry CASF-2007 core set.",
     )
     parser.add_argument(
+        "--pdb_ids",
+        type=str,
+        default=None,
+        help="Explicit PDB IDs to benchmark. Accepts comma or whitespace-separated IDs and overrides --dataset/--n_complexes.",
+    )
+    parser.add_argument(
+        "--pdb_file",
+        type=Path,
+        default=None,
+        help="Path to a text file listing explicit PDB IDs (comments with # supported). Overrides --dataset/--n_complexes.",
+    )
+    parser.add_argument(
         "--max-retries",
         type=int,
         default=6,
         help="Maximum retry attempts for the canonical certified DQ-Dock run",
     )
     args = parser.parse_args()
+    explicit_pdb_ids = load_explicit_pdb_ids(args.pdb_ids, args.pdb_file)
 
     is_valid, warnings = CERTIFIED_DOCKING.validate()
     for warning in warnings:
@@ -3037,10 +3370,12 @@ if __name__ == "__main__":
         certified_scoring_family=DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
         use_multi_stage=DEFAULT_BENCHMARK_USE_MULTI_STAGE,
         use_pocket_guided=DEFAULT_BENCHMARK_USE_POCKET_GUIDED,
+        use_rich_exact_rescoring=args.use_rich_exact_rescoring,
         results_dir=args.results_dir,
         competitors=args.competitors,
         attempt_timeout_seconds=args.attempt_timeout_seconds,
         dataset=args.dataset,
+        pdb_ids=explicit_pdb_ids,
         optimizer_backend=DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
         parallelism=BenchmarkParallelism(max_workers=args.workers),
         max_retries=args.max_retries,

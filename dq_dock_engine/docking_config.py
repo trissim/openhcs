@@ -86,6 +86,10 @@ class DockingConfig:
     #: succeeds, then the exact fallback handles the remainder.
     adaptive_coarse_target_errors: Tuple[float, ...] | None = (0.05, 0.01, 0.004)
 
+    #: Optional theorem-backed rich chemistry terms (h-bond, screened coulomb, desolvation)
+    #: Used during the final exact rescoring stage.
+    use_rich_exact_rescoring: bool = True
+
     #: Certified physical score family for both route_scoring and formal rounds
     certified_scoring_family: CertifiedScoringFamily = (
         CertifiedScoringFamily.LJ_REALSPACE_EWALD
@@ -114,6 +118,7 @@ class DockingConfig:
             self.formal_round_strategy,
             self.use_softened_coarse_prefilter,
             self.adaptive_coarse_target_errors,
+            self.use_rich_exact_rescoring,
             self.certified_scoring_family,
             self.max_receptor_atoms,
             self.max_ligand_atoms,
@@ -132,10 +137,11 @@ class DockingConfig:
             coarse_target_error=children[2],
             use_softened_coarse_prefilter=aux_data[4],
             adaptive_coarse_target_errors=aux_data[5],
-            certified_scoring_family=aux_data[6],
+            use_rich_exact_rescoring=aux_data[6],
+            certified_scoring_family=aux_data[7],
             certified_binding_site=children[3],
-            max_receptor_atoms=aux_data[7],
-            max_ligand_atoms=aux_data[8],
+            max_receptor_atoms=aux_data[8],
+            max_ligand_atoms=aux_data[9],
         )
 
     def __post_init__(self) -> None:

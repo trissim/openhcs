@@ -189,7 +189,7 @@ class CertifiedContactSurrogateSpec:
 @dataclass(frozen=True)
 class CertifiedDirectionalHBondSpec:
     receptor_directions: jnp.ndarray
-    ligand_directions: jnp.ndarray
+    ligand_neighbor_indices: jnp.ndarray
     receptor_strengths: jnp.ndarray
     ligand_strengths: jnp.ndarray
     ideal_distance: float = 2.8
@@ -205,8 +205,8 @@ class CertifiedDirectionalHBondSpec:
             raise ValueError("hydrogen-bond cutoff must be positive")
         if self.receptor_directions.ndim != 2 or self.receptor_directions.shape[1] != 3:
             raise ValueError("receptor_directions must have shape (N_rec, 3)")
-        if self.ligand_directions.ndim != 2 or self.ligand_directions.shape[1] != 3:
-            raise ValueError("ligand_directions must have shape (N_lig, 3)")
+        if self.ligand_neighbor_indices.ndim != 2:
+            raise ValueError("ligand_neighbor_indices must be a 2D array")
         if self.receptor_strengths.ndim != 1:
             raise ValueError("receptor_strengths must be a 1D array")
         if self.ligand_strengths.ndim != 1:
@@ -215,7 +215,7 @@ class CertifiedDirectionalHBondSpec:
     def tree_flatten(self):
         children = (
             self.receptor_directions,
-            self.ligand_directions,
+            self.ligand_neighbor_indices,
             self.receptor_strengths,
             self.ligand_strengths,
         )
@@ -229,7 +229,7 @@ class CertifiedDirectionalHBondSpec:
     def receptor_subset(self, indices: jnp.ndarray) -> "CertifiedDirectionalHBondSpec":
         return CertifiedDirectionalHBondSpec(
             receptor_directions=self.receptor_directions[indices],
-            ligand_directions=self.ligand_directions,
+            ligand_neighbor_indices=self.ligand_neighbor_indices,
             receptor_strengths=self.receptor_strengths[indices],
             ligand_strengths=self.ligand_strengths,
             ideal_distance=self.ideal_distance,
@@ -636,7 +636,7 @@ def _directional_hbond_pair_terms(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
     receptor_directions: jnp.ndarray,
-    ligand_directions: jnp.ndarray,
+    ligand_neighbor_indices: jnp.ndarray,
     receptor_strengths: jnp.ndarray,
     ligand_strengths: jnp.ndarray,
     ideal_distance: float,
@@ -647,9 +647,15 @@ def _directional_hbond_pair_terms(
     unit_vectors = diffs / jnp.maximum(dists[..., None], 1e-6)
 
     receptor_dirs = _normalize_direction_vectors(receptor_directions)
+    
+    # Calculate ligand directions from neighbors
+    neighbor_coords = poses_coords[:, ligand_neighbor_indices, :]  # (B, N_lig, k, 3)
+    mean_neighbor_coords = jnp.mean(neighbor_coords, axis=2)  # (B, N_lig, 3)
+    ligand_directions = poses_coords - mean_neighbor_coords
+    
     ligand_dirs = _normalize_direction_vectors(ligand_directions)
     receptor_dirs_expanded = receptor_dirs[None, :, None, :]
-    ligand_dirs_expanded = ligand_dirs[None, None, :, :]
+    ligand_dirs_expanded = ligand_dirs[:, None, :, :]
 
     pair_strength = jnp.clip(
         receptor_strengths[None, :, None] * ligand_strengths[None, None, :],
@@ -673,7 +679,7 @@ def _score_directional_hbond_exact_batch(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
     receptor_directions: jnp.ndarray,
-    ligand_directions: jnp.ndarray,
+    ligand_neighbor_indices: jnp.ndarray,
     receptor_strengths: jnp.ndarray,
     ligand_strengths: jnp.ndarray,
     ideal_distance: float,
@@ -683,7 +689,7 @@ def _score_directional_hbond_exact_batch(
         receptor_coords,
         poses_coords,
         receptor_directions,
-        ligand_directions,
+        ligand_neighbor_indices,
         receptor_strengths,
         ligand_strengths,
         ideal_distance,
@@ -697,7 +703,7 @@ def _score_directional_hbond_cutoff_batch(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
     receptor_directions: jnp.ndarray,
-    ligand_directions: jnp.ndarray,
+    ligand_neighbor_indices: jnp.ndarray,
     receptor_strengths: jnp.ndarray,
     ligand_strengths: jnp.ndarray,
     ideal_distance: float,
@@ -708,7 +714,7 @@ def _score_directional_hbond_cutoff_batch(
         receptor_coords,
         poses_coords,
         receptor_directions,
-        ligand_directions,
+        ligand_neighbor_indices,
         receptor_strengths,
         ligand_strengths,
         ideal_distance,
@@ -818,7 +824,7 @@ def score_certified_directional_hbond_batch(
         receptor_coords,
         poses_coords,
         hbond_spec.receptor_directions,
-        hbond_spec.ligand_directions,
+        hbond_spec.ligand_neighbor_indices,
         hbond_spec.receptor_strengths,
         hbond_spec.ligand_strengths,
         hbond_spec.ideal_distance,
@@ -828,7 +834,7 @@ def score_certified_directional_hbond_batch(
         receptor_coords,
         poses_coords,
         hbond_spec.receptor_directions,
-        hbond_spec.ligand_directions,
+        hbond_spec.ligand_neighbor_indices,
         hbond_spec.receptor_strengths,
         hbond_spec.ligand_strengths,
         hbond_spec.ideal_distance,

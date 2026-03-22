@@ -1642,17 +1642,40 @@ class CertifiedPipelineRoute(PipelineRoute):
         )[0]
         survivor_coords = batched_coords[survivor_indices]
         del coarse_scores, delta
-        exact_kwargs = derive_route_scoring_kwargs(
-            request,
-            engine=request.effective_engine,
-            poses_coords=survivor_coords,
-            electrostatics=electrostatics.receptor_subset(
-                jnp.arange(request.protein_coords.shape[0])
+        if request.config is not None and getattr(request.config, "use_rich_exact_rescoring", False):
+            from dq_dock_engine.docking.rich_chemistry import build_all_rich_chemistry_specs
+            from dq_dock_engine.docking.scoring import score_certified_rich_chemistry_batch
+            
+            receptor_charges = electrostatics.receptor_charges if electrostatics else jnp.zeros(request.protein_coords.shape[0])
+            screened, contact, hbond = build_all_rich_chemistry_specs(
+                np.asarray(request.protein_coords),
+                request.receptor_elements or tuple(["C"] * request.protein_coords.shape[0]),
+                np.asarray(receptor_charges),
+                request.ligand_ctx
             )
-            if electrostatics
-            else None,
-        )
-        survivor_exact_scores = route_scoring(**exact_kwargs)
+            rich_batch = score_certified_rich_chemistry_batch(
+                receptor_coords=request.protein_coords,
+                poses_coords=survivor_coords,
+                receptor_radii=request.receptor_radii,
+                ligand_radii=request.ligand_ctx.base_radii,
+                screened_coulomb=screened,
+                contact=contact,
+                directional_hbond=hbond,
+                target_error=request.target_error
+            )
+            survivor_exact_scores = rich_batch.scores
+        else:
+            exact_kwargs = derive_route_scoring_kwargs(
+                request,
+                engine=request.effective_engine,
+                poses_coords=survivor_coords,
+                electrostatics=electrostatics.receptor_subset(
+                    jnp.arange(request.protein_coords.shape[0])
+                )
+                if electrostatics
+                else None,
+            )
+            survivor_exact_scores = route_scoring(**exact_kwargs)
         valid_survivor_mask = survivor_indices != -1
         valid_survivor_indices = survivor_indices[valid_survivor_mask]
         padded_survivor_scores = jnp.where(
@@ -1879,14 +1902,36 @@ def _run_docking_pipeline_request(
         request,
         engine=request.effective_engine,
     )
-    final_scores = route_scoring(
-        **derive_route_scoring_kwargs(
-            request,
-            engine=request.effective_engine,
-            poses_coords=opt_coords,
-            electrostatics=electrostatics,
+    if request.config is not None and getattr(request.config, "use_rich_exact_rescoring", False):
+        from dq_dock_engine.docking.rich_chemistry import build_all_rich_chemistry_specs
+        from dq_dock_engine.docking.scoring import score_certified_rich_chemistry_batch
+        
+        receptor_charges = electrostatics.receptor_charges if electrostatics else jnp.zeros(request.protein_coords.shape[0])
+        screened, contact, hbond = build_all_rich_chemistry_specs(
+            np.asarray(request.protein_coords),
+            request.receptor_elements or tuple(["C"] * request.protein_coords.shape[0]),
+            np.asarray(receptor_charges),
+            request.ligand_ctx
         )
-    )
+        final_scores = score_certified_rich_chemistry_batch(
+            receptor_coords=request.protein_coords,
+            poses_coords=opt_coords,
+            receptor_radii=request.receptor_radii,
+            ligand_radii=request.ligand_ctx.base_radii,
+            screened_coulomb=screened,
+            contact=contact,
+            directional_hbond=hbond,
+            target_error=request.target_error
+        ).scores
+    else:
+        final_scores = route_scoring(
+            **derive_route_scoring_kwargs(
+                request,
+                engine=request.effective_engine,
+                poses_coords=opt_coords,
+                electrostatics=electrostatics,
+            )
+        )
 
     cert = _compute_native_certification(
         config=request.config,
