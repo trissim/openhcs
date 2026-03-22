@@ -1,0 +1,11 @@
+\subsection{Signature Factorization}
+
+Identical parameter sequences and declared-type bundles appearing in multiple function signatures are a recurring source of drift and accidental redundancy. Viewed through the zero-error lens of Paper~1 and the derivation/SSOT lens of Paper~2, this is the same structural phenomenon we treat elsewhere: repeated observable semantics instantiate a representation fiber whose multiplicity quantifies the residual identification burden.
+
+Concretely, let \(\pi:\mathrm{Sig}\to\mathrm{Sem}\) be the map that projects a declaration to its observable semantics (parameter-type sequence, return type, and declared behavioral contract). The fiber \(\pi^{-1}(s)\) collects all signatures indistinguishable to callers under the admissibility contract (callers observe only the declared signature + contract). Paper~1 shows that zero-error identification within a fiber requires auxiliary information of size at least \(\log_2|\pi^{-1}(s)|\) bits; Paper~2 shows that making the repeated signatures derived from a single declared interface (an abstract base class or canonical ABC) enforces coherence and removes the auxiliary burden.
+
+Engineering corollary. If the same semantic parameter sequence appears in multiple places, factor it into a single abstract interface and make the others derived (inherit, delegate, or generate). Doing so is not merely style: it is a zero-error coherence transformation that removes an information-theoretic burden from the system and prevents accidental divergence between semantically identical call sites.
+
+Tooling suggestion. A lightweight linter may enumerate candidate fibers by hashing parameter-type sequences and presenting groups with |\pi^{-1}(s)|>1 for developer review. This scan is conservative under finite-precision type representations and is an automatic instantiation of the Paper~1 counting law.
+
+\leanmeta{\LH{INF1}, \LH{DER2}}
