@@ -295,5 +295,59 @@ theorem fiber_card_implies_positive_sideinfo {s : Sem} [Fintype (fiber sem s)]
   unfold ClaimClosure.sideInfoBits
   apply (div_pos hlog_pos hlog2_pos)
 
+/-!
+  Global factorization: apply the per-fiber factorization lemma for every
+  semantic value. This packages the Template Method payoff as a universal
+  property over the semantics space.
+-/
+
+theorem factorization_removes_auxiliary_burden_for_all
+    {Dsig : DerivationSystem Sig}
+    (enc_map : Sem → List Sig)
+    (source : Sem → Sig)
+    (hsource : ∀ s, source s ∈ enc_map s)
+    (hall : ∀ s x, x ∈ enc_map s → x = source s ∨ Dsig.derived_from (source s) x) :
+    ∀ s, ClaimClosure.sideInfoBits
+      (Dof.dof (liftDerivationOnEncodings (D := Dsig))
+        ((enc_map s).map fun σ => { Dof.Encoding.fact := s, location := "", value := σ })) = 0 := by
+  intro s
+  apply factorization_removes_auxiliary_burden (enc_locs := enc_map s) (source := source s)
+  · exact (hsource s)
+  · intro x hx; exact (hall s x hx)
+
+/-!
+  Template Method — weak semantics preservation.
+
+  If implementations carry an interface-level semantics (`iface_sem`) and every
+  signature implements the chosen interface for its semantics, then the
+  observable semantics of any signature equals the interface semantics of the
+  chosen interface. If `iface_sem ∘ choose = id` then implementing the chosen
+  interface preserves `sem` exactly.
+-/
+
+variable {Interface : Type*}
+
+theorem template_method_interface_implies_sem
+    (choose : Sem → Interface) (implements : Sig → Interface → Prop)
+    (iface_sem : Interface → Sem)
+    (h_impl_spec : ∀ σ i, implements σ i → sem σ = iface_sem i)
+    (h_choose_sem : ∀ s, iface_sem (choose s) = s)
+    (s : Sem) (σ : Sig) (himpl : implements σ (choose s)) :
+    sem σ = s := by
+  have : sem σ = iface_sem (choose s) := h_impl_spec σ (choose s) himpl
+  rw [h_choose_sem s] at this
+  exact this
+
+theorem template_method_preserves_semantics
+    (choose : Sem → Interface) (implements : Sig → Interface → Prop)
+    (iface_sem : Interface → Sem)
+    (h_impl_spec : ∀ σ i, implements σ i → sem σ = iface_sem i)
+    (h_choose_sem : ∀ s, iface_sem (choose s) = s)
+    (h_all_impl : ∀ σ, implements σ (choose (sem σ))) :
+    ∀ σ, sem σ = iface_sem (choose (sem σ)) := by
+  intro σ
+  apply h_impl_spec
+  exact h_all_impl σ
+
 
 end SignatureFactorization
