@@ -1,0 +1,3 @@
+# Lake shared package cache — packages download on demand via lake build
+packages/
+.lake-local-backup*/
