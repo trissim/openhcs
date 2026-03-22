@@ -181,7 +181,11 @@ def _derive_electrostatic_cutoff(
         kappa=effective_kappa,
         min_cutoff=4.0,
     )
-    return min(cutoff, 20.0)
+    # No cap - use the formally derived cutoff directly.
+    # The 20Å cap was a heuristic with no performance benefit (JAX computes
+    # all pairs regardless of cutoff). Removing it ensures we achieve the
+    # target error bound ε as proven in Lean (screened_coulomb_exp_bound).
+    return cutoff
 
 
 def build_all_rich_chemistry_specs(
