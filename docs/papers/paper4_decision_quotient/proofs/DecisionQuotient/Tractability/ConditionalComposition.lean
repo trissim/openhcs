@@ -333,6 +333,174 @@ theorem cutoff_12_sufficient_condition
        _ = 12 := by field_simp
   exact screened_coulomb_exp_bound Q ε κ_physiological 12 hQ_pos hε_pos hκ_pos h_log_bound
 
+/-! ### Metal Coordination Screening (κ ≈ 1.0 Å⁻¹)
+
+For metal coordination in proteins, the appropriate screening is NOT Debye-Hückel
+but rather a "shell separation" model where we want second-shell electrostatics
+to be suppressed relative to first-shell coordination bonds.
+
+Physical basis:
+- First coordination shell: r₁ ≈ 2.2 Å (metal-ligand bond length)
+- Second coordination shell: r₂ ≈ 4.5 Å (next nearest atoms)
+- Design goal: V(r₂)/V(r₁) ≤ δ (e.g., 5%)
+
+For screened Coulomb V(r) = exp(-κr)/r:
+  V(r₂)/V(r₁) = (r₁/r₂) × exp(-κ(r₂ - r₁))
+
+To achieve suppression ratio δ:
+  κ ≥ (ln(r₁/r₂) - ln(δ)) / (r₂ - r₁)
+  κ ≥ ln(r₁/(r₂×δ)) / (r₂ - r₁)
+
+For r₁=2.2, r₂=4.5, δ=0.05:
+  κ ≥ ln(2.2/(4.5×0.05)) / 2.3
+  κ ≥ ln(9.78) / 2.3
+  κ ≥ 0.99 Å⁻¹
+
+Thus κ = 1.0 Å⁻¹ achieves ~5% second-shell suppression.
+-/
+
+/-- Metal coordination shell distances (empirical, from crystallography) -/
+noncomputable def r_first_shell : ℝ := 2.2   -- Å, typical metal-ligand bond
+noncomputable def r_second_shell : ℝ := 4.5  -- Å, second coordination shell
+
+/-- Screened Coulomb potential ratio between two distances.
+    V(r₂)/V(r₁) = (r₁/r₂) × exp(-κ(r₂ - r₁)) -/
+noncomputable def screenedCoulombRatio (r₁ r₂ κ : ℝ) : ℝ :=
+  (r₁ / r₂) * Real.exp (-κ * (r₂ - r₁))
+
+/-- The ratio formula is correct: V(r₂)/V(r₁) = (r₁/r₂) × exp(-κ(r₂ - r₁)) -/
+theorem screened_coulomb_ratio_formula
+    (r₁ r₂ κ : ℝ) (hr₁_pos : 0 < r₁) (hr₂_pos : 0 < r₂) :
+    let V := fun r => Real.exp (-κ * r) / r
+    V r₂ / V r₁ = screenedCoulombRatio r₁ r₂ κ := by
+  unfold screenedCoulombRatio
+  simp only []
+  have h1 : Real.exp (-κ * r₂) / r₂ / (Real.exp (-κ * r₁) / r₁) =
+            (Real.exp (-κ * r₂) / Real.exp (-κ * r₁)) * (r₁ / r₂) := by
+    have hr₁_ne : r₁ ≠ 0 := ne_of_gt hr₁_pos
+    have hr₂_ne : r₂ ≠ 0 := ne_of_gt hr₂_pos
+    have he₁_ne : Real.exp (-κ * r₁) ≠ 0 := Real.exp_ne_zero _
+    have he₂_ne : Real.exp (-κ * r₂) ≠ 0 := Real.exp_ne_zero _
+    field_simp
+  rw [h1]
+  have h2 : Real.exp (-κ * r₂) / Real.exp (-κ * r₁) = Real.exp (-κ * r₂ - (-κ * r₁)) := by
+    rw [← Real.exp_sub]
+  rw [h2]
+  ring_nf
+
+/-- Minimum κ to achieve a given suppression ratio δ between shells.
+    κ_min = ln(r₁/(r₂×δ)) / (r₂ - r₁) -/
+noncomputable def minKappaForSuppression (r₁ r₂ δ : ℝ) : ℝ :=
+  Real.log (r₁ / (r₂ * δ)) / (r₂ - r₁)
+
+/-- If κ ≥ κ_min, then the shell ratio is ≤ δ. -/
+theorem shell_suppression_achieved
+    (r₁ r₂ δ κ : ℝ)
+    (hr₁_pos : 0 < r₁) (hr₂_pos : 0 < r₂) (hδ_pos : 0 < δ)
+    (hr_order : r₁ < r₂)
+    (hκ_bound : minKappaForSuppression r₁ r₂ δ ≤ κ) :
+    screenedCoulombRatio r₁ r₂ κ ≤ δ := by
+  unfold screenedCoulombRatio minKappaForSuppression at *
+  have hΔr_pos : 0 < r₂ - r₁ := by linarith
+  have h_arg_pos : 0 < r₁ / (r₂ * δ) := by positivity
+  -- κ ≥ ln(r₁/(r₂×δ)) / (r₂ - r₁)
+  -- κ × (r₂ - r₁) ≥ ln(r₁/(r₂×δ))
+  have h1 : Real.log (r₁ / (r₂ * δ)) ≤ κ * (r₂ - r₁) := by
+    calc Real.log (r₁ / (r₂ * δ)) = Real.log (r₁ / (r₂ * δ)) / (r₂ - r₁) * (r₂ - r₁) := by field_simp
+         _ ≤ κ * (r₂ - r₁) := mul_le_mul_of_nonneg_right hκ_bound (le_of_lt hΔr_pos)
+  -- exp(-κ(r₂ - r₁)) ≤ exp(-ln(r₁/(r₂×δ))) = r₂×δ/r₁
+  have h2 : Real.exp (-κ * (r₂ - r₁)) ≤ (r₂ * δ) / r₁ := by
+    have h2a : Real.exp (-κ * (r₂ - r₁)) ≤ Real.exp (-Real.log (r₁ / (r₂ * δ))) := by
+      apply Real.exp_le_exp_of_le
+      linarith
+    have h2b : Real.exp (-Real.log (r₁ / (r₂ * δ))) = (r₁ / (r₂ * δ))⁻¹ := by
+      rw [Real.exp_neg, Real.exp_log h_arg_pos]
+    have h2c : (r₁ / (r₂ * δ))⁻¹ = (r₂ * δ) / r₁ := by field_simp
+    calc Real.exp (-κ * (r₂ - r₁)) ≤ Real.exp (-Real.log (r₁ / (r₂ * δ))) := h2a
+         _ = (r₁ / (r₂ * δ))⁻¹ := h2b
+         _ = (r₂ * δ) / r₁ := h2c
+  -- (r₁/r₂) × exp(-κ(r₂-r₁)) ≤ (r₁/r₂) × (r₂×δ/r₁) = δ
+  calc r₁ / r₂ * Real.exp (-κ * (r₂ - r₁))
+       ≤ r₁ / r₂ * ((r₂ * δ) / r₁) := by apply mul_le_mul_of_nonneg_left h2; positivity
+     _ = δ := by field_simp
+
+/-- Metal coordination screening parameter.
+    Derived from: 5% second-shell suppression (δ=0.05) with r₁=2.2, r₂=4.5 Å.
+    κ_metal = ln(2.2/0.225) / 2.3 ≈ 0.99 ≈ 1.0 Å⁻¹ -/
+noncomputable def κ_metal : ℝ := 1.0
+
+/-- The design suppression ratio for metal coordination (5% = 0.05) -/
+noncomputable def δ_metal_design : ℝ := 0.05
+
+/-- Given an upper bound on exp(-Δr), we can bound the shell ratio.
+    This is the key lemma: if exp(-κΔr) ≤ b, then ratio ≤ (r₁/r₂) × b -/
+theorem shell_ratio_from_exp_bound
+    (r₁ r₂ κ b : ℝ) (hr₁_pos : 0 < r₁) (hr₂_pos : 0 < r₂)
+    (hb_pos : 0 ≤ b) (h_exp_bound : Real.exp (-κ * (r₂ - r₁)) ≤ b) :
+    screenedCoulombRatio r₁ r₂ κ ≤ (r₁ / r₂) * b := by
+  unfold screenedCoulombRatio
+  apply mul_le_mul_of_nonneg_left h_exp_bound
+  positivity
+
+/-- The exp function is strictly decreasing for negative arguments.
+    So exp(-κΔr) decreases as κ increases (for fixed Δr > 0). -/
+theorem exp_decreases_with_kappa
+    (κ₁ κ₂ Δr : ℝ) (hΔr_pos : 0 < Δr) (hκ_le : κ₁ ≤ κ₂) :
+    Real.exp (-κ₂ * Δr) ≤ Real.exp (-κ₁ * Δr) := by
+  apply Real.exp_le_exp_of_le
+  have h : -κ₂ * Δr ≤ -κ₁ * Δr := by nlinarith
+  exact h
+
+/-- Larger κ gives smaller (better) suppression ratio. -/
+theorem larger_kappa_better_suppression
+    (r₁ r₂ κ₁ κ₂ : ℝ) (hr₁_pos : 0 < r₁) (hr₂_pos : 0 < r₂)
+    (hr_order : r₁ < r₂) (hκ_le : κ₁ ≤ κ₂) :
+    screenedCoulombRatio r₁ r₂ κ₂ ≤ screenedCoulombRatio r₁ r₂ κ₁ := by
+  unfold screenedCoulombRatio
+  apply mul_le_mul_of_nonneg_left
+  · apply exp_decreases_with_kappa κ₁ κ₂ (r₂ - r₁) (by linarith) hκ_le
+  · positivity
+
+/-- If κ achieves suppression δ, any larger κ also achieves it. -/
+theorem suppression_monotone_in_kappa
+    (r₁ r₂ δ κ₁ κ₂ : ℝ) (hr₁_pos : 0 < r₁) (hr₂_pos : 0 < r₂)
+    (hr_order : r₁ < r₂) (hκ_le : κ₁ ≤ κ₂)
+    (h_achieved : screenedCoulombRatio r₁ r₂ κ₁ ≤ δ) :
+    screenedCoulombRatio r₁ r₂ κ₂ ≤ δ := by
+  calc screenedCoulombRatio r₁ r₂ κ₂
+       ≤ screenedCoulombRatio r₁ r₂ κ₁ := larger_kappa_better_suppression r₁ r₂ κ₁ κ₂ hr₁_pos hr₂_pos hr_order hκ_le
+     _ ≤ δ := h_achieved
+
+/-- The shell ratio at κ=0 equals r₁/r₂ (no suppression). -/
+theorem shell_ratio_at_kappa_zero (r₁ r₂ : ℝ) (hr₂_pos : 0 < r₂) :
+    screenedCoulombRatio r₁ r₂ 0 = r₁ / r₂ := by
+  unfold screenedCoulombRatio
+  simp [Real.exp_zero]
+
+/-- As κ → ∞, the shell ratio → 0 (perfect suppression).
+    For any ε > 0, there exists κ₀ such that for all κ ≥ κ₀, the ratio ≤ ε. -/
+theorem shell_ratio_limit_zero (r₁ r₂ : ℝ) (hr₁_pos : 0 < r₁) (hr₂_pos : 0 < r₂) (hr_order : r₁ < r₂) :
+    ∀ ε > 0, ∃ κ₀ > 0, ∀ κ ≥ κ₀, screenedCoulombRatio r₁ r₂ κ ≤ ε := by
+  intro ε hε_pos
+  -- Use minKappaForSuppression to get the threshold κ₀
+  have hΔr_pos : 0 < r₂ - r₁ := by linarith
+  have hδ_pos : 0 < ε * r₂ / r₁ := by positivity
+  -- We need (r₁/r₂) × exp(-κΔr) ≤ ε, i.e., ratio ≤ ε
+  -- By shell_suppression_achieved, this holds when κ ≥ minKappaForSuppression r₁ r₂ ε
+  let κ₀ := max 1 (minKappaForSuppression r₁ r₂ ε + 1)
+  use κ₀
+  constructor
+  · -- κ₀ > 0: max 1 _ ≥ 1 > 0
+    have h : (1 : ℝ) ≤ κ₀ := le_max_left 1 _
+    linarith
+  · intro κ hκ_ge
+    -- κ ≥ κ₀ ≥ minKappaForSuppression r₁ r₂ ε + 1 > minKappaForSuppression r₁ r₂ ε
+    have hκ_min : minKappaForSuppression r₁ r₂ ε ≤ κ := by
+      have h1 : minKappaForSuppression r₁ r₂ ε + 1 ≤ κ₀ := le_max_right _ _
+      have h2 : minKappaForSuppression r₁ r₂ ε < minKappaForSuppression r₁ r₂ ε + 1 := by linarith
+      linarith
+    exact shell_suppression_achieved r₁ r₂ ε κ hr₁_pos hr₂_pos hε_pos hr_order hκ_min
+
 /-! ### Pure Coulomb (κ=0) Tail Bound
 
 For κ=0 (pure Coulomb), the potential is E = q_i q_j / r with no exponential decay.

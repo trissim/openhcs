@@ -18,10 +18,29 @@ from dq_dock_engine.docking.core import LigandContext
 # This is the maximum acceptable tail error from truncating the potential
 _DEFAULT_ELECTROSTATIC_TARGET_ERROR = 0.5
 
-# Screening parameters:
-# - KAPPA_METAL = 1.0: Strong screening for metal coordination (empirical but effective)
-# - KAPPA_PHYSIOLOGICAL = 0.128: Debye-Hückel screening in physiological solution (derived)
-KAPPA_METAL = 1.0
+# =============================================================================
+# Screening Parameters (Lean: ConditionalComposition.lean)
+# =============================================================================
+#
+# KAPPA_PHYSIOLOGICAL = 0.128 Å⁻¹
+#   - Debye-Hückel screening at physiological ionic strength (150mM, 37°C)
+#   - Debye length λ_D ≈ 7.8 Å → κ = 1/λ_D ≈ 0.128
+#   - Theorem: physiological_cutoff_bound
+#
+# KAPPA_METAL = 1.0 Å⁻¹
+#   - Derived from shell separation requirement for metal coordination
+#   - r₁ = 2.2 Å (first coordination shell, metal-ligand bond)
+#   - r₂ = 4.5 Å (second coordination shell)
+#   - δ = 0.05 (5% suppression of second-shell vs first-shell)
+#   - Formula: κ = ln(r₁/(r₂×δ)) / (r₂ - r₁) = ln(9.78) / 2.3 ≈ 0.99 ≈ 1.0
+#   - Theorems: shell_suppression_achieved, suppression_monotone_in_kappa
+#
+# Key insight: For metal coordination, we want the explicit coordination term
+# (CertifiedMetalCoordinationSpec) to dominate over long-range electrostatics.
+# κ=1.0 ensures second-shell electrostatics are ~5% of first-shell, so the
+# coordination bond energy is the primary signal.
+
+KAPPA_METAL = 1.0  # Å⁻¹, derived from 5% second-shell suppression requirement
 
 def find_k_nearest_neighbors(coords: np.ndarray, k: int) -> np.ndarray:
     diffs = coords[:, None, :] - coords[None, :, :]
