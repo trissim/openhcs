@@ -79,11 +79,16 @@ from dq_dock_engine.docking.pocket_sampling import (
     extract_local_pocket_region_view,
 )
 from dq_dock_engine.docking.optimization import optimize_poses_batched
+from dq_dock_engine.docking.scoring_context import (
+    CertifiedScoringContext,
+    build_certified_scoring_context,
+)
 from dq_dock_engine.docking_config import (
     CertifiedScoringFamily,
     compute_certified_cutoff,
     DockingConfig,
     DockingMode,
+    ExactChemistryMode,
     FormalRoundStrategy,
     OptimizerBackend,
 )
@@ -308,6 +313,14 @@ class PipelineDockingRequest(RoutedDockingRequest):
             self.config.formal_round_strategy
             if self.config is not None
             else FormalRoundStrategy.SINGLETON_HYBRID
+        )
+
+    @property
+    def exact_chemistry_mode(self) -> ExactChemistryMode:
+        return (
+            self.config.exact_chemistry_mode
+            if self.config is not None
+            else ExactChemistryMode.NONE
         )
 
     def with_scoring_override(
@@ -733,7 +746,10 @@ def derive_callable_kwargs(
         if source_values is not None and source_name in source_values:
             kwargs[name] = source_values[source_name]
             continue
-        if not hasattr(source, source_name) and parameter.default is not inspect.Parameter.empty:
+        if (
+            not hasattr(source, source_name)
+            and parameter.default is not inspect.Parameter.empty
+        ):
             continue
         kwargs[name] = getattr(source, source_name)
     if accepts_var_keyword:
@@ -763,6 +779,30 @@ def resolve_request_electrostatics(
         _resolve_route_scoring_electrostatics,
         request,
         engine=request.engine if engine is None else engine,
+    )
+
+
+def resolve_request_scoring_context(
+    request: RoutedDockingRequest,
+    *,
+    engine: ScoringEngine | None = None,
+) -> CertifiedScoringContext:
+    effective_engine = request.engine if engine is None else engine
+    electrostatics = resolve_request_electrostatics(request, engine=effective_engine)
+    if not isinstance(request, PipelineDockingRequest):
+        return CertifiedScoringContext(
+            exact_chemistry_mode=ExactChemistryMode.NONE,
+            electrostatics=electrostatics,
+            rich_chemistry_plan=None,
+        )
+    return build_certified_scoring_context(
+        exact_chemistry_mode=request.exact_chemistry_mode,
+        electrostatics=electrostatics,
+        receptor_coords=request.protein_coords,
+        receptor_elements=request.receptor_elements,
+        receptor_file=request.receptor_file,
+        ligand_ctx=request.ligand_ctx,
+        target_electrostatic_error=request.target_error,
     )
 
 
@@ -1457,34 +1497,21 @@ def _score_exact_pose_batch(
     if poses_coords.shape[0] == 0:
         return jnp.zeros((0,), dtype=request.protein_coords.dtype)
 
-    if request.config is not None and getattr(
-        request.config, "use_rich_exact_rescoring", False
-    ):
-        from dq_dock_engine.docking.rich_chemistry import (
-            build_all_rich_chemistry_specs,
+    if request.is_certified_mode:
+        scoring_context = resolve_request_scoring_context(
+            request,
+            engine=request.effective_engine,
         )
-        from dq_dock_engine.docking.scoring import score_certified_rich_chemistry_batch
 
-        receptor_charges = (
-            electrostatics.receptor_charges
-            if electrostatics is not None
-            else jnp.zeros(request.protein_coords.shape[0], dtype=request.protein_coords.dtype)
-        )
-        plan = build_all_rich_chemistry_specs(
-            np.asarray(request.protein_coords),
-            request.receptor_elements or tuple(["C"] * request.protein_coords.shape[0]),
-            np.asarray(receptor_charges),
-            request.ligand_ctx,
-        )
         def score_chunk(chunk_coords: jnp.ndarray) -> jnp.ndarray:
             return jnp.asarray(
-                score_certified_rich_chemistry_batch(
+                scoring_context.score_exact_batch(
                     receptor_coords=request.protein_coords,
                     poses_coords=chunk_coords,
                     receptor_radii=request.receptor_radii,
                     ligand_radii=request.ligand_ctx.base_radii,
-                    rich_chemistry_plan=plan,
                     target_error=request.target_error,
+                    epsilon=0.2,
                 ).scores
             )
     else:
@@ -1902,20 +1929,11 @@ def _run_docking_pipeline_request(
     backend = request.formal_backend
     route.validate_backend(request, backend)
 
-    electrostatics = resolve_request_electrostatics(
+    scoring_context = resolve_request_scoring_context(
         request,
         engine=request.effective_engine,
     )
-    rich_chemistry_plan = None
-    if request.config is not None and getattr(request.config, "use_rich_exact_rescoring", False):
-        from dq_dock_engine.docking.rich_chemistry import build_all_rich_chemistry_specs
-        receptor_charges = electrostatics.receptor_charges if electrostatics else jnp.zeros(request.protein_coords.shape[0])
-        rich_chemistry_plan = build_all_rich_chemistry_specs(
-            np.asarray(request.protein_coords),
-            request.receptor_elements or tuple(["C"] * request.protein_coords.shape[0]),
-            np.asarray(receptor_charges),
-            request.ligand_ctx
-        )
+    electrostatics = scoring_context.electrostatics
 
     if backend == OptimizerBackend.FORMAL:
         from dq_dock_engine.docking.formal_optimizer import (
@@ -1945,8 +1963,7 @@ def _run_docking_pipeline_request(
             use_softened_coarse=request.use_softened_coarse_prefilter,
             base_translation_step=translation_cell_width / 2.0,
             base_rotation_step_rad=float(jnp.pi / 2.0),
-            electrostatics=electrostatics,
-            rich_chemistry_plan=rich_chemistry_plan,
+            scoring_context=scoring_context,
         )
         formal_refiners = {
             FormalRoundStrategy.EXACT: _run_exact_formal_refinement,
@@ -1971,16 +1988,14 @@ def _run_docking_pipeline_request(
             PoseVector(translation=opt_t, quaternion=opt_q),
         )
 
-    if request.config is not None and getattr(request.config, "use_rich_exact_rescoring", False):
-        from dq_dock_engine.docking.scoring import score_certified_rich_chemistry_batch
-        
-        final_scores = score_certified_rich_chemistry_batch(
+    if request.is_certified_mode:
+        final_scores = scoring_context.score_exact_batch(
             receptor_coords=request.protein_coords,
             poses_coords=opt_coords,
             receptor_radii=request.receptor_radii,
             ligand_radii=request.ligand_ctx.base_radii,
-            rich_chemistry_plan=rich_chemistry_plan,
-            target_error=request.target_error
+            target_error=request.target_error,
+            epsilon=0.2,
         ).scores
     else:
         final_scores = route_scoring(

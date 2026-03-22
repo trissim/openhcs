@@ -1,47 +1,47 @@
-import jax.numpy as jnp
-import numpy as np
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
-from dq_dock_engine.docking.receptor_preparation import METAL_ELEMENTS
-from dq_dock_engine.docking.scoring import (
-    CertifiedScreenedCoulombSpec,
-    CertifiedContactSurrogateSpec,
-    CertifiedDirectionalHBondSpec,
-    CertifiedMetalCoordinationSpec,
-    CertifiedRichChemistryPlan,
-    screened_coulomb_min_cutoff,
-    KAPPA_PHYSIOLOGICAL,
+import jax.numpy as jnp
+import numpy as np
+
+from dq_dock_engine.docking.chemistry_annotations import (
+    ChemistryAnnotationCatalog,
+    ChemistrySiteRole,
+    DirectionalSiteAnnotation,
+    IndexedSiteAnnotation,
+    RingSiteAnnotation,
+    build_ligand_chemistry_catalog,
+    build_receptor_chemistry_catalog,
+)
+from dq_dock_engine.docking.chemistry_runtime import (
+    AnchoredSiteArray,
+    HalogenBondInteractionTerm,
+    IndexedSiteArray,
+    PiCationInteractionTerm,
+    PiStackingInteractionTerm,
+    SiteGeometry,
+    WaterMediatedHBondInteractionTerm,
 )
 from dq_dock_engine.docking.core import LigandContext
+from dq_dock_engine.docking.receptor_preparation import METAL_ELEMENTS
+from dq_dock_engine.docking.scoring import (
+    CertifiedContactSurrogateSpec,
+    CertifiedDirectionalHBondSpec,
+    CertifiedExtendedInteractionBundle,
+    CertifiedMetalCoordinationSpec,
+    CertifiedRichChemistryPlan,
+    CertifiedScreenedCoulombSpec,
+    KAPPA_PHYSIOLOGICAL,
+    CertifiedOptionalInteractionTerm,
+    screened_coulomb_min_cutoff,
+)
 
-# Default target error for electrostatic cutoff derivation (kcal/mol)
-# This is the maximum acceptable tail error from truncating the potential
+
 _DEFAULT_ELECTROSTATIC_TARGET_ERROR = 0.5
-
-# =============================================================================
-# Screening Parameters (Lean: ConditionalComposition.lean)
-# =============================================================================
-#
-# KAPPA_PHYSIOLOGICAL = 0.128 Å⁻¹
-#   - Debye-Hückel screening at physiological ionic strength (150mM, 37°C)
-#   - Debye length λ_D ≈ 7.8 Å → κ = 1/λ_D ≈ 0.128
-#   - Theorem: physiological_cutoff_bound
-#
-# KAPPA_METAL = 1.0 Å⁻¹
-#   - Derived from shell separation requirement for metal coordination
-#   - r₁ = 2.2 Å (first coordination shell, metal-ligand bond)
-#   - r₂ = 4.5 Å (second coordination shell)
-#   - δ = 0.05 (5% suppression of second-shell vs first-shell)
-#   - Formula: κ = ln(r₁/(r₂×δ)) / (r₂ - r₁) = ln(9.78) / 2.3 ≈ 0.99 ≈ 1.0
-#   - Theorems: shell_suppression_achieved, suppression_monotone_in_kappa
-#
-# Key insight: For metal coordination, we want the explicit coordination term
-# (CertifiedMetalCoordinationSpec) to dominate over long-range electrostatics.
-# κ=1.0 ensures second-shell electrostatics are ~5% of first-shell, so the
-# coordination bond energy is the primary signal.
-
-KAPPA_METAL = 1.0  # Å⁻¹, derived from 5% second-shell suppression requirement
+KAPPA_METAL = 1.0
 
 
 def find_k_nearest_neighbors(coords: np.ndarray, k: int) -> np.ndarray:
@@ -54,17 +54,13 @@ def find_k_nearest_neighbors(coords: np.ndarray, k: int) -> np.ndarray:
 
 
 def build_screened_coulomb_spec(
-    receptor_charges: np.ndarray,
-    ligand_charges: np.ndarray,
-    kappa: float = 1.0,  # Å⁻¹, see ScreenedCoulombApproximation.lean
-    cutoff: float = 8.0,  # Å, use _derive_electrostatic_cutoff for optimal
-    dielectric: float = 4.0,  # Certified by DB1, DB2
+    receptor_charges: np.ndarray | jnp.ndarray,
+    ligand_charges: np.ndarray | jnp.ndarray,
+    *,
+    kappa: float,
+    cutoff: float,
+    dielectric: float = 4.0,
 ) -> CertifiedScreenedCoulombSpec:
-    """Build screened Coulomb spec with derived parameters.
-
-    For optimal cutoff, use build_all_rich_chemistry_specs() which calls
-    _derive_electrostatic_cutoff() with Lean-certified formulas.
-    """
     return CertifiedScreenedCoulombSpec(
         receptor_charges=jnp.array(receptor_charges, dtype=jnp.float32),
         ligand_charges=jnp.array(ligand_charges, dtype=jnp.float32),
@@ -77,75 +73,79 @@ def build_screened_coulomb_spec(
 def build_contact_surrogate_spec(
     receptor_elements: tuple[str, ...],
     ligand_elements: tuple[str, ...],
-    beta: float = 0.6,  # Å⁻¹, Gaussian decay rate
-    cutoff: float = 6.0,  # Certified by GD3, GD4, GD6
+    *,
+    beta: float = 0.6,
+    cutoff: float = 6.0,
 ) -> CertifiedContactSurrogateSpec:
-    """Build contact surrogate spec.
-
-    Cutoff derivation (Lean: GaussianDecayBounds.lean):
-      R_min = √(ln(W/ε)) / β for error ≤ ε
-    """
-    polars = {"N", "O", "S", "F", "Cl", "Br", "I"}
-    r_weights = np.array(
-        [1.0 if e in polars else 0.5 for e in receptor_elements], dtype=np.float32
+    polar_elements = {"N", "O", "S", "F", "CL", "BR", "I"}
+    receptor_weights = np.array(
+        [
+            1.0 if element.upper() in polar_elements else 0.5
+            for element in receptor_elements
+        ],
+        dtype=np.float32,
     )
-    l_weights = np.array(
-        [1.0 if e in polars else 0.5 for e in ligand_elements], dtype=np.float32
+    ligand_weights = np.array(
+        [
+            1.0 if element.upper() in polar_elements else 0.5
+            for element in ligand_elements
+        ],
+        dtype=np.float32,
     )
     return CertifiedContactSurrogateSpec(
-        receptor_weights=jnp.array(r_weights),
-        ligand_weights=jnp.array(l_weights),
+        receptor_weights=jnp.array(receptor_weights),
+        ligand_weights=jnp.array(ligand_weights),
         beta=beta,
         cutoff=cutoff,
     )
 
 
 def build_directional_hbond_spec(
-    receptor_coords: np.ndarray,
+    receptor_coords: np.ndarray | jnp.ndarray,
     receptor_elements: tuple[str, ...],
-    ligand_coords: np.ndarray,
+    ligand_coords: np.ndarray | jnp.ndarray,
     ligand_elements: tuple[str, ...],
-    ideal_distance: float = 2.8,  # N-H···O distance (Å), crystallographic
-    distance_width: float = 0.8,  # Certified by TF1, TF3, TF6
+    *,
+    ideal_distance: float = 2.8,
+    distance_width: float = 0.8,
     cutoff: float = 4.0,
 ) -> CertifiedDirectionalHBondSpec:
-    """Build directional H-bond spec.
-
-    Distance width derivation (Lean: ThermalFluctuationBounds.lean):
-      σ = √(kT/k) ≈ 0.8 Å at 310K with k ≈ 1 kcal/(mol·Å²)
-    """
-    polars = {"N", "O", "F"}
-
-    # 1. Strengths (1.0 for polar, 0.0 otherwise)
-    r_strengths = np.array(
-        [1.0 if e in polars else 0.0 for e in receptor_elements], dtype=np.float32
+    receptor_coords = np.asarray(receptor_coords, dtype=np.float32)
+    ligand_coords = np.asarray(ligand_coords, dtype=np.float32)
+    polar_elements = {"N", "O", "F"}
+    receptor_strengths = np.array(
+        [
+            1.0 if element.upper() in polar_elements else 0.0
+            for element in receptor_elements
+        ],
+        dtype=np.float32,
     )
-    l_strengths = np.array(
-        [1.0 if e in polars else 0.0 for e in ligand_elements], dtype=np.float32
+    ligand_strengths = np.array(
+        [
+            1.0 if element.upper() in polar_elements else 0.0
+            for element in ligand_elements
+        ],
+        dtype=np.float32,
     )
-
-    # 2. Receptor directions (rigid, so precomputed)
     if receptor_coords.shape[0] > 0:
-        r_neighbors = find_k_nearest_neighbors(receptor_coords, k=3)
-        r_neighbor_coords = receptor_coords[r_neighbors]
-        r_mean_neighbor = np.mean(r_neighbor_coords, axis=1)
-        r_directions = receptor_coords - r_mean_neighbor
-        r_norms = np.linalg.norm(r_directions, axis=-1, keepdims=True)
-        r_directions = np.where(r_norms > 1e-6, r_directions / r_norms, 0.0)
+        receptor_neighbors = find_k_nearest_neighbors(receptor_coords, k=3)
+        receptor_neighbor_coords = receptor_coords[receptor_neighbors]
+        receptor_mean_neighbor = np.mean(receptor_neighbor_coords, axis=1)
+        receptor_directions = receptor_coords - receptor_mean_neighbor
+        norms = np.linalg.norm(receptor_directions, axis=-1, keepdims=True)
+        receptor_directions = np.where(norms > 1e-6, receptor_directions / norms, 0.0)
     else:
-        r_directions = np.zeros((0, 3))
-
-    # 3. Ligand neighbor indices
-    if ligand_coords.shape[0] > 0:
-        l_neighbors = find_k_nearest_neighbors(ligand_coords, k=3)
-    else:
-        l_neighbors = np.zeros((0, 3), dtype=np.int32)
-
+        receptor_directions = np.zeros((0, 3), dtype=np.float32)
+    ligand_neighbors = (
+        find_k_nearest_neighbors(ligand_coords, k=3)
+        if ligand_coords.shape[0] > 0
+        else np.zeros((0, 3), dtype=np.int32)
+    )
     return CertifiedDirectionalHBondSpec(
-        receptor_directions=jnp.array(r_directions, dtype=jnp.float32),
-        ligand_neighbor_indices=jnp.array(l_neighbors, dtype=jnp.int32),
-        receptor_strengths=jnp.array(r_strengths, dtype=jnp.float32),
-        ligand_strengths=jnp.array(l_strengths, dtype=jnp.float32),
+        receptor_directions=jnp.array(receptor_directions, dtype=jnp.float32),
+        ligand_neighbor_indices=jnp.array(ligand_neighbors, dtype=jnp.int32),
+        receptor_strengths=jnp.array(receptor_strengths, dtype=jnp.float32),
+        ligand_strengths=jnp.array(ligand_strengths, dtype=jnp.float32),
         ideal_distance=ideal_distance,
         distance_width=distance_width,
         cutoff=cutoff,
@@ -153,141 +153,352 @@ def build_directional_hbond_spec(
 
 
 def build_metal_coordination_spec(
-    receptor_elements: tuple[str, ...], ligand_elements: tuple[str, ...]
+    receptor_elements: tuple[str, ...],
+    ligand_elements: tuple[str, ...],
 ) -> CertifiedMetalCoordinationSpec:
-    """Build metal coordination spec for Zn, Fe, Mg, etc.
-
-    Uses default distance_width=0.3Å certified by TF1, TF4, TF5
-    (equipartition theorem with k ≈ 7 kcal/(mol·Å²) for metal bonds).
-    """
-    polars = {"N", "O", "S"}
-    r_strengths = np.array(
-        [50.0 if e in METAL_ELEMENTS else 0.0 for e in receptor_elements],
+    polar_elements = {"N", "O", "S"}
+    receptor_strengths = np.array(
+        [
+            50.0 if element.upper() in METAL_ELEMENTS else 0.0
+            for element in receptor_elements
+        ],
         dtype=np.float32,
     )
-    l_strengths = np.array(
-        [1.0 if e in polars else 0.0 for e in ligand_elements], dtype=np.float32
+    ligand_strengths = np.array(
+        [
+            1.0 if element.upper() in polar_elements else 0.0
+            for element in ligand_elements
+        ],
+        dtype=np.float32,
     )
     return CertifiedMetalCoordinationSpec(
-        receptor_strengths=jnp.array(r_strengths),
-        ligand_strengths=jnp.array(l_strengths),
+        receptor_strengths=jnp.array(receptor_strengths),
+        ligand_strengths=jnp.array(ligand_strengths),
     )
 
 
 def _derive_electrostatic_cutoff(
-    receptor_charges: np.ndarray,
-    ligand_charges: np.ndarray,
+    receptor_charges: np.ndarray | jnp.ndarray,
+    ligand_charges: np.ndarray | jnp.ndarray,
+    *,
     kappa: float,
-    target_error: float = _DEFAULT_ELECTROSTATIC_TARGET_ERROR,
+    target_error: float,
 ) -> float:
-    """Derive minimum cutoff for electrostatics using Lean-certified formulas.
-
-    Lean theorems (ConditionalComposition.lean):
-        - screened_coulomb_exp_bound: Q * exp(-κR) ≤ ε when R ≥ ln(Q/ε) / κ
-        - screenedCoulombMinCutoff_optimal: ln(Q/ε)/κ is the MINIMUM cutoff
-        - cutoff_12_sufficient_condition: 12Å with κ=0.128 suffices for Q/ε ≤ 4.6
-
-    For solvated biomolecules, we use Debye-Hückel screening (κ ≈ 0.128 Å⁻¹)
-    rather than pure Coulomb (κ=0). This is physically correct and gives
-    tractable cutoffs.
-
-    Args:
-        receptor_charges: Receptor partial charges
-        ligand_charges: Ligand partial charges
-        kappa: Screening parameter (use KAPPA_PHYSIOLOGICAL for non-metals)
-        target_error: Desired error bound (kcal/mol)
-
-    Returns:
-        Minimum cutoff radius (Å)
-    """
-    # Compute max charge product bound
+    receptor_charges = np.asarray(receptor_charges, dtype=np.float32)
+    ligand_charges = np.asarray(ligand_charges, dtype=np.float32)
     max_receptor_charge = (
         float(np.max(np.abs(receptor_charges))) if len(receptor_charges) > 0 else 1.0
     )
     max_ligand_charge = (
         float(np.max(np.abs(ligand_charges))) if len(ligand_charges) > 0 else 1.0
     )
-    n_pairs = len(receptor_charges) * len(ligand_charges)
-    max_charge_product = max_receptor_charge * max_ligand_charge
-
-    # Screened Coulomb: R = ln(Q/ε) / κ (screened_coulomb_exp_bound theorem)
-    # Q_bound = max_charge_product * N_pairs (conservative worst-case)
-    q_bound = max_charge_product * max(n_pairs, 1)
-
-    # Use physiological screening if κ=0 was requested (κ=0 is physically wrong)
+    q_bound = max(
+        max_receptor_charge
+        * max_ligand_charge
+        * max(len(receptor_charges) * len(ligand_charges), 1),
+        1.0,
+    )
     effective_kappa = kappa if kappa > 0 else KAPPA_PHYSIOLOGICAL
-
-    cutoff = screened_coulomb_min_cutoff(
+    return screened_coulomb_min_cutoff(
         max_charge_product=q_bound,
         target_error=target_error,
         kappa=effective_kappa,
         min_cutoff=4.0,
     )
-    # No cap - use the formally derived cutoff directly.
-    # The 20Å cap was a heuristic with no performance benefit (JAX computes
-    # all pairs regardless of cutoff). Removing it ensures we achieve the
-    # target error bound ε as proven in Lean (screened_coulomb_exp_bound).
-    return cutoff
 
 
-def build_all_rich_chemistry_specs(
+def _pad_rows(
+    rows: list[tuple[int, ...]], minimum_width: int = 1
+) -> tuple[np.ndarray, np.ndarray]:
+    width = max(minimum_width, max((len(row) for row in rows), default=0), 1)
+    values = np.zeros((len(rows), width), dtype=np.int32)
+    mask = np.zeros((len(rows), width), dtype=bool)
+    for row_index, row in enumerate(rows):
+        limit = min(len(row), width)
+        if limit > 0:
+            values[row_index, :limit] = np.asarray(row[:limit], dtype=np.int32)
+            mask[row_index, :limit] = True
+    return values, mask
+
+
+@dataclass(frozen=True)
+class SiteArrayPackingRule:
+    field_name: str
+    source: Literal["receptor", "ligand"]
+    role: ChemistrySiteRole
+    geometry: SiteGeometry
+    anchored: bool
+    site_type: type[IndexedSiteAnnotation]
+
+
+def _pack_anchored_sites(
+    sites: tuple[IndexedSiteAnnotation, ...],
+    geometry: SiteGeometry,
+) -> AnchoredSiteArray:
+    if not sites:
+        return AnchoredSiteArray.empty(geometry)
+    vector_attr = {
+        SiteGeometry.POINT: None,
+        SiteGeometry.DIRECTIONAL: "direction",
+        SiteGeometry.RING: "normal",
+    }[geometry]
+    vectors = (
+        np.zeros((len(sites), 3), dtype=np.float32)
+        if vector_attr is None
+        else np.stack([getattr(site, vector_attr) for site in sites], axis=0).astype(
+            np.float32
+        )
+    )
+    return AnchoredSiteArray(
+        geometry=geometry,
+        positions=jnp.array(
+            np.stack([site.position for site in sites], axis=0), dtype=jnp.float32
+        ),
+        vectors=jnp.array(vectors, dtype=jnp.float32),
+        strengths=jnp.array([site.strength for site in sites], dtype=jnp.float32),
+        anchor_indices=jnp.array(
+            [site.anchor_index for site in sites], dtype=jnp.int32
+        ),
+    )
+
+
+def _reference_rows(
+    site: IndexedSiteAnnotation, geometry: SiteGeometry
+) -> tuple[int, ...]:
+    if geometry == SiteGeometry.POINT:
+        return ()
+    if geometry == SiteGeometry.DIRECTIONAL:
+        site = site  # narrow for pyright
+        return getattr(site, "neighbor_indices", ())
+    ring_indices = site.atom_indices[:3]
+    if len(ring_indices) >= 3:
+        return tuple(ring_indices)
+    if not ring_indices:
+        return ()
+    return tuple(list(ring_indices) + [ring_indices[-1]] * (3 - len(ring_indices)))
+
+
+def _pack_indexed_sites(
+    sites: tuple[IndexedSiteAnnotation, ...],
+    geometry: SiteGeometry,
+) -> IndexedSiteArray:
+    if not sites:
+        return IndexedSiteArray.empty(geometry)
+    atom_rows, atom_mask = _pad_rows(
+        [site.atom_indices for site in sites], minimum_width=1
+    )
+    reference_rows, reference_mask = _pad_rows(
+        [_reference_rows(site, geometry) for site in sites],
+        minimum_width=3 if geometry == SiteGeometry.RING else 1,
+    )
+    return IndexedSiteArray(
+        geometry=geometry,
+        atom_index_rows=jnp.array(atom_rows, dtype=jnp.int32),
+        atom_index_mask=jnp.array(atom_mask),
+        reference_index_rows=jnp.array(reference_rows, dtype=jnp.int32),
+        reference_index_mask=jnp.array(reference_mask),
+        strengths=jnp.array([site.strength for site in sites], dtype=jnp.float32),
+    )
+
+
+def pack_site_array(
+    catalog: ChemistryAnnotationCatalog,
+    rule: SiteArrayPackingRule,
+):
+    sites = catalog.typed_sites(rule.site_type, role=rule.role)
+    if rule.anchored:
+        return _pack_anchored_sites(sites, rule.geometry)
+    return _pack_indexed_sites(sites, rule.geometry)
+
+
+@dataclass(frozen=True)
+class InteractionBuildSpec:
+    term_type: type[object]
+    field_rules: tuple[SiteArrayPackingRule, ...]
+
+
+INTERACTION_BUILD_SPECS: tuple[InteractionBuildSpec, ...] = (
+    InteractionBuildSpec(
+        term_type=PiStackingInteractionTerm,
+        field_rules=(
+            SiteArrayPackingRule(
+                "receptor_rings",
+                "receptor",
+                ChemistrySiteRole.AROMATIC_RING,
+                SiteGeometry.RING,
+                True,
+                RingSiteAnnotation,
+            ),
+            SiteArrayPackingRule(
+                "ligand_rings",
+                "ligand",
+                ChemistrySiteRole.AROMATIC_RING,
+                SiteGeometry.RING,
+                False,
+                RingSiteAnnotation,
+            ),
+        ),
+    ),
+    InteractionBuildSpec(
+        term_type=PiCationInteractionTerm,
+        field_rules=(
+            SiteArrayPackingRule(
+                "receptor_rings",
+                "receptor",
+                ChemistrySiteRole.AROMATIC_RING,
+                SiteGeometry.RING,
+                True,
+                RingSiteAnnotation,
+            ),
+            SiteArrayPackingRule(
+                "receptor_cations",
+                "receptor",
+                ChemistrySiteRole.CATION,
+                SiteGeometry.POINT,
+                True,
+                IndexedSiteAnnotation,
+            ),
+            SiteArrayPackingRule(
+                "ligand_rings",
+                "ligand",
+                ChemistrySiteRole.AROMATIC_RING,
+                SiteGeometry.RING,
+                False,
+                RingSiteAnnotation,
+            ),
+            SiteArrayPackingRule(
+                "ligand_cations",
+                "ligand",
+                ChemistrySiteRole.CATION,
+                SiteGeometry.POINT,
+                False,
+                IndexedSiteAnnotation,
+            ),
+        ),
+    ),
+    InteractionBuildSpec(
+        term_type=HalogenBondInteractionTerm,
+        field_rules=(
+            SiteArrayPackingRule(
+                "receptor_acceptors",
+                "receptor",
+                ChemistrySiteRole.HALOGEN_ACCEPTOR,
+                SiteGeometry.DIRECTIONAL,
+                True,
+                DirectionalSiteAnnotation,
+            ),
+            SiteArrayPackingRule(
+                "receptor_donors",
+                "receptor",
+                ChemistrySiteRole.HALOGEN_DONOR,
+                SiteGeometry.DIRECTIONAL,
+                True,
+                DirectionalSiteAnnotation,
+            ),
+            SiteArrayPackingRule(
+                "ligand_acceptors",
+                "ligand",
+                ChemistrySiteRole.HALOGEN_ACCEPTOR,
+                SiteGeometry.DIRECTIONAL,
+                False,
+                DirectionalSiteAnnotation,
+            ),
+            SiteArrayPackingRule(
+                "ligand_donors",
+                "ligand",
+                ChemistrySiteRole.HALOGEN_DONOR,
+                SiteGeometry.DIRECTIONAL,
+                False,
+                DirectionalSiteAnnotation,
+            ),
+        ),
+    ),
+    InteractionBuildSpec(
+        term_type=WaterMediatedHBondInteractionTerm,
+        field_rules=(
+            SiteArrayPackingRule(
+                "receptor_waters",
+                "receptor",
+                ChemistrySiteRole.BRIDGE_WATER,
+                SiteGeometry.DIRECTIONAL,
+                True,
+                DirectionalSiteAnnotation,
+            ),
+            SiteArrayPackingRule(
+                "ligand_polar_sites",
+                "ligand",
+                ChemistrySiteRole.POLAR,
+                SiteGeometry.DIRECTIONAL,
+                False,
+                DirectionalSiteAnnotation,
+            ),
+        ),
+    ),
+)
+
+
+def build_extended_interaction_terms(
+    receptor_catalog: ChemistryAnnotationCatalog,
+    ligand_catalog: ChemistryAnnotationCatalog,
+) -> tuple[CertifiedOptionalInteractionTerm, ...]:
+    catalogs = {"receptor": receptor_catalog, "ligand": ligand_catalog}
+    built_terms = []
+    for spec in INTERACTION_BUILD_SPECS:
+        kwargs = {
+            rule.field_name: pack_site_array(catalogs[rule.source], rule)
+            for rule in spec.field_rules
+        }
+        built_terms.append(spec.term_type(**kwargs))
+    return tuple(built_terms)
+
+
+def build_certified_rich_chemistry_plan(
     receptor_coords: np.ndarray,
     receptor_elements: tuple[str, ...],
     receptor_charges: np.ndarray,
     ligand_ctx: LigandContext,
+    *,
+    receptor_file: str | Path | None,
     target_electrostatic_error: float = _DEFAULT_ELECTROSTATIC_TARGET_ERROR,
 ) -> CertifiedRichChemistryPlan:
-    """Build all rich chemistry specs with formally derived parameters.
-
-    Lean theorems backing this implementation (ConditionalComposition.lean):
-        - screened_coulomb_at_kappa_zero: κ=0 recovers pure Coulomb
-        - conditional_uniformApprox: predicate-based branching is certified
-        - screened_coulomb_exp_bound: Q * exp(-κR) ≤ ε when R ≥ ln(Q/ε) / κ
-        - coulomb_tail_bound: N × Q / R ≤ ε when R ≥ N × Q / ε
-
-    Args:
-        receptor_coords: Receptor atom coordinates
-        receptor_elements: Receptor element symbols
-        receptor_charges: Receptor partial charges
-        ligand_ctx: Ligand context with coordinates, elements, charges
-        target_electrostatic_error: Target error for electrostatics (kcal/mol)
-
-    Returns:
-        CertifiedRichChemistryPlan with formally derived parameters
-    """
-    # Detect metals in the receptor
-    has_metals = any(e in METAL_ELEMENTS for e in receptor_elements)
-
-    # Formally justified electrostatics parameters (ConditionalComposition.lean):
-    # - κ=0 for non-metals: recovers pure Coulomb (screened_coulomb_at_kappa_zero theorem)
-    # - κ=1.0 for metals: screened Coulomb with metal coordination signal
-    kappa = 1.0 if has_metals else 0.0
-
-    ligand_charges = (
-        ligand_ctx.charges
+    has_metals = any(element.upper() in METAL_ELEMENTS for element in receptor_elements)
+    kappa = KAPPA_METAL if has_metals else 0.0
+    ligand_charges: np.ndarray = (
+        np.asarray(ligand_ctx.charges, dtype=np.float32)
         if ligand_ctx.charges is not None
-        else np.zeros((ligand_ctx.base_coords.shape[0],))
+        else np.zeros((ligand_ctx.base_coords.shape[0],), dtype=np.float32)
     )
-
-    # Formally derived cutoff from tail bound theorems
+    ligand_coords = np.asarray(ligand_ctx.base_coords, dtype=np.float32)
     cutoff = _derive_electrostatic_cutoff(
-        receptor_charges=receptor_charges,
+        receptor_charges=np.asarray(receptor_charges, dtype=np.float32),
         ligand_charges=ligand_charges,
         kappa=kappa,
         target_error=target_electrostatic_error,
     )
-
-    screened = build_screened_coulomb_spec(
-        receptor_charges, ligand_charges, kappa=kappa, cutoff=cutoff
+    receptor_catalog = build_receptor_chemistry_catalog(
+        receptor_coords,
+        receptor_elements,
+        receptor_file=receptor_file,
     )
-    contact = build_contact_surrogate_spec(receptor_elements, ligand_ctx.elements)
-    hbond = build_directional_hbond_spec(
-        receptor_coords, receptor_elements, ligand_ctx.base_coords, ligand_ctx.elements
-    )
-    metal = build_metal_coordination_spec(receptor_elements, ligand_ctx.elements)
+    ligand_catalog = build_ligand_chemistry_catalog(ligand_ctx)
     return CertifiedRichChemistryPlan(
-        screened_coulomb=screened,
-        contact=contact,
-        directional_hbond=hbond,
-        metal_coordination=metal,
+        screened_coulomb=build_screened_coulomb_spec(
+            np.asarray(receptor_charges, dtype=np.float32),
+            ligand_charges,
+            kappa=kappa,
+            cutoff=cutoff,
+        ),
+        contact=build_contact_surrogate_spec(receptor_elements, ligand_ctx.elements),
+        directional_hbond=build_directional_hbond_spec(
+            np.asarray(receptor_coords, dtype=np.float32),
+            receptor_elements,
+            ligand_coords,
+            ligand_ctx.elements,
+        ),
+        metal_coordination=build_metal_coordination_spec(
+            receptor_elements, ligand_ctx.elements
+        ),
+        extended_terms=CertifiedExtendedInteractionBundle(
+            terms=build_extended_interaction_terms(receptor_catalog, ligand_catalog)
+        ),
     )

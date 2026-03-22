@@ -11,6 +11,7 @@ from dq_dock_engine.docking_config import (
     CertifiedScoringFamily,
     DockingConfig,
     DockingMode,
+    ExactChemistryMode,
     OptimizerBackend,
 )
 
@@ -38,7 +39,7 @@ def _make_request(*, top_k_to_optimize: int, target_error: float = 0.001):
             optimizer_backend=OptimizerBackend.FORMAL,
             certified_scoring_family=CertifiedScoringFamily.LJ,
             target_error=target_error,
-            use_rich_exact_rescoring=False,
+            exact_chemistry_mode=ExactChemistryMode.NONE,
         ),
         top_k_to_optimize=top_k_to_optimize,
     )
@@ -60,10 +61,12 @@ def test_certified_pruning_pass_uses_exact_certificate_for_top_k(monkeypatch) ->
         lambda request, *, poses_coords, electrostatics: exact_scores,
     )
 
-    survivor_mask, returned_coarse_scores, delta = docking_pipeline._certified_pruning_pass(
-        request,
-        poses_coords=jnp.zeros((3, 1, 3), dtype=jnp.float32),
-        electrostatics=None,
+    survivor_mask, returned_coarse_scores, delta = (
+        docking_pipeline._certified_pruning_pass(
+            request,
+            poses_coords=jnp.zeros((3, 1, 3), dtype=jnp.float32),
+            electrostatics=None,
+        )
     )
 
     expected = certified_pruning_certificate(
@@ -168,12 +171,17 @@ def test_score_exact_pose_batch_scores_large_pose_sets_in_chunks(monkeypatch) ->
     request = _make_request(top_k_to_optimize=2)
     chunk_sizes: list[int] = []
 
-    def fake_route_scoring(**kwargs):
-        chunk = kwargs["poses_coords"]
-        chunk_sizes.append(int(chunk.shape[0]))
-        return chunk[:, 0, 0]
+    class FakeScoringContext:
+        def score_exact_batch(self, **kwargs):
+            chunk = kwargs["poses_coords"]
+            chunk_sizes.append(int(chunk.shape[0]))
+            return SimpleNamespace(scores=chunk[:, 0, 0])
 
-    monkeypatch.setattr(docking_pipeline, "route_scoring", fake_route_scoring)
+    monkeypatch.setattr(
+        docking_pipeline,
+        "resolve_request_scoring_context",
+        lambda request, *, engine=None: FakeScoringContext(),
+    )
 
     poses_coords = jnp.arange(5, dtype=jnp.float32).reshape(5, 1, 1)
     exact_scores = docking_pipeline._score_exact_pose_batch(

@@ -15,6 +15,7 @@ from dq_dock_engine.benchmark.redocking_report import (
     render_redocking_report,
 )
 from dq_dock_engine.docking.charges import ChargeAssigner, ChargeMethod
+from dq_dock_engine.docking_config import ExactChemistryMode
 
 
 def test_benchmark_parallelism_rejects_non_positive_workers() -> None:
@@ -225,7 +226,7 @@ def test_save_benchmark_results_preserves_failed_dq_errors_and_excludes_failed_r
         attempt_timeout_seconds=None,
         use_multi_stage=False,
         use_pocket_guided=True,
-        use_rich_exact_rescoring=True,
+        exact_chemistry_mode=ExactChemistryMode.EXTENDED_RICH,
         competitors=(),
         bench_elapsed=10.0,
         phase="complete",
@@ -297,7 +298,7 @@ def test_run_dq_dock_benchmark_job_passes_top_k_and_rich_rescoring_flag(
         formal_round_strategy=benchmark_pdb.FormalRoundStrategy.SINGLETON_HYBRID,
         use_multi_stage=False,
         use_pocket_guided=True,
-        use_rich_exact_rescoring=False,
+        exact_chemistry_mode=ExactChemistryMode.NONE,
         optimizer_backend=benchmark_pdb.DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
         max_retries=1,
         retry_break_rmsd=0.0,
@@ -325,7 +326,7 @@ def test_run_dq_dock_benchmark_job_passes_top_k_and_rich_rescoring_flag(
     result = benchmark_pdb.run_dq_dock_benchmark_job(job)
 
     assert captured["top_k_to_optimize"] == 7
-    assert captured["use_rich_exact_rescoring"] is False
+    assert captured["exact_chemistry_mode"] == ExactChemistryMode.NONE
     assert result.result.success is True
 
 
@@ -339,7 +340,7 @@ def test_run_dq_dock_threads_rich_exact_rescoring_into_config(
 
     class FakeExecutor:
         def execute(self, context):
-            assert context.config.use_rich_exact_rescoring is False
+            assert context.config.exact_chemistry_mode == ExactChemistryMode.NONE
             return benchmark_pdb.BlindDockingExecutionOutcome(
                 poses=[
                     benchmark_pdb.ScoredPose(
@@ -375,7 +376,7 @@ def test_run_dq_dock_threads_rich_exact_rescoring_into_config(
         n_poses=1,
         n_opt_steps=1,
         top_k_to_optimize=1,
-        use_rich_exact_rescoring=False,
+        exact_chemistry_mode=ExactChemistryMode.NONE,
         max_retries=1,
     )
 
@@ -430,7 +431,7 @@ def test_run_dq_dock_uses_canonical_top_k_to_optimize_default(
         receptor_elements=("N",),
         n_poses=1,
         n_opt_steps=1,
-        use_rich_exact_rescoring=False,
+        exact_chemistry_mode=ExactChemistryMode.NONE,
         max_retries=1,
     )
 

@@ -54,6 +54,7 @@ from dq_dock_engine.docking.formal_surrogates import (
     summarize_staged_top1_round,
     select_exact_receptor_subset_for_local_family,
 )
+from dq_dock_engine.docking.scoring_context import CertifiedScoringContext
 from dq_dock_engine.physics.kernels import rigid_transform_3d
 
 
@@ -114,9 +115,8 @@ def _refine_round_jit_core(
     prior_spec: CertifiedPriorSpec,
     max_coarse_receptor_atoms: int,
     retained_indices: jax.Array,
-    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
+    scoring_context: CertifiedScoringContext | None = None,
     use_softened_coarse: bool = False,
-    rich_chemistry_plan: Any | None = None,
 ):
     n_poses, n_atoms, _ = coords_batch.shape
     n_actions = translation_deltas.shape[0]
@@ -143,9 +143,8 @@ def _refine_round_jit_core(
         max_receptor_atoms=max_coarse_receptor_atoms,
         translation_step=translation_step,
         coarse_target_error=coarse_target_error,
-        electrostatics=electrostatics,
+        scoring_context=scoring_context,
         use_softened_coarse=use_softened_coarse,
-        rich_chemistry_plan=rich_chemistry_plan,
     )
 
     return {
@@ -171,9 +170,8 @@ def _refine_round(
     prior_spec: CertifiedPriorSpec,
     max_coarse_receptor_atoms: int,
     retained_indices: jax.Array,
-    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
+    scoring_context: CertifiedScoringContext | None = None,
     use_softened_coarse: bool = False,
-    rich_chemistry_plan: Any | None = None,
 ) -> tuple[jax.Array, tuple[CertifiedOptimizerState, ...]]:
     action_family = create_roundwise_certified_action_family(
         base_translation_step=base_translation_step,
@@ -182,6 +180,13 @@ def _refine_round(
         support_expansion_level=support_expansion_level,
     )
 
+    # Pre-subset the scoring context here (outside JIT) so that the JIT-compiled
+    # core never calls receptor_subset with a tracer index array.
+    presubsetted_context = (
+        scoring_context.receptor_subset(retained_indices)
+        if scoring_context is not None
+        else None
+    )
     results = _refine_round_jit_core(
         coords_batch=coords_batch,
         receptor_coords=receptor_coords,
@@ -195,9 +200,8 @@ def _refine_round(
         prior_spec=prior_spec,
         max_coarse_receptor_atoms=max_coarse_receptor_atoms,
         retained_indices=retained_indices,
-        electrostatics=electrostatics,
+        scoring_context=presubsetted_context,
         use_softened_coarse=use_softened_coarse,
-        rich_chemistry_plan=rich_chemistry_plan,
     )
 
     results_host = jax.device_get(results)
@@ -302,10 +306,9 @@ def refine_poses_certified(
     base_rotation_step_rad: float = jnp.pi / 12.0,  # Certified by LS1, LS4
     prior_spec: CertifiedPriorSpec | None = None,
     max_coarse_receptor_atoms: int = 64,
-    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
+    scoring_context: CertifiedScoringContext | None = None,
     use_softened_coarse: bool = False,
     adaptive_coarse_target_errors: tuple[float, ...] | None = None,
-    rich_chemistry_plan: Any | None = None,
 ) -> tuple[jax.Array, tuple[tuple[CertifiedOptimizerState, ...], ...]]:
     if n_rounds <= 0:
         raise ValueError("n_rounds must be positive")
@@ -346,9 +349,8 @@ def refine_poses_certified(
             prior_spec=effective_prior_spec,
             max_coarse_receptor_atoms=max_coarse_receptor_atoms,
             retained_indices=retained_indices_jax,
-            electrostatics=electrostatics,
+            scoring_context=scoring_context,
             use_softened_coarse=use_softened_coarse,
-            rich_chemistry_plan=rich_chemistry_plan,
         )
         history.append(states)
 
@@ -375,10 +377,9 @@ def refine_poses_singleton_then_exact(
     base_rotation_step_rad: float = jnp.pi / 12.0,  # Certified by LS1, LS4
     prior_spec: CertifiedPriorSpec | None = None,
     max_coarse_receptor_atoms: int = 64,
-    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
+    scoring_context: CertifiedScoringContext | None = None,
     use_softened_coarse: bool = False,
     adaptive_coarse_target_errors: tuple[float, ...] | None = None,
-    rich_chemistry_plan: Any | None = None,
 ) -> HybridSingletonRefinementResult:
     opt_coords, history = refine_poses_certified(
         coords_batch=coords_batch,
@@ -392,10 +393,9 @@ def refine_poses_singleton_then_exact(
         base_rotation_step_rad=base_rotation_step_rad,
         prior_spec=prior_spec,
         max_coarse_receptor_atoms=max_coarse_receptor_atoms,
-        electrostatics=electrostatics,
+        scoring_context=scoring_context,
         use_softened_coarse=use_softened_coarse,
         adaptive_coarse_target_errors=adaptive_coarse_target_errors,
-        rich_chemistry_plan=rich_chemistry_plan,
     )
     return HybridSingletonRefinementResult(
         coords=opt_coords,

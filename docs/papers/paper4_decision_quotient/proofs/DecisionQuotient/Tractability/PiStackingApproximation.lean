@@ -13,6 +13,7 @@ namespace Tractability
 namespace PiStackingApproximation
 
 open DirectionalHBondApproximation
+open GridConvergence
 
 universe u v
 
@@ -141,6 +142,61 @@ noncomputable abbrev exact_vs_coarse_attractivePiStacking_optimizer_witness
     (s : S) :=
   exact_vs_coarse_attractiveDirectionalHBond_optimizer_witness
     radialExact faceExact offsetExact radialCoarse faceCoarse offsetCoarse s
+
+/-
+  Strengths absorption theorems.
+
+  The Python runtime `PiStackingInteractionTerm._pair_scores` computes:
+
+    strengths = receptor_rings.strengths[None,:,None] * ligand_rings.strengths[None,None,:]
+    pair_scores = -(strengths * radial * face_alignment * offset_factor)
+
+  where `strengths` depends only on the ring-pair index (state `s`), not the
+  pose (action `a`). The four-factor product is therefore equal to the
+  canonical three-factor `directionalHBondScore` with strengths absorbed:
+
+    strengths * radial * face * offset
+    = directionalHBondScore (strengths * radial) face offset
+
+  The two theorems below prove:
+    (1) the absorbed `scaledRadial = strengths * radial` is still a UnitIntervalFactor
+    (2) its Lipschitz constant is no larger than the original radial constant Lr
+
+  Together they show the existing `exact_vs_coarse_attractivePiStacking_*` family
+  applies directly once `scaledRadial` is passed as the `radial` argument,
+  closing the formal gap flagged by the `CONDITIONALLY_CERTIFIED` annotation on
+  `score_certified_pi_stacking_batch` (assumption 1: all factors in [0,1]).
+-/
+
+/-- The four-factor pi-stacking score equals the canonical three-factor
+    surrogate with ring-pair strengths absorbed into the radial component. -/
+theorem piStackingScore_strengths_eq (strengths radial face offset : ℝ) :
+    strengths * radial * face * offset =
+      piStackingScore (strengths * radial) face offset := by
+  unfold piStackingScore directionalHBondScore
+  ring
+
+/-- Ring-pair strengths in [0,1] absorbed into the radial factor yield a valid
+    UnitIntervalFactor, enabling the three-factor certificate. -/
+theorem scaledPiStackingRadial_unitIntervalFactor {A : Type u} {S : Type v}
+    (strengths : S → ℝ) (radial : A → S → ℝ)
+    (hStr : ∀ s, 0 ≤ strengths s ∧ strengths s ≤ 1)
+    (hRad : UnitIntervalFactor radial) :
+    UnitIntervalFactor (fun a s => strengths s * radial a s) :=
+  scaledByStateWeight_unitIntervalFactor strengths radial hStr hRad
+
+/-- Ring-pair strengths in [0,1] absorbed into the radial factor do not worsen
+    the Lipschitz constant Lr, so exact_vs_coarse error bounds are unchanged. -/
+theorem scaledPiStackingRadial_lipschitz {A : Type u} {Scont : Type v} {Sgrid : Type v}
+    (strCont : Scont → ℝ) (radCont : A → Scont → ℝ) (radGrid : A → Sgrid → ℝ)
+    (lift : Sgrid → Scont) (stateError : Sgrid → ℝ) (Lr : ℝ)
+    (hStr : ∀ s, 0 ≤ strCont s ∧ strCont s ≤ 1)
+    (hLip : LipschitzUtilityApprox radCont radGrid lift stateError Lr) :
+    LipschitzUtilityApprox
+      (fun a s => strCont s * radCont a s)
+      (fun a sGrid => strCont (lift sGrid) * radGrid a sGrid)
+      lift stateError Lr :=
+  scaledByStateWeight_lipschitz strCont radCont radGrid lift stateError Lr hStr hLip
 
 end PiStackingApproximation
 end Tractability

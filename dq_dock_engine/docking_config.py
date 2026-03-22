@@ -44,6 +44,13 @@ class CertifiedScoringFamily(Enum):
     LJ_REALSPACE_EWALD = "lj_realspace_ewald"
 
 
+class ExactChemistryMode(Enum):
+    """Exact chemistry family used for certified exact rescoring/refinement."""
+
+    NONE = "none"
+    EXTENDED_RICH = "extended_rich"
+
+
 @register_pytree_node_class
 @dataclass(frozen=True)
 class DockingConfig:
@@ -86,16 +93,15 @@ class DockingConfig:
     #: succeeds, then the exact fallback handles the remainder.
     adaptive_coarse_target_errors: Tuple[float, ...] | None = (0.05, 0.01, 0.004)
 
-    #: Optional theorem-backed rich chemistry terms (h-bond, screened coulomb, desolvation)
-    #: Used during the final exact rescoring stage.
-    use_rich_exact_rescoring: bool = True
+    #: The exact chemistry family used for certified exact rescoring/refinement.
+    exact_chemistry_mode: ExactChemistryMode = ExactChemistryMode.EXTENDED_RICH
 
     #: Certified physical score family for both route_scoring and formal rounds
     certified_scoring_family: CertifiedScoringFamily = (
         CertifiedScoringFamily.LJ_REALSPACE_EWALD
     )
 
-    #: Fixed padding limits for JAX JIT stability. 
+    #: Fixed padding limits for JAX JIT stability.
     #: All receptor/ligand atom sets are padded to these sizes with ghost atoms.
     max_receptor_atoms: int = 1024
     max_ligand_atoms: int = 128
@@ -118,7 +124,7 @@ class DockingConfig:
             self.formal_round_strategy,
             self.use_softened_coarse_prefilter,
             self.adaptive_coarse_target_errors,
-            self.use_rich_exact_rescoring,
+            self.exact_chemistry_mode,
             self.certified_scoring_family,
             self.max_receptor_atoms,
             self.max_ligand_atoms,
@@ -137,7 +143,7 @@ class DockingConfig:
             coarse_target_error=children[2],
             use_softened_coarse_prefilter=aux_data[4],
             adaptive_coarse_target_errors=aux_data[5],
-            use_rich_exact_rescoring=aux_data[6],
+            exact_chemistry_mode=aux_data[6],
             certified_scoring_family=aux_data[7],
             certified_binding_site=children[3],
             max_receptor_atoms=aux_data[8],
@@ -190,6 +196,10 @@ class DockingConfig:
                     warnings.append(
                         "CERTIFIED mode: adaptive_coarse_target_errors entries must be positive."
                     )
+            if self.exact_chemistry_mode == ExactChemistryMode.NONE:
+                warnings.append(
+                    "CERTIFIED mode: exact_chemistry_mode=NONE disables theorem-backed exact chemistry refinement."
+                )
 
         return len(warnings) == 0, warnings
 

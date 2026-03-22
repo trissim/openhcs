@@ -7,6 +7,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.tree_util import register_pytree_node_class
+from dq_dock_engine.docking.scoring_context import CertifiedScoringContext
+from dq_dock_engine.docking_config import ExactChemistryMode
 from dq_dock_engine.docking.formal_pruning import (
     CertifiedPruningCertificate,
     CertifiedSurvivorSetWitness,
@@ -79,12 +81,21 @@ class StagedTop1Decision:
 
     def tree_flatten(self):
         children = (self.survivor_set,)
-        aux_data = (self.branch, self.accepted_without_exact_rescore, self.selected_action)
+        aux_data = (
+            self.branch,
+            self.accepted_without_exact_rescore,
+            self.selected_action,
+        )
         return (children, aux_data)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        return cls(branch=aux_data[0], survivor_set=children[0], accepted_without_exact_rescore=aux_data[1], selected_action=aux_data[2])
+        return cls(
+            branch=aux_data[0],
+            survivor_set=children[0],
+            accepted_without_exact_rescore=aux_data[1],
+            selected_action=aux_data[2],
+        )
 
 
 @register_pytree_node_class
@@ -102,7 +113,12 @@ class StagedTop1RoundResult:
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        return cls(coarse_scores=children[0], retained_receptor_indices=children[1], decisions=children[2], delta=aux_data[0])
+        return cls(
+            coarse_scores=children[0],
+            retained_receptor_indices=children[1],
+            decisions=children[2],
+            delta=aux_data[0],
+        )
 
 
 @dataclass(frozen=True)
@@ -208,6 +224,16 @@ def _default_coarse_target_error(target_error: float | jax.Array) -> float | jax
     return jnp.maximum(target_error, 0.004)
 
 
+def _default_scoring_context(
+    electrostatics: CertifiedRealSpaceEwaldSpec | None,
+) -> CertifiedScoringContext:
+    return CertifiedScoringContext(
+        exact_chemistry_mode=ExactChemistryMode.NONE,
+        electrostatics=electrostatics,
+        rich_chemistry_plan=None,
+    )
+
+
 def _score_coarse_batch(
     receptor_coords: jax.Array,
     receptor_radii: jax.Array,
@@ -215,60 +241,30 @@ def _score_coarse_batch(
     candidate_coords: jax.Array,
     coarse_target_error: float,
     retained_indices: jax.Array,
-    electrostatics: CertifiedRealSpaceEwaldSpec | None,
+    scoring_context: CertifiedScoringContext,
     use_softened_coarse: bool,
-    rich_chemistry_plan: Any | None = None,
 ) -> tuple[jax.Array, float]:
-    if rich_chemistry_plan is not None:
-        if use_softened_coarse:
-            from dq_dock_engine.docking.scoring import score_certified_softened_rich_chemistry_batch
-            softened = score_certified_softened_rich_chemistry_batch(
-                receptor_coords=receptor_coords[retained_indices],
-                poses_coords=candidate_coords,
-                receptor_radii=receptor_radii[retained_indices],
-                ligand_radii=ligand_radii,
-                rich_chemistry_plan=rich_chemistry_plan,
-                target_error=coarse_target_error,
-            )
-            return softened.scores, softened.softening_error_bound
-        else:
-            from dq_dock_engine.docking.scoring import score_certified_rich_chemistry_batch
-            coarse = score_certified_rich_chemistry_batch(
-                receptor_coords=receptor_coords[retained_indices],
-                poses_coords=candidate_coords,
-                receptor_radii=receptor_radii[retained_indices],
-                ligand_radii=ligand_radii,
-                rich_chemistry_plan=rich_chemistry_plan,
-                target_error=coarse_target_error,
-            )
-            return coarse.scores, 0.0
+    # scoring_context must already be pre-subsetted to match retained_indices;
+    # receptor_subset is intentionally NOT called here so this function is JIT-safe.
     if use_softened_coarse:
-        if electrostatics is None:
-            softened = score_certified_softened_lj(
-                receptor_coords=receptor_coords[retained_indices],
-                poses_coords=candidate_coords,
-                receptor_radii=receptor_radii[retained_indices],
-                ligand_radii=ligand_radii,
-                target_error=coarse_target_error,
-            )
-        else:
-            softened = score_certified_softened_lj_realspace_ewald(
-                receptor_coords=receptor_coords[retained_indices],
-                poses_coords=candidate_coords,
-                receptor_radii=receptor_radii[retained_indices],
-                ligand_radii=ligand_radii,
-                electrostatics=_subset_electrostatics(electrostatics, retained_indices),
-                target_error=coarse_target_error,
-            )
+        softened = scoring_context.score_softened_batch(
+            receptor_coords=receptor_coords[retained_indices],
+            poses_coords=candidate_coords,
+            receptor_radii=receptor_radii[retained_indices],
+            ligand_radii=ligand_radii,
+            target_error=coarse_target_error,
+            epsilon=0.2,
+            softening_radius=None,
+        )
         return softened.scores, softened.softening_error_bound
 
-    coarse = score_certified_batch(
+    coarse = scoring_context.score_exact_batch(
         receptor_coords=receptor_coords[retained_indices],
         poses_coords=candidate_coords,
         receptor_radii=receptor_radii[retained_indices],
         ligand_radii=ligand_radii,
         target_error=coarse_target_error,
-        electrostatics=_subset_electrostatics(electrostatics, retained_indices),
+        epsilon=0.2,
     )
     return coarse.scores, 0.0
 
@@ -368,6 +364,7 @@ def score_exact_and_coarse_local_family(
     translation_step: float,
     coarse_target_error: float | None = None,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
+    scoring_context: CertifiedScoringContext | None = None,
     use_softened_coarse: bool = False,
 ) -> CertifiedCoarseScoreBundle:
     coarse_target_error = (
@@ -383,13 +380,19 @@ def score_exact_and_coarse_local_family(
         translation_step=translation_step,
         target_error=target_error,
     )
-    exact_batch = score_certified_batch(
+    effective_scoring_context = (
+        _default_scoring_context(electrostatics)
+        if scoring_context is None
+        else scoring_context
+    )
+    exact_subsetted_context = effective_scoring_context.receptor_subset(retained_indices)
+    exact_batch = exact_subsetted_context.score_exact_batch(
         receptor_coords=receptor_coords[retained_indices],
         poses_coords=candidate_coords,
         receptor_radii=receptor_radii[retained_indices],
         ligand_radii=ligand_radii,
         target_error=target_error,
-        electrostatics=_subset_electrostatics(electrostatics, retained_indices),
+        epsilon=0.2,
     )
     coarse_retained_indices = select_exact_receptor_subset_for_local_family(
         receptor_coords=receptor_coords,
@@ -399,6 +402,9 @@ def score_exact_and_coarse_local_family(
         translation_step=translation_step,
         target_error=coarse_target_error,
     )
+    coarse_subsetted_context = effective_scoring_context.receptor_subset(
+        coarse_retained_indices
+    )
     coarse_scores, softening_error_bound = _score_coarse_batch(
         receptor_coords=receptor_coords,
         receptor_radii=receptor_radii,
@@ -406,7 +412,7 @@ def score_exact_and_coarse_local_family(
         candidate_coords=candidate_coords,
         coarse_target_error=coarse_target_error,
         retained_indices=coarse_retained_indices,
-        electrostatics=electrostatics,
+        scoring_context=coarse_subsetted_context,
         use_softened_coarse=use_softened_coarse,
     )
     witness = two_cutoff_approximation_witness(target_error, coarse_target_error)
@@ -447,9 +453,8 @@ def score_exact_and_coarse_round(
     translation_step: float,
     retained_indices: jax.Array | None = None,
     coarse_target_error: float | None = None,
-    electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
+    scoring_context: CertifiedScoringContext | None = None,
     use_softened_coarse: bool = False,
-    rich_chemistry_plan: Any | None = None,
 ) -> tuple[jax.Array, jax.Array, float, float, jax.Array]:
     coarse_target_error = (
         _default_coarse_target_error(target_error)
@@ -458,49 +463,35 @@ def score_exact_and_coarse_round(
     )
     n_poses, n_actions, n_atoms, _ = candidate_batches.shape
     flat_candidates = candidate_batches.reshape((n_poses * n_actions, n_atoms, 3))
-    
-    if retained_indices is None:
-         # Fallback for simple calls, but not used in optimized refinement
-         retained_indices = jnp.arange(receptor_coords.shape[0])
-         
-    # Subset the rich chemistry plan for the retained receptor atoms
-    plan_subset = (
-        rich_chemistry_plan.receptor_subset(retained_indices)
-        if rich_chemistry_plan is not None
-        else None
-    )
 
-    if False: # Temporarily disabled for speed test
-        from dq_dock_engine.docking.scoring import score_certified_rich_chemistry_batch
-        exact_batch = score_certified_rich_chemistry_batch(
-            receptor_coords=receptor_coords[retained_indices],
-            poses_coords=flat_candidates,
-            receptor_radii=receptor_radii[retained_indices],
-            ligand_radii=ligand_radii,
-            rich_chemistry_plan=plan_subset,
-            target_error=target_error,
-        )
-    else:
-        exact_batch = score_certified_batch(
-            receptor_coords=receptor_coords[retained_indices],
-            poses_coords=flat_candidates,
-            receptor_radii=receptor_radii[retained_indices],
-            ligand_radii=ligand_radii,
-            target_error=target_error,
-            electrostatics=_subset_electrostatics(electrostatics, retained_indices),
-        )
+    if retained_indices is None:
+        # Fallback for simple calls, but not used in optimized refinement
+        retained_indices = jnp.arange(receptor_coords.shape[0])
+
+    # scoring_context must already be pre-subsetted to match retained_indices
+    # before this JIT-compiled function is entered; receptor_subset is not
+    # called here so this function remains JIT-safe.
+    effective_scoring_context = (
+        _default_scoring_context(None) if scoring_context is None else scoring_context
+    )
+    exact_batch = effective_scoring_context.score_exact_batch(
+        receptor_coords=receptor_coords[retained_indices],
+        poses_coords=flat_candidates,
+        receptor_radii=receptor_radii[retained_indices],
+        ligand_radii=ligand_radii,
+        target_error=target_error,
+        epsilon=0.2,
+    )
     exact_scores = exact_batch.scores.reshape((n_poses, n_actions))
-    coarse_retained_indices = retained_indices # Use same subset for efficiency in optimized loop
     coarse_scores_flat, softening_error_bound = _score_coarse_batch(
         receptor_coords=receptor_coords,
         receptor_radii=receptor_radii,
         ligand_radii=ligand_radii,
         candidate_coords=flat_candidates,
         coarse_target_error=coarse_target_error,
-        retained_indices=coarse_retained_indices,
-        electrostatics=electrostatics,
+        retained_indices=retained_indices,
+        scoring_context=effective_scoring_context,
         use_softened_coarse=use_softened_coarse,
-        rich_chemistry_plan=plan_subset,
     )
     coarse_scores = coarse_scores_flat.reshape((n_poses, n_actions))
     witness = two_cutoff_approximation_witness(target_error, coarse_target_error)
@@ -510,7 +501,7 @@ def score_exact_and_coarse_round(
         coarse_scores,
         delta,
         exact_batch.error_bound,
-        coarse_retained_indices,
+        retained_indices,
     )
 
 
@@ -554,7 +545,7 @@ def staged_top1_round_from_coarse_scores(
     )
     # This return a batched StagedTop1Decision Pytree
     decisions = vmapped_decision(coarse_scores, coarse_scores, delta)
-    
+
     return StagedTop1RoundResult(
         coarse_scores=coarse_scores,
         delta=delta,
@@ -569,15 +560,27 @@ def summarize_staged_top1_round(
     # Handle both tuple of decisions (legacy) and batched decision Pytree
     decisions = round_result.decisions
     if isinstance(decisions, tuple):
-        exact_top1_count = sum(d.branch == Top1PruningBranch.EXACT_TOP1 for d in decisions)
-        singleton_count = sum(d.branch == Top1PruningBranch.EXACT_SINGLETON_WINNER for d in decisions)
-        ambiguity_band_count = sum(d.branch == Top1PruningBranch.TOP1_COARSE_AMBIGUITY_BAND for d in decisions)
+        exact_top1_count = sum(
+            d.branch == Top1PruningBranch.EXACT_TOP1 for d in decisions
+        )
+        singleton_count = sum(
+            d.branch == Top1PruningBranch.EXACT_SINGLETON_WINNER for d in decisions
+        )
+        ambiguity_band_count = sum(
+            d.branch == Top1PruningBranch.TOP1_COARSE_AMBIGUITY_BAND for d in decisions
+        )
     else:
         # Batched Pytree mode
-        exact_top1_count = int(jnp.sum(decisions.branch == Top1PruningBranch.EXACT_TOP1))
-        singleton_count = int(jnp.sum(decisions.branch == Top1PruningBranch.EXACT_SINGLETON_WINNER))
-        ambiguity_band_count = int(jnp.sum(decisions.branch == Top1PruningBranch.TOP1_COARSE_AMBIGUITY_BAND))
-        
+        exact_top1_count = int(
+            jnp.sum(decisions.branch == Top1PruningBranch.EXACT_TOP1)
+        )
+        singleton_count = int(
+            jnp.sum(decisions.branch == Top1PruningBranch.EXACT_SINGLETON_WINNER)
+        )
+        ambiguity_band_count = int(
+            jnp.sum(decisions.branch == Top1PruningBranch.TOP1_COARSE_AMBIGUITY_BAND)
+        )
+
     return StagedTop1BranchSummary(
         exact_top1_count=exact_top1_count,
         singleton_count=singleton_count,
@@ -668,6 +671,7 @@ def try_fast_singleton_accept_round(
         target_error=coarse_target_error,
     )
     flat_candidates = candidate_batches.reshape((n_poses * n_actions, n_atoms, 3))
+    scoring_context = _default_scoring_context(electrostatics)
     coarse_scores_flat, softening_error_bound = _score_coarse_batch(
         receptor_coords=receptor_coords,
         receptor_radii=receptor_radii,
@@ -675,7 +679,7 @@ def try_fast_singleton_accept_round(
         candidate_coords=flat_candidates,
         coarse_target_error=coarse_target_error,
         retained_indices=coarse_retained_indices,
-        electrostatics=electrostatics,
+        scoring_context=scoring_context,
         use_softened_coarse=use_softened_coarse,
     )
     coarse_scores = coarse_scores_flat.reshape((n_poses, n_actions))

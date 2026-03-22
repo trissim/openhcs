@@ -38,6 +38,51 @@ noncomputable def directionalHBondDecisionProblem {A : Type u} {S : Type v}
 def UnitIntervalFactor {A : Type u} {S : Type v} (f : A → S → ℝ) : Prop :=
   ∀ a s, 0 ≤ f a s ∧ f a s ≤ 1
 
+/-- A state-only weight in [0,1] absorbed into a UnitIntervalFactor field
+    preserves the unit-interval constraint.
+
+    Key application: in pi-stacking, `strengths s = rec_strength s * lig_strength s`
+    depends only on the ring-pair state `s`, not the pose `a`. This lemma shows
+    that `fun a s => strengths s * radial a s` is still a valid UnitIntervalFactor,
+    so the three-factor certificate applies unchanged after absorption. -/
+theorem scaledByStateWeight_unitIntervalFactor {A : Type u} {S : Type v}
+    (w : S → ℝ) (f : A → S → ℝ)
+    (hw : ∀ s, 0 ≤ w s ∧ w s ≤ 1)
+    (hf : UnitIntervalFactor f) :
+    UnitIntervalFactor (fun a s => w s * f a s) := by
+  intro a s
+  rcases hw s with ⟨hlo, hhi⟩
+  rcases hf a s with ⟨hflo, hfhi⟩
+  exact ⟨mul_nonneg hlo hflo, by nlinarith⟩
+
+/-- A state-only weight in [0,1] absorbed into a factor does not worsen
+    the Lipschitz constant.
+
+    Proof: `|w(lift sg) * fCont - w(lift sg) * fGrid|`
+            `= w(lift sg) * |fCont - fGrid|`   (since w ≥ 0)
+            `≤ 1 * |fCont - fGrid|`             (since w ≤ 1)
+            `≤ L * stateError sg`               (by hypothesis)
+
+    The Lipschitz constant `L` is unchanged. This holds because `w` is
+    state-only: it factors out of the pose-difference absolutely. -/
+theorem scaledByStateWeight_lipschitz {A : Type u} {Scont : Type v} {Sgrid : Type v}
+    (wCont : Scont → ℝ) (fCont : A → Scont → ℝ) (fGrid : A → Sgrid → ℝ)
+    (lift : Sgrid → Scont) (stateError : Sgrid → ℝ) (L : ℝ)
+    (hw : ∀ s, 0 ≤ wCont s ∧ wCont s ≤ 1)
+    (hLip : LipschitzUtilityApprox fCont fGrid lift stateError L) :
+    LipschitzUtilityApprox
+      (fun a s => wCont s * fCont a s)
+      (fun a sGrid => wCont (lift sGrid) * fGrid a sGrid)
+      lift stateError L := by
+  intro a sGrid
+  rcases hw (lift sGrid) with ⟨hlo, hhi⟩
+  have hKey : |wCont (lift sGrid) * fCont a (lift sGrid) - wCont (lift sGrid) * fGrid a sGrid|
+      = wCont (lift sGrid) * |fCont a (lift sGrid) - fGrid a sGrid| := by
+    rw [← mul_sub, abs_mul, abs_of_nonneg hlo]
+  rw [hKey]
+  exact ((mul_le_mul_of_nonneg_right hhi (abs_nonneg _)).trans_eq (one_mul _)).trans
+    (hLip a sGrid)
+
 theorem directionalHBondScore_sub_le_component_sum
     {r1 r2 d1 d2 a1 a2 Lr Ld La err : ℝ}
     (hr1 : 0 ≤ r1) (hr1b : r1 ≤ 1)

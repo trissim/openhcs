@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -223,11 +224,11 @@ class ChemistryAnnotationCatalog:
         )
 
 
-class LigandChemistryAnnotations(ChemistryAnnotationCatalog):
+class LigandChemistryCatalog(ChemistryAnnotationCatalog):
     pass
 
 
-class ReceptorChemistryAnnotations(ChemistryAnnotationCatalog):
+class ReceptorChemistryCatalog(ChemistryAnnotationCatalog):
     pass
 
 
@@ -312,7 +313,7 @@ class LigandSiteExtractor(ABC):
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
-        if cls is not LigandSiteExtractor and cls.__dict__.get("register", True):
+        if not inspect.isabstract(cls):
             cls._registered_types.append(cls)
 
     @classmethod
@@ -331,7 +332,7 @@ class ReceptorSiteExtractor(ABC):
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
-        if cls is not ReceptorSiteExtractor and cls.__dict__.get("register", True):
+        if not inspect.isabstract(cls):
             cls._registered_types.append(cls)
 
     @classmethod
@@ -416,7 +417,9 @@ class LigandHalogenDonorExtractor(LigandSiteExtractor):
 
 
 class _LigandDirectionalExtractor(LigandSiteExtractor):
-    role: ClassVar[ChemistrySiteRole]
+    @property
+    @abstractmethod
+    def role(self) -> ChemistrySiteRole: ...
 
     def include_atom(self, charge: float) -> bool:
         return True
@@ -451,11 +454,15 @@ class _LigandDirectionalExtractor(LigandSiteExtractor):
 
 
 class LigandPolarExtractor(_LigandDirectionalExtractor):
-    role = ChemistrySiteRole.POLAR
+    @property
+    def role(self) -> ChemistrySiteRole:
+        return ChemistrySiteRole.POLAR
 
 
 class LigandHalogenAcceptorExtractor(_LigandDirectionalExtractor):
-    role = ChemistrySiteRole.HALOGEN_ACCEPTOR
+    @property
+    def role(self) -> ChemistrySiteRole:
+        return ChemistrySiteRole.HALOGEN_ACCEPTOR
 
     def include_atom(self, charge: float) -> bool:
         return charge <= 0.2
@@ -630,13 +637,13 @@ class ReceptorBridgeWaterExtractor(ReceptorSiteExtractor):
         return tuple(sites)
 
 
-def build_ligand_chemistry_annotations(
+def build_ligand_chemistry_catalog(
     ligand_ctx: LigandContext,
-) -> LigandChemistryAnnotations:
+) -> LigandChemistryCatalog:
     coords = np.asarray(ligand_ctx.base_coords, dtype=np.float32)
     elements = tuple(ligand_ctx.elements)
     if len(elements) != coords.shape[0]:
-        return LigandChemistryAnnotations()
+        return LigandChemistryCatalog()
     charges = (
         None
         if ligand_ctx.charges is None
@@ -648,7 +655,7 @@ def build_ligand_chemistry_annotations(
         charges=charges,
         adjacency=_infer_bond_adjacency(coords, elements),
     )
-    return LigandChemistryAnnotations(
+    return LigandChemistryCatalog(
         sites=tuple(
             site
             for extractor_type in LigandSiteExtractor.registered_types()
@@ -657,21 +664,21 @@ def build_ligand_chemistry_annotations(
     )
 
 
-def build_receptor_chemistry_annotations(
+def build_receptor_chemistry_catalog(
     receptor_coords: np.ndarray,
     receptor_elements: tuple[str, ...],
     *,
     receptor_file: str | Path | None,
-) -> ReceptorChemistryAnnotations:
+) -> ReceptorChemistryCatalog:
     if receptor_file is None:
-        return ReceptorChemistryAnnotations()
+        return ReceptorChemistryCatalog()
     records = iter_atom_records(Path(receptor_file))
     if len(records) != receptor_coords.shape[0]:
-        return ReceptorChemistryAnnotations()
+        return ReceptorChemistryCatalog()
     if tuple(record.element for record in records) != tuple(
         _normalize_element(element) for element in receptor_elements
     ):
-        return ReceptorChemistryAnnotations()
+        return ReceptorChemistryCatalog()
     indexed_records = tuple(enumerate(records))
     grouped = group_atom_records_by_residue(records)
     record_index_by_identity = {id(record): index for index, record in indexed_records}
@@ -687,7 +694,7 @@ def build_receptor_chemistry_annotations(
             for residue, residue_records in grouped.items()
         },
     )
-    return ReceptorChemistryAnnotations(
+    return ReceptorChemistryCatalog(
         sites=tuple(
             site
             for extractor_type in ReceptorSiteExtractor.registered_types()

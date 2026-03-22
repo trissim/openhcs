@@ -743,9 +743,9 @@ class CertifiedRichChemistryPlan:
 @dataclass(frozen=True)
 class CertifiedBatchResult:
     scores: jnp.ndarray
-    error_bound: float
-    target_error: float
-    cutoff_radius: float
+    error_bound: jax.Array | float
+    target_error: jax.Array | float
+    cutoff_radius: jax.Array | float
 
     def tree_flatten(self):
         children = (
@@ -796,15 +796,12 @@ def _branch_on_activity(
     active_fn: Callable[[], CertifiedBatchResult],
     inactive_fn: Callable[[], CertifiedBatchResult],
 ) -> CertifiedBatchResult:
-    try:
-        return active_fn() if bool(activity) else inactive_fn()
-    except jax.errors.TracerBoolConversionError:
-        return jax.lax.cond(
-            activity,
-            lambda _: active_fn(),
-            lambda _: inactive_fn(),
-            operand=None,
-        )
+    return jax.lax.cond(
+        activity,
+        lambda _: active_fn(),
+        lambda _: inactive_fn(),
+        operand=None,
+    )
 
 
 def _score_certified_interaction_active_batch(
@@ -870,10 +867,10 @@ def _score_certified_extended_interaction_bundle_batch(
 @dataclass(frozen=True)
 class CertifiedSoftenedBatchResult:
     scores: jnp.ndarray
-    softening_error_bound: float
-    target_error: float
-    cutoff_radius: float
-    softening_radius: float
+    softening_error_bound: jax.Array | float
+    target_error: jax.Array | float
+    cutoff_radius: jax.Array | float
+    softening_radius: jax.Array | float
 
     def tree_flatten(self):
         children = (
@@ -1459,13 +1456,115 @@ def score_certified_directional_hbond_batch(
 
 
 @conditionally_certified(
-    "HandleAliases.lean::AR1; HandleAliases.lean::AR2; HandleAliases.lean::AR3; HandleAliases.lean::AR4; HandleAliases.lean::AR5; HandleAliases.lean::MC6; HandleAliases.lean::MC7; HandleAliases.lean::MC8; HandleAliases.lean::MC9; HandleAliases.lean::MC10",
+    "HandleAliases.lean::PP6; HandleAliases.lean::PP7; HandleAliases.lean::PP8; HandleAliases.lean::PP9; HandleAliases.lean::PP10; "
+    "PiStackingApproximation.lean::scaledPiStackingRadial_unitIntervalFactor; "
+    "PiStackingApproximation.lean::scaledPiStackingRadial_lipschitz",
     assumptions=[
-        "The attractive runtime polar energy is exactly the negative sum of the certified contact surrogate, the certified directional H-bond surrogate, and the certified attractive metal coordination surrogate signals",
-        "The combined error bound is the sum of the finite-batch contact, directional H-bond, and metal coordination discrepancy bounds",
+        "The runtime passes scaledRadial = strengths * radial as the radial argument, which "
+        "scaledPiStackingRadial_unitIntervalFactor proves is a UnitIntervalFactor and "
+        "scaledPiStackingRadial_lipschitz proves preserves the Lipschitz constant Lr unchanged; "
+        "the remaining correspondence between Python PiStackingInteractionTerm and the Lean "
+        "attractivePiStackingDecisionProblem family (face_alignment, offset_factor shape) is assumed",
+        "The reported error bound is the exact finite-batch max discrepancy between exact and cutoff attractive pi-stacking scores",
     ],
 )
-def score_certified_polar_surrogate_batch(
+def score_certified_pi_stacking_batch(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    pi_stacking_term: CertifiedOptionalInteractionTerm,
+) -> CertifiedBatchResult:
+    return _score_certified_optional_interaction_batch(
+        receptor_coords,
+        poses_coords,
+        pi_stacking_term,
+    )
+
+
+@conditionally_certified(
+    "HandleAliases.lean::PC6; HandleAliases.lean::PC7; HandleAliases.lean::PC8; HandleAliases.lean::PC9; HandleAliases.lean::PC10",
+    assumptions=[
+        "The runtime uses the exact same attractive pi-cation surrogate family as the Lean theorem family",
+        "The reported error bound is the exact finite-batch max discrepancy between exact and cutoff attractive pi-cation scores",
+    ],
+)
+def score_certified_pi_cation_batch(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    pi_cation_term: CertifiedOptionalInteractionTerm,
+) -> CertifiedBatchResult:
+    return _score_certified_optional_interaction_batch(
+        receptor_coords,
+        poses_coords,
+        pi_cation_term,
+    )
+
+
+@conditionally_certified(
+    "HandleAliases.lean::XB6; HandleAliases.lean::XB7; HandleAliases.lean::XB8; HandleAliases.lean::XB9; HandleAliases.lean::XB10",
+    assumptions=[
+        "The runtime uses the exact same attractive halogen-bond surrogate family as the Lean theorem family",
+        "The reported error bound is the exact finite-batch max discrepancy between exact and cutoff attractive halogen-bond scores",
+    ],
+)
+def score_certified_halogen_bond_batch(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    halogen_bond_term: CertifiedOptionalInteractionTerm,
+) -> CertifiedBatchResult:
+    return _score_certified_optional_interaction_batch(
+        receptor_coords,
+        poses_coords,
+        halogen_bond_term,
+    )
+
+
+@conditionally_certified(
+    "HandleAliases.lean::WB6; HandleAliases.lean::WB7; HandleAliases.lean::WB8; HandleAliases.lean::WB9; HandleAliases.lean::WB10",
+    assumptions=[
+        "The runtime uses the exact same attractive water-mediated hydrogen-bond surrogate family as the Lean theorem family",
+        "The reported error bound is the exact finite-batch max discrepancy between exact and cutoff attractive water-mediated hydrogen-bond scores",
+    ],
+)
+def score_certified_water_mediated_hbond_batch(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    water_mediated_hbond_term: CertifiedOptionalInteractionTerm,
+) -> CertifiedBatchResult:
+    return _score_certified_optional_interaction_batch(
+        receptor_coords,
+        poses_coords,
+        water_mediated_hbond_term,
+    )
+
+
+def _combine_certified_batches(
+    *batches: CertifiedBatchResult,
+    target_error: float | None = None,
+) -> CertifiedBatchResult:
+    if not batches:
+        raise ValueError("At least one certified batch is required")
+    return CertifiedBatchResult(
+        scores=jnp.sum(jnp.stack([batch.scores for batch in batches], axis=0), axis=0),
+        error_bound=sum(batch.error_bound for batch in batches),
+        target_error=(
+            sum(batch.target_error for batch in batches)
+            if target_error is None
+            else target_error
+        ),
+        cutoff_radius=jnp.max(
+            jnp.stack([jnp.asarray(batch.cutoff_radius) for batch in batches], axis=0)
+        ),
+    )
+
+
+@conditionally_certified(
+    "HandleAliases.lean::XR1; HandleAliases.lean::XR2; HandleAliases.lean::XR3; HandleAliases.lean::XR4; HandleAliases.lean::XR5",
+    assumptions=[
+        "The attractive runtime chemistry energy is exactly the sum of the theorem-backed attractive contact, directional H-bond, metal coordination, pi-stacking, pi-cation, halogen-bond, and water-mediated hydrogen-bond signals",
+        "The combined error bound is the sum of the finite-batch discrepancy bounds for all attractive chemistry components",
+    ],
+)
+def score_certified_attractive_chemistry_batch(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
     rich_chemistry_plan: CertifiedRichChemistryPlan,
@@ -1485,21 +1584,22 @@ def score_certified_polar_surrogate_batch(
         poses_coords,
         rich_chemistry_plan.metal_coordination,
     )
-    return CertifiedBatchResult(
-        scores=-(contact_batch.scores + hbond_batch.scores) + metal_batch.scores,
-        error_bound=contact_batch.error_bound
-        + hbond_batch.error_bound
-        + metal_batch.error_bound,
-        target_error=contact_batch.error_bound
-        + hbond_batch.error_bound
-        + metal_batch.error_bound,
-        cutoff_radius=jnp.maximum(
-            jnp.maximum(
-                contact_batch.cutoff_radius,
-                hbond_batch.cutoff_radius,
+    extended_batch = _score_certified_extended_interaction_bundle_batch(
+        receptor_coords,
+        poses_coords,
+        rich_chemistry_plan.extended_terms,
+    )
+    return _combine_certified_batches(
+        CertifiedBatchResult(
+            scores=-(contact_batch.scores + hbond_batch.scores),
+            error_bound=contact_batch.error_bound + hbond_batch.error_bound,
+            target_error=contact_batch.target_error + hbond_batch.target_error,
+            cutoff_radius=jnp.maximum(
+                contact_batch.cutoff_radius, hbond_batch.cutoff_radius
             ),
-            metal_batch.cutoff_radius,
         ),
+        metal_batch,
+        extended_batch,
     )
 
 
@@ -1545,10 +1645,10 @@ def score_certified_lj_screened_coulomb_batch(
 
 
 @conditionally_certified(
-    "HandleAliases.lean::AR6; HandleAliases.lean::AR7; HandleAliases.lean::AR8; HandleAliases.lean::AR9; HandleAliases.lean::AR10",
+    "HandleAliases.lean::XR6; HandleAliases.lean::XR7; HandleAliases.lean::XR8; HandleAliases.lean::XR9; HandleAliases.lean::XR10",
     assumptions=[
-        "The additive runtime score is exactly the sum of the certified LJ+screened-Coulomb term and the certified polar surrogate term",
-        "The combined error bound is the sum of the certified nonbonded bound and the certified polar surrogate batch discrepancy bound",
+        "The additive runtime score is exactly the sum of the certified LJ+screened-Coulomb term and the certified attractive extended chemistry term",
+        "The combined error bound is the sum of the certified nonbonded bound and the certified attractive extended chemistry batch discrepancy bound",
     ],
 )
 def score_certified_rich_chemistry_batch(
@@ -1569,19 +1669,15 @@ def score_certified_rich_chemistry_batch(
         target_error=target_error,
         epsilon=epsilon,
     )
-    polar_batch = score_certified_polar_surrogate_batch(
+    attractive_batch = score_certified_attractive_chemistry_batch(
         receptor_coords,
         poses_coords,
         rich_chemistry_plan,
     )
-    return CertifiedBatchResult(
-        scores=nonbonded_batch.scores + polar_batch.scores,
-        error_bound=nonbonded_batch.error_bound + polar_batch.error_bound,
+    return _combine_certified_batches(
+        nonbonded_batch,
+        attractive_batch,
         target_error=target_error,
-        cutoff_radius=jnp.maximum(
-            nonbonded_batch.cutoff_radius,
-            polar_batch.cutoff_radius,
-        ),
     )
 
 
@@ -1595,31 +1691,36 @@ def score_certified_softened_rich_chemistry_batch(
     epsilon: float = _EPSILON_KCAL_MOL,
     softening_radius: float | None = None,
 ) -> CertifiedSoftenedBatchResult:
-    # Use softened nonbonded scoring
-    nonbonded_softened = score_certified_softened_lj_realspace_ewald(
+    softened_lj = score_certified_softened_lj(
         receptor_coords=receptor_coords,
         poses_coords=poses_coords,
         receptor_radii=receptor_radii,
         ligand_radii=ligand_radii,
-        electrostatics=rich_chemistry_plan.screened_coulomb,
         target_error=target_error,
         epsilon=epsilon,
         softening_radius=softening_radius,
     )
-    # Evaluate polar terms exactly for both modes for now
-    polar_batch = score_certified_polar_surrogate_batch(
+    screened_batch = score_certified_screened_coulomb_batch(
+        receptor_coords,
+        poses_coords,
+        rich_chemistry_plan.screened_coulomb,
+    )
+    attractive_batch = score_certified_attractive_chemistry_batch(
         receptor_coords,
         poses_coords,
         rich_chemistry_plan,
     )
     return CertifiedSoftenedBatchResult(
-        scores=nonbonded_softened.scores + polar_batch.scores,
-        softening_error_bound=nonbonded_softened.softening_error_bound,
+        scores=softened_lj.scores + screened_batch.scores + attractive_batch.scores,
+        softening_error_bound=softened_lj.softening_error_bound
+        + screened_batch.error_bound
+        + attractive_batch.error_bound,
         target_error=target_error,
         cutoff_radius=jnp.maximum(
-            nonbonded_softened.cutoff_radius, polar_batch.cutoff_radius
+            jnp.maximum(softened_lj.cutoff_radius, screened_batch.cutoff_radius),
+            attractive_batch.cutoff_radius,
         ),
-        softening_radius=nonbonded_softened.softening_radius,
+        softening_radius=softened_lj.softening_radius,
     )
 
 

@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import textwrap
 from pathlib import Path
-from typing import cast
+from typing import Callable, cast
 
 import matplotlib
 import numpy as np
@@ -170,7 +170,9 @@ def generate_pose_comparison_figures(
     *,
     output_dir: Path | None = None,
     pdb_ids: set[str] | None = None,
+    warning_sink: Callable[[str], None] | None = None,
 ) -> dict[str, Path]:
+    del warning_sink
     if not csv_path.exists():
         return {}
 
@@ -513,11 +515,16 @@ def generate_pymol_pose_comparisons(
     output_dir: Path | None = None,
     pdb_ids: set[str] | None = None,
     render_png: bool = True,
+    warning_sink: Callable[[str], None] | None = None,
 ) -> dict[str, Path]:
     if not csv_path.exists():
+        if warning_sink is not None:
+            warning_sink(f"PyMOL render skipped because CSV is missing: {csv_path}")
         return {}
     pymol_bin = shutil.which("pymol")
     if pymol_bin is None:
+        if warning_sink is not None:
+            warning_sink("PyMOL render skipped because `pymol` is not on PATH")
         return {}
     rows_by_pdb = _group_csv_rows_by_pdb(csv_path, pdb_ids)
 
@@ -532,6 +539,10 @@ def generate_pymol_pose_comparisons(
             continue
         _write_pymol_pose_script(scene)
         if not scene.script_path.exists():
+            if warning_sink is not None:
+                warning_sink(
+                    f"PyMOL render skipped for {pdb_id}: script was not written to {scene.script_path}"
+                )
             continue
 
         if render_png:
@@ -543,7 +554,15 @@ def generate_pymol_pose_comparisons(
                     text=True,
                     timeout=120,
                 )
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            except subprocess.TimeoutExpired:
+                if warning_sink is not None:
+                    warning_sink(f"PyMOL render timed out for {pdb_id} after 120s")
+                continue
+            except subprocess.CalledProcessError as exc:
+                if warning_sink is not None:
+                    stderr = exc.stderr.strip() if exc.stderr is not None else ""
+                    suffix = f": {stderr}" if stderr else ""
+                    warning_sink(f"PyMOL render failed for {pdb_id}{suffix}")
                 continue
             _flatten_png_background(scene.front_png_path)
             _flatten_png_background(scene.side_png_path)
@@ -587,15 +606,55 @@ def _write_markdown_report(payload: dict, report_path: Path) -> None:
         f"- DQ-Dock total time (s): `{summary['dq_total_time_s']}`",
         f"- Total benchmark time (s): `{summary['total_benchmark_time_s']}`",
         "",
+    ]
+
+    # Diversity summary — derived entirely from the per-row classification fields
+    classified_rows = [r for r in dq_rows if r.get("target_class") is not None]
+    if classified_rows:
+        from collections import Counter
+
+        target_counts: Counter[str] = Counter(
+            r["target_class"] for r in classified_rows
+        )
+        mode_counts: Counter[str] = Counter(
+            r["binding_mode"] for r in classified_rows
+        )
+        lines.extend(
+            [
+                "## Benchmark Diversity",
+                "",
+                "### By Target Class",
+                "",
+                "| Target Class | Count |",
+                "| --- | ---: |",
+            ]
+        )
+        for tc, n in sorted(target_counts.items(), key=lambda x: -x[1]):
+            lines.append(f"| {tc} | {n} |")
+        lines.extend(
+            [
+                "",
+                "### By Binding Mode",
+                "",
+                "| Binding Mode | Count |",
+                "| --- | ---: |",
+            ]
+        )
+        for bm, n in sorted(mode_counts.items(), key=lambda x: -x[1]):
+            lines.append(f"| {bm} | {n} |")
+        lines.append("")
+
+    lines.extend(
+        [
         "## DQ-Dock",
         "",
-        "| PDB | Target | Status | RMSD | Time (s) | Energy | Gap Proof | Native Rank | Energy Gap | Error |",
-        "| --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | --- |",
-    ]
+        "| PDB | Target | Class | Mode | Status | RMSD | Time (s) | Energy | Gap Proof | Native Rank | Energy Gap | Error |",
+        "| --- | --- | --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | --- |",
+    ])
 
     for row in dq_rows:
         lines.append(
-            f"| {row['pdb_id']} | {row['target_name']} | {'success' if row.get('success', True) else 'failure'} | {_fmt_number(row.get('rmsd'))} | {_fmt_number(row['time_s'])} | {_fmt_number(row.get('energy'))} | {_fmt_text(row.get('gap_proof'))} | {_fmt_text(row.get('native_rank'))} | {_fmt_number(row.get('energy_gap'))} | {_fmt_text(row.get('error'))} |"
+            f"| {row['pdb_id']} | {row['target_name']} | {_fmt_text(row.get('target_class'))} | {_fmt_text(row.get('binding_mode'))} | {'success' if row.get('success', True) else 'failure'} | {_fmt_number(row.get('rmsd'))} | {_fmt_number(row['time_s'])} | {_fmt_number(row.get('energy'))} | {_fmt_text(row.get('gap_proof'))} | {_fmt_text(row.get('native_rank'))} | {_fmt_number(row.get('energy_gap'))} | {_fmt_text(row.get('error'))} |"
         )
 
     for competitor in summary["competitors"]:
@@ -796,7 +855,12 @@ def _plot_scatter(payload: dict, output_path: Path) -> None:
     plt.close()
 
 
-def render_redocking_report(json_path: Path) -> dict[str, Path]:
+def render_redocking_report(
+    json_path: Path,
+    *,
+    report_pdb_ids: set[str] | None = None,
+    warning_sink: Callable[[str], None] | None = None,
+) -> dict[str, Path]:
     payload = _load_payload(json_path)
     base = json_path.with_suffix("")
     csv_path = json_path.with_suffix(".csv")
@@ -820,10 +884,18 @@ def render_redocking_report(json_path: Path) -> dict[str, Path]:
         "scatter": scatter_path,
     }
 
-    pose_outputs = generate_pose_comparison_figures(csv_path)
+    pose_outputs = generate_pose_comparison_figures(
+        csv_path,
+        pdb_ids=report_pdb_ids,
+        warning_sink=warning_sink,
+    )
     if pose_outputs:
         outputs["pose_figures_dir"] = next(iter(pose_outputs.values())).parent
-    pymol_outputs = generate_pymol_pose_comparisons(csv_path)
+    pymol_outputs = generate_pymol_pose_comparisons(
+        csv_path,
+        pdb_ids=report_pdb_ids,
+        warning_sink=warning_sink,
+    )
     if pymol_outputs:
         outputs["pymol_figures_dir"] = next(iter(pymol_outputs.values())).parent
 

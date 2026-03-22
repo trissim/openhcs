@@ -5,9 +5,15 @@ import numpy as np
 import dq_dock_engine.docking.scoring as scoring
 
 from dq_dock_engine.docking.formal_handles import (
+    attractive_extended_chemistry_theorem_handles,
     attractive_directional_hbond_theorem_handles,
+    attractive_halogen_bond_theorem_handles,
+    attractive_pi_cation_theorem_handles,
+    attractive_pi_stacking_theorem_handles,
+    attractive_water_mediated_hbond_theorem_handles,
     contact_surrogate_theorem_handles,
     directional_hbond_finite_theorem_handles,
+    extended_rich_chemistry_theorem_handles,
     negation_invariance_theorem_handles,
     rich_chemistry_theorem_handles,
     screened_coulomb_theorem_handles,
@@ -20,11 +26,11 @@ from dq_dock_engine.docking.scoring import (
     CertifiedScreenedCoulombSpec,
     CertifiedMetalCoordinationSpec,
     CertifiedRichChemistryPlan,
+    score_certified_attractive_chemistry_batch,
     score_certified_contact_batch,
     score_certified_directional_hbond_batch,
     score_certified_metal_coordination_batch,
     score_certified_lj_screened_coulomb_batch,
-    score_certified_polar_surrogate_batch,
     score_certified_rich_chemistry_batch,
     score_certified_screened_coulomb_batch,
 )
@@ -126,6 +132,14 @@ def test_new_chemistry_handle_helpers_surface_new_theorem_families() -> None:
         set(directional_hbond_finite_theorem_handles())
     )
     assert {"AH1", "AH8"}.issubset(set(attractive_directional_hbond_theorem_handles()))
+    assert {"PP6", "PP10"}.issubset(set(attractive_pi_stacking_theorem_handles()))
+    assert {"PC6", "PC10"}.issubset(set(attractive_pi_cation_theorem_handles()))
+    assert {"XB6", "XB10"}.issubset(set(attractive_halogen_bond_theorem_handles()))
+    assert {"WB6", "WB10"}.issubset(
+        set(attractive_water_mediated_hbond_theorem_handles())
+    )
+    assert {"XR1", "XR5"}.issubset(set(attractive_extended_chemistry_theorem_handles()))
+    assert {"XR6", "XR10"}.issubset(set(extended_rich_chemistry_theorem_handles()))
     assert {"NG1", "NG5"}.issubset(set(negation_invariance_theorem_handles()))
     assert {"AR1", "AR10"}.issubset(set(rich_chemistry_theorem_handles()))
     assert {"TK13", "TK15"}.issubset(set(topk_bridge_theorem_handles()))
@@ -192,7 +206,7 @@ def test_new_chemistry_scoring_helpers_are_jit_safe() -> None:
         assert np.all(np.isfinite(arr))
 
 
-def test_polar_surrogate_is_attractive_negative_energy() -> None:
+def test_attractive_chemistry_is_attractive_negative_energy() -> None:
     (
         receptor_coords,
         poses_coords,
@@ -210,22 +224,27 @@ def test_polar_surrogate_is_attractive_negative_energy() -> None:
     metal_batch = score_certified_metal_coordination_batch(
         receptor_coords, poses_coords, plan.metal_coordination
     )
-    polar_batch = score_certified_polar_surrogate_batch(
+    attractive_batch = score_certified_attractive_chemistry_batch(
         receptor_coords, poses_coords, plan
     )
 
     np.testing.assert_allclose(
-        np.asarray(polar_batch.scores),
-        -(np.asarray(contact_batch.scores) + np.asarray(hbond_batch.scores)) + np.asarray(metal_batch.scores),
+        np.asarray(attractive_batch.scores),
+        -(np.asarray(contact_batch.scores) + np.asarray(hbond_batch.scores))
+        + np.asarray(metal_batch.scores),
         atol=1e-5,
     )
     assert np.isclose(
-        float(polar_batch.error_bound),
-        float(contact_batch.error_bound + hbond_batch.error_bound + metal_batch.error_bound),
+        float(attractive_batch.error_bound),
+        float(
+            contact_batch.error_bound
+            + hbond_batch.error_bound
+            + metal_batch.error_bound
+        ),
     )
 
 
-def test_rich_chemistry_composes_nonbonded_with_attractive_polar_energy() -> None:
+def test_rich_chemistry_composes_nonbonded_with_attractive_chemistry() -> None:
     (
         receptor_coords,
         poses_coords,
@@ -242,7 +261,7 @@ def test_rich_chemistry_composes_nonbonded_with_attractive_polar_energy() -> Non
         plan.screened_coulomb,
         target_error=0.001,
     )
-    polar_batch = score_certified_polar_surrogate_batch(
+    attractive_batch = score_certified_attractive_chemistry_batch(
         receptor_coords, poses_coords, plan
     )
     rich_batch = score_certified_rich_chemistry_batch(
@@ -256,7 +275,7 @@ def test_rich_chemistry_composes_nonbonded_with_attractive_polar_energy() -> Non
 
     np.testing.assert_allclose(
         np.asarray(rich_batch.scores),
-        np.asarray(nonbonded_batch.scores) + np.asarray(polar_batch.scores),
+        np.asarray(nonbonded_batch.scores) + np.asarray(attractive_batch.scores),
     )
 
 
@@ -272,14 +291,20 @@ def test_inactive_directional_hbond_short_circuits_without_kernel_calls(
     def _should_not_run(*args, **kwargs):
         raise AssertionError("inactive directional hbond spec should short-circuit")
 
-    monkeypatch.setattr(scoring, "_score_directional_hbond_exact_batch", _should_not_run)
-    monkeypatch.setattr(scoring, "_score_directional_hbond_cutoff_batch", _should_not_run)
+    monkeypatch.setattr(
+        scoring, "_score_directional_hbond_exact_batch", _should_not_run
+    )
+    monkeypatch.setattr(
+        scoring, "_score_directional_hbond_cutoff_batch", _should_not_run
+    )
 
     batch = score_certified_directional_hbond_batch(
         receptor_coords, poses_coords, plan.directional_hbond
     )
 
-    np.testing.assert_allclose(np.asarray(batch.scores), np.zeros(poses_coords.shape[0]))
+    np.testing.assert_allclose(
+        np.asarray(batch.scores), np.zeros(poses_coords.shape[0])
+    )
     assert float(batch.error_bound) == 0.0
     assert float(batch.target_error) == 0.0
     assert float(batch.cutoff_radius) == 0.0
@@ -304,7 +329,7 @@ def test_inactive_rich_chemistry_terms_are_jit_safe_and_structurally_absent() ->
         metal_batch = score_certified_metal_coordination_batch(
             receptor_coords, poses_coords, plan.metal_coordination
         )
-        polar_batch = score_certified_polar_surrogate_batch(
+        attractive_batch = score_certified_attractive_chemistry_batch(
             receptor_coords, poses_coords, plan
         )
         return (
@@ -314,9 +339,9 @@ def test_inactive_rich_chemistry_terms_are_jit_safe_and_structurally_absent() ->
             metal_batch.scores,
             metal_batch.error_bound,
             metal_batch.cutoff_radius,
-            polar_batch.scores,
-            polar_batch.error_bound,
-            polar_batch.cutoff_radius,
+            attractive_batch.scores,
+            attractive_batch.error_bound,
+            attractive_batch.cutoff_radius,
         )
 
     (
@@ -326,15 +351,19 @@ def test_inactive_rich_chemistry_terms_are_jit_safe_and_structurally_absent() ->
         metal_scores,
         metal_error_bound,
         metal_cutoff_radius,
-        polar_scores,
-        polar_error_bound,
-        polar_cutoff_radius,
+        attractive_scores,
+        attractive_error_bound,
+        attractive_cutoff_radius,
     ) = run_inactive()
 
-    np.testing.assert_allclose(np.asarray(hbond_scores), np.zeros(poses_coords.shape[0]))
-    np.testing.assert_allclose(np.asarray(metal_scores), np.zeros(poses_coords.shape[0]))
     np.testing.assert_allclose(
-        np.asarray(polar_scores),
+        np.asarray(hbond_scores), np.zeros(poses_coords.shape[0])
+    )
+    np.testing.assert_allclose(
+        np.asarray(metal_scores), np.zeros(poses_coords.shape[0])
+    )
+    np.testing.assert_allclose(
+        np.asarray(attractive_scores),
         -np.asarray(contact_batch.scores),
         atol=1e-5,
     )
@@ -342,8 +371,10 @@ def test_inactive_rich_chemistry_terms_are_jit_safe_and_structurally_absent() ->
     assert float(hbond_cutoff_radius) == 0.0
     assert float(metal_error_bound) == 0.0
     assert float(metal_cutoff_radius) == 0.0
-    assert np.isclose(float(polar_error_bound), float(contact_batch.error_bound))
-    assert np.isclose(float(polar_cutoff_radius), float(contact_batch.cutoff_radius))
+    assert np.isclose(float(attractive_error_bound), float(contact_batch.error_bound))
+    assert np.isclose(
+        float(attractive_cutoff_radius), float(contact_batch.cutoff_radius)
+    )
 
 
 def test_build_directional_hbond_spec_handles_small_receptor_neighbor_sets() -> None:

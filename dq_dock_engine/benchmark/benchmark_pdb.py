@@ -52,7 +52,7 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
 import jax
 import jax.numpy as jnp
 import numpy as np
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from dq_dock_engine.docking.core import (
     BenchmarkResult,
@@ -91,6 +91,7 @@ from dq_dock_engine.docking_config import (
     CERTIFIED_DOCKING,
     CertifiedScoringFamily,
     DockingMode,
+    ExactChemistryMode,
     OptimizerBackend,
 )
 from dq_dock_engine.benchmark.large_pdb_ids import (
@@ -143,6 +144,7 @@ DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY = CertifiedScoringFamily.LJ_REALSPACE
 DEFAULT_BENCHMARK_TOP_K_TO_OPTIMIZE = 20
 DEFAULT_BENCHMARK_USE_POCKET_GUIDED = True
 DEFAULT_BENCHMARK_USE_MULTI_STAGE = False
+DEFAULT_BENCHMARK_EXACT_CHEMISTRY_MODE = ExactChemistryMode.EXTENDED_RICH
 DEFAULT_BENCHMARK_PROCESS_START_METHOD = "spawn"
 
 
@@ -426,6 +428,7 @@ class ComplexSummaryRow:
     dq_pose_pdb: str | None = None
     receptor_pdb: str | None = None
     native_ligand_pdb: str | None = None
+    classification: ComplexClassification | None = None
 
     def to_csv_record(
         self,
@@ -470,6 +473,12 @@ class ComplexSummaryRow:
             "energy_gap": energy_gap,
             "receptor_pdb": self.receptor_pdb,
             "native_ligand_pdb": self.native_ligand_pdb,
+            "target_class": self.classification.target_class.value
+            if self.classification is not None
+            else None,
+            "binding_mode": self.classification.binding_mode.value
+            if self.classification is not None
+            else None,
             "status": "success" if result.success else "failure",
             "error": result.error,
         }
@@ -513,6 +522,12 @@ class ComplexSummaryRow:
             else result.certified_failure_reason.name,
             "native_rank": _safe_json_value(native_rank),
             "energy_gap": _safe_json_value(energy_gap),
+            "target_class": self.classification.target_class.value
+            if self.classification is not None
+            else None,
+            "binding_mode": self.classification.binding_mode.value
+            if self.classification is not None
+            else None,
             "error": result.error,
         }
 
@@ -527,6 +542,13 @@ class BenchmarkComplex:
     ligand_residue: LigandResidue | None = None
     receptor_system: PreparedReceptorSystem | None = None
     chemistry_plan: ReceptorChemistryPlan | None = None
+
+
+@dataclass(frozen=True)
+class BenchmarkChemistryExecutionPlan:
+    charge_method: ChargeMethod
+    protocol_name: str
+    exact_chemistry_mode: ExactChemistryMode = DEFAULT_BENCHMARK_EXACT_CHEMISTRY_MODE
 
 
 @dataclass(frozen=True)
@@ -551,8 +573,14 @@ class PreparedBenchmarkComplex:
     pocket_charges: np.ndarray | None
     preferred_resname: str | None = None
     receptor_system: PreparedReceptorSystem | None = None
-    charge_method: ChargeMethod = DEFAULT_BENCHMARK_CHARGE_METHOD
-    chemistry_protocol_name: str = "standard"
+    classification: ComplexClassification | None = None
+    chemistry_execution_plan: BenchmarkChemistryExecutionPlan = field(
+        default_factory=lambda: BenchmarkChemistryExecutionPlan(
+            charge_method=DEFAULT_BENCHMARK_CHARGE_METHOD,
+            protocol_name="standard",
+            exact_chemistry_mode=DEFAULT_BENCHMARK_EXACT_CHEMISTRY_MODE,
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -735,6 +763,7 @@ class PreparedDockingInputs:
 class DQDockExecutionOptions:
     charge_method: ChargeMethod
     certified_scoring_family: CertifiedScoringFamily
+    exact_chemistry_mode: ExactChemistryMode
     n_poses: int
     n_opt_steps: int
     top_k_to_optimize: int
@@ -742,7 +771,6 @@ class DQDockExecutionOptions:
     formal_round_strategy: FormalRoundStrategy
     use_multi_stage: bool
     use_pocket_guided: bool
-    use_rich_exact_rescoring: bool
     optimizer_backend: "OptimizerBackend"
     max_retries: int
     retry_break_rmsd: float
@@ -811,11 +839,13 @@ class BenchmarkState:
         excluded_rows: list["ExcludedComplexRow"],
         *,
         render_report: bool = False,
+        report_pdb_ids: set[str] | None = None,
     ) -> tuple[Path, Path]:
         return save_benchmark_results(
             context.output_paths,
             charge_method_name=context.charge_method_name,
             certified_scoring_family=context.certified_scoring_family,
+            exact_chemistry_mode=context.exact_chemistry_mode,
             n_complexes_requested=context.n_complexes_requested,
             n_poses=context.n_poses,
             n_opt_steps=context.n_opt_steps,
@@ -825,7 +855,6 @@ class BenchmarkState:
             attempt_timeout_seconds=context.attempt_timeout_seconds,
             use_multi_stage=context.use_multi_stage,
             use_pocket_guided=context.use_pocket_guided,
-            use_rich_exact_rescoring=context.use_rich_exact_rescoring,
             competitors=context.competitors,
             bench_elapsed=context.elapsed(),
             phase=phase,
@@ -835,6 +864,7 @@ class BenchmarkState:
             competitor_rows=self.competitor_rows,
             excluded_rows=excluded_rows,
             render_report=render_report,
+            report_pdb_ids=report_pdb_ids,
         )
 
 
@@ -842,6 +872,44 @@ class BenchmarkState:
 class ExcludedComplexRow:
     pdb_id: str
     reason: str
+
+
+class TargetClass(Enum):
+    """Protein functional classification derived from PDB KEYWDS records."""
+
+    HYDROLASE = "hydrolase"
+    TRANSFERASE = "transferase"
+    OXIDOREDUCTASE = "oxidoreductase"
+    LYASE = "lyase"
+    ISOMERASE = "isomerase"
+    LIGASE = "ligase"
+    NUCLEAR_RECEPTOR = "nuclear_receptor"
+    TRANSPORT = "transport"
+    SIGNALING = "signaling"
+    VIRAL = "viral"
+    IMMUNE = "immune"
+    TRANSCRIPTION = "transcription"
+    OTHER = "other"
+
+
+class BindingMode(Enum):
+    """Structural binding mode classification derived from the prepared complex."""
+
+    STANDARD = "standard"
+    METAL_MEDIATED = "metal_mediated"
+    MULTI_RESIDUE = "multi_residue"
+
+
+@dataclass(frozen=True)
+class ComplexClassification:
+    """Authoritative classification for a protein-ligand complex.
+
+    Derived once at preparation time; all report/JSON/CSV views are derived
+    from these two fields.
+    """
+
+    target_class: TargetClass
+    binding_mode: BindingMode
 
 
 @dataclass(frozen=True)
@@ -891,6 +959,76 @@ def format_gap_proof_label(certified: bool | None) -> str | None:
     if certified is None:
         return None
     return "proved" if certified else "inconclusive"
+
+
+def _parse_pdb_keywds(pdb_path: Path) -> str:
+    """Return the concatenated KEYWDS content from a PDB file, upper-cased."""
+    parts: list[str] = []
+    with open(pdb_path) as f:
+        for line in f:
+            if line.startswith("KEYWDS"):
+                parts.append(line[10:].strip())
+            elif parts and not line.startswith("KEYWDS"):
+                break
+    return " ".join(parts).upper()
+
+
+# Ordered keyword → TargetClass mapping.  Evaluated in order; first match wins.
+_KEYWDS_TO_TARGET_CLASS: tuple[tuple[str, TargetClass], ...] = (
+    ("HYDROLASE", TargetClass.HYDROLASE),
+    ("PROTEASE", TargetClass.HYDROLASE),
+    ("PEPTIDASE", TargetClass.HYDROLASE),
+    ("TRANSFERASE", TargetClass.TRANSFERASE),
+    ("KINASE", TargetClass.TRANSFERASE),
+    ("OXIDOREDUCTASE", TargetClass.OXIDOREDUCTASE),
+    ("REDUCTASE", TargetClass.OXIDOREDUCTASE),
+    ("DEHYDROGENASE", TargetClass.OXIDOREDUCTASE),
+    ("LYASE", TargetClass.LYASE),
+    ("ISOMERASE", TargetClass.ISOMERASE),
+    ("LIGASE", TargetClass.LIGASE),
+    ("NUCLEAR RECEPTOR", TargetClass.NUCLEAR_RECEPTOR),
+    ("HORMONE RECEPTOR", TargetClass.NUCLEAR_RECEPTOR),
+    ("TRANSPORT", TargetClass.TRANSPORT),
+    ("BINDING PROTEIN", TargetClass.TRANSPORT),
+    ("SIGNALING", TargetClass.SIGNALING),
+    ("VIRAL PROTEIN", TargetClass.VIRAL),
+    ("VIRUS", TargetClass.VIRAL),
+    ("IMMUNE", TargetClass.IMMUNE),
+    ("TRANSCRIPTION", TargetClass.TRANSCRIPTION),
+)
+
+
+def _classify_target_class(keywds: str) -> TargetClass:
+    """Map raw PDB KEYWDS string to the TargetClass enum value."""
+    for keyword, target_class in _KEYWDS_TO_TARGET_CLASS:
+        if keyword in keywds:
+            return target_class
+    return TargetClass.OTHER
+
+
+def _classify_binding_mode(
+    receptor_system: PreparedReceptorSystem,
+    ligand_residue: LigandResidue,
+) -> BindingMode:
+    """Derive binding mode from the prepared receptor system and ligand residue."""
+    if ligand_residue.bonded_residues:
+        return BindingMode.MULTI_RESIDUE
+    if receptor_system.has_structural_metals:
+        return BindingMode.METAL_MEDIATED
+    return BindingMode.STANDARD
+
+
+def classify_complex(
+    pdb_path: Path,
+    receptor_system: PreparedReceptorSystem,
+    ligand_residue: LigandResidue,
+) -> ComplexClassification:
+    """Derive the authoritative ComplexClassification for a prepared complex."""
+    keywds = _parse_pdb_keywds(pdb_path)
+    return ComplexClassification(
+        target_class=_classify_target_class(keywds),
+        binding_mode=_classify_binding_mode(receptor_system, ligand_residue),
+    )
 
 
 def _parse_hetatm_residue_coords(
@@ -978,17 +1116,13 @@ def detect_primary_ligand_residue(
             raise ValueError(
                 f"Preferred ligand residue {preferred_resname} not found in {pdb_path}"
             )
-    (resname, chain_id, residue_id), _ = max(
-        counts.items(), key=lambda x: x[1]
-    )
+    (resname, chain_id, residue_id), _ = max(counts.items(), key=lambda x: x[1])
     primary_key = (resname, chain_id, residue_id)
 
     # Detect multi-residue ligands (e.g. dipeptides) by flood-filling covalent bonds
     residue_coords = _parse_hetatm_residue_coords(pdb_path)
     bonded_group = _find_covalently_bonded_hetatm_residues(residue_coords, primary_key)
-    bonded_residues = tuple(
-        sorted(key for key in bonded_group if key != primary_key)
-    )
+    bonded_residues = tuple(sorted(key for key in bonded_group if key != primary_key))
     total_atom_count = sum(counts.get(key, 0) for key in bonded_group)
 
     return LigandResidue(
@@ -1518,8 +1652,19 @@ def prepare_benchmark_complex(
         pocket_charges=pocket_charges,
         preferred_resname=complex_entry.preferred_resname,
         receptor_system=receptor_system,
-        charge_method=chemistry_plan.charge_method,
-        chemistry_protocol_name=chemistry_plan.protocol_name,
+        classification=classify_complex(
+            complex_entry.path,
+            receptor_system,
+            detect_primary_ligand_residue(
+                complex_entry.path,
+                preferred_resname=complex_entry.preferred_resname,
+            ),
+        ),
+        chemistry_execution_plan=BenchmarkChemistryExecutionPlan(
+            charge_method=chemistry_plan.charge_method,
+            protocol_name=chemistry_plan.protocol_name,
+            exact_chemistry_mode=DEFAULT_BENCHMARK_EXACT_CHEMISTRY_MODE,
+        ),
     )
 
 
@@ -1908,6 +2053,7 @@ def save_benchmark_results(
     *,
     charge_method_name: str,
     certified_scoring_family: CertifiedScoringFamily,
+    exact_chemistry_mode: ExactChemistryMode,
     n_complexes_requested: int,
     n_poses: int,
     n_opt_steps: int,
@@ -1917,7 +2063,6 @@ def save_benchmark_results(
     attempt_timeout_seconds: float | None,
     use_multi_stage: bool,
     use_pocket_guided: bool,
-    use_rich_exact_rescoring: bool,
     competitors: tuple[CompetitorMetadata, ...],
     bench_elapsed: float,
     phase: str,
@@ -1927,6 +2072,7 @@ def save_benchmark_results(
     competitor_rows: list[CompetitorResultRow],
     excluded_rows: list[ExcludedComplexRow],
     render_report: bool = False,
+    report_pdb_ids: set[str] | None = None,
 ) -> tuple[Path, Path]:
     json_path = output_paths.json_path
     csv_path = output_paths.csv_path
@@ -2071,7 +2217,7 @@ def save_benchmark_results(
         ],
         "use_multi_stage": use_multi_stage,
         "use_pocket_guided": use_pocket_guided,
-        "use_rich_exact_rescoring": use_rich_exact_rescoring,
+        "exact_chemistry_mode": exact_chemistry_mode.value,
         "competitors": [
             {
                 "engine_id": metadata.engine_id,
@@ -2116,7 +2262,11 @@ def save_benchmark_results(
         json.dump(payload, f, indent=2)
 
     if render_report:
-        render_redocking_report(json_path)
+        render_redocking_report(
+            json_path,
+            report_pdb_ids=report_pdb_ids,
+            warning_sink=lambda message: print(f"[report] {message}"),
+        )
 
     return json_path, csv_path
 
@@ -2200,7 +2350,7 @@ def run_dq_dock(
     receptor_elements: list[str] | tuple[str, ...] | None = None,
     n_opt_steps: int = 50,
     top_k_to_optimize: int = DEFAULT_BENCHMARK_TOP_K_TO_OPTIMIZE,
-    use_rich_exact_rescoring: bool = True,
+    exact_chemistry_mode: ExactChemistryMode = DEFAULT_BENCHMARK_EXACT_CHEMISTRY_MODE,
     max_retries: int = 6,
     optimizer_backend: "OptimizerBackend" = DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
     formal_round_strategy: FormalRoundStrategy = DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY,
@@ -2244,7 +2394,7 @@ def run_dq_dock(
         optimizer=optimizer_str,
         formal_round_strategy=formal_round_strategy,
         certified_scoring_family=certified_scoring_family,
-        use_rich_exact_rescoring=use_rich_exact_rescoring,
+        exact_chemistry_mode=exact_chemistry_mode,
         target_error=0.001,
         min_energy_gap=0.0,
         use_external_scorer=False,
@@ -2594,7 +2744,7 @@ def run_dq_dock_benchmark_job(job: DQDockBenchmarkJob) -> DQDockBenchmarkJobResu
         n_poses=job.n_poses,
         n_opt_steps=job.n_opt_steps,
         top_k_to_optimize=job.top_k_to_optimize,
-        use_rich_exact_rescoring=job.use_rich_exact_rescoring,
+        exact_chemistry_mode=job.exact_chemistry_mode,
         use_multi_stage=job.use_multi_stage,
         use_pocket_guided=job.use_pocket_guided,
         ligand_elements=job.complex_entry.ligand_elements,
@@ -2890,6 +3040,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
                 dq_pose_pdb=None if dq_pose_path is None else str(dq_pose_path),
                 receptor_pdb=str(complex_entry.receptor_view_pdb),
                 native_ligand_pdb=str(complex_entry.native_ligand_view_pdb),
+                classification=complex_entry.classification,
             )
         )
 
@@ -2899,6 +3050,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
             context,
             excluded_rows=excluded_rows,
             render_report=True,
+            report_pdb_ids={complex_entry.pdb_id},
         )
         checkpoint_elapsed = time.perf_counter() - checkpoint_start
         wall_time = dock_time + pose_save_elapsed + checkpoint_elapsed
@@ -2947,7 +3099,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
     ) -> DQDockBenchmarkJob:
         return DQDockBenchmarkJob(
             complex_entry=complex_entry,
-            charge_method=complex_entry.charge_method,
+            charge_method=complex_entry.chemistry_execution_plan.charge_method,
             precomputed_ligand_charges=complex_entry.ligand_charges,
             precomputed_receptor_charges=complex_entry.pocket_charges,
             n_poses=context.n_poses,
@@ -2955,7 +3107,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
             top_k_to_optimize=context.top_k_to_optimize,
             use_multi_stage=context.use_multi_stage,
             use_pocket_guided=context.use_pocket_guided,
-            use_rich_exact_rescoring=context.use_rich_exact_rescoring,
+            exact_chemistry_mode=context.exact_chemistry_mode,
             optimizer_backend=context.optimizer_backend,
             formal_round_strategy=context.formal_round_strategy,
             certified_scoring_family=context.certified_scoring_family,
@@ -3225,6 +3377,7 @@ class CLIDockingBenchmarkEngine(BenchmarkEngine[CompetitorResultRow]):
             context,
             excluded_rows,
             render_report=True,
+            report_pdb_ids={run_result.pdb_id},
         )
 
     def print_summary(
@@ -3290,9 +3443,9 @@ class VinaLikeBenchmarkEngine(CLIDockingBenchmarkEngine):
             "--size_z",
             str(complex_entry.box_size[2]),
             "--exhaustiveness",
-            "64",
+            "128",
             "--num_modes",
-            "20",
+            "40",
             *self.additional_cli_flags(),
             "--min_rmsd_filter",
             "0.5",
@@ -3336,7 +3489,7 @@ For now, we'll run DQ-Dock only on PDB files.
         return "RUNNING SMINA/VINA"
 
     def additional_cli_flags(self) -> tuple[str, ...]:
-        return ("--energy_range", "12.0")
+        return ("--energy_range", "20.0")
 
 
 class GninaBenchmarkEngine(VinaLikeBenchmarkEngine):
@@ -3359,6 +3512,13 @@ To run this benchmark with GNINA comparisons:
 3. Re-run this benchmark
 """
 
+    def additional_cli_flags(self) -> tuple[str, ...]:
+        return (
+            "--cnn_scoring", "rescore",
+            "--cnn", "crossdock_default2018",
+            "--energy_range", "20.0",
+        )
+
 
 def run_benchmark(
     n_complexes: int = 10,
@@ -3371,7 +3531,7 @@ def run_benchmark(
     certified_scoring_family: CertifiedScoringFamily = DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
     use_multi_stage: bool = DEFAULT_BENCHMARK_USE_MULTI_STAGE,
     use_pocket_guided: bool = DEFAULT_BENCHMARK_USE_POCKET_GUIDED,
-    use_rich_exact_rescoring: bool = True,
+    exact_chemistry_mode: ExactChemistryMode = DEFAULT_BENCHMARK_EXACT_CHEMISTRY_MODE,
     results_dir: Path = Path("benchmark_results"),
     competitors: Literal["all", "none", "smina", "gnina"] = "all",
     dataset: Literal["curated", "casf2007"] = "casf2007",
@@ -3523,7 +3683,7 @@ def run_benchmark(
         formal_round_strategy=formal_round_strategy,
         use_multi_stage=use_multi_stage,
         use_pocket_guided=use_pocket_guided,
-        use_rich_exact_rescoring=use_rich_exact_rescoring,
+        exact_chemistry_mode=exact_chemistry_mode,
         output_paths=output_paths,
         pose_dir=pose_dir,
         competitors=competitor_metadata,
@@ -3643,10 +3803,11 @@ if __name__ == "__main__":
         help="Number of DQ-Dock worker processes across complexes (default: 1)",
     )
     parser.add_argument(
-        "--no_rich_exact_rescoring",
-        action="store_false",
-        dest="use_rich_exact_rescoring",
-        help="Disable rich chemistry rescoring",
+        "--exact_chemistry_mode",
+        type=str,
+        choices=(ExactChemistryMode.NONE.value, ExactChemistryMode.EXTENDED_RICH.value),
+        default=DEFAULT_BENCHMARK_EXACT_CHEMISTRY_MODE.value,
+        help="Certified exact chemistry family used for exact rescoring/refinement",
     )
     parser.add_argument(
         "--competitors",
@@ -3717,7 +3878,7 @@ if __name__ == "__main__":
         certified_scoring_family=DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
         use_multi_stage=DEFAULT_BENCHMARK_USE_MULTI_STAGE,
         use_pocket_guided=DEFAULT_BENCHMARK_USE_POCKET_GUIDED,
-        use_rich_exact_rescoring=args.use_rich_exact_rescoring,
+        exact_chemistry_mode=ExactChemistryMode(args.exact_chemistry_mode),
         results_dir=args.results_dir,
         competitors=args.competitors,
         attempt_timeout_seconds=args.attempt_timeout_seconds,
