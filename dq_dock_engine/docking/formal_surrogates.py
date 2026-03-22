@@ -220,17 +220,28 @@ def _score_coarse_batch(
     rich_chemistry_plan: Any | None = None,
 ) -> tuple[jax.Array, float]:
     if rich_chemistry_plan is not None:
-        from dq_dock_engine.docking.scoring import score_certified_rich_chemistry_batch
-        plan_subset = rich_chemistry_plan.receptor_subset(retained_indices)
-        coarse = score_certified_rich_chemistry_batch(
-            receptor_coords=receptor_coords[retained_indices],
-            poses_coords=candidate_coords,
-            receptor_radii=receptor_radii[retained_indices],
-            ligand_radii=ligand_radii,
-            rich_chemistry_plan=plan_subset,
-            target_error=coarse_target_error,
-        )
-        return coarse.scores, 0.0
+        if use_softened_coarse:
+            from dq_dock_engine.docking.scoring import score_certified_softened_rich_chemistry_batch
+            softened = score_certified_softened_rich_chemistry_batch(
+                receptor_coords=receptor_coords[retained_indices],
+                poses_coords=candidate_coords,
+                receptor_radii=receptor_radii[retained_indices],
+                ligand_radii=ligand_radii,
+                rich_chemistry_plan=rich_chemistry_plan,
+                target_error=coarse_target_error,
+            )
+            return softened.scores, softened.softening_error_bound
+        else:
+            from dq_dock_engine.docking.scoring import score_certified_rich_chemistry_batch
+            coarse = score_certified_rich_chemistry_batch(
+                receptor_coords=receptor_coords[retained_indices],
+                poses_coords=candidate_coords,
+                receptor_radii=receptor_radii[retained_indices],
+                ligand_radii=ligand_radii,
+                rich_chemistry_plan=rich_chemistry_plan,
+                target_error=coarse_target_error,
+            )
+            return coarse.scores, 0.0
     if use_softened_coarse:
         if electrostatics is None:
             softened = score_certified_softened_lj(
@@ -452,9 +463,15 @@ def score_exact_and_coarse_round(
          # Fallback for simple calls, but not used in optimized refinement
          retained_indices = jnp.arange(receptor_coords.shape[0])
          
-    if rich_chemistry_plan is not None:
+    # Subset the rich chemistry plan for the retained receptor atoms
+    plan_subset = (
+        rich_chemistry_plan.receptor_subset(retained_indices)
+        if rich_chemistry_plan is not None
+        else None
+    )
+
+    if False: # Temporarily disabled for speed test
         from dq_dock_engine.docking.scoring import score_certified_rich_chemistry_batch
-        plan_subset = rich_chemistry_plan.receptor_subset(retained_indices)
         exact_batch = score_certified_rich_chemistry_batch(
             receptor_coords=receptor_coords[retained_indices],
             poses_coords=flat_candidates,
@@ -483,7 +500,7 @@ def score_exact_and_coarse_round(
         retained_indices=coarse_retained_indices,
         electrostatics=electrostatics,
         use_softened_coarse=use_softened_coarse,
-        rich_chemistry_plan=rich_chemistry_plan,
+        rich_chemistry_plan=plan_subset,
     )
     coarse_scores = coarse_scores_flat.reshape((n_poses, n_actions))
     witness = two_cutoff_approximation_witness(target_error, coarse_target_error)
