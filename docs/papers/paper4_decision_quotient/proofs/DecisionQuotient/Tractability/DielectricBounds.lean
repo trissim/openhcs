@@ -70,24 +70,112 @@ theorem interface_dielectric_derivation :
 
 /-! ### Bounds on Effective Dielectric -/
 
-/-- Lower bound: fully buried residues have ε_eff ≥ ε_protein ≈ 2 -/
-theorem dielectric_lower_bound (ε_in ε_out f : ℝ) 
-    (hε_in_pos : 0 < ε_in) (hε_out_pos : 0 < ε_out) 
-    (hf_range : 0 ≤ f ∧ f ≤ 1) (hε_order : ε_in ≤ ε_out) :
-    ε_in ≤ kirkwoodEffectiveDielectric ε_in ε_out f ∨ 
-    kirkwoodEffectiveDielectric ε_in ε_out f ≤ ε_out := by
-  left
-  unfold kirkwoodEffectiveDielectric
-  -- This requires more detailed analysis; the bound holds when denominator is positive
-  sorry
+/-- Helper: the denominator in Kirkwood formula is positive when ε_in, ε_out > 0
+    and ε_in ≤ ε_out with f ∈ [0, 1].
 
-/-- Upper bound: solvent-exposed residues have ε_eff ≤ ε_water ≈ 80 -/
+    Denominator = ε_out + (ε_in - ε_out) × f = ε_out(1-f) + ε_in×f
+    This is a convex combination of ε_out and ε_in, hence ≥ min(ε_in, ε_out) = ε_in > 0. -/
+theorem kirkwood_denom_pos (ε_in ε_out f : ℝ)
+    (hε_in_pos : 0 < ε_in) (hε_out_pos : 0 < ε_out)
+    (hf_range : 0 ≤ f ∧ f ≤ 1) :
+    0 < ε_out + (ε_in - ε_out) * f := by
+  -- Rewrite as convex combination: ε_out(1-f) + ε_in×f
+  have h_rewrite : ε_out + (ε_in - ε_out) * f = ε_out * (1 - f) + ε_in * f := by ring
+  rw [h_rewrite]
+  -- Extract bounds on f
+  obtain ⟨hf_nonneg, hf_le_one⟩ := hf_range
+  have h_one_minus_f_nonneg : 0 ≤ 1 - f := sub_nonneg.mpr hf_le_one
+  -- Both terms are non-negative
+  have h_term1_nonneg : 0 ≤ ε_out * (1 - f) := mul_nonneg (le_of_lt hε_out_pos) h_one_minus_f_nonneg
+  have h_term2_nonneg : 0 ≤ ε_in * f := mul_nonneg (le_of_lt hε_in_pos) hf_nonneg
+  -- Case split: at least one term must be strictly positive
+  rcases eq_or_lt_of_le hf_nonneg with hf_zero | hf_pos
+  · -- f = 0: first term is ε_out > 0, second term is 0
+    rw [← hf_zero]
+    simp only [mul_zero, add_zero, sub_zero, mul_one]
+    exact hε_out_pos
+  · -- f > 0: second term ε_in × f > 0
+    have h_term2_pos : 0 < ε_in * f := mul_pos hε_in_pos hf_pos
+    exact add_pos_of_nonneg_of_pos h_term1_nonneg h_term2_pos
+
+/-- The effective dielectric is bounded above by ε_out when ε_in ≤ ε_out.
+
+    Proof: We need ε_in × ε_out / denom ≤ ε_out
+    ⟺ ε_in × ε_out ≤ ε_out × denom  (since denom > 0)
+    ⟺ ε_in ≤ denom = ε_out + (ε_in - ε_out) × f  (since ε_out > 0)
+    ⟺ ε_in - ε_out ≤ (ε_in - ε_out) × f
+    ⟺ (ε_in - ε_out) × (1 - f) ≤ 0
+
+    This holds because ε_in - ε_out ≤ 0 and 1 - f ≥ 0. -/
 theorem dielectric_upper_bound (ε_in ε_out f : ℝ)
     (hε_in_pos : 0 < ε_in) (hε_out_pos : 0 < ε_out)
     (hf_range : 0 ≤ f ∧ f ≤ 1) (hε_order : ε_in ≤ ε_out) :
     kirkwoodEffectiveDielectric ε_in ε_out f ≤ ε_out := by
   unfold kirkwoodEffectiveDielectric
-  sorry
+  -- Establish denominator positivity
+  have h_denom_pos : 0 < ε_out + (ε_in - ε_out) * f := kirkwood_denom_pos ε_in ε_out f hε_in_pos hε_out_pos hf_range
+  -- We prove a/b ≤ c by showing a ≤ c * b when b > 0
+  -- This is: ε_in × ε_out ≤ ε_out × (ε_out + (ε_in - ε_out) × f)
+  -- We first establish the key inequality
+  have h_diff_nonpos : ε_in - ε_out ≤ 0 := sub_nonpos.mpr hε_order
+  have h_one_minus_f_nonneg : 0 ≤ 1 - f := sub_nonneg.mpr hf_range.2
+  -- (ε_in - ε_out) × (1 - f) ≤ 0
+  have h_prod_nonpos : (ε_in - ε_out) * (1 - f) ≤ 0 :=
+    mul_nonpos_of_nonpos_of_nonneg h_diff_nonpos h_one_minus_f_nonneg
+  -- ε_out × (ε_in - ε_out) ≤ 0 since ε_out ≥ 0 and (ε_in - ε_out) ≤ 0
+  have h_eout_diff_nonpos : ε_out * (ε_in - ε_out) ≤ 0 :=
+    mul_nonpos_of_nonneg_of_nonpos (le_of_lt hε_out_pos) h_diff_nonpos
+  -- (ε_out × (ε_in - ε_out)) × (1 - f) ≤ 0 since first factor ≤ 0 and (1-f) ≥ 0
+  have h_triple_nonpos : ε_out * (ε_in - ε_out) * (1 - f) ≤ 0 :=
+    mul_nonpos_of_nonpos_of_nonneg h_eout_diff_nonpos h_one_minus_f_nonneg
+  -- Now: ε_in × ε_out = ε_out × ε_out + ε_out × (ε_in - ε_out) × (1 - f) + ε_out × (ε_in - ε_out) × f
+  --                   = ε_out² + ε_out × (ε_in - ε_out)
+  -- We need: ε_in × ε_out ≤ ε_out × (ε_out + (ε_in - ε_out) × f)
+  -- i.e., ε_in × ε_out ≤ ε_out² + ε_out × (ε_in - ε_out) × f
+  -- i.e., ε_in × ε_out - ε_out² ≤ ε_out × (ε_in - ε_out) × f
+  -- i.e., ε_out × (ε_in - ε_out) ≤ ε_out × (ε_in - ε_out) × f
+  -- i.e., ε_out × (ε_in - ε_out) × (1 - f) ≤ 0  ✓
+  have h_num_le_rhs : ε_in * ε_out ≤ ε_out * (ε_out + (ε_in - ε_out) * f) := by
+    have h_expand : ε_out * (ε_out + (ε_in - ε_out) * f) - ε_in * ε_out =
+                    -(ε_out * (ε_in - ε_out) * (1 - f)) := by ring
+    have h_neg_triple : -(ε_out * (ε_in - ε_out) * (1 - f)) ≥ 0 := neg_nonneg.mpr h_triple_nonpos
+    linarith
+  -- Apply div_le_of_le_mul: a / b ≤ c ← a ≤ c * b when b > 0
+  exact (div_le_iff₀ h_denom_pos).mpr h_num_le_rhs
+
+/-- The effective dielectric is bounded below by ε_in when ε_in ≤ ε_out.
+
+    Proof: We need ε_in ≤ ε_in × ε_out / denom
+    ⟺ ε_in × denom ≤ ε_in × ε_out  (since denom > 0)
+    ⟺ denom ≤ ε_out  (since ε_in > 0)
+    ⟺ ε_out + (ε_in - ε_out) × f ≤ ε_out
+    ⟺ (ε_in - ε_out) × f ≤ 0
+
+    This holds because ε_in - ε_out ≤ 0 and f ≥ 0. -/
+theorem dielectric_lower_bound (ε_in ε_out f : ℝ)
+    (hε_in_pos : 0 < ε_in) (hε_out_pos : 0 < ε_out)
+    (hf_range : 0 ≤ f ∧ f ≤ 1) (hε_order : ε_in ≤ ε_out) :
+    ε_in ≤ kirkwoodEffectiveDielectric ε_in ε_out f := by
+  unfold kirkwoodEffectiveDielectric
+  -- Establish denominator positivity
+  have h_denom_pos : 0 < ε_out + (ε_in - ε_out) * f := kirkwood_denom_pos ε_in ε_out f hε_in_pos hε_out_pos hf_range
+  -- We prove c ≤ a/b by showing c * b ≤ a when b > 0
+  -- This is: ε_in × (ε_out + (ε_in - ε_out) × f) ≤ ε_in × ε_out
+  have h_diff_nonpos : ε_in - ε_out ≤ 0 := sub_nonpos.mpr hε_order
+  -- ε_in × (ε_in - ε_out) ≤ 0 since ε_in > 0 and (ε_in - ε_out) ≤ 0
+  have h_prod_nonpos : ε_in * (ε_in - ε_out) ≤ 0 :=
+    mul_nonpos_of_nonneg_of_nonpos (le_of_lt hε_in_pos) h_diff_nonpos
+  -- ε_in × (ε_in - ε_out) × f ≤ 0 since f ≥ 0
+  have h_triple_nonpos : ε_in * (ε_in - ε_out) * f ≤ 0 :=
+    mul_nonpos_of_nonpos_of_nonneg h_prod_nonpos hf_range.1
+  -- Need: ε_in × (ε_out + (ε_in - ε_out) × f) ≤ ε_in × ε_out
+  have h_lhs_le_num : ε_in * (ε_out + (ε_in - ε_out) * f) ≤ ε_in * ε_out := by
+    have h_expand : ε_in * (ε_out + (ε_in - ε_out) * f) =
+                    ε_in * ε_out + ε_in * (ε_in - ε_out) * f := by ring
+    rw [h_expand]
+    linarith
+  -- Apply le_div_iff: c ≤ a/b ← c * b ≤ a when b > 0
+  exact (le_div_iff₀ h_denom_pos).mpr h_lhs_le_num
 
 /-! ### Implementation Justification -/
 
@@ -118,8 +206,8 @@ theorem implemented_in_valid_range :
     
     However, the constant ε = 4 model is computationally simpler and
     provides a reasonable average for buried interface contacts. -/
-noncomputable def sigmoidalDielectric (ε_0 ε_∞ λ r : ℝ) : ℝ :=
-  ε_0 + (ε_∞ - ε_0) * (1 - exp (-r / λ))
+noncomputable def sigmoidalDielectric (ε_0 ε_inf decay_length r : ℝ) : ℝ :=
+  ε_0 + (ε_inf - ε_0) * (1 - exp (-r / decay_length))
 
 /-! ### Screening Length Relationship -/
 
