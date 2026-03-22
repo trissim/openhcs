@@ -167,6 +167,42 @@ theorem dof1_zero_side_information : sideInfoBits 1 = 0 := by
   unfold sideInfoBits
   simp
 
+theorem sideInfoBits_strict_mono {m n : Nat} (hm : m > 0) (hmn : m < n) :
+    sideInfoBits m < sideInfoBits n := by
+  unfold sideInfoBits
+  -- monotonicity of Real.log on (0, ∞) gives log m < log n, then divide by log 2 > 0
+  have hlog : Real.log (m : ℝ) < Real.log (n : ℝ) :=
+    Real.log_lt_log (by exact_mod_cast hm) (by exact_mod_cast hmn)
+  have hlog2_pos : 0 < Real.log 2 := Real.log_pos (by norm_num : (1 : ℝ) < 2)
+  simpa using div_lt_div_of_pos_left hlog hlog2_pos
+
+/-!
+  Side-information monotonicity and zero-characterization lemmas.
+/-
+
+theorem sideInfoBits_eq_zero_iff {k : Nat} (hk : k > 0) :
+    sideInfoBits k = 0 ↔ k = 1 := by
+  constructor
+  · intro h
+    unfold sideInfoBits at h
+    -- Multiply both sides by `Real.log 2` (nonzero) to deduce `Real.log k = 0`.
+    have hlog2_ne : Real.log 2 ≠ 0 := by exact ne_of_gt (Real.log_pos (by norm_num : (1 : ℝ) < 2))
+    have : Real.log (k : ℝ) = 0 := by
+      calc
+        Real.log (k : ℝ) = (Real.log (k : ℝ) / Real.log 2) * Real.log 2 := by
+          rw [div_mul_cancel (Real.log (k : ℝ)) (Real.log 2) hlog2_ne]; rfl
+        _ = 0 := by rw [h]; rfl
+    -- Exponentiate both sides and use `Real.exp_log` to recover `k = 1`.
+    have hkpos : (0 : ℝ) < (k : ℝ) := by exact_mod_cast hk
+    have : Real.exp (Real.log (k : ℝ)) = Real.exp 0 := by congrArg Real.exp this
+    rw [Real.exp_log hkpos] at this
+    simp at this
+    exact this
+  · intro hk
+    subst hk
+    unfold sideInfoBits
+    simp
+
 theorem side_information_scales_with_redundancy (n : Nat) (_hn : n > 0) :
     sideInfoBits n = sideInfoBits (redundancy n + 1) := by
   have hred : redundancy n + 1 = n := by
