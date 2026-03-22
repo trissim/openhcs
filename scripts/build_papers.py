@@ -1231,6 +1231,99 @@ end {module_root}
                     ),
                 )
 
+    def _ensure_proofs_lake_symlink(
+        self, paper_id: str, migrate_packages: bool = False
+    ) -> None:
+        """Ensure the paper's proofs/.lake is a symlink to the shared lake store.
+
+        Non-destructive: existing .lake is always backed up before any change.
+        Package migration is best-effort and off by default.
+
+        Args:
+            paper_id: Which paper to operate on.
+            migrate_packages: If True and the backed-up .lake has a packages/ dir,
+                attempt to move non-conflicting items into .lake-shared/packages.
+                Default is False (safe: no migration during normal builds).
+        """
+        proofs_dir = self._get_paper_proofs_dir(paper_id)
+        if not proofs_dir.exists():
+            return
+
+        shared = self.papers_dir / ".lake-shared"
+        (shared / "packages").mkdir(parents=True, exist_ok=True)
+        (shared / "config").mkdir(parents=True, exist_ok=True)
+
+        lake_path = proofs_dir / ".lake"
+
+        # Case 1: already a symlink to the shared store -> nothing to do
+        if lake_path.is_symlink():
+            if lake_path.resolve() == shared.resolve():
+                return
+            # Symlink points elsewhere: unlink and replace
+            lake_path.unlink()
+            lake_path.symlink_to(shared.resolve(), target_is_directory=True)
+            print(f"[lake-sync] Replaced .lake symlink in {proofs_dir} -> {shared}")
+            return
+
+        # Case 2: absent -> create symlink directly
+        if not lake_path.exists():
+            lake_path.symlink_to(shared.resolve(), target_is_directory=True)
+            print(f"[lake-sync] Created symlink {lake_path} -> {shared}")
+            return
+
+        # Case 3: exists as dir/file -> back up, optionally migrate, then symlink
+        base_backup = proofs_dir / ".lake-local-backup"
+        backup = base_backup
+        idx = 0
+        while backup.exists():
+            idx += 1
+            backup = proofs_dir / f".lake-local-backup-{idx}"
+
+        shutil.move(str(lake_path), str(backup))
+        print(f"[lake-sync] Backed up existing .lake -> {backup}")
+
+        # Best-effort package migration: move non-conflicting items into shared/packages
+        if migrate_packages:
+            pkg_src = backup / "packages"
+            pkg_dst = shared / "packages"
+            if pkg_src.exists() and pkg_src.is_dir():
+                for item in sorted(pkg_src.iterdir()):
+                    dest = pkg_dst / item.name
+                    if dest.exists():
+                        # Merge directories where safe; skip files and conflicting dirs
+                        if dest.is_dir() and item.is_dir():
+                            for sub in sorted(item.iterdir()):
+                                subdest = dest / sub.name
+                                if not subdest.exists():
+                                    shutil.move(str(sub), str(subdest))
+                                else:
+                                    print(
+                                        f"[lake-sync] Skipping {sub.name} (conflict at {subdest})"
+                                    )
+                            try:
+                                item.rmdir()
+                            except OSError:
+                                pass
+                        else:
+                            print(
+                                f"[lake-sync] Skipping {item.name} (destination exists)"
+                            )
+                    else:
+                        shutil.move(str(item), str(dest))
+                try:
+                    pkg_src.rmdir()
+                except OSError:
+                    pass
+
+        # Create the symlink
+        try:
+            lake_path.symlink_to(shared.resolve(), target_is_directory=True)
+            print(f"[lake-sync] Created symlink {lake_path} -> {shared}")
+        except OSError as e:
+            print(
+                f"[lake-sync] Warning: could not create symlink for {proofs_dir}: {e}"
+            )
+
     def _sync_graph_infra_lean(self, paper_id: str) -> None:
         """Copy DependencyGraph.lean from graph_infra into the paper's proofs dir."""
         src = (
@@ -4196,6 +4289,17 @@ end {module_root}
 
         # Ensure local dependency aliases (dep_<paper>) are present for path deps.
         dep_ids = self._collect_lean_dependency_closure(paper_id)
+
+        # Ensure proofs/.lake symlink exists for this paper and its dependencies.
+        # For dependencies we avoid migrating packages to keep this operation
+        # non-destructive during normal builds.
+        try:
+            self._ensure_proofs_lake_symlink(paper_id)
+            for dep_id in dep_ids:
+                self._ensure_proofs_lake_symlink(dep_id, migrate_packages=False)
+        except Exception as e:
+            print(f"[build] Warning: could not ensure .lake symlinks: {e}")
+
         self._sync_local_lean_dependency_dirs(paper_id)
         for dep_id in dep_ids:
             self._sync_graph_infra_lean(dep_id)
@@ -5862,9 +5966,7 @@ end {module_root}
         # point is a different file). The submission wrapper defines \JSAITREVIEW and
         # would produce the review format instead of the journal format on arXiv.
         # A clean arXiv main.tex wrapper is written below after the copy loop.
-        submission_wrapper_name = (
-            "main.tex" if meta.latex_file != "main.tex" else None
-        )
+        submission_wrapper_name = "main.tex" if meta.latex_file != "main.tex" else None
         for ext in self.build_config.latex_source_extensions:
             for src_file in latex_dir.glob(f"*{ext}"):
                 if src_file.name == submission_wrapper_name:

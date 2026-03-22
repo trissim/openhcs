@@ -11,9 +11,6 @@ package «ssot» where
 require mathlib from git
   "https://github.com/leanprover-community/mathlib4" @ "a8227f463392ef51e5bd9f68975fe46f5d9057f3"
 
--- Reuse Paper 1 mechanized lemmas directly in the active SSOT proof graph.
-require nominal_resolution from "./dep_paper1"
-
 @[default_target]
 lean_lib «Ssot» where
   globs := #[.submodules `Ssot]
