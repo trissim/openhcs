@@ -28,6 +28,7 @@ import DecisionQuotient.Tractability.ScreenedCoulombApproximation
 import DecisionQuotient.Tractability.NonbondedApproximation
 import DecisionQuotient.Tractability.DirectionalHBondApproximation
 import DecisionQuotient.Tractability.SignInvariance
+import DecisionQuotient.Tractability.MetalCoordinationApproximation
 import DecisionQuotient.Tractability.RichChemistryApproximation
 import DecisionQuotient.Tractability.TopKLoweringBridge
 import DecisionQuotient.Tractability.SupportExpansion
@@ -445,6 +446,15 @@ noncomputable def rich_chemistry_certified_top1
     distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
     radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
 
+/-- Exact-vs-cutoff bounded metal coordination certified top-1 survivor set alias. -/
+noncomputable def metal_coordination_cutoff_certified_top1
+    {A S : Type*}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (w ideal width rc : ℝ) (distance : A → S → ℝ) (s : S) :
+    DecisionQuotient.Tractability.CertifiedPruning.CertifiedSurvivorSet A :=
+  DecisionQuotient.Tractability.MetalCoordinationApproximation.exact_vs_cutoff_metalCoordination_certified_top1
+    w ideal width rc distance s
+
 /-- Generic negation-preserving certified top-1 survivor set alias. -/
 noncomputable def negated_uniform_certified_top1
     {A : Type*}
@@ -483,6 +493,15 @@ noncomputable def attractive_rich_chemistry_certified_top1
   DecisionQuotient.Tractability.RichChemistryApproximation.exact_vs_coarse_attractiveRichChemistry_certified_top1
     distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
     radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
+
+/-- Exact-vs-cutoff attractive metal coordination certified top-1 survivor set alias. -/
+noncomputable def attractive_metal_coordination_cutoff_certified_top1
+    {A S : Type*}
+    [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
+    (w ideal width rc : ℝ) (distance : A → S → ℝ) (s : S) :
+    DecisionQuotient.Tractability.CertifiedPruning.CertifiedSurvivorSet A :=
+  DecisionQuotient.Tractability.MetalCoordinationApproximation.exact_vs_cutoff_attractiveMetalCoordination_certified_top1
+    w ideal width rc distance s
 
 /-- Exact-vs-coarse attractive directional H-bond certified top-1 survivor set alias. -/
 noncomputable def attractive_directional_hbond_finite_certified_top1

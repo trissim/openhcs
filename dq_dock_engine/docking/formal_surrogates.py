@@ -217,7 +217,20 @@ def _score_coarse_batch(
     retained_indices: jax.Array,
     electrostatics: CertifiedRealSpaceEwaldSpec | None,
     use_softened_coarse: bool,
+    rich_chemistry_plan: Any | None = None,
 ) -> tuple[jax.Array, float]:
+    if rich_chemistry_plan is not None:
+        from dq_dock_engine.docking.scoring import score_certified_rich_chemistry_batch
+        plan_subset = rich_chemistry_plan.receptor_subset(retained_indices)
+        coarse = score_certified_rich_chemistry_batch(
+            receptor_coords=receptor_coords[retained_indices],
+            poses_coords=candidate_coords,
+            receptor_radii=receptor_radii[retained_indices],
+            ligand_radii=ligand_radii,
+            rich_chemistry_plan=plan_subset,
+            target_error=coarse_target_error,
+        )
+        return coarse.scores, 0.0
     if use_softened_coarse:
         if electrostatics is None:
             softened = score_certified_softened_lj(
@@ -425,6 +438,7 @@ def score_exact_and_coarse_round(
     coarse_target_error: float | None = None,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
     use_softened_coarse: bool = False,
+    rich_chemistry_plan: Any | None = None,
 ) -> tuple[jax.Array, jax.Array, float, float, jax.Array]:
     coarse_target_error = (
         _default_coarse_target_error(target_error)
@@ -438,14 +452,26 @@ def score_exact_and_coarse_round(
          # Fallback for simple calls, but not used in optimized refinement
          retained_indices = jnp.arange(receptor_coords.shape[0])
          
-    exact_batch = score_certified_batch(
-        receptor_coords=receptor_coords[retained_indices],
-        poses_coords=flat_candidates,
-        receptor_radii=receptor_radii[retained_indices],
-        ligand_radii=ligand_radii,
-        target_error=target_error,
-        electrostatics=_subset_electrostatics(electrostatics, retained_indices),
-    )
+    if rich_chemistry_plan is not None:
+        from dq_dock_engine.docking.scoring import score_certified_rich_chemistry_batch
+        plan_subset = rich_chemistry_plan.receptor_subset(retained_indices)
+        exact_batch = score_certified_rich_chemistry_batch(
+            receptor_coords=receptor_coords[retained_indices],
+            poses_coords=flat_candidates,
+            receptor_radii=receptor_radii[retained_indices],
+            ligand_radii=ligand_radii,
+            rich_chemistry_plan=plan_subset,
+            target_error=target_error,
+        )
+    else:
+        exact_batch = score_certified_batch(
+            receptor_coords=receptor_coords[retained_indices],
+            poses_coords=flat_candidates,
+            receptor_radii=receptor_radii[retained_indices],
+            ligand_radii=ligand_radii,
+            target_error=target_error,
+            electrostatics=_subset_electrostatics(electrostatics, retained_indices),
+        )
     exact_scores = exact_batch.scores.reshape((n_poses, n_actions))
     coarse_retained_indices = retained_indices # Use same subset for efficiency in optimized loop
     coarse_scores_flat, softening_error_bound = _score_coarse_batch(
@@ -457,6 +483,7 @@ def score_exact_and_coarse_round(
         retained_indices=coarse_retained_indices,
         electrostatics=electrostatics,
         use_softened_coarse=use_softened_coarse,
+        rich_chemistry_plan=rich_chemistry_plan,
     )
     coarse_scores = coarse_scores_flat.reshape((n_poses, n_actions))
     witness = two_cutoff_approximation_witness(target_error, coarse_target_error)

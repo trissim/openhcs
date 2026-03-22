@@ -116,6 +116,7 @@ def _refine_round_jit_core(
     retained_indices: jax.Array,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
     use_softened_coarse: bool = False,
+    rich_chemistry_plan: Any | None = None,
 ):
     n_poses, n_atoms, _ = coords_batch.shape
     n_actions = translation_deltas.shape[0]
@@ -139,11 +140,12 @@ def _refine_round_jit_core(
         ligand_radii=ligand_radii,
         candidate_batches=candidate_batches,
         target_error=target_error,
-        coarse_target_error=coarse_target_error,
         max_receptor_atoms=max_coarse_receptor_atoms,
         translation_step=translation_step,
+        coarse_target_error=coarse_target_error,
         electrostatics=electrostatics,
         use_softened_coarse=use_softened_coarse,
+        rich_chemistry_plan=rich_chemistry_plan,
     )
 
     return {
@@ -171,6 +173,7 @@ def _refine_round(
     retained_indices: jax.Array,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
     use_softened_coarse: bool = False,
+    rich_chemistry_plan: Any | None = None,
 ) -> tuple[jax.Array, tuple[CertifiedOptimizerState, ...]]:
     action_family = create_roundwise_certified_action_family(
         base_translation_step=base_translation_step,
@@ -194,6 +197,7 @@ def _refine_round(
         retained_indices=retained_indices,
         electrostatics=electrostatics,
         use_softened_coarse=use_softened_coarse,
+        rich_chemistry_plan=rich_chemistry_plan,
     )
 
     results_host = jax.device_get(results)
@@ -301,6 +305,7 @@ def refine_poses_certified(
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
     use_softened_coarse: bool = False,
     adaptive_coarse_target_errors: tuple[float, ...] | None = None,
+    rich_chemistry_plan: Any | None = None,
 ) -> tuple[jax.Array, tuple[tuple[CertifiedOptimizerState, ...], ...]]:
     if n_rounds <= 0:
         raise ValueError("n_rounds must be positive")
@@ -343,6 +348,7 @@ def refine_poses_certified(
             retained_indices=retained_indices_jax,
             electrostatics=electrostatics,
             use_softened_coarse=use_softened_coarse,
+            rich_chemistry_plan=rich_chemistry_plan,
         )
         history.append(states)
 
@@ -372,6 +378,7 @@ def refine_poses_singleton_then_exact(
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
     use_softened_coarse: bool = False,
     adaptive_coarse_target_errors: tuple[float, ...] | None = None,
+    rich_chemistry_plan: Any | None = None,
 ) -> HybridSingletonRefinementResult:
     opt_coords, history = refine_poses_certified(
         coords_batch=coords_batch,
@@ -388,6 +395,7 @@ def refine_poses_singleton_then_exact(
         electrostatics=electrostatics,
         use_softened_coarse=use_softened_coarse,
         adaptive_coarse_target_errors=adaptive_coarse_target_errors,
+        rich_chemistry_plan=rich_chemistry_plan,
     )
     return HybridSingletonRefinementResult(
         coords=opt_coords,

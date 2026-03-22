@@ -733,6 +733,8 @@ def derive_callable_kwargs(
         if source_values is not None and source_name in source_values:
             kwargs[name] = source_values[source_name]
             continue
+        if not hasattr(source, source_name) and parameter.default is not inspect.Parameter.empty:
+            continue
         kwargs[name] = getattr(source, source_name)
     if accepts_var_keyword:
         for name, value in overrides.items():
@@ -1468,7 +1470,7 @@ def _score_exact_pose_batch(
             if electrostatics is not None
             else jnp.zeros(request.protein_coords.shape[0], dtype=request.protein_coords.dtype)
         )
-        screened, contact, hbond = build_all_rich_chemistry_specs(
+        plan = build_all_rich_chemistry_specs(
             np.asarray(request.protein_coords),
             request.receptor_elements or tuple(["C"] * request.protein_coords.shape[0]),
             np.asarray(receptor_charges),
@@ -1481,9 +1483,7 @@ def _score_exact_pose_batch(
                     poses_coords=chunk_coords,
                     receptor_radii=request.receptor_radii,
                     ligand_radii=request.ligand_ctx.base_radii,
-                    screened_coulomb=screened,
-                    contact=contact,
-                    directional_hbond=hbond,
+                    rich_chemistry_plan=plan,
                     target_error=request.target_error,
                 ).scores
             )
@@ -1902,6 +1902,21 @@ def _run_docking_pipeline_request(
     backend = request.formal_backend
     route.validate_backend(request, backend)
 
+    electrostatics = resolve_request_electrostatics(
+        request,
+        engine=request.effective_engine,
+    )
+    rich_chemistry_plan = None
+    if request.config is not None and getattr(request.config, "use_rich_exact_rescoring", False):
+        from dq_dock_engine.docking.rich_chemistry import build_all_rich_chemistry_specs
+        receptor_charges = electrostatics.receptor_charges if electrostatics else jnp.zeros(request.protein_coords.shape[0])
+        rich_chemistry_plan = build_all_rich_chemistry_specs(
+            np.asarray(request.protein_coords),
+            request.receptor_elements or tuple(["C"] * request.protein_coords.shape[0]),
+            np.asarray(receptor_charges),
+            request.ligand_ctx
+        )
+
     if backend == OptimizerBackend.FORMAL:
         from dq_dock_engine.docking.formal_optimizer import (
             _run_exact_formal_refinement,
@@ -1930,12 +1945,9 @@ def _run_docking_pipeline_request(
             use_softened_coarse=request.use_softened_coarse_prefilter,
             base_translation_step=translation_cell_width / 2.0,
             base_rotation_step_rad=float(jnp.pi / 2.0),
+            electrostatics=electrostatics,
+            rich_chemistry_plan=rich_chemistry_plan,
         )
-        formal_electrostatics = resolve_request_electrostatics(
-            request,
-            engine=request.effective_engine,
-        )
-        refinement_kwargs["electrostatics"] = formal_electrostatics
         formal_refiners = {
             FormalRoundStrategy.EXACT: _run_exact_formal_refinement,
             FormalRoundStrategy.SINGLETON_HYBRID: _run_singleton_hybrid_formal_refinement,
@@ -1959,29 +1971,15 @@ def _run_docking_pipeline_request(
             PoseVector(translation=opt_t, quaternion=opt_q),
         )
 
-    electrostatics = resolve_request_electrostatics(
-        request,
-        engine=request.effective_engine,
-    )
     if request.config is not None and getattr(request.config, "use_rich_exact_rescoring", False):
-        from dq_dock_engine.docking.rich_chemistry import build_all_rich_chemistry_specs
         from dq_dock_engine.docking.scoring import score_certified_rich_chemistry_batch
         
-        receptor_charges = electrostatics.receptor_charges if electrostatics else jnp.zeros(request.protein_coords.shape[0])
-        screened, contact, hbond = build_all_rich_chemistry_specs(
-            np.asarray(request.protein_coords),
-            request.receptor_elements or tuple(["C"] * request.protein_coords.shape[0]),
-            np.asarray(receptor_charges),
-            request.ligand_ctx
-        )
         final_scores = score_certified_rich_chemistry_batch(
             receptor_coords=request.protein_coords,
             poses_coords=opt_coords,
             receptor_radii=request.receptor_radii,
             ligand_radii=request.ligand_ctx.base_radii,
-            screened_coulomb=screened,
-            contact=contact,
-            directional_hbond=hbond,
+            rich_chemistry_plan=rich_chemistry_plan,
             target_error=request.target_error
         ).scores
     else:

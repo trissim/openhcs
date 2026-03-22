@@ -1,10 +1,14 @@
 import jax.numpy as jnp
 import numpy as np
+from dataclasses import dataclass
 
+from dq_dock_engine.docking.receptor_preparation import METAL_ELEMENTS
 from dq_dock_engine.docking.scoring import (
     CertifiedScreenedCoulombSpec,
     CertifiedContactSurrogateSpec,
     CertifiedDirectionalHBondSpec,
+    CertifiedMetalCoordinationSpec,
+    CertifiedRichChemistryPlan,
 )
 from dq_dock_engine.docking.core import LigandContext
 
@@ -90,12 +94,24 @@ def build_directional_hbond_spec(
         cutoff=cutoff,
     )
 
+def build_metal_coordination_spec(
+    receptor_elements: tuple[str, ...],
+    ligand_elements: tuple[str, ...]
+) -> CertifiedMetalCoordinationSpec:
+    polars = {"N", "O", "S"}
+    r_strengths = np.array([50.0 if e in METAL_ELEMENTS else 0.0 for e in receptor_elements], dtype=np.float32)
+    l_strengths = np.array([1.0 if e in polars else 0.0 for e in ligand_elements], dtype=np.float32)
+    return CertifiedMetalCoordinationSpec(
+        receptor_strengths=jnp.array(r_strengths),
+        ligand_strengths=jnp.array(l_strengths),
+    )
+
 def build_all_rich_chemistry_specs(
     receptor_coords: np.ndarray,
     receptor_elements: tuple[str, ...],
     receptor_charges: np.ndarray,
     ligand_ctx: LigandContext,
-) -> tuple[CertifiedScreenedCoulombSpec, CertifiedContactSurrogateSpec, CertifiedDirectionalHBondSpec]:
+) -> CertifiedRichChemistryPlan:
     ligand_charges = ligand_ctx.charges if ligand_ctx.charges is not None else np.zeros((ligand_ctx.base_coords.shape[0],))
     screened = build_screened_coulomb_spec(receptor_charges, ligand_charges)
     contact = build_contact_surrogate_spec(receptor_elements, ligand_ctx.elements)
@@ -103,4 +119,10 @@ def build_all_rich_chemistry_specs(
         receptor_coords, receptor_elements, 
         ligand_ctx.base_coords, ligand_ctx.elements
     )
-    return screened, contact, hbond
+    metal = build_metal_coordination_spec(receptor_elements, ligand_ctx.elements)
+    return CertifiedRichChemistryPlan(
+        screened_coulomb=screened,
+        contact=contact,
+        directional_hbond=hbond,
+        metal_coordination=metal,
+    )

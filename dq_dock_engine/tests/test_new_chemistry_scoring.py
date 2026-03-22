@@ -16,8 +16,11 @@ from dq_dock_engine.docking.scoring import (
     CertifiedContactSurrogateSpec,
     CertifiedDirectionalHBondSpec,
     CertifiedScreenedCoulombSpec,
+    CertifiedMetalCoordinationSpec,
+    CertifiedRichChemistryPlan,
     score_certified_contact_batch,
     score_certified_directional_hbond_batch,
+    score_certified_metal_coordination_batch,
     score_certified_lj_screened_coulomb_batch,
     score_certified_polar_surrogate_batch,
     score_certified_rich_chemistry_batch,
@@ -61,14 +64,22 @@ def _toy_geometry():
         distance_width=0.7,
         cutoff=4.0,
     )
+    metal = CertifiedMetalCoordinationSpec(
+        receptor_strengths=jnp.array([1.0, 0.0], dtype=jnp.float32),
+        ligand_strengths=jnp.array([1.0, 1.0], dtype=jnp.float32),
+    )
+    plan = CertifiedRichChemistryPlan(
+        screened_coulomb=screened,
+        contact=contact,
+        directional_hbond=hbond,
+        metal_coordination=metal,
+    )
     return (
         receptor_coords,
         poses_coords,
         receptor_radii,
         ligand_radii,
-        screened,
-        contact,
-        hbond,
+        plan,
     )
 
 
@@ -98,28 +109,29 @@ def test_new_chemistry_scoring_helpers_are_jit_safe() -> None:
         poses_coords,
         receptor_radii,
         ligand_radii,
-        screened,
-        contact,
-        hbond,
+        plan,
     ) = _toy_geometry()
 
     @jax.jit
     def run_all():
         screened_batch = score_certified_screened_coulomb_batch(
-            receptor_coords, poses_coords, screened
+            receptor_coords, poses_coords, plan.screened_coulomb
         )
         contact_batch = score_certified_contact_batch(
-            receptor_coords, poses_coords, contact
+            receptor_coords, poses_coords, plan.contact
         )
         hbond_batch = score_certified_directional_hbond_batch(
-            receptor_coords, poses_coords, hbond
+            receptor_coords, poses_coords, plan.directional_hbond
+        )
+        metal_batch = score_certified_metal_coordination_batch(
+            receptor_coords, poses_coords, plan.metal_coordination
         )
         nonbonded_batch = score_certified_lj_screened_coulomb_batch(
             receptor_coords,
             poses_coords,
             receptor_radii,
             ligand_radii,
-            screened,
+            plan.screened_coulomb,
             target_error=0.001,
         )
         rich_batch = score_certified_rich_chemistry_batch(
@@ -127,9 +139,7 @@ def test_new_chemistry_scoring_helpers_are_jit_safe() -> None:
             poses_coords=poses_coords,
             receptor_radii=receptor_radii,
             ligand_radii=ligand_radii,
-            screened_coulomb=screened,
-            contact=contact,
-            directional_hbond=hbond,
+            rich_chemistry_plan=plan,
             target_error=0.001,
         )
         return (
@@ -139,6 +149,8 @@ def test_new_chemistry_scoring_helpers_are_jit_safe() -> None:
             contact_batch.error_bound,
             hbond_batch.scores,
             hbond_batch.error_bound,
+            metal_batch.scores,
+            metal_batch.error_bound,
             nonbonded_batch.scores,
             nonbonded_batch.error_bound,
             rich_batch.scores,
@@ -157,28 +169,30 @@ def test_polar_surrogate_is_attractive_negative_energy() -> None:
         poses_coords,
         _receptor_radii,
         _ligand_radii,
-        _screened,
-        contact,
-        hbond,
+        plan,
     ) = _toy_geometry()
 
     contact_batch = score_certified_contact_batch(
-        receptor_coords, poses_coords, contact
+        receptor_coords, poses_coords, plan.contact
     )
     hbond_batch = score_certified_directional_hbond_batch(
-        receptor_coords, poses_coords, hbond
+        receptor_coords, poses_coords, plan.directional_hbond
+    )
+    metal_batch = score_certified_metal_coordination_batch(
+        receptor_coords, poses_coords, plan.metal_coordination
     )
     polar_batch = score_certified_polar_surrogate_batch(
-        receptor_coords, poses_coords, contact, hbond
+        receptor_coords, poses_coords, plan
     )
 
     np.testing.assert_allclose(
         np.asarray(polar_batch.scores),
-        -(np.asarray(contact_batch.scores) + np.asarray(hbond_batch.scores)),
+        -(np.asarray(contact_batch.scores) + np.asarray(hbond_batch.scores)) + np.asarray(metal_batch.scores),
+        atol=1e-5,
     )
     assert np.isclose(
         float(polar_batch.error_bound),
-        float(contact_batch.error_bound + hbond_batch.error_bound),
+        float(contact_batch.error_bound + hbond_batch.error_bound + metal_batch.error_bound),
     )
 
 
@@ -188,9 +202,7 @@ def test_rich_chemistry_composes_nonbonded_with_attractive_polar_energy() -> Non
         poses_coords,
         receptor_radii,
         ligand_radii,
-        screened,
-        contact,
-        hbond,
+        plan,
     ) = _toy_geometry()
 
     nonbonded_batch = score_certified_lj_screened_coulomb_batch(
@@ -198,20 +210,18 @@ def test_rich_chemistry_composes_nonbonded_with_attractive_polar_energy() -> Non
         poses_coords,
         receptor_radii,
         ligand_radii,
-        screened,
+        plan.screened_coulomb,
         target_error=0.001,
     )
     polar_batch = score_certified_polar_surrogate_batch(
-        receptor_coords, poses_coords, contact, hbond
+        receptor_coords, poses_coords, plan
     )
     rich_batch = score_certified_rich_chemistry_batch(
         receptor_coords=receptor_coords,
         poses_coords=poses_coords,
         receptor_radii=receptor_radii,
         ligand_radii=ligand_radii,
-        screened_coulomb=screened,
-        contact=contact,
-        directional_hbond=hbond,
+        rich_chemistry_plan=plan,
         target_error=0.001,
     )
 
