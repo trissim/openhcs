@@ -142,6 +142,7 @@ class BenchmarkResult:
     time: float
     n_atoms: int
     formal_status: str
+    error: Optional[str] = None
     dock_time_s: Optional[float] = None
     checkpoint_time_s: Optional[float] = None
     total_wall_time_s: Optional[float] = None
@@ -179,6 +180,7 @@ class BenchmarkResult:
             time=elapsed,
             n_atoms=n_atoms,
             formal_status=formal_status,
+            error=None,
             dock_time_s=elapsed,
             checkpoint_time_s=None,
             total_wall_time_s=elapsed,

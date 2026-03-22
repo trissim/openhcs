@@ -937,8 +937,8 @@ def score_certified_rich_chemistry_batch(
     receptor_radii: jnp.ndarray,
     ligand_radii: jnp.ndarray,
     screened_coulomb: CertifiedScreenedCoulombSpec,
-    contact_spec: CertifiedContactSurrogateSpec,
-    hbond_spec: CertifiedDirectionalHBondSpec,
+    contact: CertifiedContactSurrogateSpec,
+    directional_hbond: CertifiedDirectionalHBondSpec,
     target_error: float = 0.001,
     epsilon: float = _EPSILON_KCAL_MOL,
 ) -> CertifiedBatchResult:
@@ -954,8 +954,8 @@ def score_certified_rich_chemistry_batch(
     polar_batch = score_certified_polar_surrogate_batch(
         receptor_coords,
         poses_coords,
-        contact_spec,
-        hbond_spec,
+        contact,
+        directional_hbond,
     )
     return CertifiedBatchResult(
         scores=nonbonded_batch.scores + polar_batch.scores,

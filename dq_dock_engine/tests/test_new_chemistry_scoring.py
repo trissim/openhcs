@@ -18,6 +18,7 @@ from dq_dock_engine.docking.scoring import (
     score_certified_rich_chemistry_batch,
     score_certified_screened_coulomb_batch,
 )
+from dq_dock_engine.docking.rich_chemistry import build_directional_hbond_spec
 
 
 def _toy_geometry():
@@ -115,13 +116,13 @@ def test_new_chemistry_scoring_helpers_are_jit_safe() -> None:
             target_error=0.001,
         )
         rich_batch = score_certified_rich_chemistry_batch(
-            receptor_coords,
-            poses_coords,
-            receptor_radii,
-            ligand_radii,
-            screened,
-            contact,
-            hbond,
+            receptor_coords=receptor_coords,
+            poses_coords=poses_coords,
+            receptor_radii=receptor_radii,
+            ligand_radii=ligand_radii,
+            screened_coulomb=screened,
+            contact=contact,
+            directional_hbond=hbond,
             target_error=0.001,
         )
         return (
@@ -141,3 +142,19 @@ def test_new_chemistry_scoring_helpers_are_jit_safe() -> None:
     for value in outputs:
         arr = np.asarray(value)
         assert np.all(np.isfinite(arr))
+
+
+def test_build_directional_hbond_spec_handles_small_receptor_neighbor_sets() -> None:
+    spec = build_directional_hbond_spec(
+        receptor_coords=np.array([[0.0, 0.0, 0.0], [2.5, 0.0, 0.0]], dtype=np.float32),
+        receptor_elements=("O", "N"),
+        ligand_coords=np.array([[0.5, 0.1, 0.0], [1.2, -0.1, 0.0]], dtype=np.float32),
+        ligand_elements=("N", "O"),
+    )
+
+    receptor_directions = np.asarray(spec.receptor_directions)
+    ligand_neighbor_indices = np.asarray(spec.ligand_neighbor_indices)
+
+    assert receptor_directions.shape == (2, 3)
+    assert ligand_neighbor_indices.shape == (2, 2)
+    assert np.all(np.isfinite(receptor_directions))

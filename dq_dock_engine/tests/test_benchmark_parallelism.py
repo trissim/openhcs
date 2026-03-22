@@ -6,8 +6,10 @@ import json
 from pathlib import Path
 import tempfile
 import jax.numpy as jnp
+import numpy as np
 
 from dq_dock_engine.benchmark import benchmark_pdb
+from dq_dock_engine.benchmark import redocking_report
 from dq_dock_engine.benchmark.redocking_report import (
     generate_pose_comparison_figures,
     render_redocking_report,
@@ -134,6 +136,234 @@ def test_render_redocking_report_tolerates_missing_gap_metrics() -> None:
 
     assert "1m0n" in markdown
     assert "n/a" in markdown
+
+
+def test_save_benchmark_results_preserves_failed_dq_errors_and_excludes_failed_rmsd(
+    tmp_path,
+) -> None:
+    def make_complex(pdb_id: str) -> benchmark_pdb.PreparedBenchmarkComplex:
+        base = tmp_path / pdb_id
+        receptor_pdb = base.with_name(f"{pdb_id}_receptor.pdb")
+        ligand_pdb = base.with_name(f"{pdb_id}_ligand.pdb")
+        receptor_pdb.write_text("")
+        ligand_pdb.write_text("")
+        return benchmark_pdb.PreparedBenchmarkComplex(
+            pdb_id=pdb_id,
+            target_name=f"target-{pdb_id}",
+            path=base.with_name(f"{pdb_id}.pdb"),
+            center=(0.0, 0.0, 0.0),
+            box_size=(12.0, 12.0, 12.0),
+            receptor_pdb=receptor_pdb,
+            pocket_receptor_pdb=receptor_pdb,
+            ligand_pdb=ligand_pdb,
+            receptor_view_pdb=receptor_pdb,
+            native_ligand_view_pdb=ligand_pdb,
+            ligand_coords=np.zeros((1, 3), dtype=np.float32),
+            ligand_radii=np.ones(1, dtype=np.float32),
+            ligand_elements=("C",),
+            ligand_charges=None,
+            pocket_coords=np.zeros((1, 3), dtype=np.float32),
+            pocket_radii=np.ones(1, dtype=np.float32),
+            pocket_elements=("N",),
+            pocket_charges=None,
+        )
+
+    output_paths = benchmark_pdb.BenchmarkOutputPaths(
+        json_path=tmp_path / "results.json",
+        csv_path=tmp_path / "results.csv",
+    )
+    complexes = [make_complex("1abc"), make_complex("2def")]
+    dq_rows = [
+        benchmark_pdb.ComplexSummaryRow(
+            pdb_id="1abc",
+            target_name="target-1abc",
+            ligand_atoms=1,
+            pocket_atoms=1,
+            rmsd=1.5,
+            time=4.0,
+        ),
+        benchmark_pdb.ComplexSummaryRow(
+            pdb_id="2def",
+            target_name="target-2def",
+            ligand_atoms=1,
+            pocket_atoms=1,
+            rmsd=None,
+            time=6.0,
+        ),
+    ]
+    dq_results = [
+        benchmark_pdb.BenchmarkResult(
+            success=True,
+            energy=-7.0,
+            rmsd=1.5,
+            time=4.0,
+            n_atoms=2,
+            formal_status="DQ-Dock",
+        ),
+        benchmark_pdb.BenchmarkResult(
+            success=False,
+            energy=0.0,
+            rmsd=0.0,
+            time=6.0,
+            n_atoms=0,
+            formal_status="DQ-Dock",
+            error="IndexError: index 8 is out of bounds for axis 1 with size 3",
+            execution_path=benchmark_pdb.BlindDockingExecutionPath.GENERIC_PIPELINE,
+        ),
+    ]
+
+    benchmark_pdb.save_benchmark_results(
+        output_paths,
+        charge_method_name="gasteiger",
+        certified_scoring_family=benchmark_pdb.CertifiedScoringFamily.LJ_REALSPACE_EWALD,
+        n_complexes_requested=2,
+        n_poses=10,
+        n_opt_steps=5,
+        box_size=12.0,
+        formal_round_strategy=benchmark_pdb.FormalRoundStrategy.SINGLETON_HYBRID,
+        attempt_timeout_seconds=None,
+        use_multi_stage=False,
+        use_pocket_guided=True,
+        use_rich_exact_rescoring=True,
+        competitors=(),
+        bench_elapsed=10.0,
+        phase="complete",
+        complexes=complexes,
+        dq_rows=dq_rows,
+        dq_results=dq_results,
+        competitor_rows=[],
+        excluded_rows=[],
+        render_report=False,
+    )
+
+    with open(output_paths.csv_path, newline="") as f:
+        rows = list(csv.DictReader(f))
+    payload = json.loads(output_paths.json_path.read_text())
+
+    failed_csv_row = next(row for row in rows if row["pdb_id"] == "2def")
+    failed_json_row = next(
+        row for row in payload["dq_dock"] if row["pdb_id"] == "2def"
+    )
+
+    assert payload["summary"]["dq_avg_rmsd"] == 1.5
+    assert failed_csv_row["status"] == "failure"
+    assert failed_csv_row["top_rmsd"] == ""
+    assert failed_csv_row["score"] == ""
+    assert "IndexError" in failed_csv_row["error"]
+    assert failed_json_row["success"] is False
+    assert failed_json_row["rmsd"] is None
+    assert failed_json_row["energy"] is None
+    assert "IndexError" in failed_json_row["error"]
+
+
+def test_redocking_report_excludes_failed_dq_rows_from_rmsd_and_scatter(monkeypatch, tmp_path) -> None:
+    payload = {
+        "summary": {
+            "phase": "complete",
+            "charge_method": "gasteiger",
+            "n_complexes_requested": 2,
+            "n_complexes_run": 2,
+            "n_complexes_excluded": 0,
+            "n_poses": 10,
+            "n_opt_steps": 5,
+            "use_pocket_guided": True,
+            "competitors": [
+                {
+                    "engine_id": "gnina",
+                    "display_name": "GNINA",
+                    "score_name": "cnn_affinity",
+                    "prep_protocol": "direct",
+                }
+            ],
+            "dq_avg_rmsd": 1.2,
+            "dq_total_time_s": 5.0,
+            "total_benchmark_time_s": 6.0,
+            "competitor_stats": {
+                "gnina": {
+                    "n_completed": 2,
+                    "n_successful": 2,
+                    "avg_top_rmsd": 1.0,
+                    "avg_best_mode_rmsd": 1.0,
+                    "total_time_s": 3.0,
+                }
+            },
+        },
+        "dq_dock": [
+            {
+                "pdb_id": "1abc",
+                "target_name": "target-1abc",
+                "success": True,
+                "rmsd": 1.2,
+                "time_s": 2.0,
+                "energy": -5.0,
+                "gap_proof": "proved",
+                "native_rank": 1,
+                "energy_gap": 0.2,
+                "error": None,
+            },
+            {
+                "pdb_id": "2def",
+                "target_name": "target-2def",
+                "success": False,
+                "rmsd": None,
+                "time_s": 3.0,
+                "energy": None,
+                "gap_proof": None,
+                "native_rank": None,
+                "energy_gap": None,
+                "error": "IndexError: index 8 is out of bounds for axis 1 with size 3",
+            },
+        ],
+        "competitors": [
+            {
+                "engine_id": "gnina",
+                "display_name": "GNINA",
+                "score_name": "cnn_affinity",
+                "pdb_id": "1abc",
+                "target_name": "target-1abc",
+                "success": True,
+                "top_rmsd": 1.1,
+                "best_returned_mode_rmsd": 1.0,
+                "time_s": 1.0,
+                "score": -6.0,
+                "error": None,
+            },
+            {
+                "engine_id": "gnina",
+                "display_name": "GNINA",
+                "score_name": "cnn_affinity",
+                "pdb_id": "2def",
+                "target_name": "target-2def",
+                "success": True,
+                "top_rmsd": 1.6,
+                "best_returned_mode_rmsd": 1.5,
+                "time_s": 2.0,
+                "score": -5.5,
+                "error": None,
+            },
+        ],
+        "excluded": [],
+    }
+    seen: dict[str, object] = {}
+
+    def fake_barplot(*, data, x: str, y: str, hue: str) -> None:
+        seen["rmsd_data"] = data.copy()
+
+    def fake_scatterplot(*, data, x: str, y: str, hue: str, s: int) -> None:
+        seen["scatter_data"] = data.copy()
+
+    monkeypatch.setattr(redocking_report, "_barplot", fake_barplot)
+    monkeypatch.setattr(redocking_report, "_scatterplot", fake_scatterplot)
+
+    redocking_report._plot_rmsd(payload, tmp_path / "rmsd.png")
+    redocking_report._plot_scatter(payload, tmp_path / "scatter.png")
+
+    rmsd_data = seen["rmsd_data"]
+    scatter_data = seen["scatter_data"]
+
+    dq_rmsd_ids = set(rmsd_data.loc[rmsd_data["Method"] == "DQ-Dock", "pdb_id"])
+    assert dq_rmsd_ids == {"1abc"}
+    assert set(scatter_data["pdb_id"]) == {"1abc"}
 
 
 def test_prepare_benchmark_electrostatics_surfaces_charge_failures() -> None:

@@ -66,7 +66,7 @@ def build_directional_hbond_spec(
     # 2. Receptor directions (rigid, so precomputed)
     if receptor_coords.shape[0] > 0:
         r_neighbors = find_k_nearest_neighbors(receptor_coords, k=3)
-        r_neighbor_coords = receptor_coords[np.arange(receptor_coords.shape[0])[:, None], r_neighbors]
+        r_neighbor_coords = receptor_coords[r_neighbors]
         r_mean_neighbor = np.mean(r_neighbor_coords, axis=1)
         r_directions = receptor_coords - r_mean_neighbor
         r_norms = np.linalg.norm(r_directions, axis=-1, keepdims=True)

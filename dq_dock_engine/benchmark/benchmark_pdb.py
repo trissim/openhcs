@@ -407,7 +407,7 @@ class ComplexSummaryRow:
     target_name: str
     ligand_atoms: int
     pocket_atoms: int
-    rmsd: float
+    rmsd: float | None
     time: float
     dock_time: float | None = None
     dq_pose_pdb: str | None = None
@@ -419,6 +419,11 @@ class ComplexSummaryRow:
         complex_entry: "PreparedBenchmarkComplex",
         result: BenchmarkResult,
     ) -> dict[str, object]:
+        score = result.energy if result.success else None
+        rmsd = self.rmsd if result.success else None
+        gap_proof = format_gap_proof_label(result.certified) if result.success else None
+        native_rank = result.native_rank if result.success else None
+        energy_gap = result.energy_gap if result.success else None
         return {
             "method": "DQ-Dock",
             "engine_id": "dq_dock",
@@ -433,32 +438,37 @@ class ComplexSummaryRow:
             "ligand_atoms": self.ligand_atoms,
             "pocket_atoms": self.pocket_atoms,
             "score_name": "energy",
-            "score": result.energy,
-            "top_rmsd": self.rmsd,
-            "best_mode_rmsd": self.rmsd,
+            "score": score,
+            "top_rmsd": rmsd,
+            "best_mode_rmsd": rmsd,
             "time_s": self.time,
             "dock_time_s": _safe_json_value(result.dock_time_s),
             "checkpoint_time_s": _safe_json_value(result.checkpoint_time_s),
             "total_wall_time_s": _safe_json_value(result.total_wall_time_s),
             "pose_pdb": self.dq_pose_pdb,
-            "gap_proof": format_gap_proof_label(result.certified),
+            "gap_proof": gap_proof,
             "execution_path": None
             if result.execution_path is None
             else result.execution_path.name,
             "certified_failure_reason": None
             if result.certified_failure_reason is None
             else result.certified_failure_reason.name,
-            "native_rank": result.native_rank,
-            "energy_gap": result.energy_gap,
+            "native_rank": native_rank,
+            "energy_gap": energy_gap,
             "receptor_pdb": self.receptor_pdb,
             "native_ligand_pdb": self.native_ligand_pdb,
-            "status": "success",
-            "error": None,
+            "status": "success" if result.success else "failure",
+            "error": result.error,
         }
 
     def to_json_record(
         self, complex_entry: "PreparedBenchmarkComplex", result: BenchmarkResult
     ) -> dict[str, object]:
+        rmsd = self.rmsd if result.success else None
+        energy = result.energy if result.success else None
+        gap_proof = format_gap_proof_label(result.certified) if result.success else None
+        native_rank = result.native_rank if result.success else None
+        energy_gap = result.energy_gap if result.success else None
         return {
             "pdb_id": self.pdb_id,
             "target_name": self.target_name,
@@ -470,24 +480,27 @@ class ComplexSummaryRow:
             "box_z": complex_entry.box_size[2],
             "ligand_atoms": self.ligand_atoms,
             "pocket_atoms": self.pocket_atoms,
-            "rmsd": _safe_json_value(self.rmsd),
+            "success": result.success,
+            "status": "success" if result.success else "failure",
+            "rmsd": _safe_json_value(rmsd),
             "time_s": _safe_json_value(self.time),
             "dock_time_s": _safe_json_value(result.dock_time_s),
             "checkpoint_time_s": _safe_json_value(result.checkpoint_time_s),
             "total_wall_time_s": _safe_json_value(result.total_wall_time_s),
-            "energy": _safe_json_value(result.energy),
+            "energy": _safe_json_value(energy),
             "pose_pdb": self.dq_pose_pdb,
             "receptor_pdb": self.receptor_pdb,
             "native_ligand_pdb": self.native_ligand_pdb,
-            "gap_proof": format_gap_proof_label(result.certified),
+            "gap_proof": gap_proof,
             "execution_path": None
             if result.execution_path is None
             else result.execution_path.name,
             "certified_failure_reason": None
             if result.certified_failure_reason is None
             else result.certified_failure_reason.name,
-            "native_rank": _safe_json_value(result.native_rank),
-            "energy_gap": _safe_json_value(result.energy_gap),
+            "native_rank": _safe_json_value(native_rank),
+            "energy_gap": _safe_json_value(energy_gap),
+            "error": result.error,
         }
 
 
@@ -1737,6 +1750,10 @@ def _safe_json_value(value: object) -> object:
     return value
 
 
+def _format_benchmark_error(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {exc}"
+
+
 def create_benchmark_output_paths(output_dir: Path) -> BenchmarkOutputPaths:
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1793,6 +1810,12 @@ def save_benchmark_results(
 ) -> tuple[Path, Path]:
     json_path = output_paths.json_path
     csv_path = output_paths.csv_path
+
+    if len(dq_rows) != len(dq_results):
+        raise ValueError(
+            "DQ-Dock row/result mismatch: "
+            f"{len(dq_rows)} rows vs {len(dq_results)} results"
+        )
 
     complex_map = {cx.pdb_id: cx for cx in complexes}
     dq_map = {row.pdb_id: row for row in dq_rows}
@@ -1893,6 +1916,12 @@ def save_benchmark_results(
         for row in csv_rows:
             writer.writerow({k: _safe_json_value(v) for k, v in row.items()})
 
+    successful_dq_rmsds = [
+        row.rmsd
+        for row, result in zip(dq_rows, dq_results)
+        if result.success and row.rmsd is not None
+    ]
+
     summary: dict[str, object] = {
         "timestamp": json_path.stem.removeprefix("pdb_redocking_"),
         "phase": phase,
@@ -1937,8 +1966,8 @@ def save_benchmark_results(
         },
         "total_benchmark_time_s": bench_elapsed,
         "dq_avg_rmsd": None
-        if not dq_rows
-        else float(np.mean([row.rmsd for row in dq_rows])),
+        if not successful_dq_rmsds
+        else float(np.mean(successful_dq_rmsds)),
         "dq_total_time_s": float(sum(row.time for row in dq_rows)),
         "dq_total_dock_time_s": float(
             sum(result.dock_time_s or result.time for result in dq_results)
@@ -2148,6 +2177,44 @@ def run_dq_dock(
             return best_result, best_pose_coords
         return failure_result, None
 
+    def build_failure_result(
+        *,
+        error: str,
+        execution_path_override: BlindDockingExecutionPath | None = None,
+        certified_failure_reason_override=None,
+        theorem_handles_override: tuple[str, ...] | None = None,
+        elapsed: float | None = None,
+        formal_status_override: str | None = None,
+    ) -> BenchmarkResult:
+        return BenchmarkResult(
+            success=False,
+            energy=0.0,
+            rmsd=0.0,
+            time=time.time() - start if elapsed is None else elapsed,
+            n_atoms=0,
+            formal_status=(
+                formal_status
+                if formal_status_override is None
+                else formal_status_override
+            ),
+            execution_path=(
+                execution_path
+                if execution_path_override is None
+                else execution_path_override
+            ),
+            certified_failure_reason=(
+                certified_failure_reason
+                if certified_failure_reason_override is None
+                else certified_failure_reason_override
+            ),
+            theorem_handles=(
+                theorem_handles
+                if theorem_handles_override is None
+                else theorem_handles_override
+            ),
+            error=error,
+        )
+
     def execute_attempt(attempt_key: jax.Array) -> BlindDockingExecutionOutcome:
         return attempt_executor.execute(
             BlindDockingAttemptContext(
@@ -2216,17 +2283,7 @@ def run_dq_dock(
                     )
                     continue
                 return finalize_attempt_failure(
-                    BenchmarkResult(
-                        success=False,
-                        energy=0.0,
-                        rmsd=0.0,
-                        time=time.time() - start,
-                        n_atoms=0,
-                        formal_status=formal_status,
-                        execution_path=execution_path,
-                        certified_failure_reason=certified_failure_reason,
-                        theorem_handles=theorem_handles,
-                    )
+                    build_failure_result(error="ValueError: No poses returned by docking pipeline")
                 )
 
             elapsed = time.time() - start
@@ -2278,16 +2335,11 @@ def run_dq_dock(
                 if "NO_LOCAL_REGION" in str(e):
                     reason = CertifiedPocketFailureReason.NO_LOCAL_REGION
                 return finalize_attempt_failure(
-                    BenchmarkResult(
-                        success=False,
-                        energy=0.0,
-                        rmsd=0.0,
-                        time=time.time() - start,
-                        n_atoms=0,
-                        formal_status=formal_status,
-                        execution_path=BlindDockingExecutionPath.STRICT_CERTIFIED,
-                        certified_failure_reason=reason,
-                        theorem_handles=(),
+                    build_failure_result(
+                        error=_format_benchmark_error(e),
+                        execution_path_override=BlindDockingExecutionPath.STRICT_CERTIFIED,
+                        certified_failure_reason_override=reason,
+                        theorem_handles_override=(),
                     )
                 )
             if attempt < max_retries - 1:
@@ -2301,29 +2353,17 @@ def run_dq_dock(
                 )
                 continue
             return finalize_attempt_failure(
-                BenchmarkResult(
-                    success=False,
-                    energy=0.0,
-                    rmsd=0.0,
-                    time=time.time() - start,
-                    n_atoms=0,
-                    formal_status=formal_status,
-                    execution_path=execution_path,
-                    certified_failure_reason=certified_failure_reason,
-                    theorem_handles=theorem_handles,
-                )
+                build_failure_result(error=_format_benchmark_error(e))
             )
 
     if best_result is None:
-        return BenchmarkResult(
-            success=False,
-            energy=0.0,
-            rmsd=0.0,
-            time=time.time() - start,
-            n_atoms=0,
-            formal_status=formal_status,
-            execution_path=BlindDockingExecutionPath.GENERIC_PIPELINE,
-        ), None
+        return (
+            build_failure_result(
+                error="RuntimeError: Docking failed without producing a result",
+                execution_path_override=BlindDockingExecutionPath.GENERIC_PIPELINE,
+            ),
+            None,
+        )
 
     return best_result, best_pose_coords
 
@@ -2477,6 +2517,7 @@ def run_dq_dock_benchmark_job_with_timeout(
                 time=timeout_seconds,
                 n_atoms=0,
                 formal_status=f"timeout after {timeout_seconds:.1f}s",
+                    error=f"timeout after {timeout_seconds:.1f}s",
             ),
             dq_pose_coords=None,
         )
@@ -2562,7 +2603,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
                 target_name=complex_entry.target_name,
                 ligand_atoms=len(complex_entry.ligand_coords),
                 pocket_atoms=len(complex_entry.pocket_coords),
-                rmsd=result.rmsd,
+                rmsd=result.rmsd if result.success else None,
                 time=result.time,
                 dock_time=dock_time,
                 dq_pose_pdb=None if dq_pose_path is None else str(dq_pose_path),
@@ -2594,18 +2635,23 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
             dock_time=dock_time,
         )
 
-        print(
-            f"  Best Energy: {finalized_result.energy:.2f} kcal/mol, Sampled Pose RMSD: {finalized_result.rmsd:.2f}A, Dock: {dock_time:.2f}s, Wall: {wall_time:.2f}s"
-        )
-        print("  DQ-Dock Redocking", end="")
-        gap_proof = format_gap_proof_label(finalized_result.certified)
-        if gap_proof is not None:
-            print(f", Gap Proof: {gap_proof}", end="")
-            if finalized_result.native_rank is not None:
-                print(f", Native Rank: {finalized_result.native_rank}", end="")
-            if finalized_result.energy_gap is not None:
-                print(f", Energy Gap: {finalized_result.energy_gap:.4f}", end="")
-        print()
+        if finalized_result.success:
+            print(
+                f"  Best Energy: {finalized_result.energy:.2f} kcal/mol, Sampled Pose RMSD: {finalized_result.rmsd:.2f}A, Dock: {dock_time:.2f}s, Wall: {wall_time:.2f}s"
+            )
+            print("  DQ-Dock Redocking", end="")
+            gap_proof = format_gap_proof_label(finalized_result.certified)
+            if gap_proof is not None:
+                print(f", Gap Proof: {gap_proof}", end="")
+                if finalized_result.native_rank is not None:
+                    print(f", Native Rank: {finalized_result.native_rank}", end="")
+                if finalized_result.energy_gap is not None:
+                    print(f", Energy Gap: {finalized_result.energy_gap:.4f}", end="")
+            print()
+        else:
+            print(
+                f"  DQ-Dock failed, Dock: {dock_time:.2f}s, Wall: {wall_time:.2f}s, Error: {finalized_result.error or finalized_result.formal_status}"
+            )
         print(f"  Checkpoint save time: {checkpoint_elapsed:.2f}s", flush=True)
         if finalized_result.native_rank is not None:
             print(
@@ -2660,25 +2706,30 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
             print("\nDQ-Dock Per-Complex")
             print("-" * 70)
             print(
-                f"{'PDB':<8} {'Ligand':<8} {'Pocket':<8} {'RMSD':<10} {'Dock':<10} {'Wall':<10}"
+                f"{'PDB':<8} {'Ligand':<8} {'Pocket':<8} {'Status':<10} {'RMSD':<10} {'Dock':<10} {'Wall':<10}"
             )
-            for row in state.dq_rows:
+            for row, result in zip(state.dq_rows, state.dq_results):
+                rmsd_text = "n/a" if row.rmsd is None else f"{row.rmsd:.2f}"
                 print(
-                    f"{row.pdb_id:<8} {row.ligand_atoms:<8} {row.pocket_atoms:<8} {row.rmsd:<10.2f} {(row.dock_time or float('nan')):<10.2f} {row.time:<10.2f}"
+                    f"{row.pdb_id:<8} {row.ligand_atoms:<8} {row.pocket_atoms:<8} {('success' if result.success else 'failure'):<10} {rmsd_text:<10} {(row.dock_time or float('nan')):<10.2f} {row.time:<10.2f}"
                 )
 
         if state.dq_results:
+            successful_results = [result for result in state.dq_results if result.success]
             avg_time = np.mean([r.time for r in state.dq_results])
             avg_dock_time = np.mean([r.dock_time_s or r.time for r in state.dq_results])
-            avg_rmsd = np.mean([r.rmsd for r in state.dq_results])
             min_time = np.min([r.time for r in state.dq_results])
             max_time = np.max([r.time for r in state.dq_results])
             dq_total = sum(r.time for r in state.dq_results)
             dq_total_dock = sum(r.dock_time_s or r.time for r in state.dq_results)
             print(
-                f"{self.display_name:<20} {avg_time:<12.2f} {dq_total:<12.2f} {len(state.dq_results)}/{len(complexes)}"
+                f"{self.display_name:<20} {avg_time:<12.2f} {dq_total:<12.2f} {len(successful_results)}/{len(state.dq_results)}"
             )
-            print(f"  Avg RMSD: {avg_rmsd:.2f}A")
+            if successful_results:
+                avg_rmsd = np.mean([r.rmsd for r in successful_results])
+                print(f"  Avg RMSD: {avg_rmsd:.2f}A")
+            else:
+                print("  Avg RMSD: n/a (no successful DQ-Dock runs)")
             print(
                 f"  Avg dock time: {avg_dock_time:.2f}s, Total dock time: {dq_total_dock:.2f}s"
             )
@@ -3226,7 +3277,7 @@ def run_benchmark(
 
     print(f"\n  Total benchmark time: {bench_elapsed:.2f}s")
     print(
-        f"  {len(state.dq_results)}/{len(prepared_complexes)} complexes completed successfully"
+        f"  {sum(result.success for result in state.dq_results)}/{len(prepared_complexes)} complexes completed successfully"
     )
     print(f"  {len(excluded_rows)} complexes excluded by QC")
 

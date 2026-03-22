@@ -95,7 +95,13 @@ def _graph_label(pdb_id: str, target_name: str) -> str:
 
 def _load_payload(json_path: Path) -> dict:
     with open(json_path) as f:
-        return json.load(f)
+        payload = json.load(f)
+    for row in payload.get("dq_dock", []):
+        if "success" not in row:
+            row["success"] = row.get("status", "success") == "success"
+        row.setdefault("status", "success" if row["success"] else "failure")
+        row.setdefault("error", None)
+    return payload
 
 
 def _read_structure_coords(pdb_path: Path) -> np.ndarray:
@@ -559,6 +565,7 @@ def _write_markdown_report(payload: dict, report_path: Path) -> None:
     dq_rows = payload["dq_dock"]
     competitor_rows = payload["competitors"]
     excluded_rows = payload["excluded"]
+    successful_dq_rows = [row for row in dq_rows if row.get("success", True)]
 
     lines = [
         "# PDB Redocking Benchmark",
@@ -567,6 +574,7 @@ def _write_markdown_report(payload: dict, report_path: Path) -> None:
         f"- Charge method: `{summary['charge_method']}`",
         f"- Requested complexes: `{summary['n_complexes_requested']}`",
         f"- Completed DQ-Dock complexes: `{summary['n_complexes_run']}`",
+        f"- Successful DQ-Dock complexes: `{len(successful_dq_rows)}`",
         f"- Excluded complexes: `{summary['n_complexes_excluded']}`",
         f"- Poses: `{summary['n_poses']}`",
         f"- Optimization steps: `{summary['n_opt_steps']}`",
@@ -581,13 +589,13 @@ def _write_markdown_report(payload: dict, report_path: Path) -> None:
         "",
         "## DQ-Dock",
         "",
-        "| PDB | Target | RMSD | Time (s) | Energy | Gap Proof | Native Rank | Energy Gap |",
-        "| --- | --- | ---: | ---: | ---: | --- | ---: | ---: |",
+        "| PDB | Target | Status | RMSD | Time (s) | Energy | Gap Proof | Native Rank | Energy Gap | Error |",
+        "| --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | --- |",
     ]
 
     for row in dq_rows:
         lines.append(
-            f"| {row['pdb_id']} | {row['target_name']} | {_fmt_number(row['rmsd'])} | {_fmt_number(row['time_s'])} | {_fmt_number(row['energy'])} | {_fmt_text(row['gap_proof'])} | {_fmt_text(row['native_rank'])} | {_fmt_number(row['energy_gap'])} |"
+            f"| {row['pdb_id']} | {row['target_name']} | {'success' if row.get('success', True) else 'failure'} | {_fmt_number(row.get('rmsd'))} | {_fmt_number(row['time_s'])} | {_fmt_number(row.get('energy'))} | {_fmt_text(row.get('gap_proof'))} | {_fmt_text(row.get('native_rank'))} | {_fmt_number(row.get('energy_gap'))} | {_fmt_text(row.get('error'))} |"
         )
 
     for competitor in summary["competitors"]:
@@ -642,6 +650,11 @@ def _write_markdown_report(payload: dict, report_path: Path) -> None:
 def _plot_rmsd(payload: dict, output_path: Path) -> None:
     dq_df = pd.DataFrame(payload["dq_dock"])
     competitor_df = pd.DataFrame(payload["competitors"])
+    if dq_df.empty:
+        return
+
+    if "success" in dq_df.columns:
+        dq_df = dq_df[dq_df["success"]].copy()
     if dq_df.empty:
         return
 
@@ -740,6 +753,11 @@ def _plot_scatter(payload: dict, output_path: Path) -> None:
     dq_df = pd.DataFrame(payload["dq_dock"])
     competitor_df = pd.DataFrame(payload["competitors"])
     if dq_df.empty or competitor_df.empty:
+        return
+
+    if "success" in dq_df.columns:
+        dq_df = dq_df[dq_df["success"]].copy()
+    if dq_df.empty:
         return
 
     successful_competitors = competitor_df[competitor_df["success"]].copy()
