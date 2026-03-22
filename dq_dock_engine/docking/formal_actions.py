@@ -42,10 +42,16 @@ class CertifiedActionFamily:
     translation_step: float
     rotation_step_rad: float
     stencil_level: int
+    support_shell_levels: tuple[int, ...]
 
     def tree_flatten(self):
         children = (self.actions, self.translation_deltas, self.quaternion_deltas)
-        aux_data = (self.translation_step, self.rotation_step_rad, self.stencil_level)
+        aux_data = (
+            self.translation_step,
+            self.rotation_step_rad,
+            self.stencil_level,
+            self.support_shell_levels,
+        )
         return (children, aux_data)
 
     @classmethod
@@ -117,6 +123,7 @@ def _cached_action_family(
         translation_step=translation_step,
         rotation_step_rad=rotation_step_rad,
         stencil_level=stencil_level,
+        support_shell_levels=(stencil_level,),
     )
 
 
@@ -128,6 +135,76 @@ def create_certified_action_family(
     return _cached_action_family(
         float(translation_step), float(rotation_step_rad), int(stencil_level)
     )
+
+
+def merge_certified_action_families(
+    families: tuple[CertifiedActionFamily, ...],
+) -> CertifiedActionFamily:
+    if not families:
+        raise ValueError("families must be non-empty")
+    if not all(family.actions and family.actions[0].is_noop for family in families):
+        raise ValueError("each family must expose a noop action at index 0")
+
+    merged_shell_levels: list[int] = []
+    merged_actions: list[CertifiedLocalAction] = []
+
+    for family_index, family in enumerate(families):
+        for shell_level in family.support_shell_levels:
+            if shell_level not in merged_shell_levels:
+                merged_shell_levels.append(shell_level)
+        source_actions = family.actions if family_index == 0 else family.actions[1:]
+        merged_actions.extend(source_actions)
+
+    reindexed_actions = tuple(
+        CertifiedLocalAction(
+            action_id=action_id,
+            translation_delta=action.translation_delta,
+            quaternion_delta=action.quaternion_delta,
+            is_noop=action.is_noop,
+        )
+        for action_id, action in enumerate(merged_actions)
+    )
+    return CertifiedActionFamily(
+        actions=reindexed_actions,
+        translation_deltas=jnp.stack(
+            [action.translation_delta for action in reindexed_actions], axis=0
+        ),
+        quaternion_deltas=jnp.stack(
+            [action.quaternion_delta for action in reindexed_actions], axis=0
+        ),
+        translation_step=max(family.translation_step for family in families),
+        rotation_step_rad=max(family.rotation_step_rad for family in families),
+        stencil_level=max(merged_shell_levels),
+        support_shell_levels=tuple(merged_shell_levels),
+    )
+
+
+def create_roundwise_certified_action_family(
+    base_translation_step: float,
+    base_rotation_step_rad: float,
+    round_index: int,
+    support_expansion_level: int = 0,
+) -> CertifiedActionFamily:
+    if round_index < 0:
+        raise ValueError("round_index must be non-negative")
+    if support_expansion_level < 0:
+        raise ValueError("support_expansion_level must be non-negative")
+
+    coarser_shell_count = min(round_index, support_expansion_level)
+    shell_levels = tuple(
+        range(round_index, round_index - coarser_shell_count - 1, -1)
+    )
+    families = tuple(
+        create_certified_action_family(
+            translation_step=base_translation_step / (2**shell_level),
+            rotation_step_rad=base_rotation_step_rad / (2**shell_level),
+            stencil_level=shell_level,
+        )
+        for shell_level in shell_levels
+    )
+    if len(families) == 1:
+        return families[0]
+    return merge_certified_action_families(families)
 
 
 def apply_local_action(

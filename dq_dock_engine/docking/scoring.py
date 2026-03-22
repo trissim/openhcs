@@ -853,7 +853,7 @@ def score_certified_directional_hbond_batch(
 @conditionally_certified(
     "HandleAliases.lean::RC1; HandleAliases.lean::RC2; HandleAliases.lean::RC3; HandleAliases.lean::RC4; HandleAliases.lean::RC5",
     assumptions=[
-        "The additive runtime score is exactly the sum of the certified contact surrogate and the certified directional H-bond surrogate",
+        "The attractive runtime polar energy is exactly the negative sum of the certified contact surrogate and the certified directional H-bond surrogate signals",
         "The combined error bound is the sum of the finite-batch contact and directional H-bond discrepancy bounds",
     ],
 )
@@ -874,7 +874,7 @@ def score_certified_polar_surrogate_batch(
         hbond_spec,
     )
     return CertifiedBatchResult(
-        scores=contact_batch.scores + hbond_batch.scores,
+        scores=-(contact_batch.scores + hbond_batch.scores),
         error_bound=contact_batch.error_bound + hbond_batch.error_bound,
         target_error=contact_batch.error_bound + hbond_batch.error_bound,
         cutoff_radius=jnp.maximum(

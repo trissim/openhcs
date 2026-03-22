@@ -66,7 +66,10 @@ from dq_dock_engine.docking.pocket_analysis import (
     detect_certified_pocket,
     detect_geometric_pocket,
 )
-from dq_dock_engine.docking.formal_pruning import coarse_top1_ambiguity_mask
+from dq_dock_engine.docking.formal_pruning import (
+    certified_pruning_certificate,
+    coarse_top1_ambiguity_mask,
+)
 from dq_dock_engine.docking.scoring import (
     score_certified_softened_lj,
     score_certified_softened_lj_realspace_ewald,
@@ -94,6 +97,11 @@ if TYPE_CHECKING:
 # According to the BD5/TK11 theorems, the survivor set size is bounded by O(K+L).
 # 256 is an ample bound for typical drug-like docking scenarios.
 SURVIVOR_BATCH_SIZE = 256
+
+# Exact certified rescoring can be invoked over the full sampled pose population when
+# top_k_to_optimize > 1. Keep it chunked so theorem-honest Top-K pruning remains usable
+# on large pose sets without allocating one giant batched exact-score tensor.
+EXACT_RESCORING_CHUNK_SIZE = 2048
 
 
 @dataclass(frozen=True)
@@ -1354,12 +1362,9 @@ def _resolve_route_scoring_electrostatics(
 
 
 def _certified_pruning_pass(
-    receptor_coords: jnp.ndarray,
+    request: PipelineDockingRequest,
     poses_coords: jnp.ndarray,
-    receptor_radii: jnp.ndarray,
-    ligand_ctx: LigandContext,
     electrostatics: Optional[CertifiedRealSpaceEwaldSpec],
-    target_error: float,
 ) -> tuple[jnp.ndarray, jnp.ndarray, float]:
     """
     Perform a formally justified pruning pass on the global pose set.
@@ -1367,34 +1372,50 @@ def _certified_pruning_pass(
     Uses the Lean-proven top-1 coarse ambiguity band (TK11, BD5) to eliminate
     poses that cannot possibly be the global minimum under the exact engine.
     """
+    if request.top_k_to_optimize <= 0:
+        raise ValueError("top_k_to_optimize must be positive")
+
+    k = min(request.top_k_to_optimize, poses_coords.shape[0])
+
     # 1. Compute coarse (softened) scores and the associated error bound delta
     if electrostatics is not None:
         coarse_batch = score_certified_softened_lj_realspace_ewald(
-            receptor_coords=receptor_coords,
+            receptor_coords=request.receptor_coords,
             poses_coords=poses_coords,
-            receptor_radii=receptor_radii,
-            ligand_radii=ligand_ctx.base_radii,
+            receptor_radii=request.receptor_radii,
+            ligand_radii=request.ligand_radii,
             electrostatics=electrostatics,
-            target_error=target_error,
+            target_error=request.target_error,
             compute_error_bound=False,
         )
     else:
-        from dq_dock_engine.docking.scoring import score_certified_softened_lj
-
         coarse_batch = score_certified_softened_lj(
-            receptor_coords=receptor_coords,
+            receptor_coords=request.receptor_coords,
             poses_coords=poses_coords,
-            receptor_radii=receptor_radii,
-            ligand_radii=ligand_ctx.base_radii,
-            target_error=target_error,
+            receptor_radii=request.receptor_radii,
+            ligand_radii=request.ligand_radii,
+            target_error=request.target_error,
             compute_error_bound=False,
         )
 
-    # 2. Compute the survivor mask based on the theorem bound (TK11).
-    # Since the global optimum is guaranteed to be non-clashing, its softening
-    # error is 0.0. The only remaining error is the cutoff target_error.
-    delta = target_error
-    survivor_mask = coarse_top1_ambiguity_mask(coarse_batch.scores, delta)
+    # 2. Compute the survivor mask from the proved pruning certificate.
+    # For k=1 we preserve the existing coarse-only fast path (TK11). For k>1,
+    # TK4 requires exact scores for the certified survivor set.
+    delta = request.target_error
+    if k == 1:
+        survivor_mask = coarse_top1_ambiguity_mask(coarse_batch.scores, delta)
+    else:
+        exact_scores = _score_exact_pose_batch(
+            request,
+            poses_coords=poses_coords,
+            electrostatics=electrostatics,
+        )
+        survivor_mask = certified_pruning_certificate(
+            exact_scores=exact_scores,
+            coarse_scores=coarse_batch.scores,
+            k=k,
+            delta=delta,
+        ).survivor_mask
 
     n_total = poses_coords.shape[0]
 
@@ -1410,7 +1431,7 @@ def _certified_pruning_pass(
         efficiency = 100.0 * (1.0 - n_surv_val / n_total)
         print(
             f"[CERTIFIED PRUNING] Pruned {n_total} -> {n_surv_val} poses "
-            f"({efficiency:.1f}% reduction, delta={delta_val:.3f} kcal/mol)"
+            f"({efficiency:.1f}% reduction, delta={delta_val:.3f} kcal/mol, k={k})"
         )
     except Exception:
         # Fallback for JIT context where device_get is forbidden
@@ -1419,6 +1440,76 @@ def _certified_pruning_pass(
         jax.debug.print("[CERTIFIED PRUNING] Pruning completed (tracing context).")
 
     return survivor_mask, coarse_batch.scores, delta
+
+
+def _score_exact_pose_batch(
+    request: PipelineDockingRequest,
+    *,
+    poses_coords: jnp.ndarray,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None,
+    chunk_size: int = EXACT_RESCORING_CHUNK_SIZE,
+) -> jnp.ndarray:
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+
+    if poses_coords.shape[0] == 0:
+        return jnp.zeros((0,), dtype=request.protein_coords.dtype)
+
+    if request.config is not None and getattr(
+        request.config, "use_rich_exact_rescoring", False
+    ):
+        from dq_dock_engine.docking.rich_chemistry import (
+            build_all_rich_chemistry_specs,
+        )
+        from dq_dock_engine.docking.scoring import score_certified_rich_chemistry_batch
+
+        receptor_charges = (
+            electrostatics.receptor_charges
+            if electrostatics is not None
+            else jnp.zeros(request.protein_coords.shape[0], dtype=request.protein_coords.dtype)
+        )
+        screened, contact, hbond = build_all_rich_chemistry_specs(
+            np.asarray(request.protein_coords),
+            request.receptor_elements or tuple(["C"] * request.protein_coords.shape[0]),
+            np.asarray(receptor_charges),
+            request.ligand_ctx,
+        )
+        def score_chunk(chunk_coords: jnp.ndarray) -> jnp.ndarray:
+            return jnp.asarray(
+                score_certified_rich_chemistry_batch(
+                    receptor_coords=request.protein_coords,
+                    poses_coords=chunk_coords,
+                    receptor_radii=request.receptor_radii,
+                    ligand_radii=request.ligand_ctx.base_radii,
+                    screened_coulomb=screened,
+                    contact=contact,
+                    directional_hbond=hbond,
+                    target_error=request.target_error,
+                ).scores
+            )
+    else:
+
+        def score_chunk(chunk_coords: jnp.ndarray) -> jnp.ndarray:
+            return jnp.asarray(
+                route_scoring(
+                    **derive_route_scoring_kwargs(
+                        request,
+                        engine=request.effective_engine,
+                        poses_coords=chunk_coords,
+                        electrostatics=electrostatics,
+                    )
+                )
+            )
+
+    if poses_coords.shape[0] <= chunk_size:
+        return score_chunk(poses_coords)
+
+    scored_chunks: list[jnp.ndarray] = []
+    for start in range(0, poses_coords.shape[0], chunk_size):
+        stop = min(start + chunk_size, poses_coords.shape[0])
+        scored_chunks.append(score_chunk(poses_coords[start:stop]))
+
+    return jnp.concatenate(scored_chunks, axis=0)
 
 
 def _pad_to_size(
@@ -1631,60 +1722,34 @@ class CertifiedPipelineRoute(PipelineRoute):
             request,
             engine=request.effective_engine,
         )
-        survivor_mask, coarse_scores, delta = call_with_derived_kwargs(
-            _certified_pruning_pass,
+        survivor_mask, coarse_scores, delta = _certified_pruning_pass(
             request,
             poses_coords=batched_coords,
             electrostatics=electrostatics,
         )
+        n_survivors = int(np.asarray(jax.device_get(jnp.sum(survivor_mask))))
+        if n_survivors > SURVIVOR_BATCH_SIZE:
+            raise ValueError(
+                "Certified survivor set exceeded fixed padded capacity "
+                f"({n_survivors} > {SURVIVOR_BATCH_SIZE}); refusing to truncate "
+                "survivors and lose theorem honesty."
+            )
         survivor_indices = jnp.where(
             survivor_mask, size=SURVIVOR_BATCH_SIZE, fill_value=-1
         )[0]
-        survivor_coords = batched_coords[survivor_indices]
-        del coarse_scores, delta
-        if request.config is not None and getattr(request.config, "use_rich_exact_rescoring", False):
-            from dq_dock_engine.docking.rich_chemistry import build_all_rich_chemistry_specs
-            from dq_dock_engine.docking.scoring import score_certified_rich_chemistry_batch
-            
-            receptor_charges = electrostatics.receptor_charges if electrostatics else jnp.zeros(request.protein_coords.shape[0])
-            screened, contact, hbond = build_all_rich_chemistry_specs(
-                np.asarray(request.protein_coords),
-                request.receptor_elements or tuple(["C"] * request.protein_coords.shape[0]),
-                np.asarray(receptor_charges),
-                request.ligand_ctx
-            )
-            rich_batch = score_certified_rich_chemistry_batch(
-                receptor_coords=request.protein_coords,
-                poses_coords=survivor_coords,
-                receptor_radii=request.receptor_radii,
-                ligand_radii=request.ligand_ctx.base_radii,
-                screened_coulomb=screened,
-                contact=contact,
-                directional_hbond=hbond,
-                target_error=request.target_error
-            )
-            survivor_exact_scores = rich_batch.scores
-        else:
-            exact_kwargs = derive_route_scoring_kwargs(
-                request,
-                engine=request.effective_engine,
-                poses_coords=survivor_coords,
-                electrostatics=electrostatics.receptor_subset(
-                    jnp.arange(request.protein_coords.shape[0])
-                )
-                if electrostatics
-                else None,
-            )
-            survivor_exact_scores = route_scoring(**exact_kwargs)
         valid_survivor_mask = survivor_indices != -1
         valid_survivor_indices = survivor_indices[valid_survivor_mask]
-        padded_survivor_scores = jnp.where(
-            valid_survivor_mask, survivor_exact_scores, 1e6
+        survivor_coords = batched_coords[valid_survivor_indices]
+        del coarse_scores, delta
+        survivor_exact_scores = _score_exact_pose_batch(
+            request,
+            poses_coords=survivor_coords,
+            electrostatics=electrostatics,
         )
         final_scores = (
             jnp.full((batched_coords.shape[0],), 1e6)
-            .at[survivor_indices]
-            .set(padded_survivor_scores, indices_are_sorted=False)
+            .at[valid_survivor_indices]
+            .set(survivor_exact_scores, indices_are_sorted=False)
         )
         return PipelineInitialScores(
             final_scores=final_scores,
@@ -1692,8 +1757,8 @@ class CertifiedPipelineRoute(PipelineRoute):
                 translation=pose_vecs.translation[valid_survivor_indices],
                 quaternion=pose_vecs.quaternion[valid_survivor_indices],
             ),
-            survivor_exact_scores=padded_survivor_scores,
-            valid_survivor_mask=valid_survivor_mask,
+            survivor_exact_scores=survivor_exact_scores,
+            valid_survivor_mask=jnp.ones(survivor_exact_scores.shape, dtype=bool),
         )
 
     def best_index_limit(
@@ -1708,19 +1773,15 @@ class CertifiedPipelineRoute(PipelineRoute):
         pose_vecs: PoseVector,
         initial_scores: PipelineInitialScores,
     ) -> tuple[jnp.ndarray, jnp.ndarray, int]:
-        del pose_vecs
+        del request, pose_vecs
         assert initial_scores.survivor_pose_vecs is not None
         assert initial_scores.survivor_exact_scores is not None
-        assert initial_scores.valid_survivor_mask is not None
         n_valid_survivors = initial_scores.survivor_pose_vecs.translation.shape[0]
-        n_to_opt = min(request.top_k_to_optimize, n_valid_survivors)
-        survivor_ranked = jnp.argsort(
-            initial_scores.survivor_exact_scores[initial_scores.valid_survivor_mask]
-        )[:n_to_opt]
+        survivor_ranked = jnp.argsort(initial_scores.survivor_exact_scores)
         return (
             initial_scores.survivor_pose_vecs.translation[survivor_ranked],
             initial_scores.survivor_pose_vecs.quaternion[survivor_ranked],
-            n_to_opt,
+            n_valid_survivors,
         )
 
     def validate_backend(

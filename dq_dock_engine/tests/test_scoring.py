@@ -2,7 +2,6 @@ import numpy as np
 import jax.numpy as jnp
 from pathlib import Path
 import tempfile
-
 from dq_dock_engine.docking.scoring import (
     CertifiedContactSurrogateSpec,
     CertifiedRealSpaceEwaldSpec,

@@ -54,7 +54,7 @@ LOWERING_BODIES: Dict[str, str] = {
     "normalize_probability_vector": "return weights / jnp.sum(weights)",
     "uniform_probability_vector_like": "weights = jnp.ones_like(template, dtype=jnp.float32)\nreturn weights / jnp.sum(weights)",
     "noop_biased_probability_vector_like": "n = template.shape[0]\nif n == 0:\n    return jnp.zeros_like(template, dtype=jnp.float32)\nif n == 1:\n    return jnp.ones_like(template, dtype=jnp.float32)\nremainder = (1.0 - noop_mass) / (n - 1)\nreturn jnp.concatenate([jnp.array([noop_mass], dtype=jnp.float32), jnp.full((n - 1,), remainder, dtype=jnp.float32)])",
-    "top_k_with_ties_mask": "strict_better = utilities[None, :] > utilities[:, None]\nreturn jnp.sum(strict_better, axis=1) < k",
+    "top_k_with_ties_mask": "n = utilities.shape[0]\nif n == 0:\n    return jnp.zeros_like(utilities, dtype=bool)\nif k <= 0:\n    return jnp.zeros_like(utilities, dtype=bool)\nif k >= n:\n    return jnp.ones_like(utilities, dtype=bool)\nkth_boundary = jnp.partition(utilities, n - k)[n - k]\nreturn utilities >= kth_boundary",
     "ambiguity_band_mask": "sorted_utilities = jnp.sort(utilities)[::-1]\nkth_boundary = sorted_utilities[jnp.maximum(k - 1, 0)]\nreturn utilities >= (kth_boundary - epsilon)",
     "stable_argmax_masked": "return jnp.argmax(jnp.where(mask, values, -jnp.inf))",
     "axis_angle_quaternion": "half = angle / 2.0\ns = jnp.sin(half)\nreturn jnp.array([jnp.cos(half), axis[0] * s, axis[1] * s, axis[2] * s], dtype=jnp.float32)",

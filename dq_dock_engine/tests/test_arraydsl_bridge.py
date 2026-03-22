@@ -170,6 +170,31 @@ def test_arraydsl_generated_wrappers_execute_with_jax_arrays():
     )
 
 
+def test_top_k_with_ties_mask_handles_ties_and_edge_cases():
+    tied_utilities = jnp.array([5.0, 4.0, 4.0, 1.0], dtype=jnp.float32)
+
+    assert jnp.array_equal(
+        topKWithTiesMask(tied_utilities, 1),
+        jnp.array([True, False, False, False]),
+    )
+    assert jnp.array_equal(
+        topKWithTiesMask(tied_utilities, 2),
+        jnp.array([True, True, True, False]),
+    )
+    assert jnp.array_equal(
+        topKWithTiesMask(tied_utilities, 0),
+        jnp.array([False, False, False, False]),
+    )
+    assert jnp.array_equal(
+        topKWithTiesMask(tied_utilities, 10),
+        jnp.array([True, True, True, True]),
+    )
+    assert jnp.array_equal(
+        topKWithTiesMask(jnp.array([], dtype=jnp.float32), 1),
+        jnp.array([], dtype=bool),
+    )
+
+
 def test_arraydsl_molecular_primitives_match_physics_kernels():
     batched_x = jnp.array([[1.0, 2.0, 2.0], [3.0, 0.0, 4.0]])
     batched_y = jnp.array([[0.0, 2.0, 2.0], [0.0, 0.0, 4.0]])

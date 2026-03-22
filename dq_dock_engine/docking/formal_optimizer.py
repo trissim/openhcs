@@ -17,7 +17,7 @@ from dq_dock_engine.docking.core import (
     ScoringEngine,
 )
 from dq_dock_engine.docking.formal_actions import (
-    create_certified_action_family,
+    create_roundwise_certified_action_family,
     apply_action_family_batch,
 )
 from dq_dock_engine.docking.formal_belief import (
@@ -108,6 +108,7 @@ def _refine_round_jit_core(
     ligand_radii: jax.Array,
     target_error: float,
     coarse_target_error: float,
+    translation_step: float,
     translation_deltas: jax.Array,
     quaternion_deltas: jax.Array,
     prior_spec: CertifiedPriorSpec,
@@ -140,7 +141,7 @@ def _refine_round_jit_core(
         target_error=target_error,
         coarse_target_error=coarse_target_error,
         max_receptor_atoms=max_coarse_receptor_atoms,
-        translation_step=jnp.linalg.norm(translation_deltas[1]),
+        translation_step=translation_step,
         electrostatics=electrostatics,
         use_softened_coarse=use_softened_coarse,
     )
@@ -164,19 +165,18 @@ def _refine_round(
     round_index: int,
     base_translation_step: float,
     base_rotation_step_rad: float,
+    support_expansion_level: int,
     prior_spec: CertifiedPriorSpec,
     max_coarse_receptor_atoms: int,
     retained_indices: jax.Array,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
     use_softened_coarse: bool = False,
 ) -> tuple[jax.Array, tuple[CertifiedOptimizerState, ...]]:
-    t_step = base_translation_step / (2**round_index)
-    r_step = base_rotation_step_rad / (2**round_index)
-
-    action_family = create_certified_action_family(
-        translation_step=t_step,
-        rotation_step_rad=r_step,
-        stencil_level=round_index,
+    action_family = create_roundwise_certified_action_family(
+        base_translation_step=base_translation_step,
+        base_rotation_step_rad=base_rotation_step_rad,
+        round_index=round_index,
+        support_expansion_level=support_expansion_level,
     )
 
     results = _refine_round_jit_core(
@@ -186,6 +186,7 @@ def _refine_round(
         ligand_radii=ligand_radii,
         target_error=target_error,
         coarse_target_error=coarse_target_error,
+        translation_step=action_family.translation_step,
         translation_deltas=action_family.translation_deltas,
         quaternion_deltas=action_family.quaternion_deltas,
         prior_spec=prior_spec,
@@ -281,6 +282,10 @@ def _refine_round(
     return next_coords, tuple(states)
 
 
+def _has_non_singleton_ambiguity(state: CertifiedOptimizerState) -> bool:
+    return int(np.count_nonzero(np.asarray(state.belief.ambiguity_mask))) > 1
+
+
 def refine_poses_certified(
     coords_batch: jax.Array,
     receptor_coords: jax.Array,
@@ -301,6 +306,7 @@ def refine_poses_certified(
         raise ValueError("n_rounds must be positive")
     current_coords = coords_batch
     history: list[tuple[CertifiedOptimizerState, ...]] = []
+    support_expansion_level = 0
     effective_prior_spec = (
         CertifiedPriorSpec(kind="uniform") if prior_spec is None else prior_spec
     )
@@ -331,6 +337,7 @@ def refine_poses_certified(
             round_index=round_index,
             base_translation_step=base_translation_step,
             base_rotation_step_rad=float(base_rotation_step_rad),
+            support_expansion_level=support_expansion_level,
             prior_spec=effective_prior_spec,
             max_coarse_receptor_atoms=max_coarse_receptor_atoms,
             retained_indices=retained_indices_jax,
@@ -341,6 +348,11 @@ def refine_poses_certified(
 
         if all(_noop_is_unique_admissible_action(s) for s in states):
             break
+
+        if any(_has_non_singleton_ambiguity(state) for state in states):
+            support_expansion_level += 1
+        else:
+            support_expansion_level = 0
 
     return current_coords, tuple(history)
 

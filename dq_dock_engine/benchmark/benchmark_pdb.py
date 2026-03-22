@@ -128,6 +128,7 @@ DEFAULT_BENCHMARK_CHARGE_METHOD = ChargeMethod.GASTEIGER
 DEFAULT_BENCHMARK_OPTIMIZER_BACKEND = OptimizerBackend.FORMAL
 DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY = FormalRoundStrategy.SINGLETON_HYBRID
 DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY = CertifiedScoringFamily.LJ_REALSPACE_EWALD
+DEFAULT_BENCHMARK_TOP_K_TO_OPTIMIZE = 20
 DEFAULT_BENCHMARK_USE_POCKET_GUIDED = True
 DEFAULT_BENCHMARK_USE_MULTI_STAGE = False
 DEFAULT_BENCHMARK_PROCESS_START_METHOD = "spawn"
@@ -718,6 +719,7 @@ class DQDockExecutionOptions:
     certified_scoring_family: CertifiedScoringFamily
     n_poses: int
     n_opt_steps: int
+    top_k_to_optimize: int
     box_size: float
     formal_round_strategy: FormalRoundStrategy
     use_multi_stage: bool
@@ -799,6 +801,7 @@ class BenchmarkState:
             n_complexes_requested=context.n_complexes_requested,
             n_poses=context.n_poses,
             n_opt_steps=context.n_opt_steps,
+            top_k_to_optimize=context.top_k_to_optimize,
             box_size=context.box_size,
             formal_round_strategy=context.formal_round_strategy,
             attempt_timeout_seconds=context.attempt_timeout_seconds,
@@ -1792,6 +1795,7 @@ def save_benchmark_results(
     n_complexes_requested: int,
     n_poses: int,
     n_opt_steps: int,
+    top_k_to_optimize: int,
     box_size: float,
     formal_round_strategy: FormalRoundStrategy,
     attempt_timeout_seconds: float | None,
@@ -1931,6 +1935,7 @@ def save_benchmark_results(
         "n_complexes_excluded": len(excluded_rows),
         "n_poses": n_poses,
         "n_opt_steps": n_opt_steps,
+        "top_k_to_optimize": top_k_to_optimize,
         "formal_round_strategy": formal_round_strategy.value,
         "attempt_timeout_seconds": attempt_timeout_seconds,
         "benchmark_pocket_radius_a": BENCHMARK_PROTOCOL.pocket_radius_a,
@@ -2078,6 +2083,8 @@ def run_dq_dock(
     ligand_elements: list[str] | tuple[str, ...] | None = None,
     receptor_elements: list[str] | tuple[str, ...] | None = None,
     n_opt_steps: int = 50,
+    top_k_to_optimize: int = DEFAULT_BENCHMARK_TOP_K_TO_OPTIMIZE,
+    use_rich_exact_rescoring: bool = True,
     max_retries: int = 6,
     optimizer_backend: "OptimizerBackend" = DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
     formal_round_strategy: FormalRoundStrategy = DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY,
@@ -2121,6 +2128,7 @@ def run_dq_dock(
         optimizer=optimizer_str,
         formal_round_strategy=formal_round_strategy,
         certified_scoring_family=certified_scoring_family,
+        use_rich_exact_rescoring=use_rich_exact_rescoring,
         target_error=0.001,
         min_energy_gap=0.0,
         use_external_scorer=False,
@@ -2232,7 +2240,7 @@ def run_dq_dock(
                 top_k=1,
                 optimize=True,
                 n_opt_steps=n_opt_steps,
-                top_k_to_optimize=1,
+                top_k_to_optimize=top_k_to_optimize,
                 include_native=True,
                 engine=engine,
                 use_multi_stage=use_multi_stage,
@@ -2467,6 +2475,8 @@ def run_dq_dock_benchmark_job(job: DQDockBenchmarkJob) -> DQDockBenchmarkJobResu
         precomputed_receptor_charges=job.precomputed_receptor_charges,
         n_poses=job.n_poses,
         n_opt_steps=job.n_opt_steps,
+        top_k_to_optimize=job.top_k_to_optimize,
+        use_rich_exact_rescoring=job.use_rich_exact_rescoring,
         use_multi_stage=job.use_multi_stage,
         use_pocket_guided=job.use_pocket_guided,
         ligand_elements=job.complex_entry.ligand_elements,
@@ -2671,6 +2681,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
             precomputed_receptor_charges=complex_entry.pocket_charges,
             n_poses=context.n_poses,
             n_opt_steps=context.n_opt_steps,
+            top_k_to_optimize=context.top_k_to_optimize,
             use_multi_stage=context.use_multi_stage,
             use_pocket_guided=context.use_pocket_guided,
             use_rich_exact_rescoring=context.use_rich_exact_rescoring,
@@ -3081,6 +3092,7 @@ def run_benchmark(
     charge_method: ChargeMethod = DEFAULT_BENCHMARK_CHARGE_METHOD,
     n_poses: int = 2000,
     n_opt_steps: int = 50,
+    top_k_to_optimize: int = DEFAULT_BENCHMARK_TOP_K_TO_OPTIMIZE,
     box_size: float = BENCHMARK_PROTOCOL.box_size_a,
     formal_round_strategy: FormalRoundStrategy = DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY,
     certified_scoring_family: CertifiedScoringFamily = DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
@@ -3231,6 +3243,7 @@ def run_benchmark(
         n_complexes_requested=selection.n_complexes_requested,
         n_poses=n_poses,
         n_opt_steps=n_opt_steps,
+        top_k_to_optimize=top_k_to_optimize,
         box_size=box_size,
         formal_round_strategy=formal_round_strategy,
         use_multi_stage=use_multi_stage,
@@ -3331,6 +3344,12 @@ if __name__ == "__main__":
         help="Number of optimization steps per pose",
     )
     parser.add_argument(
+        "--top_k_to_optimize",
+        type=int,
+        default=DEFAULT_BENCHMARK_TOP_K_TO_OPTIMIZE,
+        help="Number of certified survivors to optimize after pruning",
+    )
+    parser.add_argument(
         "--box-size",
         type=float,
         default=BENCHMARK_PROTOCOL.box_size_a,
@@ -3407,6 +3426,7 @@ if __name__ == "__main__":
         f"formal_round_strategy={DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY.value} "
         f"certified_scoring_family={DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY.value} "
         f"pocket_guided={DEFAULT_BENCHMARK_USE_POCKET_GUIDED} "
+        f"top_k_to_optimize={args.top_k_to_optimize} "
         f"workers={args.workers}",
         flush=True,
     )
@@ -3416,6 +3436,7 @@ if __name__ == "__main__":
         charge_method=DEFAULT_BENCHMARK_CHARGE_METHOD,
         n_poses=args.n_poses,
         n_opt_steps=args.n_opt_steps,
+        top_k_to_optimize=args.top_k_to_optimize,
         box_size=args.box_size,
         formal_round_strategy=DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY,
         certified_scoring_family=DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,

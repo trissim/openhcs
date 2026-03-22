@@ -132,9 +132,14 @@ class CertifiedActionFamily:
     translation_step: float
     rotation_step_rad: float
     stencil_level: int
+    support_shell_levels: tuple[int, ...]
 ```
 
 This is the runtime analogue of `SampledActionFamily`.
+
+`support_shell_levels` is the honest runtime marker for roundwise support
+expansion: a round may declare not just the current finest stencil, but also a
+deterministic finite union of carried-forward coarser shells.
 
 ### 3. Belief state
 
@@ -442,7 +447,27 @@ Run a fixed finite number of rounds:
 At each round:
 
 - rebuild the local family around the new current pose
+- if the previous round remained ambiguity-band dominated, widen the **declared
+  support** for the next round by carrying forward one or more coarser shells
 - repeat the certified admissible update rule
+
+### Support-capture gap and roundwise expansion
+
+The current Lean boundary is still:
+
+- certified pruning/selection is justified **within a declared finite support**
+- support capture itself is **not** yet globally certified
+
+So the honest runtime story for hard cases like `2j77` is:
+
+- a round declares a finite local support family
+- Lean-backed pruning/selection runs inside that family
+- persistent ambiguity is treated as evidence that the family may be too narrow
+- the **next** round declares a larger finite family by unioning in coarser
+  shells
+
+This is therefore **roundwise certified support expansion**, not a theorem that
+the optimizer already guarantees native-basin capture from the initial support.
 
 Termination:
 

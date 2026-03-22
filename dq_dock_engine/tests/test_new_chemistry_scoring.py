@@ -15,6 +15,7 @@ from dq_dock_engine.docking.scoring import (
     score_certified_contact_batch,
     score_certified_directional_hbond_batch,
     score_certified_lj_screened_coulomb_batch,
+    score_certified_polar_surrogate_batch,
     score_certified_rich_chemistry_batch,
     score_certified_screened_coulomb_batch,
 )
@@ -142,6 +143,77 @@ def test_new_chemistry_scoring_helpers_are_jit_safe() -> None:
     for value in outputs:
         arr = np.asarray(value)
         assert np.all(np.isfinite(arr))
+
+
+def test_polar_surrogate_is_attractive_negative_energy() -> None:
+    (
+        receptor_coords,
+        poses_coords,
+        _receptor_radii,
+        _ligand_radii,
+        _screened,
+        contact,
+        hbond,
+    ) = _toy_geometry()
+
+    contact_batch = score_certified_contact_batch(receptor_coords, poses_coords, contact)
+    hbond_batch = score_certified_directional_hbond_batch(
+        receptor_coords, poses_coords, hbond
+    )
+    polar_batch = score_certified_polar_surrogate_batch(
+        receptor_coords, poses_coords, contact, hbond
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(polar_batch.scores),
+        -(
+            np.asarray(contact_batch.scores)
+            + np.asarray(hbond_batch.scores)
+        ),
+    )
+    assert np.isclose(
+        float(polar_batch.error_bound),
+        float(contact_batch.error_bound + hbond_batch.error_bound),
+    )
+
+
+def test_rich_chemistry_composes_nonbonded_with_attractive_polar_energy() -> None:
+    (
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        screened,
+        contact,
+        hbond,
+    ) = _toy_geometry()
+
+    nonbonded_batch = score_certified_lj_screened_coulomb_batch(
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        screened,
+        target_error=0.001,
+    )
+    polar_batch = score_certified_polar_surrogate_batch(
+        receptor_coords, poses_coords, contact, hbond
+    )
+    rich_batch = score_certified_rich_chemistry_batch(
+        receptor_coords=receptor_coords,
+        poses_coords=poses_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_radii,
+        screened_coulomb=screened,
+        contact=contact,
+        directional_hbond=hbond,
+        target_error=0.001,
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(rich_batch.scores),
+        np.asarray(nonbonded_batch.scores) + np.asarray(polar_batch.scores),
+    )
 
 
 def test_build_directional_hbond_spec_handles_small_receptor_neighbor_sets() -> None:

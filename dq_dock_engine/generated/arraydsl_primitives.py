@@ -75,8 +75,15 @@ def noopBiasedProbabilityVectorLike(template, noop_mass):
 
 def topKWithTiesMask(utilities, k):
     """Generated wrapper for DecisionQuotient.Computation.ArrayDSL.topKWithTiesMask."""
-    strict_better = utilities[None, :] > utilities[:, None]
-    return jnp.sum(strict_better, axis=1) < k
+    n = utilities.shape[0]
+    if n == 0:
+        return jnp.zeros_like(utilities, dtype=bool)
+    if k <= 0:
+        return jnp.zeros_like(utilities, dtype=bool)
+    if k >= n:
+        return jnp.ones_like(utilities, dtype=bool)
+    kth_boundary = jnp.partition(utilities, n - k)[n - k]
+    return utilities >= kth_boundary
 
 
 def ambiguityBandMask(utilities, k, epsilon):
