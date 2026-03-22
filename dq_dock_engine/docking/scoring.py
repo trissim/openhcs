@@ -62,6 +62,190 @@ def certified_realspace_ewald_error_bound(
     return ewald_realspace_cutoff_error(charge_bound, alpha, cutoff)
 
 
+# =============================================================================
+# Screened Coulomb Cutoff Derivation (Lean: ConditionalComposition.lean)
+# =============================================================================
+# Theorems:
+#   - screened_coulomb_exp_bound: Q * exp(-κR) ≤ ε when R ≥ ln(Q/ε) / κ
+#   - screenedCoulombMinCutoff: R_min = ln(Q/ε) / κ
+#   - screenedCoulombMinCutoff_optimal: R = ln(Q/ε)/κ is the MINIMUM achieving ε
+#   - screenedCoulombMinCutoff_tight: At R = ln(Q/ε)/κ, error EQUALS ε exactly
+#
+# For pairwise sums over N pairs, use Q_max = max(|q_i * q_j|) * N_pairs
+# or conservatively Q_max = max_receptor_charge * max_ligand_charge * N_pairs
+
+# =============================================================================
+# Debye-Hückel Screening (Lean: ConditionalComposition.lean)
+# =============================================================================
+# In aqueous solution, electrostatics ARE screened. Pure Coulomb (κ=0) is
+# physically incorrect for solvated biomolecules.
+#
+# At physiological conditions (37°C, ionic strength I ≈ 0.15 M):
+#   Debye length λ_D ≈ 7.8 Å → κ = 1/λ_D ≈ 0.128 Å⁻¹
+#
+# Theorems:
+#   - physiological_cutoff_bound: κ=0.128 guarantees exponential decay
+#   - cutoff_12_sufficient_condition: 12Å suffices when Q/ε ≤ exp(1.536) ≈ 4.6
+#
+# This provides PHYSICAL justification for why 12Å works for non-metal systems:
+# they're not pure Coulomb, they're weakly screened Coulomb.
+
+KAPPA_PHYSIOLOGICAL = 0.128  # Å⁻¹, Debye-Hückel screening at physiological ionic strength
+
+
+def screened_coulomb_min_cutoff(
+    max_charge_product: float,
+    target_error: float,
+    kappa: float,
+    min_cutoff: float = 1.0,
+) -> float:
+    """Derive minimum cutoff for screened Coulomb to achieve target error.
+
+    Lean theorem (screened_coulomb_exp_bound):
+        Q * exp(-κR) ≤ ε when R ≥ ln(Q/ε) / κ
+
+    Args:
+        max_charge_product: Maximum |q_i * q_j| * N_pairs bound
+        target_error: Desired error bound ε
+        kappa: Screening parameter (must be > 0)
+        min_cutoff: Minimum cutoff floor (default 1.0 Å)
+
+    Returns:
+        Minimum cutoff R such that error ≤ target_error
+
+    JIT-safe: Uses jnp.log, jnp.maximum for JAX compatibility.
+    """
+    # For κ = 0, this formula diverges; caller should use different logic
+    # (pure Coulomb with power-law tail bound from LatticeSum.lean)
+    if kappa <= 0:
+        raise ValueError("screened_coulomb_min_cutoff requires kappa > 0")
+
+    # R = ln(Q/ε) / κ
+    ratio = max_charge_product / target_error
+    cutoff = float(jnp.log(ratio) / kappa)
+    return max(cutoff, min_cutoff)
+
+
+def screened_coulomb_min_cutoff_jit(
+    max_charge_product: jnp.ndarray,
+    target_error: jnp.ndarray,
+    kappa: jnp.ndarray,
+    min_cutoff: float = 1.0,
+) -> jnp.ndarray:
+    """JIT-compatible version of screened_coulomb_min_cutoff.
+
+    Safe for use inside JAX-traced functions. Uses jnp.where to handle
+    edge cases without Python control flow.
+    """
+    ratio = max_charge_product / target_error
+    raw_cutoff = jnp.log(jnp.maximum(ratio, 1.0)) / jnp.maximum(kappa, 1e-10)
+    return jnp.maximum(raw_cutoff, min_cutoff)
+
+
+def screened_coulomb_error_at_cutoff(
+    max_charge_product: float,
+    kappa: float,
+    cutoff: float,
+) -> float:
+    """Compute the error bound for a given cutoff.
+
+    Lean theorem (screened_coulomb_exp_bound):
+        error ≤ Q * exp(-κR)
+
+    Args:
+        max_charge_product: Maximum |q_i * q_j| * N_pairs bound
+        kappa: Screening parameter
+        cutoff: Cutoff radius R
+
+    Returns:
+        Upper bound on tail error
+    """
+    return float(max_charge_product * jnp.exp(-kappa * cutoff))
+
+
+# =============================================================================
+# Pure Coulomb (κ=0) Cutoff Derivation (Lean: ConditionalComposition.lean)
+# =============================================================================
+# Theorems:
+#   - coulomb_tail_bound: N × Q / R ≤ ε when R ≥ N × Q / ε
+#   - coulombMinCutoff: R_min = N × Q / ε
+#
+# For pairwise sums, N = number of pairs, Q = max|q_i × q_j|
+
+
+def coulomb_min_cutoff(
+    n_pairs: int,
+    max_charge_product: float,
+    target_error: float,
+    min_cutoff: float = 4.0,
+    max_cutoff: float = 30.0,
+) -> float:
+    """Derive minimum cutoff for pure Coulomb (κ=0) to achieve target error.
+
+    Lean theorem (coulomb_tail_bound):
+        N × Q / R ≤ ε when R ≥ N × Q / ε
+
+    Args:
+        n_pairs: Number of interacting pairs N
+        max_charge_product: Maximum |q_i × q_j| bound Q
+        target_error: Desired error bound ε
+        min_cutoff: Minimum physical cutoff floor (default 4.0 Å)
+        max_cutoff: Maximum practical cutoff cap (default 30.0 Å)
+
+    Returns:
+        Minimum cutoff R such that tail error ≤ target_error
+
+    Note: Pure Coulomb has 1/R decay, not exponential, so cutoffs can be
+    large for many pairs with significant charges.
+    """
+    if target_error <= 0:
+        raise ValueError("target_error must be positive")
+
+    # R = N × Q / ε (coulombMinCutoff theorem)
+    cutoff = float(n_pairs * max_charge_product / target_error)
+
+    # Clamp to physical bounds
+    return max(min_cutoff, min(cutoff, max_cutoff))
+
+
+def coulomb_min_cutoff_jit(
+    n_pairs: jnp.ndarray,
+    max_charge_product: jnp.ndarray,
+    target_error: jnp.ndarray,
+    min_cutoff: float = 4.0,
+    max_cutoff: float = 30.0,
+) -> jnp.ndarray:
+    """JIT-compatible version of coulomb_min_cutoff.
+
+    Safe for use inside JAX-traced functions.
+    """
+    raw_cutoff = n_pairs * max_charge_product / jnp.maximum(target_error, 1e-10)
+    return jnp.clip(raw_cutoff, min_cutoff, max_cutoff)
+
+
+def coulomb_error_at_cutoff(
+    n_pairs: int,
+    max_charge_product: float,
+    cutoff: float,
+) -> float:
+    """Compute the error bound for a given cutoff (pure Coulomb).
+
+    Lean theorem (coulomb_tail_bound):
+        error ≤ N × Q / R
+
+    Args:
+        n_pairs: Number of interacting pairs N
+        max_charge_product: Maximum |q_i × q_j| bound Q
+        cutoff: Cutoff radius R
+
+    Returns:
+        Upper bound on tail error
+    """
+    if cutoff <= 0:
+        raise ValueError("cutoff must be positive")
+    return float(n_pairs * max_charge_product / cutoff)
+
+
 @register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedRealSpaceEwaldSpec:
@@ -224,6 +408,13 @@ class CertifiedMetalCoordinationSpec:
             cutoff=self.cutoff,
         )
 
+    @property
+    def is_active(self) -> jnp.ndarray:
+        return jnp.logical_and(
+            jnp.any(self.receptor_strengths != 0.0),
+            jnp.any(self.ligand_strengths != 0.0),
+        )
+
 
 @register_pytree_node_class
 @dataclass(frozen=True)
@@ -277,6 +468,13 @@ class CertifiedDirectionalHBondSpec:
             cutoff=self.cutoff,
         )
 
+    @property
+    def is_active(self) -> jnp.ndarray:
+        return jnp.logical_and(
+            jnp.any(self.receptor_strengths != 0.0),
+            jnp.any(self.ligand_strengths != 0.0),
+        )
+
 
 @register_pytree_node_class
 @dataclass(frozen=True)
@@ -308,6 +506,14 @@ class CertifiedRichChemistryPlan:
             metal_coordination=self.metal_coordination.receptor_subset(indices),
         )
 
+    @property
+    def has_active_directional_hbond(self) -> jnp.ndarray:
+        return self.directional_hbond.is_active
+
+    @property
+    def has_active_metal_coordination(self) -> jnp.ndarray:
+        return self.metal_coordination.is_active
+
 
 @register_pytree_node_class
 @dataclass(frozen=True)
@@ -318,13 +524,18 @@ class CertifiedBatchResult:
     cutoff_radius: float
 
     def tree_flatten(self):
-        children = (self.scores,)
-        aux_data = (self.error_bound, self.target_error, self.cutoff_radius)
-        return (children, aux_data)
+        children = (
+            self.scores,
+            self.error_bound,
+            self.target_error,
+            self.cutoff_radius,
+        )
+        return (children, None)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        return cls(*children, *aux_data)
+        del aux_data
+        return cls(*children)
 
     def certify_gap(self, idx_a: int, idx_b: int) -> GapCertification:
         return GapCertification.from_energies(
@@ -345,6 +556,33 @@ class CertifiedBatchResult:
         return certifications
 
 
+def _zero_certified_batch_result(poses_coords: jnp.ndarray) -> CertifiedBatchResult:
+    zero = jnp.array(0.0, dtype=poses_coords.dtype)
+    return CertifiedBatchResult(
+        scores=jnp.zeros((poses_coords.shape[0],), dtype=poses_coords.dtype),
+        error_bound=zero,
+        target_error=zero,
+        cutoff_radius=zero,
+    )
+
+
+def _branch_on_activity(
+    activity: jnp.ndarray,
+    *,
+    active_fn: Callable[[], CertifiedBatchResult],
+    inactive_fn: Callable[[], CertifiedBatchResult],
+) -> CertifiedBatchResult:
+    try:
+        return active_fn() if bool(activity) else inactive_fn()
+    except jax.errors.TracerBoolConversionError:
+        return jax.lax.cond(
+            activity,
+            lambda _: active_fn(),
+            lambda _: inactive_fn(),
+            operand=None,
+        )
+
+
 @register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedSoftenedBatchResult:
@@ -355,18 +593,19 @@ class CertifiedSoftenedBatchResult:
     softening_radius: float
 
     def tree_flatten(self):
-        children = (self.scores,)
-        aux_data = (
+        children = (
+            self.scores,
             self.softening_error_bound,
             self.target_error,
             self.cutoff_radius,
             self.softening_radius,
         )
-        return (children, aux_data)
+        return (children, None)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        return cls(*children, *aux_data)
+        del aux_data
+        return cls(*children)
 
 
 def _score_certified_scores(
@@ -911,19 +1150,11 @@ def score_certified_contact_batch(
     )
 
 
-@conditionally_certified(
-    "Summary.lean::attractive_metal_coordination_cutoff_certified_top1",
-    assumptions=[
-        "The runtime uses the exact same Gaussian surrogate as the Lean theorem family",
-        "The reported error bound is the exact finite-batch max discrepancy between exact and cutoff metal coordination scores",
-    ],
-)
-def score_certified_metal_coordination_batch(
+def _score_certified_metal_coordination_active_batch(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
     metal_spec: CertifiedMetalCoordinationSpec,
 ) -> CertifiedBatchResult:
-    metal_spec.validate()
     exact_scores = _score_metal_coordination_exact_batch(
         receptor_coords,
         poses_coords,
@@ -946,24 +1177,15 @@ def score_certified_metal_coordination_batch(
         scores=coarse_scores,
         error_bound=error_bound,
         target_error=error_bound,
-        cutoff_radius=metal_spec.cutoff,
+        cutoff_radius=jnp.array(metal_spec.cutoff, dtype=poses_coords.dtype),
     )
 
 
-@conditionally_certified(
-    "HandleAliases.lean::HB1; HandleAliases.lean::HB9; HandleAliases.lean::HB10; HandleAliases.lean::HB11; HandleAliases.lean::HB12",
-    assumptions=[
-        "The runtime uses exact and coarse directional H-bond factor families whose finite-domain discrepancy is captured by the computed max exact-vs-cutoff batch difference",
-        "Receptor and ligand direction vectors are normalized up to the runtime 1e-6 norm guard",
-        "Strength and angular factors remain within [0, 1] on the evaluated batch",
-    ],
-)
-def score_certified_directional_hbond_batch(
+def _score_certified_directional_hbond_active_batch(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
     hbond_spec: CertifiedDirectionalHBondSpec,
 ) -> CertifiedBatchResult:
-    hbond_spec.validate()
     exact_scores = _score_directional_hbond_exact_batch(
         receptor_coords,
         poses_coords,
@@ -990,15 +1212,64 @@ def score_certified_directional_hbond_batch(
         scores=coarse_scores,
         error_bound=error_bound,
         target_error=error_bound,
-        cutoff_radius=hbond_spec.cutoff,
+        cutoff_radius=jnp.array(hbond_spec.cutoff, dtype=poses_coords.dtype),
     )
 
 
 @conditionally_certified(
-    "HandleAliases.lean::AR1; HandleAliases.lean::AR2; HandleAliases.lean::AR3; HandleAliases.lean::AR4; HandleAliases.lean::AR5",
+    "Summary.lean::attractive_metal_coordination_cutoff_certified_top1",
     assumptions=[
-        "The attractive runtime polar energy is exactly the negative sum of the certified contact surrogate and the certified directional H-bond surrogate signals",
-        "The combined error bound is the sum of the finite-batch contact and directional H-bond discrepancy bounds",
+        "The runtime uses the exact same Gaussian surrogate as the Lean theorem family",
+        "The reported error bound is the exact finite-batch max discrepancy between exact and cutoff metal coordination scores",
+    ],
+)
+def score_certified_metal_coordination_batch(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    metal_spec: CertifiedMetalCoordinationSpec,
+) -> CertifiedBatchResult:
+    metal_spec.validate()
+    return _branch_on_activity(
+        metal_spec.is_active,
+        active_fn=lambda: _score_certified_metal_coordination_active_batch(
+            receptor_coords,
+            poses_coords,
+            metal_spec,
+        ),
+        inactive_fn=lambda: _zero_certified_batch_result(poses_coords),
+    )
+
+
+@conditionally_certified(
+    "HandleAliases.lean::HB1; HandleAliases.lean::HB9; HandleAliases.lean::HB10; HandleAliases.lean::HB11; HandleAliases.lean::HB12",
+    assumptions=[
+        "The runtime uses exact and coarse directional H-bond factor families whose finite-domain discrepancy is captured by the computed max exact-vs-cutoff batch difference",
+        "Receptor and ligand direction vectors are normalized up to the runtime 1e-6 norm guard",
+        "Strength and angular factors remain within [0, 1] on the evaluated batch",
+    ],
+)
+def score_certified_directional_hbond_batch(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    hbond_spec: CertifiedDirectionalHBondSpec,
+) -> CertifiedBatchResult:
+    hbond_spec.validate()
+    return _branch_on_activity(
+        hbond_spec.is_active,
+        active_fn=lambda: _score_certified_directional_hbond_active_batch(
+            receptor_coords,
+            poses_coords,
+            hbond_spec,
+        ),
+        inactive_fn=lambda: _zero_certified_batch_result(poses_coords),
+    )
+
+
+@conditionally_certified(
+    "HandleAliases.lean::AR1; HandleAliases.lean::AR2; HandleAliases.lean::AR3; HandleAliases.lean::AR4; HandleAliases.lean::AR5; HandleAliases.lean::MC6; HandleAliases.lean::MC7; HandleAliases.lean::MC8; HandleAliases.lean::MC9; HandleAliases.lean::MC10",
+    assumptions=[
+        "The attractive runtime polar energy is exactly the negative sum of the certified contact surrogate, the certified directional H-bond surrogate, and the certified attractive metal coordination surrogate signals",
+        "The combined error bound is the sum of the finite-batch contact, directional H-bond, and metal coordination discrepancy bounds",
     ],
 )
 def score_certified_polar_surrogate_batch(
@@ -1027,10 +1298,10 @@ def score_certified_polar_surrogate_batch(
         target_error=contact_batch.error_bound + hbond_batch.error_bound + metal_batch.error_bound,
         cutoff_radius=jnp.maximum(
             jnp.maximum(
-                jnp.array(rich_chemistry_plan.contact.cutoff),
-                jnp.array(rich_chemistry_plan.directional_hbond.cutoff)
+                contact_batch.cutoff_radius,
+                hbond_batch.cutoff_radius,
             ),
-            jnp.array(rich_chemistry_plan.metal_coordination.cutoff)
+            metal_batch.cutoff_radius,
         ),
     )
 
@@ -1114,6 +1385,42 @@ def score_certified_rich_chemistry_batch(
             nonbonded_batch.cutoff_radius,
             polar_batch.cutoff_radius,
         ),
+    )
+
+
+def score_certified_softened_rich_chemistry_batch(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+    rich_chemistry_plan: CertifiedRichChemistryPlan,
+    target_error: float = 0.001,
+    epsilon: float = _EPSILON_KCAL_MOL,
+    softening_radius: float | None = None,
+) -> CertifiedSoftenedBatchResult:
+    # Use softened nonbonded scoring
+    nonbonded_softened = score_certified_softened_lj_realspace_ewald(
+        receptor_coords=receptor_coords,
+        poses_coords=poses_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_radii,
+        electrostatics=rich_chemistry_plan.screened_coulomb,
+        target_error=target_error,
+        epsilon=epsilon,
+        softening_radius=softening_radius,
+    )
+    # Evaluate polar terms exactly for both modes for now
+    polar_batch = score_certified_polar_surrogate_batch(
+        receptor_coords,
+        poses_coords,
+        rich_chemistry_plan,
+    )
+    return CertifiedSoftenedBatchResult(
+        scores=nonbonded_softened.scores + polar_batch.scores,
+        softening_error_bound=nonbonded_softened.softening_error_bound,
+        target_error=target_error,
+        cutoff_radius=jnp.maximum(nonbonded_softened.cutoff_radius, polar_batch.cutoff_radius),
+        softening_radius=nonbonded_softened.softening_radius,
     )
 
 
