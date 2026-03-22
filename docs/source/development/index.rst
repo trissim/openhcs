@@ -15,6 +15,7 @@ Systematic approaches for OpenHCS development workflows.
    architectural_refactoring_patterns
    refactoring_principles
    respecting_codebase_architecture
+   agent_refactoring_crash_course
    lean_jax_python_bridge_framework
    literal_includes_audit_methodology
    compositional_commit_message_generation
