@@ -607,6 +607,96 @@ noncomputable def attractiveDirectionalHBond_resolutionControlled_optimizer_witn
     radialCont donorCont acceptorCont radialGrid donorGrid acceptorGrid
     lift stateError Lr Ld La res sGrid hApprox hL hRes).toOptimizerWitness
 
+/-
+  Flip distinguishability: H-bond donors break 180° orientation degeneracy.
+
+  The Python `_branch_scores` in `chemistry_runtime.py` computes:
+
+      donor_angle  = jnp.clip(dot(donor_vec, unit_to_acceptor), 0, 1)
+      acceptor_angle = jnp.clip(dot(acceptor_vec, -unit_to_acceptor), 0, 1)
+
+  When the ligand is rotated 180°, the donor vector is negated relative to
+  the donor→acceptor unit vector, so cos θ → −cos θ ≤ 0 and the clipped
+  angle collapses to 0.  The theorems below certify that any native
+  interaction with strictly positive (radial, donor, acceptor) factors
+  strictly dominates the corresponding flipped interaction where the donor
+  has been silenced.
+
+  This is the first step toward the `flip_distinguishable_if_hbond_active`
+  theorem sketched in `docs/failure_analysis/native_basin_proof_tractability.md`.
+  The geometric claim — that a 180° flip negates the donor cosine — is
+  stated in the comments as the physical interpretation; the proofs here
+  establish the algebraic consequences once that silencing has occurred.
+-/
+
+/-- When the donor angle is zero (donor silent after flip), the H-bond score
+    is zero regardless of the radial and acceptor factors.
+
+    Direct consequence of the multiplicative structure
+    `directionalHBondScore r 0 a = r * 0 * a = 0`. -/
+theorem directionalHBondScore_zero_of_silent_donor
+    (r a : ℝ) : directionalHBondScore r 0 a = 0 := by
+  unfold directionalHBondScore; ring
+
+/-- Symmetric lemma: a zero acceptor angle also silences the score.
+    Useful for the analogous proof on the acceptor side. -/
+theorem directionalHBondScore_zero_of_silent_acceptor
+    (r d : ℝ) : directionalHBondScore r d 0 = 0 := by
+  unfold directionalHBondScore; ring
+
+/-- When all three factors are strictly positive, the H-bond score is
+    strictly positive. -/
+theorem directionalHBondScore_pos_of_active
+    {r d a : ℝ} (hr : 0 < r) (hd : 0 < d) (ha : 0 < a) :
+    0 < directionalHBondScore r d a := by
+  unfold directionalHBondScore
+  exact mul_pos (mul_pos hr hd) ha
+
+/-- **Core flip-distinguishability theorem.**
+
+    A native donor–acceptor pair with `r > 0`, `d > 0`, `a > 0` strictly
+    dominates any flipped-pose interaction where the donor angle has been
+    clipped to zero.
+
+    Physical reading: a ligand N–H donor correctly aligned with a receptor
+    acceptor in the native orientation (donorAngle > 0) points *away* from
+    that acceptor after a 180° rigid-body rotation
+    (cos θ → −cos θ ≤ 0 → clip = 0).  The native score `r·d·a > 0`
+    strictly exceeds the flipped score `r'·0·a' = 0`.
+
+    Prerequisite for the full `flip_distinguishable_if_hbond_active` proof:
+    once the Python H-bond perception assigns non-zero donor/acceptor
+    strengths to the correct atom roles (Steps 1–3 of the integration plan),
+    this theorem certifies that those strengths break the orientation
+    degeneracy that the pi-stacking `|cos θ|` term cannot. -/
+theorem hbond_distinguishes_flip
+    {r_nat d_nat a_nat r_flip a_flip : ℝ}
+    (hr : 0 < r_nat) (hd : 0 < d_nat) (ha : 0 < a_nat) :
+    directionalHBondScore r_flip 0 a_flip
+      < directionalHBondScore r_nat d_nat a_nat := by
+  rw [directionalHBondScore_zero_of_silent_donor]
+  exact directionalHBondScore_pos_of_active hr hd ha
+
+/-- Attractive-utility form of flip distinguishability.
+
+    The `attractiveDirectionalHBondDecisionProblem` negates the score so that
+    more binding energy maps to a lower (more negative) utility.  This theorem
+    shows that the native pose achieves a strictly more negative attractive
+    utility than the flipped pose whenever the native interaction is active.
+
+    Connects directly to `attractiveDirectionalHBondDecisionProblem` which
+    applies `negDecisionProblem` to the raw `directionalHBondDecisionProblem`. -/
+theorem attractive_hbond_native_beats_flipped
+    {r_nat d_nat a_nat r_flip a_flip : ℝ}
+    (hr : 0 < r_nat) (hd : 0 < d_nat) (ha : 0 < a_nat) :
+    -(directionalHBondScore r_nat d_nat a_nat)
+      < -(directionalHBondScore r_flip 0 a_flip) := by
+  have h0 : directionalHBondScore r_flip 0 a_flip = 0 :=
+    directionalHBondScore_zero_of_silent_donor r_flip a_flip
+  have hpos : 0 < directionalHBondScore r_nat d_nat a_nat :=
+    directionalHBondScore_pos_of_active hr hd ha
+  linarith
+
 end DirectionalHBondApproximation
 end Tractability
 end DecisionQuotient
