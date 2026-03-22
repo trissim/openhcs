@@ -5,15 +5,38 @@ Ties together pure JAX batched generation and Enum-dispatched scoring
 with multi-stage filtering and pocket-guided sampling.
 """
 
-from dataclasses import dataclass
+import inspect
+from abc import ABC, abstractmethod
+from dataclasses import (
+    MISSING,
+    dataclass,
+    field,
+    fields as dataclass_fields,
+    is_dataclass,
+    replace,
+)
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    ClassVar,
+    Generic,
+    List,
+    Optional,
+    Self,
+    TypeVar,
+    Union,
+    cast,
+)
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from dq_dock_engine.docking.core import (
+    BindingSite,
+    BlindDockingPlan,
     CertifiedBindingSite,
     CertifiedBlindDockingResult,
     CertifiedBlindDockingPlan,
@@ -79,26 +102,678 @@ class CertifiedPoseGeneration:
     family: "CertifiedGlobalActionFamily | None"
 
 
-@dataclass(frozen=True)
-class CertifiedPocketPreparation:
+BindingSiteT = TypeVar("BindingSiteT", bound=BindingSite)
+DetectedPocketT = TypeVar("DetectedPocketT")
+PlanT = TypeVar("PlanT", bound=BlindDockingPlan)
+
+
+@dataclass(frozen=True, kw_only=True)
+class BlindDockingPreparation:
     protein_coords: jnp.ndarray
     receptor_radii: jnp.ndarray
     receptor_elements: tuple[str, ...] | None
     precomputed_receptor_charges: jnp.ndarray | None
     box: DockingBox
+
+
+@dataclass(frozen=True, kw_only=True)
+class CertifiedPocketPreparation(BlindDockingPreparation):
     detected_pocket: CertifiedDetectedPocket | None
     plan: CertifiedBlindDockingPlan
 
 
-@dataclass(frozen=True)
-class GeometricPocketPreparation:
+@dataclass(frozen=True, kw_only=True)
+class GeometricPocketPreparation(BlindDockingPreparation):
+    detected_pocket: GeometricDetectedPocket | None
+    plan: GeometricBlindDockingPlan
+
+
+@dataclass(frozen=True, kw_only=True)
+class DockingRequestBase:
+    protein_coords: jnp.ndarray
+    receptor_radii: jnp.ndarray
+    ligand_ctx: LigandContext
+    box: DockingBox
+    n_poses: int
+    key: jax.Array
+    receptor_elements: tuple[str, ...] | None = None
+    charge_method: ChargeMethod | None = None
+    receptor_file: str | Path | None = None
+    precomputed_receptor_charges: jnp.ndarray | None = None
+    config: DockingConfig | None = None
+    top_k: int = 10
+    optimize: bool = True
+    n_opt_steps: int = 50
+    top_k_to_optimize: int = 200
+    include_native: bool = False
+    scoring_kwargs: dict[str, object] = field(default_factory=dict)
+
+    def with_updates(self, **changes: object) -> Self:
+        return replace(self, **changes)
+
+    @property
+    def normalized_key(self) -> jax.Array:
+        return _normalize_sampling_key(self.key)
+
+    @property
+    def resolved_target_error(self) -> float:
+        if self.config is None or self.config.target_error <= 0:
+            return 0.001
+        return self.config.target_error
+
+    @property
+    def target_error(self) -> float:
+        return self.resolved_target_error
+
+    @property
+    def certified_binding_site(self) -> CertifiedBindingSite | None:
+        return None if self.config is None else self.config.certified_binding_site
+
+    @property
+    def coarse_target_error(self) -> float:
+        return 0.004 if self.config is None else self.config.coarse_target_error
+
+    @property
+    def adaptive_coarse_target_errors(self) -> tuple[float, ...] | None:
+        return (
+            None if self.config is None else self.config.adaptive_coarse_target_errors
+        )
+
+    @property
+    def use_softened_coarse_prefilter(self) -> bool:
+        return (
+            False if self.config is None else self.config.use_softened_coarse_prefilter
+        )
+
+    @property
+    def receptor_coords(self) -> jnp.ndarray:
+        return self.protein_coords
+
+    @property
+    def ligand_radii(self) -> jnp.ndarray:
+        return self.ligand_ctx.base_radii
+
+
+@dataclass(frozen=True, kw_only=True)
+class BlindDockingRequest(DockingRequestBase):
+    pass
+
+
+@dataclass(frozen=True, kw_only=True)
+class CertifiedBlindDockingRequest(BlindDockingRequest):
+    pass
+
+
+@dataclass(frozen=True, kw_only=True)
+class RoutedDockingRequest(DockingRequestBase):
+    engine: ScoringEngine = ScoringEngine.INTERNAL_LJ
+
+
+@dataclass(frozen=True, kw_only=True)
+class GeometricBlindDockingRequest(RoutedDockingRequest):
+    pass
+
+
+@dataclass(frozen=True, kw_only=True)
+class BlindDockingPreparationRequest:
     protein_coords: jnp.ndarray
     receptor_radii: jnp.ndarray
     receptor_elements: tuple[str, ...] | None
     precomputed_receptor_charges: jnp.ndarray | None
+    ligand_ctx: LigandContext
     box: DockingBox
-    detected_pocket: GeometricDetectedPocket | None
-    plan: GeometricBlindDockingPlan
+    target_error: float
+
+
+@dataclass(frozen=True, kw_only=True)
+class CertifiedPreparationRequest(BlindDockingPreparationRequest):
+    explicit_binding_site: CertifiedBindingSite | None = None
+    coarse_target_error: float = 0.004
+    adaptive_coarse_target_errors: tuple[float, ...] | None = None
+    use_softened_coarse_prefilter: bool = False
+
+    @classmethod
+    def from_request(
+        cls, request: "PipelineDockingRequest | CertifiedBlindDockingRequest"
+    ) -> "CertifiedPreparationRequest":
+        return derive_request(
+            cls,
+            request,
+            target_error=request.target_error,
+            explicit_binding_site=request.certified_binding_site,
+            coarse_target_error=request.coarse_target_error,
+            adaptive_coarse_target_errors=request.adaptive_coarse_target_errors,
+            use_softened_coarse_prefilter=request.use_softened_coarse_prefilter,
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class GeometricPreparationRequest(BlindDockingPreparationRequest):
+    @classmethod
+    def from_request(
+        cls, request: "PipelineDockingRequest | GeometricBlindDockingRequest"
+    ) -> "GeometricPreparationRequest":
+        return derive_request(
+            cls,
+            request,
+            target_error=request.target_error,
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PipelineDockingRequest(RoutedDockingRequest):
+    use_pocket_guided: bool = True
+    use_multi_stage: bool = False
+    certified_pocket_prep: CertifiedPocketPreparation | None = None
+
+    @property
+    def is_certified_mode(self) -> bool:
+        return self.config is not None and self.config.mode == DockingMode.CERTIFIED
+
+    @property
+    def requires_fixed_size_padding(self) -> bool:
+        return self.config is not None and self.config.mode != DockingMode.CERTIFIED
+
+    @property
+    def certified_scoring_family(self) -> CertifiedScoringFamily | None:
+        return None if self.config is None else self.config.certified_scoring_family
+
+    @property
+    def effective_engine(self) -> ScoringEngine:
+        if not self.is_certified_mode:
+            return self.engine
+        if self.certified_scoring_family == CertifiedScoringFamily.LJ:
+            return ScoringEngine.CERTIFIED_LJ
+        return ScoringEngine.CERTIFIED_LJ_REALSPACE_EWALD
+
+    @property
+    def formal_backend(self) -> OptimizerBackend:
+        return (
+            self.config.optimizer_backend
+            if self.config is not None
+            else OptimizerBackend.GRADIENT
+        )
+
+    @property
+    def formal_round_strategy(self) -> FormalRoundStrategy:
+        return (
+            self.config.formal_round_strategy
+            if self.config is not None
+            else FormalRoundStrategy.SINGLETON_HYBRID
+        )
+
+    def with_scoring_override(
+        self, **scoring_overrides: object
+    ) -> "PipelineDockingRequest":
+        return self.with_updates(
+            scoring_kwargs=dict(self.scoring_kwargs) | dict(scoring_overrides)
+        )
+
+    def with_preparation(
+        self,
+        prep: BlindDockingPreparation,
+        *,
+        certified_pocket_prep: CertifiedPocketPreparation | None = None,
+    ) -> "PipelineDockingRequest":
+        return self.with_updates(
+            protein_coords=prep.protein_coords,
+            receptor_radii=prep.receptor_radii,
+            receptor_elements=prep.receptor_elements,
+            precomputed_receptor_charges=prep.precomputed_receptor_charges,
+            box=prep.box,
+            certified_pocket_prep=certified_pocket_prep,
+        )
+
+    def with_fixed_size_padding(self) -> "PipelineDockingRequest":
+        if not self.requires_fixed_size_padding:
+            return self
+        assert self.config is not None
+        padded_receptor_charges = self.precomputed_receptor_charges
+        if padded_receptor_charges is not None:
+            padded_receptor_charges = _pad_to_size(
+                padded_receptor_charges,
+                self.config.max_receptor_atoms,
+                axis=0,
+                value=0.0,
+            )
+        padded_ligand_elements = _pad_tuple_to_size(
+            self.ligand_ctx.elements,
+            self.config.max_ligand_atoms,
+            value="C",
+        )
+        padded_ligand_charges = None
+        if self.ligand_ctx.charges is not None:
+            padded_ligand_charges = _pad_to_size(
+                self.ligand_ctx.charges,
+                self.config.max_ligand_atoms,
+                axis=0,
+                value=0.0,
+            )
+        return self.with_updates(
+            protein_coords=_pad_to_size(
+                self.protein_coords,
+                self.config.max_receptor_atoms,
+                axis=0,
+                value=1e4,
+            ),
+            receptor_radii=_pad_to_size(
+                self.receptor_radii,
+                self.config.max_receptor_atoms,
+                axis=0,
+                value=0.0,
+            ),
+            receptor_elements=_pad_tuple_to_size(
+                self.receptor_elements,
+                self.config.max_receptor_atoms,
+                value="C",
+            ),
+            precomputed_receptor_charges=padded_receptor_charges,
+            ligand_ctx=LigandContext(
+                base_coords=_pad_to_size(
+                    self.ligand_ctx.base_coords,
+                    self.config.max_ligand_atoms,
+                    axis=0,
+                    value=1e4,
+                ),
+                base_radii=_pad_to_size(
+                    self.ligand_ctx.base_radii,
+                    self.config.max_ligand_atoms,
+                    axis=0,
+                    value=0.0,
+                ),
+                elements=()
+                if padded_ligand_elements is None
+                else padded_ligand_elements,
+                charges=padded_ligand_charges,
+                center_of_mass=self.ligand_ctx.center_of_mass,
+            ),
+        )
+
+
+class RequestMatchBase:
+    @classmethod
+    def matches_request(cls, request: PipelineDockingRequest) -> bool:
+        del request
+        return True
+
+
+class CertifiedModeMatch(RequestMatchBase):
+    @classmethod
+    def matches_request(cls, request: PipelineDockingRequest) -> bool:
+        return super().matches_request(request) and request.is_certified_mode
+
+
+class NonCertifiedModeMatch(RequestMatchBase):
+    @classmethod
+    def matches_request(cls, request: PipelineDockingRequest) -> bool:
+        return super().matches_request(request) and not request.is_certified_mode
+
+
+class GuidedSamplingMatch(RequestMatchBase):
+    @classmethod
+    def matches_request(cls, request: PipelineDockingRequest) -> bool:
+        return super().matches_request(request) and request.use_pocket_guided
+
+
+class BoxSamplingMatch(RequestMatchBase):
+    @classmethod
+    def matches_request(cls, request: PipelineDockingRequest) -> bool:
+        return super().matches_request(request) and not request.use_pocket_guided
+
+
+class DirectScoringMatch(RequestMatchBase):
+    @classmethod
+    def matches_request(cls, request: PipelineDockingRequest) -> bool:
+        return super().matches_request(request) and not request.use_multi_stage
+
+
+class MultiStageScoringMatch(RequestMatchBase):
+    @classmethod
+    def matches_request(cls, request: PipelineDockingRequest) -> bool:
+        return super().matches_request(request) and request.use_multi_stage
+
+
+class CertifiedPreparationMixin:
+    def prepare(self) -> "PreparedCertifiedDirectPipelineRequest":
+        request = cast(Any, self)
+        prep = request.certified_pocket_prep
+        if prep is None:
+            prep = _prepare_certified_blind_docking(
+                CertifiedPreparationRequest.from_request(request)
+            )
+        return derive_request(
+            PreparedCertifiedDirectPipelineRequest,
+            request.with_preparation(prep, certified_pocket_prep=prep),
+            certified_pocket_prep=prep,
+        )
+
+
+class GeometricPreparationMixin:
+    def prepare(self) -> "PreparedGeometricPipelineRequest":
+        request = cast(Any, self)
+        prep = _prepare_geometric_blind_docking(
+            GeometricPreparationRequest.from_request(request)
+        )
+        return derive_request(
+            PreparedGeometricPipelineRequest,
+            request.with_preparation(prep),
+            geometric_pocket_prep=prep,
+            sampling_plan=derive_geometric_sampling_plan(prep),
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class NominalPipelineDockingRequest(RequestMatchBase, PipelineDockingRequest):
+    route_type_name: ClassVar[str | None] = None
+    _registered_types: ClassVar[list[type["NominalPipelineDockingRequest"]]] = []
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls.__dict__.get("route_type_name") is not None:
+            cls._registered_types.append(cls)
+
+    @classmethod
+    def from_request(
+        cls, request: PipelineDockingRequest
+    ) -> "NominalPipelineDockingRequest":
+        matches = [
+            candidate
+            for candidate in cls._registered_types
+            if candidate.matches_request(request)
+        ]
+        if not matches:
+            raise ValueError(
+                "CERTIFIED mode does not support the heuristic multi-stage scoring pipeline."
+            )
+        if len(matches) != 1:
+            raise TypeError(
+                f"Ambiguous nominal pipeline request refinement for {type(request).__name__}: {[candidate.__name__ for candidate in matches]}"
+            )
+        return derive_request(matches[0], request)
+
+    def create_route(self) -> "PipelineRoute":
+        if self.route_type_name is None:
+            raise TypeError(
+                f"Nominal request type {type(self).__name__} does not declare a route type."
+            )
+        return cast(type[PipelineRoute], globals()[self.route_type_name])()
+
+
+@dataclass(frozen=True, kw_only=True)
+class DirectPipelineDockingRequest(DirectScoringMatch, NominalPipelineDockingRequest):
+    use_multi_stage: bool = False
+
+
+@dataclass(frozen=True, kw_only=True)
+class MultiStagePipelineDockingRequest(
+    MultiStageScoringMatch, NominalPipelineDockingRequest
+):
+    use_multi_stage: bool = True
+    charge_method: ChargeMethod | None = None
+
+    def __post_init__(self) -> None:
+        _require_present_fields(self, "charge_method")
+
+
+@dataclass(frozen=True, kw_only=True)
+class CertifiedDirectPipelineRequest(
+    CertifiedPreparationMixin,
+    CertifiedModeMatch,
+    DirectPipelineDockingRequest,
+):
+    route_type_name: ClassVar[str] = "CertifiedPipelineRoute"
+    use_pocket_guided: bool = True
+
+
+@dataclass(frozen=True, kw_only=True)
+class GeometricDirectPipelineRequest(
+    GeometricPreparationMixin,
+    GuidedSamplingMatch,
+    NonCertifiedModeMatch,
+    DirectPipelineDockingRequest,
+):
+    route_type_name: ClassVar[str] = "GeometricPocketRoute"
+    use_pocket_guided: bool = True
+
+
+@dataclass(frozen=True, kw_only=True)
+class BoxDirectPipelineRequest(
+    BoxSamplingMatch,
+    NonCertifiedModeMatch,
+    DirectPipelineDockingRequest,
+):
+    route_type_name: ClassVar[str] = "BoxSamplingRoute"
+    use_pocket_guided: bool = False
+
+
+@dataclass(frozen=True, kw_only=True)
+class GeometricMultiStagePipelineRequest(
+    GeometricPreparationMixin,
+    GuidedSamplingMatch,
+    NonCertifiedModeMatch,
+    MultiStagePipelineDockingRequest,
+):
+    route_type_name: ClassVar[str] = "GeometricMultiStageRoute"
+    use_pocket_guided: bool = True
+
+
+@dataclass(frozen=True, kw_only=True)
+class BoxMultiStagePipelineRequest(
+    BoxSamplingMatch,
+    NonCertifiedModeMatch,
+    MultiStagePipelineDockingRequest,
+):
+    route_type_name: ClassVar[str] = "BoxMultiStageRoute"
+    use_pocket_guided: bool = False
+
+
+def _require_present_fields(instance: object, *field_names: str) -> None:
+    missing = [name for name in field_names if getattr(instance, name) is None]
+    if missing:
+        raise ValueError(
+            f"{type(instance).__name__} requires non-null fields: {', '.join(missing)}"
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PreparedCertifiedDirectPipelineRequest(CertifiedDirectPipelineRequest):
+    certified_pocket_prep: CertifiedPocketPreparation | None = None
+
+    def __post_init__(self) -> None:
+        _require_present_fields(self, "certified_pocket_prep")
+
+    def prepare(self) -> "PreparedCertifiedDirectPipelineRequest":
+        return self
+
+
+class GeometricSamplingPlan(ABC):
+    @abstractmethod
+    def sample(
+        self, request: "PreparedGeometricPipelineRequest"
+    ) -> tuple[jax.Array, PoseVector]:
+        """Sample a pose batch for the prepared geometric request."""
+
+
+class DerivedSamplingPlan(GeometricSamplingPlan, ABC):
+    @property
+    @abstractmethod
+    def sampler(self) -> Callable[..., tuple[jax.Array, PoseVector]]:
+        """Concrete sampler function."""
+
+    def sample(
+        self, request: "PreparedGeometricPipelineRequest"
+    ) -> tuple[jax.Array, PoseVector]:
+        return call_with_derived_kwargs(
+            self.sampler,
+            request,
+            aliases=None,
+            **self.sampling_kwargs(),
+        )
+
+    def sampling_kwargs(self) -> dict[str, object]:
+        return {}
+
+
+@dataclass(frozen=True, kw_only=True)
+class PreparedGeometricPipelineRequest(PipelineDockingRequest):
+    geometric_pocket_prep: GeometricPocketPreparation
+    sampling_plan: GeometricSamplingPlan
+
+    def prepare(self) -> "PreparedGeometricPipelineRequest":
+        return self
+
+    def sample_pose_batch(self) -> tuple[jax.Array, PoseVector]:
+        return self.sampling_plan.sample(self)
+
+
+@dataclass(frozen=True)
+class PocketGuidedSamplingPlan(DerivedSamplingPlan):
+    geometric_detected_pocket: GeometricDetectedPocket
+
+    @property
+    def sampler(self) -> Callable[..., tuple[jax.Array, PoseVector]]:
+        return _sample_geometric_pocket_guided_pose_vectors
+
+    def sampling_kwargs(self) -> dict[str, object]:
+        return {"geometric_detected_pocket": self.geometric_detected_pocket}
+
+
+@dataclass(frozen=True)
+class BoxFallbackSamplingPlan(DerivedSamplingPlan):
+    @property
+    def sampler(self) -> Callable[..., tuple[jax.Array, PoseVector]]:
+        return _sample_box_guided_pose_vectors
+
+
+def derive_geometric_sampling_plan(
+    prep: GeometricPocketPreparation,
+) -> GeometricSamplingPlan:
+    if prep.detected_pocket is None:
+        return BoxFallbackSamplingPlan()
+    return PocketGuidedSamplingPlan(geometric_detected_pocket=prep.detected_pocket)
+
+
+RequestTypeT = TypeVar("RequestTypeT")
+
+
+def derive_request_kwargs(
+    request_type: type[RequestTypeT],
+    source: object | dict[str, Any],
+    /,
+    **overrides: Any,
+) -> dict[str, Any]:
+    if isinstance(source, dict):
+        source_values = source
+    elif is_dataclass(source):
+        source_values = {
+            field.name: getattr(source, field.name)
+            for field in dataclass_fields(source)
+        }
+    else:
+        raise TypeError(
+            f"Cannot derive {request_type.__name__} from non-dataclass source {type(source).__name__}."
+        )
+    derived = {
+        field.name: source_values[field.name]
+        for field in dataclass_fields(cast(Any, request_type))
+        if field.init and field.name in source_values
+    }
+    derived.update(overrides)
+    return derived
+
+
+def derive_request(
+    request_type: type[RequestTypeT],
+    source: object | dict[str, Any],
+    /,
+    **overrides: Any,
+) -> RequestTypeT:
+    return request_type(**derive_request_kwargs(request_type, source, **overrides))
+
+
+def derive_callable_kwargs(
+    func: Callable[..., Any],
+    source: object | dict[str, Any],
+    /,
+    *,
+    aliases: dict[str, str] | None = None,
+    **overrides: Any,
+) -> dict[str, Any]:
+    alias_map = {} if aliases is None else aliases
+    signature = inspect.signature(func)
+    if isinstance(source, dict):
+        source_values = source
+    elif is_dataclass(source):
+        source_values = {
+            field.name: getattr(source, field.name)
+            for field in dataclass_fields(source)
+        }
+    else:
+        source_values = None
+    kwargs: dict[str, Any] = {}
+    accepts_var_keyword = False
+    for name, parameter in signature.parameters.items():
+        if parameter.kind in (inspect.Parameter.VAR_POSITIONAL,):
+            continue
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            accepts_var_keyword = True
+            continue
+        if name in overrides:
+            kwargs[name] = overrides[name]
+            continue
+        source_name = alias_map.get(name, name)
+        if source_values is not None and source_name in source_values:
+            kwargs[name] = source_values[source_name]
+            continue
+        kwargs[name] = getattr(source, source_name)
+    if accepts_var_keyword:
+        for name, value in overrides.items():
+            if name not in kwargs:
+                kwargs[name] = value
+    return kwargs
+
+
+def call_with_derived_kwargs(
+    func: Callable[..., Any],
+    source: object | dict[str, Any],
+    /,
+    *,
+    aliases: dict[str, str] | None = None,
+    **overrides: Any,
+) -> Any:
+    return func(**derive_callable_kwargs(func, source, aliases=aliases, **overrides))
+
+
+def resolve_request_electrostatics(
+    request: RoutedDockingRequest,
+    *,
+    engine: ScoringEngine | None = None,
+) -> CertifiedRealSpaceEwaldSpec | None:
+    return call_with_derived_kwargs(
+        _resolve_route_scoring_electrostatics,
+        request,
+        engine=request.engine if engine is None else engine,
+    )
+
+
+def derive_route_scoring_kwargs(
+    request: RoutedDockingRequest,
+    *,
+    poses_coords: jnp.ndarray,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None,
+    engine: ScoringEngine | None = None,
+    **extra_overrides: object,
+) -> dict[str, Any]:
+    return {
+        "engine": request.engine if engine is None else engine,
+        "receptor_coords": request.receptor_coords,
+        "receptor_radii": request.receptor_radii,
+        "ligand_radii": request.ligand_radii,
+        "poses_coords": poses_coords,
+        "electrostatics": electrostatics,
+        **dict(request.scoring_kwargs),
+        **dict(extra_overrides),
+    }
 
 
 def _ligand_extent_radius(ligand_ctx: LigandContext) -> float:
@@ -108,14 +783,14 @@ def _ligand_extent_radius(ligand_ctx: LigandContext) -> float:
     return float(jnp.max(jnp.linalg.norm(centered, axis=1)))
 
 
-def _apply_binding_site_restriction_impl(
+def _apply_binding_site_restriction(
     protein_coords: jnp.ndarray,
     receptor_radii: jnp.ndarray,
     receptor_elements: tuple[str, ...] | None,
     precomputed_receptor_charges: jnp.ndarray | None,
     ligand_ctx: LigandContext,
     box: DockingBox,
-    binding_site: CertifiedBindingSite | GeometricBindingSite,
+    binding_site: BindingSite,
     target_error: float,
 ) -> tuple[
     jnp.ndarray,
@@ -162,62 +837,6 @@ def _apply_binding_site_restriction_impl(
         restricted_elements,
         restricted_charges,
         restricted_box,
-    )
-
-
-def _apply_certified_binding_site_restriction(
-    protein_coords: jnp.ndarray,
-    receptor_radii: jnp.ndarray,
-    receptor_elements: tuple[str, ...] | None,
-    precomputed_receptor_charges: jnp.ndarray | None,
-    ligand_ctx: LigandContext,
-    box: DockingBox,
-    binding_site: CertifiedBindingSite,
-    target_error: float,
-) -> tuple[
-    jnp.ndarray,
-    jnp.ndarray,
-    tuple[str, ...] | None,
-    jnp.ndarray | None,
-    DockingBox,
-]:
-    return _apply_binding_site_restriction_impl(
-        protein_coords=protein_coords,
-        receptor_radii=receptor_radii,
-        receptor_elements=receptor_elements,
-        precomputed_receptor_charges=precomputed_receptor_charges,
-        ligand_ctx=ligand_ctx,
-        box=box,
-        binding_site=binding_site,
-        target_error=target_error,
-    )
-
-
-def _apply_geometric_binding_site_restriction(
-    protein_coords: jnp.ndarray,
-    receptor_radii: jnp.ndarray,
-    receptor_elements: tuple[str, ...] | None,
-    precomputed_receptor_charges: jnp.ndarray | None,
-    ligand_ctx: LigandContext,
-    box: DockingBox,
-    binding_site: GeometricBindingSite,
-    target_error: float,
-) -> tuple[
-    jnp.ndarray,
-    jnp.ndarray,
-    tuple[str, ...] | None,
-    jnp.ndarray | None,
-    DockingBox,
-]:
-    return _apply_binding_site_restriction_impl(
-        protein_coords=protein_coords,
-        receptor_radii=receptor_radii,
-        receptor_elements=receptor_elements,
-        precomputed_receptor_charges=precomputed_receptor_charges,
-        ligand_ctx=ligand_ctx,
-        box=box,
-        binding_site=binding_site,
-        target_error=target_error,
     )
 
 
@@ -359,135 +978,317 @@ def _sample_geometric_pocket_guided_pose_vectors(
     return next_key, PoseVector(translation=translations, quaternion=quaternions)
 
 
-def _prepare_certified_blind_docking(
-    protein_coords: jnp.ndarray,
-    receptor_radii: jnp.ndarray,
-    receptor_elements: tuple[str, ...] | None,
-    precomputed_receptor_charges: jnp.ndarray | None,
-    ligand_ctx: LigandContext,
-    box: DockingBox,
-    target_error: float,
-    certified_binding_site: CertifiedBindingSite | None,
-    coarse_target_error: float = 0.004,
-    adaptive_coarse_target_errors: tuple[float, ...] | None = None,
-    use_softened_coarse_prefilter: bool = False,
-) -> CertifiedPocketPreparation:
-    detected_pocket: CertifiedDetectedPocket | None = None
-    binding_site = certified_binding_site
-    failure_reason: CertifiedPocketFailureReason | None = None
-    if binding_site is None:
-        detected_pocket, failure_reason = _derive_certified_binding_site_from_box(
-            protein_coords=protein_coords,
-            receptor_radii=receptor_radii,
-            receptor_elements=receptor_elements,
-            box=box,
-        )
-        binding_site = None if detected_pocket is None else detected_pocket.binding_site
+class BlindDockingPreparer(ABC, Generic[BindingSiteT, DetectedPocketT, PlanT]):
+    preparation_type: ClassVar[type[BlindDockingPreparation]]
+    plan_type: ClassVar[type[BlindDockingPlan]]
 
-    restricted_box = box
-    restricted_coords = protein_coords
-    restricted_radii = receptor_radii
-    restricted_elements = receptor_elements
-    restricted_charges = precomputed_receptor_charges
-    theorem_handles: tuple[str, ...] = ()
-    if binding_site is not None:
-        (
-            restricted_coords,
-            restricted_radii,
-            restricted_elements,
-            restricted_charges,
-            restricted_box,
-        ) = _apply_certified_binding_site_restriction(
+    def prepare_request(
+        self,
+        request: BlindDockingPreparationRequest,
+    ) -> BlindDockingPreparation:
+        return self.prepare(**derive_callable_kwargs(self.prepare, request))
+
+    def prepare(
+        self,
+        *,
+        protein_coords: jnp.ndarray,
+        receptor_radii: jnp.ndarray,
+        receptor_elements: tuple[str, ...] | None,
+        precomputed_receptor_charges: jnp.ndarray | None,
+        ligand_ctx: LigandContext,
+        box: DockingBox,
+        target_error: float,
+        explicit_binding_site: BindingSiteT | None = None,
+        coarse_target_error: float = 0.004,
+        adaptive_coarse_target_errors: tuple[float, ...] | None = None,
+        use_softened_coarse_prefilter: bool = False,
+    ) -> BlindDockingPreparation:
+        detected_pocket: DetectedPocketT | None = None
+        failure_reason: CertifiedPocketFailureReason | None = None
+        binding_site = explicit_binding_site
+        if binding_site is None:
+            detected_pocket, failure_reason = self.detect_pocket_from_box(
+                protein_coords=protein_coords,
+                receptor_radii=receptor_radii,
+                receptor_elements=receptor_elements,
+                box=box,
+            )
+            if detected_pocket is not None:
+                binding_site = self.binding_site_from_detected_pocket(detected_pocket)
+
+        restricted_coords = protein_coords
+        restricted_radii = receptor_radii
+        restricted_elements = receptor_elements
+        restricted_charges = precomputed_receptor_charges
+        restricted_box = box
+        theorem_handles = self.binding_site_theorem_handles(binding_site)
+        if binding_site is not None:
+            (
+                restricted_coords,
+                restricted_radii,
+                restricted_elements,
+                restricted_charges,
+                restricted_box,
+            ) = _apply_binding_site_restriction(
+                protein_coords=protein_coords,
+                receptor_radii=receptor_radii,
+                receptor_elements=receptor_elements,
+                precomputed_receptor_charges=precomputed_receptor_charges,
+                ligand_ctx=ligand_ctx,
+                box=box,
+                binding_site=binding_site,
+                target_error=target_error,
+            )
+        theorem_handles = self.merge_theorem_handles(detected_pocket, theorem_handles)
+        plan = self.build_plan(
+            binding_site=binding_site,
+            restricted_box=restricted_box,
+            restricted_atom_count=int(restricted_coords.shape[0]),
+            detected_pocket=detected_pocket,
+            failure_reason=failure_reason,
+            theorem_handles=theorem_handles,
+            coarse_target_error=coarse_target_error,
+            adaptive_coarse_target_errors=adaptive_coarse_target_errors,
+            use_softened_coarse_prefilter=use_softened_coarse_prefilter,
+        )
+        return self.build_preparation(
+            protein_coords=restricted_coords,
+            receptor_radii=restricted_radii,
+            receptor_elements=restricted_elements,
+            precomputed_receptor_charges=restricted_charges,
+            box=restricted_box,
+            detected_pocket=detected_pocket,
+            plan=plan,
+        )
+
+    @abstractmethod
+    def detect_pocket_from_box(
+        self,
+        *,
+        protein_coords: jnp.ndarray,
+        receptor_radii: jnp.ndarray,
+        receptor_elements: tuple[str, ...] | None,
+        box: DockingBox,
+    ) -> tuple[DetectedPocketT | None, CertifiedPocketFailureReason | None]:
+        """Derive a local pocket object from the docking box."""
+
+    @abstractmethod
+    def binding_site_from_detected_pocket(
+        self, detected_pocket: DetectedPocketT
+    ) -> BindingSiteT:
+        """Project a detected pocket down to its binding-site abstraction."""
+
+    def build_plan(
+        self,
+        *,
+        binding_site: BindingSiteT | None,
+        restricted_box: DockingBox,
+        restricted_atom_count: int,
+        detected_pocket: DetectedPocketT | None,
+        failure_reason: CertifiedPocketFailureReason | None,
+        theorem_handles: tuple[str, ...],
+        coarse_target_error: float,
+        adaptive_coarse_target_errors: tuple[float, ...] | None,
+        use_softened_coarse_prefilter: bool,
+    ) -> PlanT:
+        return cast(
+            PlanT,
+            self.plan_type(
+                binding_site=binding_site,
+                restricted_box=restricted_box,
+                restricted_atom_count=restricted_atom_count,
+                **self.plan_extras(
+                    detected_pocket=detected_pocket,
+                    failure_reason=failure_reason,
+                    theorem_handles=theorem_handles,
+                    coarse_target_error=coarse_target_error,
+                    adaptive_coarse_target_errors=adaptive_coarse_target_errors,
+                    use_softened_coarse_prefilter=use_softened_coarse_prefilter,
+                ),
+            ),
+        )
+
+    def build_preparation(
+        self,
+        *,
+        protein_coords: jnp.ndarray,
+        receptor_radii: jnp.ndarray,
+        receptor_elements: tuple[str, ...] | None,
+        precomputed_receptor_charges: jnp.ndarray | None,
+        box: DockingBox,
+        detected_pocket: DetectedPocketT | None,
+        plan: PlanT,
+    ) -> BlindDockingPreparation:
+        return cast(Any, self.preparation_type)(
             protein_coords=protein_coords,
             receptor_radii=receptor_radii,
             receptor_elements=receptor_elements,
             precomputed_receptor_charges=precomputed_receptor_charges,
-            ligand_ctx=ligand_ctx,
             box=box,
-            binding_site=binding_site,
-            target_error=target_error,
-        )
-        theorem_handles = binding_site.theorem_handles
-    if detected_pocket is not None:
-        theorem_handles = tuple(
-            dict.fromkeys(detected_pocket.theorem_handles + theorem_handles)
+            detected_pocket=detected_pocket,
+            plan=plan,
         )
 
-    plan = CertifiedBlindDockingPlan(
-        binding_site=binding_site,
-        restricted_box=restricted_box,
-        restricted_atom_count=int(restricted_coords.shape[0]),
-        certified_pocket_found=detected_pocket is not None,
-        certified_failure_reason=failure_reason,
-        coarse_target_error=coarse_target_error,
-        adaptive_coarse_target_errors=adaptive_coarse_target_errors,
-        use_softened_coarse_prefilter=use_softened_coarse_prefilter,
-        theorem_handles=theorem_handles,
-    )
-    return CertifiedPocketPreparation(
-        protein_coords=restricted_coords,
-        receptor_radii=restricted_radii,
-        receptor_elements=restricted_elements,
-        precomputed_receptor_charges=restricted_charges,
-        box=restricted_box,
-        detected_pocket=detected_pocket,
-        plan=plan,
-    )
+    @abstractmethod
+    def plan_extras(
+        self,
+        *,
+        detected_pocket: DetectedPocketT | None,
+        failure_reason: CertifiedPocketFailureReason | None,
+        theorem_handles: tuple[str, ...],
+        coarse_target_error: float,
+        adaptive_coarse_target_errors: tuple[float, ...] | None,
+        use_softened_coarse_prefilter: bool,
+    ) -> dict[str, object]:
+        """Route-specific plan fields beyond the shared blind-docking skeleton."""
+
+    def binding_site_theorem_handles(
+        self, binding_site: BindingSiteT | None
+    ) -> tuple[str, ...]:
+        return ()
+
+    def merge_theorem_handles(
+        self,
+        detected_pocket: DetectedPocketT | None,
+        theorem_handles: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        return theorem_handles
+
+
+class CertifiedBlindDockingPreparer(
+    BlindDockingPreparer[
+        CertifiedBindingSite,
+        CertifiedDetectedPocket,
+        CertifiedBlindDockingPlan,
+    ]
+):
+    preparation_type = CertifiedPocketPreparation
+    plan_type = CertifiedBlindDockingPlan
+
+    def detect_pocket_from_box(
+        self,
+        *,
+        protein_coords: jnp.ndarray,
+        receptor_radii: jnp.ndarray,
+        receptor_elements: tuple[str, ...] | None,
+        box: DockingBox,
+    ) -> tuple[CertifiedDetectedPocket | None, CertifiedPocketFailureReason | None]:
+        return _derive_certified_binding_site_from_box(
+            protein_coords=protein_coords,
+            receptor_radii=receptor_radii,
+            receptor_elements=receptor_elements,
+            box=box,
+        )
+
+    def binding_site_from_detected_pocket(
+        self, detected_pocket: CertifiedDetectedPocket
+    ) -> CertifiedBindingSite:
+        return detected_pocket.binding_site
+
+    def plan_extras(
+        self,
+        *,
+        detected_pocket: CertifiedDetectedPocket | None,
+        failure_reason: CertifiedPocketFailureReason | None,
+        theorem_handles: tuple[str, ...],
+        coarse_target_error: float,
+        adaptive_coarse_target_errors: tuple[float, ...] | None,
+        use_softened_coarse_prefilter: bool,
+    ) -> dict[str, object]:
+        return dict(
+            certified_pocket_found=detected_pocket is not None,
+            certified_failure_reason=failure_reason,
+            coarse_target_error=coarse_target_error,
+            adaptive_coarse_target_errors=adaptive_coarse_target_errors,
+            use_softened_coarse_prefilter=use_softened_coarse_prefilter,
+            theorem_handles=theorem_handles,
+        )
+
+    def binding_site_theorem_handles(
+        self, binding_site: CertifiedBindingSite | None
+    ) -> tuple[str, ...]:
+        return () if binding_site is None else binding_site.theorem_handles
+
+    def merge_theorem_handles(
+        self,
+        detected_pocket: CertifiedDetectedPocket | None,
+        theorem_handles: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        if detected_pocket is None:
+            return theorem_handles
+        return tuple(dict.fromkeys(detected_pocket.theorem_handles + theorem_handles))
+
+
+class GeometricBlindDockingPreparer(
+    BlindDockingPreparer[
+        GeometricBindingSite,
+        GeometricDetectedPocket,
+        GeometricBlindDockingPlan,
+    ]
+):
+    preparation_type = GeometricPocketPreparation
+    plan_type = GeometricBlindDockingPlan
+
+    def detect_pocket_from_box(
+        self,
+        *,
+        protein_coords: jnp.ndarray,
+        receptor_radii: jnp.ndarray,
+        receptor_elements: tuple[str, ...] | None,
+        box: DockingBox,
+    ) -> tuple[GeometricDetectedPocket | None, CertifiedPocketFailureReason | None]:
+        return (
+            _derive_geometric_pocket_from_box(
+                protein_coords=protein_coords,
+                receptor_radii=receptor_radii,
+                receptor_elements=receptor_elements,
+                box=box,
+            ),
+            None,
+        )
+
+    def binding_site_from_detected_pocket(
+        self, detected_pocket: GeometricDetectedPocket
+    ) -> GeometricBindingSite:
+        return detected_pocket.binding_site
+
+    def plan_extras(
+        self,
+        *,
+        detected_pocket: GeometricDetectedPocket | None,
+        failure_reason: CertifiedPocketFailureReason | None,
+        theorem_handles: tuple[str, ...],
+        coarse_target_error: float,
+        adaptive_coarse_target_errors: tuple[float, ...] | None,
+        use_softened_coarse_prefilter: bool,
+    ) -> dict[str, object]:
+        del detected_pocket
+        del failure_reason
+        del theorem_handles
+        del coarse_target_error
+        del adaptive_coarse_target_errors
+        del use_softened_coarse_prefilter
+        return dict(
+            sampling_strategy=SamplingStrategy.HYBRID,
+        )
+
+
+_CERTIFIED_PREPARER = CertifiedBlindDockingPreparer()
+_GEOMETRIC_PREPARER = GeometricBlindDockingPreparer()
+
+
+def _prepare_certified_blind_docking(
+    request: CertifiedPreparationRequest,
+) -> CertifiedPocketPreparation:
+    prep = _CERTIFIED_PREPARER.prepare_request(request)
+    return cast(CertifiedPocketPreparation, prep)
 
 
 def _prepare_geometric_blind_docking(
-    protein_coords: jnp.ndarray,
-    receptor_radii: jnp.ndarray,
-    receptor_elements: tuple[str, ...] | None,
-    precomputed_receptor_charges: jnp.ndarray | None,
-    ligand_ctx: LigandContext,
-    box: DockingBox,
-    target_error: float,
+    request: GeometricPreparationRequest,
 ) -> GeometricPocketPreparation:
-    detected_pocket = _derive_geometric_pocket_from_box(
-        protein_coords=protein_coords,
-        receptor_radii=receptor_radii,
-        receptor_elements=receptor_elements,
-        box=box,
-    )
-    binding_site = None if detected_pocket is None else detected_pocket.binding_site
-    restricted_box = box
-    restricted_coords = protein_coords
-    restricted_radii = receptor_radii
-    restricted_elements = receptor_elements
-    restricted_charges = precomputed_receptor_charges
-    if binding_site is not None:
-        (
-            restricted_coords,
-            restricted_radii,
-            restricted_elements,
-            restricted_charges,
-            restricted_box,
-        ) = _apply_geometric_binding_site_restriction(
-            protein_coords=protein_coords,
-            receptor_radii=receptor_radii,
-            receptor_elements=receptor_elements,
-            precomputed_receptor_charges=precomputed_receptor_charges,
-            ligand_ctx=ligand_ctx,
-            box=box,
-            binding_site=binding_site,
-            target_error=target_error,
-        )
-    plan = GeometricBlindDockingPlan(
-        binding_site=binding_site,
-        restricted_box=restricted_box,
-        restricted_atom_count=int(restricted_coords.shape[0]),
-        sampling_strategy=SamplingStrategy.HYBRID,
-    )
-    return GeometricPocketPreparation(
-        protein_coords=restricted_coords,
-        receptor_radii=restricted_radii,
-        receptor_elements=restricted_elements,
-        precomputed_receptor_charges=restricted_charges,
-        box=restricted_box,
-        detected_pocket=detected_pocket,
-        plan=plan,
-    )
+    prep = _GEOMETRIC_PREPARER.prepare_request(request)
+    return cast(GeometricPocketPreparation, prep)
 
 
 def _resolve_route_scoring_electrostatics(
@@ -649,209 +1450,132 @@ def _pad_tuple_to_size(
     return tup + (value,) * (size - current_size)
 
 
-def run_docking_pipeline(
-    protein_coords: jnp.ndarray,
-    receptor_radii: jnp.ndarray,
-    ligand_ctx: LigandContext,
-    box: DockingBox,
-    n_poses: int = 2000,
-    key: jax.Array | None = None,
-    config: DockingConfig | None = None,
-    top_k: int = 10,
-    optimize: bool = True,
-    n_opt_steps: int = 50,
-    top_k_to_optimize: int = 200,
-    use_pocket_guided: bool = True,
-    use_multi_stage: bool = False,
-    include_native: bool = False,
-    receptor_elements: tuple[str, ...] | None = None,
-    precomputed_receptor_charges: jnp.ndarray | None = None,
-    receptor_file: str | Path | None = None,
-    charge_method: ChargeMethod | None = None,
-    engine: ScoringEngine = ScoringEngine.INTERNAL_LJ,
-    certified_pocket_prep: CertifiedPocketPreparation | None = None,
-    **scoring_kwargs,
-) -> tuple[List[ScoredPose], Union[NativeCertification, GapCertification, None]]:
-    """
-    Run a two-stage pose prediction pipeline.
-    """
-    if config is not None and config.mode != DockingMode.CERTIFIED:
-        # --- FIXED-SIZE PADDING FOR JIT STABILITY ---
-        # Ghost atoms are placed at 1e4 Angstroms to avoid any interaction within realistic cutoffs.
-        protein_coords = _pad_to_size(
-            protein_coords, config.max_receptor_atoms, axis=0, value=1e4
-        )
-        receptor_radii = _pad_to_size(
-            receptor_radii, config.max_receptor_atoms, axis=0, value=0.0
-        )
-        receptor_elements = _pad_tuple_to_size(
-            receptor_elements, config.max_receptor_atoms, value="C"
-        )
-        if precomputed_receptor_charges is not None:
-            precomputed_receptor_charges = _pad_to_size(
-                precomputed_receptor_charges,
-                config.max_receptor_atoms,
-                axis=0,
-                value=0.0,
-            )
+def _normalize_sampling_key(key: jax.Array | None) -> jax.Array:
+    return jax.random.PRNGKey(0) if key is None else key
 
-        # Pad ligand context
-        padded_ligand_coords = _pad_to_size(
-            ligand_ctx.base_coords, config.max_ligand_atoms, axis=0, value=1e4
-        )
-        padded_ligand_radii = _pad_to_size(
-            ligand_ctx.base_radii, config.max_ligand_atoms, axis=0, value=0.0
-        )
-        padded_ligand_elements = _pad_tuple_to_size(
-            ligand_ctx.elements, config.max_ligand_atoms, value="C"
-        )
 
-        padded_ligand_charges = None
-        if ligand_ctx.charges is not None:
-            padded_ligand_charges = _pad_to_size(
-                ligand_ctx.charges, config.max_ligand_atoms, axis=0, value=0.0
-            )
+@dataclass(frozen=True)
+class PipelinePoseBatch:
+    request: PipelineDockingRequest
+    pose_vecs: PoseVector
+    certified_family: "CertifiedGlobalActionFamily | None" = None
 
-        # Create a new LigandContext with padded arrays
-        ligand_ctx = LigandContext(
-            base_coords=padded_ligand_coords,
-            base_radii=padded_ligand_radii,
-            elements=padded_ligand_elements,
-            charges=padded_ligand_charges,
-            center_of_mass=ligand_ctx.center_of_mass,
+
+@dataclass(frozen=True)
+class PipelineInitialScores:
+    final_scores: jnp.ndarray | np.ndarray
+    survivor_pose_vecs: PoseVector | None = None
+    survivor_exact_scores: jnp.ndarray | np.ndarray | None = None
+    valid_survivor_mask: jnp.ndarray | np.ndarray | None = None
+
+
+class PipelineRoute(ABC):
+    def prepare_request(
+        self, request: PipelineDockingRequest
+    ) -> PipelineDockingRequest:
+        return request
+
+    @abstractmethod
+    def generate_pose_batch(self, request: PipelineDockingRequest) -> PipelinePoseBatch:
+        """Generate the initial pose batch for the route."""
+
+    @abstractmethod
+    def score_pose_batch(
+        self,
+        request: PipelineDockingRequest,
+        batched_coords: jnp.ndarray,
+        pose_vecs: PoseVector,
+    ) -> PipelineInitialScores:
+        """Score the initial pose batch."""
+
+    def best_index_limit(
+        self, request: PipelineDockingRequest, initial_scores: PipelineInitialScores
+    ) -> int:
+        return request.n_poses
+
+    def optimization_inputs(
+        self,
+        request: PipelineDockingRequest,
+        pose_vecs: PoseVector,
+        initial_scores: PipelineInitialScores,
+    ) -> tuple[jnp.ndarray, jnp.ndarray, int]:
+        n_to_opt = min(request.top_k_to_optimize, request.n_poses)
+        opt_indices = jnp.argsort(initial_scores.final_scores)[:n_to_opt]
+        return (
+            pose_vecs.translation[opt_indices],
+            pose_vecs.quaternion[opt_indices],
+            n_to_opt,
         )
 
-    # Determine effective engine based on config
-    target_error = 0.001
-    certified_family = None
-    certified_binding_site = None
-    certified_detected_pocket = None
-    if config is not None and config.mode == DockingMode.CERTIFIED:
-        if config.certified_scoring_family == CertifiedScoringFamily.LJ:
-            effective_engine = ScoringEngine.CERTIFIED_LJ
-        else:
-            effective_engine = ScoringEngine.CERTIFIED_LJ_REALSPACE_EWALD
-        target_error = config.target_error if config.target_error > 0 else 0.001
-        scoring_kwargs["target_error"] = target_error
-        if certified_pocket_prep is None:
-            certified_pocket_prep = _prepare_certified_blind_docking(
-                protein_coords=protein_coords,
-                receptor_radii=receptor_radii,
-                receptor_elements=receptor_elements,
-                precomputed_receptor_charges=precomputed_receptor_charges,
-                ligand_ctx=ligand_ctx,
-                box=box,
-                target_error=target_error,
-                certified_binding_site=config.certified_binding_site,
-                coarse_target_error=config.coarse_target_error,
-                adaptive_coarse_target_errors=config.adaptive_coarse_target_errors,
-                use_softened_coarse_prefilter=config.use_softened_coarse_prefilter,
-            )
-        protein_coords = certified_pocket_prep.protein_coords
-        receptor_radii = certified_pocket_prep.receptor_radii
-        receptor_elements = certified_pocket_prep.receptor_elements
-        precomputed_receptor_charges = (
-            certified_pocket_prep.precomputed_receptor_charges
-        )
-        box = certified_pocket_prep.box
-        certified_detected_pocket = certified_pocket_prep.detected_pocket
-        certified_binding_site = certified_pocket_prep.plan.binding_site
-    else:
-        effective_engine = engine
+    def validate_backend(
+        self, request: PipelineDockingRequest, backend: OptimizerBackend
+    ) -> None:
+        del request, backend
 
-    # --- POSE GENERATION ---
-    certified_family = None
-    if config is not None and config.mode == DockingMode.CERTIFIED:
-        certified_generation = _create_certified_pose_vectors(
-            box=box,
-            n_poses=n_poses,
-            certified_binding_site=certified_binding_site,
-        )
-        pose_vecs = certified_generation.pose_vecs
-        certified_family = certified_generation.family
-    elif use_pocket_guided:
-        geometric_pocket_prep = _prepare_geometric_blind_docking(
-            protein_coords=protein_coords,
-            receptor_radii=receptor_radii,
-            receptor_elements=receptor_elements,
-            precomputed_receptor_charges=precomputed_receptor_charges,
-            ligand_ctx=ligand_ctx,
-            box=box,
-            target_error=target_error,
-        )
-        protein_coords = geometric_pocket_prep.protein_coords
-        receptor_radii = geometric_pocket_prep.receptor_radii
-        receptor_elements = geometric_pocket_prep.receptor_elements
-        precomputed_receptor_charges = (
-            geometric_pocket_prep.precomputed_receptor_charges
-        )
-        box = geometric_pocket_prep.box
-        geometric_detected_pocket = geometric_pocket_prep.detected_pocket
-        key, pose_vecs = (
-            _sample_geometric_pocket_guided_pose_vectors(
-                key=key,
-                n_poses=n_poses,
-                geometric_detected_pocket=geometric_detected_pocket,
-                ligand_ctx=ligand_ctx,
-            )
-            if geometric_detected_pocket is not None
-            else _sample_box_guided_pose_vectors(
-                key=key,
-                box=box,
-                n_poses=n_poses,
-                protein_coords=protein_coords,
-                receptor_elements=receptor_elements,
-                ligand_ctx=ligand_ctx,
-            )
-        )
-    else:
-        from dq_dock_engine.docking.placement import sample_random_poses
 
-        pose_vecs = sample_random_poses(key, box, n_poses)
+class DirectScoringRoute(PipelineRoute, ABC):
+    def prepare_request(
+        self, request: PipelineDockingRequest
+    ) -> PipelineDockingRequest:
+        return request.with_fixed_size_padding()
 
-    from dq_dock_engine.docking.placement import apply_poses
+    def score_pose_batch(
+        self,
+        request: PipelineDockingRequest,
+        batched_coords: jnp.ndarray,
+        pose_vecs: PoseVector,
+    ) -> PipelineInitialScores:
+        del pose_vecs
+        kwargs = derive_route_scoring_kwargs(
+            request,
+            engine=request.effective_engine,
+            poses_coords=batched_coords,
+            electrostatics=resolve_request_electrostatics(
+                request,
+                engine=request.effective_engine,
+            ),
+        )
+        return PipelineInitialScores(final_scores=route_scoring(**kwargs))
 
-    batched_coords = apply_poses(ligand_ctx, pose_vecs)
 
-    # --- MULTI-STAGE SCORING ---
-    if use_multi_stage:
+class MultiStageScoringRoute(PipelineRoute, ABC):
+    def score_pose_batch(
+        self,
+        request: PipelineDockingRequest,
+        batched_coords: jnp.ndarray,
+        pose_vecs: PoseVector,
+    ) -> PipelineInitialScores:
+        del pose_vecs
         from dq_dock_engine.docking.scoring_stages import (
             StageLevel,
-            create_stage_calculator,
             create_pipeline,
             create_receptor_data,
         )
         from dq_dock_engine.docking.charges import create_charge_assigner, ChargeMethod
 
-        # Require explicit charge method selection for multi-stage pipeline
-        if charge_method is None:
-            raise ValueError(
-                "A ChargeMethod must be provided to run the multi-stage pipeline (no implicit fallback)."
-            )
-
-        # Use provided receptor_elements if available, otherwise fallback to carbon
+        typed_request = cast(MultiStagePipelineDockingRequest, request)
+        receptor_elements = typed_request.receptor_elements
         if receptor_elements is None:
-            receptor_elements = tuple(["C"] * len(protein_coords))
+            receptor_elements = tuple(["C"] * len(typed_request.protein_coords))
 
-        # Create assigner and assign receptor charges. For non-SIMPLE methods a receptor_file
-        # (path or RDKit Mol) MUST be provided because RDKit/antechamber require a molecule input.
-        assigner = create_charge_assigner(charge_method)
+        assigner = create_charge_assigner(
+            cast(ChargeMethod, typed_request.charge_method)
+        )
         if assigner.method == ChargeMethod.SIMPLE:
             receptor_charges = assigner.assign(receptor_elements).charges
         else:
-            if receptor_file is None:
+            if typed_request.receptor_file is None:
                 raise ValueError(
                     f"ChargeMethod {assigner.method.name} requires a receptor file path or RDKit Mol to assign charges."
                 )
-            receptor_charges = assigner.assign(receptor_file).charges
+            receptor_charges = assigner.assign(typed_request.receptor_file).charges
 
         receptor_data = create_receptor_data(
-            coords=protein_coords,
-            radii=receptor_radii,
+            coords=typed_request.protein_coords,
+            radii=typed_request.receptor_radii,
             charges=receptor_charges,
             elements=receptor_elements,
         )
-
         pipeline = create_pipeline(
             (
                 StageLevel.STAGE1_GEOMETRIC,
@@ -859,111 +1583,209 @@ def run_docking_pipeline(
                 StageLevel.STAGE3_FULL,
             )
         )
-
         stage_results, validation = pipeline.run(
             receptor_data,
             batched_coords,
             validate=False,
-            ligand_radii=ligand_ctx.base_radii,
-            ligand_charges=ligand_ctx.charges,
-            ligand_elements=ligand_ctx.elements,
+            ligand_radii=typed_request.ligand_ctx.base_radii,
+            ligand_charges=typed_request.ligand_ctx.charges,
+            ligand_elements=typed_request.ligand_ctx.elements,
         )
-
         if validation is not None:
             print(
                 f"Stage validation: Spearman 1-3={validation.spearman_1_3:.2f}, Top-10 overlap={validation.top10_overlap_1_3:.2f}"
             )
+        return PipelineInitialScores(final_scores=stage_results[-1].scores)
 
-        final_scores = stage_results[-1].scores
-    else:
-        electrostatics = _resolve_route_scoring_electrostatics(
-            effective_engine,
-            ligand_ctx,
-            receptor_elements,
-            charge_method,
-            receptor_file,
-            precomputed_receptor_charges,
+
+class CertifiedPipelineRoute(PipelineRoute):
+    def prepare_request(
+        self, request: PipelineDockingRequest
+    ) -> PipelineDockingRequest:
+        prepared_request = cast(CertifiedPreparationMixin, request).prepare()
+        return prepared_request.with_scoring_override(target_error=request.target_error)
+
+    def generate_pose_batch(self, request: PipelineDockingRequest) -> PipelinePoseBatch:
+        prepared_request = cast(PreparedCertifiedDirectPipelineRequest, request)
+        generation = _create_certified_pose_vectors(
+            box=prepared_request.box,
+            n_poses=prepared_request.n_poses,
+            certified_binding_site=cast(
+                CertifiedPocketPreparation,
+                prepared_request.certified_pocket_prep,
+            ).plan.binding_site,
+        )
+        return PipelinePoseBatch(
+            request=prepared_request,
+            pose_vecs=generation.pose_vecs,
+            certified_family=generation.family,
         )
 
-        global_final_scores = None
-        survivor_pose_vecs = None
-        survivor_exact_scores = None
-        valid_survivor_mask = None
-        if config is not None and config.mode == DockingMode.CERTIFIED:
-            # 1. Formal Pruning Pass
-            survivor_mask, coarse_scores, delta = _certified_pruning_pass(
-                receptor_coords=protein_coords,
-                poses_coords=batched_coords,
-                receptor_radii=receptor_radii,
-                ligand_ctx=ligand_ctx,
-                electrostatics=electrostatics,
-                target_error=target_error,
+    def score_pose_batch(
+        self,
+        request: PipelineDockingRequest,
+        batched_coords: jnp.ndarray,
+        pose_vecs: PoseVector,
+    ) -> PipelineInitialScores:
+        electrostatics = resolve_request_electrostatics(
+            request,
+            engine=request.effective_engine,
+        )
+        survivor_mask, coarse_scores, delta = call_with_derived_kwargs(
+            _certified_pruning_pass,
+            request,
+            poses_coords=batched_coords,
+            electrostatics=electrostatics,
+        )
+        survivor_indices = jnp.where(
+            survivor_mask, size=SURVIVOR_BATCH_SIZE, fill_value=-1
+        )[0]
+        survivor_coords = batched_coords[survivor_indices]
+        del coarse_scores, delta
+        exact_kwargs = derive_route_scoring_kwargs(
+            request,
+            engine=request.effective_engine,
+            poses_coords=survivor_coords,
+            electrostatics=electrostatics.receptor_subset(
+                jnp.arange(request.protein_coords.shape[0])
             )
-
-            # 2. Extract survivors with FIXED SIZE to stabilize JIT compilation.
-            # Using jnp.where(size=...) ensures the output shape is constant.
-            # We pad with indices that point to the first survivor (safe for internal JAX loops)
-            # but we'll mask them out in the final scores.
-            survivor_indices = jnp.where(
-                survivor_mask, size=SURVIVOR_BATCH_SIZE, fill_value=-1
-            )[0]
-            survivor_coords = batched_coords[survivor_indices]
-
-            # Compute exact utility for the padded survivor set
-            exact_kwargs = {
-                "receptor_coords": protein_coords,
-                "receptor_radii": receptor_radii,
-                "ligand_radii": ligand_ctx.base_radii,
-                "poses_coords": survivor_coords,
-                "electrostatics": electrostatics.receptor_subset(
-                    jnp.arange(protein_coords.shape[0])
-                )
-                if electrostatics
-                else None,
-                **scoring_kwargs,
-            }
-            survivor_exact_scores = route_scoring(effective_engine, **exact_kwargs)
-
-            # Handle padding: poses where index was -1 are filtered out.
-            valid_survivor_mask = survivor_indices != -1
-            valid_survivor_indices = survivor_indices[valid_survivor_mask]
-            survivor_exact_scores = jnp.where(
-                valid_survivor_mask, survivor_exact_scores, 1e6
-            )
-
-            # Mapping back to the full set
-            final_scores = (
-                jnp.full((batched_coords.shape[0],), 1e6)
-                .at[survivor_indices]
-                .set(survivor_exact_scores, indices_are_sorted=False)
-            )
-
-            # Filter the pose_vecs for the optimizer (Stage 2)
-            # We must use the same padded size to avoid re-compiling the optimizer
-            survivor_pose_vecs = PoseVector(
+            if electrostatics
+            else None,
+        )
+        survivor_exact_scores = route_scoring(**exact_kwargs)
+        valid_survivor_mask = survivor_indices != -1
+        valid_survivor_indices = survivor_indices[valid_survivor_mask]
+        padded_survivor_scores = jnp.where(
+            valid_survivor_mask, survivor_exact_scores, 1e6
+        )
+        final_scores = (
+            jnp.full((batched_coords.shape[0],), 1e6)
+            .at[survivor_indices]
+            .set(padded_survivor_scores, indices_are_sorted=False)
+        )
+        return PipelineInitialScores(
+            final_scores=final_scores,
+            survivor_pose_vecs=PoseVector(
                 translation=pose_vecs.translation[valid_survivor_indices],
                 quaternion=pose_vecs.quaternion[valid_survivor_indices],
+            ),
+            survivor_exact_scores=padded_survivor_scores,
+            valid_survivor_mask=valid_survivor_mask,
+        )
+
+    def best_index_limit(
+        self, request: PipelineDockingRequest, initial_scores: PipelineInitialScores
+    ) -> int:
+        del request, initial_scores
+        return SURVIVOR_BATCH_SIZE
+
+    def optimization_inputs(
+        self,
+        request: PipelineDockingRequest,
+        pose_vecs: PoseVector,
+        initial_scores: PipelineInitialScores,
+    ) -> tuple[jnp.ndarray, jnp.ndarray, int]:
+        del pose_vecs
+        assert initial_scores.survivor_pose_vecs is not None
+        assert initial_scores.survivor_exact_scores is not None
+        assert initial_scores.valid_survivor_mask is not None
+        n_valid_survivors = initial_scores.survivor_pose_vecs.translation.shape[0]
+        n_to_opt = min(request.top_k_to_optimize, n_valid_survivors)
+        survivor_ranked = jnp.argsort(
+            initial_scores.survivor_exact_scores[initial_scores.valid_survivor_mask]
+        )[:n_to_opt]
+        return (
+            initial_scores.survivor_pose_vecs.translation[survivor_ranked],
+            initial_scores.survivor_pose_vecs.quaternion[survivor_ranked],
+            n_to_opt,
+        )
+
+    def validate_backend(
+        self, request: PipelineDockingRequest, backend: OptimizerBackend
+    ) -> None:
+        if backend != OptimizerBackend.FORMAL:
+            raise ValueError(
+                "CERTIFIED mode requires the formal optimizer backend; gradient refinement is heuristic."
             )
-        else:
-            kwargs = {
-                "receptor_coords": protein_coords,
-                "receptor_radii": receptor_radii,
-                "ligand_radii": ligand_ctx.base_radii,
-                "poses_coords": batched_coords,
-                "electrostatics": electrostatics,
-                **scoring_kwargs,
-            }
-            final_scores = route_scoring(effective_engine, **kwargs)
 
-    # --- SELECT TOP POSES ---
-    # In certified mode, we only choose from the survivors (others are 1e6)
-    if config is not None and config.mode == DockingMode.CERTIFIED:
-        # We sort among the survivors to find the top k
-        best_indices = jnp.argsort(final_scores)[: min(top_k, SURVIVOR_BATCH_SIZE)]
-    else:
-        best_indices = jnp.argsort(final_scores)[: min(top_k, n_poses)]
 
-    if not optimize:
+class GeometricPocketRoute(DirectScoringRoute):
+    def generate_pose_batch(self, request: PipelineDockingRequest) -> PipelinePoseBatch:
+        prepared_request = cast(GeometricPreparationMixin, request).prepare()
+        key, pose_vecs = prepared_request.sample_pose_batch()
+        return PipelinePoseBatch(
+            request=prepared_request.with_updates(key=key),
+            pose_vecs=pose_vecs,
+        )
+
+
+class BoxSamplingRoute(DirectScoringRoute):
+    def generate_pose_batch(self, request: PipelineDockingRequest) -> PipelinePoseBatch:
+        from dq_dock_engine.docking.placement import sample_random_poses
+
+        return PipelinePoseBatch(
+            request=request,
+            pose_vecs=sample_random_poses(
+                request.normalized_key,
+                request.box,
+                request.n_poses,
+            ),
+        )
+
+
+class GeometricMultiStageRoute(MultiStageScoringRoute, GeometricPocketRoute):
+    pass
+
+
+class BoxMultiStageRoute(MultiStageScoringRoute, BoxSamplingRoute):
+    pass
+
+
+def nominalize_pipeline_request(
+    request: PipelineDockingRequest,
+) -> PipelineDockingRequest:
+    if isinstance(request, NominalPipelineDockingRequest):
+        return request
+    return NominalPipelineDockingRequest.from_request(request)
+
+
+def derive_pipeline_route(request: PipelineDockingRequest) -> PipelineRoute:
+    if not isinstance(request, NominalPipelineDockingRequest):
+        raise TypeError(
+            f"Cannot derive a pipeline route from non-nominal request type {type(request).__name__}."
+        )
+    return request.create_route()
+
+
+def _run_docking_pipeline_request(
+    request: PipelineDockingRequest,
+) -> tuple[List[ScoredPose], Union[NativeCertification, GapCertification, None]]:
+    """
+    Run a two-stage pose prediction pipeline.
+    """
+    request = nominalize_pipeline_request(
+        request.with_updates(key=request.normalized_key)
+    )
+    route = derive_pipeline_route(request)
+    request = route.prepare_request(request)
+    pose_batch = route.generate_pose_batch(request)
+    request = pose_batch.request
+
+    from dq_dock_engine.docking.placement import apply_poses
+
+    batched_coords = apply_poses(request.ligand_ctx, pose_batch.pose_vecs)
+
+    initial_scores = route.score_pose_batch(
+        request, batched_coords, pose_batch.pose_vecs
+    )
+
+    final_scores = initial_scores.final_scores
+
+    best_indices = jnp.argsort(final_scores)[
+        : min(request.top_k, route.best_index_limit(request, initial_scores))
+    ]
+
+    if not request.optimize:
         outputs = []
         for idx in best_indices:
             idx_i = int(idx)
@@ -971,52 +1793,30 @@ def run_docking_pipeline(
                 ScoredPose(
                     coords=batched_coords[idx_i],
                     energy=float(final_scores[idx_i]),
-                    engine=effective_engine,
+                    engine=request.effective_engine,
                 )
             )
         cert = _compute_native_certification(
-            config=config,
-            protein_coords=protein_coords,
+            config=request.config,
+            protein_coords=request.protein_coords,
             coords=batched_coords,
             pre_opt_scores=final_scores,
-            receptor_radii=receptor_radii,
-            ligand_ctx=ligand_ctx,
-            include_native=include_native,
+            receptor_radii=request.receptor_radii,
+            ligand_ctx=request.ligand_ctx,
+            include_native=request.include_native,
         )
         return outputs, cert
 
-    # --- LOCAL OPTIMIZATION ---
-    if config is not None and config.mode == DockingMode.CERTIFIED:
-        assert survivor_pose_vecs is not None
-        assert survivor_exact_scores is not None
-        assert valid_survivor_mask is not None
-        # For survivors, we optimize the top internal candidates.
-        n_valid_survivors = survivor_pose_vecs.translation.shape[0]
-        n_to_opt = min(top_k_to_optimize, n_valid_survivors)
-        survivor_ranked = jnp.argsort(survivor_exact_scores[valid_survivor_mask])[
-            :n_to_opt
-        ]
-
-        opt_translations = survivor_pose_vecs.translation[survivor_ranked]
-        opt_quaternions = survivor_pose_vecs.quaternion[survivor_ranked]
-    else:
-        n_to_opt = min(top_k_to_optimize, n_poses)
-        opt_indices = jnp.argsort(final_scores)[:n_to_opt]
-
-        opt_translations = pose_vecs.translation[opt_indices]
-        opt_quaternions = pose_vecs.quaternion[opt_indices]
+    opt_translations, opt_quaternions, n_to_opt = route.optimization_inputs(
+        request,
+        pose_batch.pose_vecs,
+        initial_scores,
+    )
 
     pre_opt_scores = final_scores
 
-    backend = (
-        config.optimizer_backend if config is not None else OptimizerBackend.GRADIENT
-    )
-
-    if config is not None and config.mode == DockingMode.CERTIFIED:
-        if backend != OptimizerBackend.FORMAL:
-            raise ValueError(
-                "CERTIFIED mode requires the formal optimizer backend; gradient refinement is heuristic."
-            )
+    backend = request.formal_backend
+    route.validate_backend(request, backend)
 
     if backend == OptimizerBackend.FORMAL:
         from dq_dock_engine.docking.formal_optimizer import (
@@ -1028,98 +1828,77 @@ def run_docking_pipeline(
             translation=opt_translations,
             quaternion=opt_quaternions,
         )
-        initial_coords = apply_poses(ligand_ctx, initial_opt_vecs)
+        initial_coords = apply_poses(request.ligand_ctx, initial_opt_vecs)
         translation_cell_width = 1.0
-        if certified_family is not None:
-            translation_cell_width = float(jnp.min(box.size)) / float(
-                certified_family.lattice_resolution
+        if pose_batch.certified_family is not None:
+            translation_cell_width = float(jnp.min(request.box.size)) / float(
+                pose_batch.certified_family.lattice_resolution
             )
         refinement_kwargs: dict[str, object] = dict(
             coords_batch=initial_coords,
-            receptor_coords=protein_coords,
-            receptor_radii=receptor_radii,
-            ligand_radii=ligand_ctx.base_radii,
-            n_rounds=n_opt_steps,
-            target_error=target_error,
-            coarse_target_error=(
-                config.coarse_target_error if config is not None else 0.004
-            ),
-            adaptive_coarse_target_errors=(
-                config.adaptive_coarse_target_errors if config is not None else None
-            ),
-            use_softened_coarse=(
-                config.use_softened_coarse_prefilter if config is not None else False
-            ),
+            receptor_coords=request.protein_coords,
+            receptor_radii=request.receptor_radii,
+            ligand_radii=request.ligand_ctx.base_radii,
+            n_rounds=request.n_opt_steps,
+            target_error=request.target_error,
+            coarse_target_error=request.coarse_target_error,
+            adaptive_coarse_target_errors=request.adaptive_coarse_target_errors,
+            use_softened_coarse=request.use_softened_coarse_prefilter,
             base_translation_step=translation_cell_width / 2.0,
             base_rotation_step_rad=float(jnp.pi / 2.0),
         )
-        formal_electrostatics = _resolve_route_scoring_electrostatics(
-            effective_engine,
-            ligand_ctx,
-            receptor_elements,
-            charge_method,
-            receptor_file,
-            precomputed_receptor_charges,
+        formal_electrostatics = resolve_request_electrostatics(
+            request,
+            engine=request.effective_engine,
         )
         refinement_kwargs["electrostatics"] = formal_electrostatics
-        strategy = (
-            config.formal_round_strategy
-            if config is not None
-            else FormalRoundStrategy.SINGLETON_HYBRID
-        )
         formal_refiners = {
             FormalRoundStrategy.EXACT: _run_exact_formal_refinement,
             FormalRoundStrategy.SINGLETON_HYBRID: _run_singleton_hybrid_formal_refinement,
         }
-        opt_coords = formal_refiners[strategy](**refinement_kwargs)
-        opt_vecs = None
+        opt_coords = formal_refiners[request.formal_round_strategy](**refinement_kwargs)
     else:
         opt_t, opt_q = optimize_poses_batched(
             translations=opt_translations,
             quaternions=opt_quaternions,
-            ligand_base_coords=ligand_ctx.base_coords,
-            receptor_coords=protein_coords,
-            receptor_radii=receptor_radii,
-            ligand_radii=ligand_ctx.base_radii,
-            n_steps=n_opt_steps,
+            ligand_base_coords=request.ligand_ctx.base_coords,
+            receptor_coords=request.protein_coords,
+            receptor_radii=request.receptor_radii,
+            ligand_radii=request.ligand_ctx.base_radii,
+            n_steps=request.n_opt_steps,
             lr_t=0.05,
             lr_q=0.05,
-            config=config,
+            config=request.config,
         )
-        opt_vecs = PoseVector(translation=opt_t, quaternion=opt_q)
-        opt_coords = apply_poses(ligand_ctx, opt_vecs)
+        opt_coords = apply_poses(
+            request.ligand_ctx,
+            PoseVector(translation=opt_t, quaternion=opt_q),
+        )
 
-    # --- FINAL SCORING ---
-    electrostatics = _resolve_route_scoring_electrostatics(
-        effective_engine,
-        ligand_ctx,
-        receptor_elements,
-        charge_method,
-        receptor_file,
-        precomputed_receptor_charges,
+    electrostatics = resolve_request_electrostatics(
+        request,
+        engine=request.effective_engine,
     )
-    kwargs = {
-        "receptor_coords": protein_coords,
-        "receptor_radii": receptor_radii,
-        "ligand_radii": ligand_ctx.base_radii,
-        "poses_coords": opt_coords,
-        "electrostatics": electrostatics,
-    }
-    final_scores = route_scoring(effective_engine, **kwargs)
+    final_scores = route_scoring(
+        **derive_route_scoring_kwargs(
+            request,
+            engine=request.effective_engine,
+            poses_coords=opt_coords,
+            electrostatics=electrostatics,
+        )
+    )
 
-    # --- CERTIFICATION ---
     cert = _compute_native_certification(
-        config=config,
-        protein_coords=protein_coords,
+        config=request.config,
+        protein_coords=request.protein_coords,
         coords=opt_coords,
         pre_opt_scores=pre_opt_scores,
-        receptor_radii=receptor_radii,
-        ligand_ctx=ligand_ctx,
-        include_native=include_native,
+        receptor_radii=request.receptor_radii,
+        ligand_ctx=request.ligand_ctx,
+        include_native=request.include_native,
     )
 
-    # --- RANKING ---
-    best_final_indices = jnp.argsort(final_scores)[: min(top_k, n_to_opt)]
+    best_final_indices = jnp.argsort(final_scores)[: min(request.top_k, n_to_opt)]
 
     best_poses = []
     for idx in best_final_indices:
@@ -1128,82 +1907,48 @@ def run_docking_pipeline(
             ScoredPose(
                 coords=opt_coords[idx_i],
                 energy=float(final_scores[idx_i]),
-                engine=effective_engine,
+                engine=request.effective_engine,
             )
         )
 
     return best_poses, cert
 
 
-def run_certified_blind_docking(
-    protein_coords: jnp.ndarray,
-    receptor_radii: jnp.ndarray,
-    ligand_ctx: LigandContext,
-    box: DockingBox,
-    n_poses: int,
-    key: jax.Array,
-    receptor_elements: tuple[str, ...] | None = None,
-    *,
-    charge_method: ChargeMethod | None = None,
-    receptor_file: str | Path | None = None,
-    precomputed_receptor_charges: jnp.ndarray | None = None,
-    config: DockingConfig | None = None,
-    top_k: int = 10,
-    optimize: bool = True,
-    n_opt_steps: int = 50,
-    top_k_to_optimize: int = 200,
-    include_native: bool = False,
-    **scoring_kwargs,
+def run_docking_pipeline_request(
+    request: PipelineDockingRequest,
+) -> tuple[List[ScoredPose], Union[NativeCertification, GapCertification, None]]:
+    return _run_docking_pipeline_request(request)
+
+
+def run_certified_blind_docking_request(
+    request: CertifiedBlindDockingRequest,
 ) -> CertifiedBlindDockingResult:
-    effective_config = (
-        DockingConfig(
-            mode=DockingMode.CERTIFIED, optimizer_backend=OptimizerBackend.FORMAL
+    effective_request = request.with_updates(
+        config=(
+            DockingConfig(
+                mode=DockingMode.CERTIFIED, optimizer_backend=OptimizerBackend.FORMAL
+            )
+            if request.config is None
+            else request.config
         )
-        if config is None
-        else config
-    )
-    target_error = (
-        effective_config.target_error if effective_config.target_error > 0 else 0.001
     )
     prep = _prepare_certified_blind_docking(
-        protein_coords=protein_coords,
-        receptor_radii=receptor_radii,
-        receptor_elements=receptor_elements,
-        precomputed_receptor_charges=precomputed_receptor_charges,
-        ligand_ctx=ligand_ctx,
-        box=box,
-        target_error=target_error,
-        certified_binding_site=effective_config.certified_binding_site,
-        coarse_target_error=effective_config.coarse_target_error,
-        adaptive_coarse_target_errors=effective_config.adaptive_coarse_target_errors,
-        use_softened_coarse_prefilter=effective_config.use_softened_coarse_prefilter,
+        CertifiedPreparationRequest.from_request(effective_request)
     )
     if not prep.plan.certified_pocket_found and prep.plan.binding_site is None:
         raise ValueError(
             "Certified blind docking could not derive a theorem-backed pocket/binding-site plan"
             f" ({prep.plan.certified_failure_reason.name if prep.plan.certified_failure_reason is not None else 'UNKNOWN'})."
         )
-    poses, certification = run_docking_pipeline(
-        protein_coords=protein_coords,
-        receptor_radii=receptor_radii,
-        ligand_ctx=ligand_ctx,
-        box=box,
-        n_poses=n_poses,
-        engine=ScoringEngine.CERTIFIED_LJ_REALSPACE_EWALD,
-        key=key,
-        receptor_elements=receptor_elements,
-        charge_method=charge_method,
-        receptor_file=receptor_file,
-        precomputed_receptor_charges=precomputed_receptor_charges,
-        config=effective_config,
-        top_k=top_k,
-        optimize=optimize,
-        n_opt_steps=n_opt_steps,
-        top_k_to_optimize=top_k_to_optimize,
-        use_pocket_guided=True,
-        include_native=include_native,
-        certified_pocket_prep=prep,
-        **scoring_kwargs,
+    poses, certification = run_docking_pipeline_request(
+        derive_request(
+            PipelineDockingRequest,
+            effective_request,
+            engine=ScoringEngine.CERTIFIED_LJ_REALSPACE_EWALD,
+            use_pocket_guided=True,
+            certified_pocket_prep=prep,
+            scoring_kwargs=dict(effective_request.scoring_kwargs),
+        )
     )
     return CertifiedBlindDockingResult(
         plan=prep.plan,
@@ -1212,62 +1957,135 @@ def run_certified_blind_docking(
     )
 
 
-def run_geometric_blind_docking(
-    protein_coords: jnp.ndarray,
-    receptor_radii: jnp.ndarray,
-    ligand_ctx: LigandContext,
-    box: DockingBox,
-    n_poses: int,
-    engine: ScoringEngine,
-    key: jax.Array,
-    receptor_elements: tuple[str, ...] | None = None,
-    *,
-    charge_method: ChargeMethod | None = None,
-    receptor_file: str | Path | None = None,
-    precomputed_receptor_charges: jnp.ndarray | None = None,
-    config: DockingConfig | None = None,
-    top_k: int = 10,
-    optimize: bool = True,
-    n_opt_steps: int = 50,
-    top_k_to_optimize: int = 200,
-    include_native: bool = False,
-    **scoring_kwargs,
+def run_geometric_blind_docking_request(
+    request: GeometricBlindDockingRequest,
 ) -> GeometricBlindDockingResult:
     prep = _prepare_geometric_blind_docking(
-        protein_coords=protein_coords,
-        receptor_radii=receptor_radii,
-        receptor_elements=receptor_elements,
-        precomputed_receptor_charges=precomputed_receptor_charges,
-        ligand_ctx=ligand_ctx,
-        box=box,
-        target_error=(
-            config.target_error
-            if config is not None and config.target_error > 0
-            else 0.001
-        ),
+        GeometricPreparationRequest.from_request(request)
     )
-    poses, _ = run_docking_pipeline(
-        protein_coords=protein_coords,
-        receptor_radii=receptor_radii,
-        ligand_ctx=ligand_ctx,
-        box=box,
-        n_poses=n_poses,
-        engine=engine,
-        key=key,
-        receptor_elements=receptor_elements,
-        charge_method=charge_method,
-        receptor_file=receptor_file,
-        precomputed_receptor_charges=precomputed_receptor_charges,
-        config=config,
-        top_k=top_k,
-        optimize=optimize,
-        n_opt_steps=n_opt_steps,
-        top_k_to_optimize=top_k_to_optimize,
-        use_pocket_guided=True,
-        include_native=include_native,
-        **scoring_kwargs,
+    poses, _ = run_docking_pipeline_request(
+        derive_request(
+            PipelineDockingRequest,
+            request,
+            use_pocket_guided=True,
+            scoring_kwargs=dict(request.scoring_kwargs),
+        )
     )
     return GeometricBlindDockingResult(plan=prep.plan, poses=tuple(poses))
+
+
+@dataclass(frozen=True)
+class GeneratedRequestWrapperSpec:
+    name: str
+    request_type: type[DockingRequestBase]
+    runner: Callable[[Any], Any]
+    middle_positional_fields: tuple[str, ...] = ()
+    signature_defaults: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def positional_fields(self) -> tuple[str, ...]:
+        return (
+            "protein_coords",
+            "receptor_radii",
+            "ligand_ctx",
+            "box",
+            "n_poses",
+            *self.middle_positional_fields,
+            "key",
+            "receptor_elements",
+        )
+
+
+def _build_request_wrapper_signature(
+    spec: GeneratedRequestWrapperSpec,
+) -> inspect.Signature:
+    parameters: list[inspect.Parameter] = []
+    ordered_fields = {
+        field_info.name: field_info
+        for field_info in dataclass_fields(spec.request_type)
+        if field_info.init and field_info.name != "scoring_kwargs"
+    }
+    parameter_names = list(spec.positional_fields) + [
+        name for name in ordered_fields if name not in spec.positional_fields
+    ]
+    for name in parameter_names:
+        field_info = ordered_fields[name]
+        default = inspect._empty
+        if name in spec.signature_defaults:
+            default = spec.signature_defaults[name]
+        elif field_info.default is not MISSING:
+            default = field_info.default
+        elif field_info.default_factory is not MISSING:  # type: ignore[attr-defined]
+            default = field_info.default_factory()  # type: ignore[misc]
+        kind = (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD
+            if name in spec.positional_fields
+            else inspect.Parameter.KEYWORD_ONLY
+        )
+        parameters.append(
+            inspect.Parameter(
+                name,
+                kind,
+                default=default,
+                annotation=field_info.type,
+            )
+        )
+    parameters.append(
+        inspect.Parameter("scoring_kwargs", inspect.Parameter.VAR_KEYWORD)
+    )
+    return inspect.Signature(
+        parameters,
+        return_annotation=inspect.signature(spec.runner).return_annotation,
+    )
+
+
+def _make_request_wrapper(spec: GeneratedRequestWrapperSpec) -> Callable[..., Any]:
+    signature = _build_request_wrapper_signature(spec)
+
+    def wrapper(*args: object, **kwargs: object) -> Any:
+        bound = signature.bind(*args, **kwargs)
+        request_kwargs = dict(bound.arguments)
+        scoring_kwargs = request_kwargs.pop("scoring_kwargs", {})
+        if "key" in request_kwargs:
+            request_kwargs["key"] = _normalize_sampling_key(
+                cast(jax.Array | None, request_kwargs["key"])
+            )
+        request_kwargs["scoring_kwargs"] = dict(cast(dict[str, object], scoring_kwargs))
+        return spec.runner(derive_request(spec.request_type, request_kwargs))
+
+    wrapper.__name__ = spec.name
+    wrapper.__qualname__ = spec.name
+    wrapper.__doc__ = (
+        f"Auto-generated convenience wrapper for `{spec.request_type.__name__}`."
+    )
+    setattr(wrapper, "__signature__", signature)
+    return wrapper
+
+
+REQUEST_WRAPPER_SPECS = (
+    GeneratedRequestWrapperSpec(
+        name="run_docking_pipeline",
+        request_type=PipelineDockingRequest,
+        runner=run_docking_pipeline_request,
+        signature_defaults={"key": None},
+    ),
+    GeneratedRequestWrapperSpec(
+        name="run_certified_blind_docking",
+        request_type=CertifiedBlindDockingRequest,
+        runner=run_certified_blind_docking_request,
+    ),
+    GeneratedRequestWrapperSpec(
+        name="run_geometric_blind_docking",
+        request_type=GeometricBlindDockingRequest,
+        runner=run_geometric_blind_docking_request,
+        middle_positional_fields=("engine",),
+        signature_defaults={"engine": inspect._empty},
+    ),
+)
+
+globals().update(
+    {spec.name: _make_request_wrapper(spec) for spec in REQUEST_WRAPPER_SPECS}
+)
 
 
 def _compute_native_certification(

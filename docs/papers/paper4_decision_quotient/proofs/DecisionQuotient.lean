@@ -57,6 +57,11 @@ import DecisionQuotient.Physics.ClaimTransport
 import DecisionQuotient.Physics.PhysicalCore
 import DecisionQuotient.Physics.Uncertainty
 import DecisionQuotient.Physics.HeisenbergStrong
+import DecisionQuotient.Tractability.ContactApproximation
+import DecisionQuotient.Tractability.NonbondedApproximation
+import DecisionQuotient.Tractability.DirectionalHBondApproximation
+import DecisionQuotient.Tractability.RichChemistryApproximation
+import DecisionQuotient.Tractability.ScreenedCoulombApproximation
 import DecisionQuotient.AbstractionCollapse
 import DecisionQuotient.GraphNontriviality
 import DecisionQuotient.ClaimClosure

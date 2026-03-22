@@ -4,14 +4,19 @@ from pathlib import Path
 import tempfile
 
 from dq_dock_engine.docking.scoring import (
+    CertifiedContactSurrogateSpec,
     CertifiedRealSpaceEwaldSpec,
+    CertifiedScreenedCoulombSpec,
     certified_realspace_ewald_error_bound,
     route_scoring,
     score_certified_batch,
+    score_certified_contact_batch,
     score_certified_lj,
+    score_certified_lj_screened_coulomb_batch,
     score_certified_softened_lj,
     score_certified_softened_lj_realspace_ewald,
     score_certified_lj_realspace_ewald,
+    score_certified_screened_coulomb_batch,
 )
 from dq_dock_engine.docking.core import ScoringEngine
 from dq_dock_engine.docking.core import LigandContext
@@ -26,6 +31,7 @@ from dq_dock_engine.docking.pocket_analysis import (
 )
 from dq_dock_engine.docking.pipeline import _resolve_route_scoring_electrostatics
 from dq_dock_engine.docking.pipeline import _apply_certified_binding_site_restriction
+from dq_dock_engine.docking.pipeline import CertifiedPreparationRequest
 from dq_dock_engine.docking.pipeline import _derive_certified_binding_site_from_box
 from dq_dock_engine.docking.pipeline import _prepare_certified_blind_docking
 from dq_dock_engine.docking.pipeline import run_geometric_blind_docking
@@ -229,6 +235,80 @@ def test_score_certified_batch_uses_composite_path_when_charges_present() -> Non
     assert batch.scores.shape == (1,)
     assert np.isfinite(float(batch.scores[0]))
     assert np.isfinite(batch.error_bound)
+
+
+def test_score_certified_contact_batch_reports_finite_batch_error_bound() -> None:
+    receptor_coords = jnp.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    poses_coords = jnp.array([[[1.0, 0.0, 0.0]], [[3.0, 0.0, 0.0]]])
+    contact_spec = CertifiedContactSurrogateSpec(
+        receptor_weights=jnp.array([1.0, 0.8]),
+        ligand_weights=jnp.array([1.0]),
+        beta=0.5,
+        cutoff=2.5,
+    )
+
+    result = score_certified_contact_batch(
+        receptor_coords,
+        poses_coords,
+        contact_spec,
+    )
+
+    assert result.scores.shape == (2,)
+    assert np.isfinite(result.error_bound)
+    assert result.error_bound >= 0.0
+    assert result.cutoff_radius == contact_spec.cutoff
+
+
+def test_score_certified_screened_coulomb_batch_reports_finite_batch_error_bound() -> (
+    None
+):
+    receptor_coords = jnp.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    poses_coords = jnp.array([[[1.0, 0.0, 0.0]], [[3.0, 0.0, 0.0]]])
+    screened = CertifiedScreenedCoulombSpec(
+        receptor_charges=jnp.array([1.0, -1.0]),
+        ligand_charges=jnp.array([0.5]),
+        kappa=0.8,
+        cutoff=3.0,
+        dielectric=4.0,
+    )
+
+    result = score_certified_screened_coulomb_batch(
+        receptor_coords,
+        poses_coords,
+        screened,
+    )
+
+    assert result.scores.shape == (2,)
+    assert np.isfinite(result.error_bound)
+    assert result.error_bound >= 0.0
+    assert result.cutoff_radius == screened.cutoff
+
+
+def test_score_certified_lj_screened_coulomb_batch_composes_error_bounds() -> None:
+    receptor_coords = jnp.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    poses_coords = jnp.array([[[3.0, 0.0, 0.0]], [[4.0, 0.0, 0.0]]])
+    receptor_radii = jnp.array([1.7, 1.7])
+    ligand_radii = jnp.array([1.5])
+    screened = CertifiedScreenedCoulombSpec(
+        receptor_charges=jnp.array([1.0, -1.0]),
+        ligand_charges=jnp.array([0.5]),
+        kappa=0.8,
+        cutoff=3.0,
+        dielectric=4.0,
+    )
+
+    result = score_certified_lj_screened_coulomb_batch(
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        screened,
+    )
+
+    assert result.scores.shape == (2,)
+    assert np.isfinite(result.error_bound)
+    assert result.error_bound >= 0.0
+    assert result.cutoff_radius >= screened.cutoff
 
 
 def test_certified_softened_lj_matches_exact_when_outside_softening_radius() -> None:
@@ -533,14 +613,16 @@ def test_prepare_certified_blind_docking_returns_theorem_directed_plan() -> None
     )
 
     prep = _prepare_certified_blind_docking(
-        protein_coords=protein_coords,
-        receptor_radii=receptor_radii,
-        receptor_elements=None,
-        precomputed_receptor_charges=None,
-        ligand_ctx=ligand_ctx,
-        box=box,
-        target_error=0.001,
-        certified_binding_site=None,
+        CertifiedPreparationRequest(
+            protein_coords=protein_coords,
+            receptor_radii=receptor_radii,
+            receptor_elements=None,
+            precomputed_receptor_charges=None,
+            ligand_ctx=ligand_ctx,
+            box=box,
+            target_error=0.001,
+            explicit_binding_site=None,
+        )
     )
 
     assert prep.plan.binding_site is None

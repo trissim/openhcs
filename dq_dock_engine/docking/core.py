@@ -142,6 +142,9 @@ class BenchmarkResult:
     time: float
     n_atoms: int
     formal_status: str
+    dock_time_s: Optional[float] = None
+    checkpoint_time_s: Optional[float] = None
+    total_wall_time_s: Optional[float] = None
     certified: Optional[bool] = None
     confidence: Optional[float] = None
     energy_gap: Optional[float] = None
@@ -163,26 +166,30 @@ class BenchmarkResult:
         certified_failure_reason: Optional[CertifiedPocketFailureReason] = None,
         theorem_handles: Tuple[str, ...] = (),
     ) -> "BenchmarkResult":
-        kwargs = dict(
+        certified = None if cert is None else cert.is_certified
+        confidence = None if cert is None else cert.confidence
+        energy_gap = None if cert is None else cert.energy_gap
+        native_rank = (
+            cert.native_rank if isinstance(cert, NativeCertification) else None
+        )
+        return cls(
             success=True,
             energy=pose_energy,
             rmsd=pose_rmsd,
             time=elapsed,
             n_atoms=n_atoms,
             formal_status=formal_status,
+            dock_time_s=elapsed,
+            checkpoint_time_s=None,
+            total_wall_time_s=elapsed,
+            certified=certified,
+            confidence=confidence,
+            energy_gap=energy_gap,
+            native_rank=native_rank,
             execution_path=execution_path,
             certified_failure_reason=certified_failure_reason,
             theorem_handles=theorem_handles,
         )
-        if cert is not None:
-            kwargs.update(
-                certified=cert.is_certified,
-                confidence=cert.confidence,
-                energy_gap=cert.energy_gap,
-            )
-        if isinstance(cert, NativeCertification):
-            kwargs["native_rank"] = cert.native_rank
-        return cls(**kwargs)
 
 
 @register_pytree_node_class
@@ -208,11 +215,27 @@ class DockingBox:
 
 @register_pytree_node_class
 @dataclass(frozen=True)
-class CertifiedBindingSite:
-    """Runtime representation of a theorem-backed binding site."""
+class BindingSite:
+    """Runtime representation of a docking binding site."""
 
     center: jnp.ndarray  # shape (3,)
     radius: float
+
+    def tree_flatten(self):
+        children = (self.center, self.radius)
+        aux_data = None
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+
+@register_pytree_node_class
+@dataclass(frozen=True)
+class CertifiedBindingSite(BindingSite):
+    """Theorem-backed binding site with proof metadata."""
+
     theorem_handles: Tuple[str, ...] = ()
 
     def tree_flatten(self):
@@ -226,20 +249,24 @@ class CertifiedBindingSite:
 
 
 @dataclass(frozen=True)
-class GeometricBindingSite:
+class GeometricBindingSite(BindingSite):
     """Runtime geometric binding-site abstraction without theorem guarantees."""
-
-    center: jnp.ndarray  # shape (3,)
-    radius: float
 
 
 @dataclass(frozen=True)
-class CertifiedBlindDockingPlan:
+class BlindDockingPlan:
+    """Shared runtime plan for blind docking."""
+
+    binding_site: Optional[BindingSite]
+    restricted_box: DockingBox
+    restricted_atom_count: int
+
+
+@dataclass(frozen=True)
+class CertifiedBlindDockingPlan(BlindDockingPlan):
     """Theorem-directed runtime plan for certified blind docking."""
 
     binding_site: Optional[CertifiedBindingSite]
-    restricted_box: DockingBox
-    restricted_atom_count: int
     certified_pocket_found: bool
     certified_failure_reason: Optional[CertifiedPocketFailureReason]
     coarse_target_error: float
@@ -249,24 +276,26 @@ class CertifiedBlindDockingPlan:
 
 
 @dataclass(frozen=True)
-class CertifiedBlindDockingResult:
-    plan: CertifiedBlindDockingPlan
+class BlindDockingResult:
+    plan: BlindDockingPlan
     poses: tuple[ScoredPose, ...]
+
+
+@dataclass(frozen=True)
+class CertifiedBlindDockingResult(BlindDockingResult):
+    plan: CertifiedBlindDockingPlan
     certification: Optional[Union[NativeCertification, GapCertification]] = None
 
 
 @dataclass(frozen=True)
-class GeometricBlindDockingPlan:
+class GeometricBlindDockingPlan(BlindDockingPlan):
     binding_site: Optional[GeometricBindingSite]
-    restricted_box: DockingBox
-    restricted_atom_count: int
     sampling_strategy: SamplingStrategy = SamplingStrategy.HYBRID
 
 
 @dataclass(frozen=True)
-class GeometricBlindDockingResult:
+class GeometricBlindDockingResult(BlindDockingResult):
     plan: GeometricBlindDockingPlan
-    poses: tuple[ScoredPose, ...]
 
 
 @register_pytree_node_class
@@ -283,7 +312,12 @@ class LigandContext:
     charges: Optional[jnp.ndarray] = None
 
     def tree_flatten(self):
-        children = (self.base_coords, self.base_radii, self.center_of_mass, self.charges)
+        children = (
+            self.base_coords,
+            self.base_radii,
+            self.center_of_mass,
+            self.charges,
+        )
         aux_data = (self.elements,)
         return (children, aux_data)
 

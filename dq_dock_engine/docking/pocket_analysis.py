@@ -19,7 +19,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from dq_dock_engine.docking.core import CertifiedBindingSite, GeometricBindingSite
+from dq_dock_engine.docking.core import (
+    BindingSite,
+    CertifiedBindingSite,
+    GeometricBindingSite,
+)
 from dq_dock_engine.docking.sasa import (
     accessible_surface_points_single,
     create_sasa_config,
@@ -187,7 +191,19 @@ class RuntimeConcaveRegion:
 
 
 @dataclass(frozen=True)
-class CertifiedDetectedPocket:
+class DetectedPocket:
+    pocket_coords: jnp.ndarray
+    pocket_elements: tuple[str, ...]
+    atoms: tuple[RuntimeImplicitAtom, ...]
+    shape: PocketShape
+    accessibility: jnp.ndarray
+    features: tuple[PharmacophoreFeature, ...]
+    surface_points: tuple[CertifiedSurfacePoint, ...]
+    binding_site: BindingSite
+
+
+@dataclass(frozen=True)
+class CertifiedDetectedPocket(DetectedPocket):
     """
     Runtime approximation of a theorem-backed detected pocket.
 
@@ -195,13 +211,6 @@ class CertifiedDetectedPocket:
     the conservative certified binding-site abstraction consumed downstream.
     """
 
-    pocket_coords: jnp.ndarray
-    pocket_elements: tuple[str, ...]
-    atoms: tuple[RuntimeImplicitAtom, ...]
-    shape: PocketShape
-    accessibility: jnp.ndarray
-    features: tuple[PharmacophoreFeature, ...]
-    surface_points: tuple[CertifiedSurfacePoint, ...]
     concavity_witnesses: tuple[ConcavityWitness, ...]
     concave_region: RuntimeConcaveRegion
     binding_site: CertifiedBindingSite
@@ -209,14 +218,7 @@ class CertifiedDetectedPocket:
 
 
 @dataclass(frozen=True)
-class GeometricDetectedPocket:
-    pocket_coords: jnp.ndarray
-    pocket_elements: tuple[str, ...]
-    atoms: tuple[RuntimeImplicitAtom, ...]
-    shape: PocketShape
-    accessibility: jnp.ndarray
-    features: tuple[PharmacophoreFeature, ...]
-    surface_points: tuple[CertifiedSurfacePoint, ...]
+class GeometricDetectedPocket(DetectedPocket):
     binding_site: GeometricBindingSite
 
 
@@ -345,7 +347,7 @@ def intersecting_atom_count(
     )
 
 
-@functools.partial(jax.jit, static_argnames=['n_points'])
+@functools.partial(jax.jit, static_argnames=["n_points"])
 def _derive_surface_points_jitted(
     pocket_coords: jnp.ndarray,
     pocket_radii: jnp.ndarray,
@@ -354,41 +356,50 @@ def _derive_surface_points_jitted(
     n_points: int,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     from dq_dock_engine.docking.sasa import _fibonacci_sphere_points
+
     directions = _fibonacci_sphere_points(n_points)
-    
+
     def process_atom(i):
         atom_pos = pocket_coords[i]
         atom_rad = pocket_radii[i]
         surf_pts = atom_pos + (atom_rad + probe_radius) * directions
         diffs = surf_pts[:, None, :] - pocket_coords[None, :, :]
         dists = jnp.linalg.norm(diffs, axis=-1)
-        
+
         buried_threshold = pocket_radii[None, :] + probe_radius
         is_buried = dists < buried_threshold
         is_buried = is_buried.at[:, i].set(False)
-        
+
         accessible = ~jnp.any(is_buried, axis=1)
         has_any = jnp.any(accessible)
-        
+
         dist_to_center = jnp.linalg.norm(surf_pts - pocket_center, axis=1)
         dist_to_center = jnp.where(accessible, dist_to_center, jnp.inf)
-        
-        best_idx = jnp.argmin(dist_to_center) # Closest ACCESSIBLE point if has_any
+
+        best_idx = jnp.argmin(dist_to_center)  # Closest ACCESSIBLE point if has_any
         best_probe_center = surf_pts[best_idx]
-        
+
         vec_acc = best_probe_center - atom_pos
         norm_acc = jnp.linalg.norm(vec_acc)
-        cav_norm_acc = jnp.where(norm_acc > 1e-8, vec_acc / norm_acc, jnp.array([1.0, 0.0, 0.0], dtype=vec_acc.dtype))
+        cav_norm_acc = jnp.where(
+            norm_acc > 1e-8,
+            vec_acc / norm_acc,
+            jnp.array([1.0, 0.0, 0.0], dtype=vec_acc.dtype),
+        )
         surf_pos_acc = atom_pos + atom_rad * cav_norm_acc
-        
+
         vec_fallback = pocket_center - atom_pos
         norm_fallback = jnp.linalg.norm(vec_fallback)
-        cav_norm_fallback = jnp.where(norm_fallback > 1e-8, vec_fallback / norm_fallback, jnp.array([1.0, 0.0, 0.0], dtype=vec_fallback.dtype))
+        cav_norm_fallback = jnp.where(
+            norm_fallback > 1e-8,
+            vec_fallback / norm_fallback,
+            jnp.array([1.0, 0.0, 0.0], dtype=vec_fallback.dtype),
+        )
         surf_pos_fallback = atom_pos + atom_rad * cav_norm_fallback
-        
+
         surf_pos = jnp.where(has_any, surf_pos_acc, surf_pos_fallback)
         cav_norm = jnp.where(has_any, cav_norm_acc, cav_norm_fallback)
-        
+
         return surf_pos, cav_norm
 
     return jax.vmap(process_atom)(jnp.arange(pocket_coords.shape[0]))
@@ -404,19 +415,24 @@ def derive_surface_points(
     surf_pos, cav_norm = _derive_surface_points_jitted(
         pocket_coords, pocket_radii, pocket_center, probe_radius, sasa_config.n_points
     )
-    
+
     import numpy as np
+
     surf_pos = np.asarray(surf_pos)
     cav_norm = np.asarray(cav_norm)
     pocket_coords_np = np.asarray(pocket_coords)
     pocket_radii_np = np.asarray(pocket_radii)
-    
+
     surface_points = []
     for idx in range(pocket_coords.shape[0]):
         atom_radius = float(pocket_radii_np[idx])
-        distances = np.linalg.norm(pocket_coords_np - surf_pos[idx], axis=1) - pocket_radii_np
-        signed_distance = float(np.min(distances)) if pocket_coords_np.shape[0] > 0 else float("inf")
-        
+        distances = (
+            np.linalg.norm(pocket_coords_np - surf_pos[idx], axis=1) - pocket_radii_np
+        )
+        signed_distance = (
+            float(np.min(distances)) if pocket_coords_np.shape[0] > 0 else float("inf")
+        )
+
         surface_points.append(
             CertifiedSurfacePoint(
                 position=jnp.array(surf_pos[idx]),
@@ -436,6 +452,7 @@ def derive_radial_surface_points(
 ) -> tuple[CertifiedSurfacePoint, ...]:
     surface_points: list[CertifiedSurfacePoint] = []
     import numpy as np
+
     pocket_coords_np = np.asarray(pocket_coords)
     pocket_radii_np = np.asarray(pocket_radii)
     pocket_center_np = np.asarray(pocket_center)
@@ -446,7 +463,10 @@ def derive_radial_surface_points(
         norm = np.linalg.norm(vec)
         cavity_normal = vec / norm if norm > 1e-8 else np.array([1.0, 0.0, 0.0])
         surface_position = atom_position + atom_radius * cavity_normal
-        distances = np.linalg.norm(pocket_coords_np - surface_position, axis=1) - pocket_radii_np
+        distances = (
+            np.linalg.norm(pocket_coords_np - surface_position, axis=1)
+            - pocket_radii_np
+        )
         signed_distance = float(np.min(distances))
         surface_points.append(
             CertifiedSurfacePoint(
@@ -482,14 +502,19 @@ def detect_concavity_witnesses(
 ) -> tuple[ConcavityWitness, ...]:
     if len(surface_points) == 0:
         return tuple()
-        
-    probe_centers = jnp.array([sp.position + epsilon * sp.cavity_normal for sp in surface_points])
-    intersect_mask = _compute_concavity_intersect_mask(probe_centers, pocket_coords, pocket_radii, probe_radius)
-    
+
+    probe_centers = jnp.array(
+        [sp.position + epsilon * sp.cavity_normal for sp in surface_points]
+    )
+    intersect_mask = _compute_concavity_intersect_mask(
+        probe_centers, pocket_coords, pocket_radii, probe_radius
+    )
+
     import numpy as np
+
     mask_np = np.asarray(intersect_mask)
     witnesses = []
-    
+
     for surface_index, surface_point in enumerate(surface_points):
         intersecting = np.nonzero(mask_np[surface_index])[0]
         if len(intersecting) >= 2:

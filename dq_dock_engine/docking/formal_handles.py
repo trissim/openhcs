@@ -9,6 +9,12 @@ from dq_dock_engine.generated.formal_handle_aliases import (
     APX12,
     APX4,
     BD10,
+    CT1,
+    CT2,
+    CT3,
+    CT4,
+    CT5,
+    CT6,
     CB5,
     CB6,
     CB10,
@@ -35,11 +41,49 @@ from dq_dock_engine.generated.formal_handle_aliases import (
     FLO4,
     FLO8,
     FLO9,
+    HB1,
+    HB2,
+    HB3,
+    HB4,
+    HB5,
+    HB6,
+    HB7,
+    HB8,
+    HB9,
+    HB10,
+    HB11,
+    HB12,
     LJ13,
     LJ14,
     LJ10,
     LJ11,
     LJ12,
+    NB1,
+    NB2,
+    NB3,
+    NB4,
+    NB5,
+    NB6,
+    NB7,
+    NB8,
+    NB9,
+    NB10,
+    RC1,
+    RC2,
+    RC3,
+    RC4,
+    RC5,
+    RC6,
+    RC7,
+    RC8,
+    RC9,
+    RC10,
+    SC1,
+    SC2,
+    SC3,
+    SC4,
+    SC5,
+    SC6,
     SD10,
     TK1,
     TK8,
@@ -221,6 +265,30 @@ def scoring_family_theorem_handles(
     if certified_scoring_family == CertifiedScoringFamily.LJ:
         return (LJ10, LJ11, LJ12, LJ13, LJ14, APX10, APX11, APX12)
     return ()
+
+
+def contact_surrogate_theorem_handles() -> tuple[str, ...]:
+    return (CT1, CT2, CT3, CT4, CT5, CT6)
+
+
+def screened_coulomb_theorem_handles() -> tuple[str, ...]:
+    return (SC1, SC2, SC3, SC4, SC5, SC6)
+
+
+def additive_nonbonded_theorem_handles() -> tuple[str, ...]:
+    return (NB1, NB2, NB3, NB4, NB5, NB6, NB7, NB8, NB9, NB10)
+
+
+def directional_hbond_theorem_handles() -> tuple[str, ...]:
+    return (HB1, HB2, HB3, HB4, HB5, HB6, HB7, HB8)
+
+
+def directional_hbond_finite_theorem_handles() -> tuple[str, ...]:
+    return (HB1, HB9, HB10, HB11, HB12)
+
+
+def rich_chemistry_theorem_handles() -> tuple[str, ...]:
+    return (RC1, RC2, RC3, RC4, RC5, RC6, RC7, RC8, RC9, RC10)
 
 
 def selection_theorem_handle(branch: str) -> str:
