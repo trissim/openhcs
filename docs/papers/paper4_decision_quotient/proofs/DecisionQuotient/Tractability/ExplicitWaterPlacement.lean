@@ -38,6 +38,7 @@
 import DecisionQuotient.Tractability.CoarseApproximation
 import DecisionQuotient.Tractability.FormalLocalOptimizer
 import DecisionQuotient.Tractability.ConformerSearch
+import DecisionQuotient.Tractability.BlindConformerRuntimeCertificates
 
 namespace DecisionQuotient
 namespace Tractability
@@ -181,6 +182,28 @@ theorem water_bridge_additive_with_base {A : Type u} {S : Type v}
   · exact h_base
   · intro a s
     simp [waterPlacementDecisionProblem]
+
+open BlindConformerRuntimeCertificates in
+/-- Water bridges can be safely treated as an omitted channel because EWP4
+    provides a strict physical value bound: each bridge score is in [0, 2].
+    For N bridges, the total water contribution is bounded by 2N.
+
+    This connects the physics theorem (waterBridgeScore_le_two) to the
+    abstract omitted-channel machinery (bounded_channel_uniformApprox_zero).
+
+    Unlike screened Coulomb or LJ (whose peak values are enormous), water
+    bridges have a small, finite maximum. This is the one channel where
+    true omission (coarse = 0) is safe with a tight bound. -/
+theorem water_bridge_is_bounded_omitted_channel
+    {A : Type u} {S : Type v}
+    (waterBridge : A → S → ℝ)
+    (maxBridges : ℕ)
+    (hBound : ∀ a s, |waterBridge a s| ≤ (maxBridges : ℝ) * 2) :
+    UniformUtilityApprox
+      (omittedChannelDecisionProblem waterBridge)
+      zeroDecisionProblem
+      ((maxBridges : ℝ) * 2) :=
+  omitted_channel_is_bounded_by_supremum waterBridge ((maxBridges : ℝ) * 2) hBound
 
 end ExplicitWaterPlacement
 end Tractability

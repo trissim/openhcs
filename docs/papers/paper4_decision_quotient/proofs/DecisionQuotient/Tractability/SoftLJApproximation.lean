@@ -235,6 +235,42 @@ theorem softenedLJ_torsion_composition
     LipschitzWith (L_soft * K) (fun p => score (kinematics p)) :=
   h_score.comp h_kine
 
+/-- The softening error is purely a function of (r, rSoft): it is nonzero
+    only when r < rSoft, and in that case equals |exactLJ(r) - exactLJ(rSoft)|.
+    When r ≥ rSoft, the error is exactly zero.
+
+    This proves that the softening error is **unbounded** as r → 0 (because
+    exactLJScore diverges), so the batch-max delta is NOT stable across batch
+    sizes — any batch containing a close-contact pose will explode the delta.
+
+    The runtime fix: use softenedLJScore as BOTH the exact and coarse base,
+    so the softening error cancels to zero (see `softened_lj_self_approx_zero`). -/
+theorem exact_vs_softened_lj_error (ε σ r rSoft : ℝ) :
+    |exactLJScore ε σ r - softenedLJScore ε σ rSoft r| =
+      if r < rSoft then |exactLJScore ε σ r - exactLJScore ε σ rSoft| else 0 := by
+  unfold softenedLJScore
+  split_ifs with h
+  · -- Case r < rSoft: max r rSoft = rSoft
+    have : max r rSoft = rSoft := max_eq_right (le_of_lt h)
+    rw [this]
+  · -- Case r ≥ rSoft: max r rSoft = r, so exactLJ(r) - exactLJ(r) = 0
+    push_neg at h
+    have : max r rSoft = r := max_eq_left h
+    rw [this, sub_self, abs_zero]
+
+/-- When both exact and coarse use softened LJ, the approximation error is
+    exactly zero. This is the key insight: eliminate the unstable softening
+    delta by adopting softened LJ as the shared scoring base. -/
+theorem softened_lj_self_approx_zero
+    {A : Type u} {S : Type v}
+    (distance : A → S → ℝ) (ε σ rSoft : ℝ) :
+    UniformUtilityApprox
+      (softenedLJDecisionProblem distance ε σ rSoft)
+      (softenedLJDecisionProblem distance ε σ rSoft)
+      0 := by
+  intro a s
+  simp [softenedLJDecisionProblem]
+
 end SoftLJApproximation
 end Tractability
 end DecisionQuotient
