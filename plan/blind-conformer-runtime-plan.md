@@ -26,7 +26,8 @@
 
 | File | Key structures/theorems |
 |------|------------------------|
-| `EnergyRMSDConvergence.lean` | `CertifiedQuadraticBasin`, `CertifiedLocalSpectralEnclosure`, `CertifiedGradientDescentDynamics`, `rmsd_target_of_canonicalIterationBudgetFromGradientDescentDynamics`, `leastAdequateIterationBudget_spec` |
+| `EnergyRMSDConvergence.lean` | `CertifiedQuadraticBasin`, `CertifiedSegmentCurvature`, `CertifiedLocalSpectralEnclosure`, `CertifiedOneStepEnergyContraction`, `CertifiedGradientDescentDynamics`, `rmsd_target_of_canonicalIterationBudgetFromLocalCertificates`, `rmsd_target_of_canonicalIterationBudgetFromGradientDescentDynamics` |
+| (new) `SE3JacobianBridge.lean` | **`parameterSpace_quadraticBasin_transfers_to_coordSpace`** — bridges SE(3) Hessian eigenvalues to coordinate-space quadratic growth via kinematics Jacobian singular values |
 
 ---
 
@@ -158,6 +159,8 @@ def analytic_cutoff_tail_bound(self) -> float:
 
 Similar for `CertifiedContactSurrogateSpec` (Gaussian tail), `CertifiedDirectionalHBondSpec` (Gaussian tail), `CertifiedMetalCoordinationSpec` (Gaussian tail).
 
+Also add `analytic_cutoff_tail_bound()` to the abstract base class `CertifiedOptionalInteractionTerm` (scoring.py:424) so that extended terms in `CertifiedExtendedInteractionBundle.terms` can be iterated uniformly in Step A3.
+
 #### Step A3: Add `analytic_total_delta()` to `CertifiedRichChemistryPlan`
 
 ```python
@@ -288,123 +291,402 @@ additive_correction = jnp.sum(
 
 ## Problem 3: Formulaic refinement budget
 
-### Strategy: measure, then certify
+### Why the previous plan was broken
 
-The previous plan tried to derive `lmin`/`lmax` analytically and gave up, proposing heuristic alternatives. The correct approach: **compute the exact Hessian with JAX, extract eigenvalues, then feed them into the Lean certificate chain.** No heuristics needed.
+The previous version computed a 3N×3N Hessian in Cartesian atom-coordinate space and fed eigenvalues into `CertifiedGradientDescentDynamics`. Three fatal issues:
 
-The Lean infrastructure already exists — it's a post-hoc verification layer, not a derivation engine:
+**1. Wrong parameter space.** The optimizer works in 7D SE(3) (translation + quaternion), not 3N Cartesian. A rigid body has 6 zero-eigenvalue modes in Cartesian space → `lmin = 0` → `CertifiedQuadraticBasin` precondition `0 < μ` fails → falls back to fixed budget every time.
 
-1. `jax.hessian` computes the exact Hessian at the optimized pose
-2. `jnp.linalg.eigvalsh` extracts eigenvalues → `lmin`, `lmax`
-3. These populate `CertifiedLocalSpectralEnclosure` (Lean structure at `EnergyRMSDConvergence.lean:149`)
-4. `CertifiedGradientDescentDynamics` wraps the step contraction with `q = (lmax-lmin)/(lmax+lmin)`
-5. `rmsd_target_of_canonicalIterationBudgetFromGradientDescentDynamics` certifies the RMSD guarantee
+**2. Wrong optimizer dynamics.** The Lean theorem `CertifiedGradientDescentDynamics` assumes standard gradient descent: `x_{t+1} = x_t - α∇E(x_t)`. The actual optimizer (`optimization.py:75-97`) uses gradient norm clipping, direction normalization, and quaternion renormalization — a fundamentally different dynamics. The Lean contraction rate `q = (M-μ)/(M+μ)` doesn't describe this optimizer.
 
-**This is not an axiom.** We are not assuming `μ`; we are computing it for a specific pose and using Lean to verify that *if the computation is correct*, the RMSD guarantee holds.
+**3. Wrong cost estimate.** The plan said "90×90 Hessian, 4.5s per pose." The correct parameter space is 6D (rigid) or 6+n_bonds (flexible) → 6×6 Hessian → 0.3s per pose.
 
-### Lean certificate chain
+### The two Lean ingredients (independent)
+
+The RMSD guarantee theorem `rmsd_target_of_canonicalAdequateIterationBudget` needs two independent certificates:
+
+**Ingredient 1 — Quadratic basin** (`CertifiedQuadraticBasin`):
+```
+∀ x, (μ/2) × squaredDisplacement(x, center) ≤ E(x) - E(center)
+```
+This is a statement in **coordinate space** (`CoordSet n`). It converts energy convergence into RMSD convergence via `targetEnergyGap(μ, n, eps) = μ × n × eps² / 2`.
+
+**Ingredient 2 — Linear energy convergence** (`CertifiedLinearEnergyConvergence`):
+```
+∀ t, energyGap(t) ≤ q^t × energyGap(0)
+```
+This is **optimizer-agnostic**. It's a property of the energy gap sequence, not a property of any particular optimizer.
+
+### Two approaches: observed certification (A) vs certified-by-construction (B)
+
+Both approaches share ingredient 2 (linear energy convergence) and differ in how they obtain ingredient 1 (quadratic basin) and q.
+
+**Approach A: SE(3) Hessian + Jacobian bridge + observed q** — "measure, then certify"
+- Use any optimizer (including the current clipped GD)
+- Observe the energy trajectory to extract q empirically
+- Compute a 6×6 Hessian in SE(3) parameter space
+- Bridge to coordinate-space μ via a new Lean theorem (Jacobian bridge)
+- Pro: no optimizer changes, cheap, practical
+- Con: requires one new Lean theorem
+
+**Approach B: Certified GD optimizer** — "certify by construction"
+- Add a new optimizer mode that IS standard gradient descent in axis-angle parameterization
+- Derive q analytically from the Hessian: `q = (lmax-lmin)/(lmax+lmin)`
+- The Lean chain applies directly (optimizer matches theorem)
+- Pro: fully theorem-derived, no empirical components
+- Con: standard GD may converge slower than clipped GD; requires optimizer changes
+
+Both are implemented behind a flag: `refinement_certification_mode: Literal["observed", "certified_gd"]`.
+
+---
+
+### Approach A: SE(3) Hessian + Jacobian bridge (observed certification)
+
+#### Mathematical foundation
+
+The optimizer works in parameter space P = R³ × R³ (translation + axis-angle rotation). The energy is:
+
+```
+E_param(t, θ) = E_coord(K(t, θ))
+```
+
+where K: P → CoordSet n is the rigid-body kinematics (`_apply_single_pose`). The Hessian H_param of E_param at the optimized point has eigenvalues `lmin_param > 0` (because there are no zero modes in P — every direction changes the energy).
+
+The coordinate-space quadratic growth constant μ is related to the parameter-space Hessian by the kinematics Jacobian J = dK/d(t,θ):
+
+```
+μ_coord = lmin_param / σ_max(J)²
+```
+
+where σ_max(J) is the largest singular value of the Jacobian. This follows from:
+
+```
+ΔE ≥ (lmin_param / 2) × ||Δparams||²        (parameter-space quadratic growth)
+||Δcoords||² ≤ σ_max(J)² × ||Δparams||²     (Jacobian bound)
+→ ΔE ≥ (lmin_param / (2 × σ_max(J)²)) × ||Δcoords||²   (coordinate-space growth)
+```
+
+#### New Lean theorem needed: Jacobian bridge
+
+```lean
+/-- Parameter-space quadratic growth transfers to coordinate-space quadratic growth
+    via the kinematics Jacobian's singular values. -/
+theorem parameterSpace_quadraticBasin_transfers_to_coordSpace
+    {n d : ℕ}
+    (E_coord : CoordSet n → ℝ)
+    (K : Fin d → ℝ → CoordSet n)  -- kinematics parameterization
+    (center_param : Fin d → ℝ)
+    (center_coord : CoordSet n)
+    (μ_param : ℝ)
+    (σ_max_sq : ℝ)
+    (hμ : 0 < μ_param)
+    (hσ : 0 < σ_max_sq)
+    (h_center : K center_param = center_coord)  -- center maps correctly
+    (h_param_basin : ∀ p, (μ_param / 2) * paramDisplacement p center_param
+        ≤ E_coord (K p) - E_coord (K center_param))
+    (h_jacobian : ∀ p, squaredDisplacement (K p) (K center_param)
+        ≤ σ_max_sq * paramDisplacement p center_param) :
+    CertifiedQuadraticBasin E_coord center_coord where
+  μ := μ_param / σ_max_sq
+  μ_pos := div_pos hμ hσ
+  quadratic_growth := ...  -- follows from h_param_basin and h_jacobian
+```
+
+#### Lean certificate chain (Approach A)
 
 | Lean structure | Python source | What it certifies |
 |---------------|---------------|-------------------|
-| `CertifiedLocalSpectralEnclosure` | `jax.hessian` eigenvalues at optimized pose | `lmin × ‖x-c‖² ≤ d²E/dt² ≤ lmax × ‖x-c‖²` along all rays |
-| `CertifiedGradientStepParameters` | `α = 2/(lmin+lmax)`, `q = (lmax-lmin)/(lmax+lmin)` | Valid step size and contraction factor |
-| `CertifiedGradientDescentDynamics` | Observed energy gaps from optimizer | `gap(t+1) ≤ q × gap(t)` |
-| `canonicalIterationBudgetFromGradientDescentDynamics` | — | Minimum `t` such that `rmsd(pose_t, center) ≤ eps` |
-| `rmsd_target_of_canonicalIterationBudgetFromGradientDescentDynamics` | — | **The RMSD guarantee** |
+| (new) `parameterSpace_quadraticBasin_transfers_to_coordSpace` | 6×6 Hessian eigenvalues + Jacobian singular values | `μ_coord = lmin_param / σ_max(J)²` transfers to coordinate space |
+| `CertifiedQuadraticBasin` | Derived via Jacobian bridge | `(μ/2) × squaredDisplacement ≤ ΔE` in coordinate space |
+| `CertifiedOneStepEnergyContraction` | Observed energy gaps from optimizer | `gap(t+1) ≤ q × gap(t)` with empirical q |
+| `rmsd_target_of_canonicalIterationBudgetFromLocalCertificates` | — | **The RMSD guarantee** |
 
-### Cost of exact Hessian
+#### Implementation (Approach A)
 
-For N_lig ≈ 30 atoms → 90-dimensional parameter space → 90×90 Hessian.
-
-`jax.hessian` uses forward-over-reverse mode: O(3N) reverse-mode passes, each O(scoring cost). For 50ms scoring: 90 × 50ms = **4.5s per pose**.
-
-This is done **once per surviving pose after optimization**, not per scoring call. With ~10–50 survivors after Problem 1 pruning, total cost is 45–225s. Acceptable for a theorem-honest result.
-
-### Implementation
-
-#### Step C1: Compute exact Hessian post-optimization
+##### Step C-A1: Energy function in SE(3) parameter space
 
 ```python
-def compute_spectral_certificate(
-    energy_fn: Callable[[jnp.ndarray], float],
-    optimized_coords: jnp.ndarray,  # (N_lig, 3)
-) -> tuple[float, float]:
-    """Compute exact lmin, lmax from Hessian eigenvalues.
+def _make_se3_energy_fn(
+    base_coords: jnp.ndarray,        # (N_lig, 3)
+    receptor_coords: jnp.ndarray,    # (N_rec, 3)
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+    cutoff: jnp.ndarray,
+    epsilon: float,
+) -> Callable[[jnp.ndarray], float]:
+    """Energy as a function of 6D parameter vector [tx, ty, tz, θx, θy, θz].
 
-    Lean: populates CertifiedLocalSpectralEnclosure.
+    The first 3 components are translation. The last 3 are axis-angle rotation.
+    This is the optimizer's actual parameter space — no constraints.
     """
-    flat = optimized_coords.ravel()
-    H = jax.hessian(lambda x: energy_fn(x.reshape(-1, 3)))(flat)
-    eigenvalues = jnp.linalg.eigvalsh(H)
-    lmin = float(eigenvalues[0])
-    lmax = float(eigenvalues[-1])
-    # Precondition check: CertifiedLocalSpectralEnclosure requires 0 < lmin
-    if lmin <= 0:
-        # Not in a convex basin — cannot certify. Fall back to fixed budget.
-        return None
-    return lmin, lmax
+    def energy_fn(params: jnp.ndarray) -> float:
+        t = params[:3]
+        rotvec = params[3:6]
+        angle = jnp.linalg.norm(rotvec)
+        axis = jnp.where(angle > 1e-8, rotvec / angle, jnp.array([0., 0., 1.]))
+        q = _axis_angle_to_quaternion(axis, angle)
+        pose_coords = _apply_single_pose(base_coords, t, q)
+        energy, _ = _score_certified_lj(
+            receptor_coords, pose_coords, receptor_radii, ligand_radii,
+            cutoff, epsilon,
+        )
+        return energy
+    return energy_fn
 ```
 
-#### Step C2: Derive iteration budget from certificate
+##### Step C-A2: Compute 6×6 Hessian + Jacobian singular values
 
 ```python
-def certified_iteration_budget(
-    lmin: float,
-    lmax: float,
-    initial_gap: float,   # E(x0) - E(x_final)
+def compute_se3_spectral_certificate(
+    energy_fn: Callable[[jnp.ndarray], float],
+    kinematics_fn: Callable[[jnp.ndarray], jnp.ndarray],  # params → (N_lig, 3)
+    optimized_params: jnp.ndarray,  # (6,) [t, rotvec]
+) -> SE3SpectralCertificate | None:
+    """Compute lmin_param, lmax_param from 6×6 Hessian, σ_max from Jacobian.
+
+    Cost: 6 reverse-mode passes for Hessian + 1 Jacobian computation.
+    For 50ms scoring: ~0.3s per pose.
+    """
+    H = jax.hessian(energy_fn)(optimized_params)       # (6, 6)
+    eigs = jnp.linalg.eigvalsh(H)
+    lmin_param = float(eigs[0])
+    lmax_param = float(eigs[-1])
+
+    if lmin_param <= 0:
+        return None  # not in a convex basin
+
+    J = jax.jacobian(kinematics_fn)(optimized_params)  # (N_lig, 3, 6)
+    J_flat = J.reshape(-1, 6)                          # (3*N_lig, 6)
+    sigma_max_sq = float(jnp.max(jnp.linalg.svdvals(J_flat)) ** 2)
+
+    mu_coord = lmin_param / sigma_max_sq
+    return SE3SpectralCertificate(
+        lmin_param=lmin_param,
+        lmax_param=lmax_param,
+        sigma_max_sq=sigma_max_sq,
+        mu_coord=mu_coord,
+    )
+```
+
+##### Step C-A3: Extract observed q from energy trajectory
+
+```python
+def extract_observed_contraction_rate(
+    energy_trajectory: list[float],
+) -> float | None:
+    """Fit q from observed energy gaps: gap(t+1) ≤ q × gap(t).
+
+    Takes the worst-case ratio across all steps. If any step increases
+    the energy gap, returns None (not monotonically converging).
+
+    Lean: populates CertifiedOneStepEnergyContraction.step_contract.
+    """
+    final_energy = energy_trajectory[-1]
+    gaps = [e - final_energy for e in energy_trajectory]
+
+    q_max = 0.0
+    for t in range(len(gaps) - 1):
+        if gaps[t] <= 0:
+            continue  # already converged
+        ratio = gaps[t + 1] / gaps[t]
+        if ratio >= 1.0:
+            return None  # energy gap increased — cannot certify
+        q_max = max(q_max, ratio)
+    return q_max
+```
+
+##### Step C-A4: Derive certified iteration budget
+
+```python
+def certified_iteration_budget_observed(
+    mu_coord: float,    # from Jacobian bridge
+    q: float,           # from observed energy trajectory
+    initial_gap: float, # E(pose_0) - E(pose_final)
     target_rmsd: float,
     n_atoms: int,
 ) -> int:
-    """Lean: canonicalIterationBudgetFromGradientDescentDynamics.
+    """Lean: logarithmicIterationBound applied to observed q and bridged μ.
 
-    Returns the provably minimal iteration count for the RMSD target.
+    Returns the provably sufficient iteration count for the RMSD target.
     """
-    q = (lmax - lmin) / (lmax + lmin)
-    target_gap = lmin * n_atoms * target_rmsd**2 / 2.0  # targetEnergyGap
-
+    target_gap = mu_coord * n_atoms * target_rmsd**2 / 2.0
     if initial_gap <= target_gap:
         return 0
-
-    # Lean: logarithmicIterationBound ≥ canonicalAdequateIterationBudget
     import math
     return math.ceil(math.log(initial_gap / target_gap) / math.log(1.0 / q))
 ```
 
-#### Step C3: Wire into optimizer loop
+##### Step C-A5: Wire into pipeline (post-optimization)
 
 ```python
-# In pipeline.py — after initial optimization:
-spectral = compute_spectral_certificate(score_fn, optimized_coords)
-if spectral is not None:
-    lmin, lmax = spectral
-    initial_gap = float(initial_energy - optimized_energy)
-    n_steps = certified_iteration_budget(
-        lmin, lmax, initial_gap, target_rmsd=0.5, n_atoms=n_lig)
-else:
-    n_steps = 50  # fallback only when not in a convex basin
+# After running the existing optimizer:
+opt_t, opt_q = optimize_poses_batched(translations, quaternions, ..., n_steps=50)
+opt_coords = apply_poses(ligand_ctx, PoseVector(opt_t, opt_q))
+
+# For each surviving pose, certify the result:
+for i in range(n_survivors):
+    params_i = _pose_to_se3_params(opt_t[i], opt_q[i])
+    cert = compute_se3_spectral_certificate(energy_fn, kinematics_fn, params_i)
+    if cert is not None:
+        q_obs = extract_observed_contraction_rate(energy_trajectories[i])
+        if q_obs is not None:
+            budget = certified_iteration_budget_observed(
+                cert.mu_coord, q_obs, gaps[i], target_rmsd=0.5, n_atoms=n_lig)
+            # budget tells us whether 50 steps was enough, or how many more needed
 ```
 
-#### Step C4: Certificate dataclasses
+**Key requirement**: the optimizer must record the energy at each step. Currently `jax.lax.fori_loop` doesn't do this. This requires changing the loop to `jax.lax.scan` which returns intermediate states, or recording energies in a pre-allocated array via `.at[i].set(energy)`.
+
+---
+
+### Approach B: Certified gradient descent optimizer
+
+#### Mathematical foundation
+
+Replace the current clipped-normalized optimizer with standard gradient descent in axis-angle parameterization:
+
+```
+params_{t+1} = params_t - α × ∇E(params_t)
+```
+
+with `α = 2 / (lmin_param + lmax_param)` from the Hessian eigenvalues. The Lean theorem `CertifiedGradientDescentDynamics` proves contraction rate `q = (lmax - lmin) / (lmax + lmin)` for this exact dynamics.
+
+Combined with the Jacobian bridge (shared with Approach A), this gives the full RMSD guarantee.
+
+#### Lean certificate chain (Approach B)
+
+| Lean structure | Python source | What it certifies |
+|---------------|---------------|-------------------|
+| (new) `parameterSpace_quadraticBasin_transfers_to_coordSpace` | Same as Approach A | `μ_coord = lmin_param / σ_max(J)²` |
+| `CertifiedGradientStepParameters` | `α = 2/(lmin+lmax)`, `μ = lmin`, `M = lmax` | Valid step size |
+| `CertifiedGradientDescentDynamics` | Standard GD matches theorem exactly | `gap(t+1) ≤ q × gap(t)` with `q = (M-μ)/(M+μ)` |
+| `rmsd_target_of_canonicalIterationBudgetFromGradientDescentDynamics` | — | **The RMSD guarantee** |
+
+The key difference from Approach A: q is **derived from the theorem**, not observed. The optimizer IS the object the theorem proves about.
+
+#### Implementation (Approach B)
+
+##### Step C-B1: Standard GD optimizer in axis-angle space
+
+```python
+def _step_body_certified_gd(
+    params: jnp.ndarray,    # (6,) [t, rotvec]
+    alpha: float,
+    base_coords: jnp.ndarray,
+    receptor_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+    cutoff: jnp.ndarray,
+    epsilon: float,
+) -> jnp.ndarray:
+    """One step of standard gradient descent. No clipping, no normalization.
+
+    This IS the optimizer that CertifiedGradientDescentDynamics proves about.
+    Lean: step_contract follows from α = 2/(lmin+lmax) and smooth strong convexity.
+    """
+    grad = jax.grad(energy_fn)(params)
+    return params - alpha * grad
+```
+
+##### Step C-B2: Two-phase optimization
+
+```python
+def optimize_certified_gd(
+    initial_params: jnp.ndarray,  # (6,) [t, rotvec]
+    energy_fn: Callable[[jnp.ndarray], float],
+    kinematics_fn: Callable[[jnp.ndarray], jnp.ndarray],
+    target_rmsd: float,
+    n_atoms: int,
+    max_probe_steps: int = 10,
+) -> CertifiedGDResult:
+    """Two-phase certified optimization.
+
+    Phase 1: Run a few steps to reach near the basin (cheap probe).
+    Phase 2: Compute Hessian, derive α and budget T, run T steps of standard GD.
+    """
+    # Phase 1: quick probe with small fixed step size
+    probed = _run_gd_steps(initial_params, energy_fn, alpha=0.01, n_steps=max_probe_steps)
+
+    # Compute Hessian at probed point
+    cert = compute_se3_spectral_certificate(energy_fn, kinematics_fn, probed)
+    if cert is None:
+        return CertifiedGDResult(params=probed, certificate=None)
+
+    # Phase 2: certified standard GD
+    alpha = 2.0 / (cert.lmin_param + cert.lmax_param)
+    q = (cert.lmax_param - cert.lmin_param) / (cert.lmax_param + cert.lmin_param)
+    initial_gap = float(energy_fn(initial_params) - energy_fn(probed))
+    budget = certified_iteration_budget_observed(
+        cert.mu_coord, q, initial_gap, target_rmsd, n_atoms)
+
+    optimized = _run_gd_steps(initial_params, energy_fn, alpha=alpha, n_steps=budget)
+    return CertifiedGDResult(params=optimized, certificate=cert, q=q, n_steps=budget)
+```
+
+---
+
+### Shared components
+
+#### Certificate dataclasses
 
 ```python
 @dataclass(frozen=True)
-class SpectralCertificate:
-    """Runtime mirror of CertifiedLocalSpectralEnclosure."""
-    lmin: float
-    lmax: float
+class SE3SpectralCertificate:
+    """Hessian eigenvalues in SE(3) parameter space + Jacobian bridge.
+    Lean: parameterSpace_quadraticBasin_transfers_to_coordSpace."""
+    lmin_param: float   # smallest Hessian eigenvalue in parameter space
+    lmax_param: float   # largest Hessian eigenvalue in parameter space
+    sigma_max_sq: float # squared largest singular value of kinematics Jacobian
+    mu_coord: float     # coordinate-space quadratic growth: lmin_param / sigma_max_sq
 
 @dataclass(frozen=True)
 class RefinementCertificate:
-    """Combined certificate for theorem-backed n_opt_steps.
-    Lean: canonicalIterationBudgetFromGradientDescentDynamics."""
-    spectral: SpectralCertificate
-    q: float            # contraction rate
+    """Combined certificate for theorem-backed n_opt_steps."""
+    spectral: SE3SpectralCertificate
+    q: float            # contraction rate (observed for A, derived for B)
     initial_gap: float
     target_rmsd: float
     n_steps: int        # certified budget
+    mode: str           # "observed" or "certified_gd"
 ```
 
-**No `@conditionally_certified` needed.** The Hessian eigenvalues are exact (not approximate), and the Lean chain from `CertifiedLocalSpectralEnclosure` through `rmsd_target_of_canonicalIterationBudgetFromGradientDescentDynamics` is fully proven.
+#### Flag in `PipelineDockingRequest`
+
+```python
+refinement_certification_mode: Literal["observed", "certified_gd", "none"] = "none"
+```
+
+- `"none"`: current behavior, fixed `n_opt_steps=50`
+- `"observed"`: Approach A — run existing optimizer, certify post-hoc
+- `"certified_gd"`: Approach B — run standard GD with theorem-derived budget
+
+#### Axis-angle ↔ quaternion conversion
+
+Already exists in codebase:
+- `_axis_angle_to_quaternion` in `pocket_sampling.py:187` and `formal_actions.py:88`
+- `_rodrigues_rotate` in `conformer_search.py:503`
+
+Need to add: `_quaternion_to_axis_angle` for converting existing optimizer output to axis-angle params.
+
+### Cost comparison
+
+| | Approach A (observed) | Approach B (certified GD) |
+|-|----------------------|--------------------------|
+| Hessian | 6×6 → ~0.3s/pose | 6×6 → ~0.3s/pose |
+| Jacobian | 1 computation → ~0.05s/pose | Same |
+| Optimizer | Existing (fast, clipped) | Standard GD (possibly slower) |
+| Energy recording | Requires `scan` instead of `fori_loop` | Not needed (q is derived) |
+| New Lean | Jacobian bridge theorem | Same + nothing extra |
+| Gap | q is empirical (observed) | q is provably correct |
+
+### Research value
+
+This is a valid research direction because:
+
+1. **Novel**: No docking software provides provable RMSD convergence bounds. Both approaches are publishable.
+2. **Comparable**: A vs B directly tests whether the clipped optimizer converges faster than the theoretically optimal standard GD. If A consistently needs fewer steps, it demonstrates that the heuristic optimizer is better in practice (common belief, rarely proven). If B is competitive, it demonstrates that theorem-backed optimization doesn't sacrifice performance.
+3. **The Jacobian bridge theorem is independently useful**: it connects parameter-space optimization theory to coordinate-space structural biology metrics (RMSD). This applies beyond docking — to any rigid-body or articulated optimization problem.
+4. **Falsifiable**: if the observed q from Approach A is consistently worse than the derived q from Approach B, it means the clipped optimizer is actually slower — a concrete finding.
 
 ---
 
@@ -463,19 +745,30 @@ This is the `canonicalSeedBudgetCost_mono` theorem: larger budgets never increas
 
 #### Step D1: Make `max_cells` adaptive
 
+Must be computed in `_build_conformer_search_config()` (pipeline.py:1572), which already has `rotatable_bonds`. NOT in `search_conformers()`, where the default `BranchAndBoundConfig()` is constructed before `n_bonds` is known (conformer_search.py:908-922).
+
 ```python
-def adaptive_max_cells(
-    n_bonds: int,
-    base_max_cells: int = 200,
-) -> int:
-    """Scale B&B budget with torsion dimensionality."""
-    # Each bisection doubles cells; need ~2^n_bonds to explore one level
-    return base_max_cells * min(2 ** n_bonds, 1024)
+# In _build_conformer_search_config():
+n_bonds = len(rotatable_bonds)
+max_cells = 200 * min(2 ** n_bonds, 1024)
+
+return BranchAndBoundConfig(
+    max_cells=max_cells,
+    score_lipschitz_constant=score_lipschitz_constant,
+    per_bond_lipschitz=per_bond_lipschitz,
+    reuse_initial_conformer=request.reuse_initial_conformer,
+)
 ```
 
 #### Step D2: Add early-termination when retain set stabilizes
 
-In the B&B loop, track the number of leaf conformers found. If no new distinct conformers are found after K consecutive batches, terminate early (the Lean monotonicity theorem guarantees this doesn't miss the optimum if the budget is adequate).
+Currently the B&B loop (conformer_search.py:693-811) only checks `cells_evaluated < config.max_cells` and deduplicates post-hoc. Change to:
+
+1. Deduplicate **during** the loop (move dedup logic from post-hoc into the cell evaluation)
+2. Track `steps_since_last_new_conformer`
+3. Terminate early when `steps_since_last_new_conformer > K` (e.g., K = 50)
+
+The Lean monotonicity theorem (`canonicalSeedBudgetCost_mono`) guarantees this doesn't miss the optimum if the budget was already adequate.
 
 ---
 
@@ -549,17 +842,18 @@ This tightens the threshold from "200th best + delta" to "10th best + delta". Th
 
 #### Step E2: Remove `top_k_to_optimize` from `PipelineDockingRequest`
 
-Delete the `top_k_to_optimize` field and all references:
+Delete the `top_k_to_optimize` field. **Not all references are mechanical replacements** — three have different semantics:
 
-| File | References to remove |
-|------|---------------------|
-| `pipeline.py:187` | Default value definition |
-| `pipeline.py:1464-1467` | `k = min(request.top_k_to_optimize, ...)` |
-| `pipeline.py:1631` | `_survivor_capacity()` reference |
-| `pipeline.py:2054` | `n_to_opt = min(request.top_k_to_optimize, ...)` |
-| `pipeline.py:2255` | Exact survivor mask reference |
-| `benchmark_pdb.py` | ~12 references |
-| test files | ~15 references |
+| File:Line | Current use | Replacement | Notes |
+|-----------|------------|-------------|-------|
+| `pipeline.py:187` | Default value definition | Delete field | — |
+| `pipeline.py:1464-1467` | `k = min(top_k_to_optimize, ...)` for pruning threshold | `k = min(request.top_k, ...)` | Also update validation at line 1464 from `top_k_to_optimize > 0` to `top_k > 0` |
+| `pipeline.py:1631-1637` | `_survivor_capacity()`: `top_k_to_optimize * 256` for **memory allocation** | Use `BLIND_CONFORMER_SURVIVOR_BATCH_SIZE` (8192) directly | This is NOT a pruning threshold — it sizes JAX arrays. With emergent retain set, the survivor batch is bounded by `BLIND_CONFORMER_SURVIVOR_BATCH_SIZE` regardless. |
+| `pipeline.py:2054` | `n_to_opt = min(top_k_to_optimize, n_poses)` for **optimizer input selection** | Optimize all canonical retain survivors | The canonical retain set IS the optimization set. Its size is emergent from delta, not a separate parameter. |
+| `pipeline.py:2255` | Exact survivor mask `k = min(top_k_to_optimize, ...)` | `k = min(request.top_k, ...)` | Same as E1 — mechanical replacement |
+| `pipeline.py:126` | Comment referencing `top_k_to_optimize > 1` | Update comment | — |
+| `benchmark_pdb.py` | ~14 references including CLI `--top_k_to_optimize` | **Deprecation**: accept flag, warn, ignore value | Breaking change — existing scripts use this flag |
+| test files | ~15 references (helpers, assertions) | Update to use `top_k` | — |
 
 #### Step E3: Safety floor (theorem-honest)
 
@@ -589,7 +883,8 @@ No `MAX_SURVIVORS` cap. The retain set size is the retain set size. The theorems
 | **2** | E1-E4: Replace `top_k_to_optimize` with theorem-derived retain sizing | A (needs stable delta to produce reasonable retain set sizes) | Small — change k source, remove parameter, assert safety invariant |
 | **3** | B1-B2: Pose-specific torsion budgets | A (need stable delta first) | Small — one new function + change two lines in pruning pass |
 | **4** | D1-D2: Adaptive seed budget | Nothing | Small — parameter scaling + early termination |
-| **5** | C1-C4: Formulaic refinement budget | Nothing | Large — Hessian estimation, new certificate types, optimizer integration |
+| **5a** | C-A1–A5: Observed certification (Approach A) | Nothing | Large — SE(3) energy fn, 6×6 Hessian, Jacobian bridge, energy recording via `scan`, Lean theorem |
+| **5b** | C-B1–B2: Certified GD optimizer (Approach B) | 5a (shares Hessian + Jacobian bridge) | Medium — standard GD step function, two-phase optimization, flag wiring |
 
 ---
 
@@ -603,7 +898,8 @@ No `MAX_SURVIVORS` cap. The retain set size is the retain set size. The theorems
 | Refinement efficiency | Unnecessary optimization steps saved | > 30% reduction vs. fixed n_opt_steps=50 |
 | Batch-size independence | Delta on 1k vs 500k batch | Within 10% of each other |
 | top_k_to_optimize eliminated | Parameter removed from request | k=top_k via `canonicalRetain_certifiedSafe`, no heuristic cap |
-| n_opt_steps derived | Iteration budget from certificate | Within 2× of converged value on 80%+ targets |
+| n_opt_steps derived (A) | Iteration budget from observed q + Jacobian bridge | Certified RMSD ≤ 0.5 Å on 80%+ poses with convex basin |
+| n_opt_steps derived (B) | Iteration budget from certified GD dynamics | Same RMSD guarantee, compare step count to Approach A |
 
 ---
 
@@ -611,6 +907,7 @@ No `MAX_SURVIVORS` cap. The retain set size is the retain set size. The theorems
 
 - All `analytic_cutoff_tail_bound()` methods must use concrete Python floats, computed once at spec construction — never inside JIT
 - `_posewise_active_torsion_mask()` must be JIT-compatible (pure jnp, no Python branching on traced values)
-- Exact Hessian via `jax.hessian` is done post-optimization, outside the scoring JIT — O(3N) reverse-mode passes
+- 6×6 Hessian in SE(3) parameter space via `jax.hessian` — done post-optimization, outside the scoring JIT — O(6) reverse-mode passes ≈ 0.3s/pose
+- Approach A requires `jax.lax.scan` instead of `fori_loop` in the optimizer to record energy trajectory — JIT-compatible but changes the loop structure
 - Coarse scoring is unchanged (full rich chemistry) — only the delta computation changes, from batch-max to analytic
 - `analytic_total_delta()` is computed once per ligand, cached on the plan object
