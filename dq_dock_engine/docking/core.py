@@ -312,6 +312,8 @@ class LigandContext:
     elements: Tuple[str, ...] = ()
     # Optional per-atom partial charges (shape (N,)). None if not assigned.
     charges: Optional[jnp.ndarray] = None
+    # Optional adjacency graph per-atom (tuple of neighbor index tuples). None if not available.
+    adjacency: Optional[Tuple[Tuple[int, ...], ...]] = None
 
     def tree_flatten(self):
         children = (
@@ -320,19 +322,21 @@ class LigandContext:
             self.center_of_mass,
             self.charges,
         )
-        aux_data = (self.elements,)
+        aux_data = (self.elements, self.adjacency)
         return (children, aux_data)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         base_coords, base_radii, center_of_mass, charges = children
         elements = aux_data[0]
+        adjacency = aux_data[1]
         return cls(
             base_coords=base_coords,
             base_radii=base_radii,
             center_of_mass=center_of_mass,
             elements=elements,
             charges=charges,
+            adjacency=adjacency,
         )
 
 
@@ -361,3 +365,4 @@ class ScoredPose:
     coords: jnp.ndarray  # shape (N, 3)
     energy: float
     engine: ScoringEngine
+    theorem_handles: Tuple[str, ...] = ()

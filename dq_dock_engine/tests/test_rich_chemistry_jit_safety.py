@@ -4,7 +4,9 @@ These tests live in a dedicated file so they are never skipped by the
 stale-import guard in test_formal_optimizer.py.
 """
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 
 from dq_dock_engine.docking.chemistry_runtime import (
     AnchoredSiteArray,
@@ -54,21 +56,69 @@ def _make_pi_stacking_context(n_receptor: int) -> CertifiedScoringContext:
             receptor_weights=jnp.zeros((n_receptor,), dtype=jnp.float32),
             ligand_weights=jnp.zeros((1,), dtype=jnp.float32),
         ),
-        directional_hbond=CertifiedDirectionalHBondSpec(
+        hbond_receptor_donor=CertifiedDirectionalHBondSpec(
+            receptor_anchor_indices=jnp.zeros((n_receptor,), dtype=jnp.int32),
             receptor_directions=jnp.zeros((n_receptor, 3), dtype=jnp.float32),
-            ligand_neighbor_indices=jnp.zeros((1, 1), dtype=jnp.int32),
+            ligand_anchor_indices=jnp.zeros((1,), dtype=jnp.int32),
+            ligand_local_directions=jnp.zeros((1, 3), dtype=jnp.float32),
+            ligand_frame_coords=jnp.zeros((1, 3), dtype=jnp.float32),
             receptor_strengths=jnp.zeros((n_receptor,), dtype=jnp.float32),
             ligand_strengths=jnp.zeros((1,), dtype=jnp.float32),
+        ),
+        hbond_ligand_donor=CertifiedDirectionalHBondSpec(
+            receptor_anchor_indices=jnp.zeros((n_receptor,), dtype=jnp.int32),
+            receptor_directions=jnp.zeros((n_receptor, 3), dtype=jnp.float32),
+            ligand_anchor_indices=jnp.zeros((1,), dtype=jnp.int32),
+            ligand_local_directions=jnp.zeros((1, 3), dtype=jnp.float32),
+            ligand_frame_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+            receptor_strengths=jnp.zeros((n_receptor,), dtype=jnp.float32),
+            ligand_strengths=jnp.zeros((1,), dtype=jnp.float32),
+            receptor_alignment_sign=-1.0,
+            ligand_alignment_sign=1.0,
         ),
         metal_coordination=CertifiedMetalCoordinationSpec(
             receptor_strengths=jnp.zeros((n_receptor,), dtype=jnp.float32),
             ligand_strengths=jnp.zeros((1,), dtype=jnp.float32),
+            receptor_ideal_angles=jnp.zeros((n_receptor,), dtype=jnp.float32),
         ),
+        pairwise_sigma=jnp.full((n_receptor, 1), 3.22, dtype=jnp.float32),
         extended_terms=CertifiedExtendedInteractionBundle(terms=(pi_stacking,)),
     )
     return CertifiedScoringContext(
         exact_chemistry_mode=ExactChemistryMode.EXTENDED_RICH,
         rich_chemistry_plan=rich_plan,
+    )
+
+
+def test_directional_hbond_receptor_subset_is_jit_safe_and_remaps_indices():
+    spec = CertifiedDirectionalHBondSpec(
+        receptor_anchor_indices=jnp.array([1, 3], dtype=jnp.int32),
+        receptor_directions=jnp.array(
+            [[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]], dtype=jnp.float32
+        ),
+        ligand_anchor_indices=jnp.array([0], dtype=jnp.int32),
+        ligand_local_directions=jnp.array([[1.0, 0.0, 0.0]], dtype=jnp.float32),
+        ligand_frame_coords=jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_strengths=jnp.array([0.8, 0.6], dtype=jnp.float32),
+        ligand_strengths=jnp.array([1.0], dtype=jnp.float32),
+    )
+
+    @jax.jit
+    def subset(indices: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        narrowed = spec.receptor_subset(indices)
+        return narrowed.receptor_anchor_indices, narrowed.receptor_strengths
+
+    remapped_indices, remapped_strengths = subset(
+        jnp.array([4, 3], dtype=jnp.int32)
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(remapped_indices),
+        np.array([0, 1], dtype=np.int32),
+    )
+    np.testing.assert_allclose(
+        np.asarray(remapped_strengths),
+        np.array([0.0, 0.6], dtype=np.float32),
     )
 
 

@@ -83,8 +83,17 @@ from dq_dock_engine.docking.scoring_context import (
     CertifiedScoringContext,
     build_certified_scoring_context,
 )
+from dq_dock_engine.docking.conformer_search import (
+    BranchAndBoundConfig,
+    compute_raw_lj_lipschitz,
+    detect_rotatable_bonds,
+    default_torsion_strain_params,
+    search_conformers,
+)
+from dq_dock_engine.physics.kernels import rigid_transform_3d
 from dq_dock_engine.docking_config import (
     CertifiedScoringFamily,
+    ConformerSearchMode,
     compute_certified_cutoff,
     DockingConfig,
     DockingMode,
@@ -152,6 +161,7 @@ class DockingRequestBase:
     receptor_elements: tuple[str, ...] | None = None
     charge_method: ChargeMethod | None = None
     receptor_file: str | Path | None = None
+    ligand_source_path: str | Path | None = None
     precomputed_receptor_charges: jnp.ndarray | None = None
     config: DockingConfig | None = None
     top_k: int = 10
@@ -799,8 +809,10 @@ def resolve_request_scoring_context(
         exact_chemistry_mode=request.exact_chemistry_mode,
         electrostatics=electrostatics,
         receptor_coords=request.protein_coords,
+        receptor_radii=request.receptor_radii,
         receptor_elements=request.receptor_elements,
         receptor_file=request.receptor_file,
+        ligand_source_path=request.ligand_source_path,
         ligand_ctx=request.ligand_ctx,
         target_electrostatic_error=request.target_error,
     )
@@ -1484,6 +1496,134 @@ def _certified_pruning_pass(
     return survivor_mask, coarse_batch.scores, delta
 
 
+def _request_uses_conformer_search(request: "PipelineDockingRequest") -> bool:
+    """Check if conformer search is enabled for this request.
+
+    Requires: config with ConformerSearchMode.ENABLED AND ligand adjacency.
+    """
+    return (
+        request.config is not None
+        and request.config.conformer_search == ConformerSearchMode.ENABLED
+        and request.ligand_ctx.adjacency is not None
+    )
+
+
+def _build_conformer_score_fns(
+    request: "PipelineDockingRequest",
+    quaternion: jnp.ndarray,
+    translation: jnp.ndarray,
+    scoring_context: CertifiedScoringContext | None,
+    electrostatics: "CertifiedRealSpaceEwaldSpec | None",
+) -> tuple[
+    Callable[[jnp.ndarray], float],
+    Callable[[jnp.ndarray], jnp.ndarray] | None,
+]:
+    """Build scoring closures for conformer search at a given rigid pose.
+
+    Returns (score_fn, score_fn_batch):
+      - score_fn: (N_atoms, 3) → float  (single-pose fallback)
+      - score_fn_batch: (PAD, N_atoms, 3) → (PAD,) scores  (fixed-size batched path)
+        Caller MUST always pass the same padded shape to avoid JIT recompilation.
+    """
+
+    def score_fn(candidate_coords: jnp.ndarray) -> float:
+        transformed = rigid_transform_3d(candidate_coords, quaternion, translation)
+        posed = jnp.expand_dims(jnp.asarray(transformed), 0)
+        if scoring_context is not None:
+            scores = scoring_context.score_rigid_exact_batch(
+                receptor_coords=request.protein_coords,
+                poses_coords=posed,
+                receptor_radii=request.receptor_radii,
+                ligand_radii=request.ligand_ctx.base_radii,
+                target_error=request.target_error,
+                epsilon=0.2,
+            ).scores
+        else:
+            scores = route_scoring(
+                **derive_route_scoring_kwargs(
+                    request,
+                    engine=request.effective_engine,
+                    poses_coords=posed,
+                    electrostatics=electrostatics,
+                )
+            )
+        return float(np.asarray(scores[0]))
+
+    score_fn_batch: Callable[[jnp.ndarray], jnp.ndarray] | None = None
+    if scoring_context is not None:
+
+        def _score_batch(coords_batch: jnp.ndarray) -> jnp.ndarray:
+            """Score a fixed-size padded batch: (PAD, N_atoms, 3) → (PAD,)."""
+            posed = jax.vmap(lambda c: rigid_transform_3d(c, quaternion, translation))(
+                coords_batch
+            )
+            return scoring_context.score_rigid_exact_batch(
+                receptor_coords=request.protein_coords,
+                poses_coords=posed,
+                receptor_radii=request.receptor_radii,
+                ligand_radii=request.ligand_ctx.base_radii,
+                target_error=request.target_error,
+                epsilon=0.2,
+            ).scores
+
+        score_fn_batch = _score_batch
+
+    return score_fn, score_fn_batch
+
+
+def _run_conformer_search_for_pose(
+    request: "PipelineDockingRequest",
+    quaternion: jnp.ndarray,
+    translation: jnp.ndarray,
+    scoring_context: CertifiedScoringContext | None,
+    electrostatics: "CertifiedRealSpaceEwaldSpec | None",
+) -> tuple[jnp.ndarray, float, tuple[str, ...]] | None:
+    """Run conformer search for a single posed ligand.
+
+    Returns (best_conformer_coords_in_world, energy, theorem_handles) if a
+    conformer improves over the rigid baseline, else None.
+    Fails loud — no silent fallback.
+    """
+    score_fn, score_fn_batch = _build_conformer_score_fns(
+        request,
+        quaternion,
+        translation,
+        scoring_context,
+        electrostatics,
+    )
+    # Derive Lipschitz constant from actual molecular parameters
+    # (LipschitzStepBounds.lean::typicalLipschitzConstant = 762 × ε / σ)
+    config: BranchAndBoundConfig | None = None
+    if request.receptor_elements is not None:
+        from dq_dock_engine.docking.physics_params import get_pairwise_contact_sigma
+        from dq_dock_engine.docking.scoring import _EPSILON_KCAL_MOL
+
+        min_sigma = min(
+            get_pairwise_contact_sigma(re, le)
+            for re in request.receptor_elements
+            for le in request.ligand_ctx.elements
+        )
+        config = BranchAndBoundConfig(
+            score_lipschitz_constant=compute_raw_lj_lipschitz(
+                _EPSILON_KCAL_MOL,
+                min_sigma,
+            ),
+        )
+    result = search_conformers(
+        base_coords=request.ligand_ctx.base_coords,
+        adjacency=request.ligand_ctx.adjacency,
+        elements=request.ligand_ctx.elements,
+        score_fn=score_fn,
+        config=config,
+        score_fn_batch=score_fn_batch,
+    )
+    if not result.conformer_coords:
+        return None
+    best_conf = result.conformer_coords[0]
+    world_coords = rigid_transform_3d(best_conf, quaternion, translation)
+    return world_coords, float(result.conformer_energies[0]), result.theorem_handles
+
+
 def _score_exact_pose_batch(
     request: PipelineDockingRequest,
     *,
@@ -1773,6 +1913,49 @@ class CertifiedPipelineRoute(PipelineRoute):
             poses_coords=survivor_coords,
             electrostatics=electrostatics,
         )
+        if _request_uses_conformer_search(request):
+            scoring_context = (
+                resolve_request_scoring_context(
+                    request, engine=request.effective_engine
+                )
+                if request.is_certified_mode
+                else None
+            )
+            updated_scores = np.asarray(jax.device_get(survivor_exact_scores)).copy()
+            # PERF3b (skip_conformer_of_strain_bounded_improvement):
+            # Max conformer improvement = Σ 2·Vk over all rotatable bonds.
+            # If rigid_score > best + Σ 2·Vk, skip conformer search entirely.
+            # Proven in PerformanceCertificates.lean::skip_conformer_of_strain_bounded_improvement.
+            adj = request.ligand_ctx.adjacency
+            elems = request.ligand_ctx.elements
+            coords_np = np.asarray(request.ligand_ctx.base_coords, dtype=np.float32)
+            if adj is not None and elems is not None:
+                bonds = detect_rotatable_bonds(adj, coords_np, elems)
+                strain_params = default_torsion_strain_params(len(bonds))
+                # Max conformer improvement = Σ 2·Vk (LSA5: additive_strain_bounded)
+                conf_improvement_bound = float(
+                    2.0 * np.sum(np.asarray(strain_params.barrier_heights))
+                )
+            else:
+                # Dead path: _request_uses_conformer_search requires adjacency.
+                # Σ 2·Vk cannot be derived without bond graph; skip all conformer search.
+                conf_improvement_bound = 0.0
+            best_rigid = float(np.min(updated_scores))
+            for i in range(updated_scores.shape[0]):
+                if updated_scores[i] > best_rigid + conf_improvement_bound:
+                    continue  # CS5: this pose can't beat best even with perfect conformer
+                conf = _run_conformer_search_for_pose(
+                    request,
+                    quaternion=pose_vecs.quaternion[valid_survivor_indices[i]],
+                    translation=pose_vecs.translation[valid_survivor_indices[i]],
+                    scoring_context=scoring_context,
+                    electrostatics=electrostatics,
+                )
+                if conf is not None and conf[1] < float(updated_scores[i]):
+                    updated_scores[i] = conf[1]
+                    best_rigid = min(best_rigid, conf[1])
+            survivor_exact_scores = jnp.asarray(updated_scores)
+
         final_scores = (
             jnp.full((batched_coords.shape[0],), 1e6)
             .at[valid_survivor_indices]
@@ -1897,14 +2080,41 @@ def _run_docking_pipeline_request(
     ]
 
     if not request.optimize:
+        do_conf = _request_uses_conformer_search(request)
+        scoring_context = (
+            resolve_request_scoring_context(request, engine=request.effective_engine)
+            if do_conf and request.is_certified_mode
+            else None
+        )
+        electrostatics = (
+            resolve_request_electrostatics(request, engine=request.effective_engine)
+            if do_conf and not request.is_certified_mode
+            else None
+        )
         outputs = []
         for idx in best_indices:
             idx_i = int(idx)
+            th_handles: tuple[str, ...] = ()
+            coords_out = batched_coords[idx_i]
+            energy_out = float(final_scores[idx_i])
+
+            if do_conf:
+                conf = _run_conformer_search_for_pose(
+                    request,
+                    quaternion=pose_batch.pose_vecs.quaternion[idx_i],
+                    translation=pose_batch.pose_vecs.translation[idx_i],
+                    scoring_context=scoring_context,
+                    electrostatics=electrostatics,
+                )
+                if conf is not None and conf[1] < energy_out:
+                    coords_out, energy_out, th_handles = conf
+
             outputs.append(
                 ScoredPose(
-                    coords=batched_coords[idx_i],
-                    energy=float(final_scores[idx_i]),
+                    coords=coords_out,
+                    energy=energy_out,
                     engine=request.effective_engine,
+                    theorem_handles=th_handles,
                 )
             )
         cert = _compute_native_certification(
@@ -1951,6 +2161,39 @@ def _run_docking_pipeline_request(
             translation_cell_width = float(jnp.min(request.box.size)) / float(
                 pose_batch.certified_family.lattice_resolution
             )
+        # PERF5 (softened_grid_speedup_ratio): when softened coarse scoring
+        # has a tighter Lipschitz constant, allow larger optimizer steps.
+        # Certified by PerformanceCertificates.lean::softened_grid_speedup_ratio.
+        # All constants derived from molecular data:
+        #   - epsilon_lj: scoring._EPSILON_KCAL_MOL (LJ well depth)
+        #   - min_sigma: min pairwise contact σ from Alvarez/Bondi table
+        #   - r_soft: 0.5 × (min_rec_radius + min_lig_radius) (same as scoring)
+        base_step = translation_cell_width / 2.0
+        if (
+            request.use_softened_coarse_prefilter
+            and request.receptor_elements is not None
+        ):
+            from dq_dock_engine.docking.formal_actions import (
+                compute_adaptive_translation_step,
+            )
+            from dq_dock_engine.docking.physics_params import get_pairwise_contact_sigma
+            from dq_dock_engine.docking.scoring import _EPSILON_KCAL_MOL
+
+            # Derive min pairwise sigma from actual receptor/ligand elements
+            min_sigma = min(
+                get_pairwise_contact_sigma(re, le)
+                for re in request.receptor_elements
+                for le in request.ligand_ctx.elements
+            )
+            r_soft = 0.5 * float(
+                jnp.min(request.receptor_radii) + jnp.min(request.ligand_ctx.base_radii)
+            )
+            base_step = compute_adaptive_translation_step(
+                base_step,
+                _EPSILON_KCAL_MOL,
+                min_sigma,
+                r_soft,
+            )
         refinement_kwargs: dict[str, object] = dict(
             coords_batch=initial_coords,
             receptor_coords=request.protein_coords,
@@ -1961,7 +2204,7 @@ def _run_docking_pipeline_request(
             coarse_target_error=request.coarse_target_error,
             adaptive_coarse_target_errors=request.adaptive_coarse_target_errors,
             use_softened_coarse=request.use_softened_coarse_prefilter,
-            base_translation_step=translation_cell_width / 2.0,
+            base_translation_step=base_step,
             base_rotation_step_rad=float(jnp.pi / 2.0),
             scoring_context=scoring_context,
         )
@@ -1970,6 +2213,9 @@ def _run_docking_pipeline_request(
             FormalRoundStrategy.SINGLETON_HYBRID: _run_singleton_hybrid_formal_refinement,
         }
         opt_coords = formal_refiners[request.formal_round_strategy](**refinement_kwargs)
+        # FORMAL backend: retain pre-optimization pose vectors for conformer search
+        opt_pose_translations = opt_translations
+        opt_pose_quaternions = opt_quaternions
     else:
         opt_t, opt_q = optimize_poses_batched(
             translations=opt_translations,
@@ -1987,6 +2233,8 @@ def _run_docking_pipeline_request(
             request.ligand_ctx,
             PoseVector(translation=opt_t, quaternion=opt_q),
         )
+        opt_pose_translations = opt_t
+        opt_pose_quaternions = opt_q
 
     if request.is_certified_mode:
         final_scores = scoring_context.score_exact_batch(
@@ -2019,14 +2267,31 @@ def _run_docking_pipeline_request(
 
     best_final_indices = jnp.argsort(final_scores)[: min(request.top_k, n_to_opt)]
 
+    do_conf = _request_uses_conformer_search(request)
     best_poses = []
     for idx in best_final_indices:
         idx_i = int(idx)
+        th_handles: tuple[str, ...] = ()
+        coords_out = opt_coords[idx_i]
+        energy_out = float(final_scores[idx_i])
+
+        if do_conf:
+            conf = _run_conformer_search_for_pose(
+                request,
+                quaternion=opt_pose_quaternions[idx_i],
+                translation=opt_pose_translations[idx_i],
+                scoring_context=scoring_context,
+                electrostatics=electrostatics,
+            )
+            if conf is not None and conf[1] < energy_out:
+                coords_out, energy_out, th_handles = conf
+
         best_poses.append(
             ScoredPose(
-                coords=opt_coords[idx_i],
-                energy=float(final_scores[idx_i]),
+                coords=coords_out,
+                energy=energy_out,
                 engine=request.effective_engine,
+                theorem_handles=th_handles,
             )
         )
 

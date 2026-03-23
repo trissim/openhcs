@@ -107,6 +107,10 @@ def build_ligand_context(
 
     el_tuple = tuple(elements) if elements is not None else ()
     jnp_charges = jnp.array(charges) if charges is not None else None
+    adjacency = None
+    if elements is not None:
+        from dq_dock_engine.docking.chemistry_annotations import _infer_bond_adjacency
+        adjacency = _infer_bond_adjacency(ligand_coords, tuple(el_tuple), include_hydrogens=False)
 
     return LigandContext(
         base_coords=base_coords,
@@ -114,6 +118,7 @@ def build_ligand_context(
         center_of_mass=com,
         elements=el_tuple,
         charges=jnp_charges,
+        adjacency=adjacency,
     )
 
 

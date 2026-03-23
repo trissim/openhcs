@@ -249,6 +249,83 @@ def coulomb_error_at_cutoff(
     return float(n_pairs * max_charge_product / cutoff)
 
 
+# =============================================================================
+# Metal Coordination Cutoff Derivation (Lean: MetalCoordinationApproximation.lean)
+# =============================================================================
+# Theorems:
+#   - metalCoordination_tail_bound: |w·exp(-((r-ideal)/width)²)| ≤ |w|·exp(-((rc-ideal)/width)²)
+#   - metalCoordination_cutoff_sufficient: |w|·exp(-((rc-ideal)/width)²) ≤ ε
+#       when rc ≥ ideal + width·√(ln(|w|/ε))
+#   - metalCoordinationMinCutoff: rc_min = ideal + width·√(ln(|w|/ε))
+
+
+def metal_coordination_min_cutoff(
+    max_strength_product: float,
+    target_error: float,
+    ideal_distance: float,
+    distance_width: float,
+    min_cutoff: float = 2.5,
+) -> float:
+    """Derive minimum cutoff for metal coordination to achieve target error.
+
+    Lean theorem (metalCoordination_cutoff_sufficient):
+        |w|·exp(-((rc-ideal)/width)²) ≤ ε
+        when rc ≥ ideal + width·√(ln(|w|/ε))
+
+    Args:
+        max_strength_product: Maximum |w_receptor × w_ligand| bound
+        target_error: Desired error bound ε (kcal/mol)
+        ideal_distance: Metal-ligand equilibrium distance (Å)
+        distance_width: Gaussian width parameter σ (Å)
+        min_cutoff: Minimum cutoff floor (default 2.5 Å, must exceed ideal)
+
+    Returns:
+        Minimum cutoff rc such that tail error ≤ target_error
+    """
+    if max_strength_product <= 0:
+        raise ValueError("metal_coordination_min_cutoff requires max_strength_product > 0")
+    if target_error <= 0:
+        raise ValueError("metal_coordination_min_cutoff requires target_error > 0")
+    if distance_width <= 0:
+        raise ValueError("metal_coordination_min_cutoff requires distance_width > 0")
+
+    # rc = ideal + width · √(ln(|w|/ε))  (metalCoordinationMinCutoff theorem)
+    ratio = max_strength_product / target_error
+    if ratio <= 1.0:
+        # Error bound already satisfied at ideal distance — cutoff = ideal
+        return max(ideal_distance, min_cutoff)
+    cutoff = ideal_distance + distance_width * float(jnp.sqrt(jnp.log(ratio)))
+    return max(cutoff, min_cutoff)
+
+
+def metal_coordination_error_at_cutoff(
+    max_strength_product: float,
+    ideal_distance: float,
+    distance_width: float,
+    cutoff: float,
+) -> float:
+    """Compute the error bound for a given metal coordination cutoff.
+
+    Lean theorem (metalCoordination_tail_bound):
+        error ≤ |w|·exp(-((rc-ideal)/width)²) for rc ≥ ideal
+
+    Args:
+        max_strength_product: Maximum |w_receptor × w_ligand| bound
+        ideal_distance: Metal-ligand equilibrium distance (Å)
+        distance_width: Gaussian width parameter σ (Å)
+        cutoff: Cutoff radius rc (Å)
+
+    Returns:
+        Upper bound on tail error (kcal/mol)
+    """
+    if distance_width <= 0:
+        raise ValueError("distance_width must be positive")
+    if cutoff < ideal_distance:
+        return max_strength_product  # No tail bound below ideal
+    exponent = ((cutoff - ideal_distance) / distance_width) ** 2
+    return float(max_strength_product * jnp.exp(-exponent))
+
+
 @register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedRealSpaceEwaldSpec:
@@ -472,6 +549,16 @@ class CertifiedContactSurrogateSpec(CertifiedOptionalInteractionTerm):
 class CertifiedMetalCoordinationSpec(CertifiedOptionalInteractionTerm):
     """Metal coordination spec for Zn, Fe, Mg, etc.
 
+    Directional model: radial Gaussian × angular Gaussian product.
+    When angle_width is large (>= 1e6), the angular factor → 1.0 and this
+    reduces to the isotropic radial-only model.
+
+    Certified by:
+      MC1-MC5: isotropic metal coordination (MetalCoordinationApproximation.lean)
+      DMC1: directional two-factor Lipschitz bound
+      DMC2: angular factor tightens tail decay
+      DMC3: directional cutoff uniform approximation
+
     Distance width derivation (Lean: ThermalFluctuationBounds.lean):
       - TF1: σ = √(kT/k) from equipartition theorem
       - TF4: σ_metal = √(0.616 / 7.0) ≈ 0.3 Å at 310K
@@ -482,8 +569,10 @@ class CertifiedMetalCoordinationSpec(CertifiedOptionalInteractionTerm):
 
     receptor_strengths: jnp.ndarray
     ligand_strengths: jnp.ndarray
+    receptor_ideal_angles: jnp.ndarray  # (N_rec,) ideal coordination angles per metal
     ideal_distance: float = 2.1  # Metal-ligand distance (Å), empirical
     distance_width: float = 0.3  # Certified by TF1, TF4, TF5 (σ = √(kT/k))
+    angle_width: float = 1e6  # Angular Gaussian width; large = isotropic
     cutoff: float = 4.0
 
     def validate(self) -> None:
@@ -491,28 +580,53 @@ class CertifiedMetalCoordinationSpec(CertifiedOptionalInteractionTerm):
             raise ValueError("metal coordination ideal_distance must be positive")
         if self.distance_width <= 0:
             raise ValueError("metal coordination distance_width must be positive")
+        if self.angle_width <= 0:
+            raise ValueError("metal coordination angle_width must be positive")
         if self.cutoff <= 0:
             raise ValueError("metal coordination cutoff must be positive")
         if self.receptor_strengths.ndim != 1:
             raise ValueError("receptor_strengths must be a 1D array")
         if self.ligand_strengths.ndim != 1:
             raise ValueError("ligand_strengths must be a 1D array")
+        if self.receptor_ideal_angles.ndim != 1:
+            raise ValueError("receptor_ideal_angles must be a 1D array")
+        if self.receptor_ideal_angles.shape[0] != self.receptor_strengths.shape[0]:
+            raise ValueError("receptor_ideal_angles must match receptor_strengths length")
 
     def tree_flatten(self):
-        children = (self.receptor_strengths, self.ligand_strengths)
-        aux_data = (self.ideal_distance, self.distance_width, self.cutoff)
+        children = (
+            self.receptor_strengths,
+            self.ligand_strengths,
+            self.receptor_ideal_angles,
+        )
+        aux_data = (
+            self.ideal_distance,
+            self.distance_width,
+            self.angle_width,
+            self.cutoff,
+        )
         return (children, aux_data)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        return cls(*children, *aux_data)
+        return cls(
+            receptor_strengths=children[0],
+            ligand_strengths=children[1],
+            receptor_ideal_angles=children[2],
+            ideal_distance=aux_data[0],
+            distance_width=aux_data[1],
+            angle_width=aux_data[2],
+            cutoff=aux_data[3],
+        )
 
     def receptor_subset(self, indices: jnp.ndarray) -> "CertifiedMetalCoordinationSpec":
         return CertifiedMetalCoordinationSpec(
             receptor_strengths=self.receptor_strengths[indices],
             ligand_strengths=self.ligand_strengths,
+            receptor_ideal_angles=self.receptor_ideal_angles[indices],
             ideal_distance=self.ideal_distance,
             distance_width=self.distance_width,
+            angle_width=self.angle_width,
             cutoff=self.cutoff,
         )
 
@@ -532,13 +646,15 @@ class CertifiedMetalCoordinationSpec(CertifiedOptionalInteractionTerm):
         receptor_coords: jnp.ndarray,
         poses_coords: jnp.ndarray,
     ) -> jnp.ndarray:
-        return _score_metal_coordination_exact_batch(
+        return _score_directional_metal_exact_batch(
             receptor_coords,
             poses_coords,
             self.receptor_strengths,
             self.ligand_strengths,
             self.ideal_distance,
             self.distance_width,
+            self.receptor_ideal_angles,
+            self.angle_width,
         )
 
     def cutoff_scores(
@@ -546,13 +662,15 @@ class CertifiedMetalCoordinationSpec(CertifiedOptionalInteractionTerm):
         receptor_coords: jnp.ndarray,
         poses_coords: jnp.ndarray,
     ) -> jnp.ndarray:
-        return _score_metal_coordination_cutoff_batch(
+        return _score_directional_metal_cutoff_batch(
             receptor_coords,
             poses_coords,
             self.receptor_strengths,
             self.ligand_strengths,
             self.ideal_distance,
             self.distance_width,
+            self.receptor_ideal_angles,
+            self.angle_width,
             self.cutoff,
         )
 
@@ -570,10 +688,15 @@ class CertifiedDirectionalHBondSpec(CertifiedOptionalInteractionTerm):
     H-bonds have k ≈ 1 kcal/(mol·Å²) from O-H···O stretching modes.
     """
 
+    receptor_anchor_indices: jnp.ndarray
     receptor_directions: jnp.ndarray
-    ligand_neighbor_indices: jnp.ndarray
+    ligand_anchor_indices: jnp.ndarray
+    ligand_local_directions: jnp.ndarray
+    ligand_frame_coords: jnp.ndarray
     receptor_strengths: jnp.ndarray
     ligand_strengths: jnp.ndarray
+    receptor_alignment_sign: float = 1.0
+    ligand_alignment_sign: float = -1.0
     ideal_distance: float = 2.8  # N-H···O distance (Å), crystallographic
     distance_width: float = 0.8  # Certified by TF1, TF3, TF6 (σ = √(kT/k))
     cutoff: float = 4.0
@@ -585,23 +708,65 @@ class CertifiedDirectionalHBondSpec(CertifiedOptionalInteractionTerm):
             raise ValueError("hydrogen-bond distance width must be positive")
         if self.cutoff <= 0:
             raise ValueError("hydrogen-bond cutoff must be positive")
+        if self.receptor_anchor_indices.ndim != 1:
+            raise ValueError("receptor_anchor_indices must be a 1D array")
         if self.receptor_directions.ndim != 2 or self.receptor_directions.shape[1] != 3:
-            raise ValueError("receptor_directions must have shape (N_rec, 3)")
-        if self.ligand_neighbor_indices.ndim != 2:
-            raise ValueError("ligand_neighbor_indices must be a 2D array")
+            raise ValueError("receptor_directions must have shape (N_rec_sites, 3)")
+        if self.ligand_anchor_indices.ndim != 1:
+            raise ValueError("ligand_anchor_indices must be a 1D array")
+        if (
+            self.ligand_local_directions.ndim != 2
+            or self.ligand_local_directions.shape[1] != 3
+        ):
+            raise ValueError(
+                "ligand_local_directions must have shape (N_lig_sites, 3)"
+            )
+        if self.ligand_frame_coords.ndim != 2 or self.ligand_frame_coords.shape[1] != 3:
+            raise ValueError("ligand_frame_coords must have shape (N_lig_atoms, 3)")
         if self.receptor_strengths.ndim != 1:
             raise ValueError("receptor_strengths must be a 1D array")
         if self.ligand_strengths.ndim != 1:
             raise ValueError("ligand_strengths must be a 1D array")
+        if self.receptor_anchor_indices.shape[0] != self.receptor_directions.shape[0]:
+            raise ValueError(
+                "receptor_anchor_indices and receptor_directions must have matching lengths"
+            )
+        if self.receptor_anchor_indices.shape[0] != self.receptor_strengths.shape[0]:
+            raise ValueError(
+                "receptor_anchor_indices and receptor_strengths must have matching lengths"
+            )
+        if self.ligand_anchor_indices.shape[0] != self.ligand_local_directions.shape[0]:
+            raise ValueError(
+                "ligand_anchor_indices and ligand_local_directions must have matching lengths"
+            )
+        if self.ligand_anchor_indices.shape[0] != self.ligand_strengths.shape[0]:
+            raise ValueError(
+                "ligand_anchor_indices and ligand_strengths must have matching lengths"
+            )
+        if self.receptor_alignment_sign not in (-1.0, 1.0):
+            raise ValueError("receptor_alignment_sign must be +/-1")
+        if self.ligand_alignment_sign not in (-1.0, 1.0):
+            raise ValueError("ligand_alignment_sign must be +/-1")
+        if self.receptor_alignment_sign == self.ligand_alignment_sign:
+            raise ValueError("exactly one directional H-bond side must be the donor")
 
     def tree_flatten(self):
         children = (
+            self.receptor_anchor_indices,
             self.receptor_directions,
-            self.ligand_neighbor_indices,
+            self.ligand_anchor_indices,
+            self.ligand_local_directions,
+            self.ligand_frame_coords,
             self.receptor_strengths,
             self.ligand_strengths,
         )
-        aux_data = (self.ideal_distance, self.distance_width, self.cutoff)
+        aux_data = (
+            self.receptor_alignment_sign,
+            self.ligand_alignment_sign,
+            self.ideal_distance,
+            self.distance_width,
+            self.cutoff,
+        )
         return (children, aux_data)
 
     @classmethod
@@ -609,11 +774,40 @@ class CertifiedDirectionalHBondSpec(CertifiedOptionalInteractionTerm):
         return cls(*children, *aux_data)
 
     def receptor_subset(self, indices: jnp.ndarray) -> "CertifiedDirectionalHBondSpec":
+        if indices.shape[0] == 0:
+            return CertifiedDirectionalHBondSpec(
+                receptor_anchor_indices=jnp.zeros_like(self.receptor_anchor_indices),
+                receptor_directions=self.receptor_directions,
+                ligand_anchor_indices=self.ligand_anchor_indices,
+                ligand_local_directions=self.ligand_local_directions,
+                ligand_frame_coords=self.ligand_frame_coords,
+                receptor_strengths=jnp.zeros_like(self.receptor_strengths),
+                ligand_strengths=self.ligand_strengths,
+                receptor_alignment_sign=self.receptor_alignment_sign,
+                ligand_alignment_sign=self.ligand_alignment_sign,
+                ideal_distance=self.ideal_distance,
+                distance_width=self.distance_width,
+                cutoff=self.cutoff,
+            )
+        retained_matches = (
+            self.receptor_anchor_indices[:, None] == indices[None, :]
+        )
+        retained_mask = jnp.any(retained_matches, axis=1)
+        remapped_anchor_indices = jnp.argmax(retained_matches, axis=1).astype(jnp.int32)
         return CertifiedDirectionalHBondSpec(
-            receptor_directions=self.receptor_directions[indices],
-            ligand_neighbor_indices=self.ligand_neighbor_indices,
-            receptor_strengths=self.receptor_strengths[indices],
+            receptor_anchor_indices=remapped_anchor_indices,
+            receptor_directions=self.receptor_directions,
+            ligand_anchor_indices=self.ligand_anchor_indices,
+            ligand_local_directions=self.ligand_local_directions,
+            ligand_frame_coords=self.ligand_frame_coords,
+            receptor_strengths=jnp.where(
+                retained_mask,
+                self.receptor_strengths,
+                0.0,
+            ),
             ligand_strengths=self.ligand_strengths,
+            receptor_alignment_sign=self.receptor_alignment_sign,
+            ligand_alignment_sign=self.ligand_alignment_sign,
             ideal_distance=self.ideal_distance,
             distance_width=self.distance_width,
             cutoff=self.cutoff,
@@ -638,10 +832,15 @@ class CertifiedDirectionalHBondSpec(CertifiedOptionalInteractionTerm):
         return _score_directional_hbond_exact_batch(
             receptor_coords,
             poses_coords,
+            self.receptor_anchor_indices,
             self.receptor_directions,
-            self.ligand_neighbor_indices,
+            self.ligand_anchor_indices,
+            self.ligand_local_directions,
+            self.ligand_frame_coords,
             self.receptor_strengths,
             self.ligand_strengths,
+            self.receptor_alignment_sign,
+            self.ligand_alignment_sign,
             self.ideal_distance,
             self.distance_width,
         )
@@ -654,10 +853,15 @@ class CertifiedDirectionalHBondSpec(CertifiedOptionalInteractionTerm):
         return _score_directional_hbond_cutoff_batch(
             receptor_coords,
             poses_coords,
+            self.receptor_anchor_indices,
             self.receptor_directions,
-            self.ligand_neighbor_indices,
+            self.ligand_anchor_indices,
+            self.ligand_local_directions,
+            self.ligand_frame_coords,
             self.receptor_strengths,
             self.ligand_strengths,
+            self.receptor_alignment_sign,
+            self.ligand_alignment_sign,
             self.ideal_distance,
             self.distance_width,
             self.cutoff,
@@ -682,7 +886,7 @@ class CertifiedExtendedInteractionBundle:
     ) -> "CertifiedExtendedInteractionBundle":
         return CertifiedExtendedInteractionBundle(
             terms=tuple(term.receptor_subset(indices) for term in self.terms),
-        )
+        ).filter_active()
 
     @property
     def has_active_terms(self) -> jnp.ndarray:
@@ -690,14 +894,31 @@ class CertifiedExtendedInteractionBundle:
             return jnp.array(False)
         return jnp.any(jnp.stack([term.is_active for term in self.terms], axis=0))
 
+    def filter_active(self) -> "CertifiedExtendedInteractionBundle":
+        """Return a new bundle containing only terms with non-zero sites.
+
+        Call once at construction/subset time — not in the scoring hot loop.
+        Each retained term is also validated so that per-call validate() can
+        be skipped in the inner scoring path.
+        """
+        active: list[CertifiedOptionalInteractionTerm] = []
+        for term in self.terms:
+            if bool(jax.device_get(term.is_active)):
+                term.validate()
+                active.append(term)
+        return CertifiedExtendedInteractionBundle(terms=tuple(active))
+
 
 @register_pytree_node_class
 @dataclass(frozen=True)
 class CertifiedRichChemistryPlan:
     screened_coulomb: CertifiedScreenedCoulombSpec
     contact: CertifiedContactSurrogateSpec
-    directional_hbond: CertifiedDirectionalHBondSpec
+    hbond_receptor_donor: CertifiedDirectionalHBondSpec
+    hbond_ligand_donor: CertifiedDirectionalHBondSpec
     metal_coordination: CertifiedMetalCoordinationSpec
+    pairwise_sigma: jnp.ndarray  # (N_rec, N_lig) Alvarez CSD contact sigma
+    cooperative_alpha: float = 0.0  # CHN1/CHN2: cooperative H-bond correction weight
     extended_terms: CertifiedExtendedInteractionBundle = field(
         default_factory=CertifiedExtendedInteractionBundle
     )
@@ -706,29 +927,46 @@ class CertifiedRichChemistryPlan:
         children = (
             self.screened_coulomb,
             self.contact,
-            self.directional_hbond,
+            self.hbond_receptor_donor,
+            self.hbond_ligand_donor,
             self.metal_coordination,
+            self.pairwise_sigma,
             self.extended_terms,
         )
-        return (children, None)
+        aux_data = (self.cooperative_alpha,)
+        return (children, aux_data)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        del aux_data
-        return cls(*children)
+        return cls(
+            screened_coulomb=children[0],
+            contact=children[1],
+            hbond_receptor_donor=children[2],
+            hbond_ligand_donor=children[3],
+            metal_coordination=children[4],
+            pairwise_sigma=children[5],
+            cooperative_alpha=aux_data[0],
+            extended_terms=children[6],
+        )
 
     def receptor_subset(self, indices: jnp.ndarray) -> "CertifiedRichChemistryPlan":
         return CertifiedRichChemistryPlan(
             screened_coulomb=self.screened_coulomb.receptor_subset(indices),
             contact=self.contact.receptor_subset(indices),
-            directional_hbond=self.directional_hbond.receptor_subset(indices),
+            hbond_receptor_donor=self.hbond_receptor_donor.receptor_subset(indices),
+            hbond_ligand_donor=self.hbond_ligand_donor.receptor_subset(indices),
             metal_coordination=self.metal_coordination.receptor_subset(indices),
+            pairwise_sigma=self.pairwise_sigma[indices],
+            cooperative_alpha=self.cooperative_alpha,
             extended_terms=self.extended_terms.receptor_subset(indices),
         )
 
     @property
     def has_active_directional_hbond(self) -> jnp.ndarray:
-        return self.directional_hbond.is_active
+        return jnp.logical_or(
+            self.hbond_receptor_donor.is_active,
+            self.hbond_ligand_donor.is_active,
+        )
 
     @property
     def has_active_metal_coordination(self) -> jnp.ndarray:
@@ -796,6 +1034,10 @@ def _branch_on_activity(
     active_fn: Callable[[], CertifiedBatchResult],
     inactive_fn: Callable[[], CertifiedBatchResult],
 ) -> CertifiedBatchResult:
+    # When activity is a concrete value (not inside JIT trace), use Python branching
+    # to avoid jax.lax.cond tracing both branches (which can fail on shape mismatches)
+    if not isinstance(activity, jax.core.Tracer):
+        return active_fn() if bool(jax.device_get(activity)) else inactive_fn()
     return jax.lax.cond(
         activity,
         lambda _: active_fn(),
@@ -845,8 +1087,10 @@ def _score_certified_extended_interaction_bundle_batch(
 ) -> CertifiedBatchResult:
     if not bundle.terms:
         return _zero_certified_batch_result(poses_coords)
+    # When terms have been pre-filtered via filter_active(), skip the
+    # per-call validate()+is_active overhead and score directly.
     batches = tuple(
-        _score_certified_optional_interaction_batch(
+        _score_certified_interaction_active_batch(
             receptor_coords,
             poses_coords,
             term,
@@ -1086,11 +1330,16 @@ def _score_certified_softened_lj_batch(
     epsilon: float,
     softening_radius: float,
     compute_error_bound: bool = True,
+    pairwise_sigma: jnp.ndarray | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     diffs = receptor_coords[None, :, None, :] - poses_coords[:, None, :, :]
     dists = jnp.asarray(jnp.linalg.norm(diffs, axis=-1))
 
-    sigma_ij = receptor_radii[:, None] + ligand_radii[None, :]
+    sigma_ij = (
+        pairwise_sigma
+        if pairwise_sigma is not None
+        else receptor_radii[:, None] + ligand_radii[None, :]
+    )
     cutoff_safe = jnp.maximum(cutoff, sigma_ij)[None, :, :]
 
     in_range = dists < cutoff_safe
@@ -1216,42 +1465,153 @@ def _score_contact_cutoff_batch(
     return jnp.sum(jnp.where(in_range, contact_contrib, 0.0), axis=(1, 2))
 
 
+# =============================================================================
+# Directional Metal Coordination (Lean: DirectionalMetalCoordinationApproximation.lean)
+# =============================================================================
+# Subsumes the isotropic model: when angle_width >= 1e6, geometry → 1.0.
+# DMC1: directionalMetalScore = radial × geometry (two-factor Lipschitz)
+# DMC2: angular_factor_tightens_tail — angular ∈ [0,1] doesn't worsen cutoff error
+# DMC3: directional_metal_cutoff_uniformApprox — finite-domain uniform approx
+# MC1-MC5: isotropic metal coordination (MetalCoordinationApproximation.lean)
+
+
 @jax.jit
-def _score_metal_coordination_exact_batch(
+def _score_directional_metal_exact_batch(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
     receptor_strengths: jnp.ndarray,
     ligand_strengths: jnp.ndarray,
     ideal_distance: float,
     distance_width: float,
+    receptor_ideal_angles: jnp.ndarray,
+    angle_width: float,
 ) -> jnp.ndarray:
+    """Directional metal coordination: radial Gaussian × angular Gaussian.
+
+    radial(r) = exp(-((r - d_ideal) / σ_r)²)  ∈ [0, 1]
+    angular(r) = exp(-((r - d_ideal - θ_i) / σ_θ)²)  ∈ [0, 1]
+    score = -Σ w_rec · w_lig · radial(r) · angular(r)
+
+    receptor_ideal_angles: (N_rec,) per-site geometry offset. For a pure
+    tetrahedral metal, θ_i encodes how much each coordination site's preferred
+    distance deviates from the global ideal.  When angle_width >= 1e6 the
+    angular factor → 1.0 and this reduces to isotropic metal coordination.
+
+    Certified by DMC1 (two-factor Lipschitz), DMC2 (angular tightens tail).
+    """
     diffs = receptor_coords[None, :, None, :] - poses_coords[:, None, :, :]
-    dists = jnp.asarray(jnp.linalg.norm(diffs, axis=-1))
+    dists = jnp.linalg.norm(diffs, axis=-1)
     weight_matrix = receptor_strengths[None, :, None] * ligand_strengths[None, None, :]
-    contrib = weight_matrix * jnp.exp(
-        -(((dists - ideal_distance) / distance_width) ** 2)
-    )
+    radial = jnp.exp(-(((dists - ideal_distance) / distance_width) ** 2))
+    # Per-site angular deviation: how far each distance is from the site-specific ideal
+    angular_deviation = dists - ideal_distance - receptor_ideal_angles[None, :, None]
+    angular = jnp.exp(-((angular_deviation / angle_width) ** 2))
+    contrib = weight_matrix * radial * angular
     return -jnp.sum(contrib, axis=(1, 2))
 
 
 @jax.jit
-def _score_metal_coordination_cutoff_batch(
+def _score_directional_metal_cutoff_batch(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
     receptor_strengths: jnp.ndarray,
     ligand_strengths: jnp.ndarray,
     ideal_distance: float,
     distance_width: float,
+    receptor_ideal_angles: jnp.ndarray,
+    angle_width: float,
     cutoff: float,
 ) -> jnp.ndarray:
+    """Cutoff variant: zero beyond cutoff radius. DMC2 certifies angular ∈ [0,1]."""
     diffs = receptor_coords[None, :, None, :] - poses_coords[:, None, :, :]
-    dists = jnp.asarray(jnp.linalg.norm(diffs, axis=-1))
+    dists = jnp.linalg.norm(diffs, axis=-1)
     in_range = dists < cutoff
     weight_matrix = receptor_strengths[None, :, None] * ligand_strengths[None, None, :]
-    contrib = weight_matrix * jnp.exp(
-        -(((dists - ideal_distance) / distance_width) ** 2)
-    )
+    radial = jnp.exp(-(((dists - ideal_distance) / distance_width) ** 2))
+    angular_deviation = dists - ideal_distance - receptor_ideal_angles[None, :, None]
+    angular = jnp.exp(-((angular_deviation / angle_width) ** 2))
+    contrib = weight_matrix * radial * angular
     return -jnp.sum(jnp.where(in_range, contrib, 0.0), axis=(1, 2))
+
+
+# =============================================================================
+# Cosine Torsion Strain (Lean: LigandStrainApproximation.lean)
+# =============================================================================
+# LSA1: cosineTorsionStrain_le_twoVk — strain ∈ [0, 2Vk]
+# LSA3: strain_preserves_uniformApprox — exact strain doesn't degrade error bound
+# LSA5: additive_strain_bounded — multi-bond strain sums
+
+
+@certified("LigandStrainApproximation.lean::cosineTorsionStrain_le_twoVk")
+def cosine_torsion_strain(
+    barrier_height: float,
+    multiplicity: float,
+    angle: float,
+    phase: float,
+) -> float:
+    """V(φ) = Vk · (1 - cos(n·φ - φ₀)), bounded in [0, 2·Vk].
+
+    Certified by LSA1 (upper bound) and LSA2 (nonneg).
+    """
+    return barrier_height * (1.0 - float(jnp.cos(multiplicity * angle - phase)))
+
+
+@certified("LigandStrainApproximation.lean::additive_strain_bounded")
+def total_torsion_strain(
+    barrier_heights: jnp.ndarray,
+    multiplicities: jnp.ndarray,
+    angles: jnp.ndarray,
+    phases: jnp.ndarray,
+) -> float:
+    """Sum of cosine torsion strain over all rotatable bonds.
+
+    Bounded by Σ 2·Vk_i (LSA5: additive_strain_bounded).
+    """
+    strains = barrier_heights * (1.0 - jnp.cos(multiplicities * angles - phases))
+    return float(jnp.sum(strains))
+
+
+@certified("LigandStrainApproximation.lean::additive_strain_bounded")
+def total_torsion_strain_bound(barrier_heights: jnp.ndarray) -> float:
+    """Upper bound on total torsion strain: Σ 2·Vk_i."""
+    return float(2.0 * jnp.sum(barrier_heights))
+
+
+# =============================================================================
+# Cooperative H-Bond Correction (Lean: CooperativeHBondApproximation.lean)
+# =============================================================================
+# CHN1: cooperative_correction_bounded — |α · Σ fᵢ·fⱼ| ≤ |α| · N²
+# CHN2: independent_approximates_cooperative — UniformUtilityApprox
+
+
+@certified("CooperativeHBondApproximation.lean::cooperative_correction_bounded")
+def cooperative_hbond_correction_bound(
+    alpha: float,
+    n_hbonds: int,
+) -> float:
+    """Upper bound on cooperative correction: |α| · N².
+
+    For typical α ≈ 0.2 and N ≈ 5: bound = 0.2 × 25 = 5.0 kcal/mol.
+    """
+    return abs(alpha) * n_hbonds ** 2
+
+
+@jax.jit
+def _cooperative_hbond_correction_batch(
+    hbond_scores: jnp.ndarray,
+    alpha: float,
+) -> jnp.ndarray:
+    """Cooperative correction: α · Σᵢ<ⱼ sᵢ·sⱼ for each pose.
+
+    hbond_scores: (batch, n_hbonds) individual H-bond scores in [0, 1].
+    Returns: (batch,) cooperative correction per pose.
+
+    Certified by CHN1 (bounded by |α|·N²), CHN2 (independent approximates cooperative).
+    """
+    # Σᵢ Σⱼ sᵢ·sⱼ = (Σ sᵢ)² — use this for efficiency
+    sums = jnp.sum(hbond_scores, axis=-1)
+    pairwise_product_sum = sums ** 2
+    return alpha * pairwise_product_sum
 
 
 def _normalize_direction_vectors(vectors: jnp.ndarray) -> jnp.ndarray:
@@ -1260,28 +1620,54 @@ def _normalize_direction_vectors(vectors: jnp.ndarray) -> jnp.ndarray:
 
 
 @jax.jit
+def _batched_kabsch_rotations(
+    reference_coords: jnp.ndarray,
+    posed_coords: jnp.ndarray,
+) -> jnp.ndarray:
+    reference_centered = reference_coords - jnp.mean(
+        reference_coords, axis=0, keepdims=True
+    )
+    posed_centered = posed_coords - jnp.mean(posed_coords, axis=1, keepdims=True)
+    covariance = jnp.einsum("ni,bnj->bij", reference_centered, posed_centered)
+    left, _, right_t = jnp.linalg.svd(covariance, full_matrices=False)
+    right = jnp.swapaxes(right_t, -2, -1)
+    left_t = jnp.swapaxes(left, -2, -1)
+    det = jnp.linalg.det(right @ left_t)
+    correction = jnp.broadcast_to(
+        jnp.eye(3, dtype=reference_coords.dtype),
+        (covariance.shape[0], 3, 3),
+    )
+    correction = correction.at[:, 2, 2].set(jnp.where(det < 0.0, -1.0, 1.0))
+    return right @ correction @ left_t
+
+
+@jax.jit
 def _directional_hbond_pair_terms(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
+    receptor_anchor_indices: jnp.ndarray,
     receptor_directions: jnp.ndarray,
-    ligand_neighbor_indices: jnp.ndarray,
+    ligand_anchor_indices: jnp.ndarray,
+    ligand_local_directions: jnp.ndarray,
+    ligand_frame_coords: jnp.ndarray,
     receptor_strengths: jnp.ndarray,
     ligand_strengths: jnp.ndarray,
+    receptor_alignment_sign: float,
+    ligand_alignment_sign: float,
     ideal_distance: float,
     distance_width: float,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    diffs = poses_coords[:, None, :, :] - receptor_coords[None, :, None, :]
+    receptor_site_coords = receptor_coords[receptor_anchor_indices]
+    ligand_site_coords = poses_coords[:, ligand_anchor_indices, :]
+    diffs = ligand_site_coords[:, None, :, :] - receptor_site_coords[None, :, None, :]
     dists = jnp.asarray(jnp.linalg.norm(diffs, axis=-1))
     unit_vectors = diffs / jnp.maximum(dists[..., None], 1e-6)
 
     receptor_dirs = _normalize_direction_vectors(receptor_directions)
-
-    # Calculate ligand directions from neighbors
-    neighbor_coords = poses_coords[:, ligand_neighbor_indices, :]  # (B, N_lig, k, 3)
-    mean_neighbor_coords = jnp.mean(neighbor_coords, axis=2)  # (B, N_lig, 3)
-    ligand_directions = poses_coords - mean_neighbor_coords
-
-    ligand_dirs = _normalize_direction_vectors(ligand_directions)
+    rotations = _batched_kabsch_rotations(ligand_frame_coords, poses_coords)
+    ligand_dirs = _normalize_direction_vectors(
+        jnp.einsum("bij,nj->bni", rotations, ligand_local_directions)
+    )
     receptor_dirs_expanded = receptor_dirs[None, :, None, :]
     ligand_dirs_expanded = ligand_dirs[:, None, :, :]
 
@@ -1293,67 +1679,100 @@ def _directional_hbond_pair_terms(
     radial = pair_strength * jnp.exp(
         -(((dists - ideal_distance) / distance_width) ** 2)
     )
-    donor_angle = jnp.clip(
-        jnp.sum(receptor_dirs_expanded * unit_vectors, axis=-1), 0.0, 1.0
+    receptor_angle = jnp.clip(
+        jnp.sum(
+            receptor_dirs_expanded * (receptor_alignment_sign * unit_vectors),
+            axis=-1,
+        ),
+        0.0,
+        1.0,
     )
-    acceptor_angle = jnp.clip(
-        jnp.sum(ligand_dirs_expanded * (-unit_vectors), axis=-1), 0.0, 1.0
+    ligand_angle = jnp.clip(
+        jnp.sum(
+            ligand_dirs_expanded * (ligand_alignment_sign * unit_vectors),
+            axis=-1,
+        ),
+        0.0,
+        1.0,
     )
-    return radial, donor_angle, acceptor_angle
+    return radial, receptor_angle, ligand_angle
 
 
 @jax.jit
 def _score_directional_hbond_exact_batch(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
+    receptor_anchor_indices: jnp.ndarray,
     receptor_directions: jnp.ndarray,
-    ligand_neighbor_indices: jnp.ndarray,
+    ligand_anchor_indices: jnp.ndarray,
+    ligand_local_directions: jnp.ndarray,
+    ligand_frame_coords: jnp.ndarray,
     receptor_strengths: jnp.ndarray,
     ligand_strengths: jnp.ndarray,
+    receptor_alignment_sign: float,
+    ligand_alignment_sign: float,
     ideal_distance: float,
     distance_width: float,
 ) -> jnp.ndarray:
-    radial, donor_angle, acceptor_angle = _directional_hbond_pair_terms(
+    radial, receptor_angle, ligand_angle = _directional_hbond_pair_terms(
         receptor_coords,
         poses_coords,
+        receptor_anchor_indices,
         receptor_directions,
-        ligand_neighbor_indices,
+        ligand_anchor_indices,
+        ligand_local_directions,
+        ligand_frame_coords,
         receptor_strengths,
         ligand_strengths,
+        receptor_alignment_sign,
+        ligand_alignment_sign,
         ideal_distance,
         distance_width,
     )
-    return jnp.sum(radial * donor_angle * acceptor_angle, axis=(1, 2))
+    return jnp.sum(radial * receptor_angle * ligand_angle, axis=(1, 2))
 
 
 @jax.jit
 def _score_directional_hbond_cutoff_batch(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
+    receptor_anchor_indices: jnp.ndarray,
     receptor_directions: jnp.ndarray,
-    ligand_neighbor_indices: jnp.ndarray,
+    ligand_anchor_indices: jnp.ndarray,
+    ligand_local_directions: jnp.ndarray,
+    ligand_frame_coords: jnp.ndarray,
     receptor_strengths: jnp.ndarray,
     ligand_strengths: jnp.ndarray,
+    receptor_alignment_sign: float,
+    ligand_alignment_sign: float,
     ideal_distance: float,
     distance_width: float,
     cutoff: float,
 ) -> jnp.ndarray:
-    radial, donor_angle, acceptor_angle = _directional_hbond_pair_terms(
+    radial, receptor_angle, ligand_angle = _directional_hbond_pair_terms(
         receptor_coords,
         poses_coords,
+        receptor_anchor_indices,
         receptor_directions,
-        ligand_neighbor_indices,
+        ligand_anchor_indices,
+        ligand_local_directions,
+        ligand_frame_coords,
         receptor_strengths,
         ligand_strengths,
+        receptor_alignment_sign,
+        ligand_alignment_sign,
         ideal_distance,
         distance_width,
     )
+    receptor_site_coords = receptor_coords[receptor_anchor_indices]
+    ligand_site_coords = poses_coords[:, ligand_anchor_indices, :]
     dists = jnp.asarray(
         jnp.linalg.norm(
-            poses_coords[:, None, :, :] - receptor_coords[None, :, None, :], axis=-1
+            ligand_site_coords[:, None, :, :] - receptor_site_coords[None, :, None, :],
+            axis=-1,
         )
     )
-    pair_scores = radial * donor_angle * acceptor_angle
+    pair_scores = radial * receptor_angle * ligand_angle
     return jnp.sum(jnp.where(dists < cutoff, pair_scores, 0.0), axis=(1, 2))
 
 
@@ -1560,7 +1979,7 @@ def _combine_certified_batches(
 @conditionally_certified(
     "HandleAliases.lean::XR1; HandleAliases.lean::XR2; HandleAliases.lean::XR3; HandleAliases.lean::XR4; HandleAliases.lean::XR5",
     assumptions=[
-        "The attractive runtime chemistry energy is exactly the sum of the theorem-backed attractive contact, directional H-bond, metal coordination, pi-stacking, pi-cation, halogen-bond, and water-mediated hydrogen-bond signals",
+        "The attractive runtime chemistry energy is exactly the sum of the theorem-backed attractive contact, receptor-donor directional H-bond, ligand-donor directional H-bond, metal coordination, pi-stacking, pi-cation, halogen-bond, and water-mediated hydrogen-bond signals",
         "The combined error bound is the sum of the finite-batch discrepancy bounds for all attractive chemistry components",
     ],
 )
@@ -1574,10 +1993,15 @@ def score_certified_attractive_chemistry_batch(
         poses_coords,
         rich_chemistry_plan.contact,
     )
-    hbond_batch = score_certified_directional_hbond_batch(
+    hbond_receptor_donor_batch = score_certified_directional_hbond_batch(
         receptor_coords,
         poses_coords,
-        rich_chemistry_plan.directional_hbond,
+        rich_chemistry_plan.hbond_receptor_donor,
+    )
+    hbond_ligand_donor_batch = score_certified_directional_hbond_batch(
+        receptor_coords,
+        poses_coords,
+        rich_chemistry_plan.hbond_ligand_donor,
     )
     metal_batch = score_certified_metal_coordination_batch(
         receptor_coords,
@@ -1589,13 +2013,47 @@ def score_certified_attractive_chemistry_batch(
         poses_coords,
         rich_chemistry_plan.extended_terms,
     )
+    # CHN1/CHN2: cooperative H-bond correction α·(Σs)²
+    # hbond scores are raw (positive = attractive), stack for cooperative calc
+    cooperative_correction = _cooperative_hbond_correction_batch(
+        jnp.stack(
+            [hbond_receptor_donor_batch.scores, hbond_ligand_donor_batch.scores],
+            axis=-1,
+        ),
+        rich_chemistry_plan.cooperative_alpha,
+    )
+    n_hbond_channels = 2
+    cooperative_error = cooperative_hbond_correction_bound(
+        rich_chemistry_plan.cooperative_alpha, n_hbond_channels
+    )
     return _combine_certified_batches(
         CertifiedBatchResult(
-            scores=-(contact_batch.scores + hbond_batch.scores),
-            error_bound=contact_batch.error_bound + hbond_batch.error_bound,
-            target_error=contact_batch.target_error + hbond_batch.target_error,
-            cutoff_radius=jnp.maximum(
-                contact_batch.cutoff_radius, hbond_batch.cutoff_radius
+            scores=-(
+                contact_batch.scores
+                + hbond_receptor_donor_batch.scores
+                + hbond_ligand_donor_batch.scores
+            )
+            + cooperative_correction,
+            error_bound=(
+                contact_batch.error_bound
+                + hbond_receptor_donor_batch.error_bound
+                + hbond_ligand_donor_batch.error_bound
+                + cooperative_error
+            ),
+            target_error=(
+                contact_batch.target_error
+                + hbond_receptor_donor_batch.target_error
+                + hbond_ligand_donor_batch.target_error
+            ),
+            cutoff_radius=jnp.max(
+                jnp.stack(
+                    [
+                        jnp.asarray(contact_batch.cutoff_radius),
+                        jnp.asarray(hbond_receptor_donor_batch.cutoff_radius),
+                        jnp.asarray(hbond_ligand_donor_batch.cutoff_radius),
+                    ],
+                    axis=0,
+                )
             ),
         ),
         metal_batch,
@@ -1645,10 +2103,12 @@ def score_certified_lj_screened_coulomb_batch(
 
 
 @conditionally_certified(
-    "HandleAliases.lean::XR6; HandleAliases.lean::XR7; HandleAliases.lean::XR8; HandleAliases.lean::XR9; HandleAliases.lean::XR10",
+    "HandleAliases.lean::XR6; HandleAliases.lean::XR7; HandleAliases.lean::XR8; HandleAliases.lean::XR9; HandleAliases.lean::XR10; "
+    "SoftLJApproximation.lean::soft_lj_lower_bound",
     assumptions=[
-        "The additive runtime score is exactly the sum of the certified LJ+screened-Coulomb term and the certified attractive extended chemistry term",
-        "The combined error bound is the sum of the certified nonbonded bound and the certified attractive extended chemistry batch discrepancy bound",
+        "The additive runtime score is exactly the sum of the certified softened-LJ term, the certified screened-Coulomb term, and the certified attractive extended chemistry term",
+        "The combined error bound is the sum of the certified softened-LJ bound (including softening error), the certified screened-Coulomb bound, and the certified attractive extended chemistry batch discrepancy bound",
+        "Soft-core LJ prevents the repulsive wall from penalizing genuine H-bond contact distances (2.7-3.0 A) that fall below Bondi sigma",
     ],
 )
 def score_certified_rich_chemistry_batch(
@@ -1660,24 +2120,37 @@ def score_certified_rich_chemistry_batch(
     target_error: float = 0.001,
     epsilon: float = _EPSILON_KCAL_MOL,
 ) -> CertifiedBatchResult:
-    nonbonded_batch = score_certified_lj_screened_coulomb_batch(
-        receptor_coords,
-        poses_coords,
-        receptor_radii,
-        ligand_radii,
-        rich_chemistry_plan.screened_coulomb,
+    softened_lj = score_certified_softened_lj(
+        receptor_coords=receptor_coords,
+        poses_coords=poses_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_radii,
         target_error=target_error,
         epsilon=epsilon,
+        softening_radius=None,
+        pairwise_sigma=rich_chemistry_plan.pairwise_sigma,
+    )
+    screened_batch = score_certified_screened_coulomb_batch(
+        receptor_coords,
+        poses_coords,
+        rich_chemistry_plan.screened_coulomb,
     )
     attractive_batch = score_certified_attractive_chemistry_batch(
         receptor_coords,
         poses_coords,
         rich_chemistry_plan,
     )
-    return _combine_certified_batches(
-        nonbonded_batch,
-        attractive_batch,
+    combined_cutoff = jnp.maximum(
+        jnp.maximum(softened_lj.cutoff_radius, screened_batch.cutoff_radius),
+        attractive_batch.cutoff_radius,
+    )
+    return CertifiedBatchResult(
+        scores=softened_lj.scores + screened_batch.scores + attractive_batch.scores,
+        error_bound=softened_lj.softening_error_bound
+        + screened_batch.error_bound
+        + attractive_batch.error_bound,
         target_error=target_error,
+        cutoff_radius=combined_cutoff,
     )
 
 
@@ -1699,6 +2172,7 @@ def score_certified_softened_rich_chemistry_batch(
         target_error=target_error,
         epsilon=epsilon,
         softening_radius=softening_radius,
+        pairwise_sigma=rich_chemistry_plan.pairwise_sigma,
     )
     screened_batch = score_certified_screened_coulomb_batch(
         receptor_coords,
@@ -1788,6 +2262,7 @@ def score_certified_softened_lj(
     epsilon: float = _EPSILON_KCAL_MOL,
     softening_radius: float | None = None,
     compute_error_bound: bool = True,
+    pairwise_sigma: jnp.ndarray | None = None,
 ) -> CertifiedSoftenedBatchResult:
     cutoff = jnp.array(optimal_cutoff(target_error, s=6.0))
     r_soft = (
@@ -1804,6 +2279,7 @@ def score_certified_softened_lj(
         epsilon,
         r_soft,
         compute_error_bound=compute_error_bound,
+        pairwise_sigma=pairwise_sigma,
     )
     return CertifiedSoftenedBatchResult(
         scores=scores,

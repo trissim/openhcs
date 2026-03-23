@@ -259,6 +259,16 @@ def attractive_metal_coordination_theorem_handles() -> tuple[str, ...]:
     return _selected_handles(MC6, MC7, MC8, MC9, MC10)
 
 
+def metal_coordination_cutoff_theorem_handles() -> tuple[str, ...]:
+    """Physically derived cutoff bounds (MetalCoordinationApproximation.lean).
+
+    MC11: metalCoordination_tail_bound — pointwise Gaussian tail decay
+    MC12: metalCoordination_cutoff_sufficient — rc ≥ ideal + width·√(ln(|w|/ε)) ⟹ error ≤ ε
+    MC13: metalCoordinationMinCutoff_sufficient — minimum cutoff achieves ε guarantee
+    """
+    return _selected_handles(MC11, MC12, MC13)
+
+
 def pi_stacking_theorem_handles() -> tuple[str, ...]:
     return _selected_handles(PP1, PP2, PP3, PP4, PP5)
 
@@ -305,6 +315,34 @@ def topk_bridge_theorem_handles() -> tuple[str, ...]:
 
 def support_expansion_theorem_handles() -> tuple[str, ...]:
     return _prefixed_handles("SH")
+
+
+def conformer_search_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(CS1, CS2, CS3, CS4, CS5, CS6, CS7, CS8, CS9, GAP2)
+
+
+def ligand_strain_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(LSA1, LSA2, LSA3, LSA4, LSA5, LSA6, LSA7, LSA8)
+
+
+def directional_metal_coordination_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(DMC1, DMC2, DMC3, DMC4, DMC5)
+
+
+def cooperative_hbond_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(CHN1, CHN2, CHN3, CHN4)
+
+
+def explicit_water_placement_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(EWP1, EWP2, EWP3, EWP4, EWP5)
+
+
+def performance_certificate_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(PERF1, PERF2, PERF3, PERF4, PERF5, PERF6)
+
+
+def receptor_flexibility_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(RFE1, RFE2, RFE3, RFE4, RFE5, RFE6)
 
 
 def selection_theorem_handle(branch: str) -> str:

@@ -351,6 +351,9 @@ MC7 = "MC7"
 MC8 = "MC8"
 MC9 = "MC9"
 MC10 = "MC10"
+MC11 = "MC11"
+MC12 = "MC12"
+MC13 = "MC13"
 PP1 = "PP1"
 PP2 = "PP2"
 PP3 = "PP3"
@@ -414,6 +417,15 @@ APX7 = "APX7"
 APX8 = "APX8"
 APX9 = "APX9"
 APX4 = "APX4"
+CS1 = "CS1"
+CS2 = "CS2"
+CS3 = "CS3"
+CS4 = "CS4"
+CS5 = "CS5"
+CS6 = "CS6"
+CS7 = "CS7"
+CS8 = "CS8"
+CS9 = "CS9"
 SD1 = "SD1"
 SD2 = "SD2"
 SD3 = "SD3"
@@ -446,9 +458,9 @@ SH3 = "SH3"
 SH4 = "SH4"
 SH5 = "SH5"
 SH6 = "SH6"
-GD1 = "GD1"
-GD2 = "GD2"
-GD3 = "GD3"
+GC1 = "GC1"
+GC2 = "GC2"
+GC3 = "GC3"
 CP1 = "CP1"
 CP2 = "CP2"
 CP3 = "CP3"
@@ -473,10 +485,10 @@ FLO15 = "FLO15"
 FLO16 = "FLO16"
 FLO17 = "FLO17"
 FLO18 = "FLO18"
-LS1 = "LS1"
-LS2 = "LS2"
-LS3 = "LS3"
-LS4 = "LS4"
+LT1 = "LT1"
+LT2 = "LT2"
+LT3 = "LT3"
+LT4 = "LT4"
 ADL1 = "ADL1"
 ADL2 = "ADL2"
 ADL3 = "ADL3"
@@ -895,6 +907,41 @@ DB1 = "DB1"
 DB2 = "DB2"
 DB3 = "DB3"
 DB4 = "DB4"
+LSA1 = "LSA1"
+LSA2 = "LSA2"
+LSA3 = "LSA3"
+LSA4 = "LSA4"
+LSA5 = "LSA5"
+LSA6 = "LSA6"
+LSA7 = "LSA7"
+LSA8 = "LSA8"
+DMC1 = "DMC1"
+DMC2 = "DMC2"
+DMC3 = "DMC3"
+DMC4 = "DMC4"
+DMC5 = "DMC5"
+CHN1 = "CHN1"
+CHN2 = "CHN2"
+CHN3 = "CHN3"
+CHN4 = "CHN4"
+EWP1 = "EWP1"
+EWP2 = "EWP2"
+EWP3 = "EWP3"
+EWP4 = "EWP4"
+EWP5 = "EWP5"
+RFE1 = "RFE1"
+RFE2 = "RFE2"
+RFE3 = "RFE3"
+RFE4 = "RFE4"
+RFE5 = "RFE5"
+RFE6 = "RFE6"
+GAP2 = "GAP2"
+PERF1 = "PERF1"
+PERF2 = "PERF2"
+PERF3 = "PERF3"
+PERF4 = "PERF4"
+PERF5 = "PERF5"
+PERF6 = "PERF6"
 
 __all__ = [
     "DC1",
@@ -1246,6 +1293,9 @@ __all__ = [
     "MC8",
     "MC9",
     "MC10",
+    "MC11",
+    "MC12",
+    "MC13",
     "PP1",
     "PP2",
     "PP3",
@@ -1309,6 +1359,15 @@ __all__ = [
     "APX8",
     "APX9",
     "APX4",
+    "CS1",
+    "CS2",
+    "CS3",
+    "CS4",
+    "CS5",
+    "CS6",
+    "CS7",
+    "CS8",
+    "CS9",
     "SD1",
     "SD2",
     "SD3",
@@ -1341,9 +1400,9 @@ __all__ = [
     "SH4",
     "SH5",
     "SH6",
-    "GD1",
-    "GD2",
-    "GD3",
+    "GC1",
+    "GC2",
+    "GC3",
     "CP1",
     "CP2",
     "CP3",
@@ -1368,10 +1427,10 @@ __all__ = [
     "FLO16",
     "FLO17",
     "FLO18",
-    "LS1",
-    "LS2",
-    "LS3",
-    "LS4",
+    "LT1",
+    "LT2",
+    "LT3",
+    "LT4",
     "ADL1",
     "ADL2",
     "ADL3",
@@ -1790,4 +1849,39 @@ __all__ = [
     "DB2",
     "DB3",
     "DB4",
+    "LSA1",
+    "LSA2",
+    "LSA3",
+    "LSA4",
+    "LSA5",
+    "LSA6",
+    "LSA7",
+    "LSA8",
+    "DMC1",
+    "DMC2",
+    "DMC3",
+    "DMC4",
+    "DMC5",
+    "CHN1",
+    "CHN2",
+    "CHN3",
+    "CHN4",
+    "EWP1",
+    "EWP2",
+    "EWP3",
+    "EWP4",
+    "EWP5",
+    "RFE1",
+    "RFE2",
+    "RFE3",
+    "RFE4",
+    "RFE5",
+    "RFE6",
+    "GAP2",
+    "PERF1",
+    "PERF2",
+    "PERF3",
+    "PERF4",
+    "PERF5",
+    "PERF6",
 ]

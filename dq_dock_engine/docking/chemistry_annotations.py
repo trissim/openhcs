@@ -14,13 +14,13 @@ from dq_dock_engine.docking.receptor_preparation import (
     PDBAtomRecord,
     ResidueKey,
     WATER_RESNAMES,
-    group_atom_records_by_residue,
-    iter_atom_records,
 )
 
 
 HALOGEN_ELEMENTS = frozenset({"CL", "BR", "I"})
 POLAR_ELEMENTS = frozenset({"N", "O", "S", "F"})
+HBOND_DONOR_ELEMENTS = frozenset({"N", "O", "S"})
+HBOND_ACCEPTOR_ELEMENTS = frozenset({"N", "O", "S"})
 AROMATIC_RING_ELEMENTS = frozenset({"C", "N"})
 POSITIVE_ELEMENTS = frozenset(
     {"NA", "K", "CA", "MG", "MN", "FE", "CO", "NI", "CU", "ZN", "CD"}
@@ -63,6 +63,18 @@ _AROMATIC_RESIDUE_TEMPLATES: dict[str, tuple[tuple[str, ...], ...]] = {
     ),
 }
 
+_DONOR_ONLY_RECEPTOR_NITROGENS = frozenset(
+    {
+        ("ARG", "NE"),
+        ("ARG", "NH1"),
+        ("ARG", "NH2"),
+        ("ASN", "ND2"),
+        ("GLN", "NE2"),
+        ("LYS", "NZ"),
+        ("TRP", "NE1"),
+    }
+)
+
 
 def _normalize_element(element: str) -> str:
     return element.strip().upper()
@@ -102,15 +114,17 @@ def _infer_bond_cutoff(element_a: str, element_b: str) -> float:
 def _infer_bond_adjacency(
     coords: np.ndarray,
     elements: tuple[str, ...],
+    *,
+    include_hydrogens: bool = False,
 ) -> tuple[tuple[int, ...], ...]:
     adjacency = [set() for _ in range(len(elements))]
     for idx_a in range(len(elements)):
         element_a = _normalize_element(elements[idx_a])
-        if element_a == "H":
+        if not include_hydrogens and element_a == "H":
             continue
         for idx_b in range(idx_a + 1, len(elements)):
             element_b = _normalize_element(elements[idx_b])
-            if element_b == "H":
+            if not include_hydrogens and element_b == "H":
                 continue
             distance = float(np.linalg.norm(coords[idx_a] - coords[idx_b]))
             if 0.4 <= distance <= _infer_bond_cutoff(element_a, element_b):
@@ -172,6 +186,8 @@ def _is_planar_ring(coords: np.ndarray, atom_indices: tuple[int, ...]) -> bool:
 class ChemistrySiteRole(Enum):
     AROMATIC_RING = auto()
     CATION = auto()
+    HBOND_DONOR = auto()
+    HBOND_ACCEPTOR = auto()
     HALOGEN_DONOR = auto()
     HALOGEN_ACCEPTOR = auto()
     POLAR = auto()
@@ -205,6 +221,7 @@ class DirectionalSiteAnnotation(IndexedSiteAnnotation):
 
 
 SiteT = TypeVar("SiteT", bound=ChemistrySiteAnnotation)
+StructureT = TypeVar("StructureT")
 
 
 @dataclass(frozen=True)
@@ -233,17 +250,20 @@ class ReceptorChemistryCatalog(ChemistryAnnotationCatalog):
 
 
 @dataclass(frozen=True)
-class LigandStructureModel:
+class BondedStructureModel:
     coords: np.ndarray
     elements: tuple[str, ...]
-    charges: np.ndarray | None
     adjacency: tuple[tuple[int, ...], ...]
+    hydrogen_directions: tuple[tuple[np.ndarray, ...], ...]
 
 
 @dataclass(frozen=True)
-class ReceptorStructureModel:
-    coords: np.ndarray
-    elements: tuple[str, ...]
+class LigandStructureModel(BondedStructureModel):
+    charges: np.ndarray | None = None
+
+
+@dataclass(frozen=True)
+class ReceptorStructureModel(BondedStructureModel):
     indexed_records: tuple[tuple[int, PDBAtomRecord], ...]
     residue_records: dict[ResidueKey, tuple[tuple[int, PDBAtomRecord], ...]]
 
@@ -307,6 +327,51 @@ def _directional_site(
         ),
     )
 
+
+def _receptor_acceptor_allowed(
+    residue: ResidueKey,
+    atom_name: str,
+    *,
+    element: str,
+    hydrogen_count: int,
+    heavy_degree: int,
+) -> bool:
+    normalized_element = _normalize_element(element)
+    normalized_atom_name = atom_name.upper()
+    normalized_resname = residue.resname.upper()
+    if normalized_element == "O":
+        return True
+    if normalized_element == "S":
+        return True
+    if normalized_element != "N":
+        return False
+    if normalized_atom_name == "N":
+        return False
+    if (normalized_resname, normalized_atom_name) in _DONOR_ONLY_RECEPTOR_NITROGENS:
+        return False
+    if normalized_resname in {"HIS", "HID", "HIE", "HIP"} and normalized_atom_name in {
+        "ND1",
+        "NE2",
+    }:
+        return hydrogen_count == 0
+    return hydrogen_count == 0 and heavy_degree <= 2
+
+
+def _ligand_acceptor_allowed(
+    structure: LigandStructureModel,
+    atom_index: int,
+) -> bool:
+    element = _normalize_element(structure.elements[atom_index])
+    charge = 0.0 if structure.charges is None else float(structure.charges[atom_index])
+    hydrogen_count = len(structure.hydrogen_directions[atom_index])
+    heavy_degree = len(structure.adjacency[atom_index])
+    if element == "O":
+        return charge <= 0.4
+    if element == "S":
+        return charge <= 0.2 and heavy_degree <= 2
+    if element != "N":
+        return False
+    return charge <= 0.2 and hydrogen_count == 0 and heavy_degree <= 2
 
 class LigandSiteExtractor(ABC):
     _registered_types: ClassVar[list[type["LigandSiteExtractor"]]] = []
@@ -413,6 +478,50 @@ class LigandHalogenDonorExtractor(LigandSiteExtractor):
                         ),
                     )
                 )
+        return tuple(sites)
+
+
+class LigandHBondDonorExtractor(LigandSiteExtractor):
+    def extract(
+        self, structure: LigandStructureModel
+    ) -> tuple[ChemistrySiteAnnotation, ...]:
+        sites: list[ChemistrySiteAnnotation] = []
+        for atom_index, element in enumerate(structure.elements):
+            if _normalize_element(element) not in HBOND_DONOR_ELEMENTS:
+                continue
+            for direction in structure.hydrogen_directions[atom_index]:
+                sites.append(
+                    _directional_site(
+                        role=ChemistrySiteRole.HBOND_DONOR,
+                        atom_indices=(atom_index,),
+                        neighbor_indices=structure.adjacency[atom_index],
+                        coords=structure.coords,
+                        strength=1.0,
+                        direction=direction,
+                    )
+                )
+        return tuple(sites)
+
+
+class LigandHBondAcceptorExtractor(LigandSiteExtractor):
+    def extract(
+        self, structure: LigandStructureModel
+    ) -> tuple[ChemistrySiteAnnotation, ...]:
+        sites: list[ChemistrySiteAnnotation] = []
+        for atom_index, element in enumerate(structure.elements):
+            if _normalize_element(element) not in HBOND_ACCEPTOR_ELEMENTS:
+                continue
+            if not _ligand_acceptor_allowed(structure, atom_index):
+                continue
+            sites.append(
+                _directional_site(
+                    role=ChemistrySiteRole.HBOND_ACCEPTOR,
+                    atom_indices=(atom_index,),
+                    neighbor_indices=structure.adjacency[atom_index],
+                    coords=structure.coords,
+                    strength=1.0,
+                )
+            )
         return tuple(sites)
 
 
@@ -529,6 +638,60 @@ class ReceptorCationExtractor(ReceptorSiteExtractor):
         return tuple(sites)
 
 
+class ReceptorHBondDonorExtractor(ReceptorSiteExtractor):
+    def extract(
+        self, structure: ReceptorStructureModel
+    ) -> tuple[ChemistrySiteAnnotation, ...]:
+        sites: list[ChemistrySiteAnnotation] = []
+        for residue, indexed_records in structure.residue_records.items():
+            del residue
+            for atom_index, record in indexed_records:
+                if _normalize_element(record.element) not in HBOND_DONOR_ELEMENTS:
+                    continue
+                for direction in structure.hydrogen_directions[atom_index]:
+                    sites.append(
+                        _directional_site(
+                            role=ChemistrySiteRole.HBOND_DONOR,
+                            atom_indices=(atom_index,),
+                            neighbor_indices=structure.adjacency[atom_index],
+                            coords=structure.coords,
+                            strength=1.0,
+                            direction=direction,
+                        )
+                    )
+        return tuple(sites)
+
+
+class ReceptorHBondAcceptorExtractor(ReceptorSiteExtractor):
+    def extract(
+        self, structure: ReceptorStructureModel
+    ) -> tuple[ChemistrySiteAnnotation, ...]:
+        sites: list[ChemistrySiteAnnotation] = []
+        for residue, indexed_records in structure.residue_records.items():
+            for atom_index, record in indexed_records:
+                element = _normalize_element(record.element)
+                if element not in HBOND_ACCEPTOR_ELEMENTS:
+                    continue
+                if not _receptor_acceptor_allowed(
+                    residue,
+                    record.atom_name,
+                    element=element,
+                    hydrogen_count=len(structure.hydrogen_directions[atom_index]),
+                    heavy_degree=len(structure.adjacency[atom_index]),
+                ):
+                    continue
+                sites.append(
+                    _directional_site(
+                        role=ChemistrySiteRole.HBOND_ACCEPTOR,
+                        atom_indices=(atom_index,),
+                        neighbor_indices=structure.adjacency[atom_index],
+                        coords=structure.coords,
+                        strength=1.0,
+                    )
+                )
+        return tuple(sites)
+
+
 class ReceptorHalogenDonorExtractor(ReceptorSiteExtractor):
     def extract(
         self, structure: ReceptorStructureModel
@@ -637,67 +800,72 @@ class ReceptorBridgeWaterExtractor(ReceptorSiteExtractor):
         return tuple(sites)
 
 
-def build_ligand_chemistry_catalog(
-    ligand_ctx: LigandContext,
+def _collect_sites(
+    structure: StructureT,
+    extractor_types: tuple[type, ...],
+) -> tuple[ChemistrySiteAnnotation, ...]:
+    return tuple(
+        site
+        for extractor_type in extractor_types
+        for site in extractor_type().extract(structure)
+    )
+
+
+def catalog_from_ligand_structure(
+    structure: LigandStructureModel,
 ) -> LigandChemistryCatalog:
-    coords = np.asarray(ligand_ctx.base_coords, dtype=np.float32)
-    elements = tuple(ligand_ctx.elements)
-    if len(elements) != coords.shape[0]:
-        return LigandChemistryCatalog()
-    charges = (
-        None
-        if ligand_ctx.charges is None
-        else np.asarray(ligand_ctx.charges, dtype=np.float32)
-    )
-    structure = LigandStructureModel(
-        coords=coords,
-        elements=elements,
-        charges=charges,
-        adjacency=_infer_bond_adjacency(coords, elements),
-    )
     return LigandChemistryCatalog(
-        sites=tuple(
-            site
-            for extractor_type in LigandSiteExtractor.registered_types()
-            for site in extractor_type().extract(structure)
+        sites=_collect_sites(structure, LigandSiteExtractor.registered_types())
+    )
+
+
+def catalog_from_receptor_structure(
+    structure: ReceptorStructureModel,
+) -> ReceptorChemistryCatalog:
+    return ReceptorChemistryCatalog(
+        sites=_collect_sites(structure, ReceptorSiteExtractor.registered_types())
+    )
+
+
+def build_ligand_chemistry_catalog(
+    ligand_ctx: LigandContext | LigandStructureModel,
+    *,
+    ligand_source_path: str | Path | None = None,
+) -> LigandChemistryCatalog:
+    if isinstance(ligand_ctx, LigandStructureModel):
+        return catalog_from_ligand_structure(ligand_ctx)
+    from dq_dock_engine.docking.chemistry_preparation import (
+        prepare_ligand_chemistry_structure,
+    )
+
+    return catalog_from_ligand_structure(
+        prepare_ligand_chemistry_structure(
+            ligand_ctx,
+            ligand_source_path=ligand_source_path,
         )
     )
 
 
 def build_receptor_chemistry_catalog(
-    receptor_coords: np.ndarray,
-    receptor_elements: tuple[str, ...],
+    receptor_coords: np.ndarray | ReceptorStructureModel,
+    receptor_elements: tuple[str, ...] | None = None,
     *,
-    receptor_file: str | Path | None,
+    receptor_file: str | Path | None = None,
 ) -> ReceptorChemistryCatalog:
-    if receptor_file is None:
-        return ReceptorChemistryCatalog()
-    records = iter_atom_records(Path(receptor_file))
-    if len(records) != receptor_coords.shape[0]:
-        return ReceptorChemistryCatalog()
-    if tuple(record.element for record in records) != tuple(
-        _normalize_element(element) for element in receptor_elements
-    ):
-        return ReceptorChemistryCatalog()
-    indexed_records = tuple(enumerate(records))
-    grouped = group_atom_records_by_residue(records)
-    record_index_by_identity = {id(record): index for index, record in indexed_records}
-    structure = ReceptorStructureModel(
-        coords=np.asarray(receptor_coords, dtype=np.float32),
-        elements=tuple(_normalize_element(element) for element in receptor_elements),
-        indexed_records=indexed_records,
-        residue_records={
-            residue: tuple(
-                (record_index_by_identity[id(record)], record)
-                for record in residue_records
-            )
-            for residue, residue_records in grouped.items()
-        },
+    if isinstance(receptor_coords, ReceptorStructureModel):
+        return catalog_from_receptor_structure(receptor_coords)
+    if receptor_elements is None:
+        raise ValueError(
+            "Extended-rich chemistry requires receptor element annotations for every runtime atom"
+        )
+    from dq_dock_engine.docking.chemistry_preparation import (
+        prepare_receptor_chemistry_structure,
     )
-    return ReceptorChemistryCatalog(
-        sites=tuple(
-            site
-            for extractor_type in ReceptorSiteExtractor.registered_types()
-            for site in extractor_type().extract(structure)
+
+    return catalog_from_receptor_structure(
+        prepare_receptor_chemistry_structure(
+            receptor_coords,
+            receptor_elements,
+            receptor_file=receptor_file,
         )
     )

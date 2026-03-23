@@ -27,6 +27,7 @@ def test_metal_coordination_scoring() -> None:
     spec = CertifiedMetalCoordinationSpec(
         receptor_strengths=jnp.array([1.0, 0.9]),
         ligand_strengths=jnp.array([1.0, 0.5]),
+        receptor_ideal_angles=jnp.array([0.0, 0.0]),
         ideal_distance=2.1,
         distance_width=0.3,
         cutoff=4.0,
@@ -60,6 +61,7 @@ def test_inactive_metal_coordination_short_circuits_without_kernel_calls(
     spec = CertifiedMetalCoordinationSpec(
         receptor_strengths=jnp.array([0.0, 0.0]),
         ligand_strengths=jnp.array([1.0, 0.5]),
+        receptor_ideal_angles=jnp.array([0.0, 0.0]),
         ideal_distance=2.1,
         distance_width=0.3,
         cutoff=9.0,
@@ -70,8 +72,8 @@ def test_inactive_metal_coordination_short_circuits_without_kernel_calls(
     def _should_not_run(*args, **kwargs):
         raise AssertionError("inactive metal spec should short-circuit")
 
-    monkeypatch.setattr(scoring, "_score_metal_coordination_exact_batch", _should_not_run)
-    monkeypatch.setattr(scoring, "_score_metal_coordination_cutoff_batch", _should_not_run)
+    monkeypatch.setattr(scoring, "_score_directional_metal_exact_batch", _should_not_run)
+    monkeypatch.setattr(scoring, "_score_directional_metal_cutoff_batch", _should_not_run)
 
     res = score_certified_metal_coordination_batch(receptor_coords, poses_coords, spec)
 

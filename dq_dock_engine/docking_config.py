@@ -51,6 +51,13 @@ class ExactChemistryMode(Enum):
     EXTENDED_RICH = "extended_rich"
 
 
+class ConformerSearchMode(Enum):
+    """Whether to run certified conformer (torsion) search for ligands."""
+
+    DISABLED = "disabled"
+    ENABLED = "enabled"
+
+
 @register_pytree_node_class
 @dataclass(frozen=True)
 class DockingConfig:
@@ -101,6 +108,9 @@ class DockingConfig:
         CertifiedScoringFamily.LJ_REALSPACE_EWALD
     )
 
+    #: Whether to run certified conformer search (torsional flexibility)
+    conformer_search: ConformerSearchMode = ConformerSearchMode.ENABLED
+
     #: Fixed padding limits for JAX JIT stability.
     #: All receptor/ligand atom sets are padded to these sizes with ghost atoms.
     max_receptor_atoms: int = 1024
@@ -128,6 +138,7 @@ class DockingConfig:
             self.certified_scoring_family,
             self.max_receptor_atoms,
             self.max_ligand_atoms,
+            self.conformer_search,
         )
         return (children, aux_data)
 
@@ -148,6 +159,7 @@ class DockingConfig:
             certified_binding_site=children[3],
             max_receptor_atoms=aux_data[8],
             max_ligand_atoms=aux_data[9],
+            conformer_search=aux_data[10],
         )
 
     def __post_init__(self) -> None:

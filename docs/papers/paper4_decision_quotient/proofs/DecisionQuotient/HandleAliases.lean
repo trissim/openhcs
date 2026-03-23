@@ -95,6 +95,11 @@ import DecisionQuotient.Tractability.GaussianDecayBounds
 import DecisionQuotient.Tractability.ThermalFluctuationBounds
 import DecisionQuotient.Tractability.LipschitzStepBounds
 import DecisionQuotient.Tractability.DielectricBounds
+import DecisionQuotient.Tractability.LigandStrainApproximation
+import DecisionQuotient.Tractability.DirectionalMetalCoordinationApproximation
+import DecisionQuotient.Tractability.CooperativeHBondApproximation
+import DecisionQuotient.Tractability.ExplicitWaterPlacement
+import DecisionQuotient.Tractability.ReceptorFlexibility
 import DecisionQuotient.Computation.PocketDetection
 import DecisionQuotient.Information
 import DecisionQuotient.Information.RateDistortion
@@ -2013,5 +2018,86 @@ abbrev DB2 := @Tractability.DielectricBounds.implemented_in_valid_range
 noncomputable abbrev DB3 := @Tractability.DielectricBounds.sigmoidalDielectric
 -- DB4: Screening length scaling with dielectric
 noncomputable abbrev DB4 := @Tractability.DielectricBounds.screeningLength_from_dielectric
+
+/-! ## Ligand Strain Approximation (LSA) handles
+    LigandStrainApproximation.lean - Cosine torsion strain with additive composition
+-/
+
+-- LSA1: Cosine torsion strain bounded in [0, 2Vk]
+abbrev LSA1 := @Tractability.LigandStrainApproximation.cosineTorsionStrain_le_twoVk
+-- LSA2: Cosine torsion strain nonneg
+abbrev LSA2 := @Tractability.LigandStrainApproximation.cosineTorsionStrain_nonneg
+-- LSA3: Strain preserves uniform approximation
+abbrev LSA3 := @Tractability.LigandStrainApproximation.strain_preserves_uniformApprox
+-- LSA4: Strain-augmented Lipschitz constant
+abbrev LSA4 := @Tractability.LigandStrainApproximation.strain_augmented_lipschitz
+-- LSA5: Additive strain bounded
+abbrev LSA5 := @Tractability.LigandStrainApproximation.additive_strain_bounded
+-- LSA6: Cosine torsion strain vanishes at equilibrium
+abbrev LSA6 := @Tractability.LigandStrainApproximation.cosineTorsionStrain_at_equilibrium
+-- LSA7: Cosine torsion strain is BoundedStrain instance
+abbrev LSA7 := @Tractability.LigandStrainApproximation.cosineTorsionStrain_bounded
+-- LSA8: Strain-aware conformer pruning
+abbrev LSA8 := @Tractability.LigandStrainApproximation.strain_aware_conformer_dominated
+
+/-! ## Directional Metal Coordination (DMC) handles
+    DirectionalMetalCoordinationApproximation.lean - Angular × radial two-factor Lipschitz
+-/
+
+-- DMC1: Two-factor product Lipschitz bound (telescope decomposition)
+abbrev DMC1 := @Tractability.DirectionalMetalCoordinationApproximation.directionalMetalScore_sub_le_component_sum
+-- DMC2: Angular factor tightens tail bound (geometry is "free")
+abbrev DMC2 := @Tractability.DirectionalMetalCoordinationApproximation.angular_factor_tightens_tail
+-- DMC3: Directional metal cutoff uniform approximation
+abbrev DMC3 := @Tractability.DirectionalMetalCoordinationApproximation.directional_metal_cutoff_uniformApprox
+-- DMC4: Directional metal cutoff error radius nonneg
+abbrev DMC4 := @Tractability.DirectionalMetalCoordinationApproximation.directionalMetalCutoffErrorRadius_nonneg
+-- DMC5: Attractive directional metal cutoff uniform approximation
+abbrev DMC5 := @Tractability.DirectionalMetalCoordinationApproximation.attractive_directional_metal_cutoff_uniformApprox
+
+/-! ## Cooperative H-Bond Network (CHN) handles
+    CooperativeHBondApproximation.lean - Bounded perturbation |α|·N²
+-/
+
+-- CHN1: Cooperative correction bounded by |α|·N²
+abbrev CHN1 := @Tractability.CooperativeHBondApproximation.cooperative_correction_bounded
+-- CHN2: Independent model approximates cooperative model
+abbrev CHN2 := @Tractability.CooperativeHBondApproximation.independent_approximates_cooperative
+-- CHN3: Cooperative error bound nonneg
+abbrev CHN3 := @Tractability.CooperativeHBondApproximation.cooperative_error_nonneg
+-- CHN4: Pairwise product sum bounded by N²
+abbrev CHN4 := @Tractability.CooperativeHBondApproximation.pairwise_product_sum_le_of_unit_interval
+
+/-! ## Explicit Water Placement (EWP) handles
+    ExplicitWaterPlacement.lean - Bridging water placement with certified bounds
+-/
+
+-- EWP1: Best water bridge achieved by some candidate (witness)
+abbrev EWP1 := @Tractability.ExplicitWaterPlacement.bestWaterBridge_achieved
+-- EWP2: Discrete placement approximation with Lipschitz error
+abbrev EWP2 := @Tractability.ExplicitWaterPlacement.discrete_placement_approximation
+-- EWP3: Water bridge additive with base chemistry (zero added error)
+abbrev EWP3 := @Tractability.ExplicitWaterPlacement.water_bridge_additive_with_base
+-- EWP4: Water bridge score bounded by 2
+abbrev EWP4 := @Tractability.ExplicitWaterPlacement.waterBridgeScore_le_two
+-- EWP5: Water bridge score nonneg
+abbrev EWP5 := @Tractability.ExplicitWaterPlacement.waterBridgeScore_nonneg
+
+/-! ## Receptor Flexibility / Ensemble Docking (RFE) handles
+    ReceptorFlexibility.lean - Ensemble docking with Boltzmann averaging
+-/
+
+-- RFE1: Rigid model approximates any single conformation
+abbrev RFE1 := @Tractability.ReceptorFlexibility.rigid_approximates_conformation
+-- RFE2: Ensemble best-conformation bounded by rigid + error
+abbrev RFE2 := @Tractability.ReceptorFlexibility.ensemble_bounded_by_rigid_plus_error
+-- RFE3: Rigid score ≤ ensemble score
+abbrev RFE3 := @Tractability.ReceptorFlexibility.rigid_le_ensemble
+-- RFE4: Boltzmann average lies within max conformational deviation
+abbrev RFE4 := @Tractability.ReceptorFlexibility.boltzmann_between_extremes
+-- RFE5: Conformational error radius nonneg
+abbrev RFE5 := @Tractability.ReceptorFlexibility.conformationalErrorRadius_nonneg
+-- RFE6: Ensemble rigid certified top-1 survivor set sound
+abbrev RFE6 := @Tractability.ReceptorFlexibility.ensemble_rigid_certified_top1_sound
 
 end DecisionQuotient

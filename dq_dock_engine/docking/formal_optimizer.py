@@ -83,11 +83,13 @@ class HybridSingletonRefinementResult:
 
 
 def _noop_is_unique_admissible_action(state: CertifiedOptimizerState) -> bool:
-    ambiguity_mask = state.belief.ambiguity_mask
+    ambiguity_mask = np.asarray(state.belief.ambiguity_mask, dtype=bool).reshape(-1)
+    if ambiguity_mask.size == 0:
+        return False
     return (
-        state.belief.selected_action == 0
+        int(state.belief.selected_action) == 0
         and bool(ambiguity_mask[0])
-        and int(jnp.sum(ambiguity_mask.astype(jnp.int32))) == 1
+        and int(np.count_nonzero(ambiguity_mask)) == 1
     )
 
 
@@ -100,6 +102,8 @@ def active_pruning_branch(state: CertifiedOptimizerState) -> Top1PruningBranch:
     static_argnames=(
         "max_coarse_receptor_atoms",
         "use_softened_coarse",
+        "target_error",
+        "coarse_target_error",
     ),
 )
 def _refine_round_jit_core(
@@ -328,9 +332,6 @@ def refine_poses_certified(
         ligand_radii=ligand_radii,
         translation_step=base_translation_step,
         target_error=target_error,
-    )
-    print(
-        f"[DEBUG] Retained {len(retained_indices)} receptor atoms out of {len(receptor_coords)}"
     )
     retained_indices_jax = jnp.array(retained_indices)
 

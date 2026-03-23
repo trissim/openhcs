@@ -13,8 +13,12 @@ from dq_dock_engine.docking.chemistry_annotations import (
     DirectionalSiteAnnotation,
     IndexedSiteAnnotation,
     RingSiteAnnotation,
-    build_ligand_chemistry_catalog,
-    build_receptor_chemistry_catalog,
+    catalog_from_ligand_structure,
+    catalog_from_receptor_structure,
+)
+from dq_dock_engine.docking.chemistry_preparation import (
+    prepare_ligand_chemistry_structure,
+    prepare_receptor_chemistry_structure,
 )
 from dq_dock_engine.docking.chemistry_runtime import (
     AnchoredSiteArray,
@@ -26,6 +30,7 @@ from dq_dock_engine.docking.chemistry_runtime import (
     WaterMediatedHBondInteractionTerm,
 )
 from dq_dock_engine.docking.core import LigandContext
+from dq_dock_engine.docking.physics_params import build_pairwise_sigma_matrix
 from dq_dock_engine.docking.receptor_preparation import METAL_ELEMENTS
 from dq_dock_engine.docking.scoring import (
     CertifiedContactSurrogateSpec,
@@ -36,21 +41,14 @@ from dq_dock_engine.docking.scoring import (
     CertifiedScreenedCoulombSpec,
     KAPPA_PHYSIOLOGICAL,
     CertifiedOptionalInteractionTerm,
+    metal_coordination_min_cutoff,
     screened_coulomb_min_cutoff,
 )
 
 
 _DEFAULT_ELECTROSTATIC_TARGET_ERROR = 0.5
+_DEFAULT_METAL_COORDINATION_TARGET_ERROR = 0.01  # kcal/mol
 KAPPA_METAL = 1.0
-
-
-def find_k_nearest_neighbors(coords: np.ndarray, k: int) -> np.ndarray:
-    diffs = coords[:, None, :] - coords[None, :, :]
-    dists = np.linalg.norm(diffs, axis=-1)
-    np.fill_diagonal(dists, np.inf)
-    if dists.shape[0] <= k:
-        return np.tile(np.arange(dists.shape[0]), (dists.shape[0], 1))[:, :k]
-    return np.argsort(dists, axis=-1)[:, :k]
 
 
 def build_screened_coulomb_spec(
@@ -100,52 +98,79 @@ def build_contact_surrogate_spec(
     )
 
 
+@dataclass(frozen=True)
+class DirectionalHBondChannelBuildSpec:
+    plan_field: str
+    receptor_role: ChemistrySiteRole
+    ligand_role: ChemistrySiteRole
+    receptor_alignment_sign: float
+    ligand_alignment_sign: float
+
+
+HBOND_CHANNEL_BUILD_SPECS: tuple[DirectionalHBondChannelBuildSpec, ...] = (
+    DirectionalHBondChannelBuildSpec(
+        plan_field="hbond_receptor_donor",
+        receptor_role=ChemistrySiteRole.HBOND_DONOR,
+        ligand_role=ChemistrySiteRole.HBOND_ACCEPTOR,
+        receptor_alignment_sign=1.0,
+        ligand_alignment_sign=-1.0,
+    ),
+    DirectionalHBondChannelBuildSpec(
+        plan_field="hbond_ligand_donor",
+        receptor_role=ChemistrySiteRole.HBOND_ACCEPTOR,
+        ligand_role=ChemistrySiteRole.HBOND_DONOR,
+        receptor_alignment_sign=-1.0,
+        ligand_alignment_sign=1.0,
+    ),
+)
+
+
 def build_directional_hbond_spec(
-    receptor_coords: np.ndarray | jnp.ndarray,
-    receptor_elements: tuple[str, ...],
-    ligand_coords: np.ndarray | jnp.ndarray,
-    ligand_elements: tuple[str, ...],
+    receptor_catalog: ChemistryAnnotationCatalog,
+    ligand_catalog: ChemistryAnnotationCatalog,
     *,
+    ligand_frame_coords: np.ndarray | jnp.ndarray,
+    receptor_role: ChemistrySiteRole,
+    ligand_role: ChemistrySiteRole,
+    receptor_alignment_sign: float,
+    ligand_alignment_sign: float,
     ideal_distance: float = 2.8,
     distance_width: float = 0.8,
     cutoff: float = 4.0,
 ) -> CertifiedDirectionalHBondSpec:
-    receptor_coords = np.asarray(receptor_coords, dtype=np.float32)
-    ligand_coords = np.asarray(ligand_coords, dtype=np.float32)
-    polar_elements = {"N", "O", "F"}
-    receptor_strengths = np.array(
-        [
-            1.0 if element.upper() in polar_elements else 0.0
-            for element in receptor_elements
-        ],
-        dtype=np.float32,
+    receptor_sites = receptor_catalog.typed_sites(
+        DirectionalSiteAnnotation,
+        role=receptor_role,
     )
-    ligand_strengths = np.array(
-        [
-            1.0 if element.upper() in polar_elements else 0.0
-            for element in ligand_elements
-        ],
-        dtype=np.float32,
+    ligand_sites = ligand_catalog.typed_sites(
+        DirectionalSiteAnnotation,
+        role=ligand_role,
     )
-    if receptor_coords.shape[0] > 0:
-        receptor_neighbors = find_k_nearest_neighbors(receptor_coords, k=3)
-        receptor_neighbor_coords = receptor_coords[receptor_neighbors]
-        receptor_mean_neighbor = np.mean(receptor_neighbor_coords, axis=1)
-        receptor_directions = receptor_coords - receptor_mean_neighbor
-        norms = np.linalg.norm(receptor_directions, axis=-1, keepdims=True)
-        receptor_directions = np.where(norms > 1e-6, receptor_directions / norms, 0.0)
-    else:
-        receptor_directions = np.zeros((0, 3), dtype=np.float32)
-    ligand_neighbors = (
-        find_k_nearest_neighbors(ligand_coords, k=3)
-        if ligand_coords.shape[0] > 0
-        else np.zeros((0, 3), dtype=np.int32)
-    )
+
+    def _anchor_array(sites: tuple[DirectionalSiteAnnotation, ...]) -> jnp.ndarray:
+        return jnp.array([site.anchor_index for site in sites], dtype=jnp.int32)
+
+    def _vector_array(sites: tuple[DirectionalSiteAnnotation, ...]) -> jnp.ndarray:
+        if not sites:
+            return jnp.zeros((0, 3), dtype=jnp.float32)
+        return jnp.array(
+            np.stack([site.direction for site in sites], axis=0),
+            dtype=jnp.float32,
+        )
+
+    def _strength_array(sites: tuple[DirectionalSiteAnnotation, ...]) -> jnp.ndarray:
+        return jnp.array([site.strength for site in sites], dtype=jnp.float32)
+
     return CertifiedDirectionalHBondSpec(
-        receptor_directions=jnp.array(receptor_directions, dtype=jnp.float32),
-        ligand_neighbor_indices=jnp.array(ligand_neighbors, dtype=jnp.int32),
-        receptor_strengths=jnp.array(receptor_strengths, dtype=jnp.float32),
-        ligand_strengths=jnp.array(ligand_strengths, dtype=jnp.float32),
+        receptor_anchor_indices=_anchor_array(receptor_sites),
+        receptor_directions=_vector_array(receptor_sites),
+        ligand_anchor_indices=_anchor_array(ligand_sites),
+        ligand_local_directions=_vector_array(ligand_sites),
+        ligand_frame_coords=jnp.array(ligand_frame_coords, dtype=jnp.float32),
+        receptor_strengths=_strength_array(receptor_sites),
+        ligand_strengths=_strength_array(ligand_sites),
+        receptor_alignment_sign=receptor_alignment_sign,
+        ligand_alignment_sign=ligand_alignment_sign,
         ideal_distance=ideal_distance,
         distance_width=distance_width,
         cutoff=cutoff,
@@ -155,6 +180,11 @@ def build_directional_hbond_spec(
 def build_metal_coordination_spec(
     receptor_elements: tuple[str, ...],
     ligand_elements: tuple[str, ...],
+    *,
+    ideal_distance: float = 2.1,
+    distance_width: float = 0.3,
+    angle_width: float = 0.5,
+    target_error: float = _DEFAULT_METAL_COORDINATION_TARGET_ERROR,
 ) -> CertifiedMetalCoordinationSpec:
     polar_elements = {"N", "O", "S"}
     receptor_strengths = np.array(
@@ -171,9 +201,31 @@ def build_metal_coordination_spec(
         ],
         dtype=np.float32,
     )
+    # Per-site ideal coordination angle offsets.
+    # Zero offset = ideal tetrahedral; nonzero encodes geometry preference.
+    receptor_ideal_angles = np.zeros_like(receptor_strengths)
+    # Derive cutoff from physical parameters using the Lean-certified formula:
+    # rc = ideal + width · √(ln(|w|/ε))  (MetalCoordinationApproximation.lean)
+    max_rec = float(np.max(np.abs(receptor_strengths))) if len(receptor_strengths) > 0 else 0.0
+    max_lig = float(np.max(np.abs(ligand_strengths))) if len(ligand_strengths) > 0 else 0.0
+    max_strength = max_rec * max_lig
+    if max_strength > 0:
+        cutoff = metal_coordination_min_cutoff(
+            max_strength_product=max_strength,
+            target_error=target_error,
+            ideal_distance=ideal_distance,
+            distance_width=distance_width,
+        )
+    else:
+        cutoff = ideal_distance  # No active interactions
     return CertifiedMetalCoordinationSpec(
         receptor_strengths=jnp.array(receptor_strengths),
         ligand_strengths=jnp.array(ligand_strengths),
+        receptor_ideal_angles=jnp.array(receptor_ideal_angles),
+        ideal_distance=ideal_distance,
+        distance_width=distance_width,
+        angle_width=angle_width,
+        cutoff=cutoff,
     )
 
 
@@ -452,6 +504,33 @@ def build_extended_interaction_terms(
     return tuple(built_terms)
 
 
+def _derive_cooperative_alpha(
+    hbond_channels: dict[str, CertifiedDirectionalHBondSpec],
+) -> float:
+    """Derive cooperative coupling constant from H-bond channel strengths.
+
+    Uses the geometric mean of average strengths across both channels,
+    clamped to the Lean-specified range [0.1, 0.3].  Returns 0.0 when
+    no H-bond sites are present (cooperative correction is vacuous).
+    """
+    all_strengths: list[float] = []
+    for spec in hbond_channels.values():
+        rec_s = np.asarray(spec.receptor_strengths)
+        lig_s = np.asarray(spec.ligand_strengths)
+        if rec_s.size > 0:
+            all_strengths.append(float(np.mean(np.abs(rec_s))))
+        if lig_s.size > 0:
+            all_strengths.append(float(np.mean(np.abs(lig_s))))
+    if not all_strengths:
+        return 0.0
+    geo_mean = float(np.exp(np.mean(np.log(np.clip(all_strengths, 1e-8, None)))))
+    # Scale: strength ≈ 1.0 → α ≈ 0.15 (midpoint of [0.1, 0.3])
+    alpha = 0.15 * geo_mean
+    if alpha < 0.1:
+        return 0.0  # No meaningful H-bond interactions → no cooperative correction
+    return float(np.clip(alpha, 0.1, 0.3))
+
+
 def build_certified_rich_chemistry_plan(
     receptor_coords: np.ndarray,
     receptor_elements: tuple[str, ...],
@@ -459,7 +538,9 @@ def build_certified_rich_chemistry_plan(
     ligand_ctx: LigandContext,
     *,
     receptor_file: str | Path | None,
+    ligand_source_path: str | Path | None,
     target_electrostatic_error: float = _DEFAULT_ELECTROSTATIC_TARGET_ERROR,
+    cooperative_alpha: float | None = None,
 ) -> CertifiedRichChemistryPlan:
     has_metals = any(element.upper() in METAL_ELEMENTS for element in receptor_elements)
     kappa = KAPPA_METAL if has_metals else 0.0
@@ -475,12 +556,40 @@ def build_certified_rich_chemistry_plan(
         kappa=kappa,
         target_error=target_electrostatic_error,
     )
-    receptor_catalog = build_receptor_chemistry_catalog(
-        receptor_coords,
-        receptor_elements,
-        receptor_file=receptor_file,
+    receptor_catalog = catalog_from_receptor_structure(
+        prepare_receptor_chemistry_structure(
+            receptor_coords,
+            receptor_elements,
+            receptor_file=receptor_file,
+        )
     )
-    ligand_catalog = build_ligand_chemistry_catalog(ligand_ctx)
+    ligand_catalog = catalog_from_ligand_structure(
+        prepare_ligand_chemistry_structure(
+            ligand_ctx,
+            ligand_source_path=ligand_source_path,
+        )
+    )
+    hbond_channels = {
+        channel_spec.plan_field: build_directional_hbond_spec(
+            receptor_catalog,
+            ligand_catalog,
+            ligand_frame_coords=ligand_coords,
+            receptor_role=channel_spec.receptor_role,
+            ligand_role=channel_spec.ligand_role,
+            receptor_alignment_sign=channel_spec.receptor_alignment_sign,
+            ligand_alignment_sign=channel_spec.ligand_alignment_sign,
+        )
+        for channel_spec in HBOND_CHANNEL_BUILD_SPECS
+    }
+    # Derive cooperative_alpha from H-bond strengths when not explicitly set.
+    # CHN1 (CooperativeHBondApproximation.lean): α ∈ [0.1, 0.3] typically.
+    # We use the geometric mean of average donor/acceptor strengths, clamped to
+    # the Lean-specified range.  When no H-bond sites exist, α = 0 (no correction).
+    if cooperative_alpha is None:
+        cooperative_alpha = _derive_cooperative_alpha(hbond_channels)
+    pairwise_sigma = jnp.array(
+        build_pairwise_sigma_matrix(receptor_elements, ligand_ctx.elements)
+    )
     return CertifiedRichChemistryPlan(
         screened_coulomb=build_screened_coulomb_spec(
             np.asarray(receptor_charges, dtype=np.float32),
@@ -489,16 +598,14 @@ def build_certified_rich_chemistry_plan(
             cutoff=cutoff,
         ),
         contact=build_contact_surrogate_spec(receptor_elements, ligand_ctx.elements),
-        directional_hbond=build_directional_hbond_spec(
-            np.asarray(receptor_coords, dtype=np.float32),
-            receptor_elements,
-            ligand_coords,
-            ligand_ctx.elements,
-        ),
+        hbond_receptor_donor=hbond_channels["hbond_receptor_donor"],
+        hbond_ligand_donor=hbond_channels["hbond_ligand_donor"],
         metal_coordination=build_metal_coordination_spec(
             receptor_elements, ligand_ctx.elements
         ),
+        pairwise_sigma=pairwise_sigma,
+        cooperative_alpha=cooperative_alpha,
         extended_terms=CertifiedExtendedInteractionBundle(
             terms=build_extended_interaction_terms(receptor_catalog, ligand_catalog)
-        ),
+        ).filter_active(),
     )

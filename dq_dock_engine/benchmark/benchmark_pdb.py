@@ -27,6 +27,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import csv
 from enum import Enum
+import gc
 import json
 import math
 import multiprocessing as mp
@@ -2325,6 +2326,8 @@ def run_cli_docking(
             time=time.time() - start,
         )
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return DockingRunResult(success=False, error=str(e), time=time.time() - start)
     finally:
         if output_path.exists():
@@ -2355,6 +2358,7 @@ def run_dq_dock(
     optimizer_backend: "OptimizerBackend" = DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
     formal_round_strategy: FormalRoundStrategy = DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY,
     certified_scoring_family: CertifiedScoringFamily = DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
+    conformer_search: bool = True,
     retry_break_rmsd: float = 0.0,
     retry_preserve_seed: bool = False,
     box_size: float = BENCHMARK_PROTOCOL.box_size_a,
@@ -2375,6 +2379,7 @@ def run_dq_dock(
     from dq_dock_engine.docking_config import (
         FormalRoundStrategy,
         create_config,
+        ConformerSearchMode,
     )
     from dq_dock_engine.docking.metrics import compute_docking_rmsd_batched
 
@@ -2398,6 +2403,7 @@ def run_dq_dock(
         target_error=0.001,
         min_energy_gap=0.0,
         use_external_scorer=False,
+        conformer_search=(ConformerSearchMode.ENABLED if conformer_search else ConformerSearchMode.DISABLED),
     )
 
     if ligand_elements is None:
@@ -2500,6 +2506,7 @@ def run_dq_dock(
                 key=attempt_key,
                 charge_method=charge_method,
                 receptor_file=receptor_file,
+                ligand_source_path=ligand_file,
                 precomputed_receptor_charges=runtime_receptor_charges,
                 receptor_elements=runtime_receptor_elements,
                 config=docking_config,
@@ -2679,6 +2686,8 @@ class BenchmarkEngine(ABC, Generic[EngineRunT]):
         self._print_section_header(context)
         for run_result in self.iter_run_results(complexes, context):
             self.record_run_result(run_result, state, context, excluded_rows)
+            jax.clear_caches()
+            gc.collect()
 
     def iter_run_results(
         self,
@@ -2980,13 +2989,11 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
         complexes: Sequence[PreparedBenchmarkComplex],
         context: BenchmarkExecutionContext,
     ) -> Iterator[DQDockBenchmarkJobResult]:
-        jobs = tuple(
-            self._build_job(complex_entry, context) for complex_entry in complexes
-        )
+        jobs = (self._build_job(complex_entry, context) for complex_entry in complexes)
         timeout_seconds = context.attempt_timeout_seconds
         if timeout_seconds is not None:
             yield from iter_dq_dock_benchmark_jobs_with_persistent_timeout(
-                jobs,
+                tuple(jobs),
                 timeout_seconds=timeout_seconds,
                 parallelism=context.parallelism,
             )

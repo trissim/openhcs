@@ -5,6 +5,11 @@ Step size derivation (Lean: LipschitzStepBounds.lean):
   - LS2: For LJ potential, L ≈ 22 kcal/(mol·Å) at typical distances
   - LS3: Translation step 0.5 Å is ~20× theoretical minimum but practical
   - LS4: Rotation step π/12 rad (~15°) balances sampling and convergence
+
+Adaptive step size from softened Lipschitz (PERF5):
+  - softened_grid_speedup_ratio: L_soft ≤ L_raw → δ/L_raw ≤ δ/L_soft
+  - When softened scoring has tighter Lipschitz, step can scale by L_raw/L_soft
+  - Condition: rSoft ≥ 0.8σ (proven in SoftLJApproximation.lean)
 """
 from __future__ import annotations
 
@@ -195,6 +200,49 @@ def merge_certified_action_families(
         support_shell_levels=tuple(merged_shell_levels),
         theorem_handles=support_expansion_theorem_handles(),
     )
+
+
+def compute_adaptive_translation_step(
+    base_step: float,
+    epsilon_lj: float,
+    min_pairwise_sigma: float,
+    r_soft: float,
+) -> float:
+    """PERF5: adaptive step from softened Lipschitz constant.
+
+    All parameters are derived from molecular data, not heuristics:
+      - epsilon_lj: LJ well depth from scoring._EPSILON_KCAL_MOL
+      - min_pairwise_sigma: min σ from Alvarez/Bondi pairwise table
+        (tightest constraint since rSoft must exceed 0.8 × σ)
+      - r_soft: softening radius = 0.5 × (min_rec_radius + min_lig_radius)
+
+    The raw LJ Lipschitz constant (LipschitzStepBounds.lean::typicalLipschitzConstant):
+        L_raw = 762 × ε / σ
+
+    The softened Lipschitz constant (SoftLJApproximation.lean::softenedLipschitzConstant):
+        L_soft = 24ε/rSoft × |2(σ/rSoft)¹² - (σ/rSoft)⁶|
+
+    Certified by PerformanceCertificates.lean::softened_grid_speedup_ratio:
+        L_soft ≤ L_raw → δ/L_raw ≤ δ/L_soft
+
+    Condition: rSoft ≥ 0.8σ (SoftLJApproximation.lean::softenedLipschitz_le_rawLipschitz).
+    Returns base_step scaled by min(L_raw / L_soft, 4.0) when condition holds.
+    """
+    if (
+        min_pairwise_sigma <= 0
+        or r_soft <= 0
+        or epsilon_lj <= 0
+        or r_soft < 0.8 * min_pairwise_sigma
+    ):
+        return base_step
+    ratio = min_pairwise_sigma / r_soft
+    l_soft = abs(24.0 * epsilon_lj / r_soft * (2.0 * ratio**12 - ratio**6))
+    l_raw = 762.0 * epsilon_lj / min_pairwise_sigma
+    if l_soft <= 0 or l_soft >= l_raw:
+        return base_step
+    # Cap at 4x to avoid overshooting (64× grid reduction in 3D)
+    scale = min(l_raw / l_soft, 4.0)
+    return base_step * scale
 
 
 def create_roundwise_certified_action_family(

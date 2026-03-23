@@ -385,7 +385,9 @@ def score_exact_and_coarse_local_family(
         if scoring_context is None
         else scoring_context
     )
-    exact_subsetted_context = effective_scoring_context.receptor_subset(retained_indices)
+    exact_subsetted_context = effective_scoring_context.receptor_subset(
+        retained_indices
+    )
     exact_batch = exact_subsetted_context.score_exact_batch(
         receptor_coords=receptor_coords[retained_indices],
         poses_coords=candidate_coords,
@@ -441,6 +443,8 @@ def score_exact_and_coarse_local_family(
     static_argnames=(
         "max_receptor_atoms",
         "use_softened_coarse",
+        "target_error",
+        "coarse_target_error",
     ),
 )
 def score_exact_and_coarse_round(

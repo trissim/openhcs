@@ -49,6 +49,7 @@ from dq_dock_engine.docking_config import (
     CertifiedScoringFamily,
     DockingConfig,
     DockingMode,
+    ExactChemistryMode,
     OptimizerBackend,
 )
 import jax
@@ -363,6 +364,7 @@ def test_certified_pipeline_accepts_realspace_ewald_scoring_family() -> None:
         mode=DockingMode.CERTIFIED,
         optimizer_backend=OptimizerBackend.FORMAL,
         certified_scoring_family=CertifiedScoringFamily.LJ_REALSPACE_EWALD,
+        exact_chemistry_mode=ExactChemistryMode.NONE,
     )
 
     poses, _ = run_docking_pipeline(
@@ -406,6 +408,7 @@ def test_certified_pipeline_derives_site_even_without_heuristic_pocket_flag() ->
         mode=DockingMode.CERTIFIED,
         optimizer_backend=OptimizerBackend.FORMAL,
         certified_scoring_family=CertifiedScoringFamily.LJ,
+        exact_chemistry_mode=ExactChemistryMode.NONE,
     )
 
     poses, _ = run_docking_pipeline(
@@ -676,6 +679,7 @@ def test_run_certified_blind_docking_succeeds_when_certified_site_is_supplied() 
         mode=DockingMode.CERTIFIED,
         optimizer_backend=OptimizerBackend.FORMAL,
         certified_scoring_family=CertifiedScoringFamily.LJ,
+        exact_chemistry_mode=ExactChemistryMode.NONE,
         certified_binding_site=site,
     )
 
