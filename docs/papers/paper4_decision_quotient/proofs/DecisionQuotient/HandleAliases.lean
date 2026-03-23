@@ -100,6 +100,7 @@ import DecisionQuotient.Tractability.DirectionalMetalCoordinationApproximation
 import DecisionQuotient.Tractability.CooperativeHBondApproximation
 import DecisionQuotient.Tractability.ExplicitWaterPlacement
 import DecisionQuotient.Tractability.ReceptorFlexibility
+import DecisionQuotient.Tractability.EnergyRMSDConvergence
 import DecisionQuotient.Tractability.CrossDockingCertificates
 import DecisionQuotient.Computation.PocketDetection
 import DecisionQuotient.Information
@@ -2113,5 +2114,94 @@ abbrev RFE4 := @Tractability.ReceptorFlexibility.boltzmann_between_extremes
 abbrev RFE5 := @Tractability.ReceptorFlexibility.conformationalErrorRadius_nonneg
 -- RFE6: Ensemble rigid certified top-1 survivor set sound
 abbrev RFE6 := @Tractability.ReceptorFlexibility.ensemble_rigid_certified_top1_sound
+
+/-! ## Energy/RMSD Convergence (ERC) handles
+    EnergyRMSDConvergence.lean - certified bridge from energy refinement to RMSD targets
+-/
+
+-- ERC1: Quadratic growth implies explicit RMSD bound from energy gap
+abbrev ERC1 := @Tractability.EnergyRMSDConvergence.rmsd_le_of_quadratic_growth
+-- ERC2: Target energy gap implies RMSD tolerance
+abbrev ERC2 := @Tractability.EnergyRMSDConvergence.rmsd_le_of_energyGap_le_target
+-- ERC3: RMSD tolerance implies upper quadratic energy gap
+abbrev ERC3 := @Tractability.EnergyRMSDConvergence.energyGap_le_of_rmsd_le
+-- ERC4: Adequate iteration budgets are monotone in step count
+abbrev ERC4 := @Tractability.EnergyRMSDConvergence.adequateIterationBudget_mono
+-- ERC5: Adequate iteration budgets are monotone in RMSD tolerance
+abbrev ERC5 := @Tractability.EnergyRMSDConvergence.adequateIterationBudget_mono_eps
+-- ERC6: Minimal adequate iteration budget is cost-optimal
+abbrev ERC6 := @Tractability.EnergyRMSDConvergence.minimal_adequate_iterationBudget_optimal
+-- ERC7: A certified linear rate eventually reaches any positive RMSD tolerance
+abbrev ERC7 := @Tractability.EnergyRMSDConvergence.exists_adequateIterationBudget
+-- ERC8: The least adequate iteration budget is itself adequate
+abbrev ERC8 := @Tractability.EnergyRMSDConvergence.leastAdequateIterationBudget_spec
+-- ERC9: The least adequate iteration budget is minimal among adequate budgets
+abbrev ERC9 := @Tractability.EnergyRMSDConvergence.leastAdequateIterationBudget_minimal
+-- ERC10: Certified step parameters yield nonnegative contraction factor
+abbrev ERC10 := @Tractability.EnergyRMSDConvergence.CertifiedGradientStepParameters.q_nonneg
+-- ERC11: Certified step parameters yield contraction factor strictly below one
+abbrev ERC11 := @Tractability.EnergyRMSDConvergence.CertifiedGradientStepParameters.q_lt_one
+-- ERC12: Least adequate iteration budget is cost-optimal
+abbrev ERC12 := @Tractability.EnergyRMSDConvergence.leastAdequateIterationBudget_optimal
+-- ERC13: Least adequate iteration budget certifies the RMSD target
+abbrev ERC13 := @Tractability.EnergyRMSDConvergence.rmsd_target_of_leastAdequateIterationBudget
+-- ERC14: Canonical adequate iteration budget is adequate
+abbrev ERC14 := @Tractability.EnergyRMSDConvergence.canonicalAdequateIterationBudget_spec
+-- ERC15: Canonical adequate iteration budget is cost-optimal
+abbrev ERC15 := @Tractability.EnergyRMSDConvergence.canonicalAdequateIterationBudget_optimal
+-- ERC16: Canonical adequate iteration budget certifies the RMSD target
+abbrev ERC16 := @Tractability.EnergyRMSDConvergence.rmsd_target_of_canonicalAdequateIterationBudget
+-- ERC17: Segment-curvature certificate yields a quadratic window
+abbrev ERC17 := @Tractability.EnergyRMSDConvergence.CertifiedSegmentCurvature.toCertifiedQuadraticWindow
+-- ERC18: One-step contraction yields certified linear energy convergence
+abbrev ERC18 := @Tractability.EnergyRMSDConvergence.CertifiedOneStepEnergyContraction.toCertifiedLinearEnergyConvergence
+-- ERC19: Local curvature + one-step contraction define a canonical iteration budget
+abbrev ERC19 := @Tractability.EnergyRMSDConvergence.canonicalIterationBudgetFromLocalCertificates_spec
+-- ERC20: That canonical local-certificate budget is cost-optimal
+abbrev ERC20 := @Tractability.EnergyRMSDConvergence.canonicalIterationBudgetFromLocalCertificates_optimal
+-- ERC21: That canonical local-certificate budget certifies the RMSD target
+abbrev ERC21 := @Tractability.EnergyRMSDConvergence.rmsd_target_of_canonicalIterationBudgetFromLocalCertificates
+-- ERC22: Gradient-descent dynamics certificate yields one-step contraction witness
+abbrev ERC22 := @Tractability.EnergyRMSDConvergence.CertifiedGradientDescentDynamics.toCertifiedOneStepEnergyContraction
+-- ERC23: Gradient-descent dynamics certificate yields full linear convergence
+abbrev ERC23 := @Tractability.EnergyRMSDConvergence.CertifiedGradientDescentDynamics.toCertifiedLinearEnergyConvergence
+-- ERC24: Canonical budget from gradient-descent dynamics is adequate
+abbrev ERC24 := @Tractability.EnergyRMSDConvergence.canonicalIterationBudgetFromGradientDescentDynamics_spec
+-- ERC25: Canonical budget from gradient-descent dynamics is cost-optimal
+abbrev ERC25 := @Tractability.EnergyRMSDConvergence.canonicalIterationBudgetFromGradientDescentDynamics_optimal
+-- ERC26: Canonical budget from gradient-descent dynamics certifies the RMSD target
+abbrev ERC26 := @Tractability.EnergyRMSDConvergence.rmsd_target_of_canonicalIterationBudgetFromGradientDescentDynamics
+-- ERC27: Explicit Rayleigh/Hessian bounds yield certified segment curvature
+abbrev ERC27 := @Tractability.EnergyRMSDConvergence.CertifiedRayleighHessianBounds.toCertifiedSegmentCurvature
+-- ERC28: Explicit Rayleigh/Hessian bounds yield a quadratic window
+abbrev ERC28 := @Tractability.EnergyRMSDConvergence.CertifiedRayleighHessianBounds.toCertifiedQuadraticWindow
+-- ERC29: Explicit Rayleigh/Hessian bounds yield a quadratic basin
+abbrev ERC29 := @Tractability.EnergyRMSDConvergence.CertifiedRayleighHessianBounds.toCertifiedQuadraticBasin
+-- ERC30: Initial certified energy gap already below target implies zero-step adequacy
+abbrev ERC30 := @Tractability.EnergyRMSDConvergence.adequateIterationBudget_zero_of_initialGap_le_target
+-- ERC31: Under the same condition, zero refinement already certifies the RMSD target
+abbrev ERC31 := @Tractability.EnergyRMSDConvergence.rmsd_target_of_zeroIterationBudget
+-- ERC32: If zero steps are adequate, the least adequate budget is exactly zero
+abbrev ERC32 := @Tractability.EnergyRMSDConvergence.leastAdequateIterationBudget_eq_zero_of_zero_adequate
+-- ERC33: If the initial gap is below target, the canonical adequate budget is zero
+abbrev ERC33 := @Tractability.EnergyRMSDConvergence.canonicalAdequateIterationBudget_eq_zero_of_initialGap_le_target
+-- ERC34: Local spectral enclosure yields certified Rayleigh/Hessian bounds
+abbrev ERC34 := @Tractability.EnergyRMSDConvergence.CertifiedLocalSpectralEnclosure.toCertifiedRayleighHessianBounds
+-- ERC35: Local spectral enclosure yields certified segment curvature
+abbrev ERC35 := @Tractability.EnergyRMSDConvergence.CertifiedLocalSpectralEnclosure.toCertifiedSegmentCurvature
+-- ERC36: Local spectral enclosure yields a quadratic window
+abbrev ERC36 := @Tractability.EnergyRMSDConvergence.CertifiedLocalSpectralEnclosure.toCertifiedQuadraticWindow
+-- ERC37: Local spectral enclosure yields a quadratic basin
+abbrev ERC37 := @Tractability.EnergyRMSDConvergence.CertifiedLocalSpectralEnclosure.toCertifiedQuadraticBasin
+-- ERC38: Logarithmic closed-form iteration bound is adequate
+abbrev ERC38 := @Tractability.EnergyRMSDConvergence.adequateIterationBudget_of_logarithmicIterationBound
+-- ERC39: Canonical adequate budget is bounded by the logarithmic closed form
+abbrev ERC39 := @Tractability.EnergyRMSDConvergence.canonicalAdequateIterationBudget_le_logarithmicIterationBound
+-- ERC40: Logarithmic closed-form iteration bound certifies the RMSD target
+abbrev ERC40 := @Tractability.EnergyRMSDConvergence.rmsd_target_of_logarithmicIterationBound
+-- ERC41: GD dynamics logarithmic bound is adequate
+abbrev ERC41 := @Tractability.EnergyRMSDConvergence.adequateIterationBudget_of_logarithmicIterationBoundFromGradientDescentDynamics
+-- ERC42: GD dynamics logarithmic bound certifies the RMSD target
+abbrev ERC42 := @Tractability.EnergyRMSDConvergence.rmsd_target_of_logarithmicIterationBoundFromGradientDescentDynamics
 
 end DecisionQuotient
