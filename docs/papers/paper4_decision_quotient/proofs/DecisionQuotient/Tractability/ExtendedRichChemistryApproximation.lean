@@ -43,7 +43,7 @@ universe u v
 noncomputable def exactAttractiveExtendedChemistryDecisionProblem {A : Type u} {S : Type v}
     (distance : A → S → ℝ)
     (w β : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -56,7 +56,7 @@ noncomputable def exactAttractiveExtendedChemistryDecisionProblem {A : Type u} {
         (sumDecisionProblems
           (sumDecisionProblems
             (exactAttractivePolarSurrogateDecisionProblem
-              distance w β polarRadialExact polarDonorExact polarAcceptorExact)
+              distance w β polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor)
             (exactAttractiveMetalCoordinationDecisionProblem
               metalW metalIdeal metalWidth metalDistance))
           (attractivePiStackingDecisionProblem
@@ -71,7 +71,7 @@ noncomputable def exactAttractiveExtendedChemistryDecisionProblem {A : Type u} {
 noncomputable def coarseAttractiveExtendedChemistryDecisionProblem {A : Type u} {S : Type v}
     (distance : A → S → ℝ)
     (w β rcCT : ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialCoarse ppFaceCoarse ppOffsetCoarse : A → S → ℝ)
@@ -84,7 +84,7 @@ noncomputable def coarseAttractiveExtendedChemistryDecisionProblem {A : Type u} 
         (sumDecisionProblems
           (sumDecisionProblems
             (coarseAttractivePolarSurrogateDecisionProblem
-              distance w β rcCT polarRadialCoarse polarDonorCoarse polarAcceptorCoarse)
+              distance w β rcCT polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor)
             (cutoffAttractiveMetalCoordinationDecisionProblem
               metalW metalIdeal metalWidth metalRc metalDistance))
           (attractivePiStackingDecisionProblem
@@ -100,8 +100,8 @@ noncomputable def attractiveExtendedChemistryErrorRadius {A : Type u} {S : Type 
     [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
     (distance : A → S → ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -114,8 +114,8 @@ noncomputable def attractiveExtendedChemistryErrorRadius {A : Type u} {S : Type 
     (wbRadialCoarse wbWaterCoarse wbLigandCoarse : A → S → ℝ) : ℝ :=
   attractivePolarSurrogateErrorRadius
       distance w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
     + metalCoordinationCutoffErrorRadius metalW metalIdeal metalWidth metalRc metalDistance
     + finitePiStackingErrorRadius
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
@@ -130,8 +130,8 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_uniformApprox {A : Type u} {
     [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
     (distance : A → S → ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -145,7 +145,7 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_uniformApprox {A : Type u} {
     UniformUtilityApprox
       (exactAttractiveExtendedChemistryDecisionProblem
         distance w β
-        polarRadialExact polarDonorExact polarAcceptorExact
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
         metalW metalIdeal metalWidth metalDistance
         ppRadialExact ppFaceExact ppOffsetExact
         pcRadialExact pcPlaneExact pcCationExact
@@ -153,7 +153,7 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_uniformApprox {A : Type u} {
         wbRadialExact wbWaterExact wbLigandExact)
       (coarseAttractiveExtendedChemistryDecisionProblem
         distance w β rcCT
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -161,8 +161,8 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_uniformApprox {A : Type u} {
         wbRadialCoarse wbWaterCoarse wbLigandCoarse)
       (attractiveExtendedChemistryErrorRadius
         distance w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact
         ppRadialCoarse ppFaceCoarse ppOffsetCoarse
@@ -178,35 +178,35 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_uniformApprox {A : Type u} {
       UniformUtilityApprox
         (sumDecisionProblems
           (exactAttractivePolarSurrogateDecisionProblem
-            distance w β polarRadialExact polarDonorExact polarAcceptorExact)
+            distance w β polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor)
           (exactAttractiveMetalCoordinationDecisionProblem
             metalW metalIdeal metalWidth metalDistance))
         (sumDecisionProblems
           (coarseAttractivePolarSurrogateDecisionProblem
-            distance w β rcCT polarRadialCoarse polarDonorCoarse polarAcceptorCoarse)
+            distance w β rcCT polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor)
           (cutoffAttractiveMetalCoordinationDecisionProblem
             metalW metalIdeal metalWidth metalRc metalDistance))
         (attractivePolarSurrogateErrorRadius
             distance w β rcCT
-            polarRadialExact polarDonorExact polarAcceptorExact
-            polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+            polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+            polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
           + metalCoordinationCutoffErrorRadius metalW metalIdeal metalWidth metalRc metalDistance) := by
     exact sum_uniformApprox
       (exactAttractivePolarSurrogateDecisionProblem
-        distance w β polarRadialExact polarDonorExact polarAcceptorExact)
+        distance w β polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor)
       (coarseAttractivePolarSurrogateDecisionProblem
-        distance w β rcCT polarRadialCoarse polarDonorCoarse polarAcceptorCoarse)
+        distance w β rcCT polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor)
       (exactAttractiveMetalCoordinationDecisionProblem metalW metalIdeal metalWidth metalDistance)
       (cutoffAttractiveMetalCoordinationDecisionProblem metalW metalIdeal metalWidth metalRc metalDistance)
       (attractivePolarSurrogateErrorRadius
         distance w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse)
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor)
       (metalCoordinationCutoffErrorRadius metalW metalIdeal metalWidth metalRc metalDistance)
       (exact_vs_coarse_attractivePolarSurrogate_uniformApprox
         distance w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse)
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor)
       (exact_vs_cutoff_attractiveMetalCoordination_uniformApprox
         metalW metalIdeal metalWidth metalRc metalDistance)
   have hPolarMetalPi :
@@ -214,7 +214,7 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_uniformApprox {A : Type u} {
         (sumDecisionProblems
           (sumDecisionProblems
             (exactAttractivePolarSurrogateDecisionProblem
-              distance w β polarRadialExact polarDonorExact polarAcceptorExact)
+              distance w β polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor)
             (exactAttractiveMetalCoordinationDecisionProblem
               metalW metalIdeal metalWidth metalDistance))
           (attractivePiStackingDecisionProblem
@@ -222,15 +222,15 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_uniformApprox {A : Type u} {
         (sumDecisionProblems
           (sumDecisionProblems
             (coarseAttractivePolarSurrogateDecisionProblem
-              distance w β rcCT polarRadialCoarse polarDonorCoarse polarAcceptorCoarse)
+              distance w β rcCT polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor)
             (cutoffAttractiveMetalCoordinationDecisionProblem
               metalW metalIdeal metalWidth metalRc metalDistance))
           (attractivePiStackingDecisionProblem
             ppRadialCoarse ppFaceCoarse ppOffsetCoarse))
         ((attractivePolarSurrogateErrorRadius
             distance w β rcCT
-            polarRadialExact polarDonorExact polarAcceptorExact
-            polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+            polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+            polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
           + metalCoordinationCutoffErrorRadius metalW metalIdeal metalWidth metalRc metalDistance)
           + finitePiStackingErrorRadius
               ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse) := by
@@ -250,7 +250,7 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_uniformApprox {A : Type u} {
           (sumDecisionProblems
             (sumDecisionProblems
               (exactAttractivePolarSurrogateDecisionProblem
-                distance w β polarRadialExact polarDonorExact polarAcceptorExact)
+                distance w β polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor)
               (exactAttractiveMetalCoordinationDecisionProblem
                 metalW metalIdeal metalWidth metalDistance))
             (attractivePiStackingDecisionProblem ppRadialExact ppFaceExact ppOffsetExact))
@@ -259,15 +259,15 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_uniformApprox {A : Type u} {
           (sumDecisionProblems
             (sumDecisionProblems
               (coarseAttractivePolarSurrogateDecisionProblem
-                distance w β rcCT polarRadialCoarse polarDonorCoarse polarAcceptorCoarse)
+                distance w β rcCT polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor)
               (cutoffAttractiveMetalCoordinationDecisionProblem
                 metalW metalIdeal metalWidth metalRc metalDistance))
             (attractivePiStackingDecisionProblem ppRadialCoarse ppFaceCoarse ppOffsetCoarse))
           (attractivePiCationDecisionProblem pcRadialCoarse pcPlaneCoarse pcCationCoarse))
         (((attractivePolarSurrogateErrorRadius
             distance w β rcCT
-            polarRadialExact polarDonorExact polarAcceptorExact
-            polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+            polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+            polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
           + metalCoordinationCutoffErrorRadius metalW metalIdeal metalWidth metalRc metalDistance)
           + finitePiStackingErrorRadius
               ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse)
@@ -290,7 +290,7 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_uniformApprox {A : Type u} {
             (sumDecisionProblems
               (sumDecisionProblems
                 (exactAttractivePolarSurrogateDecisionProblem
-                  distance w β polarRadialExact polarDonorExact polarAcceptorExact)
+                  distance w β polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor)
                 (exactAttractiveMetalCoordinationDecisionProblem
                   metalW metalIdeal metalWidth metalDistance))
               (attractivePiStackingDecisionProblem ppRadialExact ppFaceExact ppOffsetExact))
@@ -301,7 +301,7 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_uniformApprox {A : Type u} {
             (sumDecisionProblems
               (sumDecisionProblems
                 (coarseAttractivePolarSurrogateDecisionProblem
-                  distance w β rcCT polarRadialCoarse polarDonorCoarse polarAcceptorCoarse)
+                  distance w β rcCT polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor)
                 (cutoffAttractiveMetalCoordinationDecisionProblem
                   metalW metalIdeal metalWidth metalRc metalDistance))
               (attractivePiStackingDecisionProblem ppRadialCoarse ppFaceCoarse ppOffsetCoarse))
@@ -309,8 +309,8 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_uniformApprox {A : Type u} {
           (attractiveHalogenBondDecisionProblem xbRadialCoarse xbDonorCoarse xbAcceptorCoarse))
         ((((attractivePolarSurrogateErrorRadius
             distance w β rcCT
-            polarRadialExact polarDonorExact polarAcceptorExact
-            polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+            polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+            polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
           + metalCoordinationCutoffErrorRadius metalW metalIdeal metalWidth metalRc metalDistance)
           + finitePiStackingErrorRadius
               ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse)
@@ -343,8 +343,8 @@ theorem attractiveExtendedChemistryErrorRadius_nonneg {A : Type u} {S : Type v}
     [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
     (distance : A → S → ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -357,8 +357,8 @@ theorem attractiveExtendedChemistryErrorRadius_nonneg {A : Type u} {S : Type v}
     (wbRadialCoarse wbWaterCoarse wbLigandCoarse : A → S → ℝ) :
     0 ≤ attractiveExtendedChemistryErrorRadius
       distance w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -366,8 +366,8 @@ theorem attractiveExtendedChemistryErrorRadius_nonneg {A : Type u} {S : Type v}
       wbRadialExact wbWaterExact wbLigandExact wbRadialCoarse wbWaterCoarse wbLigandCoarse := by
   have hPolar := attractivePolarSurrogateErrorRadius_nonneg
       distance w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
   have hMetal := metalCoordinationCutoffErrorRadius_nonneg
       metalW metalIdeal metalWidth metalRc metalDistance
   have hPP := finitePiStackingErrorRadius_nonneg
@@ -385,8 +385,8 @@ noncomputable def exact_vs_coarse_attractiveExtendedChemistry_certified_top1 {A 
     [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
     (distance : A → S → ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -401,7 +401,7 @@ noncomputable def exact_vs_coarse_attractiveExtendedChemistry_certified_top1 {A 
   certified_top1_survivor_set_of_uniformApprox
     (fun a => exactAttractiveExtendedChemistryDecisionProblem
       distance w β
-      polarRadialExact polarDonorExact polarAcceptorExact
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
       metalW metalIdeal metalWidth metalDistance
       ppRadialExact ppFaceExact ppOffsetExact
       pcRadialExact pcPlaneExact pcCationExact
@@ -409,7 +409,7 @@ noncomputable def exact_vs_coarse_attractiveExtendedChemistry_certified_top1 {A 
       wbRadialExact wbWaterExact wbLigandExact |>.utility a s)
     (fun a => coarseAttractiveExtendedChemistryDecisionProblem
       distance w β rcCT
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -417,8 +417,8 @@ noncomputable def exact_vs_coarse_attractiveExtendedChemistry_certified_top1 {A 
       wbRadialCoarse wbWaterCoarse wbLigandCoarse |>.utility a s)
     (attractiveExtendedChemistryErrorRadius
       distance w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -426,8 +426,8 @@ noncomputable def exact_vs_coarse_attractiveExtendedChemistry_certified_top1 {A 
       wbRadialExact wbWaterExact wbLigandExact wbRadialCoarse wbWaterCoarse wbLigandCoarse)
     (fun a => exact_vs_coarse_attractiveExtendedChemistry_uniformApprox
       distance w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -435,8 +435,8 @@ noncomputable def exact_vs_coarse_attractiveExtendedChemistry_certified_top1 {A 
       wbRadialExact wbWaterExact wbLigandExact wbRadialCoarse wbWaterCoarse wbLigandCoarse a s)
     (attractiveExtendedChemistryErrorRadius_nonneg
       distance w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -447,8 +447,8 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_certified_top1_sound {A : Ty
     [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
     (distance : A → S → ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -463,7 +463,7 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_certified_top1_sound {A : Ty
     (certificate_of_top1_coarse_ambiguityBand
       (fun a => exactAttractiveExtendedChemistryDecisionProblem
         distance w β
-        polarRadialExact polarDonorExact polarAcceptorExact
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
         metalW metalIdeal metalWidth metalDistance
         ppRadialExact ppFaceExact ppOffsetExact
         pcRadialExact pcPlaneExact pcCationExact
@@ -471,7 +471,7 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_certified_top1_sound {A : Ty
         wbRadialExact wbWaterExact wbLigandExact |>.utility a s)
       (fun a => coarseAttractiveExtendedChemistryDecisionProblem
         distance w β rcCT
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -479,8 +479,8 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_certified_top1_sound {A : Ty
         wbRadialCoarse wbWaterCoarse wbLigandCoarse |>.utility a s)
       (attractiveExtendedChemistryErrorRadius
         distance w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -488,8 +488,8 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_certified_top1_sound {A : Ty
         wbRadialExact wbWaterExact wbLigandExact wbRadialCoarse wbWaterCoarse wbLigandCoarse)
       (fun a => exact_vs_coarse_attractiveExtendedChemistry_uniformApprox
         distance w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -497,8 +497,8 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_certified_top1_sound {A : Ty
         wbRadialExact wbWaterExact wbLigandExact wbRadialCoarse wbWaterCoarse wbLigandCoarse a s)
       (attractiveExtendedChemistryErrorRadius_nonneg
         distance w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -506,8 +506,8 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_certified_top1_sound {A : Ty
         wbRadialExact wbWaterExact wbLigandExact wbRadialCoarse wbWaterCoarse wbLigandCoarse)).exactTopK
       ⊆ (exact_vs_coarse_attractiveExtendedChemistry_certified_top1
         distance w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -517,7 +517,7 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_certified_top1_sound {A : Ty
     using certified_top1_survivor_set_of_uniformApprox_sound
       (fun a => exactAttractiveExtendedChemistryDecisionProblem
         distance w β
-        polarRadialExact polarDonorExact polarAcceptorExact
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
         metalW metalIdeal metalWidth metalDistance
         ppRadialExact ppFaceExact ppOffsetExact
         pcRadialExact pcPlaneExact pcCationExact
@@ -525,7 +525,7 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_certified_top1_sound {A : Ty
         wbRadialExact wbWaterExact wbLigandExact |>.utility a s)
       (fun a => coarseAttractiveExtendedChemistryDecisionProblem
         distance w β rcCT
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -533,8 +533,8 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_certified_top1_sound {A : Ty
         wbRadialCoarse wbWaterCoarse wbLigandCoarse |>.utility a s)
       (attractiveExtendedChemistryErrorRadius
         distance w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -542,8 +542,8 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_certified_top1_sound {A : Ty
         wbRadialExact wbWaterExact wbLigandExact wbRadialCoarse wbWaterCoarse wbLigandCoarse)
       (fun a => exact_vs_coarse_attractiveExtendedChemistry_uniformApprox
         distance w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -551,8 +551,8 @@ theorem exact_vs_coarse_attractiveExtendedChemistry_certified_top1_sound {A : Ty
         wbRadialExact wbWaterExact wbLigandExact wbRadialCoarse wbWaterCoarse wbLigandCoarse a s)
       (attractiveExtendedChemistryErrorRadius_nonneg
         distance w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -563,8 +563,8 @@ noncomputable def exact_vs_coarse_attractiveExtendedChemistry_coherent_optimizer
     [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
     (distance : A → S → ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -579,7 +579,7 @@ noncomputable def exact_vs_coarse_attractiveExtendedChemistry_coherent_optimizer
   coherent_optimizer_witness_of_uniformApprox_top1
     (fun a => exactAttractiveExtendedChemistryDecisionProblem
       distance w β
-      polarRadialExact polarDonorExact polarAcceptorExact
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
       metalW metalIdeal metalWidth metalDistance
       ppRadialExact ppFaceExact ppOffsetExact
       pcRadialExact pcPlaneExact pcCationExact
@@ -587,7 +587,7 @@ noncomputable def exact_vs_coarse_attractiveExtendedChemistry_coherent_optimizer
       wbRadialExact wbWaterExact wbLigandExact |>.utility a s)
     (fun a => coarseAttractiveExtendedChemistryDecisionProblem
       distance w β rcCT
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -595,8 +595,8 @@ noncomputable def exact_vs_coarse_attractiveExtendedChemistry_coherent_optimizer
       wbRadialCoarse wbWaterCoarse wbLigandCoarse |>.utility a s)
     (attractiveExtendedChemistryErrorRadius
       distance w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -604,8 +604,8 @@ noncomputable def exact_vs_coarse_attractiveExtendedChemistry_coherent_optimizer
       wbRadialExact wbWaterExact wbLigandExact wbRadialCoarse wbWaterCoarse wbLigandCoarse)
     (fun a => exact_vs_coarse_attractiveExtendedChemistry_uniformApprox
       distance w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -613,8 +613,8 @@ noncomputable def exact_vs_coarse_attractiveExtendedChemistry_coherent_optimizer
       wbRadialExact wbWaterExact wbLigandExact wbRadialCoarse wbWaterCoarse wbLigandCoarse a s)
     (attractiveExtendedChemistryErrorRadius_nonneg
       distance w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -625,8 +625,8 @@ noncomputable def exact_vs_coarse_attractiveExtendedChemistry_optimizer_witness 
     [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
     (distance : A → S → ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -640,8 +640,8 @@ noncomputable def exact_vs_coarse_attractiveExtendedChemistry_optimizer_witness 
     (s : S) : OptimizerWitness A :=
   (exact_vs_coarse_attractiveExtendedChemistry_coherent_optimizer_witness
     distance w β rcCT
-    polarRadialExact polarDonorExact polarAcceptorExact
-    polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+    polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+    polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
     metalW metalIdeal metalWidth metalRc metalDistance
     ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
     pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -653,7 +653,7 @@ noncomputable def exactExtendedRichChemistryDecisionProblem {A : Type u} {S : Ty
     (distance : A → S → ℝ)
     (ε σ q_i q_j κ : ℝ)
     (w β : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -664,7 +664,7 @@ noncomputable def exactExtendedRichChemistryDecisionProblem {A : Type u} {S : Ty
     (exactLJScreenedCoulombDecisionProblem distance ε σ q_i q_j κ)
     (exactAttractiveExtendedChemistryDecisionProblem
       distance w β
-      polarRadialExact polarDonorExact polarAcceptorExact
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
       metalW metalIdeal metalWidth metalDistance
       ppRadialExact ppFaceExact ppOffsetExact
       pcRadialExact pcPlaneExact pcCationExact
@@ -675,7 +675,7 @@ noncomputable def coarseExtendedRichChemistryDecisionProblem {A : Type u} {S : T
     (distance : A → S → ℝ)
     (ε σ rcLJ q_i q_j κ rcSC : ℝ)
     (w β rcCT : ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialCoarse ppFaceCoarse ppOffsetCoarse : A → S → ℝ)
@@ -686,7 +686,7 @@ noncomputable def coarseExtendedRichChemistryDecisionProblem {A : Type u} {S : T
     (cutoffLJScreenedCoulombDecisionProblem distance ε σ rcLJ q_i q_j κ rcSC)
     (coarseAttractiveExtendedChemistryDecisionProblem
       distance w β rcCT
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -698,8 +698,8 @@ noncomputable def extendedRichChemistryErrorRadius {A : Type u} {S : Type v}
     (distance : A → S → ℝ)
     (ε σ rcLJ q_i q_j κ rcSC : ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -713,8 +713,8 @@ noncomputable def extendedRichChemistryErrorRadius {A : Type u} {S : Type v}
   ljScreenedCoulombCutoffErrorRadius distance ε σ rcLJ q_i q_j κ rcSC
     + attractiveExtendedChemistryErrorRadius
         distance w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -726,8 +726,8 @@ theorem exact_vs_coarse_extendedRichChemistry_uniformApprox {A : Type u} {S : Ty
     (distance : A → S → ℝ)
     (ε σ rcLJ q_i q_j κ rcSC : ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -742,7 +742,7 @@ theorem exact_vs_coarse_extendedRichChemistry_uniformApprox {A : Type u} {S : Ty
       (exactExtendedRichChemistryDecisionProblem
         distance ε σ q_i q_j κ
         w β
-        polarRadialExact polarDonorExact polarAcceptorExact
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
         metalW metalIdeal metalWidth metalDistance
         ppRadialExact ppFaceExact ppOffsetExact
         pcRadialExact pcPlaneExact pcCationExact
@@ -751,7 +751,7 @@ theorem exact_vs_coarse_extendedRichChemistry_uniformApprox {A : Type u} {S : Ty
       (coarseExtendedRichChemistryDecisionProblem
         distance ε σ rcLJ q_i q_j κ rcSC
         w β rcCT
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -760,8 +760,8 @@ theorem exact_vs_coarse_extendedRichChemistry_uniformApprox {A : Type u} {S : Ty
       (extendedRichChemistryErrorRadius
         distance ε σ rcLJ q_i q_j κ rcSC
         w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact
         ppRadialCoarse ppFaceCoarse ppOffsetCoarse
@@ -777,7 +777,7 @@ theorem exact_vs_coarse_extendedRichChemistry_uniformApprox {A : Type u} {S : Ty
     (cutoffLJScreenedCoulombDecisionProblem distance ε σ rcLJ q_i q_j κ rcSC)
     (exactAttractiveExtendedChemistryDecisionProblem
       distance w β
-      polarRadialExact polarDonorExact polarAcceptorExact
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
       metalW metalIdeal metalWidth metalDistance
       ppRadialExact ppFaceExact ppOffsetExact
       pcRadialExact pcPlaneExact pcCationExact
@@ -785,7 +785,7 @@ theorem exact_vs_coarse_extendedRichChemistry_uniformApprox {A : Type u} {S : Ty
       wbRadialExact wbWaterExact wbLigandExact)
     (coarseAttractiveExtendedChemistryDecisionProblem
       distance w β rcCT
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -794,8 +794,8 @@ theorem exact_vs_coarse_extendedRichChemistry_uniformApprox {A : Type u} {S : Ty
     (ljScreenedCoulombCutoffErrorRadius distance ε σ rcLJ q_i q_j κ rcSC)
     (attractiveExtendedChemistryErrorRadius
       distance w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -804,8 +804,8 @@ theorem exact_vs_coarse_extendedRichChemistry_uniformApprox {A : Type u} {S : Ty
     (exact_vs_cutoff_lj_screened_coulomb_uniformApprox distance ε σ rcLJ q_i q_j κ rcSC)
     (exact_vs_coarse_attractiveExtendedChemistry_uniformApprox
       distance w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -817,8 +817,8 @@ theorem extendedRichChemistryErrorRadius_nonneg {A : Type u} {S : Type v}
     (distance : A → S → ℝ)
     (ε σ rcLJ q_i q_j κ rcSC : ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -832,8 +832,8 @@ theorem extendedRichChemistryErrorRadius_nonneg {A : Type u} {S : Type v}
     0 ≤ extendedRichChemistryErrorRadius
       distance ε σ rcLJ q_i q_j κ rcSC
       w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -844,8 +844,8 @@ theorem extendedRichChemistryErrorRadius_nonneg {A : Type u} {S : Type v}
     (ljScreenedCoulombCutoffErrorRadius_nonneg distance ε σ rcLJ q_i q_j κ rcSC)
     (attractiveExtendedChemistryErrorRadius_nonneg
       distance w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -857,8 +857,8 @@ noncomputable def exact_vs_coarse_extendedRichChemistry_certified_top1 {A : Type
     (distance : A → S → ℝ)
     (ε σ rcLJ q_i q_j κ rcSC : ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -874,7 +874,7 @@ noncomputable def exact_vs_coarse_extendedRichChemistry_certified_top1 {A : Type
     (fun a => exactExtendedRichChemistryDecisionProblem
       distance ε σ q_i q_j κ
       w β
-      polarRadialExact polarDonorExact polarAcceptorExact
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
       metalW metalIdeal metalWidth metalDistance
       ppRadialExact ppFaceExact ppOffsetExact
       pcRadialExact pcPlaneExact pcCationExact
@@ -883,7 +883,7 @@ noncomputable def exact_vs_coarse_extendedRichChemistry_certified_top1 {A : Type
     (fun a => coarseExtendedRichChemistryDecisionProblem
       distance ε σ rcLJ q_i q_j κ rcSC
       w β rcCT
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -892,8 +892,8 @@ noncomputable def exact_vs_coarse_extendedRichChemistry_certified_top1 {A : Type
     (extendedRichChemistryErrorRadius
       distance ε σ rcLJ q_i q_j κ rcSC
       w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -902,8 +902,8 @@ noncomputable def exact_vs_coarse_extendedRichChemistry_certified_top1 {A : Type
     (fun a => exact_vs_coarse_extendedRichChemistry_uniformApprox
       distance ε σ rcLJ q_i q_j κ rcSC
       w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -912,8 +912,8 @@ noncomputable def exact_vs_coarse_extendedRichChemistry_certified_top1 {A : Type
     (extendedRichChemistryErrorRadius_nonneg
       distance ε σ rcLJ q_i q_j κ rcSC
       w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -925,8 +925,8 @@ theorem exact_vs_coarse_extendedRichChemistry_certified_top1_sound {A : Type u} 
     (distance : A → S → ℝ)
     (ε σ rcLJ q_i q_j κ rcSC : ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -942,7 +942,7 @@ theorem exact_vs_coarse_extendedRichChemistry_certified_top1_sound {A : Type u} 
       (fun a => exactExtendedRichChemistryDecisionProblem
         distance ε σ q_i q_j κ
         w β
-        polarRadialExact polarDonorExact polarAcceptorExact
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
         metalW metalIdeal metalWidth metalDistance
         ppRadialExact ppFaceExact ppOffsetExact
         pcRadialExact pcPlaneExact pcCationExact
@@ -951,7 +951,7 @@ theorem exact_vs_coarse_extendedRichChemistry_certified_top1_sound {A : Type u} 
       (fun a => coarseExtendedRichChemistryDecisionProblem
         distance ε σ rcLJ q_i q_j κ rcSC
         w β rcCT
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -960,8 +960,8 @@ theorem exact_vs_coarse_extendedRichChemistry_certified_top1_sound {A : Type u} 
       (extendedRichChemistryErrorRadius
         distance ε σ rcLJ q_i q_j κ rcSC
         w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -970,8 +970,8 @@ theorem exact_vs_coarse_extendedRichChemistry_certified_top1_sound {A : Type u} 
       (fun a => exact_vs_coarse_extendedRichChemistry_uniformApprox
         distance ε σ rcLJ q_i q_j κ rcSC
         w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -980,8 +980,8 @@ theorem exact_vs_coarse_extendedRichChemistry_certified_top1_sound {A : Type u} 
       (extendedRichChemistryErrorRadius_nonneg
         distance ε σ rcLJ q_i q_j κ rcSC
         w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -990,8 +990,8 @@ theorem exact_vs_coarse_extendedRichChemistry_certified_top1_sound {A : Type u} 
       ⊆ (exact_vs_coarse_extendedRichChemistry_certified_top1
         distance ε σ rcLJ q_i q_j κ rcSC
         w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -1002,7 +1002,7 @@ theorem exact_vs_coarse_extendedRichChemistry_certified_top1_sound {A : Type u} 
       (fun a => exactExtendedRichChemistryDecisionProblem
         distance ε σ q_i q_j κ
         w β
-        polarRadialExact polarDonorExact polarAcceptorExact
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
         metalW metalIdeal metalWidth metalDistance
         ppRadialExact ppFaceExact ppOffsetExact
         pcRadialExact pcPlaneExact pcCationExact
@@ -1011,7 +1011,7 @@ theorem exact_vs_coarse_extendedRichChemistry_certified_top1_sound {A : Type u} 
       (fun a => coarseExtendedRichChemistryDecisionProblem
         distance ε σ rcLJ q_i q_j κ rcSC
         w β rcCT
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -1020,8 +1020,8 @@ theorem exact_vs_coarse_extendedRichChemistry_certified_top1_sound {A : Type u} 
       (extendedRichChemistryErrorRadius
         distance ε σ rcLJ q_i q_j κ rcSC
         w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -1030,8 +1030,8 @@ theorem exact_vs_coarse_extendedRichChemistry_certified_top1_sound {A : Type u} 
       (fun a => exact_vs_coarse_extendedRichChemistry_uniformApprox
         distance ε σ rcLJ q_i q_j κ rcSC
         w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -1040,8 +1040,8 @@ theorem exact_vs_coarse_extendedRichChemistry_certified_top1_sound {A : Type u} 
       (extendedRichChemistryErrorRadius_nonneg
         distance ε σ rcLJ q_i q_j κ rcSC
         w β rcCT
-        polarRadialExact polarDonorExact polarAcceptorExact
-        polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+        polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+        polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
         metalW metalIdeal metalWidth metalRc metalDistance
         ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
         pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -1053,8 +1053,8 @@ noncomputable def exact_vs_coarse_extendedRichChemistry_coherent_optimizer_witne
     (distance : A → S → ℝ)
     (ε σ rcLJ q_i q_j κ rcSC : ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -1070,7 +1070,7 @@ noncomputable def exact_vs_coarse_extendedRichChemistry_coherent_optimizer_witne
     (fun a => exactExtendedRichChemistryDecisionProblem
       distance ε σ q_i q_j κ
       w β
-      polarRadialExact polarDonorExact polarAcceptorExact
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
       metalW metalIdeal metalWidth metalDistance
       ppRadialExact ppFaceExact ppOffsetExact
       pcRadialExact pcPlaneExact pcCationExact
@@ -1079,7 +1079,7 @@ noncomputable def exact_vs_coarse_extendedRichChemistry_coherent_optimizer_witne
     (fun a => coarseExtendedRichChemistryDecisionProblem
       distance ε σ rcLJ q_i q_j κ rcSC
       w β rcCT
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -1088,8 +1088,8 @@ noncomputable def exact_vs_coarse_extendedRichChemistry_coherent_optimizer_witne
     (extendedRichChemistryErrorRadius
       distance ε σ rcLJ q_i q_j κ rcSC
       w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -1098,8 +1098,8 @@ noncomputable def exact_vs_coarse_extendedRichChemistry_coherent_optimizer_witne
     (fun a => exact_vs_coarse_extendedRichChemistry_uniformApprox
       distance ε σ rcLJ q_i q_j κ rcSC
       w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -1108,8 +1108,8 @@ noncomputable def exact_vs_coarse_extendedRichChemistry_coherent_optimizer_witne
     (extendedRichChemistryErrorRadius_nonneg
       distance ε σ rcLJ q_i q_j κ rcSC
       w β rcCT
-      polarRadialExact polarDonorExact polarAcceptorExact
-      polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+      polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+      polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
       metalW metalIdeal metalWidth metalRc metalDistance
       ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
       pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -1121,8 +1121,8 @@ noncomputable def exact_vs_coarse_extendedRichChemistry_optimizer_witness {A : T
     (distance : A → S → ℝ)
     (ε σ rcLJ q_i q_j κ rcSC : ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -1137,8 +1137,8 @@ noncomputable def exact_vs_coarse_extendedRichChemistry_optimizer_witness {A : T
   (exact_vs_coarse_extendedRichChemistry_coherent_optimizer_witness
     distance ε σ rcLJ q_i q_j κ rcSC
     w β rcCT
-    polarRadialExact polarDonorExact polarAcceptorExact
-    polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+    polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+    polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
     metalW metalIdeal metalWidth metalRc metalDistance
     ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
     pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse

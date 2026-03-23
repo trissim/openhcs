@@ -39,6 +39,11 @@ import DecisionQuotient.Tractability.TopKLoweringBridge
 import DecisionQuotient.Tractability.SupportExpansion
 import DecisionQuotient.Tractability.GridConvergence
 import DecisionQuotient.Tractability.CoarseApproximation
+import DecisionQuotient.Tractability.LigandStrainApproximation
+import DecisionQuotient.Tractability.DirectionalMetalCoordinationApproximation
+import DecisionQuotient.Tractability.CooperativeHBondApproximation
+import DecisionQuotient.Tractability.ExplicitWaterPlacement
+import DecisionQuotient.Tractability.ReceptorFlexibility
 import DecisionQuotient.Dichotomy
 import DecisionQuotient.ComplexityMain
 
@@ -273,13 +278,13 @@ noncomputable def rich_chemistry_coherent_optimizer_witness
     [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
     (distance : A → S → ℝ)
     (ε σ rcLJ q_i q_j κ rcSC w β rcCT : ℝ)
-    (radialExact donorExact acceptorExact : A → S → ℝ)
-    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (radialExactRecDonor donorExactRecDonor acceptorExactRecDonor radialExactLigDonor donorExactLigDonor acceptorExactLigDonor : A → S → ℝ)
+    (radialCoarseRecDonor donorCoarseRecDonor acceptorCoarseRecDonor radialCoarseLigDonor donorCoarseLigDonor acceptorCoarseLigDonor : A → S → ℝ)
     (s : S) :
     DecisionQuotient.Tractability.FormalLocalOptimizer.CoherentOptimizerWitness A :=
   DecisionQuotient.Tractability.RichChemistryApproximation.exact_vs_coarse_richChemistry_coherent_optimizer_witness
     distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
-    radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
+    radialExactRecDonor donorExactRecDonor acceptorExactRecDonor radialExactLigDonor donorExactLigDonor acceptorExactLigDonor radialCoarseRecDonor donorCoarseRecDonor acceptorCoarseRecDonor radialCoarseLigDonor donorCoarseLigDonor acceptorCoarseLigDonor s
 
 /-- Generic negation-preserving coherent optimizer witness alias. -/
 noncomputable def negated_uniform_coherent_optimizer_witness
@@ -299,12 +304,12 @@ noncomputable def attractive_polar_surrogate_coherent_optimizer_witness
     [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
     (distance : A → S → ℝ)
     (w β rc : ℝ)
-    (radialExact donorExact acceptorExact : A → S → ℝ)
-    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (radialExactRecDonor donorExactRecDonor acceptorExactRecDonor radialExactLigDonor donorExactLigDonor acceptorExactLigDonor : A → S → ℝ)
+    (radialCoarseRecDonor donorCoarseRecDonor acceptorCoarseRecDonor radialCoarseLigDonor donorCoarseLigDonor acceptorCoarseLigDonor : A → S → ℝ)
     (s : S) :
     DecisionQuotient.Tractability.FormalLocalOptimizer.CoherentOptimizerWitness A :=
   DecisionQuotient.Tractability.RichChemistryApproximation.exact_vs_coarse_attractivePolarSurrogate_coherent_optimizer_witness
-    distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
+    distance w β rc radialExactRecDonor donorExactRecDonor acceptorExactRecDonor radialExactLigDonor donorExactLigDonor acceptorExactLigDonor radialCoarseRecDonor donorCoarseRecDonor acceptorCoarseRecDonor radialCoarseLigDonor donorCoarseLigDonor acceptorCoarseLigDonor s
 
 /-- Exact-vs-coarse attractive rich chemistry coherent optimizer witness alias. -/
 noncomputable def attractive_rich_chemistry_coherent_optimizer_witness
@@ -312,13 +317,13 @@ noncomputable def attractive_rich_chemistry_coherent_optimizer_witness
     [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S] [LinearOrder A]
     (distance : A → S → ℝ)
     (ε σ rcLJ q_i q_j κ rcSC w β rcCT : ℝ)
-    (radialExact donorExact acceptorExact : A → S → ℝ)
-    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (radialExactRecDonor donorExactRecDonor acceptorExactRecDonor radialExactLigDonor donorExactLigDonor acceptorExactLigDonor : A → S → ℝ)
+    (radialCoarseRecDonor donorCoarseRecDonor acceptorCoarseRecDonor radialCoarseLigDonor donorCoarseLigDonor acceptorCoarseLigDonor : A → S → ℝ)
     (s : S) :
     DecisionQuotient.Tractability.FormalLocalOptimizer.CoherentOptimizerWitness A :=
   DecisionQuotient.Tractability.RichChemistryApproximation.exact_vs_coarse_attractiveRichChemistry_coherent_optimizer_witness
     distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
-    radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
+    radialExactRecDonor donorExactRecDonor acceptorExactRecDonor radialExactLigDonor donorExactLigDonor acceptorExactLigDonor radialCoarseRecDonor donorCoarseRecDonor acceptorCoarseRecDonor radialCoarseLigDonor donorCoarseLigDonor acceptorCoarseLigDonor s
 
 /-- Exact-vs-coarse attractive directional H-bond coherent optimizer witness alias. -/
 noncomputable def attractive_directional_hbond_finite_coherent_optimizer_witness
@@ -443,13 +448,13 @@ noncomputable def rich_chemistry_certified_top1
     [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
     (distance : A → S → ℝ)
     (ε σ rcLJ q_i q_j κ rcSC w β rcCT : ℝ)
-    (radialExact donorExact acceptorExact : A → S → ℝ)
-    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (radialExactRecDonor donorExactRecDonor acceptorExactRecDonor radialExactLigDonor donorExactLigDonor acceptorExactLigDonor : A → S → ℝ)
+    (radialCoarseRecDonor donorCoarseRecDonor acceptorCoarseRecDonor radialCoarseLigDonor donorCoarseLigDonor acceptorCoarseLigDonor : A → S → ℝ)
     (s : S) :
     DecisionQuotient.Tractability.CertifiedPruning.CertifiedSurvivorSet A :=
   DecisionQuotient.Tractability.RichChemistryApproximation.exact_vs_coarse_richChemistry_certified_top1
     distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
-    radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
+    radialExactRecDonor donorExactRecDonor acceptorExactRecDonor radialExactLigDonor donorExactLigDonor acceptorExactLigDonor radialCoarseRecDonor donorCoarseRecDonor acceptorCoarseRecDonor radialCoarseLigDonor donorCoarseLigDonor acceptorCoarseLigDonor s
 
 /-- Exact-vs-cutoff bounded metal coordination certified top-1 survivor set alias. -/
 noncomputable def metal_coordination_cutoff_certified_top1
@@ -478,12 +483,12 @@ noncomputable def attractive_polar_surrogate_certified_top1
     [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
     (distance : A → S → ℝ)
     (w β rc : ℝ)
-    (radialExact donorExact acceptorExact : A → S → ℝ)
-    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (radialExactRecDonor donorExactRecDonor acceptorExactRecDonor radialExactLigDonor donorExactLigDonor acceptorExactLigDonor : A → S → ℝ)
+    (radialCoarseRecDonor donorCoarseRecDonor acceptorCoarseRecDonor radialCoarseLigDonor donorCoarseLigDonor acceptorCoarseLigDonor : A → S → ℝ)
     (s : S) :
     DecisionQuotient.Tractability.CertifiedPruning.CertifiedSurvivorSet A :=
   DecisionQuotient.Tractability.RichChemistryApproximation.exact_vs_coarse_attractivePolarSurrogate_certified_top1
-    distance w β rc radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
+    distance w β rc radialExactRecDonor donorExactRecDonor acceptorExactRecDonor radialExactLigDonor donorExactLigDonor acceptorExactLigDonor radialCoarseRecDonor donorCoarseRecDonor acceptorCoarseRecDonor radialCoarseLigDonor donorCoarseLigDonor acceptorCoarseLigDonor s
 
 /-- Exact-vs-coarse attractive rich chemistry certified top-1 survivor set alias. -/
 noncomputable def attractive_rich_chemistry_certified_top1
@@ -491,13 +496,13 @@ noncomputable def attractive_rich_chemistry_certified_top1
     [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
     (distance : A → S → ℝ)
     (ε σ rcLJ q_i q_j κ rcSC w β rcCT : ℝ)
-    (radialExact donorExact acceptorExact : A → S → ℝ)
-    (radialCoarse donorCoarse acceptorCoarse : A → S → ℝ)
+    (radialExactRecDonor donorExactRecDonor acceptorExactRecDonor radialExactLigDonor donorExactLigDonor acceptorExactLigDonor : A → S → ℝ)
+    (radialCoarseRecDonor donorCoarseRecDonor acceptorCoarseRecDonor radialCoarseLigDonor donorCoarseLigDonor acceptorCoarseLigDonor : A → S → ℝ)
     (s : S) :
     DecisionQuotient.Tractability.CertifiedPruning.CertifiedSurvivorSet A :=
   DecisionQuotient.Tractability.RichChemistryApproximation.exact_vs_coarse_attractiveRichChemistry_certified_top1
     distance ε σ rcLJ q_i q_j κ rcSC w β rcCT
-    radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
+    radialExactRecDonor donorExactRecDonor acceptorExactRecDonor radialExactLigDonor donorExactLigDonor acceptorExactLigDonor radialCoarseRecDonor donorCoarseRecDonor acceptorCoarseRecDonor radialCoarseLigDonor donorCoarseLigDonor acceptorCoarseLigDonor s
 
 /-- Exact-vs-coarse attractive extended chemistry certified top-1 survivor set alias. -/
 noncomputable def attractive_extended_chemistry_certified_top1
@@ -505,8 +510,8 @@ noncomputable def attractive_extended_chemistry_certified_top1
     [Fintype A] [Fintype S] [DecidableEq A] [Nonempty A] [Nonempty S]
     (distance : A → S → ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -521,8 +526,8 @@ noncomputable def attractive_extended_chemistry_certified_top1
     DecisionQuotient.Tractability.CertifiedPruning.CertifiedSurvivorSet A :=
   DecisionQuotient.Tractability.ExtendedRichChemistryApproximation.exact_vs_coarse_attractiveExtendedChemistry_certified_top1
     distance w β rcCT
-    polarRadialExact polarDonorExact polarAcceptorExact
-    polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+    polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+    polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
     metalW metalIdeal metalWidth metalRc metalDistance
     ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
     pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -536,8 +541,8 @@ noncomputable def extended_rich_chemistry_certified_top1
     (distance : A → S → ℝ)
     (ε σ rcLJ q_i q_j κ rcSC : ℝ)
     (w β rcCT : ℝ)
-    (polarRadialExact polarDonorExact polarAcceptorExact : A → S → ℝ)
-    (polarRadialCoarse polarDonorCoarse polarAcceptorCoarse : A → S → ℝ)
+    (polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor : A → S → ℝ)
+    (polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor : A → S → ℝ)
     (metalW metalIdeal metalWidth metalRc : ℝ)
     (metalDistance : A → S → ℝ)
     (ppRadialExact ppFaceExact ppOffsetExact : A → S → ℝ)
@@ -553,8 +558,8 @@ noncomputable def extended_rich_chemistry_certified_top1
   DecisionQuotient.Tractability.ExtendedRichChemistryApproximation.exact_vs_coarse_extendedRichChemistry_certified_top1
     distance ε σ rcLJ q_i q_j κ rcSC
     w β rcCT
-    polarRadialExact polarDonorExact polarAcceptorExact
-    polarRadialCoarse polarDonorCoarse polarAcceptorCoarse
+    polarRadialExactRecDonor polarDonorExactRecDonor polarAcceptorExactRecDonor polarRadialExactLigDonor polarDonorExactLigDonor polarAcceptorExactLigDonor
+    polarRadialCoarseRecDonor polarDonorCoarseRecDonor polarAcceptorCoarseRecDonor polarRadialCoarseLigDonor polarDonorCoarseLigDonor polarAcceptorCoarseLigDonor
     metalW metalIdeal metalWidth metalRc metalDistance
     ppRadialExact ppFaceExact ppOffsetExact ppRadialCoarse ppFaceCoarse ppOffsetCoarse
     pcRadialExact pcPlaneExact pcCationExact pcRadialCoarse pcPlaneCoarse pcCationCoarse
@@ -627,6 +632,143 @@ noncomputable def uniformApprox_coherent_optimizer_witness
     DecisionQuotient.Tractability.FormalLocalOptimizer.CoherentOptimizerWitness A :=
   DecisionQuotient.Tractability.CoarseApproximation.coherent_optimizer_witness_of_uniformApprox_top1
     uExact uCoarse delta hApprox hDelta
+
+-- ---------------------------------------------------------------------------
+-- Ligand strain energy theorem family
+-- ---------------------------------------------------------------------------
+
+/-- Cosine torsion strain is bounded in [0, 2Vk]. -/
+theorem cosine_torsion_strain_bounded (Vk n φ φ₀ : ℝ) (hVk : 0 ≤ Vk) :
+    DecisionQuotient.Tractability.LigandStrainApproximation.BoundedStrain
+      (fun φ' => DecisionQuotient.Tractability.LigandStrainApproximation.cosineTorsionStrain Vk n φ' φ₀) (2 * Vk) :=
+  DecisionQuotient.Tractability.LigandStrainApproximation.cosineTorsionStrain_bounded Vk n φ₀ hVk
+
+/-- Exact strain penalty preserves uniform approximation error bounds. -/
+theorem strain_preserves_uniform_approximation {A : Type*} {S : Type*}
+    (exact coarse : DecisionQuotient.DecisionProblem A S) (δ : ℝ)
+    (strain : A → ℝ)
+    (h : DecisionQuotient.Tractability.CoarseApproximation.UniformUtilityApprox exact coarse δ) :
+    DecisionQuotient.Tractability.CoarseApproximation.UniformUtilityApprox
+      (DecisionQuotient.Tractability.LigandStrainApproximation.strainAugmentedDecisionProblem exact strain)
+      (DecisionQuotient.Tractability.LigandStrainApproximation.strainAugmentedDecisionProblem coarse strain)
+      δ :=
+  DecisionQuotient.Tractability.LigandStrainApproximation.strain_preserves_uniformApprox exact coarse δ strain h
+
+-- ---------------------------------------------------------------------------
+-- Directional metal coordination theorem family
+-- ---------------------------------------------------------------------------
+
+/-- Two-factor Lipschitz bound for radial × angular metal coordination. -/
+theorem directional_metal_two_factor_lipschitz
+    {f1 f2 g1 g2 Lf Lg err : ℝ}
+    (hf1 : 0 ≤ f1) (hf1b : f1 ≤ 1)
+    (hf2 : 0 ≤ f2) (hf2b : f2 ≤ 1)
+    (hg1 : 0 ≤ g1) (hg1b : g1 ≤ 1)
+    (hg2 : 0 ≤ g2) (hg2b : g2 ≤ 1)
+    (hLf : 0 ≤ Lf) (hLg : 0 ≤ Lg)
+    (herr : 0 ≤ err)
+    (hRadial : |f1 - f2| ≤ Lf * err)
+    (hGeometry : |g1 - g2| ≤ Lg * err) :
+    |DecisionQuotient.Tractability.DirectionalMetalCoordinationApproximation.directionalMetalScore f1 g1 -
+     DecisionQuotient.Tractability.DirectionalMetalCoordinationApproximation.directionalMetalScore f2 g2| ≤
+      (Lf + Lg) * err :=
+  DecisionQuotient.Tractability.DirectionalMetalCoordinationApproximation.directionalMetalScore_sub_le_component_sum
+    hf1 hf1b hf2 hf2b hg1 hg1b hg2 hg2b hLf hLg herr hRadial hGeometry
+
+/-- Angular factor ∈ [0,1] does not worsen radial cutoff error. -/
+theorem angular_factor_tightens_tail
+    (w radial angular B : ℝ)
+    (h_nonneg : 0 ≤ angular) (h_le_one : angular ≤ 1)
+    (h_bound : |w * radial| ≤ B) :
+    |w * radial * angular| ≤ B :=
+  DecisionQuotient.Tractability.DirectionalMetalCoordinationApproximation.angular_factor_tightens_tail
+    w radial angular h_nonneg h_le_one h_bound
+
+/-- Directional metal coordination cutoff uniform approximation. -/
+theorem directional_metal_cutoff_uniformApprox {A : Type*} {S : Type*}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (w ideal width rc : ℝ) (distance geometry : A → S → ℝ) :
+    DecisionQuotient.Tractability.CoarseApproximation.UniformUtilityApprox
+      (DecisionQuotient.Tractability.DirectionalMetalCoordinationApproximation.exactDirectionalMetalDecisionProblem w ideal width distance geometry)
+      (DecisionQuotient.Tractability.DirectionalMetalCoordinationApproximation.cutoffDirectionalMetalDecisionProblem w ideal width rc distance geometry)
+      (DecisionQuotient.Tractability.DirectionalMetalCoordinationApproximation.directionalMetalCutoffErrorRadius w ideal width rc distance geometry) :=
+  DecisionQuotient.Tractability.DirectionalMetalCoordinationApproximation.directional_metal_cutoff_uniformApprox w ideal width rc distance geometry
+
+-- ---------------------------------------------------------------------------
+-- Cooperative H-bond network theorem family
+-- ---------------------------------------------------------------------------
+
+/-- Independent pairwise model is a uniform approximation of the cooperative
+    model with error ≤ |α| · N². -/
+theorem independent_approximates_cooperative {A : Type*} {S : Type*}
+    (N : ℕ) (scores : Fin N → A → S → ℝ) (α : ℝ)
+    (h_unit : ∀ a s, DecisionQuotient.Tractability.CooperativeHBondApproximation.AllUnitInterval (fun i => scores i a s)) :
+    DecisionQuotient.Tractability.CoarseApproximation.UniformUtilityApprox
+      (DecisionQuotient.Tractability.CooperativeHBondApproximation.cooperativeHBondDecisionProblem N scores α)
+      (DecisionQuotient.Tractability.CooperativeHBondApproximation.independentHBondDecisionProblem N scores)
+      (|α| * (N : ℝ) ^ 2) :=
+  DecisionQuotient.Tractability.CooperativeHBondApproximation.independent_approximates_cooperative N scores α h_unit
+
+-- ---------------------------------------------------------------------------
+-- Explicit water placement theorem family
+-- ---------------------------------------------------------------------------
+
+/-- Discrete water grid approximates continuous placement with Lipschitz error. -/
+theorem discrete_water_placement_approximation
+    {Wcont Wgrid : Type*}
+    [Fintype Wgrid] [Nonempty Wgrid]
+    (bridgeCont : Wcont → ℝ) (bridgeGrid : Wgrid → ℝ)
+    (nearest : Wcont → Wgrid)
+    (h : ℝ)
+    (h_approx : ∀ wc, |bridgeCont wc - bridgeGrid (nearest wc)| ≤ h)
+    (w_opt : Wcont) :
+    bridgeCont w_opt - h ≤ DecisionQuotient.Tractability.ExplicitWaterPlacement.bestWaterBridge bridgeGrid :=
+  DecisionQuotient.Tractability.ExplicitWaterPlacement.discrete_placement_approximation
+    bridgeCont bridgeGrid nearest h h_approx w_opt
+
+/-- Water bridge composes additively with base chemistry (zero added error). -/
+theorem water_bridge_additive_composition {A : Type*} {S : Type*}
+    (base_exact base_coarse : DecisionQuotient.DecisionProblem A S)
+    (δ_base : ℝ)
+    (h_base : DecisionQuotient.Tractability.CoarseApproximation.UniformUtilityApprox base_exact base_coarse δ_base)
+    {W : Type*} [Fintype W] [Nonempty W]
+    (bridge : W → A → S → ℝ) :
+    DecisionQuotient.Tractability.CoarseApproximation.UniformUtilityApprox
+      (DecisionQuotient.Tractability.CoarseApproximation.sumDecisionProblems base_exact
+        (DecisionQuotient.Tractability.ExplicitWaterPlacement.waterPlacementDecisionProblem bridge))
+      (DecisionQuotient.Tractability.CoarseApproximation.sumDecisionProblems base_coarse
+        (DecisionQuotient.Tractability.ExplicitWaterPlacement.waterPlacementDecisionProblem bridge))
+      (δ_base + 0) :=
+  DecisionQuotient.Tractability.ExplicitWaterPlacement.water_bridge_additive_with_base
+    base_exact base_coarse δ_base h_base bridge
+
+-- ---------------------------------------------------------------------------
+-- Receptor flexibility / ensemble docking theorem family
+-- ---------------------------------------------------------------------------
+
+/-- Rigid model at r₀ uniformly approximates the flexible model at any
+    single conformation r. -/
+theorem rigid_approximates_conformation {A : Type*} {S : Type*}
+    {R : Type*} [Fintype A] [Fintype S] [Fintype R]
+    [Nonempty A] [Nonempty S] [Nonempty R]
+    (score : A → S → R → ℝ) (r₀ r : R) :
+    DecisionQuotient.Tractability.CoarseApproximation.UniformUtilityApprox
+      (DecisionQuotient.Tractability.ReceptorFlexibility.flexibleDecisionProblem score r)
+      (DecisionQuotient.Tractability.ReceptorFlexibility.rigidDecisionProblem score r₀)
+      (DecisionQuotient.Tractability.ReceptorFlexibility.conformationalErrorRadius score r₀) :=
+  DecisionQuotient.Tractability.ReceptorFlexibility.rigid_approximates_conformation score r₀ r
+
+/-- Boltzmann-weighted ensemble average approximates any reference conformation
+    with error ≤ max conformational deviation. -/
+theorem boltzmann_ensemble_approximation {R : Type*} [Fintype R] [Nonempty R]
+    (weights : R → ℝ) (score : R → ℝ)
+    (h_nonneg : ∀ r, 0 ≤ weights r)
+    (h_sum_one : Finset.univ.sum weights = 1)
+    (r₀ : R) :
+    |DecisionQuotient.Tractability.ReceptorFlexibility.boltzmannEnsembleScore weights score - score r₀| ≤
+      Finset.univ.sup' Finset.univ_nonempty (fun r => |score r - score r₀|) :=
+  DecisionQuotient.Tractability.ReceptorFlexibility.boltzmann_between_extremes
+    weights score h_nonneg h_sum_one r₀
 
 /-- Multiplicative-separable tractability alias. -/
 theorem multiplicative_separable_empty_sufficient

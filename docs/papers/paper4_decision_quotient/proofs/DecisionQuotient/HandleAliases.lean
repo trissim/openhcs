@@ -75,6 +75,7 @@ import DecisionQuotient.Tractability.MetalCoordinationApproximation
 import DecisionQuotient.Tractability.ExtendedRichChemistryApproximation
 import DecisionQuotient.Tractability.TopKLoweringBridge
 import DecisionQuotient.Tractability.SupportExpansion
+import DecisionQuotient.Tractability.ConformerSearch
 import DecisionQuotient.Tractability.CoarseApproximation
 import DecisionQuotient.Tractability.CertifiedPruning
 import DecisionQuotient.Tractability.SampledDocking
@@ -1125,6 +1126,16 @@ abbrev APX8 := @Tractability.GridConvergence.resolutionControlledApprox_certifie
 noncomputable abbrev APX9 := @Tractability.GridConvergence.resolutionControlledApprox_optimizer_witness
 abbrev APX4 := @Tractability.CoarseApproximation.sum_uniformApprox
 
+abbrev CS1 := @Tractability.ConformerSearch.sum_channel_uniformApprox
+abbrev CS2 := @Tractability.ConformerSearch.conformer_dominated
+abbrev CS3 := @Tractability.ConformerSearch.optimal_conformer_bound_tight
+abbrev CS4 := @Tractability.ConformerSearch.lipschitz_score_composition
+abbrev CS5 := @Tractability.ConformerSearch.isometric_kinematics_preserves_lipschitz
+abbrev CS6 := @Tractability.ConformerSearch.sum_channel_lowerBound
+abbrev CS7 := @Tractability.ConformerSearch.energy_conformer_dominated
+abbrev CS8 := @Tractability.ConformerSearch.lipschitz_energy_lower_bound
+abbrev CS9 := @Tractability.ConformerSearch.lipschitz_energy_lower_bound_on_ball
+
 abbrev SD1 := @Tractability.SampledDockingGap.strictUtilityGap_lifted_exact
 abbrev SD2 := @Tractability.SampledDockingGap.sampled_epsilon_margin_invariance
 abbrev SD3 := @Tractability.SampledDockingGap.SampledDockingProblem.exact_coarse_opt_agree_of_gap
@@ -1160,9 +1171,9 @@ abbrev SH4 := @Tractability.SupportExpansion.supportShellLevels_monotone
 abbrev SH5 := @Tractability.SupportExpansion.supportShellLevels_max'
 abbrev SH6 := @Tractability.SupportExpansion.mergedActionCount_eq
 
-abbrev GD1 := @Tractability.GridMDInstances.gridMDState_sufficient_erase_irrelevant
-abbrev GD2 := @Tractability.GridConvergence.resolutionControlledApprox_implies_uniformApprox
-abbrev GD3 := @Tractability.GridConvergence.lipschitzUtilityApprox_implies_resolutionControlled
+abbrev GC1 := @Tractability.GridMDInstances.gridMDState_sufficient_erase_irrelevant
+abbrev GC2 := @Tractability.GridConvergence.resolutionControlledApprox_implies_uniformApprox
+abbrev GC3 := @Tractability.GridConvergence.lipschitzUtilityApprox_implies_resolutionControlled
 abbrev CP1 := @Tractability.CertifiedPruning.certificate_sound
 noncomputable abbrev CP2 := @Tractability.CertifiedPruning.certificate_of_exact_top1
 noncomputable abbrev CP3 := @Tractability.CertifiedPruning.certificate_of_top1_branch
@@ -1188,10 +1199,10 @@ noncomputable abbrev FLO16 := @Tractability.FormalLocalOptimizer.optimizerWitnes
 noncomputable abbrev FLO17 := @Tractability.FormalLocalOptimizer.optimizerWitness_of_exact_singleton_winner
 noncomputable abbrev FLO18 := @Tractability.FormalLocalOptimizer.optimizerWitness_of_top1_branch
 
-abbrev LS1 := @Tractability.LatticeSum.latticeTailSum6_le_M_div_R3
-abbrev LS2 := @Tractability.LatticeSum.latticeTailSum12_le_M_div_R9
-abbrev LS3 := @Tractability.LatticeSum.lj6_tail_bound
-abbrev LS4 := @Tractability.LatticeSum.lj12_tail_bound
+abbrev LT1 := @Tractability.LatticeSum.latticeTailSum6_le_M_div_R3
+abbrev LT2 := @Tractability.LatticeSum.latticeTailSum12_le_M_div_R9
+abbrev LT3 := @Tractability.LatticeSum.lj6_tail_bound
+abbrev LT4 := @Tractability.LatticeSum.lj12_tail_bound
 
 abbrev ADL1 := @Computation.ArrayDSL.norm_nonneg_bound
 abbrev ADL2 := @Computation.ArrayDSL.distance_triangle_bound
