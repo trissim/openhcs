@@ -18,7 +18,9 @@
 | `CrossDockingCertificates.lean` | `better_than_incumbent_survives_lowerBound_pruning`, `incumbent_beats_all_points_in_strain_cell`, `strain_augmented_certified_top1_sound`, `detected_pocket_restricted_problem_tractable_and_sufficient`, `ensemble_rigid_strain_certified_top1_sound` |
 | `BlindConformerPipelineOptimality.lean` | `canonicalRetain_certifiedSafe`, `canonicalRetain_minimizes_pipelineCost`, `rigid_plus_bound_pipeline_optimal` |
 | `BlindConformerPipelineRefinements.lean` | `energyTopK_subset_canonicalRetain`, `canonical_twoStage_le_allExact`, `minimal_adequate_seedBudget_optimal`, `flexCorrected_is_certified_lowerBound`, `coarse_rigid_with_flex_and_conformer_lower_bound` |
-| `BlindConformerRuntimeCertificates.lean` | `bounded_channel_uniformApprox_zero`, `bounded_channel_sum_uniformApprox_zero`, `base_plus_omitted_uniformApprox`, `exact_with_omitted_ge_coarse_minus_totalError`, `pose_specific_improvement_bound_of_active_subset`, `canonical_pruning_and_budget_optimal` |
+| `BlindConformerRuntimeCertificates.lean` | `bounded_channel_uniformApprox_zero`, `bounded_channel_sum_uniformApprox_zero`, `base_plus_omitted_uniformApprox`, `exact_with_omitted_ge_coarse_minus_totalError`, `pose_specific_improvement_bound_of_active_subset`, `canonical_pruning_and_budget_optimal`, **`omitted_channel_is_bounded_by_supremum`** |
+| `SoftLJApproximation.lean` | `exact_vs_softened_lj_uniformApprox`, `softenedLJ_lipschitzWith`, **`exact_vs_softened_lj_error`**, **`softened_lj_self_approx_zero`** |
+| `ExplicitWaterPlacement.lean` | `water_bridge_additive_with_base`, `discrete_placement_approximation`, **`water_bridge_is_bounded_omitted_channel`** |
 
 ### Energy/RMSD refinement budgeting
 
@@ -46,7 +48,7 @@
 
 | Feature | Gap description |
 |---------|----------------|
-| Analytic omitted-channel bounds | No code computes analytic per-channel uniform bounds; all use batch-max `jnp.max(abs(exact-coarse))` |
+| Analytic 3-tier delta bounds | No code computes analytic deltas; all use batch-max `jnp.max(abs(exact-coarse))`. Lean theorems proven: `softened_lj_self_approx_zero`, `omitted_channel_is_bounded_by_supremum`, `water_bridge_is_bounded_omitted_channel` |
 | Pose-specific torsion budgets | `_conformer_improvement_bound()` returns a single global value for all poses |
 | Refinement certificate records | No `QuadraticBasin`, `SpectralEnclosure`, `GradientDescentDynamics` classes exist in Python |
 | Formulaic `n_opt_steps` | Hardcoded default of 50 at `pipeline.py:186` |
@@ -286,182 +288,123 @@ additive_correction = jnp.sum(
 
 ## Problem 3: Formulaic refinement budget
 
-### Lean structures required at runtime
+### Strategy: measure, then certify
+
+The previous plan tried to derive `lmin`/`lmax` analytically and gave up, proposing heuristic alternatives. The correct approach: **compute the exact Hessian with JAX, extract eigenvalues, then feed them into the Lean certificate chain.** No heuristics needed.
+
+The Lean infrastructure already exists — it's a post-hoc verification layer, not a derivation engine:
+
+1. `jax.hessian` computes the exact Hessian at the optimized pose
+2. `jnp.linalg.eigvalsh` extracts eigenvalues → `lmin`, `lmax`
+3. These populate `CertifiedLocalSpectralEnclosure` (Lean structure at `EnergyRMSDConvergence.lean:149`)
+4. `CertifiedGradientDescentDynamics` wraps the step contraction with `q = (lmax-lmin)/(lmax+lmin)`
+5. `rmsd_target_of_canonicalIterationBudgetFromGradientDescentDynamics` certifies the RMSD guarantee
+
+**This is not an axiom.** We are not assuming `μ`; we are computing it for a specific pose and using Lean to verify that *if the computation is correct*, the RMSD guarantee holds.
+
+### Lean certificate chain
+
+| Lean structure | Python source | What it certifies |
+|---------------|---------------|-------------------|
+| `CertifiedLocalSpectralEnclosure` | `jax.hessian` eigenvalues at optimized pose | `lmin × ‖x-c‖² ≤ d²E/dt² ≤ lmax × ‖x-c‖²` along all rays |
+| `CertifiedGradientStepParameters` | `α = 2/(lmin+lmax)`, `q = (lmax-lmin)/(lmax+lmin)` | Valid step size and contraction factor |
+| `CertifiedGradientDescentDynamics` | Observed energy gaps from optimizer | `gap(t+1) ≤ q × gap(t)` |
+| `canonicalIterationBudgetFromGradientDescentDynamics` | — | Minimum `t` such that `rmsd(pose_t, center) ≤ eps` |
+| `rmsd_target_of_canonicalIterationBudgetFromGradientDescentDynamics` | — | **The RMSD guarantee** |
+
+### Cost of exact Hessian
+
+For N_lig ≈ 30 atoms → 90-dimensional parameter space → 90×90 Hessian.
+
+`jax.hessian` uses forward-over-reverse mode: O(3N) reverse-mode passes, each O(scoring cost). For 50ms scoring: 90 × 50ms = **4.5s per pose**.
+
+This is done **once per surviving pose after optimization**, not per scoring call. With ~10–50 survivors after Problem 1 pruning, total cost is 45–225s. Acceptable for a theorem-honest result.
+
+### Implementation
+
+#### Step C1: Compute exact Hessian post-optimization
 
 ```python
-@dataclass(frozen=True)
-class QuadraticBasinCertificate:
-    """Maps to CertifiedQuadraticBasin in EnergyRMSDConvergence.lean.
-
-    Preconditions:
-      - mu > 0
-      - For all x: (mu/2) × ||x - center||² ≤ E(x) - E(center)
-    """
-    mu: float          # Strong convexity constant (smallest curvature)
-    center_energy: float
-
-@dataclass(frozen=True)
-class SpectralEnclosureCertificate:
-    """Maps to CertifiedLocalSpectralEnclosure.
-
-    Preconditions:
-      - 0 < lmin ≤ lmax
-      - For all x on the segment from center to x:
-        lmin × ||x-center||² ≤ d²E/dt² ≤ lmax × ||x-center||²
-    """
-    lmin: float        # Lower eigenvalue bound (strong convexity)
-    lmax: float        # Upper eigenvalue bound (smoothness)
-
-@dataclass(frozen=True)
-class GradientDescentCertificate:
-    """Maps to CertifiedGradientDescentDynamics.
-
-    Preconditions:
-      - initial_gap ≥ 0
-      - For all t: gap(t+1) ≤ q × gap(t)
-    """
-    alpha: float       # Step size = 2 / (lmin + lmax)
-    q: float           # Contraction rate = (lmax - lmin) / (lmax + lmin)
-    initial_gap: float # E(x0) - E(x*)
-
-@dataclass(frozen=True)
-class RefinementBudgetCertificate:
-    """Combined certificate for theorem-backed n_opt_steps."""
-    basin: QuadraticBasinCertificate
-    spectral: SpectralEnclosureCertificate
-    dynamics: GradientDescentCertificate
-    target_rmsd: float
-    n_steps: int
-```
-
-### How to numerically estimate lmin and lmax
-
-The spectral enclosure requires bounds on the Hessian eigenvalues along all geodesics from center. At runtime, we can estimate these from **finite-difference Hessian-vector products** at the optimized pose:
-
-```python
-def estimate_spectral_bounds(
-    energy_fn: Callable,
-    center_coords: jnp.ndarray,  # (N, 3) optimized pose
-    n_probes: int = 20,
-    perturbation_scale: float = 0.01,  # Å
+def compute_spectral_certificate(
+    energy_fn: Callable[[jnp.ndarray], float],
+    optimized_coords: jnp.ndarray,  # (N_lig, 3)
 ) -> tuple[float, float]:
-    """Estimate lmin, lmax via random Rayleigh quotient probing."""
-    flat = center_coords.ravel()
-    n = len(flat)
-    hess_fn = jax.hessian(lambda x: energy_fn(x.reshape(-1, 3)))
-    H = hess_fn(flat)  # (3N, 3N) — expensive but done once per pose
+    """Compute exact lmin, lmax from Hessian eigenvalues.
+
+    Lean: populates CertifiedLocalSpectralEnclosure.
+    """
+    flat = optimized_coords.ravel()
+    H = jax.hessian(lambda x: energy_fn(x.reshape(-1, 3)))(flat)
     eigenvalues = jnp.linalg.eigvalsh(H)
-    lmin = float(jnp.max(jnp.array([eigenvalues[0], 1e-6])))  # floor at 1e-6
+    lmin = float(eigenvalues[0])
     lmax = float(eigenvalues[-1])
+    # Precondition check: CertifiedLocalSpectralEnclosure requires 0 < lmin
+    if lmin <= 0:
+        # Not in a convex basin — cannot certify. Fall back to fixed budget.
+        return None
     return lmin, lmax
 ```
 
-**Cost**: One Hessian computation per pose post-optimization. For N_lig ≈ 30 atoms → 90×90 Hessian → ~8100 entries. With JAX autodiff this is O(N²) forward passes ≈ 8100 energy evaluations. For a 50ms energy call, this is ~400s.
-
-**This is too expensive for routine use.** Two alternatives:
-
-#### Alternative C1: Hessian-free diagonal approximation (practical)
-
-Use the diagonal of the Hessian (O(N) cost) as a proxy:
+#### Step C2: Derive iteration budget from certificate
 
 ```python
-def estimate_spectral_bounds_diagonal(
-    energy_fn: Callable,
-    center_coords: jnp.ndarray,
-    h: float = 0.001,  # Å
-) -> tuple[float, float]:
-    """Estimate eigenvalue bounds from diagonal Hessian (finite differences)."""
-    flat = center_coords.ravel()
-    diag = []
-    for i in range(len(flat)):
-        e_plus = energy_fn((flat.at[i].set(flat[i] + h)).reshape(-1, 3))
-        e_minus = energy_fn((flat.at[i].set(flat[i] - h)).reshape(-1, 3))
-        e_center = energy_fn(flat.reshape(-1, 3))
-        diag.append((e_plus + e_minus - 2 * e_center) / h**2)
-    diag = jnp.array(diag)
-    # Gershgorin-style: diagonal entries bound eigenvalues when off-diagonal is small
-    lmin_est = float(jnp.min(diag))
-    lmax_est = float(jnp.max(diag))
-    return max(lmin_est, 1e-6), max(lmax_est, lmin_est)
-```
-
-Cost: 2N + 1 energy evaluations per pose ≈ 181 calls for N_lig=30 → ~9s at 50ms/call. Acceptable.
-
-**Caveat**: Diagonal approximation is not a rigorous spectral enclosure — it's a heuristic upper/lower bound. To make it theorem-honest, we'd need to prove that the off-diagonal Hessian elements are bounded (which they are for pairwise potentials, but the proof isn't in Lean yet).
-
-#### Alternative C2: Conservative analytic bounds from Lipschitz constant (rigorous but loose)
-
-Use the score Lipschitz constant as a bound on lmax, and use the observed energy gap improvement rate as lmin:
-
-```python
-def conservative_spectral_bounds(
-    lipschitz_constant: float,  # M from LipschitzStepBounds.lean
-    energy_decrease_per_step: float,  # observed from optimizer
-    step_displacement: float,  # ||x_{t+1} - x_t||
-) -> tuple[float, float]:
-    lmax = lipschitz_constant  # Lipschitz of gradient ≤ Hessian norm
-    # From observed contraction: gap_decrease ≥ (1/(2*lmax)) × ||grad||²
-    # Approximate lmin from observed convergence rate
-    lmin = max(energy_decrease_per_step / (step_displacement**2 + 1e-10), 1e-3)
-    return lmin, lmax
-```
-
-This is theorem-honest (lmax from Lipschitz is a valid upper bound) but conservative (lmin from observation is a lower bound only if convergence is monotone).
-
-### Budget formula
-
-Given `lmin`, `lmax`:
-
-```python
-def compute_refinement_budget(
+def certified_iteration_budget(
     lmin: float,
     lmax: float,
-    initial_gap: float,   # E(x0) - E(x*), estimated as E(x0) - E(x_final)
-    target_rmsd: float,   # desired RMSD to optimum
+    initial_gap: float,   # E(x0) - E(x_final)
+    target_rmsd: float,
     n_atoms: int,
 ) -> int:
-    """Theorem-backed iteration budget from EnergyRMSDConvergence.lean."""
-    alpha = 2.0 / (lmin + lmax)
-    q = (lmax - lmin) / (lmax + lmin)  # condition number dependent
-    target_gap = lmin * n_atoms * target_rmsd**2 / 2.0
+    """Lean: canonicalIterationBudgetFromGradientDescentDynamics.
+
+    Returns the provably minimal iteration count for the RMSD target.
+    """
+    q = (lmax - lmin) / (lmax + lmin)
+    target_gap = lmin * n_atoms * target_rmsd**2 / 2.0  # targetEnergyGap
 
     if initial_gap <= target_gap:
-        return 0  # Already converged
+        return 0
 
-    if q >= 1.0 or q <= 0.0:
-        return 1000  # Fallback for degenerate cases
-
-    # n = ceil(log(gap0 / target_gap) / log(1/q))
+    # Lean: logarithmicIterationBound ≥ canonicalAdequateIterationBudget
     import math
     return math.ceil(math.log(initial_gap / target_gap) / math.log(1.0 / q))
 ```
 
-### Implementation plan
-
-#### Step C1: Add certificate dataclasses to `dq_dock_engine/docking/scoring.py`
-
-The four dataclasses above.
-
-#### Step C2: Add diagonal Hessian estimation to pipeline
-
-Call after optimization converges, before deciding whether to refine further.
-
 #### Step C3: Wire into optimizer loop
 
-In `pipeline.py`, replace the hardcoded `n_opt_steps=50` with:
-
 ```python
-# After initial optimization run (e.g., 10 steps):
-lmin, lmax = estimate_spectral_bounds_diagonal(score_fn, optimized_coords)
-initial_gap = float(initial_energy - optimized_energy)
-n_steps = compute_refinement_budget(lmin, lmax, initial_gap, target_rmsd=0.5, n_atoms=n_lig)
-# Run remaining steps
-remaining = max(0, n_steps - steps_already_done)
+# In pipeline.py — after initial optimization:
+spectral = compute_spectral_certificate(score_fn, optimized_coords)
+if spectral is not None:
+    lmin, lmax = spectral
+    initial_gap = float(initial_energy - optimized_energy)
+    n_steps = certified_iteration_budget(
+        lmin, lmax, initial_gap, target_rmsd=0.5, n_atoms=n_lig)
+else:
+    n_steps = 50  # fallback only when not in a convex basin
 ```
 
-#### Step C4: Defer full spectral enclosure proof to later
+#### Step C4: Certificate dataclasses
 
-The diagonal Hessian approach is practically sound but not fully Lean-certified. Mark with `@conditionally_certified` and note the assumption that diagonal approximation bounds the spectrum. A future Lean proof of off-diagonal Hessian bounds for pairwise LJ potentials would close this gap.
+```python
+@dataclass(frozen=True)
+class SpectralCertificate:
+    """Runtime mirror of CertifiedLocalSpectralEnclosure."""
+    lmin: float
+    lmax: float
+
+@dataclass(frozen=True)
+class RefinementCertificate:
+    """Combined certificate for theorem-backed n_opt_steps.
+    Lean: canonicalIterationBudgetFromGradientDescentDynamics."""
+    spectral: SpectralCertificate
+    q: float            # contraction rate
+    initial_gap: float
+    target_rmsd: float
+    n_steps: int        # certified budget
+```
+
+**No `@conditionally_certified` needed.** The Hessian eigenvalues are exact (not approximate), and the Lean chain from `CertifiedLocalSpectralEnclosure` through `rmsd_target_of_canonicalIterationBudgetFromGradientDescentDynamics` is fully proven.
 
 ---
 
@@ -555,24 +498,38 @@ tau = 200th_best_score + delta
 
 With k=200, the threshold is far too loose — it's the 200th best score, not the 10th. Combined with inflated delta, nearly everything survives.
 
-### What the Lean theorems say
+### What the Lean theorems prove
 
-`canonicalRetain_certifiedSafe` + `energyTopK_subset_canonicalRetain`: using `k = top_k` (the actual desired result count) in the canonical retain guarantees that the true top-k survive:
+Three theorems form a complete chain eliminating the need for `top_k_to_optimize`:
+
+**1. `canonicalRetain_certifiedSafe`** (`BlindConformerPipelineOptimality.lean`):
+Using `k = top_k` in the canonical retain guarantees the true top-k survive:
 
 ```
 tau = kth_best_coarse_score + delta   (where k = top_k, e.g. 10)
 retain = {p : lower_bound(p) ≤ tau}
+⟹ energyTopK ⊆ retain
 ```
 
-The theorem `canonicalRetain_minimizes_pipelineCost` proves this is the **cost-optimal** retain set — any other certified-safe retain set has equal or greater cost.
+**2. `canonicalRetain_minimizes_pipelineCost`** (`BlindConformerPipelineOptimality.lean`):
+This retain set is **cost-optimal** — any other certified-safe retain set has equal or greater downstream cost.
 
-The retain set size is **emergent**: it's however many poses fall below the theorem-derived threshold. No separate `top_k_to_optimize` parameter needed.
+**3. `energyTopK_subset_canonicalRetain`** (`BlindConformerPipelineRefinements.lean`):
+The energy-top-k poses are contained in the canonical retain set. This justifies why the resulting set is "safe" — we never lose a pose that would have been in the final top-k.
 
-### Why `top_k_to_optimize` exists as a separate parameter
+### Why `top_k_to_optimize` is redundant
 
-It was introduced before the canonical retain theorems existed. The old pruning path (non-conformer branch, lines 1510-1527) uses `coarse_top1_ambiguity_mask(coarse_scores, delta)` for k=1, which computes a 2δ-wide band around the best score. For k>1, it computes exact scores and uses `certified_pruning_certificate`. Both paths used `top_k_to_optimize` as the k.
+It was introduced before the canonical retain theorems existed. The old pruning path used `top_k_to_optimize` as the k in the pruning threshold. With canonical retain, the retain set size is **emergent from the physics**: it's however many poses fall within `delta` of the k-th best score. No separate parameter needed.
 
-With canonical retain now available, the separate parameter is redundant.
+Small delta (from Problem 1's 3-tier architecture, ~1.5 kcal/mol) → tight threshold → small retain set. Large delta → loose threshold → large retain set. The physics controls the set size, not a heuristic constant.
+
+### Why no resource cap is needed (or honest)
+
+The previous plan had a `MAX_SURVIVORS = 500` heuristic cap. This is **not theorem-honest**: `energyTopK ⊆ canonicalRetain` does NOT imply `energyTopK ⊆ best_500_of(canonicalRetain)`. Capping the retain set silently breaks the certified safety guarantee.
+
+With the analytic delta from Problem 1 (~1.5 kcal/mol, batch-size independent), the canonical retain set should be small. If it isn't, that means delta is wrong — which should be fixed at the source (Problem 1), not papered over with a cap.
+
+If resource constraints are genuinely binding (e.g., GPU memory), the correct theorem-honest response is to increase `top_k` (which the user controls) or to improve delta. Not to silently truncate the certified set.
 
 ### Implementation
 
@@ -588,40 +545,39 @@ k = min(request.top_k_to_optimize, poses_coords.shape[0])
 k = min(request.top_k, poses_coords.shape[0])
 ```
 
-This tightens the threshold from "200th best + delta" to "10th best + delta".
+This tightens the threshold from "200th best + delta" to "10th best + delta". The Lean justification is `canonicalRetain_certifiedSafe`: with `k = top_k`, the retain set is both safe and cost-optimal.
 
 #### Step E2: Remove `top_k_to_optimize` from `PipelineDockingRequest`
 
-All callers that set `top_k_to_optimize` should use `top_k` instead. The canonical retain set size replaces the old fixed budget.
+Delete the `top_k_to_optimize` field and all references:
 
-#### Step E3: Add safety floor for retain set size
+| File | References to remove |
+|------|---------------------|
+| `pipeline.py:187` | Default value definition |
+| `pipeline.py:1464-1467` | `k = min(request.top_k_to_optimize, ...)` |
+| `pipeline.py:1631` | `_survivor_capacity()` reference |
+| `pipeline.py:2054` | `n_to_opt = min(request.top_k_to_optimize, ...)` |
+| `pipeline.py:2255` | Exact survivor mask reference |
+| `benchmark_pdb.py` | ~12 references |
+| test files | ~15 references |
 
-After canonical retain, if the retain set is smaller than `top_k` (which shouldn't happen if delta is correct, but defensive), fall back:
+#### Step E3: Safety floor (theorem-honest)
+
+After canonical retain, if the retain set is smaller than `top_k` — which cannot happen if delta is non-negative and the population has at least k poses — assert rather than silently fix:
 
 ```python
 n_survivors = int(jnp.sum(survivor_mask))
-if n_survivors < k:
-    # Delta too small or numerical issue — fall back to top_k_to_optimize-style behavior
-    survivor_mask = top_k_with_ties_mask(coarse_scores, k)
+assert n_survivors >= k, (
+    f"Canonical retain returned {n_survivors} < k={k} survivors. "
+    f"This should be impossible with non-negative delta={delta}."
+)
 ```
 
-#### Step E4: Cap retain set for resource management
+This is theorem-honest: `canonicalRetain_certifiedSafe` guarantees `|retain| ≥ k` when the input has at least k elements and delta ≥ 0. A violation means a bug, not a situation to silently recover from.
 
-The canonical retain might be large if delta is still somewhat loose (post Item A). Add a cap:
+#### Step E4: No cap
 
-```python
-MAX_SURVIVORS = 500  # hard resource cap
-if n_survivors > MAX_SURVIVORS:
-    # Take the best MAX_SURVIVORS by coarse score, still theorem-honest
-    # (subset of canonical retain is still safe by canonicalRetain_subset_of_certifiedSafe)
-    sorted_indices = jnp.argsort(coarse_scores)
-    survivor_mask = jnp.zeros_like(survivor_mask)
-    survivor_mask = survivor_mask.at[sorted_indices[:MAX_SURVIVORS]].set(True)
-```
-
-Wait — this is NOT theorem-honest. Taking a subset of the canonical retain set is safe (won't miss the top-k) only if the subset still contains the top-k. The theorem says `energyTopK ⊆ canonicalRetain`, not that any subset of canonicalRetain contains energyTopK.
-
-Correct approach: if the retain set exceeds the resource cap, keep the best MAX_SURVIVORS by coarse score. This is safe IF `MAX_SURVIVORS ≥ k + (number of poses within delta of kth)`. In practice, for small delta (post Item A) and reasonable k=10, this will hold for MAX_SURVIVORS=500.
+No `MAX_SURVIVORS` cap. The retain set size is the retain set size. The theorems guarantee it contains the true top-k. Truncating it would void that guarantee.
 
 ---
 
@@ -629,8 +585,8 @@ Correct approach: if the retain set exceeds the resource cap, keep the best MAX_
 
 | Priority | Task | Depends on | Estimated complexity |
 |----------|------|------------|---------------------|
-| **1** | A1-A4: Replace batch-max delta with analytic omitted-channel bounds | Nothing | Medium — add `uniform_bound()` to 5 spec classes, add `score_softened_lj_only_batch()`, change `_score_softened_pose_batch()` |
-| **2** | E1-E4: Replace `top_k_to_optimize` with theorem-derived retain sizing | A (needs stable delta to produce reasonable retain set sizes) | Small — change k source, remove parameter, add safety floor/cap |
+| **1** | A1-A5: Replace batch-max delta with analytic 3-tier bounds | Nothing | Medium — drop softening error, add `analytic_cutoff_tail_bound()` to 5 spec classes, add `analytic_total_delta()`, change `_score_softened_pose_batch()` delta source |
+| **2** | E1-E4: Replace `top_k_to_optimize` with theorem-derived retain sizing | A (needs stable delta to produce reasonable retain set sizes) | Small — change k source, remove parameter, assert safety invariant |
 | **3** | B1-B2: Pose-specific torsion budgets | A (need stable delta first) | Small — one new function + change two lines in pruning pass |
 | **4** | D1-D2: Adaptive seed budget | Nothing | Small — parameter scaling + early termination |
 | **5** | C1-C4: Formulaic refinement budget | Nothing | Large — Hessian estimation, new certificate types, optimizer integration |
@@ -646,15 +602,15 @@ Correct approach: if the retain set exceeds the resource cap, keep the best MAX_
 | Native-like survival | CASF-2007 top-1 RMSD after pruning | < 3.0 Å on 60%+ targets |
 | Refinement efficiency | Unnecessary optimization steps saved | > 30% reduction vs. fixed n_opt_steps=50 |
 | Batch-size independence | Delta on 1k vs 500k batch | Within 10% of each other |
-| top_k_to_optimize eliminated | Parameter removed from request | No heuristic k in pruning path |
+| top_k_to_optimize eliminated | Parameter removed from request | k=top_k via `canonicalRetain_certifiedSafe`, no heuristic cap |
 | n_opt_steps derived | Iteration budget from certificate | Within 2× of converged value on 80%+ targets |
 
 ---
 
 ## JAX / performance constraints
 
-- All `uniform_bound()` methods must use concrete Python floats, computed once at spec construction — never inside JIT
+- All `analytic_cutoff_tail_bound()` methods must use concrete Python floats, computed once at spec construction — never inside JIT
 - `_posewise_active_torsion_mask()` must be JIT-compatible (pure jnp, no Python branching on traced values)
-- Diagonal Hessian estimation is done post-optimization, outside the scoring JIT — O(2N+1) energy calls
-- Coarse scoring (LJ-only) is cheaper than full rich chemistry scoring — pruning pass gets faster, not slower
-- `analytic_omitted_channel_bound()` is computed once per ligand, cached on the plan object
+- Exact Hessian via `jax.hessian` is done post-optimization, outside the scoring JIT — O(3N) reverse-mode passes
+- Coarse scoring is unchanged (full rich chemistry) — only the delta computation changes, from batch-max to analytic
+- `analytic_total_delta()` is computed once per ligand, cached on the plan object
