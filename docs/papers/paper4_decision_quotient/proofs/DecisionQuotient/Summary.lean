@@ -44,6 +44,8 @@ import DecisionQuotient.Tractability.DirectionalMetalCoordinationApproximation
 import DecisionQuotient.Tractability.CooperativeHBondApproximation
 import DecisionQuotient.Tractability.ExplicitWaterPlacement
 import DecisionQuotient.Tractability.ReceptorFlexibility
+import DecisionQuotient.Tractability.CrossDockingCertificates
+import DecisionQuotient.Tractability.BlindConformerPipelineOptimality
 import DecisionQuotient.Dichotomy
 import DecisionQuotient.ComplexityMain
 
@@ -769,6 +771,120 @@ theorem boltzmann_ensemble_approximation {R : Type*} [Fintype R] [Nonempty R]
       Finset.univ.sup' Finset.univ_nonempty (fun r => |score r - score r₀|) :=
   DecisionQuotient.Tractability.ReceptorFlexibility.boltzmann_between_extremes
     weights score h_nonneg h_sum_one r₀
+
+-- ---------------------------------------------------------------------------
+-- Cross-docking certificate family
+-- ---------------------------------------------------------------------------
+
+/-- An incumbent below a Lipschitz cell lower bound beats every point in that
+    cell. -/
+theorem incumbent_beats_lipschitz_cell
+    {P : Type*} [PseudoMetricSpace P]
+    (energy : P → ℝ)
+    (L : NNReal)
+    (hLip : LipschitzWith L energy)
+    (incumbent center point : P)
+    (r : ℝ)
+    (hBest : energy incumbent < energy center - L * r)
+    (hBall : dist point center ≤ r) :
+    energy incumbent < energy point :=
+  DecisionQuotient.Tractability.CrossDockingCertificates.incumbent_beats_all_points_in_cell
+    energy L hLip incumbent center point r hBest hBall
+
+/-- Strain-augmented exact/coarse top-1 pruning keeps every exact winner in the
+    runtime support. -/
+theorem strain_augmented_exact_top1_subset_support
+    {A : Type*} {S : Type*}
+    [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (exact coarse : DecisionQuotient.DecisionProblem A S)
+    (δ : ℝ)
+    (strain : A → ℝ)
+    (s : S)
+    (hApprox : DecisionQuotient.Tractability.CoarseApproximation.UniformUtilityApprox exact coarse δ)
+    (hδ : 0 ≤ δ) :
+    (DecisionQuotient.Tractability.CrossDockingCertificates.strain_augmented_coherent_optimizer_witness
+      exact coarse δ strain s hApprox hδ).survivorSet.certificate.exactTopK
+      ⊆
+      (DecisionQuotient.Tractability.CrossDockingCertificates.strain_augmented_coherent_optimizer_witness
+        exact coarse δ strain s hApprox hδ).belief.selection.support :=
+  DecisionQuotient.Tractability.CrossDockingCertificates.strain_augmented_exactTop1_subset_support
+    exact coarse δ strain s hApprox hδ
+
+/-- Receptor-flexibility error and exact ligand strain compose into a certified
+    rigid-reference top-1 survivor set. -/
+theorem ensemble_rigid_strain_certified_top1_sound
+    {A : Type*} {S : Type*} {R : Type*}
+    [Fintype A] [Fintype S] [Fintype R]
+    [DecidableEq A] [Nonempty A] [Nonempty S] [Nonempty R]
+    (score : A → S → R → ℝ)
+    (strain : A → ℝ)
+    (r₀ r : R)
+    (s : S) :
+    (DecisionQuotient.Tractability.CertifiedPruning.certificate_of_top1_coarse_ambiguityBand
+      (fun a =>
+        (DecisionQuotient.Tractability.LigandStrainApproximation.strainAugmentedDecisionProblem
+          (DecisionQuotient.Tractability.ReceptorFlexibility.flexibleDecisionProblem score r)
+          strain).utility a s)
+      (fun a =>
+        (DecisionQuotient.Tractability.LigandStrainApproximation.strainAugmentedDecisionProblem
+          (DecisionQuotient.Tractability.ReceptorFlexibility.rigidDecisionProblem score r₀)
+          strain).utility a s)
+      (DecisionQuotient.Tractability.ReceptorFlexibility.conformationalErrorRadius score r₀)
+      (fun a =>
+        DecisionQuotient.Tractability.LigandStrainApproximation.strain_preserves_uniformApprox
+          (DecisionQuotient.Tractability.ReceptorFlexibility.flexibleDecisionProblem score r)
+          (DecisionQuotient.Tractability.ReceptorFlexibility.rigidDecisionProblem score r₀)
+          (DecisionQuotient.Tractability.ReceptorFlexibility.conformationalErrorRadius score r₀)
+          strain
+          (DecisionQuotient.Tractability.ReceptorFlexibility.rigid_approximates_conformation score r₀ r)
+          a s)
+      (DecisionQuotient.Tractability.ReceptorFlexibility.conformationalErrorRadius_nonneg score r₀)).exactTopK
+      ⊆
+      (DecisionQuotient.Tractability.CrossDockingCertificates.ensemble_rigid_strain_certified_top1
+        score strain r₀ r s).survivors :=
+  DecisionQuotient.Tractability.CrossDockingCertificates.ensemble_rigid_strain_certified_top1_sound
+    score strain r₀ r s
+
+/-- Among all certified-safe blind-conformer retain sets, the canonical lower-
+    bound retain set minimizes total runtime under a nonnegative post-filter cost
+    model. -/
+theorem blind_conformer_pipeline_optimal
+    {P : Type*} [Fintype P] [DecidableEq P]
+    (rigidScore improvementBound : P → ℝ)
+    (τ prefilterCost : ℝ)
+    {retain : Finset P}
+    (hSafe : DecisionQuotient.Tractability.BlindConformerPipelineOptimality.CertifiedSafeForThreshold
+      (DecisionQuotient.Tractability.BlindConformerPipelineOptimality.conformerLowerBound
+        rigidScore improvementBound)
+      retain τ)
+    (postFilterCost : P → ℝ)
+    (hNonneg : ∀ p, 0 ≤ postFilterCost p) :
+    DecisionQuotient.Tractability.BlindConformerPipelineOptimality.pipelineCost
+      prefilterCost
+      (DecisionQuotient.Tractability.BlindConformerPipelineOptimality.canonicalRetain
+        (DecisionQuotient.Tractability.BlindConformerPipelineOptimality.conformerLowerBound
+          rigidScore improvementBound)
+        τ)
+      postFilterCost
+      ≤
+    DecisionQuotient.Tractability.BlindConformerPipelineOptimality.pipelineCost
+      prefilterCost retain postFilterCost :=
+  DecisionQuotient.Tractability.BlindConformerPipelineOptimality.rigid_plus_bound_pipeline_optimal
+    rigidScore improvementBound τ prefilterCost hSafe postFilterCost hNonneg
+
+/-- The canonical lower-bound retain set is the unique minimal certified-safe
+    retain set for thresholded blind-conformer pruning. -/
+theorem blind_conformer_canonical_subset_of_every_certified_safe_pipeline
+    {P : Type*} [Fintype P] [DecidableEq P]
+    (lowerBound : P → ℝ)
+    (τ : ℝ)
+    {retain : Finset P}
+    (hSafe : DecisionQuotient.Tractability.BlindConformerPipelineOptimality.CertifiedSafeForThreshold
+      lowerBound retain τ) :
+    DecisionQuotient.Tractability.BlindConformerPipelineOptimality.canonicalRetain lowerBound τ
+      ⊆ retain :=
+  DecisionQuotient.Tractability.BlindConformerPipelineOptimality.canonicalRetain_subset_of_certifiedSafe
+    lowerBound τ hSafe
 
 /-- Multiplicative-separable tractability alias. -/
 theorem multiplicative_separable_empty_sufficient

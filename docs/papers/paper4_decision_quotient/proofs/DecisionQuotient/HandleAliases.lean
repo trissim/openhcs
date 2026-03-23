@@ -100,6 +100,7 @@ import DecisionQuotient.Tractability.DirectionalMetalCoordinationApproximation
 import DecisionQuotient.Tractability.CooperativeHBondApproximation
 import DecisionQuotient.Tractability.ExplicitWaterPlacement
 import DecisionQuotient.Tractability.ReceptorFlexibility
+import DecisionQuotient.Tractability.CrossDockingCertificates
 import DecisionQuotient.Computation.PocketDetection
 import DecisionQuotient.Information
 import DecisionQuotient.Information.RateDistortion
@@ -1203,6 +1204,19 @@ noncomputable abbrev FLO15 := @Tractability.FormalLocalOptimizer.optimizerWitnes
 noncomputable abbrev FLO16 := @Tractability.FormalLocalOptimizer.optimizerWitness_of_top1_coarse_ambiguityBand
 noncomputable abbrev FLO17 := @Tractability.FormalLocalOptimizer.optimizerWitness_of_exact_singleton_winner
 noncomputable abbrev FLO18 := @Tractability.FormalLocalOptimizer.optimizerWitness_of_top1_branch
+
+abbrev XD1 := @Tractability.CrossDockingCertificates.better_than_incumbent_survives_lowerBound_pruning
+abbrev XD2 := @Tractability.CrossDockingCertificates.lowerBoundSurvivors_monotone
+abbrev XD3 := @Tractability.CrossDockingCertificates.incumbent_beats_all_points_in_cell
+abbrev XD4 := @Tractability.CrossDockingCertificates.incumbent_beats_all_points_in_strain_cell
+noncomputable abbrev XD5 := @Tractability.CrossDockingCertificates.strain_augmented_certified_top1
+abbrev XD6 := @Tractability.CrossDockingCertificates.strain_augmented_certified_top1_sound
+noncomputable abbrev XD7 := @Tractability.CrossDockingCertificates.strain_augmented_coherent_optimizer_witness
+abbrev XD8 := @Tractability.CrossDockingCertificates.strain_augmented_exactTop1_subset_support
+abbrev XD9 := @Tractability.CrossDockingCertificates.detected_pocket_sampled_insideCutoff_sufficient
+abbrev XD10 := @Tractability.CrossDockingCertificates.detected_pocket_restricted_problem_tractable_and_sufficient
+noncomputable abbrev XD11 := @Tractability.CrossDockingCertificates.ensemble_rigid_strain_certified_top1
+abbrev XD12 := @Tractability.CrossDockingCertificates.ensemble_rigid_strain_certified_top1_sound
 
 abbrev LT1 := @Tractability.LatticeSum.latticeTailSum6_le_M_div_R3
 abbrev LT2 := @Tractability.LatticeSum.latticeTailSum12_le_M_div_R9
