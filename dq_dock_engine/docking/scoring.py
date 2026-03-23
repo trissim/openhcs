@@ -411,6 +411,22 @@ class CertifiedScreenedCoulombSpec:
     def tree_unflatten(cls, aux_data, children):
         return cls(*children, *aux_data)
 
+    def analytic_cutoff_tail_bound(self) -> float:
+        """Screened Coulomb tail: (q_max_rec × q_max_lig / ε_r) × exp(-κR) / R × N_pairs.
+
+        Lean: exponential screening decay beyond cutoff radius.
+        """
+        import math
+
+        q_max_rec = float(jnp.max(jnp.abs(self.receptor_charges)))
+        q_max_lig = float(jnp.max(jnp.abs(self.ligand_charges)))
+        n_pairs = int(self.receptor_charges.shape[0]) * int(self.ligand_charges.shape[0])
+        tail_per_pair = (
+            q_max_rec * q_max_lig * math.exp(-self.kappa * self.cutoff)
+            / (self.dielectric * self.cutoff)
+        )
+        return tail_per_pair * n_pairs
+
     def receptor_subset(self, indices: jnp.ndarray) -> "CertifiedScreenedCoulombSpec":
         return CertifiedScreenedCoulombSpec(
             receptor_charges=self.receptor_charges[indices],
@@ -449,6 +465,17 @@ class CertifiedOptionalInteractionTerm(ABC):
         poses_coords: jnp.ndarray,
     ) -> jnp.ndarray:
         """Return exact batched scores for this interaction family."""
+
+    @abstractmethod
+    def analytic_cutoff_tail_bound(self) -> float:
+        """Certified upper bound on tail contribution beyond cutoff radius.
+
+        Returns the maximum absolute error from using cutoff approximation
+        instead of infinite-range exact scoring, summed over all receptor-ligand
+        pairs. This is batch-size independent.
+
+        Lean: sum_uniformApprox — cutoff approximation error per channel.
+        """
 
     @abstractmethod
     def cutoff_scores(
@@ -496,6 +523,19 @@ class CertifiedContactSurrogateSpec(CertifiedOptionalInteractionTerm):
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         return cls(*children, *aux_data)
+
+    def analytic_cutoff_tail_bound(self) -> float:
+        """Contact Gaussian tail: W_max² × exp(-(β × R_cutoff)²) × N_pairs.
+
+        Lean: GaussianDecayBounds.lean::GD3.
+        """
+        import math
+
+        w_max_rec = float(jnp.max(jnp.abs(self.receptor_weights)))
+        w_max_lig = float(jnp.max(jnp.abs(self.ligand_weights)))
+        n_pairs = int(self.receptor_weights.shape[0]) * int(self.ligand_weights.shape[0])
+        tail_per_pair = w_max_rec * w_max_lig * math.exp(-(self.beta * self.cutoff) ** 2)
+        return tail_per_pair * n_pairs
 
     def receptor_subset(self, indices: jnp.ndarray) -> "CertifiedContactSurrogateSpec":
         return CertifiedContactSurrogateSpec(
@@ -618,6 +658,21 @@ class CertifiedMetalCoordinationSpec(CertifiedOptionalInteractionTerm):
             angle_width=aux_data[2],
             cutoff=aux_data[3],
         )
+
+    def analytic_cutoff_tail_bound(self) -> float:
+        """Metal coordination Gaussian tail: S_max² × exp(-((R-d₀)/σ)²) × N_pairs.
+
+        Lean: MetalCoordinationApproximation.lean::MC3.
+        """
+        import math
+
+        s_max_rec = float(jnp.max(jnp.abs(self.receptor_strengths)))
+        s_max_lig = float(jnp.max(jnp.abs(self.ligand_strengths)))
+        n_pairs = int(self.receptor_strengths.shape[0]) * int(self.ligand_strengths.shape[0])
+        tail_per_pair = s_max_rec * s_max_lig * math.exp(
+            -((self.cutoff - self.ideal_distance) / self.distance_width) ** 2
+        )
+        return tail_per_pair * n_pairs
 
     def receptor_subset(self, indices: jnp.ndarray) -> "CertifiedMetalCoordinationSpec":
         return CertifiedMetalCoordinationSpec(
@@ -772,6 +827,21 @@ class CertifiedDirectionalHBondSpec(CertifiedOptionalInteractionTerm):
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         return cls(*children, *aux_data)
+
+    def analytic_cutoff_tail_bound(self) -> float:
+        """H-bond Gaussian tail: S_max² × exp(-((R-d₀)/σ)²) × N_pairs.
+
+        Lean: ThermalFluctuationBounds.lean — Gaussian envelope decay.
+        """
+        import math
+
+        s_max_rec = float(jnp.max(jnp.abs(self.receptor_strengths)))
+        s_max_lig = float(jnp.max(jnp.abs(self.ligand_strengths)))
+        n_pairs = int(self.receptor_strengths.shape[0]) * int(self.ligand_strengths.shape[0])
+        tail_per_pair = s_max_rec * s_max_lig * math.exp(
+            -((self.cutoff - self.ideal_distance) / self.distance_width) ** 2
+        )
+        return tail_per_pair * n_pairs
 
     def receptor_subset(self, indices: jnp.ndarray) -> "CertifiedDirectionalHBondSpec":
         if indices.shape[0] == 0:
@@ -960,6 +1030,37 @@ class CertifiedRichChemistryPlan:
             cooperative_alpha=self.cooperative_alpha,
             extended_terms=self.extended_terms.receptor_subset(indices),
         )
+
+    def analytic_total_delta(self, n_water_bridges: int = 0) -> float:
+        """Batch-size-independent delta from analytic bounds.
+
+        Three tiers:
+          Tier 1: Softened LJ shared base → δ = 0
+                  (Lean: softened_lj_self_approx_zero)
+          Tier 2: Cutoff approximation tail bounds
+                  (Lean: sum_uniformApprox — per-channel cutoff tail errors)
+          Tier 3: Omitted channel value bounds
+                  (Lean: base_plus_omitted_uniformApprox +
+                         omitted_channel_is_bounded_by_supremum)
+        """
+        # Tier 2: cutoff tail bounds (batch-size independent)
+        cutoff_delta = (
+            self.screened_coulomb.analytic_cutoff_tail_bound()
+            + self.contact.analytic_cutoff_tail_bound()
+            + self.hbond_receptor_donor.analytic_cutoff_tail_bound()
+            + self.hbond_ligand_donor.analytic_cutoff_tail_bound()
+            + self.metal_coordination.analytic_cutoff_tail_bound()
+            + sum(t.analytic_cutoff_tail_bound() for t in self.extended_terms.terms)
+        )
+        # Tier 3: omitted channel value bounds
+        # Cooperative H-bond: |α| × N² where N = 2 (receptor_donor + ligand_donor)
+        # Lean: CooperativeHBondApproximation.lean::cooperative_correction_bounded
+        cooperative_bound = cooperative_hbond_correction_bound(self.cooperative_alpha, 2)
+        # Water bridges: 2 per bridge
+        # Lean: ExplicitWaterPlacement.lean::water_bridge_is_bounded_omitted_channel
+        water_bridge_bound = 2.0 * n_water_bridges
+        omitted_delta = cooperative_bound + water_bridge_bound
+        return cutoff_delta + omitted_delta
 
     @property
     def has_active_directional_hbond(self) -> jnp.ndarray:

@@ -325,6 +325,33 @@ def ligand_strain_theorem_handles() -> tuple[str, ...]:
     return _selected_handles(LSA1, LSA2, LSA3, LSA4, LSA5, LSA6, LSA7, LSA8)
 
 
+def branch_and_bound_cross_docking_handles() -> tuple[str, ...]:
+    return ("XD1", "XD2", "XD3", "XD4")
+
+
+def strain_augmented_cross_docking_handles() -> tuple[str, ...]:
+    return ("XD5", "XD6", "XD7", "XD8")
+
+
+def pocket_cross_docking_handles() -> tuple[str, ...]:
+    return ("XD9", "XD10")
+
+
+def receptor_flex_cross_docking_handles() -> tuple[str, ...]:
+    return ("XD11", "XD12")
+
+
+def cross_docking_theorem_handles() -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            branch_and_bound_cross_docking_handles()
+            + strain_augmented_cross_docking_handles()
+            + pocket_cross_docking_handles()
+            + receptor_flex_cross_docking_handles()
+        )
+    )
+
+
 def directional_metal_coordination_theorem_handles() -> tuple[str, ...]:
     return _selected_handles(DMC1, DMC2, DMC3, DMC4, DMC5)
 

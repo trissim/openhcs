@@ -16,7 +16,7 @@ from dq_dock_engine.docking_config import (
 )
 
 
-def _make_request(*, top_k_to_optimize: int, target_error: float = 0.001):
+def _make_request(*, target_error: float = 0.001):
     ligand_ctx = LigandContext(
         base_coords=jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32),
         base_radii=jnp.array([1.7], dtype=jnp.float32),
@@ -32,7 +32,7 @@ def _make_request(*, top_k_to_optimize: int, target_error: float = 0.001):
         receptor_radii=jnp.array([1.7], dtype=jnp.float32),
         ligand_ctx=ligand_ctx,
         box=box,
-        n_poses=3,
+        n_poses_override=3,
         key=jax.random.PRNGKey(0),
         config=DockingConfig(
             mode=DockingMode.CERTIFIED,
@@ -41,14 +41,13 @@ def _make_request(*, top_k_to_optimize: int, target_error: float = 0.001):
             target_error=target_error,
             exact_chemistry_mode=ExactChemistryMode.NONE,
         ),
-        top_k_to_optimize=top_k_to_optimize,
     )
 
 
 def test_certified_pruning_pass_uses_exact_certificate_for_top_k(monkeypatch) -> None:
     coarse_scores = jnp.array([0.0, 10.0, 0.1], dtype=jnp.float32)
     exact_scores = jnp.array([0.0, 0.05, 2.0], dtype=jnp.float32)
-    request = _make_request(top_k_to_optimize=2, target_error=0.1)
+    request = _make_request(target_error=0.1)
 
     monkeypatch.setattr(
         docking_pipeline,
@@ -81,7 +80,7 @@ def test_certified_pruning_pass_uses_exact_certificate_for_top_k(monkeypatch) ->
 
 
 def test_certified_pipeline_route_scores_only_valid_survivors(monkeypatch) -> None:
-    request = _make_request(top_k_to_optimize=2)
+    request = _make_request()
     pose_vecs = PoseVector(
         translation=jnp.array(
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=jnp.float32
@@ -131,7 +130,7 @@ def test_certified_pipeline_route_scores_only_valid_survivors(monkeypatch) -> No
 
 
 def test_certified_pipeline_route_optimizes_all_certified_survivors() -> None:
-    request = _make_request(top_k_to_optimize=1)
+    request = _make_request()
     survivor_pose_vecs = PoseVector(
         translation=jnp.array(
             [[10.0, 0.0, 0.0], [20.0, 0.0, 0.0], [30.0, 0.0, 0.0]],
@@ -168,7 +167,7 @@ def test_certified_pipeline_route_optimizes_all_certified_survivors() -> None:
 
 
 def test_score_exact_pose_batch_scores_large_pose_sets_in_chunks(monkeypatch) -> None:
-    request = _make_request(top_k_to_optimize=2)
+    request = _make_request()
     chunk_sizes: list[int] = []
 
     class FakeScoringContext:
@@ -198,7 +197,7 @@ def test_score_exact_pose_batch_scores_large_pose_sets_in_chunks(monkeypatch) ->
 def test_certified_pipeline_route_fails_loud_when_survivor_capacity_is_exceeded(
     monkeypatch,
 ) -> None:
-    request = _make_request(top_k_to_optimize=2)
+    request = _make_request()
     n_survivors = docking_pipeline.SURVIVOR_BATCH_SIZE + 1
     pose_vecs = PoseVector(
         translation=jnp.zeros((n_survivors, 3), dtype=jnp.float32),

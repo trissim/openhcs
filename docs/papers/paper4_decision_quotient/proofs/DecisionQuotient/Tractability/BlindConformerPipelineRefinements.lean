@@ -213,6 +213,54 @@ def flexCorrectedLowerBound
     (rigidScore improvementBound receptorFlexError : P → ℝ) (p : P) : ℝ :=
   rigidScore p - improvementBound p - receptorFlexError p
 
+/-- If both the reference and alternative receptor-conformation scores are each
+    approximated within `δ`, then the exact receptor-flexibility gap is bounded by
+    the coarse gap plus `2δ`. -/
+theorem exact_flex_gap_le_coarse_gap_plus_two_delta
+    (exactRef exactConf coarseRef coarseConf δ : ℝ)
+    (hRef : |exactRef - coarseRef| ≤ δ)
+    (hConf : |exactConf - coarseConf| ≤ δ) :
+    |exactConf - exactRef| ≤ |coarseConf - coarseRef| + 2 * δ := by
+  have hRef' : |coarseRef - exactRef| ≤ δ := by
+    simpa [abs_sub_comm] using hRef
+  have hConf' : |exactConf - coarseConf| ≤ δ := hConf
+  have hTriangle :
+      |(exactConf - coarseConf) + (coarseConf - coarseRef) + (coarseRef - exactRef)| ≤
+        |exactConf - coarseConf| + |coarseConf - coarseRef| + |coarseRef - exactRef| := by
+    calc
+      |(exactConf - coarseConf) + (coarseConf - coarseRef) + (coarseRef - exactRef)|
+        = |((exactConf - coarseConf) + (coarseConf - coarseRef)) + (coarseRef - exactRef)| := by ring_nf
+      _ ≤ |(exactConf - coarseConf) + (coarseConf - coarseRef)| + |coarseRef - exactRef| := by
+        exact abs_add_le _ _
+      _ ≤ |exactConf - coarseConf| + |coarseConf - coarseRef| + |coarseRef - exactRef| := by
+        gcongr
+        exact abs_add_le _ _
+  calc
+    |exactConf - exactRef|
+      = |(exactConf - coarseConf) + (coarseConf - coarseRef) + (coarseRef - exactRef)| := by ring_nf
+    _ ≤ |exactConf - coarseConf| + |coarseConf - coarseRef| + |coarseRef - exactRef| := hTriangle
+    _ ≤ δ + |coarseConf - coarseRef| + δ := by gcongr
+    _ = |coarseConf - coarseRef| + 2 * δ := by ring
+
+/-- Certified blind-conformer lower bound from a coarse rigid score, a conformer
+    improvement allowance, and a coarse receptor-flexibility allowance.
+
+    This packages the runtime formula
+
+      coarseRef - confImprove - coarseFlexGap - 3δ
+
+    as a sound lower bound on the final exact energy whenever the exact rigid
+    score is approximated within `δ` and the exact receptor-flexibility gap is
+    bounded using `exact_flex_gap_le_coarse_gap_plus_two_delta`. -/
+theorem coarse_rigid_with_flex_and_conformer_lower_bound
+    (exactRigid coarseRigid exactFinal confImprove coarseFlexGap δ : ℝ)
+    (hApprox : |exactRigid - coarseRigid| ≤ δ)
+    (hFinal : exactRigid - confImprove - (coarseFlexGap + 2 * δ) ≤ exactFinal) :
+    coarseRigid - confImprove - coarseFlexGap - 3 * δ ≤ exactFinal := by
+  have hLower : coarseRigid - δ ≤ exactRigid := by
+    linarith [(abs_le.mp hApprox).left]
+  linarith
+
 /-- Certified lower bound for the flexible objective after adding receptor-error
     allowance. -/
 theorem flexCorrected_is_certified_lowerBound

@@ -1147,7 +1147,7 @@ def test_certified_pipeline_does_not_call_heuristic_sampler(monkeypatch):
         receptor_radii=jnp.array([1.0]),
         ligand_ctx=ligand_ctx,
         box=box,
-        n_poses=1,
+        n_poses_override=1,
         engine=ScoringEngine.INTERNAL_LJ,
         key=jax.random.PRNGKey(0),
         config=DockingConfig(

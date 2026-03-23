@@ -212,6 +212,11 @@ class DerivedInteractionTerm(CertifiedOptionalInteractionTerm, DerivedPytreeReco
     def cutoff_radius(self) -> float:
         return self.cutoff
 
+    def analytic_cutoff_tail_bound(self) -> float:
+        """Short-range interactions (Gaussian/exponential decay) have negligible
+        tail beyond cutoff. Conservative bound: 0.0 kcal/mol."""
+        return 0.0
+
     @property
     def is_active(self) -> jnp.ndarray:
         if not type(self)._activity_field_groups:

@@ -98,6 +98,29 @@ class CertifiedScoringContext:
     def uses_extended_rich(self) -> bool:
         return self.exact_chemistry_mode == ExactChemistryMode.EXTENDED_RICH
 
+    def analytic_pruning_delta(self) -> float:
+        """Batch-size-independent certified pruning delta.
+
+        Dispatches on exact_chemistry_mode:
+          EXTENDED_RICH → analytic 3-tier bounds from rich_chemistry_plan
+          Otherwise     → 0.0 (softened LJ is the shared base; no other channels)
+
+        Lean: softened_lj_self_approx_zero (tier 1),
+              sum_uniformApprox (tier 2),
+              base_plus_omitted_uniformApprox (tier 3).
+        """
+        if not self.uses_extended_rich:
+            # Pure softened LJ or Ewald: exact and coarse share the same
+            # softened LJ base → δ = 0 (Lean: softened_lj_self_approx_zero)
+            return 0.0
+        assert self.rich_chemistry_plan is not None
+        n_water_bridges = 0
+        if self.water_grid is not None:
+            n_water_bridges = int(self.water_grid.positions.shape[0])
+        return self.rich_chemistry_plan.analytic_total_delta(
+            n_water_bridges=n_water_bridges,
+        )
+
     def receptor_subset(
         self, retained_indices: jnp.ndarray
     ) -> "CertifiedScoringContext":
@@ -213,6 +236,64 @@ class CertifiedScoringContext:
             electrostatics=self.electrostatics,
         )
 
+    def _score_softened_physics_only(
+        self,
+        receptor_coords: jnp.ndarray,
+        poses_coords: jnp.ndarray,
+        receptor_radii: jnp.ndarray,
+        ligand_radii: jnp.ndarray,
+        target_error: float,
+        epsilon: float,
+        softening_radius: float | None,
+    ) -> CertifiedSoftenedBatchResult:
+        if self.uses_extended_rich:
+            if self.rich_chemistry_plan is None:
+                raise ValueError(
+                    "Extended-rich exact chemistry mode requires a rich chemistry plan"
+                )
+            return score_certified_softened_rich_chemistry_batch(
+                receptor_coords=receptor_coords,
+                poses_coords=poses_coords,
+                receptor_radii=receptor_radii,
+                ligand_radii=ligand_radii,
+                rich_chemistry_plan=self.rich_chemistry_plan,
+                target_error=target_error,
+                epsilon=epsilon,
+                softening_radius=softening_radius,
+            )
+        if self.electrostatics is not None:
+            return score_certified_softened_lj_realspace_ewald(
+                receptor_coords=receptor_coords,
+                poses_coords=poses_coords,
+                receptor_radii=receptor_radii,
+                ligand_radii=ligand_radii,
+                electrostatics=self.electrostatics,
+                target_error=target_error,
+                epsilon=epsilon,
+                softening_radius=softening_radius,
+            )
+        return score_certified_softened_lj(
+            receptor_coords=receptor_coords,
+            poses_coords=poses_coords,
+            receptor_radii=receptor_radii,
+            ligand_radii=ligand_radii,
+            target_error=target_error,
+            epsilon=epsilon,
+            softening_radius=softening_radius,
+        )
+
+    @staticmethod
+    def _posewise_receptor_flex_error(
+        reference_scores: jnp.ndarray,
+        per_conformation_scores: tuple[jnp.ndarray, ...],
+    ) -> jnp.ndarray:
+        if not per_conformation_scores:
+            return jnp.zeros_like(reference_scores)
+        diffs = [
+            jnp.abs(scores_k - reference_scores) for scores_k in per_conformation_scores
+        ]
+        return jnp.max(jnp.stack(diffs, axis=0), axis=0)
+
     def score_rigid_exact_batch(
         self,
         *,
@@ -236,6 +317,102 @@ class CertifiedScoringContext:
             ligand_radii,
             target_error,
             epsilon,
+        )
+
+    def score_rigid_softened_batch(
+        self,
+        *,
+        receptor_coords: jnp.ndarray,
+        poses_coords: jnp.ndarray,
+        receptor_radii: jnp.ndarray,
+        ligand_radii: jnp.ndarray,
+        target_error: float,
+        epsilon: float,
+        softening_radius: float | None,
+    ) -> CertifiedSoftenedBatchResult:
+        return self._score_softened_physics_only(
+            receptor_coords,
+            poses_coords,
+            receptor_radii,
+            ligand_radii,
+            target_error,
+            epsilon,
+            softening_radius,
+        )
+
+    def posewise_receptor_flex_error_exact_batch(
+        self,
+        *,
+        receptor_coords: jnp.ndarray,
+        poses_coords: jnp.ndarray,
+        receptor_radii: jnp.ndarray,
+        ligand_radii: jnp.ndarray,
+        target_error: float,
+        epsilon: float,
+    ) -> jnp.ndarray:
+        if self.receptor_conformations is None:
+            return jnp.zeros((poses_coords.shape[0],), dtype=poses_coords.dtype)
+        ref_scores = self.score_rigid_exact_batch(
+            receptor_coords=receptor_coords,
+            poses_coords=poses_coords,
+            receptor_radii=receptor_radii,
+            ligand_radii=ligand_radii,
+            target_error=target_error,
+            epsilon=epsilon,
+        ).scores
+        conf_scores = tuple(
+            self.score_rigid_exact_batch(
+                receptor_coords=conf.coords,
+                poses_coords=poses_coords,
+                receptor_radii=conf.radii,
+                ligand_radii=ligand_radii,
+                target_error=target_error,
+                epsilon=epsilon,
+            ).scores
+            for conf in self.receptor_conformations
+        )
+        return self._posewise_receptor_flex_error(ref_scores, conf_scores)
+
+    def posewise_receptor_flex_error_softened_batch(
+        self,
+        *,
+        receptor_coords: jnp.ndarray,
+        poses_coords: jnp.ndarray,
+        receptor_radii: jnp.ndarray,
+        ligand_radii: jnp.ndarray,
+        target_error: float,
+        epsilon: float,
+        softening_radius: float | None,
+    ) -> tuple[jnp.ndarray, jax.Array | float]:
+        ref_scores = self.score_rigid_softened_batch(
+            receptor_coords=receptor_coords,
+            poses_coords=poses_coords,
+            receptor_radii=receptor_radii,
+            ligand_radii=ligand_radii,
+            target_error=target_error,
+            epsilon=epsilon,
+            softening_radius=softening_radius,
+        )
+        if self.receptor_conformations is None:
+            return (
+                jnp.zeros((poses_coords.shape[0],), dtype=poses_coords.dtype),
+                ref_scores.softening_error_bound,
+            )
+        conf_scores = tuple(
+            self.score_rigid_softened_batch(
+                receptor_coords=conf.coords,
+                poses_coords=poses_coords,
+                receptor_radii=conf.radii,
+                ligand_radii=ligand_radii,
+                target_error=target_error,
+                epsilon=epsilon,
+                softening_radius=softening_radius,
+            ).scores
+            for conf in self.receptor_conformations
+        )
+        return (
+            self._posewise_receptor_flex_error(ref_scores.scores, conf_scores),
+            ref_scores.softening_error_bound,
         )
 
     def score_exact_batch(

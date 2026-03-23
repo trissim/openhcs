@@ -14,6 +14,7 @@ from dq_dock_engine.docking.formal_handles import (
     conformer_search_theorem_handles,
     contact_surrogate_theorem_handles,
     cooperative_hbond_theorem_handles,
+    cross_docking_theorem_handles,
     directional_hbond_finite_theorem_handles,
     directional_metal_coordination_theorem_handles,
     explicit_water_placement_theorem_handles,
@@ -204,6 +205,20 @@ def test_new_chemistry_handle_helpers_surface_new_theorem_families() -> None:
         "CS7",
         "CS8",
         "CS9",
+    }
+    assert set(cross_docking_theorem_handles()) == {
+        "XD1",
+        "XD2",
+        "XD3",
+        "XD4",
+        "XD5",
+        "XD6",
+        "XD7",
+        "XD8",
+        "XD9",
+        "XD10",
+        "XD11",
+        "XD12",
     }
     assert {"TK13", "TK15"}.issubset(set(topk_bridge_theorem_handles()))
     assert {"SH1", "SH6"}.issubset(set(support_expansion_theorem_handles()))
@@ -623,4 +638,4 @@ def test_cooperative_correction_batch_bounded() -> None:
     # Zero scores give zero correction
     assert np.isclose(float(correction[2]), 0.0, atol=1e-8)
     # All-ones gives α · N² (maximum)
-    assert np.isclose(float(correction[1]), alpha * n_hbonds ** 2, atol=1e-6)
+    assert np.isclose(float(correction[1]), alpha * n_hbonds**2, atol=1e-6)

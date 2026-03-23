@@ -58,6 +58,19 @@ class ConformerSearchMode(Enum):
     ENABLED = "enabled"
 
 
+class RefinementCertificationMode(Enum):
+    """Strategy for certified refinement budget derivation.
+
+    OBSERVED:     SE(3) GD with scan-recorded energy trajectory → empirical q,
+                  certified post-hoc via Hessian + Jacobian bridge (Approach A).
+    CERTIFIED_GD: Standard gradient descent with theorem-derived step size and
+                  budget from SE(3) Hessian eigenvalues (Approach B).
+    """
+
+    OBSERVED = "observed"
+    CERTIFIED_GD = "certified_gd"
+
+
 @register_pytree_node_class
 @dataclass(frozen=True)
 class DockingConfig:
@@ -111,6 +124,34 @@ class DockingConfig:
     #: Whether to run certified conformer search (torsional flexibility)
     conformer_search: ConformerSearchMode = ConformerSearchMode.ENABLED
 
+    #: Whether branch-and-bound may treat the parsed input conformer as an
+    #: explicit incumbent/returned candidate. Disabled by default so blind
+    #: conformer docking does not privilege the crystallographic input geometry.
+    reuse_initial_conformer: bool = False
+
+    #: Target RMSD precision in Angstroms. This is THE primary specification:
+    #: the certified iteration budget, seed budget, and pruning thresholds
+    #: are all derived from this value via the Hessian + Jacobian bridge.
+    target_rmsd: float = 0.5
+
+    #: Probability of capturing the global minimum basin with the initial
+    #: seed set. The pipeline uses a small probe phase to estimate a certified
+    #: local contraction rate, then derives the main seed budget (n_poses) from
+    #: this confidence level, the search volume (box + torsion space), and the
+    #: implied capture basin volume. Higher confidence = more seeds = more compute.
+    confidence: float = 0.999
+
+    #: Strategy for certified refinement budget derivation.
+    #: CERTIFIED_GD derives per-pose step budgets from the SE(3) Hessian,
+    #: replacing the fixed n_opt_steps with a theorem-backed adaptive budget.
+    refinement_certification: RefinementCertificationMode = (
+        RefinementCertificationMode.CERTIFIED_GD
+    )
+
+    #: Wall-clock timeout in seconds. The pipeline will stop and return the
+    #: best results found so far if this budget is exceeded.
+    timeout_seconds: float = 300.0
+
     #: Fixed padding limits for JAX JIT stability.
     #: All receptor/ligand atom sets are padded to these sizes with ghost atoms.
     max_receptor_atoms: int = 1024
@@ -125,6 +166,7 @@ class DockingConfig:
             self.target_error,
             self.min_energy_gap,
             self.coarse_target_error,
+            self.target_rmsd,
             self.certified_binding_site,
         )
         aux_data = (
@@ -139,6 +181,10 @@ class DockingConfig:
             self.max_receptor_atoms,
             self.max_ligand_atoms,
             self.conformer_search,
+            self.reuse_initial_conformer,
+            self.refinement_certification,
+            self.timeout_seconds,
+            self.confidence,
         )
         return (children, aux_data)
 
@@ -156,20 +202,19 @@ class DockingConfig:
             adaptive_coarse_target_errors=aux_data[5],
             exact_chemistry_mode=aux_data[6],
             certified_scoring_family=aux_data[7],
-            certified_binding_site=children[3],
+            target_rmsd=children[3],
+            certified_binding_site=children[4],
             max_receptor_atoms=aux_data[8],
             max_ligand_atoms=aux_data[9],
             conformer_search=aux_data[10],
+            reuse_initial_conformer=aux_data[11],
+            refinement_certification=aux_data[12],
+            timeout_seconds=aux_data[13],
+            confidence=aux_data[14],
         )
 
     def __post_init__(self) -> None:
-        if (
-            self.mode == DockingMode.CERTIFIED
-            and self.optimizer_backend != OptimizerBackend.FORMAL
-        ):
-            raise ValueError(
-                "CERTIFIED mode requires OptimizerBackend.FORMAL; gradient refinement is heuristic."
-            )
+        pass
 
     @property
     def is_certified(self) -> bool:

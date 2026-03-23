@@ -24,6 +24,7 @@ from dq_dock_engine.docking.conformer_search import (
     search_conformers,
 )
 from dq_dock_engine.docking.chemistry_annotations import _infer_bond_adjacency
+from dq_dock_engine.docking_config import DockingConfig, DockingMode
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +318,13 @@ class TestBranchAndBound:
         assert len(result.conformer_coords) == 1
         np.testing.assert_allclose(result.conformer_coords[0], coords, atol=1e-5)
 
+    def test_reuse_initial_conformer_flag_is_explicit(self):
+        assert BranchAndBoundConfig().reuse_initial_conformer is False
+        assert (
+            BranchAndBoundConfig(reuse_initial_conformer=True).reuse_initial_conformer
+            is True
+        )
+
 
 # ---------------------------------------------------------------------------
 # Integration: search_conformers
@@ -344,3 +352,7 @@ class TestSearchConformers:
         assert len(result.conformer_coords) >= 1
         for c in result.conformer_coords:
             assert c.shape == (n, 3)
+
+
+def test_docking_config_defaults_to_blind_conformer_search_seed() -> None:
+    assert DockingConfig(mode=DockingMode.HEURISTIC).reuse_initial_conformer is False

@@ -595,8 +595,6 @@ def _write_markdown_report(payload: dict, report_path: Path) -> None:
         f"- Completed DQ-Dock complexes: `{summary['n_complexes_run']}`",
         f"- Successful DQ-Dock complexes: `{len(successful_dq_rows)}`",
         f"- Excluded complexes: `{summary['n_complexes_excluded']}`",
-        f"- Poses: `{summary['n_poses']}`",
-        f"- Optimization steps: `{summary['n_opt_steps']}`",
         f"- Pocket-guided sampling: `{summary['use_pocket_guided']}`",
         f"- Competitors: `{', '.join(item['display_name'] for item in summary['competitors'])}`",
         "",

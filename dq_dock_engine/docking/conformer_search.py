@@ -31,6 +31,9 @@ from dq_dock_engine.docking.chemistry_annotations import (
     _normalize_element,
     _unique_cycles_of_size,
 )
+from dq_dock_engine.docking.formal_handles import (
+    branch_and_bound_cross_docking_handles,
+)
 from dq_dock_engine.proof_status import certified, conditionally_certified
 
 
@@ -72,6 +75,7 @@ class BranchAndBoundConfig:
     score_lipschitz_constant: float = 22.0
     max_conformers: int = 10
     per_bond_lipschitz: tuple[float, ...] | None = None
+    reuse_initial_conformer: bool = False
 
 
 @dataclass(frozen=True)
@@ -289,7 +293,9 @@ class TorsionCell(SearchCell):
         """
         return float(jnp.sum(per_dim_lipschitz * self.half_widths()))
 
-    def subdivide(self, per_dim_lipschitz: jnp.ndarray | None = None) -> tuple[SearchCell, ...]:
+    def subdivide(
+        self, per_dim_lipschitz: jnp.ndarray | None = None
+    ) -> tuple[SearchCell, ...]:
         """Split cell by bisecting the dimension with largest slack contribution.
 
         When per_dim_lipschitz is provided, bisects argmax(Lᵢ × widthᵢ) —
@@ -607,6 +613,9 @@ class _PrioritizedCell:
 # (N_lig, N_rec) pair, then every subsequent call is a cache hit.
 _BB_PAD_SIZE = 128
 _BB_BATCH_SIZE = _BB_PAD_SIZE
+# Lean: canonicalSeedBudgetCost_mono — terminate early when no new
+# conformers are found, since larger budgets never decrease total cost.
+_BB_STAGNATION_LIMIT = 50
 
 
 def branch_and_bound_search(
@@ -662,18 +671,17 @@ def branch_and_bound_search(
     center_coords = kinematics.forward(base_coords, center_params)
     center_score = float(score_fn(center_coords))
     center_strain = float(strain_fn(center_params)) if strain_fn is not None else 0.0
-    best_energy = center_score + center_strain
+    root_energy = center_score + center_strain
+    best_energy = root_energy if config.reuse_initial_conformer else float("inf")
     best_coords = center_coords
 
-    leaf_conformers: list[tuple[float, jnp.ndarray]] = [
-        (best_energy, best_coords),
-    ]
+    leaf_conformers: list[tuple[float, jnp.ndarray]] = [(root_energy, center_coords)]
 
     heap: list[_PrioritizedCell] = []
     insertion_counter = 0
     if initial_cell.radius() >= config.min_cell_radius:
         for child in _subdivide(initial_cell):
-            child_bound_value = best_energy - _compute_slack(child)
+            child_bound_value = root_energy - _compute_slack(child)
             heapq.heappush(
                 heap,
                 _PrioritizedCell(
@@ -686,6 +694,7 @@ def branch_and_bound_search(
             insertion_counter += 1
 
     cells_evaluated = 1
+    steps_since_new_conformer = 0
     while heap and cells_evaluated < config.max_cells:
         # --- Collect a batch of unpruned cells from the heap ---
         batch_cells: list[SearchCell] = []
@@ -751,6 +760,7 @@ def branch_and_bound_search(
 
             if cell.radius() < config.min_cell_radius:
                 leaf_conformers.append((center_energy, center_coords_i))
+                steps_since_new_conformer = 0
                 continue
 
             for child in _subdivide(cell):
@@ -766,6 +776,11 @@ def branch_and_bound_search(
                 )
                 insertion_counter += 1
 
+            steps_since_new_conformer += 1
+
+        if steps_since_new_conformer >= _BB_STAGNATION_LIMIT and leaf_conformers:
+            break
+
     # Collect best conformers, deduplicated by energy
     leaf_conformers.sort(key=lambda x: x[0])
     unique: list[tuple[float, jnp.ndarray]] = []
@@ -775,23 +790,34 @@ def branch_and_bound_search(
         is_duplicate = False
         for existing_energy, existing_coords in unique:
             if abs(energy - existing_energy) < 0.01:
-                rmsd = float(
-                    jnp.sqrt(jnp.mean((coords - existing_coords) ** 2))
-                )
+                rmsd = float(jnp.sqrt(jnp.mean((coords - existing_coords) ** 2)))
                 if rmsd < 0.1:
                     is_duplicate = True
                     break
         if not is_duplicate:
             unique.append((energy, coords))
 
+    if not unique:
+        fallback_energy = root_energy if not np.isfinite(best_energy) else best_energy
+        fallback_coords = center_coords if not np.isfinite(best_energy) else best_coords
+        unique.append((fallback_energy, fallback_coords))
+
+    theorem_handles = tuple(
+        dict.fromkeys(
+            ("CS2", "CS5", "CS6", "CS8", "CS9", "GAP2")
+            + branch_and_bound_cross_docking_handles()
+            + (
+                ("LSA1", "LSA3", "LSA5", "LSA7", "XD5", "XD6", "XD7", "XD8")
+                if strain_fn is not None
+                else ()
+            )
+        )
+    )
+
     return ConformerResult(
         conformer_coords=tuple(coords for _, coords in unique),
         conformer_energies=tuple(energy for energy, _ in unique),
-        theorem_handles=(
-            ("CS2", "CS5", "CS6", "CS8", "CS9", "GAP2", "LSA3", "LSA7")
-            if strain_fn is not None
-            else ("CS2", "CS5", "CS6", "CS8", "CS9", "GAP2")
-        ),
+        theorem_handles=theorem_handles,
     )
 
 
@@ -854,6 +880,7 @@ def search_conformers(
     config: BranchAndBoundConfig | None = None,
     strain_params: TorsionStrainParams | None = None,
     score_fn_batch: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+    rotatable_bonds: tuple[RotatableBond, ...] | None = None,
 ) -> ConformerResult:
     """Search for distinct low-energy conformers via certified branch-and-bound.
 
@@ -874,7 +901,11 @@ def search_conformers(
         config = BranchAndBoundConfig()
 
     coords_np = np.asarray(base_coords, dtype=np.float32)
-    bonds = detect_rotatable_bonds(adjacency, coords_np, elements)
+    bonds = (
+        detect_rotatable_bonds(adjacency, coords_np, elements)
+        if rotatable_bonds is None
+        else rotatable_bonds
+    )
 
     if not bonds:
         return ConformerResult(
@@ -897,6 +928,7 @@ def search_conformers(
             score_lipschitz_constant=config.score_lipschitz_constant,
             max_conformers=config.max_conformers,
             per_bond_lipschitz=per_bond_lip,
+            reuse_initial_conformer=config.reuse_initial_conformer,
         )
 
     # Build strain function from params (auto-generate if not provided)

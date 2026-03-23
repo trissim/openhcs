@@ -75,7 +75,10 @@ from dq_dock_engine.docking.pipeline import (
     run_docking_pipeline_request,
     run_geometric_blind_docking_request,
 )
-from dq_dock_engine.docking.pdb_io import parse_structure
+from dq_dock_engine.docking.pdb_io import (
+    generate_independent_ligand_geometry,
+    parse_structure,
+)
 from dq_dock_engine.docking.receptor_preparation import (
     EssentialSiteComponentsPolicy,
     PreparedReceptorSystem,
@@ -109,6 +112,7 @@ from dq_dock_engine.docking.formal_handles import (
     ACTIVE_EXACT_CERTIFIED_RUNTIME_CONTRACT,
     ACTIVE_SINGLETON_HYBRID_RUNTIME_CONTRACT,
     CP3,
+    cross_docking_theorem_handles,
     FLO18,
     SD10,
     STAGED_COARSE_TOP1_RUNTIME_CONTRACT,
@@ -142,7 +146,6 @@ DEFAULT_BENCHMARK_CHARGE_METHOD = ChargeMethod.GASTEIGER
 DEFAULT_BENCHMARK_OPTIMIZER_BACKEND = OptimizerBackend.FORMAL
 DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY = FormalRoundStrategy.SINGLETON_HYBRID
 DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY = CertifiedScoringFamily.LJ_REALSPACE_EWALD
-DEFAULT_BENCHMARK_TOP_K_TO_OPTIMIZE = 20
 DEFAULT_BENCHMARK_USE_POCKET_GUIDED = True
 DEFAULT_BENCHMARK_USE_MULTI_STAGE = False
 DEFAULT_BENCHMARK_EXACT_CHEMISTRY_MODE = ExactChemistryMode.EXTENDED_RICH
@@ -320,6 +323,13 @@ class StrictCertifiedBlindDockingExecutor(
     execution_path = BlindDockingExecutionPath.STRICT_CERTIFIED
     request_type = CertifiedBlindDockingRequest
 
+    @staticmethod
+    def _pose_theorem_handles(poses: Sequence[ScoredPose]) -> tuple[str, ...]:
+        merged: list[str] = []
+        for pose in poses:
+            merged.extend(pose.theorem_handles)
+        return tuple(dict.fromkeys(merged))
+
     def run_request(
         self, request: CertifiedBlindDockingRequest
     ) -> CertifiedBlindDockingResult:
@@ -335,7 +345,12 @@ class StrictCertifiedBlindDockingExecutor(
             certification=blind_result.certification,
             execution_path=BlindDockingExecutionPath.STRICT_CERTIFIED,
             certified_failure_reason=blind_result.plan.certified_failure_reason,
-            theorem_handles=blind_result.plan.theorem_handles,
+            theorem_handles=tuple(
+                dict.fromkeys(
+                    blind_result.plan.theorem_handles
+                    + self._pose_theorem_handles(blind_result.poses)
+                )
+            ),
         )
 
 
@@ -401,7 +416,9 @@ class GenericPipelineBlindDockingExecutor(
             certification=certification,
             execution_path=BlindDockingExecutionPath.GENERIC_PIPELINE,
             certified_failure_reason=None,
-            theorem_handles=(),
+            theorem_handles=StrictCertifiedBlindDockingExecutor._pose_theorem_handles(
+                poses
+            ),
         )
 
 
@@ -765,17 +782,18 @@ class DQDockExecutionOptions:
     charge_method: ChargeMethod
     certified_scoring_family: CertifiedScoringFamily
     exact_chemistry_mode: ExactChemistryMode
-    n_poses: int
-    n_opt_steps: int
-    top_k_to_optimize: int
     box_size: float
     formal_round_strategy: FormalRoundStrategy
     use_multi_stage: bool
     use_pocket_guided: bool
     optimizer_backend: "OptimizerBackend"
+    reuse_initial_conformer: bool
+    use_crystal_ligand_geometry: bool
     max_retries: int
     retry_break_rmsd: float
     retry_preserve_seed: bool
+    target_rmsd: float
+    confidence: float
 
 
 @dataclass(frozen=True)
@@ -848,9 +866,6 @@ class BenchmarkState:
             certified_scoring_family=context.certified_scoring_family,
             exact_chemistry_mode=context.exact_chemistry_mode,
             n_complexes_requested=context.n_complexes_requested,
-            n_poses=context.n_poses,
-            n_opt_steps=context.n_opt_steps,
-            top_k_to_optimize=context.top_k_to_optimize,
             box_size=context.box_size,
             formal_round_strategy=context.formal_round_strategy,
             attempt_timeout_seconds=context.attempt_timeout_seconds,
@@ -2049,6 +2064,22 @@ def copy_structure_for_viewing(source: Path, destination: Path) -> None:
     shutil.copy2(source, destination)
 
 
+def prepare_competitor_ligand_input(
+    complex_entry: PreparedBenchmarkComplex,
+    context: BenchmarkExecutionContext,
+) -> tuple[Path, Path | None]:
+    if context.use_crystal_ligand_geometry:
+        return complex_entry.ligand_pdb, None
+    temp_dir = Path(tempfile.mkdtemp(prefix="blind_competitor_ligand_"))
+    ligand_path = temp_dir / f"{complex_entry.ligand_pdb.stem}_blind.pdb"
+    coords, _ = generate_independent_ligand_geometry(
+        complex_entry.ligand_pdb,
+        expected_elements=complex_entry.ligand_elements,
+    )
+    save_pose_from_template(coords, complex_entry.ligand_pdb, ligand_path)
+    return ligand_path, temp_dir
+
+
 def save_benchmark_results(
     output_paths: BenchmarkOutputPaths,
     *,
@@ -2056,9 +2087,6 @@ def save_benchmark_results(
     certified_scoring_family: CertifiedScoringFamily,
     exact_chemistry_mode: ExactChemistryMode,
     n_complexes_requested: int,
-    n_poses: int,
-    n_opt_steps: int,
-    top_k_to_optimize: int,
     box_size: float,
     formal_round_strategy: FormalRoundStrategy,
     attempt_timeout_seconds: float | None,
@@ -2125,7 +2153,10 @@ def save_benchmark_results(
     active_runtime_contract = active_formal_runtime_contract(formal_round_strategy)
     active_runtime_handles = handle_bundle_from_contracts(
         active_runtime_contract,
-        extra_theorem_handles=scoring_family_theorem_handles(certified_scoring_family),
+        extra_theorem_handles=(
+            scoring_family_theorem_handles(certified_scoring_family)
+            + cross_docking_theorem_handles()
+        ),
     )
     staged_runtime_handles = handle_bundle_from_contracts(
         STAGED_COARSE_TOP1_RUNTIME_CONTRACT,
@@ -2196,9 +2227,6 @@ def save_benchmark_results(
         "n_complexes_requested": n_complexes_requested,
         "n_complexes_run": len(dq_rows),
         "n_complexes_excluded": len(excluded_rows),
-        "n_poses": n_poses,
-        "n_opt_steps": n_opt_steps,
-        "top_k_to_optimize": top_k_to_optimize,
         "formal_round_strategy": formal_round_strategy.value,
         "attempt_timeout_seconds": attempt_timeout_seconds,
         "benchmark_pocket_radius_a": BENCHMARK_PROTOCOL.pocket_radius_a,
@@ -2327,6 +2355,7 @@ def run_cli_docking(
         )
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         return DockingRunResult(success=False, error=str(e), time=time.time() - start)
     finally:
@@ -2345,23 +2374,24 @@ def run_dq_dock(
     charge_method: ChargeMethod = DEFAULT_BENCHMARK_CHARGE_METHOD,
     precomputed_ligand_charges: np.ndarray | None = None,
     precomputed_receptor_charges: np.ndarray | None = None,
-    n_poses: int = 2000,
     use_multi_stage: bool = DEFAULT_BENCHMARK_USE_MULTI_STAGE,
     use_pocket_guided: bool = DEFAULT_BENCHMARK_USE_POCKET_GUIDED,
     engine: ScoringEngine = ScoringEngine.INTERNAL_LJ,
     ligand_elements: list[str] | tuple[str, ...] | None = None,
     receptor_elements: list[str] | tuple[str, ...] | None = None,
-    n_opt_steps: int = 50,
-    top_k_to_optimize: int = DEFAULT_BENCHMARK_TOP_K_TO_OPTIMIZE,
     exact_chemistry_mode: ExactChemistryMode = DEFAULT_BENCHMARK_EXACT_CHEMISTRY_MODE,
     max_retries: int = 6,
     optimizer_backend: "OptimizerBackend" = DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
     formal_round_strategy: FormalRoundStrategy = DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY,
     certified_scoring_family: CertifiedScoringFamily = DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
     conformer_search: bool = True,
+    reuse_initial_conformer: bool = False,
+    use_crystal_ligand_geometry: bool = False,
     retry_break_rmsd: float = 0.0,
     retry_preserve_seed: bool = False,
     box_size: float = BENCHMARK_PROTOCOL.box_size_a,
+    target_rmsd: float = 0.5,
+    confidence: float = 0.999,
 ) -> tuple[BenchmarkResult, np.ndarray | None]:
     """Run true DQ-Dock pipeline on complex using core infrastructure."""
     import os
@@ -2375,6 +2405,7 @@ def run_dq_dock(
     from dq_dock_engine.docking.pdb_io import (
         build_ligand_context,
         build_receptor_arrays,
+        generate_independent_ligand_geometry,
     )
     from dq_dock_engine.docking_config import (
         FormalRoundStrategy,
@@ -2403,7 +2434,14 @@ def run_dq_dock(
         target_error=0.001,
         min_energy_gap=0.0,
         use_external_scorer=False,
-        conformer_search=(ConformerSearchMode.ENABLED if conformer_search else ConformerSearchMode.DISABLED),
+        conformer_search=(
+            ConformerSearchMode.ENABLED
+            if conformer_search
+            else ConformerSearchMode.DISABLED
+        ),
+        reuse_initial_conformer=reuse_initial_conformer,
+        target_rmsd=target_rmsd,
+        confidence=confidence,
     )
 
     if ligand_elements is None:
@@ -2427,12 +2465,27 @@ def run_dq_dock(
         )
         ligand_charges = assigner.assign(ligand_source).charges
 
+    ligand_context_coords = ligand_coords
+    ligand_context_adjacency = None
+    if (
+        not use_crystal_ligand_geometry
+        and ligand_elements is not None
+        and ligand_file is not None
+    ):
+        ligand_context_coords, ligand_context_adjacency = (
+            generate_independent_ligand_geometry(
+                ligand_file,
+                expected_elements=tuple(ligand_elements),
+            )
+        )
+
     # Build LigandContext via core infra (auto-centers, stores radii/elements/charges)
     ligand_ctx = build_ligand_context(
-        ligand_coords,
+        ligand_context_coords,
         ligand_radii,
         elements=list(ligand_elements) if ligand_elements is not None else None,
         charges=np.asarray(ligand_charges) if ligand_charges is not None else None,
+        adjacency=ligand_context_adjacency,
     )
 
     runtime_receptor_elements, runtime_receptor_charges = _ligand_receptor_runtime_args(
@@ -2502,7 +2555,6 @@ def run_dq_dock(
                 receptor_radii=runtime_receptor_radii,
                 ligand_ctx=ligand_ctx,
                 box=box,
-                n_poses=n_poses,
                 key=attempt_key,
                 charge_method=charge_method,
                 receptor_file=receptor_file,
@@ -2510,10 +2562,7 @@ def run_dq_dock(
                 precomputed_receptor_charges=runtime_receptor_charges,
                 receptor_elements=runtime_receptor_elements,
                 config=docking_config,
-                top_k=1,
                 optimize=True,
-                n_opt_steps=n_opt_steps,
-                top_k_to_optimize=top_k_to_optimize,
                 include_native=True,
                 engine=engine,
                 use_multi_stage=use_multi_stage,
@@ -2545,7 +2594,7 @@ def run_dq_dock(
                 optimizer_backend.name if optimizer_backend is not None else "GRADIENT"
             )
             print(
-                f"    [Debug] {ligand_file.stem} attempt {attempt + 1}/{max_retries} seed={k0:08x}-{k1:08x} backend={backend_name} n_poses={n_poses} n_opt_steps={n_opt_steps}",
+                f"    [Debug] {ligand_file.stem} attempt {attempt + 1}/{max_retries} seed={k0:08x}-{k1:08x} backend={backend_name} confidence={docking_config.confidence}",
                 flush=True,
             )
 
@@ -2557,10 +2606,8 @@ def run_dq_dock(
 
             if not best_poses:
                 if attempt < max_retries - 1:
-                    n_poses *= 2
-                    n_opt_steps *= 2
                     print(
-                        f"    [Retry {attempt + 2}/{max_retries}] n_poses={n_poses}, n_opt_steps={n_opt_steps} (no poses)"
+                        f"    [Retry {attempt + 2}/{max_retries}] (no poses)"
                     )
                     continue
                 return finalize_attempt_failure(
@@ -2601,10 +2648,8 @@ def run_dq_dock(
                 return best_result, best_pose_coords
 
             if attempt < max_retries - 1:
-                n_poses *= 2
-                n_opt_steps *= 2
                 print(
-                    f"    [Retry {attempt + 2}/{max_retries}] RMSD={rmsd:.2f}A, n_poses={n_poses}, n_opt_steps={n_opt_steps}"
+                    f"    [Retry {attempt + 2}/{max_retries}] RMSD={rmsd:.2f}A"
                 )
                 continue
         except Exception as e:
@@ -2629,10 +2674,8 @@ def run_dq_dock(
                 import traceback
 
                 traceback.print_exc()
-                n_poses *= 2
-                n_opt_steps *= 2
                 print(
-                    f"    [Retry {attempt + 2}/{max_retries}] n_poses={n_poses}, n_opt_steps={n_opt_steps} (exception: {e})"
+                    f"    [Retry {attempt + 2}/{max_retries}] (exception: {e})"
                 )
                 continue
             return finalize_attempt_failure(
@@ -2750,21 +2793,22 @@ def run_dq_dock_benchmark_job(job: DQDockBenchmarkJob) -> DQDockBenchmarkJobResu
         charge_method=job.charge_method,
         precomputed_ligand_charges=job.precomputed_ligand_charges,
         precomputed_receptor_charges=job.precomputed_receptor_charges,
-        n_poses=job.n_poses,
-        n_opt_steps=job.n_opt_steps,
-        top_k_to_optimize=job.top_k_to_optimize,
         exact_chemistry_mode=job.exact_chemistry_mode,
         use_multi_stage=job.use_multi_stage,
         use_pocket_guided=job.use_pocket_guided,
         ligand_elements=job.complex_entry.ligand_elements,
         receptor_elements=job.complex_entry.pocket_elements,
         optimizer_backend=job.optimizer_backend,
+        reuse_initial_conformer=job.reuse_initial_conformer,
+        use_crystal_ligand_geometry=job.use_crystal_ligand_geometry,
         formal_round_strategy=job.formal_round_strategy,
         certified_scoring_family=job.certified_scoring_family,
         max_retries=job.max_retries,
         retry_break_rmsd=job.retry_break_rmsd,
         retry_preserve_seed=job.retry_preserve_seed,
         box_size=job.box_size,
+        target_rmsd=job.target_rmsd,
+        confidence=job.confidence,
     )
     return DQDockBenchmarkJobResult(
         complex_entry=job.complex_entry,
@@ -2982,7 +3026,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
             if context.parallelism.is_parallel
             else ""
         )
-        return f"RUNNING DQ-DOCK ({context.n_poses} poses, {context.n_opt_steps} opt steps, {mode_label}{worker_label})"
+        return f"RUNNING DQ-DOCK ({mode_label}{worker_label})"
 
     def iter_run_results(
         self,
@@ -3109,19 +3153,20 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
             charge_method=complex_entry.chemistry_execution_plan.charge_method,
             precomputed_ligand_charges=complex_entry.ligand_charges,
             precomputed_receptor_charges=complex_entry.pocket_charges,
-            n_poses=context.n_poses,
-            n_opt_steps=context.n_opt_steps,
-            top_k_to_optimize=context.top_k_to_optimize,
             use_multi_stage=context.use_multi_stage,
             use_pocket_guided=context.use_pocket_guided,
             exact_chemistry_mode=context.exact_chemistry_mode,
             optimizer_backend=context.optimizer_backend,
+            reuse_initial_conformer=context.reuse_initial_conformer,
+            use_crystal_ligand_geometry=context.use_crystal_ligand_geometry,
             formal_round_strategy=context.formal_round_strategy,
             certified_scoring_family=context.certified_scoring_family,
             max_retries=context.max_retries,
             retry_break_rmsd=context.retry_break_rmsd,
             retry_preserve_seed=context.retry_preserve_seed,
             box_size=context.box_size,
+            target_rmsd=context.target_rmsd,
+            confidence=context.confidence,
         )
 
     def _save_pose(
@@ -3276,33 +3321,76 @@ class CLIDockingBenchmarkEngine(BenchmarkEngine[CompetitorResultRow]):
         pose_output_path = (
             context.pose_dir / f"{complex_entry.pdb_id}_{self.engine_id}_pose.pdb"
         )
+        ligand_input_path, ligand_input_cleanup = prepare_competitor_ligand_input(
+            complex_entry,
+            context,
+        )
 
         final_row: CompetitorResultRow | None = None
-        for strategy in self.input_preparation_strategies:
-            cleanup_dir: Path | None = None
-            try:
-                prepared_inputs = strategy.prepare_inputs(
-                    complex_entry.receptor_pdb,
-                    complex_entry.ligand_pdb,
-                )
-                cleanup_dir = prepared_inputs.cleanup_dir
-                print(f"  Receptor: {prepared_inputs.receptor_path.name}", flush=True)
-                print(f"  Ligand: {prepared_inputs.ligand_path.name}", flush=True)
-                command = self.build_command(
-                    prepared_inputs,
-                    complex_entry,
-                    pose_output_path,
-                )
-                result = run_cli_docking(
-                    command,
-                    pose_output_path,
-                    timeout_seconds=context.attempt_timeout_seconds,
-                )
-                if not result.success or result.score is None:
-                    error_msg = result.error or f"{self.display_name} run failed"
+        try:
+            for strategy in self.input_preparation_strategies:
+                cleanup_dir: Path | None = None
+                try:
+                    prepared_inputs = strategy.prepare_inputs(
+                        complex_entry.receptor_pdb,
+                        ligand_input_path,
+                    )
+                    cleanup_dir = prepared_inputs.cleanup_dir
                     print(
-                        f"  {prepared_inputs.protocol_label} attempt failed ({error_msg})",
-                        flush=True,
+                        f"  Receptor: {prepared_inputs.receptor_path.name}", flush=True
+                    )
+                    print(f"  Ligand: {prepared_inputs.ligand_path.name}", flush=True)
+                    command = self.build_command(
+                        prepared_inputs,
+                        complex_entry,
+                        pose_output_path,
+                    )
+                    result = run_cli_docking(
+                        command,
+                        pose_output_path,
+                        timeout_seconds=context.attempt_timeout_seconds,
+                    )
+                    if not result.success or result.score is None:
+                        error_msg = result.error or f"{self.display_name} run failed"
+                        print(
+                            f"  {prepared_inputs.protocol_label} attempt failed ({error_msg})",
+                            flush=True,
+                        )
+                        final_row = CompetitorResultRow(
+                            engine_id=self.engine_id,
+                            display_name=self.display_name,
+                            score_name=self.score_name(),
+                            pdb_id=complex_entry.pdb_id,
+                            target_name=complex_entry.target_name,
+                            success=False,
+                            time=result.time,
+                            error=error_msg,
+                        )
+                        continue
+
+                    top_rmsd = float("nan")
+                    best_mode_rmsd = float("nan")
+                    if result.top_coords is not None:
+                        pose_coords = result.top_coords
+                        if len(pose_coords) != len(complex_entry.ligand_coords):
+                            print(
+                                f"  ⚠️  Atom count mismatch: Native={len(complex_entry.ligand_coords)}, {self.display_name}={len(pose_coords)}"
+                            )
+                        top_rmsd = compute_pose_rmsd(
+                            pose_coords,
+                            complex_entry.ligand_coords,
+                        )
+                    if result.model_coords:
+                        model_rmsds = [
+                            compute_pose_rmsd(model_coords, complex_entry.ligand_coords)
+                            for model_coords in result.model_coords
+                        ]
+                        finite_model_rmsds = [r for r in model_rmsds if not np.isnan(r)]
+                        if finite_model_rmsds:
+                            best_mode_rmsd = min(finite_model_rmsds)
+
+                    print(
+                        f"  {self.score_name().title()}: {result.score:.2f}, Top Pose RMSD: {top_rmsd:.2f}A, Best Returned Mode RMSD: {best_mode_rmsd:.2f}A, Time: {result.time:.1f}s"
                     )
                     final_row = CompetitorResultRow(
                         engine_id=self.engine_id,
@@ -3310,53 +3398,20 @@ class CLIDockingBenchmarkEngine(BenchmarkEngine[CompetitorResultRow]):
                         score_name=self.score_name(),
                         pdb_id=complex_entry.pdb_id,
                         target_name=complex_entry.target_name,
-                        success=False,
+                        success=True,
                         time=result.time,
-                        error=error_msg,
+                        score=result.score,
+                        top_rmsd=top_rmsd,
+                        best_mode_rmsd=best_mode_rmsd,
+                        pose_pdb=str(pose_output_path),
                     )
-                    continue
-
-                top_rmsd = float("nan")
-                best_mode_rmsd = float("nan")
-                if result.top_coords is not None:
-                    pose_coords = result.top_coords
-                    if len(pose_coords) != len(complex_entry.ligand_coords):
-                        print(
-                            f"  ⚠️  Atom count mismatch: Native={len(complex_entry.ligand_coords)}, {self.display_name}={len(pose_coords)}"
-                        )
-                    top_rmsd = compute_pose_rmsd(
-                        pose_coords,
-                        complex_entry.ligand_coords,
-                    )
-                if result.model_coords:
-                    model_rmsds = [
-                        compute_pose_rmsd(model_coords, complex_entry.ligand_coords)
-                        for model_coords in result.model_coords
-                    ]
-                    finite_model_rmsds = [r for r in model_rmsds if not np.isnan(r)]
-                    if finite_model_rmsds:
-                        best_mode_rmsd = min(finite_model_rmsds)
-
-                print(
-                    f"  {self.score_name().title()}: {result.score:.2f}, Top Pose RMSD: {top_rmsd:.2f}A, Best Returned Mode RMSD: {best_mode_rmsd:.2f}A, Time: {result.time:.1f}s"
-                )
-                final_row = CompetitorResultRow(
-                    engine_id=self.engine_id,
-                    display_name=self.display_name,
-                    score_name=self.score_name(),
-                    pdb_id=complex_entry.pdb_id,
-                    target_name=complex_entry.target_name,
-                    success=True,
-                    time=result.time,
-                    score=result.score,
-                    top_rmsd=top_rmsd,
-                    best_mode_rmsd=best_mode_rmsd,
-                    pose_pdb=str(pose_output_path),
-                )
-                break
-            finally:
-                if cleanup_dir is not None:
-                    shutil.rmtree(cleanup_dir, ignore_errors=True)
+                    break
+                finally:
+                    if cleanup_dir is not None:
+                        shutil.rmtree(cleanup_dir, ignore_errors=True)
+        finally:
+            if ligand_input_cleanup is not None:
+                shutil.rmtree(ligand_input_cleanup, ignore_errors=True)
 
         if final_row is None:
             final_row = CompetitorResultRow(
@@ -3521,18 +3576,18 @@ To run this benchmark with GNINA comparisons:
 
     def additional_cli_flags(self) -> tuple[str, ...]:
         return (
-            "--cnn_scoring", "rescore",
-            "--cnn", "crossdock_default2018",
-            "--energy_range", "20.0",
+            "--cnn_scoring",
+            "rescore",
+            "--cnn",
+            "crossdock_default2018",
+            "--energy_range",
+            "20.0",
         )
 
 
 def run_benchmark(
     n_complexes: int = 10,
     charge_method: ChargeMethod = DEFAULT_BENCHMARK_CHARGE_METHOD,
-    n_poses: int = 2000,
-    n_opt_steps: int = 50,
-    top_k_to_optimize: int = DEFAULT_BENCHMARK_TOP_K_TO_OPTIMIZE,
     box_size: float = BENCHMARK_PROTOCOL.box_size_a,
     formal_round_strategy: FormalRoundStrategy = DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY,
     certified_scoring_family: CertifiedScoringFamily = DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
@@ -3544,11 +3599,15 @@ def run_benchmark(
     dataset: Literal["curated", "casf2007"] = "casf2007",
     pdb_ids: Sequence[str] = (),
     optimizer_backend: OptimizerBackend = DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
+    reuse_initial_conformer: bool = False,
+    use_crystal_ligand_geometry: bool = False,
     parallelism: BenchmarkParallelism = BenchmarkParallelism(),
     attempt_timeout_seconds: float | None = None,
     max_retries: int = 6,
     retry_break_rmsd: float = 0.0,
     retry_preserve_seed: bool = False,
+    target_rmsd: float = 0.5,
+    confidence: float = 0.999,
 ):
     """Run full benchmark."""
     bench_start = time.time()
@@ -3683,14 +3742,13 @@ def run_benchmark(
         parallelism=parallelism,
         complexes=tuple(prepared_complexes),
         n_complexes_requested=selection.n_complexes_requested,
-        n_poses=n_poses,
-        n_opt_steps=n_opt_steps,
-        top_k_to_optimize=top_k_to_optimize,
         box_size=box_size,
         formal_round_strategy=formal_round_strategy,
         use_multi_stage=use_multi_stage,
         use_pocket_guided=use_pocket_guided,
         exact_chemistry_mode=exact_chemistry_mode,
+        reuse_initial_conformer=reuse_initial_conformer,
+        use_crystal_ligand_geometry=use_crystal_ligand_geometry,
         output_paths=output_paths,
         pose_dir=pose_dir,
         competitors=competitor_metadata,
@@ -3700,6 +3758,8 @@ def run_benchmark(
         max_retries=max_retries,
         retry_break_rmsd=retry_break_rmsd,
         retry_preserve_seed=retry_preserve_seed,
+        target_rmsd=target_rmsd,
+        confidence=confidence,
     )
     state = BenchmarkState(dq_results=[], dq_rows=[], competitor_rows=[])
     state.save("curation", context, excluded_rows, render_report=True)
@@ -3769,27 +3829,24 @@ def run_benchmark(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Real PDB docking benchmark")
+    parser = argparse.ArgumentParser(
+        description="Real PDB docking benchmark",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument(
         "--n_complexes", type=int, default=10, help="Number of complexes"
     )
     parser.add_argument(
-        "--n_poses",
-        type=int,
-        default=2000,
-        help="Number of sampled poses for DQ-Dock",
+        "--confidence",
+        type=float,
+        default=0.999,
+        help="Probability of capturing the global minimum basin; derives seed budget",
     )
     parser.add_argument(
-        "--n_opt_steps",
-        type=int,
-        default=50,
-        help="Number of optimization steps per pose",
-    )
-    parser.add_argument(
-        "--top_k_to_optimize",
-        type=int,
-        default=DEFAULT_BENCHMARK_TOP_K_TO_OPTIMIZE,
-        help="Number of certified survivors to optimize after pruning",
+        "--target-rmsd",
+        type=float,
+        default=0.5,
+        help="Target RMSD precision in Angstroms; derives iteration budget, seed budget, pruning thresholds",
     )
     parser.add_argument(
         "--box-size",
@@ -3807,7 +3864,7 @@ if __name__ == "__main__":
         "--workers",
         type=int,
         default=1,
-        help="Number of DQ-Dock worker processes across complexes (default: 1)",
+        help="Number of DQ-Dock worker processes across complexes",
     )
     parser.add_argument(
         "--exact_chemistry_mode",
@@ -3834,7 +3891,7 @@ if __name__ == "__main__":
         type=str,
         choices=("curated", "casf2007"),
         default="casf2007",
-        help="Which dataset to benchmark (default: casf2007). "
+        help="Which dataset to benchmark. "
         "'casf2007' uses the 195-entry CASF-2007 core set.",
     )
     parser.add_argument(
@@ -3855,6 +3912,16 @@ if __name__ == "__main__":
         default=6,
         help="Maximum retry attempts for the canonical certified DQ-Dock run",
     )
+    parser.add_argument(
+        "--reuse-initial-conformer",
+        action="store_true",
+        help="Reuse the parsed input conformer as an explicit incumbent during conformer search",
+    )
+    parser.add_argument(
+        "--use-crystal-ligand-geometry",
+        action="store_true",
+        help="Use the crystallographic ligand geometry as the docking template instead of generating an independent conformer",
+    )
     args = parser.parse_args()
     explicit_pdb_ids = load_explicit_pdb_ids(args.pdb_ids, args.pdb_file)
 
@@ -3869,7 +3936,10 @@ if __name__ == "__main__":
         f"formal_round_strategy={DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY.value} "
         f"certified_scoring_family={DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY.value} "
         f"pocket_guided={DEFAULT_BENCHMARK_USE_POCKET_GUIDED} "
-        f"top_k_to_optimize={args.top_k_to_optimize} "
+        f"reuse_initial_conformer={args.reuse_initial_conformer} "
+        f"use_crystal_ligand_geometry={args.use_crystal_ligand_geometry} "
+        f"target_rmsd={args.target_rmsd} "
+        f"confidence={args.confidence} "
         f"workers={args.workers}",
         flush=True,
     )
@@ -3877,9 +3947,6 @@ if __name__ == "__main__":
     run_benchmark(
         args.n_complexes,
         charge_method=DEFAULT_BENCHMARK_CHARGE_METHOD,
-        n_poses=args.n_poses,
-        n_opt_steps=args.n_opt_steps,
-        top_k_to_optimize=args.top_k_to_optimize,
         box_size=args.box_size,
         formal_round_strategy=DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY,
         certified_scoring_family=DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
@@ -3892,6 +3959,10 @@ if __name__ == "__main__":
         dataset=args.dataset,
         pdb_ids=explicit_pdb_ids,
         optimizer_backend=DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
+        reuse_initial_conformer=args.reuse_initial_conformer,
+        use_crystal_ligand_geometry=args.use_crystal_ligand_geometry,
         parallelism=BenchmarkParallelism(max_workers=args.workers),
         max_retries=args.max_retries,
+        target_rmsd=args.target_rmsd,
+        confidence=args.confidence,
     )

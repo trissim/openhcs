@@ -200,16 +200,22 @@ def prepare_ligand_chemistry_structure(
         elements=source.elements,
         adjacency=source.adjacency,
     )
-    centered_heavy_coords = centered_source.coords[list(source_heavy_indices)]
-    matched_heavy_positions = _match_runtime_atoms_to_source(
-        runtime_coords=coords,
-        runtime_elements=elements,
-        source_coords=centered_heavy_coords,
-        source_elements=tuple(
-            centered_source.elements[index] for index in source_heavy_indices
-        ),
-        structure_label="Ligand",
+    source_heavy_elements = tuple(
+        centered_source.elements[index] for index in source_heavy_indices
     )
+    if tuple(_normalize_element(element) for element in elements) == tuple(
+        _normalize_element(element) for element in source_heavy_elements
+    ):
+        matched_heavy_positions = tuple(range(len(source_heavy_indices)))
+    else:
+        centered_heavy_coords = centered_source.coords[list(source_heavy_indices)]
+        matched_heavy_positions = _match_runtime_atoms_to_source(
+            runtime_coords=coords,
+            runtime_elements=elements,
+            source_coords=centered_heavy_coords,
+            source_elements=source_heavy_elements,
+            structure_label="Ligand",
+        )
     matched_source = MatchedRuntimeSource(
         runtime_coords=coords,
         runtime_elements=elements,
@@ -239,12 +245,8 @@ def _match_protonated_source_to_records(
     """
     from dq_dock_engine.docking.receptor_preparation import PDBAtomRecord
 
-    record_coords = np.asarray(
-        [record.coord for record in records], dtype=np.float32
-    )
-    record_elements = tuple(
-        _normalize_element(record.element) for record in records
-    )
+    record_coords = np.asarray([record.coord for record in records], dtype=np.float32)
+    record_elements = tuple(_normalize_element(record.element) for record in records)
     remaining = set(range(len(records)))
     result: list[tuple[int, PDBAtomRecord]] = []
     for runtime_index, source_index in enumerate(
@@ -324,9 +326,7 @@ def _protonate_receptor_with_rdkit(
         ],
         dtype=np.float32,
     )
-    elements = tuple(
-        _normalize_element(atom.GetSymbol()) for atom in mol.GetAtoms()
-    )
+    elements = tuple(_normalize_element(atom.GetSymbol()) for atom in mol.GetAtoms())
     if not any(element == "H" for element in elements):
         raise ValueError(
             "RDKit protonation of receptor did not produce explicit hydrogens"
@@ -352,20 +352,12 @@ def prepare_receptor_chemistry_structure(
             "Extended-rich chemistry requires receptor element annotations for every runtime atom"
         )
     records = iter_atom_records(Path(receptor_file))
-    has_hydrogens = any(
-        _normalize_element(record.element) == "H" for record in records
-    )
+    has_hydrogens = any(_normalize_element(record.element) == "H" for record in records)
     if has_hydrogens:
-        full_coords = np.asarray(
-            [record.coord for record in records], dtype=np.float32
-        )
-        full_elements = tuple(
-            _normalize_element(record.element) for record in records
-        )
+        full_coords = np.asarray([record.coord for record in records], dtype=np.float32)
+        full_elements = tuple(_normalize_element(record.element) for record in records)
     else:
-        full_coords, full_elements = _protonate_receptor_with_rdkit(
-            Path(receptor_file)
-        )
+        full_coords, full_elements = _protonate_receptor_with_rdkit(Path(receptor_file))
     source = ProtonatedSourceStructure(
         coords=full_coords,
         elements=full_elements,
@@ -404,9 +396,7 @@ def prepare_receptor_chemistry_structure(
     else:
         # Source came from RDKit protonation — match RDKit heavy atoms
         # back to original PDB records by coordinate proximity
-        indexed_records = _match_protonated_source_to_records(
-            matched_source, records
-        )
+        indexed_records = _match_protonated_source_to_records(matched_source, records)
     grouped_records = group_atom_records_by_residue(
         tuple(record for _, record in indexed_records)
     )

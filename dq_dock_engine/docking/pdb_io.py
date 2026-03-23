@@ -18,6 +18,10 @@ from dq_dock_engine.docking.core import LigandContext, DockingBox
 from dq_dock_engine.docking.physics_params import get_vdw_radius
 
 
+def _normalize_element(element: str) -> str:
+    return element.strip().upper()
+
+
 def parse_structure(
     pdb_path: Path,
     *,
@@ -95,6 +99,7 @@ def build_ligand_context(
     ligand_radii: np.ndarray,
     elements: list[str] | None = None,
     charges: np.ndarray | None = None,
+    adjacency: tuple[tuple[int, ...], ...] | None = None,
 ) -> LigandContext:
     """
     Construct an immutable LigandContext from parsed arrays.
@@ -107,10 +112,13 @@ def build_ligand_context(
 
     el_tuple = tuple(elements) if elements is not None else ()
     jnp_charges = jnp.array(charges) if charges is not None else None
-    adjacency = None
-    if elements is not None:
+    inferred_adjacency = adjacency
+    if inferred_adjacency is None and elements is not None:
         from dq_dock_engine.docking.chemistry_annotations import _infer_bond_adjacency
-        adjacency = _infer_bond_adjacency(ligand_coords, tuple(el_tuple), include_hydrogens=False)
+
+        inferred_adjacency = _infer_bond_adjacency(
+            ligand_coords, tuple(el_tuple), include_hydrogens=False
+        )
 
     return LigandContext(
         base_coords=base_coords,
@@ -118,8 +126,90 @@ def build_ligand_context(
         center_of_mass=com,
         elements=el_tuple,
         charges=jnp_charges,
-        adjacency=adjacency,
+        adjacency=inferred_adjacency,
     )
+
+
+def generate_independent_ligand_geometry(
+    ligand_source_path: str | Path,
+    *,
+    expected_elements: tuple[str, ...],
+) -> tuple[np.ndarray, tuple[tuple[int, ...], ...]]:
+    """Generate a non-crystal ligand conformer from chemistry alone.
+
+    Uses RDKit distance geometry to build an independent 3D conformer while
+    preserving atom ordering/connectivity for the heavy-atom runtime model.
+    """
+
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import AllChem
+    except ImportError as exc:
+        raise ValueError("Blind ligand geometry generation requires RDKit") from exc
+
+    source_path = Path(ligand_source_path)
+    mol = Chem.MolFromPDBFile(str(source_path), removeHs=False)
+    if mol is None:
+        raise ValueError(f"RDKit failed to parse ligand source: {source_path}")
+
+    mol = Chem.AddHs(mol, addCoords=True)
+    mol = Chem.Mol(mol)
+    mol.RemoveAllConformers()
+
+    params = AllChem.ETKDGv3()
+    params.randomSeed = 0xD0C6
+    params.useRandomCoords = True
+    status = AllChem.EmbedMolecule(mol, params)
+    if status != 0:
+        fallback = AllChem.ETKDGv2()
+        fallback.randomSeed = 0xD0C6
+        fallback.useRandomCoords = True
+        status = AllChem.EmbedMolecule(mol, fallback)
+    if status != 0:
+        raise ValueError(
+            f"RDKit failed to embed an independent conformer for {source_path}"
+        )
+
+    if AllChem.MMFFHasAllMoleculeParams(mol):
+        AllChem.MMFFOptimizeMolecule(mol)
+    else:
+        try:
+            AllChem.UFFOptimizeMolecule(mol)
+        except Exception:
+            pass
+
+    conformer = mol.GetConformer()
+    heavy_indices = [
+        atom.GetIdx() for atom in mol.GetAtoms() if atom.GetAtomicNum() > 1
+    ]
+    heavy_elements = tuple(
+        _normalize_element(mol.GetAtomWithIdx(atom_idx).GetSymbol())
+        for atom_idx in heavy_indices
+    )
+    normalized_expected = tuple(
+        _normalize_element(element) for element in expected_elements
+    )
+    if heavy_elements != normalized_expected:
+        raise ValueError(
+            "Independent ligand conformer generation changed heavy-atom ordering; "
+            f"expected {normalized_expected} but got {heavy_elements}"
+        )
+
+    coords = np.asarray(
+        [list(conformer.GetAtomPosition(atom_idx)) for atom_idx in heavy_indices],
+        dtype=np.float32,
+    )
+    runtime_index = {atom_idx: idx for idx, atom_idx in enumerate(heavy_indices)}
+    adjacency: list[tuple[int, ...]] = []
+    for atom_idx in heavy_indices:
+        neighbors = []
+        atom = mol.GetAtomWithIdx(atom_idx)
+        for neighbor in atom.GetNeighbors():
+            neighbor_idx = neighbor.GetIdx()
+            if neighbor_idx in runtime_index:
+                neighbors.append(runtime_index[neighbor_idx])
+        adjacency.append(tuple(sorted(neighbors)))
+    return coords, tuple(adjacency)
 
 
 def build_receptor_arrays(

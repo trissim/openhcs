@@ -105,8 +105,6 @@ def test_render_redocking_report_tolerates_missing_gap_metrics() -> None:
             "n_complexes_requested": 1,
             "n_complexes_run": 1,
             "n_complexes_excluded": 0,
-            "n_poses": 10,
-            "n_opt_steps": 5,
             "use_pocket_guided": True,
             "competitors": [],
             "dq_avg_rmsd": 1.23,
@@ -218,9 +216,6 @@ def test_save_benchmark_results_preserves_failed_dq_errors_and_excludes_failed_r
         charge_method_name="gasteiger",
         certified_scoring_family=benchmark_pdb.CertifiedScoringFamily.LJ_REALSPACE_EWALD,
         n_complexes_requested=2,
-        n_poses=10,
-        n_opt_steps=5,
-        top_k_to_optimize=7,
         box_size=12.0,
         formal_round_strategy=benchmark_pdb.FormalRoundStrategy.SINGLETON_HYBRID,
         attempt_timeout_seconds=None,
@@ -246,7 +241,6 @@ def test_save_benchmark_results_preserves_failed_dq_errors_and_excludes_failed_r
     failed_json_row = next(row for row in payload["dq_dock"] if row["pdb_id"] == "2def")
 
     assert payload["summary"]["dq_avg_rmsd"] == 1.5
-    assert payload["summary"]["top_k_to_optimize"] == 7
     assert failed_csv_row["status"] == "failure"
     assert failed_csv_row["top_rmsd"] == ""
     assert failed_csv_row["score"] == ""
@@ -257,7 +251,7 @@ def test_save_benchmark_results_preserves_failed_dq_errors_and_excludes_failed_r
     assert "IndexError" in failed_json_row["error"]
 
 
-def test_run_dq_dock_benchmark_job_passes_top_k_and_rich_rescoring_flag(
+def test_run_dq_dock_benchmark_job_passes_rich_rescoring_flag(
     monkeypatch, tmp_path
 ) -> None:
     base = tmp_path / "1abc"
@@ -291,18 +285,19 @@ def test_run_dq_dock_benchmark_job_passes_top_k_and_rich_rescoring_flag(
         precomputed_receptor_charges=None,
         charge_method=ChargeMethod.GASTEIGER,
         certified_scoring_family=benchmark_pdb.CertifiedScoringFamily.LJ,
-        n_poses=10,
-        n_opt_steps=5,
-        top_k_to_optimize=7,
         box_size=12.0,
         formal_round_strategy=benchmark_pdb.FormalRoundStrategy.SINGLETON_HYBRID,
         use_multi_stage=False,
         use_pocket_guided=True,
         exact_chemistry_mode=ExactChemistryMode.NONE,
         optimizer_backend=benchmark_pdb.DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
+        reuse_initial_conformer=False,
+        use_crystal_ligand_geometry=True,
         max_retries=1,
         retry_break_rmsd=0.0,
         retry_preserve_seed=False,
+        target_rmsd=0.5,
+        confidence=0.999,
     )
     captured: dict[str, object] = {}
 
@@ -325,7 +320,6 @@ def test_run_dq_dock_benchmark_job_passes_top_k_and_rich_rescoring_flag(
 
     result = benchmark_pdb.run_dq_dock_benchmark_job(job)
 
-    assert captured["top_k_to_optimize"] == 7
     assert captured["exact_chemistry_mode"] == ExactChemistryMode.NONE
     assert result.result.success is True
 
@@ -373,66 +367,9 @@ def test_run_dq_dock_threads_rich_exact_rescoring_into_config(
         precomputed_receptor_charges=np.zeros(1, dtype=np.float32),
         ligand_elements=("C",),
         receptor_elements=("N",),
-        n_poses=1,
-        n_opt_steps=1,
-        top_k_to_optimize=1,
         exact_chemistry_mode=ExactChemistryMode.NONE,
         max_retries=1,
-    )
-
-    assert result.success is True
-
-
-def test_run_dq_dock_uses_canonical_top_k_to_optimize_default(
-    monkeypatch, tmp_path
-) -> None:
-    receptor_pdb = tmp_path / "receptor.pdb"
-    ligand_pdb = tmp_path / "ligand.pdb"
-    receptor_pdb.write_text("")
-    ligand_pdb.write_text("")
-
-    class FakeExecutor:
-        def execute(self, context):
-            assert (
-                context.top_k_to_optimize
-                == benchmark_pdb.DEFAULT_BENCHMARK_TOP_K_TO_OPTIMIZE
-            )
-            return benchmark_pdb.BlindDockingExecutionOutcome(
-                poses=[
-                    benchmark_pdb.ScoredPose(
-                        coords=jnp.zeros((1, 3), dtype=jnp.float32),
-                        energy=-1.0,
-                        engine=benchmark_pdb.ScoringEngine.INTERNAL_LJ,
-                    )
-                ],
-                certification=None,
-                execution_path=benchmark_pdb.BlindDockingExecutionPath.GENERIC_PIPELINE,
-                certified_failure_reason=None,
-                theorem_handles=(),
-            )
-
-    monkeypatch.setattr(
-        benchmark_pdb,
-        "derive_blind_docking_executor",
-        lambda docking_mode, *, use_pocket_guided: FakeExecutor(),
-    )
-
-    result, _ = benchmark_pdb.run_dq_dock(
-        pocket_coords=np.zeros((1, 3), dtype=np.float32),
-        pocket_radii=np.ones(1, dtype=np.float32),
-        ligand_coords=np.zeros((1, 3), dtype=np.float32),
-        ligand_radii=np.ones(1, dtype=np.float32),
-        center=(0.0, 0.0, 0.0),
-        ligand_file=ligand_pdb,
-        receptor_file=receptor_pdb,
-        precomputed_ligand_charges=np.zeros(1, dtype=np.float32),
-        precomputed_receptor_charges=np.zeros(1, dtype=np.float32),
-        ligand_elements=("C",),
-        receptor_elements=("N",),
-        n_poses=1,
-        n_opt_steps=1,
-        exact_chemistry_mode=ExactChemistryMode.NONE,
-        max_retries=1,
+        use_crystal_ligand_geometry=True,
     )
 
     assert result.success is True
@@ -448,8 +385,6 @@ def test_redocking_report_excludes_failed_dq_rows_from_rmsd_and_scatter(
             "n_complexes_requested": 2,
             "n_complexes_run": 2,
             "n_complexes_excluded": 0,
-            "n_poses": 10,
-            "n_opt_steps": 5,
             "use_pocket_guided": True,
             "competitors": [
                 {
