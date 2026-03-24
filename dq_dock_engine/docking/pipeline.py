@@ -364,36 +364,82 @@ def _seed_budget_torsion_count(request: "DockingRequestBase") -> int:
     return _rotatable_bond_count(request.ligand_ctx)
 
 
-def _derive_uniform_torsion_support_spec(
+def _derive_adaptive_torsion_support_spec(
     per_bond_lipschitz: tuple[float, ...],
     target_delta: float,
-) -> tuple[int, float]:
-    """Derive a proof-backed uniform torsion support from the Lean cell-cover theorems.
+) -> tuple[int, float, tuple[int, ...]]:
+    """Derive a proof-backed adaptive torsion support from the Lean support theorems.
 
-    Using `ConformerSupportCoverage.uniformArithmeticCentersPi_*`, if every torsion
-    dimension is covered by arithmetic centers on `[-pi, pi]` with half-width `h`,
-    the ambient support error is bounded by `sum_i L_i * h`. Choosing
+    Lean now provides canonical adaptive segment counts from per-dimension Lipschitz
+    constants and target slack. For `m` active torsions, choose
 
-        h = target_delta / sum_i L_i
+        segments_i = ceil(2 * pi * m * L_i / target_delta) ∨ 1
 
-    and then taking the explicit center spacing `2*pi/segments <= h` yields a finite
-    support family with `(segments + 1)^n` centers and certified support slack not
-    exceeding `target_delta`.
+    so the arithmetic center half-width is `2*pi/segments_i` and the total support
+    slack is certified to be at most `target_delta`. The finite support size is the
+    tensor-product cardinality `prod_i (segments_i + 1)`.
     """
     if target_delta <= 0.0:
         raise ValueError(f"target_delta must be positive, got {target_delta}")
     if not per_bond_lipschitz:
-        return 1, float(2.0 * np.pi)
-    total_lipschitz = float(np.sum(np.asarray(per_bond_lipschitz, dtype=np.float64)))
-    if total_lipschitz <= 0.0:
-        return 1, float(2.0 * np.pi)
-    half_width_target = target_delta / total_lipschitz
-    if half_width_target >= 2.0 * np.pi:
-        return 1, float(2.0 * np.pi)
-    segments = max(1, int(math.ceil((2.0 * np.pi) / half_width_target)))
-    half_width = float((2.0 * np.pi) / segments)
-    support_size = int((segments + 1) ** len(per_bond_lipschitz))
-    return support_size, half_width
+        return 1, float(2.0 * np.pi), ()
+    n_active = len(per_bond_lipschitz)
+    segments = tuple(
+        max(
+            1,
+            int(
+                math.ceil(
+                    (2.0 * math.pi * n_active * max(0.0, float(li))) / target_delta
+                )
+            ),
+        )
+        for li in per_bond_lipschitz
+    )
+    half_widths = [float((2.0 * math.pi) / seg) for seg in segments]
+    support_size = 1
+    for seg in segments:
+        support_size *= seg + 1
+    min_cell_radius = min(half_widths) if half_widths else float(2.0 * np.pi)
+    return support_size, min_cell_radius, segments
+
+
+def _active_rotatable_bonds_for_pose(
+    world_coords: jnp.ndarray,
+    receptor_coords: jnp.ndarray,
+    rotatable_bonds: tuple[RotatableBond, ...],
+) -> tuple[tuple[RotatableBond, ...], np.ndarray]:
+    if not rotatable_bonds:
+        return (), np.zeros((0,), dtype=bool)
+    active_mask = np.asarray(
+        jax.device_get(
+            _posewise_active_torsion_mask(
+                poses_coords=jnp.expand_dims(world_coords, axis=0),
+                receptor_coords=receptor_coords,
+                bonds=rotatable_bonds,
+            )[0]
+        ),
+        dtype=bool,
+    )
+    active_bonds = tuple(
+        bond for bond, is_active in zip(rotatable_bonds, active_mask) if is_active
+    )
+    return active_bonds, active_mask
+
+
+def _restrict_strain_params(
+    strain_params: TorsionStrainParams | None,
+    active_mask: np.ndarray,
+) -> TorsionStrainParams | None:
+    if strain_params is None or active_mask.size == 0:
+        return None if strain_params is None else default_torsion_strain_params(0)
+    if not np.any(active_mask):
+        return default_torsion_strain_params(0)
+    idx = np.flatnonzero(active_mask)
+    return TorsionStrainParams(
+        barrier_heights=jnp.asarray(strain_params.barrier_heights)[idx],
+        multiplicities=jnp.asarray(strain_params.multiplicities)[idx],
+        phases=jnp.asarray(strain_params.phases)[idx],
+    )
 
 
 def _probe_seed_budget_certificate(
@@ -1924,7 +1970,7 @@ def _build_conformer_search_config(
         per_bond_lipschitz = tuple(
             score_lipschitz_constant * bond.max_arm_length for bond in rotatable_bonds
         )
-        max_cells, min_cell_radius = _derive_uniform_torsion_support_spec(
+        max_cells, min_cell_radius, _ = _derive_adaptive_torsion_support_spec(
             per_bond_lipschitz,
             request.target_error,
         )
@@ -1949,7 +1995,21 @@ def _conformer_runtime_theorem_handles(
 ) -> tuple[str, ...]:
     return _merge_theorem_handles(
         ("CS2", "CS5", "CS6", "CS8", "CS9", "GAP2") if has_rotatable_bonds else (),
-        ("CSC14", "CSC15", "CSC16") if has_rotatable_bonds else (),
+        (
+            "CSC14",
+            "CSC15",
+            "CSC16",
+            "CSC29",
+            "CSC30",
+            "CSC31",
+            "CSC32",
+            "CSC33",
+            "CSC34",
+            "CSC35",
+            "CSC36",
+        )
+        if has_rotatable_bonds
+        else (),
         branch_and_bound_cross_docking_handles() if has_rotatable_bonds else (),
         ("LSA1", "LSA3", "LSA5", "LSA7") if has_rotatable_bonds else (),
         strain_augmented_cross_docking_handles() if has_rotatable_bonds else (),
@@ -2141,6 +2201,38 @@ def _run_conformer_search_for_pose(
         if rotatable_bonds is None
         else rotatable_bonds
     )
+    active_mask = np.zeros((len(bonds),), dtype=bool)
+    if bonds:
+        base_world_coords = rigid_transform_3d(
+            request.ligand_ctx.base_coords,
+            quaternion,
+            translation,
+        )
+        bonds, active_mask = _active_rotatable_bonds_for_pose(
+            base_world_coords,
+            request.protein_coords,
+            bonds,
+        )
+    if not bonds:
+        world_coords = rigid_transform_3d(
+            request.ligand_ctx.base_coords,
+            quaternion,
+            translation,
+        )
+        best_energy = float(score_fn(request.ligand_ctx.base_coords))
+        return (
+            jnp.asarray(world_coords),
+            best_energy,
+            _conformer_runtime_theorem_handles(
+                has_rotatable_bonds=False,
+                include_pocket_handles=request.certified_binding_site is not None,
+                include_receptor_flex_handles=(
+                    scoring_context is not None
+                    and scoring_context.receptor_conformations is not None
+                ),
+            ),
+        )
+    active_strain_params = _restrict_strain_params(strain_params, active_mask)
     config = (
         _build_conformer_search_config(request, rotatable_bonds=bonds)
         if conformer_config is None
@@ -2152,7 +2244,7 @@ def _run_conformer_search_for_pose(
         elements=request.ligand_ctx.elements,
         score_fn=score_fn,
         config=config,
-        strain_params=strain_params,
+        strain_params=active_strain_params,
         score_fn_batch=score_fn_batch,
         rotatable_bonds=bonds,
     )
