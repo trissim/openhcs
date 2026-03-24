@@ -393,10 +393,18 @@ class CertifiedScoringContext:
             epsilon=epsilon,
             softening_radius=softening_radius,
         )
+        flex_delta: jax.Array | float = ref_scores.softening_error_bound
+        if self.uses_extended_rich:
+            # In extended-rich mode the theorem-backed pruning delta is the analytic
+            # composite bound, not the raw summed softening tail bound from the
+            # coarse scorer internals. Using the analytic delta keeps the runtime
+            # aligned with BlindConformerPipelineRefinements.lean
+            # (coarse_rigid_with_flex_and_conformer_lower_bound).
+            flex_delta = self.analytic_pruning_delta()
         if self.receptor_conformations is None:
             return (
                 jnp.zeros((poses_coords.shape[0],), dtype=poses_coords.dtype),
-                ref_scores.softening_error_bound,
+                flex_delta,
             )
         conf_scores = tuple(
             self.score_rigid_softened_batch(
@@ -412,7 +420,7 @@ class CertifiedScoringContext:
         )
         return (
             self._posewise_receptor_flex_error(ref_scores.scores, conf_scores),
-            ref_scores.softening_error_bound,
+            flex_delta,
         )
 
     def score_exact_batch(

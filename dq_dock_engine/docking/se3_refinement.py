@@ -79,15 +79,35 @@ def _quaternion_to_axis_angle(q: jnp.ndarray) -> jnp.ndarray:
 
 def _axis_angle_to_quaternion(rotvec: jnp.ndarray) -> jnp.ndarray:
     """Convert axis-angle rotation vector (3,) to quaternion [w, x, y, z]."""
-    angle = jnp.linalg.norm(rotvec)
-    axis = jnp.where(angle > 1e-8, rotvec / angle, jnp.array([0.0, 0.0, 1.0]))
-    half = angle / 2.0
-    return jnp.array([
-        jnp.cos(half),
-        axis[0] * jnp.sin(half),
-        axis[1] * jnp.sin(half),
-        axis[2] * jnp.sin(half),
-    ])
+    angle_sq = jnp.dot(rotvec, rotvec)
+
+    def _small_angle(rv: jnp.ndarray) -> jnp.ndarray:
+        # Taylor expansion around zero with finite derivatives.
+        ang_sq = jnp.dot(rv, rv)
+        scale = 0.5 - ang_sq / 48.0
+        return jnp.array(
+            [
+                1.0 - ang_sq / 8.0,
+                rv[0] * scale,
+                rv[1] * scale,
+                rv[2] * scale,
+            ]
+        )
+
+    def _regular_angle(rv: jnp.ndarray) -> jnp.ndarray:
+        angle = jnp.sqrt(jnp.dot(rv, rv))
+        half = angle / 2.0
+        scale = jnp.sin(half) / angle
+        return jnp.array(
+            [
+                jnp.cos(half),
+                rv[0] * scale,
+                rv[1] * scale,
+                rv[2] * scale,
+            ]
+        )
+
+    return jax.lax.cond(angle_sq < 1e-12, _small_angle, _regular_angle, rotvec)
 
 
 def _pose_to_se3_params(
@@ -130,8 +150,12 @@ def make_se3_energy_fn(
         t, q = _se3_params_to_pose(params)
         pose_coords = _apply_single_pose(base_coords, t, q)
         energy, _ = _score_certified_lj(
-            receptor_coords, pose_coords, receptor_radii, ligand_radii,
-            cutoff, epsilon,
+            receptor_coords,
+            pose_coords,
+            receptor_radii,
+            ligand_radii,
+            cutoff,
+            epsilon,
         )
         return energy
 
@@ -207,12 +231,25 @@ def certified_iteration_budget(
     target_gap = μ × n × eps² / 2   (Lean: targetEnergyGap)
     budget = ceil(log(initial_gap / target_gap) / log(1/q))
     """
-    target_gap = mu_coord * n_atoms * target_rmsd ** 2 / 2.0
+    target_gap = mu_coord * n_atoms * target_rmsd**2 / 2.0
+    if not math.isfinite(target_gap) or target_gap <= 0.0:
+        return -1
+    if not math.isfinite(initial_gap) or initial_gap <= 0.0:
+        return -1
     if initial_gap <= target_gap:
         return 0
     if q <= 0 or q >= 1.0:
         return -1  # cannot certify: non-contractive
-    return math.ceil(math.log(initial_gap / target_gap) / math.log(1.0 / q))
+    ratio = initial_gap / target_gap
+    if not math.isfinite(ratio) or ratio <= 0.0:
+        return -1
+    denom = math.log(1.0 / q)
+    if not math.isfinite(denom) or denom <= 0.0:
+        return -1
+    numer = math.log(ratio)
+    if not math.isfinite(numer):
+        return -1
+    return math.ceil(numer / denom)
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +299,11 @@ def certify_observed(
     if initial_gap <= 0:
         return None
     n_steps = certified_iteration_budget(
-        spectral.mu_coord, q, initial_gap, target_rmsd, n_atoms,
+        spectral.mu_coord,
+        q,
+        initial_gap,
+        target_rmsd,
+        n_atoms,
     )
     if n_steps < 0:
         return None
@@ -281,9 +322,7 @@ def certify_observed(
 # ---------------------------------------------------------------------------
 
 
-def _certified_gd_step(
-    params: jnp.ndarray, energy_fn, alpha: float
-) -> jnp.ndarray:
+def _certified_gd_step(params: jnp.ndarray, energy_fn, alpha: float) -> jnp.ndarray:
     """One step of standard gradient descent. No clipping, no normalization.
 
     This IS the optimizer that CertifiedGradientDescentDynamics proves about.
@@ -350,7 +389,10 @@ def observe_gd_trajectory(
     trajectory must satisfy gap(t+1) ≤ q × gap(t).
     """
     optimized, energy_trajectory = _run_gd_steps_with_trajectory(
-        initial_params, energy_fn, alpha, n_steps,
+        initial_params,
+        energy_fn,
+        alpha,
+        n_steps,
     )
 
     spectral = compute_se3_spectral_certificate(energy_fn, kinematics_fn, optimized)
@@ -385,22 +427,41 @@ def optimize_certified_gd(
           convex functions.
     """
     # Phase 1: probe
-    probed = _run_gd_steps(initial_params, energy_fn, alpha=0.01, n_steps=max_probe_steps)
+    probed = _run_gd_steps(
+        initial_params, energy_fn, alpha=0.01, n_steps=max_probe_steps
+    )
 
     # Compute spectral certificate at probed point
     spectral = compute_se3_spectral_certificate(energy_fn, kinematics_fn, probed)
     if spectral is None:
         return probed, None
+    if (
+        not math.isfinite(spectral.lmin_param)
+        or not math.isfinite(spectral.lmax_param)
+        or not math.isfinite(spectral.mu_coord)
+        or spectral.lmin_param <= 0.0
+        or spectral.lmax_param < spectral.lmin_param
+        or spectral.mu_coord <= 0.0
+    ):
+        return probed, None
 
     # Phase 2: certified GD
     alpha = 2.0 / (spectral.lmin_param + spectral.lmax_param)
-    q = (spectral.lmax_param - spectral.lmin_param) / (spectral.lmax_param + spectral.lmin_param)
+    q = (spectral.lmax_param - spectral.lmin_param) / (
+        spectral.lmax_param + spectral.lmin_param
+    )
+    if not math.isfinite(alpha) or alpha <= 0.0 or not math.isfinite(q):
+        return probed, None
     initial_gap = float(energy_fn(initial_params)) - float(energy_fn(probed))
     if initial_gap <= 0:
         return probed, None
 
     budget = certified_iteration_budget(
-        spectral.mu_coord, q, initial_gap, target_rmsd, n_atoms,
+        spectral.mu_coord,
+        q,
+        initial_gap,
+        target_rmsd,
+        n_atoms,
     )
     if budget < 0:
         return probed, None

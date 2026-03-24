@@ -30,6 +30,7 @@ Practical guides for specific development tasks.
 
    ui-patterns
    pipeline_debugging_guide
+   docking_pipeline_audit_1hk4
    placeholder_inheritance_debugging
    parameter_analysis_audit
    unified_parameter_analyzer_migration

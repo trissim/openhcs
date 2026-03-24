@@ -126,11 +126,6 @@ if TYPE_CHECKING:
 
 # Certified Pruning Constants
 # We use a fixed power-of-two size for the survivor set to stabilize XLA caching.
-# According to the BD5/TK11 theorems, the survivor set size is bounded by O(K+L).
-# 256 is an ample bound for typical drug-like docking scenarios.
-SURVIVOR_BATCH_SIZE = 256
-BLIND_CONFORMER_SURVIVOR_BATCH_SIZE = 8192
-
 # Two-phase seed-budget derivation uses a small probe set to estimate a certified
 # local contraction rate and derive the full seed budget mechanically from the
 # target RMSD. These constants control only the calibration phase size.
@@ -292,9 +287,64 @@ def derive_seed_budget(
 
 
 def _ligand_radius(ligand_ctx: LigandContext) -> float:
-    coords = ligand_ctx.base_coords
-    com = ligand_ctx.center_of_mass
-    return float(jnp.max(jnp.linalg.norm(coords - com, axis=-1)))
+    # `base_coords` are already centered in build_ligand_context, so the ligand
+    # radius is just the farthest atom from the origin in that centered frame.
+    return float(jnp.max(jnp.linalg.norm(ligand_ctx.base_coords, axis=-1)))
+
+
+def _fit_pose_vector_from_coords(
+    base_coords: jnp.ndarray,
+    world_coords: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Recover the rigid translation/quaternion mapping `base_coords` to `world_coords`.
+
+    Formal round refinement operates directly on coordinates. The theorem-backed
+    SE(3) refinement layer expects the equivalent rigid pose vector, so we recover
+    it deterministically with the Kabsch solution.
+    """
+    from scipy.spatial.transform import Rotation
+
+    base_np = np.asarray(base_coords, dtype=np.float64)
+    world_np = np.asarray(world_coords, dtype=np.float64)
+    base_mean = base_np.mean(axis=0)
+    world_mean = world_np.mean(axis=0)
+    base_centered = base_np - base_mean
+    world_centered = world_np - world_mean
+    covariance = base_centered.T @ world_centered
+    u, _, vt = np.linalg.svd(covariance)
+    # `rigid_transform_3d` applies coordinates as `coords @ rotation.T + translation`.
+    # For this row-vector convention, the Kabsch solution is R = V U^T.
+    rotation = vt.T @ u.T
+    if np.linalg.det(rotation) < 0.0:
+        vt[-1, :] *= -1.0
+        rotation = vt.T @ u.T
+    translation = world_mean - base_mean @ rotation.T
+    quat_xyzw = Rotation.from_matrix(rotation).as_quat()
+    quat_wxyz = np.array(
+        [quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]],
+        dtype=np.float32,
+    )
+    dtype = world_coords.dtype
+    return (
+        jnp.asarray(translation, dtype=dtype),
+        jnp.asarray(quat_wxyz, dtype=dtype),
+    )
+
+
+def _fit_pose_vectors_from_coords_batch(
+    base_coords: jnp.ndarray,
+    world_coords_batch: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    translations: list[jnp.ndarray] = []
+    quaternions: list[jnp.ndarray] = []
+    for coords in np.asarray(world_coords_batch):
+        translation, quaternion = _fit_pose_vector_from_coords(
+            base_coords,
+            jnp.asarray(coords, dtype=world_coords_batch.dtype),
+        )
+        translations.append(translation)
+        quaternions.append(quaternion)
+    return jnp.stack(translations), jnp.stack(quaternions)
 
 
 def _rotatable_bond_count(ligand_ctx: LigandContext) -> int:
@@ -1882,12 +1932,6 @@ def _conformer_improvement_bound(
     return improvement_bound, strain_params
 
 
-def _survivor_capacity(request: "PipelineDockingRequest") -> int:
-    if _request_uses_conformer_search(request):
-        return BLIND_CONFORMER_SURVIVOR_BATCH_SIZE
-    return SURVIVOR_BATCH_SIZE
-
-
 def _canonical_retain_mask(
     reference_scores: jnp.ndarray,
     *,
@@ -2080,21 +2124,6 @@ def _run_conformer_search_for_pose(
     best_conf = result.conformer_coords[0]
     world_coords = rigid_transform_3d(best_conf, quaternion, translation)
     best_energy = float(result.conformer_energies[0])
-    if scoring_context is not None:
-        best_energy = float(
-            np.asarray(
-                jax.device_get(
-                    scoring_context.score_exact_batch(
-                        receptor_coords=request.protein_coords,
-                        poses_coords=jnp.expand_dims(jnp.asarray(world_coords), axis=0),
-                        receptor_radii=request.receptor_radii,
-                        ligand_radii=request.ligand_ctx.base_radii,
-                        target_error=request.target_error,
-                        epsilon=0.2,
-                    ).scores[0]
-                )
-            )
-        )
     theorem_handles = _merge_theorem_handles(
         result.theorem_handles,
         _conformer_runtime_theorem_handles(
@@ -2276,6 +2305,7 @@ class PipelineInitialScores:
     survivor_pose_vecs: PoseVector | None = None
     survivor_exact_scores: jnp.ndarray | np.ndarray | None = None
     valid_survivor_mask: jnp.ndarray | np.ndarray | None = None
+    survivor_coords: jnp.ndarray | np.ndarray | None = None
 
 
 class PipelineRoute(ABC):
@@ -2458,19 +2488,9 @@ class CertifiedPipelineRoute(PipelineRoute):
             scoring_context=scoring_context,
             rotatable_bonds=rotatable_bonds,
         )
-        n_survivors = int(np.asarray(jax.device_get(jnp.sum(survivor_mask))))
-        survivor_capacity = _survivor_capacity(request)
-        if n_survivors > survivor_capacity:
-            raise ValueError(
-                "Certified survivor set exceeded fixed padded capacity "
-                f"({n_survivors} > {survivor_capacity}); refusing to truncate "
-                "survivors and lose theorem honesty."
-            )
-        survivor_indices = jnp.where(
-            survivor_mask, size=survivor_capacity, fill_value=-1
-        )[0]
-        valid_survivor_mask = survivor_indices != -1
-        valid_survivor_indices = survivor_indices[valid_survivor_mask]
+        valid_survivor_indices = jnp.asarray(
+            np.flatnonzero(np.asarray(jax.device_get(survivor_mask), dtype=bool))
+        )
         survivor_coords = batched_coords[valid_survivor_indices]
         del coarse_scores, delta
         survivor_pose_vecs = PoseVector(
@@ -2530,6 +2550,7 @@ class CertifiedPipelineRoute(PipelineRoute):
         )
         if do_conf:
             updated_scores = np.asarray(jax.device_get(survivor_exact_scores)).copy()
+            updated_coords = np.asarray(jax.device_get(survivor_coords)).copy()
             conformer_config = _build_conformer_search_config(
                 request, rotatable_bonds=rotatable_bonds
             )
@@ -2545,8 +2566,10 @@ class CertifiedPipelineRoute(PipelineRoute):
                     strain_params=strain_params,
                 )
                 if conf is not None and conf[1] < float(updated_scores[i]):
+                    updated_coords[i] = np.asarray(conf[0])
                     updated_scores[i] = conf[1]
             survivor_exact_scores = jnp.asarray(updated_scores)
+            survivor_coords = jnp.asarray(updated_coords)
 
         final_scores = (
             jnp.full((batched_coords.shape[0],), 1e6)
@@ -2558,13 +2581,15 @@ class CertifiedPipelineRoute(PipelineRoute):
             survivor_pose_vecs=survivor_pose_vecs,
             survivor_exact_scores=survivor_exact_scores,
             valid_survivor_mask=jnp.ones(survivor_exact_scores.shape, dtype=bool),
+            survivor_coords=survivor_coords,
         )
 
     def best_index_limit(
         self, request: PipelineDockingRequest, initial_scores: PipelineInitialScores
     ) -> int:
-        del initial_scores
-        return _survivor_capacity(request)
+        del request
+        assert initial_scores.survivor_exact_scores is not None
+        return int(initial_scores.survivor_exact_scores.shape[0])
 
     def optimization_inputs(
         self,
@@ -2737,6 +2762,10 @@ def _run_docking_pipeline_request(
     electrostatics = scoring_context.electrostatics
     opt_pose_translations = opt_translations
     opt_pose_quaternions = opt_quaternions
+    opt_coords = apply_poses(
+        request.ligand_ctx,
+        PoseVector(translation=opt_pose_translations, quaternion=opt_pose_quaternions),
+    )
 
     refinement_certificates: list[RefinementCertificate | None] = []
 
@@ -2750,7 +2779,14 @@ def _run_docking_pipeline_request(
             translation=opt_translations,
             quaternion=opt_quaternions,
         )
-        initial_coords = apply_poses(request.ligand_ctx, initial_opt_vecs)
+        if initial_scores.survivor_coords is not None:
+            assert initial_scores.survivor_exact_scores is not None
+            survivor_ranked = jnp.argsort(initial_scores.survivor_exact_scores)
+            initial_coords = jnp.asarray(initial_scores.survivor_coords)[
+                survivor_ranked
+            ]
+        else:
+            initial_coords = apply_poses(request.ligand_ctx, initial_opt_vecs)
         translation_cell_width = 1.0
         if pose_batch.certified_family is not None:
             translation_cell_width = float(jnp.min(request.box.size)) / float(
@@ -2816,24 +2852,36 @@ def _run_docking_pipeline_request(
             FormalRoundStrategy.SINGLETON_HYBRID: _run_singleton_hybrid_formal_refinement,
         }
         opt_coords = formal_refiners[request.formal_round_strategy](**refinement_kwargs)
+        opt_pose_translations, opt_pose_quaternions = (
+            _fit_pose_vectors_from_coords_batch(
+                request.ligand_ctx.base_coords,
+                opt_coords,
+            )
+        )
         # FORMAL search proof complete — now add the refinement proof.
         # The Bayesian rounds certify basin selection; SE(3) refinement
         # certifies convergence to within ε RMSD of the basin minimum.
-    # --- Certified SE(3) refinement (both backends) ---
-    # Per-pose adaptive budget derived from Hessian eigenvalues + Jacobian bridge.
-    # FORMAL: search proof (basin selection) + refinement proof (RMSD convergence)
-    # GRADIENT: refinement proof only
-    opt_t, opt_q, refinement_certificates = _certified_refinement(
-        request=request,
-        initial_translations=opt_pose_translations,
-        initial_quaternions=opt_pose_quaternions,
-    )
-    opt_coords = apply_poses(
-        request.ligand_ctx,
-        PoseVector(translation=opt_t, quaternion=opt_q),
-    )
-    opt_pose_translations = opt_t
-    opt_pose_quaternions = opt_q
+    # --- Certified SE(3) refinement (rigid-only routes) ---
+    # When conformer search is active the optimization state is no longer a pure
+    # rigid transform of the original ligand frame, so the theorem-backed rigid
+    # SE(3) certificate does not directly apply. In that case we keep the formal
+    # coordinate-space refinement result and only recover a best-fit rigid pose for
+    # downstream bookkeeping / optional conformer re-evaluation.
+    do_conf = _request_uses_conformer_search(request)
+    if do_conf:
+        refinement_certificates = [None] * int(opt_coords.shape[0])
+    else:
+        opt_t, opt_q, refinement_certificates = _certified_refinement(
+            request=request,
+            initial_translations=opt_pose_translations,
+            initial_quaternions=opt_pose_quaternions,
+        )
+        opt_coords = apply_poses(
+            request.ligand_ctx,
+            PoseVector(translation=opt_t, quaternion=opt_q),
+        )
+        opt_pose_translations = opt_t
+        opt_pose_quaternions = opt_q
 
     if request.is_certified_mode:
         final_scores = scoring_context.score_exact_batch(
@@ -2866,7 +2914,6 @@ def _run_docking_pipeline_request(
 
     best_final_indices = jnp.argsort(final_scores)[:n_to_opt]
 
-    do_conf = _request_uses_conformer_search(request)
     rotatable_bonds: tuple[RotatableBond, ...] = ()
     conformer_config: BranchAndBoundConfig | None = None
     conf_improvement_bound = 0.0

@@ -11,7 +11,9 @@ from dq_dock_engine.docking.pipeline import (
     PipelineInitialScores,
     PipelinePoseBatch,
     PipelineRoute,
+    _ligand_radius,
     _probe_seed_budget_certificate,
+    _seed_budget_torsion_count,
     derive_seed_budget,
 )
 from dq_dock_engine.docking.se3_refinement import (
@@ -143,6 +145,7 @@ def test_probe_seed_budget_certificate_overrides_request_budget(monkeypatch) -> 
         confidence=0.99,
         box_size=request.box.size,
         target_rmsd=0.5,
-        ligand_radius=0.75,
+        ligand_radius=_ligand_radius(request.ligand_ctx),
+        n_torsions=_seed_budget_torsion_count(request),
         probe_certificate=cert,
     )

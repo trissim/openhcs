@@ -101,6 +101,7 @@ import DecisionQuotient.Tractability.CooperativeHBondApproximation
 import DecisionQuotient.Tractability.ExplicitWaterPlacement
 import DecisionQuotient.Tractability.ReceptorFlexibility
 import DecisionQuotient.Tractability.EnergyRMSDConvergence
+import DecisionQuotient.Tractability.ConformerSupportCoverage
 import DecisionQuotient.Tractability.CrossDockingCertificates
 import DecisionQuotient.Computation.PocketDetection
 import DecisionQuotient.Information
@@ -2203,5 +2204,42 @@ abbrev ERC40 := @Tractability.EnergyRMSDConvergence.rmsd_target_of_logarithmicIt
 abbrev ERC41 := @Tractability.EnergyRMSDConvergence.adequateIterationBudget_of_logarithmicIterationBoundFromGradientDescentDynamics
 -- ERC42: GD dynamics logarithmic bound certifies the RMSD target
 abbrev ERC42 := @Tractability.EnergyRMSDConvergence.rmsd_target_of_logarithmicIterationBoundFromGradientDescentDynamics
+
+/-! ## Conformer Support Coverage (CSC) handles
+    ConformerSupportCoverage.lean - finite conformer-library support coverage
+-/
+
+-- CSC1: Exact optimality implies 0-approximate optimality
+abbrev CSC1 := @Tractability.ConformerSupportCoverage.optimal_isApproxOptimal_zero
+-- CSC2: Approximate optimality is monotone in the slack radius
+abbrev CSC2 := @Tractability.ConformerSupportCoverage.approxOptimal_mono
+-- CSC3: Support coverage is monotone under support enlargement
+abbrev CSC3 := @Tractability.ConformerSupportCoverage.supportCovers_mono
+-- CSC4: Lipschitz utility + epsilon-cover yields a supported delta-near-optimum
+abbrev CSC4 := @Tractability.ConformerSupportCoverage.lipschitz_cover_yields_supported_approxOptimal
+-- CSC5: Sampled action family epsilon-cover yields a supported delta-near-optimum
+abbrev CSC5 := @Tractability.ConformerSupportCoverage.sampledActionFamily_cover_yields_supported_approxOptimal
+-- CSC6: RMSD-library coverage is monotone under support enlargement
+abbrev CSC6 := @Tractability.ConformerSupportCoverage.rmsdSupportCovers_mono
+-- CSC7: RMSD-library epsilon-cover + RMSD-Lipschitz energy yields delta-near-optimum
+abbrev CSC7 := @Tractability.ConformerSupportCoverage.rmsd_cover_yields_library_approxOptimal
+-- CSC8: Any restricted sampled decision problem has an exact optimum
+abbrev CSC8 := @Tractability.ConformerSupportCoverage.restrictedDecisionProblem_exists_opt
+-- CSC9: Support coverage yields a restricted exact optimum that is ambient delta-near-optimal
+abbrev CSC9 := @Tractability.ConformerSupportCoverage.sampledActionFamily_cover_yields_restricted_opt_approxAmbient
+-- CSC10: Support coverage plus support-side uniform approximation yields a delta-near-optimal runtime support witness
+abbrev CSC10 := @Tractability.ConformerSupportCoverage.sampledActionFamily_cover_and_uniformApprox_yields_near_opt_in_runtime_support
+-- CSC11: Tensor-product coordinate-center support membership is coordinatewise
+abbrev CSC11 := @Tractability.ConformerSupportCoverage.mem_coordinateCenterSupport_iff
+-- CSC12: Tensor-product coordinate-center support cardinality factorizes
+abbrev CSC12 := @Tractability.ConformerSupportCoverage.coordinateCenterSupport_card
+-- CSC13: Coordinatewise nonempty centers yield nonempty tensor-product support
+abbrev CSC13 := @Tractability.ConformerSupportCoverage.coordinateCenterSupport_nonempty
+-- CSC14: Coordinatewise interval cover yields hypercube support on the box
+abbrev CSC14 := @Tractability.ConformerSupportCoverage.coordinatewise_cover_yields_hypercubeSupportOnBox
+-- CSC15: Box-restricted hypercube cover yields a supported delta-near-optimum
+abbrev CSC15 := @Tractability.ConformerSupportCoverage.hypercube_supportOnBox_yields_supported_approxOptimal
+-- CSC16: Box-restricted hypercube cover yields a restricted optimum that is ambient delta-near-optimal
+abbrev CSC16 := @Tractability.ConformerSupportCoverage.hypercube_supportOnBox_yields_restricted_opt_approxAmbient
 
 end DecisionQuotient
