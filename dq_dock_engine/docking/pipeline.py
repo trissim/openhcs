@@ -6,6 +6,7 @@ with multi-stage filtering and pocket-guided sampling.
 """
 
 import inspect
+import math
 from abc import ABC, abstractmethod
 from dataclasses import (
     MISSING,
@@ -361,6 +362,38 @@ def _seed_budget_torsion_count(request: "DockingRequestBase") -> int:
     if config is None or config.conformer_search != ConformerSearchMode.ENABLED:
         return 0
     return _rotatable_bond_count(request.ligand_ctx)
+
+
+def _derive_uniform_torsion_support_spec(
+    per_bond_lipschitz: tuple[float, ...],
+    target_delta: float,
+) -> tuple[int, float]:
+    """Derive a proof-backed uniform torsion support from the Lean cell-cover theorems.
+
+    Using `ConformerSupportCoverage.uniformArithmeticCentersPi_*`, if every torsion
+    dimension is covered by arithmetic centers on `[-pi, pi]` with half-width `h`,
+    the ambient support error is bounded by `sum_i L_i * h`. Choosing
+
+        h = target_delta / sum_i L_i
+
+    and then taking the explicit center spacing `2*pi/segments <= h` yields a finite
+    support family with `(segments + 1)^n` centers and certified support slack not
+    exceeding `target_delta`.
+    """
+    if target_delta <= 0.0:
+        raise ValueError(f"target_delta must be positive, got {target_delta}")
+    if not per_bond_lipschitz:
+        return 1, float(2.0 * np.pi)
+    total_lipschitz = float(np.sum(np.asarray(per_bond_lipschitz, dtype=np.float64)))
+    if total_lipschitz <= 0.0:
+        return 1, float(2.0 * np.pi)
+    half_width_target = target_delta / total_lipschitz
+    if half_width_target >= 2.0 * np.pi:
+        return 1, float(2.0 * np.pi)
+    segments = max(1, int(math.ceil((2.0 * np.pi) / half_width_target)))
+    half_width = float((2.0 * np.pi) / segments)
+    support_size = int((segments + 1) ** len(per_bond_lipschitz))
+    return support_size, half_width
 
 
 def _probe_seed_budget_certificate(
@@ -1891,14 +1924,17 @@ def _build_conformer_search_config(
         per_bond_lipschitz = tuple(
             score_lipschitz_constant * bond.max_arm_length for bond in rotatable_bonds
         )
-
-    # Adaptive seed budget: scale max_cells with torsion dimensionality.
-    # Lean: canonicalSeedBudgetCost_mono — monotone cost in seed count.
-    n_bonds = len(rotatable_bonds)
-    max_cells = 200 * min(2**n_bonds, 1024)
+        max_cells, min_cell_radius = _derive_uniform_torsion_support_spec(
+            per_bond_lipschitz,
+            request.target_error,
+        )
+    else:
+        max_cells = 1
+        min_cell_radius = float(2.0 * np.pi)
 
     return BranchAndBoundConfig(
         max_cells=max_cells,
+        min_cell_radius=min_cell_radius,
         score_lipschitz_constant=score_lipschitz_constant,
         per_bond_lipschitz=per_bond_lipschitz,
         reuse_initial_conformer=request.reuse_initial_conformer,
@@ -1913,6 +1949,7 @@ def _conformer_runtime_theorem_handles(
 ) -> tuple[str, ...]:
     return _merge_theorem_handles(
         ("CS2", "CS5", "CS6", "CS8", "CS9", "GAP2") if has_rotatable_bonds else (),
+        ("CSC14", "CSC15", "CSC16") if has_rotatable_bonds else (),
         branch_and_bound_cross_docking_handles() if has_rotatable_bonds else (),
         ("LSA1", "LSA3", "LSA5", "LSA7") if has_rotatable_bonds else (),
         strain_augmented_cross_docking_handles() if has_rotatable_bonds else (),

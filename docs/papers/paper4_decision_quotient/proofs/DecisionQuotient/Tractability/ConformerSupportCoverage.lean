@@ -636,6 +636,139 @@ theorem uniformArithmeticCentersPi_tensor_card
   rw [coordinateCenterSupport_card]
   simp [uniformArithmeticCentersPi_card, hSeg]
 
+/-- Per-dimension arithmetic-center support obtained by giving each torsion its
+    own deterministic segment count. -/
+noncomputable def adaptiveArithmeticCenterSupport
+    (n : ℕ)
+    (segments : Fin n → ℕ) : Finset (Fin n → ℝ) :=
+  coordinateCenterSupport n (fun i => uniformArithmeticCentersPi (segments i))
+
+/-- Tensor-product cardinality for the adaptive arithmetic-center support. -/
+theorem adaptiveArithmeticCenterSupport_card
+    (n : ℕ)
+    (segments : Fin n → ℕ)
+    (hSeg : ∀ i, 0 < segments i) :
+    (adaptiveArithmeticCenterSupport n segments).card = ∏ i, (segments i + 1) := by
+  unfold adaptiveArithmeticCenterSupport
+  rw [coordinateCenterSupport_card]
+  refine Finset.prod_congr rfl ?_
+  intro i _
+  simpa using uniformArithmeticCentersPi_card (segments i) (hSeg i)
+
+/-- The adaptive arithmetic-center support covers the full torsion box with the
+    per-dimension arithmetic step as its certified half-width parameter. -/
+theorem adaptiveArithmeticCenterSupport_cover_on_box
+    (n : ℕ)
+    (segments : Fin n → ℕ)
+    (hSeg : ∀ i, 0 < segments i) :
+    HypercubeSupportCoversOnBox n
+      (adaptiveArithmeticCenterSupport n segments)
+      (fun _ => -Real.pi)
+      (fun _ => Real.pi)
+      (fun i => uniformArithmeticStep (segments i)) := by
+  unfold adaptiveArithmeticCenterSupport
+  apply coordinatewise_cover_yields_hypercubeSupportOnBox
+  intro i x hxLower hxUpper
+  exact uniformArithmeticCentersPi_intervalCover (segments i) (hSeg i) x hxLower hxUpper
+
+/-- The adaptive arithmetic support is never larger than a uniform support using
+    a segment count that dominates every per-dimension segment count. -/
+theorem adaptiveArithmeticCenterSupport_card_le_uniform
+    (n s : ℕ)
+    (segments : Fin n → ℕ)
+    (hSeg : ∀ i, 0 < segments i)
+    (hLe : ∀ i, segments i ≤ s) :
+    (adaptiveArithmeticCenterSupport n segments).card ≤ (s + 1) ^ n := by
+  rw [adaptiveArithmeticCenterSupport_card n segments hSeg]
+  calc
+    ∏ i, (segments i + 1) ≤ ∏ i : Fin n, (s + 1) := by
+      simpa using
+        (Finset.prod_le_prod'
+          (s := (Finset.univ : Finset (Fin n)))
+          (f := fun i => segments i + 1)
+          (g := fun _ => s + 1)
+          (fun i _ => Nat.succ_le_succ (hLe i)))
+    _ = (s + 1) ^ n := by simp
+
+/-- A per-dimension segment budget is admissible for target slack `δ` when the
+    weighted arithmetic-step error sums to at most `δ`. -/
+def AdaptiveSegmentBudget
+    (n : ℕ)
+    (L : Fin n → ℝ)
+    (segments : Fin n → ℕ)
+    (δ : ℝ) : Prop :=
+  Finset.univ.sum (fun i => L i * uniformArithmeticStep (segments i)) ≤ δ
+
+/-- If the per-dimension arithmetic support budget is admissible, the support
+    contains a delta-near-optimal action. This is the direct implementation-facing
+    theorem for deterministic torsion libraries. -/
+theorem adaptiveArithmeticSupport_yields_supported_approxOptimal_of_budget
+    (n : ℕ)
+    (f : (Fin n → ℝ) → ℝ)
+    (L : Fin n → ℝ)
+    (segments : Fin n → ℕ)
+    (δ : ℝ)
+    (hSeg : ∀ i, 0 < segments i)
+    (hL : ∀ i, 0 ≤ L i)
+    (hBudget : AdaptiveSegmentBudget n L segments δ)
+    {pStar : Fin n → ℝ}
+    (hBox : ∀ i, -Real.pi ≤ pStar i ∧ pStar i ≤ Real.pi)
+    (hOpt : IsOptimal f pStar)
+    (hLip : ∀ i : Fin n, ∀ p q : Fin n → ℝ,
+      (∀ j, j ≠ i → p j = q j) →
+      |f p - f q| ≤ L i * |p i - q i|) :
+    ∃ center, center ∈ adaptiveArithmeticCenterSupport n segments ∧
+      IsApproxOptimal f δ center := by
+  rcases hypercube_supportOnBox_yields_supported_approxOptimal
+      n f (adaptiveArithmeticCenterSupport n segments)
+      (fun _ => -Real.pi)
+      (fun _ => Real.pi)
+      L
+      (fun i => uniformArithmeticStep (segments i))
+      (adaptiveArithmeticCenterSupport_cover_on_box n segments hSeg)
+      hL hBox hOpt hLip with ⟨center, hcenter, hApprox⟩
+  refine ⟨center, hcenter, ?_⟩
+  exact approxOptimal_mono f hBudget hApprox
+
+/-- Restricted sampled version of the adaptive arithmetic support theorem. -/
+theorem adaptiveArithmeticSupport_yields_restricted_opt_approxAmbient_of_budget
+    (n : ℕ)
+    {S : Type v}
+    (exactDP : DecisionProblem (Fin n → ℝ) S)
+    (F : SampledActionFamily (Fin n → ℝ))
+    (s : S)
+    (L : Fin n → ℝ)
+    (segments : Fin n → ℕ)
+    (δ : ℝ)
+    (hSupport : F.support = adaptiveArithmeticCenterSupport n segments)
+    (hSeg : ∀ i, 0 < segments i)
+    (hL : ∀ i, 0 ≤ L i)
+    (hBudget : AdaptiveSegmentBudget n L segments δ)
+    {pStar : Fin n → ℝ}
+    (hBox : ∀ i, -Real.pi ≤ pStar i ∧ pStar i ≤ Real.pi)
+    (hOpt : IsOptimal (fun p => exactDP.utility p s) pStar)
+    (hLip : ∀ i : Fin n, ∀ p q : Fin n → ℝ,
+      (∀ j, j ≠ i → p j = q j) →
+      |exactDP.utility p s - exactDP.utility q s| ≤ L i * |p i - q i|) :
+    ∃ a : SupportedAction F,
+      a ∈ (restrictedDecisionProblem exactDP F).Opt s ∧
+      IsApproxOptimal (fun p => exactDP.utility p s) δ a.1 := by
+  have hCoverF : HypercubeSupportCoversOnBox n F.support
+      (fun _ => -Real.pi)
+      (fun _ => Real.pi)
+      (fun i => uniformArithmeticStep (segments i)) := by
+    simpa [hSupport] using adaptiveArithmeticCenterSupport_cover_on_box n segments hSeg
+  rcases hypercube_supportOnBox_yields_restricted_opt_approxAmbient
+      n exactDP F s
+      (fun _ => -Real.pi)
+      (fun _ => Real.pi)
+      L
+      (fun i => uniformArithmeticStep (segments i))
+      hCoverF
+      hL hBox hOpt hLip with ⟨a, haOpt, hApprox⟩
+  refine ⟨a, haOpt, ?_⟩
+  exact approxOptimal_mono (fun p => exactDP.utility p s) hBudget hApprox
+
 /-- Runtime-facing theorem: if the sampled support consists of one representative
     per certified hypercube cell and those cells cover the ambient optimum, then a
     delta-near-optimal supported action lies in the runtime support after the
@@ -679,6 +812,61 @@ theorem hypercube_support_and_uniformApprox_yields_near_opt_in_runtime_support
       (fun a : SupportedAction F => (restrictedDecisionProblem exactDP F).utility a s)
       (fun a : SupportedAction F => (restrictedDecisionProblem coarseDP F).utility a s)
       δ hApprox hδ hTop
+
+/-- Runtime-support version of the adaptive arithmetic support theorem after the
+    support-side coarse approximation step. -/
+theorem adaptiveArithmeticSupport_and_uniformApprox_yields_near_opt_in_runtime_support_of_budget
+    (n : ℕ)
+    {S : Type v}
+    (exactDP coarseDP : DecisionProblem (Fin n → ℝ) S)
+    (F : SampledActionFamily (Fin n → ℝ))
+    (s : S)
+    (L : Fin n → ℝ)
+    (segments : Fin n → ℕ)
+    (δ_cover δ_coarse : ℝ)
+    [LinearOrder (SupportedAction F)]
+    (hSupport : F.support = adaptiveArithmeticCenterSupport n segments)
+    (hSeg : ∀ i, 0 < segments i)
+    (hL : ∀ i, 0 ≤ L i)
+    (hBudget : AdaptiveSegmentBudget n L segments δ_cover)
+    {pStar : Fin n → ℝ}
+    (hBox : ∀ i, -Real.pi ≤ pStar i ∧ pStar i ≤ Real.pi)
+    (hOpt : IsOptimal (fun p => exactDP.utility p s) pStar)
+    (hLip : ∀ i : Fin n, ∀ p q : Fin n → ℝ,
+      (∀ j, j ≠ i → p j = q j) →
+      |exactDP.utility p s - exactDP.utility q s| ≤ L i * |p i - q i|)
+    (hApprox : ∀ a : SupportedAction F,
+      |(restrictedDecisionProblem exactDP F).utility a s -
+        (restrictedDecisionProblem coarseDP F).utility a s| ≤ δ_coarse)
+    (hδ : 0 ≤ δ_coarse) :
+    ∃ a : SupportedAction F,
+      a ∈ (coherent_optimizer_witness_of_uniformApprox_top1
+        (fun a => (restrictedDecisionProblem exactDP F).utility a s)
+        (fun a => (restrictedDecisionProblem coarseDP F).utility a s)
+        δ_coarse hApprox hδ).belief.selection.support
+      ∧ IsApproxOptimal (fun p => exactDP.utility p s) δ_cover a.1 := by
+  have hCoverF : HypercubeSupportCoversOnBox n F.support
+      (fun _ => -Real.pi)
+      (fun _ => Real.pi)
+      (fun i => uniformArithmeticStep (segments i)) := by
+    simpa [hSupport] using adaptiveArithmeticCenterSupport_cover_on_box n segments hSeg
+  rcases hypercube_supportOnBox_yields_restricted_opt_approxAmbient
+      n exactDP F s
+      (fun _ => -Real.pi)
+      (fun _ => Real.pi)
+      L
+      (fun i => uniformArithmeticStep (segments i))
+      hCoverF
+      hL hBox hOpt hLip with ⟨aBest, hBestOpt, hApproxBest⟩
+  refine ⟨aBest, ?_, ?_⟩
+  · have hTop : aBest ∈ topKSet
+        (fun a : SupportedAction F => (restrictedDecisionProblem exactDP F).utility a s) 1 := by
+      exact optimal_mem_topKSet_one _ hBestOpt
+    exact coherent_uniformApprox_exactTop1_subset_support
+        (fun a : SupportedAction F => (restrictedDecisionProblem exactDP F).utility a s)
+        (fun a : SupportedAction F => (restrictedDecisionProblem coarseDP F).utility a s)
+        δ_coarse hApprox hδ hTop
+  · exact approxOptimal_mono (fun p => exactDP.utility p s) hBudget hApproxBest
 
 end ConformerSupportCoverage
 end Tractability

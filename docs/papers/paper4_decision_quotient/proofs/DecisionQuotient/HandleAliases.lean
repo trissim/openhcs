@@ -2241,5 +2241,17 @@ abbrev CSC14 := @Tractability.ConformerSupportCoverage.coordinatewise_cover_yiel
 abbrev CSC15 := @Tractability.ConformerSupportCoverage.hypercube_supportOnBox_yields_supported_approxOptimal
 -- CSC16: Box-restricted hypercube cover yields a restricted optimum that is ambient delta-near-optimal
 abbrev CSC16 := @Tractability.ConformerSupportCoverage.hypercube_supportOnBox_yields_restricted_opt_approxAmbient
+-- CSC17: Adaptive arithmetic-center support has explicit tensor-product cardinality
+abbrev CSC17 := @Tractability.ConformerSupportCoverage.adaptiveArithmeticCenterSupport_card
+-- CSC18: Adaptive arithmetic-center support covers the torsion box
+abbrev CSC18 := @Tractability.ConformerSupportCoverage.adaptiveArithmeticCenterSupport_cover_on_box
+-- CSC19: Adaptive arithmetic-center support is no larger than a dominating uniform grid
+abbrev CSC19 := @Tractability.ConformerSupportCoverage.adaptiveArithmeticCenterSupport_card_le_uniform
+-- CSC20: Adaptive arithmetic budget yields a supported delta-near-optimum
+abbrev CSC20 := @Tractability.ConformerSupportCoverage.adaptiveArithmeticSupport_yields_supported_approxOptimal_of_budget
+-- CSC21: Adaptive arithmetic budget yields a restricted optimum that is ambient delta-near-optimal
+abbrev CSC21 := @Tractability.ConformerSupportCoverage.adaptiveArithmeticSupport_yields_restricted_opt_approxAmbient_of_budget
+-- CSC22: Adaptive arithmetic budget plus support-side uniform approximation yields a delta-near-optimal runtime support witness
+abbrev CSC22 := @Tractability.ConformerSupportCoverage.adaptiveArithmeticSupport_and_uniformApprox_yields_near_opt_in_runtime_support_of_budget
 
 end DecisionQuotient
