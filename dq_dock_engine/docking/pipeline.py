@@ -98,6 +98,7 @@ from dq_dock_engine.docking.conformer_search import (
     RotatableBond,
     TorsionStrainParams,
     compute_raw_lj_lipschitz,
+    compute_softened_lipschitz_constant,
     detect_rotatable_bonds,
     default_torsion_strain_params,
     search_conformers,
@@ -1961,9 +1962,22 @@ def _build_conformer_search_config(
             for re in request.receptor_elements
             for le in request.ligand_ctx.elements
         )
+        # Default: raw LJ Lipschitz constant (LipschitzStepBounds.lean)
         score_lipschitz_constant = compute_raw_lj_lipschitz(
             _EPSILON_KCAL_MOL, min_sigma
         )
+        # Use tighter softened constant when preconditions hold:
+        #   softenedLJ_lipschitzWith (theorem): requires rSoft ≤ σ
+        #   softenedLipschitz_le_rawLipschitz: requires 0.8σ ≤ rSoft ≤ σ
+        r_soft = 0.5 * float(
+            jnp.min(request.receptor_radii) + jnp.min(request.ligand_ctx.base_radii)
+        )
+        if 0 < r_soft and 0.8 * min_sigma <= r_soft <= min_sigma:
+            softened = compute_softened_lipschitz_constant(
+                _EPSILON_KCAL_MOL, min_sigma, r_soft
+            )
+            if 0 < softened < score_lipschitz_constant:
+                score_lipschitz_constant = softened
 
     per_bond_lipschitz = None
     if rotatable_bonds:

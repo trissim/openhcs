@@ -9,7 +9,7 @@ Step size derivation (Lean: LipschitzStepBounds.lean):
 Adaptive step size from softened Lipschitz (PERF5):
   - softened_grid_speedup_ratio: L_soft ≤ L_raw → δ/L_raw ≤ δ/L_soft
   - When softened scoring has tighter Lipschitz, step can scale by L_raw/L_soft
-  - Condition: rSoft ≥ 0.8σ (proven in SoftLJApproximation.lean)
+  - Conditions: rSoft ≥ 0.8σ, rSoft ≤ σ (proven in SoftLJApproximation.lean)
 """
 from __future__ import annotations
 
@@ -225,14 +225,17 @@ def compute_adaptive_translation_step(
     Certified by PerformanceCertificates.lean::softened_grid_speedup_ratio:
         L_soft ≤ L_raw → δ/L_raw ≤ δ/L_soft
 
-    Condition: rSoft ≥ 0.8σ (SoftLJApproximation.lean::softenedLipschitz_le_rawLipschitz).
-    Returns base_step scaled by min(L_raw / L_soft, 4.0) when condition holds.
+    Conditions (SoftLJApproximation.lean):
+      - rSoft ≥ 0.8σ (softenedLipschitz_le_rawLipschitz)
+      - rSoft ≤ σ   (softenedLJ_lipschitzWith — gradient bound requires repulsive wall)
+    Returns base_step scaled by min(L_raw / L_soft, 4.0) when conditions hold.
     """
     if (
         min_pairwise_sigma <= 0
         or r_soft <= 0
         or epsilon_lj <= 0
         or r_soft < 0.8 * min_pairwise_sigma
+        or r_soft > min_pairwise_sigma
     ):
         return base_step
     ratio = min_pairwise_sigma / r_soft

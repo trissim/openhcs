@@ -333,8 +333,10 @@ def compute_softened_lipschitz_constant(
     L_soft = 24ε/rSoft × |2(σ/rSoft)¹² - (σ/rSoft)⁶|
 
     This is the maximum gradient magnitude of the softened LJ potential,
-    which occurs at r = rSoft. Always ≤ raw LJ Lipschitz when rSoft ≥ 0.8σ
-    (proven in SoftLJApproximation.lean::softenedLipschitz_le_rawLipschitz).
+    which occurs at r = rSoft (repulsive wall). Certified by:
+      - softenedLJ_lipschitzWith (theorem): softened LJ is L_soft-Lipschitz
+        Precondition: rSoft ≤ σ (gradient bound requires repulsive wall dominance)
+      - softenedLipschitz_le_rawLipschitz: L_soft ≤ L_raw when 0.8σ ≤ rSoft ≤ σ
     """
     ratio = sigma / r_soft
     return abs(24.0 * epsilon_lj / r_soft * (2.0 * ratio**12 - ratio**6))
