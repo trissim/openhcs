@@ -525,6 +525,117 @@ theorem hypercube_supportOnBox_yields_restricted_opt_approxAmbient
     exact hBestOpt ⟨center, hcenter⟩
   linarith
 
+/-- Uniform arithmetic centers on `[-π, π]` with spacing `2π / segments`. We use
+    endpoints rather than midpoints, so the certified cover radius is exactly the
+    grid spacing. This is slightly conservative but fully explicit and easy to
+    instantiate in runtime code. -/
+noncomputable def uniformArithmeticCentersPi
+    (segments : ℕ) : Finset ℝ :=
+  (Finset.range (segments + 1)).image
+    (fun k : ℕ => -Real.pi + (k : ℝ) * (2 * Real.pi / segments))
+
+/-- Grid spacing for the arithmetic-center support on `[-π, π]`. -/
+noncomputable def uniformArithmeticStep
+    (segments : ℕ) : ℝ :=
+  2 * Real.pi / segments
+
+theorem uniformArithmeticCentersPi_card
+    (segments : ℕ)
+    (hSeg : 0 < segments) :
+    (uniformArithmeticCentersPi segments).card = segments + 1 := by
+  unfold uniformArithmeticCentersPi
+  have hInj : Set.InjOn (fun k : ℕ => -Real.pi + (k : ℝ) * (2 * Real.pi / segments)) ↑(Finset.range (segments + 1)) := by
+    intro k hk l hl hEq
+    have hStepPos : 0 < 2 * Real.pi / segments := by positivity
+    have hkEq : (k : ℝ) = l := by
+      nlinarith [hEq, hStepPos]
+    exact_mod_cast hkEq
+  calc
+    (Finset.image (fun k : ℕ => -Real.pi + (k : ℝ) * (2 * Real.pi / segments)) (Finset.range (segments + 1))).card
+        = (Finset.range (segments + 1)).card := Finset.card_image_iff.mpr hInj
+    _ = segments + 1 := Finset.card_range (segments + 1)
+
+theorem uniformArithmeticCentersPi_intervalCover
+    (segments : ℕ)
+    (hSeg : 0 < segments)
+    (x : ℝ)
+    (hxLower : -Real.pi ≤ x)
+    (hxUpper : x ≤ Real.pi) :
+    ∃ center, center ∈ uniformArithmeticCentersPi segments ∧
+      |x - center| ≤ uniformArithmeticStep segments := by
+  have hSegR : 0 < (segments : ℝ) := by exact_mod_cast hSeg
+  have hStepPos : 0 < uniformArithmeticStep segments := by
+    unfold uniformArithmeticStep
+    positivity
+  let y : ℝ := (x + Real.pi) / uniformArithmeticStep segments
+  let k : ℕ := Nat.floor y
+  have hyNonneg : 0 ≤ y := by
+    dsimp [y]
+    exact div_nonneg (by linarith) hStepPos.le
+  have hyLe : y ≤ segments := by
+    rw [_root_.div_le_iff₀ hStepPos]
+    dsimp [y, uniformArithmeticStep]
+    field_simp [hSegR.ne']
+    nlinarith [hxLower, hxUpper]
+  have hkLe : k ≤ segments := by
+    have hkLeR : (k : ℝ) ≤ segments := by
+      exact le_trans (Nat.floor_le hyNonneg) hyLe
+    exact_mod_cast hkLeR
+  let center : ℝ := -Real.pi + (k : ℝ) * uniformArithmeticStep segments
+  refine ⟨center, ?_, ?_⟩
+  · refine Finset.mem_image.mpr ?_
+    refine ⟨k, Finset.mem_range.mpr ?_, rfl⟩
+    omega
+  · have hyMul : y * uniformArithmeticStep segments = x + Real.pi := by
+      dsimp [y]
+      field_simp [show uniformArithmeticStep segments ≠ 0 by positivity]
+    have hkFloor : (k : ℝ) ≤ y := Nat.floor_le hyNonneg
+    have hkSucc : y < k + 1 := Nat.lt_floor_add_one y
+    have hDiffNonneg : 0 ≤ y - k := by linarith
+    have hDiffLe : y - k ≤ 1 := by linarith
+    have hCenterEq : x - center = (y - k) * uniformArithmeticStep segments := by
+      dsimp [center]
+      linarith [hyMul]
+    rw [hCenterEq, abs_of_nonneg (mul_nonneg hDiffNonneg hStepPos.le)]
+    calc
+      (y - k) * uniformArithmeticStep segments ≤ 1 * uniformArithmeticStep segments := by
+        gcongr
+      _ = uniformArithmeticStep segments := by ring
+
+theorem uniformArithmeticCentersPi_coordinateCover
+    (segments : ℕ)
+    (hSeg : 0 < segments) :
+    CoordinatewiseIntervalCover 1
+      (fun _ : Fin 1 => uniformArithmeticCentersPi segments)
+      (fun _ => -Real.pi)
+      (fun _ => Real.pi)
+      (fun _ => uniformArithmeticStep segments) := by
+  intro i x hxLower hxUpper
+  rcases uniformArithmeticCentersPi_intervalCover segments hSeg x hxLower hxUpper with ⟨center, hcenter, hdist⟩
+  refine ⟨center, hcenter, ?_⟩
+  simpa using hdist
+
+theorem uniformArithmeticCentersPi_cover_on_box
+    (n segments : ℕ)
+    (hSeg : 0 < segments) :
+    HypercubeSupportCoversOnBox n
+      (coordinateCenterSupport n (fun _ : Fin n => uniformArithmeticCentersPi segments))
+      (fun _ => -Real.pi)
+      (fun _ => Real.pi)
+      (fun _ => uniformArithmeticStep segments) := by
+  apply coordinatewise_cover_yields_hypercubeSupportOnBox
+  intro i x hxLower hxUpper
+  rcases uniformArithmeticCentersPi_intervalCover segments hSeg x hxLower hxUpper with ⟨center, hcenter, hdist⟩
+  exact ⟨center, hcenter, hdist⟩
+
+theorem uniformArithmeticCentersPi_tensor_card
+    (n segments : ℕ)
+    (hSeg : 0 < segments) :
+    (coordinateCenterSupport n (fun _ : Fin n => uniformArithmeticCentersPi segments)).card =
+      (segments + 1) ^ n := by
+  rw [coordinateCenterSupport_card]
+  simp [uniformArithmeticCentersPi_card, hSeg]
+
 /-- Runtime-facing theorem: if the sampled support consists of one representative
     per certified hypercube cell and those cells cover the ambient optimum, then a
     delta-near-optimal supported action lies in the runtime support after the
