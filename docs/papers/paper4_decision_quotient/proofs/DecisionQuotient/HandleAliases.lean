@@ -2253,5 +2253,17 @@ abbrev CSC20 := @Tractability.ConformerSupportCoverage.adaptiveArithmeticSupport
 abbrev CSC21 := @Tractability.ConformerSupportCoverage.adaptiveArithmeticSupport_yields_restricted_opt_approxAmbient_of_budget
 -- CSC22: Adaptive arithmetic budget plus support-side uniform approximation yields a delta-near-optimal runtime support witness
 abbrev CSC22 := @Tractability.ConformerSupportCoverage.adaptiveArithmeticSupport_and_uniformApprox_yields_near_opt_in_runtime_support_of_budget
+-- CSC23: Canonical uniform segment count is always positive
+abbrev CSC23 := @Tractability.ConformerSupportCoverage.canonicalUniformSegmentsFromSlack_pos
+-- CSC24: Canonical uniform segment count satisfies the adaptive segment budget
+abbrev CSC24 := @Tractability.ConformerSupportCoverage.adaptiveBudget_of_canonicalUniformSegmentsFromSlack
+-- CSC25: Canonical adaptive segment counts are always positive
+abbrev CSC25 := @Tractability.ConformerSupportCoverage.canonicalAdaptiveSegmentsFromSlack_pos
+-- CSC26: Canonical adaptive segment count satisfies the adaptive segment budget
+abbrev CSC26 := @Tractability.ConformerSupportCoverage.adaptiveBudget_of_canonicalAdaptiveSegmentsFromSlack
+-- CSC27: Canonical uniform support yields a supported delta-near-optimum
+abbrev CSC27 := @Tractability.ConformerSupportCoverage.canonicalUniformSupport_yields_supported_approxOptimal
+-- CSC28: Canonical adaptive support yields a supported delta-near-optimum
+abbrev CSC28 := @Tractability.ConformerSupportCoverage.canonicalAdaptiveSupport_yields_supported_approxOptimal
 
 end DecisionQuotient

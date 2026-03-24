@@ -699,6 +699,118 @@ def AdaptiveSegmentBudget
     (δ : ℝ) : Prop :=
   Finset.univ.sum (fun i => L i * uniformArithmeticStep (segments i)) ≤ δ
 
+/-- Canonical uniform segment count derived directly from total Lipschitz mass and
+    target slack. This is the fully explicit one-parameter fallback support size. -/
+noncomputable def canonicalUniformSegmentsFromSlack
+    (n : ℕ)
+    (L : Fin n → ℝ)
+    (δ : ℝ) : ℕ :=
+  max 1 (Nat.ceil ((2 * Real.pi * Finset.univ.sum (fun i => L i)) / δ))
+
+theorem canonicalUniformSegmentsFromSlack_pos
+    (n : ℕ)
+    (L : Fin n → ℝ)
+    (δ : ℝ) :
+    0 < canonicalUniformSegmentsFromSlack n L δ := by
+  unfold canonicalUniformSegmentsFromSlack
+  omega
+
+theorem adaptiveBudget_of_canonicalUniformSegmentsFromSlack
+    (n : ℕ)
+    (L : Fin n → ℝ)
+    (δ : ℝ)
+    (hL : ∀ i, 0 ≤ L i)
+    (hδ : 0 < δ) :
+    AdaptiveSegmentBudget n L
+      (fun _ => canonicalUniformSegmentsFromSlack n L δ) δ := by
+  let totalL : ℝ := Finset.univ.sum (fun i => L i)
+  have hSegPosNat : 0 < canonicalUniformSegmentsFromSlack n L δ :=
+    canonicalUniformSegmentsFromSlack_pos n L δ
+  have hTotalNonneg : 0 ≤ totalL := by
+    exact Finset.sum_nonneg (fun i _ => hL i)
+  have hLower : (2 * Real.pi * totalL) / δ ≤ (canonicalUniformSegmentsFromSlack n L δ : ℝ) := by
+    unfold canonicalUniformSegmentsFromSlack
+    calc
+      (2 * Real.pi * Finset.univ.sum (fun i => L i)) / δ ≤ ↑⌈(2 * Real.pi * Finset.univ.sum (fun i => L i)) / δ⌉₊ := by
+        exact Nat.le_ceil _
+      _ ≤ ↑(max 1 ⌈(2 * Real.pi * Finset.univ.sum (fun i => L i)) / δ⌉₊) := by
+        exact_mod_cast (le_max_right 1 ⌈(2 * Real.pi * Finset.univ.sum (fun i => L i)) / δ⌉₊)
+  have hMain : totalL * uniformArithmeticStep (canonicalUniformSegmentsFromSlack n L δ) ≤ δ := by
+    let seg := canonicalUniformSegmentsFromSlack n L δ
+    have ha : 2 * Real.pi * totalL ≤ (seg : ℝ) * δ := by
+      exact (_root_.div_le_iff₀ hδ).mp hLower
+    have hDiv : (2 * Real.pi * totalL) / (seg : ℝ) ≤ δ := by
+      exact (_root_.div_le_iff₀ (show 0 < (seg : ℝ) by exact_mod_cast hSegPosNat)).2 (by nlinarith)
+    have hEq : totalL * uniformArithmeticStep seg = (2 * Real.pi * totalL) / (seg : ℝ) := by
+      unfold uniformArithmeticStep
+      field_simp [show (seg : ℝ) ≠ 0 by positivity]
+    rw [hEq]
+    exact hDiv
+  unfold AdaptiveSegmentBudget
+  dsimp [totalL]
+  simpa [totalL, Finset.sum_mul] using hMain
+
+/-- Canonical adaptive segment count from an equal-share per-dimension slack
+    allocation. This gives a deterministic theorem-backed adaptive support family. -/
+noncomputable def canonicalAdaptiveSegmentsFromSlack
+    (n : ℕ)
+    (L : Fin n → ℝ)
+    (δ : ℝ) : Fin n → ℕ :=
+  fun i => max 1 (Nat.ceil ((2 * Real.pi * (n : ℝ) * L i) / δ))
+
+theorem canonicalAdaptiveSegmentsFromSlack_pos
+    (n : ℕ)
+    (L : Fin n → ℝ)
+    (δ : ℝ)
+    (i : Fin n) :
+    0 < canonicalAdaptiveSegmentsFromSlack n L δ i := by
+  unfold canonicalAdaptiveSegmentsFromSlack
+  omega
+
+theorem adaptiveBudget_of_canonicalAdaptiveSegmentsFromSlack
+    (n : ℕ)
+    (L : Fin n → ℝ)
+    (δ : ℝ)
+    (hn : 0 < n)
+    (hL : ∀ i, 0 ≤ L i)
+    (hδ : 0 < δ) :
+    AdaptiveSegmentBudget n L (canonicalAdaptiveSegmentsFromSlack n L δ) δ := by
+  have hnR : 0 < (n : ℝ) := by exact_mod_cast hn
+  have hTerm : ∀ i : Fin n,
+      L i * uniformArithmeticStep (canonicalAdaptiveSegmentsFromSlack n L δ i) ≤ δ / n := by
+    intro i
+    let seg := canonicalAdaptiveSegmentsFromSlack n L δ i
+    have hSegPosNat : 0 < seg := canonicalAdaptiveSegmentsFromSlack_pos n L δ i
+    have hLower : (2 * Real.pi * (n : ℝ) * L i) / δ ≤ (canonicalAdaptiveSegmentsFromSlack n L δ i : ℝ) := by
+      unfold canonicalAdaptiveSegmentsFromSlack
+      calc
+        (2 * Real.pi * (n : ℝ) * L i) / δ ≤ ↑⌈(2 * Real.pi * (n : ℝ) * L i) / δ⌉₊ := by
+          exact Nat.le_ceil _
+        _ ≤ ↑(max 1 ⌈(2 * Real.pi * (n : ℝ) * L i) / δ⌉₊) := by
+          exact_mod_cast (le_max_right 1 ⌈(2 * Real.pi * (n : ℝ) * L i) / δ⌉₊)
+    have ha : 2 * Real.pi * (n : ℝ) * L i ≤ (seg : ℝ) * δ := by
+      exact (_root_.div_le_iff₀ hδ).mp hLower
+    have hDiv : (2 * Real.pi * (n : ℝ) * L i) / (seg : ℝ) ≤ δ := by
+      exact (_root_.div_le_iff₀ (show 0 < (seg : ℝ) by exact_mod_cast hSegPosNat)).2 (by nlinarith)
+    rw [_root_.le_div_iff₀ hnR]
+    have hEq : L i * uniformArithmeticStep seg * n = (2 * Real.pi * (n : ℝ) * L i) / (seg : ℝ) := by
+      unfold uniformArithmeticStep
+      field_simp [show (seg : ℝ) ≠ 0 by positivity]
+    rw [hEq]
+    exact hDiv
+  unfold AdaptiveSegmentBudget
+  have hsum : Finset.univ.sum (fun i => L i * uniformArithmeticStep (canonicalAdaptiveSegmentsFromSlack n L δ i))
+      ≤ Finset.univ.sum (fun _ : Fin n => δ / n) := by
+    refine Finset.sum_le_sum ?_
+    intro i _
+    exact hTerm i
+  have hconst : Finset.univ.sum (fun _ : Fin n => δ / n) = δ := by
+    rw [Finset.sum_const, Finset.card_univ, Fintype.card_fin]
+    have : (n : ℝ) * (δ / n) = δ := by
+      field_simp [hnR.ne']
+    simpa using this
+  exact hsum.trans_eq hconst
+
 /-- If the per-dimension arithmetic support budget is admissible, the support
     contains a delta-near-optimal action. This is the direct implementation-facing
     theorem for deterministic torsion libraries. -/
@@ -867,6 +979,53 @@ theorem adaptiveArithmeticSupport_and_uniformApprox_yields_near_opt_in_runtime_s
         (fun a : SupportedAction F => (restrictedDecisionProblem coarseDP F).utility a s)
         δ_coarse hApprox hδ hTop
   · exact approxOptimal_mono (fun p => exactDP.utility p s) hBudget hApproxBest
+
+theorem canonicalUniformSupport_yields_supported_approxOptimal
+    (n : ℕ)
+    (f : (Fin n → ℝ) → ℝ)
+    (L : Fin n → ℝ)
+    (δ : ℝ)
+    (hL : ∀ i, 0 ≤ L i)
+    (hδ : 0 < δ)
+    {pStar : Fin n → ℝ}
+    (hBox : ∀ i, -Real.pi ≤ pStar i ∧ pStar i ≤ Real.pi)
+    (hOpt : IsOptimal f pStar)
+    (hLip : ∀ i : Fin n, ∀ p q : Fin n → ℝ,
+      (∀ j, j ≠ i → p j = q j) →
+      |f p - f q| ≤ L i * |p i - q i|) :
+    ∃ center,
+      center ∈ coordinateCenterSupport n (fun _ : Fin n => uniformArithmeticCentersPi (canonicalUniformSegmentsFromSlack n L δ))
+      ∧ IsApproxOptimal f δ center := by
+  let seg := canonicalUniformSegmentsFromSlack n L δ
+  have hSeg : 0 < seg := canonicalUniformSegmentsFromSlack_pos n L δ
+  have hBudget : AdaptiveSegmentBudget n L (fun _ : Fin n => seg) δ :=
+    adaptiveBudget_of_canonicalUniformSegmentsFromSlack n L δ hL hδ
+  simpa [adaptiveArithmeticCenterSupport, seg] using
+    adaptiveArithmeticSupport_yields_supported_approxOptimal_of_budget
+      n f L (fun _ : Fin n => seg) δ (fun _ => hSeg) hL hBudget hBox hOpt hLip
+
+theorem canonicalAdaptiveSupport_yields_supported_approxOptimal
+    (n : ℕ)
+    (f : (Fin n → ℝ) → ℝ)
+    (L : Fin n → ℝ)
+    (δ : ℝ)
+    (hn : 0 < n)
+    (hL : ∀ i, 0 ≤ L i)
+    (hδ : 0 < δ)
+    {pStar : Fin n → ℝ}
+    (hBox : ∀ i, -Real.pi ≤ pStar i ∧ pStar i ≤ Real.pi)
+    (hOpt : IsOptimal f pStar)
+    (hLip : ∀ i : Fin n, ∀ p q : Fin n → ℝ,
+      (∀ j, j ≠ i → p j = q j) →
+      |f p - f q| ≤ L i * |p i - q i|) :
+    ∃ center,
+      center ∈ adaptiveArithmeticCenterSupport n (canonicalAdaptiveSegmentsFromSlack n L δ)
+      ∧ IsApproxOptimal f δ center := by
+  have hBudget : AdaptiveSegmentBudget n L (canonicalAdaptiveSegmentsFromSlack n L δ) δ :=
+    adaptiveBudget_of_canonicalAdaptiveSegmentsFromSlack n L δ hn hL hδ
+  exact adaptiveArithmeticSupport_yields_supported_approxOptimal_of_budget
+    n f L (canonicalAdaptiveSegmentsFromSlack n L δ) δ
+    (canonicalAdaptiveSegmentsFromSlack_pos n L δ) hL hBudget hBox hOpt hLip
 
 end ConformerSupportCoverage
 end Tractability
