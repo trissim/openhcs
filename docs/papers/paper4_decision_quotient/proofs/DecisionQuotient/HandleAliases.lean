@@ -2265,5 +2265,21 @@ abbrev CSC26 := @Tractability.ConformerSupportCoverage.adaptiveBudget_of_canonic
 abbrev CSC27 := @Tractability.ConformerSupportCoverage.canonicalUniformSupport_yields_supported_approxOptimal
 -- CSC28: Canonical adaptive support yields a supported delta-near-optimum
 abbrev CSC28 := @Tractability.ConformerSupportCoverage.canonicalAdaptiveSupport_yields_supported_approxOptimal
+-- CSC29: Sparse adaptive support has explicit active-dimension cardinality formula
+abbrev CSC29 := @Tractability.ConformerSupportCoverage.sparseAdaptiveArithmeticCenterSupport_card
+-- CSC30: Sparse adaptive support cardinality is monotone in the active subset
+abbrev CSC30 := @Tractability.ConformerSupportCoverage.sparseAdaptiveArithmeticCenterSupport_card_mono_active
+-- CSC31: Sparse adaptive support covers the anchored torsion box
+abbrev CSC31 := @Tractability.ConformerSupportCoverage.sparseAdaptiveArithmeticCenterSupport_cover_on_box
+-- CSC32: Active-segment budgets are monotone under active-subset reduction
+abbrev CSC32 := @Tractability.ConformerSupportCoverage.activeSegmentBudget_mono
+-- CSC33: Sparse active budget converts to the hypercube slack bound used by the support theorems
+abbrev CSC33 := @Tractability.ConformerSupportCoverage.sparseBudget_as_hypercubeSlack
+-- CSC34: Masked anchor projection preserves optimality under certified invariance
+abbrev CSC34 := @Tractability.ConformerSupportCoverage.maskedAnchorProjection_preserves_optimality
+-- CSC35: Sparse adaptive support yields a supported delta-near-optimum for anchored optima
+abbrev CSC35 := @Tractability.ConformerSupportCoverage.sparseAdaptiveSupport_yields_supported_approxOptimal_of_budget
+-- CSC36: Sparse adaptive support yields a supported delta-near-optimum under projection invariance
+abbrev CSC36 := @Tractability.ConformerSupportCoverage.sparseAdaptiveSupport_yields_supported_approxOptimal_of_projection_invariance
 
 end DecisionQuotient

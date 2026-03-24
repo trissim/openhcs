@@ -1027,6 +1027,278 @@ theorem canonicalAdaptiveSupport_yields_supported_approxOptimal
     n f L (canonicalAdaptiveSegmentsFromSlack n L δ) δ
     (canonicalAdaptiveSegmentsFromSlack_pos n L δ) hL hBudget hBox hOpt hLip
 
+/-- Sparse adaptive support that varies only the active torsion coordinates and
+    keeps all inactive coordinates fixed to an anchor value. -/
+noncomputable def sparseAdaptiveArithmeticCenterSupport
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (segments : Fin n → ℕ) : Finset (Fin n → ℝ) :=
+  coordinateCenterSupport n (fun i => if i ∈ active then uniformArithmeticCentersPi (segments i) else {anchor i})
+
+noncomputable def sparseLowerBounds
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ) : Fin n → ℝ :=
+  fun i => if i ∈ active then -Real.pi else anchor i
+
+noncomputable def sparseUpperBounds
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ) : Fin n → ℝ :=
+  fun i => if i ∈ active then Real.pi else anchor i
+
+noncomputable def sparseHalfWidths
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (segments : Fin n → ℕ) : Fin n → ℝ :=
+  fun i => if i ∈ active then uniformArithmeticStep (segments i) else 0
+
+def ActiveSegmentBudget
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (L : Fin n → ℝ)
+    (segments : Fin n → ℕ)
+    (δ : ℝ) : Prop :=
+  Finset.sum active (fun i => L i * uniformArithmeticStep (segments i)) ≤ δ
+
+def maskedAnchorProjection
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (anchor p : Fin n → ℝ) : Fin n → ℝ :=
+  fun i => if i ∈ active then p i else anchor i
+
+def InvariantUnderMaskedProjection
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (u : (Fin n → ℝ) → ℝ) : Prop :=
+  ∀ p, u (maskedAnchorProjection n active anchor p) = u p
+
+theorem sparseAdaptiveArithmeticCenterSupport_card
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (segments : Fin n → ℕ)
+    (hSeg : ∀ i, i ∈ active → 0 < segments i) :
+    (sparseAdaptiveArithmeticCenterSupport n active anchor segments).card =
+      ∏ i, if i ∈ active then (segments i + 1) else 1 := by
+  unfold sparseAdaptiveArithmeticCenterSupport
+  rw [coordinateCenterSupport_card]
+  refine Finset.prod_congr rfl ?_
+  intro i _
+  by_cases hi : i ∈ active
+  · simp [hi, uniformArithmeticCentersPi_card, hSeg i hi]
+  · simp [hi]
+
+theorem sparseAdaptiveArithmeticCenterSupport_card_mono_active
+    (n : ℕ)
+    {active₁ active₂ : Finset (Fin n)}
+    (anchor : Fin n → ℝ)
+    (segments : Fin n → ℕ)
+    (hSeg : ∀ i, 0 < segments i)
+    (hSubset : active₁ ⊆ active₂) :
+    (sparseAdaptiveArithmeticCenterSupport n active₁ anchor segments).card ≤
+      (sparseAdaptiveArithmeticCenterSupport n active₂ anchor segments).card := by
+  rw [sparseAdaptiveArithmeticCenterSupport_card n active₁ anchor segments (fun i _ => hSeg i)]
+  rw [sparseAdaptiveArithmeticCenterSupport_card n active₂ anchor segments (fun i _ => hSeg i)]
+  calc
+    ∏ i : Fin n, (if i ∈ active₁ then (segments i + 1) else 1)
+        ≤ ∏ i : Fin n, if i ∈ active₂ then (segments i + 1) else 1 := by
+          simpa using
+            (Finset.prod_le_prod'
+              (s := (Finset.univ : Finset (Fin n)))
+              (f := fun i => if i ∈ active₁ then (segments i + 1) else 1)
+              (g := fun i => if i ∈ active₂ then (segments i + 1) else 1)
+              (fun i _ => by
+                by_cases h1 : i ∈ active₁
+                · have h2 : i ∈ active₂ := hSubset h1
+                  simp [h1, h2]
+                · by_cases h2 : i ∈ active₂
+                  · simp [h1, h2]
+                  · simp [h1, h2]))
+
+theorem sparseAdaptiveArithmeticCenterSupport_cover_on_box
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (segments : Fin n → ℕ)
+    (hSeg : ∀ i, i ∈ active → 0 < segments i) :
+    HypercubeSupportCoversOnBox n
+      (sparseAdaptiveArithmeticCenterSupport n active anchor segments)
+      (sparseLowerBounds n active anchor)
+      (sparseUpperBounds n active anchor)
+      (sparseHalfWidths n active segments) := by
+  unfold sparseAdaptiveArithmeticCenterSupport sparseLowerBounds sparseUpperBounds sparseHalfWidths
+  apply coordinatewise_cover_yields_hypercubeSupportOnBox
+  intro i x hxLower hxUpper
+  by_cases hi : i ∈ active
+  · have hxLower' : -Real.pi ≤ x := by simpa [hi] using hxLower
+    have hxUpper' : x ≤ Real.pi := by simpa [hi] using hxUpper
+    rcases uniformArithmeticCentersPi_intervalCover (segments i) (hSeg i hi) x hxLower' hxUpper' with ⟨center, hcenter, hdist⟩
+    exact ⟨center, by simp [hi, hcenter], by simpa [hi] using hdist⟩
+  · have hxLower' : anchor i ≤ x := by simpa [hi] using hxLower
+    have hxUpper' : x ≤ anchor i := by simpa [hi] using hxUpper
+    have hEq : x = anchor i := le_antisymm hxUpper' hxLower'
+    refine ⟨anchor i, by simp [hi], ?_⟩
+    simpa [hi, hEq]
+
+theorem activeSegmentBudget_mono
+    (n : ℕ)
+    {active₁ active₂ : Finset (Fin n)}
+    (L : Fin n → ℝ)
+    (segments : Fin n → ℕ)
+    (δ : ℝ)
+    (hNonneg : ∀ i, 0 ≤ L i * uniformArithmeticStep (segments i))
+    (hSubset : active₁ ⊆ active₂)
+    (hBudget : ActiveSegmentBudget n active₂ L segments δ) :
+    ActiveSegmentBudget n active₁ L segments δ := by
+  unfold ActiveSegmentBudget at *
+  exact le_trans
+    (Finset.sum_le_sum_of_subset_of_nonneg hSubset (fun i _ _ => hNonneg i))
+    hBudget
+
+theorem sparseBudget_as_hypercubeSlack
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (L : Fin n → ℝ)
+    (segments : Fin n → ℕ)
+    (δ : ℝ)
+    (hBudget : ActiveSegmentBudget n active L segments δ) :
+    Finset.univ.sum (fun i => L i * sparseHalfWidths n active segments i) ≤ δ := by
+  unfold ActiveSegmentBudget sparseHalfWidths at *
+  simpa using hBudget
+
+theorem maskedAnchorProjection_eq_self_of_inactive_anchor
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (anchor p : Fin n → ℝ)
+    (hInactive : ∀ i, i ∉ active → p i = anchor i) :
+    maskedAnchorProjection n active anchor p = p := by
+  funext i
+  unfold maskedAnchorProjection
+  by_cases hi : i ∈ active
+  · simp [hi]
+  · simp [hi, hInactive i hi]
+
+theorem maskedAnchorProjection_preserves_active
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (anchor p : Fin n → ℝ)
+    (i : Fin n)
+    (hi : i ∈ active) :
+    maskedAnchorProjection n active anchor p i = p i := by
+  unfold maskedAnchorProjection
+  simp [hi]
+
+theorem maskedAnchorProjection_sets_inactive_to_anchor
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (anchor p : Fin n → ℝ)
+    (i : Fin n)
+    (hi : i ∉ active) :
+    maskedAnchorProjection n active anchor p i = anchor i := by
+  unfold maskedAnchorProjection
+  simp [hi]
+
+theorem maskedAnchorProjection_in_sparse_box
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (anchor p : Fin n → ℝ)
+    (hBox : ∀ i, i ∈ active → -Real.pi ≤ p i ∧ p i ≤ Real.pi) :
+    ∀ i,
+      sparseLowerBounds n active anchor i ≤ maskedAnchorProjection n active anchor p i
+      ∧ maskedAnchorProjection n active anchor p i ≤ sparseUpperBounds n active anchor i := by
+  intro i
+  unfold sparseLowerBounds sparseUpperBounds maskedAnchorProjection
+  by_cases hi : i ∈ active
+  · simpa [hi] using hBox i hi
+  · simp [hi]
+
+theorem maskedAnchorProjection_preserves_optimality
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (u : (Fin n → ℝ) → ℝ)
+    (hInv : InvariantUnderMaskedProjection n active anchor u)
+    {pStar : Fin n → ℝ}
+    (hOpt : IsOptimal u pStar) :
+    IsOptimal u (maskedAnchorProjection n active anchor pStar) := by
+  intro p
+  have hOptP : u p ≤ u pStar := hOpt p
+  have hEq : u (maskedAnchorProjection n active anchor pStar) = u pStar := hInv pStar
+  linarith
+
+theorem sparseAdaptiveSupport_yields_supported_approxOptimal_of_budget
+    (n : ℕ)
+    (f : (Fin n → ℝ) → ℝ)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (L : Fin n → ℝ)
+    (segments : Fin n → ℕ)
+    (δ : ℝ)
+    (hSeg : ∀ i, i ∈ active → 0 < segments i)
+    (hL : ∀ i, 0 ≤ L i)
+    (hBudget : ActiveSegmentBudget n active L segments δ)
+    {pStar : Fin n → ℝ}
+    (hBox : ∀ i, i ∈ active → -Real.pi ≤ pStar i ∧ pStar i ≤ Real.pi)
+    (hAnchor : ∀ i, i ∉ active → pStar i = anchor i)
+    (hOpt : IsOptimal f pStar)
+    (hLip : ∀ i : Fin n, ∀ p q : Fin n → ℝ,
+      (∀ j, j ≠ i → p j = q j) →
+      |f p - f q| ≤ L i * |p i - q i|) :
+    ∃ center, center ∈ sparseAdaptiveArithmeticCenterSupport n active anchor segments ∧
+      IsApproxOptimal f δ center := by
+  rcases hypercube_supportOnBox_yields_supported_approxOptimal
+      n f
+      (sparseAdaptiveArithmeticCenterSupport n active anchor segments)
+      (sparseLowerBounds n active anchor)
+      (sparseUpperBounds n active anchor)
+      L
+      (sparseHalfWidths n active segments)
+      (sparseAdaptiveArithmeticCenterSupport_cover_on_box n active anchor segments hSeg)
+      hL
+      (by
+        intro i
+        unfold sparseLowerBounds sparseUpperBounds
+        by_cases hi : i ∈ active
+        · simpa [hi] using hBox i hi
+        · simp [hi, hAnchor i hi])
+      hOpt hLip with ⟨center, hcenter, hApprox⟩
+  refine ⟨center, hcenter, ?_⟩
+  exact approxOptimal_mono f (sparseBudget_as_hypercubeSlack n active L segments δ hBudget) hApprox
+
+theorem sparseAdaptiveSupport_yields_supported_approxOptimal_of_projection_invariance
+    (n : ℕ)
+    (f : (Fin n → ℝ) → ℝ)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (L : Fin n → ℝ)
+    (segments : Fin n → ℕ)
+    (δ : ℝ)
+    (hSeg : ∀ i, i ∈ active → 0 < segments i)
+    (hL : ∀ i, 0 ≤ L i)
+    (hBudget : ActiveSegmentBudget n active L segments δ)
+    {pStar : Fin n → ℝ}
+    (hBox : ∀ i, i ∈ active → -Real.pi ≤ pStar i ∧ pStar i ≤ Real.pi)
+    (hInv : InvariantUnderMaskedProjection n active anchor f)
+    (hOpt : IsOptimal f pStar)
+    (hLip : ∀ i : Fin n, ∀ p q : Fin n → ℝ,
+      (∀ j, j ≠ i → p j = q j) →
+      |f p - f q| ≤ L i * |p i - q i|) :
+    ∃ center, center ∈ sparseAdaptiveArithmeticCenterSupport n active anchor segments ∧
+      IsApproxOptimal f δ center := by
+  let pProj := maskedAnchorProjection n active anchor pStar
+  have hOptProj : IsOptimal f pProj := maskedAnchorProjection_preserves_optimality n active anchor f hInv hOpt
+  have hAnchorProj : ∀ i, i ∉ active → pProj i = anchor i := by
+    intro i hi
+    exact maskedAnchorProjection_sets_inactive_to_anchor n active anchor pStar i hi
+  have hBoxProj : ∀ i, i ∈ active → -Real.pi ≤ pProj i ∧ pProj i ≤ Real.pi := by
+    intro i hi
+    simpa [pProj, maskedAnchorProjection, hi] using hBox i hi
+  exact sparseAdaptiveSupport_yields_supported_approxOptimal_of_budget
+    n f active anchor L segments δ hSeg hL hBudget hBoxProj hAnchorProj hOptProj hLip
+
 end ConformerSupportCoverage
 end Tractability
 end DecisionQuotient
