@@ -557,7 +557,7 @@ axiom single_bond_torsion_lipschitz
       (fun i => |coords θ₁ i - coords θ₂ i|) ≤ max_arm * |θ₁ - θ₂|
 
 -- ---------------------------------------------------------------------------
--- Gap B: Rigid body transform is an isometry
+-- Gap B: Rigid body transform is an isometry (remains as axiom for now)
 -- ---------------------------------------------------------------------------
 
 /-- Rigid body transforms preserve pairwise distances (isometry).
@@ -586,6 +586,13 @@ theorem rigid_body_isometry
       Finset.univ.sum (fun i => (T x i - T y i) ^ 2) =
       Finset.univ.sum (fun i => (x i - y i) ^ 2) :=
   h_rigid
+
+-- Note: The theorem above is trivial (just restates the hypothesis).
+-- A proper implementation would require:
+-- 1. Importing Mathlib.LinearAlgebra.Matrix.Orthogonal for orthogonal matrices
+-- 2. Defining Euclidean norm on Fin n → ℝ
+-- 3. Proving orthogonal matrices preserve norm: ‖Qv‖ = ‖v‖
+-- This is a well-known fact but requires substantial linear algebra setup.
 
 -- ---------------------------------------------------------------------------
 -- Gap C: Per-bond composed Lipschitz = M × arm_i
