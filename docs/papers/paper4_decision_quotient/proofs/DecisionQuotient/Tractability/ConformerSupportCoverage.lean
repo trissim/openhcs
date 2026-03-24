@@ -31,6 +31,9 @@ import DecisionQuotient.Tractability.CoarseApproximation
 import DecisionQuotient.Tractability.ConformerSearch
 import DecisionQuotient.Tractability.SampledDocking
 import DecisionQuotient.Tractability.EnergyRMSDConvergence
+import DecisionQuotient.Tractability.GaussianDecayBounds
+import DecisionQuotient.Tractability.LJApproximation
+import DecisionQuotient.Tractability.CoulombApproximation
 
 namespace DecisionQuotient
 namespace Tractability
@@ -42,6 +45,9 @@ open CoarseApproximation
 open ConformerSearch
 open EnergyRMSDConvergence
 open Computation.ArrayDSL
+open GaussianDecayBounds
+open LJApproximation
+open CoulombApproximation
 
 universe u v
 
@@ -1804,11 +1810,65 @@ theorem torsion_locality_radius_multi_atom
   rw [h_zero θ₁, h_zero θ₂, dist_self]
   simp
 
--- Note: runtime_torsion_inactivity_radius was removed because it referenced
--- undefined scoring functions (coulombScore) and unimported ones
--- (gaussianScore, exactLJScore).  The generic `torsion_locality_radius` and
--- `torsion_locality_radius_multi_atom` theorems above already certify the
--- result for any cutoff-based scoring function.
+/-- Theorem CSC47: Runtime torsion inactivity radius for cutoff score families.
+
+    If every rotating atom of a torsion remains beyond the largest runtime
+    cutoff radius from every receptor atom, then the combined cutoff Gaussian,
+    cutoff Lennard-Jones, and cutoff Coulomb contribution of that torsion is
+    identically zero. Hence the torsion is 0-Lipschitz for that score slice. -/
+noncomputable def runtimeTorsionCutoffScore
+    {Coord : Type*} [PseudoMetricSpace Coord]
+    (w β R_gaussian : ℝ)
+    (ε_lj σ R_lj : ℝ)
+    (q_i q_j R_coulomb : ℝ)
+    (torsion_kinematics : ℝ → Finset Coord)
+    (receptor_atoms : Finset Coord)
+    (θ : ℝ) : ℝ :=
+  (torsion_kinematics θ).sum fun a =>
+    receptor_atoms.sum fun b =>
+      cutoffGaussianScore w β R_gaussian (dist a b) +
+      cutoffLJScore ε_lj σ R_lj (dist a b) +
+      cutoffCoulombScore q_i q_j R_coulomb (dist a b)
+
+theorem runtime_torsion_inactivity_radius
+    {Coord : Type*} [PseudoMetricSpace Coord]
+    (w β R_gaussian : ℝ)
+    (ε_lj σ R_lj : ℝ)
+    (q_i q_j R_coulomb : ℝ)
+    (torsion_kinematics : ℝ → Finset Coord)
+    (receptor_atoms : Finset Coord)
+    (h_far : ∀ θ : ℝ, ∀ a ∈ torsion_kinematics θ, ∀ b ∈ receptor_atoms,
+      @dist Coord _ a b > max R_gaussian (max R_lj R_coulomb)) :
+    LipschitzWith 0
+      (runtimeTorsionCutoffScore w β R_gaussian ε_lj σ R_lj q_i q_j R_coulomb
+        torsion_kinematics receptor_atoms) := by
+  apply LipschitzWith.of_dist_le_mul
+  intro θ₁ θ₂
+  have h_zero : ∀ θ,
+      runtimeTorsionCutoffScore w β R_gaussian ε_lj σ R_lj q_i q_j R_coulomb
+        torsion_kinematics receptor_atoms θ = 0 := by
+    intro θ
+    unfold runtimeTorsionCutoffScore
+    apply Finset.sum_eq_zero
+    intro a ha
+    apply Finset.sum_eq_zero
+    intro b hb
+    have h_dist : @dist Coord _ a b > max R_gaussian (max R_lj R_coulomb) := h_far θ a ha b hb
+    have h_gaussian : cutoffGaussianScore w β R_gaussian (@dist Coord _ a b) = 0 := by
+      unfold cutoffGaussianScore
+      apply if_neg
+      exact not_lt.mpr (le_trans (le_max_left _ _) (le_of_lt h_dist))
+    have h_lj : cutoffLJScore ε_lj σ R_lj (@dist Coord _ a b) = 0 := by
+      unfold cutoffLJScore
+      apply if_neg
+      exact not_lt.mpr (le_trans (le_trans (le_max_left _ _) (le_max_right _ _)) (le_of_lt h_dist))
+    have h_coulomb : cutoffCoulombScore q_i q_j R_coulomb (@dist Coord _ a b) = 0 := by
+      unfold cutoffCoulombScore
+      apply if_neg
+      exact not_lt.mpr (le_trans (le_trans (le_max_right _ _) (le_max_right _ _)) (le_of_lt h_dist))
+    simp [h_gaussian, h_lj, h_coulomb]
+  rw [h_zero θ₁, h_zero θ₂, dist_self]
+  simp
 
 /-- Theorem CS11: B&B stopping radius yields uniform coverage.
     

@@ -606,11 +606,14 @@ axiom single_bond_torsion_lipschitz
     (arm_lengths : Fin n_atoms → ℝ)
     (h_arms : ∀ i, 0 ≤ arm_lengths i ∧ arm_lengths i ≤ max_arm)
     -- The full multi-atom map θ ↦ coords(θ) is max_arm-Lipschitz
-    (coords : ℝ → Fin n_atoms → ℝ)
+    (coords : ℝ → Fin n_atoms → (Fin 3 → ℝ))
     (θ₁ θ₂ : ℝ)
+    (h_coords : ∀ i θ,
+        ∃ (axis_origin axis_dir u v : Fin 3 → ℝ) (h_unit : ‖axis_dir‖ = 1),
+          coords θ i = axis_origin + (arm_lengths i) • (Real.cos θ • u + Real.sin θ • v))
     [Inhabited (Fin n_atoms)] :
     Finset.univ.sup' ⟨default, Finset.mem_univ _⟩
-      (fun i => |coords θ₁ i - coords θ₂ i|) ≤ max_arm * |θ₁ - θ₂|
+      (fun i => dist (coords θ₁ i) (coords θ₂ i)) ≤ max_arm * |θ₁ - θ₂|
 
 -- ---------------------------------------------------------------------------
 -- Gap B: Rigid body transform is an isometry (remains as axiom for now)
@@ -678,6 +681,7 @@ theorem per_bond_composed_lipschitz
     _ ≤ M * (arm_i * |Δθ|) := by
         apply mul_le_mul_of_nonneg_left h_disp hM
     _ = M * arm_i * |Δθ| := by ring
+
 
 end ConformerSearch
 end Tractability

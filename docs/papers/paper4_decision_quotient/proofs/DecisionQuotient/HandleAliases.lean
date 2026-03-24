@@ -2310,6 +2310,6 @@ abbrev CSC45 := @DecisionQuotient.Tractability.ConformerSupportCoverage.torsion_
 abbrev CSC46 := @DecisionQuotient.Tractability.ConformerSupportCoverage.torsion_locality_radius_multi_atom
 
 -- CSC47: Runtime torsion inactivity radius
--- This theorem was removed because it depended on undefined scoring-function identifiers.
+abbrev CSC47 := @Tractability.ConformerSupportCoverage.runtime_torsion_inactivity_radius
 
 end DecisionQuotient
