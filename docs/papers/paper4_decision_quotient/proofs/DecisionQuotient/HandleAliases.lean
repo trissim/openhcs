@@ -2297,4 +2297,19 @@ abbrev CSC42 := @Tractability.ConformerSupportCoverage.canonicalSparseAdaptiveSu
 -- CS10: Splitting the argmax weighted slack dimension is one-step optimal
 abbrev CS10 := @Tractability.ConformerSearch.weighted_l1_argmax_subdivision_optimal
 
+-- CS11: B&B stopping radius yields uniform coverage
+abbrev CS11 := @DecisionQuotient.Tractability.ConformerSupportCoverage.bb_stopping_radius_yields_coverage
+
+-- CSC43: Certified support deduplication
+abbrev CSC43 := @DecisionQuotient.Tractability.ConformerSupportCoverage.dedup_preserves_coverage
+
+-- CSC45: Torsion locality radius (single atom)
+abbrev CSC45 := @DecisionQuotient.Tractability.ConformerSupportCoverage.torsion_locality_radius
+
+-- CSC46: Torsion locality radius (multiple atoms)
+abbrev CSC46 := @DecisionQuotient.Tractability.ConformerSupportCoverage.torsion_locality_radius_multi_atom
+
+-- CSC47: Runtime torsion inactivity radius
+-- This theorem was removed because it depended on undefined scoring-function identifiers.
+
 end DecisionQuotient
