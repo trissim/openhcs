@@ -1075,6 +1075,19 @@ def InvariantUnderMaskedProjection
     (u : (Fin n → ℝ) → ℝ) : Prop :=
   ∀ p, u (maskedAnchorProjection n active anchor p) = u p
 
+def DependsOnlyOnActiveCoords
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (u : (Fin n → ℝ) → ℝ) : Prop :=
+  ∀ p q, (∀ i, i ∈ active → p i = q i) → u p = u q
+
+def UtilityRepresentativeCover
+    {A : Type u}
+    (u : A → ℝ)
+    (support reps : Finset A)
+    (η : ℝ) : Prop :=
+  ∀ a, a ∈ support → ∃ r, r ∈ reps ∧ |u a - u r| ≤ η
+
 theorem sparseAdaptiveArithmeticCenterSupport_card
     (n : ℕ)
     (active : Finset (Fin n))
@@ -1229,6 +1242,149 @@ theorem maskedAnchorProjection_preserves_optimality
   have hEq : u (maskedAnchorProjection n active anchor pStar) = u pStar := hInv pStar
   linarith
 
+theorem dependsOnlyOnActiveCoords_implies_projection_invariance
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (u : (Fin n → ℝ) → ℝ)
+    (hDep : DependsOnlyOnActiveCoords n active u) :
+    InvariantUnderMaskedProjection n active anchor u := by
+  intro p
+  apply hDep
+  intro i hi
+  exact maskedAnchorProjection_preserves_active n active anchor p i hi
+
+theorem utilityRepresentativeCover_mono
+    {A : Type u}
+    (u : A → ℝ)
+    {support₁ support₂ reps₁ reps₂ : Finset A}
+    {η₁ η₂ : ℝ}
+    (hSupport : support₁ ⊆ support₂)
+    (hReps : reps₁ ⊆ reps₂)
+    (hη : η₁ ≤ η₂)
+    (hCover : UtilityRepresentativeCover u support₁ reps₁ η₁) :
+    UtilityRepresentativeCover u support₁ reps₂ η₂ := by
+  intro a ha
+  rcases hCover a ha with ⟨r, hr, hdist⟩
+  exact ⟨r, hReps hr, le_trans hdist hη⟩
+
+theorem zero_lipschitz_outside_active_implies_dependsOnlyOnActiveCoords
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (f : (Fin n → ℝ) → ℝ)
+    (L : Fin n → ℝ)
+    (hLip : ∀ i : Fin n, ∀ p q : Fin n → ℝ,
+      (∀ j, j ≠ i → p j = q j) →
+      |f p - f q| ≤ L i * |p i - q i|)
+    (hZero : ∀ i, i ∉ active → L i = 0) :
+    DependsOnlyOnActiveCoords n active f := by
+  intro p q hActive
+  have hAbs := per_dimension_lipschitz_bound n f L hLip p q
+  have hSumZero : Finset.univ.sum (fun i => L i * |p i - q i|) = 0 := by
+    apply Finset.sum_eq_zero
+    intro i _
+    by_cases hi : i ∈ active
+    · have hEq : p i = q i := hActive i hi
+      simp [hEq]
+    · simp [hZero i hi]
+  have hAbsZero : |f p - f q| ≤ 0 := by simpa [hSumZero] using hAbs
+  have hAbs' := abs_le.mp hAbsZero
+  linarith
+
+theorem zero_lipschitz_outside_active_implies_projection_invariance
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (f : (Fin n → ℝ) → ℝ)
+    (L : Fin n → ℝ)
+    (hLip : ∀ i : Fin n, ∀ p q : Fin n → ℝ,
+      (∀ j, j ≠ i → p j = q j) →
+      |f p - f q| ≤ L i * |p i - q i|)
+    (hZero : ∀ i, i ∉ active → L i = 0) :
+    InvariantUnderMaskedProjection n active anchor f := by
+  apply dependsOnlyOnActiveCoords_implies_projection_invariance
+  exact zero_lipschitz_outside_active_implies_dependsOnlyOnActiveCoords n active f L hLip hZero
+
+theorem dependsOnlyOnActiveCoords_mono
+    (n : ℕ)
+    {active₁ active₂ : Finset (Fin n)}
+    (u : (Fin n → ℝ) → ℝ)
+    (hSubset : active₁ ⊆ active₂)
+    (hDep : DependsOnlyOnActiveCoords n active₁ u) :
+    DependsOnlyOnActiveCoords n active₂ u := by
+  intro p q hEq
+  apply hDep
+  intro i hi
+  exact hEq i (hSubset hi)
+
+theorem invariantUnderMaskedProjection_add
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (u v : (Fin n → ℝ) → ℝ)
+    (hu : InvariantUnderMaskedProjection n active anchor u)
+    (hv : InvariantUnderMaskedProjection n active anchor v) :
+    InvariantUnderMaskedProjection n active anchor (fun p => u p + v p) := by
+  intro p
+  simp [hu p, hv p]
+
+theorem dependsOnlyOnActiveCoords_add
+    (n : ℕ)
+    (active_u active_v : Finset (Fin n))
+    (u v : (Fin n → ℝ) → ℝ)
+    (hu : DependsOnlyOnActiveCoords n active_u u)
+    (hv : DependsOnlyOnActiveCoords n active_v v) :
+    DependsOnlyOnActiveCoords n (active_u ∪ active_v) (fun p => u p + v p) := by
+  intro p q hEq
+  have hu' : u p = u q := hu p q (fun i hi => hEq i (Finset.mem_union.mpr (Or.inl hi)))
+  have hv' : v p = v q := hv p q (fun i hi => hEq i (Finset.mem_union.mpr (Or.inr hi)))
+  linarith
+
+theorem projectionInvariance_of_channelwise_dependence
+    (n : ℕ)
+    (active_u active_v : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (u v : (Fin n → ℝ) → ℝ)
+    (hu : DependsOnlyOnActiveCoords n active_u u)
+    (hv : DependsOnlyOnActiveCoords n active_v v) :
+    InvariantUnderMaskedProjection n (active_u ∪ active_v) anchor (fun p => u p + v p) := by
+  apply dependsOnlyOnActiveCoords_implies_projection_invariance
+  exact dependsOnlyOnActiveCoords_add n active_u active_v u v hu hv
+
+theorem representativeCover_preserves_supported_approxOptimal
+    {A : Type u} [DecidableEq A]
+    (u : A → ℝ)
+    (support reps : Finset A)
+    (δ η : ℝ)
+    (hRepSubset : reps ⊆ support)
+    (hCover : UtilityRepresentativeCover u support reps η)
+    {a : A}
+    (ha : a ∈ support)
+    (hApprox : IsApproxOptimal u δ a) :
+    ∃ r, r ∈ reps ∧ IsApproxOptimal u (δ + η) r := by
+  rcases hCover a ha with ⟨r, hr, hClose⟩
+  refine ⟨r, hr, ?_⟩
+  intro a'
+  have hApprox' : u a' ≤ u a + δ := hApprox a'
+  have hClose' := abs_le.mp hClose
+  linarith
+
+theorem representativeCover_preserves_restricted_opt_approxAmbient
+    {A : Type u} {S : Type v}
+    [DecidableEq A]
+    (dp : DecisionProblem A S)
+    (support reps : Finset A)
+    (s : S)
+    (δ η : ℝ)
+    (hRepSubset : reps ⊆ support)
+    (hCover : UtilityRepresentativeCover (fun a => dp.utility a s) support reps η)
+    {a : A}
+    (ha : a ∈ support)
+    (hApprox : IsApproxOptimal (fun a => dp.utility a s) δ a) :
+    ∃ r, r ∈ reps ∧ IsApproxOptimal (fun a => dp.utility a s) (δ + η) r := by
+  exact representativeCover_preserves_supported_approxOptimal
+    (u := fun a => dp.utility a s) support reps δ η hRepSubset hCover ha hApprox
+
 theorem sparseAdaptiveSupport_yields_supported_approxOptimal_of_budget
     (n : ℕ)
     (f : (Fin n → ℝ) → ℝ)
@@ -1298,6 +1454,259 @@ theorem sparseAdaptiveSupport_yields_supported_approxOptimal_of_projection_invar
     simpa [pProj, maskedAnchorProjection, hi] using hBox i hi
   exact sparseAdaptiveSupport_yields_supported_approxOptimal_of_budget
     n f active anchor L segments δ hSeg hL hBudget hBoxProj hAnchorProj hOptProj hLip
+
+theorem sparseAdaptiveSupport_yields_restricted_opt_approxAmbient_of_budget
+    (n : ℕ)
+    {S : Type v}
+    (exactDP : DecisionProblem (Fin n → ℝ) S)
+    (F : SampledActionFamily (Fin n → ℝ))
+    (s : S)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (L : Fin n → ℝ)
+    (segments : Fin n → ℕ)
+    (δ : ℝ)
+    (hSupport : F.support = sparseAdaptiveArithmeticCenterSupport n active anchor segments)
+    (hSeg : ∀ i, i ∈ active → 0 < segments i)
+    (hL : ∀ i, 0 ≤ L i)
+    (hBudget : ActiveSegmentBudget n active L segments δ)
+    {pStar : Fin n → ℝ}
+    (hBox : ∀ i, i ∈ active → -Real.pi ≤ pStar i ∧ pStar i ≤ Real.pi)
+    (hAnchor : ∀ i, i ∉ active → pStar i = anchor i)
+    (hOpt : IsOptimal (fun p => exactDP.utility p s) pStar)
+    (hLip : ∀ i : Fin n, ∀ p q : Fin n → ℝ,
+      (∀ j, j ≠ i → p j = q j) →
+      |exactDP.utility p s - exactDP.utility q s| ≤ L i * |p i - q i|) :
+    ∃ a : SupportedAction F,
+      a ∈ (restrictedDecisionProblem exactDP F).Opt s ∧
+      IsApproxOptimal (fun p => exactDP.utility p s) δ a.1 := by
+  have hCoverF : HypercubeSupportCoversOnBox n F.support
+      (sparseLowerBounds n active anchor)
+      (sparseUpperBounds n active anchor)
+      (sparseHalfWidths n active segments) := by
+    simpa [hSupport] using sparseAdaptiveArithmeticCenterSupport_cover_on_box n active anchor segments hSeg
+  rcases hypercube_supportOnBox_yields_restricted_opt_approxAmbient
+      n exactDP F s
+      (sparseLowerBounds n active anchor)
+      (sparseUpperBounds n active anchor)
+      L
+      (sparseHalfWidths n active segments)
+      hCoverF
+      hL
+      (by
+        intro i
+        unfold sparseLowerBounds sparseUpperBounds
+        by_cases hi : i ∈ active
+        · simpa [hi] using hBox i hi
+        · simp [hi, hAnchor i hi])
+      hOpt hLip with ⟨a, haOpt, hApprox⟩
+  refine ⟨a, haOpt, ?_⟩
+  exact approxOptimal_mono (fun p => exactDP.utility p s)
+    (sparseBudget_as_hypercubeSlack n active L segments δ hBudget) hApprox
+
+theorem sparseAdaptiveSupport_and_uniformApprox_yields_near_opt_in_runtime_support_of_budget
+    (n : ℕ)
+    {S : Type v}
+    (exactDP coarseDP : DecisionProblem (Fin n → ℝ) S)
+    (F : SampledActionFamily (Fin n → ℝ))
+    (s : S)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (L : Fin n → ℝ)
+    (segments : Fin n → ℕ)
+    (δ_cover δ_coarse : ℝ)
+    [LinearOrder (SupportedAction F)]
+    (hSupport : F.support = sparseAdaptiveArithmeticCenterSupport n active anchor segments)
+    (hSeg : ∀ i, i ∈ active → 0 < segments i)
+    (hL : ∀ i, 0 ≤ L i)
+    (hBudget : ActiveSegmentBudget n active L segments δ_cover)
+    {pStar : Fin n → ℝ}
+    (hBox : ∀ i, i ∈ active → -Real.pi ≤ pStar i ∧ pStar i ≤ Real.pi)
+    (hAnchor : ∀ i, i ∉ active → pStar i = anchor i)
+    (hOpt : IsOptimal (fun p => exactDP.utility p s) pStar)
+    (hLip : ∀ i : Fin n, ∀ p q : Fin n → ℝ,
+      (∀ j, j ≠ i → p j = q j) →
+      |exactDP.utility p s - exactDP.utility q s| ≤ L i * |p i - q i|)
+    (hApprox : ∀ a : SupportedAction F,
+      |(restrictedDecisionProblem exactDP F).utility a s -
+        (restrictedDecisionProblem coarseDP F).utility a s| ≤ δ_coarse)
+    (hδ : 0 ≤ δ_coarse) :
+    ∃ a : SupportedAction F,
+      a ∈ (coherent_optimizer_witness_of_uniformApprox_top1
+        (fun a => (restrictedDecisionProblem exactDP F).utility a s)
+        (fun a => (restrictedDecisionProblem coarseDP F).utility a s)
+        δ_coarse hApprox hδ).belief.selection.support
+      ∧ IsApproxOptimal (fun p => exactDP.utility p s) δ_cover a.1 := by
+  rcases sparseAdaptiveSupport_yields_restricted_opt_approxAmbient_of_budget
+      n exactDP F s active anchor L segments δ_cover hSupport hSeg hL hBudget hBox hAnchor hOpt hLip
+      with ⟨aBest, hBestOpt, hApproxBest⟩
+  refine ⟨aBest, ?_, hApproxBest⟩
+  have hTop : aBest ∈ topKSet
+      (fun a : SupportedAction F => (restrictedDecisionProblem exactDP F).utility a s) 1 := by
+    exact optimal_mem_topKSet_one _ hBestOpt
+  exact coherent_uniformApprox_exactTop1_subset_support
+      (fun a : SupportedAction F => (restrictedDecisionProblem exactDP F).utility a s)
+      (fun a : SupportedAction F => (restrictedDecisionProblem coarseDP F).utility a s)
+      δ_coarse hApprox hδ hTop
+
+noncomputable def canonicalSparseAdaptiveSegmentsFromSlack
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (L : Fin n → ℝ)
+    (δ : ℝ) : Fin n → ℕ :=
+  fun i => if i ∈ active then max 1 (Nat.ceil ((2 * Real.pi * (active.card : ℝ) * L i) / δ)) else 1
+
+theorem canonicalSparseAdaptiveSegmentsFromSlack_pos
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (L : Fin n → ℝ)
+    (δ : ℝ)
+    (i : Fin n) :
+    0 < canonicalSparseAdaptiveSegmentsFromSlack n active L δ i := by
+  unfold canonicalSparseAdaptiveSegmentsFromSlack
+  by_cases hi : i ∈ active
+  · simp [hi]
+  · simp [hi]
+
+theorem canonicalSparseAdaptiveSegmentsFromSlack_eq_one_of_inactive
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (L : Fin n → ℝ)
+    (δ : ℝ)
+    {i : Fin n}
+    (hi : i ∉ active) :
+    canonicalSparseAdaptiveSegmentsFromSlack n active L δ i = 1 := by
+  simp [canonicalSparseAdaptiveSegmentsFromSlack, hi]
+
+theorem activeSegmentBudget_of_canonicalSparseAdaptiveSegmentsFromSlack
+    (n : ℕ)
+    (active : Finset (Fin n))
+    (L : Fin n → ℝ)
+    (δ : ℝ)
+    (hL : ∀ i, 0 ≤ L i)
+    (hδ : 0 < δ) :
+    ActiveSegmentBudget n active L (canonicalSparseAdaptiveSegmentsFromSlack n active L δ) δ := by
+  by_cases hEmpty : active = ∅
+  · subst hEmpty
+    unfold ActiveSegmentBudget
+    simp [le_of_lt hδ]
+  · have hActNonempty : active.Nonempty := Finset.nonempty_iff_ne_empty.mpr hEmpty
+    have hActCardPosNat : 0 < active.card := Finset.card_pos.mpr hActNonempty
+    have hActCardPos : 0 < (active.card : ℝ) := by exact_mod_cast hActCardPosNat
+    have hTerm : ∀ i ∈ active,
+        L i * uniformArithmeticStep (canonicalSparseAdaptiveSegmentsFromSlack n active L δ i) ≤ δ / active.card := by
+      intro i hi
+      let seg := canonicalSparseAdaptiveSegmentsFromSlack n active L δ i
+      have hSegPosNat : 0 < seg := canonicalSparseAdaptiveSegmentsFromSlack_pos n active L δ i
+      have hSegEq : seg = max 1 (Nat.ceil ((2 * Real.pi * (active.card : ℝ) * L i) / δ)) := by
+        simp [canonicalSparseAdaptiveSegmentsFromSlack, seg, hi]
+      have hLower : (2 * Real.pi * (active.card : ℝ) * L i) / δ ≤ (seg : ℝ) := by
+        rw [hSegEq]
+        calc
+          (2 * Real.pi * (active.card : ℝ) * L i) / δ ≤ ↑⌈(2 * Real.pi * (active.card : ℝ) * L i) / δ⌉₊ := by
+            exact Nat.le_ceil _
+          _ ≤ ↑(max 1 ⌈(2 * Real.pi * (active.card : ℝ) * L i) / δ⌉₊) := by
+            exact_mod_cast (le_max_right 1 ⌈(2 * Real.pi * (active.card : ℝ) * L i) / δ⌉₊)
+      have hDiv : (2 * Real.pi * (active.card : ℝ) * L i) / (seg : ℝ) ≤ δ := by
+        apply (_root_.div_le_iff₀ (show 0 < (seg : ℝ) by exact_mod_cast hSegPosNat)).2
+        have hMul : 2 * Real.pi * (active.card : ℝ) * L i ≤ δ * (seg : ℝ) := by
+          simpa [mul_comm, mul_left_comm, mul_assoc] using (_root_.div_le_iff₀ hδ).mp hLower
+        exact hMul
+      rw [_root_.le_div_iff₀ hActCardPos]
+      have hEq : L i * uniformArithmeticStep seg * active.card = (2 * Real.pi * (active.card : ℝ) * L i) / (seg : ℝ) := by
+        unfold uniformArithmeticStep
+        field_simp [show (seg : ℝ) ≠ 0 by positivity]
+      rw [hEq]
+      exact hDiv
+    unfold ActiveSegmentBudget
+    have hsum : Finset.sum active (fun i => L i * uniformArithmeticStep (canonicalSparseAdaptiveSegmentsFromSlack n active L δ i))
+        ≤ Finset.sum active (fun _ => δ / active.card) := by
+      refine Finset.sum_le_sum ?_
+      intro i hi
+      exact hTerm i hi
+    have hconst : Finset.sum active (fun _ => δ / active.card) = δ := by
+      rw [Finset.sum_const, nsmul_eq_mul, Finset.card_eq_sum_ones]
+      have : (active.card : ℝ) * (δ / active.card) = δ := by
+        field_simp [show (active.card : ℝ) ≠ 0 by exact_mod_cast hActCardPosNat.ne']
+      simpa using this
+    exact hsum.trans_eq hconst
+
+theorem canonicalSparseAdaptiveSupport_yields_supported_approxOptimal_of_projection_invariance
+    (n : ℕ)
+    (f : (Fin n → ℝ) → ℝ)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (L : Fin n → ℝ)
+    (δ : ℝ)
+    (hL : ∀ i, 0 ≤ L i)
+    (hδ : 0 < δ)
+    {pStar : Fin n → ℝ}
+    (hBox : ∀ i, i ∈ active → -Real.pi ≤ pStar i ∧ pStar i ≤ Real.pi)
+    (hInv : InvariantUnderMaskedProjection n active anchor f)
+    (hOpt : IsOptimal f pStar)
+    (hLip : ∀ i : Fin n, ∀ p q : Fin n → ℝ,
+      (∀ j, j ≠ i → p j = q j) →
+      |f p - f q| ≤ L i * |p i - q i|) :
+    ∃ center,
+      center ∈ sparseAdaptiveArithmeticCenterSupport n active anchor (canonicalSparseAdaptiveSegmentsFromSlack n active L δ)
+      ∧ IsApproxOptimal f δ center := by
+  have hBudget : ActiveSegmentBudget n active L (canonicalSparseAdaptiveSegmentsFromSlack n active L δ) δ :=
+    activeSegmentBudget_of_canonicalSparseAdaptiveSegmentsFromSlack n active L δ hL hδ
+  exact sparseAdaptiveSupport_yields_supported_approxOptimal_of_projection_invariance
+    n f active anchor L (canonicalSparseAdaptiveSegmentsFromSlack n active L δ) δ
+    (fun i hi => canonicalSparseAdaptiveSegmentsFromSlack_pos n active L δ i)
+    hL hBudget hBox hInv hOpt hLip
+
+theorem sparseAdaptiveSupport_yields_supported_approxOptimal_of_zero_lipschitz_outside_active
+    (n : ℕ)
+    (f : (Fin n → ℝ) → ℝ)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (L : Fin n → ℝ)
+    (segments : Fin n → ℕ)
+    (δ : ℝ)
+    (hSeg : ∀ i, i ∈ active → 0 < segments i)
+    (hL : ∀ i, 0 ≤ L i)
+    (hBudget : ActiveSegmentBudget n active L segments δ)
+    {pStar : Fin n → ℝ}
+    (hBox : ∀ i, i ∈ active → -Real.pi ≤ pStar i ∧ pStar i ≤ Real.pi)
+    (hOpt : IsOptimal f pStar)
+    (hLip : ∀ i : Fin n, ∀ p q : Fin n → ℝ,
+      (∀ j, j ≠ i → p j = q j) →
+      |f p - f q| ≤ L i * |p i - q i|)
+    (hZero : ∀ i, i ∉ active → L i = 0) :
+    ∃ center, center ∈ sparseAdaptiveArithmeticCenterSupport n active anchor segments ∧
+      IsApproxOptimal f δ center := by
+  apply sparseAdaptiveSupport_yields_supported_approxOptimal_of_projection_invariance
+    n f active anchor L segments δ hSeg hL hBudget hBox
+    (zero_lipschitz_outside_active_implies_projection_invariance n active anchor f L hLip hZero)
+    hOpt hLip
+
+theorem canonicalSparseAdaptiveSupport_yields_supported_approxOptimal_of_zero_lipschitz_outside_active
+    (n : ℕ)
+    (f : (Fin n → ℝ) → ℝ)
+    (active : Finset (Fin n))
+    (anchor : Fin n → ℝ)
+    (L : Fin n → ℝ)
+    (δ : ℝ)
+    (hL : ∀ i, 0 ≤ L i)
+    (hδ : 0 < δ)
+    {pStar : Fin n → ℝ}
+    (hBox : ∀ i, i ∈ active → -Real.pi ≤ pStar i ∧ pStar i ≤ Real.pi)
+    (hOpt : IsOptimal f pStar)
+    (hLip : ∀ i : Fin n, ∀ p q : Fin n → ℝ,
+      (∀ j, j ≠ i → p j = q j) →
+      |f p - f q| ≤ L i * |p i - q i|)
+    (hZero : ∀ i, i ∉ active → L i = 0) :
+    ∃ center,
+      center ∈ sparseAdaptiveArithmeticCenterSupport n active anchor (canonicalSparseAdaptiveSegmentsFromSlack n active L δ)
+      ∧ IsApproxOptimal f δ center := by
+  have hBudget : ActiveSegmentBudget n active L (canonicalSparseAdaptiveSegmentsFromSlack n active L δ) δ :=
+    activeSegmentBudget_of_canonicalSparseAdaptiveSegmentsFromSlack n active L δ hL hδ
+  exact sparseAdaptiveSupport_yields_supported_approxOptimal_of_zero_lipschitz_outside_active
+    n f active anchor L (canonicalSparseAdaptiveSegmentsFromSlack n active L δ) δ
+    (fun i hi => canonicalSparseAdaptiveSegmentsFromSlack_pos n active L δ i)
+    hL hBudget hBox hOpt hLip hZero
 
 end ConformerSupportCoverage
 end Tractability

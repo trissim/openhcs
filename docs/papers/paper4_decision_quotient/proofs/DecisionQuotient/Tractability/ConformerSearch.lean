@@ -401,6 +401,62 @@ theorem weighted_l1_targeted_subdivision
     exact this
   · simp [heq]
 
+/-- Splitting the coordinate with maximal weighted slack gives the smallest
+    one-step weighted-L1 upper bound among all single-coordinate bisections.
+
+    This is the precise theorem behind argmax subdivision in branch-and-bound:
+    if `k` maximizes `Lᵢ × hᵢ`, then halving dimension `k` yields a bound no worse
+    than halving any other single dimension. -/
+theorem weighted_l1_argmax_subdivision_optimal
+    (n : ℕ)
+    (L h_w : Fin n → ℝ)
+    (hL : ∀ i, 0 ≤ L i)
+    (hh : ∀ i, 0 ≤ h_w i)
+    (k : Fin n)
+    (hMax : ∀ j : Fin n, L j * h_w j ≤ L k * h_w k) :
+    ∀ j : Fin n,
+      Finset.univ.sum (fun i => L i * (if i = k then h_w i / 2 else h_w i)) ≤
+      Finset.univ.sum (fun i => L i * (if i = j then h_w i / 2 else h_w i)) := by
+  intro j
+  let total : ℝ := Finset.univ.sum (fun i => L i * h_w i)
+  have hSplitK :
+      Finset.univ.sum (fun i => L i * (if i = k then h_w i / 2 else h_w i)) =
+        total - (L k * h_w k) / 2 := by
+    unfold total
+    classical
+    have hfun : ∀ i,
+        L i * (if i = k then h_w i / 2 else h_w i) =
+          L i * h_w i - (if i = k then (L i * h_w i) / 2 else 0) := by
+      intro i
+      by_cases hi : i = k
+      · subst hi
+        simp
+        ring_nf
+      · simp [hi]
+    rw [Finset.sum_congr rfl (fun i _ => hfun i), Finset.sum_sub_distrib]
+    simp
+  have hSplitJ :
+      Finset.univ.sum (fun i => L i * (if i = j then h_w i / 2 else h_w i)) =
+        total - (L j * h_w j) / 2 := by
+    unfold total
+    classical
+    have hfun : ∀ i,
+        L i * (if i = j then h_w i / 2 else h_w i) =
+          L i * h_w i - (if i = j then (L i * h_w i) / 2 else 0) := by
+      intro i
+      by_cases hi : i = j
+      · subst hi
+        simp
+        ring_nf
+      · simp [hi]
+    rw [Finset.sum_congr rfl (fun i _ => hfun i), Finset.sum_sub_distrib]
+    simp
+  rw [hSplitK, hSplitJ]
+  have hNonneg : 0 ≤ (1 : ℝ) / 2 := by positivity
+  have hHalf : (L j * h_w j) / 2 ≤ (L k * h_w k) / 2 := by
+    simpa [div_eq_mul_inv] using mul_le_mul_of_nonneg_right (hMax j) hNonneg
+  linarith
+
 -- ---------------------------------------------------------------------------
 -- Theorem 7: Sequential torsion scan (Gap 3)
 -- ---------------------------------------------------------------------------

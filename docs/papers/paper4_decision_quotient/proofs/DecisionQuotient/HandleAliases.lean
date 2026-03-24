@@ -2281,5 +2281,20 @@ abbrev CSC34 := @Tractability.ConformerSupportCoverage.maskedAnchorProjection_pr
 abbrev CSC35 := @Tractability.ConformerSupportCoverage.sparseAdaptiveSupport_yields_supported_approxOptimal_of_budget
 -- CSC36: Sparse adaptive support yields a supported delta-near-optimum under projection invariance
 abbrev CSC36 := @Tractability.ConformerSupportCoverage.sparseAdaptiveSupport_yields_supported_approxOptimal_of_projection_invariance
+-- CSC37: Utility-representative covers preserve near-optimality under deduplication
+abbrev CSC37 := @Tractability.ConformerSupportCoverage.representativeCover_preserves_supported_approxOptimal
+-- CSC38: Zero-Lipschitz inactive coordinates imply projection invariance
+abbrev CSC38 := @Tractability.ConformerSupportCoverage.zero_lipschitz_outside_active_implies_projection_invariance
+-- CSC39: Canonical sparse inactive coordinates collapse to singleton support
+abbrev CSC39 := @Tractability.ConformerSupportCoverage.canonicalSparseAdaptiveSegmentsFromSlack_eq_one_of_inactive
+-- CSC40: Canonical sparse active-segment budget is theorem-backed
+abbrev CSC40 := @Tractability.ConformerSupportCoverage.activeSegmentBudget_of_canonicalSparseAdaptiveSegmentsFromSlack
+-- CSC41: Canonical sparse adaptive support yields a supported delta-near-optimum
+abbrev CSC41 := @Tractability.ConformerSupportCoverage.canonicalSparseAdaptiveSupport_yields_supported_approxOptimal_of_projection_invariance
+-- CSC42: Canonical sparse adaptive support yields a supported delta-near-optimum from zero-Lipschitz inactive coordinates
+abbrev CSC42 := @Tractability.ConformerSupportCoverage.canonicalSparseAdaptiveSupport_yields_supported_approxOptimal_of_zero_lipschitz_outside_active
+
+-- CS10: Splitting the argmax weighted slack dimension is one-step optimal
+abbrev CS10 := @Tractability.ConformerSearch.weighted_l1_argmax_subdivision_optimal
 
 end DecisionQuotient
