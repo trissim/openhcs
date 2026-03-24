@@ -244,13 +244,10 @@ dramatically tighter.
     coordinate (with other coordinates fixed), then for any two points
     p, q in a product space, |f(p) - f(q)| ≤ Σᵢ Lᵢ × |pᵢ - qᵢ|.
 
-    This is a standard result (Lipschitz in each variable separately
-    implies Lipschitz in the weighted L1 norm). Stated as an axiom
-    because Mathlib's PseudoMetricSpace for product types uses L∞,
-    not the weighted L1 we need here. The proof is elementary:
-    telescope f(p₁,p₂,...) - f(q₁,q₂,...) through intermediate
-    points f(q₁,p₂,...), f(q₁,q₂,p₃,...), etc. -/
-axiom per_dimension_lipschitz_bound
+    Proof: telescope through intermediate points w(k) where the first
+    k coordinates are q and the rest are p. Uses Finset.range induction
+    to avoid Fin.castSucc type issues. -/
+theorem per_dimension_lipschitz_bound
     (n : ℕ)
     (f : (Fin n → ℝ) → ℝ)
     (L : Fin n → ℝ)
@@ -258,7 +255,75 @@ axiom per_dimension_lipschitz_bound
       (∀ j, j ≠ i → p j = q j) →
       |f p - f q| ≤ L i * |p i - q i|)
     (p q : Fin n → ℝ) :
-    |f p - f q| ≤ Finset.univ.sum (fun i => L i * |p i - q i|)
+    |f p - f q| ≤ Finset.univ.sum (fun i => L i * |p i - q i|) := by
+  -- Intermediate points: w(k) has first k coords from q, rest from p
+  let w (k : ℕ) : Fin n → ℝ := fun i => if (i : ℕ) < k then q i else p i
+  have w_zero : w 0 = p := by ext i; simp [w]
+  have w_n : w n = q := by ext i; simp [w, i.isLt]
+  -- Telescoping via Nat induction, accumulating over Fin directly
+  -- Key idea: induct on m, maintaining the partial sum over Fin indices < m
+  suffices h_tel : ∀ m ≤ n, |f (w 0) - f (w m)| ≤
+      Finset.univ.sum (fun i : Fin n => if (i : ℕ) < m then L i * |p i - q i| else 0) by
+    have h_final := h_tel n le_rfl
+    rw [w_zero, w_n] at h_final
+    simp only [Fin.isLt, ite_true] at h_final
+    exact h_final
+  intro m
+  induction m with
+  | zero => intro _; simp
+  | succ m ih =>
+    intro hm
+    have hm_lt : m < n := by omega
+    have hm_le : m ≤ n := by omega
+    -- Consecutive points differ only at coordinate m
+    have w_agree : ∀ j : Fin n, j ≠ ⟨m, hm_lt⟩ → w m j = w (m + 1) j := by
+      intro j hj
+      show (if (j : ℕ) < m then q j else p j) = (if (j : ℕ) < m + 1 then q j else p j)
+      have hj_ne : (j : ℕ) ≠ m := fun h => hj (Fin.ext h)
+      by_cases hjm : (j : ℕ) < m
+      · simp [hjm, show (j : ℕ) < m + 1 from by omega]
+      · simp [hjm, show ¬((j : ℕ) < m + 1) from by omega]
+    have h_step : |f (w m) - f (w (m + 1))| ≤ L ⟨m, hm_lt⟩ * |w m ⟨m, hm_lt⟩ - w (m + 1) ⟨m, hm_lt⟩| :=
+      h_lip ⟨m, hm_lt⟩ (w m) (w (m + 1)) w_agree
+    have w_m_val : w m ⟨m, hm_lt⟩ = p ⟨m, hm_lt⟩ := by
+      show (if (⟨m, hm_lt⟩ : Fin n).val < m then q ⟨m, hm_lt⟩ else p ⟨m, hm_lt⟩) = p ⟨m, hm_lt⟩
+      simp
+    have w_succ_val : w (m + 1) ⟨m, hm_lt⟩ = q ⟨m, hm_lt⟩ := by
+      show (if (⟨m, hm_lt⟩ : Fin n).val < m + 1 then q ⟨m, hm_lt⟩ else p ⟨m, hm_lt⟩) = q ⟨m, hm_lt⟩
+      simp
+    have h_step' : |f (w m) - f (w (m + 1))| ≤ L ⟨m, hm_lt⟩ * |p ⟨m, hm_lt⟩ - q ⟨m, hm_lt⟩| := by
+      calc |f (w m) - f (w (m + 1))|
+          ≤ L ⟨m, hm_lt⟩ * |w m ⟨m, hm_lt⟩ - w (m + 1) ⟨m, hm_lt⟩| := h_step
+        _ = L ⟨m, hm_lt⟩ * |p ⟨m, hm_lt⟩ - q ⟨m, hm_lt⟩| := by rw [w_m_val, w_succ_val]
+    -- Show the partial sum grows by one term
+    have h_sum_step : Finset.univ.sum (fun i : Fin n => if (i : ℕ) < m + 1 then L i * |p i - q i| else 0) =
+        Finset.univ.sum (fun i : Fin n => if (i : ℕ) < m then L i * |p i - q i| else 0) +
+        L ⟨m, hm_lt⟩ * |p ⟨m, hm_lt⟩ - q ⟨m, hm_lt⟩| := by
+      have : Finset.univ.sum (fun i : Fin n => if (i : ℕ) < m + 1 then L i * |p i - q i| else 0) =
+          Finset.univ.sum (fun i : Fin n => (if (i : ℕ) < m then L i * |p i - q i| else 0) +
+            (if (i : ℕ) = m then L i * |p i - q i| else 0)) := by
+        congr 1; ext i
+        by_cases him : (i : ℕ) < m
+        · simp [him, show (i : ℕ) < m + 1 from by omega, show (i : ℕ) ≠ m from by omega]
+        · by_cases hieq : (i : ℕ) = m
+          · simp [him, hieq, show (i : ℕ) < m + 1 from by omega]
+          · simp [him, hieq, show ¬((i : ℕ) < m + 1) from by omega]
+      rw [this, Finset.sum_add_distrib]
+      congr 1
+      have : Finset.univ.sum (fun i : Fin n => if (i : ℕ) = m then L i * |p i - q i| else 0) =
+          L ⟨m, hm_lt⟩ * |p ⟨m, hm_lt⟩ - q ⟨m, hm_lt⟩| := by
+        rw [Finset.sum_eq_single ⟨m, hm_lt⟩]
+        · simp
+        · intro b _ hb; simp [show (b : ℕ) ≠ m from fun h => hb (Fin.ext h)]
+        · intro h; exact absurd (Finset.mem_univ _) h
+      exact this
+    rw [h_sum_step]
+    have h_ih := ih hm_le
+    have h_tri : |f (w 0) - f (w (m + 1))| ≤ |f (w 0) - f (w m)| + |f (w m) - f (w (m + 1))| := by
+      have : f (w 0) - f (w (m + 1)) = (f (w 0) - f (w m)) + (f (w m) - f (w (m + 1))) := by ring
+      rw [this]
+      exact abs_add_le _ _
+    linarith
 
 /-- Per-dimension lower bound on a hypercube cell.
 
@@ -266,9 +331,8 @@ axiom per_dimension_lipschitz_bound
     evaluated at the center of a hypercube with half-widths (h₁, …, hₙ),
     then f(center) - Σᵢ Lᵢ × hᵢ ≤ f(p) for all p in the cell.
 
-    This is tighter than the L2 ball bound (f(center) - L × r) when
-    the Lᵢ are non-uniform. -/
-axiom per_dimension_energy_lower_bound_on_cell
+    Direct corollary of per_dimension_lipschitz_bound. -/
+theorem per_dimension_energy_lower_bound_on_cell
     (n : ℕ)
     (f : (Fin n → ℝ) → ℝ)
     (L : Fin n → ℝ)
@@ -279,7 +343,20 @@ axiom per_dimension_energy_lower_bound_on_cell
     (half_widths : Fin n → ℝ)
     (p : Fin n → ℝ)
     (h_cell : ∀ i, |p i - center i| ≤ half_widths i) :
-    f center - Finset.univ.sum (fun i => L i * half_widths i) ≤ f p
+    f center - Finset.univ.sum (fun i => L i * half_widths i) ≤ f p := by
+  have hL_nonneg : ∀ i : Fin n, 0 ≤ L i := by
+    intro i
+    have := h_lip i (fun j => if j = i then center i + 1 else center j) center
+      (fun j hj => by simp [hj])
+    simp at this
+    linarith [abs_nonneg (f (fun j => if j = i then center i + 1 else center j) - f center)]
+  have h_bound := per_dimension_lipschitz_bound n f L h_lip center p
+  have h_sum_le : Finset.univ.sum (fun i => L i * |center i - p i|) ≤
+      Finset.univ.sum (fun i => L i * half_widths i) := by
+    apply Finset.sum_le_sum
+    intro i _
+    exact mul_le_mul_of_nonneg_left (by rw [abs_sub_comm]; exact h_cell i) (hL_nonneg i)
+  linarith [le_abs_self (f center - f p)]
 
 /-- The weighted-L1 bound is always ≤ the L2 ball bound.
 

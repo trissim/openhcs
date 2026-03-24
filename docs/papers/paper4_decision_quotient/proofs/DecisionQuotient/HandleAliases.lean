@@ -2163,9 +2163,9 @@ abbrev ERC20 := @Tractability.EnergyRMSDConvergence.canonicalIterationBudgetFrom
 -- ERC21: That canonical local-certificate budget certifies the RMSD target
 abbrev ERC21 := @Tractability.EnergyRMSDConvergence.rmsd_target_of_canonicalIterationBudgetFromLocalCertificates
 -- ERC22: Gradient-descent dynamics certificate yields one-step contraction witness
-abbrev ERC22 := @Tractability.EnergyRMSDConvergence.CertifiedGradientDescentDynamics.toCertifiedOneStepEnergyContraction
+noncomputable abbrev ERC22 := @Tractability.EnergyRMSDConvergence.CertifiedGradientDescentDynamics.toCertifiedOneStepEnergyContraction
 -- ERC23: Gradient-descent dynamics certificate yields full linear convergence
-abbrev ERC23 := @Tractability.EnergyRMSDConvergence.CertifiedGradientDescentDynamics.toCertifiedLinearEnergyConvergence
+noncomputable abbrev ERC23 := @Tractability.EnergyRMSDConvergence.CertifiedGradientDescentDynamics.toCertifiedLinearEnergyConvergence
 -- ERC24: Canonical budget from gradient-descent dynamics is adequate
 abbrev ERC24 := @Tractability.EnergyRMSDConvergence.canonicalIterationBudgetFromGradientDescentDynamics_spec
 -- ERC25: Canonical budget from gradient-descent dynamics is cost-optimal
