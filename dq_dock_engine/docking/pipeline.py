@@ -446,6 +446,12 @@ def _derive_returned_pose_proof_plan(
     if not support_indices:
         support_indices = (winner_index,)
     winner_refinement_cert = refinement_certificates[winner_index]
+    print(
+        f"[PROOF_PLAN] winner_index={winner_index}, winner_singleton={winner_singleton}, "
+        f"refinement_certificates length={len(refinement_certificates)}, "
+        f"winner_cert is None: {winner_refinement_cert is None}",
+        flush=True,
+    )
     winner_conformer_improved = False
     if conformer_improved_mask is not None and winner_index < len(
         conformer_improved_mask
@@ -459,6 +465,12 @@ def _derive_returned_pose_proof_plan(
         basin_witness_source = "refinement_certificate"
     elif fallback_basin_mu_coord is not None:
         basin_witness_source = "spectral_only"
+    print(
+        f"[PROOF_PLAN] basin_witness_source={basin_witness_source}, "
+        f"fallback_basin_mu_coord={fallback_basin_mu_coord}, "
+        f"winner_refinement_cert.spectral={winner_refinement_cert.spectral if winner_refinement_cert else 'N/A'}",
+        flush=True,
+    )
     basin_mu_coord = (
         fallback_basin_mu_coord
         if winner_refinement_cert is None
@@ -483,6 +495,11 @@ def _derive_returned_pose_proof_plan(
         cover_gap_budget = float(
             conformer_coverage_plan.score_lipschitz_constant * cover_rmsd_radius
         )
+    print(
+        f"[PROOF_PLAN] conformer_coverage_plan={conformer_coverage_plan is not None}, "
+        f"cover_rmsd_radius={cover_rmsd_radius}, cover_gap_budget={cover_gap_budget}, do_conf={do_conf}",
+        flush=True,
+    )
     total_gap_budget = None
     band_width = 0.0
     if do_conf:
@@ -4898,7 +4915,19 @@ def _run_docking_pipeline_request(
         ].set(opt_q_subset)
         for local_idx, pose_idx in enumerate(local_refine_indices.tolist()):
             if subset_in_site[local_idx]:
-                refinement_certificates[pose_idx] = subset_certificates[local_idx]
+                cert = subset_certificates[local_idx]
+                refinement_certificates[pose_idx] = cert
+                print(
+                    f"[REFINE_CERTS] Assigned cert to pose_idx={pose_idx}: {cert is not None}, "
+                    f"spectral={cert.spectral if cert else 'None'}",
+                    flush=True,
+                )
+
+    print(
+        f"[PROOF_PLAN] Before proof plan: refinement_certs = {[c is not None for c in refinement_certificates]}, "
+        f"winner would be index 0",
+        flush=True,
+    )
 
     if request.is_certified_mode:
         if scoring_context.uses_extended_rich:
