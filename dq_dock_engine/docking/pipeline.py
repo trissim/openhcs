@@ -476,16 +476,6 @@ def _derive_returned_pose_proof_plan(
         if winner_refinement_cert is None
         else float(winner_refinement_cert.spectral.mu_coord)
     )
-    target_energy_gap = (
-        None
-        if basin_mu_coord is None
-        else float(
-            basin_mu_coord
-            * float(request.ligand_ctx.base_coords.shape[0])
-            * request.target_rmsd**2
-            / 2.0
-        )
-    )
     cover_rmsd_radius = None
     cover_gap_budget = None
     if conformer_coverage_plan is not None:
@@ -495,6 +485,47 @@ def _derive_returned_pose_proof_plan(
         cover_gap_budget = float(
             conformer_coverage_plan.score_lipschitz_constant * cover_rmsd_radius
         )
+    if basin_mu_coord is None and cover_gap_budget is not None:
+        print(
+            f"[PROOF_PLAN] Using weaker conformer-only certificate: cover_gap_budget={cover_gap_budget}",
+            flush=True,
+        )
+    if basin_mu_coord is not None:
+        target_energy_gap = float(
+            basin_mu_coord
+            * float(request.ligand_ctx.base_coords.shape[0])
+            * request.target_rmsd**2
+            / 2.0
+        )
+    elif cover_gap_budget is not None:
+        target_energy_gap = cover_gap_budget
+    else:
+        target_energy_gap = None
+    cover_rmsd_radius = None
+    cover_gap_budget = None
+    if conformer_coverage_plan is not None:
+        cover_rmsd_radius = float(
+            conformer_coverage_plan.max_arm * conformer_coverage_plan.min_cell_radius
+        )
+        cover_gap_budget = float(
+            conformer_coverage_plan.score_lipschitz_constant * cover_rmsd_radius
+        )
+    if basin_mu_coord is None and cover_gap_budget is not None:
+        print(
+            f"[PROOF_PLAN] Using weaker conformer-only certificate: cover_gap_budget={cover_gap_budget}",
+            flush=True,
+        )
+    if basin_mu_coord is not None:
+        target_energy_gap = float(
+            basin_mu_coord
+            * float(request.ligand_ctx.base_coords.shape[0])
+            * request.target_rmsd**2
+            / 2.0
+        )
+    elif cover_gap_budget is not None:
+        target_energy_gap = cover_gap_budget
+    else:
+        target_energy_gap = None
     print(
         f"[PROOF_PLAN] conformer_coverage_plan={conformer_coverage_plan is not None}, "
         f"cover_rmsd_radius={cover_rmsd_radius}, cover_gap_budget={cover_gap_budget}, do_conf={do_conf}",
