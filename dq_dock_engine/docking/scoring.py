@@ -23,6 +23,20 @@ import jax.numpy as jnp
 import jax.scipy.special as jsp
 import numpy as np
 
+from dq_dock_engine.docking.certified_runtime_plans import (
+    CertifiedBudgetBreakdownItem,
+    CertifiedPruningDeltaBudget,
+)
+from dq_dock_engine.docking.formal_handles import (
+    attractive_extended_chemistry_theorem_handles,
+    contact_surrogate_theorem_handles,
+    directional_hbond_finite_theorem_handles,
+    metal_coordination_cutoff_theorem_handles,
+    omitted_channel_bound_theorem_handles,
+    rich_pruning_delta_theorem_handles,
+    screened_coulomb_theorem_handles,
+    softened_lj_shared_base_delta_theorem_handles,
+)
 from dq_dock_engine.proof_status import (
     certified,
     conditionally_certified,
@@ -1103,20 +1117,13 @@ class CertifiedRichChemistryPlan:
     def default_softening_radius(self) -> float:
         return float(jnp.min(self.pairwise_sigma))
 
-    def analytic_total_delta(self, n_water_bridges: int = 0) -> float:
-        """Batch-size-independent delta from analytic bounds.
-
-        Three tiers:
-          Tier 1: Softened LJ shared base → δ = 0
-                  (Lean: softened_lj_self_approx_zero)
-          Tier 2: Cutoff approximation tail bounds
-                  (Lean: sum_uniformApprox — per-channel cutoff tail errors)
-          Tier 3: Omitted channel value bounds
-                  (Lean: base_plus_omitted_uniformApprox +
-                         omitted_channel_is_bounded_by_supremum)
-        """
-        # Tier 2: cutoff tail bounds (batch-size independent)
-        cutoff_delta = (
+    def pruning_delta_budget(
+        self,
+        *,
+        n_water_bridges: int = 0,
+    ) -> CertifiedPruningDeltaBudget:
+        """Single-source theorem-backed pruning slack for rich chemistry."""
+        cutoff_tail_delta = (
             self.screened_coulomb.analytic_cutoff_tail_bound()
             + self.contact.analytic_cutoff_tail_bound()
             + self.hbond_receptor_donor.analytic_cutoff_tail_bound()
@@ -1124,17 +1131,56 @@ class CertifiedRichChemistryPlan:
             + self.metal_coordination.analytic_cutoff_tail_bound()
             + sum(t.analytic_cutoff_tail_bound() for t in self.extended_terms.terms)
         )
-        # Tier 3: omitted channel value bounds
-        # Cooperative H-bond: |α| × N² where N = 2 (receptor_donor + ligand_donor)
-        # Lean: CooperativeHBondApproximation.lean::cooperative_correction_bounded
         cooperative_bound = cooperative_hbond_correction_bound(
-            self.cooperative_alpha, 2
+            self.cooperative_alpha,
+            2,
         )
-        # Water bridges: 2 per bridge
-        # Lean: ExplicitWaterPlacement.lean::water_bridge_is_bounded_omitted_channel
         water_bridge_bound = 2.0 * n_water_bridges
         omitted_delta = cooperative_bound + water_bridge_bound
-        return cutoff_delta + omitted_delta
+        cutoff_tail_handles = (
+            screened_coulomb_theorem_handles()
+            + contact_surrogate_theorem_handles()
+            + directional_hbond_finite_theorem_handles()
+            + metal_coordination_cutoff_theorem_handles()
+            + attractive_extended_chemistry_theorem_handles()
+        )
+        return CertifiedPruningDeltaBudget(
+            source="rich_chemistry_pruning_delta",
+            shared_base_delta=0.0,
+            cutoff_tail_delta=cutoff_tail_delta,
+            omitted_value_delta=omitted_delta,
+            softening_mismatch_delta=0.0,
+            total_delta=cutoff_tail_delta + omitted_delta,
+            theorem_handles=rich_pruning_delta_theorem_handles(),
+            breakdown=(
+                CertifiedBudgetBreakdownItem(
+                    label="shared_base_zero",
+                    value=0.0,
+                    theorem_handles=softened_lj_shared_base_delta_theorem_handles(),
+                    note=(
+                        "Shared softened-LJ base contributes zero pruning slack on the "
+                        "rich-chemistry path"
+                    ),
+                ),
+                CertifiedBudgetBreakdownItem(
+                    label="cutoff_tail",
+                    value=cutoff_tail_delta,
+                    theorem_handles=cutoff_tail_handles,
+                    note="Included channel cutoff tails",
+                ),
+                CertifiedBudgetBreakdownItem(
+                    label="omitted_value",
+                    value=omitted_delta,
+                    theorem_handles=omitted_channel_bound_theorem_handles(),
+                    note="Omitted cooperative and water-mediated value bounds",
+                ),
+            ),
+        )
+
+    def analytic_total_delta(self, n_water_bridges: int = 0) -> float:
+        return self.pruning_delta_budget(
+            n_water_bridges=n_water_bridges,
+        ).total_delta
 
     @property
     def has_active_directional_hbond(self) -> jnp.ndarray:

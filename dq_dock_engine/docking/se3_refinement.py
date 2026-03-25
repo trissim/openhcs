@@ -28,6 +28,10 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
+from dq_dock_engine.docking.certified_runtime_plans import (
+    CertifiedRefinementBudget,
+    CertifiedRefinementBudgetKind,
+)
 from dq_dock_engine.docking.placement import _apply_single_pose
 from dq_dock_engine.docking.scoring import _score_certified_lj
 from dq_dock_engine.docking_config import RefinementCertificationMode
@@ -58,6 +62,21 @@ class RefinementCertificate:
     target_rmsd: float
     n_steps: int  # certified budget
     mode: RefinementCertificationMode
+    iteration_budget_plan: "CertifiedIterationBudgetPlan | None" = None
+
+
+@dataclass(frozen=True)
+class CertifiedIterationBudgetPlan:
+    """First-class theorem-backed SE(3) iteration-budget derivation."""
+
+    budget: CertifiedRefinementBudget
+    mu_coord: float
+    q: float
+    initial_gap: float
+    target_gap: float
+    target_rmsd: float
+    n_atoms: int
+    theorem_handles: tuple[str, ...]
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +162,9 @@ def make_se3_energy_fn(
     ligand_radii: jnp.ndarray,
     cutoff: jnp.ndarray,
     epsilon: float,
+    *,
+    scoring_context=None,
+    target_error: float | None = None,
 ):
     """Energy as a function of 6D SE(3) parameter vector.
 
@@ -150,18 +172,37 @@ def make_se3_energy_fn(
     certified LJ score. This is the optimizer's actual parameter space.
     """
 
-    def energy_fn(params: jnp.ndarray) -> jnp.ndarray:
-        t, q = _se3_params_to_pose(params)
-        pose_coords = _apply_single_pose(base_coords, t, q)
-        energy, _ = _score_certified_lj(
-            receptor_coords,
-            pose_coords,
-            receptor_radii,
-            ligand_radii,
-            cutoff,
-            epsilon,
-        )
-        return energy
+    if scoring_context is None:
+
+        def energy_fn(params: jnp.ndarray) -> jnp.ndarray:
+            t, q = _se3_params_to_pose(params)
+            pose_coords = _apply_single_pose(base_coords, t, q)
+            energy, _ = _score_certified_lj(
+                receptor_coords,
+                pose_coords,
+                receptor_radii,
+                ligand_radii,
+                cutoff,
+                epsilon,
+            )
+            return energy
+
+    else:
+        if target_error is None:
+            raise ValueError("target_error is required when using a scoring context")
+
+        def energy_fn(params: jnp.ndarray) -> jnp.ndarray:
+            t, q = _se3_params_to_pose(params)
+            pose_coords = _apply_single_pose(base_coords, t, q)
+            batch = scoring_context.score_exact_batch(
+                receptor_coords=receptor_coords,
+                poses_coords=pose_coords[None, ...],
+                receptor_radii=receptor_radii,
+                ligand_radii=ligand_radii,
+                target_error=target_error,
+                epsilon=epsilon,
+            )
+            return batch.scores[0]
 
     return energy_fn
 
@@ -230,13 +271,13 @@ def compute_se3_spectral_certificate(
 # ---------------------------------------------------------------------------
 
 
-def certified_iteration_budget(
+def certified_iteration_budget_plan(
     mu_coord: float,
     q: float,
     initial_gap: float,
     target_rmsd: float,
     n_atoms: int,
-) -> int:
+) -> CertifiedIterationBudgetPlan | None:
     """Provably sufficient iteration count for the RMSD target.
 
     Lean: logarithmicIterationBound applied to q and μ from Jacobian bridge.
@@ -246,23 +287,58 @@ def certified_iteration_budget(
     """
     target_gap = mu_coord * n_atoms * target_rmsd**2 / 2.0
     if not math.isfinite(target_gap) or target_gap <= 0.0:
-        return -1
+        return None
     if not math.isfinite(initial_gap) or initial_gap <= 0.0:
-        return -1
+        return None
     if initial_gap <= target_gap:
-        return 0
-    if q <= 0 or q >= 1.0:
-        return -1  # cannot certify: non-contractive
-    ratio = initial_gap / target_gap
-    if not math.isfinite(ratio) or ratio <= 0.0:
-        return -1
-    denom = math.log(1.0 / q)
-    if not math.isfinite(denom) or denom <= 0.0:
-        return -1
-    numer = math.log(ratio)
-    if not math.isfinite(numer):
-        return -1
-    return math.ceil(numer / denom)
+        n_steps = 0
+    else:
+        if q <= 0 or q >= 1.0:
+            return None
+        ratio = initial_gap / target_gap
+        if not math.isfinite(ratio) or ratio <= 0.0:
+            return None
+        denom = math.log(1.0 / q)
+        if not math.isfinite(denom) or denom <= 0.0:
+            return None
+        numer = math.log(ratio)
+        if not math.isfinite(numer):
+            return None
+        n_steps = math.ceil(numer / denom)
+    theorem_handles = ("ERC20", "ERC21", "ERC38", "ERC40")
+    return CertifiedIterationBudgetPlan(
+        budget=CertifiedRefinementBudget(
+            kind=CertifiedRefinementBudgetKind.SE3_ITERATIONS,
+            n_steps=n_steps,
+            pose_indices=(),
+            theorem_handles=theorem_handles,
+            note="Certified SE(3) gradient-descent iteration budget",
+        ),
+        mu_coord=mu_coord,
+        q=q,
+        initial_gap=initial_gap,
+        target_gap=target_gap,
+        target_rmsd=target_rmsd,
+        n_atoms=n_atoms,
+        theorem_handles=theorem_handles,
+    )
+
+
+def certified_iteration_budget(
+    mu_coord: float,
+    q: float,
+    initial_gap: float,
+    target_rmsd: float,
+    n_atoms: int,
+) -> int:
+    plan = certified_iteration_budget_plan(
+        mu_coord=mu_coord,
+        q=q,
+        initial_gap=initial_gap,
+        target_rmsd=target_rmsd,
+        n_atoms=n_atoms,
+    )
+    return -1 if plan is None else plan.budget.n_steps
 
 
 # ---------------------------------------------------------------------------
@@ -311,22 +387,23 @@ def certify_observed(
     initial_gap = energy_trajectory[0] - energy_trajectory[-1]
     if initial_gap <= 0:
         return None
-    n_steps = certified_iteration_budget(
+    iteration_budget_plan = certified_iteration_budget_plan(
         spectral.mu_coord,
         q,
         initial_gap,
         target_rmsd,
         n_atoms,
     )
-    if n_steps < 0:
+    if iteration_budget_plan is None:
         return None
     return RefinementCertificate(
         spectral=spectral,
         q=q,
         initial_gap=initial_gap,
         target_rmsd=target_rmsd,
-        n_steps=n_steps,
+        n_steps=iteration_budget_plan.budget.n_steps,
         mode=RefinementCertificationMode.OBSERVED,
+        iteration_budget_plan=iteration_budget_plan,
     )
 
 

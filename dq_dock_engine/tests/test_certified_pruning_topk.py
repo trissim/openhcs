@@ -6,6 +6,10 @@ import jax.numpy as jnp
 import pytest
 
 from dq_dock_engine.docking import pipeline as docking_pipeline
+from dq_dock_engine.docking.certified_runtime_plans import (
+    CertifiedPipelineExecutionPlan,
+    CertifiedPruningDeltaBudget,
+)
 from dq_dock_engine.docking.core import DockingBox, LigandContext, PoseVector
 from dq_dock_engine.docking.scoring_context import CertifiedScoringContext
 from dq_dock_engine.docking_config import (
@@ -45,6 +49,18 @@ def _make_request(*, target_error: float = 0.001):
     )
 
 
+def _make_delta_budget(total_delta: float) -> CertifiedPruningDeltaBudget:
+    return CertifiedPruningDeltaBudget(
+        source="test_delta",
+        shared_base_delta=0.0,
+        cutoff_tail_delta=0.0,
+        omitted_value_delta=0.0,
+        softening_mismatch_delta=total_delta,
+        total_delta=total_delta,
+        theorem_handles=("LJ10",),
+    )
+
+
 def test_certified_pruning_pass_uses_top1_coarse_ambiguity_band(monkeypatch) -> None:
     coarse_scores = jnp.array([0.0, 10.0, 0.1], dtype=jnp.float32)
     request = _make_request(target_error=0.1)
@@ -54,24 +70,22 @@ def test_certified_pruning_pass_uses_top1_coarse_ambiguity_band(monkeypatch) -> 
         "_score_softened_pose_batch",
         lambda request, *, poses_coords, electrostatics, scoring_context: (
             coarse_scores,
-            0.1,
+            _make_delta_budget(0.1),
         ),
     )
 
-    survivor_mask, returned_coarse_scores, delta = (
-        docking_pipeline._certified_pruning_pass(
-            request,
-            poses_coords=jnp.zeros((3, 1, 3), dtype=jnp.float32),
-            electrostatics=None,
-        )
+    execution_plan = docking_pipeline._certified_pruning_pass(
+        request,
+        poses_coords=jnp.zeros((3, 1, 3), dtype=jnp.float32),
+        electrostatics=None,
     )
 
     assert jnp.array_equal(
-        survivor_mask,
+        execution_plan.retain_mask,
         jnp.array([True, False, True], dtype=bool),
     )
-    assert jnp.array_equal(returned_coarse_scores, coarse_scores)
-    assert delta == 0.1
+    assert jnp.array_equal(execution_plan.coarse_scores, coarse_scores)
+    assert execution_plan.pruning_delta_budget.total_delta == 0.1
 
 
 def test_score_softened_pose_batch_uses_softening_bound_for_base_physics() -> None:
@@ -80,6 +94,10 @@ def test_score_softened_pose_batch_uses_softening_bound_for_base_physics() -> No
     class FakeBaseContext:
         uses_extended_rich = False
 
+        def pruning_delta_budget(self, *, softening_error_bound=None):
+            assert softening_error_bound is not None
+            return _make_delta_budget(float(softening_error_bound))
+
         def score_softened_batch(self, **kwargs):
             del kwargs
             return SimpleNamespace(
@@ -87,7 +105,7 @@ def test_score_softened_pose_batch_uses_softening_bound_for_base_physics() -> No
                 softening_error_bound=jnp.asarray(0.125, dtype=jnp.float32),
             )
 
-    scores, delta = docking_pipeline._score_softened_pose_batch(
+    scores, delta_budget = docking_pipeline._score_softened_pose_batch(
         cast(Any, request),
         poses_coords=jnp.zeros((2, 1, 3), dtype=jnp.float32),
         electrostatics=None,
@@ -95,10 +113,13 @@ def test_score_softened_pose_batch_uses_softening_bound_for_base_physics() -> No
     )
 
     assert jnp.array_equal(scores, jnp.array([1.0, 2.0], dtype=jnp.float32))
-    assert delta == pytest.approx(0.125)
+    assert delta_budget.total_delta == pytest.approx(0.125)
+    assert delta_budget.softening_mismatch_delta == pytest.approx(0.125)
 
 
-def test_score_softened_pose_batch_uses_batch_delta_for_pruning_context() -> None:
+def test_score_softened_pose_batch_uses_analytic_delta_for_rich_pruning_context() -> (
+    None
+):
     request = SimpleNamespace(
         protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
         receptor_radii=jnp.array([1.7], dtype=jnp.float32),
@@ -110,15 +131,9 @@ def test_score_softened_pose_batch_uses_batch_delta_for_pruning_context() -> Non
     class FakeRichPruningContext:
         uses_extended_rich = True
 
-        def uses_batch_pruning_delta(self):
-            return True
-
-        def pruning_softening_matches_exact(self, softening_radius):
-            del softening_radius
-            return False
-
-        def analytic_pruning_delta(self):
-            return 99.0
+        def pruning_delta_budget(self, *, softening_error_bound=None):
+            del softening_error_bound
+            return _make_delta_budget(99.0)
 
         def score_softened_batch(self, **kwargs):
             del kwargs
@@ -127,7 +142,7 @@ def test_score_softened_pose_batch_uses_batch_delta_for_pruning_context() -> Non
                 softening_error_bound=jnp.asarray(0.25, dtype=jnp.float32),
             )
 
-    scores, delta = docking_pipeline._score_softened_pose_batch(
+    scores, delta_budget = docking_pipeline._score_softened_pose_batch(
         cast(Any, request),
         poses_coords=jnp.zeros((1, 1, 3), dtype=jnp.float32),
         electrostatics=None,
@@ -135,47 +150,7 @@ def test_score_softened_pose_batch_uses_batch_delta_for_pruning_context() -> Non
     )
 
     assert jnp.array_equal(scores, jnp.array([3.0], dtype=jnp.float32))
-    assert delta == pytest.approx(0.25)
-
-
-def test_score_softened_pose_batch_uses_zero_delta_when_scores_match_exact() -> None:
-    request = SimpleNamespace(
-        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
-        receptor_radii=jnp.array([1.7], dtype=jnp.float32),
-        ligand_ctx=SimpleNamespace(base_radii=jnp.array([1.7], dtype=jnp.float32)),
-        target_error=0.1,
-        softening_radius=3.4,
-    )
-
-    class FakeExactPruningContext:
-        uses_extended_rich = True
-
-        def uses_batch_pruning_delta(self):
-            return True
-
-        def pruning_softening_matches_exact(self, softening_radius):
-            del softening_radius
-            return True
-
-        def analytic_pruning_delta(self):
-            return 99.0
-
-        def score_softened_batch(self, **kwargs):
-            del kwargs
-            return SimpleNamespace(
-                scores=jnp.array([4.0], dtype=jnp.float32),
-                softening_error_bound=jnp.asarray(123.0, dtype=jnp.float32),
-            )
-
-    scores, delta = docking_pipeline._score_softened_pose_batch(
-        cast(Any, request),
-        poses_coords=jnp.zeros((1, 1, 3), dtype=jnp.float32),
-        electrostatics=None,
-        scoring_context=cast(CertifiedScoringContext, FakeExactPruningContext()),
-    )
-
-    assert jnp.array_equal(scores, jnp.array([4.0], dtype=jnp.float32))
-    assert delta == 0.0
+    assert delta_budget.total_delta == pytest.approx(99.0)
 
 
 def test_certified_pipeline_route_scores_only_valid_survivors(monkeypatch) -> None:
@@ -196,9 +171,14 @@ def test_certified_pipeline_route_scores_only_valid_survivors(monkeypatch) -> No
         docking_pipeline,
         "_certified_pruning_pass",
         lambda request, *, poses_coords, electrostatics, **kwargs: (
-            jnp.array([True, False, False]),
-            jnp.array([0.0, 1.0, 2.0], dtype=jnp.float32),
-            0.001,
+            CertifiedPipelineExecutionPlan(
+                coarse_scores=jnp.array([0.0, 1.0, 2.0], dtype=jnp.float32),
+                lower_bounds=jnp.array([0.0, 0.999, 1.999], dtype=jnp.float32),
+                tau=0.001,
+                retain_mask=jnp.array([True, False, False]),
+                pruning_delta_budget=_make_delta_budget(0.001),
+                theorem_handles=("TK11",),
+            )
         ),
     )
 
@@ -228,6 +208,7 @@ def test_certified_pipeline_route_scores_only_valid_survivors(monkeypatch) -> No
         initial_scores.survivor_exact_scores,
         jnp.array([3.14], dtype=jnp.float32),
     )
+    assert initial_scores.execution_plan is not None
 
 
 def test_certified_pipeline_route_optimizes_all_certified_survivors() -> None:
@@ -313,9 +294,14 @@ def test_certified_pipeline_route_keeps_all_certified_survivors(
         docking_pipeline,
         "_certified_pruning_pass",
         lambda request, *, poses_coords, electrostatics, **kwargs: (
-            jnp.ones((n_survivors,), dtype=bool),
-            jnp.zeros((n_survivors,), dtype=jnp.float32),
-            0.001,
+            CertifiedPipelineExecutionPlan(
+                coarse_scores=jnp.zeros((n_survivors,), dtype=jnp.float32),
+                lower_bounds=jnp.zeros((n_survivors,), dtype=jnp.float32),
+                tau=0.001,
+                retain_mask=jnp.ones((n_survivors,), dtype=bool),
+                pruning_delta_budget=_make_delta_budget(0.001),
+                theorem_handles=("TK11",),
+            )
         ),
     )
     monkeypatch.setattr(
@@ -387,10 +373,17 @@ def test_certified_pipeline_route_uses_pruning_context_for_pruning(
         docking_pipeline,
         "_certified_pruning_pass",
         lambda request, *, poses_coords, electrostatics, scoring_context, **kwargs: (
-            seen.setdefault("pruning_context", scoring_context) is not None
-            and jnp.array([True], dtype=bool),
-            jnp.array([0.0], dtype=jnp.float32),
-            0.0,
+            CertifiedPipelineExecutionPlan(
+                coarse_scores=jnp.array([0.0], dtype=jnp.float32),
+                lower_bounds=jnp.array([0.0], dtype=jnp.float32),
+                tau=0.0,
+                retain_mask=(
+                    seen.setdefault("pruning_context", scoring_context) is not None
+                    and jnp.array([True], dtype=bool)
+                ),
+                pruning_delta_budget=_make_delta_budget(0.0),
+                theorem_handles=("TK11",),
+            )
         ),
     )
     monkeypatch.setattr(

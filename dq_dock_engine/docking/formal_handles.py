@@ -380,7 +380,41 @@ def cooperative_hbond_theorem_handles() -> tuple[str, ...]:
 
 
 def explicit_water_placement_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(EWP1, EWP2, EWP3, EWP4, EWP5)
+    return _selected_handles(EWP1, EWP2, EWP3, EWP4, EWP5, EWP6)
+
+
+def softened_lj_shared_base_delta_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(LJ18, LJ19)
+
+
+def omitted_channel_bound_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(BCRC4, BCRC5, BCRC6, CHN1, CHN2, EWP6)
+
+
+def pose_specific_improvement_budget_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(BCRC1, BCRC2, CSC47)
+
+
+def joint_pruning_budget_optimality_handles() -> tuple[str, ...]:
+    return _selected_handles(BCPO1, BCRP1, BCRC3)
+
+
+def seed_budget_minimality_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(SB2, SB5, SB7, BCRP2, ERC43)
+
+
+def rich_pruning_delta_theorem_handles() -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            softened_lj_shared_base_delta_theorem_handles()
+            + screened_coulomb_theorem_handles()
+            + contact_surrogate_theorem_handles()
+            + directional_hbond_finite_theorem_handles()
+            + metal_coordination_cutoff_theorem_handles()
+            + attractive_extended_chemistry_theorem_handles()
+            + omitted_channel_bound_theorem_handles()
+        )
+    )
 
 
 def performance_certificate_theorem_handles() -> tuple[str, ...]:

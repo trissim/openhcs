@@ -56,6 +56,17 @@ from dq_dock_engine.docking.core import (
     CertificationDecision,
 )
 from dq_dock_engine.docking.charges import ChargeMethod, create_charge_assigner
+from dq_dock_engine.docking.certified_runtime_plans import (
+    CertifiedPipelineCostModel,
+    CertifiedPipelineExecutionPlan,
+    CertifiedPruningDeltaBudget,
+    CertifiedRefinementBudget,
+    CertifiedRefinementBudgetKind,
+    CertifiedSeedBudgetCandidate,
+    CertifiedSeedBudgetPlan,
+    PoseSpecificImprovementBudget,
+    PoseSpecificImprovementBudgetFamily,
+)
 from dq_dock_engine.docking.scoring import (
     CertifiedRealSpaceEwaldSpec,
     route_scoring,
@@ -105,9 +116,12 @@ from dq_dock_engine.docking.conformer_search import (
 )
 from dq_dock_engine.docking.formal_handles import (
     branch_and_bound_cross_docking_handles,
+    joint_pruning_budget_optimality_handles,
     pocket_cross_docking_handles,
+    pose_specific_improvement_budget_theorem_handles,
     receptor_flex_cross_docking_handles,
     receptor_flexibility_theorem_handles,
+    seed_budget_minimality_theorem_handles,
 )
 from dq_dock_engine.physics.kernels import rigid_transform_3d
 from dq_dock_engine.docking_config import (
@@ -328,23 +342,10 @@ def derive_seed_budget(
     if n_torsions < 0:
         raise ValueError(f"n_torsions must be nonnegative, got {n_torsions}")
 
-    capture_rmsd = target_rmsd
-    if probe_certificate is not None and probe_certificate.n_steps > 0:
-        q = float(probe_certificate.q)
-        mu_coord = float(probe_certificate.spectral.mu_coord)
-        M_coord = float(probe_certificate.spectral.M_coord)
-        if (
-            0.0 < q < 1.0
-            and math.isfinite(mu_coord)
-            and math.isfinite(M_coord)
-            and mu_coord > 0.0
-            and M_coord > 0.0
-        ):
-            contraction = math.pow(q, probe_certificate.n_steps)
-            if contraction > 0.0 and math.isfinite(contraction):
-                amplification_sq = mu_coord / (M_coord * contraction)
-                if amplification_sq > 1.0 and math.isfinite(amplification_sq):
-                    capture_rmsd = target_rmsd * math.sqrt(amplification_sq)
+    capture_rmsd = _certified_capture_rmsd(
+        target_rmsd=target_rmsd,
+        probe_certificate=probe_certificate,
+    )
 
     # --- Search volumes ---
 
@@ -404,6 +405,101 @@ def derive_seed_budget(
 
     n_poses = math.ceil(math.log(1.0 - confidence) / math.log(1.0 - ratio))
     return max(1, n_poses)
+
+
+def _certified_capture_rmsd(
+    *,
+    target_rmsd: float,
+    probe_certificate: RefinementCertificate | None,
+) -> float:
+    import math
+
+    capture_rmsd = target_rmsd
+    if probe_certificate is not None and probe_certificate.n_steps > 0:
+        q = float(probe_certificate.q)
+        mu_coord = float(probe_certificate.spectral.mu_coord)
+        M_coord = float(probe_certificate.spectral.M_coord)
+        if (
+            0.0 < q < 1.0
+            and math.isfinite(mu_coord)
+            and math.isfinite(M_coord)
+            and mu_coord > 0.0
+            and M_coord > 0.0
+        ):
+            contraction = math.pow(q, probe_certificate.n_steps)
+            if contraction > 0.0 and math.isfinite(contraction):
+                amplification_sq = mu_coord / (M_coord * contraction)
+                if amplification_sq > 1.0 and math.isfinite(amplification_sq):
+                    capture_rmsd = target_rmsd * math.sqrt(amplification_sq)
+    return capture_rmsd
+
+
+def derive_seed_budget_plan(
+    *,
+    confidence: float,
+    box_size: jnp.ndarray,
+    target_rmsd: float,
+    ligand_radius: float,
+    n_torsions: int = 0,
+    probe_candidates: tuple[tuple[int, RefinementCertificate | None], ...] = (),
+) -> CertifiedSeedBudgetPlan:
+    baseline_candidate = CertifiedSeedBudgetCandidate(
+        budget=derive_seed_budget(
+            confidence=confidence,
+            box_size=box_size,
+            target_rmsd=target_rmsd,
+            ligand_radius=ligand_radius,
+            n_torsions=n_torsions,
+            probe_certificate=None,
+        ),
+        source="baseline_zero_step_capture",
+        adequate=True,
+        capture_rmsd=_certified_capture_rmsd(
+            target_rmsd=target_rmsd,
+            probe_certificate=None,
+        ),
+        theorem_handles=("SB2", "SB5"),
+    )
+    candidates: list[CertifiedSeedBudgetCandidate] = [baseline_candidate]
+    for probe_rank, probe_certificate in probe_candidates:
+        if probe_certificate is None:
+            continue
+        candidates.append(
+            CertifiedSeedBudgetCandidate(
+                budget=derive_seed_budget(
+                    confidence=confidence,
+                    box_size=box_size,
+                    target_rmsd=target_rmsd,
+                    ligand_radius=ligand_radius,
+                    n_torsions=n_torsions,
+                    probe_certificate=probe_certificate,
+                ),
+                source="observed_probe_capture",
+                adequate=True,
+                capture_rmsd=_certified_capture_rmsd(
+                    target_rmsd=target_rmsd,
+                    probe_certificate=probe_certificate,
+                ),
+                theorem_handles=("SB2", "SB5", "SB7", "ERC43"),
+                probe_rank=probe_rank,
+                provenance_note=(
+                    "Probe ranking limits are engineering calibration bounds and do not "
+                    "change the selected theorem-backed seed budget fact once a probe "
+                    "certificate is admitted"
+                ),
+            )
+        )
+    selected_index = min(
+        range(len(candidates)),
+        key=lambda idx: (candidates[idx].budget, idx),
+    )
+    return CertifiedSeedBudgetPlan(
+        candidates=tuple(candidates),
+        selected_index=selected_index,
+        theorem_handles=seed_budget_minimality_theorem_handles(),
+        engineering_probe_pose_cap=SEED_BUDGET_PROBE_POSES,
+        engineering_probe_top_k=SEED_BUDGET_PROBE_TOP_K,
+    )
 
 
 def _ligand_radius(ligand_ctx: LigandContext) -> float:
@@ -923,12 +1019,13 @@ def _probe_seed_budget_certificate(
     probe_scores_np = np.asarray(jax.device_get(probe_scores), dtype=np.float64)
     ranked = np.argsort(probe_scores_np)
 
-    best_cert: RefinementCertificate | None = None
-    best_seed_budget: int | None = None
+    successful_probe_candidates: list[tuple[int, RefinementCertificate | None]] = []
     n_torsions = _seed_budget_torsion_count(probe_request)
     ligand_radius = _ligand_radius(probe_request.ligand_ctx)
 
-    for idx in ranked[: min(SEED_BUDGET_PROBE_TOP_K, ranked.shape[0])]:
+    for probe_rank, idx in enumerate(
+        ranked[: min(SEED_BUDGET_PROBE_TOP_K, ranked.shape[0])]
+    ):
         opt_t, opt_q, certs = _certified_refinement(
             request=probe_request,
             initial_translations=probe_batch.pose_vecs.translation[idx : idx + 1],
@@ -939,26 +1036,31 @@ def _probe_seed_budget_certificate(
         cert = certs[0]
         if cert is None:
             continue
-        derived_budget = derive_seed_budget(
-            confidence=cast(DockingConfig, probe_request.config).confidence,
-            box_size=probe_request.box.size,
-            target_rmsd=cast(DockingConfig, probe_request.config).target_rmsd,
-            ligand_radius=ligand_radius,
-            n_torsions=n_torsions,
-            probe_certificate=cert,
-        )
-        # SB7 only needs one conservative basin underestimate. Among multiple
-        # successful probe certificates, keep the largest certified basin, i.e.
-        # the smallest derived full-run seed budget.
-        if best_seed_budget is None or derived_budget < best_seed_budget:
-            best_seed_budget = derived_budget
-            best_cert = cert
+        successful_probe_candidates.append((probe_rank, cert))
 
-    if best_seed_budget is None:
-        return request, None
+    config = cast(DockingConfig, probe_request.config)
+    seed_budget_plan = derive_seed_budget_plan(
+        confidence=config.confidence,
+        box_size=probe_request.box.size,
+        target_rmsd=config.target_rmsd,
+        ligand_radius=ligand_radius,
+        n_torsions=n_torsions,
+        probe_candidates=tuple(successful_probe_candidates),
+    )
+    selected_candidate = seed_budget_plan.selected_candidate
+    best_cert = None
+    if selected_candidate.source == "observed_probe_capture":
+        selected_probe_rank = selected_candidate.probe_rank
+        for probe_rank, cert in successful_probe_candidates:
+            if probe_rank == selected_probe_rank:
+                best_cert = cert
+                break
     return cast(
         "PipelineDockingRequest",
-        probe_request.with_updates(n_poses_override=best_seed_budget),
+        probe_request.with_updates(
+            n_poses_override=None,
+            seed_budget_plan=seed_budget_plan,
+        ),
     ), best_cert
 
 
@@ -969,6 +1071,7 @@ class DockingRequestBase:
     ligand_ctx: LigandContext
     box: DockingBox
     n_poses_override: int | None = None
+    seed_budget_plan: CertifiedSeedBudgetPlan | None = None
     key: jax.Array
     receptor_elements: tuple[str, ...] | None = None
     charge_method: ChargeMethod | None = None
@@ -992,6 +1095,8 @@ class DockingRequestBase:
         """Seed budget: explicit if set, otherwise derived from confidence."""
         if self.n_poses_override is not None:
             return self.n_poses_override
+        if self.seed_budget_plan is not None:
+            return self.seed_budget_plan.selected_budget
         config = self.config
         if config is None:
             raise ValueError(
@@ -999,13 +1104,13 @@ class DockingRequestBase:
                 "cannot derive seed budget without confidence + target_rmsd"
             )
         ligand_radius = _ligand_radius(self.ligand_ctx)
-        return derive_seed_budget(
+        return derive_seed_budget_plan(
             confidence=config.confidence,
             box_size=self.box.size,
             target_rmsd=config.target_rmsd,
             ligand_radius=ligand_radius,
             n_torsions=_seed_budget_torsion_count(self),
-        )
+        ).selected_budget
 
     @property
     def resolved_target_error(self) -> float:
@@ -2339,23 +2444,117 @@ def _posewise_conformer_correction(
     per_bond_local_bounds: jnp.ndarray | None,
     scoring_cutoff: float = 6.0,
 ) -> jnp.ndarray:
-    """Per-pose conformer improvement bound from active torsion subsets.
-
-    Lean: pose_specific_improvement_bound_of_active_subset — active subsets
-    give no larger improvement budgets than the global bound.
-
-    Returns shape (B,) per-pose correction.
-    """
-    n_poses = poses_coords.shape[0]
-    if per_bond_local_bounds is None or not rotatable_bonds:
-        return jnp.zeros(n_poses, dtype=poses_coords.dtype)
-    active_mask = _posewise_active_torsion_mask(
+    family = _posewise_improvement_budget_family(
         poses_coords,
         receptor_coords,
         rotatable_bonds,
+        per_bond_local_bounds,
         scoring_cutoff=scoring_cutoff,
     )
-    return jnp.sum(active_mask * per_bond_local_bounds[None, :], axis=-1)
+    return jnp.asarray(family.totals_array())
+
+
+def _merge_pruning_delta_budgets(
+    lhs: CertifiedPruningDeltaBudget,
+    rhs: CertifiedPruningDeltaBudget,
+) -> CertifiedPruningDeltaBudget:
+    preferred_breakdown = (
+        lhs.breakdown if lhs.total_delta >= rhs.total_delta else rhs.breakdown
+    )
+    return CertifiedPruningDeltaBudget(
+        source=(
+            lhs.source if lhs.source == rhs.source else f"{lhs.source}+{rhs.source}"
+        ),
+        shared_base_delta=max(lhs.shared_base_delta, rhs.shared_base_delta),
+        cutoff_tail_delta=max(lhs.cutoff_tail_delta, rhs.cutoff_tail_delta),
+        omitted_value_delta=max(lhs.omitted_value_delta, rhs.omitted_value_delta),
+        softening_mismatch_delta=max(
+            lhs.softening_mismatch_delta,
+            rhs.softening_mismatch_delta,
+        ),
+        total_delta=max(lhs.total_delta, rhs.total_delta),
+        theorem_handles=_merge_theorem_handles(
+            lhs.theorem_handles,
+            rhs.theorem_handles,
+        ),
+        witness_handles=_merge_theorem_handles(
+            lhs.witness_handles,
+            rhs.witness_handles,
+        ),
+        breakdown=preferred_breakdown,
+    )
+
+
+def _posewise_improvement_budget_family(
+    poses_coords: jnp.ndarray,
+    receptor_coords: jnp.ndarray,
+    rotatable_bonds: tuple[RotatableBond, ...],
+    per_bond_local_bounds: jnp.ndarray | None,
+    *,
+    scoring_cutoff: float = 6.0,
+    pose_indices: np.ndarray | None = None,
+    active_subset_source: str = "posewise_interaction_cutoff",
+) -> PoseSpecificImprovementBudgetFamily:
+    theorem_handles = pose_specific_improvement_budget_theorem_handles()
+    n_poses = int(poses_coords.shape[0])
+    if pose_indices is None:
+        pose_indices = np.arange(n_poses, dtype=np.int32)
+    if per_bond_local_bounds is None or not rotatable_bonds:
+        return PoseSpecificImprovementBudgetFamily(
+            budgets=tuple(
+                PoseSpecificImprovementBudget(
+                    pose_index=int(pose_index),
+                    active_torsion_indices=(),
+                    active_torsion_mask=(),
+                    per_bond_local_bounds=(),
+                    total_budget=0.0,
+                    active_subset_source=active_subset_source,
+                    theorem_handles=theorem_handles,
+                )
+                for pose_index in pose_indices.tolist()
+            ),
+            theorem_handles=theorem_handles,
+        )
+    active_mask = np.asarray(
+        jax.device_get(
+            _posewise_active_torsion_mask(
+                poses_coords,
+                receptor_coords,
+                rotatable_bonds,
+                scoring_cutoff=scoring_cutoff,
+            )
+        ),
+        dtype=bool,
+    )
+    per_bond_bounds_np = np.asarray(
+        jax.device_get(per_bond_local_bounds),
+        dtype=np.float64,
+    )
+    budgets: list[PoseSpecificImprovementBudget] = []
+    for local_pose_index, pose_index in enumerate(pose_indices.tolist()):
+        pose_mask = tuple(bool(flag) for flag in active_mask[local_pose_index].tolist())
+        budgets.append(
+            PoseSpecificImprovementBudget(
+                pose_index=int(pose_index),
+                active_torsion_indices=tuple(
+                    int(idx)
+                    for idx in np.flatnonzero(active_mask[local_pose_index]).tolist()
+                ),
+                active_torsion_mask=pose_mask,
+                per_bond_local_bounds=tuple(
+                    float(v) for v in per_bond_bounds_np.tolist()
+                ),
+                total_budget=float(
+                    np.sum(active_mask[local_pose_index] * per_bond_bounds_np)
+                ),
+                active_subset_source=active_subset_source,
+                theorem_handles=theorem_handles,
+            )
+        )
+    return PoseSpecificImprovementBudgetFamily(
+        budgets=tuple(budgets),
+        theorem_handles=theorem_handles,
+    )
 
 
 def _certified_pruning_pass(
@@ -2365,7 +2564,7 @@ def _certified_pruning_pass(
     *,
     scoring_context: CertifiedScoringContext | None = None,
     rotatable_bonds: tuple[RotatableBond, ...] = (),
-) -> tuple[jnp.ndarray, jnp.ndarray, float]:
+) -> CertifiedPipelineExecutionPlan:
     """
     Perform a formally justified pruning pass on the global pose set.
 
@@ -2375,7 +2574,23 @@ def _certified_pruning_pass(
     n_total = int(poses_coords.shape[0])
     if n_total == 0:
         empty = np.zeros((0,), dtype=np.float32)
-        return jnp.asarray(empty.astype(bool)), jnp.asarray(empty), 0.0
+        zero_budget = CertifiedPruningDeltaBudget(
+            source="empty_pruning_delta",
+            shared_base_delta=0.0,
+            cutoff_tail_delta=0.0,
+            omitted_value_delta=0.0,
+            softening_mismatch_delta=0.0,
+            total_delta=0.0,
+            theorem_handles=("TK11",),
+        )
+        return CertifiedPipelineExecutionPlan(
+            coarse_scores=jnp.asarray(empty),
+            lower_bounds=jnp.asarray(empty),
+            tau=0.0,
+            retain_mask=jnp.asarray(empty.astype(bool)),
+            pruning_delta_budget=zero_budget,
+            theorem_handles=("TK11",),
+        )
 
     # Runtime-execution detail only: evaluate the certified pruning quantities in
     # host-side chunks so large theorem-backed seed budgets do not require one
@@ -2387,11 +2602,8 @@ def _certified_pruning_pass(
         scoring_context is not None
         and scoring_context.receptor_conformations is not None
     )
-    additive_correction_np = (
-        np.empty((n_total,), dtype=np.float32)
-        if (use_conf or needs_receptor_flex)
-        else None
-    )
+    additive_correction_np = np.zeros((n_total,), dtype=np.float32)
+    improvement_budgets: list[PoseSpecificImprovementBudget] = []
 
     conformer_config = None
     per_bond_bounds = None
@@ -2406,13 +2618,12 @@ def _certified_pruning_pass(
             conformer_config.per_bond_lipschitz,
         )
 
-    delta: float | None = None
-    flex_delta_val: float | None = None
+    pruning_delta_budget: CertifiedPruningDeltaBudget | None = None
 
     for start in range(0, n_total, chunk_size):
         stop = min(start + chunk_size, n_total)
         chunk_coords = poses_coords[start:stop]
-        chunk_scores, chunk_delta = _score_softened_pose_batch(
+        chunk_scores, chunk_delta_budget = _score_softened_pose_batch(
             request,
             poses_coords=chunk_coords,
             electrostatics=electrostatics,
@@ -2421,28 +2632,26 @@ def _certified_pruning_pass(
         chunk_scores_np = np.asarray(jax.device_get(chunk_scores), dtype=np.float32)
         coarse_scores_np[start:stop] = chunk_scores_np
 
-        if delta is None:
-            delta = float(chunk_delta)
+        if pruning_delta_budget is None:
+            pruning_delta_budget = chunk_delta_budget
         else:
-            delta = max(delta, float(chunk_delta))
-
-        if additive_correction_np is None:
-            continue
+            pruning_delta_budget = _merge_pruning_delta_budgets(
+                pruning_delta_budget,
+                chunk_delta_budget,
+            )
 
         chunk_correction_np = np.zeros((stop - start,), dtype=np.float32)
         if use_conf:
-            chunk_correction_np += np.asarray(
-                jax.device_get(
-                    _posewise_conformer_correction(
-                        chunk_coords,
-                        request.protein_coords,
-                        rotatable_bonds,
-                        per_bond_bounds,
-                        scoring_cutoff=compute_certified_cutoff(request.target_error),
-                    )
-                ),
-                dtype=np.float32,
+            chunk_family = _posewise_improvement_budget_family(
+                chunk_coords,
+                request.protein_coords,
+                rotatable_bonds,
+                per_bond_bounds,
+                scoring_cutoff=compute_certified_cutoff(request.target_error),
+                pose_indices=np.arange(start, stop, dtype=np.int32),
             )
+            improvement_budgets.extend(chunk_family.budgets)
+            chunk_correction_np += chunk_family.totals_array()
         if needs_receptor_flex:
             assert scoring_context is not None
             posewise_flex_error, coarse_phys_delta = (
@@ -2461,30 +2670,48 @@ def _certified_pruning_pass(
                 dtype=np.float32,
             )
             chunk_flex_delta = float(np.asarray(jax.device_get(coarse_phys_delta)))
-            if flex_delta_val is None:
-                flex_delta_val = chunk_flex_delta
-            else:
-                flex_delta_val = max(flex_delta_val, chunk_flex_delta)
             chunk_correction_np += np.float32(2.0 * chunk_flex_delta)
         additive_correction_np[start:stop] = chunk_correction_np
 
-    assert delta is not None
-    best_score = float(np.min(coarse_scores_np))
-    tau = best_score + 2.0 * delta
-
-    if additive_correction_np is None:
-        survivor_mask_np = coarse_scores_np <= tau
-    else:
-        survivor_mask_np = (coarse_scores_np - additive_correction_np) <= tau
+    assert pruning_delta_budget is not None
+    survivor_mask, tau, lower_bounds = _canonical_retain_mask(
+        jnp.asarray(coarse_scores_np),
+        delta=pruning_delta_budget.total_delta,
+        additive_correction=jnp.asarray(additive_correction_np),
+    )
+    survivor_mask_np = np.asarray(jax.device_get(survivor_mask), dtype=bool)
+    lower_bounds_np = np.asarray(jax.device_get(lower_bounds), dtype=np.float32)
 
     n_surv_val = int(np.count_nonzero(survivor_mask_np))
     efficiency = 100.0 * (1.0 - n_surv_val / n_total)
     print(
         f"[CERTIFIED PRUNING] Pruned {n_total} -> {n_surv_val} poses "
-        f"({efficiency:.1f}% reduction, delta={delta:.3f} kcal/mol)"
+        f"({efficiency:.1f}% reduction, delta={pruning_delta_budget.total_delta:.3f} kcal/mol)"
     )
-
-    return jnp.asarray(survivor_mask_np), jnp.asarray(coarse_scores_np), delta
+    improvement_budget_family = (
+        PoseSpecificImprovementBudgetFamily(
+            budgets=tuple(improvement_budgets),
+            theorem_handles=pose_specific_improvement_budget_theorem_handles(),
+        )
+        if use_conf
+        else None
+    )
+    return CertifiedPipelineExecutionPlan(
+        coarse_scores=jnp.asarray(coarse_scores_np),
+        lower_bounds=jnp.asarray(lower_bounds_np),
+        tau=float(np.asarray(jax.device_get(tau))),
+        retain_mask=jnp.asarray(survivor_mask_np),
+        pruning_delta_budget=pruning_delta_budget,
+        improvement_budget_family=improvement_budget_family,
+        theorem_handles=_merge_theorem_handles(
+            ("TK11", "BD5"),
+            joint_pruning_budget_optimality_handles(),
+            pruning_delta_budget.theorem_handles,
+            ()
+            if improvement_budget_family is None
+            else improvement_budget_family.theorem_handles,
+        ),
+    )
 
 
 def _request_uses_conformer_search(request: "PipelineDockingRequest") -> bool:
@@ -2690,7 +2917,7 @@ def _score_softened_pose_batch(
     poses_coords: jnp.ndarray,
     electrostatics: CertifiedRealSpaceEwaldSpec | None,
     scoring_context: CertifiedScoringContext | None,
-) -> tuple[jnp.ndarray, float]:
+) -> tuple[jnp.ndarray, CertifiedPruningDeltaBudget]:
     softening_radius = request.softening_radius
     if scoring_context is not None:
         coarse_batch = scoring_context.score_softened_batch(
@@ -2702,31 +2929,10 @@ def _score_softened_pose_batch(
             epsilon=0.2,
             softening_radius=softening_radius,
         )
-        exact_softening = float(
-            jnp.min(request.receptor_radii) + jnp.min(request.ligand_ctx.base_radii)
+        delta_budget = scoring_context.pruning_delta_budget(
+            softening_error_bound=coarse_batch.softening_error_bound,
         )
-        if getattr(scoring_context, "uses_batch_pruning_delta", lambda: False)() and (
-            softening_radius is None
-            or math.isclose(
-                softening_radius,
-                exact_softening,
-                rel_tol=1e-6,
-                abs_tol=1e-6,
-            )
-        ):
-            delta = 0.0
-        elif (
-            scoring_context.uses_extended_rich
-            and not getattr(
-                scoring_context, "uses_batch_pruning_delta", lambda: False
-            )()
-        ):
-            delta = scoring_context.analytic_pruning_delta()
-        else:
-            delta = float(
-                np.asarray(jax.device_get(coarse_batch.softening_error_bound))
-            )
-        return coarse_batch.scores, delta
+        return coarse_batch.scores, delta_budget
 
     if electrostatics is not None:
         coarse_batch = score_certified_softened_lj_realspace_ewald(
@@ -2749,8 +2955,11 @@ def _score_softened_pose_batch(
             compute_error_bound=True,
             softening_radius=softening_radius,
         )
-    delta = float(np.asarray(jax.device_get(coarse_batch.softening_error_bound)))
-    return coarse_batch.scores, delta
+    delta_budget = CertifiedScoringContext(
+        exact_chemistry_mode=ExactChemistryMode.NONE,
+        electrostatics=electrostatics,
+    ).pruning_delta_budget(softening_error_bound=coarse_batch.softening_error_bound)
+    return coarse_batch.scores, delta_budget
 
 
 def _build_conformer_score_fns(
@@ -3085,6 +3294,7 @@ class PipelineInitialScores:
     survivor_exact_scores: jnp.ndarray | np.ndarray | None = None
     valid_survivor_mask: jnp.ndarray | np.ndarray | None = None
     survivor_coords: jnp.ndarray | np.ndarray | None = None
+    execution_plan: CertifiedPipelineExecutionPlan | None = None
 
 
 class PipelineRoute(ABC):
@@ -3272,18 +3482,18 @@ class CertifiedPipelineRoute(PipelineRoute):
         )
         do_conf = _request_uses_conformer_search(request)
         rotatable_bonds = _request_rotatable_bonds(request) if do_conf else ()
-        survivor_mask, coarse_scores, delta = _certified_pruning_pass(
+        execution_plan = _certified_pruning_pass(
             request,
             poses_coords=batched_coords,
             electrostatics=electrostatics,
             scoring_context=pruning_scoring_context,
             rotatable_bonds=rotatable_bonds,
         )
+        survivor_mask = execution_plan.retain_mask
         valid_survivor_indices = jnp.asarray(
             np.flatnonzero(np.asarray(jax.device_get(survivor_mask), dtype=bool))
         )
         survivor_coords = batched_coords[valid_survivor_indices]
-        del coarse_scores, delta
         survivor_pose_vecs = PoseVector(
             translation=pose_vecs.translation[valid_survivor_indices],
             quaternion=pose_vecs.quaternion[valid_survivor_indices],
@@ -3305,11 +3515,21 @@ class CertifiedPipelineRoute(PipelineRoute):
                 rotatable_bonds,
                 conformer_config.per_bond_lipschitz,
             )
-            conf_improvement_bound = _conformer_improvement_bound(per_bond_bounds)
             strain_params = None
-            exact_additive_correction = jnp.full_like(
-                survivor_rigid_scores,
-                conf_improvement_bound,
+            exact_improvement_family = _posewise_improvement_budget_family(
+                survivor_coords,
+                request.protein_coords,
+                rotatable_bonds,
+                per_bond_bounds,
+                scoring_cutoff=compute_certified_cutoff(request.target_error),
+                pose_indices=np.asarray(
+                    jax.device_get(valid_survivor_indices),
+                    dtype=np.int32,
+                ),
+                active_subset_source="survivor_exact_interaction_cutoff",
+            )
+            exact_additive_correction = jnp.asarray(
+                exact_improvement_family.totals_array(),
                 dtype=survivor_rigid_scores.dtype,
             )
             if (
@@ -3340,6 +3560,16 @@ class CertifiedPipelineRoute(PipelineRoute):
             )
         else:
             strain_params = None
+
+        execution_plan = execution_plan.with_final_survivor_indices(
+            tuple(
+                int(index)
+                for index in np.asarray(
+                    jax.device_get(valid_survivor_indices),
+                    dtype=np.int32,
+                ).tolist()
+            )
+        )
 
         survivor_exact_scores = _score_exact_pose_batch(
             request,
@@ -3411,6 +3641,7 @@ class CertifiedPipelineRoute(PipelineRoute):
             survivor_exact_scores=survivor_exact_scores,
             valid_survivor_mask=jnp.ones(survivor_exact_scores.shape, dtype=bool),
             survivor_coords=survivor_coords,
+            execution_plan=execution_plan,
         )
 
     def best_index_limit(
@@ -3505,7 +3736,11 @@ def _run_docking_pipeline_request(
     )
     route = derive_pipeline_route(request)
     request = route.prepare_request(request)
-    if request.n_poses_override is None and request.config is not None:
+    if (
+        request.n_poses_override is None
+        and request.seed_budget_plan is None
+        and request.config is not None
+    ):
         request, _ = _probe_seed_budget_certificate(request, route)
     pose_batch = route.generate_pose_batch(request)
     request = pose_batch.request
@@ -3517,6 +3752,7 @@ def _run_docking_pipeline_request(
     initial_scores = route.score_pose_batch(
         request, batched_coords, pose_batch.pose_vecs
     )
+    execution_plan = initial_scores.execution_plan
 
     final_scores = initial_scores.final_scores
 
@@ -3705,6 +3941,41 @@ def _run_docking_pipeline_request(
                 f"poses (Delta_max={local_improvement_bound:.3f} kcal/mol)",
                 flush=True,
             )
+        if request.is_certified_mode:
+            if execution_plan is None:
+                raise ValueError(
+                    "certified formal refinement requires an authoritative execution plan"
+                )
+            refinement_budget = CertifiedRefinementBudget(
+                kind=CertifiedRefinementBudgetKind.DYADIC_ROUNDS,
+                n_steps=n_search_rounds,
+                pose_indices=tuple(int(i) for i in local_refine_indices.tolist()),
+                theorem_handles=_merge_theorem_handles(
+                    ("SH12", "SH13"),
+                    joint_pruning_budget_optimality_handles(),
+                ),
+                max_total_improvement=local_improvement_bound,
+                note="Certified local dyadic refinement budget",
+            )
+            execution_plan = execution_plan.with_refinement_budget(
+                refinement_budget,
+                postfilter_cost_model=CertifiedPipelineCostModel(
+                    input_pose_count=int(initial_coords.shape[0]),
+                    retained_pose_count=int(initial_coords.shape[0]),
+                    refinement_pose_count=int(local_refine_indices.size),
+                    theorem_handles=joint_pruning_budget_optimality_handles(),
+                ),
+            )
+            initial_scores = replace(initial_scores, execution_plan=execution_plan)
+            local_refine_indices = np.asarray(
+                execution_plan.refinement_pose_indices,
+                dtype=np.int32,
+            )
+            local_refinement_budget = cast(
+                CertifiedRefinementBudget,
+                execution_plan.refinement_budget,
+            )
+            n_search_rounds = local_refinement_budget.n_steps
         refinement_input_coords = initial_coords[jnp.asarray(local_refine_indices)]
 
         refinement_kwargs: dict[str, object] = dict(
@@ -3928,7 +4199,7 @@ def _run_docking_pipeline_request(
 
     rotatable_bonds: tuple[RotatableBond, ...] = ()
     conformer_config: BranchAndBoundConfig | None = None
-    conf_improvement_bound = 0.0
+    final_pose_improvement_family: PoseSpecificImprovementBudgetFamily | None = None
     strain_params: TorsionStrainParams | None = None
     conformer_handles = ()
     if do_conf:
@@ -3941,7 +4212,15 @@ def _run_docking_pipeline_request(
             rotatable_bonds,
             conformer_config.per_bond_lipschitz,
         )
-        conf_improvement_bound = _conformer_improvement_bound(per_bond_bounds)
+        final_pose_improvement_family = _posewise_improvement_budget_family(
+            opt_coords,
+            request.protein_coords,
+            rotatable_bonds,
+            per_bond_bounds,
+            scoring_cutoff=compute_certified_cutoff(request.target_error),
+            pose_indices=np.arange(int(opt_coords.shape[0]), dtype=np.int32),
+            active_subset_source="final_pose_interaction_cutoff",
+        )
         strain_params = None
         conformer_handles = _conformer_runtime_theorem_handles(
             has_rotatable_bonds=bool(rotatable_bonds),
@@ -3967,7 +4246,12 @@ def _run_docking_pipeline_request(
         energy_out = float(final_scores[idx_i])
 
         if do_conf:
-            if energy_out <= best_energy_with_conf + conf_improvement_bound:
+            pose_conf_improvement_budget = (
+                0.0
+                if final_pose_improvement_family is None
+                else final_pose_improvement_family.budgets[idx_i].total_budget
+            )
+            if energy_out <= best_energy_with_conf + pose_conf_improvement_budget:
                 conf = _run_conformer_search_for_pose(
                     request,
                     quaternion=opt_pose_quaternions[idx_i],
@@ -4204,6 +4488,13 @@ def _certified_refinement(
     ligand_radius = float(jnp.max(jnp.linalg.norm(base_coords, axis=-1)))
     n_atoms = base_coords.shape[0]
 
+    refinement_scoring_context = None
+    if request.is_certified_mode:
+        refinement_scoring_context = resolve_request_scoring_context(
+            request,
+            engine=request.effective_engine,
+        ).optimization_context()
+
     energy_fn = make_se3_energy_fn(
         base_coords,
         receptor_coords,
@@ -4211,6 +4502,8 @@ def _certified_refinement(
         ligand_radii,
         cutoff,
         _EPSILON_KCAL_MOL,
+        scoring_context=refinement_scoring_context,
+        target_error=request.target_error,
     )
     kinematics_fn = make_se3_kinematics_fn(base_coords)
 

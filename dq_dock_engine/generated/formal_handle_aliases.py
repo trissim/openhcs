@@ -1071,6 +1071,21 @@ CSC47 = "CSC47"
 BCRC1 = "BCRC1"
 BCRC2 = "BCRC2"
 BCRC3 = "BCRC3"
+BCRC4 = "BCRC4"
+BCRC5 = "BCRC5"
+BCRC6 = "BCRC6"
+BCPO1 = "BCPO1"
+BCRP1 = "BCRP1"
+BCRP2 = "BCRP2"
+LJ18 = "LJ18"
+LJ19 = "LJ19"
+MC11 = "MC11"
+MC12 = "MC12"
+MC13 = "MC13"
+SB2 = "SB2"
+SB5 = "SB5"
+SB7 = "SB7"
+EWP6 = "EWP6"
 
 __all__ = [
     "DC1",
@@ -2142,4 +2157,19 @@ __all__ = [
     "BCRC1",
     "BCRC2",
     "BCRC3",
+    "BCRC4",
+    "BCRC5",
+    "BCRC6",
+    "BCPO1",
+    "BCRP1",
+    "BCRP2",
+    "LJ18",
+    "LJ19",
+    "MC11",
+    "MC12",
+    "MC13",
+    "SB2",
+    "SB5",
+    "SB7",
+    "EWP6",
 ]

@@ -193,12 +193,26 @@ theorem dyadicTranslationStep_sum_with_tail_eq
   | zero =>
       simp [dyadicTranslationStep]
   | succ roundCount ih =>
-      rw [Finset.sum_range_succ, ih]
-      unfold dyadicTranslationStep
-      rw [pow_succ]
-      have hpow : (2 : ℝ) ^ roundCount ≠ 0 := by positivity
-      field_simp [hpow]
-      ring
+      rw [Finset.sum_range_succ]
+      have htail :
+          dyadicTranslationStep baseStep roundCount +
+            2 * dyadicTranslationStep baseStep (roundCount + 1) =
+            2 * dyadicTranslationStep baseStep roundCount := by
+        unfold dyadicTranslationStep
+        rw [pow_succ]
+        have hpow : (2 : ℝ) ^ roundCount ≠ 0 := by positivity
+        field_simp [hpow]
+        ring
+      calc
+        (Finset.range roundCount).sum (fun r => dyadicTranslationStep baseStep r) +
+            dyadicTranslationStep baseStep roundCount +
+            2 * dyadicTranslationStep baseStep (roundCount + 1)
+            = (Finset.range roundCount).sum (fun r => dyadicTranslationStep baseStep r) +
+                (dyadicTranslationStep baseStep roundCount +
+                  2 * dyadicTranslationStep baseStep (roundCount + 1)) := by ring
+        _ = (Finset.range roundCount).sum (fun r => dyadicTranslationStep baseStep r) +
+              2 * dyadicTranslationStep baseStep roundCount := by rw [htail]
+        _ = 2 * baseStep := ih
 
 /-- The cumulative dyadic translation path is always bounded by twice the root step. -/
 theorem dyadicTranslationStep_sum_le_two_mul
@@ -243,8 +257,10 @@ theorem dyadicMaxStep_sum_le_two_mul_max
           intro r _
           exact hPointwise r
     _ ≤ 2 * max baseStep₁ baseStep₂ := by
+          have hMaxBase : 0 ≤ max baseStep₁ baseStep₂ := by
+            exact le_trans hBase₁ (le_max_left _ _)
           exact dyadicTranslationStep_sum_le_two_mul (max baseStep₁ baseStep₂)
-            (le_max hBase₁ hBase₂) roundCount
+            hMaxBase roundCount
 
 theorem exists_adequateDyadicRound
     (baseStep target : ℝ)

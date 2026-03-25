@@ -24,6 +24,7 @@ from dq_dock_engine.docking.pipeline import (
     _seed_budget_torsion_count,
     _shared_certified_singleton_top1,
     derive_seed_budget,
+    derive_seed_budget_plan,
 )
 from dq_dock_engine.docking.se3_refinement import (
     RefinementCertificate,
@@ -201,7 +202,7 @@ def test_probe_seed_budget_certificate_overrides_request_budget(monkeypatch) -> 
     updated_request, probe_cert = _probe_seed_budget_certificate(request, _FakeRoute())
 
     assert probe_cert == cert
-    assert updated_request.n_poses_override == derive_seed_budget(
+    expected_budget = derive_seed_budget(
         confidence=0.99,
         box_size=request.box.size,
         target_rmsd=0.5,
@@ -209,6 +210,10 @@ def test_probe_seed_budget_certificate_overrides_request_budget(monkeypatch) -> 
         n_torsions=_seed_budget_torsion_count(request),
         probe_certificate=cert,
     )
+    assert updated_request.n_poses_override is None
+    assert updated_request.seed_budget_plan is not None
+    assert updated_request.seed_budget_plan.selected_budget == expected_budget
+    assert updated_request.n_poses == expected_budget
 
 
 def test_probe_seed_budget_certificate_falls_back_to_original_request(
@@ -238,8 +243,12 @@ def test_probe_seed_budget_certificate_falls_back_to_original_request(
     updated_request, probe_cert = _probe_seed_budget_certificate(request, _FakeRoute())
 
     assert probe_cert is None
-    assert updated_request is request
     assert updated_request.n_poses_override is None
+    assert updated_request.seed_budget_plan is not None
+    assert (
+        updated_request.seed_budget_plan.selected_candidate.source
+        == "baseline_zero_step_capture"
+    )
     assert updated_request.n_poses == request.n_poses
 
 
@@ -305,7 +314,30 @@ def test_probe_seed_budget_certificate_uses_smallest_successful_budget(
     )
 
     assert probe_cert == cert_small
-    assert updated_request.n_poses_override == min(budget_large, budget_small)
+    assert updated_request.seed_budget_plan is not None
+    assert updated_request.seed_budget_plan.selected_budget == min(
+        budget_large,
+        budget_small,
+    )
+    assert updated_request.n_poses == min(budget_large, budget_small)
+
+
+def test_derive_seed_budget_plan_keeps_baseline_and_probe_candidates() -> None:
+    cert = _dummy_certificate(q=0.25, n_steps=2)
+    plan = derive_seed_budget_plan(
+        confidence=0.99,
+        box_size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        target_rmsd=0.5,
+        ligand_radius=2.0,
+        probe_candidates=((0, cert),),
+    )
+
+    assert len(plan.candidates) == 2
+    assert plan.candidates[0].source == "baseline_zero_step_capture"
+    assert plan.candidates[1].source == "observed_probe_capture"
+    assert plan.selected_candidate.budget <= plan.candidates[0].budget
+    assert plan.engineering_probe_pose_cap is not None
+    assert plan.engineering_probe_top_k is not None
 
 
 def test_probe_seed_budget_certificate_uses_observed_refinement_mode(

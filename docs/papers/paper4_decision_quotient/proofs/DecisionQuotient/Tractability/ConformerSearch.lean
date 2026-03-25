@@ -544,7 +544,9 @@ theorem weighted_l1_argmax_subdivision_contraction
   have hRemoved : total / (2 * (n : ℝ)) ≤ (L k * h_w k) / 2 := by
     apply (_root_.div_le_iff₀ (show 0 < 2 * (n : ℝ) by positivity)).2
     have : total ≤ ((L k * h_w k) / 2) * (2 * (n : ℝ)) := by
-      simpa [mul_assoc, mul_left_comm, mul_comm] using hMaxSum
+      calc
+        total ≤ (n : ℝ) * (L k * h_w k) := hMaxSum
+        _ = ((L k * h_w k) / 2) * (2 * (n : ℝ)) := by ring
     exact this
   rw [weighted_l1_single_coordinate_bisection_exact]
   have hStep : total - (L k * h_w k) / 2 ≤ total - total / (2 * (n : ℝ)) := by

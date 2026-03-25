@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import dq_dock_engine.docking.scoring as scoring
 
@@ -19,11 +20,16 @@ from dq_dock_engine.docking.formal_handles import (
     directional_metal_coordination_theorem_handles,
     explicit_water_placement_theorem_handles,
     extended_rich_chemistry_theorem_handles,
+    joint_pruning_budget_optimality_handles,
     ligand_strain_theorem_handles,
     negation_invariance_theorem_handles,
+    omitted_channel_bound_theorem_handles,
+    pose_specific_improvement_budget_theorem_handles,
     receptor_flexibility_theorem_handles,
     rich_chemistry_theorem_handles,
     screened_coulomb_theorem_handles,
+    seed_budget_minimality_theorem_handles,
+    softened_lj_shared_base_delta_theorem_handles,
     support_expansion_theorem_handles,
     topk_bridge_theorem_handles,
 )
@@ -231,6 +237,17 @@ def test_new_chemistry_handle_helpers_surface_new_theorem_families() -> None:
     }
     assert {"TK13", "TK15"}.issubset(set(topk_bridge_theorem_handles()))
     assert {"SH1", "SH6"}.issubset(set(support_expansion_theorem_handles()))
+    assert {"LJ18", "LJ19"} == set(softened_lj_shared_base_delta_theorem_handles())
+    assert {"BCRC4", "BCRC6", "EWP6"}.issubset(
+        set(omitted_channel_bound_theorem_handles())
+    )
+    assert {"BCRC1", "BCRC2", "CSC47"} == set(
+        pose_specific_improvement_budget_theorem_handles()
+    )
+    assert {"BCPO1", "BCRP1", "BCRC3"} == set(joint_pruning_budget_optimality_handles())
+    assert {"SB2", "SB7", "BCRP2", "ERC43"}.issubset(
+        set(seed_budget_minimality_theorem_handles())
+    )
 
 
 def test_new_chemistry_scoring_helpers_are_jit_safe() -> None:
@@ -298,6 +315,24 @@ def test_new_chemistry_scoring_helpers_are_jit_safe() -> None:
         assert np.all(np.isfinite(arr))
 
 
+def test_rich_chemistry_pruning_delta_budget_tracks_named_components() -> None:
+    _, _, _, _, plan = _toy_geometry()
+
+    delta_budget = plan.pruning_delta_budget(n_water_bridges=3)
+
+    assert delta_budget.shared_base_delta == pytest.approx(0.0)
+    assert delta_budget.cutoff_tail_delta > 0.0
+    assert delta_budget.omitted_value_delta >= 6.0
+    assert delta_budget.total_delta == pytest.approx(
+        delta_budget.cutoff_tail_delta + delta_budget.omitted_value_delta
+    )
+    assert {item.label for item in delta_budget.breakdown} == {
+        "shared_base_zero",
+        "cutoff_tail",
+        "omitted_value",
+    }
+
+
 def test_attractive_chemistry_is_attractive_negative_energy() -> None:
     (
         receptor_coords,
@@ -344,7 +379,7 @@ def test_attractive_chemistry_is_attractive_negative_energy() -> None:
     )
 
 
-def test_rich_chemistry_composes_nonbonded_with_attractive_chemistry() -> None:
+def test_rich_chemistry_composes_softened_nonbonded_with_attractive_chemistry() -> None:
     (
         receptor_coords,
         poses_coords,
@@ -353,13 +388,19 @@ def test_rich_chemistry_composes_nonbonded_with_attractive_chemistry() -> None:
         plan,
     ) = _toy_geometry()
 
-    nonbonded_batch = score_certified_lj_screened_coulomb_batch(
+    softened_lj = scoring.score_certified_softened_lj(
         receptor_coords,
         poses_coords,
         receptor_radii,
         ligand_radii,
-        plan.screened_coulomb,
         target_error=0.001,
+        pairwise_sigma=plan.pairwise_sigma,
+        softening_radius=None,
+    )
+    screened_batch = score_certified_screened_coulomb_batch(
+        receptor_coords,
+        poses_coords,
+        plan.screened_coulomb,
     )
     attractive_batch = score_certified_attractive_chemistry_batch(
         receptor_coords, poses_coords, plan
@@ -375,7 +416,9 @@ def test_rich_chemistry_composes_nonbonded_with_attractive_chemistry() -> None:
 
     np.testing.assert_allclose(
         np.asarray(rich_batch.scores),
-        np.asarray(nonbonded_batch.scores) + np.asarray(attractive_batch.scores),
+        np.asarray(softened_lj.scores)
+        + np.asarray(screened_batch.scores)
+        + np.asarray(attractive_batch.scores),
     )
 
 
@@ -531,8 +574,9 @@ def test_cooperative_hbond_handles_exist() -> None:
 
 def test_explicit_water_placement_handles_exist() -> None:
     handles = explicit_water_placement_theorem_handles()
-    assert len(handles) == 5
+    assert len(handles) == 6
     assert handles[0] == "EWP1"
+    assert handles[-1] == "EWP6"
 
 
 def test_receptor_flexibility_handles_exist() -> None:

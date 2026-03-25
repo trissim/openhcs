@@ -9,6 +9,10 @@ import jax.tree_util
 import numpy as np
 from jax.tree_util import register_pytree_node_class
 
+from dq_dock_engine.docking.certified_runtime_plans import (
+    CertifiedBudgetBreakdownItem,
+    CertifiedPruningDeltaBudget,
+)
 from dq_dock_engine.docking.core import LigandContext
 from dq_dock_engine.docking.explicit_water_placement import (
     WaterPlacementGrid,
@@ -275,11 +279,51 @@ class CertifiedScoringContext:
             # softened LJ base → δ = 0 (Lean: softened_lj_self_approx_zero)
             return 0.0
         assert self.rich_chemistry_plan is not None
-        n_water_bridges = 0
-        if self.water_grid is not None:
-            n_water_bridges = int(self.water_grid.positions.shape[0])
-        return self.rich_chemistry_plan.analytic_total_delta(
-            n_water_bridges=n_water_bridges,
+        return self.pruning_delta_budget().total_delta
+
+    def pruning_delta_budget(
+        self,
+        *,
+        softening_error_bound: float | jnp.ndarray | None = None,
+    ) -> CertifiedPruningDeltaBudget:
+        if self.uses_extended_rich:
+            assert self.rich_chemistry_plan is not None
+            n_water_bridges = 0
+            if self.water_grid is not None:
+                n_water_bridges = int(self.water_grid.positions.shape[0])
+            return self.rich_chemistry_plan.pruning_delta_budget(
+                n_water_bridges=n_water_bridges,
+            )
+        if softening_error_bound is None:
+            raise ValueError(
+                "base-physics pruning delta budget requires an explicit softening_error_bound"
+            )
+        total_delta = float(np.asarray(softening_error_bound))
+        scoring_handles = (
+            ("CB10", "CB11", "CB12")
+            if self.electrostatics is not None
+            else ("LJ10", "LJ11", "LJ12")
+        )
+        return CertifiedPruningDeltaBudget(
+            source=(
+                "softened_lj_realspace_ewald_pruning_delta"
+                if self.electrostatics is not None
+                else "softened_lj_pruning_delta"
+            ),
+            shared_base_delta=0.0,
+            cutoff_tail_delta=0.0,
+            omitted_value_delta=0.0,
+            softening_mismatch_delta=total_delta,
+            total_delta=total_delta,
+            theorem_handles=scoring_handles,
+            breakdown=(
+                CertifiedBudgetBreakdownItem(
+                    label="softening_mismatch",
+                    value=total_delta,
+                    theorem_handles=scoring_handles,
+                    note="Exact-vs-softened base-physics pruning slack",
+                ),
+            ),
         )
 
     def receptor_subset(
@@ -556,12 +600,7 @@ class CertifiedScoringContext:
         )
         flex_delta: jax.Array | float = ref_scores.softening_error_bound
         if self.uses_extended_rich:
-            # In extended-rich mode the theorem-backed pruning delta is the analytic
-            # composite bound, not the raw summed softening tail bound from the
-            # coarse scorer internals. Using the analytic delta keeps the runtime
-            # aligned with BlindConformerPipelineRefinements.lean
-            # (coarse_rigid_with_flex_and_conformer_lower_bound).
-            flex_delta = self.analytic_pruning_delta()
+            flex_delta = self.pruning_delta_budget().total_delta
         if self.receptor_conformations is None:
             return (
                 jnp.zeros((poses_coords.shape[0],), dtype=poses_coords.dtype),

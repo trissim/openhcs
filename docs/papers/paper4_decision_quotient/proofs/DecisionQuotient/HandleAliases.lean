@@ -101,8 +101,12 @@ import DecisionQuotient.Tractability.CooperativeHBondApproximation
 import DecisionQuotient.Tractability.ExplicitWaterPlacement
 import DecisionQuotient.Tractability.ReceptorFlexibility
 import DecisionQuotient.Tractability.EnergyRMSDConvergence
+import DecisionQuotient.Tractability.SeedBudgetDerivation
 import DecisionQuotient.Tractability.ConformerSupportCoverage
 import DecisionQuotient.Tractability.CrossDockingCertificates
+import DecisionQuotient.Tractability.BlindConformerPipelineOptimality
+import DecisionQuotient.Tractability.BlindConformerPipelineRefinements
+import DecisionQuotient.Tractability.BlindConformerRuntimeCertificates
 import DecisionQuotient.Computation.PocketDetection
 import DecisionQuotient.Information
 import DecisionQuotient.Information.RateDistortion
@@ -2368,5 +2372,46 @@ abbrev BCRC1 := @Tractability.BlindConformerRuntimeCertificates.torsionImproveme
 abbrev BCRC2 := @Tractability.BlindConformerRuntimeCertificates.pose_specific_improvement_bound_of_active_subset
 -- BCRC3: Canonical pruning plus canonical refinement budget is jointly optimal
 abbrev BCRC3 := @Tractability.BlindConformerRuntimeCertificates.canonical_pruning_and_budget_optimal
+
+-- BCRC4: Shared base plus omitted channels preserve a uniform-approximation budget
+abbrev BCRC4 := @Tractability.BlindConformerRuntimeCertificates.base_plus_omitted_uniformApprox
+-- BCRC5: Exact with omitted channels stays above the coarse score minus total error
+abbrev BCRC5 := @Tractability.BlindConformerRuntimeCertificates.exact_with_omitted_ge_coarse_minus_totalError
+-- BCRC6: Omitted nonnegative channels are bounded by a certified supremum budget
+abbrev BCRC6 := @Tractability.BlindConformerRuntimeCertificates.omitted_channel_is_bounded_by_supremum
+
+/-! ## Blind Conformer Pipeline Optimality / Refinement handles -/
+
+-- BCPO1: Canonical retain set minimizes additive pipeline cost among safe retainers
+abbrev BCPO1 := @Tractability.BlindConformerPipelineOptimality.canonicalRetain_minimizes_pipelineCost
+
+-- BCRP1: Canonical two-stage plan is no worse than all-exact evaluation
+abbrev BCRP1 := @Tractability.BlindConformerPipelineRefinements.canonical_twoStage_le_allExact
+-- BCRP2: Minimal adequate seed budget is optimal among adequate budgets
+abbrev BCRP2 := @Tractability.BlindConformerPipelineRefinements.minimal_adequate_seedBudget_optimal
+
+/-! ## Additional runtime-proof hooks for theorem-gap roadmap integration -/
+
+-- LJ18: Explicit exact-vs-softened LJ error identity
+abbrev LJ18 := @Tractability.SoftLJApproximation.exact_vs_softened_lj_error
+-- LJ19: Shared softened-LJ base contributes zero self-approximation error
+abbrev LJ19 := @Tractability.SoftLJApproximation.softened_lj_self_approx_zero
+
+-- MC11: Metal-coordination pointwise Gaussian tail bound
+abbrev MC11 := @Tractability.MetalCoordinationApproximation.metalCoordination_tail_bound
+-- MC12: Metal-coordination cutoff sufficiency theorem
+abbrev MC12 := @Tractability.MetalCoordinationApproximation.metalCoordination_cutoff_sufficient
+-- MC13: Canonical minimum metal-coordination cutoff remains sufficient
+abbrev MC13 := @Tractability.MetalCoordinationApproximation.metalCoordinationMinCutoff_sufficient
+
+-- SB2: Sufficient seed budget from capture probability threshold
+abbrev SB2 := @Tractability.SeedBudgetDerivation.sufficient_seed_budget
+-- SB5: Minimal seed budget is antitone in basin volume fraction
+abbrev SB5 := @Tractability.SeedBudgetDerivation.minSeedBudget_antitone
+-- SB7: Two-phase probe-derived seed budget remains sufficient
+abbrev SB7 := @Tractability.SeedBudgetDerivation.composed_two_phase_seed_budget
+
+-- EWP6: Water-bridge omission is bounded by a certified omitted-channel budget
+abbrev EWP6 := @Tractability.ExplicitWaterPlacement.water_bridge_is_bounded_omitted_channel
 
 end DecisionQuotient
