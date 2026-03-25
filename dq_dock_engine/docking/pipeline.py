@@ -3846,6 +3846,12 @@ def _recertify_conformer_updated_pose(
             flush=True,
         )
 
+    if certificates[0] is not None:
+        print(
+            f"[RECERTIFY DEBUG] Got certificate: spectral={certificates[0].spectral}",
+            flush=True,
+        )
+
     refined_coords = apply_poses(
         local_ligand_ctx,
         PoseVector(
@@ -5088,7 +5094,21 @@ def _run_docking_pipeline_request(
                         dtype=np.float32,
                     )
                     resolved_energies[idx_i] = float(recert_energy)
-                    refinement_certificates[idx_i] = recert_certificate
+                    original_cert = refinement_certificates[idx_i]
+                    if original_cert is not None:
+                        refinement_certificates[idx_i] = original_cert
+                        print(
+                            f"[CONFORMER IMPROVE] Keeping original cert for pose {idx_i}: "
+                            f"spectral={original_cert.spectral}, "
+                            f"recert_basin_mu_coord={recert_basin_mu_coord}",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            f"[CONFORMER IMPROVE] No original cert for pose {idx_i}, "
+                            f"recert_basin_mu_coord={recert_basin_mu_coord}",
+                            flush=True,
+                        )
                     assert pose_basin_mu_coords is not None
                     pose_basin_mu_coords[idx_i] = recert_basin_mu_coord
                     assert per_pose_theorem_handles is not None
