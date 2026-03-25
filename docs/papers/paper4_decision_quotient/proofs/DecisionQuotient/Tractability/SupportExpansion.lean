@@ -7,6 +7,7 @@
   strategy.
 -/
 import Mathlib.Data.Finset.Max
+import Mathlib.Data.Real.Basic
 import Mathlib.Tactic
 
 namespace DecisionQuotient
@@ -27,6 +28,21 @@ noncomputable def supportShellLevels (roundIndex supportExpansionLevel : ℕ) : 
 /-- The merged runtime family keeps one noop plus 12 local actions per shell. -/
 noncomputable def mergedActionCount (roundIndex supportExpansionLevel : ℕ) : ℕ :=
   1 + 12 * (supportShellLevels roundIndex supportExpansionLevel).card
+
+/-- Translation step used by shell `roundIndex` under dyadic refinement. -/
+noncomputable def dyadicTranslationStep (baseStep : ℝ) (roundIndex : ℕ) : ℝ :=
+  baseStep / (2 : ℝ) ^ roundIndex
+
+/-- A dyadic refinement round is adequate once its translation step is at most
+    the requested target resolution. -/
+def AdequateDyadicRound (baseStep target : ℝ) (roundIndex : ℕ) : Prop :=
+  dyadicTranslationStep baseStep roundIndex ≤ target
+
+/-- Joint adequacy for two dyadic step channels (e.g. translation and the
+    rotation-induced displacement radius). -/
+def AdequateJointDyadicRound (baseStep₁ baseStep₂ target : ℝ) (roundIndex : ℕ) : Prop :=
+  AdequateDyadicRound baseStep₁ target roundIndex ∧
+    AdequateDyadicRound baseStep₂ target roundIndex
 
 theorem roundIndex_mem_supportShellLevels (roundIndex supportExpansionLevel : ℕ) :
     roundIndex ∈ supportShellLevels roundIndex supportExpansionLevel := by
@@ -112,6 +128,260 @@ theorem mergedActionCount_eq (roundIndex supportExpansionLevel : ℕ) :
       1 + 12 * (coarserShellCount roundIndex supportExpansionLevel + 1) := by
   unfold mergedActionCount
   rw [supportShellLevels_card]
+
+lemma natCast_le_twoPow (n : ℕ) :
+    (n : ℝ) ≤ (2 : ℝ) ^ n := by
+  induction n with
+  | zero => norm_num
+  | succ n ih =>
+      have hpow_one : (1 : ℝ) ≤ (2 : ℝ) ^ n := by
+        have hpow_nat : (1 : ℕ) ≤ (2 : ℕ) ^ n := by
+          exact Nat.succ_le_of_lt (Nat.pow_pos (show 0 < (2 : ℕ) by decide))
+        exact_mod_cast hpow_nat
+      calc
+        ((n + 1 : ℕ) : ℝ) = (n : ℝ) + 1 := by norm_num
+        _ ≤ (2 : ℝ) ^ n + (2 : ℝ) ^ n := by
+          gcongr
+        _ = (2 : ℝ) ^ (n + 1) := by
+          rw [pow_succ]
+          ring
+
+theorem dyadicTranslationStep_antitone
+    (baseStep : ℝ)
+    (hBase : 0 ≤ baseStep)
+    {r₁ r₂ : ℕ}
+    (hRound : r₁ ≤ r₂) :
+    dyadicTranslationStep baseStep r₂ ≤ dyadicTranslationStep baseStep r₁ := by
+  unfold dyadicTranslationStep
+  have hpowNat : (2 : ℕ) ^ r₁ ≤ (2 : ℕ) ^ r₂ :=
+    Nat.pow_le_pow_right (by norm_num) hRound
+  have hpow : (2 : ℝ) ^ r₁ ≤ (2 : ℝ) ^ r₂ := by
+    exact_mod_cast hpowNat
+  have hpos₁ : 0 < (2 : ℝ) ^ r₁ := by positivity
+  have hpos₂ : 0 < (2 : ℝ) ^ r₂ := by positivity
+  exact div_le_div_of_nonneg_left hBase hpos₁ hpow
+
+theorem adequateDyadicRound_mono
+    (baseStep target : ℝ)
+    (hBase : 0 ≤ baseStep)
+    {r₁ r₂ : ℕ}
+    (hRound : r₁ ≤ r₂)
+    (hAdeq : AdequateDyadicRound baseStep target r₁) :
+    AdequateDyadicRound baseStep target r₂ := by
+  unfold AdequateDyadicRound at hAdeq ⊢
+  exact le_trans (dyadicTranslationStep_antitone baseStep hBase hRound) hAdeq
+
+theorem adequateJointDyadicRound_mono
+    (baseStep₁ baseStep₂ target : ℝ)
+    (hBase₁ : 0 ≤ baseStep₁)
+    (hBase₂ : 0 ≤ baseStep₂)
+    {r₁ r₂ : ℕ}
+    (hRound : r₁ ≤ r₂)
+    (hAdeq : AdequateJointDyadicRound baseStep₁ baseStep₂ target r₁) :
+    AdequateJointDyadicRound baseStep₁ baseStep₂ target r₂ := by
+  rcases hAdeq with ⟨h₁, h₂⟩
+  exact ⟨adequateDyadicRound_mono baseStep₁ target hBase₁ hRound h₁,
+    adequateDyadicRound_mono baseStep₂ target hBase₂ hRound h₂⟩
+
+/-- Exact finite geometric-series identity for dyadic translation steps. -/
+theorem dyadicTranslationStep_sum_with_tail_eq
+    (baseStep : ℝ)
+    (roundCount : ℕ) :
+    (Finset.range roundCount).sum (fun r => dyadicTranslationStep baseStep r) +
+      2 * dyadicTranslationStep baseStep roundCount = 2 * baseStep := by
+  induction roundCount with
+  | zero =>
+      simp [dyadicTranslationStep]
+  | succ roundCount ih =>
+      rw [Finset.sum_range_succ, ih]
+      unfold dyadicTranslationStep
+      rw [pow_succ]
+      have hpow : (2 : ℝ) ^ roundCount ≠ 0 := by positivity
+      field_simp [hpow]
+      ring
+
+/-- The cumulative dyadic translation path is always bounded by twice the root step. -/
+theorem dyadicTranslationStep_sum_le_two_mul
+    (baseStep : ℝ)
+    (hBase : 0 ≤ baseStep)
+    (roundCount : ℕ) :
+    (Finset.range roundCount).sum (fun r => dyadicTranslationStep baseStep r) ≤ 2 * baseStep := by
+  have hEq := dyadicTranslationStep_sum_with_tail_eq baseStep roundCount
+  have hTailNonneg : 0 ≤ 2 * dyadicTranslationStep baseStep roundCount := by
+    unfold dyadicTranslationStep
+    have hpow_nonneg : 0 ≤ (2 : ℝ) ^ roundCount := by positivity
+    exact mul_nonneg (by positivity) (div_nonneg hBase hpow_nonneg)
+  linarith
+
+/-- If each round chooses one of two dyadic step channels, the cumulative path
+    displacement is bounded by twice the larger root step. This matches the
+    runtime's rigid local optimizer, which takes either a translation step or a
+    rotation-induced displacement step at each round, but not both at once. -/
+theorem dyadicMaxStep_sum_le_two_mul_max
+    (baseStep₁ baseStep₂ : ℝ)
+    (hBase₁ : 0 ≤ baseStep₁)
+    (hBase₂ : 0 ≤ baseStep₂)
+    (roundCount : ℕ) :
+    (Finset.range roundCount).sum
+        (fun r => max (dyadicTranslationStep baseStep₁ r) (dyadicTranslationStep baseStep₂ r))
+      ≤ 2 * max baseStep₁ baseStep₂ := by
+  have hPointwise : ∀ r,
+      max (dyadicTranslationStep baseStep₁ r) (dyadicTranslationStep baseStep₂ r)
+        ≤ dyadicTranslationStep (max baseStep₁ baseStep₂) r := by
+    intro r
+    unfold dyadicTranslationStep
+    have hpow_pos : 0 < (2 : ℝ) ^ r := by positivity
+    refine max_le_iff.mpr ?_
+    constructor
+    · exact (_root_.div_le_div_of_nonneg_right (le_max_left _ _) (le_of_lt hpow_pos))
+    · exact (_root_.div_le_div_of_nonneg_right (le_max_right _ _) (le_of_lt hpow_pos))
+  calc
+    (Finset.range roundCount).sum
+        (fun r => max (dyadicTranslationStep baseStep₁ r) (dyadicTranslationStep baseStep₂ r))
+        ≤ (Finset.range roundCount).sum (fun r => dyadicTranslationStep (max baseStep₁ baseStep₂) r) := by
+          refine Finset.sum_le_sum ?_
+          intro r _
+          exact hPointwise r
+    _ ≤ 2 * max baseStep₁ baseStep₂ := by
+          exact dyadicTranslationStep_sum_le_two_mul (max baseStep₁ baseStep₂)
+            (le_max hBase₁ hBase₂) roundCount
+
+theorem exists_adequateDyadicRound
+    (baseStep target : ℝ)
+    (hBase : 0 ≤ baseStep)
+    (hTarget : 0 < target) :
+    ∃ roundIndex, AdequateDyadicRound baseStep target roundIndex := by
+  refine ⟨Nat.ceil (baseStep / target), ?_⟩
+  unfold AdequateDyadicRound dyadicTranslationStep
+  have hratio_nonneg : 0 ≤ baseStep / target := by
+    exact div_nonneg hBase (le_of_lt hTarget)
+  have hceil : baseStep / target ≤ (Nat.ceil (baseStep / target) : ℝ) :=
+    Nat.le_ceil _
+  have hpow : (Nat.ceil (baseStep / target) : ℝ) ≤
+      (2 : ℝ) ^ Nat.ceil (baseStep / target) :=
+    natCast_le_twoPow _
+  have hratio_le_pow : baseStep / target ≤ (2 : ℝ) ^ Nat.ceil (baseStep / target) := by
+    exact le_trans hceil hpow
+  have hscaled : (baseStep / target) * target ≤
+      ((2 : ℝ) ^ Nat.ceil (baseStep / target)) * target := by
+    exact mul_le_mul_of_nonneg_right hratio_le_pow (le_of_lt hTarget)
+  have hleft : (baseStep / target) * target = baseStep := by
+    field_simp [hTarget.ne']
+  have hpow_pos : 0 < (2 : ℝ) ^ Nat.ceil (baseStep / target) := by positivity
+  rw [hleft] at hscaled
+  exact (_root_.div_le_iff₀ hpow_pos).2 (by simpa [mul_comm, mul_left_comm, mul_assoc] using hscaled)
+
+/-- Canonical least dyadic round whose translation step meets the target. This
+    matches the runtime loop that repeatedly halves the step until it is small
+    enough, rather than using an implementation-specific closed form. -/
+noncomputable def leastAdequateDyadicRound
+    (baseStep target : ℝ)
+    (hBase : 0 ≤ baseStep)
+    (hTarget : 0 < target) : ℕ :=
+  Nat.find (exists_adequateDyadicRound baseStep target hBase hTarget)
+
+theorem leastAdequateDyadicRound_spec
+    (baseStep target : ℝ)
+    (hBase : 0 ≤ baseStep)
+    (hTarget : 0 < target) :
+    AdequateDyadicRound baseStep target
+      (leastAdequateDyadicRound baseStep target hBase hTarget) := by
+  exact Nat.find_spec (exists_adequateDyadicRound baseStep target hBase hTarget)
+
+theorem leastAdequateDyadicRound_minimal
+    (baseStep target : ℝ)
+    (hBase : 0 ≤ baseStep)
+    (hTarget : 0 < target)
+    {roundIndex : ℕ}
+    (hAdeq : AdequateDyadicRound baseStep target roundIndex) :
+    leastAdequateDyadicRound baseStep target hBase hTarget ≤ roundIndex := by
+  exact Nat.find_min' (exists_adequateDyadicRound baseStep target hBase hTarget) hAdeq
+
+/-- Runtime variant of `leastAdequateDyadicRound` that insists on executing at
+    least one refinement round. This matches the local optimizer loop, which
+    always performs a nonempty certified action-family pass. -/
+noncomputable def leastPositiveAdequateDyadicRound
+    (baseStep target : ℝ)
+    (hBase : 0 ≤ baseStep)
+    (hTarget : 0 < target) : ℕ :=
+  max 1 (leastAdequateDyadicRound baseStep target hBase hTarget)
+
+theorem leastPositiveAdequateDyadicRound_spec
+    (baseStep target : ℝ)
+    (hBase : 0 ≤ baseStep)
+    (hTarget : 0 < target) :
+    0 < leastPositiveAdequateDyadicRound baseStep target hBase hTarget ∧
+    AdequateDyadicRound baseStep target
+      (leastPositiveAdequateDyadicRound baseStep target hBase hTarget) := by
+  constructor
+  · unfold leastPositiveAdequateDyadicRound
+    positivity
+  · unfold leastPositiveAdequateDyadicRound
+    exact adequateDyadicRound_mono baseStep target hBase (Nat.le_max_right _ _)
+      (leastAdequateDyadicRound_spec baseStep target hBase hTarget)
+
+theorem leastPositiveAdequateDyadicRound_minimal
+    (baseStep target : ℝ)
+    (hBase : 0 ≤ baseStep)
+    (hTarget : 0 < target)
+    {roundIndex : ℕ}
+    (hPos : 0 < roundIndex)
+    (hAdeq : AdequateDyadicRound baseStep target roundIndex) :
+    leastPositiveAdequateDyadicRound baseStep target hBase hTarget ≤ roundIndex := by
+  unfold leastPositiveAdequateDyadicRound
+  have hLeast : leastAdequateDyadicRound baseStep target hBase hTarget ≤ roundIndex :=
+    leastAdequateDyadicRound_minimal baseStep target hBase hTarget hAdeq
+  omega
+
+/-- Canonical least positive round that simultaneously satisfies two dyadic step
+    constraints. This is the runtime-facing quantity for rigid refinement where
+    both translation and rotation-induced displacement must fall below the same
+    RMSD target scale. -/
+noncomputable def leastPositiveJointAdequateDyadicRound
+    (baseStep₁ baseStep₂ target : ℝ)
+    (hBase₁ : 0 ≤ baseStep₁)
+    (hBase₂ : 0 ≤ baseStep₂)
+    (hTarget : 0 < target) : ℕ :=
+  max
+    (leastPositiveAdequateDyadicRound baseStep₁ target hBase₁ hTarget)
+    (leastPositiveAdequateDyadicRound baseStep₂ target hBase₂ hTarget)
+
+theorem leastPositiveJointAdequateDyadicRound_spec
+    (baseStep₁ baseStep₂ target : ℝ)
+    (hBase₁ : 0 ≤ baseStep₁)
+    (hBase₂ : 0 ≤ baseStep₂)
+    (hTarget : 0 < target) :
+    0 < leastPositiveJointAdequateDyadicRound baseStep₁ baseStep₂ target hBase₁ hBase₂ hTarget ∧
+    AdequateJointDyadicRound baseStep₁ baseStep₂ target
+      (leastPositiveJointAdequateDyadicRound baseStep₁ baseStep₂ target hBase₁ hBase₂ hTarget) := by
+  constructor
+  · unfold leastPositiveJointAdequateDyadicRound
+    have hpos₁ := (leastPositiveAdequateDyadicRound_spec baseStep₁ target hBase₁ hTarget).1
+    exact lt_of_lt_of_le hpos₁ (Nat.le_max_left _ _)
+  · unfold leastPositiveJointAdequateDyadicRound AdequateJointDyadicRound
+    constructor
+    · exact adequateDyadicRound_mono baseStep₁ target hBase₁ (Nat.le_max_left _ _)
+        (leastPositiveAdequateDyadicRound_spec baseStep₁ target hBase₁ hTarget).2
+    · exact adequateDyadicRound_mono baseStep₂ target hBase₂ (Nat.le_max_right _ _)
+        (leastPositiveAdequateDyadicRound_spec baseStep₂ target hBase₂ hTarget).2
+
+theorem leastPositiveJointAdequateDyadicRound_minimal
+    (baseStep₁ baseStep₂ target : ℝ)
+    (hBase₁ : 0 ≤ baseStep₁)
+    (hBase₂ : 0 ≤ baseStep₂)
+    (hTarget : 0 < target)
+    {roundIndex : ℕ}
+    (hPos : 0 < roundIndex)
+    (hAdeq : AdequateJointDyadicRound baseStep₁ baseStep₂ target roundIndex) :
+    leastPositiveJointAdequateDyadicRound baseStep₁ baseStep₂ target hBase₁ hBase₂ hTarget ≤ roundIndex := by
+  rcases (show AdequateDyadicRound baseStep₁ target roundIndex ∧ AdequateDyadicRound baseStep₂ target roundIndex by
+      simpa [AdequateJointDyadicRound] using hAdeq) with ⟨hAdeq₁, hAdeq₂⟩
+  have h₁ : leastPositiveAdequateDyadicRound baseStep₁ target hBase₁ hTarget ≤ roundIndex :=
+    leastPositiveAdequateDyadicRound_minimal baseStep₁ target hBase₁ hTarget hPos hAdeq₁
+  have h₂ : leastPositiveAdequateDyadicRound baseStep₂ target hBase₂ hTarget ≤ roundIndex :=
+    leastPositiveAdequateDyadicRound_minimal baseStep₂ target hBase₂ hTarget hPos hAdeq₂
+  unfold leastPositiveJointAdequateDyadicRound
+  omega
 
 end SupportExpansion
 end Tractability

@@ -401,6 +401,42 @@ theorem weighted_l1_targeted_subdivision
     exact this
   · simp [heq]
 
+/-- Exact slack identity for halving a single coordinate in the weighted-L1
+    cell bound. Splitting dimension `k` reduces the total weighted slack by
+    exactly half of that dimension's contribution. -/
+theorem weighted_l1_single_coordinate_bisection_exact
+    (n : ℕ)
+    (L h_w : Fin n → ℝ)
+    (k : Fin n) :
+    Finset.univ.sum (fun i => L i * (if i = k then h_w i / 2 else h_w i)) =
+      Finset.univ.sum (fun i => L i * h_w i) - (L k * h_w k) / 2 := by
+  let total : ℝ := Finset.univ.sum (fun i => L i * h_w i)
+  have hfun : ∀ i,
+      L i * (if i = k then h_w i / 2 else h_w i) =
+        L i * h_w i - (if i = k then (L i * h_w i) / 2 else 0) := by
+    intro i
+    by_cases hi : i = k
+    · subst hi
+      simp
+      ring_nf
+    · simp [hi]
+  rw [Finset.sum_congr rfl (fun i _ => hfun i), Finset.sum_sub_distrib]
+  simp [total]
+
+/-- If the chosen split dimension contributes positive weighted slack, then the
+    weighted-L1 cell slack decreases strictly after bisecting that dimension. -/
+theorem weighted_l1_subdivision_strict_of_positive_contribution
+    (n : ℕ)
+    (L h_w : Fin n → ℝ)
+    (k : Fin n)
+    (hPos : 0 < L k * h_w k) :
+    Finset.univ.sum (fun i => L i * (if i = k then h_w i / 2 else h_w i)) <
+      Finset.univ.sum (fun i => L i * h_w i) := by
+  rw [weighted_l1_single_coordinate_bisection_exact]
+  have hHalfPos : 0 < (L k * h_w k) / 2 := by
+    positivity
+  linarith
+
 /-- Splitting the coordinate with maximal weighted slack gives the smallest
     one-step weighted-L1 upper bound among all single-coordinate bisections.
 
@@ -456,6 +492,66 @@ theorem weighted_l1_argmax_subdivision_optimal
   have hHalf : (L j * h_w j) / 2 ≤ (L k * h_w k) / 2 := by
     simpa [div_eq_mul_inv] using mul_le_mul_of_nonneg_right (hMax j) hNonneg
   linarith
+
+/-- If the argmax weighted slack contribution is positive, then bisecting that
+    argmax coordinate strictly reduces the one-step weighted-L1 upper bound. -/
+theorem weighted_l1_argmax_subdivision_strict_progress
+    (n : ℕ)
+    (L h_w : Fin n → ℝ)
+    (k : Fin n)
+    (hMax : ∀ j : Fin n, L j * h_w j ≤ L k * h_w k)
+    (hPos : 0 < L k * h_w k) :
+    Finset.univ.sum (fun i => L i * (if i = k then h_w i / 2 else h_w i)) <
+      Finset.univ.sum (fun i => L i * h_w i) := by
+  exact weighted_l1_subdivision_strict_of_positive_contribution n L h_w k hPos
+
+/-- Argmax weighted-L1 subdivision contracts total slack by at least the
+    universal factor `1 - 1 / (2n)`.
+
+    The maximal contribution is at least the average contribution, so halving
+    the argmax coordinate removes at least a `1/(2n)` fraction of the total
+    weighted slack. This is the runtime-facing convergence-rate theorem used to
+    turn the argmax strategy into a finite full-tree budget. -/
+theorem weighted_l1_argmax_subdivision_contraction
+    (n : ℕ)
+    (hn : 0 < n)
+    (L h_w : Fin n → ℝ)
+    (hL : ∀ i, 0 ≤ L i)
+    (hh : ∀ i, 0 ≤ h_w i)
+    (k : Fin n)
+    (hMax : ∀ j : Fin n, L j * h_w j ≤ L k * h_w k) :
+    Finset.univ.sum (fun i => L i * (if i = k then h_w i / 2 else h_w i)) ≤
+      (1 - 1 / (2 * (n : ℝ))) * Finset.univ.sum (fun i => L i * h_w i) := by
+  let total : ℝ := Finset.univ.sum (fun i => L i * h_w i)
+  have hTermNonneg : ∀ i : Fin n, 0 ≤ L i * h_w i := by
+    intro i
+    exact mul_nonneg (hL i) (hh i)
+  have hTotalNonneg : 0 ≤ total := by
+    unfold total
+    exact Finset.sum_nonneg (fun i _ => hTermNonneg i)
+  have hCardPos : 0 < (n : ℝ) := by
+    exact_mod_cast hn
+  have hMaxSum : total ≤ (n : ℝ) * (L k * h_w k) := by
+    unfold total
+    calc
+      Finset.univ.sum (fun i => L i * h_w i)
+          ≤ Finset.univ.sum (fun _ : Fin n => L k * h_w k) := by
+            refine Finset.sum_le_sum ?_
+            intro i _
+            exact hMax i
+      _ = (n : ℝ) * (L k * h_w k) := by
+            simp [Finset.card_univ]
+  have hRemoved : total / (2 * (n : ℝ)) ≤ (L k * h_w k) / 2 := by
+    apply (_root_.div_le_iff₀ (show 0 < 2 * (n : ℝ) by positivity)).2
+    have : total ≤ ((L k * h_w k) / 2) * (2 * (n : ℝ)) := by
+      simpa [mul_assoc, mul_left_comm, mul_comm] using hMaxSum
+    exact this
+  rw [weighted_l1_single_coordinate_bisection_exact]
+  have hStep : total - (L k * h_w k) / 2 ≤ total - total / (2 * (n : ℝ)) := by
+    linarith
+  calc
+    total - (L k * h_w k) / 2 ≤ total - total / (2 * (n : ℝ)) := hStep
+    _ = (1 - 1 / (2 * (n : ℝ))) * total := by ring
 
 -- ---------------------------------------------------------------------------
 -- Theorem 7: Sequential torsion scan (Gap 3)

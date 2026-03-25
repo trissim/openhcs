@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -6,7 +7,7 @@ import pytest
 
 from dq_dock_engine.docking import pipeline as docking_pipeline
 from dq_dock_engine.docking.core import DockingBox, LigandContext, PoseVector
-from dq_dock_engine.docking.formal_pruning import certified_pruning_certificate
+from dq_dock_engine.docking.scoring_context import CertifiedScoringContext
 from dq_dock_engine.docking_config import (
     CertifiedScoringFamily,
     DockingConfig,
@@ -44,20 +45,17 @@ def _make_request(*, target_error: float = 0.001):
     )
 
 
-def test_certified_pruning_pass_uses_exact_certificate_for_top_k(monkeypatch) -> None:
+def test_certified_pruning_pass_uses_top1_coarse_ambiguity_band(monkeypatch) -> None:
     coarse_scores = jnp.array([0.0, 10.0, 0.1], dtype=jnp.float32)
-    exact_scores = jnp.array([0.0, 0.05, 2.0], dtype=jnp.float32)
     request = _make_request(target_error=0.1)
 
     monkeypatch.setattr(
         docking_pipeline,
-        "score_certified_softened_lj",
-        lambda **kwargs: SimpleNamespace(scores=coarse_scores),
-    )
-    monkeypatch.setattr(
-        docking_pipeline,
-        "_score_exact_pose_batch",
-        lambda request, *, poses_coords, electrostatics: exact_scores,
+        "_score_softened_pose_batch",
+        lambda request, *, poses_coords, electrostatics, scoring_context: (
+            coarse_scores,
+            0.1,
+        ),
     )
 
     survivor_mask, returned_coarse_scores, delta = (
@@ -68,15 +66,116 @@ def test_certified_pruning_pass_uses_exact_certificate_for_top_k(monkeypatch) ->
         )
     )
 
-    expected = certified_pruning_certificate(
-        exact_scores=exact_scores,
-        coarse_scores=coarse_scores,
-        k=2,
-        delta=0.1,
+    assert jnp.array_equal(
+        survivor_mask,
+        jnp.array([True, False, True], dtype=bool),
     )
-    assert jnp.array_equal(survivor_mask, expected.survivor_mask)
     assert jnp.array_equal(returned_coarse_scores, coarse_scores)
     assert delta == 0.1
+
+
+def test_score_softened_pose_batch_uses_softening_bound_for_base_physics() -> None:
+    request = _make_request(target_error=0.1)
+
+    class FakeBaseContext:
+        uses_extended_rich = False
+
+        def score_softened_batch(self, **kwargs):
+            del kwargs
+            return SimpleNamespace(
+                scores=jnp.array([1.0, 2.0], dtype=jnp.float32),
+                softening_error_bound=jnp.asarray(0.125, dtype=jnp.float32),
+            )
+
+    scores, delta = docking_pipeline._score_softened_pose_batch(
+        cast(Any, request),
+        poses_coords=jnp.zeros((2, 1, 3), dtype=jnp.float32),
+        electrostatics=None,
+        scoring_context=cast(CertifiedScoringContext, FakeBaseContext()),
+    )
+
+    assert jnp.array_equal(scores, jnp.array([1.0, 2.0], dtype=jnp.float32))
+    assert delta == pytest.approx(0.125)
+
+
+def test_score_softened_pose_batch_uses_batch_delta_for_pruning_context() -> None:
+    request = SimpleNamespace(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.array([1.7], dtype=jnp.float32),
+        ligand_ctx=SimpleNamespace(base_radii=jnp.array([1.7], dtype=jnp.float32)),
+        target_error=0.1,
+        softening_radius=9.0,
+    )
+
+    class FakeRichPruningContext:
+        uses_extended_rich = True
+
+        def uses_batch_pruning_delta(self):
+            return True
+
+        def pruning_softening_matches_exact(self, softening_radius):
+            del softening_radius
+            return False
+
+        def analytic_pruning_delta(self):
+            return 99.0
+
+        def score_softened_batch(self, **kwargs):
+            del kwargs
+            return SimpleNamespace(
+                scores=jnp.array([3.0], dtype=jnp.float32),
+                softening_error_bound=jnp.asarray(0.25, dtype=jnp.float32),
+            )
+
+    scores, delta = docking_pipeline._score_softened_pose_batch(
+        cast(Any, request),
+        poses_coords=jnp.zeros((1, 1, 3), dtype=jnp.float32),
+        electrostatics=None,
+        scoring_context=cast(CertifiedScoringContext, FakeRichPruningContext()),
+    )
+
+    assert jnp.array_equal(scores, jnp.array([3.0], dtype=jnp.float32))
+    assert delta == pytest.approx(0.25)
+
+
+def test_score_softened_pose_batch_uses_zero_delta_when_scores_match_exact() -> None:
+    request = SimpleNamespace(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.array([1.7], dtype=jnp.float32),
+        ligand_ctx=SimpleNamespace(base_radii=jnp.array([1.7], dtype=jnp.float32)),
+        target_error=0.1,
+        softening_radius=3.4,
+    )
+
+    class FakeExactPruningContext:
+        uses_extended_rich = True
+
+        def uses_batch_pruning_delta(self):
+            return True
+
+        def pruning_softening_matches_exact(self, softening_radius):
+            del softening_radius
+            return True
+
+        def analytic_pruning_delta(self):
+            return 99.0
+
+        def score_softened_batch(self, **kwargs):
+            del kwargs
+            return SimpleNamespace(
+                scores=jnp.array([4.0], dtype=jnp.float32),
+                softening_error_bound=jnp.asarray(123.0, dtype=jnp.float32),
+            )
+
+    scores, delta = docking_pipeline._score_softened_pose_batch(
+        cast(Any, request),
+        poses_coords=jnp.zeros((1, 1, 3), dtype=jnp.float32),
+        electrostatics=None,
+        scoring_context=cast(CertifiedScoringContext, FakeExactPruningContext()),
+    )
+
+    assert jnp.array_equal(scores, jnp.array([4.0], dtype=jnp.float32))
+    assert delta == 0.0
 
 
 def test_certified_pipeline_route_scores_only_valid_survivors(monkeypatch) -> None:
@@ -96,15 +195,17 @@ def test_certified_pipeline_route_scores_only_valid_survivors(monkeypatch) -> No
     monkeypatch.setattr(
         docking_pipeline,
         "_certified_pruning_pass",
-        lambda request, *, poses_coords, electrostatics: (
+        lambda request, *, poses_coords, electrostatics, **kwargs: (
             jnp.array([True, False, False]),
             jnp.array([0.0, 1.0, 2.0], dtype=jnp.float32),
             0.001,
         ),
     )
 
-    def fake_score_exact(request, *, poses_coords, electrostatics):
-        del request, electrostatics
+    def fake_score_exact(
+        request, *, poses_coords, electrostatics, scoring_context=None
+    ):
+        del request, electrostatics, scoring_context
         assert poses_coords.shape[0] == 1
         return jnp.array([3.14], dtype=jnp.float32)
 
@@ -194,11 +295,11 @@ def test_score_exact_pose_batch_scores_large_pose_sets_in_chunks(monkeypatch) ->
     assert jnp.allclose(exact_scores, jnp.array([0, 1, 2, 3, 4], dtype=jnp.float32))
 
 
-def test_certified_pipeline_route_fails_loud_when_survivor_capacity_is_exceeded(
+def test_certified_pipeline_route_keeps_all_certified_survivors(
     monkeypatch,
 ) -> None:
     request = _make_request()
-    n_survivors = docking_pipeline.SURVIVOR_BATCH_SIZE + 1
+    n_survivors = 7
     pose_vecs = PoseVector(
         translation=jnp.zeros((n_survivors, 3), dtype=jnp.float32),
         quaternion=jnp.tile(
@@ -211,16 +312,100 @@ def test_certified_pipeline_route_fails_loud_when_survivor_capacity_is_exceeded(
     monkeypatch.setattr(
         docking_pipeline,
         "_certified_pruning_pass",
-        lambda request, *, poses_coords, electrostatics: (
+        lambda request, *, poses_coords, electrostatics, **kwargs: (
             jnp.ones((n_survivors,), dtype=bool),
             jnp.zeros((n_survivors,), dtype=jnp.float32),
             0.001,
         ),
     )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_score_exact_pose_batch",
+        lambda request, *, poses_coords, electrostatics, scoring_context=None: (
+            jnp.arange(poses_coords.shape[0], dtype=jnp.float32)
+        ),
+    )
 
-    with pytest.raises(ValueError, match="exceeded fixed padded capacity"):
-        docking_pipeline.CertifiedPipelineRoute().score_pose_batch(
-            request,
-            batched_coords,
-            pose_vecs,
-        )
+    initial_scores = docking_pipeline.CertifiedPipelineRoute().score_pose_batch(
+        request,
+        batched_coords,
+        pose_vecs,
+    )
+
+    assert initial_scores.survivor_pose_vecs is not None
+    assert initial_scores.survivor_pose_vecs.translation.shape[0] == n_survivors
+    assert initial_scores.survivor_exact_scores is not None
+    assert initial_scores.survivor_exact_scores.shape[0] == n_survivors
+
+
+def test_certified_pipeline_route_uses_pruning_context_for_pruning(
+    monkeypatch,
+) -> None:
+    request = _make_request()
+    pose_vecs = PoseVector(
+        translation=jnp.zeros((1, 3), dtype=jnp.float32),
+        quaternion=jnp.array([[1.0, 0.0, 0.0, 0.0]], dtype=jnp.float32),
+    )
+    batched_coords = jnp.zeros((1, 1, 3), dtype=jnp.float32)
+    seen: dict[str, object] = {}
+
+    class FakeOptimizationContext:
+        uses_extended_rich = False
+
+    class FakePruningContext:
+        uses_extended_rich = True
+
+    class FakeFullContext:
+        uses_extended_rich = True
+
+        def optimization_context(self):
+            return FakeOptimizationContext()
+
+        def pruning_context(self):
+            return FakePruningContext()
+
+        def score_exact_batch(self, **kwargs):
+            del kwargs
+            return SimpleNamespace(
+                scores=jnp.array([0.0], dtype=jnp.float32),
+                error_bound=jnp.asarray(0.0, dtype=jnp.float32),
+            )
+
+        def score_flip_disambiguation_batch(self, **kwargs):
+            del kwargs
+            return SimpleNamespace(
+                scores=jnp.array([0.0], dtype=jnp.float32),
+                error_bound=jnp.asarray(0.0, dtype=jnp.float32),
+            )
+
+    monkeypatch.setattr(
+        docking_pipeline,
+        "resolve_request_scoring_context",
+        lambda request, *, engine=None: FakeFullContext(),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_certified_pruning_pass",
+        lambda request, *, poses_coords, electrostatics, scoring_context, **kwargs: (
+            seen.setdefault("pruning_context", scoring_context) is not None
+            and jnp.array([True], dtype=bool),
+            jnp.array([0.0], dtype=jnp.float32),
+            0.0,
+        ),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_score_exact_pose_batch",
+        lambda request, *, poses_coords, electrostatics, scoring_context=None: (
+            jnp.array([0.0], dtype=jnp.float32)
+        ),
+    )
+
+    initial_scores = docking_pipeline.CertifiedPipelineRoute().score_pose_batch(
+        request,
+        batched_coords,
+        pose_vecs,
+    )
+
+    assert isinstance(seen["pruning_context"], FakePruningContext)
+    assert initial_scores.survivor_exact_scores is not None

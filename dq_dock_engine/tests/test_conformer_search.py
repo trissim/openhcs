@@ -20,6 +20,7 @@ from dq_dock_engine.docking.conformer_search import (
     build_torsion_kinematics,
     compose_channel_error_bounds,
     compose_channel_lower_bounds,
+    compute_raw_lj_lipschitz,
     detect_rotatable_bonds,
     search_conformers,
 )
@@ -179,6 +180,18 @@ class TestTorsionCell:
         assert float(c0.upper[1]) == pytest.approx(0.0)
         assert float(c1.lower[1]) == pytest.approx(0.0)
 
+    def test_subdivide_weighted_argmax_is_used_when_weights_provided(self):
+        cell = TorsionCell(
+            lower=jnp.array([-1.0, -1.0]),
+            upper=jnp.array([1.0, 1.0]),
+        )
+        children = cell.subdivide(jnp.array([1.0, 5.0], dtype=jnp.float32))
+        c0, c1 = children
+        assert isinstance(c0, TorsionCell)
+        assert isinstance(c1, TorsionCell)
+        assert float(c0.upper[1]) == pytest.approx(0.0)
+        assert float(c1.lower[1]) == pytest.approx(0.0)
+
 
 # ---------------------------------------------------------------------------
 # Rotatable bond detection
@@ -319,9 +332,23 @@ class TestBranchAndBound:
         np.testing.assert_allclose(result.conformer_coords[0], coords, atol=1e-5)
 
     def test_reuse_initial_conformer_flag_is_explicit(self):
-        assert BranchAndBoundConfig().reuse_initial_conformer is False
         assert (
-            BranchAndBoundConfig(reuse_initial_conformer=True).reuse_initial_conformer
+            BranchAndBoundConfig(
+                max_cells=3,
+                min_cell_radius=0.1,
+                score_lipschitz_constant=1.0,
+                max_conformers=1,
+            ).reuse_initial_conformer
+            is False
+        )
+        assert (
+            BranchAndBoundConfig(
+                max_cells=3,
+                min_cell_radius=0.1,
+                score_lipschitz_constant=1.0,
+                max_conformers=1,
+                reuse_initial_conformer=True,
+            ).reuse_initial_conformer
             is True
         )
 
@@ -332,6 +359,23 @@ class TestBranchAndBound:
 
 
 class TestSearchConformers:
+    def test_chain_requires_explicit_theorem_derived_config(self):
+        n = 5
+        coords_np = np.zeros((n, 3), dtype=np.float32)
+        for i in range(n):
+            coords_np[i, 0] = i * 1.5
+        elements = tuple("C" for _ in range(n))
+        adjacency = _infer_bond_adjacency(coords_np, elements)
+        coords = jnp.array(coords_np, dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match="explicit theorem-derived"):
+            search_conformers(
+                base_coords=coords,
+                adjacency=adjacency,
+                elements=elements,
+                score_fn=lambda c: float(jnp.sum(c**2)),
+            )
+
     def test_chain_produces_conformers(self):
         """A 5-atom linear chain has 2 rotatable bonds → should produce conformers."""
         n = 5
@@ -347,11 +391,24 @@ class TestSearchConformers:
             adjacency=adjacency,
             elements=elements,
             score_fn=lambda c: float(jnp.sum(c**2)),
-            config=BranchAndBoundConfig(max_cells=200, min_cell_radius=0.3),
+            config=BranchAndBoundConfig(
+                max_cells=200,
+                min_cell_radius=0.3,
+                score_lipschitz_constant=3.0,
+                max_conformers=5,
+            ),
         )
         assert len(result.conformer_coords) >= 1
         for c in result.conformer_coords:
             assert c.shape == (n, 3)
+
+
+def test_compute_raw_lj_lipschitz_requires_physical_inputs() -> None:
+    with pytest.raises(ValueError, match="min_pairwise_sigma"):
+        compute_raw_lj_lipschitz(0.1, 0.0)
+
+    with pytest.raises(ValueError, match="epsilon_lj"):
+        compute_raw_lj_lipschitz(0.0, 3.5)
 
 
 def test_docking_config_defaults_to_blind_conformer_search_seed() -> None:

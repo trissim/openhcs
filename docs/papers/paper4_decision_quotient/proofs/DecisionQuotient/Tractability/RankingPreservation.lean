@@ -144,6 +144,32 @@ theorem exact_top1_eq_singleton_of_coarse_gap_margin
     rw [hEmpty]
     omega
 
+/-- Energy-form version of `exact_top1_eq_singleton_of_coarse_gap_margin`.
+    If a coarse energy score assigns `aStar` a margin of more than `2 * delta`
+    below every rival, then the exact utility `-energy` has singleton top-1 set
+    `{aStar}` under the same uniform approximation radius. -/
+theorem exact_top1_eq_singleton_of_coarse_energy_gap_margin
+    {A : Type*} [Fintype A] [DecidableEq A]
+    (eExact eCoarse : A → ℝ)
+    (aStar : A)
+    (delta : ℝ)
+    (hApprox : ∀ x, |eExact x - eCoarse x| ≤ delta)
+    (hStrict : ∀ b, b ≠ aStar → eCoarse aStar + 2 * delta < eCoarse b) :
+    topKSet (fun a => -eExact a) 1 = ({aStar} : Finset A) := by
+  apply exact_top1_eq_singleton_of_coarse_gap_margin
+    (uExact := fun a => -eExact a)
+    (uCoarse := fun a => -eCoarse a)
+    (aStar := aStar)
+    (delta := delta)
+  · intro x
+    have h' : |eCoarse x - eExact x| ≤ delta := by
+      simpa [abs_sub_comm] using hApprox x
+    simpa [sub_eq_add_neg, add_comm] using h'
+  · intro b hb
+    unfold PairwiseGap
+    have h := hStrict b hb
+    linarith
+
 end RankingPreservation
 end Tractability
 end DecisionQuotient

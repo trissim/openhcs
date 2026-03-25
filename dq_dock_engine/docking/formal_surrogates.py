@@ -220,8 +220,8 @@ def two_cutoff_approximation_witness(
     )
 
 
-def _default_coarse_target_error(target_error: float | jax.Array) -> float | jax.Array:
-    return jnp.maximum(target_error, 0.004)
+def _default_coarse_target_error(target_error: float) -> float:
+    return float(target_error)
 
 
 def _default_scoring_context(
@@ -360,7 +360,6 @@ def score_exact_and_coarse_local_family(
     ligand_radii: jax.Array,
     candidate_coords: jax.Array,
     target_error: float,
-    max_receptor_atoms: int,
     translation_step: float,
     coarse_target_error: float | None = None,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
@@ -441,7 +440,6 @@ def score_exact_and_coarse_local_family(
 @functools.partial(
     jax.jit,
     static_argnames=(
-        "max_receptor_atoms",
         "use_softened_coarse",
         "target_error",
         "coarse_target_error",
@@ -453,7 +451,6 @@ def score_exact_and_coarse_round(
     ligand_radii: jax.Array,
     candidate_batches: jax.Array,
     target_error: float,
-    max_receptor_atoms: int,
     translation_step: float,
     retained_indices: jax.Array | None = None,
     coarse_target_error: float | None = None,

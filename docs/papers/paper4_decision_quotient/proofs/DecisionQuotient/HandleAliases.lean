@@ -959,6 +959,9 @@ abbrev LJ10 := @Tractability.SoftLJApproximation.exact_vs_softened_lj_certified_
 noncomputable abbrev LJ11 := @Tractability.SoftLJApproximation.exact_vs_softened_lj_certified_top1
 noncomputable abbrev LJ12 := @Tractability.SoftLJApproximation.exact_vs_softened_lj_optimizer_witness
 noncomputable abbrev LJ14 := @Tractability.SoftLJApproximation.exact_vs_softened_lj_coherent_optimizer_witness
+abbrev LJ15 := @Tractability.SoftLJApproximation.canonicalSofteningRadius_valid
+abbrev LJ16 := @Tractability.SoftLJApproximation.canonicalSofteningRadius_maximal
+abbrev LJ17 := @Tractability.SoftLJApproximation.softenedLipschitzConstant_at_canonical
 
 abbrev CB1 := @Tractability.CoulombApproximation.coulombCutoffErrorRadius_spec
 abbrev CB2 := @Tractability.CoulombApproximation.exact_vs_cutoff_coulomb_uniformApprox
@@ -1012,6 +1015,8 @@ abbrev HB9 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_direct
 noncomputable abbrev HB10 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_directionalHBond_certified_top1
 noncomputable abbrev HB11 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_directionalHBond_optimizer_witness
 noncomputable abbrev HB12 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_directionalHBond_coherent_optimizer_witness
+abbrev HB13 := @Tractability.DirectionalHBondApproximation.totalScore_native_beats_flipped_of_equal_background
+abbrev HB14 := @Tractability.DirectionalHBondApproximation.totalScore_equal_of_equal_background_and_silent_donor
 abbrev AH1 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_uniformApprox
 abbrev AH2 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_certified_top1_sound
 noncomputable abbrev AH3 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_certified_top1
@@ -1020,6 +1025,8 @@ noncomputable abbrev AH5 := @Tractability.DirectionalHBondApproximation.exact_vs
 abbrev AH6 := @Tractability.DirectionalHBondApproximation.attractiveDirectionalHBond_resolutionControlledApprox
 noncomputable abbrev AH7 := @Tractability.DirectionalHBondApproximation.attractiveDirectionalHBond_resolutionControlled_certified_top1
 noncomputable abbrev AH8 := @Tractability.DirectionalHBondApproximation.attractiveDirectionalHBond_resolutionControlled_coherent_optimizer_witness
+abbrev AH9 := @Tractability.DirectionalHBondApproximation.attractiveTotal_native_beats_flipped_of_equal_background
+abbrev AH10 := @Tractability.DirectionalHBondApproximation.attractiveTotal_equal_of_equal_background_and_silent_donor
 
 abbrev NG1 := @Tractability.SignInvariance.neg_utility_uniformApprox
 abbrev NG2 := @Tractability.SignInvariance.certified_top1_survivor_set_of_negated_uniformApprox_sound
@@ -1171,6 +1178,7 @@ noncomputable abbrev TK12 := @Tractability.CertifiedPruning.certificate_of_exact
 abbrev TK13 := @Tractability.FiniteTopK.mem_topKSet_iff_kthUtility_le
 abbrev TK14 := @Tractability.FiniteTopK.topKSet_eq_survivorSet_at_kthUtility
 abbrev TK15 := @Tractability.TopKLoweringBridge.thresholdTopKWithTiesMask_eq_topKWithTiesMask
+abbrev TK16 := @Tractability.RankingPreservation.exact_top1_eq_singleton_of_coarse_energy_gap_margin
 
 abbrev SH1 := @Tractability.SupportExpansion.roundIndex_mem_supportShellLevels
 abbrev SH2 := @Tractability.SupportExpansion.coarsestShell_mem_supportShellLevels
@@ -1178,6 +1186,17 @@ abbrev SH3 := @Tractability.SupportExpansion.supportShellLevels_card
 abbrev SH4 := @Tractability.SupportExpansion.supportShellLevels_monotone
 abbrev SH5 := @Tractability.SupportExpansion.supportShellLevels_max'
 abbrev SH6 := @Tractability.SupportExpansion.mergedActionCount_eq
+abbrev SH7 := @Tractability.SupportExpansion.dyadicTranslationStep_antitone
+abbrev SH8 := @Tractability.SupportExpansion.leastAdequateDyadicRound_spec
+abbrev SH9 := @Tractability.SupportExpansion.leastAdequateDyadicRound_minimal
+abbrev SH10 := @Tractability.SupportExpansion.leastPositiveAdequateDyadicRound_spec
+abbrev SH11 := @Tractability.SupportExpansion.leastPositiveAdequateDyadicRound_minimal
+abbrev SH12 := @Tractability.SupportExpansion.leastPositiveJointAdequateDyadicRound_spec
+abbrev SH13 := @Tractability.SupportExpansion.leastPositiveJointAdequateDyadicRound_minimal
+abbrev SH14 := @Tractability.SupportExpansion.adequateJointDyadicRound_mono
+abbrev SH15 := @Tractability.SupportExpansion.dyadicTranslationStep_sum_with_tail_eq
+abbrev SH16 := @Tractability.SupportExpansion.dyadicTranslationStep_sum_le_two_mul
+abbrev SH17 := @Tractability.SupportExpansion.dyadicMaxStep_sum_le_two_mul_max
 
 abbrev GC1 := @Tractability.GridMDInstances.gridMDState_sufficient_erase_irrelevant
 abbrev GC2 := @Tractability.GridConvergence.resolutionControlledApprox_implies_uniformApprox
@@ -1206,6 +1225,10 @@ noncomputable abbrev FLO15 := @Tractability.FormalLocalOptimizer.optimizerWitnes
 noncomputable abbrev FLO16 := @Tractability.FormalLocalOptimizer.optimizerWitness_of_top1_coarse_ambiguityBand
 noncomputable abbrev FLO17 := @Tractability.FormalLocalOptimizer.optimizerWitness_of_exact_singleton_winner
 noncomputable abbrev FLO18 := @Tractability.FormalLocalOptimizer.optimizerWitness_of_top1_branch
+noncomputable abbrev FLO19 := @Tractability.FormalLocalOptimizer.coherentOptimizerWitness_of_exact_singleton_top1
+abbrev FLO20 := @Tractability.FormalLocalOptimizer.coherentOptimizerWitness_of_exact_singleton_top1_choice
+abbrev FLO21 := @Tractability.FormalLocalOptimizer.exact_singleton_top1_choice_agreement
+abbrev FLO22 := @Tractability.FormalLocalOptimizer.exact_energy_gap_certified_choice_agreement
 
 abbrev XD1 := @Tractability.CrossDockingCertificates.better_than_incumbent_survives_lowerBound_pruning
 abbrev XD2 := @Tractability.CrossDockingCertificates.lowerBoundSurvivors_monotone
@@ -2021,6 +2044,10 @@ noncomputable abbrev LS2 := @Tractability.LipschitzStepBounds.optimalTranslation
 abbrev LS3 := @Tractability.LipschitzStepBounds.optimalTranslationStep_achieves_budget
 -- LS4: Descent bounded change theorem
 abbrev LS4 := @Tractability.LipschitzStepBounds.descent_bounded_change
+-- LS5: Lower Lipschitz constant yields a weakly larger optimal step
+abbrev LS5 := @Tractability.LipschitzStepBounds.optimalTranslationStep_mono_of_lipschitz_le
+-- LS6: Optimal steps scale exactly by the inverse Lipschitz ratio
+abbrev LS6 := @Tractability.LipschitzStepBounds.optimalTranslationStep_scale_ratio
 
 /-! ## Dielectric Bounds (DB) handles
     DielectricBounds.lean - Kirkwood-Fröhlich theory for effective dielectric
@@ -2204,6 +2231,12 @@ abbrev ERC40 := @Tractability.EnergyRMSDConvergence.rmsd_target_of_logarithmicIt
 abbrev ERC41 := @Tractability.EnergyRMSDConvergence.adequateIterationBudget_of_logarithmicIterationBoundFromGradientDescentDynamics
 -- ERC42: GD dynamics logarithmic bound certifies the RMSD target
 abbrev ERC42 := @Tractability.EnergyRMSDConvergence.rmsd_target_of_logarithmicIterationBoundFromGradientDescentDynamics
+-- ERC43: Latest certified probe prefix is still RMSD-sound
+abbrev ERC43 := @Tractability.EnergyRMSDConvergence.rmsd_target_of_maxCertifiedPrefix
+-- ERC44: Pointwise atomic displacement bound certifies RMSD
+abbrev ERC44 := @Tractability.EnergyRMSDConvergence.rmsd_le_of_pointwiseDist_le
+-- ERC45: Split pointwise displacement channels certify RMSD
+abbrev ERC45 := @Tractability.EnergyRMSDConvergence.rmsd_le_of_pointwiseSplitDist_le
 
 /-! ## Conformer Support Coverage (CSC) handles
     ConformerSupportCoverage.lean - finite conformer-library support coverage
@@ -2296,12 +2329,25 @@ abbrev CSC42 := @Tractability.ConformerSupportCoverage.canonicalSparseAdaptiveSu
 
 -- CS10: Splitting the argmax weighted slack dimension is one-step optimal
 abbrev CS10 := @Tractability.ConformerSearch.weighted_l1_argmax_subdivision_optimal
+-- CS12: Splitting a positive weighted-slack dimension strictly reduces slack
+abbrev CS12 := @Tractability.ConformerSearch.weighted_l1_subdivision_strict_of_positive_contribution
+-- CS13: Splitting the argmax positive weighted-slack dimension strictly progresses
+abbrev CS13 := @Tractability.ConformerSearch.weighted_l1_argmax_subdivision_strict_progress
+-- CS14: Argmax weighted-L1 subdivision has a geometric contraction factor
+abbrev CS14 := @Tractability.ConformerSearch.weighted_l1_argmax_subdivision_contraction
 
 -- CS11: B&B stopping radius yields uniform coverage
 abbrev CS11 := @DecisionQuotient.Tractability.ConformerSupportCoverage.bb_stopping_radius_yields_coverage
 
 -- CSC43: Certified support deduplication
 abbrev CSC43 := @DecisionQuotient.Tractability.ConformerSupportCoverage.dedup_preserves_coverage
+
+-- CSC44: Binary branch-and-bound cell budget from certified support size
+abbrev CSC44 := @DecisionQuotient.Tractability.ConformerSupportCoverage.max_binary_cells_bound
+-- CSC48: RMSD target induces an energy budget under RMSD-Lipschitz energy
+abbrev CSC48 := @Tractability.ConformerSupportCoverage.energyBudget_of_rmsdTarget
+-- CSC50: Parameter-space stopping radius induces coordinate-space coverage
+abbrev CSC50 := @Tractability.ConformerSupportCoverage.min_cell_radius_derivation
 
 -- CSC45: Torsion locality radius (single atom)
 abbrev CSC45 := @DecisionQuotient.Tractability.ConformerSupportCoverage.torsion_locality_radius
@@ -2311,5 +2357,16 @@ abbrev CSC46 := @DecisionQuotient.Tractability.ConformerSupportCoverage.torsion_
 
 -- CSC47: Runtime torsion inactivity radius
 abbrev CSC47 := @Tractability.ConformerSupportCoverage.runtime_torsion_inactivity_radius
+
+/-! ## Blind Conformer Runtime Certificates (BCRC) handles
+    BlindConformerRuntimeCertificates.lean - runtime pruning/budget safety
+-/
+
+-- BCRC1: Active torsion subsets give no larger improvement budgets
+abbrev BCRC1 := @Tractability.BlindConformerRuntimeCertificates.torsionImprovementBudget_mono
+-- BCRC2: Certified active supersets preserve pose-specific improvement bounds
+abbrev BCRC2 := @Tractability.BlindConformerRuntimeCertificates.pose_specific_improvement_bound_of_active_subset
+-- BCRC3: Canonical pruning plus canonical refinement budget is jointly optimal
+abbrev BCRC3 := @Tractability.BlindConformerRuntimeCertificates.canonical_pruning_and_budget_optimal
 
 end DecisionQuotient

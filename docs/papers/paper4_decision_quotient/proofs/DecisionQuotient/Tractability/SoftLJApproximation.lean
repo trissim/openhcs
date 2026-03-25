@@ -7,6 +7,9 @@
 import DecisionQuotient.Tractability.LJApproximation
 import DecisionQuotient.Tractability.LipschitzStepBounds
 import Mathlib.Data.Finset.Max
+import Mathlib.Analysis.Calculus.MeanValue
+import Mathlib.Analysis.Calculus.Deriv.Basic
+import Mathlib.Analysis.SpecialFunctions.Pow.Real
 
 namespace DecisionQuotient
 namespace Tractability
@@ -169,6 +172,37 @@ for typical softening radii (rSoft ≈ 1.0–2.0 Å) it is 2–5× smaller.
 noncomputable def softenedLipschitzConstant (ε_lj σ rSoft : ℝ) : ℝ :=
   24 * ε_lj / rSoft * |2 * (σ / rSoft) ^ 12 - (σ / rSoft) ^ 6|
 
+/-- Canonical theorem-valid softening radius used by the runtime.
+    The current proof regime requires `0.8σ ≤ rSoft ≤ σ`. Among those values,
+    the physically natural and maximally softened choice is the upper endpoint
+    `σ` itself: this keeps the softened domain inside the proved interval while
+    maximizing the clamped contact radius. -/
+noncomputable def canonicalSofteningRadius (σ : ℝ) : ℝ :=
+  σ
+
+theorem canonicalSofteningRadius_valid (σ : ℝ)
+    (hσ : 0 < σ) :
+    0.8 * σ ≤ canonicalSofteningRadius σ ∧ canonicalSofteningRadius σ ≤ σ := by
+  constructor <;> unfold canonicalSofteningRadius <;> nlinarith
+
+theorem canonicalSofteningRadius_maximal
+    (σ rSoft : ℝ)
+    (hσ : 0 < σ)
+    (hr : 0.8 * σ ≤ rSoft)
+    (hrσ : rSoft ≤ σ) :
+    rSoft ≤ canonicalSofteningRadius σ := by
+  unfold canonicalSofteningRadius
+  exact hrσ
+
+theorem softenedLipschitzConstant_at_canonical (ε_lj σ : ℝ) :
+    softenedLipschitzConstant ε_lj σ (canonicalSofteningRadius σ) = 24 * ε_lj / σ := by
+  unfold softenedLipschitzConstant canonicalSofteningRadius
+  by_cases hσ : σ = 0
+  · subst hσ
+    ring_nf
+  · field_simp [hσ]
+    ring
+
 /-- The softened Lipschitz constant is nonneg when ε_lj ≥ 0 and rSoft > 0. -/
 theorem softenedLipschitzConstant_nonneg (ε_lj σ rSoft : ℝ)
     (hε : 0 ≤ ε_lj) (hr : 0 < rSoft) :
@@ -237,6 +271,8 @@ axiom exactLJ_lipschitz_on_Ici (ε_lj σ rSoft : ℝ)
     (a b : ℝ) (ha : rSoft ≤ a) (hb : rSoft ≤ b) :
     |exactLJScore ε_lj σ a - exactLJScore ε_lj σ b| ≤
       softenedLipschitzConstant ε_lj σ rSoft * |a - b|
+
+
 
 -- ---------------------------------------------------------------------------
 -- Main theorems (replacing axioms)

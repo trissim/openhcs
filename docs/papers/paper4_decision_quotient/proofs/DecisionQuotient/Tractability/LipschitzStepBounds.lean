@@ -73,6 +73,25 @@ theorem optimalTranslationStep_achieves_budget
   unfold optimalTranslationStep
   field_simp
 
+theorem optimalTranslationStep_mono_of_lipschitz_le
+    (ε_budget L_raw L_soft : ℝ)
+    (hε : 0 ≤ ε_budget)
+    (_hL_raw : 0 < L_raw)
+    (hL_soft : 0 < L_soft)
+    (hLe : L_soft ≤ L_raw) :
+    optimalTranslationStep ε_budget L_raw ≤ optimalTranslationStep ε_budget L_soft := by
+  unfold optimalTranslationStep
+  exact div_le_div_of_nonneg_left hε hL_soft hLe
+
+theorem optimalTranslationStep_scale_ratio
+    (ε_budget L_raw L_soft : ℝ)
+    (_hL_raw : 0 < L_raw)
+    (hL_soft : 0 < L_soft) :
+    optimalTranslationStep ε_budget L_soft =
+      (L_raw / L_soft) * optimalTranslationStep ε_budget L_raw := by
+  unfold optimalTranslationStep
+  field_simp [hL_soft.ne', (show L_raw ≠ 0 by linarith)]
+
 /-! ### Rotation Step Derivation -/
 
 /-- For rotation, the translation induced at distance d from rotation axis is:
@@ -165,4 +184,3 @@ despite potentially overshooting individual gradient steps.
 end LipschitzStepBounds
 end Tractability
 end DecisionQuotient
-

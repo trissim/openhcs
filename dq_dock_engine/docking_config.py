@@ -71,6 +71,13 @@ class RefinementCertificationMode(Enum):
     CERTIFIED_GD = "certified_gd"
 
 
+class SofteningPolicy(Enum):
+    NONE = "none"
+    CANONICAL_MAX_SIGMA = "canonical_max_sigma"
+    DERIVED_FROM_ERROR_BUDGET = "derived_from_error_budget"
+    EMPIRICAL_RATIO = "empirical_ratio"
+
+
 @register_pytree_node_class
 @dataclass(frozen=True)
 class DockingConfig:
@@ -80,9 +87,10 @@ class DockingConfig:
 
     mode: DockingMode
 
-    #: CERTIFIED: Target error bound in kcal/mol (passed to optimal_cutoff)
+    #: CERTIFIED: Target error bound in kcal/mol (passed to optimal_cutoff).
+    #: Non-positive means "derive from target_rmsd plus physical LJ constants".
     #: HEURISTIC: Cutoff radius in Angstroms for ad-hoc scoring
-    target_error: float = 0.001
+    target_error: float = 0.0
 
     #: Energy gap threshold for certification
     #: CERTIFIED: Must exceed 2 × lattice_tail_bound(R)
@@ -100,18 +108,24 @@ class DockingConfig:
     formal_round_strategy: FormalRoundStrategy = FormalRoundStrategy.SINGLETON_HYBRID
 
     #: Certified coarse surrogate error budget used by formal round pruning.
-    #: Larger values shrink the certified cutoff and can reduce compute.
-    coarse_target_error: float = 0.004
+    #: Non-positive means "derive from target_error" instead of hard-coding a
+    #: separate surrogate tolerance.
+    coarse_target_error: float = 0.0
 
-    #: Optional theorem-backed softened-LJ coarse prefilter.
-    #: Disabled by default because the current aggregate softening bound is often
-    #: too conservative to improve pruning in practice.
+    #: Softened-LJ coarse policy. In CERTIFIED mode this must remain theorem- or
+    #: physics-derived; empirical ratios are only allowed in HEURISTIC mode.
+    softening_policy: SofteningPolicy = SofteningPolicy.CANONICAL_MAX_SIGMA
+
+    #: Optional heuristic ratio used only when softening_policy == EMPIRICAL_RATIO.
+    heuristic_softening_ratio: float = 0.8
+
+    #: Legacy heuristic flag. Ignored in CERTIFIED mode; retained only so
+    #: heuristic/experimental entry points can still request softened coarse scoring.
     use_softened_coarse_prefilter: bool = False
 
     #: Optional adaptive certified coarse schedule for singleton acceptance.
-    #: Tried from loosest to tightest until a theorem-backed singleton decision
-    #: succeeds, then the exact fallback handles the remainder.
-    adaptive_coarse_target_errors: Tuple[float, ...] | None = (0.05, 0.01, 0.004)
+    #: `None` means use the single derived coarse target only.
+    adaptive_coarse_target_errors: Tuple[float, ...] | None = None
 
     #: The exact chemistry family used for certified exact rescoring/refinement.
     exact_chemistry_mode: ExactChemistryMode = ExactChemistryMode.EXTENDED_RICH
@@ -174,6 +188,8 @@ class DockingConfig:
             self.use_external_scorer,
             self.optimizer_backend,
             self.formal_round_strategy,
+            self.softening_policy,
+            self.heuristic_softening_ratio,
             self.use_softened_coarse_prefilter,
             self.adaptive_coarse_target_errors,
             self.exact_chemistry_mode,
@@ -198,19 +214,21 @@ class DockingConfig:
             optimizer_backend=aux_data[2],
             formal_round_strategy=aux_data[3],
             coarse_target_error=children[2],
-            use_softened_coarse_prefilter=aux_data[4],
-            adaptive_coarse_target_errors=aux_data[5],
-            exact_chemistry_mode=aux_data[6],
-            certified_scoring_family=aux_data[7],
+            softening_policy=aux_data[4],
+            heuristic_softening_ratio=aux_data[5],
+            use_softened_coarse_prefilter=aux_data[6],
+            adaptive_coarse_target_errors=aux_data[7],
+            exact_chemistry_mode=aux_data[8],
+            certified_scoring_family=aux_data[9],
             target_rmsd=children[3],
             certified_binding_site=children[4],
-            max_receptor_atoms=aux_data[8],
-            max_ligand_atoms=aux_data[9],
-            conformer_search=aux_data[10],
-            reuse_initial_conformer=aux_data[11],
-            refinement_certification=aux_data[12],
-            timeout_seconds=aux_data[13],
-            confidence=aux_data[14],
+            max_receptor_atoms=aux_data[10],
+            max_ligand_atoms=aux_data[11],
+            conformer_search=aux_data[12],
+            reuse_initial_conformer=aux_data[13],
+            refinement_certification=aux_data[14],
+            timeout_seconds=aux_data[15],
+            confidence=aux_data[16],
         )
 
     def __post_init__(self) -> None:
@@ -236,13 +254,15 @@ class DockingConfig:
                     "CERTIFIED mode: use_external_scorer=True conflicts with "
                     "formal guarantee. External scorers are HEURISTIC."
                 )
-            if self.target_error <= 0:
-                warnings.append("CERTIFIED mode: target_error must be positive.")
-            if self.coarse_target_error <= 0:
-                warnings.append("CERTIFIED mode: coarse_target_error must be positive.")
-            if self.coarse_target_error < self.target_error:
+            if self.target_rmsd <= 0:
+                warnings.append("CERTIFIED mode: target_rmsd must be positive.")
+            if 0 < self.coarse_target_error < self.target_error:
                 warnings.append(
                     "CERTIFIED mode: coarse_target_error < target_error tightens the surrogate instead of coarsening it."
+                )
+            if self.softening_policy == SofteningPolicy.EMPIRICAL_RATIO:
+                warnings.append(
+                    "CERTIFIED mode: empirical softening ratios are not allowed. Use NONE, CANONICAL_MAX_SIGMA, or DERIVED_FROM_ERROR_BUDGET."
                 )
             if self.adaptive_coarse_target_errors is not None:
                 if len(self.adaptive_coarse_target_errors) == 0:
@@ -257,6 +277,13 @@ class DockingConfig:
                 warnings.append(
                     "CERTIFIED mode: exact_chemistry_mode=NONE disables theorem-backed exact chemistry refinement."
                 )
+        elif (
+            self.softening_policy == SofteningPolicy.EMPIRICAL_RATIO
+            and self.heuristic_softening_ratio <= 0
+        ):
+            warnings.append(
+                "HEURISTIC mode with EMPIRICAL_RATIO requires heuristic_softening_ratio > 0."
+            )
 
         return len(warnings) == 0, warnings
 
@@ -264,7 +291,7 @@ class DockingConfig:
 # Predefined configurations
 CERTIFIED_DOCKING = DockingConfig(
     mode=DockingMode.CERTIFIED,
-    target_error=0.001,
+    target_error=0.0,
     min_energy_gap=0.0,
     use_external_scorer=False,
     optimizer_backend=OptimizerBackend.FORMAL,
@@ -273,7 +300,7 @@ CERTIFIED_DOCKING = DockingConfig(
 
 CERTIFIED_DOCKING_FORMAL = DockingConfig(
     mode=DockingMode.CERTIFIED,
-    target_error=0.001,
+    target_error=0.0,
     min_energy_gap=0.0,
     use_external_scorer=False,
     optimizer_backend=OptimizerBackend.FORMAL,

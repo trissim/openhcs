@@ -12,8 +12,20 @@ from dq_dock_engine.docking.core import (
 )
 from dq_dock_engine.proof_status import conditionally_certified
 from dq_dock_engine.docking.placement import _apply_single_pose
+from dq_dock_engine.docking.conformer_search import compute_raw_lj_lipschitz
 from dq_dock_engine.docking.scoring import _score_single_lj, _score_certified_lj
 from dq_dock_engine.docking_config import DockingConfig, DockingMode
+
+
+def _derive_target_error_from_rmsd(
+    target_rmsd: float,
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+) -> float:
+    if target_rmsd <= 0:
+        raise ValueError(f"target_rmsd must be positive, got {target_rmsd}")
+    sigma_min = float(jnp.min(receptor_radii) + jnp.min(ligand_radii))
+    return compute_raw_lj_lipschitz(0.086, sigma_min) * target_rmsd
 
 
 def _pose_loss_heuristic(
@@ -145,7 +157,7 @@ def _optimize_single(
         return jax.lax.fori_loop(0, n_steps, body_fn, (t, q))
 
 
-@functools.partial(jax.jit, static_argnames=['n_steps', 'use_certified'])
+@functools.partial(jax.jit, static_argnames=["n_steps", "use_certified"])
 def _execute_batched_optimize_jitted(
     translations: jnp.ndarray,
     quaternions: jnp.ndarray,
@@ -179,6 +191,7 @@ def _execute_batched_optimize_jitted(
 
     return jax.vmap(batch_fn, in_axes=((0, 0),))((translations, quaternions))
 
+
 @conditionally_certified(
     "HandleAliases.lean::FLO4; HandleAliases.lean::FLO5; HandleAliases.lean::FLO6; HandleAliases.lean::FLO7; HandleAliases.lean::FLO8; HandleAliases.lean::FLO9; HandleAliases.lean::FLO10; HandleAliases.lean::BD9; HandleAliases.lean::BD10; HandleAliases.lean::LJ9; HandleAliases.lean::CB12; HandleAliases.lean::APX9",
     assumptions=[
@@ -199,7 +212,15 @@ def optimize_poses_batched(
     config: DockingConfig | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     if config is not None and config.mode == DockingMode.CERTIFIED:
-        target_error = config.target_error if config.target_error > 0 else 0.001
+        target_error = (
+            config.target_error
+            if config.target_error > 0
+            else _derive_target_error_from_rmsd(
+                config.target_rmsd,
+                receptor_radii,
+                ligand_radii,
+            )
+        )
         from dq_dock_engine.physics.lattice_sum import optimal_cutoff
 
         cutoff = jnp.array(optimal_cutoff(target_error, s=6.0))

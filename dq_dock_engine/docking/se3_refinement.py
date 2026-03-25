@@ -9,13 +9,15 @@ Implements two approaches for theorem-backed optimization budgets:
     parameterization with theorem-derived step size and budget.
 
 Both share the SE(3) spectral certificate computation (Hessian eigenvalues
-+ kinematics Jacobian singular values) and the Jacobian bridge theorem.
+and kinematics Jacobian singular values) and the parameter/coordinate
+quadratic-window bridge.
 
 Lean: EnergyRMSDConvergence.lean — CertifiedQuadraticBasin,
       CertifiedLinearEnergyConvergence,
+      parameter_window_transfers_to_coordinate_window_sq,
       rmsd_target_of_canonicalIterationBudgetFromLocalCertificates,
-      rmsd_target_of_canonicalIterationBudgetFromGradientDescentDynamics.
-New:  SE3JacobianBridge.lean — parameterSpace_quadraticBasin_transfers_to_coordSpace.
+      rmsd_target_of_canonicalIterationBudgetFromGradientDescentDynamics,
+      rmsd_target_of_initial_rmsd_and_linear_energy_convergence.
 """
 
 from __future__ import annotations
@@ -35,13 +37,15 @@ from dq_dock_engine.docking_config import RefinementCertificationMode
 class SE3SpectralCertificate:
     """Hessian eigenvalues in SE(3) parameter space + Jacobian bridge.
 
-    Lean: parameterSpace_quadraticBasin_transfers_to_coordSpace.
+    Lean: EnergyRMSDConvergence.parameter_window_transfers_to_coordinate_window_sq.
     """
 
     lmin_param: float
     lmax_param: float
+    sigma_min_sq: float
     sigma_max_sq: float
     mu_coord: float  # lmin_param / sigma_max_sq
+    M_coord: float  # lmax_param / sigma_min_sq
 
 
 @dataclass(frozen=True)
@@ -189,7 +193,7 @@ def compute_se3_spectral_certificate(
 
     Returns None if not in a convex basin (lmin_param ≤ 0).
 
-    Lean: parameterSpace_quadraticBasin_transfers_to_coordSpace.
+    Lean: EnergyRMSDConvergence.parameter_window_transfers_to_coordinate_window_sq.
     """
     H = jax.hessian(energy_fn)(optimized_params)  # (6, 6)
     eigs = jnp.linalg.eigvalsh(H)
@@ -201,14 +205,23 @@ def compute_se3_spectral_certificate(
 
     J = jax.jacobian(kinematics_fn)(optimized_params)  # (N_atoms, 3, 6)
     J_flat = J.reshape(-1, 6)  # (3*N_atoms, 6)
-    sigma_max_sq = float(jnp.max(jnp.linalg.svdvals(J_flat)) ** 2)
+    singular_values = jnp.linalg.svdvals(J_flat)
+    sigma_min_sq = float(jnp.min(singular_values) ** 2)
+    sigma_max_sq = float(jnp.max(singular_values) ** 2)
 
     mu_coord = lmin_param / sigma_max_sq
+    M_coord = (
+        float("inf")
+        if sigma_min_sq <= 0.0 or not math.isfinite(sigma_min_sq)
+        else lmax_param / sigma_min_sq
+    )
     return SE3SpectralCertificate(
         lmin_param=lmin_param,
         lmax_param=lmax_param,
+        sigma_min_sq=sigma_min_sq,
         sigma_max_sq=sigma_max_sq,
         mu_coord=mu_coord,
+        M_coord=M_coord,
     )
 
 
@@ -368,6 +381,151 @@ def _run_gd_steps_with_trajectory(
     return final_params, energy_trajectory
 
 
+def _stabilized_probe_step_limits(
+    ligand_radius: float,
+    target_rmsd: float,
+) -> tuple[float, float]:
+    """Deterministic per-step RMSD budget split for the observed probe.
+
+    Lean: EnergyRMSDConvergence
+      - ERC44 rmsd_le_of_pointwiseDist_le
+      - ERC45 rmsd_le_of_pointwiseSplitDist_le
+
+    We split the per-step RMSD budget evenly between translation and
+    rotation-induced displacement. If every atom moves by at most `tBound` from
+    translation and at most `rBound` from rotation with `tBound + rBound ≤
+    target_rmsd`, then the full pointwise displacement - and therefore RMSD - is
+    bounded by `target_rmsd`.
+    """
+    translation_limit = target_rmsd / 2.0
+    if ligand_radius <= 1e-8:
+        rotation_limit = math.pi
+    else:
+        rotation_limit = min(math.pi, target_rmsd / (2.0 * ligand_radius))
+    return translation_limit, rotation_limit
+
+
+def _initial_probe_backtracking_round(
+    translation_norm: float,
+    rotation_norm: float,
+    ligand_radius: float,
+    target_rmsd: float,
+) -> int:
+    """Canonical first dyadic round whose step budget certifies RMSD safety.
+
+    Lean:
+      - ERC45 (`rmsd_le_of_pointwiseSplitDist_le`)
+      - SH12 (`leastPositiveJointAdequateDyadicRound_spec`)
+
+    We require each of the two pointwise displacement channels to fit within
+    half the RMSD budget so their sum remains within the full target radius.
+    """
+    from dq_dock_engine.docking.formal_actions import (
+        least_positive_joint_adequate_dyadic_round,
+    )
+
+    split_budget = target_rmsd / 2.0
+    rotation_displacement_norm = ligand_radius * rotation_norm
+    return least_positive_joint_adequate_dyadic_round(
+        translation_norm,
+        rotation_displacement_norm,
+        split_budget,
+    )
+
+
+def _run_stabilized_observed_probe(
+    initial_params: jnp.ndarray,
+    energy_fn,
+    *,
+    n_steps: int,
+    ligand_radius: float,
+    target_rmsd: float,
+) -> tuple[list[jnp.ndarray], list[float]]:
+    """Observed-mode probe with dyadically derived monotone backtracking.
+
+    The observed certificate only depends on the realized energy trajectory, not
+    on the specific optimizer family. This probe therefore prioritizes staying in
+    a local interacting basin over taking one large unconstrained SE(3) step that
+    can eject the ligand into the zero-contact plateau.
+
+    There are no free line-search constants here: we follow the negative gradient
+    direction and start at the first dyadic scale whose pointwise translation and
+    rotation-induced displacements fit inside the theorem-backed RMSD split
+    budget. Further backtracking only halves that already-safe step.
+    """
+    params = initial_params
+    params_trajectory = [params]
+    energy_current = float(energy_fn(params))
+    energy_trajectory = [energy_current]
+
+    for _ in range(n_steps):
+        value, grad = jax.value_and_grad(energy_fn)(params)
+        energy_current = float(value)
+        step = -grad
+        round_index = _initial_probe_backtracking_round(
+            float(jnp.linalg.norm(step[:3])),
+            float(jnp.linalg.norm(step[3:6])),
+            ligand_radius,
+            target_rmsd,
+        )
+
+        next_params = params
+        next_energy = energy_current
+        while True:
+            candidate_step = step * math.ldexp(1.0, -round_index)
+            if float(jnp.max(jnp.abs(candidate_step))) == 0.0:
+                break
+            candidate = params + candidate_step
+            candidate_energy = float(energy_fn(candidate))
+            if math.isfinite(candidate_energy) and candidate_energy < energy_current:
+                next_params = candidate
+                next_energy = candidate_energy
+                break
+            round_index += 1
+
+        if next_energy >= energy_current:
+            break
+
+        params = next_params
+        params_trajectory.append(params)
+        energy_trajectory.append(next_energy)
+
+    return params_trajectory, energy_trajectory
+
+
+def _best_observed_certificate_from_trajectory(
+    params_trajectory: list[jnp.ndarray],
+    energy_trajectory: list[float],
+    energy_fn,
+    kinematics_fn,
+    *,
+    target_rmsd: float,
+    n_atoms: int,
+) -> tuple[jnp.ndarray, RefinementCertificate | None]:
+    """Return the latest certifiable prefix of an observed probe trajectory.
+
+    Lean: EnergyRMSDConvergence.rmsd_target_of_maxCertifiedPrefix.
+    """
+    best_params = params_trajectory[-1]
+    for end in range(len(params_trajectory) - 1, 0, -1):
+        spectral = compute_se3_spectral_certificate(
+            energy_fn,
+            kinematics_fn,
+            params_trajectory[end],
+        )
+        if spectral is None:
+            continue
+        cert = certify_observed(
+            spectral=spectral,
+            energy_trajectory=energy_trajectory[: end + 1],
+            target_rmsd=target_rmsd,
+            n_atoms=n_atoms,
+        )
+        if cert is not None:
+            return params_trajectory[end], cert
+    return best_params, None
+
+
 def observe_gd_trajectory(
     initial_params: jnp.ndarray,
     energy_fn,
@@ -375,10 +533,11 @@ def observe_gd_trajectory(
     n_steps: int,
     target_rmsd: float,
     n_atoms: int,
-    alpha: float = 0.01,
+    ligand_radius: float,
 ) -> tuple[jnp.ndarray, RefinementCertificate | None]:
-    """Approach A: run GD with fixed step size, record full energy trajectory,
-    then certify post-hoc via spectral certificate + observed contraction rate.
+    """Approach A: follow the negative gradient with dyadically derived step
+    budgets, record the realized energy trajectory, then certify post-hoc via
+    spectral certificate + observed contraction rate.
 
     The key difference from Approach B is that q is *empirical* (worst-case
     ratio from the trajectory) rather than *derived* from the Hessian condition
@@ -388,21 +547,19 @@ def observe_gd_trajectory(
     Lean: CertifiedOneStepEnergyContraction — each consecutive pair in the
     trajectory must satisfy gap(t+1) ≤ q × gap(t).
     """
-    optimized, energy_trajectory = _run_gd_steps_with_trajectory(
+    params_trajectory, energy_trajectory = _run_stabilized_observed_probe(
         initial_params,
         energy_fn,
-        alpha,
-        n_steps,
+        n_steps=n_steps,
+        ligand_radius=ligand_radius,
+        target_rmsd=target_rmsd,
     )
 
-    spectral = compute_se3_spectral_certificate(energy_fn, kinematics_fn, optimized)
-    if spectral is None:
-        return optimized, None
-
-    trajectory_list = [float(e) for e in energy_trajectory]
-    cert = certify_observed(
-        spectral=spectral,
-        energy_trajectory=trajectory_list,
+    optimized, cert = _best_observed_certificate_from_trajectory(
+        params_trajectory,
+        energy_trajectory,
+        energy_fn,
+        kinematics_fn,
         target_rmsd=target_rmsd,
         n_atoms=n_atoms,
     )
@@ -415,11 +572,12 @@ def optimize_certified_gd(
     kinematics_fn,
     target_rmsd: float,
     n_atoms: int,
-    max_probe_steps: int = 10,
+    ligand_radius: float,
+    max_probe_steps: int,
 ) -> tuple[jnp.ndarray, RefinementCertificate | None]:
     """Two-phase certified optimization (Approach B).
 
-    Phase 1: Quick probe with small fixed step size to reach near the basin.
+    Phase 1: Quick probe with the same dyadically derived observed-step policy.
     Phase 2: Compute Hessian, derive α and budget T, run T steps of standard GD.
 
     Lean: CertifiedGradientDescentDynamics — q = (M-μ)/(M+μ) with
@@ -427,9 +585,14 @@ def optimize_certified_gd(
           convex functions.
     """
     # Phase 1: probe
-    probed = _run_gd_steps(
-        initial_params, energy_fn, alpha=0.01, n_steps=max_probe_steps
+    probe_params, _ = _run_stabilized_observed_probe(
+        initial_params,
+        energy_fn,
+        n_steps=max_probe_steps,
+        ligand_radius=ligand_radius,
+        target_rmsd=target_rmsd,
     )
+    probed = probe_params[-1]
 
     # Compute spectral certificate at probed point
     spectral = compute_se3_spectral_certificate(energy_fn, kinematics_fn, probed)

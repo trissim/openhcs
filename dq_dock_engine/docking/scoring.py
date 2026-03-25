@@ -283,7 +283,9 @@ def metal_coordination_min_cutoff(
         Minimum cutoff rc such that tail error ≤ target_error
     """
     if max_strength_product <= 0:
-        raise ValueError("metal_coordination_min_cutoff requires max_strength_product > 0")
+        raise ValueError(
+            "metal_coordination_min_cutoff requires max_strength_product > 0"
+        )
     if target_error <= 0:
         raise ValueError("metal_coordination_min_cutoff requires target_error > 0")
     if distance_width <= 0:
@@ -420,9 +422,13 @@ class CertifiedScreenedCoulombSpec:
 
         q_max_rec = float(jnp.max(jnp.abs(self.receptor_charges)))
         q_max_lig = float(jnp.max(jnp.abs(self.ligand_charges)))
-        n_pairs = int(self.receptor_charges.shape[0]) * int(self.ligand_charges.shape[0])
+        n_pairs = int(self.receptor_charges.shape[0]) * int(
+            self.ligand_charges.shape[0]
+        )
         tail_per_pair = (
-            q_max_rec * q_max_lig * math.exp(-self.kappa * self.cutoff)
+            q_max_rec
+            * q_max_lig
+            * math.exp(-self.kappa * self.cutoff)
             / (self.dielectric * self.cutoff)
         )
         return tail_per_pair * n_pairs
@@ -431,6 +437,15 @@ class CertifiedScreenedCoulombSpec:
         return CertifiedScreenedCoulombSpec(
             receptor_charges=self.receptor_charges[indices],
             ligand_charges=self.ligand_charges,
+            kappa=self.kappa,
+            cutoff=self.cutoff,
+            dielectric=self.dielectric,
+        )
+
+    def zeroed(self) -> "CertifiedScreenedCoulombSpec":
+        return CertifiedScreenedCoulombSpec(
+            receptor_charges=jnp.zeros_like(self.receptor_charges),
+            ligand_charges=jnp.zeros_like(self.ligand_charges),
             kappa=self.kappa,
             cutoff=self.cutoff,
             dielectric=self.dielectric,
@@ -533,14 +548,26 @@ class CertifiedContactSurrogateSpec(CertifiedOptionalInteractionTerm):
 
         w_max_rec = float(jnp.max(jnp.abs(self.receptor_weights)))
         w_max_lig = float(jnp.max(jnp.abs(self.ligand_weights)))
-        n_pairs = int(self.receptor_weights.shape[0]) * int(self.ligand_weights.shape[0])
-        tail_per_pair = w_max_rec * w_max_lig * math.exp(-(self.beta * self.cutoff) ** 2)
+        n_pairs = int(self.receptor_weights.shape[0]) * int(
+            self.ligand_weights.shape[0]
+        )
+        tail_per_pair = (
+            w_max_rec * w_max_lig * math.exp(-((self.beta * self.cutoff) ** 2))
+        )
         return tail_per_pair * n_pairs
 
     def receptor_subset(self, indices: jnp.ndarray) -> "CertifiedContactSurrogateSpec":
         return CertifiedContactSurrogateSpec(
             receptor_weights=self.receptor_weights[indices],
             ligand_weights=self.ligand_weights,
+            beta=self.beta,
+            cutoff=self.cutoff,
+        )
+
+    def zeroed(self) -> "CertifiedContactSurrogateSpec":
+        return CertifiedContactSurrogateSpec(
+            receptor_weights=jnp.zeros_like(self.receptor_weights),
+            ligand_weights=jnp.zeros_like(self.ligand_weights),
             beta=self.beta,
             cutoff=self.cutoff,
         )
@@ -631,7 +658,9 @@ class CertifiedMetalCoordinationSpec(CertifiedOptionalInteractionTerm):
         if self.receptor_ideal_angles.ndim != 1:
             raise ValueError("receptor_ideal_angles must be a 1D array")
         if self.receptor_ideal_angles.shape[0] != self.receptor_strengths.shape[0]:
-            raise ValueError("receptor_ideal_angles must match receptor_strengths length")
+            raise ValueError(
+                "receptor_ideal_angles must match receptor_strengths length"
+            )
 
     def tree_flatten(self):
         children = (
@@ -668,9 +697,15 @@ class CertifiedMetalCoordinationSpec(CertifiedOptionalInteractionTerm):
 
         s_max_rec = float(jnp.max(jnp.abs(self.receptor_strengths)))
         s_max_lig = float(jnp.max(jnp.abs(self.ligand_strengths)))
-        n_pairs = int(self.receptor_strengths.shape[0]) * int(self.ligand_strengths.shape[0])
-        tail_per_pair = s_max_rec * s_max_lig * math.exp(
-            -((self.cutoff - self.ideal_distance) / self.distance_width) ** 2
+        n_pairs = int(self.receptor_strengths.shape[0]) * int(
+            self.ligand_strengths.shape[0]
+        )
+        tail_per_pair = (
+            s_max_rec
+            * s_max_lig
+            * math.exp(
+                -(((self.cutoff - self.ideal_distance) / self.distance_width) ** 2)
+            )
         )
         return tail_per_pair * n_pairs
 
@@ -679,6 +714,17 @@ class CertifiedMetalCoordinationSpec(CertifiedOptionalInteractionTerm):
             receptor_strengths=self.receptor_strengths[indices],
             ligand_strengths=self.ligand_strengths,
             receptor_ideal_angles=self.receptor_ideal_angles[indices],
+            ideal_distance=self.ideal_distance,
+            distance_width=self.distance_width,
+            angle_width=self.angle_width,
+            cutoff=self.cutoff,
+        )
+
+    def zeroed(self) -> "CertifiedMetalCoordinationSpec":
+        return CertifiedMetalCoordinationSpec(
+            receptor_strengths=jnp.zeros_like(self.receptor_strengths),
+            ligand_strengths=jnp.zeros_like(self.ligand_strengths),
+            receptor_ideal_angles=jnp.zeros_like(self.receptor_ideal_angles),
             ideal_distance=self.ideal_distance,
             distance_width=self.distance_width,
             angle_width=self.angle_width,
@@ -773,9 +819,7 @@ class CertifiedDirectionalHBondSpec(CertifiedOptionalInteractionTerm):
             self.ligand_local_directions.ndim != 2
             or self.ligand_local_directions.shape[1] != 3
         ):
-            raise ValueError(
-                "ligand_local_directions must have shape (N_lig_sites, 3)"
-            )
+            raise ValueError("ligand_local_directions must have shape (N_lig_sites, 3)")
         if self.ligand_frame_coords.ndim != 2 or self.ligand_frame_coords.shape[1] != 3:
             raise ValueError("ligand_frame_coords must have shape (N_lig_atoms, 3)")
         if self.receptor_strengths.ndim != 1:
@@ -837,9 +881,15 @@ class CertifiedDirectionalHBondSpec(CertifiedOptionalInteractionTerm):
 
         s_max_rec = float(jnp.max(jnp.abs(self.receptor_strengths)))
         s_max_lig = float(jnp.max(jnp.abs(self.ligand_strengths)))
-        n_pairs = int(self.receptor_strengths.shape[0]) * int(self.ligand_strengths.shape[0])
-        tail_per_pair = s_max_rec * s_max_lig * math.exp(
-            -((self.cutoff - self.ideal_distance) / self.distance_width) ** 2
+        n_pairs = int(self.receptor_strengths.shape[0]) * int(
+            self.ligand_strengths.shape[0]
+        )
+        tail_per_pair = (
+            s_max_rec
+            * s_max_lig
+            * math.exp(
+                -(((self.cutoff - self.ideal_distance) / self.distance_width) ** 2)
+            )
         )
         return tail_per_pair * n_pairs
 
@@ -859,9 +909,7 @@ class CertifiedDirectionalHBondSpec(CertifiedOptionalInteractionTerm):
                 distance_width=self.distance_width,
                 cutoff=self.cutoff,
             )
-        retained_matches = (
-            self.receptor_anchor_indices[:, None] == indices[None, :]
-        )
+        retained_matches = self.receptor_anchor_indices[:, None] == indices[None, :]
         retained_mask = jnp.any(retained_matches, axis=1)
         remapped_anchor_indices = jnp.argmax(retained_matches, axis=1).astype(jnp.int32)
         return CertifiedDirectionalHBondSpec(
@@ -1031,6 +1079,30 @@ class CertifiedRichChemistryPlan:
             extended_terms=self.extended_terms.receptor_subset(indices),
         )
 
+    def disambiguation_plan(self) -> "CertifiedRichChemistryPlan":
+        """Plan used for theorem-backed certified pruning / winner filtering.
+
+        The final certified top-1 winner is always chosen by the H-bond-backed
+        orientation-disambiguation objective unless the richer chemistry score is
+        proven to share the same singleton top-1 winner. Therefore the pruning
+        objective only needs the exact channels that define this disambiguation
+        score family: base physics (softened LJ + screened Coulomb) plus the two
+        directional H-bond channels.
+        """
+        return CertifiedRichChemistryPlan(
+            screened_coulomb=self.screened_coulomb,
+            contact=self.contact.zeroed(),
+            hbond_receptor_donor=self.hbond_receptor_donor,
+            hbond_ligand_donor=self.hbond_ligand_donor,
+            metal_coordination=self.metal_coordination.zeroed(),
+            pairwise_sigma=self.pairwise_sigma,
+            cooperative_alpha=0.0,
+            extended_terms=CertifiedExtendedInteractionBundle(),
+        )
+
+    def default_softening_radius(self) -> float:
+        return float(jnp.min(self.pairwise_sigma))
+
     def analytic_total_delta(self, n_water_bridges: int = 0) -> float:
         """Batch-size-independent delta from analytic bounds.
 
@@ -1055,7 +1127,9 @@ class CertifiedRichChemistryPlan:
         # Tier 3: omitted channel value bounds
         # Cooperative H-bond: |α| × N² where N = 2 (receptor_donor + ligand_donor)
         # Lean: CooperativeHBondApproximation.lean::cooperative_correction_bounded
-        cooperative_bound = cooperative_hbond_correction_bound(self.cooperative_alpha, 2)
+        cooperative_bound = cooperative_hbond_correction_bound(
+            self.cooperative_alpha, 2
+        )
         # Water bridges: 2 per bridge
         # Lean: ExplicitWaterPlacement.lean::water_bridge_is_bounded_omitted_channel
         water_bridge_bound = 2.0 * n_water_bridges
@@ -1268,7 +1342,8 @@ def _default_softening_radius(
 ) -> jax.Array | float:
     receptor_min = jnp.min(receptor_radii)
     ligand_min = jnp.min(ligand_radii)
-    return 0.5 * (receptor_min + ligand_min)
+    sigma_min = receptor_min + ligand_min
+    return sigma_min
 
 
 def score_certified_batch(
@@ -1276,7 +1351,7 @@ def score_certified_batch(
     poses_coords: jnp.ndarray,
     receptor_radii: jnp.ndarray,
     ligand_radii: jnp.ndarray,
-    target_error: float = 0.001,
+    target_error: float,
     epsilon: float = _EPSILON_KCAL_MOL,
     electrostatics: CertifiedRealSpaceEwaldSpec | None = None,
 ) -> CertifiedBatchResult:
@@ -1694,7 +1769,7 @@ def cooperative_hbond_correction_bound(
 
     For typical α ≈ 0.2 and N ≈ 5: bound = 0.2 × 25 = 5.0 kcal/mol.
     """
-    return abs(alpha) * n_hbonds ** 2
+    return abs(alpha) * n_hbonds**2
 
 
 @jax.jit
@@ -1711,7 +1786,7 @@ def _cooperative_hbond_correction_batch(
     """
     # Σᵢ Σⱼ sᵢ·sⱼ = (Σ sᵢ)² — use this for efficiency
     sums = jnp.sum(hbond_scores, axis=-1)
-    pairwise_product_sum = sums ** 2
+    pairwise_product_sum = sums**2
     return alpha * pairwise_product_sum
 
 
@@ -2175,7 +2250,7 @@ def score_certified_lj_screened_coulomb_batch(
     receptor_radii: jnp.ndarray,
     ligand_radii: jnp.ndarray,
     screened_coulomb: CertifiedScreenedCoulombSpec,
-    target_error: float = 0.001,
+    target_error: float,
     epsilon: float = _EPSILON_KCAL_MOL,
 ) -> CertifiedBatchResult:
     lj_scores, lj_error_bound = score_certified_lj(
@@ -2218,7 +2293,7 @@ def score_certified_rich_chemistry_batch(
     receptor_radii: jnp.ndarray,
     ligand_radii: jnp.ndarray,
     rich_chemistry_plan: CertifiedRichChemistryPlan,
-    target_error: float = 0.001,
+    target_error: float,
     epsilon: float = _EPSILON_KCAL_MOL,
 ) -> CertifiedBatchResult:
     softened_lj = score_certified_softened_lj(
@@ -2261,7 +2336,7 @@ def score_certified_softened_rich_chemistry_batch(
     receptor_radii: jnp.ndarray,
     ligand_radii: jnp.ndarray,
     rich_chemistry_plan: CertifiedRichChemistryPlan,
-    target_error: float = 0.001,
+    target_error: float,
     epsilon: float = _EPSILON_KCAL_MOL,
     softening_radius: float | None = None,
 ) -> CertifiedSoftenedBatchResult:
@@ -2305,7 +2380,7 @@ def score_certified_lj(
     poses_coords: jnp.ndarray,
     receptor_radii: jnp.ndarray,
     ligand_radii: jnp.ndarray,
-    target_error: float = 0.001,
+    target_error: float,
     epsilon: float = _EPSILON_KCAL_MOL,
 ) -> tuple[jnp.ndarray, float]:
     """
@@ -2324,7 +2399,7 @@ def score_certified_lj(
         poses_coords: (N_poses, N_lig, 3)
         receptor_radii: (N_rec,)
         ligand_radii: (N_lig,)
-        target_error: Target error bound per atom pair (default 0.001 kcal/mol)
+        target_error: Target error bound per atom pair
         epsilon: Well depth in kcal/mol for calibration (default 0.086 for C-C)
 
     Returns:
@@ -2359,7 +2434,7 @@ def score_certified_softened_lj(
     poses_coords: jnp.ndarray,
     receptor_radii: jnp.ndarray,
     ligand_radii: jnp.ndarray,
-    target_error: float = 0.001,
+    target_error: float,
     epsilon: float = _EPSILON_KCAL_MOL,
     softening_radius: float | None = None,
     compute_error_bound: bool = True,
@@ -2404,7 +2479,7 @@ def score_certified_softened_lj_realspace_ewald(
     receptor_radii: jnp.ndarray,
     ligand_radii: jnp.ndarray,
     electrostatics: CertifiedRealSpaceEwaldSpec,
-    target_error: float = 0.001,
+    target_error: float,
     epsilon: float = _EPSILON_KCAL_MOL,
     softening_radius: float | None = None,
     compute_error_bound: bool = True,
@@ -2452,7 +2527,7 @@ def score_certified_lj_realspace_ewald(
     receptor_radii: jnp.ndarray,
     ligand_radii: jnp.ndarray,
     electrostatics: CertifiedRealSpaceEwaldSpec,
-    target_error: float = 0.001,
+    target_error: float,
     epsilon: float = _EPSILON_KCAL_MOL,
 ) -> tuple[jnp.ndarray, float]:
     electrostatics.validate()
@@ -2664,7 +2739,11 @@ def route_scoring(engine: ScoringEngine, **kwargs) -> np.ndarray:
             )
 
         case ScoringEngine.CERTIFIED_LJ:
-            target_error = kwargs.get("target_error", 0.001)
+            if "target_error" not in kwargs:
+                raise ValueError(
+                    "CERTIFIED_LJ scoring requires an explicit derived target_error"
+                )
+            target_error = kwargs["target_error"]
             scores, error_bound = score_certified_lj(
                 kwargs["receptor_coords"],
                 kwargs["poses_coords"],
@@ -2675,7 +2754,11 @@ def route_scoring(engine: ScoringEngine, **kwargs) -> np.ndarray:
             return np.array(scores)
 
         case ScoringEngine.CERTIFIED_LJ_REALSPACE_EWALD:
-            target_error = kwargs.get("target_error", 0.001)
+            if "target_error" not in kwargs:
+                raise ValueError(
+                    "CERTIFIED_LJ_REALSPACE_EWALD scoring requires an explicit derived target_error"
+                )
+            target_error = kwargs["target_error"]
             electrostatics: CertifiedRealSpaceEwaldSpec = kwargs["electrostatics"]
             scores, error_bound = score_certified_lj_realspace_ewald(
                 kwargs["receptor_coords"],

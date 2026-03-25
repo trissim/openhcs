@@ -697,6 +697,58 @@ theorem attractive_hbond_native_beats_flipped
     directionalHBondScore_pos_of_active hr hd ha
   linarith
 
+/-- If all non-H-bond channels are flip-symmetric, an active native H-bond is
+    sufficient to distinguish the native pose from its donor-silent flipped
+    counterpart at the total-score level. -/
+theorem totalScore_native_beats_flipped_of_equal_background
+    {bg_nat bg_flip r_nat d_nat a_nat r_flip a_flip : ℝ}
+    (hbg : bg_nat = bg_flip)
+    (hr : 0 < r_nat) (hd : 0 < d_nat) (ha : 0 < a_nat) :
+    bg_flip + directionalHBondScore r_flip 0 a_flip
+      < bg_nat + directionalHBondScore r_nat d_nat a_nat := by
+  subst hbg
+  have hflip : directionalHBondScore r_flip 0 a_flip
+      < directionalHBondScore r_nat d_nat a_nat :=
+    hbond_distinguishes_flip (r_flip := r_flip) (a_flip := a_flip) hr hd ha
+  linarith
+
+/-- Attractive-utility form of `totalScore_native_beats_flipped_of_equal_background`.
+    If the non-H-bond background energy is equal across the native pose and a
+    flipped pose, then any active native H-bond makes the native total utility
+    strictly better (more negative). -/
+theorem attractiveTotal_native_beats_flipped_of_equal_background
+    {bg_nat bg_flip r_nat d_nat a_nat r_flip a_flip : ℝ}
+    (hbg : bg_nat = bg_flip)
+    (hr : 0 < r_nat) (hd : 0 < d_nat) (ha : 0 < a_nat) :
+    bg_nat - directionalHBondScore r_nat d_nat a_nat
+      < bg_flip - directionalHBondScore r_flip 0 a_flip := by
+  subst hbg
+  have hflip : -(directionalHBondScore r_nat d_nat a_nat)
+      < -(directionalHBondScore r_flip 0 a_flip) :=
+    attractive_hbond_native_beats_flipped (r_flip := r_flip) (a_flip := a_flip) hr hd ha
+  linarith
+
+/-- If the non-H-bond background is identical and both directional donor factors
+    are silenced, then the total score is exactly equal across the two poses. -/
+theorem totalScore_equal_of_equal_background_and_silent_donor
+    {bg_nat bg_flip r_nat a_nat r_flip a_flip : ℝ}
+    (hbg : bg_nat = bg_flip) :
+    bg_nat + directionalHBondScore r_nat 0 a_nat
+      = bg_flip + directionalHBondScore r_flip 0 a_flip := by
+  rw [directionalHBondScore_zero_of_silent_donor, directionalHBondScore_zero_of_silent_donor]
+  simpa [hbg]
+
+/-- Attractive-utility form of the silent-donor equality theorem. When both
+    donor factors are silent and the background score is unchanged, the total
+    attractive utility cannot distinguish the two poses. -/
+theorem attractiveTotal_equal_of_equal_background_and_silent_donor
+    {bg_nat bg_flip r_nat a_nat r_flip a_flip : ℝ}
+    (hbg : bg_nat = bg_flip) :
+    bg_nat - directionalHBondScore r_nat 0 a_nat
+      = bg_flip - directionalHBondScore r_flip 0 a_flip := by
+  rw [directionalHBondScore_zero_of_silent_donor, directionalHBondScore_zero_of_silent_donor]
+  simpa [hbg]
+
 end DirectionalHBondApproximation
 end Tractability
 end DecisionQuotient

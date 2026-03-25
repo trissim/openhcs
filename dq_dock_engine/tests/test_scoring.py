@@ -51,13 +51,11 @@ from dq_dock_engine.docking_config import (
     DockingMode,
     ExactChemistryMode,
     OptimizerBackend,
+    SofteningPolicy,
 )
 import jax
 from dq_dock_engine.benchmark.benchmark_pdb import prepare_protein
 from dq_dock_engine.benchmark.benchmark_pdb import prepare_ligand
-
-
-
 
 
 def test_composite_score_matches_lj_when_charges_zero() -> None:
@@ -174,11 +172,13 @@ def test_certified_config_defaults_to_realspace_ewald_family() -> None:
         optimizer_backend=OptimizerBackend.FORMAL,
     )
     assert config.certified_scoring_family == CertifiedScoringFamily.LJ_REALSPACE_EWALD
-    assert config.coarse_target_error == 0.004
+    assert config.target_error == 0.0
+    assert config.coarse_target_error == 0.0
+    assert config.adaptive_coarse_target_errors is None
     assert config.use_softened_coarse_prefilter is False
 
 
-def test_certified_config_validate_rejects_bad_coarse_target_error() -> None:
+def test_certified_config_validate_allows_derived_coarse_target_error() -> None:
     config = DockingConfig(
         mode=DockingMode.CERTIFIED,
         optimizer_backend=OptimizerBackend.FORMAL,
@@ -186,10 +186,19 @@ def test_certified_config_validate_rejects_bad_coarse_target_error() -> None:
         coarse_target_error=0.0,
     )
     valid, warnings = config.validate()
-    assert valid is False
-    assert any(
-        "coarse_target_error must be positive" in warning for warning in warnings
+    assert valid is True
+    assert warnings == []
+
+
+def test_certified_config_rejects_empirical_softening_ratio() -> None:
+    config = DockingConfig(
+        mode=DockingMode.CERTIFIED,
+        optimizer_backend=OptimizerBackend.FORMAL,
+        softening_policy=SofteningPolicy.EMPIRICAL_RATIO,
     )
+    valid, warnings = config.validate()
+    assert valid is False
+    assert any("empirical softening ratios" in warning for warning in warnings)
 
 
 def test_certified_config_accepts_adaptive_coarse_schedule() -> None:

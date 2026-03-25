@@ -371,6 +371,96 @@ noncomputable def coherentOptimizerWitness_of_exact_singleton_winner
         (CertifiedPruning.certificate_of_exact_singleton_winner uExact uCoarse aStar delta hApprox hStrict).survivors
       rfl }
 
+/-- If the exact top-1 set is already known to be the singleton `{aStar}`, the
+    runtime can package the support-fallback branch with singleton support as a
+    coherent optimizer witness directly, without going through an additional
+    coarse-margin theorem. This matches runtime paths that certify singleton
+    winners from exact score gaps inside a finite retained family. -/
+noncomputable def coherentOptimizerWitness_of_exact_singleton_top1
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uExact : A → ℝ)
+    (aStar : A)
+    (hSingleton : topKSet uExact 1 = ({aStar} : Finset A)) :
+    CoherentOptimizerWitness A :=
+  { survivorSet :=
+      { survivors := ({aStar} : Finset A)
+        certificate :=
+          { survivors := ({aStar} : Finset A)
+            exactTopK := topKSet uExact 1
+            sound := by
+              intro a ha
+              rw [hSingleton] at ha
+              exact ha }
+        survivors_eq := rfl }
+    belief := beliefWitness_of_survivorConditioning_supportSet ({aStar} : Finset A) (by simp)
+    support_eq := rfl }
+
+theorem coherentOptimizerWitness_of_exact_singleton_top1_choice
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (uExact : A → ℝ)
+    (aStar : A)
+    (hSingleton : topKSet uExact 1 = ({aStar} : Finset A)) :
+    let w := coherentOptimizerWitness_of_exact_singleton_top1 uExact aStar hSingleton
+    w.belief.selection.choice = aStar ∧
+      w.belief.selection.support = ({aStar} : Finset A) := by
+  simp [coherentOptimizerWitness_of_exact_singleton_top1,
+    beliefWitness_of_survivorConditioning_supportSet,
+    selectionWitness_of_supportSet]
+
+/-- If two exact score families both certify the same singleton top-1 action,
+    then the coherent optimizer witness induced by either family has the same
+    support and the same selected action. This is the ranking-consistency bridge
+    used when a richer score is only trusted after it agrees with a simpler
+    theorem-backed disambiguation score on a certified singleton winner. -/
+theorem exact_singleton_top1_choice_agreement
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (u₁ u₂ : A → ℝ)
+    (aStar : A)
+    (h₁ : topKSet u₁ 1 = ({aStar} : Finset A))
+    (h₂ : topKSet u₂ 1 = ({aStar} : Finset A)) :
+    let w₁ := coherentOptimizerWitness_of_exact_singleton_top1 u₁ aStar h₁
+    let w₂ := coherentOptimizerWitness_of_exact_singleton_top1 u₂ aStar h₂
+    w₁.belief.selection.choice = w₂.belief.selection.choice ∧
+      w₁.belief.selection.support = w₂.belief.selection.support := by
+  have hw₁ := coherentOptimizerWitness_of_exact_singleton_top1_choice u₁ aStar h₁
+  have hw₂ := coherentOptimizerWitness_of_exact_singleton_top1_choice u₂ aStar h₂
+  simp at hw₁ hw₂
+  aesop
+
+/-- Energy-form runtime bridge: if two coarse energy families each certify the
+    same singleton top-1 action `aStar` under their respective uniform error
+    bounds, then the induced coherent optimizer witnesses agree on the selected
+    action and support. This is the theorem-facing version of the runtime policy
+    that only trusts a richer score after shared singleton certification with a
+    simpler disambiguation score. -/
+theorem exact_energy_gap_certified_choice_agreement
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (e₁Exact e₁Coarse e₂Exact e₂Coarse : A → ℝ)
+    (aStar : A)
+    (δ₁ δ₂ : ℝ)
+    (hApprox₁ : ∀ x, |e₁Exact x - e₁Coarse x| ≤ δ₁)
+    (hApprox₂ : ∀ x, |e₂Exact x - e₂Coarse x| ≤ δ₂)
+    (hStrict₁ : ∀ b, b ≠ aStar → e₁Coarse aStar + 2 * δ₁ < e₁Coarse b)
+    (hStrict₂ : ∀ b, b ≠ aStar → e₂Coarse aStar + 2 * δ₂ < e₂Coarse b) :
+    let w₁ := coherentOptimizerWitness_of_exact_singleton_top1
+      (fun a => -e₁Exact a) aStar
+      (RankingPreservation.exact_top1_eq_singleton_of_coarse_energy_gap_margin
+        e₁Exact e₁Coarse aStar δ₁ hApprox₁ hStrict₁)
+    let w₂ := coherentOptimizerWitness_of_exact_singleton_top1
+      (fun a => -e₂Exact a) aStar
+      (RankingPreservation.exact_top1_eq_singleton_of_coarse_energy_gap_margin
+        e₂Exact e₂Coarse aStar δ₂ hApprox₂ hStrict₂)
+    w₁.belief.selection.choice = w₂.belief.selection.choice ∧
+      w₁.belief.selection.support = w₂.belief.selection.support := by
+  simpa using exact_singleton_top1_choice_agreement
+    (u₁ := fun a => -e₁Exact a)
+    (u₂ := fun a => -e₂Exact a)
+    (aStar := aStar)
+    (h₁ := RankingPreservation.exact_top1_eq_singleton_of_coarse_energy_gap_margin
+      e₁Exact e₁Coarse aStar δ₁ hApprox₁ hStrict₁)
+    (h₂ := RankingPreservation.exact_top1_eq_singleton_of_coarse_energy_gap_margin
+      e₂Exact e₂Coarse aStar δ₂ hApprox₂ hStrict₂)
+
 noncomputable def optimizerWitness_of_top1_branch
     {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
     (branch : CertifiedPruning.Top1PruningBranch)

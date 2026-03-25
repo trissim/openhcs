@@ -1,16 +1,17 @@
 """Certified action families for local optimization.
 
-Step size derivation (Lean: LipschitzStepBounds.lean):
-  - LS1: lipschitz_step_bound proves Δ ≤ ε/L guarantees |ΔU| ≤ ε
-  - LS2: For LJ potential, L ≈ 22 kcal/(mol·Å) at typical distances
-  - LS3: Translation step 0.5 Å is ~20× theoretical minimum but practical
-  - LS4: Rotation step π/12 rad (~15°) balances sampling and convergence
+Step-size control is theorem-driven rather than fixed by user heuristics:
+  - LS1: `lipschitz_step_bound` proves Δ ≤ ε/L guarantees |ΔU| ≤ ε
+  - LS2/LS3: `optimalTranslationStep` and its exact budget theorem
+  - LS5/LS6: lower Lipschitz constants induce exactly larger optimal steps
+  - SH8-SH14: dyadic shell rounds are chosen by least adequate joint resolution
 
 Adaptive step size from softened Lipschitz (PERF5):
   - softened_grid_speedup_ratio: L_soft ≤ L_raw → δ/L_raw ≤ δ/L_soft
   - When softened scoring has tighter Lipschitz, step can scale by L_raw/L_soft
   - Conditions: rSoft ≥ 0.8σ, rSoft ≤ σ (proven in SoftLJApproximation.lean)
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -212,9 +213,9 @@ def compute_adaptive_translation_step(
 
     All parameters are derived from molecular data, not heuristics:
       - epsilon_lj: LJ well depth from scoring._EPSILON_KCAL_MOL
-      - min_pairwise_sigma: min σ from Alvarez/Bondi pairwise table
-        (tightest constraint since rSoft must exceed 0.8 × σ)
-      - r_soft: softening radius = 0.5 × (min_rec_radius + min_lig_radius)
+      - min_pairwise_sigma: min pairwise σ from the runtime LJ scoring model
+      - r_soft: canonical theorem-valid maximal softening radius = σ
+        (derived as the largest theorem-valid softened radius)
 
     The raw LJ Lipschitz constant (LipschitzStepBounds.lean::typicalLipschitzConstant):
         L_raw = 762 × ε / σ
@@ -222,13 +223,16 @@ def compute_adaptive_translation_step(
     The softened Lipschitz constant (SoftLJApproximation.lean::softenedLipschitzConstant):
         L_soft = 24ε/rSoft × |2(σ/rSoft)¹² - (σ/rSoft)⁶|
 
-    Certified by PerformanceCertificates.lean::softened_grid_speedup_ratio:
-        L_soft ≤ L_raw → δ/L_raw ≤ δ/L_soft
+    Certified by LipschitzStepBounds / PerformanceCertificates:
+      - LS5: lower Lipschitz constant yields a weakly larger optimal step
+      - LS6: optimal steps scale exactly by L_raw / L_soft
+      - softened_grid_speedup_ratio: δ/L_raw ≤ δ/L_soft
 
     Conditions (SoftLJApproximation.lean):
       - rSoft ≥ 0.8σ (softenedLipschitz_le_rawLipschitz)
       - rSoft ≤ σ   (softenedLJ_lipschitzWith — gradient bound requires repulsive wall)
-    Returns base_step scaled by min(L_raw / L_soft, 4.0) when conditions hold.
+    Returns base_step scaled by the exact inverse-Lipschitz ratio L_raw / L_soft
+    when the softened constant is strictly tighter.
     """
     if (
         min_pairwise_sigma <= 0
@@ -243,8 +247,7 @@ def compute_adaptive_translation_step(
     l_raw = 762.0 * epsilon_lj / min_pairwise_sigma
     if l_soft <= 0 or l_soft >= l_raw:
         return base_step
-    # Cap at 4x to avoid overshooting (64× grid reduction in 3D)
-    scale = min(l_raw / l_soft, 4.0)
+    scale = l_raw / l_soft
     return base_step * scale
 
 
@@ -261,8 +264,11 @@ def create_roundwise_certified_action_family(
 
     Lipschitz bounds (Lean: LipschitzStepBounds.lean):
       - LS1: lipschitz_step_bound guarantees |ΔU| ≤ ε for step ≤ ε/L
-      - LS3: base_translation_step=0.5Å is empirically tuned (LS3)
-      - LS4: base_rotation_step=π/12 balances exploration/exploitation (LS4)
+      - LS2/LS3: the caller can derive a translation step from ε/L exactly
+      - LS5/LS6: softened scoring scales that step by the inverse Lipschitz ratio
+
+    The base translation and rotation steps are therefore caller-supplied derived
+    quantities, not fixed local-family heuristics.
     """
     if round_index < 0:
         raise ValueError("round_index must be non-negative")
@@ -282,6 +288,57 @@ def create_roundwise_certified_action_family(
     if len(families) == 1:
         return families[0]
     return merge_certified_action_families(families)
+
+
+def least_adequate_dyadic_round(base_step: float, target_step: float) -> int:
+    """Canonical least dyadic round whose translation step is <= target.
+
+    Lean: SupportExpansion.lean
+      - SH8 leastAdequateDyadicRound_spec
+      - SH9 leastAdequateDyadicRound_minimal
+
+    This deliberately uses the same semantics as the Lean definition: keep
+    halving until the dyadic translation step is small enough, and return the
+    first round that satisfies the target.
+    """
+    if base_step < 0.0:
+        raise ValueError(f"base_step must be nonnegative, got {base_step}")
+    if target_step <= 0.0:
+        raise ValueError(f"target_step must be positive, got {target_step}")
+
+    round_index = 0
+    current_step = float(base_step)
+    while current_step > target_step:
+        current_step /= 2.0
+        round_index += 1
+    return round_index
+
+
+def least_positive_adequate_dyadic_round(base_step: float, target_step: float) -> int:
+    """Canonical least positive dyadic round whose step is <= target.
+
+    Lean: SupportExpansion.lean
+      - SH10 leastPositiveAdequateDyadicRound_spec
+      - SH11 leastPositiveAdequateDyadicRound_minimal
+    """
+    return max(1, least_adequate_dyadic_round(base_step, target_step))
+
+
+def least_positive_joint_adequate_dyadic_round(
+    base_step_1: float,
+    base_step_2: float,
+    target_step: float,
+) -> int:
+    """Canonical least positive round satisfying two dyadic step constraints.
+
+    Lean: SupportExpansion.lean
+      - SH12 leastPositiveJointAdequateDyadicRound_spec
+      - SH13 leastPositiveJointAdequateDyadicRound_minimal
+    """
+    return max(
+        least_positive_adequate_dyadic_round(base_step_1, target_step),
+        least_positive_adequate_dyadic_round(base_step_2, target_step),
+    )
 
 
 def apply_local_action(

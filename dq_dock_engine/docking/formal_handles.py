@@ -228,7 +228,7 @@ def additive_nonbonded_theorem_handles() -> tuple[str, ...]:
 
 
 def directional_hbond_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(HB1, HB2, HB3, HB4, HB5, HB6, HB7, HB8)
+    return _selected_handles(HB1, HB2, HB3, HB4, HB5, HB6, HB7, HB8, HB13, HB14)
 
 
 def directional_hbond_finite_theorem_handles() -> tuple[str, ...]:
@@ -318,7 +318,26 @@ def support_expansion_theorem_handles() -> tuple[str, ...]:
 
 
 def conformer_search_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(CS1, CS2, CS3, CS4, CS5, CS6, CS7, CS8, CS9, GAP2)
+    return _selected_handles(
+        CS1,
+        CS2,
+        CS3,
+        CS4,
+        CS5,
+        CS6,
+        CS7,
+        CS8,
+        CS9,
+        CS10,
+        CS12,
+        CS13,
+        CS14,
+        "CS11",
+        "CSC43",
+        "CSC44",
+        "CSC50",
+        "GAP2",
+    )
 
 
 def ligand_strain_theorem_handles() -> tuple[str, ...]:

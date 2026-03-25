@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import math
 
 import jax.numpy as jnp
 import jax.tree_util
@@ -25,6 +26,7 @@ from dq_dock_engine.docking.scoring import (
     CertifiedRealSpaceEwaldSpec,
     CertifiedRichChemistryPlan,
     CertifiedSoftenedBatchResult,
+    score_certified_directional_hbond_batch,
     score_certified_batch,
     score_certified_rich_chemistry_batch,
     score_certified_softened_lj,
@@ -97,6 +99,165 @@ class CertifiedScoringContext:
     @property
     def uses_extended_rich(self) -> bool:
         return self.exact_chemistry_mode == ExactChemistryMode.EXTENDED_RICH
+
+    def optimization_context(self) -> "CertifiedScoringContext":
+        """Base-physics context for certified local optimization.
+
+        The formal optimizer should search on the smooth certified base physics
+        objective (LJ with optional real-space Ewald electrostatics), then hand
+        the resulting candidate poses to the full exact scorer for final ranking.
+
+        This intentionally strips extended-rich anisotropic channels, water
+        bridges, and receptor-flex ensemble corrections from the optimization
+        loop while preserving the theorem-backed base physics objective.
+        """
+        if (
+            self.exact_chemistry_mode == ExactChemistryMode.NONE
+            and self.rich_chemistry_plan is None
+            and self.water_grid is None
+            and self.receptor_conformations is None
+        ):
+            return self
+        return CertifiedScoringContext(
+            exact_chemistry_mode=ExactChemistryMode.NONE,
+            electrostatics=self.electrostatics,
+        )
+
+    def rich_orientation_disambiguation_active(self) -> bool:
+        """Whether theorem-backed directional chemistry can break flip symmetry.
+
+        For the current certified runtime, directional H-bond channels are the
+        only mechanized orientation-breaking signal we rely on to let the richer
+        chemistry objective decide between rigidly equivalent pose families.
+        """
+        if not self.uses_extended_rich or self.rich_chemistry_plan is None:
+            return False
+        return bool(np.asarray(self.rich_chemistry_plan.has_active_directional_hbond))
+
+    def ranking_context(self) -> "CertifiedScoringContext":
+        """Final ranking context respecting current flip-disambiguation proofs."""
+        if self.rich_orientation_disambiguation_active():
+            return self
+        return self.optimization_context()
+
+    def pruning_context(self) -> "CertifiedScoringContext":
+        """Certified top-1 pruning context.
+
+        For extended-rich scoring, the final winner is only allowed to deviate
+        from the H-bond-backed orientation-disambiguation objective when the
+        richer chemistry score is proven to share the same singleton top-1.
+        Certified pruning therefore targets the disambiguation score family
+        directly, which gives a substantially tighter theorem-backed delta than
+        pruning against the full rich stack.
+        """
+        if not self.uses_extended_rich or self.rich_chemistry_plan is None:
+            return self
+        return CertifiedScoringContext(
+            exact_chemistry_mode=ExactChemistryMode.EXTENDED_RICH,
+            electrostatics=self.electrostatics,
+            rich_chemistry_plan=self.rich_chemistry_plan.disambiguation_plan(),
+            water_grid=None,
+            receptor_conformations=None,
+        )
+
+    def uses_batch_pruning_delta(self) -> bool:
+        """Whether the batch's exact-vs-coarse discrepancy is complete and usable.
+
+        For full rich chemistry with omitted channels, waters, or receptor-flex
+        corrections, the analytic theorem-backed delta is still required. For the
+        stripped pruning context, every active channel already reports the exact
+        finite-batch max discrepancy, so the batch delta is both valid and much
+        tighter.
+        """
+        if not self.uses_extended_rich or self.rich_chemistry_plan is None:
+            return True
+        if self.water_grid is not None or self.receptor_conformations is not None:
+            return False
+        if self.rich_chemistry_plan.cooperative_alpha != 0.0:
+            return False
+        if bool(np.asarray(self.rich_chemistry_plan.contact.is_active)):
+            return False
+        if bool(np.asarray(self.rich_chemistry_plan.metal_coordination.is_active)):
+            return False
+        if bool(np.asarray(self.rich_chemistry_plan.has_active_extended_terms)):
+            return False
+        return True
+
+    def pruning_softening_matches_exact(self, softening_radius: float | None) -> bool:
+        if not self.uses_batch_pruning_delta() or self.rich_chemistry_plan is None:
+            return False
+        exact_softening = self.rich_chemistry_plan.default_softening_radius()
+        resolved_softening = (
+            exact_softening if softening_radius is None else softening_radius
+        )
+        return math.isclose(
+            resolved_softening,
+            exact_softening,
+            rel_tol=1e-6,
+            abs_tol=1e-6,
+        )
+
+    def score_flip_disambiguation_batch(
+        self,
+        *,
+        receptor_coords: jnp.ndarray,
+        poses_coords: jnp.ndarray,
+        receptor_radii: jnp.ndarray,
+        ligand_radii: jnp.ndarray,
+        target_error: float,
+        epsilon: float,
+    ) -> CertifiedBatchResult:
+        """Base physics plus directional H-bond channels only.
+
+        This is the strongest currently mechanized orientation-breaking score we
+        trust to distinguish native from 180-degree flip families. It excludes
+        richer anisotropic channels such as pi-stacking from winner selection
+        unless they agree with the H-bond-supported ranking.
+        """
+        base_result = self.optimization_context().score_exact_batch(
+            receptor_coords=receptor_coords,
+            poses_coords=poses_coords,
+            receptor_radii=receptor_radii,
+            ligand_radii=ligand_radii,
+            target_error=target_error,
+            epsilon=epsilon,
+        )
+        if not self.uses_extended_rich or self.rich_chemistry_plan is None:
+            return base_result
+
+        hbond_receptor_donor = score_certified_directional_hbond_batch(
+            receptor_coords,
+            poses_coords,
+            self.rich_chemistry_plan.hbond_receptor_donor,
+        )
+        hbond_ligand_donor = score_certified_directional_hbond_batch(
+            receptor_coords,
+            poses_coords,
+            self.rich_chemistry_plan.hbond_ligand_donor,
+        )
+        return CertifiedBatchResult(
+            scores=(
+                base_result.scores
+                - hbond_receptor_donor.scores
+                - hbond_ligand_donor.scores
+            ),
+            error_bound=(
+                base_result.error_bound
+                + hbond_receptor_donor.error_bound
+                + hbond_ligand_donor.error_bound
+            ),
+            target_error=base_result.target_error,
+            cutoff_radius=jnp.max(
+                jnp.stack(
+                    [
+                        jnp.asarray(base_result.cutoff_radius),
+                        jnp.asarray(hbond_receptor_donor.cutoff_radius),
+                        jnp.asarray(hbond_ligand_donor.cutoff_radius),
+                    ],
+                    axis=0,
+                )
+            ),
+        )
 
     def analytic_pruning_delta(self) -> float:
         """Batch-size-independent certified pruning delta.

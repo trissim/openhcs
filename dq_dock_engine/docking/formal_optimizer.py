@@ -100,10 +100,10 @@ def active_pruning_branch(state: CertifiedOptimizerState) -> Top1PruningBranch:
 @functools.partial(
     jax.jit,
     static_argnames=(
-        "max_coarse_receptor_atoms",
         "use_softened_coarse",
         "target_error",
         "coarse_target_error",
+        "binding_site_radius",
     ),
 )
 def _refine_round_jit_core(
@@ -117,18 +117,25 @@ def _refine_round_jit_core(
     translation_deltas: jax.Array,
     quaternion_deltas: jax.Array,
     prior_spec: CertifiedPriorSpec,
-    max_coarse_receptor_atoms: int,
     retained_indices: jax.Array,
     scoring_context: CertifiedScoringContext | None = None,
+    binding_site_center: jax.Array | None = None,
+    binding_site_radius: float = -1.0,
     use_softened_coarse: bool = False,
 ):
     n_poses, n_atoms, _ = coords_batch.shape
     n_actions = translation_deltas.shape[0]
 
     candidate_batches = jax.vmap(
-        lambda pose_coords: jax.vmap(
-            lambda t, q: rigid_transform_3d(pose_coords, q, t), in_axes=(0, 0)
-        )(translation_deltas, quaternion_deltas),
+        lambda pose_coords: (
+            lambda center, centered: jax.vmap(
+                lambda t, q: rigid_transform_3d(centered, q, t) + center,
+                in_axes=(0, 0),
+            )(translation_deltas, quaternion_deltas)
+        )(
+            jnp.mean(pose_coords, axis=0),
+            pose_coords - jnp.mean(pose_coords, axis=0),
+        ),
         in_axes=0,
     )(coords_batch)
 
@@ -144,12 +151,40 @@ def _refine_round_jit_core(
         ligand_radii=ligand_radii,
         candidate_batches=candidate_batches,
         target_error=target_error,
-        max_receptor_atoms=max_coarse_receptor_atoms,
         translation_step=translation_step,
+        retained_indices=retained_indices,
         coarse_target_error=coarse_target_error,
         scoring_context=scoring_context,
         use_softened_coarse=use_softened_coarse,
     )
+
+    if binding_site_radius > 0.0 and binding_site_center is not None:
+        candidate_centers = jnp.mean(candidate_batches, axis=2)
+        feasible_mask = (
+            jnp.linalg.norm(
+                candidate_centers - binding_site_center[None, None, :],
+                axis=-1,
+            )
+            <= binding_site_radius
+        )
+        invalid_exact = jnp.asarray(
+            jnp.finfo(exact_scores_matrix.dtype).max / 4.0,
+            dtype=exact_scores_matrix.dtype,
+        )
+        invalid_coarse = jnp.asarray(
+            jnp.finfo(coarse_scores_matrix.dtype).max / 4.0,
+            dtype=coarse_scores_matrix.dtype,
+        )
+        exact_scores_matrix = jnp.where(
+            feasible_mask,
+            exact_scores_matrix,
+            invalid_exact,
+        )
+        coarse_scores_matrix = jnp.where(
+            feasible_mask,
+            coarse_scores_matrix,
+            invalid_coarse,
+        )
 
     return {
         "candidate_batches": candidate_batches,
@@ -172,9 +207,10 @@ def _refine_round(
     base_rotation_step_rad: float,
     support_expansion_level: int,
     prior_spec: CertifiedPriorSpec,
-    max_coarse_receptor_atoms: int,
     retained_indices: jax.Array,
     scoring_context: CertifiedScoringContext | None = None,
+    binding_site_center: jax.Array | None = None,
+    binding_site_radius: float = -1.0,
     use_softened_coarse: bool = False,
 ) -> tuple[jax.Array, tuple[CertifiedOptimizerState, ...]]:
     action_family = create_roundwise_certified_action_family(
@@ -202,9 +238,10 @@ def _refine_round(
         translation_deltas=action_family.translation_deltas,
         quaternion_deltas=action_family.quaternion_deltas,
         prior_spec=prior_spec,
-        max_coarse_receptor_atoms=max_coarse_receptor_atoms,
         retained_indices=retained_indices,
         scoring_context=presubsetted_context,
+        binding_site_center=binding_site_center,
+        binding_site_radius=binding_site_radius,
         use_softened_coarse=use_softened_coarse,
     )
 
@@ -305,63 +342,94 @@ def refine_poses_certified(
     ligand_radii: jax.Array,
     n_rounds: int,
     target_error: float,
-    coarse_target_error: float = 0.004,
-    base_translation_step: float = 0.5,  # Certified by LS1, LS3 (Lipschitz bound)
-    base_rotation_step_rad: float = jnp.pi / 12.0,  # Certified by LS1, LS4
+    base_translation_step: float,
+    base_rotation_step_rad: float,
+    coarse_target_error: float | None = None,
     prior_spec: CertifiedPriorSpec | None = None,
-    max_coarse_receptor_atoms: int = 64,
     scoring_context: CertifiedScoringContext | None = None,
+    binding_site_center: jax.Array | None = None,
+    binding_site_radius: float = -1.0,
     use_softened_coarse: bool = False,
     adaptive_coarse_target_errors: tuple[float, ...] | None = None,
 ) -> tuple[jax.Array, tuple[tuple[CertifiedOptimizerState, ...], ...]]:
     if n_rounds <= 0:
         raise ValueError("n_rounds must be positive")
+    effective_coarse_target_error = (
+        target_error if coarse_target_error is None else coarse_target_error
+    )
     current_coords = coords_batch
     history: list[tuple[CertifiedOptimizerState, ...]] = []
-    support_expansion_level = 0
     effective_prior_spec = (
         CertifiedPriorSpec(kind="uniform") if prior_spec is None else prior_spec
     )
+    support_expansion_levels = np.zeros((int(coords_batch.shape[0]),), dtype=np.int32)
 
-    # Precompute a stable receptor subset once on the host
-    # and use it for all rounds to ensure JIT-safe static shapes.
-    retained_indices = select_exact_receptor_subset_for_local_family(
-        receptor_coords=receptor_coords,
-        receptor_radii=receptor_radii,
-        reference_coords_batch=current_coords,
-        ligand_radii=ligand_radii,
-        translation_step=base_translation_step,
-        target_error=target_error,
-    )
+    # Use the full receptor in the exact local optimizer. The earlier shared
+    # batch-level subset was a performance shortcut, but it made refinement
+    # outcome depend on which unrelated poses happened to be optimized in the
+    # same batch. For correctness-first certified refinement, keep the local
+    # exact scorer batch-independent and let pipeline-level chunking absorb the
+    # runtime cost.
+    retained_indices = np.arange(receptor_coords.shape[0], dtype=np.int32)
     retained_indices_jax = jnp.array(retained_indices)
 
     for round_index in range(n_rounds):
-        current_coords, states = _refine_round(
-            coords_batch=current_coords,
-            receptor_coords=receptor_coords,
-            receptor_radii=receptor_radii,
-            ligand_radii=ligand_radii,
-            target_error=target_error,
-            coarse_target_error=coarse_target_error,
-            round_index=round_index,
-            base_translation_step=base_translation_step,
-            base_rotation_step_rad=float(base_rotation_step_rad),
-            support_expansion_level=support_expansion_level,
-            prior_spec=effective_prior_spec,
-            max_coarse_receptor_atoms=max_coarse_receptor_atoms,
-            retained_indices=retained_indices_jax,
-            scoring_context=scoring_context,
-            use_softened_coarse=use_softened_coarse,
+        next_coords_rows: list[jax.Array | None] = [None] * int(current_coords.shape[0])
+        round_states: list[CertifiedOptimizerState | None] = [None] * int(
+            current_coords.shape[0]
         )
+
+        for support_expansion_level in sorted(set(support_expansion_levels.tolist())):
+            pose_indices = np.flatnonzero(
+                support_expansion_levels == support_expansion_level
+            )
+            if pose_indices.size == 0:
+                continue
+            group_indices = jnp.asarray(pose_indices, dtype=jnp.int32)
+            next_group_coords, group_states = _refine_round(
+                coords_batch=current_coords[group_indices],
+                receptor_coords=receptor_coords,
+                receptor_radii=receptor_radii,
+                ligand_radii=ligand_radii,
+                target_error=target_error,
+                coarse_target_error=effective_coarse_target_error,
+                round_index=round_index,
+                base_translation_step=base_translation_step,
+                base_rotation_step_rad=float(base_rotation_step_rad),
+                support_expansion_level=int(support_expansion_level),
+                prior_spec=effective_prior_spec,
+                retained_indices=retained_indices_jax,
+                scoring_context=scoring_context,
+                binding_site_center=binding_site_center,
+                binding_site_radius=binding_site_radius,
+                use_softened_coarse=use_softened_coarse,
+            )
+            for local_idx, pose_idx in enumerate(pose_indices.tolist()):
+                next_coords_rows[pose_idx] = next_group_coords[local_idx]
+                round_states[pose_idx] = group_states[local_idx]
+
+        assert all(coords is not None for coords in next_coords_rows)
+        assert all(state is not None for state in round_states)
+        current_coords = jnp.stack(
+            [coords for coords in next_coords_rows if coords is not None]
+        )
+        states = tuple(state for state in round_states if state is not None)
         history.append(states)
 
         if all(_noop_is_unique_admissible_action(s) for s in states):
             break
 
-        if any(_has_non_singleton_ambiguity(state) for state in states):
-            support_expansion_level += 1
-        else:
-            support_expansion_level = 0
+        support_expansion_levels = np.asarray(
+            [
+                prev + 1 if _has_non_singleton_ambiguity(state) else 0
+                for prev, state in zip(
+                    support_expansion_levels.tolist(),
+                    states,
+                    strict=True,
+                )
+            ],
+            dtype=np.int32,
+        )
 
     return current_coords, tuple(history)
 
@@ -373,12 +441,13 @@ def refine_poses_singleton_then_exact(
     ligand_radii: jax.Array,
     n_rounds: int,
     target_error: float,
-    coarse_target_error: float = 0.004,
-    base_translation_step: float = 0.5,  # Certified by LS1, LS3
-    base_rotation_step_rad: float = jnp.pi / 12.0,  # Certified by LS1, LS4
+    base_translation_step: float,
+    base_rotation_step_rad: float,
+    coarse_target_error: float | None = None,
     prior_spec: CertifiedPriorSpec | None = None,
-    max_coarse_receptor_atoms: int = 64,
     scoring_context: CertifiedScoringContext | None = None,
+    binding_site_center: jax.Array | None = None,
+    binding_site_radius: float = -1.0,
     use_softened_coarse: bool = False,
     adaptive_coarse_target_errors: tuple[float, ...] | None = None,
 ) -> HybridSingletonRefinementResult:
@@ -393,8 +462,9 @@ def refine_poses_singleton_then_exact(
         base_translation_step=base_translation_step,
         base_rotation_step_rad=base_rotation_step_rad,
         prior_spec=prior_spec,
-        max_coarse_receptor_atoms=max_coarse_receptor_atoms,
         scoring_context=scoring_context,
+        binding_site_center=binding_site_center,
+        binding_site_radius=binding_site_radius,
         use_softened_coarse=use_softened_coarse,
         adaptive_coarse_target_errors=adaptive_coarse_target_errors,
     )

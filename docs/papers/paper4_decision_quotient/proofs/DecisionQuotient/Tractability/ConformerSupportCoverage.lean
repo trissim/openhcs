@@ -309,6 +309,22 @@ theorem rmsd_cover_yields_library_approxOptimal
     linarith
   linarith
 
+/-- Runtime-facing bridge: an RMSD target `ε` induces an energy-resolution budget
+    `L * ε` whenever the exact energy is `L`-Lipschitz with respect to RMSD. This
+    is the direct theorem used to derive certified score-resolution budgets from
+    `target_rmsd`. -/
+theorem energyBudget_of_rmsdTarget
+    {n : ℕ}
+    (energy : CoordSet n → ℝ)
+    (L ε : ℝ)
+    (hL : 0 ≤ L)
+    (hLip : RMSDLipschitzEnergy energy L)
+    {x y : CoordSet n}
+    (hrmsd : rmsd x y ≤ ε) :
+    |energy x - energy y| ≤ L * ε := by
+  have hAbs : |energy x - energy y| ≤ L * rmsd x y := hLip x y
+  exact le_trans hAbs (mul_le_mul_of_nonneg_left hrmsd hL)
+
 /-- A finite support family of cell centers epsilon-covers parameter space when
     every parameter point lies in at least one supported hypercube cell. -/
 def HypercubeSupportCovers
@@ -1975,6 +1991,22 @@ theorem max_uniform_cells_bound
     exact ⟨c, hcMem, fun i => le_trans (hcDist i) hStep⟩
   -- Part B: Cardinality — tensor product of (S+1)-element 1D supports
   · exact le_of_eq (uniformArithmeticCentersPi_tensor_card N S hS_pos)
+
+/-- The binary branch-and-bound cell budget induced by a certified finite support
+    of size `B`. A full binary refinement tree with `B` leaf cells evaluates at
+    most `2 * B - 1` cell centers. Combined with `max_uniform_cells_bound`, this
+    yields a theorem-backed absolute ceiling for the runtime `max_cells` budget. -/
+theorem max_binary_cells_bound
+    (N : ℕ)
+    (ε : ℝ)
+    (hε : 0 < ε) :
+    ∃ (support : Finset (Fin N → ℝ)),
+      (∀ p : Fin N → ℝ, (∀ i, -Real.pi ≤ p i ∧ p i ≤ Real.pi) →
+        ∃ c ∈ support, ∀ i, |p i - c i| ≤ ε) ∧
+      (2 * support.card - 1 ≤ 2 * ((⌈2 * Real.pi / ε⌉₊ + 1) ^ N) - 1) := by
+  rcases max_uniform_cells_bound N ε hε with ⟨support, hCover, hCard⟩
+  refine ⟨support, hCover, ?_⟩
+  omega
 
 end ConformerSupportCoverage
 end Tractability

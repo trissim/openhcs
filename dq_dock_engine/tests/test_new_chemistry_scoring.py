@@ -205,6 +205,15 @@ def test_new_chemistry_handle_helpers_surface_new_theorem_families() -> None:
         "CS7",
         "CS8",
         "CS9",
+        "CS10",
+        "CS11",
+        "CS12",
+        "CS13",
+        "CS14",
+        "CSC43",
+        "CSC44",
+        "CSC50",
+        "GAP2",
     }
     assert set(cross_docking_theorem_handles()) == {
         "XD1",

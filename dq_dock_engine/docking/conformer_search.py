@@ -20,6 +20,7 @@ import heapq
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
 import jax
@@ -61,8 +62,12 @@ def compute_raw_lj_lipschitz(epsilon_lj: float, min_pairwise_sigma: float) -> fl
     r = (26/7)^(1/6) × σ ≈ 0.8σ. The coefficient 762 comes from evaluating
     |dU/dr| at that point: 762 = 24 × |2×(7/26)^2 - (7/26)|  × (26/7)^(1/6).
     """
-    if min_pairwise_sigma <= 0 or epsilon_lj <= 0:
-        return 22.0  # safe fallback
+    if min_pairwise_sigma <= 0:
+        raise ValueError(
+            f"min_pairwise_sigma must be positive, got {min_pairwise_sigma}"
+        )
+    if epsilon_lj <= 0:
+        raise ValueError(f"epsilon_lj must be positive, got {epsilon_lj}")
     return 762.0 * epsilon_lj / min_pairwise_sigma
 
 
@@ -70,10 +75,10 @@ def compute_raw_lj_lipschitz(epsilon_lj: float, min_pairwise_sigma: float) -> fl
 class BranchAndBoundConfig:
     """Configuration for the branch-and-bound conformer search."""
 
-    max_cells: int = 200
-    min_cell_radius: float = 0.05
-    score_lipschitz_constant: float = 22.0
-    max_conformers: int = 10
+    max_cells: int
+    min_cell_radius: float
+    score_lipschitz_constant: float
+    max_conformers: int
     per_bond_lipschitz: tuple[float, ...] | None = None
     reuse_initial_conformer: bool = False
 
@@ -188,7 +193,15 @@ class RigidBodyKinematics(KinematicMap):
 
         quaternion = params[:4]
         translation = params[4:7]
-        return rigid_transform_3d(base_coords, quaternion, translation)
+
+        # Gap B: Normalize quaternion to ensure rigid transform is an isometry (K=1)
+        # Without normalization, distances aren't preserved and pruning certificates break
+        quat_norm = jnp.linalg.norm(quaternion)
+        quaternion_normalized = quaternion / (
+            quat_norm + 1e-8
+        )  # Add epsilon to avoid div by zero
+
+        return rigid_transform_3d(base_coords, quaternion_normalized, translation)
 
 
 @dataclass(frozen=True)
@@ -299,9 +312,19 @@ class TorsionCell(SearchCell):
         """Split cell by bisecting the dimension with largest slack contribution.
 
         When per_dim_lipschitz is provided, bisects argmax(Lᵢ × widthᵢ) —
-        the dimension contributing most to the lower bound slack. This is
-        certified by ConformerSearch.lean::weighted_l1_targeted_subdivision
-        to maximally tighten the bound.
+        the dimension contributing most to the lower bound slack.
+
+        Certified by:
+          - ConformerSearch.lean::weighted_l1_argmax_subdivision_optimal
+          - ConformerSearch.lean::weighted_l1_subdivision_strict_of_positive_contribution
+          - ConformerSearch.lean::weighted_l1_argmax_subdivision_strict_progress
+          - ConformerSearch.lean::weighted_l1_argmax_subdivision_contraction
+
+        So the argmax weighted-slack split is theorem-backed as the best
+        one-step coordinate bisection among single-dimension splits, and it
+        strictly decreases weighted slack whenever the chosen contribution is
+        positive, with an explicit worst-case contraction factor available for
+        runtime convergence budgets.
 
         Falls back to bisecting the widest dimension when no weights given.
         """
@@ -615,9 +638,6 @@ class _PrioritizedCell:
 # (N_lig, N_rec) pair, then every subsequent call is a cache hit.
 _BB_PAD_SIZE = 128
 _BB_BATCH_SIZE = _BB_PAD_SIZE
-# Lean: canonicalSeedBudgetCost_mono — terminate early when no new
-# conformers are found, since larger budgets never decrease total cost.
-_BB_STAGNATION_LIMIT = 50
 
 
 def branch_and_bound_search(
@@ -696,15 +716,16 @@ def branch_and_bound_search(
             insertion_counter += 1
 
     cells_evaluated = 1
-    steps_since_new_conformer = 0
     while heap and cells_evaluated < config.max_cells:
-        # --- Collect a batch of unpruned cells from the heap ---
+        # --- Collect a batch of cells from the heap ---
+        # NOTE: No pruning at heap-pop. The priority is an optimistic estimate
+        # derived from the *parent* cell's energy, not the child's own center.
+        # Only the post-evaluation check (CS5: energy_conformer_dominated) is
+        # a certified bound — it uses the cell's own evaluated center energy.
         batch_cells: list[SearchCell] = []
         batch_limit = _BB_BATCH_SIZE if use_batch else 1
         while heap and len(batch_cells) < batch_limit:
             entry = heapq.heappop(heap)
-            if entry.priority > best_energy:
-                continue
             batch_cells.append(entry.cell)
 
         if not batch_cells:
@@ -762,7 +783,6 @@ def branch_and_bound_search(
 
             if cell.radius() < config.min_cell_radius:
                 leaf_conformers.append((center_energy, center_coords_i))
-                steps_since_new_conformer = 0
                 continue
 
             for child in _subdivide(cell):
@@ -778,35 +798,63 @@ def branch_and_bound_search(
                 )
                 insertion_counter += 1
 
-            steps_since_new_conformer += 1
+    # --- THEOREM-BACKED DEDUPLICATION (CSC43) ---
+    # Theorem CSC43: If we deduplicate conformers within distance τ of the
+    # B&B cell centers (which form an ε-cover), the resulting set is an (ε + τ)-cover.
 
-        if steps_since_new_conformer >= _BB_STAGNATION_LIMIT and leaf_conformers:
-            break
+    # B&B stops at min_cell_radius (parameter space resolution in radians).
+    # Kinematics Lipschitz constant K converts parameter distance to coordinate distance.
+    # Therefore coordinate space resolution = K * min_cell_radius.
 
-    # Collect best conformers, deduplicated by energy
+    # τ = kinematics.lipschitz_constant * config.min_cell_radius ensures we only
+    # merge conformers that could be from the same true optimum region, introducing
+    # no additional unverified slack beyond what B&B already guarantees.
+
+    tau_rmsd = kinematics.lipschitz_constant * config.min_cell_radius
+
     leaf_conformers.sort(key=lambda x: x[0])
     unique: list[tuple[float, jnp.ndarray]] = []
+
     for energy, coords in leaf_conformers:
         if len(unique) >= config.max_conformers:
             break
+
         is_duplicate = False
-        for existing_energy, existing_coords in unique:
-            if abs(energy - existing_energy) < 0.01:
-                rmsd = float(jnp.sqrt(jnp.mean((coords - existing_coords) ** 2)))
-                if rmsd < 0.1:
-                    is_duplicate = True
-                    break
+        for _, existing_coords in unique:
+            # Theorem CSC43: Deduplication preserves the epsilon-cover up to tau.
+            # Since tau is exactly our derived search resolution, we introduce no unverified slack.
+            diff = coords - existing_coords
+            rmsd = float(jnp.sqrt(jnp.mean(diff**2)))
+
+            if rmsd <= tau_rmsd:
+                is_duplicate = True
+                break
+
         if not is_duplicate:
             unique.append((energy, coords))
 
     if not unique:
-        fallback_energy = root_energy if not np.isfinite(best_energy) else best_energy
-        fallback_coords = center_coords if not np.isfinite(best_energy) else best_coords
-        unique.append((fallback_energy, fallback_coords))
+        raise ValueError(
+            "Certified conformer search produced no finite leaf conformers; "
+            "refine the derived search budget or inspect the scoring function"
+        )
 
     theorem_handles = tuple(
         dict.fromkeys(
-            ("CS2", "CS5", "CS6", "CS8", "CS9", "GAP2")
+            (
+                "CS2",
+                "CS5",
+                "CS6",
+                "CS8",
+                "CS9",
+                "CS10",
+                "CS11",
+                "CS12",
+                "CS13",
+                "CS14",
+                "CSC43",
+                "GAP2",
+            )
             + branch_and_bound_cross_docking_handles()
             + (
                 ("LSA1", "LSA3", "LSA5", "LSA7", "XD5", "XD6", "XD7", "XD8")
@@ -833,8 +881,11 @@ class TorsionStrainParams:
     """Per-bond torsion strain parameters for certified strain scoring.
 
     barrier_heights: (n_bonds,) Vk values in kcal/mol
-    multiplicities: (n_bonds,) periodicity n (typically 1, 2, or 3)
+    multiplicities: (n_bonds,) periodicity n
     phases: (n_bonds,) equilibrium phase φ₀ in radians
+
+    These parameters must come from an explicit physical/empirical source.
+    The certified engine intentionally does not fabricate generic defaults.
     """
 
     barrier_heights: jnp.ndarray
@@ -842,17 +893,75 @@ class TorsionStrainParams:
     phases: jnp.ndarray
 
 
-def default_torsion_strain_params(n_bonds: int) -> TorsionStrainParams:
-    """Build default torsion strain parameters for detected rotatable bonds.
+def derive_uff_torsion_barrier_heights(
+    ligand_source_path: str | Path | None,
+    expected_elements: tuple[str, ...],
+    rotatable_bonds: tuple[RotatableBond, ...],
+) -> jnp.ndarray | None:
+    """Derive per-bond torsion barrier heights from an explicit UFF source.
 
-    Uses generic sp3-sp3 single bond parameters:
-      Vk = 1.0 kcal/mol, n = 3, φ₀ = 0 (staggered preferred)
+    This does not invent generic torsion parameters. It uses RDKit's UFF torsion
+    barrier API on the actual ligand source and returns the maximum available
+    barrier for each heavy-atom rotatable bond over all neighbor quadruples.
+    If no explicit physical source is available, returns `None`.
     """
-    return TorsionStrainParams(
-        barrier_heights=jnp.ones(n_bonds, dtype=jnp.float32),
-        multiplicities=jnp.full(n_bonds, 3.0, dtype=jnp.float32),
-        phases=jnp.zeros(n_bonds, dtype=jnp.float32),
+    if ligand_source_path is None or not rotatable_bonds:
+        return None
+
+    from rdkit import Chem
+    from rdkit.Chem import AllChem, rdForceFieldHelpers
+
+    source_path = Path(ligand_source_path)
+    mol = Chem.MolFromPDBFile(str(source_path), removeHs=False)
+    if mol is None:
+        return None
+    mol = Chem.AddHs(mol, addCoords=True)
+
+    heavy_indices = [
+        atom.GetIdx() for atom in mol.GetAtoms() if atom.GetAtomicNum() > 1
+    ]
+    heavy_elements = tuple(
+        _normalize_element(mol.GetAtomWithIdx(atom_idx).GetSymbol())
+        for atom_idx in heavy_indices
     )
+    normalized_expected = tuple(
+        _normalize_element(element) for element in expected_elements
+    )
+    if heavy_elements != normalized_expected:
+        raise ValueError(
+            "UFF torsion parameter derivation changed heavy-atom ordering; "
+            f"expected {normalized_expected} but got {heavy_elements}"
+        )
+
+    barrier_heights: list[float] = []
+    for bond in rotatable_bonds:
+        atom_i = heavy_indices[bond.atom_i]
+        atom_j = heavy_indices[bond.atom_j]
+        neighbors_i = [
+            nbr.GetIdx()
+            for nbr in mol.GetAtomWithIdx(atom_i).GetNeighbors()
+            if nbr.GetIdx() != atom_j
+        ]
+        neighbors_j = [
+            nbr.GetIdx()
+            for nbr in mol.GetAtomWithIdx(atom_j).GetNeighbors()
+            if nbr.GetIdx() != atom_i
+        ]
+
+        barrier_candidates: list[float] = []
+        for atom_k in neighbors_i:
+            for atom_l in neighbors_j:
+                barrier = rdForceFieldHelpers.GetUFFTorsionParams(
+                    mol, atom_k, atom_i, atom_j, atom_l
+                )
+                if barrier is not None:
+                    barrier_candidates.append(abs(float(barrier)))
+
+        if not barrier_candidates:
+            return None
+        barrier_heights.append(max(barrier_candidates))
+
+    return jnp.asarray(barrier_heights, dtype=jnp.float32)
 
 
 def _build_strain_fn(
@@ -893,15 +1002,14 @@ def search_conformers(
     evaluated in batches for dramatically reduced JAX dispatch overhead.
 
     When strain_params is provided (or auto-generated), torsion strain is
-    added to the energy at each candidate conformation. Certified by
-    LSA3 (strain_preserves_uniformApprox) and LSA7 (strain_aware_conformer_dominated).
+    added to the energy at each candidate conformation. The certified engine no
+    longer auto-generates generic torsion strain parameters; callers must supply
+    an explicit physically grounded strain model if they want strain-augmented
+    conformer ranking.
 
     The scoring function should accept (N_atoms, 3) coordinates and return
     a scalar energy (lower = better).
     """
-    if config is None:
-        config = BranchAndBoundConfig()
-
     coords_np = np.asarray(base_coords, dtype=np.float32)
     bonds = (
         detect_rotatable_bonds(adjacency, coords_np, elements)
@@ -914,6 +1022,12 @@ def search_conformers(
             conformer_coords=(base_coords,),
             conformer_energies=(float(score_fn(base_coords)),),
             theorem_handles=("CS7",),
+        )
+
+    if config is None:
+        raise ValueError(
+            "search_conformers requires an explicit theorem-derived BranchAndBoundConfig "
+            "when rotatable bonds are present"
         )
 
     kinematics = build_torsion_kinematics(bonds, coords_np, len(elements))
@@ -933,10 +1047,7 @@ def search_conformers(
             reuse_initial_conformer=config.reuse_initial_conformer,
         )
 
-    # Build strain function from params (auto-generate if not provided)
-    if strain_params is None:
-        strain_params = default_torsion_strain_params(n_bonds)
-    strain_fn = _build_strain_fn(strain_params)
+    strain_fn = None if strain_params is None else _build_strain_fn(strain_params)
 
     initial_cell = TorsionCell(
         lower=jnp.full((n_bonds,), -jnp.pi, dtype=jnp.float32),

@@ -70,6 +70,8 @@ from dq_dock_engine.docking.pipeline import (
     DockingRequestBase,
     GeometricBlindDockingRequest,
     PipelineDockingRequest,
+    RUNTIME_ORIENTATION_SIGNAL_INACTIVE,
+    RUNTIME_RIGID_EQUIVALENCE_AMBIGUITY,
     derive_request,
     run_certified_blind_docking_request,
     run_docking_pipeline_request,
@@ -787,6 +789,7 @@ class DQDockExecutionOptions:
     use_multi_stage: bool
     use_pocket_guided: bool
     optimizer_backend: "OptimizerBackend"
+    conformer_search: bool
     reuse_initial_conformer: bool
     use_crystal_ligand_geometry: bool
     max_retries: int
@@ -794,6 +797,7 @@ class DQDockExecutionOptions:
     retry_preserve_seed: bool
     target_rmsd: float
     confidence: float
+    n_poses_override: int | None
 
 
 @dataclass(frozen=True)
@@ -2392,6 +2396,7 @@ def run_dq_dock(
     box_size: float = BENCHMARK_PROTOCOL.box_size_a,
     target_rmsd: float = 0.5,
     confidence: float = 0.999,
+    n_poses_override: int | None = None,
 ) -> tuple[BenchmarkResult, np.ndarray | None]:
     """Run true DQ-Dock pipeline on complex using core infrastructure."""
     import os
@@ -2431,7 +2436,6 @@ def run_dq_dock(
         formal_round_strategy=formal_round_strategy,
         certified_scoring_family=certified_scoring_family,
         exact_chemistry_mode=exact_chemistry_mode,
-        target_error=0.001,
         min_energy_gap=0.0,
         use_external_scorer=False,
         conformer_search=(
@@ -2555,6 +2559,7 @@ def run_dq_dock(
                 receptor_radii=runtime_receptor_radii,
                 ligand_ctx=ligand_ctx,
                 box=box,
+                n_poses_override=n_poses_override,
                 key=attempt_key,
                 charge_method=charge_method,
                 receptor_file=receptor_file,
@@ -2606,9 +2611,7 @@ def run_dq_dock(
 
             if not best_poses:
                 if attempt < max_retries - 1:
-                    print(
-                        f"    [Retry {attempt + 2}/{max_retries}] (no poses)"
-                    )
+                    print(f"    [Retry {attempt + 2}/{max_retries}] (no poses)")
                     continue
                 return finalize_attempt_failure(
                     build_failure_result(
@@ -2623,13 +2626,22 @@ def run_dq_dock(
             pose_jnp = jnp.expand_dims(best_pose.coords, axis=0)
             native_jnp = jnp.array(ligand_coords)
             rmsd = float(compute_docking_rmsd_batched(pose_jnp, native_jnp)[0])
+            effective_formal_status = formal_status
+            if RUNTIME_RIGID_EQUIVALENCE_AMBIGUITY in theorem_handles:
+                effective_formal_status = (
+                    f"{effective_formal_status} (rigid-orientation ambiguity)"
+                )
+            elif RUNTIME_ORIENTATION_SIGNAL_INACTIVE in theorem_handles:
+                effective_formal_status = (
+                    f"{effective_formal_status} (orientation signal insufficient)"
+                )
 
             attempt_result = BenchmarkResult.from_certification(
                 pose_energy=best_pose.energy,
                 pose_rmsd=rmsd,
                 elapsed=elapsed,
                 n_atoms=len(pocket_coords) + len(ligand_coords),
-                formal_status=formal_status,
+                formal_status=effective_formal_status,
                 cert=cert,
                 execution_path=execution_path,
                 certified_failure_reason=certified_failure_reason,
@@ -2648,9 +2660,7 @@ def run_dq_dock(
                 return best_result, best_pose_coords
 
             if attempt < max_retries - 1:
-                print(
-                    f"    [Retry {attempt + 2}/{max_retries}] RMSD={rmsd:.2f}A"
-                )
+                print(f"    [Retry {attempt + 2}/{max_retries}] RMSD={rmsd:.2f}A")
                 continue
         except Exception as e:
             if (
@@ -2674,9 +2684,7 @@ def run_dq_dock(
                 import traceback
 
                 traceback.print_exc()
-                print(
-                    f"    [Retry {attempt + 2}/{max_retries}] (exception: {e})"
-                )
+                print(f"    [Retry {attempt + 2}/{max_retries}] (exception: {e})")
                 continue
             return finalize_attempt_failure(
                 build_failure_result(error=_format_benchmark_error(e))
@@ -2799,6 +2807,7 @@ def run_dq_dock_benchmark_job(job: DQDockBenchmarkJob) -> DQDockBenchmarkJobResu
         ligand_elements=job.complex_entry.ligand_elements,
         receptor_elements=job.complex_entry.pocket_elements,
         optimizer_backend=job.optimizer_backend,
+        conformer_search=job.conformer_search,
         reuse_initial_conformer=job.reuse_initial_conformer,
         use_crystal_ligand_geometry=job.use_crystal_ligand_geometry,
         formal_round_strategy=job.formal_round_strategy,
@@ -2809,6 +2818,7 @@ def run_dq_dock_benchmark_job(job: DQDockBenchmarkJob) -> DQDockBenchmarkJobResu
         box_size=job.box_size,
         target_rmsd=job.target_rmsd,
         confidence=job.confidence,
+        n_poses_override=job.n_poses_override,
     )
     return DQDockBenchmarkJobResult(
         complex_entry=job.complex_entry,
@@ -3157,6 +3167,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
             use_pocket_guided=context.use_pocket_guided,
             exact_chemistry_mode=context.exact_chemistry_mode,
             optimizer_backend=context.optimizer_backend,
+            conformer_search=context.conformer_search,
             reuse_initial_conformer=context.reuse_initial_conformer,
             use_crystal_ligand_geometry=context.use_crystal_ligand_geometry,
             formal_round_strategy=context.formal_round_strategy,
@@ -3167,6 +3178,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
             box_size=context.box_size,
             target_rmsd=context.target_rmsd,
             confidence=context.confidence,
+            n_poses_override=context.n_poses_override,
         )
 
     def _save_pose(
@@ -3599,6 +3611,7 @@ def run_benchmark(
     dataset: Literal["curated", "casf2007"] = "casf2007",
     pdb_ids: Sequence[str] = (),
     optimizer_backend: OptimizerBackend = DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
+    conformer_search: bool = True,
     reuse_initial_conformer: bool = False,
     use_crystal_ligand_geometry: bool = False,
     parallelism: BenchmarkParallelism = BenchmarkParallelism(),
@@ -3608,6 +3621,7 @@ def run_benchmark(
     retry_preserve_seed: bool = False,
     target_rmsd: float = 0.5,
     confidence: float = 0.999,
+    n_poses_override: int | None = None,
 ):
     """Run full benchmark."""
     bench_start = time.time()
@@ -3747,6 +3761,7 @@ def run_benchmark(
         use_multi_stage=use_multi_stage,
         use_pocket_guided=use_pocket_guided,
         exact_chemistry_mode=exact_chemistry_mode,
+        conformer_search=conformer_search,
         reuse_initial_conformer=reuse_initial_conformer,
         use_crystal_ligand_geometry=use_crystal_ligand_geometry,
         output_paths=output_paths,
@@ -3760,6 +3775,7 @@ def run_benchmark(
         retry_preserve_seed=retry_preserve_seed,
         target_rmsd=target_rmsd,
         confidence=confidence,
+        n_poses_override=n_poses_override,
     )
     state = BenchmarkState(dq_results=[], dq_rows=[], competitor_rows=[])
     state.save("curation", context, excluded_rows, render_report=True)
@@ -3849,6 +3865,12 @@ if __name__ == "__main__":
         help="Target RMSD precision in Angstroms; derives iteration budget, seed budget, pruning thresholds",
     )
     parser.add_argument(
+        "--n-poses-override",
+        type=int,
+        default=None,
+        help="Debug-only override for the derived rigid seed count",
+    )
+    parser.add_argument(
         "--box-size",
         type=float,
         default=BENCHMARK_PROTOCOL.box_size_a,
@@ -3922,6 +3944,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Use the crystallographic ligand geometry as the docking template instead of generating an independent conformer",
     )
+    parser.add_argument(
+        "--disable-conformer-search",
+        action="store_true",
+        help="Disable post-rigid conformer search; use this together with `--use-crystal-ligand-geometry` for known-conformer benchmarking",
+    )
     args = parser.parse_args()
     explicit_pdb_ids = load_explicit_pdb_ids(args.pdb_ids, args.pdb_file)
 
@@ -3936,10 +3963,12 @@ if __name__ == "__main__":
         f"formal_round_strategy={DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY.value} "
         f"certified_scoring_family={DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY.value} "
         f"pocket_guided={DEFAULT_BENCHMARK_USE_POCKET_GUIDED} "
+        f"conformer_search={not args.disable_conformer_search} "
         f"reuse_initial_conformer={args.reuse_initial_conformer} "
         f"use_crystal_ligand_geometry={args.use_crystal_ligand_geometry} "
         f"target_rmsd={args.target_rmsd} "
         f"confidence={args.confidence} "
+        f"n_poses_override={args.n_poses_override} "
         f"workers={args.workers}",
         flush=True,
     )
@@ -3959,10 +3988,12 @@ if __name__ == "__main__":
         dataset=args.dataset,
         pdb_ids=explicit_pdb_ids,
         optimizer_backend=DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
+        conformer_search=not args.disable_conformer_search,
         reuse_initial_conformer=args.reuse_initial_conformer,
         use_crystal_ligand_geometry=args.use_crystal_ligand_geometry,
         parallelism=BenchmarkParallelism(max_workers=args.workers),
         max_retries=args.max_retries,
         target_rmsd=args.target_rmsd,
         confidence=args.confidence,
+        n_poses_override=args.n_poses_override,
     )

@@ -20,6 +20,7 @@ from dq_dock_engine.docking.scoring import (
     CertifiedDirectionalHBondSpec,
     CertifiedExtendedInteractionBundle,
     CertifiedMetalCoordinationSpec,
+    CertifiedRealSpaceEwaldSpec,
     CertifiedRichChemistryPlan,
     CertifiedScreenedCoulombSpec,
 )
@@ -108,9 +109,7 @@ def test_directional_hbond_receptor_subset_is_jit_safe_and_remaps_indices():
         narrowed = spec.receptor_subset(indices)
         return narrowed.receptor_anchor_indices, narrowed.receptor_strengths
 
-    remapped_indices, remapped_strengths = subset(
-        jnp.array([4, 3], dtype=jnp.int32)
-    )
+    remapped_indices, remapped_strengths = subset(jnp.array([4, 3], dtype=jnp.int32))
 
     np.testing.assert_array_equal(
         np.asarray(remapped_indices),
@@ -150,3 +149,26 @@ def test_refine_poses_certified_extended_rich_pi_stacking_no_tracer_breach():
 
     assert refined_coords.shape == initial_coords.shape
     assert len(history) == 1
+
+
+def test_optimization_context_strips_extended_rich_terms_but_keeps_electrostatics():
+    rich_only = _make_pi_stacking_context(4)
+    electrostatics = CertifiedRealSpaceEwaldSpec(
+        receptor_charges=jnp.zeros((4,), dtype=jnp.float32),
+        ligand_charges=jnp.zeros((1,), dtype=jnp.float32),
+    )
+    context = CertifiedScoringContext(
+        exact_chemistry_mode=ExactChemistryMode.EXTENDED_RICH,
+        electrostatics=electrostatics,
+        rich_chemistry_plan=rich_only.rich_chemistry_plan,
+    )
+
+    optimization_context = context.optimization_context()
+    ranking_context = context.ranking_context()
+
+    assert optimization_context.exact_chemistry_mode == ExactChemistryMode.NONE
+    assert optimization_context.electrostatics is electrostatics
+    assert optimization_context.rich_chemistry_plan is None
+    assert optimization_context.water_grid is None
+    assert optimization_context.receptor_conformations is None
+    assert ranking_context.exact_chemistry_mode == ExactChemistryMode.NONE

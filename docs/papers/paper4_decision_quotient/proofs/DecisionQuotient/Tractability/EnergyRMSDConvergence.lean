@@ -209,6 +209,62 @@ lemma rmsd_sq_eq {n : ℕ} (x y : CoordSet n) (hn : 0 < n) :
   refine div_nonneg (squaredDisplacement_nonneg x y) ?_
   exact_mod_cast (le_of_lt hn)
 
+lemma squaredDisplacement_le_of_pointwiseDist_le {n : ℕ}
+    (x y : CoordSet n)
+    (eps : ℝ)
+    (heps : 0 ≤ eps)
+    (hPoint : ∀ i, dist (x i) (y i) ≤ eps) :
+    squaredDisplacement x y ≤ (n : ℝ) * eps ^ 2 := by
+  unfold squaredDisplacement
+  calc
+    ∑ i, ‖x i - y i‖ ^ 2
+        ≤ ∑ i, eps ^ 2 := by
+          apply Finset.sum_le_sum
+          intro i _
+          have hi : ‖x i - y i‖ ≤ eps := by
+            simpa [dist_eq_norm] using hPoint i
+          nlinarith [norm_nonneg (x i - y i), heps, hi]
+    _ = (n : ℝ) * eps ^ 2 := by
+          rw [Finset.sum_const, Finset.card_univ]
+          simp [nsmul_eq_mul]
+
+theorem rmsd_le_of_pointwiseDist_le {n : ℕ}
+    (x y : CoordSet n)
+    (hn : 0 < n)
+    (eps : ℝ)
+    (heps : 0 ≤ eps)
+    (hPoint : ∀ i, dist (x i) (y i) ≤ eps) :
+    rmsd x y ≤ eps := by
+  have hdisp : squaredDisplacement x y ≤ (n : ℝ) * eps ^ 2 :=
+    squaredDisplacement_le_of_pointwiseDist_le x y eps heps hPoint
+  have hdiv : squaredDisplacement x y / (n : ℝ) ≤ eps ^ 2 := by
+    have hn_pos : 0 < (n : ℝ) := by exact_mod_cast hn
+    rw [_root_.div_le_iff₀ hn_pos]
+    simpa [mul_comm, mul_left_comm, mul_assoc] using hdisp
+  have hsqrt : Real.sqrt (squaredDisplacement x y / (n : ℝ)) ≤ Real.sqrt (eps ^ 2) := by
+    exact Real.sqrt_le_sqrt hdiv
+  have hroot : Real.sqrt (eps ^ 2) = eps := by
+    rw [Real.sqrt_sq_eq_abs]
+    simpa [abs_of_nonneg heps]
+  simpa [rmsd, hroot] using hsqrt
+
+theorem rmsd_le_of_pointwiseSplitDist_le {n : ℕ}
+    (x mid y : CoordSet n)
+    (hn : 0 < n)
+    (tBound rBound eps : ℝ)
+    (ht : 0 ≤ tBound)
+    (hr : 0 ≤ rBound)
+    (hBudget : tBound + rBound ≤ eps)
+    (hTrans : ∀ i, dist (x i) (mid i) ≤ tBound)
+    (hRot : ∀ i, dist (mid i) (y i) ≤ rBound) :
+    rmsd x y ≤ eps := by
+  have heps : 0 ≤ eps := le_trans (add_nonneg ht hr) hBudget
+  apply le_trans (rmsd_le_of_pointwiseDist_le x y hn (tBound + rBound) (add_nonneg ht hr) ?_) hBudget
+  intro i
+  calc
+    dist (x i) (y i) ≤ dist (x i) (mid i) + dist (mid i) (y i) := dist_triangle _ _ _
+    _ ≤ tBound + rBound := add_le_add (hTrans i) (hRot i)
+
 lemma targetEnergyGap_nonneg (μ : ℝ) (n : ℕ) (eps : ℝ)
     (hμ : 0 ≤ μ) : 0 ≤ targetEnergyGap μ n eps := by
   unfold targetEnergyGap
@@ -630,6 +686,127 @@ theorem energyGap_le_of_rmsd_le
     rw [hrewrite] at hscale
     exact hscale
   exact le_trans hquad hbound
+
+/-- A parameter-space quadratic window transfers to coordinate space once the
+    runtime has certified squared-displacement comparison bounds in both
+    directions. This is the algebraic core behind using Jacobian singular-value
+    bounds to convert `(lmin_param, lmax_param)` into coordinate-space
+    `(μ_coord, M_coord)`. -/
+theorem parameter_window_transfers_to_coordinate_window_sq
+    (μparam Mparam σminSq σmaxSq dParamSq dCoordSq gap : ℝ)
+    (hμ : 0 ≤ μparam)
+    (hM : 0 ≤ Mparam)
+    (hσmin : 0 < σminSq)
+    (hσmax : 0 < σmaxSq)
+    (hLowerParam : (μparam / 2) * dParamSq ≤ gap)
+    (hUpperParam : gap ≤ (Mparam / 2) * dParamSq)
+    (hCoordUpper : dCoordSq ≤ σmaxSq * dParamSq)
+    (hCoordLower : σminSq * dParamSq ≤ dCoordSq) :
+    ((μparam / σmaxSq) / 2) * dCoordSq ≤ gap ∧
+      gap ≤ ((Mparam / σminSq) / 2) * dCoordSq := by
+  constructor
+  · have hscaled : ((μparam / σmaxSq) / 2) * dCoordSq ≤
+        ((μparam / σmaxSq) / 2) * (σmaxSq * dParamSq) := by
+      exact mul_le_mul_of_nonneg_left hCoordUpper (by positivity)
+    have hrewrite : ((μparam / σmaxSq) / 2) * (σmaxSq * dParamSq) =
+        (μparam / 2) * dParamSq := by
+      field_simp [hσmax.ne']
+    rw [hrewrite] at hscaled
+    exact le_trans hscaled hLowerParam
+  · have hscaled : ((Mparam / σminSq) / 2) * (σminSq * dParamSq) ≤
+        ((Mparam / σminSq) / 2) * dCoordSq := by
+      exact mul_le_mul_of_nonneg_left hCoordLower (by positivity)
+    have hrewrite : ((Mparam / σminSq) / 2) * (σminSq * dParamSq) =
+        (Mparam / 2) * dParamSq := by
+      field_simp [hσmin.ne']
+    rw [hrewrite] at hscaled
+    exact le_trans hUpperParam hscaled
+
+/-- Upper quadratic control at the initial pose and linear energy convergence
+    together give a direct RMSD target certificate after `t` refinement steps.
+
+    This is the runtime-facing bridge needed for theorem-honest two-phase seed
+    budgets: if the initial RMSD lies inside a radius `eps0` whose induced
+    energy gap contracts enough after `t` steps, then the `t`-th iterate is
+    certified to lie within the requested RMSD tolerance `eps`. -/
+theorem rmsd_target_of_initial_rmsd_and_linear_energy_convergence
+    {n : ℕ}
+    (energy : CoordSet n → ℝ)
+    (center : CoordSet n)
+    (poseAt : ℕ → CoordSet n)
+    (window : CertifiedQuadraticWindow energy center)
+    (conv : CertifiedLinearEnergyConvergence (fun t => energy (poseAt t) - energy center))
+    (hn : 0 < n)
+    (eps eps0 : ℝ)
+    (heps : 0 ≤ eps)
+    (heps0 : 0 ≤ eps0)
+    (t : ℕ)
+    (hinit : rmsd (poseAt 0) center ≤ eps0)
+    (hcontract : conv.q ^ t * window.M * eps0 ^ 2 ≤ window.μ * eps ^ 2) :
+    rmsd (poseAt t) center ≤ eps := by
+  have hgap0 : energy (poseAt 0) - energy center ≤ targetEnergyGap window.M n eps0 := by
+    exact energyGap_le_of_rmsd_le energy center (poseAt 0) window hn eps0 heps0 hinit
+  have hq_nonneg : 0 ≤ conv.q ^ t := by
+    exact pow_nonneg conv.q_nonneg t
+  have hscaled0 :
+      conv.q ^ t * (energy (poseAt 0) - energy center) ≤
+        conv.q ^ t * targetEnergyGap window.M n eps0 := by
+    exact mul_le_mul_of_nonneg_left hgap0 hq_nonneg
+  have htarget :
+      conv.q ^ t * targetEnergyGap window.M n eps0 ≤ targetEnergyGap window.μ n eps := by
+    unfold targetEnergyGap
+    have hfactor_nonneg : 0 ≤ (n : ℝ) / 2 := by positivity
+    have hmul := mul_le_mul_of_nonneg_left hcontract hfactor_nonneg
+    have hleft :
+        ((n : ℝ) / 2) * (conv.q ^ t * window.M * eps0 ^ 2) =
+          conv.q ^ t * (window.M * (n : ℝ) * eps0 ^ 2 / 2) := by
+      ring
+    have hright :
+        ((n : ℝ) / 2) * (window.μ * eps ^ 2) =
+          window.μ * (n : ℝ) * eps ^ 2 / 2 := by
+      ring
+    rw [hleft, hright] at hmul
+    exact hmul
+  have hbudget :
+      conv.q ^ t * (energy (poseAt 0) - energy center) ≤ targetEnergyGap window.μ n eps := by
+    exact le_trans hscaled0 htarget
+  apply rmsd_le_of_energyGap_le_target
+    energy center (poseAt t) window.toCertifiedQuadraticBasin hn eps heps
+  exact le_trans (conv.rate t) hbudget
+
+/-- Selecting the largest certified prefix from a finite probe trajectory is
+    sound: once a runtime has identified a nonempty finite set of prefix lengths
+    that satisfy the contraction inequality from
+    `rmsd_target_of_initial_rmsd_and_linear_energy_convergence`, the maximal
+    such prefix still certifies the requested RMSD target. This matches the
+    runtime policy of scanning an observed probe trajectory backwards and
+    returning the latest certifiable prefix. -/
+theorem rmsd_target_of_maxCertifiedPrefix
+    {n : ℕ}
+    (energy : CoordSet n → ℝ)
+    (center : CoordSet n)
+    (poseAt : ℕ → CoordSet n)
+    (window : CertifiedQuadraticWindow energy center)
+    (conv : CertifiedLinearEnergyConvergence (fun t => energy (poseAt t) - energy center))
+    (hn : 0 < n)
+    (eps eps0 : ℝ)
+    (heps : 0 ≤ eps)
+    (heps0 : 0 ≤ eps0)
+    (candidates : Finset ℕ)
+    (hinit : rmsd (poseAt 0) center ≤ eps0)
+    (hcertNonempty :
+      (candidates.filter (fun t => conv.q ^ t * window.M * eps0 ^ 2 ≤ window.μ * eps ^ 2)).Nonempty) :
+    let certified := candidates.filter (fun t => conv.q ^ t * window.M * eps0 ^ 2 ≤ window.μ * eps ^ 2)
+    let tStar := certified.max' hcertNonempty
+    rmsd (poseAt tStar) center ≤ eps := by
+  let certified := candidates.filter (fun t => conv.q ^ t * window.M * eps0 ^ 2 ≤ window.μ * eps ^ 2)
+  let tStar := certified.max' hcertNonempty
+  have ht_mem : tStar ∈ certified := by
+    exact Finset.max'_mem certified hcertNonempty
+  have hcontract : conv.q ^ tStar * window.M * eps0 ^ 2 ≤ window.μ * eps ^ 2 := by
+    exact (Finset.mem_filter.mp ht_mem).2
+  exact rmsd_target_of_initial_rmsd_and_linear_energy_convergence
+    energy center poseAt window conv hn eps eps0 heps heps0 tStar hinit hcontract
 
 /-- Any certified linear energy-rate immediately yields an RMSD bound after `t`
     refinement steps once combined with a certified quadratic basin. -/

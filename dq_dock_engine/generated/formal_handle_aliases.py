@@ -260,6 +260,9 @@ LJ10 = "LJ10"
 LJ11 = "LJ11"
 LJ12 = "LJ12"
 LJ14 = "LJ14"
+LJ15 = "LJ15"
+LJ16 = "LJ16"
+LJ17 = "LJ17"
 CB1 = "CB1"
 CB2 = "CB2"
 CB3 = "CB3"
@@ -308,6 +311,8 @@ HB9 = "HB9"
 HB10 = "HB10"
 HB11 = "HB11"
 HB12 = "HB12"
+HB13 = "HB13"
+HB14 = "HB14"
 AH1 = "AH1"
 AH2 = "AH2"
 AH3 = "AH3"
@@ -316,6 +321,8 @@ AH5 = "AH5"
 AH6 = "AH6"
 AH7 = "AH7"
 AH8 = "AH8"
+AH9 = "AH9"
+AH10 = "AH10"
 NG1 = "NG1"
 NG2 = "NG2"
 NG3 = "NG3"
@@ -351,9 +358,6 @@ MC7 = "MC7"
 MC8 = "MC8"
 MC9 = "MC9"
 MC10 = "MC10"
-MC11 = "MC11"
-MC12 = "MC12"
-MC13 = "MC13"
 PP1 = "PP1"
 PP2 = "PP2"
 PP3 = "PP3"
@@ -452,12 +456,24 @@ TK12 = "TK12"
 TK13 = "TK13"
 TK14 = "TK14"
 TK15 = "TK15"
+TK16 = "TK16"
 SH1 = "SH1"
 SH2 = "SH2"
 SH3 = "SH3"
 SH4 = "SH4"
 SH5 = "SH5"
 SH6 = "SH6"
+SH7 = "SH7"
+SH8 = "SH8"
+SH9 = "SH9"
+SH10 = "SH10"
+SH11 = "SH11"
+SH12 = "SH12"
+SH13 = "SH13"
+SH14 = "SH14"
+SH15 = "SH15"
+SH16 = "SH16"
+SH17 = "SH17"
 GC1 = "GC1"
 GC2 = "GC2"
 GC3 = "GC3"
@@ -485,6 +501,22 @@ FLO15 = "FLO15"
 FLO16 = "FLO16"
 FLO17 = "FLO17"
 FLO18 = "FLO18"
+FLO19 = "FLO19"
+FLO20 = "FLO20"
+FLO21 = "FLO21"
+FLO22 = "FLO22"
+XD1 = "XD1"
+XD2 = "XD2"
+XD3 = "XD3"
+XD4 = "XD4"
+XD5 = "XD5"
+XD6 = "XD6"
+XD7 = "XD7"
+XD8 = "XD8"
+XD9 = "XD9"
+XD10 = "XD10"
+XD11 = "XD11"
+XD12 = "XD12"
 LT1 = "LT1"
 LT2 = "LT2"
 LT3 = "LT3"
@@ -903,6 +935,8 @@ LS1 = "LS1"
 LS2 = "LS2"
 LS3 = "LS3"
 LS4 = "LS4"
+LS5 = "LS5"
+LS6 = "LS6"
 DB1 = "DB1"
 DB2 = "DB2"
 DB3 = "DB3"
@@ -935,13 +969,108 @@ RFE3 = "RFE3"
 RFE4 = "RFE4"
 RFE5 = "RFE5"
 RFE6 = "RFE6"
-GAP2 = "GAP2"
-PERF1 = "PERF1"
-PERF2 = "PERF2"
-PERF3 = "PERF3"
-PERF4 = "PERF4"
-PERF5 = "PERF5"
-PERF6 = "PERF6"
+ERC1 = "ERC1"
+ERC2 = "ERC2"
+ERC3 = "ERC3"
+ERC4 = "ERC4"
+ERC5 = "ERC5"
+ERC6 = "ERC6"
+ERC7 = "ERC7"
+ERC8 = "ERC8"
+ERC9 = "ERC9"
+ERC10 = "ERC10"
+ERC11 = "ERC11"
+ERC12 = "ERC12"
+ERC13 = "ERC13"
+ERC14 = "ERC14"
+ERC15 = "ERC15"
+ERC16 = "ERC16"
+ERC17 = "ERC17"
+ERC18 = "ERC18"
+ERC19 = "ERC19"
+ERC20 = "ERC20"
+ERC21 = "ERC21"
+ERC22 = "ERC22"
+ERC23 = "ERC23"
+ERC24 = "ERC24"
+ERC25 = "ERC25"
+ERC26 = "ERC26"
+ERC27 = "ERC27"
+ERC28 = "ERC28"
+ERC29 = "ERC29"
+ERC30 = "ERC30"
+ERC31 = "ERC31"
+ERC32 = "ERC32"
+ERC33 = "ERC33"
+ERC34 = "ERC34"
+ERC35 = "ERC35"
+ERC36 = "ERC36"
+ERC37 = "ERC37"
+ERC38 = "ERC38"
+ERC39 = "ERC39"
+ERC40 = "ERC40"
+ERC41 = "ERC41"
+ERC42 = "ERC42"
+ERC43 = "ERC43"
+ERC44 = "ERC44"
+ERC45 = "ERC45"
+CSC1 = "CSC1"
+CSC2 = "CSC2"
+CSC3 = "CSC3"
+CSC4 = "CSC4"
+CSC5 = "CSC5"
+CSC6 = "CSC6"
+CSC7 = "CSC7"
+CSC8 = "CSC8"
+CSC9 = "CSC9"
+CSC10 = "CSC10"
+CSC11 = "CSC11"
+CSC12 = "CSC12"
+CSC13 = "CSC13"
+CSC14 = "CSC14"
+CSC15 = "CSC15"
+CSC16 = "CSC16"
+CSC17 = "CSC17"
+CSC18 = "CSC18"
+CSC19 = "CSC19"
+CSC20 = "CSC20"
+CSC21 = "CSC21"
+CSC22 = "CSC22"
+CSC23 = "CSC23"
+CSC24 = "CSC24"
+CSC25 = "CSC25"
+CSC26 = "CSC26"
+CSC27 = "CSC27"
+CSC28 = "CSC28"
+CSC29 = "CSC29"
+CSC30 = "CSC30"
+CSC31 = "CSC31"
+CSC32 = "CSC32"
+CSC33 = "CSC33"
+CSC34 = "CSC34"
+CSC35 = "CSC35"
+CSC36 = "CSC36"
+CSC37 = "CSC37"
+CSC38 = "CSC38"
+CSC39 = "CSC39"
+CSC40 = "CSC40"
+CSC41 = "CSC41"
+CSC42 = "CSC42"
+CS10 = "CS10"
+CS12 = "CS12"
+CS13 = "CS13"
+CS14 = "CS14"
+CS11 = "CS11"
+CSC43 = "CSC43"
+CSC44 = "CSC44"
+CSC48 = "CSC48"
+CSC50 = "CSC50"
+CSC45 = "CSC45"
+CSC46 = "CSC46"
+CSC47 = "CSC47"
+BCRC1 = "BCRC1"
+BCRC2 = "BCRC2"
+BCRC3 = "BCRC3"
 
 __all__ = [
     "DC1",
@@ -1202,6 +1331,9 @@ __all__ = [
     "LJ11",
     "LJ12",
     "LJ14",
+    "LJ15",
+    "LJ16",
+    "LJ17",
     "CB1",
     "CB2",
     "CB3",
@@ -1250,6 +1382,8 @@ __all__ = [
     "HB10",
     "HB11",
     "HB12",
+    "HB13",
+    "HB14",
     "AH1",
     "AH2",
     "AH3",
@@ -1258,6 +1392,8 @@ __all__ = [
     "AH6",
     "AH7",
     "AH8",
+    "AH9",
+    "AH10",
     "NG1",
     "NG2",
     "NG3",
@@ -1293,9 +1429,6 @@ __all__ = [
     "MC8",
     "MC9",
     "MC10",
-    "MC11",
-    "MC12",
-    "MC13",
     "PP1",
     "PP2",
     "PP3",
@@ -1394,12 +1527,24 @@ __all__ = [
     "TK13",
     "TK14",
     "TK15",
+    "TK16",
     "SH1",
     "SH2",
     "SH3",
     "SH4",
     "SH5",
     "SH6",
+    "SH7",
+    "SH8",
+    "SH9",
+    "SH10",
+    "SH11",
+    "SH12",
+    "SH13",
+    "SH14",
+    "SH15",
+    "SH16",
+    "SH17",
     "GC1",
     "GC2",
     "GC3",
@@ -1427,6 +1572,22 @@ __all__ = [
     "FLO16",
     "FLO17",
     "FLO18",
+    "FLO19",
+    "FLO20",
+    "FLO21",
+    "FLO22",
+    "XD1",
+    "XD2",
+    "XD3",
+    "XD4",
+    "XD5",
+    "XD6",
+    "XD7",
+    "XD8",
+    "XD9",
+    "XD10",
+    "XD11",
+    "XD12",
     "LT1",
     "LT2",
     "LT3",
@@ -1845,6 +2006,8 @@ __all__ = [
     "LS2",
     "LS3",
     "LS4",
+    "LS5",
+    "LS6",
     "DB1",
     "DB2",
     "DB3",
@@ -1877,11 +2040,106 @@ __all__ = [
     "RFE4",
     "RFE5",
     "RFE6",
-    "GAP2",
-    "PERF1",
-    "PERF2",
-    "PERF3",
-    "PERF4",
-    "PERF5",
-    "PERF6",
+    "ERC1",
+    "ERC2",
+    "ERC3",
+    "ERC4",
+    "ERC5",
+    "ERC6",
+    "ERC7",
+    "ERC8",
+    "ERC9",
+    "ERC10",
+    "ERC11",
+    "ERC12",
+    "ERC13",
+    "ERC14",
+    "ERC15",
+    "ERC16",
+    "ERC17",
+    "ERC18",
+    "ERC19",
+    "ERC20",
+    "ERC21",
+    "ERC22",
+    "ERC23",
+    "ERC24",
+    "ERC25",
+    "ERC26",
+    "ERC27",
+    "ERC28",
+    "ERC29",
+    "ERC30",
+    "ERC31",
+    "ERC32",
+    "ERC33",
+    "ERC34",
+    "ERC35",
+    "ERC36",
+    "ERC37",
+    "ERC38",
+    "ERC39",
+    "ERC40",
+    "ERC41",
+    "ERC42",
+    "ERC43",
+    "ERC44",
+    "ERC45",
+    "CSC1",
+    "CSC2",
+    "CSC3",
+    "CSC4",
+    "CSC5",
+    "CSC6",
+    "CSC7",
+    "CSC8",
+    "CSC9",
+    "CSC10",
+    "CSC11",
+    "CSC12",
+    "CSC13",
+    "CSC14",
+    "CSC15",
+    "CSC16",
+    "CSC17",
+    "CSC18",
+    "CSC19",
+    "CSC20",
+    "CSC21",
+    "CSC22",
+    "CSC23",
+    "CSC24",
+    "CSC25",
+    "CSC26",
+    "CSC27",
+    "CSC28",
+    "CSC29",
+    "CSC30",
+    "CSC31",
+    "CSC32",
+    "CSC33",
+    "CSC34",
+    "CSC35",
+    "CSC36",
+    "CSC37",
+    "CSC38",
+    "CSC39",
+    "CSC40",
+    "CSC41",
+    "CSC42",
+    "CS10",
+    "CS12",
+    "CS13",
+    "CS14",
+    "CS11",
+    "CSC43",
+    "CSC44",
+    "CSC48",
+    "CSC50",
+    "CSC45",
+    "CSC46",
+    "CSC47",
+    "BCRC1",
+    "BCRC2",
+    "BCRC3",
 ]

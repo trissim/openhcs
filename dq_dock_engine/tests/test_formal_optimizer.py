@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import pytest
+import dq_dock_engine.docking.formal_optimizer as formal_optimizer_module
 
 from pathlib import Path
 
@@ -1017,7 +1018,6 @@ def test_exact_local_family_subset_preserves_scores_when_atoms_are_far():
         ligand_radii=ligand_radii,
         candidate_coords=candidate_coords,
         target_error=0.001,
-        max_receptor_atoms=64,
         translation_step=0.5,
     )
 
@@ -1040,7 +1040,6 @@ def test_softened_local_family_coarse_scores_are_certified_and_distinct():
         candidate_coords=candidate_coords,
         target_error=0.001,
         coarse_target_error=0.004,
-        max_receptor_atoms=64,
         translation_step=0.5,
     )
 
@@ -1124,6 +1123,48 @@ def test_certified_global_sampler_is_deterministic_and_nonrandom():
     assert pose_vec.translation.shape == (8, 3)
     assert pose_vec.quaternion.shape == (8, 4)
     assert not jnp.any(jnp.all(jnp.isclose(pose_vec.translation, box.center), axis=1))
+
+
+def test_refine_round_core_rotates_about_pose_centroid(monkeypatch):
+    def fake_score_exact_and_coarse_round(**kwargs):
+        candidate_batches = kwargs["candidate_batches"]
+        n_poses, n_actions = candidate_batches.shape[:2]
+        zeros = jnp.zeros((n_poses, n_actions), dtype=jnp.float32)
+        return zeros, zeros, 0.0, 0.0, None
+
+    monkeypatch.setattr(
+        formal_optimizer_module,
+        "score_exact_and_coarse_round",
+        fake_score_exact_and_coarse_round,
+    )
+
+    results = formal_optimizer_module._refine_round_jit_core(
+        coords_batch=jnp.array(
+            [[[10.0, 0.0, 0.0], [12.0, 0.0, 0.0]]], dtype=jnp.float32
+        ),
+        receptor_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_radii=jnp.ones((2,), dtype=jnp.float32),
+        target_error=0.001,
+        coarse_target_error=0.001,
+        translation_step=0.0,
+        translation_deltas=jnp.zeros((2, 3), dtype=jnp.float32),
+        quaternion_deltas=jnp.array(
+            [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=jnp.float32
+        ),
+        prior_spec=CertifiedPriorSpec(kind="uniform"),
+        retained_indices=jnp.array([0], dtype=jnp.int32),
+        scoring_context=None,
+        use_softened_coarse=False,
+    )
+
+    rotated = results["candidate_batches"][0, 1]
+    assert jnp.allclose(jnp.mean(rotated, axis=0), jnp.array([11.0, 0.0, 0.0]))
+    assert jnp.allclose(
+        rotated,
+        jnp.array([[12.0, 0.0, 0.0], [10.0, 0.0, 0.0]], dtype=jnp.float32),
+        atol=1e-5,
+    )
 
 
 def test_certified_pipeline_does_not_call_heuristic_sampler(monkeypatch):
