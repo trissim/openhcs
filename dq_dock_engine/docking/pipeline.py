@@ -3867,6 +3867,10 @@ def _recertify_conformer_updated_pose(
         scoring_context=scoring_context,
     )
 
+    print(
+        f"[RECERTIFY] About to return: spectral_mu_coord={spectral_mu_coord}, cert={certificates[0] is not None}",
+        flush=True,
+    )
     return (
         refined_coords,
         float(score[0]),
@@ -5077,6 +5081,10 @@ def _run_docking_pipeline_request(
                 )
                 if conf is not None and conf[1] < resolved_energies[idx_i]:
                     conformer_improved_mask[idx_i] = True
+                    print(
+                        f"[CONFORMER] Before recertify call for pose {idx_i}",
+                        flush=True,
+                    )
                     (
                         recert_coords,
                         recert_energy,
