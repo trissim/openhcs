@@ -103,6 +103,7 @@ import DecisionQuotient.Tractability.ReceptorFlexibility
 import DecisionQuotient.Tractability.EnergyRMSDConvergence
 import DecisionQuotient.Tractability.SeedBudgetDerivation
 import DecisionQuotient.Tractability.ConformerSupportCoverage
+import DecisionQuotient.Tractability.ReturnedPoseGuarantee
 import DecisionQuotient.Tractability.CrossDockingCertificates
 import DecisionQuotient.Tractability.BlindConformerPipelineOptimality
 import DecisionQuotient.Tractability.BlindConformerPipelineRefinements
@@ -742,6 +743,7 @@ abbrev DC100 := @StochasticSequential.benchmark_escalation_summary
 abbrev DC101 := @StochasticSequential.sequential_sufficiency_upper_bound_summary
 abbrev DC102 := @StochasticSequential.sequential_anchor_upper_bound_summary
 abbrev DC103 := @StochasticSequential.sequential_minimum_upper_bound_summary
+abbrev DC104 := @StochasticSequential.stochastic_preservation_iff_static_of_positive_fiber_support
 abbrev DC69 := @StochasticSequential.countedSequentialAnchorSearch_steps
 abbrev DC70 := @static_sufficiency_inP_explicit
 abbrev DC71 := @static_anchor_inP_explicit
@@ -1233,6 +1235,12 @@ noncomputable abbrev FLO19 := @Tractability.FormalLocalOptimizer.coherentOptimiz
 abbrev FLO20 := @Tractability.FormalLocalOptimizer.coherentOptimizerWitness_of_exact_singleton_top1_choice
 abbrev FLO21 := @Tractability.FormalLocalOptimizer.exact_singleton_top1_choice_agreement
 abbrev FLO22 := @Tractability.FormalLocalOptimizer.exact_energy_gap_certified_choice_agreement
+abbrev FLO23 := @Tractability.FormalLocalOptimizer.SelectionWitness.choice_inherits_of_support
+abbrev FLO24 := @Tractability.FormalLocalOptimizer.BeliefWitness.choice_inherits_of_support
+abbrev FLO25 := @Tractability.FormalLocalOptimizer.CoherentOptimizerWitness.choice_inherits_of_support
+abbrev FLO26 := @Tractability.FormalLocalOptimizer.CoherentOptimizerWitness.choice_eq_of_singleton_support
+abbrev FLO27 := @Tractability.FormalLocalOptimizer.CoherentOptimizerWitness.choice_inherits_of_singleton_support
+abbrev FLO28 := @Tractability.FormalLocalOptimizer.exact_energy_gap_certified_choice_inherits_property
 
 abbrev XD1 := @Tractability.CrossDockingCertificates.better_than_incumbent_survives_lowerBound_pruning
 abbrev XD2 := @Tractability.CrossDockingCertificates.lowerBoundSurvivors_monotone
@@ -2352,6 +2360,31 @@ abbrev CSC44 := @DecisionQuotient.Tractability.ConformerSupportCoverage.max_bina
 abbrev CSC48 := @Tractability.ConformerSupportCoverage.energyBudget_of_rmsdTarget
 -- CSC50: Parameter-space stopping radius induces coordinate-space coverage
 abbrev CSC50 := @Tractability.ConformerSupportCoverage.min_cell_radius_derivation
+-- CSC51: Conformer library RMSD cover plus energy gap budget yields RMSD target
+abbrev CSC51 := @Tractability.ConformerSupportCoverage.rmsd_cover_yields_library_rmsd_target
+-- CSC52: Approx-optimal negative-energy witness yields RMSD target
+abbrev CSC52 := @Tractability.ConformerSupportCoverage.approxOptimal_negEnergy_yields_rmsd_target
+-- CSC53: Supported approx-optimal witness yields a library RMSD target witness
+abbrev CSC53 := @Tractability.ConformerSupportCoverage.supported_approxOptimal_yields_library_rmsd_target
+-- CSC54: Exact library winner inherits approximate optimality from a supported witness
+abbrev CSC54 := @Tractability.ConformerSupportCoverage.exact_library_winner_inherits_approxOptimal_of_supportedWitness
+-- CSC55: Exact library winner of a covered support satisfies the RMSD target
+abbrev CSC55 := @Tractability.ConformerSupportCoverage.exact_library_winner_of_cover_yields_rmsd_target
+-- CSC56: Exact library winner of a covered support has bounded energy gap
+abbrev CSC56 := @Tractability.ConformerSupportCoverage.exact_library_winner_energy_gap_of_cover_le
+
+-- RPG1: Ambiguity-band members have bounded energy gap relative to an exact top-1 winner
+abbrev RPG1 := @Tractability.ReturnedPoseGuarantee.ambiguityBand_member_energy_gap_le_of_top1
+-- RPG2: Ambiguity-band members inherit an RMSD target from winner gap and basin budget
+abbrev RPG2 := @Tractability.ReturnedPoseGuarantee.ambiguityBand_member_yields_rmsd_target_of_top1_gap
+-- RPG3: An ambiguity band can be certified as a whole output set for the RMSD contract
+abbrev RPG3 := @Tractability.ReturnedPoseGuarantee.ambiguityBand_support_yields_certified_output_set
+-- RPG4: A certified singleton exact winner over a covered support satisfies the returned-pose RMSD target
+abbrev RPG4 := @Tractability.ReturnedPoseGuarantee.returned_choice_of_exact_singleton_winner_of_cover_yields_rmsd_target
+-- RPG5: An ambiguity band over a covered support yields a certified RMSD output set
+abbrev RPG5 := @Tractability.ReturnedPoseGuarantee.ambiguityBand_support_of_cover_yields_certified_output_set
+-- RPG6: A certified exact/coarse singleton choice over a covered support satisfies the RMSD target
+abbrev RPG6 := @Tractability.ReturnedPoseGuarantee.exact_energy_gap_certified_choice_of_cover_yields_rmsd_target
 
 -- CSC45: Torsion locality radius (single atom)
 abbrev CSC45 := @DecisionQuotient.Tractability.ConformerSupportCoverage.torsion_locality_radius

@@ -411,6 +411,28 @@ theorem static_sufficiency_implies_stochastic_preservation_of_positive_fiber_sup
     _ = P.toDecisionProblem.Opt t := hsupport t htpos
     _ = P.toDecisionProblem.Opt s := hstat t s hts
 
+/-- Support-aware bridge for sparse distributions: if every `I`-fiber meets the
+    positive support and the distribution is globally nonnegative, then
+    stochastic preservation is equivalent to static sufficiency.
+
+    This is the corrected replacement for the false coordinate-wise general
+    distribution conjecture in sparse docking settings: the real obstruction is
+    missing positive-support representatives in an observed fiber, not the
+    omission of an individually relevant coordinate. -/
+theorem stochastic_preservation_iff_static_of_positive_fiber_support
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n] [Nonempty A]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n))
+    (hnonneg : ∀ s : S, 0 ≤ P.distribution s)
+    (hcover : PositiveFiberSupport P.distribution I) :
+    StochasticPreservationSufficient P I ↔ P.toDecisionProblem.isSufficient I := by
+  constructor
+  · intro hpres
+    exact stochastic_preservation_implies_static_sufficiency P I hpres
+  · intro hstat
+    exact static_sufficiency_implies_stochastic_preservation_of_positive_fiber_support
+      P I hnonneg hcover hstat
+
 /-- Anchor-local version of the positive-fiber-support bridge. If a static anchor
     witness has a positive-mass representative in its fiber, then anchor
     preservation follows. -/

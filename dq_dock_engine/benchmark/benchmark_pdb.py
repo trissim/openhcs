@@ -483,6 +483,22 @@ class ComplexSummaryRow:
             "total_wall_time_s": _safe_json_value(result.total_wall_time_s),
             "pose_pdb": self.dq_pose_pdb,
             "gap_proof": gap_proof,
+            "requested_target_rmsd": _safe_json_value(result.requested_target_rmsd),
+            "returned_pose_target_rmsd_certified": _safe_json_value(
+                result.returned_pose_target_rmsd_certified
+            ),
+            "returned_pose_contract_decision": result.returned_pose_contract_decision,
+            "returned_pose_contract_summary": result.returned_pose_contract_summary,
+            "returned_pose_proof_case": result.returned_pose_proof_case,
+            "returned_pose_witness_status": result.returned_pose_witness_status,
+            "pruning_total_delta": _safe_json_value(result.pruning_total_delta),
+            "pruning_active_component_labels": None
+            if result.pruning_active_component_labels is None
+            else ",".join(result.pruning_active_component_labels),
+            "returned_pose_debug_summary": _debug_csv_value(
+                result.returned_pose_debug_summary
+            ),
+            "pipeline_debug_summary": _debug_csv_value(result.pipeline_debug_summary),
             "execution_path": None
             if result.execution_path is None
             else result.execution_path.name,
@@ -534,6 +550,18 @@ class ComplexSummaryRow:
             "receptor_pdb": self.receptor_pdb,
             "native_ligand_pdb": self.native_ligand_pdb,
             "gap_proof": gap_proof,
+            "requested_target_rmsd": _safe_json_value(result.requested_target_rmsd),
+            "returned_pose_target_rmsd_certified": _safe_json_value(
+                result.returned_pose_target_rmsd_certified
+            ),
+            "returned_pose_contract_decision": result.returned_pose_contract_decision,
+            "returned_pose_contract_summary": result.returned_pose_contract_summary,
+            "returned_pose_proof_case": result.returned_pose_proof_case,
+            "returned_pose_witness_status": result.returned_pose_witness_status,
+            "pruning_total_delta": _safe_json_value(result.pruning_total_delta),
+            "pruning_active_component_labels": result.pruning_active_component_labels,
+            "returned_pose_debug_summary": result.returned_pose_debug_summary,
+            "pipeline_debug_summary": result.pipeline_debug_summary,
             "execution_path": None
             if result.execution_path is None
             else result.execution_path.name,
@@ -2034,6 +2062,15 @@ def _safe_json_value(value: object) -> object:
     return value
 
 
+def _debug_csv_value(value: object) -> object:
+    if value is None:
+        return None
+    payload = json.dumps(value, sort_keys=True)
+    if len(payload) <= 4096:
+        return payload
+    return payload[:4096] + "...<truncated>"
+
+
 def _format_benchmark_error(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
 
@@ -2534,6 +2571,7 @@ def run_dq_dock(
                 if formal_status_override is None
                 else formal_status_override
             ),
+            requested_target_rmsd=docking_config.target_rmsd,
             execution_path=(
                 execution_path
                 if execution_path_override is None
@@ -2643,10 +2681,23 @@ def run_dq_dock(
                 n_atoms=len(pocket_coords) + len(ligand_coords),
                 formal_status=effective_formal_status,
                 cert=cert,
+                returned_pose_cert=best_pose.returned_pose_certification,
+                returned_pose_debug_summary=best_pose.returned_pose_proof_debug,
+                pipeline_debug_summary=best_pose.pipeline_debug_summary,
+                requested_target_rmsd=docking_config.target_rmsd,
                 execution_path=execution_path,
                 certified_failure_reason=certified_failure_reason,
                 theorem_handles=theorem_handles,
             )
+            if best_pose.returned_pose_proof_debug is not None:
+                print(
+                    "    [Debug] returned_pose "
+                    f"decision={attempt_result.returned_pose_contract_decision} "
+                    f"proof_case={attempt_result.returned_pose_proof_case} "
+                    f"witness={attempt_result.returned_pose_witness_status} "
+                    f"pruning_delta={attempt_result.pruning_total_delta}",
+                    flush=True,
+                )
 
             if best_result is None or attempt_result.rmsd < best_result.rmsd:
                 best_result = attempt_result
@@ -2864,6 +2915,7 @@ def _timed_out_dq_job_result(
             time=timeout_seconds,
             n_atoms=0,
             formal_status=f"timeout after {timeout_seconds:.1f}s",
+            requested_target_rmsd=job.target_rmsd,
             error=f"timeout after {timeout_seconds:.1f}s",
         ),
         dq_pose_coords=None,
@@ -3142,6 +3194,11 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
                 if finalized_result.energy_gap is not None:
                     print(f", Energy Gap: {finalized_result.energy_gap:.4f}", end="")
             print()
+            if finalized_result.requested_target_rmsd is not None:
+                contract_summary = finalized_result.returned_pose_contract_summary
+                if contract_summary is None:
+                    contract_summary = f"requested target_rmsd<={finalized_result.requested_target_rmsd:.2f}A"
+                print(f"  Returned-pose contract: {contract_summary}")
         else:
             print(
                 f"  DQ-Dock failed, Dock: {dock_time:.2f}s, Wall: {wall_time:.2f}s, Error: {finalized_result.error or finalized_result.formal_status}"

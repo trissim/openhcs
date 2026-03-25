@@ -8,6 +8,8 @@ import pytest
 from dq_dock_engine.docking import pipeline as docking_pipeline
 from dq_dock_engine.docking.certified_runtime_plans import (
     CertifiedPipelineExecutionPlan,
+    CertifiedPruningDeltaComponent,
+    CertifiedPruningDeltaComponentKind,
     CertifiedPruningDeltaBudget,
 )
 from dq_dock_engine.docking.core import DockingBox, LigandContext, PoseVector
@@ -50,13 +52,17 @@ def _make_request(*, target_error: float = 0.001):
 
 
 def _make_delta_budget(total_delta: float) -> CertifiedPruningDeltaBudget:
-    return CertifiedPruningDeltaBudget(
+    return CertifiedPruningDeltaBudget.from_components(
         source="test_delta",
-        shared_base_delta=0.0,
-        cutoff_tail_delta=0.0,
-        omitted_value_delta=0.0,
-        softening_mismatch_delta=total_delta,
-        total_delta=total_delta,
+        components=(
+            CertifiedPruningDeltaComponent(
+                label="softening_mismatch",
+                kind=CertifiedPruningDeltaComponentKind.SOFTENING_MISMATCH,
+                active=total_delta > 0.0,
+                delta=total_delta,
+                theorem_handles=("LJ10",),
+            ),
+        ),
         theorem_handles=("LJ10",),
     )
 
@@ -88,13 +94,89 @@ def test_certified_pruning_pass_uses_top1_coarse_ambiguity_band(monkeypatch) -> 
     assert execution_plan.pruning_delta_budget.total_delta == 0.1
 
 
+def test_merge_pruning_delta_budgets_preserves_component_provenance() -> None:
+    lhs = CertifiedPruningDeltaBudget.from_components(
+        source="lhs",
+        components=(
+            CertifiedPruningDeltaComponent(
+                label="cutoff_tail",
+                kind=CertifiedPruningDeltaComponentKind.CUTOFF_TAIL,
+                active=True,
+                delta=0.1,
+                theorem_handles=("A1",),
+            ),
+        ),
+        theorem_handles=("A1",),
+    )
+    rhs = CertifiedPruningDeltaBudget.from_components(
+        source="rhs",
+        components=(
+            CertifiedPruningDeltaComponent(
+                label="water_mediated",
+                kind=CertifiedPruningDeltaComponentKind.WATER_MEDIATED,
+                active=True,
+                delta=0.2,
+                theorem_handles=("B1",),
+            ),
+        ),
+        theorem_handles=("B1",),
+    )
+
+    merged = docking_pipeline._merge_pruning_delta_budgets(lhs, rhs)
+
+    assert merged.total_delta == pytest.approx(0.3)
+    assert merged.cutoff_tail_delta == pytest.approx(0.1)
+    assert merged.omitted_value_delta == pytest.approx(0.2)
+    assert {component.label for component in merged.active_components} == {
+        "cutoff_tail",
+        "water_mediated",
+    }
+
+
+def test_pruning_budget_requires_explicit_authoritative_components() -> None:
+    with pytest.raises(ValueError, match="requires explicit authoritative components"):
+        CertifiedPruningDeltaBudget(
+            source="legacy",
+            shared_base_delta=0.0,
+            cutoff_tail_delta=0.0,
+            omitted_value_delta=0.0,
+            softening_mismatch_delta=0.1,
+            total_delta=0.1,
+            theorem_handles=("LJ10",),
+        )
+
+
+def test_pruning_budget_debug_summary_exposes_active_component_map() -> None:
+    budget = CertifiedPruningDeltaBudget.from_components(
+        source="debug",
+        components=(
+            CertifiedPruningDeltaComponent(
+                label="softening_mismatch",
+                kind=CertifiedPruningDeltaComponentKind.SOFTENING_MISMATCH,
+                active=True,
+                delta=0.25,
+                theorem_handles=("LJ10",),
+            ),
+        ),
+        theorem_handles=("LJ10",),
+    )
+
+    summary = budget.debug_summary()
+
+    assert summary["total_delta"] == pytest.approx(0.25)
+    assert budget.component_delta_map == {"softening_mismatch": 0.25}
+
+
 def test_score_softened_pose_batch_uses_softening_bound_for_base_physics() -> None:
     request = _make_request(target_error=0.1)
 
     class FakeBaseContext:
         uses_extended_rich = False
 
-        def pruning_delta_budget(self, *, softening_error_bound=None):
+        def pruning_delta_budget(
+            self, *, softening_error_bound=None, softening_radius=None
+        ):
+            del softening_radius
             assert softening_error_bound is not None
             return _make_delta_budget(float(softening_error_bound))
 
@@ -131,8 +213,10 @@ def test_score_softened_pose_batch_uses_analytic_delta_for_rich_pruning_context(
     class FakeRichPruningContext:
         uses_extended_rich = True
 
-        def pruning_delta_budget(self, *, softening_error_bound=None):
-            del softening_error_bound
+        def pruning_delta_budget(
+            self, *, softening_error_bound=None, softening_radius=None
+        ):
+            del softening_error_bound, softening_radius
             return _make_delta_budget(99.0)
 
         def score_softened_batch(self, **kwargs):
@@ -151,6 +235,61 @@ def test_score_softened_pose_batch_uses_analytic_delta_for_rich_pruning_context(
 
     assert jnp.array_equal(scores, jnp.array([3.0], dtype=jnp.float32))
     assert delta_budget.total_delta == pytest.approx(99.0)
+
+
+def test_score_softened_pose_batch_uses_batch_exact_delta_for_pruning_context() -> None:
+    request = SimpleNamespace(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.array([1.7], dtype=jnp.float32),
+        ligand_ctx=SimpleNamespace(base_radii=jnp.array([1.7], dtype=jnp.float32)),
+        target_error=0.1,
+        softening_radius=1.5,
+    )
+
+    class FakeTightPruningContext:
+        uses_extended_rich = True
+
+        def uses_batch_pruning_delta(self):
+            return True
+
+        def pruning_softening_matches_exact(self, softening_radius):
+            return softening_radius == 1.5
+
+        def pruning_delta_budget(
+            self, *, softening_error_bound=None, softening_radius=None
+        ):
+            assert softening_error_bound is not None
+            assert softening_radius == 1.5
+            return CertifiedPruningDeltaBudget.from_components(
+                source="rich_batch_exact_pruning_delta",
+                components=(
+                    CertifiedPruningDeltaComponent(
+                        label="batch_exact_delta",
+                        kind=CertifiedPruningDeltaComponentKind.SOFTENING_MISMATCH,
+                        active=float(softening_error_bound) > 0.0,
+                        delta=float(softening_error_bound),
+                        theorem_handles=("RPG6",),
+                    ),
+                ),
+                theorem_handles=("RPG6",),
+            )
+
+        def score_softened_batch(self, **kwargs):
+            del kwargs
+            return SimpleNamespace(
+                scores=jnp.array([3.0], dtype=jnp.float32),
+                softening_error_bound=jnp.asarray(0.25, dtype=jnp.float32),
+            )
+
+    scores, delta_budget = docking_pipeline._score_softened_pose_batch(
+        cast(Any, request),
+        poses_coords=jnp.zeros((1, 1, 3), dtype=jnp.float32),
+        electrostatics=None,
+        scoring_context=cast(CertifiedScoringContext, FakeTightPruningContext()),
+    )
+
+    assert jnp.array_equal(scores, jnp.array([3.0], dtype=jnp.float32))
+    assert delta_budget.total_delta == pytest.approx(0.25)
 
 
 def test_certified_pipeline_route_scores_only_valid_survivors(monkeypatch) -> None:

@@ -54,18 +54,31 @@ from dq_dock_engine.docking.core import (
     GapCertification,
     NativeCertification,
     CertificationDecision,
+    ReturnedPoseCertification,
+    ReturnedPoseContractDecision,
 )
 from dq_dock_engine.docking.charges import ChargeMethod, create_charge_assigner
 from dq_dock_engine.docking.certified_runtime_plans import (
+    ActiveConformerReturnedPoseWitness,
+    CertifiedActiveSubsetBudget,
+    CertifiedActiveSubsetBudgetFamily,
+    CertifiedConformerCoveragePlan,
+    CertifiedConformerAwareReturnedPoseWitness,
     CertifiedPipelineCostModel,
     CertifiedPipelineExecutionPlan,
+    CertifiedPruningDeltaComponent,
+    CertifiedPruningDeltaComponentKind,
     CertifiedPruningDeltaBudget,
     CertifiedRefinementBudget,
     CertifiedRefinementBudgetKind,
+    CertifiedRigidSeedFamilyPlan,
+    CertifiedReturnedPoseProofPlan,
     CertifiedSeedBudgetCandidate,
     CertifiedSeedBudgetPlan,
+    InactiveConformerReturnedPoseWitness,
     PoseSpecificImprovementBudget,
     PoseSpecificImprovementBudgetFamily,
+    ReturnedPoseProofCase,
 )
 from dq_dock_engine.docking.scoring import (
     CertifiedRealSpaceEwaldSpec,
@@ -79,6 +92,7 @@ from dq_dock_engine.docking.pocket_analysis import (
     detect_geometric_pocket,
 )
 from dq_dock_engine.docking.formal_pruning import (
+    ambiguity_band_mask,
     certified_pruning_certificate,
     coarse_top1_ambiguity_mask,
 )
@@ -90,8 +104,10 @@ from dq_dock_engine.docking.pocket_sampling import (
     extract_local_pocket_region,
     extract_local_pocket_region_view,
 )
+from dq_dock_engine.docking.placement import apply_poses
 from dq_dock_engine.docking.se3_refinement import (
     RefinementCertificate,
+    compute_se3_spectral_certificate,
     make_se3_energy_fn,
     make_se3_kinematics_fn,
     observe_gd_trajectory,
@@ -115,10 +131,15 @@ from dq_dock_engine.docking.conformer_search import (
     search_conformers,
 )
 from dq_dock_engine.docking.formal_handles import (
+    ambiguity_output_contract_theorem_handles,
     branch_and_bound_cross_docking_handles,
+    conformer_coverage_theorem_handles,
     joint_pruning_budget_optimality_handles,
+    optimizer_output_contract_theorem_handles,
     pocket_cross_docking_handles,
     pose_specific_improvement_budget_theorem_handles,
+    returned_pose_guarantee_theorem_handles,
+    rigid_seed_family_theorem_handles,
     receptor_flex_cross_docking_handles,
     receptor_flexibility_theorem_handles,
     seed_budget_minimality_theorem_handles,
@@ -260,6 +281,416 @@ def _shared_certified_singleton_top1(
     )
 
 
+def _winner_ambiguity_size(
+    scores: jnp.ndarray | np.ndarray,
+    error_bound: float | None,
+) -> int | None:
+    if error_bound is None or not math.isfinite(error_bound):
+        return None
+    ambiguity_mask = np.asarray(
+        jax.device_get(
+            ambiguity_band_mask(jnp.asarray(scores), k=1, epsilon=error_bound)
+        ),
+        dtype=bool,
+    )
+    return int(np.count_nonzero(ambiguity_mask))
+
+
+def _winner_ambiguity_indices(
+    scores: jnp.ndarray | np.ndarray,
+    error_bound: float | None,
+) -> tuple[int, ...]:
+    if error_bound is None or not math.isfinite(error_bound):
+        return ()
+    ambiguity_mask = np.asarray(
+        jax.device_get(
+            ambiguity_band_mask(jnp.asarray(scores), k=1, epsilon=error_bound)
+        ),
+        dtype=bool,
+    )
+    return tuple(int(index) for index in np.flatnonzero(ambiguity_mask).tolist())
+
+
+def _conformer_runtime_contract_handles(
+    *,
+    coverage_plan: CertifiedConformerCoveragePlan | None,
+    proof_case: ReturnedPoseProofCase,
+) -> tuple[str, ...]:
+    if coverage_plan is None:
+        return ()
+    base_handles = _merge_theorem_handles(
+        coverage_plan.theorem_handles,
+        conformer_coverage_theorem_handles(),
+    )
+    if proof_case == ReturnedPoseProofCase.CERTIFIED_SINGLETON:
+        return _merge_theorem_handles(
+            base_handles,
+            optimizer_output_contract_theorem_handles(),
+            returned_pose_guarantee_theorem_handles(),
+        )
+    if proof_case == ReturnedPoseProofCase.CERTIFIED_AMBIGUITY_SET:
+        return _merge_theorem_handles(
+            base_handles,
+            optimizer_output_contract_theorem_handles(),
+            ambiguity_output_contract_theorem_handles(),
+        )
+    return base_handles
+
+
+def _contains_theorem_handle_group(
+    theorem_handles: tuple[str, ...], required_handles: tuple[str, ...]
+) -> bool:
+    present_handles = set(theorem_handles)
+    return all(handle in present_handles for handle in required_handles)
+
+
+def _has_conformer_returned_pose_certificate_chain(
+    proof_plan: CertifiedReturnedPoseProofPlan,
+) -> bool:
+    witness = proof_plan.conformer_witness
+    if not isinstance(witness, ActiveConformerReturnedPoseWitness):
+        return False
+    if proof_plan.proof_case != ReturnedPoseProofCase.CERTIFIED_SINGLETON:
+        return False
+    if not proof_plan.winner_singleton or proof_plan.total_gap_budget is None:
+        return False
+    if proof_plan.total_gap_budget > witness.target_energy_gap:
+        return False
+    return _contains_theorem_handle_group(
+        proof_plan.theorem_handles,
+        returned_pose_guarantee_theorem_handles(),
+    )
+
+
+def _has_conformer_ambiguity_set_certificate_chain(
+    proof_plan: CertifiedReturnedPoseProofPlan,
+) -> bool:
+    witness = proof_plan.conformer_witness
+    if not isinstance(witness, ActiveConformerReturnedPoseWitness):
+        return False
+    if not proof_plan.ambiguity_set_certified or proof_plan.total_gap_budget is None:
+        return False
+    if proof_plan.total_gap_budget > witness.target_energy_gap:
+        return False
+    if len(proof_plan.support_indices) <= 1:
+        return False
+    return _contains_theorem_handle_group(
+        proof_plan.theorem_handles,
+        ambiguity_output_contract_theorem_handles(),
+    ) and _contains_theorem_handle_group(
+        proof_plan.theorem_handles,
+        optimizer_output_contract_theorem_handles(),
+    )
+
+
+def _missing_conformer_proof_requirements(
+    *,
+    conformer_coverage_plan: CertifiedConformerCoveragePlan | None,
+    cover_rmsd_radius: float | None,
+    cover_gap_budget: float | None,
+    basin_mu_coord: float | None,
+    target_energy_gap: float | None,
+    total_gap_budget: float | None,
+) -> tuple[str, ...]:
+    missing: list[str] = []
+    if conformer_coverage_plan is None:
+        missing.append("coverage_plan")
+    if cover_rmsd_radius is None:
+        missing.append("cover_rmsd_radius")
+    if cover_gap_budget is None:
+        missing.append("cover_gap_budget")
+    if basin_mu_coord is None:
+        missing.append("basin_mu_coord")
+    if target_energy_gap is None:
+        missing.append("target_energy_gap")
+    if total_gap_budget is None:
+        missing.append("total_gap_budget")
+    return tuple(missing)
+
+
+def _derive_returned_pose_proof_plan(
+    *,
+    request: "PipelineDockingRequest",
+    final_scores: jnp.ndarray | np.ndarray,
+    final_error_bound: float | None,
+    final_pose_coords: jnp.ndarray | np.ndarray | None,
+    refinement_certificates: list[RefinementCertificate | None],
+    pose_basin_mu_coords: tuple[float | None, ...] | None = None,
+    conformer_improved_mask: tuple[bool, ...] | None = None,
+    conformer_coverage_plan: CertifiedConformerCoveragePlan | None,
+    winner_theorem_handles: tuple[str, ...],
+    do_conf: bool,
+) -> CertifiedReturnedPoseProofPlan:
+    scores_np = np.asarray(jax.device_get(final_scores), dtype=np.float64)
+    if scores_np.shape[0] == 0:
+        return CertifiedReturnedPoseProofPlan(
+            proof_case=ReturnedPoseProofCase.NO_POSE,
+            target_rmsd=request.target_rmsd,
+            winner_index=None,
+            support_indices=(),
+            ambiguity_band_width=final_error_bound,
+            atom_count=int(request.ligand_ctx.base_coords.shape[0]),
+            dimension=int(3 * request.ligand_ctx.base_coords.shape[0]),
+            total_gap_budget=None,
+            theorem_handles=_merge_theorem_handles(winner_theorem_handles, ("TK11",)),
+            note="no returned pose available",
+        )
+
+    winner_index = int(np.argmin(scores_np))
+    winner_singleton = _certified_top1_gap(final_scores, final_error_bound)
+    support_indices = (
+        (winner_index,)
+        if winner_singleton
+        else _winner_ambiguity_indices(final_scores, final_error_bound)
+    )
+    if not support_indices:
+        support_indices = (winner_index,)
+    winner_refinement_cert = refinement_certificates[winner_index]
+    winner_conformer_improved = False
+    if conformer_improved_mask is not None and winner_index < len(
+        conformer_improved_mask
+    ):
+        winner_conformer_improved = bool(conformer_improved_mask[winner_index])
+    fallback_basin_mu_coord = None
+    if pose_basin_mu_coords is not None and winner_index < len(pose_basin_mu_coords):
+        fallback_basin_mu_coord = pose_basin_mu_coords[winner_index]
+    basin_witness_source = "missing"
+    if winner_refinement_cert is not None:
+        basin_witness_source = "refinement_certificate"
+    elif fallback_basin_mu_coord is not None:
+        basin_witness_source = "spectral_only"
+    basin_mu_coord = (
+        fallback_basin_mu_coord
+        if winner_refinement_cert is None
+        else float(winner_refinement_cert.spectral.mu_coord)
+    )
+    target_energy_gap = (
+        None
+        if basin_mu_coord is None
+        else float(
+            basin_mu_coord
+            * float(request.ligand_ctx.base_coords.shape[0])
+            * request.target_rmsd**2
+            / 2.0
+        )
+    )
+    cover_rmsd_radius = None
+    cover_gap_budget = None
+    if conformer_coverage_plan is not None:
+        cover_rmsd_radius = float(
+            conformer_coverage_plan.max_arm * conformer_coverage_plan.min_cell_radius
+        )
+        cover_gap_budget = float(
+            conformer_coverage_plan.score_lipschitz_constant * cover_rmsd_radius
+        )
+    total_gap_budget = None
+    band_width = 0.0
+    if do_conf:
+        band_width = (
+            0.0
+            if winner_singleton or final_error_bound is None
+            else float(final_error_bound)
+        )
+        total_gap_budget = (
+            None if cover_gap_budget is None else float(cover_gap_budget + band_width)
+        )
+    else:
+        total_gap_budget = (
+            0.0 if (winner_singleton and winner_refinement_cert is not None) else None
+        )
+    rigid_ambiguity_detected = bool(
+        final_pose_coords is not None
+        and _detect_rigid_equivalence_ambiguity(
+            jnp.asarray(final_pose_coords),
+            final_scores,
+            error_bound=final_error_bound,
+            target_rmsd=request.target_rmsd,
+        )
+    )
+    has_complete_conformer_chain = bool(
+        do_conf
+        and conformer_coverage_plan is not None
+        and cover_rmsd_radius is not None
+        and cover_gap_budget is not None
+        and basin_mu_coord is not None
+        and target_energy_gap is not None
+        and total_gap_budget is not None
+    )
+    missing_conformer_requirements = _missing_conformer_proof_requirements(
+        conformer_coverage_plan=conformer_coverage_plan,
+        cover_rmsd_radius=cover_rmsd_radius,
+        cover_gap_budget=cover_gap_budget,
+        basin_mu_coord=basin_mu_coord,
+        target_energy_gap=target_energy_gap,
+        total_gap_budget=total_gap_budget,
+    )
+    ambiguity_set_certified = bool(
+        has_complete_conformer_chain
+        and not winner_singleton
+        and cast(float, total_gap_budget) <= cast(float, target_energy_gap)
+    )
+    conformer_path_certified = bool(
+        has_complete_conformer_chain
+        and winner_singleton
+        and cast(float, total_gap_budget) <= cast(float, target_energy_gap)
+    )
+    proof_case = ReturnedPoseProofCase.DOWNGRADED
+    downgrade_decision = (
+        ReturnedPoseContractDecision.DOWNGRADED_NO_REFINEMENT_CERTIFICATE
+    )
+    note = None
+    if rigid_ambiguity_detected:
+        proof_case = ReturnedPoseProofCase.RIGID_AMBIGUITY
+        downgrade_decision = None
+        note = "rigid-equivalence ambiguity prevents a unique returned-pose guarantee"
+    elif ambiguity_set_certified:
+        proof_case = ReturnedPoseProofCase.CERTIFIED_AMBIGUITY_SET
+        downgrade_decision = None
+        note = (
+            "returned pose belongs to a certified ambiguity set whose members all satisfy "
+            "the requested target_rmsd contract"
+        )
+    elif not winner_singleton:
+        downgrade_decision = (
+            ReturnedPoseContractDecision.DOWNGRADED_NO_FINAL_SCORE_CERTIFICATE
+        )
+        note = "final exact winner does not have a certified singleton top-1 gap"
+    elif not do_conf and total_gap_budget is not None:
+        proof_case = ReturnedPoseProofCase.CERTIFIED_SINGLETON
+        downgrade_decision = None
+    elif total_gap_budget is None:
+        downgrade_decision = (
+            ReturnedPoseContractDecision.DOWNGRADED_NO_REFINEMENT_CERTIFICATE
+        )
+        note = (
+            "returned winner lacks the quantitative witness budget needed for certification"
+            f" (missing: {', '.join(missing_conformer_requirements)})"
+        )
+    elif conformer_path_certified:
+        proof_case = ReturnedPoseProofCase.CERTIFIED_SINGLETON
+        downgrade_decision = None
+    elif has_complete_conformer_chain:
+        downgrade_decision = ReturnedPoseContractDecision.DOWNGRADED_CONFORMER_PATH
+        note = (
+            "conformer-active returned pose is missing the full support-aware theorem chain "
+            "needed for a certified target_rmsd guarantee"
+        )
+    else:
+        downgrade_decision = (
+            ReturnedPoseContractDecision.DOWNGRADED_NO_REFINEMENT_CERTIFICATE
+        )
+        if winner_conformer_improved:
+            note = (
+                "conformer-active returned pose improved beyond the certified rigid refinement witness; "
+                "a conformer-updated winner currently invalidates the rigid refinement certificate"
+                f" (missing: {', '.join(missing_conformer_requirements)})"
+            )
+        else:
+            note = (
+                "conformer-active returned pose lacks the quantitative cover/refinement witnesses "
+                "needed for certification"
+                f" (missing: {', '.join(missing_conformer_requirements)})"
+            )
+    conformer_witness: CertifiedConformerAwareReturnedPoseWitness | None = None
+    conformer_handles = ()
+    if do_conf:
+        if has_complete_conformer_chain:
+            conformer_handles = _conformer_runtime_contract_handles(
+                coverage_plan=conformer_coverage_plan,
+                proof_case=proof_case,
+            )
+            conformer_witness = ActiveConformerReturnedPoseWitness(
+                coverage_plan=cast(
+                    CertifiedConformerCoveragePlan, conformer_coverage_plan
+                ),
+                cover_rmsd_radius=cast(float, cover_rmsd_radius),
+                cover_gap_budget=cast(float, cover_gap_budget),
+                basin_mu_coord=cast(float, basin_mu_coord),
+                target_energy_gap=cast(float, target_energy_gap),
+                theorem_handles=_merge_theorem_handles(
+                    winner_theorem_handles,
+                    conformer_handles,
+                    () if winner_refinement_cert is None else ("ERC39",),
+                ),
+            )
+        else:
+            conformer_witness = InactiveConformerReturnedPoseWitness(
+                theorem_handles=winner_theorem_handles,
+                note=note,
+            )
+    elif winner_index is not None:
+        conformer_witness = InactiveConformerReturnedPoseWitness(
+            theorem_handles=winner_theorem_handles,
+            note="conformer search inactive for returned-pose certification",
+        )
+    proof_case_handles = ()
+    if proof_case == ReturnedPoseProofCase.CERTIFIED_SINGLETON and not do_conf:
+        proof_case_handles = returned_pose_guarantee_theorem_handles()
+    return CertifiedReturnedPoseProofPlan(
+        proof_case=proof_case,
+        target_rmsd=request.target_rmsd,
+        winner_index=winner_index,
+        support_indices=support_indices,
+        ambiguity_band_width=final_error_bound,
+        atom_count=int(request.ligand_ctx.base_coords.shape[0]),
+        dimension=int(3 * request.ligand_ctx.base_coords.shape[0]),
+        total_gap_budget=total_gap_budget,
+        theorem_handles=_merge_theorem_handles(
+            winner_theorem_handles,
+            conformer_handles,
+            proof_case_handles,
+            () if winner_refinement_cert is None else ("ERC39",),
+        ),
+        conformer_witness=conformer_witness,
+        winner_refinement_certificate_present=winner_refinement_cert is not None,
+        winner_basin_witness_source=basin_witness_source,
+        winner_conformer_improved=winner_conformer_improved,
+        missing_conformer_requirements=(
+            missing_conformer_requirements if do_conf else ()
+        ),
+        downgrade_decision=downgrade_decision,
+        note=note,
+    )
+
+
+def _build_returned_pose_certification(
+    *,
+    proof_plan: CertifiedReturnedPoseProofPlan,
+) -> ReturnedPoseCertification | None:
+    if (
+        proof_plan.decision
+        == ReturnedPoseContractDecision.CERTIFIED_AMBIGUITY_SET_TARGET_RMSD
+    ):
+        if not _has_conformer_ambiguity_set_certificate_chain(proof_plan):
+            raise ValueError(
+                "Certified ambiguity-set proof plan lacks a complete conformer certificate chain"
+            )
+    elif (
+        proof_plan.decision == ReturnedPoseContractDecision.CERTIFIED_TARGET_RMSD
+        and isinstance(proof_plan.conformer_witness, ActiveConformerReturnedPoseWitness)
+        and not _has_conformer_returned_pose_certificate_chain(proof_plan)
+    ):
+        raise ValueError(
+            "Certified singleton proof plan lacks a complete conformer certificate chain"
+        )
+    if not proof_plan.has_winner:
+        return ReturnedPoseCertification(
+            decision=proof_plan.decision,
+            target_rmsd=proof_plan.target_rmsd,
+            theorem_handles=proof_plan.theorem_handles,
+            note=proof_plan.note or "no pose was available to certify",
+        )
+    return ReturnedPoseCertification(
+        decision=proof_plan.decision,
+        target_rmsd=proof_plan.target_rmsd,
+        theorem_handles=proof_plan.theorem_handles,
+        winner_index=int(cast(int, proof_plan.winner_index)),
+        ambiguity_size=proof_plan.ambiguity_size,
+        support_indices=proof_plan.support_indices,
+        note=proof_plan.note,
+    )
+
+
 @dataclass(frozen=True)
 class CertifiedPoseGeneration:
     pose_vecs: PoseVector
@@ -299,6 +730,7 @@ def derive_seed_budget(
     ligand_radius: float,
     n_torsions: int = 0,
     probe_certificate: RefinementCertificate | None = None,
+    translation_search_volume: float | None = None,
 ) -> int:
     """Derive the rigid initial-seed count from capture probability.
 
@@ -350,7 +782,11 @@ def derive_seed_budget(
     # --- Search volumes ---
 
     # Translation: box volume in Å³
-    box_vol = float(jnp.prod(box_size))
+    box_vol = (
+        float(jnp.prod(box_size))
+        if translation_search_volume is None
+        else float(translation_search_volume)
+    )
 
     # Rotation: SO(3) has volume 2π² ≈ 19.739
     so3_volume = 2.0 * math.pi**2
@@ -434,6 +870,39 @@ def _certified_capture_rmsd(
     return capture_rmsd
 
 
+def _translation_search_volume_for_seed_family(
+    *,
+    box_size: jnp.ndarray,
+    rigid_seed_box: DockingBox | None,
+    certified_binding_site: CertifiedBindingSite | None,
+) -> float:
+    if certified_binding_site is not None:
+        radius = float(certified_binding_site.radius)
+        return (4.0 / 3.0) * math.pi * radius**3
+    if rigid_seed_box is not None:
+        return float(np.prod(np.asarray(rigid_seed_box.size, dtype=np.float64)))
+    return float(jnp.prod(box_size))
+
+
+def _derive_rigid_seed_family_plan_for_budget(
+    *,
+    rigid_seed_box: DockingBox | None,
+    certified_binding_site: CertifiedBindingSite | None,
+    budget: int,
+) -> CertifiedRigidSeedFamilyPlan | None:
+    if rigid_seed_box is None:
+        return None
+    from dq_dock_engine.docking.formal_sampling import (
+        derive_certified_rigid_seed_family_plan,
+    )
+
+    return derive_certified_rigid_seed_family_plan(
+        rigid_seed_box,
+        budget,
+        certified_binding_site=certified_binding_site,
+    )
+
+
 def derive_seed_budget_plan(
     *,
     confidence: float,
@@ -442,21 +911,35 @@ def derive_seed_budget_plan(
     ligand_radius: float,
     n_torsions: int = 0,
     probe_candidates: tuple[tuple[int, RefinementCertificate | None], ...] = (),
+    rigid_seed_box: DockingBox | None = None,
+    certified_binding_site: CertifiedBindingSite | None = None,
 ) -> CertifiedSeedBudgetPlan:
+    translation_search_volume = _translation_search_volume_for_seed_family(
+        box_size=box_size,
+        rigid_seed_box=rigid_seed_box,
+        certified_binding_site=certified_binding_site,
+    )
+    baseline_budget = derive_seed_budget(
+        confidence=confidence,
+        box_size=box_size,
+        target_rmsd=target_rmsd,
+        ligand_radius=ligand_radius,
+        n_torsions=n_torsions,
+        probe_certificate=None,
+        translation_search_volume=translation_search_volume,
+    )
     baseline_candidate = CertifiedSeedBudgetCandidate(
-        budget=derive_seed_budget(
-            confidence=confidence,
-            box_size=box_size,
-            target_rmsd=target_rmsd,
-            ligand_radius=ligand_radius,
-            n_torsions=n_torsions,
-            probe_certificate=None,
-        ),
+        budget=baseline_budget,
         source="baseline_zero_step_capture",
         adequate=True,
         capture_rmsd=_certified_capture_rmsd(
             target_rmsd=target_rmsd,
             probe_certificate=None,
+        ),
+        rigid_seed_family_plan=_derive_rigid_seed_family_plan_for_budget(
+            rigid_seed_box=rigid_seed_box,
+            certified_binding_site=certified_binding_site,
+            budget=baseline_budget,
         ),
         theorem_handles=("SB2", "SB5"),
     )
@@ -464,21 +947,28 @@ def derive_seed_budget_plan(
     for probe_rank, probe_certificate in probe_candidates:
         if probe_certificate is None:
             continue
+        probe_budget = derive_seed_budget(
+            confidence=confidence,
+            box_size=box_size,
+            target_rmsd=target_rmsd,
+            ligand_radius=ligand_radius,
+            n_torsions=n_torsions,
+            probe_certificate=probe_certificate,
+            translation_search_volume=translation_search_volume,
+        )
         candidates.append(
             CertifiedSeedBudgetCandidate(
-                budget=derive_seed_budget(
-                    confidence=confidence,
-                    box_size=box_size,
-                    target_rmsd=target_rmsd,
-                    ligand_radius=ligand_radius,
-                    n_torsions=n_torsions,
-                    probe_certificate=probe_certificate,
-                ),
+                budget=probe_budget,
                 source="observed_probe_capture",
                 adequate=True,
                 capture_rmsd=_certified_capture_rmsd(
                     target_rmsd=target_rmsd,
                     probe_certificate=probe_certificate,
+                ),
+                rigid_seed_family_plan=_derive_rigid_seed_family_plan_for_budget(
+                    rigid_seed_box=rigid_seed_box,
+                    certified_binding_site=certified_binding_site,
+                    budget=probe_budget,
                 ),
                 theorem_handles=("SB2", "SB5", "SB7", "ERC43"),
                 probe_rank=probe_rank,
@@ -872,6 +1362,24 @@ def _derive_adaptive_torsion_support_spec(
     target_rmsd: float,
     max_arm: float,
 ) -> tuple[int, float, tuple[int, ...]]:
+    plan = _derive_conformer_coverage_plan_from_lipschitz(
+        score_lipschitz_constant=max(per_bond_lipschitz) if per_bond_lipschitz else 0.0,
+        per_bond_lipschitz=per_bond_lipschitz,
+        target_delta=target_delta,
+        target_rmsd=target_rmsd,
+        max_arm=max_arm,
+    )
+    return plan.max_cells, plan.min_cell_radius, plan.canonical_segments
+
+
+def _derive_conformer_coverage_plan_from_lipschitz(
+    *,
+    score_lipschitz_constant: float,
+    per_bond_lipschitz: tuple[float, ...],
+    target_delta: float,
+    target_rmsd: float,
+    max_arm: float,
+) -> CertifiedConformerCoveragePlan:
     """Derive theorem-backed torsion search budgets from slack and radius certificates.
 
     The runtime stopping radius must align with the actual B&B cell metric:
@@ -901,7 +1409,21 @@ def _derive_adaptive_torsion_support_spec(
     if target_delta <= 0.0:
         raise ValueError(f"target_delta must be positive, got {target_delta}")
     if not per_bond_lipschitz:
-        return 1, float(2.0 * np.pi), ()
+        return CertifiedConformerCoveragePlan(
+            source="zero_torsion_conformer_coverage",
+            n_torsions=0,
+            score_lipschitz_constant=max(0.0, float(score_lipschitz_constant)),
+            per_bond_lipschitz=(),
+            canonical_segments=(),
+            support_size=1,
+            max_cells=1,
+            min_cell_radius=float(2.0 * np.pi),
+            support_target_delta=target_delta,
+            target_delta=target_delta,
+            target_rmsd=target_rmsd,
+            max_arm=max_arm,
+            theorem_handles=conformer_coverage_theorem_handles(),
+        )
     if target_rmsd <= 0.0:
         raise ValueError(f"target_rmsd must be positive, got {target_rmsd}")
     if max_arm <= 0.0:
@@ -949,7 +1471,76 @@ def _derive_adaptive_torsion_support_spec(
     )
     max_cells = min(support_max_cells, convergence_max_cells)
 
-    return max_cells, min_cell_radius, segments
+    return CertifiedConformerCoveragePlan(
+        source="canonical_adaptive_torsion_support",
+        n_torsions=n_active,
+        score_lipschitz_constant=max(0.0, float(score_lipschitz_constant)),
+        per_bond_lipschitz=lipschitz,
+        canonical_segments=segments,
+        support_size=support_size,
+        max_cells=max_cells,
+        min_cell_radius=min_cell_radius,
+        support_target_delta=support_target_delta,
+        target_delta=target_delta,
+        target_rmsd=target_rmsd,
+        max_arm=max_arm,
+        theorem_handles=conformer_coverage_theorem_handles(),
+    )
+
+
+def _derive_conformer_coverage_plan(
+    request: "PipelineDockingRequest",
+    *,
+    rotatable_bonds: tuple[RotatableBond, ...],
+) -> CertifiedConformerCoveragePlan:
+    from dq_dock_engine.docking.scoring import _EPSILON_KCAL_MOL
+
+    min_sigma = _min_pairwise_sigma_from_radii(
+        request.receptor_radii,
+        request.ligand_ctx.base_radii,
+    )
+    score_lipschitz_constant = _derive_exact_score_lipschitz_constant(
+        request.receptor_radii,
+        request.ligand_ctx.base_radii,
+        request.exact_chemistry_mode,
+        request.config.softening_policy
+        if request.config is not None
+        else SofteningPolicy.NONE,
+    )
+    r_soft = request.softening_radius
+    if r_soft is not None:
+        if r_soft <= 0:
+            raise ValueError(
+                f"resolved softening radius must be positive, got {r_soft}"
+            )
+        softened = compute_softened_lipschitz_constant(
+            _EPSILON_KCAL_MOL,
+            min_sigma,
+            r_soft,
+        )
+        if 0 < softened < score_lipschitz_constant:
+            score_lipschitz_constant = softened
+
+    if not rotatable_bonds:
+        return _derive_conformer_coverage_plan_from_lipschitz(
+            score_lipschitz_constant=score_lipschitz_constant,
+            per_bond_lipschitz=(),
+            target_delta=request.target_error,
+            target_rmsd=request.target_rmsd,
+            max_arm=float(2.0 * np.pi),
+        )
+
+    per_bond_lipschitz = tuple(
+        score_lipschitz_constant * bond.max_arm_length for bond in rotatable_bonds
+    )
+    max_arm = max(bond.max_arm_length for bond in rotatable_bonds)
+    return _derive_conformer_coverage_plan_from_lipschitz(
+        score_lipschitz_constant=score_lipschitz_constant,
+        per_bond_lipschitz=per_bond_lipschitz,
+        target_delta=request.target_error,
+        target_rmsd=request.target_rmsd,
+        max_arm=max_arm,
+    )
 
 
 def _active_rotatable_bonds_for_pose(
@@ -1008,7 +1599,13 @@ def _probe_seed_budget_certificate(
 
     probe_request = cast(
         "PipelineDockingRequest",
-        request.with_updates(n_poses_override=SEED_BUDGET_PROBE_POSES),
+        request.with_updates(
+            n_poses_override=SEED_BUDGET_PROBE_POSES,
+            rigid_seed_family_plan=_derive_request_rigid_seed_family_plan(
+                request,
+                n_poses=SEED_BUDGET_PROBE_POSES,
+            ),
+        ),
     )
     probe_batch = route.generate_pose_batch(probe_request)
     probe_request = probe_batch.request
@@ -1046,6 +1643,8 @@ def _probe_seed_budget_certificate(
         ligand_radius=ligand_radius,
         n_torsions=n_torsions,
         probe_candidates=tuple(successful_probe_candidates),
+        rigid_seed_box=probe_request.box,
+        certified_binding_site=_resolved_certified_seed_binding_site(probe_request),
     )
     selected_candidate = seed_budget_plan.selected_candidate
     best_cert = None
@@ -1060,6 +1659,7 @@ def _probe_seed_budget_certificate(
         probe_request.with_updates(
             n_poses_override=None,
             seed_budget_plan=seed_budget_plan,
+            rigid_seed_family_plan=seed_budget_plan.selected_family_plan,
         ),
     ), best_cert
 
@@ -1072,6 +1672,8 @@ class DockingRequestBase:
     box: DockingBox
     n_poses_override: int | None = None
     seed_budget_plan: CertifiedSeedBudgetPlan | None = None
+    rigid_seed_family_plan: CertifiedRigidSeedFamilyPlan | None = None
+    conformer_coverage_plan: CertifiedConformerCoveragePlan | None = None
     key: jax.Array
     receptor_elements: tuple[str, ...] | None = None
     charge_method: ChargeMethod | None = None
@@ -1095,6 +1697,16 @@ class DockingRequestBase:
         """Seed budget: explicit if set, otherwise derived from confidence."""
         if self.n_poses_override is not None:
             return self.n_poses_override
+        if self.rigid_seed_family_plan is not None:
+            if (
+                self.seed_budget_plan is not None
+                and self.seed_budget_plan.selected_budget
+                != self.rigid_seed_family_plan.pose_count
+            ):
+                raise ValueError(
+                    "rigid_seed_family_plan.pose_count must agree with the selected seed budget"
+                )
+            return self.rigid_seed_family_plan.pose_count
         if self.seed_budget_plan is not None:
             return self.seed_budget_plan.selected_budget
         config = self.config
@@ -1110,6 +1722,8 @@ class DockingRequestBase:
             target_rmsd=config.target_rmsd,
             ligand_radius=ligand_radius,
             n_torsions=_seed_budget_torsion_count(self),
+            rigid_seed_box=self.box,
+            certified_binding_site=_resolved_certified_seed_binding_site(self),
         ).selected_budget
 
     @property
@@ -1923,17 +2537,23 @@ def _create_certified_pose_vectors(
     box: DockingBox,
     n_poses: int,
     certified_binding_site: CertifiedBindingSite | None,
+    rigid_seed_family_plan: CertifiedRigidSeedFamilyPlan | None = None,
 ) -> CertifiedPoseGeneration:
     from dq_dock_engine.docking.formal_sampling import (
         create_certified_binding_site_action_family,
         create_certified_global_action_family,
+        materialize_certified_rigid_seed_family,
     )
 
     certified_family = (
-        create_certified_global_action_family(box, n_poses)
-        if certified_binding_site is None
-        else create_certified_binding_site_action_family(
-            certified_binding_site, n_poses
+        materialize_certified_rigid_seed_family(rigid_seed_family_plan)
+        if rigid_seed_family_plan is not None
+        else (
+            create_certified_global_action_family(box, n_poses)
+            if certified_binding_site is None
+            else create_certified_binding_site_action_family(
+                certified_binding_site, n_poses
+            )
         )
     )
     pose_vecs = PoseVector(
@@ -1941,6 +2561,35 @@ def _create_certified_pose_vectors(
         quaternion=certified_family.quaternions,
     )
     return CertifiedPoseGeneration(pose_vecs=pose_vecs, family=certified_family)
+
+
+def _resolved_certified_seed_binding_site(
+    request: DockingRequestBase,
+) -> CertifiedBindingSite | None:
+    if (
+        isinstance(request, PipelineDockingRequest)
+        and request.certified_pocket_prep is not None
+    ):
+        return cast(
+            CertifiedPocketPreparation, request.certified_pocket_prep
+        ).plan.binding_site
+    return request.certified_binding_site
+
+
+def _derive_request_rigid_seed_family_plan(
+    request: DockingRequestBase,
+    *,
+    n_poses: int,
+) -> CertifiedRigidSeedFamilyPlan:
+    from dq_dock_engine.docking.formal_sampling import (
+        derive_certified_rigid_seed_family_plan,
+    )
+
+    return derive_certified_rigid_seed_family_plan(
+        request.box,
+        n_poses,
+        certified_binding_site=_resolved_certified_seed_binding_site(request),
+    )
 
 
 def _sample_box_guided_pose_vectors(
@@ -2444,7 +3093,7 @@ def _posewise_conformer_correction(
     per_bond_local_bounds: jnp.ndarray | None,
     scoring_cutoff: float = 6.0,
 ) -> jnp.ndarray:
-    family = _posewise_improvement_budget_family(
+    family = _active_subset_budget_family(
         poses_coords,
         receptor_coords,
         rotatable_bonds,
@@ -2454,25 +3103,54 @@ def _posewise_conformer_correction(
     return jnp.asarray(family.totals_array())
 
 
+def _merge_pruning_delta_components(
+    lhs: tuple[CertifiedPruningDeltaComponent, ...],
+    rhs: tuple[CertifiedPruningDeltaComponent, ...],
+) -> tuple[CertifiedPruningDeltaComponent, ...]:
+    merged: dict[
+        tuple[CertifiedPruningDeltaComponentKind, str],
+        CertifiedPruningDeltaComponent,
+    ] = {}
+    for component in (*lhs, *rhs):
+        key = (component.kind, component.label)
+        if key not in merged:
+            merged[key] = component
+            continue
+        prev = merged[key]
+        chosen = component if component.delta >= prev.delta else prev
+        merged[key] = CertifiedPruningDeltaComponent(
+            label=chosen.label,
+            kind=chosen.kind,
+            active=prev.active or component.active,
+            delta=max(prev.delta, component.delta),
+            theorem_handles=_merge_theorem_handles(
+                prev.theorem_handles,
+                component.theorem_handles,
+            ),
+            witness_handles=_merge_theorem_handles(
+                prev.witness_handles,
+                component.witness_handles,
+            ),
+            note=chosen.note,
+        )
+    return tuple(merged.values())
+
+
 def _merge_pruning_delta_budgets(
     lhs: CertifiedPruningDeltaBudget,
     rhs: CertifiedPruningDeltaBudget,
 ) -> CertifiedPruningDeltaBudget:
-    preferred_breakdown = (
-        lhs.breakdown if lhs.total_delta >= rhs.total_delta else rhs.breakdown
+    assert lhs.components is not None
+    assert rhs.components is not None
+    merged_components = _merge_pruning_delta_components(
+        lhs.components,
+        rhs.components,
     )
-    return CertifiedPruningDeltaBudget(
+    return CertifiedPruningDeltaBudget.from_components(
         source=(
             lhs.source if lhs.source == rhs.source else f"{lhs.source}+{rhs.source}"
         ),
-        shared_base_delta=max(lhs.shared_base_delta, rhs.shared_base_delta),
-        cutoff_tail_delta=max(lhs.cutoff_tail_delta, rhs.cutoff_tail_delta),
-        omitted_value_delta=max(lhs.omitted_value_delta, rhs.omitted_value_delta),
-        softening_mismatch_delta=max(
-            lhs.softening_mismatch_delta,
-            rhs.softening_mismatch_delta,
-        ),
-        total_delta=max(lhs.total_delta, rhs.total_delta),
+        components=merged_components,
         theorem_handles=_merge_theorem_handles(
             lhs.theorem_handles,
             rhs.theorem_handles,
@@ -2481,11 +3159,10 @@ def _merge_pruning_delta_budgets(
             lhs.witness_handles,
             rhs.witness_handles,
         ),
-        breakdown=preferred_breakdown,
     )
 
 
-def _posewise_improvement_budget_family(
+def _active_subset_budget_family(
     poses_coords: jnp.ndarray,
     receptor_coords: jnp.ndarray,
     rotatable_bonds: tuple[RotatableBond, ...],
@@ -2494,15 +3171,15 @@ def _posewise_improvement_budget_family(
     scoring_cutoff: float = 6.0,
     pose_indices: np.ndarray | None = None,
     active_subset_source: str = "posewise_interaction_cutoff",
-) -> PoseSpecificImprovementBudgetFamily:
+) -> CertifiedActiveSubsetBudgetFamily:
     theorem_handles = pose_specific_improvement_budget_theorem_handles()
     n_poses = int(poses_coords.shape[0])
     if pose_indices is None:
         pose_indices = np.arange(n_poses, dtype=np.int32)
     if per_bond_local_bounds is None or not rotatable_bonds:
-        return PoseSpecificImprovementBudgetFamily(
+        return CertifiedActiveSubsetBudgetFamily(
             budgets=tuple(
-                PoseSpecificImprovementBudget(
+                CertifiedActiveSubsetBudget(
                     pose_index=int(pose_index),
                     active_torsion_indices=(),
                     active_torsion_mask=(),
@@ -2530,11 +3207,11 @@ def _posewise_improvement_budget_family(
         jax.device_get(per_bond_local_bounds),
         dtype=np.float64,
     )
-    budgets: list[PoseSpecificImprovementBudget] = []
+    budgets: list[CertifiedActiveSubsetBudget] = []
     for local_pose_index, pose_index in enumerate(pose_indices.tolist()):
         pose_mask = tuple(bool(flag) for flag in active_mask[local_pose_index].tolist())
         budgets.append(
-            PoseSpecificImprovementBudget(
+            CertifiedActiveSubsetBudget(
                 pose_index=int(pose_index),
                 active_torsion_indices=tuple(
                     int(idx)
@@ -2551,10 +3228,31 @@ def _posewise_improvement_budget_family(
                 theorem_handles=theorem_handles,
             )
         )
-    return PoseSpecificImprovementBudgetFamily(
+    return CertifiedActiveSubsetBudgetFamily(
         budgets=tuple(budgets),
         theorem_handles=theorem_handles,
     )
+
+
+def _posewise_improvement_budget_family(
+    poses_coords: jnp.ndarray,
+    receptor_coords: jnp.ndarray,
+    rotatable_bonds: tuple[RotatableBond, ...],
+    per_bond_local_bounds: jnp.ndarray | None,
+    *,
+    scoring_cutoff: float = 6.0,
+    pose_indices: np.ndarray | None = None,
+    active_subset_source: str = "posewise_interaction_cutoff",
+) -> PoseSpecificImprovementBudgetFamily:
+    return _active_subset_budget_family(
+        poses_coords,
+        receptor_coords,
+        rotatable_bonds,
+        per_bond_local_bounds,
+        scoring_cutoff=scoring_cutoff,
+        pose_indices=pose_indices,
+        active_subset_source=active_subset_source,
+    ).as_pose_specific_improvement_family()
 
 
 def _certified_pruning_pass(
@@ -2574,13 +3272,9 @@ def _certified_pruning_pass(
     n_total = int(poses_coords.shape[0])
     if n_total == 0:
         empty = np.zeros((0,), dtype=np.float32)
-        zero_budget = CertifiedPruningDeltaBudget(
+        zero_budget = CertifiedPruningDeltaBudget.from_components(
             source="empty_pruning_delta",
-            shared_base_delta=0.0,
-            cutoff_tail_delta=0.0,
-            omitted_value_delta=0.0,
-            softening_mismatch_delta=0.0,
-            total_delta=0.0,
+            components=(),
             theorem_handles=("TK11",),
         )
         return CertifiedPipelineExecutionPlan(
@@ -2603,7 +3297,7 @@ def _certified_pruning_pass(
         and scoring_context.receptor_conformations is not None
     )
     additive_correction_np = np.zeros((n_total,), dtype=np.float32)
-    improvement_budgets: list[PoseSpecificImprovementBudget] = []
+    active_subset_budgets: list[CertifiedActiveSubsetBudget] = []
 
     conformer_config = None
     per_bond_bounds = None
@@ -2642,7 +3336,7 @@ def _certified_pruning_pass(
 
         chunk_correction_np = np.zeros((stop - start,), dtype=np.float32)
         if use_conf:
-            chunk_family = _posewise_improvement_budget_family(
+            chunk_family = _active_subset_budget_family(
                 chunk_coords,
                 request.protein_coords,
                 rotatable_bonds,
@@ -2650,7 +3344,7 @@ def _certified_pruning_pass(
                 scoring_cutoff=compute_certified_cutoff(request.target_error),
                 pose_indices=np.arange(start, stop, dtype=np.int32),
             )
-            improvement_budgets.extend(chunk_family.budgets)
+            active_subset_budgets.extend(chunk_family.budgets)
             chunk_correction_np += chunk_family.totals_array()
         if needs_receptor_flex:
             assert scoring_context is not None
@@ -2688,13 +3382,18 @@ def _certified_pruning_pass(
         f"[CERTIFIED PRUNING] Pruned {n_total} -> {n_surv_val} poses "
         f"({efficiency:.1f}% reduction, delta={pruning_delta_budget.total_delta:.3f} kcal/mol)"
     )
-    improvement_budget_family = (
-        PoseSpecificImprovementBudgetFamily(
-            budgets=tuple(improvement_budgets),
+    active_subset_budget_family = (
+        CertifiedActiveSubsetBudgetFamily(
+            budgets=tuple(active_subset_budgets),
             theorem_handles=pose_specific_improvement_budget_theorem_handles(),
         )
         if use_conf
         else None
+    )
+    improvement_budget_family = (
+        None
+        if active_subset_budget_family is None
+        else active_subset_budget_family.as_pose_specific_improvement_family()
     )
     return CertifiedPipelineExecutionPlan(
         coarse_scores=jnp.asarray(coarse_scores_np),
@@ -2702,6 +3401,7 @@ def _certified_pruning_pass(
         tau=float(np.asarray(jax.device_get(tau))),
         retain_mask=jnp.asarray(survivor_mask_np),
         pruning_delta_budget=pruning_delta_budget,
+        active_subset_budget_family=active_subset_budget_family,
         improvement_budget_family=improvement_budget_family,
         theorem_handles=_merge_theorem_handles(
             ("TK11", "BD5"),
@@ -2742,57 +3442,17 @@ def _build_conformer_search_config(
     *,
     rotatable_bonds: tuple[RotatableBond, ...],
 ) -> BranchAndBoundConfig:
-    from dq_dock_engine.docking.scoring import _EPSILON_KCAL_MOL
-
-    min_sigma = _min_pairwise_sigma_from_radii(
-        request.receptor_radii,
-        request.ligand_ctx.base_radii,
+    coverage_plan = (
+        request.conformer_coverage_plan
+        if request.conformer_coverage_plan is not None
+        else _derive_conformer_coverage_plan(request, rotatable_bonds=rotatable_bonds)
     )
-    score_lipschitz_constant = _derive_exact_score_lipschitz_constant(
-        request.receptor_radii,
-        request.ligand_ctx.base_radii,
-        request.exact_chemistry_mode,
-        request.config.softening_policy
-        if request.config is not None
-        else SofteningPolicy.NONE,
-    )
-    r_soft = request.softening_radius
-    if r_soft is not None:
-        if r_soft <= 0:
-            raise ValueError(
-                f"resolved softening radius must be positive, got {r_soft}"
-            )
-        softened = compute_softened_lipschitz_constant(
-            _EPSILON_KCAL_MOL,
-            min_sigma,
-            r_soft,
-        )
-        if 0 < softened < score_lipschitz_constant:
-            score_lipschitz_constant = softened
-
-    per_bond_lipschitz = None
-    if rotatable_bonds:
-        per_bond_lipschitz = tuple(
-            score_lipschitz_constant * bond.max_arm_length for bond in rotatable_bonds
-        )
-        max_arm = max(bond.max_arm_length for bond in rotatable_bonds)
-        max_cells, min_cell_radius, _ = _derive_adaptive_torsion_support_spec(
-            per_bond_lipschitz,
-            request.target_error,
-            request.target_rmsd,
-            max_arm,
-        )
-    else:
-        max_cells = 1
-        min_cell_radius = float(2.0 * np.pi)
-
-    return BranchAndBoundConfig(
-        max_cells=max_cells,
-        min_cell_radius=min_cell_radius,
-        score_lipschitz_constant=score_lipschitz_constant,
-        max_conformers=1,
-        per_bond_lipschitz=per_bond_lipschitz,
-        reuse_initial_conformer=request.reuse_initial_conformer,
+    return cast(
+        BranchAndBoundConfig,
+        coverage_plan.as_branch_and_bound_config(
+            reuse_initial_conformer=request.reuse_initial_conformer,
+            max_conformers=1,
+        ),
     )
 
 
@@ -2931,6 +3591,7 @@ def _score_softened_pose_batch(
         )
         delta_budget = scoring_context.pruning_delta_budget(
             softening_error_bound=coarse_batch.softening_error_bound,
+            softening_radius=softening_radius,
         )
         return coarse_batch.scores, delta_budget
 
@@ -3124,6 +3785,93 @@ def _run_conformer_search_for_pose(
         ),
     )
     return world_coords, best_energy, theorem_handles
+
+
+def _recertify_conformer_updated_pose(
+    request: "PipelineDockingRequest",
+    pose_coords: jnp.ndarray,
+    *,
+    scoring_context: CertifiedScoringContext | None,
+    electrostatics: "CertifiedRealSpaceEwaldSpec | None",
+) -> tuple[
+    jnp.ndarray,
+    float,
+    RefinementCertificate | None,
+    tuple[str, ...],
+    float | None,
+]:
+    if not request.is_certified_mode:
+        score = _score_exact_pose_batch(
+            request,
+            poses_coords=pose_coords[None, ...],
+            electrostatics=electrostatics,
+            scoring_context=scoring_context,
+        )
+        return pose_coords, float(score[0]), None, (), None
+
+    pose_center = jnp.mean(pose_coords, axis=0)
+    local_base_coords = pose_coords - pose_center
+    local_ligand_ctx = LigandContext(
+        base_coords=local_base_coords,
+        base_radii=request.ligand_ctx.base_radii,
+        center_of_mass=jnp.mean(local_base_coords, axis=0),
+        elements=request.ligand_ctx.elements,
+        charges=request.ligand_ctx.charges,
+        adjacency=request.ligand_ctx.adjacency,
+    )
+    local_request = cast(
+        "PipelineDockingRequest",
+        request.with_updates(ligand_ctx=local_ligand_ctx),
+    )
+
+    initial_translation = pose_center[None, ...]
+    initial_quaternion = jnp.array([[1.0, 0.0, 0.0, 0.0]], dtype=pose_coords.dtype)
+
+    refined_translations, refined_quaternions, certificates = _certified_refinement(
+        request=local_request,
+        initial_translations=initial_translation,
+        initial_quaternions=initial_quaternion,
+        mode_override=RefinementCertificationMode.OBSERVED,
+    )
+
+    spectral_mu_coord = None
+    if certificates[0] is not None and certificates[0].spectral is not None:
+        cert_mu = certificates[0].spectral.mu_coord
+        if math.isfinite(cert_mu) and cert_mu > 0:
+            spectral_mu_coord = float(cert_mu)
+    else:
+        print(
+            f"[RECERTIFY DEBUG] No certificate found. Certificate is None: {certificates[0] is None}, "
+            f"spectral is None: {certificates[0].spectral if certificates[0] is not None else 'N/A'}",
+            flush=True,
+        )
+
+    refined_coords = apply_poses(
+        local_ligand_ctx,
+        PoseVector(
+            translation=refined_translations,
+            quaternion=refined_quaternions,
+        ),
+    )[0]
+
+    score = _score_exact_pose_batch(
+        request,
+        poses_coords=refined_coords[None, ...],
+        electrostatics=electrostatics,
+        scoring_context=scoring_context,
+    )
+
+    return (
+        refined_coords,
+        float(score[0]),
+        certificates[0],
+        (
+            ()
+            if certificates[0] is None or certificates[0].iteration_budget_plan is None
+            else certificates[0].iteration_budget_plan.theorem_handles
+        ),
+        spectral_mu_coord,
+    )
 
 
 def _score_exact_pose_batch(
@@ -3443,6 +4191,15 @@ class CertifiedPipelineRoute(PipelineRoute):
                 CertifiedPocketPreparation,
                 prepared_request.certified_pocket_prep,
             ).plan.binding_site,
+            rigid_seed_family_plan=(
+                prepared_request.rigid_seed_family_plan
+                if prepared_request.rigid_seed_family_plan is not None
+                else (
+                    None
+                    if prepared_request.seed_budget_plan is None
+                    else prepared_request.seed_budget_plan.selected_family_plan
+                )
+            ),
         )
         return PipelinePoseBatch(
             request=prepared_request,
@@ -3734,14 +4491,37 @@ def _run_docking_pipeline_request(
     request = nominalize_pipeline_request(
         request.with_updates(key=request.normalized_key)
     )
+    if request.is_certified_mode and not request.optimize:
+        raise ValueError(
+            "certified mode requires optimize=True so the returned pose can carry a "
+            "returned-pose RMSD contract"
+        )
     route = derive_pipeline_route(request)
     request = route.prepare_request(request)
+    if request.is_certified_mode and request.rigid_seed_family_plan is None:
+        if request.n_poses_override is not None:
+            request = request.with_updates(
+                rigid_seed_family_plan=_derive_request_rigid_seed_family_plan(
+                    request,
+                    n_poses=request.n_poses_override,
+                )
+            )
     if (
         request.n_poses_override is None
         and request.seed_budget_plan is None
         and request.config is not None
     ):
         request, _ = _probe_seed_budget_certificate(request, route)
+    if (
+        _request_uses_conformer_search(request)
+        and request.conformer_coverage_plan is None
+    ):
+        request = request.with_updates(
+            conformer_coverage_plan=_derive_conformer_coverage_plan(
+                request,
+                rotatable_bonds=_request_rotatable_bonds(request),
+            )
+        )
     pose_batch = route.generate_pose_batch(request)
     request = pose_batch.request
 
@@ -3810,6 +4590,11 @@ def _run_docking_pipeline_request(
             ligand_ctx=request.ligand_ctx,
             include_native=request.include_native,
         )
+        if request.is_certified_mode:
+            raise ValueError(
+                "certified mode must not reach the non-optimized output path; "
+                "returned-pose certification requires optimization/refinement witnesses"
+            )
         return outputs, cert
 
     opt_translations, opt_quaternions, n_to_opt = route.optimization_inputs(
@@ -4039,72 +4824,59 @@ def _run_docking_pipeline_request(
         # FORMAL search proof complete — now add the refinement proof.
         # The Bayesian rounds certify basin selection; SE(3) refinement
         # certifies convergence to within ε RMSD of the basin minimum.
-    # --- Certified SE(3) refinement (rigid-only routes) ---
-    # When conformer search is active the optimization state is no longer a pure
-    # rigid transform of the original ligand frame, so the theorem-backed rigid
-    # SE(3) certificate does not directly apply. In that case we keep the formal
-    # coordinate-space refinement result and only recover a best-fit rigid pose for
-    # downstream bookkeeping / optional conformer re-evaluation.
+    # --- Certified SE(3) refinement witness ---
+    # Even when conformer search is active, we still compute the rigid SE(3)
+    # certificate for the pre-conformer rigid pose. If conformer search later
+    # improves a pose, that rigid witness is explicitly invalidated for that pose.
     do_conf = _request_uses_conformer_search(request)
-    if do_conf:
-        refinement_certificates = [None] * int(opt_coords.shape[0])
-    else:
-        site_center = binding_site_center
-        site_radius = binding_site_radius
-        refinement_certificates = [None] * int(opt_coords.shape[0])
-        if local_refine_indices.size > 0:
-            pre_se3_translations = opt_pose_translations[
-                jnp.asarray(local_refine_indices)
-            ]
-            pre_se3_quaternions = opt_pose_quaternions[
-                jnp.asarray(local_refine_indices)
-            ]
-            pre_se3_coords = opt_coords[jnp.asarray(local_refine_indices)]
-            opt_t_subset, opt_q_subset, subset_certificates = _certified_refinement(
-                request=request,
-                initial_translations=pre_se3_translations,
-                initial_quaternions=pre_se3_quaternions,
+    site_center = binding_site_center
+    site_radius = binding_site_radius
+    refinement_certificates = [None] * int(opt_coords.shape[0])
+    if local_refine_indices.size > 0:
+        pre_se3_translations = opt_pose_translations[jnp.asarray(local_refine_indices)]
+        pre_se3_quaternions = opt_pose_quaternions[jnp.asarray(local_refine_indices)]
+        pre_se3_coords = opt_coords[jnp.asarray(local_refine_indices)]
+        opt_t_subset, opt_q_subset, subset_certificates = _certified_refinement(
+            request=request,
+            initial_translations=pre_se3_translations,
+            initial_quaternions=pre_se3_quaternions,
+        )
+        subset_coords = apply_poses(
+            request.ligand_ctx,
+            PoseVector(translation=opt_t_subset, quaternion=opt_q_subset),
+        )
+        subset_in_site = np.ones((int(local_refine_indices.size),), dtype=bool)
+        if site_center is not None and site_radius > 0.0:
+            subset_centers = np.asarray(jax.device_get(jnp.mean(subset_coords, axis=1)))
+            subset_in_site = np.linalg.norm(
+                subset_centers - np.asarray(site_center),
+                axis=1,
+            ) <= float(site_radius)
+            subset_coords = jnp.where(
+                jnp.asarray(subset_in_site)[:, None, None],
+                subset_coords,
+                pre_se3_coords,
             )
-            subset_coords = apply_poses(
-                request.ligand_ctx,
-                PoseVector(translation=opt_t_subset, quaternion=opt_q_subset),
+            opt_t_subset = jnp.where(
+                jnp.asarray(subset_in_site)[:, None],
+                opt_t_subset,
+                pre_se3_translations,
             )
-            subset_in_site = np.ones((int(local_refine_indices.size),), dtype=bool)
-            if site_center is not None and site_radius > 0.0:
-                subset_centers = np.asarray(
-                    jax.device_get(jnp.mean(subset_coords, axis=1))
-                )
-                subset_in_site = np.linalg.norm(
-                    subset_centers - np.asarray(site_center),
-                    axis=1,
-                ) <= float(site_radius)
-                subset_coords = jnp.where(
-                    jnp.asarray(subset_in_site)[:, None, None],
-                    subset_coords,
-                    pre_se3_coords,
-                )
-                opt_t_subset = jnp.where(
-                    jnp.asarray(subset_in_site)[:, None],
-                    opt_t_subset,
-                    pre_se3_translations,
-                )
-                opt_q_subset = jnp.where(
-                    jnp.asarray(subset_in_site)[:, None],
-                    opt_q_subset,
-                    pre_se3_quaternions,
-                )
-            opt_coords = opt_coords.at[jnp.asarray(local_refine_indices)].set(
-                subset_coords
+            opt_q_subset = jnp.where(
+                jnp.asarray(subset_in_site)[:, None],
+                opt_q_subset,
+                pre_se3_quaternions,
             )
-            opt_pose_translations = opt_pose_translations.at[
-                jnp.asarray(local_refine_indices)
-            ].set(opt_t_subset)
-            opt_pose_quaternions = opt_pose_quaternions.at[
-                jnp.asarray(local_refine_indices)
-            ].set(opt_q_subset)
-            for local_idx, pose_idx in enumerate(local_refine_indices.tolist()):
-                if subset_in_site[local_idx]:
-                    refinement_certificates[pose_idx] = subset_certificates[local_idx]
+        opt_coords = opt_coords.at[jnp.asarray(local_refine_indices)].set(subset_coords)
+        opt_pose_translations = opt_pose_translations.at[
+            jnp.asarray(local_refine_indices)
+        ].set(opt_t_subset)
+        opt_pose_quaternions = opt_pose_quaternions.at[
+            jnp.asarray(local_refine_indices)
+        ].set(opt_q_subset)
+        for local_idx, pose_idx in enumerate(local_refine_indices.tolist()):
+            if subset_in_site[local_idx]:
+                refinement_certificates[pose_idx] = subset_certificates[local_idx]
 
     if request.is_certified_mode:
         if scoring_context.uses_extended_rich:
@@ -4159,6 +4931,8 @@ def _run_docking_pipeline_request(
         )
         final_error_bound = None
 
+    pre_conformer_final_scores = final_scores
+
     cert = _compute_native_certification(
         config=request.config,
         protein_coords=request.protein_coords,
@@ -4172,6 +4946,7 @@ def _run_docking_pipeline_request(
     best_final_indices = jnp.argsort(final_scores)[:n_to_opt]
 
     runtime_diagnostic_handles: tuple[str, ...] = ()
+    rigid_ambiguity_detected = False
     if (
         request.is_certified_mode
         and scoring_context.uses_extended_rich
@@ -4186,12 +4961,16 @@ def _run_docking_pipeline_request(
             runtime_diagnostic_handles,
             ("TK16", "FLO21", "FLO22"),
         )
-    if request.is_certified_mode and _detect_rigid_equivalence_ambiguity(
-        opt_coords,
-        final_scores,
-        error_bound=final_error_bound,
-        target_rmsd=request.target_rmsd,
-    ):
+    rigid_ambiguity_detected = (
+        request.is_certified_mode
+        and _detect_rigid_equivalence_ambiguity(
+            opt_coords,
+            final_scores,
+            error_bound=final_error_bound,
+            target_rmsd=request.target_rmsd,
+        )
+    )
+    if rigid_ambiguity_detected:
         runtime_diagnostic_handles = _merge_theorem_handles(
             runtime_diagnostic_handles,
             (RUNTIME_RIGID_EQUIVALENCE_AMBIGUITY,),
@@ -4231,27 +5010,55 @@ def _run_docking_pipeline_request(
             ),
         )
     best_energy_with_conf = (
-        float(final_scores[best_final_indices[0]])
-        if best_final_indices.shape[0] > 0
+        float(pre_conformer_final_scores[jnp.argmin(pre_conformer_final_scores)])
+        if pre_conformer_final_scores.shape[0] > 0
         else float("inf")
     )
-    best_poses = []
-    for idx in best_final_indices:
-        idx_i = int(idx)
-        th_handles: tuple[str, ...] = _merge_theorem_handles(
-            conformer_handles if do_conf else (),
-            runtime_diagnostic_handles,
+    per_pose_theorem_handles: list[tuple[str, ...]] | None = None
+    conformer_improved_mask: list[bool] | None = None
+    pose_basin_mu_coords: list[float | None] | None = None
+    if do_conf:
+        ordered_pose_indices = np.asarray(
+            jax.device_get(jnp.argsort(pre_conformer_final_scores)),
+            dtype=np.int32,
         )
-        coords_out = opt_coords[idx_i]
-        energy_out = float(final_scores[idx_i])
-
-        if do_conf:
+        resolved_coords = np.array(
+            jax.device_get(opt_coords),
+            dtype=np.float32,
+            copy=True,
+        )
+        resolved_energies = np.array(
+            jax.device_get(pre_conformer_final_scores),
+            dtype=np.float64,
+            copy=True,
+        )
+        coverage_handles = (
+            ()
+            if request.conformer_coverage_plan is None
+            else request.conformer_coverage_plan.theorem_handles
+        )
+        per_pose_theorem_handles = [
+            _merge_theorem_handles(
+                conformer_handles,
+                runtime_diagnostic_handles,
+                coverage_handles,
+            )
+            for _ in range(int(opt_coords.shape[0]))
+        ]
+        conformer_improved_mask = [False] * int(opt_coords.shape[0])
+        pose_basin_mu_coords = [
+            cast(float | None, None) for _ in range(int(opt_coords.shape[0]))
+        ]
+        for idx_i in ordered_pose_indices.tolist():
             pose_conf_improvement_budget = (
                 0.0
                 if final_pose_improvement_family is None
                 else final_pose_improvement_family.budgets[idx_i].total_budget
             )
-            if energy_out <= best_energy_with_conf + pose_conf_improvement_budget:
+            if (
+                resolved_energies[idx_i]
+                <= best_energy_with_conf + pose_conf_improvement_budget
+            ):
                 conf = _run_conformer_search_for_pose(
                     request,
                     quaternion=opt_pose_quaternions[idx_i],
@@ -4262,9 +5069,102 @@ def _run_docking_pipeline_request(
                     conformer_config=conformer_config,
                     strain_params=strain_params,
                 )
-                if conf is not None and conf[1] < energy_out:
-                    coords_out, energy_out, th_handles = conf
-            best_energy_with_conf = min(best_energy_with_conf, energy_out)
+                if conf is not None and conf[1] < resolved_energies[idx_i]:
+                    conformer_improved_mask[idx_i] = True
+                    (
+                        recert_coords,
+                        recert_energy,
+                        recert_certificate,
+                        recert_handles,
+                        recert_basin_mu_coord,
+                    ) = _recertify_conformer_updated_pose(
+                        request,
+                        jnp.asarray(conf[0]),
+                        scoring_context=scoring_context,
+                        electrostatics=electrostatics,
+                    )
+                    resolved_coords[idx_i] = np.asarray(
+                        jax.device_get(recert_coords),
+                        dtype=np.float32,
+                    )
+                    resolved_energies[idx_i] = float(recert_energy)
+                    refinement_certificates[idx_i] = recert_certificate
+                    assert pose_basin_mu_coords is not None
+                    pose_basin_mu_coords[idx_i] = recert_basin_mu_coord
+                    assert per_pose_theorem_handles is not None
+                    per_pose_theorem_handles[idx_i] = _merge_theorem_handles(
+                        per_pose_theorem_handles[idx_i],
+                        conf[2],
+                        recert_handles,
+                    )
+            best_energy_with_conf = min(best_energy_with_conf, resolved_energies[idx_i])
+        opt_coords = jnp.asarray(resolved_coords, dtype=opt_coords.dtype)
+        if request.is_certified_mode:
+            if scoring_context.uses_extended_rich:
+                rich_final_batch = scoring_context.score_exact_batch(
+                    receptor_coords=request.protein_coords,
+                    poses_coords=opt_coords,
+                    receptor_radii=request.receptor_radii,
+                    ligand_radii=request.ligand_ctx.base_radii,
+                    target_error=request.target_error,
+                    epsilon=0.2,
+                )
+                disambiguation_batch = scoring_context.score_flip_disambiguation_batch(
+                    receptor_coords=request.protein_coords,
+                    poses_coords=opt_coords,
+                    receptor_radii=request.receptor_radii,
+                    ligand_radii=request.ligand_ctx.base_radii,
+                    target_error=request.target_error,
+                    epsilon=0.2,
+                )
+                rich_ranking_certified = _shared_certified_singleton_top1(
+                    rich_final_batch.scores,
+                    float(np.asarray(jax.device_get(rich_final_batch.error_bound))),
+                    disambiguation_batch.scores,
+                    float(np.asarray(jax.device_get(disambiguation_batch.error_bound))),
+                )
+                final_batch = (
+                    rich_final_batch if rich_ranking_certified else disambiguation_batch
+                )
+            else:
+                rich_ranking_certified = False
+                final_batch = ranking_scoring_context.score_exact_batch(
+                    receptor_coords=request.protein_coords,
+                    poses_coords=opt_coords,
+                    receptor_radii=request.receptor_radii,
+                    ligand_radii=request.ligand_ctx.base_radii,
+                    target_error=request.target_error,
+                    epsilon=0.2,
+                )
+            final_scores = final_batch.scores
+            final_error_bound = float(
+                np.asarray(jax.device_get(final_batch.error_bound))
+            )
+        else:
+            final_scores = route_scoring(
+                **derive_route_scoring_kwargs(
+                    request,
+                    engine=request.effective_engine,
+                    poses_coords=opt_coords,
+                    electrostatics=electrostatics,
+                )
+            )
+            final_error_bound = None
+    best_final_indices = jnp.argsort(final_scores)[:n_to_opt]
+
+    best_poses = []
+    for idx in best_final_indices:
+        idx_i = int(idx)
+        coords_out = opt_coords[idx_i]
+        energy_out = float(final_scores[idx_i])
+        th_handles: tuple[str, ...] = (
+            per_pose_theorem_handles[idx_i]
+            if do_conf and per_pose_theorem_handles is not None
+            else _merge_theorem_handles(
+                conformer_handles if do_conf else (),
+                runtime_diagnostic_handles,
+            )
+        )
 
         best_poses.append(
             ScoredPose(
@@ -4274,6 +5174,60 @@ def _run_docking_pipeline_request(
                 theorem_handles=th_handles,
             )
         )
+
+    if best_poses:
+        winner_handles = _merge_theorem_handles(
+            best_poses[0].theorem_handles,
+            runtime_diagnostic_handles,
+        )
+        pipeline_debug_summary = (
+            None if execution_plan is None else execution_plan.debug_summary()
+        )
+        returned_pose_proof_plan = _derive_returned_pose_proof_plan(
+            request=request,
+            final_scores=final_scores,
+            final_error_bound=final_error_bound,
+            final_pose_coords=opt_coords,
+            refinement_certificates=refinement_certificates,
+            pose_basin_mu_coords=(
+                None if pose_basin_mu_coords is None else tuple(pose_basin_mu_coords)
+            ),
+            conformer_improved_mask=(
+                None
+                if conformer_improved_mask is None
+                else tuple(conformer_improved_mask)
+            ),
+            conformer_coverage_plan=request.conformer_coverage_plan,
+            winner_theorem_handles=winner_handles,
+            do_conf=do_conf,
+        )
+        returned_pose_cert = _build_returned_pose_certification(
+            proof_plan=returned_pose_proof_plan,
+        )
+        best_poses[0] = replace(
+            best_poses[0],
+            theorem_handles=(
+                best_poses[0].theorem_handles
+                if returned_pose_cert is None
+                else _merge_theorem_handles(
+                    best_poses[0].theorem_handles,
+                    returned_pose_cert.theorem_handles,
+                )
+            ),
+            returned_pose_certification=returned_pose_cert,
+            returned_pose_proof_debug=returned_pose_proof_plan.debug_summary(),
+            pipeline_debug_summary=pipeline_debug_summary,
+        )
+        if returned_pose_cert is not None:
+            if (
+                request.is_certified_mode
+                and not returned_pose_cert.is_target_rmsd_certified
+            ):
+                print(
+                    "[RETURNED POSE DOWNGRADE] "
+                    f"{returned_pose_cert.summary()} | proof_plan={returned_pose_proof_plan.debug_summary()}",
+                    flush=True,
+                )
 
     return best_poses, cert
 

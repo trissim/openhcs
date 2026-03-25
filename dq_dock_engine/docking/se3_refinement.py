@@ -232,23 +232,56 @@ def compute_se3_spectral_certificate(
     Cost: ~6 reverse-mode passes for Hessian + 1 Jacobian.
     For 50ms scoring: ~0.3s per pose.
 
-    Returns None if not in a convex basin (lmin_param ≤ 0).
+    Returns None if not in a convex basin (lmin_param ≤ 0) or if computation fails.
 
     Lean: EnergyRMSDConvergence.parameter_window_transfers_to_coordinate_window_sq.
     """
-    H = jax.hessian(energy_fn)(optimized_params)  # (6, 6)
-    eigs = jnp.linalg.eigvalsh(H)
+    try:
+        energy_at_point = energy_fn(optimized_params)
+        if not math.isfinite(float(energy_at_point)):
+            return None
+    except Exception:
+        return None
+
+    try:
+        H = jax.hessian(energy_fn)(optimized_params)  # (6, 6)
+    except Exception:
+        return None
+
+    if jnp.any(jnp.isnan(H)):
+        return None
+
+    try:
+        eigs = jnp.linalg.eigvalsh(H)
+    except Exception:
+        return None
+
     lmin_param = float(eigs[0])
     lmax_param = float(eigs[-1])
+
+    if not math.isfinite(lmin_param) or not math.isfinite(lmax_param):
+        return None
 
     if lmin_param <= 0:
         return None  # not in a convex basin
 
-    J = jax.jacobian(kinematics_fn)(optimized_params)  # (N_atoms, 3, 6)
+    try:
+        J = jax.jacobian(kinematics_fn)(optimized_params)  # (N_atoms, 3, 6)
+    except Exception:
+        return None
+
+    if jnp.any(jnp.isnan(J)):
+        return None
+
     J_flat = J.reshape(-1, 6)  # (3*N_atoms, 6)
     singular_values = jnp.linalg.svdvals(J_flat)
     sigma_min_sq = float(jnp.min(singular_values) ** 2)
     sigma_max_sq = float(jnp.max(singular_values) ** 2)
+
+    if not math.isfinite(sigma_min_sq) or not math.isfinite(sigma_max_sq):
+        return None
+    if sigma_max_sq <= 0:
+        return None
 
     mu_coord = lmin_param / sigma_max_sq
     M_coord = (
@@ -256,6 +289,10 @@ def compute_se3_spectral_certificate(
         if sigma_min_sq <= 0.0 or not math.isfinite(sigma_min_sq)
         else lmax_param / sigma_min_sq
     )
+
+    if not math.isfinite(mu_coord):
+        return None
+
     return SE3SpectralCertificate(
         lmin_param=lmin_param,
         lmax_param=lmax_param,

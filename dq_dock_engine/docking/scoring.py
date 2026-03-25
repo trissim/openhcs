@@ -24,12 +24,15 @@ import jax.scipy.special as jsp
 import numpy as np
 
 from dq_dock_engine.docking.certified_runtime_plans import (
-    CertifiedBudgetBreakdownItem,
+    CertifiedPruningDeltaComponent,
+    CertifiedPruningDeltaComponentKind,
     CertifiedPruningDeltaBudget,
 )
 from dq_dock_engine.docking.formal_handles import (
     attractive_extended_chemistry_theorem_handles,
+    attractive_water_mediated_hbond_theorem_handles,
     contact_surrogate_theorem_handles,
+    cooperative_hbond_theorem_handles,
     directional_hbond_finite_theorem_handles,
     metal_coordination_cutoff_theorem_handles,
     omitted_channel_bound_theorem_handles,
@@ -1120,7 +1123,7 @@ class CertifiedRichChemistryPlan:
     def pruning_delta_budget(
         self,
         *,
-        n_water_bridges: int = 0,
+        has_water_bridge_channel: bool = False,
     ) -> CertifiedPruningDeltaBudget:
         """Single-source theorem-backed pruning slack for rich chemistry."""
         cutoff_tail_delta = (
@@ -1135,8 +1138,7 @@ class CertifiedRichChemistryPlan:
             self.cooperative_alpha,
             2,
         )
-        water_bridge_bound = 2.0 * n_water_bridges
-        omitted_delta = cooperative_bound + water_bridge_bound
+        water_bridge_bound = 2.0 if has_water_bridge_channel else 0.0
         cutoff_tail_handles = (
             screened_coulomb_theorem_handles()
             + contact_surrogate_theorem_handles()
@@ -1144,42 +1146,66 @@ class CertifiedRichChemistryPlan:
             + metal_coordination_cutoff_theorem_handles()
             + attractive_extended_chemistry_theorem_handles()
         )
-        return CertifiedPruningDeltaBudget(
-            source="rich_chemistry_pruning_delta",
-            shared_base_delta=0.0,
-            cutoff_tail_delta=cutoff_tail_delta,
-            omitted_value_delta=omitted_delta,
-            softening_mismatch_delta=0.0,
-            total_delta=cutoff_tail_delta + omitted_delta,
-            theorem_handles=rich_pruning_delta_theorem_handles(),
-            breakdown=(
-                CertifiedBudgetBreakdownItem(
-                    label="shared_base_zero",
-                    value=0.0,
-                    theorem_handles=softened_lj_shared_base_delta_theorem_handles(),
-                    note=(
-                        "Shared softened-LJ base contributes zero pruning slack on the "
-                        "rich-chemistry path"
-                    ),
-                ),
-                CertifiedBudgetBreakdownItem(
-                    label="cutoff_tail",
-                    value=cutoff_tail_delta,
-                    theorem_handles=cutoff_tail_handles,
-                    note="Included channel cutoff tails",
-                ),
-                CertifiedBudgetBreakdownItem(
-                    label="omitted_value",
-                    value=omitted_delta,
-                    theorem_handles=omitted_channel_bound_theorem_handles(),
-                    note="Omitted cooperative and water-mediated value bounds",
+        cooperative_active = bool(
+            self.cooperative_alpha != 0.0
+            and jax.device_get(self.has_active_directional_hbond)
+        )
+        water_active = bool(has_water_bridge_channel)
+        components = (
+            CertifiedPruningDeltaComponent(
+                label="shared_base_zero",
+                kind=CertifiedPruningDeltaComponentKind.SHARED_BASE,
+                active=False,
+                delta=0.0,
+                theorem_handles=softened_lj_shared_base_delta_theorem_handles(),
+                note=(
+                    "Shared softened-LJ base contributes zero pruning slack on the rich-chemistry path"
                 ),
             ),
+            CertifiedPruningDeltaComponent(
+                label="cutoff_tail",
+                kind=CertifiedPruningDeltaComponentKind.CUTOFF_TAIL,
+                active=cutoff_tail_delta > 0.0,
+                delta=cutoff_tail_delta,
+                theorem_handles=cutoff_tail_handles,
+                note="Included active channel cutoff tails",
+            ),
+            CertifiedPruningDeltaComponent(
+                label="cooperative_correction",
+                kind=CertifiedPruningDeltaComponentKind.COOPERATIVE_CORRECTION,
+                active=cooperative_active,
+                delta=cooperative_bound if cooperative_active else 0.0,
+                theorem_handles=tuple(
+                    dict.fromkeys(
+                        cooperative_hbond_theorem_handles()
+                        + omitted_channel_bound_theorem_handles()
+                    )
+                ),
+                note="Active cooperative H-bond correction omitted from pruning score",
+            ),
+            CertifiedPruningDeltaComponent(
+                label="water_mediated",
+                kind=CertifiedPruningDeltaComponentKind.WATER_MEDIATED,
+                active=water_active,
+                delta=water_bridge_bound if water_active else 0.0,
+                theorem_handles=tuple(
+                    dict.fromkeys(
+                        attractive_water_mediated_hbond_theorem_handles()
+                        + omitted_channel_bound_theorem_handles()
+                    )
+                ),
+                note="Active water-mediated channel omitted from pruning score",
+            ),
+        )
+        return CertifiedPruningDeltaBudget.from_components(
+            source="rich_chemistry_pruning_delta",
+            components=components,
+            theorem_handles=rich_pruning_delta_theorem_handles(),
         )
 
     def analytic_total_delta(self, n_water_bridges: int = 0) -> float:
         return self.pruning_delta_budget(
-            n_water_bridges=n_water_bridges,
+            has_water_bridge_channel=n_water_bridges > 0,
         ).total_delta
 
     @property

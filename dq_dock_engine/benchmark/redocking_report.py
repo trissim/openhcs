@@ -18,6 +18,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
 
+csv.field_size_limit(max(csv.field_size_limit(), 10_000_000))
+
 try:
     import seaborn as sns
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
@@ -614,9 +616,7 @@ def _write_markdown_report(payload: dict, report_path: Path) -> None:
         target_counts: Counter[str] = Counter(
             r["target_class"] for r in classified_rows
         )
-        mode_counts: Counter[str] = Counter(
-            r["binding_mode"] for r in classified_rows
-        )
+        mode_counts: Counter[str] = Counter(r["binding_mode"] for r in classified_rows)
         lines.extend(
             [
                 "## Benchmark Diversity",
@@ -644,15 +644,16 @@ def _write_markdown_report(payload: dict, report_path: Path) -> None:
 
     lines.extend(
         [
-        "## DQ-Dock",
-        "",
-        "| PDB | Target | Class | Mode | Status | RMSD | Time (s) | Energy | Gap Proof | Native Rank | Energy Gap | Error |",
-        "| --- | --- | --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | --- |",
-    ])
+            "## DQ-Dock",
+            "",
+            "| PDB | Target | Class | Mode | Status | RMSD | Time (s) | Energy | Gap Proof | Returned Contract | Native Rank | Energy Gap | Error |",
+            "| --- | --- | --- | --- | --- | ---: | ---: | ---: | --- | --- | ---: | ---: | --- |",
+        ]
+    )
 
     for row in dq_rows:
         lines.append(
-            f"| {row['pdb_id']} | {row['target_name']} | {_fmt_text(row.get('target_class'))} | {_fmt_text(row.get('binding_mode'))} | {'success' if row.get('success', True) else 'failure'} | {_fmt_number(row.get('rmsd'))} | {_fmt_number(row['time_s'])} | {_fmt_number(row.get('energy'))} | {_fmt_text(row.get('gap_proof'))} | {_fmt_text(row.get('native_rank'))} | {_fmt_number(row.get('energy_gap'))} | {_fmt_text(row.get('error'))} |"
+            f"| {row['pdb_id']} | {row['target_name']} | {_fmt_text(row.get('target_class'))} | {_fmt_text(row.get('binding_mode'))} | {'success' if row.get('success', True) else 'failure'} | {_fmt_number(row.get('rmsd'))} | {_fmt_number(row['time_s'])} | {_fmt_number(row.get('energy'))} | {_fmt_text(row.get('gap_proof'))} | {_fmt_text(row.get('returned_pose_contract_summary'))} | {_fmt_text(row.get('native_rank'))} | {_fmt_number(row.get('energy_gap'))} | {_fmt_text(row.get('error'))} |"
         )
 
     for competitor in summary["competitors"]:

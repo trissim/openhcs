@@ -105,6 +105,38 @@ theorem topKSet_nonempty (u : A → ℝ) [Nonempty A] {k : Nat} (hk : 0 < k) :
   rw [hCountZero]
   simpa using hk
 
+/-- Any two members of the conservative top-1 set have identical utility. In the
+    tie-safe `k = 1` case, membership means "no strictly better competitor", so
+    every survivor is an exact maximizer. -/
+theorem top1_members_eq_utility (u : A → ℝ) {a b : A}
+    (ha : a ∈ topKSet u 1) (hb : b ∈ topKSet u 1) :
+    u a = u b := by
+  have haZero : strictBetterCount u a = 0 := by
+    have hlt : strictBetterCount u a < 1 := (mem_topKSet_iff u 1 a).mp ha
+    omega
+  have hbZero : strictBetterCount u b = 0 := by
+    have hlt : strictBetterCount u b < 1 := (mem_topKSet_iff u 1 b).mp hb
+    omega
+  have hba : u b ≤ u a := by
+    by_contra hgt
+    have hlt : u a < u b := lt_of_not_ge hgt
+    have hmem : b ∈ (Finset.univ : Finset A).filter (fun x => u a < u x) := by
+      simp [hlt]
+    unfold strictBetterCount at haZero
+    have hCardPos : 0 < ((Finset.univ : Finset A).filter (fun x => u a < u x)).card :=
+      Finset.card_pos.mpr ⟨b, hmem⟩
+    omega
+  have hab : u a ≤ u b := by
+    by_contra hgt
+    have hlt : u b < u a := lt_of_not_ge hgt
+    have hmem : a ∈ (Finset.univ : Finset A).filter (fun x => u b < u x) := by
+      simp [hlt]
+    unfold strictBetterCount at hbZero
+    have hCardPos : 0 < ((Finset.univ : Finset A).filter (fun x => u b < u x)).card :=
+      Finset.card_pos.mpr ⟨a, hmem⟩
+    omega
+  linarith
+
 /-- Utility value at the conservative top-k boundary. -/
 noncomputable def kthUtility (u : A → ℝ) [Nonempty A] (k : Nat) (hk : 0 < k) : ℝ :=
   ((topKSet u k).image u).min' <| by
@@ -117,6 +149,16 @@ theorem kthUtility_le_of_mem_topKSet (u : A → ℝ) [Nonempty A]
   unfold kthUtility
   apply Finset.min'_le
   exact Finset.mem_image.mpr ⟨a, ha, rfl⟩
+
+theorem kthUtility_eq_of_mem_top1 (u : A → ℝ) [Nonempty A]
+    {a : A} (ha : a ∈ topKSet u 1) :
+    kthUtility u 1 (by omega) = u a := by
+  have hMem : kthUtility u 1 (by omega) ∈ (topKSet u 1).image u := by
+    unfold kthUtility
+    exact Finset.min'_mem _ _
+  rcases Finset.mem_image.mp hMem with ⟨d, hd, hdEq⟩
+  have hEq : u a = u d := top1_members_eq_utility u ha hd
+  linarith
 
 theorem topKSet_subset_survivorSet_of_le_kthUtility (u : A → ℝ) [Nonempty A]
     (k : Nat) (hk : 0 < k) (tau : ℝ)

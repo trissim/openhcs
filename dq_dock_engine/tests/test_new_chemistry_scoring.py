@@ -12,7 +12,9 @@ from dq_dock_engine.docking.formal_handles import (
     attractive_pi_cation_theorem_handles,
     attractive_pi_stacking_theorem_handles,
     attractive_water_mediated_hbond_theorem_handles,
+    ambiguity_output_contract_theorem_handles,
     conformer_search_theorem_handles,
+    conformer_coverage_theorem_handles,
     contact_surrogate_theorem_handles,
     cooperative_hbond_theorem_handles,
     cross_docking_theorem_handles,
@@ -24,8 +26,11 @@ from dq_dock_engine.docking.formal_handles import (
     ligand_strain_theorem_handles,
     negation_invariance_theorem_handles,
     omitted_channel_bound_theorem_handles,
+    optimizer_output_contract_theorem_handles,
     pose_specific_improvement_budget_theorem_handles,
     receptor_flexibility_theorem_handles,
+    rigid_seed_family_theorem_handles,
+    returned_pose_guarantee_theorem_handles,
     rich_chemistry_theorem_handles,
     screened_coulomb_theorem_handles,
     seed_budget_minimality_theorem_handles,
@@ -248,6 +253,20 @@ def test_new_chemistry_handle_helpers_surface_new_theorem_families() -> None:
     assert {"SB2", "SB7", "BCRP2", "ERC43"}.issubset(
         set(seed_budget_minimality_theorem_handles())
     )
+    assert {"BD7", "SD9", "SD10"}.issubset(set(rigid_seed_family_theorem_handles()))
+    assert {"CSC25", "CSC26", "CSC44", "CSC50", "CSC51"}.issubset(
+        set(conformer_coverage_theorem_handles())
+    )
+    assert {"CSC52", "CSC53", "CSC54", "CSC55", "CSC56"}.issubset(
+        set(conformer_coverage_theorem_handles())
+    )
+    assert {"FLO23", "FLO28"}.issubset(set(optimizer_output_contract_theorem_handles()))
+    assert {"RPG1", "RPG2", "RPG3", "RPG5"} == set(
+        ambiguity_output_contract_theorem_handles()
+    )
+    assert {"RPG4", "RPG6", "TK16", "ERC39"}.issubset(
+        set(returned_pose_guarantee_theorem_handles())
+    )
 
 
 def test_new_chemistry_scoring_helpers_are_jit_safe() -> None:
@@ -318,18 +337,28 @@ def test_new_chemistry_scoring_helpers_are_jit_safe() -> None:
 def test_rich_chemistry_pruning_delta_budget_tracks_named_components() -> None:
     _, _, _, _, plan = _toy_geometry()
 
-    delta_budget = plan.pruning_delta_budget(n_water_bridges=3)
+    delta_budget = plan.pruning_delta_budget(has_water_bridge_channel=True)
 
     assert delta_budget.shared_base_delta == pytest.approx(0.0)
     assert delta_budget.cutoff_tail_delta > 0.0
-    assert delta_budget.omitted_value_delta >= 6.0
+    assert delta_budget.omitted_value_delta >= 2.0
     assert delta_budget.total_delta == pytest.approx(
         delta_budget.cutoff_tail_delta + delta_budget.omitted_value_delta
     )
-    assert {item.label for item in delta_budget.breakdown} == {
-        "shared_base_zero",
+    assert {component.label for component in delta_budget.active_components} == {
         "cutoff_tail",
-        "omitted_value",
+        "water_mediated",
+    }
+
+
+def test_rich_chemistry_pruning_delta_budget_omits_inactive_channels() -> None:
+    _, _, _, _, plan = _toy_geometry()
+
+    delta_budget = plan.pruning_delta_budget(has_water_bridge_channel=False)
+
+    assert delta_budget.omitted_value_delta == pytest.approx(0.0)
+    assert {component.label for component in delta_budget.active_components} == {
+        "cutoff_tail",
     }
 
 

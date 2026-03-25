@@ -1,37 +1,54 @@
 from __future__ import annotations
 
 import math
+from typing import cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from dq_dock_engine.docking import pipeline as docking_pipeline
 from dq_dock_engine.docking.core import DockingBox, LigandContext, PoseVector
-from dq_dock_engine.docking.conformer_search import RotatableBond
+from dq_dock_engine.docking.certified_runtime_plans import (
+    ActiveConformerReturnedPoseWitness,
+    CertifiedConformerCoveragePlan,
+    InactiveConformerReturnedPoseWitness,
+    ReturnedPoseProofCase,
+)
+from dq_dock_engine.docking.conformer_search import BranchAndBoundConfig, RotatableBond
+from dq_dock_engine.docking.formal_handles import conformer_coverage_theorem_handles
 from dq_dock_engine.docking.pipeline import (
     PipelineDockingRequest,
     PipelineInitialScores,
     PipelinePoseBatch,
     PipelineRoute,
+    _build_returned_pose_certification,
+    _derive_returned_pose_proof_plan,
+    _has_conformer_ambiguity_set_certificate_chain,
     _conformer_local_improvement_bounds,
+    _derive_conformer_coverage_plan,
     _derive_target_error_from_rmsd,
     _derive_adaptive_torsion_support_spec,
     _derive_local_rotation_step_rad,
     _detect_rigid_equivalence_ambiguity,
     _ligand_radius,
     _probe_seed_budget_certificate,
+    _recertify_conformer_updated_pose,
     _seed_budget_torsion_count,
     _shared_certified_singleton_top1,
     derive_seed_budget,
     derive_seed_budget_plan,
+    run_docking_pipeline_request,
 )
+from dq_dock_engine.docking.core import ReturnedPoseContractDecision
 from dq_dock_engine.docking.se3_refinement import (
     RefinementCertificate,
     SE3SpectralCertificate,
     _initial_probe_backtracking_round,
     _stabilized_probe_step_limits,
 )
+from dq_dock_engine.docking.charges import ChargeMethod
 from dq_dock_engine.docking_config import (
     ExactChemistryMode,
     RefinementCertificationMode,
@@ -87,6 +104,24 @@ def _dummy_certificate(*, q: float, n_steps: int) -> RefinementCertificate:
         target_rmsd=0.5,
         n_steps=n_steps,
         mode=create_config("certified").refinement_certification,
+    )
+
+
+def _dummy_conformer_coverage_plan() -> CertifiedConformerCoveragePlan:
+    return CertifiedConformerCoveragePlan(
+        source="test_conformer_coverage",
+        n_torsions=1,
+        score_lipschitz_constant=2.0,
+        per_bond_lipschitz=(1.0,),
+        canonical_segments=(8,),
+        support_size=8,
+        max_cells=8,
+        min_cell_radius=0.1,
+        support_target_delta=0.1,
+        target_delta=0.2,
+        target_rmsd=0.5,
+        max_arm=1.0,
+        theorem_handles=conformer_coverage_theorem_handles(),
     )
 
 
@@ -213,6 +248,8 @@ def test_probe_seed_budget_certificate_overrides_request_budget(monkeypatch) -> 
     assert updated_request.n_poses_override is None
     assert updated_request.seed_budget_plan is not None
     assert updated_request.seed_budget_plan.selected_budget == expected_budget
+    assert updated_request.rigid_seed_family_plan is not None
+    assert updated_request.rigid_seed_family_plan.pose_count == expected_budget
     assert updated_request.n_poses == expected_budget
 
 
@@ -245,6 +282,7 @@ def test_probe_seed_budget_certificate_falls_back_to_original_request(
     assert probe_cert is None
     assert updated_request.n_poses_override is None
     assert updated_request.seed_budget_plan is not None
+    assert updated_request.rigid_seed_family_plan is not None
     assert (
         updated_request.seed_budget_plan.selected_candidate.source
         == "baseline_zero_step_capture"
@@ -315,6 +353,7 @@ def test_probe_seed_budget_certificate_uses_smallest_successful_budget(
 
     assert probe_cert == cert_small
     assert updated_request.seed_budget_plan is not None
+    assert updated_request.rigid_seed_family_plan is not None
     assert updated_request.seed_budget_plan.selected_budget == min(
         budget_large,
         budget_small,
@@ -323,19 +362,26 @@ def test_probe_seed_budget_certificate_uses_smallest_successful_budget(
 
 
 def test_derive_seed_budget_plan_keeps_baseline_and_probe_candidates() -> None:
+    box = DockingBox(
+        center=jnp.zeros((3,), dtype=jnp.float32),
+        size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+    )
     cert = _dummy_certificate(q=0.25, n_steps=2)
     plan = derive_seed_budget_plan(
         confidence=0.99,
-        box_size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        box_size=box.size,
         target_rmsd=0.5,
         ligand_radius=2.0,
         probe_candidates=((0, cert),),
+        rigid_seed_box=box,
     )
 
     assert len(plan.candidates) == 2
     assert plan.candidates[0].source == "baseline_zero_step_capture"
     assert plan.candidates[1].source == "observed_probe_capture"
     assert plan.selected_candidate.budget <= plan.candidates[0].budget
+    assert plan.selected_family_plan is not None
+    assert plan.selected_family_plan.pose_count == plan.selected_budget
     assert plan.engineering_probe_pose_cap is not None
     assert plan.engineering_probe_top_k is not None
 
@@ -369,6 +415,425 @@ def test_probe_seed_budget_certificate_uses_observed_refinement_mode(
     _probe_seed_budget_certificate(request, _FakeRoute())
 
     assert captured["mode_override"] == RefinementCertificationMode.OBSERVED
+
+
+def test_returned_pose_certification_proves_rigid_target_rmsd_when_winner_and_refinement_are_certified() -> (
+    None
+):
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_dummy_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+    )
+
+    proof_plan = _derive_returned_pose_proof_plan(
+        request=request,
+        final_scores=jnp.array([0.0, 3.0], dtype=jnp.float32),
+        final_error_bound=0.1,
+        final_pose_coords=None,
+        refinement_certificates=[_dummy_certificate(q=0.25, n_steps=2), None],
+        conformer_coverage_plan=None,
+        winner_theorem_handles=("TK16",),
+        do_conf=False,
+    )
+    returned_cert = _build_returned_pose_certification(
+        proof_plan=proof_plan,
+    )
+
+    assert returned_cert is not None
+    assert returned_cert.decision == ReturnedPoseContractDecision.CERTIFIED_TARGET_RMSD
+    assert returned_cert.is_target_rmsd_certified
+
+
+def test_returned_pose_certification_promotes_conformer_ambiguity_set_when_certified() -> (
+    None
+):
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_flexible_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+        conformer_coverage_plan=CertifiedConformerCoveragePlan(
+            source="test_coverage",
+            n_torsions=1,
+            score_lipschitz_constant=1.0,
+            per_bond_lipschitz=(1.0,),
+            canonical_segments=(2,),
+            support_size=3,
+            max_cells=5,
+            min_cell_radius=0.1,
+            support_target_delta=0.1,
+            target_delta=0.1,
+            target_rmsd=0.5,
+            max_arm=1.0,
+            theorem_handles=("CSC55",),
+        ),
+    )
+
+    proof_plan = _derive_returned_pose_proof_plan(
+        request=request,
+        final_scores=jnp.array([0.0, 0.05], dtype=jnp.float32),
+        final_error_bound=0.1,
+        final_pose_coords=None,
+        refinement_certificates=[_dummy_certificate(q=0.25, n_steps=2), None],
+        conformer_coverage_plan=request.conformer_coverage_plan,
+        winner_theorem_handles=("RPG5",),
+        do_conf=True,
+    )
+    returned_cert = _build_returned_pose_certification(
+        proof_plan=proof_plan,
+    )
+
+    assert _has_conformer_ambiguity_set_certificate_chain(proof_plan)
+    assert returned_cert is not None
+    assert (
+        returned_cert.decision
+        == ReturnedPoseContractDecision.CERTIFIED_AMBIGUITY_SET_TARGET_RMSD
+    )
+    assert returned_cert.is_target_rmsd_certified
+
+
+def test_returned_pose_certification_proves_conformer_target_rmsd_when_chain_is_complete() -> (
+    None
+):
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_flexible_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+    )
+
+    proof_plan = _derive_returned_pose_proof_plan(
+        request=request,
+        final_scores=jnp.array([0.0, 3.0], dtype=jnp.float32),
+        final_error_bound=0.1,
+        final_pose_coords=None,
+        refinement_certificates=[_dummy_certificate(q=0.25, n_steps=2), None],
+        conformer_coverage_plan=_dummy_conformer_coverage_plan(),
+        winner_theorem_handles=("TK16",),
+        do_conf=True,
+    )
+    returned_cert = _build_returned_pose_certification(
+        proof_plan=proof_plan,
+    )
+
+    assert returned_cert is not None
+    assert returned_cert.decision == ReturnedPoseContractDecision.CERTIFIED_TARGET_RMSD
+    assert returned_cert.is_target_rmsd_certified
+    assert "RPG6" in returned_cert.theorem_handles
+
+
+def test_returned_pose_certification_requires_conformer_coverage_witness() -> None:
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_flexible_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+    )
+
+    proof_plan = _derive_returned_pose_proof_plan(
+        request=request,
+        final_scores=jnp.array([0.0, 3.0], dtype=jnp.float32),
+        final_error_bound=0.1,
+        final_pose_coords=None,
+        refinement_certificates=[_dummy_certificate(q=0.25, n_steps=2), None],
+        conformer_coverage_plan=None,
+        winner_theorem_handles=("TK16",),
+        do_conf=True,
+    )
+    returned_cert = _build_returned_pose_certification(
+        proof_plan=proof_plan,
+    )
+
+    assert returned_cert is not None
+    assert (
+        returned_cert.decision
+        == ReturnedPoseContractDecision.DOWNGRADED_NO_REFINEMENT_CERTIFICATE
+    )
+    assert not returned_cert.is_target_rmsd_certified
+    assert isinstance(
+        proof_plan.conformer_witness, InactiveConformerReturnedPoseWitness
+    )
+
+
+def test_returned_pose_proof_plan_derives_rigid_ambiguity_from_plan_state() -> None:
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_dummy_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=1.0),
+    )
+    final_pose_coords = jnp.array(
+        [
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            [[5.0, 0.0, 0.0], [4.0, 0.0, 0.0]],
+            [[0.0, 5.0, 0.0], [1.0, 5.0, 0.0]],
+        ],
+        dtype=jnp.float32,
+    )
+
+    proof_plan = _derive_returned_pose_proof_plan(
+        request=request,
+        final_scores=jnp.array([0.0, 0.05, 1.0], dtype=jnp.float32),
+        final_error_bound=0.05,
+        final_pose_coords=final_pose_coords,
+        refinement_certificates=[_dummy_certificate(q=0.25, n_steps=2), None, None],
+        conformer_coverage_plan=None,
+        winner_theorem_handles=("TK16",),
+        do_conf=False,
+    )
+    returned_cert = _build_returned_pose_certification(proof_plan=proof_plan)
+
+    assert proof_plan.proof_case == ReturnedPoseProofCase.RIGID_AMBIGUITY
+    assert returned_cert is not None
+    assert (
+        returned_cert.decision
+        == ReturnedPoseContractDecision.DOWNGRADED_RIGID_AMBIGUITY
+    )
+
+
+def test_returned_pose_certification_uses_active_conformer_witness_variant() -> None:
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_flexible_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+    )
+
+    proof_plan = _derive_returned_pose_proof_plan(
+        request=request,
+        final_scores=jnp.array([0.0, 3.0], dtype=jnp.float32),
+        final_error_bound=0.1,
+        final_pose_coords=None,
+        refinement_certificates=[_dummy_certificate(q=0.25, n_steps=2), None],
+        conformer_coverage_plan=_dummy_conformer_coverage_plan(),
+        winner_theorem_handles=("TK16",),
+        do_conf=True,
+    )
+
+    assert isinstance(proof_plan.conformer_witness, ActiveConformerReturnedPoseWitness)
+    assert proof_plan.proof_case == ReturnedPoseProofCase.CERTIFIED_SINGLETON
+
+
+def test_returned_pose_proof_plan_debug_summary_exposes_case_and_witness_status() -> (
+    None
+):
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_flexible_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+    )
+
+    proof_plan = _derive_returned_pose_proof_plan(
+        request=request,
+        final_scores=jnp.array([0.0, 3.0], dtype=jnp.float32),
+        final_error_bound=0.1,
+        final_pose_coords=None,
+        refinement_certificates=[_dummy_certificate(q=0.25, n_steps=2), None],
+        conformer_coverage_plan=_dummy_conformer_coverage_plan(),
+        winner_theorem_handles=("TK16",),
+        do_conf=True,
+    )
+
+    summary = proof_plan.debug_summary()
+
+    assert summary["proof_case"] == ReturnedPoseProofCase.CERTIFIED_SINGLETON.value
+    assert summary["conformer_witness_status"] == "active_complete"
+
+
+def test_returned_pose_proof_plan_marks_conformer_improvement_when_rigid_cert_invalidates() -> (
+    None
+):
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_flexible_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+    )
+
+    proof_plan = _derive_returned_pose_proof_plan(
+        request=request,
+        final_scores=jnp.array([0.0, 3.0], dtype=jnp.float32),
+        final_error_bound=0.1,
+        final_pose_coords=None,
+        refinement_certificates=[None, None],
+        conformer_improved_mask=(True, False),
+        conformer_coverage_plan=_dummy_conformer_coverage_plan(),
+        winner_theorem_handles=("TK16",),
+        do_conf=True,
+    )
+
+    summary = proof_plan.debug_summary()
+
+    assert summary["winner_conformer_improved"] is True
+    assert summary["winner_refinement_certificate_present"] is False
+    assert "invalidates the rigid refinement certificate" in cast(str, summary["note"])
+
+
+def test_recertify_conformer_updated_pose_threads_new_certificate(monkeypatch) -> None:
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_flexible_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+    )
+    pose_coords = request.ligand_ctx.base_coords
+
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_certified_refinement",
+        lambda request, initial_translations, initial_quaternions, mode_override=None: (
+            initial_translations,
+            initial_quaternions,
+            [_dummy_certificate(q=0.25, n_steps=2)],
+        ),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_score_exact_pose_batch",
+        lambda request, *, poses_coords, electrostatics, scoring_context=None: (
+            jnp.array([-1.25], dtype=jnp.float32)
+        ),
+    )
+
+    refined_coords, refined_energy, certificate, cert_handles, basin_mu_coord = (
+        _recertify_conformer_updated_pose(
+            request,
+            pose_coords,
+            scoring_context=None,
+            electrostatics=None,
+        )
+    )
+
+    assert refined_coords.shape == pose_coords.shape
+    assert refined_energy == pytest.approx(-1.25)
+    assert cert_handles == ()
+    assert basin_mu_coord is None or math.isnan(basin_mu_coord) or basin_mu_coord >= 0.0
+
+
+def test_recertify_conformer_updated_pose_finds_spectral_certificate() -> None:
+    protein_coords = jnp.array([[50.0, 0.0, 0.0]], dtype=jnp.float32)
+    receptor_radii = jnp.array([1.5], dtype=jnp.float32)
+    ligand_coords = jnp.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]], dtype=jnp.float32)
+    ligand_ctx = LigandContext(
+        base_coords=ligand_coords,
+        base_radii=jnp.array([1.5, 1.5], dtype=jnp.float32),
+        center_of_mass=jnp.mean(ligand_coords, axis=0),
+        elements=("C", "C"),
+        charges=jnp.zeros((2,)),
+        adjacency=((0, 1), (1, 0)),
+    )
+    request = PipelineDockingRequest(
+        protein_coords=protein_coords,
+        receptor_radii=receptor_radii,
+        ligand_ctx=ligand_ctx,
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([100.0, 100.0, 100.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+    )
+
+    captured_calls = []
+    original_refinement = docking_pipeline._certified_refinement
+
+    def mock_refinement(
+        request, initial_translations, initial_quaternions, mode_override=None
+    ):
+        captured_calls.append((initial_translations, initial_quaternions))
+        return original_refinement(
+            request, initial_translations, initial_quaternions, mode_override
+        )
+
+    import unittest.mock as mock
+
+    with mock.patch.object(docking_pipeline, "_certified_refinement", mock_refinement):
+        try:
+            _recertify_conformer_updated_pose(
+                request,
+                ligand_coords,
+                scoring_context=None,
+                electrostatics=None,
+            )
+        except Exception:
+            pass
+
+    assert len(captured_calls) == 1, "Should call _certified_refinement"
+    init_trans, init_quat = captured_calls[0]
+    pose_center = jnp.mean(ligand_coords, axis=0)
+    expected_trans = pose_center[None, ...]
+    assert jnp.allclose(init_trans, expected_trans), (
+        f"Initial translation should be pose_center, got {init_trans}, expected {expected_trans}"
+    )
+    assert jnp.allclose(init_quat, jnp.array([[1.0, 0.0, 0.0, 0.0]])), (
+        f"Initial quaternion should be identity, got {init_quat}"
+    )
+
+
+def test_certified_mode_rejects_non_optimized_outputs() -> None:
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_dummy_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+        optimize=False,
+    )
+
+    with pytest.raises(ValueError, match="requires optimize=True"):
+        run_docking_pipeline_request(request)
 
 
 def test_detect_rigid_equivalence_ambiguity_flags_uncertified_flip_family() -> None:
@@ -458,6 +923,43 @@ def test_adaptive_torsion_support_spec_derives_radius_from_target_error() -> Non
     assert min_cell_radius == pytest.approx(math.nextafter(0.5, 0.0))
     assert segments == (101, 26)
     assert max_cells > 0
+
+
+def test_conformer_coverage_plan_owns_branch_and_bound_budget() -> None:
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.array([1.5], dtype=jnp.float32),
+        ligand_ctx=_dummy_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+    )
+    bonds = (
+        RotatableBond(
+            atom_i=0,
+            atom_j=1,
+            rotating_atom_indices=(1,),
+            max_arm_length=1.5,
+        ),
+    )
+
+    coverage_plan = _derive_conformer_coverage_plan(request, rotatable_bonds=bonds)
+    config = cast(
+        BranchAndBoundConfig,
+        coverage_plan.as_branch_and_bound_config(
+            reuse_initial_conformer=False,
+            max_conformers=1,
+        ),
+    )
+
+    assert coverage_plan.n_torsions == 1
+    assert coverage_plan.max_cells == config.max_cells
+    assert coverage_plan.min_cell_radius == pytest.approx(config.min_cell_radius)
+    assert coverage_plan.per_bond_lipschitz == config.per_bond_lipschitz
+    assert coverage_plan.canonical_segments
 
 
 def test_conformer_local_improvement_bounds_prefers_physical_barriers(

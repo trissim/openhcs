@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from dq_dock_engine.arraydsl import quaternionDictionary8
+from dq_dock_engine.docking.certified_runtime_plans import (
+    CertifiedRigidSeedFamilyPlan,
+    CertifiedRigidSeedRegionKind,
+)
 from dq_dock_engine.docking.core import CertifiedBindingSite, DockingBox, PoseVector
+from dq_dock_engine.docking.formal_handles import rigid_seed_family_theorem_handles
 
 
 @dataclass(frozen=True)
@@ -15,6 +21,15 @@ class CertifiedGlobalActionFamily:
     quaternions: jax.Array
     lattice_resolution: int
     quaternion_count: int
+
+
+def _box_search_volume(box: DockingBox) -> float:
+    return float(np.prod(np.asarray(box.size, dtype=np.float64)))
+
+
+def _binding_site_search_volume(binding_site: CertifiedBindingSite) -> float:
+    radius = float(binding_site.radius)
+    return (4.0 / 3.0) * math.pi * radius**3
 
 
 def _quaternion_dictionary() -> jax.Array:
@@ -125,6 +140,74 @@ def create_certified_binding_site_action_family(
         quaternions=tiled_quaternions[:n_poses],
         lattice_resolution=resolution,
         quaternion_count=n_quaternions,
+    )
+
+
+def derive_certified_rigid_seed_family_plan(
+    box: DockingBox,
+    n_poses: int,
+    certified_binding_site: CertifiedBindingSite | None = None,
+) -> CertifiedRigidSeedFamilyPlan:
+    if certified_binding_site is None:
+        family = create_certified_global_action_family(box, n_poses)
+        return CertifiedRigidSeedFamilyPlan(
+            region_kind=CertifiedRigidSeedRegionKind.BOX,
+            pose_count=n_poses,
+            translation_point_count=int(math.ceil(n_poses / family.quaternion_count)),
+            lattice_resolution=family.lattice_resolution,
+            quaternion_count=family.quaternion_count,
+            translation_search_volume=_box_search_volume(box),
+            theorem_handles=rigid_seed_family_theorem_handles(),
+            box_center=tuple(float(v) for v in np.asarray(box.center).tolist()),
+            box_size=tuple(float(v) for v in np.asarray(box.size).tolist()),
+            note="Certified rigid seed family over the docking box lattice",
+        )
+    family = create_certified_binding_site_action_family(
+        certified_binding_site, n_poses
+    )
+    return CertifiedRigidSeedFamilyPlan(
+        region_kind=CertifiedRigidSeedRegionKind.CERTIFIED_BINDING_SITE,
+        pose_count=n_poses,
+        translation_point_count=int(math.ceil(n_poses / family.quaternion_count)),
+        lattice_resolution=family.lattice_resolution,
+        quaternion_count=family.quaternion_count,
+        translation_search_volume=_binding_site_search_volume(certified_binding_site),
+        theorem_handles=tuple(
+            dict.fromkeys(
+                rigid_seed_family_theorem_handles()
+                + tuple(certified_binding_site.theorem_handles)
+            )
+        ),
+        binding_site_center=tuple(
+            float(v) for v in np.asarray(certified_binding_site.center).tolist()
+        ),
+        binding_site_radius=float(certified_binding_site.radius),
+        note="Certified rigid seed family over the certified binding-site sphere",
+    )
+
+
+def materialize_certified_rigid_seed_family(
+    plan: CertifiedRigidSeedFamilyPlan,
+) -> CertifiedGlobalActionFamily:
+    if plan.region_kind == CertifiedRigidSeedRegionKind.BOX:
+        assert plan.box_center is not None
+        assert plan.box_size is not None
+        return create_certified_global_action_family(
+            DockingBox(
+                center=jnp.asarray(plan.box_center, dtype=jnp.float32),
+                size=jnp.asarray(plan.box_size, dtype=jnp.float32),
+            ),
+            plan.pose_count,
+        )
+    assert plan.binding_site_center is not None
+    assert plan.binding_site_radius is not None
+    return create_certified_binding_site_action_family(
+        CertifiedBindingSite(
+            center=jnp.asarray(plan.binding_site_center, dtype=jnp.float32),
+            radius=float(plan.binding_site_radius),
+            theorem_handles=plan.theorem_handles,
+        ),
+        plan.pose_count,
     )
 
 

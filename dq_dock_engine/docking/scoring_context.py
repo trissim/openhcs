@@ -10,10 +10,12 @@ import numpy as np
 from jax.tree_util import register_pytree_node_class
 
 from dq_dock_engine.docking.certified_runtime_plans import (
-    CertifiedBudgetBreakdownItem,
+    CertifiedPruningDeltaComponent,
+    CertifiedPruningDeltaComponentKind,
     CertifiedPruningDeltaBudget,
 )
 from dq_dock_engine.docking.core import LigandContext
+from dq_dock_engine.docking.formal_handles import rich_pruning_delta_theorem_handles
 from dq_dock_engine.docking.explicit_water_placement import (
     WaterPlacementGrid,
     generate_water_grid,
@@ -285,14 +287,35 @@ class CertifiedScoringContext:
         self,
         *,
         softening_error_bound: float | jnp.ndarray | None = None,
+        softening_radius: float | None = None,
     ) -> CertifiedPruningDeltaBudget:
         if self.uses_extended_rich:
             assert self.rich_chemistry_plan is not None
-            n_water_bridges = 0
-            if self.water_grid is not None:
-                n_water_bridges = int(self.water_grid.positions.shape[0])
+            if (
+                softening_error_bound is not None
+                and self.uses_batch_pruning_delta()
+                and self.pruning_softening_matches_exact(softening_radius)
+            ):
+                total_delta = float(np.asarray(softening_error_bound))
+                return CertifiedPruningDeltaBudget.from_components(
+                    source="rich_batch_exact_pruning_delta",
+                    components=(
+                        CertifiedPruningDeltaComponent(
+                            label="batch_exact_delta",
+                            kind=CertifiedPruningDeltaComponentKind.SOFTENING_MISMATCH,
+                            active=total_delta > 0.0,
+                            delta=total_delta,
+                            theorem_handles=rich_pruning_delta_theorem_handles(),
+                            note=(
+                                "Exact finite-batch rich pruning delta when the pruning "
+                                "context matches the exact disambiguation score family"
+                            ),
+                        ),
+                    ),
+                    theorem_handles=rich_pruning_delta_theorem_handles(),
+                )
             return self.rich_chemistry_plan.pruning_delta_budget(
-                n_water_bridges=n_water_bridges,
+                has_water_bridge_channel=self.water_grid is not None,
             )
         if softening_error_bound is None:
             raise ValueError(
@@ -304,26 +327,23 @@ class CertifiedScoringContext:
             if self.electrostatics is not None
             else ("LJ10", "LJ11", "LJ12")
         )
-        return CertifiedPruningDeltaBudget(
+        return CertifiedPruningDeltaBudget.from_components(
             source=(
                 "softened_lj_realspace_ewald_pruning_delta"
                 if self.electrostatics is not None
                 else "softened_lj_pruning_delta"
             ),
-            shared_base_delta=0.0,
-            cutoff_tail_delta=0.0,
-            omitted_value_delta=0.0,
-            softening_mismatch_delta=total_delta,
-            total_delta=total_delta,
-            theorem_handles=scoring_handles,
-            breakdown=(
-                CertifiedBudgetBreakdownItem(
+            components=(
+                CertifiedPruningDeltaComponent(
                     label="softening_mismatch",
-                    value=total_delta,
+                    kind=CertifiedPruningDeltaComponentKind.SOFTENING_MISMATCH,
+                    active=total_delta > 0.0,
+                    delta=total_delta,
                     theorem_handles=scoring_handles,
                     note="Exact-vs-softened base-physics pruning slack",
                 ),
             ),
+            theorem_handles=scoring_handles,
         )
 
     def receptor_subset(

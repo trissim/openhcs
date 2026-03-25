@@ -403,6 +403,42 @@ def seed_budget_minimality_theorem_handles() -> tuple[str, ...]:
     return _selected_handles(SB2, SB5, SB7, BCRP2, ERC43)
 
 
+def rigid_seed_family_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(BD3, BD4, BD7, BD8, BD9, BD10, SD4, SD5, SD8, SD9, SD10)
+
+
+def conformer_coverage_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(
+        CSC4,
+        CSC5,
+        CSC25,
+        CSC26,
+        CSC37,
+        CSC43,
+        CSC44,
+        CSC48,
+        CSC50,
+        CSC51,
+        CSC52,
+        CSC53,
+        CSC54,
+        CSC55,
+        CSC56,
+    )
+
+
+def optimizer_output_contract_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(FLO23, FLO24, FLO25, FLO26, FLO27, FLO28)
+
+
+def ambiguity_output_contract_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(RPG1, RPG2, RPG3, RPG5)
+
+
+def returned_pose_guarantee_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(RPG4, RPG6, TK16, ERC39, ERC43, DC104)
+
+
 def rich_pruning_delta_theorem_handles() -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(

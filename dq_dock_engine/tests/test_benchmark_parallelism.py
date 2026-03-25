@@ -14,6 +14,10 @@ from dq_dock_engine.benchmark.redocking_report import (
     generate_pose_comparison_figures,
     render_redocking_report,
 )
+from dq_dock_engine.docking.core import (
+    ReturnedPoseCertification,
+    ReturnedPoseContractDecision,
+)
 from dq_dock_engine.docking.charges import ChargeAssigner, ChargeMethod
 from dq_dock_engine.docking_config import ExactChemistryMode
 
@@ -198,6 +202,16 @@ def test_save_benchmark_results_preserves_failed_dq_errors_and_excludes_failed_r
             time=4.0,
             n_atoms=2,
             formal_status="DQ-Dock",
+            requested_target_rmsd=2.0,
+            returned_pose_target_rmsd_certified=True,
+            returned_pose_contract_decision="CERTIFIED_TARGET_RMSD",
+            returned_pose_contract_summary="target_rmsd<=2.000A certified",
+            returned_pose_proof_case="certified_singleton",
+            returned_pose_witness_status="active_complete",
+            pruning_total_delta=0.25,
+            pruning_active_component_labels=("cutoff_tail",),
+            returned_pose_debug_summary={"proof_case": "certified_singleton"},
+            pipeline_debug_summary={"tau": 1.0},
         ),
         benchmark_pdb.BenchmarkResult(
             success=False,
@@ -245,10 +259,14 @@ def test_save_benchmark_results_preserves_failed_dq_errors_and_excludes_failed_r
     assert failed_csv_row["top_rmsd"] == ""
     assert failed_csv_row["score"] == ""
     assert "IndexError" in failed_csv_row["error"]
+    assert rows[0]["returned_pose_contract_decision"] == "CERTIFIED_TARGET_RMSD"
+    assert rows[0]["returned_pose_proof_case"] == "certified_singleton"
+    assert rows[0]["pruning_active_component_labels"] == "cutoff_tail"
     assert failed_json_row["success"] is False
     assert failed_json_row["rmsd"] is None
     assert failed_json_row["energy"] is None
     assert "IndexError" in failed_json_row["error"]
+    assert payload["dq_dock"][0]["pipeline_debug_summary"] == {"tau": 1.0}
 
 
 def test_run_dq_dock_benchmark_job_passes_rich_rescoring_flag(
@@ -291,6 +309,7 @@ def test_run_dq_dock_benchmark_job_passes_rich_rescoring_flag(
         use_pocket_guided=True,
         exact_chemistry_mode=ExactChemistryMode.NONE,
         optimizer_backend=benchmark_pdb.DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
+        conformer_search=False,
         reuse_initial_conformer=False,
         use_crystal_ligand_geometry=True,
         max_retries=1,
@@ -298,6 +317,7 @@ def test_run_dq_dock_benchmark_job_passes_rich_rescoring_flag(
         retry_preserve_seed=False,
         target_rmsd=0.5,
         confidence=0.999,
+        n_poses_override=None,
     )
     captured: dict[str, object] = {}
 
@@ -324,6 +344,44 @@ def test_run_dq_dock_benchmark_job_passes_rich_rescoring_flag(
     assert result.result.success is True
 
 
+def test_benchmark_result_from_certification_threads_returned_pose_contract() -> None:
+    result = benchmark_pdb.BenchmarkResult.from_certification(
+        pose_energy=-1.0,
+        pose_rmsd=0.2,
+        elapsed=1.5,
+        n_atoms=10,
+        formal_status="DQ-Dock",
+        returned_pose_cert=ReturnedPoseCertification(
+            decision=ReturnedPoseContractDecision.CERTIFIED_TARGET_RMSD,
+            target_rmsd=2.0,
+            theorem_handles=("TK16",),
+            winner_index=0,
+        ),
+        returned_pose_debug_summary={
+            "proof_case": "certified_singleton",
+            "conformer_witness_status": "active_complete",
+        },
+        pipeline_debug_summary={
+            "pruning_delta_budget": {
+                "total_delta": 0.25,
+                "active_components": (
+                    {"label": "cutoff_tail"},
+                    {"label": "water_mediated"},
+                ),
+            }
+        },
+        requested_target_rmsd=2.0,
+    )
+
+    assert result.requested_target_rmsd == 2.0
+    assert result.returned_pose_target_rmsd_certified is True
+    assert result.returned_pose_contract_decision == "CERTIFIED_TARGET_RMSD"
+    assert result.returned_pose_proof_case == "certified_singleton"
+    assert result.returned_pose_witness_status == "active_complete"
+    assert result.pruning_total_delta == 0.25
+    assert result.pruning_active_component_labels == ("cutoff_tail", "water_mediated")
+
+
 def test_run_dq_dock_threads_rich_exact_rescoring_into_config(
     monkeypatch, tmp_path
 ) -> None:
@@ -341,6 +399,22 @@ def test_run_dq_dock_threads_rich_exact_rescoring_into_config(
                         coords=jnp.zeros((1, 3), dtype=jnp.float32),
                         energy=-1.0,
                         engine=benchmark_pdb.ScoringEngine.INTERNAL_LJ,
+                        returned_pose_certification=ReturnedPoseCertification(
+                            decision=ReturnedPoseContractDecision.CERTIFIED_TARGET_RMSD,
+                            target_rmsd=0.5,
+                            theorem_handles=("TK16",),
+                            winner_index=0,
+                        ),
+                        returned_pose_proof_debug={
+                            "proof_case": "certified_singleton",
+                            "conformer_witness_status": "inactive",
+                        },
+                        pipeline_debug_summary={
+                            "pruning_delta_budget": {
+                                "total_delta": 0.125,
+                                "active_components": ({"label": "softening_mismatch"},),
+                            }
+                        },
                     )
                 ],
                 certification=None,
@@ -373,6 +447,9 @@ def test_run_dq_dock_threads_rich_exact_rescoring_into_config(
     )
 
     assert result.success is True
+    assert result.returned_pose_proof_case == "certified_singleton"
+    assert result.pruning_total_delta == 0.125
+    assert result.pruning_active_component_labels == ("softening_mismatch",)
 
 
 def test_redocking_report_excludes_failed_dq_rows_from_rmsd_and_scatter(

@@ -309,6 +309,194 @@ theorem rmsd_cover_yields_library_approxOptimal
     linarith
   linarith
 
+/-- Geometry-energy bridge for conformer libraries: if a finite conformer
+    library RMSD-covers the ambient conformer space with radius `εCover`, the
+    exact conformer energy is RMSD-Lipschitz with constant `L`, and the induced
+    energy slack `L * εCover` lies below the quadratic-basin target-energy
+    threshold for RMSD tolerance `εTarget`, then the library contains a conformer
+    within `εTarget` RMSD of the optimal conformer `xStar`.
+
+    This is the theorem-facing bridge from support coverage plus energy control
+    back to geometry. It is exactly the missing connective tissue needed when the
+    runtime wants `target_rmsd` to mean more than mere support adequacy. -/
+theorem rmsd_cover_yields_library_rmsd_target
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (energy : CoordSet n → ℝ)
+    (library : Finset (CoordSet n))
+    (L εCover εTarget : ℝ)
+    (hL : 0 ≤ L)
+    (hCover : RMSDSupportCovers library εCover)
+    (hεCover : 0 ≤ εCover)
+    {xStar : CoordSet n}
+    (hOpt : IsOptimal (fun x => -energy x) xStar)
+    (hLip : RMSDLipschitzEnergy energy L)
+    (basin : CertifiedQuadraticBasin energy xStar)
+    (hn : 0 < n)
+    (hεTarget : 0 ≤ εTarget)
+    (hGapBudget : L * εCover ≤ targetEnergyGap basin.μ n εTarget) :
+    ∃ y, y ∈ library ∧ rmsd y xStar ≤ εTarget := by
+  have hLipNeg : RMSDLipschitzEnergy (fun x => -energy x) L := by
+    intro x y
+    calc
+      |(-energy x) - (-energy y)| = |energy y - energy x| := by ring_nf
+      _ = |energy x - energy y| := abs_sub_comm _ _
+      _ ≤ L * rmsd x y := hLip x y
+  rcases rmsd_cover_yields_library_approxOptimal
+      (energy := fun x => -energy x)
+      (library := library)
+      (L := L)
+      (ε := εCover)
+      hL hCover hεCover hOpt hLipNeg with ⟨y, hy, hApprox⟩
+  have hNearGap : energy y - energy xStar ≤ L * εCover := by
+    have hApproxStar : -energy xStar ≤ -energy y + L * εCover := hApprox xStar
+    linarith
+  refine ⟨y, hy, ?_⟩
+  apply rmsd_le_of_energyGap_le_target energy xStar y basin hn εTarget hεTarget
+  exact le_trans hNearGap hGapBudget
+
+/-- Any conformer whose negative energy is `δ`-approx-optimal around a certified
+    optimum `xStar` inherits an RMSD target once that same `δ` lies below the
+    quadratic-basin target-energy threshold. This is the direct geometry-energy
+    bridge for a concrete supported witness, independent of how that witness was
+    constructed. -/
+theorem approxOptimal_negEnergy_yields_rmsd_target
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (energy : CoordSet n → ℝ)
+    {xStar y : CoordSet n}
+    (δ εTarget : ℝ)
+    (hOpt : IsOptimal (fun x => -energy x) xStar)
+    (hApprox : IsApproxOptimal (fun x => -energy x) δ y)
+    (basin : CertifiedQuadraticBasin energy xStar)
+    (hn : 0 < n)
+    (hεTarget : 0 ≤ εTarget)
+    (hGapBudget : δ ≤ targetEnergyGap basin.μ n εTarget) :
+    rmsd y xStar ≤ εTarget := by
+  have hApproxStar : -energy xStar ≤ -energy y + δ := hApprox xStar
+  have hNearGap : energy y - energy xStar ≤ δ := by
+    linarith
+  apply rmsd_le_of_energyGap_le_target energy xStar y basin hn εTarget hεTarget
+  exact le_trans hNearGap hGapBudget
+
+/-- If a finite conformer library contains any `δ`-approx-optimal witness and that
+    same `δ` is small enough for the certified quadratic basin around the optimum,
+    then the library already contains a conformer within the requested RMSD target. -/
+theorem supported_approxOptimal_yields_library_rmsd_target
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (energy : CoordSet n → ℝ)
+    (library : Finset (CoordSet n))
+    {xStar : CoordSet n}
+    (δ εTarget : ℝ)
+    (hOpt : IsOptimal (fun x => -energy x) xStar)
+    (hWitness : ∃ y, y ∈ library ∧ IsApproxOptimal (fun x => -energy x) δ y)
+    (basin : CertifiedQuadraticBasin energy xStar)
+    (hn : 0 < n)
+    (hεTarget : 0 ≤ εTarget)
+    (hGapBudget : δ ≤ targetEnergyGap basin.μ n εTarget) :
+    ∃ y, y ∈ library ∧ rmsd y xStar ≤ εTarget := by
+  rcases hWitness with ⟨y, hy, hApprox⟩
+  refine ⟨y, hy, ?_⟩
+  exact approxOptimal_negEnergy_yields_rmsd_target
+    energy δ εTarget hOpt hApprox basin hn hεTarget hGapBudget
+
+/-- The exact winner of a finite conformer library is at least as good as any
+    supported `δ`-approx-optimal witness, so it inherits the same `δ`-near-optimal
+    guarantee. This is the proof-side winner-to-witness connection needed by the
+    runtime after exact rescoring of a certified support family. -/
+theorem exact_library_winner_inherits_approxOptimal_of_supportedWitness
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (energy : CoordSet n → ℝ)
+    (library : Finset (CoordSet n))
+    {winner witness : CoordSet n}
+    (δ : ℝ)
+    (hWitnessMem : witness ∈ library)
+    (hWitnessApprox : IsApproxOptimal (fun x => -energy x) δ witness)
+    (hWinnerMem : winner ∈ library)
+    (hWinnerBest : ∀ z, z ∈ library → energy winner ≤ energy z) :
+    IsApproxOptimal (fun x => -energy x) δ winner := by
+  intro x
+  have hApproxWitness : -energy x ≤ -energy witness + δ := hWitnessApprox x
+  have hWinnerLeWitness : energy winner ≤ energy witness := hWinnerBest witness hWitnessMem
+  linarith
+
+/-- End-to-end geometry-energy theorem on a finite conformer library: if the
+    library RMSD-covers conformer space well enough, and the exact rescored winner
+    of that library is selected, then that returned winner satisfies the requested
+    RMSD target. This is the theorem-side version of the conformer-active returned
+    pose contract before runtime witness packaging. -/
+theorem exact_library_winner_of_cover_yields_rmsd_target
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (energy : CoordSet n → ℝ)
+    (library : Finset (CoordSet n))
+    (L εCover εTarget : ℝ)
+    (hL : 0 ≤ L)
+    (hCover : RMSDSupportCovers library εCover)
+    (hεCover : 0 ≤ εCover)
+    {xStar winner : CoordSet n}
+    (hOpt : IsOptimal (fun x => -energy x) xStar)
+    (hLip : RMSDLipschitzEnergy energy L)
+    (hWinnerMem : winner ∈ library)
+    (hWinnerBest : ∀ z, z ∈ library → energy winner ≤ energy z)
+    (basin : CertifiedQuadraticBasin energy xStar)
+    (hn : 0 < n)
+    (hεTarget : 0 ≤ εTarget)
+    (hGapBudget : L * εCover ≤ targetEnergyGap basin.μ n εTarget) :
+    rmsd winner xStar ≤ εTarget := by
+  rcases rmsd_cover_yields_library_approxOptimal
+      (energy := fun x => -energy x)
+      (library := library)
+      (L := L)
+      (ε := εCover)
+      hL hCover hεCover hOpt
+      (by
+        intro x y
+        calc
+          |(-energy x) - (-energy y)| = |energy y - energy x| := by ring_nf
+          _ = |energy x - energy y| := abs_sub_comm _ _
+          _ ≤ L * rmsd x y := hLip x y)
+      with ⟨witness, hWitnessMem, hWitnessApprox⟩
+  have hWinnerApprox : IsApproxOptimal (fun x => -energy x) (L * εCover) winner :=
+    exact_library_winner_inherits_approxOptimal_of_supportedWitness
+      energy library (L * εCover) hWitnessMem hWitnessApprox hWinnerMem hWinnerBest
+  exact approxOptimal_negEnergy_yields_rmsd_target
+    energy (L * εCover) εTarget hOpt hWinnerApprox basin hn hεTarget hGapBudget
+
+/-- The exact rescored winner of a covered finite conformer library has energy gap
+    at most `L * εCover` above the optimal conformer. This is the energy-gap form
+    of `exact_library_winner_of_cover_yields_rmsd_target`, useful when composing
+    winner guarantees with ambiguity-band budgets. -/
+theorem exact_library_winner_energy_gap_of_cover_le
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (energy : CoordSet n → ℝ)
+    (library : Finset (CoordSet n))
+    (L εCover : ℝ)
+    (hL : 0 ≤ L)
+    (hCover : RMSDSupportCovers library εCover)
+    (hεCover : 0 ≤ εCover)
+    {xStar winner : CoordSet n}
+    (hOpt : IsOptimal (fun x => -energy x) xStar)
+    (hLip : RMSDLipschitzEnergy energy L)
+    (hWinnerMem : winner ∈ library)
+    (hWinnerBest : ∀ z, z ∈ library → energy winner ≤ energy z) :
+    energy winner - energy xStar ≤ L * εCover := by
+  rcases rmsd_cover_yields_library_approxOptimal
+      (energy := fun x => -energy x)
+      (library := library)
+      (L := L)
+      (ε := εCover)
+      hL hCover hεCover hOpt
+      (by
+        intro x y
+        calc
+          |(-energy x) - (-energy y)| = |energy y - energy x| := by ring_nf
+          _ = |energy x - energy y| := abs_sub_comm _ _
+          _ ≤ L * rmsd x y := hLip x y)
+      with ⟨witness, hWitnessMem, hWitnessApprox⟩
+  have hWinnerApprox : IsApproxOptimal (fun x => -energy x) (L * εCover) winner :=
+    exact_library_winner_inherits_approxOptimal_of_supportedWitness
+      energy library (L * εCover) hWitnessMem hWitnessApprox hWinnerMem hWinnerBest
+  have hApproxStar : -energy xStar ≤ -energy winner + L * εCover := hWinnerApprox xStar
+  linarith
+
 /-- Runtime-facing bridge: an RMSD target `ε` induces an energy-resolution budget
     `L * ε` whenever the exact energy is `L`-Lipschitz with respect to RMSD. This
     is the direct theorem used to derive certified score-resolution budgets from

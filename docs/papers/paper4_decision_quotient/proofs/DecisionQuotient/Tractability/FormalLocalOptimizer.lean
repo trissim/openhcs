@@ -62,6 +62,11 @@ structure OptimizerWitness (A : Type*) [DecidableEq A] where
   survivorSet : CertifiedPruning.CertifiedSurvivorSet A
   belief : BeliefWitness A
 
+/-- Property-level output contract for a finite returned support. When this holds,
+    every action in the declared output support satisfies the advertised property. -/
+def CertifiedOutputSet (support : Finset A) (P : A → Prop) : Prop :=
+  ∀ a, a ∈ support → P a
+
 /--
   Strengthened optimizer witness ensuring that the selected support used by the
   runtime is exactly the certified survivor set produced by the pruning layer.
@@ -96,6 +101,60 @@ theorem CoherentOptimizerWitness.choice_mem_survivors
     w.belief.selection.choice ∈ w.survivorSet.survivors := by
   rw [← w.support_eq]
   exact w.belief.selection.sound
+
+/-- Any property proved for every member of a selection support holds in
+    particular for the deterministically chosen action. -/
+theorem SelectionWitness.choice_inherits_of_support
+    {A : Type*} [DecidableEq A]
+    (w : SelectionWitness A)
+    {P : A → Prop}
+    (hSupport : CertifiedOutputSet w.support P) :
+    P w.choice :=
+  hSupport w.choice w.sound
+
+/-- Belief-level specialization of `SelectionWitness.choice_inherits_of_support`. -/
+theorem BeliefWitness.choice_inherits_of_support
+    {A : Type*} [DecidableEq A]
+    (w : BeliefWitness A)
+    {P : A → Prop}
+    (hSupport : CertifiedOutputSet w.selection.support P) :
+    P w.selection.choice :=
+  w.selection.choice_inherits_of_support hSupport
+
+/-- Coherent optimizer witnesses transport support-level property guarantees to
+    the returned action immediately. This is the proof-side hook for both unique
+    winner contracts and ambiguity-set contracts. -/
+theorem CoherentOptimizerWitness.choice_inherits_of_support
+    {A : Type*} [DecidableEq A]
+    (w : CoherentOptimizerWitness A)
+    {P : A → Prop}
+    (hSupport : CertifiedOutputSet w.belief.selection.support P) :
+    P w.belief.selection.choice :=
+  w.belief.choice_inherits_of_support hSupport
+
+/-- If a coherent witness advertises singleton support `{aStar}`, then its chosen
+    action is exactly `aStar`. -/
+theorem CoherentOptimizerWitness.choice_eq_of_singleton_support
+    {A : Type*} [DecidableEq A]
+    (w : CoherentOptimizerWitness A)
+    (aStar : A)
+    (hSingleton : w.belief.selection.support = ({aStar} : Finset A)) :
+    w.belief.selection.choice = aStar := by
+  have hMem : w.belief.selection.choice ∈ ({aStar} : Finset A) := by
+    simpa [hSingleton] using w.belief.selection.sound
+  simpa using hMem
+
+/-- Singleton-support specialization of `choice_inherits_of_support`. -/
+theorem CoherentOptimizerWitness.choice_inherits_of_singleton_support
+    {A : Type*} [DecidableEq A]
+    (w : CoherentOptimizerWitness A)
+    (aStar : A)
+    {P : A → Prop}
+    (hSingleton : w.belief.selection.support = ({aStar} : Finset A))
+    (hP : P aStar) :
+    P w.belief.selection.choice := by
+  rw [w.choice_eq_of_singleton_support aStar hSingleton]
+  exact hP
 
 /-- Support restriction of a finite prior along a certified survivor set. -/
 def restrictedPrior {A : Type*} [Fintype A] [DecidableEq A]
@@ -460,6 +519,35 @@ theorem exact_energy_gap_certified_choice_agreement
       e₁Exact e₁Coarse aStar δ₁ hApprox₁ hStrict₁)
     (h₂ := RankingPreservation.exact_top1_eq_singleton_of_coarse_energy_gap_margin
       e₂Exact e₂Coarse aStar δ₂ hApprox₂ hStrict₂)
+
+/-- Property inheritance for the exact-energy singleton-winner branch: once a
+    coarse energy gap margin certifies that the exact top-1 support is exactly
+    `{aStar}`, every property already proved for `aStar` transfers to the
+    runtime's returned choice. -/
+theorem exact_energy_gap_certified_choice_inherits_property
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]
+    (eExact eCoarse : A → ℝ)
+    (aStar : A)
+    (δ : ℝ)
+    (hApprox : ∀ x, |eExact x - eCoarse x| ≤ δ)
+    (hStrict : ∀ b, b ≠ aStar → eCoarse aStar + 2 * δ < eCoarse b)
+    {P : A → Prop}
+    (hP : P aStar) :
+    let w := coherentOptimizerWitness_of_exact_singleton_top1
+      (fun a => -eExact a) aStar
+      (RankingPreservation.exact_top1_eq_singleton_of_coarse_energy_gap_margin
+        eExact eCoarse aStar δ hApprox hStrict)
+    P w.belief.selection.choice := by
+  let hSingleton :=
+    RankingPreservation.exact_top1_eq_singleton_of_coarse_energy_gap_margin
+      eExact eCoarse aStar δ hApprox hStrict
+  let w : CoherentOptimizerWitness A :=
+    coherentOptimizerWitness_of_exact_singleton_top1 (fun a => -eExact a) aStar hSingleton
+  have hw := coherentOptimizerWitness_of_exact_singleton_top1_choice
+    (uExact := fun a => -eExact a) aStar hSingleton
+  have hChoiceEq : w.belief.selection.choice = aStar := by
+    simpa [w] using hw.1
+  simpa [w, hChoiceEq] using hP
 
 noncomputable def optimizerWitness_of_top1_branch
     {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [LinearOrder A]

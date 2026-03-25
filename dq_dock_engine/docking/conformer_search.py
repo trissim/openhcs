@@ -82,6 +82,31 @@ class BranchAndBoundConfig:
     per_bond_lipschitz: tuple[float, ...] | None = None
     reuse_initial_conformer: bool = False
 
+    @classmethod
+    def from_coverage_plan(
+        cls,
+        coverage_plan: object,
+        *,
+        reuse_initial_conformer: bool,
+        max_conformers: int,
+    ) -> "BranchAndBoundConfig":
+        from dq_dock_engine.docking.certified_runtime_plans import (
+            CertifiedConformerCoveragePlan,
+        )
+
+        if not isinstance(coverage_plan, CertifiedConformerCoveragePlan):
+            raise TypeError(
+                "BranchAndBoundConfig.from_coverage_plan requires a CertifiedConformerCoveragePlan"
+            )
+        return cls(
+            max_cells=int(coverage_plan.max_cells),
+            min_cell_radius=float(coverage_plan.min_cell_radius),
+            score_lipschitz_constant=float(coverage_plan.score_lipschitz_constant),
+            max_conformers=max_conformers,
+            per_bond_lipschitz=tuple(coverage_plan.per_bond_lipschitz),
+            reuse_initial_conformer=reuse_initial_conformer,
+        )
+
 
 @dataclass(frozen=True)
 class ConformerResult:

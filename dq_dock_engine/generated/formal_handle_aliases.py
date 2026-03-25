@@ -73,6 +73,7 @@ DC100 = "DC100"
 DC101 = "DC101"
 DC102 = "DC102"
 DC103 = "DC103"
+DC104 = "DC104"
 DC69 = "DC69"
 DC70 = "DC70"
 DC71 = "DC71"
@@ -505,6 +506,12 @@ FLO19 = "FLO19"
 FLO20 = "FLO20"
 FLO21 = "FLO21"
 FLO22 = "FLO22"
+FLO23 = "FLO23"
+FLO24 = "FLO24"
+FLO25 = "FLO25"
+FLO26 = "FLO26"
+FLO27 = "FLO27"
+FLO28 = "FLO28"
 XD1 = "XD1"
 XD2 = "XD2"
 XD3 = "XD3"
@@ -1065,6 +1072,18 @@ CSC43 = "CSC43"
 CSC44 = "CSC44"
 CSC48 = "CSC48"
 CSC50 = "CSC50"
+CSC51 = "CSC51"
+CSC52 = "CSC52"
+CSC53 = "CSC53"
+CSC54 = "CSC54"
+CSC55 = "CSC55"
+CSC56 = "CSC56"
+RPG1 = "RPG1"
+RPG2 = "RPG2"
+RPG3 = "RPG3"
+RPG4 = "RPG4"
+RPG5 = "RPG5"
+RPG6 = "RPG6"
 CSC45 = "CSC45"
 CSC46 = "CSC46"
 CSC47 = "CSC47"
@@ -1159,6 +1178,7 @@ __all__ = [
     "DC101",
     "DC102",
     "DC103",
+    "DC104",
     "DC69",
     "DC70",
     "DC71",
@@ -1591,6 +1611,12 @@ __all__ = [
     "FLO20",
     "FLO21",
     "FLO22",
+    "FLO23",
+    "FLO24",
+    "FLO25",
+    "FLO26",
+    "FLO27",
+    "FLO28",
     "XD1",
     "XD2",
     "XD3",
@@ -2151,6 +2177,18 @@ __all__ = [
     "CSC44",
     "CSC48",
     "CSC50",
+    "CSC51",
+    "CSC52",
+    "CSC53",
+    "CSC54",
+    "CSC55",
+    "CSC56",
+    "RPG1",
+    "RPG2",
+    "RPG3",
+    "RPG4",
+    "RPG5",
+    "RPG6",
     "CSC45",
     "CSC46",
     "CSC47",

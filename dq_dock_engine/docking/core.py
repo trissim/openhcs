@@ -39,6 +39,17 @@ class CertificationDecision(Enum):
     UNCERTIFIED = auto()
 
 
+class ReturnedPoseContractDecision(Enum):
+    CERTIFIED_TARGET_RMSD = auto()
+    CERTIFIED_AMBIGUITY_SET_TARGET_RMSD = auto()
+    DOWNGRADED_NONCERTIFIED_MODE = auto()
+    DOWNGRADED_NO_FINAL_SCORE_CERTIFICATE = auto()
+    DOWNGRADED_NO_REFINEMENT_CERTIFICATE = auto()
+    DOWNGRADED_CONFORMER_PATH = auto()
+    DOWNGRADED_RIGID_AMBIGUITY = auto()
+    DOWNGRADED_NO_POSE = auto()
+
+
 class SamplingStrategy(Enum):
     """Pocket-guided sampling strategies."""
 
@@ -135,6 +146,34 @@ class NativeCertification(GapCertification):
 
 
 @dataclass(frozen=True)
+class ReturnedPoseCertification:
+    decision: ReturnedPoseContractDecision
+    target_rmsd: float
+    theorem_handles: Tuple[str, ...] = ()
+    winner_index: Optional[int] = None
+    ambiguity_size: Optional[int] = None
+    support_indices: Tuple[int, ...] = ()
+    note: Optional[str] = None
+
+    @property
+    def is_target_rmsd_certified(self) -> bool:
+        return self.decision in (
+            ReturnedPoseContractDecision.CERTIFIED_TARGET_RMSD,
+            ReturnedPoseContractDecision.CERTIFIED_AMBIGUITY_SET_TARGET_RMSD,
+        )
+
+    def summary(self) -> str:
+        prefix = (
+            f"target_rmsd<={self.target_rmsd:.3f}A certified"
+            if self.is_target_rmsd_certified
+            else f"target_rmsd<={self.target_rmsd:.3f}A downgraded"
+        )
+        if self.note is None:
+            return prefix
+        return f"{prefix}: {self.note}"
+
+
+@dataclass(frozen=True)
 class BenchmarkResult:
     success: bool
     energy: float
@@ -150,6 +189,16 @@ class BenchmarkResult:
     confidence: Optional[float] = None
     energy_gap: Optional[float] = None
     native_rank: Optional[int] = None
+    requested_target_rmsd: Optional[float] = None
+    returned_pose_target_rmsd_certified: Optional[bool] = None
+    returned_pose_contract_decision: Optional[str] = None
+    returned_pose_contract_summary: Optional[str] = None
+    returned_pose_proof_case: Optional[str] = None
+    returned_pose_witness_status: Optional[str] = None
+    returned_pose_debug_summary: Optional[dict[str, object]] = None
+    pipeline_debug_summary: Optional[dict[str, object]] = None
+    pruning_total_delta: Optional[float] = None
+    pruning_active_component_labels: Optional[Tuple[str, ...]] = None
     execution_path: Optional[BlindDockingExecutionPath] = None
     certified_failure_reason: Optional[CertifiedPocketFailureReason] = None
     theorem_handles: Tuple[str, ...] = ()
@@ -163,6 +212,10 @@ class BenchmarkResult:
         n_atoms: int,
         formal_status: str,
         cert: Optional[Union[NativeCertification, GapCertification]] = None,
+        returned_pose_cert: Optional[ReturnedPoseCertification] = None,
+        returned_pose_debug_summary: Optional[dict[str, object]] = None,
+        pipeline_debug_summary: Optional[dict[str, object]] = None,
+        requested_target_rmsd: Optional[float] = None,
         execution_path: Optional[BlindDockingExecutionPath] = None,
         certified_failure_reason: Optional[CertifiedPocketFailureReason] = None,
         theorem_handles: Tuple[str, ...] = (),
@@ -173,6 +226,24 @@ class BenchmarkResult:
         native_rank = (
             cert.native_rank if isinstance(cert, NativeCertification) else None
         )
+        pruning_debug_summary = None
+        pruning_total_delta = None
+        pruning_active_component_labels = None
+        if pipeline_debug_summary is not None:
+            pruning_debug_summary = pipeline_debug_summary.get("pruning_delta_budget")
+            if isinstance(pruning_debug_summary, dict):
+                raw_total = pruning_debug_summary.get("total_delta")
+                if isinstance(raw_total, (int, float)):
+                    pruning_total_delta = float(raw_total)
+                raw_components = pruning_debug_summary.get("active_components")
+                if isinstance(raw_components, tuple):
+                    labels: list[str] = []
+                    for component in raw_components:
+                        if isinstance(component, dict):
+                            label = component.get("label")
+                            if isinstance(label, str):
+                                labels.append(label)
+                    pruning_active_component_labels = tuple(labels)
         return cls(
             success=True,
             energy=pose_energy,
@@ -188,10 +259,54 @@ class BenchmarkResult:
             confidence=confidence,
             energy_gap=energy_gap,
             native_rank=native_rank,
+            requested_target_rmsd=requested_target_rmsd,
+            returned_pose_target_rmsd_certified=(
+                None
+                if returned_pose_cert is None
+                else returned_pose_cert.is_target_rmsd_certified
+            ),
+            returned_pose_contract_decision=(
+                None if returned_pose_cert is None else returned_pose_cert.decision.name
+            ),
+            returned_pose_contract_summary=(
+                None if returned_pose_cert is None else returned_pose_cert.summary()
+            ),
+            returned_pose_proof_case=(
+                None
+                if returned_pose_debug_summary is None
+                else returned_pose_debug_summary.get("proof_case")
+                if isinstance(returned_pose_debug_summary.get("proof_case"), str)
+                else None
+            ),
+            returned_pose_witness_status=(
+                None
+                if returned_pose_debug_summary is None
+                else returned_pose_debug_summary.get("conformer_witness_status")
+                if isinstance(
+                    returned_pose_debug_summary.get("conformer_witness_status"),
+                    str,
+                )
+                else None
+            ),
+            returned_pose_debug_summary=returned_pose_debug_summary,
+            pipeline_debug_summary=pipeline_debug_summary,
+            pruning_total_delta=pruning_total_delta,
+            pruning_active_component_labels=pruning_active_component_labels,
             execution_path=execution_path,
             certified_failure_reason=certified_failure_reason,
             theorem_handles=theorem_handles,
         )
+
+    def debug_summary(self) -> dict[str, object]:
+        return {
+            "returned_pose_contract_decision": self.returned_pose_contract_decision,
+            "returned_pose_proof_case": self.returned_pose_proof_case,
+            "returned_pose_witness_status": self.returned_pose_witness_status,
+            "pruning_total_delta": self.pruning_total_delta,
+            "pruning_active_component_labels": self.pruning_active_component_labels,
+            "pipeline_debug_summary": self.pipeline_debug_summary,
+            "returned_pose_debug_summary": self.returned_pose_debug_summary,
+        }
 
 
 @register_pytree_node_class
@@ -366,3 +481,6 @@ class ScoredPose:
     energy: float
     engine: ScoringEngine
     theorem_handles: Tuple[str, ...] = ()
+    returned_pose_certification: Optional[ReturnedPoseCertification] = None
+    returned_pose_proof_debug: Optional[dict[str, object]] = None
+    pipeline_debug_summary: Optional[dict[str, object]] = None
