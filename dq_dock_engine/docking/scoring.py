@@ -1231,6 +1231,18 @@ class CertifiedBatchResult:
     error_bound: jax.Array | float
     target_error: jax.Array | float
     cutoff_radius: jax.Array | float
+    posewise_error_bound: jnp.ndarray | None = None
+
+    def __post_init__(self) -> None:
+        if self.posewise_error_bound is None:
+            object.__setattr__(
+                self,
+                "posewise_error_bound",
+                jnp.full_like(
+                    self.scores,
+                    jnp.asarray(self.error_bound, dtype=self.scores.dtype),
+                ),
+            )
 
     def tree_flatten(self):
         children = (
@@ -1238,6 +1250,7 @@ class CertifiedBatchResult:
             self.error_bound,
             self.target_error,
             self.cutoff_radius,
+            self.posewise_error_bound,
         )
         return (children, None)
 
@@ -1300,13 +1313,15 @@ def _score_certified_interaction_active_batch(
 ) -> CertifiedBatchResult:
     exact_scores = interaction_term.exact_scores(receptor_coords, poses_coords)
     coarse_scores = interaction_term.cutoff_scores(receptor_coords, poses_coords)
-    error_bound = jnp.max(jnp.abs(exact_scores - coarse_scores))
+    posewise_error_bound = jnp.abs(exact_scores - coarse_scores)
+    error_bound = jnp.max(posewise_error_bound)
     cutoff_radius = jnp.array(interaction_term.cutoff_radius, dtype=poses_coords.dtype)
     return CertifiedBatchResult(
         scores=coarse_scores,
         error_bound=error_bound,
         target_error=error_bound,
         cutoff_radius=cutoff_radius,
+        posewise_error_bound=posewise_error_bound,
     )
 
 
@@ -1351,6 +1366,10 @@ def _score_certified_extended_interaction_bundle_batch(
         cutoff_radius=jnp.max(
             jnp.stack([jnp.asarray(batch.cutoff_radius) for batch in batches], axis=0)
         ),
+        posewise_error_bound=jnp.sum(
+            jnp.stack([batch.posewise_error_bound for batch in batches], axis=0),
+            axis=0,
+        ),
     )
 
 
@@ -1362,6 +1381,21 @@ class CertifiedSoftenedBatchResult:
     target_error: jax.Array | float
     cutoff_radius: jax.Array | float
     softening_radius: jax.Array | float
+    posewise_softening_error_bound: jnp.ndarray | None = None
+
+    def __post_init__(self) -> None:
+        if self.posewise_softening_error_bound is None:
+            object.__setattr__(
+                self,
+                "posewise_softening_error_bound",
+                jnp.full_like(
+                    self.scores,
+                    jnp.asarray(
+                        self.softening_error_bound,
+                        dtype=self.scores.dtype,
+                    ),
+                ),
+            )
 
     def tree_flatten(self):
         children = (
@@ -1370,6 +1404,7 @@ class CertifiedSoftenedBatchResult:
             self.target_error,
             self.cutoff_radius,
             self.softening_radius,
+            self.posewise_softening_error_bound,
         )
         return (children, None)
 
@@ -1579,7 +1614,7 @@ def _score_certified_softened_lj_batch(
     softening_radius: float,
     compute_error_bound: bool = True,
     pairwise_sigma: jnp.ndarray | None = None,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     diffs = receptor_coords[None, :, None, :] - poses_coords[:, None, :, :]
     dists = jnp.asarray(jnp.linalg.norm(diffs, axis=-1))
 
@@ -1606,15 +1641,18 @@ def _score_certified_softened_lj_batch(
     exact_masked = jnp.where(in_range, exact_contrib, 0.0)
     softened_masked = jnp.where(in_range, softened_contrib, 0.0)
     energies = jnp.sum(softened_masked, axis=(1, 2))
+    posewise_error_bound = jnp.sum(
+        jnp.abs(exact_masked - softened_masked),
+        axis=(1, 2),
+    )
 
     if compute_error_bound:
-        error_bound = jnp.max(
-            jnp.sum(jnp.abs(exact_masked - softened_masked), axis=(1, 2))
-        )
+        error_bound = jnp.max(posewise_error_bound)
     else:
         error_bound = jnp.array(0.0)
+        posewise_error_bound = jnp.zeros_like(energies)
 
-    return energies, error_bound
+    return energies, error_bound, posewise_error_bound
 
 
 @jax.jit
@@ -2303,6 +2341,12 @@ def score_certified_attractive_chemistry_batch(
                     axis=0,
                 )
             ),
+            posewise_error_bound=(
+                contact_batch.posewise_error_bound
+                + hbond_receptor_donor_batch.posewise_error_bound
+                + hbond_ligand_donor_batch.posewise_error_bound
+                + jnp.full_like(contact_batch.scores, cooperative_error)
+            ),
         ),
         metal_batch,
         extended_batch,
@@ -2443,6 +2487,11 @@ def score_certified_softened_rich_chemistry_batch(
             attractive_batch.cutoff_radius,
         ),
         softening_radius=softened_lj.softening_radius,
+        posewise_softening_error_bound=(
+            softened_lj.posewise_softening_error_bound
+            + screened_batch.posewise_error_bound
+            + attractive_batch.posewise_error_bound
+        ),
     )
 
 
@@ -2518,16 +2567,18 @@ def score_certified_softened_lj(
         if softening_radius is None
         else softening_radius
     )
-    scores, softening_error_bound = _score_certified_softened_lj_batch(
-        receptor_coords,
-        poses_coords,
-        receptor_radii,
-        ligand_radii,
-        cutoff,
-        epsilon,
-        r_soft,
-        compute_error_bound=compute_error_bound,
-        pairwise_sigma=pairwise_sigma,
+    scores, softening_error_bound, posewise_softening_error_bound = (
+        _score_certified_softened_lj_batch(
+            receptor_coords,
+            poses_coords,
+            receptor_radii,
+            ligand_radii,
+            cutoff,
+            epsilon,
+            r_soft,
+            compute_error_bound=compute_error_bound,
+            pairwise_sigma=pairwise_sigma,
+        )
     )
     return CertifiedSoftenedBatchResult(
         scores=scores,
@@ -2535,6 +2586,7 @@ def score_certified_softened_lj(
         target_error=target_error,
         cutoff_radius=cutoff,
         softening_radius=r_soft,
+        posewise_softening_error_bound=posewise_softening_error_bound,
     )
 
 
@@ -2582,6 +2634,7 @@ def score_certified_softened_lj_realspace_ewald(
         target_error=target_error,
         cutoff_radius=softened_batch.cutoff_radius,
         softening_radius=softened_batch.softening_radius,
+        posewise_softening_error_bound=softened_batch.posewise_softening_error_bound,
     )
 
 

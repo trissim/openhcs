@@ -3459,7 +3459,11 @@ def _certified_pruning_pass(
     for start in range(0, n_total, chunk_size):
         stop = min(start + chunk_size, n_total)
         chunk_coords = poses_coords[start:stop]
-        chunk_scores, chunk_delta_budget = _score_softened_pose_batch(
+        (
+            chunk_scores,
+            chunk_delta_budget,
+            chunk_posewise_softening_error,
+        ) = _score_softened_pose_batch(
             request,
             poses_coords=chunk_coords,
             electrostatics=electrostatics,
@@ -3476,7 +3480,11 @@ def _certified_pruning_pass(
                 chunk_delta_budget,
             )
 
-        chunk_correction_np = np.zeros((stop - start,), dtype=np.float32)
+        chunk_correction_np = np.array(
+            jax.device_get(chunk_posewise_softening_error),
+            dtype=np.float32,
+            copy=True,
+        )
         if use_conf:
             chunk_family = _active_subset_budget_family(
                 chunk_coords,
@@ -3505,8 +3513,14 @@ def _certified_pruning_pass(
                 jax.device_get(posewise_flex_error),
                 dtype=np.float32,
             )
-            chunk_flex_delta = float(np.asarray(jax.device_get(coarse_phys_delta)))
-            chunk_correction_np += np.float32(2.0 * chunk_flex_delta)
+            chunk_flex_delta_np = np.asarray(
+                jax.device_get(coarse_phys_delta),
+                dtype=np.float32,
+            )
+            if chunk_flex_delta_np.ndim == 0:
+                chunk_correction_np += np.float32(2.0 * float(chunk_flex_delta_np))
+            else:
+                chunk_correction_np += np.float32(2.0) * chunk_flex_delta_np
         additive_correction_np[start:stop] = chunk_correction_np
 
     assert pruning_delta_budget is not None
@@ -3719,7 +3733,7 @@ def _score_softened_pose_batch(
     poses_coords: jnp.ndarray,
     electrostatics: CertifiedRealSpaceEwaldSpec | None,
     scoring_context: CertifiedScoringContext | None,
-) -> tuple[jnp.ndarray, CertifiedPruningDeltaBudget]:
+) -> tuple[jnp.ndarray, CertifiedPruningDeltaBudget, jnp.ndarray]:
     softening_radius = request.softening_radius
     if scoring_context is not None:
         coarse_batch = scoring_context.score_softened_batch(
@@ -3734,8 +3748,17 @@ def _score_softened_pose_batch(
         delta_budget = scoring_context.pruning_delta_budget(
             softening_error_bound=coarse_batch.softening_error_bound,
             softening_radius=softening_radius,
+            use_posewise_softening=True,
         )
-        return coarse_batch.scores, delta_budget
+        return (
+            coarse_batch.scores,
+            delta_budget,
+            (
+                jnp.zeros_like(coarse_batch.scores)
+                if scoring_context.uses_extended_rich
+                else cast(jnp.ndarray, coarse_batch.posewise_softening_error_bound)
+            ),
+        )
 
     if electrostatics is not None:
         coarse_batch = score_certified_softened_lj_realspace_ewald(
@@ -3761,8 +3784,15 @@ def _score_softened_pose_batch(
     delta_budget = CertifiedScoringContext(
         exact_chemistry_mode=ExactChemistryMode.NONE,
         electrostatics=electrostatics,
-    ).pruning_delta_budget(softening_error_bound=coarse_batch.softening_error_bound)
-    return coarse_batch.scores, delta_budget
+    ).pruning_delta_budget(
+        softening_error_bound=coarse_batch.softening_error_bound,
+        use_posewise_softening=True,
+    )
+    return (
+        coarse_batch.scores,
+        delta_budget,
+        cast(jnp.ndarray, coarse_batch.posewise_softening_error_bound),
+    )
 
 
 def _build_conformer_score_fns(

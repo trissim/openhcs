@@ -77,6 +77,7 @@ def test_certified_pruning_pass_uses_top1_coarse_ambiguity_band(monkeypatch) -> 
         lambda request, *, poses_coords, electrostatics, scoring_context: (
             coarse_scores,
             _make_delta_budget(0.1),
+            jnp.zeros_like(coarse_scores),
         ),
     )
 
@@ -92,6 +93,34 @@ def test_certified_pruning_pass_uses_top1_coarse_ambiguity_band(monkeypatch) -> 
     )
     assert jnp.array_equal(execution_plan.coarse_scores, coarse_scores)
     assert execution_plan.pruning_delta_budget.total_delta == 0.1
+
+
+def test_certified_pruning_pass_uses_posewise_softening_correction(monkeypatch) -> None:
+    coarse_scores = jnp.array([0.0, 10.0, 0.1], dtype=jnp.float32)
+    posewise_correction = jnp.array([0.05, 0.0, 0.15], dtype=jnp.float32)
+    request = _make_request(target_error=0.1)
+
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_score_softened_pose_batch",
+        lambda request, *, poses_coords, electrostatics, scoring_context: (
+            coarse_scores,
+            _make_delta_budget(0.0),
+            posewise_correction,
+        ),
+    )
+
+    execution_plan = docking_pipeline._certified_pruning_pass(
+        request,
+        poses_coords=jnp.zeros((3, 1, 3), dtype=jnp.float32),
+        electrostatics=None,
+    )
+
+    assert jnp.array_equal(
+        execution_plan.retain_mask,
+        jnp.array([True, False, True], dtype=bool),
+    )
+    assert execution_plan.pruning_delta_budget.total_delta == pytest.approx(0.0)
 
 
 def test_merge_pruning_delta_budgets_preserves_component_provenance() -> None:
@@ -174,20 +203,29 @@ def test_score_softened_pose_batch_uses_softening_bound_for_base_physics() -> No
         uses_extended_rich = False
 
         def pruning_delta_budget(
-            self, *, softening_error_bound=None, softening_radius=None
+            self,
+            *,
+            softening_error_bound=None,
+            softening_radius=None,
+            use_posewise_softening=False,
         ):
             del softening_radius
             assert softening_error_bound is not None
-            return _make_delta_budget(float(softening_error_bound))
+            return _make_delta_budget(
+                0.0 if use_posewise_softening else float(softening_error_bound)
+            )
 
         def score_softened_batch(self, **kwargs):
             del kwargs
             return SimpleNamespace(
                 scores=jnp.array([1.0, 2.0], dtype=jnp.float32),
                 softening_error_bound=jnp.asarray(0.125, dtype=jnp.float32),
+                posewise_softening_error_bound=jnp.array(
+                    [0.125, 0.025], dtype=jnp.float32
+                ),
             )
 
-    scores, delta_budget = docking_pipeline._score_softened_pose_batch(
+    scores, delta_budget, posewise_delta = docking_pipeline._score_softened_pose_batch(
         cast(Any, request),
         poses_coords=jnp.zeros((2, 1, 3), dtype=jnp.float32),
         electrostatics=None,
@@ -195,8 +233,9 @@ def test_score_softened_pose_batch_uses_softening_bound_for_base_physics() -> No
     )
 
     assert jnp.array_equal(scores, jnp.array([1.0, 2.0], dtype=jnp.float32))
-    assert delta_budget.total_delta == pytest.approx(0.125)
-    assert delta_budget.softening_mismatch_delta == pytest.approx(0.125)
+    assert jnp.array_equal(posewise_delta, jnp.array([0.125, 0.025], dtype=jnp.float32))
+    assert delta_budget.total_delta == pytest.approx(0.0)
+    assert delta_budget.softening_mismatch_delta == pytest.approx(0.0)
 
 
 def test_score_softened_pose_batch_uses_analytic_delta_for_rich_pruning_context() -> (
@@ -214,9 +253,13 @@ def test_score_softened_pose_batch_uses_analytic_delta_for_rich_pruning_context(
         uses_extended_rich = True
 
         def pruning_delta_budget(
-            self, *, softening_error_bound=None, softening_radius=None
+            self,
+            *,
+            softening_error_bound=None,
+            softening_radius=None,
+            use_posewise_softening=False,
         ):
-            del softening_error_bound, softening_radius
+            del softening_error_bound, softening_radius, use_posewise_softening
             return _make_delta_budget(99.0)
 
         def score_softened_batch(self, **kwargs):
@@ -224,9 +267,10 @@ def test_score_softened_pose_batch_uses_analytic_delta_for_rich_pruning_context(
             return SimpleNamespace(
                 scores=jnp.array([3.0], dtype=jnp.float32),
                 softening_error_bound=jnp.asarray(0.25, dtype=jnp.float32),
+                posewise_softening_error_bound=jnp.array([0.25], dtype=jnp.float32),
             )
 
-    scores, delta_budget = docking_pipeline._score_softened_pose_batch(
+    scores, delta_budget, posewise_delta = docking_pipeline._score_softened_pose_batch(
         cast(Any, request),
         poses_coords=jnp.zeros((1, 1, 3), dtype=jnp.float32),
         electrostatics=None,
@@ -235,6 +279,7 @@ def test_score_softened_pose_batch_uses_analytic_delta_for_rich_pruning_context(
 
     assert jnp.array_equal(scores, jnp.array([3.0], dtype=jnp.float32))
     assert delta_budget.total_delta == pytest.approx(99.0)
+    assert jnp.array_equal(posewise_delta, jnp.array([0.0], dtype=jnp.float32))
 
 
 def test_score_softened_pose_batch_uses_batch_exact_delta_for_pruning_context() -> None:
@@ -256,7 +301,11 @@ def test_score_softened_pose_batch_uses_batch_exact_delta_for_pruning_context() 
             return softening_radius == 1.5
 
         def pruning_delta_budget(
-            self, *, softening_error_bound=None, softening_radius=None
+            self,
+            *,
+            softening_error_bound=None,
+            softening_radius=None,
+            use_posewise_softening=False,
         ):
             assert softening_error_bound is not None
             assert softening_radius == 1.5
@@ -266,8 +315,13 @@ def test_score_softened_pose_batch_uses_batch_exact_delta_for_pruning_context() 
                     CertifiedPruningDeltaComponent(
                         label="batch_exact_delta",
                         kind=CertifiedPruningDeltaComponentKind.SOFTENING_MISMATCH,
-                        active=float(softening_error_bound) > 0.0,
-                        delta=float(softening_error_bound),
+                        active=(not use_posewise_softening)
+                        and float(softening_error_bound) > 0.0,
+                        delta=(
+                            0.0
+                            if use_posewise_softening
+                            else float(softening_error_bound)
+                        ),
                         theorem_handles=("RPG6",),
                     ),
                 ),
@@ -279,9 +333,10 @@ def test_score_softened_pose_batch_uses_batch_exact_delta_for_pruning_context() 
             return SimpleNamespace(
                 scores=jnp.array([3.0], dtype=jnp.float32),
                 softening_error_bound=jnp.asarray(0.25, dtype=jnp.float32),
+                posewise_softening_error_bound=jnp.array([0.25], dtype=jnp.float32),
             )
 
-    scores, delta_budget = docking_pipeline._score_softened_pose_batch(
+    scores, delta_budget, posewise_delta = docking_pipeline._score_softened_pose_batch(
         cast(Any, request),
         poses_coords=jnp.zeros((1, 1, 3), dtype=jnp.float32),
         electrostatics=None,
@@ -289,7 +344,8 @@ def test_score_softened_pose_batch_uses_batch_exact_delta_for_pruning_context() 
     )
 
     assert jnp.array_equal(scores, jnp.array([3.0], dtype=jnp.float32))
-    assert delta_budget.total_delta == pytest.approx(0.25)
+    assert delta_budget.total_delta == pytest.approx(0.0)
+    assert jnp.array_equal(posewise_delta, jnp.array([0.0], dtype=jnp.float32))
 
 
 def test_certified_pipeline_route_scores_only_valid_survivors(monkeypatch) -> None:

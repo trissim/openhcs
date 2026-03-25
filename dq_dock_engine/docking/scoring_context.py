@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import math
+from typing import cast
 
 import jax.numpy as jnp
 import jax.tree_util
@@ -263,6 +264,11 @@ class CertifiedScoringContext:
                     axis=0,
                 )
             ),
+            posewise_error_bound=(
+                base_result.posewise_error_bound
+                + hbond_receptor_donor.posewise_error_bound
+                + hbond_ligand_donor.posewise_error_bound
+            ),
         )
 
     def analytic_pruning_delta(self) -> float:
@@ -288,15 +294,16 @@ class CertifiedScoringContext:
         *,
         softening_error_bound: float | jnp.ndarray | None = None,
         softening_radius: float | None = None,
+        use_posewise_softening: bool = False,
     ) -> CertifiedPruningDeltaBudget:
         if self.uses_extended_rich:
             assert self.rich_chemistry_plan is not None
-            if (
-                softening_error_bound is not None
-                and self.uses_batch_pruning_delta()
-                and self.pruning_softening_matches_exact(softening_radius)
-            ):
-                total_delta = float(np.asarray(softening_error_bound))
+            if softening_error_bound is not None and self.uses_batch_pruning_delta():
+                total_delta = (
+                    0.0
+                    if use_posewise_softening
+                    else float(np.asarray(softening_error_bound))
+                )
                 return CertifiedPruningDeltaBudget.from_components(
                     source="rich_batch_exact_pruning_delta",
                     components=(
@@ -309,6 +316,8 @@ class CertifiedScoringContext:
                             note=(
                                 "Exact finite-batch rich pruning delta when the pruning "
                                 "context matches the exact disambiguation score family"
+                                if not use_posewise_softening
+                                else "Exact finite-batch rich pruning discrepancy is handled posewise on the additive correction path"
                             ),
                         ),
                     ),
@@ -321,7 +330,9 @@ class CertifiedScoringContext:
             raise ValueError(
                 "base-physics pruning delta budget requires an explicit softening_error_bound"
             )
-        total_delta = float(np.asarray(softening_error_bound))
+        total_delta = (
+            0.0 if use_posewise_softening else float(np.asarray(softening_error_bound))
+        )
         scoring_handles = (
             ("CB10", "CB11", "CB12")
             if self.electrostatics is not None
@@ -340,7 +351,11 @@ class CertifiedScoringContext:
                     active=total_delta > 0.0,
                     delta=total_delta,
                     theorem_handles=scoring_handles,
-                    note="Exact-vs-softened base-physics pruning slack",
+                    note=(
+                        "Exact-vs-softened base-physics pruning slack"
+                        if not use_posewise_softening
+                        else "Exact-vs-softened base-physics discrepancy is handled posewise on the additive correction path"
+                    ),
                 ),
             ),
             theorem_handles=scoring_handles,
@@ -618,7 +633,10 @@ class CertifiedScoringContext:
             epsilon=epsilon,
             softening_radius=softening_radius,
         )
-        flex_delta: jax.Array | float = ref_scores.softening_error_bound
+        flex_delta: jax.Array | float = cast(
+            jnp.ndarray,
+            ref_scores.posewise_softening_error_bound,
+        )
         if self.uses_extended_rich:
             flex_delta = self.pruning_delta_budget().total_delta
         if self.receptor_conformations is None:
@@ -734,6 +752,10 @@ class CertifiedScoringContext:
                 target_error=base.target_error,
                 cutoff_radius=base.cutoff_radius,
                 softening_radius=base.softening_radius,
+                posewise_softening_error_bound=(
+                    cast(jnp.ndarray, base.posewise_softening_error_bound)
+                    + jnp.full_like(base.scores, water_error)
+                ),
             )
         if self.electrostatics is not None:
             return score_certified_softened_lj_realspace_ewald(
