@@ -4848,6 +4848,7 @@ def _run_docking_pipeline_request(
         f"winner index in refine: {0 in local_refine_indices}",
         flush=True,
     )
+    subset_certificates_debug = None
     if local_refine_indices.size > 0:
         pre_se3_translations = opt_pose_translations[jnp.asarray(local_refine_indices)]
         pre_se3_quaternions = opt_pose_quaternions[jnp.asarray(local_refine_indices)]
@@ -4856,6 +4857,11 @@ def _run_docking_pipeline_request(
             request=request,
             initial_translations=pre_se3_translations,
             initial_quaternions=pre_se3_quaternions,
+        )
+        print(
+            f"[REFINE_CERTS] After refinement: subset_certificates = {subset_certificates}, "
+            f"len={len(subset_certificates) if subset_certificates else 'None'}",
+            flush=True,
         )
         subset_coords = apply_poses(
             request.ligand_ctx,
