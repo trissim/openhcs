@@ -35,6 +35,7 @@ from dq_dock_engine.docking.chemistry_annotations import (
 from dq_dock_engine.docking.formal_handles import (
     branch_and_bound_cross_docking_handles,
 )
+from dq_dock_engine.docking.rdkit_io import load_rdkit_molecule
 from dq_dock_engine.proof_status import certified, conditionally_certified
 
 
@@ -937,8 +938,9 @@ def derive_uff_torsion_barrier_heights(
     from rdkit.Chem import AllChem, rdForceFieldHelpers
 
     source_path = Path(ligand_source_path)
-    mol = Chem.MolFromPDBFile(str(source_path), removeHs=False)
-    if mol is None:
+    try:
+        mol = load_rdkit_molecule(source_path, remove_hs=False, sanitize=True)
+    except Exception:
         return None
     mol = Chem.AddHs(mol, addCoords=True)
 

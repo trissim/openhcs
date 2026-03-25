@@ -26,6 +26,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 
+from dq_dock_engine.docking.rdkit_io import load_rdkit_molecule
+
 
 class ChargeMethod(Enum):
     """Supported charge assignment methods."""
@@ -153,14 +155,7 @@ class GasteigerChargeAssigner(ChargeAssigner):
             p = Path(source)
             if not p.exists():
                 raise FileNotFoundError(f"Molecule file not found: {p}")
-            # RDKit can read PDB; keep Hs if present
-            mol = Chem.MolFromPDBFile(str(p), removeHs=False)
-            if mol is None:
-                # Try reading raw block
-                block = p.read_text()
-                mol = Chem.MolFromPDBBlock(block, removeHs=False)
-            if mol is None:
-                raise ValueError(f"RDKit failed to parse molecule file: {p}")
+            mol = load_rdkit_molecule(p, remove_hs=False, sanitize=True)
 
         # Compute Gasteiger charges
         try:

@@ -15,6 +15,7 @@ from dq_dock_engine.docking.chemistry_annotations import (
 )
 from dq_dock_engine.docking.core import LigandContext
 from dq_dock_engine.docking.pdb_io import parse_structure
+from dq_dock_engine.docking.rdkit_io import load_rdkit_molecule
 from dq_dock_engine.docking.receptor_preparation import (
     group_atom_records_by_residue,
     iter_atom_records,
@@ -122,24 +123,59 @@ def _load_ligand_source_with_protonation(
             "Extended-rich chemistry requires ligand_source_path for protonation-backed chemistry"
         )
     source_path = Path(ligand_source_path)
-    coords, _, elements = cast(
-        tuple[np.ndarray, np.ndarray, list[str]],
-        parse_structure(source_path, strip_hydrogens=False, return_elements=True),
-    )
-    normalized_elements = tuple(_normalize_element(element) for element in elements)
-    if not any(element == "H" for element in normalized_elements):
+    if source_path.suffix.lower() in {".pdb", ".ent"}:
+        coords, _, elements = cast(
+            tuple[np.ndarray, np.ndarray, list[str]],
+            parse_structure(source_path, strip_hydrogens=False, return_elements=True),
+        )
+        normalized_elements = tuple(_normalize_element(element) for element in elements)
+        if not any(element == "H" for element in normalized_elements):
+            try:
+                from rdkit import Chem
+            except ImportError as exc:
+                raise ValueError(
+                    "Ligand protonation requires RDKit when the ligand source lacks explicit hydrogens"
+                ) from exc
+            mol = load_rdkit_molecule(source_path, remove_hs=False, sanitize=False)
+            try:
+                Chem.SanitizeMol(mol)
+            except Exception:
+                Chem.SanitizeMol(
+                    mol,
+                    Chem.SanitizeFlags.SANITIZE_FINDRADICALS
+                    | Chem.SanitizeFlags.SANITIZE_SETAROMATICITY
+                    | Chem.SanitizeFlags.SANITIZE_SETCONJUGATION
+                    | Chem.SanitizeFlags.SANITIZE_SETHYBRIDIZATION
+                    | Chem.SanitizeFlags.SANITIZE_SYMMRINGS,
+                )
+            mol = Chem.AddHs(mol, addCoords=True)
+            conformer = mol.GetConformer()
+            coords = np.asarray(
+                [
+                    list(conformer.GetAtomPosition(atom_index))
+                    for atom_index in range(mol.GetNumAtoms())
+                ],
+                dtype=np.float32,
+            )
+            normalized_elements = tuple(
+                _normalize_element(atom.GetSymbol()) for atom in mol.GetAtoms()
+            )
+            if not any(element == "H" for element in normalized_elements):
+                raise ValueError("RDKit protonation did not produce explicit hydrogens")
+        else:
+            coords = np.asarray(coords, dtype=np.float32)
+    else:
+        mol = load_rdkit_molecule(source_path, remove_hs=False, sanitize=True)
         try:
             from rdkit import Chem
         except ImportError as exc:
+            raise ValueError("Ligand chemistry loading requires RDKit") from exc
+        if not any(atom.GetAtomicNum() == 1 for atom in mol.GetAtoms()):
+            mol = Chem.AddHs(mol, addCoords=True)
+        if mol.GetNumConformers() == 0:
             raise ValueError(
-                "Ligand protonation requires RDKit when the ligand source lacks explicit hydrogens"
-            ) from exc
-        mol = Chem.MolFromPDBFile(str(source_path), removeHs=False)
-        if mol is None:
-            raise ValueError(
-                f"RDKit failed to parse ligand protonation source: {source_path}"
+                f"Ligand chemistry source does not contain coordinates: {source_path}"
             )
-        mol = Chem.AddHs(mol, addCoords=True)
         conformer = mol.GetConformer()
         coords = np.asarray(
             [
@@ -151,10 +187,6 @@ def _load_ligand_source_with_protonation(
         normalized_elements = tuple(
             _normalize_element(atom.GetSymbol()) for atom in mol.GetAtoms()
         )
-        if not any(element == "H" for element in normalized_elements):
-            raise ValueError("RDKit protonation did not produce explicit hydrogens")
-    else:
-        coords = np.asarray(coords, dtype=np.float32)
     return ProtonatedSourceStructure(
         coords=coords,
         elements=normalized_elements,

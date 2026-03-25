@@ -16,6 +16,7 @@ import jax.numpy as jnp
 
 from dq_dock_engine.docking.core import LigandContext, DockingBox
 from dq_dock_engine.docking.physics_params import get_vdw_radius
+from dq_dock_engine.docking.rdkit_io import load_rdkit_molecule
 
 
 def _normalize_element(element: str) -> str:
@@ -148,9 +149,22 @@ def generate_independent_ligand_geometry(
         raise ValueError("Blind ligand geometry generation requires RDKit") from exc
 
     source_path = Path(ligand_source_path)
-    mol = Chem.MolFromPDBFile(str(source_path), removeHs=False)
-    if mol is None:
-        raise ValueError(f"RDKit failed to parse ligand source: {source_path}")
+    mol = load_rdkit_molecule(source_path, remove_hs=False, sanitize=False)
+
+    # Perceive aromaticity and sanitise before generating new coordinates. This
+    # reduces the chance RDKit will regenerate a conformer with incorrect
+    # bond orders for rings when the source PDB lacks explicit bond info.
+    try:
+        Chem.SanitizeMol(mol)
+    except Exception:
+        Chem.SanitizeMol(
+            mol,
+            Chem.SanitizeFlags.SANITIZE_FINDRADICALS
+            | Chem.SanitizeFlags.SANITIZE_SETAROMATICITY
+            | Chem.SanitizeFlags.SANITIZE_SETCONJUGATION
+            | Chem.SanitizeFlags.SANITIZE_SETHYBRIDIZATION
+            | Chem.SanitizeFlags.SANITIZE_SYMMRINGS,
+        )
 
     mol = Chem.AddHs(mol, addCoords=True)
     mol = Chem.Mol(mol)

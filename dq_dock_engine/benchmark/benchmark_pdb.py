@@ -609,6 +609,7 @@ class PreparedBenchmarkComplex:
     receptor_pdb: Path
     pocket_receptor_pdb: Path
     ligand_pdb: Path
+    ligand_source_path: Path
     receptor_view_pdb: Path
     native_ligand_view_pdb: Path
     ligand_coords: np.ndarray
@@ -1557,6 +1558,62 @@ def prepare_ligand(pdb_path: Path, preferred_resname: str | None = None) -> Path
     return ligand_path
 
 
+def fetch_rcsb_ideal_ligand_sdf(resname: str, output_path: Path) -> Path:
+    resname = resname.strip().upper()
+    if len(resname) == 0:
+        raise ValueError("Ligand residue name is required to fetch CCD chemistry")
+    if output_path.exists():
+        return output_path
+    url = f"https://files.rcsb.org/ligands/download/{resname}_ideal.sdf"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with urllib.request.urlopen(url) as response, output_path.open("wb") as handle:
+        handle.write(response.read())
+    return output_path
+
+
+def build_ordered_ligand_chemistry_source(
+    ligand_pdb: Path,
+    *,
+    ligand_resname: str | None,
+) -> Path:
+    """Create a bond-order-preserving ligand source in PDB atom order.
+
+    The benchmark extracts ligands as PDB HETATM records, but PDB does not carry
+    aromatic bond orders. RDKit then interprets the ligand as an all-single-bond
+    graph. We repair that by transferring bond orders from the RCSB CCD ideal SDF
+    onto the extracted PDB coordinates and writing the result as an SDF.
+    """
+
+    chemistry_source = ligand_pdb.with_suffix(".sdf")
+    if ligand_resname is None:
+        return ligand_pdb
+    chemistry_source.unlink(missing_ok=True)
+
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import AllChem
+    except ImportError:
+        return ligand_pdb
+
+    template_sdf = ligand_pdb.with_name(f"{ligand_resname.upper()}_ideal.sdf")
+    try:
+        fetch_rcsb_ideal_ligand_sdf(ligand_resname, template_sdf)
+        template = Chem.SDMolSupplier(str(template_sdf), removeHs=False, sanitize=True)[
+            0
+        ]
+        pdb_mol = Chem.MolFromPDBFile(str(ligand_pdb), removeHs=False, sanitize=False)
+        if template is None or pdb_mol is None:
+            return ligand_pdb
+        ordered = AllChem.AssignBondOrdersFromTemplate(Chem.RemoveHs(template), pdb_mol)
+        Chem.SanitizeMol(ordered)
+        writer = Chem.SDWriter(str(chemistry_source))
+        writer.write(ordered)
+        writer.close()
+        return chemistry_source
+    except Exception:
+        return ligand_pdb
+
+
 def _charge_source(
     assigner: ChargeAssigner,
     *,
@@ -1570,7 +1627,7 @@ def prepare_benchmark_electrostatics(
     *,
     assigner: ChargeAssigner,
     pdb_id: str,
-    ligand_pdb: Path,
+    ligand_source_path: Path,
     ligand_elements: tuple[str, ...],
     ligand_atom_count: int,
     pocket_receptor_pdb: Path,
@@ -1579,7 +1636,9 @@ def prepare_benchmark_electrostatics(
 ) -> PreparedBenchmarkElectrostatics:
     ligand_charges = np.asarray(
         assigner.assign(
-            _charge_source(assigner, elements=ligand_elements, pdb_path=ligand_pdb)
+            _charge_source(
+                assigner, elements=ligand_elements, pdb_path=ligand_source_path
+            )
         ).charges
     )
     pocket_charges = np.asarray(
@@ -1646,6 +1705,14 @@ def prepare_benchmark_complex(
         complex_entry.path,
         preferred_resname=complex_entry.preferred_resname,
     )
+    ligand_source_path = build_ordered_ligand_chemistry_source(
+        ligand_pdb,
+        ligand_resname=(
+            None
+            if complex_entry.ligand_residue is None
+            else complex_entry.ligand_residue.resname
+        ),
+    )
 
     ligand_coords, ligand_radii, ligand_elements = cast(
         tuple[np.ndarray, np.ndarray, list[str]],
@@ -1664,7 +1731,7 @@ def prepare_benchmark_complex(
         electrostatics = prepare_benchmark_electrostatics(
             assigner=charge_assigner,
             pdb_id=complex_entry.pdb_id,
-            ligand_pdb=ligand_pdb,
+            ligand_source_path=ligand_source_path,
             ligand_elements=tuple(ligand_elements),
             ligand_atom_count=len(ligand_coords),
             pocket_receptor_pdb=pocket_receptor_pdb,
@@ -1678,6 +1745,12 @@ def prepare_benchmark_complex(
     native_ligand_view_pdb = pose_dir / f"{complex_entry.pdb_id}_native_ligand.pdb"
     copy_structure_for_viewing(receptor_pdb, receptor_view_pdb)
     copy_structure_for_viewing(ligand_pdb, native_ligand_view_pdb)
+    save_pose_sdf_from_source(
+        ligand_coords,
+        ligand_source_path,
+        native_ligand_view_pdb.with_suffix(".sdf"),
+        expected_elements=tuple(ligand_elements),
+    )
 
     return PreparedBenchmarkComplex(
         pdb_id=complex_entry.pdb_id,
@@ -1688,6 +1761,7 @@ def prepare_benchmark_complex(
         receptor_pdb=receptor_pdb,
         pocket_receptor_pdb=pocket_receptor_pdb,
         ligand_pdb=ligand_pdb,
+        ligand_source_path=ligand_source_path,
         receptor_view_pdb=receptor_view_pdb,
         native_ligand_view_pdb=native_ligand_view_pdb,
         ligand_coords=ligand_coords,
@@ -2101,6 +2175,48 @@ def save_pose_from_template(
     _write_pdb(coords, str(template_pdb), str(output_pdb))
 
 
+def save_pose_sdf_from_source(
+    coords: np.ndarray,
+    chemistry_source: Path,
+    output_sdf: Path,
+    *,
+    expected_elements: tuple[str, ...] | None = None,
+) -> None:
+    try:
+        from rdkit import Chem
+    except ImportError:
+        return
+
+    from dq_dock_engine.docking.rdkit_io import load_rdkit_molecule
+
+    mol = load_rdkit_molecule(chemistry_source, remove_hs=False, sanitize=True)
+    mol = Chem.RemoveHs(mol)
+    heavy_elements = tuple(atom.GetSymbol().upper() for atom in mol.GetAtoms())
+    if expected_elements is not None:
+        normalized_expected = tuple(
+            element.strip().upper() for element in expected_elements
+        )
+        if heavy_elements != normalized_expected:
+            raise ValueError(
+                "Ligand chemistry source atom order mismatch for SDF pose export; "
+                f"expected {normalized_expected} but got {heavy_elements}"
+            )
+    if mol.GetNumAtoms() != len(coords):
+        raise ValueError(
+            "Ligand chemistry source atom count mismatch for SDF pose export; "
+            f"expected {len(coords)} but got {mol.GetNumAtoms()}"
+        )
+    mol = Chem.Mol(mol)
+    mol.RemoveAllConformers()
+    conformer = Chem.Conformer(mol.GetNumAtoms())
+    for atom_index, (x, y, z) in enumerate(coords):
+        conformer.SetAtomPosition(atom_index, (float(x), float(y), float(z)))
+    mol.AddConformer(conformer, assignId=True)
+    writer = Chem.SDWriter(str(output_sdf))
+    writer.write(mol)
+    writer.close()
+
+
 def copy_structure_for_viewing(source: Path, destination: Path) -> None:
     shutil.copy2(source, destination)
 
@@ -2114,7 +2230,7 @@ def prepare_competitor_ligand_input(
     temp_dir = Path(tempfile.mkdtemp(prefix="blind_competitor_ligand_"))
     ligand_path = temp_dir / f"{complex_entry.ligand_pdb.stem}_blind.pdb"
     coords, _ = generate_independent_ligand_geometry(
-        complex_entry.ligand_pdb,
+        complex_entry.ligand_source_path,
         expected_elements=complex_entry.ligand_elements,
     )
     save_pose_from_template(coords, complex_entry.ligand_pdb, ligand_path)
@@ -2411,6 +2527,7 @@ def run_dq_dock(
     ligand_radii: np.ndarray,
     center: tuple,
     ligand_file: Path,
+    ligand_source_path: Path,
     receptor_file: Path,
     charge_method: ChargeMethod = DEFAULT_BENCHMARK_CHARGE_METHOD,
     precomputed_ligand_charges: np.ndarray | None = None,
@@ -2502,7 +2619,7 @@ def run_dq_dock(
     ):
         assigner = create_charge_assigner(charge_method)
         ligand_source = (
-            ligand_elements if assigner.method.name == "SIMPLE" else ligand_file
+            ligand_elements if assigner.method.name == "SIMPLE" else ligand_source_path
         )
         ligand_charges = assigner.assign(ligand_source).charges
 
@@ -2511,11 +2628,11 @@ def run_dq_dock(
     if (
         not use_crystal_ligand_geometry
         and ligand_elements is not None
-        and ligand_file is not None
+        and ligand_source_path is not None
     ):
         ligand_context_coords, ligand_context_adjacency = (
             generate_independent_ligand_geometry(
-                ligand_file,
+                ligand_source_path,
                 expected_elements=tuple(ligand_elements),
             )
         )
@@ -2601,7 +2718,7 @@ def run_dq_dock(
                 key=attempt_key,
                 charge_method=charge_method,
                 receptor_file=receptor_file,
-                ligand_source_path=ligand_file,
+                ligand_source_path=ligand_source_path,
                 precomputed_receptor_charges=runtime_receptor_charges,
                 receptor_elements=runtime_receptor_elements,
                 config=docking_config,
@@ -2612,7 +2729,7 @@ def run_dq_dock(
             )
         )
 
-    base_seed = zlib.adler32(str(ligand_file).encode("utf-8"))
+    base_seed = zlib.adler32(str(ligand_source_path).encode("utf-8"))
     base_key = jax.random.fold_in(jax.random.PRNGKey(42), base_seed)
     formal_status = "DQ-Dock"
     best_result: BenchmarkResult | None = None
@@ -2848,6 +2965,7 @@ def run_dq_dock_benchmark_job(job: DQDockBenchmarkJob) -> DQDockBenchmarkJobResu
         job.complex_entry.ligand_radii,
         job.complex_entry.center,
         ligand_file=job.complex_entry.ligand_pdb,
+        ligand_source_path=job.complex_entry.ligand_source_path,
         receptor_file=job.complex_entry.pocket_receptor_pdb,
         charge_method=job.charge_method,
         precomputed_ligand_charges=job.precomputed_ligand_charges,
@@ -3249,6 +3367,12 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
             dq_pose_path = context.pose_dir / f"{complex_entry.pdb_id}_dq_dock_pose.pdb"
             save_pose_from_template(
                 dq_pose_coords, complex_entry.ligand_pdb, dq_pose_path
+            )
+            save_pose_sdf_from_source(
+                dq_pose_coords,
+                complex_entry.ligand_source_path,
+                dq_pose_path.with_suffix(".sdf"),
+                expected_elements=complex_entry.ligand_elements,
             )
         return dq_pose_path
 
