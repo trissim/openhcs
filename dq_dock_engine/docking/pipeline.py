@@ -4842,6 +4842,12 @@ def _run_docking_pipeline_request(
     site_center = binding_site_center
     site_radius = binding_site_radius
     refinement_certificates = [None] * int(opt_coords.shape[0])
+    print(
+        f"[REFINE_CERTS] local_refine_indices size: {local_refine_indices.size}, "
+        f"opt_coords shape[0]: {opt_coords.shape[0]}, "
+        f"winner index in refine: {0 in local_refine_indices}",
+        flush=True,
+    )
     if local_refine_indices.size > 0:
         pre_se3_translations = opt_pose_translations[jnp.asarray(local_refine_indices)]
         pre_se3_quaternions = opt_pose_quaternions[jnp.asarray(local_refine_indices)]
