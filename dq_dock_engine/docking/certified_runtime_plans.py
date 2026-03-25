@@ -809,8 +809,36 @@ class ActiveConformerReturnedPoseWitness:
         return True
 
 
+@dataclass(frozen=True)
+class ActiveConformerEnergyGapWitness:
+    coverage_plan: CertifiedConformerCoveragePlan
+    cover_rmsd_radius: float
+    cover_gap_budget: float
+    certified_energy_gap: float
+    theorem_handles: tuple[str, ...]
+    witness_handles: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _ensure_handle_provenance(
+            self.theorem_handles,
+            owner="ActiveConformerEnergyGapWitness",
+        )
+        for field_name, value in (
+            ("cover_rmsd_radius", self.cover_rmsd_radius),
+            ("cover_gap_budget", self.cover_gap_budget),
+            ("certified_energy_gap", self.certified_energy_gap),
+        ):
+            _ensure_nonnegative(value, field_name=field_name)
+
+    @property
+    def conformer_active(self) -> bool:
+        return True
+
+
 CertifiedConformerAwareReturnedPoseWitness = (
-    InactiveConformerReturnedPoseWitness | ActiveConformerReturnedPoseWitness
+    InactiveConformerReturnedPoseWitness
+    | ActiveConformerReturnedPoseWitness
+    | ActiveConformerEnergyGapWitness
 )
 
 
@@ -819,6 +847,8 @@ class ReturnedPoseProofCase(str, Enum):
     RIGID_AMBIGUITY = "rigid_ambiguity"
     CERTIFIED_SINGLETON = "certified_singleton"
     CERTIFIED_AMBIGUITY_SET = "certified_ambiguity_set"
+    CERTIFIED_ENERGY_SINGLETON = "certified_energy_singleton"
+    CERTIFIED_ENERGY_AMBIGUITY_SET = "certified_energy_ambiguity_set"
     DOWNGRADED = "downgraded"
 
 
@@ -871,7 +901,7 @@ class CertifiedReturnedPoseProofPlan:
             raise ValueError("support_indices must contain winner_index")
         active_conformer = isinstance(
             self.conformer_witness,
-            ActiveConformerReturnedPoseWitness,
+            (ActiveConformerReturnedPoseWitness, ActiveConformerEnergyGapWitness),
         )
         if active_conformer and self.total_gap_budget is None:
             raise ValueError("Active conformer witnesses require total_gap_budget")
@@ -898,6 +928,23 @@ class CertifiedReturnedPoseProofPlan:
                 raise ValueError(
                     "Certified singleton proof plans must not carry downgrade_decision"
                 )
+        elif self.proof_case == ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON:
+            if not self.winner_singleton:
+                raise ValueError(
+                    "Certified energy singleton proof plans require singleton support"
+                )
+            if self.total_gap_budget is None:
+                raise ValueError(
+                    "Certified energy singleton proof plans require total_gap_budget"
+                )
+            if not isinstance(self.conformer_witness, ActiveConformerEnergyGapWitness):
+                raise ValueError(
+                    "Certified energy singleton proof plans require an active conformer energy witness"
+                )
+            if self.downgrade_decision is not None:
+                raise ValueError(
+                    "Certified energy singleton proof plans must not carry downgrade_decision"
+                )
         elif self.proof_case == ReturnedPoseProofCase.CERTIFIED_AMBIGUITY_SET:
             if self.ambiguity_size <= 1:
                 raise ValueError(
@@ -914,6 +961,23 @@ class CertifiedReturnedPoseProofPlan:
             if self.downgrade_decision is not None:
                 raise ValueError(
                     "Certified ambiguity-set proof plans must not carry downgrade_decision"
+                )
+        elif self.proof_case == ReturnedPoseProofCase.CERTIFIED_ENERGY_AMBIGUITY_SET:
+            if self.ambiguity_size <= 1:
+                raise ValueError(
+                    "Certified energy ambiguity-set proof plans require multiple support indices"
+                )
+            if self.total_gap_budget is None:
+                raise ValueError(
+                    "Certified energy ambiguity-set proof plans require total_gap_budget"
+                )
+            if not isinstance(self.conformer_witness, ActiveConformerEnergyGapWitness):
+                raise ValueError(
+                    "Certified energy ambiguity-set proof plans require an active conformer energy witness"
+                )
+            if self.downgrade_decision is not None:
+                raise ValueError(
+                    "Certified energy ambiguity-set proof plans must not carry downgrade_decision"
                 )
         elif self.proof_case == ReturnedPoseProofCase.RIGID_AMBIGUITY:
             if self.downgrade_decision is not None:
@@ -946,7 +1010,10 @@ class CertifiedReturnedPoseProofPlan:
 
     @property
     def ambiguity_set_certified(self) -> bool:
-        return self.proof_case == ReturnedPoseProofCase.CERTIFIED_AMBIGUITY_SET
+        return self.proof_case in (
+            ReturnedPoseProofCase.CERTIFIED_AMBIGUITY_SET,
+            ReturnedPoseProofCase.CERTIFIED_ENERGY_AMBIGUITY_SET,
+        )
 
     @property
     def decision(self) -> ReturnedPoseContractDecision:
@@ -958,6 +1025,10 @@ class CertifiedReturnedPoseProofPlan:
             return ReturnedPoseContractDecision.CERTIFIED_TARGET_RMSD
         if self.proof_case == ReturnedPoseProofCase.CERTIFIED_AMBIGUITY_SET:
             return ReturnedPoseContractDecision.CERTIFIED_AMBIGUITY_SET_TARGET_RMSD
+        if self.proof_case == ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON:
+            return ReturnedPoseContractDecision.CERTIFIED_ENERGY_GAP
+        if self.proof_case == ReturnedPoseProofCase.CERTIFIED_ENERGY_AMBIGUITY_SET:
+            return ReturnedPoseContractDecision.CERTIFIED_AMBIGUITY_SET_ENERGY_GAP
         assert self.downgrade_decision is not None
         return self.downgrade_decision
 
@@ -968,9 +1039,14 @@ class CertifiedReturnedPoseProofPlan:
             return "absent"
         if isinstance(witness, ActiveConformerReturnedPoseWitness):
             return "active_complete"
+        if isinstance(witness, ActiveConformerEnergyGapWitness):
+            return "active_energy_only"
         return "inactive"
 
     def debug_summary(self) -> dict[str, object]:
+        certified_energy_gap = None
+        if isinstance(self.conformer_witness, ActiveConformerEnergyGapWitness):
+            certified_energy_gap = self.conformer_witness.certified_energy_gap
         return {
             "proof_case": self.proof_case.value,
             "decision": self.decision.name,
@@ -983,6 +1059,7 @@ class CertifiedReturnedPoseProofPlan:
             "winner_refinement_certificate_present": self.winner_refinement_certificate_present,
             "winner_basin_witness_source": self.winner_basin_witness_source,
             "winner_conformer_improved": self.winner_conformer_improved,
+            "certified_energy_gap": certified_energy_gap,
             "missing_conformer_requirements": self.missing_conformer_requirements,
             "theorem_handles": self.theorem_handles,
             "note": self.note,

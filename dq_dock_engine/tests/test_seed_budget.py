@@ -11,6 +11,7 @@ import pytest
 from dq_dock_engine.docking import pipeline as docking_pipeline
 from dq_dock_engine.docking.core import DockingBox, LigandContext, PoseVector
 from dq_dock_engine.docking.certified_runtime_plans import (
+    ActiveConformerEnergyGapWitness,
     ActiveConformerReturnedPoseWitness,
     CertifiedConformerCoveragePlan,
     InactiveConformerReturnedPoseWitness,
@@ -646,6 +647,42 @@ def test_returned_pose_certification_uses_active_conformer_witness_variant() -> 
     assert proof_plan.proof_case == ReturnedPoseProofCase.CERTIFIED_SINGLETON
 
 
+def test_returned_pose_certification_uses_energy_gap_witness_when_basin_missing() -> (
+    None
+):
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_flexible_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+    )
+
+    proof_plan = _derive_returned_pose_proof_plan(
+        request=request,
+        final_scores=jnp.array([0.0, 3.0], dtype=jnp.float32),
+        final_error_bound=0.1,
+        final_pose_coords=None,
+        refinement_certificates=[None, None],
+        conformer_coverage_plan=_dummy_conformer_coverage_plan(),
+        winner_theorem_handles=("TK16",),
+        do_conf=True,
+    )
+    returned_cert = _build_returned_pose_certification(proof_plan=proof_plan)
+
+    assert proof_plan.proof_case == ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON
+    assert isinstance(proof_plan.conformer_witness, ActiveConformerEnergyGapWitness)
+    assert returned_cert is not None
+    assert returned_cert.decision == ReturnedPoseContractDecision.CERTIFIED_ENERGY_GAP
+    assert not returned_cert.is_target_rmsd_certified
+    assert returned_cert.is_energy_gap_certified
+    assert returned_cert.certified_energy_gap == pytest.approx(0.2)
+
+
 def test_returned_pose_proof_plan_debug_summary_exposes_case_and_witness_status() -> (
     None
 ):
@@ -709,7 +746,11 @@ def test_returned_pose_proof_plan_marks_conformer_improvement_when_rigid_cert_in
 
     assert summary["winner_conformer_improved"] is True
     assert summary["winner_refinement_certificate_present"] is False
-    assert "invalidates the rigid refinement certificate" in cast(str, summary["note"])
+    assert (
+        summary["proof_case"] == ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON.value
+    )
+    assert summary["conformer_witness_status"] == "active_energy_only"
+    assert "energy gap budget" in cast(str, summary["note"])
 
 
 def test_recertify_conformer_updated_pose_threads_new_certificate(monkeypatch) -> None:
@@ -790,7 +831,10 @@ def test_recertify_conformer_updated_pose_finds_spectral_certificate() -> None:
     ):
         captured_calls.append((initial_translations, initial_quaternions))
         return original_refinement(
-            request, initial_translations, initial_quaternions, mode_override
+            request,
+            initial_translations,
+            initial_quaternions,
+            mode_override=mode_override,
         )
 
     import unittest.mock as mock

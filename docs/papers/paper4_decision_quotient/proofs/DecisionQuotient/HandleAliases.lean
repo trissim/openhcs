@@ -2385,6 +2385,10 @@ abbrev RPG4 := @Tractability.ReturnedPoseGuarantee.returned_choice_of_exact_sing
 abbrev RPG5 := @Tractability.ReturnedPoseGuarantee.ambiguityBand_support_of_cover_yields_certified_output_set
 -- RPG6: A certified exact/coarse singleton choice over a covered support satisfies the RMSD target
 abbrev RPG6 := @Tractability.ReturnedPoseGuarantee.exact_energy_gap_certified_choice_of_cover_yields_rmsd_target
+-- RPG7: An ambiguity band over a covered support yields a certified energy-gap output set
+abbrev RPG7 := @Tractability.ReturnedPoseGuarantee.ambiguityBand_support_of_cover_yields_certified_energy_output_set
+-- RPG8: A certified exact/coarse singleton choice over a covered support has bounded exact energy gap
+abbrev RPG8 := @Tractability.ReturnedPoseGuarantee.exact_energy_gap_certified_choice_of_cover_has_energy_gap_le
 
 -- CSC45: Torsion locality radius (single atom)
 abbrev CSC45 := @DecisionQuotient.Tractability.ConformerSupportCoverage.torsion_locality_radius

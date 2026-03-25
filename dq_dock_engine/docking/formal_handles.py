@@ -439,6 +439,14 @@ def returned_pose_guarantee_theorem_handles() -> tuple[str, ...]:
     return _selected_handles(RPG4, RPG6, TK16, ERC39, ERC43, DC104)
 
 
+def ambiguity_output_energy_contract_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(RPG1, RPG7, CSC56)
+
+
+def returned_pose_energy_guarantee_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(RPG8, CSC56)
+
+
 def rich_pruning_delta_theorem_handles() -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(

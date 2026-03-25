@@ -42,6 +42,8 @@ class CertificationDecision(Enum):
 class ReturnedPoseContractDecision(Enum):
     CERTIFIED_TARGET_RMSD = auto()
     CERTIFIED_AMBIGUITY_SET_TARGET_RMSD = auto()
+    CERTIFIED_ENERGY_GAP = auto()
+    CERTIFIED_AMBIGUITY_SET_ENERGY_GAP = auto()
     DOWNGRADED_NONCERTIFIED_MODE = auto()
     DOWNGRADED_NO_FINAL_SCORE_CERTIFICATE = auto()
     DOWNGRADED_NO_REFINEMENT_CERTIFICATE = auto()
@@ -150,6 +152,7 @@ class ReturnedPoseCertification:
     decision: ReturnedPoseContractDecision
     target_rmsd: float
     theorem_handles: Tuple[str, ...] = ()
+    certified_energy_gap: Optional[float] = None
     winner_index: Optional[int] = None
     ambiguity_size: Optional[int] = None
     support_indices: Tuple[int, ...] = ()
@@ -162,12 +165,20 @@ class ReturnedPoseCertification:
             ReturnedPoseContractDecision.CERTIFIED_AMBIGUITY_SET_TARGET_RMSD,
         )
 
-    def summary(self) -> str:
-        prefix = (
-            f"target_rmsd<={self.target_rmsd:.3f}A certified"
-            if self.is_target_rmsd_certified
-            else f"target_rmsd<={self.target_rmsd:.3f}A downgraded"
+    @property
+    def is_energy_gap_certified(self) -> bool:
+        return self.decision in (
+            ReturnedPoseContractDecision.CERTIFIED_ENERGY_GAP,
+            ReturnedPoseContractDecision.CERTIFIED_AMBIGUITY_SET_ENERGY_GAP,
         )
+
+    def summary(self) -> str:
+        if self.is_target_rmsd_certified:
+            prefix = f"target_rmsd<={self.target_rmsd:.3f}A certified"
+        elif self.is_energy_gap_certified and self.certified_energy_gap is not None:
+            prefix = f"energy_gap<={self.certified_energy_gap:.3f} kcal/mol certified"
+        else:
+            prefix = f"target_rmsd<={self.target_rmsd:.3f}A downgraded"
         if self.note is None:
             return prefix
         return f"{prefix}: {self.note}"

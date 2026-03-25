@@ -1084,6 +1084,8 @@ RPG3 = "RPG3"
 RPG4 = "RPG4"
 RPG5 = "RPG5"
 RPG6 = "RPG6"
+RPG7 = "RPG7"
+RPG8 = "RPG8"
 CSC45 = "CSC45"
 CSC46 = "CSC46"
 CSC47 = "CSC47"
@@ -2189,6 +2191,8 @@ __all__ = [
     "RPG4",
     "RPG5",
     "RPG6",
+    "RPG7",
+    "RPG8",
     "CSC45",
     "CSC46",
     "CSC47",

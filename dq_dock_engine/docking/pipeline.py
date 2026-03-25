@@ -59,6 +59,7 @@ from dq_dock_engine.docking.core import (
 )
 from dq_dock_engine.docking.charges import ChargeMethod, create_charge_assigner
 from dq_dock_engine.docking.certified_runtime_plans import (
+    ActiveConformerEnergyGapWitness,
     ActiveConformerReturnedPoseWitness,
     CertifiedActiveSubsetBudget,
     CertifiedActiveSubsetBudgetFamily,
@@ -131,6 +132,7 @@ from dq_dock_engine.docking.conformer_search import (
     search_conformers,
 )
 from dq_dock_engine.docking.formal_handles import (
+    ambiguity_output_energy_contract_theorem_handles,
     ambiguity_output_contract_theorem_handles,
     branch_and_bound_cross_docking_handles,
     conformer_coverage_theorem_handles,
@@ -138,6 +140,7 @@ from dq_dock_engine.docking.formal_handles import (
     optimizer_output_contract_theorem_handles,
     pocket_cross_docking_handles,
     pose_specific_improvement_budget_theorem_handles,
+    returned_pose_energy_guarantee_theorem_handles,
     returned_pose_guarantee_theorem_handles,
     rigid_seed_family_theorem_handles,
     receptor_flex_cross_docking_handles,
@@ -334,6 +337,16 @@ def _conformer_runtime_contract_handles(
             optimizer_output_contract_theorem_handles(),
             ambiguity_output_contract_theorem_handles(),
         )
+    if proof_case == ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON:
+        return _merge_theorem_handles(
+            base_handles,
+            returned_pose_energy_guarantee_theorem_handles(),
+        )
+    if proof_case == ReturnedPoseProofCase.CERTIFIED_ENERGY_AMBIGUITY_SET:
+        return _merge_theorem_handles(
+            base_handles,
+            ambiguity_output_energy_contract_theorem_handles(),
+        )
     return base_handles
 
 
@@ -362,6 +375,24 @@ def _has_conformer_returned_pose_certificate_chain(
     )
 
 
+def _has_conformer_energy_singleton_certificate_chain(
+    proof_plan: CertifiedReturnedPoseProofPlan,
+) -> bool:
+    witness = proof_plan.conformer_witness
+    if not isinstance(witness, ActiveConformerEnergyGapWitness):
+        return False
+    if proof_plan.proof_case != ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON:
+        return False
+    if not proof_plan.winner_singleton or proof_plan.total_gap_budget is None:
+        return False
+    if proof_plan.total_gap_budget > witness.certified_energy_gap:
+        return False
+    return _contains_theorem_handle_group(
+        proof_plan.theorem_handles,
+        returned_pose_energy_guarantee_theorem_handles(),
+    )
+
+
 def _has_conformer_ambiguity_set_certificate_chain(
     proof_plan: CertifiedReturnedPoseProofPlan,
 ) -> bool:
@@ -380,6 +411,26 @@ def _has_conformer_ambiguity_set_certificate_chain(
     ) and _contains_theorem_handle_group(
         proof_plan.theorem_handles,
         optimizer_output_contract_theorem_handles(),
+    )
+
+
+def _has_conformer_energy_ambiguity_set_certificate_chain(
+    proof_plan: CertifiedReturnedPoseProofPlan,
+) -> bool:
+    witness = proof_plan.conformer_witness
+    if not isinstance(witness, ActiveConformerEnergyGapWitness):
+        return False
+    if proof_plan.proof_case != ReturnedPoseProofCase.CERTIFIED_ENERGY_AMBIGUITY_SET:
+        return False
+    if proof_plan.total_gap_budget is None:
+        return False
+    if proof_plan.total_gap_budget > witness.certified_energy_gap:
+        return False
+    if len(proof_plan.support_indices) <= 1:
+        return False
+    return _contains_theorem_handle_group(
+        proof_plan.theorem_handles,
+        ambiguity_output_energy_contract_theorem_handles(),
     )
 
 
@@ -460,10 +511,16 @@ def _derive_returned_pose_proof_plan(
     fallback_basin_mu_coord = None
     if pose_basin_mu_coords is not None and winner_index < len(pose_basin_mu_coords):
         fallback_basin_mu_coord = pose_basin_mu_coords[winner_index]
+    basin_mu_coord = None
     basin_witness_source = "missing"
-    if winner_refinement_cert is not None:
+    if (
+        winner_refinement_cert is not None
+        and winner_refinement_cert.spectral is not None
+    ):
+        basin_mu_coord = float(winner_refinement_cert.spectral.mu_coord)
         basin_witness_source = "refinement_certificate"
     elif fallback_basin_mu_coord is not None:
+        basin_mu_coord = fallback_basin_mu_coord
         basin_witness_source = "spectral_only"
     print(
         f"[PROOF_PLAN] basin_witness_source={basin_witness_source}, "
@@ -471,11 +528,6 @@ def _derive_returned_pose_proof_plan(
         f"winner_refinement_cert.spectral={winner_refinement_cert.spectral if winner_refinement_cert else 'N/A'}",
         flush=True,
     )
-    basin_mu_coord = (
-        fallback_basin_mu_coord
-        if winner_refinement_cert is None
-        else float(winner_refinement_cert.spectral.mu_coord)
-    )
     cover_rmsd_radius = None
     cover_gap_budget = None
     if conformer_coverage_plan is not None:
@@ -485,51 +537,20 @@ def _derive_returned_pose_proof_plan(
         cover_gap_budget = float(
             conformer_coverage_plan.score_lipschitz_constant * cover_rmsd_radius
         )
-    if basin_mu_coord is None and cover_gap_budget is not None:
-        print(
-            f"[PROOF_PLAN] Using weaker conformer-only certificate: cover_gap_budget={cover_gap_budget}",
-            flush=True,
-        )
-    if basin_mu_coord is not None:
-        target_energy_gap = float(
-            basin_mu_coord
-            * float(request.ligand_ctx.base_coords.shape[0])
-            * request.target_rmsd**2
-            / 2.0
-        )
-    elif cover_gap_budget is not None:
-        target_energy_gap = cover_gap_budget
-    else:
-        target_energy_gap = None
-    cover_rmsd_radius = None
-    cover_gap_budget = None
-    if conformer_coverage_plan is not None:
-        cover_rmsd_radius = float(
-            conformer_coverage_plan.max_arm * conformer_coverage_plan.min_cell_radius
-        )
-        cover_gap_budget = float(
-            conformer_coverage_plan.score_lipschitz_constant * cover_rmsd_radius
-        )
-    if basin_mu_coord is None and cover_gap_budget is not None:
-        print(
-            f"[PROOF_PLAN] Using weaker conformer-only certificate: cover_gap_budget={cover_gap_budget}",
-            flush=True,
-        )
-    if basin_mu_coord is not None:
-        target_energy_gap = float(
-            basin_mu_coord
-            * float(request.ligand_ctx.base_coords.shape[0])
-            * request.target_rmsd**2
-            / 2.0
-        )
-    elif cover_gap_budget is not None:
-        target_energy_gap = cover_gap_budget
-    else:
-        target_energy_gap = None
     print(
         f"[PROOF_PLAN] conformer_coverage_plan={conformer_coverage_plan is not None}, "
         f"cover_rmsd_radius={cover_rmsd_radius}, cover_gap_budget={cover_gap_budget}, do_conf={do_conf}",
         flush=True,
+    )
+    target_rmsd_energy_gap = (
+        None
+        if basin_mu_coord is None
+        else float(
+            basin_mu_coord
+            * float(request.ligand_ctx.base_coords.shape[0])
+            * request.target_rmsd**2
+            / 2.0
+        )
     )
     total_gap_budget = None
     band_width = 0.0
@@ -561,7 +582,7 @@ def _derive_returned_pose_proof_plan(
         and cover_rmsd_radius is not None
         and cover_gap_budget is not None
         and basin_mu_coord is not None
-        and target_energy_gap is not None
+        and target_rmsd_energy_gap is not None
         and total_gap_budget is not None
     )
     missing_conformer_requirements = _missing_conformer_proof_requirements(
@@ -569,18 +590,25 @@ def _derive_returned_pose_proof_plan(
         cover_rmsd_radius=cover_rmsd_radius,
         cover_gap_budget=cover_gap_budget,
         basin_mu_coord=basin_mu_coord,
-        target_energy_gap=target_energy_gap,
+        target_energy_gap=target_rmsd_energy_gap,
         total_gap_budget=total_gap_budget,
     )
     ambiguity_set_certified = bool(
         has_complete_conformer_chain
         and not winner_singleton
-        and cast(float, total_gap_budget) <= cast(float, target_energy_gap)
+        and cast(float, total_gap_budget) <= cast(float, target_rmsd_energy_gap)
     )
     conformer_path_certified = bool(
         has_complete_conformer_chain
         and winner_singleton
-        and cast(float, total_gap_budget) <= cast(float, target_energy_gap)
+        and cast(float, total_gap_budget) <= cast(float, target_rmsd_energy_gap)
+    )
+    energy_gap_certified = bool(
+        do_conf
+        and conformer_coverage_plan is not None
+        and cover_rmsd_radius is not None
+        and cover_gap_budget is not None
+        and total_gap_budget is not None
     )
     proof_case = ReturnedPoseProofCase.DOWNGRADED
     downgrade_decision = (
@@ -623,6 +651,21 @@ def _derive_returned_pose_proof_plan(
             "conformer-active returned pose is missing the full support-aware theorem chain "
             "needed for a certified target_rmsd guarantee"
         )
+    elif energy_gap_certified and winner_singleton:
+        proof_case = ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON
+        downgrade_decision = None
+        note = (
+            "returned pose is certified to lie within the conformer-cover energy gap budget "
+            f"({cast(float, total_gap_budget):.3f} kcal/mol) of the optimal covered conformer"
+        )
+    elif energy_gap_certified:
+        proof_case = ReturnedPoseProofCase.CERTIFIED_ENERGY_AMBIGUITY_SET
+        downgrade_decision = None
+        note = (
+            "every pose in the returned ambiguity band is certified to lie within the combined "
+            f"cover-plus-band energy gap budget ({cast(float, total_gap_budget):.3f} kcal/mol) "
+            "of the optimal covered conformer"
+        )
     else:
         downgrade_decision = (
             ReturnedPoseContractDecision.DOWNGRADED_NO_REFINEMENT_CERTIFICATE
@@ -642,11 +685,17 @@ def _derive_returned_pose_proof_plan(
     conformer_witness: CertifiedConformerAwareReturnedPoseWitness | None = None
     conformer_handles = ()
     if do_conf:
-        if has_complete_conformer_chain:
+        if proof_case in (
+            ReturnedPoseProofCase.CERTIFIED_SINGLETON,
+            ReturnedPoseProofCase.CERTIFIED_AMBIGUITY_SET,
+            ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON,
+            ReturnedPoseProofCase.CERTIFIED_ENERGY_AMBIGUITY_SET,
+        ):
             conformer_handles = _conformer_runtime_contract_handles(
                 coverage_plan=conformer_coverage_plan,
                 proof_case=proof_case,
             )
+        if has_complete_conformer_chain:
             conformer_witness = ActiveConformerReturnedPoseWitness(
                 coverage_plan=cast(
                     CertifiedConformerCoveragePlan, conformer_coverage_plan
@@ -654,11 +703,27 @@ def _derive_returned_pose_proof_plan(
                 cover_rmsd_radius=cast(float, cover_rmsd_radius),
                 cover_gap_budget=cast(float, cover_gap_budget),
                 basin_mu_coord=cast(float, basin_mu_coord),
-                target_energy_gap=cast(float, target_energy_gap),
+                target_energy_gap=cast(float, target_rmsd_energy_gap),
                 theorem_handles=_merge_theorem_handles(
                     winner_theorem_handles,
                     conformer_handles,
                     () if winner_refinement_cert is None else ("ERC39",),
+                ),
+            )
+        elif proof_case in (
+            ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON,
+            ReturnedPoseProofCase.CERTIFIED_ENERGY_AMBIGUITY_SET,
+        ):
+            conformer_witness = ActiveConformerEnergyGapWitness(
+                coverage_plan=cast(
+                    CertifiedConformerCoveragePlan, conformer_coverage_plan
+                ),
+                cover_rmsd_radius=cast(float, cover_rmsd_radius),
+                cover_gap_budget=cast(float, cover_gap_budget),
+                certified_energy_gap=cast(float, total_gap_budget),
+                theorem_handles=_merge_theorem_handles(
+                    winner_theorem_handles,
+                    conformer_handles,
                 ),
             )
         else:
@@ -674,6 +739,10 @@ def _derive_returned_pose_proof_plan(
     proof_case_handles = ()
     if proof_case == ReturnedPoseProofCase.CERTIFIED_SINGLETON and not do_conf:
         proof_case_handles = returned_pose_guarantee_theorem_handles()
+    elif proof_case == ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON:
+        proof_case_handles = returned_pose_energy_guarantee_theorem_handles()
+    elif proof_case == ReturnedPoseProofCase.CERTIFIED_ENERGY_AMBIGUITY_SET:
+        proof_case_handles = ambiguity_output_energy_contract_theorem_handles()
     return CertifiedReturnedPoseProofPlan(
         proof_case=proof_case,
         target_rmsd=request.target_rmsd,
@@ -694,7 +763,14 @@ def _derive_returned_pose_proof_plan(
         winner_basin_witness_source=basin_witness_source,
         winner_conformer_improved=winner_conformer_improved,
         missing_conformer_requirements=(
-            missing_conformer_requirements if do_conf else ()
+            missing_conformer_requirements
+            if do_conf
+            and proof_case
+            not in (
+                ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON,
+                ReturnedPoseProofCase.CERTIFIED_ENERGY_AMBIGUITY_SET,
+            )
+            else ()
         ),
         downgrade_decision=downgrade_decision,
         note=note,
@@ -714,6 +790,14 @@ def _build_returned_pose_certification(
                 "Certified ambiguity-set proof plan lacks a complete conformer certificate chain"
             )
     elif (
+        proof_plan.decision
+        == ReturnedPoseContractDecision.CERTIFIED_AMBIGUITY_SET_ENERGY_GAP
+    ):
+        if not _has_conformer_energy_ambiguity_set_certificate_chain(proof_plan):
+            raise ValueError(
+                "Certified energy ambiguity-set proof plan lacks a complete conformer certificate chain"
+            )
+    elif (
         proof_plan.decision == ReturnedPoseContractDecision.CERTIFIED_TARGET_RMSD
         and isinstance(proof_plan.conformer_witness, ActiveConformerReturnedPoseWitness)
         and not _has_conformer_returned_pose_certificate_chain(proof_plan)
@@ -721,17 +805,27 @@ def _build_returned_pose_certification(
         raise ValueError(
             "Certified singleton proof plan lacks a complete conformer certificate chain"
         )
+    elif (
+        proof_plan.decision == ReturnedPoseContractDecision.CERTIFIED_ENERGY_GAP
+        and isinstance(proof_plan.conformer_witness, ActiveConformerEnergyGapWitness)
+        and not _has_conformer_energy_singleton_certificate_chain(proof_plan)
+    ):
+        raise ValueError(
+            "Certified energy singleton proof plan lacks a complete conformer certificate chain"
+        )
     if not proof_plan.has_winner:
         return ReturnedPoseCertification(
             decision=proof_plan.decision,
             target_rmsd=proof_plan.target_rmsd,
             theorem_handles=proof_plan.theorem_handles,
+            certified_energy_gap=proof_plan.total_gap_budget,
             note=proof_plan.note or "no pose was available to certify",
         )
     return ReturnedPoseCertification(
         decision=proof_plan.decision,
         target_rmsd=proof_plan.target_rmsd,
         theorem_handles=proof_plan.theorem_handles,
+        certified_energy_gap=proof_plan.total_gap_budget,
         winner_index=int(cast(int, proof_plan.winner_index)),
         ambiguity_size=proof_plan.ambiguity_size,
         support_indices=proof_plan.support_indices,
