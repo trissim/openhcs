@@ -243,7 +243,7 @@ def _score_coarse_batch(
     retained_indices: jax.Array,
     scoring_context: CertifiedScoringContext,
     use_softened_coarse: bool,
-) -> tuple[jax.Array, float]:
+) -> tuple[jax.Array, jax.Array | float]:
     # scoring_context must already be pre-subsetted to match retained_indices;
     # receptor_subset is intentionally NOT called here so this function is JIT-safe.
     if use_softened_coarse:
@@ -256,7 +256,7 @@ def _score_coarse_batch(
             epsilon=0.2,
             softening_radius=None,
         )
-        return softened.scores, softened.softening_error_bound
+        return softened.scores, jnp.asarray(softened.softening_error_bound)
 
     coarse = scoring_context.score_exact_batch(
         receptor_coords=receptor_coords[retained_indices],
@@ -440,6 +440,7 @@ def score_exact_and_coarse_local_family(
 @functools.partial(
     jax.jit,
     static_argnames=(
+        "use_softened_exact",
         "use_softened_coarse",
         "target_error",
         "coarse_target_error",
@@ -455,8 +456,9 @@ def score_exact_and_coarse_round(
     retained_indices: jax.Array | None = None,
     coarse_target_error: float | None = None,
     scoring_context: CertifiedScoringContext | None = None,
+    use_softened_exact: bool = False,
     use_softened_coarse: bool = False,
-) -> tuple[jax.Array, jax.Array, float, float, jax.Array]:
+) -> tuple[jax.Array, jax.Array, float, jax.Array | float, jax.Array]:
     coarse_target_error = (
         _default_coarse_target_error(target_error)
         if coarse_target_error is None
@@ -475,15 +477,29 @@ def score_exact_and_coarse_round(
     effective_scoring_context = (
         _default_scoring_context(None) if scoring_context is None else scoring_context
     )
-    exact_batch = effective_scoring_context.score_exact_batch(
-        receptor_coords=receptor_coords[retained_indices],
-        poses_coords=flat_candidates,
-        receptor_radii=receptor_radii[retained_indices],
-        ligand_radii=ligand_radii,
-        target_error=target_error,
-        epsilon=0.2,
-    )
-    exact_scores = exact_batch.scores.reshape((n_poses, n_actions))
+    if use_softened_exact:
+        softened_exact = effective_scoring_context.score_softened_batch(
+            receptor_coords=receptor_coords[retained_indices],
+            poses_coords=flat_candidates,
+            receptor_radii=receptor_radii[retained_indices],
+            ligand_radii=ligand_radii,
+            target_error=target_error,
+            epsilon=0.2,
+            softening_radius=None,
+        )
+        exact_scores = softened_exact.scores.reshape((n_poses, n_actions))
+        exact_error_bound: jax.Array | float = jnp.asarray(0.0)
+    else:
+        exact_batch = effective_scoring_context.score_exact_batch(
+            receptor_coords=receptor_coords[retained_indices],
+            poses_coords=flat_candidates,
+            receptor_radii=receptor_radii[retained_indices],
+            ligand_radii=ligand_radii,
+            target_error=target_error,
+            epsilon=0.2,
+        )
+        exact_scores = exact_batch.scores.reshape((n_poses, n_actions))
+        exact_error_bound = jnp.asarray(exact_batch.error_bound)
     coarse_scores_flat, softening_error_bound = _score_coarse_batch(
         receptor_coords=receptor_coords,
         receptor_radii=receptor_radii,
@@ -496,12 +512,14 @@ def score_exact_and_coarse_round(
     )
     coarse_scores = coarse_scores_flat.reshape((n_poses, n_actions))
     witness = two_cutoff_approximation_witness(target_error, coarse_target_error)
-    delta = witness.combined_delta + softening_error_bound
+    delta: float = float(witness.combined_delta) + float(
+        0.0 if (use_softened_exact and use_softened_coarse) else softening_error_bound
+    )
     return (
         exact_scores,
         coarse_scores,
         delta,
-        exact_batch.error_bound,
+        exact_error_bound,
         retained_indices,
     )
 

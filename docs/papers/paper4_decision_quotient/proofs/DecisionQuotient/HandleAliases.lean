@@ -100,6 +100,7 @@ import DecisionQuotient.Tractability.DirectionalMetalCoordinationApproximation
 import DecisionQuotient.Tractability.CooperativeHBondApproximation
 import DecisionQuotient.Tractability.ExplicitWaterPlacement
 import DecisionQuotient.Tractability.ReceptorFlexibility
+import DecisionQuotient.Tractability.PerformanceCertificates
 import DecisionQuotient.Tractability.EnergyRMSDConvergence
 import DecisionQuotient.Tractability.SeedBudgetDerivation
 import DecisionQuotient.Tractability.ConformerSupportCoverage
@@ -1023,6 +1024,7 @@ noncomputable abbrev HB11 := @Tractability.DirectionalHBondApproximation.exact_v
 noncomputable abbrev HB12 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_directionalHBond_coherent_optimizer_witness
 abbrev HB13 := @Tractability.DirectionalHBondApproximation.totalScore_native_beats_flipped_of_equal_background
 abbrev HB14 := @Tractability.DirectionalHBondApproximation.totalScore_equal_of_equal_background_and_silent_donor
+abbrev HB15 := @Tractability.DirectionalHBondApproximation.native_unique_top1_of_certified_margin_over_background
 abbrev AH1 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_uniformApprox
 abbrev AH2 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_certified_top1_sound
 noncomputable abbrev AH3 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_certified_top1
@@ -1033,6 +1035,8 @@ noncomputable abbrev AH7 := @Tractability.DirectionalHBondApproximation.attracti
 noncomputable abbrev AH8 := @Tractability.DirectionalHBondApproximation.attractiveDirectionalHBond_resolutionControlled_coherent_optimizer_witness
 abbrev AH9 := @Tractability.DirectionalHBondApproximation.attractiveTotal_native_beats_flipped_of_equal_background
 abbrev AH10 := @Tractability.DirectionalHBondApproximation.attractiveTotal_equal_of_equal_background_and_silent_donor
+abbrev AH11 := @Tractability.DirectionalHBondApproximation.attractiveDirectionalHBond_native_unique_top1_of_certified_background_margin
+abbrev AH12 := @Tractability.DirectionalHBondApproximation.attractiveDirectionalHBond_native_unique_top1_of_equal_background_and_active
 
 abbrev NG1 := @Tractability.SignInvariance.neg_utility_uniformApprox
 abbrev NG2 := @Tractability.SignInvariance.certified_top1_survivor_set_of_negated_uniformApprox_sound
@@ -1109,6 +1113,8 @@ abbrev XB7 := @Tractability.HalogenBondApproximation.exact_vs_coarse_attractiveH
 noncomputable abbrev XB8 := @Tractability.HalogenBondApproximation.exact_vs_coarse_attractiveHalogenBond_certified_top1
 noncomputable abbrev XB9 := @Tractability.HalogenBondApproximation.exact_vs_coarse_attractiveHalogenBond_optimizer_witness
 noncomputable abbrev XB10 := @Tractability.HalogenBondApproximation.exact_vs_coarse_attractiveHalogenBond_coherent_optimizer_witness
+abbrev XB11 := @Tractability.HalogenBondApproximation.attractiveHalogenBond_native_unique_top1_of_certified_background_margin
+abbrev XB12 := @Tractability.HalogenBondApproximation.attractiveHalogenBond_native_unique_top1_of_equal_background_and_active
 
 abbrev WB1 := @Tractability.WaterMediatedHBondApproximation.exact_vs_coarse_waterMediatedHBond_uniformApprox
 abbrev WB2 := @Tractability.WaterMediatedHBondApproximation.exact_vs_coarse_waterMediatedHBond_certified_top1_sound
@@ -2094,6 +2100,10 @@ abbrev LSA6 := @Tractability.LigandStrainApproximation.cosineTorsionStrain_at_eq
 abbrev LSA7 := @Tractability.LigandStrainApproximation.cosineTorsionStrain_bounded
 -- LSA8: Strain-aware conformer pruning
 abbrev LSA8 := @Tractability.LigandStrainApproximation.strain_aware_conformer_dominated
+-- LSA9: Three-frequency cosine torsion lower bound
+abbrev LSA9 := @Tractability.LigandStrainApproximation.cosineSeries3_lower_bound
+-- LSA10: Three-frequency cosine torsion drop bounded by current headroom
+abbrev LSA10 := @Tractability.LigandStrainApproximation.cosineSeries3_drop_le_headroom
 
 /-! ## Directional Metal Coordination (DMC) handles
     DirectionalMetalCoordinationApproximation.lean - Angular × radial two-factor Lipschitz
@@ -2389,6 +2399,10 @@ abbrev RPG6 := @Tractability.ReturnedPoseGuarantee.exact_energy_gap_certified_ch
 abbrev RPG7 := @Tractability.ReturnedPoseGuarantee.ambiguityBand_support_of_cover_yields_certified_energy_output_set
 -- RPG8: A certified exact/coarse singleton choice over a covered support has bounded exact energy gap
 abbrev RPG8 := @Tractability.ReturnedPoseGuarantee.exact_energy_gap_certified_choice_of_cover_has_energy_gap_le
+-- RPG9: Without any support member inside the target RMSD ball, a singleton returned winner also misses the target
+abbrev RPG9 := @Tractability.ReturnedPoseGuarantee.returned_choice_of_exact_singleton_winner_misses_rmsd_target_without_cover
+-- RPG10: A sampled rigid-pose epsilon-net plus singleton exact/coarse certification yields the RMSD target
+abbrev RPG10 := @Tractability.ReturnedPoseGuarantee.sampledActionFamily_exact_energy_gap_certified_rigid_choice_of_cover_yields_rmsd_target
 
 -- CSC45: Torsion locality radius (single atom)
 abbrev CSC45 := @DecisionQuotient.Tractability.ConformerSupportCoverage.torsion_locality_radius
@@ -2398,6 +2412,18 @@ abbrev CSC46 := @DecisionQuotient.Tractability.ConformerSupportCoverage.torsion_
 
 -- CSC47: Runtime torsion inactivity radius
 abbrev CSC47 := @Tractability.ConformerSupportCoverage.runtime_torsion_inactivity_radius
+-- CSC61: Tensor-product pocket-guided rigid seeds cover the 6D rigid box under coordinatewise interval-cover assumptions
+abbrev CSC61 := @Tractability.ConformerSupportCoverage.pocketGuidedRigidSeedSupport_cover_on_box
+-- CSC62: A sampled family with the pocket-guided rigid tensor-product support inherits the same certified box cover
+abbrev CSC62 := @Tractability.ConformerSupportCoverage.sampledPocketGuidedRigidSeedFamily_cover_on_box
+-- CSC63: The current translation-subset × quaternionDictionary8 family contains an RMSD witness when translation and rotation component covers are certified
+abbrev CSC63 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Support_contains_rmsd_witness_of_component_covers
+-- CSC64: Box cover composes through an intermediate supported lattice with additive coordinate half-widths
+abbrev CSC64 := @Tractability.ConformerSupportCoverage.hypercubeSupportCoversOnBox_of_cover_through_support
+-- CSC65: Any explicit quaternionDictionary8 witness is a certified member of the fixed orientation dictionary
+abbrev CSC65 := @Tractability.ConformerSupportCoverage.quaternionDictionary8_contains_rotation_witness
+-- CSC66: The current translation-subset × quaternionDictionary8 family contains an explicit RMSD witness from explicit translation and rotation witnesses
+abbrev CSC66 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Support_contains_explicit_rmsd_witness
 
 /-! ## Blind Conformer Runtime Certificates (BCRC) handles
     BlindConformerRuntimeCertificates.lean - runtime pruning/budget safety
@@ -2421,6 +2447,8 @@ abbrev BCRC6 := @Tractability.BlindConformerRuntimeCertificates.omitted_channel_
 
 -- BCPO1: Canonical retain set minimizes additive pipeline cost among safe retainers
 abbrev BCPO1 := @Tractability.BlindConformerPipelineOptimality.canonicalRetain_minimizes_pipelineCost
+-- BCPO2: Retaining the entire pose family is vacuously certified-safe
+abbrev BCPO2 := @Tractability.BlindConformerPipelineOptimality.universalRetain_certifiedSafe
 
 -- BCRP1: Canonical two-stage plan is no worse than all-exact evaluation
 abbrev BCRP1 := @Tractability.BlindConformerPipelineRefinements.canonical_twoStage_le_allExact
@@ -2433,6 +2461,24 @@ abbrev BCRP2 := @Tractability.BlindConformerPipelineRefinements.minimal_adequate
 abbrev LJ18 := @Tractability.SoftLJApproximation.exact_vs_softened_lj_error
 -- LJ19: Shared softened-LJ base contributes zero self-approximation error
 abbrev LJ19 := @Tractability.SoftLJApproximation.softened_lj_self_approx_zero
+-- LJ20: Pairwise LJ clearance is preserved under bounded pointwise rigid displacement
+abbrev LJ20 := @Tractability.SoftLJApproximation.lj_clearance_preserved_of_pointwise_displacement
+-- LJ21: Canonical softened LJ has a strictly positive Lipschitz constant
+abbrev LJ21 := @Tractability.SoftLJApproximation.softenedLipschitzConstant_at_canonical_pos
+-- LJ22: Canonical softened local step budget satisfies the generic Lipschitz step bound
+abbrev LJ22 := @Tractability.SoftLJApproximation.canonicalSoftened_lipschitz_step_bound
+-- PERF6: Canonical softened LJ permits a weakly larger theorem-backed local translation step than raw LJ
+abbrev PERF6 := @Tractability.PerformanceCertificates.canonical_softened_step_at_least_raw
+-- PERF7: A softened local-improvement certificate lifts to an exact local-improvement bound once pose-wise softening discrepancies are bounded
+abbrev PERF7 := @Tractability.PerformanceCertificates.exact_local_improvement_bound_of_softened_bound
+-- LJ23: Exact LJ is Lipschitz on [rSoft, ∞) with the softened-domain constant
+abbrev LJ23 := @Tractability.SoftLJApproximation.exactLJ_lipschitz_on_Ici
+-- LJ24: Exact LJ tail is Lipschitz on [r0, ∞) with local constant 24ε/r0 for r0 ≥ σ
+abbrev LJ24 := @Tractability.SoftLJApproximation.exactLJ_tail_lipschitzOnWith
+-- LJ25: Exact LJ is globally bounded below by -ε
+abbrev LJ25 := @Tractability.LJApproximation.exactLJScore_ge_neg_epsilon
+-- LJ26: Exact LJ on the tail is lower-bounded by its value at the left endpoint
+abbrev LJ26 := @Tractability.SoftLJApproximation.exactLJ_tail_lower_bound_of_ratio_le_half
 
 -- MC11: Metal-coordination pointwise Gaussian tail bound
 abbrev MC11 := @Tractability.MetalCoordinationApproximation.metalCoordination_tail_bound

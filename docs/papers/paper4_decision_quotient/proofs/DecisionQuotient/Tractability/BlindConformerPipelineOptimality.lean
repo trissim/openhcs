@@ -96,6 +96,15 @@ theorem canonicalRetain_subset_of_certifiedSafe
     simpa [canonicalRetain] using hp
   exact (not_lt_of_ge hle) hlt
 
+/-- Retaining the entire finite pose family is vacuously certified-safe for any
+    threshold because no pose is excluded.  This theorem justifies theorem-honest
+    retain-all fallbacks when a tighter pruning certificate is unavailable. -/
+theorem universalRetain_certifiedSafe
+    (lowerBound : P → ℝ) (τ : ℝ) :
+    CertifiedSafeForThreshold lowerBound (Finset.univ : Finset P) τ := by
+  intro p hp
+  exact False.elim (hp (Finset.mem_univ p))
+
 /-- Retained cost is monotone under subset inclusion when per-pose costs are
     nonnegative. -/
 theorem retainedCost_mono

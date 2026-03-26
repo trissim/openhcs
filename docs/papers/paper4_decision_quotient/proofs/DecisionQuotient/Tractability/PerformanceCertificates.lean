@@ -284,6 +284,55 @@ theorem softened_grid_speedup_ratio
     δ / L_raw ≤ δ / L_soft := by
   gcongr
 
+/-- The canonical softened-LJ local translation step is at least as large as the
+    raw-LJ step budget under the same per-step energy budget.  This packages the
+    softened-vs-raw Lipschitz comparison into a runtime-facing optimization rule:
+    in clash-heavy regions where softened LJ is the mechanically justified local
+    surrogate, the search may safely use a weakly larger theorem-backed step. -/
+theorem canonical_softened_step_at_least_raw
+    (ε_budget ε_lj σ : ℝ)
+    (hBudget : 0 ≤ ε_budget)
+    (hε : 0 < ε_lj)
+    (hσ : 0 < σ) :
+    LipschitzStepBounds.optimalTranslationStep ε_budget
+        (LipschitzStepBounds.typicalLipschitzConstant ε_lj σ)
+      ≤ LipschitzStepBounds.optimalTranslationStep ε_budget
+        (softenedLipschitzConstant ε_lj σ (canonicalSofteningRadius σ)) := by
+  apply LipschitzStepBounds.optimalTranslationStep_mono_of_lipschitz_le
+  · exact hBudget
+  · unfold LipschitzStepBounds.typicalLipschitzConstant
+    positivity
+  · exact softenedLipschitzConstant_at_canonical_pos ε_lj σ hε hσ
+  · have hsoft_le_raw := softenedLipschitz_le_rawLipschitz
+      ε_lj σ (canonicalSofteningRadius σ) hε hσ
+      (by
+        unfold canonicalSofteningRadius
+        nlinarith)
+      (by
+        unfold canonicalSofteningRadius
+        exact le_rfl)
+    simpa [LipschitzStepBounds.typicalLipschitzConstant] using hsoft_le_raw
+
+/-- If a softened local surrogate bounds the maximal softened improvement by `B`,
+    and both the current pose and every candidate action are uniformly within
+    `δCurrent` / `δNext` of the exact objective, then the exact local improvement
+    is bounded by `B + δCurrent + δNext`.  This is the algebraic bridge needed to
+    turn a softened local-search certificate into an exact local-search pruning
+    certificate once the runtime supplies pose-wise softening discrepancy bounds. -/
+theorem exact_local_improvement_bound_of_softened_bound
+    (exactCurrent softenedCurrent exactNext softenedNext B δCurrent δNext : ℝ)
+    (hCurrent : |exactCurrent - softenedCurrent| ≤ δCurrent)
+    (hNext : |exactNext - softenedNext| ≤ δNext)
+    (hSoft : softenedCurrent - B ≤ softenedNext) :
+    exactCurrent - (B + δCurrent + δNext) ≤ exactNext := by
+  have hCurrLeft : exactCurrent - δCurrent ≤ softenedCurrent := by
+    have h := abs_le.mp hCurrent
+    linarith
+  have hNextRight : softenedNext ≤ exactNext + δNext := by
+    have h := abs_le.mp hNext
+    linarith
+  linarith
+
 -- ---------------------------------------------------------------------------
 -- Certificate 6: Batch amortization bound
 -- ---------------------------------------------------------------------------

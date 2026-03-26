@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 from typing import cast
 
 import jax
@@ -35,6 +36,7 @@ from dq_dock_engine.docking.pipeline import (
     _detect_rigid_equivalence_ambiguity,
     _ligand_radius,
     _probe_seed_budget_certificate,
+    _run_conformer_search_for_pose,
     _recertify_conformer_updated_pose,
     _seed_budget_torsion_count,
     _shared_certified_singleton_top1,
@@ -238,14 +240,16 @@ def test_probe_seed_budget_certificate_overrides_request_budget(monkeypatch) -> 
     updated_request, probe_cert = _probe_seed_budget_certificate(request, _FakeRoute())
 
     assert probe_cert == cert
-    expected_budget = derive_seed_budget(
+    expected_plan = derive_seed_budget_plan(
         confidence=0.99,
         box_size=request.box.size,
         target_rmsd=0.5,
         ligand_radius=_ligand_radius(request.ligand_ctx),
         n_torsions=_seed_budget_torsion_count(request),
-        probe_certificate=cert,
+        probe_candidates=((0, cert),),
+        rigid_seed_box=request.box,
     )
+    expected_budget = expected_plan.selected_budget
     assert updated_request.n_poses_override is None
     assert updated_request.seed_budget_plan is not None
     assert updated_request.seed_budget_plan.selected_budget == expected_budget
@@ -335,31 +339,46 @@ def test_probe_seed_budget_certificate_uses_smallest_successful_budget(
         request, _RankedRoute()
     )
 
-    budget_large = derive_seed_budget(
+    budget_large = derive_seed_budget_plan(
         confidence=0.99,
         box_size=request.box.size,
         target_rmsd=0.5,
         ligand_radius=_ligand_radius(request.ligand_ctx),
         n_torsions=0,
-        probe_certificate=cert_large,
+        probe_candidates=((0, cert_large),),
+        rigid_seed_box=request.box,
+    ).selected_budget
+    budget_small = derive_seed_budget_plan(
+        confidence=0.99,
+        box_size=request.box.size,
+        target_rmsd=0.5,
+        ligand_radius=_ligand_radius(request.ligand_ctx),
+        n_torsions=0,
+        probe_candidates=((0, cert_small),),
+        rigid_seed_box=request.box,
+    ).selected_budget
+
+    expected_plan = derive_seed_budget_plan(
+        confidence=0.99,
+        box_size=request.box.size,
+        target_rmsd=0.5,
+        ligand_radius=_ligand_radius(request.ligand_ctx),
+        n_torsions=0,
+        probe_candidates=((0, cert_large), (1, cert_small)),
+        rigid_seed_box=request.box,
     )
-    budget_small = derive_seed_budget(
-        confidence=0.99,
-        box_size=request.box.size,
-        target_rmsd=0.5,
-        ligand_radius=_ligand_radius(request.ligand_ctx),
-        n_torsions=0,
-        probe_certificate=cert_small,
+    expected_probe_cert = (
+        cert_large if expected_plan.selected_candidate.probe_rank == 0 else cert_small
     )
 
-    assert probe_cert == cert_small
+    assert probe_cert == expected_probe_cert
     assert updated_request.seed_budget_plan is not None
     assert updated_request.rigid_seed_family_plan is not None
-    assert updated_request.seed_budget_plan.selected_budget == min(
-        budget_large,
-        budget_small,
+    assert (
+        updated_request.seed_budget_plan.selected_budget
+        == expected_plan.selected_budget
     )
-    assert updated_request.n_poses == min(budget_large, budget_small)
+    assert updated_request.n_poses == expected_plan.selected_budget
 
 
 def test_derive_seed_budget_plan_keeps_baseline_and_probe_candidates() -> None:
@@ -862,6 +881,99 @@ def test_recertify_conformer_updated_pose_finds_spectral_certificate() -> None:
     )
 
 
+def test_run_conformer_search_restricts_config_to_active_bonds(monkeypatch) -> None:
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_flexible_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+    )
+    rotatable_bonds = (
+        RotatableBond(
+            atom_i=0,
+            atom_j=1,
+            rotating_atom_indices=(1, 2),
+            max_arm_length=1.0,
+        ),
+        RotatableBond(
+            atom_i=1,
+            atom_j=2,
+            rotating_atom_indices=(2, 3),
+            max_arm_length=1.0,
+        ),
+        RotatableBond(
+            atom_i=2,
+            atom_j=3,
+            rotating_atom_indices=(3, 4),
+            max_arm_length=1.0,
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_build_conformer_score_fns",
+        lambda *args, **kwargs: (lambda coords: 0.0, None),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_active_rotatable_bonds_for_pose",
+        lambda *args, **kwargs: (
+            (rotatable_bonds[0], rotatable_bonds[2]),
+            np.array([True, False, True], dtype=bool),
+        ),
+    )
+
+    def _fake_search_conformers(*, config, rotatable_bonds, **kwargs):
+        captured["per_bond_lipschitz"] = config.per_bond_lipschitz
+        captured["max_cells"] = config.max_cells
+        captured["rotatable_bonds"] = rotatable_bonds
+        return SimpleNamespace(
+            conformer_coords=(),
+            conformer_energies=(),
+            theorem_handles=(),
+        )
+
+    def _fake_search_support_grid(*, config, rotatable_bonds, **kwargs):
+        return _fake_search_conformers(
+            config=config,
+            rotatable_bonds=rotatable_bonds,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(docking_pipeline, "search_conformers", _fake_search_conformers)
+    monkeypatch.setattr(
+        docking_pipeline,
+        "search_conformers_support_grid",
+        _fake_search_support_grid,
+    )
+
+    _run_conformer_search_for_pose(
+        request,
+        quaternion=jnp.array([1.0, 0.0, 0.0, 0.0], dtype=jnp.float32),
+        translation=jnp.zeros((3,), dtype=jnp.float32),
+        scoring_context=None,
+        electrostatics=None,
+        rotatable_bonds=rotatable_bonds,
+        conformer_config=BranchAndBoundConfig(
+            max_cells=999999,
+            min_cell_radius=0.1,
+            score_lipschitz_constant=1.0,
+            max_conformers=1,
+            per_bond_lipschitz=(1.0, 2.0, 3.0),
+        ),
+    )
+
+    assert captured["per_bond_lipschitz"] == (1.0, 3.0)
+    assert cast(int, captured["max_cells"]) != 999999
+    assert len(cast(tuple[RotatableBond, ...], captured["rotatable_bonds"])) == 2
+
+
 def test_certified_mode_rejects_non_optimized_outputs() -> None:
     request = PipelineDockingRequest(
         protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
@@ -1036,7 +1148,10 @@ def test_conformer_local_improvement_bounds_prefers_physical_barriers(
     bounds = _conformer_local_improvement_bounds(request, bonds, (2.0,))
 
     assert bounds is not None
-    np.testing.assert_allclose(np.asarray(bounds), np.asarray([3.0], dtype=np.float32))
+    np.testing.assert_allclose(
+        np.asarray(bounds),
+        np.asarray([3.0 + 2.0 * np.pi * 2.0], dtype=np.float32),
+    )
 
 
 def test_derived_target_error_from_rmsd_uses_physical_lj_lipschitz() -> None:

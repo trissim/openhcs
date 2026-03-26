@@ -1097,9 +1097,18 @@ BCRC5 = "BCRC5"
 BCRC6 = "BCRC6"
 BCPO1 = "BCPO1"
 BCRP1 = "BCRP1"
+LSA9 = "LSA9"
+LSA10 = "LSA10"
 BCRP2 = "BCRP2"
 LJ18 = "LJ18"
 LJ19 = "LJ19"
+LJ20 = "LJ20"
+LJ21 = "LJ21"
+LJ22 = "LJ22"
+LJ23 = "LJ23"
+LJ24 = "LJ24"
+LJ25 = "LJ25"
+LJ26 = "LJ26"
 MC11 = "MC11"
 MC12 = "MC12"
 MC13 = "MC13"
@@ -2063,6 +2072,8 @@ __all__ = [
     "LSA6",
     "LSA7",
     "LSA8",
+    "LSA9",
+    "LSA10",
     "DMC1",
     "DMC2",
     "DMC3",
@@ -2207,6 +2218,13 @@ __all__ = [
     "BCRP2",
     "LJ18",
     "LJ19",
+    "LJ20",
+    "LJ21",
+    "LJ22",
+    "LJ23",
+    "LJ24",
+    "LJ25",
+    "LJ26",
     "MC11",
     "MC12",
     "MC13",

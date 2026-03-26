@@ -138,6 +138,29 @@ noncomputable abbrev exact_vs_coarse_attractiveHalogenBond_optimizer_witness
   exact_vs_coarse_attractiveDirectionalHBond_optimizer_witness
     radialExact donorExact acceptorExact radialCoarse donorCoarse acceptorCoarse s
 
+abbrev attractiveHalogenBond_native_unique_top1_of_certified_background_margin
+    {A : Type u}
+    (background : A → ℝ)
+    (radial donor acceptor : A → ℝ)
+    (native : A)
+    (Δ : ℝ) :=
+  attractiveDirectionalHBond_native_unique_top1_of_certified_background_margin
+    background radial donor acceptor native Δ
+
+abbrev attractiveHalogenBond_native_unique_top1_of_equal_background_and_active
+    {bg_nat bg_flip r_nat d_nat a_nat r_flip a_flip : ℝ}
+    (hbg : bg_nat = bg_flip)
+    (hr : 0 < r_nat) (hd : 0 < d_nat) (ha : 0 < a_nat) :=
+  attractiveDirectionalHBond_native_unique_top1_of_equal_background_and_active
+    (bg_nat := bg_nat)
+    (bg_flip := bg_flip)
+    (r_nat := r_nat)
+    (d_nat := d_nat)
+    (a_nat := a_nat)
+    (r_flip := r_flip)
+    (a_flip := a_flip)
+    hbg hr hd ha
+
 end HalogenBondApproximation
 end Tractability
 end DecisionQuotient

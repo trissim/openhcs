@@ -28,12 +28,14 @@ from dq_dock_engine.docking.receptor_flexibility import (
     ensemble_score_upper_bound,
 )
 from dq_dock_engine.docking.rich_chemistry import build_certified_rich_chemistry_plan
+from dq_dock_engine.docking.chemistry_runtime import HalogenBondInteractionTerm
 from dq_dock_engine.docking.scoring import (
     CertifiedBatchResult,
     CertifiedRealSpaceEwaldSpec,
     CertifiedRichChemistryPlan,
     CertifiedSoftenedBatchResult,
     score_certified_directional_hbond_batch,
+    score_certified_halogen_bond_batch,
     score_certified_batch,
     score_certified_rich_chemistry_batch,
     score_certified_softened_lj,
@@ -139,7 +141,15 @@ class CertifiedScoringContext:
         """
         if not self.uses_extended_rich or self.rich_chemistry_plan is None:
             return False
-        return bool(np.asarray(self.rich_chemistry_plan.has_active_directional_hbond))
+        halogen_active = any(
+            isinstance(term, HalogenBondInteractionTerm)
+            and bool(np.asarray(term.is_active))
+            for term in self.rich_chemistry_plan.extended_terms.terms
+        )
+        return (
+            bool(np.asarray(self.rich_chemistry_plan.has_active_directional_hbond))
+            or halogen_active
+        )
 
     def ranking_context(self) -> "CertifiedScoringContext":
         """Final ranking context respecting current flip-disambiguation proofs."""
@@ -242,16 +252,53 @@ class CertifiedScoringContext:
             poses_coords,
             self.rich_chemistry_plan.hbond_ligand_donor,
         )
+        halogen_scores = []
+        halogen_error_bounds = []
+        halogen_cutoffs = []
+        halogen_posewise = []
+        for term in self.rich_chemistry_plan.extended_terms.terms:
+            if isinstance(term, HalogenBondInteractionTerm) and bool(
+                np.asarray(term.is_active)
+            ):
+                halogen_batch = score_certified_halogen_bond_batch(
+                    receptor_coords,
+                    poses_coords,
+                    term,
+                )
+                halogen_scores.append(halogen_batch.scores)
+                halogen_error_bounds.append(halogen_batch.error_bound)
+                halogen_cutoffs.append(jnp.asarray(halogen_batch.cutoff_radius))
+                halogen_posewise.append(halogen_batch.posewise_error_bound)
+        halogen_score_total = (
+            jnp.zeros_like(base_result.scores)
+            if not halogen_scores
+            else jnp.sum(jnp.stack(halogen_scores, axis=0), axis=0)
+        )
+        halogen_error_total = (
+            0.0 if not halogen_error_bounds else float(sum(halogen_error_bounds))
+        )
+        halogen_cutoff_max = (
+            jnp.asarray(0.0)
+            if not halogen_cutoffs
+            else jnp.max(jnp.stack(halogen_cutoffs, axis=0))
+        )
+        halogen_posewise_total = (
+            jnp.zeros_like(base_result.posewise_error_bound)
+            if not halogen_posewise
+            else jnp.sum(jnp.stack(halogen_posewise, axis=0), axis=0)
+        )
         return CertifiedBatchResult(
             scores=(
                 base_result.scores
                 - hbond_receptor_donor.scores
                 - hbond_ligand_donor.scores
+                - halogen_score_total
             ),
             error_bound=(
                 base_result.error_bound
                 + hbond_receptor_donor.error_bound
                 + hbond_ligand_donor.error_bound
+                + halogen_error_total
             ),
             target_error=base_result.target_error,
             cutoff_radius=jnp.max(
@@ -260,6 +307,7 @@ class CertifiedScoringContext:
                         jnp.asarray(base_result.cutoff_radius),
                         jnp.asarray(hbond_receptor_donor.cutoff_radius),
                         jnp.asarray(hbond_ligand_donor.cutoff_radius),
+                        halogen_cutoff_max,
                     ],
                     axis=0,
                 )
@@ -268,6 +316,7 @@ class CertifiedScoringContext:
                 base_result.posewise_error_bound
                 + hbond_receptor_donor.posewise_error_bound
                 + hbond_ligand_donor.posewise_error_bound
+                + halogen_posewise_total
             ),
         )
 

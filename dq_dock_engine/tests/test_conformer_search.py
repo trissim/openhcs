@@ -23,6 +23,7 @@ from dq_dock_engine.docking.conformer_search import (
     compute_raw_lj_lipschitz,
     detect_rotatable_bonds,
     search_conformers,
+    search_conformers_sequential_scan,
 )
 from dq_dock_engine.docking.chemistry_annotations import _infer_bond_adjacency
 from dq_dock_engine.docking_config import DockingConfig, DockingMode
@@ -313,6 +314,75 @@ class TestBranchAndBound:
         assert len(result.conformer_coords) >= 1
         assert all(isinstance(e, float) for e in result.conformer_energies)
 
+    def test_pruning_incumbent_can_skip_dominated_root_cell(self):
+        def score_fn(coords: jnp.ndarray) -> float:
+            return float(jnp.sum(coords**2))
+
+        base_coords = jnp.array([[1.0, 0.0, 0.0]], dtype=jnp.float32)
+        bonds = (RotatableBond(0, 0, (0,), max_arm_length=1.0),)
+        kine = build_torsion_kinematics(bonds, np.array([[1.0, 0.0, 0.0]]), n_atoms=1)
+
+        initial_cell = TorsionCell(
+            lower=jnp.array([-jnp.pi]),
+            upper=jnp.array([jnp.pi]),
+        )
+
+        config = BranchAndBoundConfig(
+            max_cells=500,
+            min_cell_radius=0.1,
+            score_lipschitz_constant=3.0,
+            max_conformers=5,
+        )
+
+        result = branch_and_bound_search(
+            kinematics=kine,
+            base_coords=base_coords,
+            score_fn=score_fn,
+            initial_cell=initial_cell,
+            config=config,
+            pruning_incumbent_energy=-100.0,
+        )
+        assert len(result.conformer_coords) == 1
+        assert result.conformer_energies == (-100.0,)
+
+    def test_local_activity_mask_can_collapse_cell_dimensions(self):
+        def score_fn(coords: jnp.ndarray) -> float:
+            return float(jnp.sum(coords**2))
+
+        base_coords = jnp.array(
+            [[0.0, 0.0, 0.0], [1.5, 0.0, 0.0], [3.0, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        bonds = (
+            RotatableBond(0, 1, (1, 2), max_arm_length=1.0),
+            RotatableBond(1, 2, (2,), max_arm_length=1.0),
+        )
+        kine = build_torsion_kinematics(bonds, np.asarray(base_coords), n_atoms=3)
+        initial_cell = TorsionCell(
+            lower=jnp.array([-jnp.pi, -jnp.pi], dtype=jnp.float32),
+            upper=jnp.array([jnp.pi, jnp.pi], dtype=jnp.float32),
+        )
+        config = BranchAndBoundConfig(
+            max_cells=32,
+            min_cell_radius=0.2,
+            score_lipschitz_constant=3.0,
+            max_conformers=5,
+            per_bond_lipschitz=(3.0, 3.0),
+        )
+
+        result = branch_and_bound_search(
+            kinematics=kine,
+            base_coords=base_coords,
+            score_fn=score_fn,
+            initial_cell=initial_cell,
+            config=config,
+            local_activity_mask_fn=lambda cell, center: np.array(
+                [True, False], dtype=bool
+            ),
+        )
+
+        assert len(result.conformer_coords) >= 1
+
     def test_rigid_ligand_returns_single_conformer(self):
         """A ligand with no rotatable bonds returns its input as the only conformer."""
         coords = jnp.array(
@@ -401,6 +471,24 @@ class TestSearchConformers:
         assert len(result.conformer_coords) >= 1
         for c in result.conformer_coords:
             assert c.shape == (n, 3)
+
+    def test_chain_sequential_scan_produces_conformer(self):
+        n = 5
+        coords_np = np.zeros((n, 3), dtype=np.float32)
+        for i in range(n):
+            coords_np[i, 0] = i * 1.5
+        elements = tuple("C" for _ in range(n))
+        adjacency = _infer_bond_adjacency(coords_np, elements)
+        coords = jnp.array(coords_np, dtype=jnp.float32)
+
+        result = search_conformers_sequential_scan(
+            base_coords=coords,
+            adjacency=adjacency,
+            elements=elements,
+            score_fn=lambda c: float(jnp.sum(c**2)),
+        )
+        assert len(result.conformer_coords) == 1
+        assert result.conformer_coords[0].shape == (n, 3)
 
 
 def test_compute_raw_lj_lipschitz_requires_physical_inputs() -> None:

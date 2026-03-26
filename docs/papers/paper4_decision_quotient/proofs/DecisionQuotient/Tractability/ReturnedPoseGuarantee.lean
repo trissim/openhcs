@@ -192,6 +192,29 @@ theorem ambiguityBand_support_of_cover_yields_certified_energy_output_set
   have hEw : runtimeEnergy winner = coordEnergy (coords winner) := hEnergy winner
   linarith
 
+/-- Coverage is necessary for the singleton returned-pose contract: if every
+    runtime action lies outside the requested RMSD target ball, then the
+    singleton winner returned by the optimizer also lies outside that ball. This
+    theorem makes the missing support-coverage hypothesis explicit. -/
+theorem returned_choice_of_exact_singleton_winner_misses_rmsd_target_without_cover
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (coords : A → CoordSet n)
+    (runtimeEnergy : A → ℝ)
+    (xStar : CoordSet n)
+    (winner : A)
+    (epsTarget : ℝ)
+    (hSingleton : topKSet (fun a => -runtimeEnergy a) 1 = ({winner} : Finset A))
+    (hNoCover : ∀ a, epsTarget < rmsd (coords a) xStar) :
+    let w := coherentOptimizerWitness_of_exact_singleton_top1
+      (fun a => -runtimeEnergy a) winner hSingleton
+    epsTarget < rmsd (coords w.belief.selection.choice) xStar := by
+  let w := coherentOptimizerWitness_of_exact_singleton_top1
+    (fun a => -runtimeEnergy a) winner hSingleton
+  have hChoiceEq : w.belief.selection.choice = winner := by
+    exact (coherentOptimizerWitness_of_exact_singleton_top1_choice
+      (fun a => -runtimeEnergy a) winner hSingleton).1
+  simpa [w, hChoiceEq] using hNoCover winner
+
 /-- End-to-end returned-pose theorem for the unique-winner path: if the finite
     runtime action family covers conformer space densely enough, the coordinate
     energy is RMSD-Lipschitz on that space, the exact rescored runtime winner is
@@ -299,6 +322,71 @@ theorem exact_energy_gap_certified_choice_of_cover_yields_rmsd_target
   exact returned_choice_of_exact_singleton_winner_of_cover_yields_rmsd_target
     coords eExact coordEnergy xStar aStar L εCover epsTarget
     hEnergy hL hCover hεCover hOpt hLip hBest basin hn hεTarget hGapBudget hSingleton
+
+/-- Rigid-docking specialization of the singleton returned-pose contract.
+
+    Interpret a finite sampled pose family `F` as a deterministic SE(3) support,
+    map each supported pose to coordinates via `coords`, and assume those
+    coordinates epsilon-cover the relevant rigid-pose library in RMSD. If the
+    restricted exact/coarse scorer certifies a singleton top-1 supported pose,
+    then the returned rigid pose satisfies the requested RMSD target.
+
+    This is the runtime-facing bridge needed to justify a finite SE(3) epsilon-net
+    of sampled rigid placements. -/
+theorem sampledActionFamily_exact_energy_gap_certified_rigid_choice_of_cover_yields_rmsd_target
+    {A : Type u} {S : Type v} [DecidableEq A] [LinearOrder A]
+    (exactDP coarseDP : DecisionProblem A S)
+    (F : SampledDocking.SampledActionFamily A)
+    (s : S)
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (coords : SampledDocking.SupportedAction F → CoordSet n)
+    (coordEnergy : CoordSet n → ℝ)
+    (xStar : CoordSet n)
+    (aStar : SampledDocking.SupportedAction F)
+    (δ L εCover epsTarget : ℝ)
+    (hEnergy : ∀ a : SampledDocking.SupportedAction F,
+      (SampledDocking.restrictedDecisionProblem exactDP F).utility a s = coordEnergy (coords a))
+    (hApprox : ∀ x : SampledDocking.SupportedAction F,
+      |(SampledDocking.restrictedDecisionProblem exactDP F).utility x s -
+        (SampledDocking.restrictedDecisionProblem coarseDP F).utility x s| ≤ δ)
+    (hStrict : ∀ b : SampledDocking.SupportedAction F, b ≠ aStar →
+      (SampledDocking.restrictedDecisionProblem coarseDP F).utility aStar s + 2 * δ <
+        (SampledDocking.restrictedDecisionProblem coarseDP F).utility b s)
+    (hL : 0 ≤ L)
+    (hCover : RMSDSupportCovers
+      ((Finset.univ : Finset (SampledDocking.SupportedAction F)).image coords) εCover)
+    (hεCover : 0 ≤ εCover)
+    (hOpt : IsOptimal (fun x => -coordEnergy x) xStar)
+    (hLip : RMSDLipschitzEnergy coordEnergy L)
+    (basin : CertifiedQuadraticBasin coordEnergy xStar)
+    (hn : 0 < n)
+    (hεTarget : 0 ≤ epsTarget)
+    (hGapBudget : L * εCover ≤ targetEnergyGap basin.μ n epsTarget) :
+    let hSingleton := RankingPreservation.exact_top1_eq_singleton_of_coarse_energy_gap_margin
+      (fun a : SampledDocking.SupportedAction F =>
+        (SampledDocking.restrictedDecisionProblem exactDP F).utility a s)
+      (fun a : SampledDocking.SupportedAction F =>
+        (SampledDocking.restrictedDecisionProblem coarseDP F).utility a s)
+      aStar δ hApprox hStrict
+    let w := coherentOptimizerWitness_of_exact_singleton_top1
+      (fun a : SampledDocking.SupportedAction F =>
+        -(SampledDocking.restrictedDecisionProblem exactDP F).utility a s)
+      aStar hSingleton
+    rmsd (coords w.belief.selection.choice) xStar ≤ epsTarget := by
+  exact exact_energy_gap_certified_choice_of_cover_yields_rmsd_target
+    (coords := coords)
+    (eExact := fun a : SampledDocking.SupportedAction F =>
+      (SampledDocking.restrictedDecisionProblem exactDP F).utility a s)
+    (eCoarse := fun a : SampledDocking.SupportedAction F =>
+      (SampledDocking.restrictedDecisionProblem coarseDP F).utility a s)
+    (coordEnergy := coordEnergy)
+    (xStar := xStar)
+    (aStar := aStar)
+    (δ := δ)
+    (L := L)
+    (εCover := εCover)
+    (epsTarget := epsTarget)
+    hEnergy hApprox hStrict hL hCover hεCover hOpt hLip basin hn hεTarget hGapBudget
 
 /-- Runtime-facing singleton energy certificate for non-convex settings: if an
     exact/coarse energy gap margin certifies singleton top-1 identity `aStar`, and

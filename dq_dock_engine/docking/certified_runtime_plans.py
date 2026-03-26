@@ -19,6 +19,27 @@ def _ensure_handle_provenance(handles: tuple[str, ...], *, owner: str) -> None:
         raise ValueError(f"{owner} must carry theorem provenance handles")
 
 
+def _cover_stats_against_selected_subset(
+    full_points: np.ndarray,
+    selected_points: np.ndarray,
+) -> tuple[np.ndarray, float]:
+    if full_points.size == 0 or selected_points.size == 0:
+        raise ValueError("cover stats require non-empty full and selected point sets")
+    try:
+        from scipy.spatial import cKDTree
+
+        distances, indices = cKDTree(selected_points).query(full_points, k=1)
+        nearest = selected_points[np.asarray(indices, dtype=np.int64)]
+    except Exception:
+        deltas = full_points[:, None, :] - selected_points[None, :, :]
+        sq = np.sum(deltas * deltas, axis=2)
+        indices = np.argmin(sq, axis=1)
+        nearest = selected_points[indices]
+        distances = np.sqrt(np.min(sq, axis=1))
+    axis_half_widths = np.max(np.abs(full_points - nearest), axis=0)
+    return axis_half_widths, float(np.max(distances))
+
+
 def _validate_pose_budget_shape(
     *,
     active_subset_source: str,
@@ -456,6 +477,8 @@ class CertifiedRigidSeedFamilyPlan:
     box_size: tuple[float, float, float] | None = None
     binding_site_center: tuple[float, float, float] | None = None
     binding_site_radius: float | None = None
+    translation_full_lattice: bool = False
+    target_translation_cover_radius: float | None = None
     note: str | None = None
 
     def __post_init__(self) -> None:
@@ -472,6 +495,11 @@ class CertifiedRigidSeedFamilyPlan:
             self.translation_search_volume,
             field_name="translation_search_volume",
         )
+        if self.target_translation_cover_radius is not None:
+            _ensure_nonnegative(
+                self.target_translation_cover_radius,
+                field_name="target_translation_cover_radius",
+            )
         if self.translation_point_count * self.quaternion_count < self.pose_count:
             raise ValueError(
                 "translation_point_count * quaternion_count must cover pose_count"
@@ -500,6 +528,160 @@ class CertifiedRigidSeedFamilyPlan:
             _ensure_nonnegative(
                 self.binding_site_radius, field_name="binding_site_radius"
             )
+
+    def debug_summary(self) -> dict[str, object]:
+        from dq_dock_engine.docking.formal_sampling import (
+            materialize_certified_rigid_seed_family,
+        )
+
+        family = materialize_certified_rigid_seed_family(self)
+        unique_translations = np.asarray(family.translations, dtype=np.float64)
+        unique_quaternions = np.asarray(family.quaternions, dtype=np.float64)
+
+        translation_points = np.unique(np.round(unique_translations, 6), axis=0)
+        quaternion_points = np.unique(np.round(unique_quaternions, 6), axis=0)
+
+        if self.region_kind == CertifiedRigidSeedRegionKind.BOX:
+            assert self.box_center is not None
+            assert self.box_size is not None
+            center = np.asarray(self.box_center, dtype=np.float64)
+            size = np.asarray(self.box_size, dtype=np.float64)
+            lower = center - size / 2.0
+            upper = center + size / 2.0
+            step = size / float(self.lattice_resolution)
+            axis_centers = tuple(
+                tuple(
+                    float(value)
+                    for value in np.linspace(
+                        lower[axis] + 0.5 * step[axis],
+                        upper[axis] - 0.5 * step[axis],
+                        self.lattice_resolution,
+                    ).tolist()
+                )
+                for axis in range(3)
+            )
+            translation_box_kind = "full_box_lattice"
+            full_translation_count = self.lattice_resolution**3
+            translation_subset_filtered = (
+                self.translation_point_count != full_translation_count
+            )
+            full_grid = np.stack(
+                np.meshgrid(*axis_centers, indexing="ij"), axis=-1
+            ).reshape((-1, 3))
+            subset_axis_half_widths, subset_cover_radius = (
+                _cover_stats_against_selected_subset(full_grid, translation_points)
+            )
+            full_cell_half_widths = step / 2.0
+            total_axis_half_widths = full_cell_half_widths + subset_axis_half_widths
+            continuous_cover_radius = float(np.linalg.norm(total_axis_half_widths))
+        else:
+            assert self.binding_site_center is not None
+            assert self.binding_site_radius is not None
+            center = np.asarray(self.binding_site_center, dtype=np.float64)
+            radius = float(self.binding_site_radius)
+            lower = center - radius
+            upper = center + radius
+            step = np.full((3,), (2.0 * radius) / float(self.lattice_resolution))
+            axis_centers = tuple(
+                tuple(
+                    float(value)
+                    for value in np.linspace(
+                        lower[axis] + 0.5 * step[axis],
+                        upper[axis] - 0.5 * step[axis],
+                        self.lattice_resolution,
+                    ).tolist()
+                )
+                for axis in range(3)
+            )
+            translation_box_kind = (
+                "binding_site_full_bounding_box_lattice"
+                if self.translation_full_lattice
+                else "sphere_bounding_box_lattice"
+            )
+            full_translation_count = self.lattice_resolution**3
+            translation_subset_filtered = (
+                self.translation_point_count != full_translation_count
+            )
+            full_grid = np.stack(
+                np.meshgrid(*axis_centers, indexing="ij"), axis=-1
+            ).reshape((-1, 3))
+            if self.translation_full_lattice:
+                subset_axis_half_widths, subset_cover_radius = (
+                    _cover_stats_against_selected_subset(full_grid, translation_points)
+                )
+                full_cell_half_widths = step / 2.0
+                total_axis_half_widths = full_cell_half_widths + subset_axis_half_widths
+                continuous_cover_radius = float(np.linalg.norm(total_axis_half_widths))
+            else:
+                in_sphere = (
+                    np.linalg.norm(full_grid - center[None, :], axis=1)
+                    <= float(self.binding_site_radius) + 1e-9
+                )
+                sphere_grid = full_grid[in_sphere]
+                subset_axis_half_widths, subset_cover_radius = (
+                    _cover_stats_against_selected_subset(
+                        sphere_grid, translation_points
+                    )
+                )
+                full_cell_half_widths = None
+                total_axis_half_widths = None
+                continuous_cover_radius = None
+
+        obstructions: list[str] = []
+        if translation_subset_filtered:
+            obstructions.append(
+                "translation support is a selected subset of the lattice, not the full tensor-product grid"
+            )
+        obstructions.append(
+            "rotation support is quaternion_dictionary8, not a tensor-product of three scalar rotation center sets"
+        )
+
+        return {
+            "region_kind": self.region_kind.value,
+            "pose_count": self.pose_count,
+            "translation_point_count": self.translation_point_count,
+            "lattice_resolution": self.lattice_resolution,
+            "quaternion_count": self.quaternion_count,
+            "translation_search_volume": self.translation_search_volume,
+            "translation_grid_kind": translation_box_kind,
+            "translation_bounds_lower": tuple(float(v) for v in lower.tolist()),
+            "translation_bounds_upper": tuple(float(v) for v in upper.tolist()),
+            "translation_axis_centers": axis_centers,
+            "translation_axis_half_widths": tuple(
+                float(v) for v in (step / 2.0).tolist()
+            ),
+            "translation_subset_axis_half_widths_over_lattice": (
+                None
+                if subset_axis_half_widths is None
+                else tuple(float(v) for v in subset_axis_half_widths.tolist())
+            ),
+            "translation_cover_axis_half_widths_over_box": (
+                None
+                if total_axis_half_widths is None
+                else tuple(float(v) for v in total_axis_half_widths.tolist())
+            ),
+            "translation_subset_cover_radius_over_lattice": subset_cover_radius,
+            "translation_cover_radius_over_box": continuous_cover_radius,
+            "translation_cover_theorem_handles": (
+                () if continuous_cover_radius is None else ("CSC61", "CSC64")
+            ),
+            "actual_translation_points": tuple(
+                tuple(float(v) for v in row.tolist()) for row in translation_points
+            ),
+            "actual_quaternion_points": tuple(
+                tuple(float(v) for v in row.tolist()) for row in quaternion_points
+            ),
+            "full_translation_lattice_point_count": full_translation_count,
+            "translation_tensor_product_complete": not translation_subset_filtered,
+            "rotation_tensor_product_complete": False,
+            "csc61_csc62_ready": False,
+            "csc61_csc62_obstructions": tuple(obstructions),
+            "translation_full_lattice": self.translation_full_lattice,
+            "target_translation_cover_radius": self.target_translation_cover_radius,
+            "theorem_handles": self.theorem_handles,
+            "witness_handles": self.witness_handles,
+            "note": self.note,
+        }
 
 
 @dataclass(frozen=True)
@@ -629,6 +811,7 @@ class CertifiedPipelineExecutionPlan:
     theorem_handles: tuple[str, ...] = ()
     witness_handles: tuple[str, ...] = ()
     final_survivor_indices: tuple[int, ...] | None = None
+    native_witness_debug: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         _ensure_handle_provenance(
@@ -684,6 +867,12 @@ class CertifiedPipelineExecutionPlan:
     ) -> "CertifiedPipelineExecutionPlan":
         return replace(self, final_survivor_indices=final_survivor_indices)
 
+    def with_native_witness_debug(
+        self,
+        native_witness_debug: dict[str, object],
+    ) -> "CertifiedPipelineExecutionPlan":
+        return replace(self, native_witness_debug=native_witness_debug)
+
     def debug_summary(self) -> dict[str, object]:
         return {
             "tau": self.tau,
@@ -696,6 +885,7 @@ class CertifiedPipelineExecutionPlan:
                 else self.active_subset_budget_family.debug_summary()
             ),
             "refinement_pose_indices": self.refinement_pose_indices,
+            "native_witness_debug": self.native_witness_debug,
             "theorem_handles": self.theorem_handles,
         }
 
@@ -725,6 +915,23 @@ class CertifiedSeedBudgetCandidate:
                 raise ValueError(
                     "rigid_seed_family_plan.pose_count must match the candidate budget"
                 )
+
+    def debug_summary(self) -> dict[str, object]:
+        return {
+            "budget": self.budget,
+            "source": self.source,
+            "adequate": self.adequate,
+            "capture_rmsd": self.capture_rmsd,
+            "probe_rank": self.probe_rank,
+            "theorem_handles": self.theorem_handles,
+            "witness_handles": self.witness_handles,
+            "provenance_note": self.provenance_note,
+            "rigid_seed_family_plan": (
+                None
+                if self.rigid_seed_family_plan is None
+                else self.rigid_seed_family_plan.debug_summary()
+            ),
+        }
 
 
 @dataclass(frozen=True)
@@ -762,6 +969,20 @@ class CertifiedSeedBudgetPlan:
     @property
     def selected_family_plan(self) -> CertifiedRigidSeedFamilyPlan | None:
         return self.selected_candidate.rigid_seed_family_plan
+
+    def debug_summary(self) -> dict[str, object]:
+        return {
+            "selected_index": self.selected_index,
+            "selected_budget": self.selected_budget,
+            "explored_budgets": self.explored_budgets,
+            "engineering_probe_pose_cap": self.engineering_probe_pose_cap,
+            "engineering_probe_top_k": self.engineering_probe_top_k,
+            "theorem_handles": self.theorem_handles,
+            "witness_handles": self.witness_handles,
+            "candidates": tuple(
+                candidate.debug_summary() for candidate in self.candidates
+            ),
+        }
 
 
 @dataclass(frozen=True)

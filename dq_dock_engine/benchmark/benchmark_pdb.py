@@ -78,6 +78,7 @@ from dq_dock_engine.docking.pipeline import (
     run_geometric_blind_docking_request,
 )
 from dq_dock_engine.docking.pdb_io import (
+    build_ligand_context,
     generate_independent_ligand_geometry,
     parse_structure,
 )
@@ -93,6 +94,7 @@ from dq_dock_engine.docking.receptor_preparation import (
     prepare_receptor_system,
 )
 from dq_dock_engine.docking.metrics import compute_docking_rmsd_batched
+from dq_dock_engine.physics.kernels import rigid_transform_3d
 from dq_dock_engine.docking_config import (
     CERTIFIED_DOCKING,
     CertifiedScoringFamily,
@@ -2217,6 +2219,191 @@ def save_pose_sdf_from_source(
     writer.close()
 
 
+def _fit_rigid_pose_vector(
+    base_coords: np.ndarray,
+    world_coords: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    from scipy.spatial.transform import Rotation
+
+    base_mean = base_coords.mean(axis=0)
+    world_mean = world_coords.mean(axis=0)
+    base_centered = base_coords - base_mean
+    world_centered = world_coords - world_mean
+    covariance = base_centered.T @ world_centered
+    u, _, vt = np.linalg.svd(covariance)
+    rotation = vt.T @ u.T
+    if np.linalg.det(rotation) < 0.0:
+        vt[-1, :] *= -1.0
+        rotation = vt.T @ u.T
+    translation = world_mean - base_mean @ rotation.T
+    quat_xyzw = Rotation.from_matrix(rotation).as_quat()
+    quat_wxyz = np.array(
+        [quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]],
+        dtype=np.float64,
+    )
+    return translation.astype(np.float64), quat_wxyz
+
+
+def _augment_pipeline_debug_with_native_rigid_seed_witness(
+    pipeline_debug_summary: dict[str, object] | None,
+    *,
+    ligand_coords: np.ndarray,
+    ligand_radii: np.ndarray,
+    ligand_elements: Sequence[str],
+    target_rmsd: float,
+) -> dict[str, object] | None:
+    if pipeline_debug_summary is None:
+        return None
+    rigid_summary_raw = pipeline_debug_summary.get("rigid_seed_family_plan")
+    if not isinstance(rigid_summary_raw, dict):
+        return pipeline_debug_summary
+
+    translations_raw = rigid_summary_raw.get("actual_translation_points")
+    quaternions_raw = rigid_summary_raw.get("actual_quaternion_points")
+    if not isinstance(translations_raw, (list, tuple)) or not isinstance(
+        quaternions_raw, (list, tuple)
+    ):
+        return pipeline_debug_summary
+    if len(translations_raw) == 0 or len(quaternions_raw) == 0:
+        return pipeline_debug_summary
+
+    ligand_ctx = build_ligand_context(
+        ligand_coords,
+        ligand_radii,
+        elements=list(ligand_elements),
+    )
+    base_coords = np.asarray(ligand_ctx.base_coords, dtype=np.float64)
+    native_translation, native_quaternion = _fit_rigid_pose_vector(
+        base_coords, ligand_coords
+    )
+
+    translations = np.asarray(translations_raw, dtype=np.float64)
+    quaternions = np.asarray(quaternions_raw, dtype=np.float64)
+
+    try:
+        from scipy.spatial import cKDTree
+
+        translation_distance, translation_index = cKDTree(translations).query(
+            native_translation, k=1
+        )
+        translation_index = int(translation_index)
+    except Exception:
+        deltas = translations - native_translation[None, :]
+        translation_index = int(np.argmin(np.sum(deltas * deltas, axis=1)))
+        translation_distance = float(np.linalg.norm(deltas[translation_index]))
+    translation_witness = translations[translation_index]
+
+    base_coords_jnp = jnp.asarray(base_coords, dtype=jnp.float32)
+    zero_translation = jnp.zeros((3,), dtype=jnp.float32)
+    native_orientation_coords = np.asarray(
+        rigid_transform_3d(
+            base_coords_jnp,
+            jnp.asarray(native_quaternion, dtype=jnp.float32),
+            zero_translation,
+        ),
+        dtype=np.float64,
+    )
+
+    best_quaternion_index = 0
+    best_orientation_pointwise = math.inf
+    best_orientation_rmsd = math.inf
+    for index, quaternion in enumerate(quaternions):
+        witness_orientation_coords = np.asarray(
+            rigid_transform_3d(
+                base_coords_jnp,
+                jnp.asarray(quaternion, dtype=jnp.float32),
+                zero_translation,
+            ),
+            dtype=np.float64,
+        )
+        displacements = np.linalg.norm(
+            witness_orientation_coords - native_orientation_coords,
+            axis=1,
+        )
+        pointwise_max = float(np.max(displacements))
+        orientation_rmsd = float(
+            np.sqrt(
+                np.mean(
+                    np.sum(
+                        (witness_orientation_coords - native_orientation_coords) ** 2,
+                        axis=1,
+                    )
+                )
+            )
+        )
+        if (pointwise_max, orientation_rmsd, index) < (
+            best_orientation_pointwise,
+            best_orientation_rmsd,
+            best_quaternion_index,
+        ):
+            best_orientation_pointwise = pointwise_max
+            best_orientation_rmsd = orientation_rmsd
+            best_quaternion_index = index
+
+    quaternion_witness = quaternions[best_quaternion_index]
+    witness_seed_coords = np.asarray(
+        rigid_transform_3d(
+            base_coords_jnp,
+            jnp.asarray(quaternion_witness, dtype=jnp.float32),
+            jnp.asarray(translation_witness, dtype=jnp.float32),
+        ),
+        dtype=np.float64,
+    )
+    exact_seed_rmsd = float(
+        compute_docking_rmsd_batched(
+            jnp.expand_dims(
+                jnp.asarray(witness_seed_coords, dtype=jnp.float32), axis=0
+            ),
+            jnp.asarray(ligand_coords, dtype=jnp.float32),
+        )[0]
+    )
+    csc63_rmsd_upper_bound = float(translation_distance + best_orientation_pointwise)
+    pipeline_debug_summary = dict(pipeline_debug_summary)
+    rigid_summary = dict(rigid_summary_raw)
+    bounds_lower = rigid_summary.get("translation_bounds_lower")
+    bounds_upper = rigid_summary.get("translation_bounds_upper")
+    required_full_lattice_resolution = None
+    required_full_lattice_pose_count = None
+    if isinstance(bounds_lower, (list, tuple)) and isinstance(
+        bounds_upper, (list, tuple)
+    ):
+        if len(bounds_lower) == 3 and len(bounds_upper) == 3:
+            sizes = [float(u) - float(l) for l, u in zip(bounds_lower, bounds_upper)]
+            required_full_lattice_resolution = max(
+                2,
+                math.ceil(
+                    math.sqrt(sum(size * size for size in sizes))
+                    / (2.0 * float(target_rmsd))
+                ),
+            )
+            if required_full_lattice_resolution % 2 == 1:
+                required_full_lattice_resolution += 1
+            required_full_lattice_pose_count = (
+                required_full_lattice_resolution** 3 * len(quaternions)
+            )
+
+    rigid_summary["native_rigid_seed_witness"] = {
+        "native_translation": tuple(float(v) for v in native_translation.tolist()),
+        "native_quaternion_wxyz": tuple(float(v) for v in native_quaternion.tolist()),
+        "translation_witness_index": translation_index,
+        "translation_witness": tuple(float(v) for v in translation_witness.tolist()),
+        "translation_witness_distance": float(translation_distance),
+        "quaternion_witness_index": best_quaternion_index,
+        "quaternion_witness_wxyz": tuple(float(v) for v in quaternion_witness.tolist()),
+        "orientation_witness_pointwise_max_displacement": best_orientation_pointwise,
+        "orientation_witness_rmsd": best_orientation_rmsd,
+        "csc63_rmsd_upper_bound": csc63_rmsd_upper_bound,
+        "exact_seed_witness_rmsd": exact_seed_rmsd,
+        "target_rmsd": float(target_rmsd),
+        "csc63_target_rmsd_certified": csc63_rmsd_upper_bound <= float(target_rmsd),
+        "required_full_lattice_resolution_for_target": required_full_lattice_resolution,
+        "required_full_lattice_pose_count_for_target": required_full_lattice_pose_count,
+        "theorem_handles": ("CSC63", "CSC65", "CSC66", "ERC45"),
+    }
+    pipeline_debug_summary["rigid_seed_family_plan"] = rigid_summary
+    return pipeline_debug_summary
+
+
 def copy_structure_for_viewing(source: Path, destination: Path) -> None:
     shutil.copy2(source, destination)
 
@@ -2724,6 +2911,7 @@ def run_dq_dock(
                 config=docking_config,
                 optimize=True,
                 include_native=True,
+                debug_native_coords=jnp.array(ligand_coords),
                 engine=engine,
                 use_multi_stage=use_multi_stage,
             )
@@ -2791,6 +2979,19 @@ def run_dq_dock(
                     f"{effective_formal_status} (orientation signal insufficient)"
                 )
 
+            pipeline_debug_summary = (
+                _augment_pipeline_debug_with_native_rigid_seed_witness(
+                    best_pose.pipeline_debug_summary,
+                    ligand_coords=ligand_coords,
+                    ligand_radii=ligand_radii,
+                    ligand_elements=cast(
+                        Sequence[str],
+                        () if ligand_elements is None else ligand_elements,
+                    ),
+                    target_rmsd=docking_config.target_rmsd,
+                )
+            )
+
             attempt_result = BenchmarkResult.from_certification(
                 pose_energy=best_pose.energy,
                 pose_rmsd=rmsd,
@@ -2800,7 +3001,7 @@ def run_dq_dock(
                 cert=cert,
                 returned_pose_cert=best_pose.returned_pose_certification,
                 returned_pose_debug_summary=best_pose.returned_pose_proof_debug,
-                pipeline_debug_summary=best_pose.pipeline_debug_summary,
+                pipeline_debug_summary=pipeline_debug_summary,
                 requested_target_rmsd=docking_config.target_rmsd,
                 execution_path=execution_path,
                 certified_failure_reason=certified_failure_reason,

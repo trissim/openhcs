@@ -17,11 +17,12 @@ Translates nine Lean theorems (CS1–CS9) from ConformerSearch.lean into JAX/Pyt
 from __future__ import annotations
 
 import heapq
+import math
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, cast
 
 import jax
 import jax.numpy as jnp
@@ -52,6 +53,7 @@ class RotatableBond:
     atom_j: int
     rotating_atom_indices: tuple[int, ...]
     max_arm_length: float
+    rotating_atom_arm_lengths: tuple[float, ...] = ()
 
 
 def compute_raw_lj_lipschitz(epsilon_lj: float, min_pairwise_sigma: float) -> float:
@@ -529,8 +531,10 @@ def detect_rotatable_bonds(
             axis_dir = axis_vec / axis_norm
 
             max_arm = 0.0
+            arm_lengths: list[float] = []
             for idx in rotating_indices:
                 dist = _point_to_line_distance(coords[idx], axis_origin, axis_dir)
+                arm_lengths.append(dist)
                 if dist > max_arm:
                     max_arm = dist
 
@@ -540,6 +544,7 @@ def detect_rotatable_bonds(
                     atom_j=atom_j,
                     rotating_atom_indices=rotating_indices,
                     max_arm_length=max_arm,
+                    rotating_atom_arm_lengths=tuple(float(v) for v in arm_lengths),
                 )
             )
 
@@ -567,6 +572,18 @@ def _rodrigues_rotate(
     sin_a = jnp.sin(angle)
     dot = jnp.sum(points * axis[None, :], axis=-1, keepdims=True)
     cross = jnp.cross(axis[None, :], points)
+    return points * cos_a + cross * sin_a + axis[None, :] * dot * (1.0 - cos_a)
+
+
+def _rodrigues_rotate_np(
+    points: np.ndarray,
+    axis: np.ndarray,
+    angle: float,
+) -> np.ndarray:
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    dot = np.sum(points * axis[None, :], axis=-1, keepdims=True)
+    cross = np.cross(axis[None, :], points)
     return points * cos_a + cross * sin_a + axis[None, :] * dot * (1.0 - cos_a)
 
 
@@ -607,6 +624,28 @@ def _apply_torsion_rotations(
         (angles, axis_origins, axis_directions, rotation_masks),
     )
     return final_coords
+
+
+def _apply_torsion_rotations_np(
+    coords: np.ndarray,
+    angles: np.ndarray,
+    axis_origins: np.ndarray,
+    axis_directions: np.ndarray,
+    rotation_masks: np.ndarray,
+) -> np.ndarray:
+    current = np.array(coords, dtype=np.float32, copy=True)
+    for angle, origin, direction, mask in zip(
+        angles.tolist(),
+        axis_origins,
+        axis_directions,
+        rotation_masks,
+    ):
+        translated = current - origin[None, :]
+        rotated = (
+            _rodrigues_rotate_np(translated, direction, float(angle)) + origin[None, :]
+        )
+        current = np.where(mask[:, None], rotated, current)
+    return current
 
 
 def build_torsion_kinematics(
@@ -664,6 +703,109 @@ class _PrioritizedCell:
 # (N_lig, N_rec) pair, then every subsequent call is a cache hit.
 _BB_PAD_SIZE = 128
 _BB_BATCH_SIZE = _BB_PAD_SIZE
+_SEQUENTIAL_SCAN_GRID_SIZE = 24
+_SEQUENTIAL_SCAN_ACTIVE_BOND_THRESHOLD = 8
+
+
+def _sequential_scan_grid_size(n_bonds: int) -> int:
+    if n_bonds >= 12:
+        return 4
+    if n_bonds >= 8:
+        return 6
+    if n_bonds >= 4:
+        return 8
+    return _SEQUENTIAL_SCAN_GRID_SIZE
+
+
+def _sequential_scan_incumbent(
+    *,
+    kinematics: TorsionKinematics,
+    base_coords: jnp.ndarray,
+    n_atoms: int,
+    n_bonds: int,
+    score_fn: Callable[[jnp.ndarray], float],
+    score_fn_batch: Callable[[jnp.ndarray], jnp.ndarray] | None,
+    strain_fn: Callable[[jnp.ndarray], float] | None,
+    initial_params: jnp.ndarray,
+    initial_energy: float,
+    initial_coords: jnp.ndarray,
+) -> tuple[float, jnp.ndarray]:
+    if n_bonds < _SEQUENTIAL_SCAN_ACTIVE_BOND_THRESHOLD:
+        return initial_energy, initial_coords
+
+    grid = np.linspace(
+        -math.pi,
+        math.pi,
+        _sequential_scan_grid_size(n_bonds),
+        endpoint=False,
+        dtype=np.float32,
+    )
+    params = np.array(jax.device_get(initial_params), dtype=np.float32, copy=True)
+    best_energy = float(initial_energy)
+    best_coords = initial_coords
+
+    improved_any = False
+    for bond_idx in range(n_bonds):
+        batch_params = np.repeat(params[None, :], grid.shape[0], axis=0)
+        batch_params[:, bond_idx] = grid
+        params_batch_jnp = jnp.asarray(batch_params, dtype=base_coords.dtype)
+        coords_batch_np = np.stack(
+            [
+                _apply_torsion_rotations_np(
+                    np.asarray(base_coords, dtype=np.float32),
+                    batch_params[i],
+                    np.asarray(kinematics.axis_origins),
+                    np.asarray(kinematics.axis_directions),
+                    np.asarray(kinematics.rotation_masks),
+                )
+                for i in range(grid.shape[0])
+            ],
+            axis=0,
+        )
+        coords_batch = jnp.asarray(coords_batch_np, dtype=base_coords.dtype)
+        if score_fn_batch is not None:
+            scores = np.asarray(
+                jax.device_get(score_fn_batch(coords_batch)), dtype=np.float32
+            )
+        else:
+            scores = np.array(
+                [float(score_fn(coords_batch[i])) for i in range(grid.shape[0])],
+                dtype=np.float32,
+            )
+        if strain_fn is not None:
+            strain = np.array(
+                [float(strain_fn(params_batch_jnp[i])) for i in range(grid.shape[0])],
+                dtype=np.float32,
+            )
+            scores = scores + strain
+        best_idx = int(np.argmin(scores))
+        if float(scores[best_idx]) < best_energy:
+            params = batch_params[best_idx]
+            best_energy = float(scores[best_idx])
+            best_coords = coords_batch[best_idx]
+            improved_any = True
+
+    if improved_any:
+        return best_energy, best_coords
+    return initial_energy, initial_coords
+
+
+def _collapse_torsion_cell_to_active_subset(
+    cell: TorsionCell,
+    active_mask: np.ndarray,
+) -> TorsionCell:
+    if active_mask.shape != (cell.lower.shape[0],):
+        raise ValueError(
+            "active_mask must match torsion cell dimensionality "
+            f"(got {active_mask.shape} vs {(cell.lower.shape[0],)})"
+        )
+    if bool(np.all(active_mask)):
+        return cell
+    center = cell.center()
+    active_mask_jnp = jnp.asarray(active_mask, dtype=jnp.bool_)
+    lower = jnp.where(active_mask_jnp, cell.lower, center)
+    upper = jnp.where(active_mask_jnp, cell.upper, center)
+    return TorsionCell(lower=lower, upper=upper)
 
 
 def branch_and_bound_search(
@@ -674,6 +816,9 @@ def branch_and_bound_search(
     config: BranchAndBoundConfig,
     strain_fn: Callable[[jnp.ndarray], float] | None = None,
     score_fn_batch: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+    pruning_incumbent_energy: float | None = None,
+    local_activity_mask_fn: Callable[[TorsionCell, np.ndarray], np.ndarray | None]
+    | None = None,
 ) -> ConformerResult:
     """Branch-and-bound over torsion space with certified Lipschitz pruning.
 
@@ -720,15 +865,81 @@ def branch_and_bound_search(
     center_score = float(score_fn(center_coords))
     center_strain = float(strain_fn(center_params)) if strain_fn is not None else 0.0
     root_energy = center_score + center_strain
-    best_energy = root_energy if config.reuse_initial_conformer else float("inf")
+    local_best_energy = root_energy if config.reuse_initial_conformer else float("inf")
+    best_energy = local_best_energy
+    if pruning_incumbent_energy is not None and math.isfinite(pruning_incumbent_energy):
+        best_energy = min(best_energy, float(pruning_incumbent_energy))
     best_coords = center_coords
+
+    scan_energy, scan_coords = _sequential_scan_incumbent(
+        kinematics=cast(TorsionKinematics, kinematics),
+        base_coords=base_coords,
+        n_atoms=n_atoms,
+        n_bonds=len(config.per_bond_lipschitz or ()),
+        score_fn=score_fn,
+        score_fn_batch=score_fn_batch,
+        strain_fn=strain_fn,
+        initial_params=center_params,
+        initial_energy=root_energy,
+        initial_coords=center_coords,
+    )
+    if scan_energy < local_best_energy:
+        local_best_energy = scan_energy
+        best_coords = scan_coords
+    if scan_energy < best_energy:
+        best_energy = scan_energy
+        best_coords = scan_coords
 
     leaf_conformers: list[tuple[float, jnp.ndarray]] = [(root_energy, center_coords)]
 
+    root_cell = initial_cell
+    if local_activity_mask_fn is not None and isinstance(initial_cell, TorsionCell):
+        root_active_mask = local_activity_mask_fn(
+            initial_cell,
+            np.asarray(jax.device_get(center_coords), dtype=np.float32),
+        )
+        if root_active_mask is not None:
+            root_cell = _collapse_torsion_cell_to_active_subset(
+                initial_cell,
+                np.asarray(root_active_mask, dtype=bool),
+            )
+
+    root_slack = _compute_slack(root_cell)
+    if root_energy - root_slack >= best_energy:
+        theorem_handles = tuple(
+            dict.fromkeys(
+                (
+                    "CS2",
+                    "CS5",
+                    "CS6",
+                    "CS8",
+                    "CS9",
+                    "CS10",
+                    "CS11",
+                    "CS12",
+                    "CS13",
+                    "CS14",
+                    "CSC43",
+                    "GAP2",
+                )
+                + branch_and_bound_cross_docking_handles()
+                + (
+                    ("LSA1", "LSA3", "LSA5", "LSA7", "XD5", "XD6", "XD7", "XD8")
+                    if strain_fn is not None
+                    else ()
+                )
+            )
+        )
+        return ConformerResult(
+            conformer_coords=(best_coords,),
+            conformer_energies=(best_energy,),
+            theorem_handles=theorem_handles,
+        )
+
     heap: list[_PrioritizedCell] = []
     insertion_counter = 0
-    if initial_cell.radius() >= config.min_cell_radius:
-        for child in _subdivide(initial_cell):
+    if root_cell.radius() >= config.min_cell_radius:
+        for child in _subdivide(root_cell):
             child_bound_value = root_energy - _compute_slack(child)
             heapq.heappush(
                 heap,
@@ -791,15 +1002,29 @@ def branch_and_bound_search(
             center_energy = center_score_i + center_strain_i
             cells_evaluated += 1
 
+            if center_energy < local_best_energy:
+                local_best_energy = center_energy
+                best_coords = center_coords_i
             if center_energy < best_energy:
                 best_energy = center_energy
-                best_coords = center_coords_i
 
-            slack = _compute_slack(cell)
+            local_cell = cell
+            if local_activity_mask_fn is not None and isinstance(cell, TorsionCell):
+                local_active_mask = local_activity_mask_fn(
+                    cell,
+                    np.asarray(coords_np[i], dtype=np.float32),
+                )
+                if local_active_mask is not None:
+                    local_cell = _collapse_torsion_cell_to_active_subset(
+                        cell,
+                        np.asarray(local_active_mask, dtype=bool),
+                    )
+
+            slack = _compute_slack(local_cell)
             bound = EnergyLowerBound(
                 center_energy=center_energy,
                 lipschitz_constant=composed_lipschitz,
-                cell_radius=cell.radius(),
+                cell_radius=local_cell.radius(),
                 per_dim_slack=slack if use_per_dim else None,
             )
 
@@ -807,11 +1032,11 @@ def branch_and_bound_search(
             if bound.is_dominated_by(best_energy):
                 continue
 
-            if cell.radius() < config.min_cell_radius:
+            if local_cell.radius() < config.min_cell_radius:
                 leaf_conformers.append((center_energy, center_coords_i))
                 continue
 
-            for child in _subdivide(cell):
+            for child in _subdivide(local_cell):
                 child_lb = center_energy - _compute_slack(child)
                 heapq.heappush(
                     heap,
@@ -991,6 +1216,96 @@ def derive_uff_torsion_barrier_heights(
     return jnp.asarray(barrier_heights, dtype=jnp.float32)
 
 
+def derive_mmff_torsion_current_headroom(
+    ligand_source_path: str | Path | None,
+    expected_elements: tuple[str, ...],
+    rotatable_bonds: tuple[RotatableBond, ...],
+) -> jnp.ndarray | None:
+    """Derive per-bond MMFF torsion headroom at the current conformer.
+
+    Uses explicit MMFF torsion coefficients `(V1, V2, V3)` from RDKit and the
+    current conformer dihedral angle to bound the maximum possible torsion-energy
+    decrease by `current_energy - lower_bound`, where
+
+      lower_bound = c - |a1| - |a2| - |a3|
+
+    for the cosine series `c + a1*cos(phi) + a2*cos(2phi) + a3*cos(3phi)`.
+    """
+    if ligand_source_path is None or not rotatable_bonds:
+        return None
+
+    from rdkit import Chem
+    from rdkit.Chem import rdForceFieldHelpers, rdMolTransforms
+
+    source_path = Path(ligand_source_path)
+    try:
+        mol = load_rdkit_molecule(source_path, remove_hs=False, sanitize=True)
+    except Exception:
+        return None
+    mol = Chem.AddHs(mol, addCoords=True)
+    props = rdForceFieldHelpers.MMFFGetMoleculeProperties(mol)
+    if props is None:
+        return None
+
+    heavy_indices = [
+        atom.GetIdx() for atom in mol.GetAtoms() if atom.GetAtomicNum() > 1
+    ]
+    heavy_elements = tuple(
+        _normalize_element(mol.GetAtomWithIdx(atom_idx).GetSymbol())
+        for atom_idx in heavy_indices
+    )
+    normalized_expected = tuple(
+        _normalize_element(element) for element in expected_elements
+    )
+    if heavy_elements != normalized_expected:
+        raise ValueError(
+            "MMFF torsion parameter derivation changed heavy-atom ordering; "
+            f"expected {normalized_expected} but got {heavy_elements}"
+        )
+
+    conf = mol.GetConformer()
+    headrooms: list[float] = []
+    for bond in rotatable_bonds:
+        atom_i = heavy_indices[bond.atom_i]
+        atom_j = heavy_indices[bond.atom_j]
+        neighbors_i = [
+            nbr.GetIdx()
+            for nbr in mol.GetAtomWithIdx(atom_i).GetNeighbors()
+            if nbr.GetIdx() != atom_j
+        ]
+        neighbors_j = [
+            nbr.GetIdx()
+            for nbr in mol.GetAtomWithIdx(atom_j).GetNeighbors()
+            if nbr.GetIdx() != atom_i
+        ]
+
+        bond_headroom = 0.0
+        found_term = False
+        for atom_k in neighbors_i:
+            for atom_l in neighbors_j:
+                params = props.GetMMFFTorsionParams(mol, atom_k, atom_i, atom_j, atom_l)
+                if params is None:
+                    continue
+                _, v1, v2, v3 = params
+                phi = float(
+                    rdMolTransforms.GetDihedralRad(conf, atom_k, atom_i, atom_j, atom_l)
+                )
+                current_energy = 0.5 * (
+                    v1 * (1.0 + math.cos(phi))
+                    + v2 * (1.0 - math.cos(2.0 * phi))
+                    + v3 * (1.0 + math.cos(3.0 * phi))
+                )
+                const = 0.5 * (v1 + v2 + v3)
+                lower_bound = const - 0.5 * (abs(v1) + abs(v2) + abs(v3))
+                bond_headroom += max(0.0, current_energy - lower_bound)
+                found_term = True
+        if not found_term:
+            return None
+        headrooms.append(bond_headroom)
+
+    return jnp.asarray(headrooms, dtype=jnp.float32)
+
+
 def _build_strain_fn(
     params: TorsionStrainParams,
 ) -> Callable[[jnp.ndarray], float]:
@@ -1019,6 +1334,9 @@ def search_conformers(
     strain_params: TorsionStrainParams | None = None,
     score_fn_batch: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
     rotatable_bonds: tuple[RotatableBond, ...] | None = None,
+    pruning_incumbent_energy: float | None = None,
+    local_activity_mask_fn: Callable[[TorsionCell, np.ndarray], np.ndarray | None]
+    | None = None,
 ) -> ConformerResult:
     """Search for distinct low-energy conformers via certified branch-and-bound.
 
@@ -1089,4 +1407,116 @@ def search_conformers(
         config=config,
         strain_fn=strain_fn,
         score_fn_batch=score_fn_batch,
+        pruning_incumbent_energy=pruning_incumbent_energy,
+        local_activity_mask_fn=local_activity_mask_fn,
+    )
+
+
+def search_conformers_sequential_scan(
+    base_coords: jnp.ndarray,
+    adjacency: tuple[tuple[int, ...], ...],
+    elements: tuple[str, ...],
+    score_fn: Callable[[jnp.ndarray], float],
+    strain_params: TorsionStrainParams | None = None,
+    score_fn_batch: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+    rotatable_bonds: tuple[RotatableBond, ...] | None = None,
+) -> ConformerResult:
+    coords_np = np.asarray(base_coords, dtype=np.float32)
+    bonds = (
+        detect_rotatable_bonds(adjacency, coords_np, elements)
+        if rotatable_bonds is None
+        else rotatable_bonds
+    )
+    if not bonds:
+        return ConformerResult(
+            conformer_coords=(base_coords,),
+            conformer_energies=(float(score_fn(base_coords)),),
+            theorem_handles=("CS7",),
+        )
+
+    kinematics = build_torsion_kinematics(bonds, coords_np, len(elements))
+    initial_params = jnp.zeros((len(bonds),), dtype=base_coords.dtype)
+    center_coords = kinematics.forward(base_coords, initial_params)
+    center_score = float(score_fn(center_coords))
+    strain_fn = None if strain_params is None else _build_strain_fn(strain_params)
+    center_strain = float(strain_fn(initial_params)) if strain_fn is not None else 0.0
+    best_energy, best_coords = _sequential_scan_incumbent(
+        kinematics=kinematics,
+        base_coords=base_coords,
+        n_atoms=base_coords.shape[0],
+        n_bonds=len(bonds),
+        score_fn=score_fn,
+        score_fn_batch=score_fn_batch,
+        strain_fn=strain_fn,
+        initial_params=initial_params,
+        initial_energy=center_score + center_strain,
+        initial_coords=center_coords,
+    )
+    return ConformerResult(
+        conformer_coords=(best_coords,),
+        conformer_energies=(best_energy,),
+        theorem_handles=(),
+    )
+
+
+def search_conformers_support_grid(
+    base_coords: jnp.ndarray,
+    adjacency: tuple[tuple[int, ...], ...],
+    elements: tuple[str, ...],
+    score_fn: Callable[[jnp.ndarray], float],
+    config: BranchAndBoundConfig,
+    strain_params: TorsionStrainParams | None = None,
+    score_fn_batch: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+    rotatable_bonds: tuple[RotatableBond, ...] | None = None,
+    canonical_segments: tuple[int, ...] | None = None,
+) -> ConformerResult:
+    coords_np = np.asarray(base_coords, dtype=np.float32)
+    bonds = (
+        detect_rotatable_bonds(adjacency, coords_np, elements)
+        if rotatable_bonds is None
+        else rotatable_bonds
+    )
+    if not bonds:
+        return ConformerResult(
+            conformer_coords=(base_coords,),
+            conformer_energies=(float(score_fn(base_coords)),),
+            theorem_handles=(),
+        )
+    if canonical_segments is None:
+        raise ValueError("support-grid conformer search requires canonical_segments")
+
+    axes = [
+        np.linspace(-math.pi, math.pi, int(seg) + 1, dtype=np.float32)
+        for seg in canonical_segments
+    ]
+    mesh = np.meshgrid(*axes, indexing="ij")
+    params_batch = np.stack([axis.reshape(-1) for axis in mesh], axis=-1)
+    params_batch_jnp = jnp.asarray(params_batch, dtype=base_coords.dtype)
+
+    kinematics = build_torsion_kinematics(bonds, coords_np, len(elements))
+    coords_batch = kinematics.forward_batch(base_coords, params_batch_jnp)
+    if score_fn_batch is not None:
+        scores = np.asarray(
+            jax.device_get(score_fn_batch(coords_batch)), dtype=np.float32
+        )
+    else:
+        scores = np.array(
+            [float(score_fn(coords_batch[i])) for i in range(coords_batch.shape[0])],
+            dtype=np.float32,
+        )
+    if strain_params is not None:
+        strain_fn = _build_strain_fn(strain_params)
+        strain_scores = np.array(
+            [
+                float(strain_fn(params_batch_jnp[i]))
+                for i in range(params_batch_jnp.shape[0])
+            ],
+            dtype=np.float32,
+        )
+        scores = scores + strain_scores
+    best_order = np.argsort(scores)[: max(1, config.max_conformers)]
+    return ConformerResult(
+        conformer_coords=tuple(coords_batch[int(i)] for i in best_order.tolist()),
+        conformer_energies=tuple(float(scores[int(i)]) for i in best_order.tolist()),
+        theorem_handles=(),
     )

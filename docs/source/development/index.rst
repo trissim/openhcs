@@ -31,6 +31,7 @@ Practical guides for specific development tasks.
    ui-patterns
    pipeline_debugging_guide
    dq_dock_agent_handoff_guide
+   dq_dock_architecture_debugging_guide
    docking_pipeline_audit_1hk4
    placeholder_inheritance_debugging
    parameter_analysis_audit

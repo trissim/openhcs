@@ -185,6 +185,71 @@ theorem strain_aware_conformer_dominated
     ∀ s, energy a' s' + strain a' < energy a s + strain a := fun s =>
   lt_of_lt_of_le h_dom (h_lb s)
 
+/-- A three-frequency cosine torsion series is bounded below by the constant term
+    minus the sum of coefficient magnitudes. This packages the exact lower bound
+    needed for MMFF-style torsion headroom at the current conformer. -/
+theorem cosineSeries3_lower_bound
+    (c a1 a2 a3 φ : ℝ) :
+    c - |a1| - |a2| - |a3|
+      ≤ c + a1 * Real.cos φ + a2 * Real.cos (2 * φ) + a3 * Real.cos (3 * φ) := by
+  have h1 : -|a1| ≤ a1 * Real.cos φ := by
+    have hcos := Real.neg_one_le_cos φ
+    by_cases ha1 : 0 ≤ a1
+    · have hmul : -a1 ≤ a1 * Real.cos φ := by
+        have := mul_le_mul_of_nonneg_left hcos ha1
+        simpa using this
+      simpa [abs_of_nonneg ha1] using hmul
+    · have ha1le : a1 ≤ 0 := le_of_not_ge ha1
+      have hcosu : Real.cos φ ≤ 1 := Real.cos_le_one φ
+      have hmul : a1 ≤ a1 * Real.cos φ := by
+        have := mul_le_mul_of_nonpos_left hcosu ha1le
+        simpa using this
+      have habs : -|a1| = a1 := by
+        simp [abs_of_nonpos ha1le]
+      simpa [habs] using hmul
+  have h2 : -|a2| ≤ a2 * Real.cos (2 * φ) := by
+    have hcos := Real.neg_one_le_cos (2 * φ)
+    by_cases ha2 : 0 ≤ a2
+    · have hmul : -a2 ≤ a2 * Real.cos (2 * φ) := by
+        have := mul_le_mul_of_nonneg_left hcos ha2
+        simpa using this
+      simpa [abs_of_nonneg ha2] using hmul
+    · have ha2le : a2 ≤ 0 := le_of_not_ge ha2
+      have hcosu : Real.cos (2 * φ) ≤ 1 := Real.cos_le_one (2 * φ)
+      have hmul : a2 ≤ a2 * Real.cos (2 * φ) := by
+        have := mul_le_mul_of_nonpos_left hcosu ha2le
+        simpa using this
+      have habs : -|a2| = a2 := by
+        simp [abs_of_nonpos ha2le]
+      simpa [habs] using hmul
+  have h3 : -|a3| ≤ a3 * Real.cos (3 * φ) := by
+    have hcos := Real.neg_one_le_cos (3 * φ)
+    by_cases ha3 : 0 ≤ a3
+    · have hmul : -a3 ≤ a3 * Real.cos (3 * φ) := by
+        have := mul_le_mul_of_nonneg_left hcos ha3
+        simpa using this
+      simpa [abs_of_nonneg ha3] using hmul
+    · have ha3le : a3 ≤ 0 := le_of_not_ge ha3
+      have hcosu : Real.cos (3 * φ) ≤ 1 := Real.cos_le_one (3 * φ)
+      have hmul : a3 ≤ a3 * Real.cos (3 * φ) := by
+        have := mul_le_mul_of_nonpos_left hcosu ha3le
+        simpa using this
+      have habs : -|a3| = a3 := by
+        simp [abs_of_nonpos ha3le]
+      simpa [habs] using hmul
+  linarith
+
+/-- The maximum possible decrease of a three-frequency cosine torsion series from
+    the current angle is bounded by its current value minus the global lower bound. -/
+theorem cosineSeries3_drop_le_headroom
+    (c a1 a2 a3 φ ψ : ℝ) :
+    (c + a1 * Real.cos φ + a2 * Real.cos (2 * φ) + a3 * Real.cos (3 * φ))
+      - (c + a1 * Real.cos ψ + a2 * Real.cos (2 * ψ) + a3 * Real.cos (3 * ψ))
+      ≤ (c + a1 * Real.cos φ + a2 * Real.cos (2 * φ) + a3 * Real.cos (3 * φ))
+        - (c - |a1| - |a2| - |a3|) := by
+  have hlb := cosineSeries3_lower_bound c a1 a2 a3 ψ
+  linarith
+
 end LigandStrainApproximation
 end Tractability
 end DecisionQuotient

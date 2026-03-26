@@ -1114,7 +1114,13 @@ class CertifiedRichChemistryPlan:
             metal_coordination=self.metal_coordination.zeroed(),
             pairwise_sigma=self.pairwise_sigma,
             cooperative_alpha=0.0,
-            extended_terms=CertifiedExtendedInteractionBundle(),
+            extended_terms=CertifiedExtendedInteractionBundle(
+                terms=tuple(
+                    term
+                    for term in self.extended_terms.terms
+                    if term.__class__.__name__ == "HalogenBondInteractionTerm"
+                )
+            ).filter_active(),
         )
 
     def default_softening_radius(self) -> float:

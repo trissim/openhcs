@@ -607,6 +607,132 @@ theorem coordinatewise_cover_yields_hypercubeSupportOnBox
   · intro i
     simpa [center] using hcDist i
 
+theorem hypercubeSupportCoversOnBox_of_cover_through_support
+    (n : ℕ)
+    (support₁ support₂ : Finset (Fin n → ℝ))
+    (lower upper halfWidths₁ halfWidths₂ : Fin n → ℝ)
+    (hCover₁ : HypercubeSupportCoversOnBox n support₁ lower upper halfWidths₁)
+    (hRefine : ∀ center,
+      center ∈ support₁ →
+      ∃ lifted, lifted ∈ support₂ ∧ ∀ i, |center i - lifted i| ≤ halfWidths₂ i) :
+    HypercubeSupportCoversOnBox n support₂ lower upper (fun i => halfWidths₁ i + halfWidths₂ i) := by
+  intro p hp
+  rcases hCover₁ p hp with ⟨center, hcenter, hcell⟩
+  rcases hRefine center hcenter with ⟨lifted, hlifted, hrefine⟩
+  refine ⟨lifted, hlifted, ?_⟩
+  intro i
+  calc
+    |p i - lifted i| = |(p i - center i) + (center i - lifted i)| := by ring_nf
+    _ ≤ |p i - center i| + |center i - lifted i| := abs_add_le _ _
+    _ ≤ halfWidths₁ i + halfWidths₂ i := add_le_add (hcell i) (hrefine i)
+
+/-- Deterministic six-dimensional rigid-pose seed support built as a tensor
+    product of per-coordinate center sets. The intended coordinates are three
+    translation axes and three rotation parameters. -/
+noncomputable def pocketGuidedRigidSeedSupport
+    (centers : Fin 6 → Finset ℝ) : Finset (Fin 6 → ℝ) :=
+  coordinateCenterSupport 6 centers
+
+/-- Sampler-side coverage theorem for the current rigid pocket-guided seed family:
+    if each of the six coordinate center sets covers its interval with certified
+    half-width, then the full tensor-product seed family covers the entire rigid
+    search box. This is the finite SE(3)-net hypothesis the runtime must satisfy
+    before the returned-pose RMSD theorems can fire. -/
+theorem pocketGuidedRigidSeedSupport_cover_on_box
+    (centers : Fin 6 → Finset ℝ)
+    (lower upper halfWidths : Fin 6 → ℝ)
+    (hCover : CoordinatewiseIntervalCover 6 centers lower upper halfWidths) :
+    HypercubeSupportCoversOnBox 6
+      (pocketGuidedRigidSeedSupport centers)
+      lower upper halfWidths := by
+  simpa [pocketGuidedRigidSeedSupport] using
+    coordinatewise_cover_yields_hypercubeSupportOnBox 6 centers lower upper halfWidths hCover
+
+/-- Sampled-action-family wrapper for `pocketGuidedRigidSeedSupport_cover_on_box`.
+    If the runtime seed family support is exactly the deterministic rigid seed
+    tensor product, the sampled family inherits the same certified box cover. -/
+theorem sampledPocketGuidedRigidSeedFamily_cover_on_box
+    (F : SampledActionFamily (Fin 6 → ℝ))
+    (centers : Fin 6 → Finset ℝ)
+    (lower upper halfWidths : Fin 6 → ℝ)
+    (hSupport : F.support = pocketGuidedRigidSeedSupport centers)
+    (hCover : CoordinatewiseIntervalCover 6 centers lower upper halfWidths) :
+    HypercubeSupportCoversOnBox 6 F.support lower upper halfWidths := by
+  simpa [hSupport] using
+    pocketGuidedRigidSeedSupport_cover_on_box centers lower upper halfWidths hCover
+
+/-- The current runtime rigid-seed family: an arbitrary finite translation subset
+    crossed with the fixed `quaternionDictionary8` orientation dictionary. This
+    matches the implementation shape used by `formal_sampling.py` after the
+    translation lattice is downselected to the requested seed budget. -/
+noncomputable def translationSubsetQuaternionDictionary8Support
+    (translationSupport : Finset (Fin 3 → ℝ)) : Finset ((Fin 3 → ℝ) × Fin 8) :=
+  translationSupport.product (Finset.univ : Finset (Fin 8))
+
+theorem quaternionDictionary8_contains_rotation_witness
+    {Ω : Type u}
+    (rotationWitness : Ω → Fin 8 → Prop)
+    {ω : Ω}
+    {k : Fin 8}
+    (hk : rotationWitness ω k) :
+    ∃ j : Fin 8, j ∈ (Finset.univ : Finset (Fin 8)) ∧ rotationWitness ω j := by
+  exact ⟨k, by simp, hk⟩
+
+/-- If the runtime translation subset carries an explicit box-cover certificate
+    and the fixed quaternion dictionary carries an explicit orientation witness
+    predicate, then the current translation-subset × quaternionDictionary8 rigid
+    family contains a pose whose coordinates lie within the requested RMSD cover
+    radius of the target rigid pose. This is the theorem-backed bridge for the
+    sampler shape the runtime actually uses today. -/
+theorem translationSubsetQuaternionDictionary8Support_contains_rmsd_witness_of_component_covers
+    {Ω : Type u}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (translationSupport : Finset (Fin 3 → ℝ))
+    (lower upper halfWidths : Fin 3 → ℝ)
+    (targetCoords : (Fin 3 → ℝ) → Ω → CoordSet n)
+    (supportedCoords : (Fin 3 → ℝ) → Fin 8 → CoordSet n)
+    (rotationWitness : Ω → Fin 8 → Prop)
+    (εCover : ℝ)
+    (hTransCover : HypercubeSupportCoversOnBox 3 translationSupport lower upper halfWidths)
+    (hRotCover : ∀ ω, ∃ k : Fin 8, rotationWitness ω k)
+    (hCompose : ∀ t ts ω k,
+      (∀ i, |t i - ts i| ≤ halfWidths i) →
+      rotationWitness ω k →
+      rmsd (supportedCoords ts k) (targetCoords t ω) ≤ εCover) :
+    ∀ t ω,
+      (∀ i, lower i ≤ t i ∧ t i ≤ upper i) →
+      ∃ seed ∈ translationSubsetQuaternionDictionary8Support translationSupport,
+        rmsd (supportedCoords seed.1 seed.2) (targetCoords t ω) ≤ εCover := by
+  intro t ω hBox
+  rcases hTransCover t hBox with ⟨ts, hts, hcell⟩
+  rcases hRotCover ω with ⟨k, hk⟩
+  refine ⟨(ts, k), ?_, hCompose t ts ω k hcell hk⟩
+  simp [translationSubsetQuaternionDictionary8Support, hts]
+
+theorem translationSubsetQuaternionDictionary8Support_contains_explicit_rmsd_witness
+    {Ω : Type u}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (translationSupport : Finset (Fin 3 → ℝ))
+    (halfWidths : Fin 3 → ℝ)
+    (targetCoords : (Fin 3 → ℝ) → Ω → CoordSet n)
+    (supportedCoords : (Fin 3 → ℝ) → Fin 8 → CoordSet n)
+    (rotationWitness : Ω → Fin 8 → Prop)
+    (εCover : ℝ)
+    {t ts : Fin 3 → ℝ}
+    {ω : Ω}
+    {k : Fin 8}
+    (hts : ts ∈ translationSupport)
+    (hCell : ∀ i, |t i - ts i| ≤ halfWidths i)
+    (hRot : rotationWitness ω k)
+    (hCompose : ∀ t ts ω k,
+      (∀ i, |t i - ts i| ≤ halfWidths i) ->
+      rotationWitness ω k ->
+      rmsd (supportedCoords ts k) (targetCoords t ω) ≤ εCover) :
+    ∃ seed ∈ translationSubsetQuaternionDictionary8Support translationSupport,
+      rmsd (supportedCoords seed.1 seed.2) (targetCoords t ω) ≤ εCover := by
+  refine ⟨(ts, k), ?_, hCompose t ts ω k hCell hRot⟩
+  simp [translationSubsetQuaternionDictionary8Support, hts]
+
 /-- If the exact optimum lies in a certified hypercube cell centered at `center`,
     then the center is delta-near-optimal with delta equal to the weighted-L1
     Lipschitz slack over that cell. -/

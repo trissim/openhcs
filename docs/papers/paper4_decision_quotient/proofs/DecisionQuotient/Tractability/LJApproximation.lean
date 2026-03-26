@@ -36,6 +36,22 @@ noncomputable def exactLJScore (ε σ : ℝ) (r : ℝ) : ℝ :=
 noncomputable def cutoffLJScore (ε σ rc : ℝ) (r : ℝ) : ℝ :=
   if r < rc then lennardJones ε σ r else 0
 
+/-- Exact LJ is globally bounded below by `-ε` (or `-ε_pair` when instantiated with a
+    per-pair well depth). This remains true even with the small-distance clamp because the
+    clamp branch is large and positive. -/
+theorem exactLJScore_ge_neg_epsilon (ε σ r : ℝ) (hε : 0 ≤ ε) :
+    -ε ≤ exactLJScore ε σ r := by
+  dsimp [exactLJScore, Computation.ArrayDSL.lennardJones]
+  split_ifs with hclamp
+  · nlinarith
+  · set u : ℝ := (σ / r) ^ (6 : ℕ)
+    have hsquare : 0 ≤ (u - (1 / 2 : ℝ)) ^ (2 : ℕ) := by positivity
+    have hquad : -(1 / 4 : ℝ) ≤ u ^ (2 : ℕ) - u := by
+      nlinarith
+    have hscale : -ε ≤ 4 * ε * (u ^ (2 : ℕ) - u) := by
+      nlinarith [hquad, hε]
+    simpa [u, pow_two] using hscale
+
 /-- Decision problem induced by an exact LJ score over a sampled distance map. -/
 noncomputable def exactLJDecisionProblem {A : Type u} {S : Type v}
     (distance : A → S → ℝ) (ε σ : ℝ) : DecisionProblem A S where

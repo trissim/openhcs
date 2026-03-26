@@ -749,6 +749,58 @@ theorem attractiveTotal_equal_of_equal_background_and_silent_donor
   rw [directionalHBondScore_zero_of_silent_donor, directionalHBondScore_zero_of_silent_donor]
   simpa [hbg]
 
+/-- Generic native-uniqueness theorem for an attractive utility built from a
+    background term minus an orientation-sensitive channel.  If the native pose's
+    background is within `Δ` of every competitor and the orientation-sensitive
+    channel enjoys a strict native margin larger than `Δ`, then the native pose is
+    the unique top-1 action. -/
+theorem native_unique_top1_of_certified_margin_over_background
+    {A : Type u}
+    (background orientationSensitive : A → ℝ)
+    (native : A)
+    (Δ : ℝ)
+    (hBg : ∀ a, a ≠ native → background native ≤ background a + Δ)
+    (hOrient : ∀ a, a ≠ native → orientationSensitive a + Δ < orientationSensitive native) :
+    ∀ a, a ≠ native →
+      background native - orientationSensitive native <
+        background a - orientationSensitive a := by
+  intro a hne
+  have hbg := hBg a hne
+  have horient := hOrient a hne
+  linarith
+
+/-- Directional-H-bond specialization of
+    `native_unique_top1_of_certified_margin_over_background`. -/
+theorem attractiveDirectionalHBond_native_unique_top1_of_certified_background_margin
+    {A : Type u}
+    (background : A → ℝ)
+    (radial donor acceptor : A → ℝ)
+    (native : A)
+    (Δ : ℝ)
+    (hBg : ∀ a, a ≠ native → background native ≤ background a + Δ)
+    (hOrient : ∀ a, a ≠ native →
+      directionalHBondScore (radial a) (donor a) (acceptor a) + Δ
+        < directionalHBondScore (radial native) (donor native) (acceptor native)) :
+    ∀ a, a ≠ native →
+      background native
+        - directionalHBondScore (radial native) (donor native) (acceptor native)
+        < background a - directionalHBondScore (radial a) (donor a) (acceptor a) := by
+  exact native_unique_top1_of_certified_margin_over_background
+    background
+    (fun a => directionalHBondScore (radial a) (donor a) (acceptor a))
+    native Δ hBg hOrient
+
+/-- Equal-background active-H-bond specialization: if the non-H-bond background is
+    identical across the native and flipped pose, then an active native
+    directional H-bond makes the native pose the unique top-1 action. -/
+theorem attractiveDirectionalHBond_native_unique_top1_of_equal_background_and_active
+    {bg_nat bg_flip r_nat d_nat a_nat r_flip a_flip : ℝ}
+    (hbg : bg_nat = bg_flip)
+    (hr : 0 < r_nat) (hd : 0 < d_nat) (ha : 0 < a_nat) :
+    bg_nat - directionalHBondScore r_nat d_nat a_nat
+      < bg_flip - directionalHBondScore r_flip 0 a_flip := by
+  exact attractiveTotal_native_beats_flipped_of_equal_background hbg hr hd ha
+
 end DirectionalHBondApproximation
 end Tractability
 end DecisionQuotient

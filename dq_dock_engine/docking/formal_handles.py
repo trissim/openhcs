@@ -341,7 +341,18 @@ def conformer_search_theorem_handles() -> tuple[str, ...]:
 
 
 def ligand_strain_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(LSA1, LSA2, LSA3, LSA4, LSA5, LSA6, LSA7, LSA8)
+    return _selected_handles(
+        LSA1,
+        LSA2,
+        LSA3,
+        LSA4,
+        LSA5,
+        LSA6,
+        LSA7,
+        LSA8,
+        LSA9,
+        LSA10,
+    )
 
 
 def branch_and_bound_cross_docking_handles() -> tuple[str, ...]:
@@ -392,7 +403,19 @@ def omitted_channel_bound_theorem_handles() -> tuple[str, ...]:
 
 
 def pose_specific_improvement_budget_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(BCRC1, BCRC2, CSC47)
+    return _selected_handles(
+        BCRC1,
+        BCRC2,
+        CSC47,
+        LSA9,
+        LSA10,
+        LJ20,
+        LJ24,
+        LJ25,
+        LJ26,
+        CB5,
+        CB6,
+    )
 
 
 def joint_pruning_budget_optimality_handles() -> tuple[str, ...]:

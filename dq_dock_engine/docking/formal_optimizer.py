@@ -100,6 +100,7 @@ def active_pruning_branch(state: CertifiedOptimizerState) -> Top1PruningBranch:
 @functools.partial(
     jax.jit,
     static_argnames=(
+        "use_softened_exact",
         "use_softened_coarse",
         "target_error",
         "coarse_target_error",
@@ -121,6 +122,7 @@ def _refine_round_jit_core(
     scoring_context: CertifiedScoringContext | None = None,
     binding_site_center: jax.Array | None = None,
     binding_site_radius: float = -1.0,
+    use_softened_exact: bool = False,
     use_softened_coarse: bool = False,
 ):
     n_poses, n_atoms, _ = coords_batch.shape
@@ -155,6 +157,7 @@ def _refine_round_jit_core(
         retained_indices=retained_indices,
         coarse_target_error=coarse_target_error,
         scoring_context=scoring_context,
+        use_softened_exact=use_softened_exact,
         use_softened_coarse=use_softened_coarse,
     )
 
@@ -211,6 +214,7 @@ def _refine_round(
     scoring_context: CertifiedScoringContext | None = None,
     binding_site_center: jax.Array | None = None,
     binding_site_radius: float = -1.0,
+    use_softened_exact: bool = False,
     use_softened_coarse: bool = False,
 ) -> tuple[jax.Array, tuple[CertifiedOptimizerState, ...]]:
     action_family = create_roundwise_certified_action_family(
@@ -242,6 +246,7 @@ def _refine_round(
         scoring_context=presubsetted_context,
         binding_site_center=binding_site_center,
         binding_site_radius=binding_site_radius,
+        use_softened_exact=use_softened_exact,
         use_softened_coarse=use_softened_coarse,
     )
 
@@ -349,6 +354,7 @@ def refine_poses_certified(
     scoring_context: CertifiedScoringContext | None = None,
     binding_site_center: jax.Array | None = None,
     binding_site_radius: float = -1.0,
+    use_softened_exact: bool = False,
     use_softened_coarse: bool = False,
     adaptive_coarse_target_errors: tuple[float, ...] | None = None,
 ) -> tuple[jax.Array, tuple[tuple[CertifiedOptimizerState, ...], ...]]:
@@ -364,12 +370,6 @@ def refine_poses_certified(
     )
     support_expansion_levels = np.zeros((int(coords_batch.shape[0]),), dtype=np.int32)
 
-    # Use the full receptor in the exact local optimizer. The earlier shared
-    # batch-level subset was a performance shortcut, but it made refinement
-    # outcome depend on which unrelated poses happened to be optimized in the
-    # same batch. For correctness-first certified refinement, keep the local
-    # exact scorer batch-independent and let pipeline-level chunking absorb the
-    # runtime cost.
     retained_indices = np.arange(receptor_coords.shape[0], dtype=np.int32)
     retained_indices_jax = jnp.array(retained_indices)
 
@@ -402,6 +402,7 @@ def refine_poses_certified(
                 scoring_context=scoring_context,
                 binding_site_center=binding_site_center,
                 binding_site_radius=binding_site_radius,
+                use_softened_exact=use_softened_exact,
                 use_softened_coarse=use_softened_coarse,
             )
             for local_idx, pose_idx in enumerate(pose_indices.tolist()):
@@ -448,6 +449,7 @@ def refine_poses_singleton_then_exact(
     scoring_context: CertifiedScoringContext | None = None,
     binding_site_center: jax.Array | None = None,
     binding_site_radius: float = -1.0,
+    use_softened_exact: bool = False,
     use_softened_coarse: bool = False,
     adaptive_coarse_target_errors: tuple[float, ...] | None = None,
 ) -> HybridSingletonRefinementResult:
@@ -465,6 +467,7 @@ def refine_poses_singleton_then_exact(
         scoring_context=scoring_context,
         binding_site_center=binding_site_center,
         binding_site_radius=binding_site_radius,
+        use_softened_exact=use_softened_exact,
         use_softened_coarse=use_softened_coarse,
         adaptive_coarse_target_errors=adaptive_coarse_target_errors,
     )

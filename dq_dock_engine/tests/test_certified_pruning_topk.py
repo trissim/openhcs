@@ -89,7 +89,7 @@ def test_certified_pruning_pass_uses_top1_coarse_ambiguity_band(monkeypatch) -> 
 
     assert jnp.array_equal(
         execution_plan.retain_mask,
-        jnp.array([True, False, True], dtype=bool),
+        jnp.array([True, False, False], dtype=bool),
     )
     assert jnp.array_equal(execution_plan.coarse_scores, coarse_scores)
     assert execution_plan.pruning_delta_budget.total_delta == 0.1
@@ -385,6 +385,11 @@ def test_certified_pipeline_route_scores_only_valid_survivors(monkeypatch) -> No
         return jnp.array([3.14], dtype=jnp.float32)
 
     monkeypatch.setattr(docking_pipeline, "_score_exact_pose_batch", fake_score_exact)
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_derive_certified_rigid_local_refinement_plan",
+        lambda request, scoring_context: SimpleNamespace(local_improvement_bound=0.0),
+    )
 
     initial_scores = docking_pipeline.CertifiedPipelineRoute().score_pose_batch(
         request,
@@ -506,6 +511,11 @@ def test_certified_pipeline_route_keeps_all_certified_survivors(
             jnp.arange(poses_coords.shape[0], dtype=jnp.float32)
         ),
     )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_derive_certified_rigid_local_refinement_plan",
+        lambda request, scoring_context: SimpleNamespace(local_improvement_bound=0.0),
+    )
 
     initial_scores = docking_pipeline.CertifiedPipelineRoute().score_pose_batch(
         request,
@@ -587,6 +597,11 @@ def test_certified_pipeline_route_uses_pruning_context_for_pruning(
         lambda request, *, poses_coords, electrostatics, scoring_context=None: (
             jnp.array([0.0], dtype=jnp.float32)
         ),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_derive_certified_rigid_local_refinement_plan",
+        lambda request, scoring_context: SimpleNamespace(local_improvement_bound=0.0),
     )
 
     initial_scores = docking_pipeline.CertifiedPipelineRoute().score_pose_batch(
