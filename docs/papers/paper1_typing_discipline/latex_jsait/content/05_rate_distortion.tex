@@ -1,6 +1,7 @@
 \subsection{Distortion as a Currency}
 
-\paragraph{Currency comparison.}
+Throughout this paper, we use the informal term ``currency'' to denote an operational modality for paying the residual ambiguity debt: auxiliary bits, query effort, or accepted distortion. This terminology is a conceptual shorthand rather than a formal definition; the precise statements are the theorems themselves.
+
 The counting and entropy converses above show that auxiliary bits, queries, and accepted distortion are alternative currencies for the same residual ambiguity. This section makes one exchange explicit: how many bits must be paid to drive distortion to zero on a collision fiber, and what floor remains when those bits are withheld.
 
 The general law is fiberwise. For arbitrary finite sources \cite{CoverThomas2006,berger1971rate}, the optimal recoverable mass decomposes exactly across representation fibers. The clean closed form arises in the uniform single-block corner, where the collision geometry alone determines the full budget-distortion tradeoff.
@@ -55,7 +56,7 @@ Take $S^\star = \bigcup_u S^\star_u$ where $S^\star_u$ is a maximizing subset in
 \end{proof}
 
 \begin{remark}[The decomposition is the general law]
-The decomposition theorem applies to any finite source distribution, including uniform, Zipf, power-law, and arbitrary. The uniform single-block formula derived below is the special case where (i) all source mass lies in one fiber and (ii) the mass is uniformly distributed. Neither assumption is required for the decomposition itself. In this sense, the decomposition is the general zero-error rate-distortion law for the fixed-representation setting; the closed-form curve is its cleanest instantiation.
+The uniform single-block formula derived below is the special case where all source mass lies in one uniformly distributed fiber. Neither assumption is required for the decomposition itself: the decomposition is the general zero-error rate-distortion law for the fixed-representation setting, and the closed-form curve is its cleanest instantiation.
 \end{remark}
 
 \begin{remark}[Relation to classical source coding]
@@ -130,7 +131,7 @@ The exact formula above is stated for the uniform source on a single collision b
 
 \subsection{Finite Entropy Converses}\label{sec:entropy-converses}
 
-The counting-based converses above are combinatorial: they bound distortion in terms of fiber sizes and tag budgets. A complementary family of converses connects distortion to information-theoretic quantities \cite{CoverThomas2006,csiszar2011information}, placing the semantic identity problem inside classical Shannon theory.
+The counting-based converses above are combinatorial: they bound distortion in terms of fiber sizes and tag budgets. A complementary family of converses connects distortion to information-theoretic quantities \cite{CoverThomas2006,csiszar2011information,barron1998information}, placing the semantic identity problem inside classical Shannon theory.
 
 The following theorems are mechanized in the RDC series, from \LH{RDC1} through \LH{RDC9}. They apply to any finite source, any observation map, and any tag/decoder pair.
 
