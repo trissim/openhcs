@@ -21,6 +21,96 @@
 \providecommand{\BIBdecl}{\relax}
 \BIBdecl
 
+\bibitem{saunshi2019theoretical}
+\BIBentryALTinterwordspacing
+N.~Saunshi, O.~Plevrakis, S.~Arora, M.~Khodak, and N.~Khandeparkar, ``A
+  theoretical analysis of contrastive unsupervised representation learning,''
+  in \emph{Proceedings of the 36th International Conference on Machine Learning
+  (ICML)}, 2019, pp. 5628--5637. [Online]. Available:
+  \url{http://proceedings.mlr.press/v97/saunshi19a.html}
+\BIBentrySTDinterwordspacing
+
+\bibitem{higgins2017beta}
+\BIBentryALTinterwordspacing
+I.~Higgins, L.~Matthey, A.~Pal, C.~Burgess, X.~Glorot, M.~Botvinick,
+  A.~Lerchner, Z.~Zheng \emph{et~al.}, ``{$\beta$}-vae: Learning basic visual
+  concepts with a constrained variational framework,'' in \emph{International
+  Conference on Learning Representations (ICLR)}, 2017. [Online]. Available:
+  \url{https://openreview.net/forum?id=Hkx9Qkcg}
+\BIBentrySTDinterwordspacing
+
+\bibitem{alemi2017deep}
+\BIBentryALTinterwordspacing
+A.~Alemi, A.~Fischer, V.~Soro, and P.~Sontag, ``Deep variational information
+  bottleneck,'' in \emph{International Conference on Learning Representations
+  (ICLR)}, 2017. [Online]. Available:
+  \url{https://openreview.net/forum?id=H1g1Ylxl}
+\BIBentrySTDinterwordspacing
+
+\bibitem{jing2022understanding}
+\BIBentryALTinterwordspacing
+L.~Jing, P.~Vincent, Y.~LeCun, and Y.~Tian, ``Understanding dimensional
+  collapse in contrastive self-supervised learning,'' in \emph{International
+  Conference on Learning Representations (ICLR)}, 2022. [Online]. Available:
+  \url{https://openreview.net/forum?id=YeuYXfR2iOa}
+\BIBentrySTDinterwordspacing
+
+\bibitem{wang2020understanding}
+\BIBentryALTinterwordspacing
+T.~Wang and P.~Isola, ``Understanding contrastive representation learning
+  through alignment and uniformity on the hypersphere,'' in \emph{International
+  Conference on Machine Learning (ICML)}.\hskip 1em plus 0.5em minus
+  0.4em\relax PMLR, 2020, pp. 9929--9939. [Online]. Available:
+  \url{http://proceedings.mlr.press/v119/wang20k.html}
+\BIBentrySTDinterwordspacing
+
+\bibitem{ignatiev2019abduction}
+A.~Ignatiev, N.~Narodytska, and J.~Marques-Silva, ``Abduction-based
+  explanations for machine learning models,'' in \emph{Proceedings of the AAAI
+  Conference on Artificial Intelligence}, vol.~33, no.~1, 2019, pp. 1511--1519.
+
+\bibitem{marquessilva2022trustworthy}
+J.~Marques-Silva and A.~Ignatiev, ``Delivering trustworthy {AI} through formal
+  {XAI},'' in \emph{Proceedings of the AAAI Conference on Artificial
+  Intelligence}, vol.~36, no.~11, 2022, pp. 12\,342--12\,350.
+
+\bibitem{dwork2006differential}
+C.~Dwork, ``Differential privacy,'' in \emph{International Colloquium on
+  Automata, Languages, and Programming (ICALP)}.\hskip 1em plus 0.5em minus
+  0.4em\relax Springer, 2006, pp. 1--12.
+
+\bibitem{slepian1973noiseless}
+D.~Slepian and J.~Wolf, ``Noiseless coding of correlated information sources,''
+  \emph{IEEE Transactions on Information Theory}, vol.~19, no.~4, pp. 471--480,
+  1973.
+
+\bibitem{wyner1976rate}
+A.~D. Wyner and J.~Ziv, ``The rate-distortion function for source coding with
+  side information at the decoder,'' \emph{IEEE Transactions on Information
+  Theory}, vol.~22, no.~1, pp. 1--10, 1976.
+
+\bibitem{yamamoto1981source}
+H.~Yamamoto, ``Source coding theory for cascade and branching communication
+  systems,'' \emph{IEEE Transactions on Information Theory}, vol.~27, no.~3,
+  pp. 299--308, 1981.
+
+\bibitem{oohama1997gaussian}
+Y.~Oohama, ``Gaussian multiterminal source coding,'' \emph{IEEE Transactions on
+  Information Theory}, vol.~43, no.~6, pp. 1912--1923, 1997.
+
+\bibitem{gastpar2004wyner}
+M.~Gastpar, ``The {W}yner--{Z}iv problem with coded side information,''
+  \emph{IEEE Transactions on Information Theory}, vol.~50, no.~11, pp.
+  2762--2768, 2004.
+
+\bibitem{shannon1956zero}
+C.~E. Shannon, ``The zero error capacity of a noisy channel,'' \emph{IRE
+  Transactions on Information Theory}, vol.~2, no.~3, pp. 8--19, 1956.
+
+\bibitem{lovasz1979shannon}
+L.~Lov{\'a}sz, ``On the shannon capacity of a graph,'' \emph{IEEE Transactions
+  on Information Theory}, vol.~25, no.~1, pp. 1--7, 1979.
+
 \bibitem{korner1973coding}
 J.~K{\"o}rner, ``Coding of an information source having ambiguous alphabet and
   the entropy of graphs,'' \emph{6th Prague Conference on Information Theory},
@@ -29,6 +119,19 @@ J.~K{\"o}rner, ``Coding of an information source having ambiguous alphabet and
 \bibitem{simonyi1995graph}
 G.~Simonyi, ``Perfect graphs and graph entropy,'' \emph{Combinatorica},
   vol.~15, no.~4, pp. 541--549, 1995.
+
+\bibitem{alon1996source}
+N.~Alon and A.~Orlitsky, ``Source coding and graph entropies,'' \emph{IEEE
+  Transactions on Information Theory}, vol.~42, no.~5, pp. 1329--1339, 1996.
+
+\bibitem{haemers1978upper}
+C.~Haemers, ``An upper bound for the shannon capacity of a graph,''
+  \emph{Colloquium Mathematicum Societatis J{\'a}nos Bolyai}, vol.~25, pp.
+  267--272, 1978.
+
+\bibitem{zuiddam2019asymptotic}
+J.~Zuiddam, ``The asymptotic spectrum of graphs and the shannon capacity,''
+  \emph{Combinatorica}, vol.~39, pp. 1173--1184, 2019.
 
 \bibitem{witsenhausen1976zero}
 H.~S. Witsenhausen, ``The zero-error side information problem and chromatic
@@ -41,6 +144,21 @@ D.~Gund{"u}z, Z.~Qin, I.~Estella~Aguerri, H.~S. Dhillon, Z.~Yang, A.~Yener,
   and task-oriented communications,'' \emph{IEEE Journal on Selected Areas in
   Communications}, vol.~41, no.~1, pp. 5--41, 2023.
 
+\bibitem{uysal2022semantic}
+E.~Uysal, O.~Kaya, A.~Ephremides \emph{et~al.}, ``Semantic communications in
+  networked systems: A data significance perspective,'' \emph{IEEE Network},
+  vol.~36, no.~4, pp. 233--240, 2022.
+
+\bibitem{bao2011towards}
+J.~Bao, P.~Basu, M.~Dean, C.~Partridge, A.~Swami, and W.~Leland, ``Towards a
+  theory of semantic communication,'' in \emph{2011 IEEE Network Science
+  Workshop}.\hskip 1em plus 0.5em minus 0.4em\relax IEEE, 2011, pp. 110--117.
+
+\bibitem{kountouris2021semantics}
+M.~Kountouris and N.~Pappas, ``Semantics-empowered communication for networked
+  intelligent systems,'' \emph{IEEE Communications Magazine}, vol.~59, no.~6,
+  pp. 96--102, 2021.
+
 \bibitem{koh2020concept}
 P.~W. Koh, T.~Nguyen, Y.~S. Tang, S.~Mussmann, E.~Pierson, B.~Kim, and
   P.~Liang, ``Concept bottleneck models,'' in \emph{Proceedings of the 37th
@@ -50,6 +168,11 @@ P.~W. Koh, T.~Nguyen, Y.~S. Tang, S.~Mussmann, E.~Pierson, B.~Kim, and
 \bibitem{garcez2020neurosymbolic}
 A.~d'Avila Garcez and L.~C. Lamb, ``Neurosymbolic {AI}: The 3rd wave,''
   \emph{CoRR}, vol. abs/2012.05876, 2020.
+
+\bibitem{polyanskiy2010channel}
+Y.~Polyanskiy, H.~V. Poor, and S.~Verd{\'u}, ``Channel coding rate in the
+  finite blocklength regime,'' \emph{IEEE Transactions on Information Theory},
+  vol.~56, no.~5, pp. 2307--2359, 2010.
 
 \bibitem{ahlswede1989identification}
 R.~Ahlswede and G.~Dueck, ``Identification via channels,'' \emph{IEEE
@@ -72,13 +195,29 @@ T.~M. Cover and J.~A. Thomas, \emph{Elements of Information Theory},
 T.~Berger, \emph{Rate Distortion Theory: A Mathematical Basis for Data
   Compression}.\hskip 1em plus 0.5em minus 0.4em\relax Prentice-Hall, 1971.
 
-\bibitem{blau2019rethinking}
+\bibitem{barron1998information}
+A.~Barron, M.~J. Schervish, and L.~Wasserman, ``The information-theoretic
+  characterization of {B}ayes performance and the choice of priors in
+  parametric and nonparametric problems,'' \emph{Bayesian Statistics}, vol.~6,
+  pp. 27--52, 1998.
+
+\bibitem{lewis2020retrieval}
 \BIBentryALTinterwordspacing
-Y.~Blau and T.~Michaeli, ``Rethinking lossy compression: The
-  rate-distortion-perception tradeoff,'' in \emph{Proceedings of the 36th
-  International Conference on Machine Learning}, ser. Proceedings of Machine
-  Learning Research, vol.~97, 2019, pp. 675--685. [Online]. Available:
-  \url{https://proceedings.mlr.press/v97/blau19a.html}
+P.~Lewis, E.~Perez, A.~Piktus, F.~Petroni, V.~Karpukhin, N.~Goyal,
+  H.~K{\"u}ttler, M.~Lewis, W.-t. Yih, T.~Rockt{\"a}schel \emph{et~al.},
+  ``Retrieval-augmented generation for knowledge-intensive nlp tasks,'' in
+  \emph{Advances in Neural Information Processing Systems (NeurIPS)}, vol.~33,
+  2020, pp. 9459--9474. [Online]. Available:
+  \url{https://proceedings.neurips.cc/paper/2020/hash/6b493230205f780e1bc26945df7481e5-Abstract.html}
 \BIBentrySTDinterwordspacing
+
+\bibitem{orlitsky2001coding}
+A.~Orlitsky and J.~R. Roche, ``Coding for computing,'' \emph{IEEE Transactions
+  on Information Theory}, vol.~47, no.~3, pp. 903--917, 2001.
+
+\bibitem{doshi2010functional}
+V.~Doshi, D.~Shah, M.~M{\'e}dard, and M.~Effros, ``Functional compression
+  through graph coloring,'' \emph{IEEE Transactions on Information Theory},
+  vol.~56, no.~8, pp. 3901--3917, 2010.
 
 \end{thebibliography}

@@ -50,6 +50,12 @@ Shahar Dobzinski and Jan Vondr{\'a}k.
 \newblock In {\em Proceedings of the 44th ACM Symposium on Theory of
   Computing}, pages 1107--1116, 2012.
 
+\bibitem{ferns2004metrics}
+Norman Ferns, Prakash Panangaden, and Doina Precup.
+\newblock Metrics for finite markov decision processes.
+\newblock {\em Proceedings of the 20th Conference on Uncertainty in Artificial
+  Intelligence (UAI)}, pages 162--169, 2004.
+
 \bibitem{forster2019verified}
 Yannick Forster, Edith Heiter, and Gert Smolka.
 \newblock Verified programming of {Turing} machines in {Coq}.
@@ -60,6 +66,13 @@ Yannick Forster, Edith Heiter, and Gert Smolka.
 Eugene~C. Freuder.
 \newblock Complexity of k-tree structured constraint satisfaction problems.
 \newblock {\em Proceedings of AAAI}, pages 4--9, 1990.
+
+\bibitem{ganian2017discovering}
+Robert Ganian, M.~S. Ramanujan, and Stefan Szeider.
+\newblock Discovering archipelagos of tractability for constraint satisfaction
+  and counting.
+\newblock In {\em Proceedings of the 27th Annual ACM-SIAM Symposium on Discrete
+  Algorithms (SODA)}, pages 1670--1681. SIAM, 2016.
 
 \bibitem{givan2003equivalence}
 Robert Givan, Thomas Dean, and Matthew Greig.
@@ -85,6 +98,12 @@ Ronald~A. Howard.
 \newblock Information value theory.
 \newblock {\em IEEE Transactions on Systems Science and Cybernetics},
   2(1):22--26, 1966.
+
+\bibitem{ignatiev2019abduction}
+Alexey Ignatiev, Nina Narodytska, and Joao Marques-Silva.
+\newblock Abduction-based explanations for machine learning models.
+\newblock {\em Proceedings of the AAAI Conference on Artificial Intelligence},
+  33:1511--1519, 2019.
 
 \bibitem{impagliazzo2001complexity}
 Russell Impagliazzo and Ramamohan Paturi.
@@ -115,6 +134,12 @@ Fabian Kunze, Gert Smolka, and Yannick Forster.
 Michael~L. Littman, Judy Goldsmith, and Martin Mundhenk.
 \newblock The computational complexity of probabilistic planning.
 \newblock {\em Journal of Artificial Intelligence Research}, 9:1--36, 1998.
+
+\bibitem{marques2022delivering}
+Joao Marques-Silva and Alexey Ignatiev.
+\newblock Delivering trustworthy ai through formal xai.
+\newblock {\em Proceedings of the AAAI Conference on Artificial Intelligence},
+  36:12342--12350, 2022.
 
 \bibitem{mundhenk2000mdp}
 Martin Mundhenk, Judy Goldsmith, Christopher Lusena, and Eric Allender.
@@ -185,6 +210,13 @@ Ryan Williams, Carla~P. Gomes, and Bart Selman.
 \newblock In {\em Proceedings of the Eighteenth International Joint Conference
   on Artificial Intelligence (IJCAI)}, pages 1173--1178. Morgan Kaufmann
   Publishers Inc., 2003.
+
+\bibitem{zhang2021learning}
+Amy Zhang, Rowan McAllister, Roberto Calandra, Yarin Gal, and Sergey Levine.
+\newblock Learning invariant representations for reinforcement learning without
+  reconstruction.
+\newblock {\em International Conference on Learning Representations (ICLR)},
+  2021.
 
 \bibitem{multiplier}
 Xiaofeng Zhang et~al.

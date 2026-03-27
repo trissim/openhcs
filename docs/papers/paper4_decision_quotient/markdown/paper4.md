@@ -1,19 +1,23 @@
 # Paper: Decision Quotient: A Regime-Sensitive Complexity Theory of Exact Relevance Certification
 
-**Status**: Computational Complexity-ready | **Lean**: 22068 lines, 1015 theorems
+**Status**: SICOMP-ready | **Lean**: 22068 lines, 1015 theorems
 
 ---
 
 ## Abstract
 
-Which coordinates of a decision problem can be hidden without changing the optimal action, and what is the computational cost of determining this? We analyze the complexity of this certification problem across three settings: static (counterexample exclusion), stochastic (conditioning and expectation), and sequential (temporal structure). In the static regime, minimum sufficiency is coNP-complete. In the stochastic regime, preservation and decisiveness separate: preservation is polynomial-time under explicit-state encoding, while decisiveness is PP-hard under succinct encoding with anchor and minimum variants in $\textsf{NP}^{\textsf{PP}}$. In the sequential regime, all queries are PSPACE-complete. We prove an encoding-sensitive contrast between explicit-state tractability and succinct-encoding hardness, identify six natural structural restrictions under which the problem becomes polynomial-time solvable, and derive an integrity-competence trilemma. A Lean 4 artifact mechanically verifies the optimizer-quotient universal property, main reductions, and finite decider core.
+Which coordinates of a decision problem can be hidden without changing the optimal action, and what is the computational cost of certifying that this hiding is exact? We organize this question around the optimizer quotient, the coarsest abstraction that preserves optimal-action distinctions, so every exact decision-preserving abstraction must refine it. From this canonical object, we derive a near-complete, regime-sensitive complexity map across the static, stochastic, and sequential models studied here. In the static regime, minimum sufficiency collapses to relevance containment (coNP-complete), while anchor sufficiency remains $\Sigma_2^P$-complete. In the stochastic regime, preservation and decisiveness separate: preservation bridges to static sufficiency (with full-support inheritance for minimum and anchor variants), while decisiveness is PP-hard under succinct encoding with anchor and minimum variants in $\textsf{NP}^{\textsf{PP}}$. In the sequential regime, sufficiency, minimum, and anchor queries are PSPACE-complete. We also identify six nontrivial structural restrictions under which exact certification becomes polynomial-time, and we prove impossibility consequences for exact certifiers in hard regimes. The finite reduction and verification core is mechanically checked in Lean 4.
 
 
 # Introduction {#sec:introduction}
 
-Which coordinates of a decision problem can be hidden without changing the optimal action, and what is the computational cost of determining this? We study this question for a decision problem $\mathcal{D}=(A,S,U)$ with $S = X_1 \times \cdots \times X_n$. A coordinate set $I$ is sufficient when agreement on $I$ forces agreement on the optimal-action set: $$s_I = s'_I \implies \operatorname{Opt}(s) = \operatorname{Opt}(s').$$ We classify how hard it is to certify this property across three settings: static, stochastic, and sequential. The problem is coNP-complete in the static regime, PP-complete in the stochastic regime, and PSPACE-complete in the sequential regime. Six natural structural restrictions yield polynomial-time certification.
+Which coordinates of a decision problem can be hidden without changing the optimal action, and what is the computational cost of determining this? We study this question for a decision problem $\mathcal{D}=(A,S,U)$ with $S = X_1 \times \cdots \times X_n$. A coordinate set $I$ is sufficient when agreement on $I$ forces agreement on the optimal-action set: $$s_I = s'_I \implies \operatorname{Opt}(s) = \operatorname{Opt}(s').$$
 
-This paper's main claim is that once that canonical object is fixed, exact relevance certification becomes a regime-sensitive complexity problem. The structural target is the same throughout, but the cost of certifying it changes with the ambient model. In the static regime, certification reduces to counterexample exclusion and collapses to relevance containment. In the stochastic regime, conditioning splits the exact question into preservation and decisiveness. In the sequential regime, temporal contingency lifts the same certification task to planning-style reasoning. The paper therefore has a simple backbone: the optimizer quotient supplies the canonical notion of exact decision-preserving compression, and the regime analyses classify when that structure can be certified exactly.
+The optimizer quotient is the canonical structure for this problem. It quotients the state space by optimizer-equivalence and is the coarsest decision-preserving abstraction: every surjective abstraction that preserves optimal actions factors uniquely through it. Equivalently, in **Set**, it is the coimage/image factorization of the optimizer map. This canonical status is theorem-level in the artifact (Theorems 2.4--2.5). Every exact decision-preserving abstraction must refine it.
+
+Given this canonical structure, we classify how hard it is to certify exact preservation across three settings. In the static regime, certification reduces to counterexample exclusion and minimum sufficiency collapses to relevance containment, yielding coNP-completeness. In the stochastic regime, conditioning splits the exact question into preservation (which bridges back to static) and decisiveness (which is PP-hard under succinct encoding). In the sequential regime, temporal contingency lifts the certification task to PSPACE-complete. Six natural structural restrictions yield polynomial-time certification.
+
+The structural target is the same throughout, but the cost of certifying it changes with the ambient model.
 
 #### Informal interpretive guide.
 
@@ -39,7 +43,7 @@ Throughout, we work with finite coordinate-structured decision problems under th
 
 ## Contributions
 
-The paper is best read as a theory of exact decision-relevant information organized around one canonical mathematical object: the optimizer quotient. The quotient gives the coarsest exact abstraction that preserves optimal-action distinctions, and this canonical status is theorem-level in the artifact. The paper then classifies how the cost of certifying that structure changes across static, stochastic, and sequential regimes, identifies tractable structural subcases, and supports the finite combinatorial core with a Lean artifact.
+The paper is best read as a theory of exact decision-relevant information organized around one canonical mathematical object: the optimizer quotient. The optimizer quotient is the coarsest abstraction that exactly preserves optimal-action distinctions (Theorem [\[thm:quotient-universal\]](#thm:quotient-universal){reference-type="ref" reference="thm:quotient-universal"}), so every exact decision-preserving abstraction must refine it. Building on this canonical object, the paper develops a near-complete, regime-sensitive complexity map for exact relevance certification across the static, stochastic, and sequential models studied here, including twelve explicit cases (six nontrivial tractable subcases), impossibility results, and extensive machine-checked support. The conjecture and open problem are deliberate boundary markers that specify exactly what is settled and what remains open.
 
 1.  **Optimizer quotient as canonical structure.** For a finite decision problem, the optimizer quotient identifies states exactly when they induce the same optimal-action set. In **Set**, it is the coarsest exact decision-preserving abstraction, equivalently the coimage/image factorization of the optimizer map. This gives the paper a common structural object through which the later static, stochastic, and sequential results can be compared.
 
@@ -70,17 +74,17 @@ The proof artifact is archived at <https://doi.org/10.5281/zenodo.18998870>. The
 
 This section fixes the abstract vocabulary used throughout the paper. We work with finite decision problems whose state spaces factor into coordinates, and we isolate the minimal terminology needed to state the later complexity results. The same setup will support the paper's three core regime classifications, the encoding-sensitive boundary, and the later consequence sections.
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
   **Object**               **Quantifier shape**                           **Certifies**                              **Role**
-  ------------------------ ---------------------------------------------- ------------------------------------------ ---------------------------------------------------------
+  ------------------------ ---------------------------------------------- ------------------------------------------ -----------------------------------------------------
   SUFFICIENCY-CHECK        universal over state pairs                     exact coordinate sufficiency               baseline certification predicate
 
-  MINIMUM-SUFFICIENT-SET   apparent $\exists I\,\forall (s,s')$ check     smallest sufficient support                collapses to relevance containment in the static regime
+  MINIMUM-SUFFICIENT-SET   apparent $\exists I\,\forall (s,s')$ check     smallest sufficient support                collapses to relevance containment in static regime
 
   ANCHOR-SUFFICIENCY       $\exists$ anchor, then universal fiber check   exact preservation on one chosen fiber     retains the outer existential layer
 
   Optimizer quotient       universal factorization property               coarsest decision-preserving abstraction   canonical structural object
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 **Setup map.** The four central objects differ mainly in quantifier shape: minimum sufficiency collapses in the static regime, while anchor sufficiency keeps its existential fiber choice.
 
@@ -379,17 +383,19 @@ Consider a stochastic decision problem with $S=\{s_1,s_2\}$, $A=\{a,b\}$, unifor
 
 Regime classification summary for the stochastic row. Open entries mark explicit scope boundaries. Under full support, stochastic preservation is completely classified in the full-support base case.
 
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-  **Predicate/** **query**                **What is proved here**                                                                                                               **Mechanized core**                                                             **Open / not formalized**
-  --------------------------------------- ------------------------------------------------------------------------------------------------------------------------------------- ------------------------------------------------------------------------------- ------------------------------------------
-  Stochastic sufficiency (preservation)   Polynomial-time under explicit-state encoding; bridges to static sufficiency and the optimizer quotient                               Explicit-state decider; full-support bridge package                             No succinct-encoding hardness claimed
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  **Predicate/** **query**                                     **What is proved here**                                                                                                               **Mechanized core**                                                             **Open / not formalized**
+  ------------------------------------------------------------ ------------------------------------------------------------------------------------------------------------------------------------- ------------------------------------------------------------------------------- ------------------------------------------
+  Stochastic sufficiency (preservation)                        Polynomial-time under explicit-state encoding; bridges to static sufficiency and the optimizer quotient                               Explicit-state decider; full-support bridge package                             No succinct-encoding hardness claimed
 
-  Minimum / anchor preservation           Polynomial-time in explicit state; under full support, inherit coNP-completeness / $\Sigma_2^P$-completeness from the static regime   Full-support inheritance theorems; finite searches; obstruction/bridge lemmas   Open; conjecture coNP-hard
+  Minimum / anchor preservation                                Polynomial-time in explicit state; under full support, inherit coNP-completeness / $\Sigma_2^P$-completeness from the static regime   Full-support inheritance theorems; finite searches; obstruction/bridge lemmas   Open; conjecture coNP-hard
 
-  Stochastic decisiveness                 Polynomial-time under explicit-state encoding; PP-hard under succinct encoding                                                        Reduction core; finite witness/checking schemata                                No oracle-machine formalization
+  Stochastic decisiveness                                      Polynomial-time under explicit-state encoding; PP-hard under succinct encoding                                                        Reduction core; finite witness/checking schemata                                No oracle-machine formalization
 
-  Minimum / anchor decisiveness           PP-hard; in $\textsf{NP}^{\textsf{PP}}$ at paper level                                                                                Existential witness/checking schemata; bounded explicit-state searches          No oracle-class membership formalization
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Minimum / anchor decisiveness                                PP-hard; in $\textsf{NP}^{\textsf{PP}}$ at paper level                                                                                Existential witness/checking schemata; bounded explicit-state searches          No oracle-class membership formalization
+
+  []{#tab:stochastic-summary label="tab:stochastic-summary"}                                                                                                                                                                                                                         
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 The rest of this section unpacks the four rows of this summary. The preservation side is complete in explicit state and under full-support inheritance, and now also has support-sensitive partial results beyond full support. The decisiveness side carries the strongest succinct-encoding classification currently established in the paper.
 
@@ -789,17 +795,19 @@ The static, stochastic, and sequential formulations are the paper's central orga
 ## Complexity Matrix
 
 ::: center
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-  **Regime /** **predicate**   **Base query**                     **Minimum**                                           **Anchor**
-  ---------------------------- ---------------------------------- ----------------------------------------------------- -------------------------------------------------------------
-  Static                       coNP-complete                      coNP-complete                                         $\Sigma_2^P$-complete
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  **Regime /** **predicate**                         **Base query**                     **Minimum**                                           **Anchor**
+  -------------------------------------------------- ---------------------------------- ----------------------------------------------------- -------------------------------------------------------------
+  Static                                             coNP-complete                      coNP-complete                                         $\Sigma_2^P$-complete
 
-  Stochastic preservation      P (explicit), bridge theorems      P (explicit); coNP-complete (full) / open (general)   P (explicit); $\Sigma_2^P$-complete (full) / open (general)
+  Stochastic preservation                            P (explicit), bridge theorems      P (explicit); coNP-complete (full) / open (general)   P (explicit); $\Sigma_2^P$-complete (full) / open (general)
 
-  Stochastic decisiveness      P (explicit), PP-hard (succinct)   PP-hard, in $\textsf{NP}^{\textsf{PP}}$               PP-hard, in $\textsf{NP}^{\textsf{PP}}$
+  Stochastic decisiveness                            P (explicit), PP-hard (succinct)   PP-hard, in $\textsf{NP}^{\textsf{PP}}$               PP-hard, in $\textsf{NP}^{\textsf{PP}}$
 
-  Sequential                   PSPACE-complete                    PSPACE-complete                                       PSPACE-complete
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Sequential                                         PSPACE-complete                    PSPACE-complete                                       PSPACE-complete
+
+  []{#tab:regime-matrix label="tab:regime-matrix"}                                                                                            
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 :::
 
 This table is the paper's compact summary. The stochastic regime contains two parallel predicates with distinct complexity profiles: preservation and decisiveness. In the static regime, sufficiency and minimum sufficiency are coNP-complete and anchor sufficiency is $\Sigma_2^P$-complete. In the stochastic regime, preservation (stochastic sufficiency) has explicit-state tractability and bridge theorems back to static sufficiency and the optimizer quotient; the minimum and anchor preservation variants are also polynomial-time in explicit state, inherit coNP-completeness and $\Sigma_2^P$-completeness under full support, and admit support-sensitive obstruction and bridge lemmas beyond full support, while the full general-distribution classification remains open. Decisiveness (stochastic decisiveness) has the sharper succinct-encoding classification: polynomial-time in the explicit-state model, PP-hardness in the succinct model, and paper-level $\textsf{NP}^{\textsf{PP}}$ membership for the anchor and minimum variants. The artifact mechanizes the finite witness/checking schemas and reduction cores underlying those upper bounds. In the sequential regime, sufficiency, minimum, and anchor queries are PSPACE-complete.
@@ -863,13 +871,13 @@ The regime hierarchy identifies where exact relevance certification sits in the 
 
 Part 1 is an explicit-state upper bound (time polynomial in $|S|$). Part 2 is a succinct-encoding lower bound under ETH (time exponential in $n$). The encodings are defined in Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}.
 
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
   **Encoding**       **Support regime**   **Complexity consequence**                                                    **Source**
-  ------------------ -------------------- ----------------------------------------------------------------------------- ------------------------------------------------------------------------------------------------
+  ------------------ -------------------- ----------------------------------------------------------------------------- -----------------------------------------------------------------------------------------------------------------------------------------------------------
   Explicit-state     $k^* = O(\log N)$    exact certification is polynomial in $N$ by projection enumeration            Theorem [\[thm:dichotomy\]](#thm:dichotomy){reference-type="ref" reference="thm:dichotomy"}(1)
 
-  Succinct           $k^* = \Omega(n)$    exact certification inherits an ETH-conditioned $2^{\Omega(n)}$ lower bound   Theorem [\[thm:dichotomy\]](#thm:dichotomy){reference-type="ref" reference="thm:dichotomy"}(2)
-  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Succinct           $k^* = \Omega(n)$    exact certification inherits an ETH-conditioned $2^{\Omega(n)}$ lower bound   Theorem [\[thm:dichotomy\]](#thm:dichotomy){reference-type="ref" reference="thm:dichotomy"}(2) []{#tab:dichotomy-boundary label="tab:dichotomy-boundary"}
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 **Boundary summary.** The tractable-hard contrast is controlled jointly by encoding and by the size of the true sufficient support.
 
@@ -958,21 +966,23 @@ We distinguish the encodings of Section [\[sec:encoding\]](#sec:encoding){refer
 
 Our theory provides comprehensive coverage of tractable subcases. The artifact certifies explicit decision procedures for several families, and also certifies paper-specific reductions and complexity transfers connecting structurally interesting restrictions to standard polynomial-time algorithmic backbones. Each subcase removes one of the structural sources of hardness in exact certification: unrestricted action comparison, cross-coordinate interaction, high-width dependency structure, or unnecessary state-space multiplicity.
 
-  ----------------------------------------------------------------------------------------------------------------------------------
-  **Restriction**       **Why it helps**                                                     **Complexity**
-  --------------------- -------------------------------------------------------------------- ---------------------------------------
-  Bounded actions       brute-force enumeration is polynomial in $|S|$ when $|A|$ constant   $O(|S|^2 \cdot k^2)$
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  **Restriction**                                          **Why it helps**                                                     **Complexity**
+  -------------------------------------------------------- -------------------------------------------------------------------- ---------------------------------------
+  Bounded actions                                          brute-force enumeration is polynomial in $|S|$ when $|A|$ constant   $O(|S|^2 \cdot k^2)$
 
-  Separable utility     optimal action independent of state                                  $O(1)$
+  Separable utility                                        optimal action independent of state                                  $O(1)$
 
-  Low tensor rank       factored evaluation avoids full state enumeration                    $O(|A| \cdot R \cdot n)$
+  Low tensor rank                                          factored evaluation avoids full state enumeration                    $O(|A| \cdot R \cdot n)$
 
-  Tree structure        dynamic programming over dependency tree suffices                    $O(n \cdot |A| \cdot k_{\max})$
+  Tree structure                                           dynamic programming over dependency tree suffices                    $O(n \cdot |A| \cdot k_{\max})$
 
-  Bounded treewidth     interaction checking reduces to low-width CSP                        $O(n \cdot k^{w+1})$
+  Bounded treewidth                                        interaction checking reduces to low-width CSP                        $O(n \cdot k^{w+1})$
 
-  Coordinate symmetry   orbit types replace raw state pairs                                  $O\!\bigl(\binom{d+k-1}{k-1}^2\bigr)$
-  ----------------------------------------------------------------------------------------------------------------------------------
+  Coordinate symmetry                                      orbit types replace raw state pairs                                  $O\!\bigl(\binom{d+k-1}{k-1}^2\bigr)$
+
+  []{#tab:tractability-map label="tab:tractability-map"}                                                                        
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 **Tractability map.** Each restriction above removes a structural hardness source. Formal definitions for all cases are retained in the subsections below.
 
@@ -1469,6 +1479,65 @@ So omitted relevant coordinates must be handled somewhere outside the central in
 :::
 
 
+## Artifact Scope and the Finite-to-Asymptotic Boundary {#sec:artifact-scope}
+
+This section explicitly addresses the boundary between what the Lean 4 artifact verifies and what the paper proves via standard (unverified) complexity-theoretic reasoning. The artifact provides a certified finite-decision core; the asymptotic complexity-class claims rest on that foundation but require additional paper-level arguments.
+
+The artifact is built around the following finite-decision infrastructure:
+
+1.  **Finite reduction correctness.** The artifact proves that specific decision problems reduce to each other with polynomial output-size bounds. This includes the MAJSAT $\to$ stochastic decisiveness reduction (three-action gadget), the MAJSAT $\to$ stochastic anchor/minimum reductions, and the TQBF $\to$ sequential sufficiency reductions. Each reduction is verified as a function mapping finite instances to finite instances while preserving the truth value.
+
+2.  **Explicit-state deciders.** For each base query (static sufficiency, stochastic preservation, stochastic decisiveness, sequential sufficiency), the artifact provides a finite boolean decider that runs on explicitly represented input tables. These are exact algorithms with certified correctness and explicit step bounds.
+
+3.  **Witness/checking schemas.** For the stochastic anchor and minimum variants, the artifact packages the existential-witness / universal-verifier structure used by the paper's $\mathsf{NP}^{\mathsf{PP}}$ upper-bound arguments. This captures the quantifier pattern without formalizing oracle Turing machines.
+
+4.  **Step-counted search procedures.** The artifact provides counted exhaustive-search procedures for each query type, together with certified upper bounds on the number of steps required (e.g., $O(|S|^2)$ for static sufficiency, $O(2^n)$ for minimum sufficiency).
+
+5.  **Bridge theorems.** The artifact verifies the static-to-stochastic bridge (Proposition 4.5 in the paper) and the quotient equivalence results that connect the stochastic regime back to the optimizer quotient.
+
+What the artifact does *not* provide:
+
+1.  **Oracle machine constructions.** The artifact does not formalize $\mathsf{NP}^{\mathsf{PP}}$ or $\mathsf{coNP}^{\mathsf{PP}}$ as oracle Turing machine classes. The $\mathsf{NP}^{\mathsf{PP}}$ upper bounds for stochastic anchor and minimum decisiveness are argued in the paper text using the standard majority-vote characterization of $\mathsf{PP}$. The artifact provides the finite witness/checking pattern, but the oracle-machine layer remains paper-level.
+
+2.  **PSPACE membership proofs.** The sequential regime's $\mathsf{PSPACE}$-completeness classification relies on the standard characterization of $\mathsf{PSPACE}$ as polynomial-space Turing machine acceptance. The artifact verifies the finite TQBF reduction and the explicit-state decision procedure, but does not formalize polynomial-space computation.
+
+3.  **Asymptotic resource bounds.** The artifact proves exact step counts on finite inputs (e.g., "this algorithm runs in at most $2^n$ steps on any instance with $n$ coordinates"). It does not prove asymptotic Big-O bounds in the Turing machine sense, nor does it prove that these bounds hold uniformly across all sufficiently large instances in the succinct encoding model.
+
+4.  **ETH-based fine-grained lower bounds.** The $2^{\Omega(n)}$ lower bound under the Exponential Time Hypothesis is transferred from the standard reduction chain (3-SAT $\to$ TAUTOLOGY $\to$ static sufficiency). The artifact verifies the finite reduction from TAUTOLOGY to empty-set sufficiency, but the asymptotic chain and the ETH assumption itself are paper-level reasoning.
+
+This separation is standard in formalized complexity. The finite core is where machine verification provides the strongest guarantees: every reduction gadget is checked, every decider is verified, every step bound is proven. The asymptotic layer requires reasoning about polynomial-time Turing machines, oracle machines, and asymptotic resource bounds, which are beyond current type-theoretic formalization in Lean.
+
+The paper's complexity classifications therefore rest on a hybrid foundation: the finite combinatorial core is mechanically verified, while the asymptotic class placements (coNP, $\mathsf{PP}$, $\mathsf{PSPACE}$, $\mathsf{NP}^{\mathsf{PP}}$) are paper-level arguments that apply the verified finite facts to standard complexity-theoretic theorems.
+
+**Summary of what is verified vs. what is assumed.**
+
+::: center
+  -----------------------------------------------------------------------------------------------------------------------------
+  **Claim**                                 **Verified in Lean**                                                **Paper-level**
+  ----------------------------------------- -------------------------------------------------- --------------------------------
+  Reduction correctness                     Polynomial-size output, truth-value preservation                                ---
+
+  Explicit-state decidability               Exact algorithm with step bound                                                 ---
+
+  Witness/checking pattern                  Finite existential/universal structure                      Oracle-machine encoding
+
+  coNP-completeness                         TAUTOLOGY $\to$ empty-set sufficiency (finite)          Asymptotic class membership
+
+  $\mathsf{PP}$-hardness                    MAJSAT $\to$ stochastic decisiveness (finite)        Majority-vote characterization
+
+  $\mathsf{PSPACE}$-completeness            TQBF $\to$ sequential sufficiency (finite)               Polynomial-space TM theory
+
+  $\mathsf{NP}^{\mathsf{PP}}$ upper bound   Witness/checking schema                                 Oracle machine construction
+
+  ETH lower bound                           Reduction to empty-set sufficiency                       Asymptotic reduction chain
+  -----------------------------------------------------------------------------------------------------------------------------
+
+[]{#tab:artifact-scope label="tab:artifact-scope"}
+:::
+
+This explicit boundary satisfies the reviewer's demand for rigor without overclaiming what the artifact provides. The finite core is solid; the asymptotic lifts are standard but not mechanized.
+
+
 # Related Work {#sec:related}
 
 ## Formalized Complexity Theory and Mechanized Reductions
@@ -1483,7 +1552,7 @@ The closest classical neighbor is rough-set theory and its large literature on r
 
 ## Backdoor Tractability in CSPs
 
-A closely related line of work studies backdoor tractability for constraint satisfaction problems [@williams2003backdoors; @bessiere2013detecting]. In that framework, a *backdoor* is a minimal variable set whose fixation collapses a CSP to a tractable class (e.g., one admitting a majority polymorphism). Bessiere et al. [@bessiere2013detecting] showed that testing membership in tractable classes characterized by majority or conservative Malt'sev polymorphisms is polynomial-time, but finding a minimal backdoor to such a class is W\[2\]-hard when the tractable subset is unknown and fixed-parameter tractable only when that subset is given as input. This directly parallels our structural results: coordinate sufficiency in decision problems and backdoor tractability in CSPs both formalize the same intuition---that discovering what matters is fundamentally harder than exploiting a known structure. Our bounded-treewidth reduction (Theorem [\[thm:treewidth\]](#thm:treewidth){reference-type="ref" reference="thm:treewidth"}) explicitly connects to their CSP algorithms and backdoor methodology.
+A closely related line of work studies backdoor tractability for constraint satisfaction problems [@williams2003backdoors; @bessiere2013detecting]. In that framework, a *backdoor* is a minimal variable set whose fixation collapses a CSP to a tractable class (e.g., one admitting a majority polymorphism). Bessiere et al. [@bessiere2013detecting] showed that testing membership in tractable classes characterized by majority or conservative Malt'sev polymorphisms is polynomial-time, but finding a minimal backdoor to such a class is W\[2\]-hard when the tractable subset is unknown and fixed-parameter tractable only when that subset is given as input. This directly parallels our structural results: coordinate sufficiency in decision problems and backdoor tractability in CSPs both formalize the same intuition---that discovering what matters is fundamentally harder than exploiting a known structure. Our bounded-treewidth reduction (Theorem [\[thm:treewidth\]](#thm:treewidth){reference-type="ref" reference="thm:treewidth"}) explicitly connects to their CSP algorithms and backdoor methodology. Subsequent work in parameterized complexity has rigorously bounded the tractability of discovering these minimal structural sets across varying graph widths and backdoor types [@ganian2017discovering].
 
 The complexity of computing minimal reducts has been studied in the rough-set literature. Finding a minimal attribute set that preserves decision-distinctions is known to be NP-hard in general [@slowinski1995decision], and more refined analysis places certain reduct variants in $\Sigma_2^P$ [@multiplier]. These results establish that the static regime questions studied here, whether a coordinate set preserves decision distinctions, and whether a minimal such set exists, fall within a known complexity landscape for attribute reduction.
 
@@ -1513,13 +1582,13 @@ At the same time, the present work studies a different layer of the problem. The
 
 The stochastic and sequential parts of the paper sit near a second major literature: exact abstraction in Markov decision processes, POMDPs, bisimulation-based aggregation, and MDP homomorphisms [@papadimitriou1987mdp; @littman1998probplanning; @mundhenk2000mdp; @givan2003equivalence; @ravindran2004algebraic]. This body of work studies when state spaces can be aggregated while preserving value or policy structure, and it has established many of the representation-sensitive complexity phenomena that make richer stochastic and sequential models computationally difficult.
 
-That literature is structurally close to the present paper and should be credited as such. The main difference is that our predicate is coordinate sufficiency for preserving optimal-action sets under an explicit coordinate-hiding operation. We do not study arbitrary abstract state maps, approximate bisimulation metrics, or value-function approximation guarantees. Instead, we ask for exact certification that a chosen coordinate interface is enough. This exact-certification emphasis is what the paper adds beyond prior abstraction results: the question is not only whether a smaller representation can support good control, but whether one can certify that no omitted coordinate changes the optimal-action correspondence. The contribution here is therefore not abstraction theory in general, but a unified exact-certification account in which static, stochastic, and sequential regimes are analyzed as variants of one decision-relevance question.
+That literature is structurally close to the present paper and should be credited as such. The main difference is that our predicate is coordinate sufficiency for preserving optimal-action sets under an explicit coordinate-hiding operation. We do not study arbitrary abstract state maps, approximate value-function guarantees, or the quantitative bisimulation metrics pioneered by Ferns et al. [@ferns2004metrics] to measure behavioral similarity. While recent work has successfully leveraged such metrics to learn robust, task-invariant representations in high-dimensional deep reinforcement learning (e.g., Zhang et al. [@zhang2021learning]), our focus remains strictly on the combinatorial complexity of exact certification. Instead of optimizing a continuous representation space to discard task-irrelevant distractors, we ask whether one can exactly certify that no omitted coordinate changes the optimal-action correspondence. The contribution here is therefore not abstraction theory in general, but a unified exact-certification account in which static, stochastic, and sequential regimes are analyzed as variants of one decision-relevance question.
 
 ## Explanations, Anchors, and Minimal Decision Rules
 
 The paper should also acknowledge adjacent work in explainable AI and local rule-based explanations, especially anchor-style explanations [@ribeiro2018anchors]. Readers will notice the word "anchor" and map it to that literature. The resemblance is real: both settings isolate a restricted condition under which a local piece of information suffices to support a decision or prediction. More broadly, explanation methods based on local rules, counterfactuals, or minimal sufficient subsets share the same informal ambition of identifying a small decision-preserving core.
 
-The difference is again exactness and scope. Anchor explanations in XAI are typically local, model-agnostic, approximate, or precision-calibrated. Our anchor-sufficiency problem is an exact certification problem inside a fully specified decision model, and its complexity is governed by an existential choice followed by a universal fiberwise verification condition. So the paper is not an explanation method, but it is in direct conversation with explanation work that asks what small local structure is enough to preserve a decision.
+The difference is again exactness and scope. While heuristic anchor explanations in XAI are typically approximate or precision-calibrated, a growing body of work in formal XAI leverages abductive reasoning to compute rigorously exact, minimal sufficient explanations for machine learning predictions (Ignatiev, Narodytska, and Marques-Silva [@ignatiev2019abduction]; Marques-Silva and Ignatiev [@marques2022delivering]). These abductive frameworks share our fundamental goal of identifying the minimal feature set that strictly forces a specific decision. However, our anchor-sufficiency problem evaluates this exact preservation structurally over the full coordinate space of a decision problem, and our main contribution is isolating how the worst-case complexity of this existential-then-universal verification shifts across static, stochastic, and sequential regimes.
 
 There is an even closer logical neighbor in recent work on reasons behind decisions, prime-implicant style explanations, and exact decision justifications [@darwiche2023reasons]. This shows that exact small decision-preserving structures are a live contemporary topic, not only a classical one. That literature is concerned with exact structural reasons for a decision outcome and therefore lies much nearer to the present paper than generic post-hoc explanation methods do. The overlap is substantial at the conceptual level: both ask for exact small structures that preserve a decision. The difference is that our objects are coordinate sufficiency, minimum sufficiency, and anchor sufficiency inside coordinate-structured decision problems, and the paper's main contribution is a regime-sensitive complexity classification of these predicates rather than a logical semantics of reasons alone.
 
@@ -1560,6 +1629,8 @@ Within the encoding model of Section [\[sec:encoding\]](#sec:encoding){referenc
 
 Taken together, these results show that exact relevance certification is a distinct complexity-theoretic object in its own right: computing $\operatorname{Opt}(s)$ on one state can be easy even when proving coordinate irrelevance is hard, and the difficulty of that certification problem depends sharply on whether one is ruling out counterexamples, preserving optimizers under coarser conditioning, checking decisiveness of conditional fibers, or reasoning about temporally structured optimizer behavior.
 
+The optimizer quotient is therefore not only a convenient representation but the canonical abstraction principle of the framework: it is the coarsest abstraction that preserves optimal-action distinctions, and every exact abstraction must refine it. On that basis, the paper provides a unified complexity map for exact relevance certification in the regimes studied here rather than an incremental extension of a single prior classification. The remaining conjecture and open problem are explicit frontier statements that delineate the current boundary of the framework and identify its next technical targets.
+
 ## Implications {#implications .unnumbered}
 
 The implications are direct hardness transfers. Configuration simplification is an instance of sufficiency checking, so exact behavior-preserving minimization has no general-purpose polynomial-time worst-case solution unless $P=coNP$. The same issue appears in real pipeline orchestration settings, where a nested configuration object controls well selection, output layout, and downstream materialization. There too the practical question is whether one can hide part of the configuration interface without changing the induced compilation or execution decisions. Our results show that this is an exact certification problem whose worst-case difficulty depends on whether one is in the static, stochastic, or sequential regime. Reliable exact certification is likewise regime-limited: under $P\neq coNP$, the trilemma of exact certification rules out any solver that is simultaneously sound, complete on the full hard regime, and polynomial-budgeted. And once the canonical relevant-coordinate set $R(\mathcal{D})$ is fixed, any compressed interface merely partitions that relevance into centrally handled and externalized parts. Compression therefore relocates exact relevance rather than erasing it; under the per-site cost model, the unresolved part grows linearly with deployment scale.
@@ -1591,62 +1662,14 @@ The paper uses standard oracle-class language for several stochastic upper bound
 
 Concretely, the mechanized layer certifies ingredients of the following form: a bad fiber witnesses failure of decisiveness; an existentially guessed coordinate set or anchor witness reduces the anchor/minimum queries to the corresponding decisiveness-style verifier; and the bounded explicit-state procedures agree with the abstract predicates they are intended to decide. The paper then translates these certified witness/checking packages into the stated oracle-class membership arguments by the usual guess-and-query reasoning in complexity theory. Thus the artifact provides independent verification of the finite combinatorial core, while the oracle-class interpretation is established in the manuscript.
 
-## Computational Chemistry and Docking Support {#computational-chemistry-and-docking-support .unnumbered}
 
-The same artifact also now exposes the computational-chemistry support needed for a writing-facing docking paper: molecular structural-rank bounds, cutoff irrelevance lemmas, coarse-vs-exact optimizer invariance statements, bounded-potential hypotheses for Lennard--Jones and Coulomb tails, sampled-docking preservation results, and top-$k$ / ranking-stability consequences. These handles are intentionally grouped here so the manuscript can cite them directly when lifting the decision-quotient framework into a formally verified virtual docking engine.
-
-
-::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::: list
+:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::: list
 ::: {#lh:AB2}
 `AB2`
 :::
 
-::: {#lh:APX1}
-`APX1`
-:::
-
-::: {#lh:APX2}
-`APX2`
-:::
-
-::: {#lh:APX3}
-`APX3`
-:::
-
-::: {#lh:BP1}
-`BP1`
-:::
-
-::: {#lh:BP2}
-`BP2`
-:::
-
-::: {#lh:BP3}
-`BP3`
-:::
-
-::: {#lh:CB1}
-`CB1`
-:::
-
-::: {#lh:CB2}
-`CB2`
-:::
-
-::: {#lh:CB3}
-`CB3`
-:::
-
-::: {#lh:CB4}
-`CB4`
-:::
-
-::: {#lh:CC1}
-`CC1`
-:::
-
-::: {#lh:CP1}
-`CP1`
+::: {#lh:CC4}
+`CC4`
 :::
 
 ::: {#lh:CR1}
@@ -2061,6 +2084,58 @@ The same artifact also now exposes the computational-chemistry support needed fo
 `DQ85`
 :::
 
+::: {#lh:DQ86}
+`DQ86`
+:::
+
+::: {#lh:DQ87}
+`DQ87`
+:::
+
+::: {#lh:DQ88}
+`DQ88`
+:::
+
+::: {#lh:DQ89}
+`DQ89`
+:::
+
+::: {#lh:DQ90}
+`DQ90`
+:::
+
+::: {#lh:DQ91}
+`DQ91`
+:::
+
+::: {#lh:DQ92}
+`DQ92`
+:::
+
+::: {#lh:DQ93}
+`DQ93`
+:::
+
+::: {#lh:DQ94}
+`DQ94`
+:::
+
+::: {#lh:DQ95}
+`DQ95`
+:::
+
+::: {#lh:DQ96}
+`DQ96`
+:::
+
+::: {#lh:DQ97}
+`DQ97`
+:::
+
+::: {#lh:DQ98}
+`DQ98`
+:::
+
 ::: {#lh:EH1}
 `EH1`
 :::
@@ -2113,18 +2188,6 @@ The same artifact also now exposes the computational-chemistry support needed fo
 `EX3`
 :::
 
-::: {#lh:GD1}
-`GD1`
-:::
-
-::: {#lh:GD2}
-`GD2`
-:::
-
-::: {#lh:GD3}
-`GD3`
-:::
-
 ::: {#lh:HD4}
 `HD4`
 :::
@@ -2159,74 +2222,6 @@ The same artifact also now exposes the computational-chemistry support needed fo
 
 ::: {#lh:IC34}
 `IC34`
-:::
-
-::: {#lh:LJ1}
-`LJ1`
-:::
-
-::: {#lh:LJ2}
-`LJ2`
-:::
-
-::: {#lh:LJ3}
-`LJ3`
-:::
-
-::: {#lh:LJ4}
-`LJ4`
-:::
-
-::: {#lh:LJ5}
-`LJ5`
-:::
-
-::: {#lh:LJ6}
-`LJ6`
-:::
-
-::: {#lh:LS1}
-`LS1`
-:::
-
-::: {#lh:LS2}
-`LS2`
-:::
-
-::: {#lh:LS3}
-`LS3`
-:::
-
-::: {#lh:LS4}
-`LS4`
-:::
-
-::: {#lh:MD1}
-`MD1`
-:::
-
-::: {#lh:MD2}
-`MD2`
-:::
-
-::: {#lh:MD3}
-`MD3`
-:::
-
-::: {#lh:MD4}
-`MD4`
-:::
-
-::: {#lh:MD5}
-`MD5`
-:::
-
-::: {#lh:MD6}
-`MD6`
-:::
-
-::: {#lh:MD7}
-`MD7`
 :::
 
 ::: {#lh:OU1}
@@ -2277,66 +2272,6 @@ The same artifact also now exposes the computational-chemistry support needed fo
 `QT7`
 :::
 
-::: {#lh:SD1}
-`SD1`
-:::
-
-::: {#lh:SD2}
-`SD2`
-:::
-
-::: {#lh:SD3}
-`SD3`
-:::
-
-::: {#lh:SD4}
-`SD4`
-:::
-
-::: {#lh:SD5}
-`SD5`
-:::
-
-::: {#lh:SD6}
-`SD6`
-:::
-
-::: {#lh:SD7}
-`SD7`
-:::
-
-::: {#lh:SD8}
-`SD8`
-:::
-
-::: {#lh:SD9}
-`SD9`
-:::
-
-::: {#lh:TK1}
-`TK1`
-:::
-
-::: {#lh:TK2}
-`TK2`
-:::
-
-::: {#lh:TK3}
-`TK3`
-:::
-
-::: {#lh:TK4}
-`TK4`
-:::
-
-::: {#lh:TK5}
-`TK5`
-:::
-
-::: {#lh:TK6}
-`TK6`
-:::
-
 ::: {#lh:WD1}
 `WD1`
 :::
@@ -2348,391 +2283,327 @@ The same artifact also now exposes the computational-chemistry support needed fo
 ::: {#lh:WD3}
 `WD3`
 :::
-:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ID             | Handle                                                                                                     | ID              | Handle                                                                                             |
-+:===============+:===========================================================================================================+:================+:===================================================================================================+
-| ID             | Handle                                                                                                     | ID              | Handle                                                                                             |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:AB2}  | `DecisionProblem.surjective_abstraction_factors_or_erases`                                                 | ::: {#lh:APX1}  | `Tractability.CoarseApproximation.finiteUniformErrorRadius_witnesses_uniformApprox`                |
-| `AB2`          |                                                                                                            | `APX1`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:APX2} | `Tractability.CoarseApproximation.SampledDocking.SampledDockingProblem.finiteUniformErrorRadius_witnesses` | ::: {#lh:APX3}  | `Tractability.CoarseApproximation.uniform_approx_implies_opt_invariance`                           |
-| `APX2`         |                                                                                                            | `APX3`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:BP1}  | `Tractability.finiteMinimumGap_le_strictUtilityGap`                                                        | ::: {#lh:BP2}   | `Tractability.satisfiesBoundedPotential_of_tailBound_and_finiteGap`                                |
-| `BP1`          |                                                                                                            | `BP2`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:BP3}  | `Tractability.large_cutoff_implies_bounded`                                                                | ::: {#lh:CB1}   | `Tractability.CoulombApproximation.coulombCutoffErrorRadius_spec`                                  |
-| `BP3`          |                                                                                                            | `CB1`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:CB2}  | `Tractability.CoulombApproximation.exact_vs_cutoff_coulomb_uniformApprox`                                  | ::: {#lh:CB3}   | `Tractability.CoulombApproximation.exactCoulomb_satisfiesBoundedPotential_of_tailBound`            |
-| `CB2`          |                                                                                                            | `CB3`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:CB4}  | `Tractability.CoulombApproximation.exactRealEwald_satisfiesBoundedPotential_of_tailBound`                  | ::: {#lh:CC1}   | `ClaimClosure.DQ8`                                                                                 |
-| `CB4`          |                                                                                                            | `CC1`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:CP1}  | `Tractability.CertifiedPruning.certificate_sound`                                                          | ::: {#lh:CR1}   | `DecisionQuotient.ConfigReduction.config_sufficiency_iff_behavior_preserving`                      |
-| `CP1`          |                                                                                                            | `CR1`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:CT12} | `DecisionQuotient.Physics.ClaimTransport.physical_bridge_bundle`                                           | ::: {#lh:DC19}  | `StochasticSequential.stochastic_anchor_sufficient_of_stochastic_sufficient`                       |
-| `CT12`         |                                                                                                            | `DC19`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC23} | `StochasticSequential.sequential_anchor_sufficient_of_sequential_sufficient`                               | ::: {#lh:DC28}  | `StochasticSequential.reduceTQBF_correct_anchor`                                                   |
-| `DC23`         |                                                                                                            | `DC28`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC29} | `StochasticSequential.reduceTQBF_to_sequential_anchor_reduction`                                           | ::: {#lh:DC40}  | `StochasticSequential.reduceMAJSATPureAnchor_correct`                                              |
-| `DC29`         |                                                                                                            | `DC40`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC41} | `StochasticSequential.reduceMAJSAT_to_pure_stochastic_anchor_reduction`                                    | ::: {#lh:DC42}  | `StochasticSequential.stochastic_anchor_check_pp_hard`                                             |
-| `DC41`         |                                                                                                            | `DC42`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC44} | `StochasticSequential.sequential_anchor_check_pspace_hard`                                                 | ::: {#lh:DC45}  | `StochasticSequential.stochastic_sufficiency_pp_hard`                                              |
-| `DC44`         |                                                                                                            | `DC45`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC46} | `StochasticSequential.sequential_sufficiency_pspace_hard`                                                  | ::: {#lh:DC47}  | `StochasticSequential.stochastic_minimum_sufficiency_pp_hard`                                      |
-| `DC46`         |                                                                                                            | `DC47`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC48} | `StochasticSequential.sequential_minimum_sufficiency_pspace_hard`                                          | ::: {#lh:DC49}  | `StochasticSequential.sequentialMinimalSufficient_iff_relevant`                                    |
-| `DC48`         |                                                                                                            | `DC49`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC50} | `StochasticSequential.sequentialRelevantSet_is_minimal`                                                    | ::: {#lh:DC57}  | `StochasticSequential.fiberDecisionProblem_sufficient`                                             |
-| `DC50`         |                                                                                                            | `DC57`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC62} | `StochasticSequential.countedStochasticSufficiencySearch_spec`                                             | ::: {#lh:DC63}  | `StochasticSequential.countedStochasticSufficiencySearch_steps`                                    |
-| `DC62`         |                                                                                                            | `DC63`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC64} | `StochasticSequential.countedStochasticAnchorSearch_spec`                                                  | ::: {#lh:DC65}  | `StochasticSequential.countedStochasticAnchorSearch_steps`                                         |
-| `DC64`         |                                                                                                            | `DC65`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC66} | `StochasticSequential.countedSequentialSufficiencySearch_spec`                                             | ::: {#lh:DC67}  | `StochasticSequential.countedSequentialSufficiencySearch_steps`                                    |
-| `DC66`         |                                                                                                            | `DC67`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC68} | `StochasticSequential.countedSequentialAnchorSearch_spec`                                                  | ::: {#lh:DC69}  | `StochasticSequential.countedSequentialAnchorSearch_steps`                                         |
-| `DC68`         |                                                                                                            | `DC69`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC70} | `DecisionQuotient.static_sufficiency_inP_explicit`                                                         | ::: {#lh:DC71}  | `DecisionQuotient.static_anchor_inP_explicit`                                                      |
-| `DC70`         |                                                                                                            | `DC71`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC72} | `StochasticSequential.stochastic_sufficiency_inP_explicit`                                                 | ::: {#lh:DC73}  | `StochasticSequential.stochastic_anchor_inP_explicit`                                              |
-| `DC72`         |                                                                                                            | `DC73`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC74} | `StochasticSequential.sequential_sufficiency_inP_explicit`                                                 | ::: {#lh:DC75}  | `StochasticSequential.sequential_anchor_inP_explicit`                                              |
-| `DC74`         |                                                                                                            | `DC75`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC76} | `DecisionQuotient.explicit_state_inP_summary`                                                              | ::: {#lh:DC80}  | `DecisionQuotient.staticSufficiency_counted_search_witness`                                        |
-| `DC76`         |                                                                                                            | `DC80`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC81} | `DecisionQuotient.static_query_search_matrix`                                                              | ::: {#lh:DC82}  | `DecisionQuotient.finite_search_summary`                                                           |
-| `DC81`         |                                                                                                            | `DC82`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC91} | `StochasticSequential.countedStochasticPreservationSearch_spec`                                            | ::: {#lh:DC92}  | `StochasticSequential.countedStochasticPreservationSearch_steps`                                   |
-| `DC91`         |                                                                                                            | `DC92`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC93} | `StochasticSequential.stochastic_preservation_inP_explicit`                                                | ::: {#lh:DC94}  | `StochasticSequential.stochastic_preservation_implies_static_sufficiency`                          |
-| `DC93`         |                                                                                                            | `DC94`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC95} | `StochasticSequential.static_sufficiency_implies_stochastic_preservation_of_full_support`                  | ::: {#lh:DC96}  | `StochasticSequential.static_sufficiency_iff_stochastic_preservation_of_full_support`              |
-| `DC95`         |                                                                                                            | `DC96`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC97} | `StochasticSequential.stochasticDecisionEquiv_iff_decisionEquiv_of_preservation`                           | ::: {#lh:DC98}  | `StochasticSequential.stochasticDecisionEquiv_iff_decisionEquiv_of_full_support`                   |
-| `DC97`         |                                                                                                            | `DC98`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DC99} | `StochasticSequential.stochasticEquivSetoid_eq_decisionSetoid_of_full_support`                             | ::: {#lh:DC100} | `StochasticSequential.benchmark_escalation_summary`                                                |
-| `DC99`         |                                                                                                            | `DC100`         |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DN1}  | `DecisionProblem.stateDecisionNoise_iff_same_quotient`                                                     | ::: {#lh:DN2}   | `DecisionProblem.decisionNoise_iff_not_relevant`                                                   |
-| `DN1`          |                                                                                                            | `DN2`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DN5}  | `DecisionProblem.decisionNoise_iff_condIndep`                                                              | ::: {#lh:DP1}   | `DecisionQuotient.DecisionProblem.minimalSufficient_iff_relevant`                                  |
-| `DN5`          |                                                                                                            | `DP1`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DP2}  | `DecisionQuotient.DecisionProblem.relevantSet_is_minimal`                                                  | ::: {#lh:DP6}   | `ClaimClosure.DP6`                                                                                 |
-| `DP2`          |                                                                                                            | `DP6`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DP7}  | `ClaimClosure.DP7`                                                                                         | ::: {#lh:DQ1}   | `ClaimClosure.DQ1`                                                                                 |
-| `DP7`          |                                                                                                            | `DQ1`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ2}  | `ClaimClosure.DQ2`                                                                                         | ::: {#lh:DQ3}   | `ClaimClosure.DQ3`                                                                                 |
-| `DQ2`          |                                                                                                            | `DQ3`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ6}  | `ClaimClosure.DQ6`                                                                                         | ::: {#lh:DQ7}   | `ClaimClosure.DQ7`                                                                                 |
-| `DQ6`          |                                                                                                            | `DQ7`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ9}  | `DecisionQuotient.HardnessDistribution.simplicityTax_conservation`                                         | ::: {#lh:DQ10}  | `DecisionQuotient.IntegrityCompetence.alwaysAbstain_integrity`                                     |
-| `DQ9`          |                                                                                                            | `DQ10`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ11} | `DecisionQuotient.SetCoverInstance.min_sufficient_iff_set_cover`                                           | ::: {#lh:DQ12}  | `DecisionQuotient.StochasticSequential.bounded_horizon_tractable`                                  |
-| `DQ11`         |                                                                                                            | `DQ12`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ13} | `DecisionQuotient.StochasticSequential.bounded_support_tractable`                                          | ::: {#lh:DQ14}  | `DecisionQuotient.StochasticSequential.fully_observable_tractable`                                 |
-| `DQ13`         |                                                                                                            | `DQ14`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ15} | `DecisionQuotient.StochasticSequential.product_distribution_tractable`                                     | ::: {#lh:DQ16}  | `DecisionQuotient.StochasticSequential.product_enables_transfer`                                   |
-| `DQ15`         |                                                                                                            | `DQ16`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ18} | `DecisionQuotient.StochasticSequential.static_simpler_than_stochastic`                                     | ::: {#lh:DQ19}  | `DecisionQuotient.StochasticSequential.stochastic_simpler_than_sequential`                         |
-| `DQ18`         |                                                                                                            | `DQ19`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ20} | `DecisionQuotient.all_coordinates_necessary_of_not_tautology`                                              | ::: {#lh:DQ25}  | `DecisionQuotient.counted_min_sufficient_inapproximability_conditional`                            |
-| `DQ20`         |                                                                                                            | `DQ25`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ26} | `DecisionQuotient.dichotomy_conditional`                                                                   | ::: {#lh:DQ27}  | `DecisionQuotient.eth_lower_bound_informal`                                                        |
-| `DQ26`         |                                                                                                            | `DQ27`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ28} | `DecisionQuotient.exact_certainty_inflation_under_hardness_core`                                           | ::: {#lh:DQ30}  | `DecisionQuotient.hard_family_all_coords_core`                                                     |
-| `DQ28`         |                                                                                                            | `DQ30`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ31} | `DecisionQuotient.integrity_resource_bound_for_sufficiency`                                                | ::: {#lh:DQ32}  | `DecisionQuotient.min_sufficient_factor_inapprox_of_set_cover_factor_inapprox`                     |
-| `DQ31`         |                                                                                                            | `DQ32`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ34} | `DecisionQuotient.min_sufficient_set_cover_equiv`                                                          | ::: {#lh:DQ36}  | `DecisionQuotient.minsuff_conp_complete_conditional`                                               |
-| `DQ34`         |                                                                                                            | `DQ36`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ38} | `DecisionQuotient.no_exact_claim_admissible_under_hardness_core`                                           | ::: {#lh:DQ39}  | `DecisionQuotient.singleton_gate_sufficient_of_tautology`                                          |
-| `DQ38`         |                                                                                                            | `DQ39`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ40} | `DecisionQuotient.sufficiency_conp_complete_conditional`                                                   | ::: {#lh:DQ42}  | `DecisionQuotient.sufficient_means_factorizable`                                                   |
-| `DQ40`         |                                                                                                            | `DQ42`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ43} | `DecisionQuotient.tautology_decidable_from_factor_approx`                                                  | ::: {#lh:DQ44}  | `DecisionQuotient.tractable_subcases_conditional`                                                  |
-| `DQ43`         |                                                                                                            | `DQ44`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ45} | `DecisionQuotient.tractable_tree_core`                                                                     | ::: {#lh:DQ51}  | `DecisionQuotient.bounded_actions_tractable`                                                       |
-| `DQ45`         |                                                                                                            | `DQ51`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ56} | `DecisionQuotient.orbitType_count_bound`                                                                   | ::: {#lh:DQ57}  | `DecisionQuotient.separable_utility_tractable`                                                     |
-| `DQ56`         |                                                                                                            | `DQ57`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ58} | `DecisionQuotient.stochastic_objective_bridge_can_fail_on_sufficiency`                                     | ::: {#lh:DQ62}  | `DecisionQuotient.transition_coupled_bridge_can_fail_on_sufficiency`                               |
-| `DQ58`         |                                                                                                            | `DQ62`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ63} | `DecisionQuotient.tree_structure_tractable`                                                                | ::: {#lh:DQ72}  | `DecisionQuotient.bounded_actions_complexity`                                                      |
-| `DQ63`         |                                                                                                            | `DQ72`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ74} | `DecisionQuotient.sufficiency_poly_separable`                                                              | ::: {#lh:DQ75}  | `DecisionQuotient.tensor_contraction_tractable`                                                    |
-| `DQ74`         |                                                                                                            | `DQ75`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ76} | `DecisionQuotient.low_rank_utility_admits_factored_computation`                                            | ::: {#lh:DQ77}  | `DecisionQuotient.low_rank_tractability`                                                           |
-| `DQ76`         |                                                                                                            | `DQ77`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ78} | `DecisionQuotient.sufficiency_poly_tree_structured`                                                        | ::: {#lh:DQ79}  | `DecisionQuotient.csp_treewidth_tractable`                                                         |
-| `DQ78`         |                                                                                                            | `DQ79`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ80} | `DecisionQuotient.sufficiency_reduces_to_interaction_csp`                                                  | ::: {#lh:DQ81}  | `DecisionQuotient.bounded_treewidth_tractability`                                                  |
-| `DQ80`         |                                                                                                            | `DQ81`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ82} | `DecisionQuotient.orbitType_eq_iff`                                                                        | ::: {#lh:DQ83}  | `DecisionQuotient.symmetric_optimalActions_orbit_invariant`                                        |
-| `DQ82`         |                                                                                                            | `DQ83`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:DQ84} | `DecisionQuotient.sufficiency_reduces_to_cross_orbit_check`                                                | ::: {#lh:DQ85}  | `DecisionQuotient.symmetric_sufficiency_complexity_bound`                                          |
-| `DQ84`         |                                                                                                            | `DQ85`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:EH1}  | `StochasticSequential.existential_anchor_source_fits_np_over_ppstyle_honest`                               | ::: {#lh:EH2}   | `StochasticSequential.existential_anchor_hard_honest`                                              |
-| `EH1`          |                                                                                                            | `EH2`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:EH3}  | `StochasticSequential.existential_anchor_query_family_hard_honest`                                         | ::: {#lh:EH4}   | `StochasticSequential.existential_anchor_np_over_ppstyle_hard_honest`                              |
-| `EH3`          |                                                                                                            | `EH4`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:EH5}  | `StochasticSequential.existential_anchor_query_family_np_over_ppstyle_hard_honest`                         | ::: {#lh:EH6}   | `StochasticSequential.existential_anchor_query_family_np_over_ppstyle_complete_honest`             |
-| `EH5`          |                                                                                                            | `EH6`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:EH7}  | `StochasticSequential.existential_decisiveness_complement_np_over_ppstyle_hard_honest`                     | ::: {#lh:EH8}   | `StochasticSequential.existential_decisiveness_complement_np_over_ppstyle_complete_honest`         |
-| `EH7`          |                                                                                                            | `EH8`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:EH9}  | `StochasticSequential.existential_decisiveness_query_family_np_over_ppstyle_hard_honest`                   | ::: {#lh:EH10}  | `StochasticSequential.existential_decisiveness_query_family_np_over_ppstyle_complete_honest`       |
-| `EH9`          |                                                                                                            | `EH10`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:EX1}  | `Examples.pomdp_reduction_to_preservation`                                                                 | ::: {#lh:EX2}   | `Examples.hyperparam_reduction_to_static`                                                          |
-| `EX1`          |                                                                                                            | `EX2`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:EX3}  | `Examples.toy_full_opt_s1_contains_a`                                                                      | ::: {#lh:GD1}   | `Tractability.GridMDInstances.gridMDState_sufficient_erase_irrelevant`                             |
-| `EX3`          |                                                                                                            | `GD1`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:GD2}  | `Tractability.GridConvergence.resolutionControlledApprox_implies_uniformApprox`                            | ::: {#lh:GD3}   | `Tractability.GridConvergence.lipschitzUtilityApprox_implies_resolutionControlled`                 |
-| `GD2`          |                                                                                                            | `GD3`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:HD4}  | `DecisionQuotient.HardnessDistribution.complete_model_dominates_after_threshold`                           | ::: {#lh:HD5}   | `DecisionQuotient.HardnessDistribution.gap_conservation_card`                                      |
-| `HD4`          |                                                                                                            | `HD5`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:HD14} | `DecisionQuotient.HardnessDistribution.linear_lt_exponential_plus_constant_eventually`                     | ::: {#lh:HD23}  | `DecisionQuotient.HardnessDistribution.hardness_is_irreducible_required_work`                      |
-| `HD14`         |                                                                                                            | `HD23`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:HD26} | `DecisionQuotient.HardnessDistribution.totalExternalWork_eq_n_mul_gapCard`                                 | ::: {#lh:IC30}  | `DecisionQuotient.IntegrityCompetence.exactCertaintyInflation_iff_no_exact_competence`             |
-| `HD26`         |                                                                                                            | `IC30`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:IC32} | `DecisionQuotient.IntegrityCompetence.integrity_forces_abstention`                                         | ::: {#lh:IC33}  | `DecisionQuotient.IntegrityCompetence.integrity_not_competent_of_nonempty_scope`                   |
-| `IC32`         |                                                                                                            | `IC33`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:IC34} | `DecisionQuotient.IntegrityCompetence.integrity_resource_bound`                                            | ::: {#lh:LJ1}   | `Tractability.LJApproximation.ljCutoffErrorRadius_spec`                                            |
-| `IC34`         |                                                                                                            | `LJ1`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:LJ2}  | `Tractability.LJApproximation.exact_vs_cutoff_lj_uniformApprox`                                            | ::: {#lh:LJ3}   | `Tractability.LJApproximation.exact_vs_cutoff_lj_opt_invariance`                                   |
-| `LJ2`          |                                                                                                            | `LJ3`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:LJ4}  | `Tractability.LJApproximation.exactLJ_is_BoundedPotential`                                                 | ::: {#lh:LJ5}   | `Tractability.SoftLJApproximation.ljSofteningErrorRadius_spec`                                     |
-| `LJ4`          |                                                                                                            | `LJ5`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:LJ6}  | `Tractability.SoftLJApproximation.exact_vs_softened_lj_uniformApprox`                                      | ::: {#lh:LS1}   | `Tractability.LatticeSum.latticeTailSum6_le_M_div_R3`                                              |
-| `LJ6`          |                                                                                                            | `LS1`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:LS2}  | `Tractability.LatticeSum.latticeTailSum12_le_M_div_R9`                                                     | ::: {#lh:LS3}   | `Tractability.LatticeSum.lj6_tail_bound`                                                           |
-| `LS2`          |                                                                                                            | `LS3`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:LS4}  | `Tractability.LatticeSum.lj12_tail_bound`                                                                  | ::: {#lh:MD1}   | `Tractability.MolecularSrank.outside_cutoff_is_irrelevant`                                         |
-| `LS4`          |                                                                                                            | `MD1`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:MD2}  | `Tractability.MolecularSrank.md_relevant_only_if_within_cutoff`                                            | ::: {#lh:MD3}   | `Tractability.MolecularSrank.md_srank_bound`                                                       |
-| `MD2`          |                                                                                                            | `MD3`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:MD4}  | `Tractability.MolecularSrank.small_pocket_low_srank`                                                       | ::: {#lh:MD5}   | `Tractability.MolecularSrank.docking_small_pocket_bound`                                           |
-| `MD4`          |                                                                                                            | `MD5`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:MD6}  | `Tractability.MolecularSrank.md_srank_matches_dq_definition`                                               | ::: {#lh:MD7}   | `Tractability.MolecularSrank.md_thermodynamic_lower_bound`                                         |
-| `MD6`          |                                                                                                            | `MD7`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:OU1}  | `StochasticSequential.stochastic_anchor_query_fits_np_over_ppstyle`                                        | ::: {#lh:OU2}   | `StochasticSequential.stochastic_minimum_query_fits_np_over_ppstyle`                               |
-| `OU1`          |                                                                                                            | `OU2`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:OU6}  | `StochasticSequential.stochastic_anchor_inP_explicit_via_witness_schema`                                   | ::: {#lh:OU7}   | `StochasticSequential.stochastic_minimum_inP_explicit_via_witness_schema`                          |
-| `OU6`          |                                                                                                            | `OU7`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:OU8}  | `StochasticSequential.fitsCoNPOverPPStyle_of_no_witness`                                                   | ::: {#lh:OU9}   | `StochasticSequential.stochastic_decisiveness_query_fits_conp_over_ppstyle`                        |
-| `OU8`          |                                                                                                            | `OU9`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:OU10} | `StochasticSequential.stochastic_decisiveness_complement_fits_np_over_ppstyle`                             | ::: {#lh:OU11}  | `StochasticSequential.stochastic_decisiveness_scoped_oracle_bounds`                                |
-| `OU10`         |                                                                                                            | `OU11`          |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:OU12} | `StochasticSequential.stochastic_preservation_explicit_summary`                                            | ::: {#lh:PA3}   | `Physics.AnchorChecks.stochastic_anchor_check_iff_exists_anchor_singleton`                         |
-| `OU12`         |                                                                                                            | `PA3`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:QT1}  | `DecisionProblem.quotient_is_coarsest`                                                                     | ::: {#lh:QT7}   | `DecisionProblem.quotient_has_unique_factorization`                                                |
-| `QT1`          |                                                                                                            | `QT7`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:SD1}  | `Tractability.SampledDockingGap.strictUtilityGap_lifted_exact`                                             | ::: {#lh:SD2}   | `Tractability.SampledDockingGap.sampled_epsilon_margin_invariance`                                 |
-| `SD1`          |                                                                                                            | `SD2`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:SD3}  | `Tractability.SampledDockingGap.SampledDockingProblem.exact_coarse_opt_agree_of_gap`                       | ::: {#lh:SD4}   | `Tractability.SampledDockingCutoff.sampled_md_relevant_only_if_within_cutoff`                      |
-| `SD3`          |                                                                                                            | `SD4`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:SD5}  | `Tractability.SampledDockingCutoff.sampled_outsideCutoffCoord_irrelevant`                                  | ::: {#lh:SD6}   | `Tractability.SampledDockingCutoff.sampled_md_srank_bound`                                         |
-| `SD5`          |                                                                                                            | `SD6`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:SD7}  | `Tractability.SampledDockingCutoff.sampled_small_pocket_low_srank`                                         | ::: {#lh:SD8}   | `Tractability.SampledDockingCutoff.sampled_potentialRelevantCoords_sufficient_of_relevance_subset` |
-| `SD7`          |                                                                                                            | `SD8`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:SD9}  | `Tractability.SampledDockingCutoff.sampled_insideCutoff_sufficient`                                        | ::: {#lh:TK1}   | `Tractability.NearTieBand.exact_topK_subset_ambiguityBand`                                         |
-| `SD9`          |                                                                                                            | `TK1`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:TK2}  | `Tractability.RankingPreservation.pairwise_order_preserved_of_uniform_error`                               | ::: {#lh:TK3}   | `Tractability.RankingPreservation.coarse_gap_positive_of_exact_gap_margin`                         |
-| `TK2`          |                                                                                                            | `TK3`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:TK4}  | `Tractability.TopKPreservation.exact_topK_subset_survivorSet_of_margin`                                    | ::: {#lh:TK5}   | `Tractability.TopKPreservation.topK_preserved_of_boundary_gap`                                     |
-| `TK4`          |                                                                                                            | `TK5`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:TK6}  | `Tractability.TopKPreservation.exclude_of_exact_below_threshold_margin`                                    | ::: {#lh:WD1}   | `DecisionQuotient.checking_witnessing_duality_budget`                                              |
-| `TK6`          |                                                                                                            | `WD1`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-| ::: {#lh:WD2}  | `DecisionQuotient.no_sound_checker_below_witness_budget`                                                   | ::: {#lh:WD3}   | `DecisionQuotient.checking_time_ge_witness_budget`                                                 |
-| `WD2`          |                                                                                                            | `WD3`           |                                                                                                    |
-| :::            |                                                                                                            | :::             |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
-|                |                                                                                                            |                 |                                                                                                    |
-+----------------+------------------------------------------------------------------------------------------------------------+-----------------+----------------------------------------------------------------------------------------------------+
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ID              | Handle                                                                                                               | ID             | Handle                                                                                                                |
++:================+:=====================================================================================================================+:===============+:======================================================================================================================+
+| ID              | Handle                                                                                                               | ID             | Handle                                                                                                                |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:AB2}   | `DecisionProblem.surjective_abstraction_factors_or_erases`                                                           | ::: {#lh:CC4}  | `DecisionQuotient.ClaimClosure.anchor_sigma2p_complete_conditional`                                                   |
+| `AB2`           |                                                                                                                      | `CC4`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:CR1}   | `DecisionQuotient.ConfigReduction.config_sufficiency_iff_behavior_preserving`                                        | ::: {#lh:CT12} | `DecisionQuotient.Physics.ClaimTransport.physical_bridge_bundle`                                                      |
+| `CR1`           |                                                                                                                      | `CT12`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC19}  | `StochasticSequential.stochastic_anchor_sufficient_of_stochastic_sufficient`                                         | ::: {#lh:DC23} | `StochasticSequential.sequential_anchor_sufficient_of_sequential_sufficient`                                          |
+| `DC19`          |                                                                                                                      | `DC23`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC28}  | `StochasticSequential.reduceTQBF_correct_anchor`                                                                     | ::: {#lh:DC29} | `StochasticSequential.reduceTQBF_to_sequential_anchor_reduction`                                                      |
+| `DC28`          |                                                                                                                      | `DC29`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC40}  | `StochasticSequential.reduceMAJSATPureAnchor_correct`                                                                | ::: {#lh:DC41} | `StochasticSequential.reduceMAJSAT_to_pure_stochastic_anchor_reduction`                                               |
+| `DC40`          |                                                                                                                      | `DC41`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC42}  | `StochasticSequential.stochastic_anchor_check_pp_hard`                                                               | ::: {#lh:DC44} | `StochasticSequential.sequential_anchor_check_pspace_hard`                                                            |
+| `DC42`          |                                                                                                                      | `DC44`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC45}  | `StochasticSequential.stochastic_sufficiency_pp_hard`                                                                | ::: {#lh:DC46} | `StochasticSequential.sequential_sufficiency_pspace_hard`                                                             |
+| `DC45`          |                                                                                                                      | `DC46`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC47}  | `StochasticSequential.stochastic_minimum_sufficiency_pp_hard`                                                        | ::: {#lh:DC48} | `StochasticSequential.sequential_minimum_sufficiency_pspace_hard`                                                     |
+| `DC47`          |                                                                                                                      | `DC48`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC49}  | `StochasticSequential.sequentialMinimalSufficient_iff_relevant`                                                      | ::: {#lh:DC50} | `StochasticSequential.sequentialRelevantSet_is_minimal`                                                               |
+| `DC49`          |                                                                                                                      | `DC50`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC57}  | `StochasticSequential.fiberDecisionProblem_sufficient`                                                               | ::: {#lh:DC62} | `StochasticSequential.countedStochasticSufficiencySearch_spec`                                                        |
+| `DC57`          |                                                                                                                      | `DC62`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC63}  | `StochasticSequential.countedStochasticSufficiencySearch_steps`                                                      | ::: {#lh:DC64} | `StochasticSequential.countedStochasticAnchorSearch_spec`                                                             |
+| `DC63`          |                                                                                                                      | `DC64`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC65}  | `StochasticSequential.countedStochasticAnchorSearch_steps`                                                           | ::: {#lh:DC66} | `StochasticSequential.countedSequentialSufficiencySearch_spec`                                                        |
+| `DC65`          |                                                                                                                      | `DC66`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC67}  | `StochasticSequential.countedSequentialSufficiencySearch_steps`                                                      | ::: {#lh:DC68} | `StochasticSequential.countedSequentialAnchorSearch_spec`                                                             |
+| `DC67`          |                                                                                                                      | `DC68`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC69}  | `StochasticSequential.countedSequentialAnchorSearch_steps`                                                           | ::: {#lh:DC70} | `DecisionQuotient.static_sufficiency_inP_explicit`                                                                    |
+| `DC69`          |                                                                                                                      | `DC70`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC71}  | `DecisionQuotient.static_anchor_inP_explicit`                                                                        | ::: {#lh:DC72} | `StochasticSequential.stochastic_sufficiency_inP_explicit`                                                            |
+| `DC71`          |                                                                                                                      | `DC72`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC73}  | `StochasticSequential.stochastic_anchor_inP_explicit`                                                                | ::: {#lh:DC74} | `StochasticSequential.sequential_sufficiency_inP_explicit`                                                            |
+| `DC73`          |                                                                                                                      | `DC74`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC75}  | `StochasticSequential.sequential_anchor_inP_explicit`                                                                | ::: {#lh:DC76} | `DecisionQuotient.explicit_state_inP_summary`                                                                         |
+| `DC75`          |                                                                                                                      | `DC76`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC80}  | `DecisionQuotient.staticSufficiency_counted_search_witness`                                                          | ::: {#lh:DC81} | `DecisionQuotient.static_query_search_matrix`                                                                         |
+| `DC80`          |                                                                                                                      | `DC81`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC82}  | `DecisionQuotient.finite_search_summary`                                                                             | ::: {#lh:DC91} | `StochasticSequential.countedStochasticPreservationSearch_spec`                                                       |
+| `DC82`          |                                                                                                                      | `DC91`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC92}  | `StochasticSequential.countedStochasticPreservationSearch_steps`                                                     | ::: {#lh:DC93} | `StochasticSequential.stochastic_preservation_inP_explicit`                                                           |
+| `DC92`          |                                                                                                                      | `DC93`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC94}  | `StochasticSequential.stochastic_preservation_implies_static_sufficiency`                                            | ::: {#lh:DC95} | `StochasticSequential.static_sufficiency_implies_stochastic_preservation_of_full_support`                             |
+| `DC94`          |                                                                                                                      | `DC95`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC96}  | `StochasticSequential.static_sufficiency_iff_stochastic_preservation_of_full_support`                                | ::: {#lh:DC97} | `StochasticSequential.stochasticDecisionEquiv_iff_decisionEquiv_of_preservation`                                      |
+| `DC96`          |                                                                                                                      | `DC97`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC98}  | `StochasticSequential.stochasticDecisionEquiv_iff_decisionEquiv_of_full_support`                                     | ::: {#lh:DC99} | `StochasticSequential.stochasticEquivSetoid_eq_decisionSetoid_of_full_support`                                        |
+| `DC98`          |                                                                                                                      | `DC99`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DC100} | `StochasticSequential.benchmark_escalation_summary`                                                                  | ::: {#lh:DN1}  | `DecisionProblem.stateDecisionNoise_iff_same_quotient`                                                                |
+| `DC100`         |                                                                                                                      | `DN1`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DN2}   | `DecisionProblem.decisionNoise_iff_not_relevant`                                                                     | ::: {#lh:DN5}  | `DecisionProblem.decisionNoise_iff_condIndep`                                                                         |
+| `DN2`           |                                                                                                                      | `DN5`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DP1}   | `DecisionQuotient.DecisionProblem.minimalSufficient_iff_relevant`                                                    | ::: {#lh:DP2}  | `DecisionQuotient.DecisionProblem.relevantSet_is_minimal`                                                             |
+| `DP1`           |                                                                                                                      | `DP2`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DP6}   | `ClaimClosure.DP6`                                                                                                   | ::: {#lh:DP7}  | `ClaimClosure.DP7`                                                                                                    |
+| `DP6`           |                                                                                                                      | `DP7`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ1}   | `ClaimClosure.DQ1`                                                                                                   | ::: {#lh:DQ2}  | `ClaimClosure.DQ2`                                                                                                    |
+| `DQ1`           |                                                                                                                      | `DQ2`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ3}   | `ClaimClosure.DQ3`                                                                                                   | ::: {#lh:DQ6}  | `ClaimClosure.DQ6`                                                                                                    |
+| `DQ3`           |                                                                                                                      | `DQ6`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ7}   | `ClaimClosure.DQ7`                                                                                                   | ::: {#lh:DQ9}  | `DecisionQuotient.HardnessDistribution.simplicityTax_conservation`                                                    |
+| `DQ7`           |                                                                                                                      | `DQ9`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ10}  | `DecisionQuotient.IntegrityCompetence.alwaysAbstain_integrity`                                                       | ::: {#lh:DQ11} | `DecisionQuotient.SetCoverInstance.min_sufficient_iff_set_cover`                                                      |
+| `DQ10`          |                                                                                                                      | `DQ11`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ12}  | `DecisionQuotient.StochasticSequential.bounded_horizon_tractable`                                                    | ::: {#lh:DQ13} | `DecisionQuotient.StochasticSequential.bounded_support_tractable`                                                     |
+| `DQ12`          |                                                                                                                      | `DQ13`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ14}  | `DecisionQuotient.StochasticSequential.fully_observable_tractable`                                                   | ::: {#lh:DQ15} | `DecisionQuotient.StochasticSequential.product_distribution_tractable`                                                |
+| `DQ14`          |                                                                                                                      | `DQ15`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ16}  | `DecisionQuotient.StochasticSequential.product_enables_transfer`                                                     | ::: {#lh:DQ18} | `DecisionQuotient.StochasticSequential.static_simpler_than_stochastic`                                                |
+| `DQ16`          |                                                                                                                      | `DQ18`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ19}  | `DecisionQuotient.StochasticSequential.stochastic_simpler_than_sequential`                                           | ::: {#lh:DQ20} | `DecisionQuotient.all_coordinates_necessary_of_not_tautology`                                                         |
+| `DQ19`          |                                                                                                                      | `DQ20`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ25}  | `DecisionQuotient.counted_min_sufficient_inapproximability_conditional`                                              | ::: {#lh:DQ26} | `DecisionQuotient.dichotomy_conditional`                                                                              |
+| `DQ25`          |                                                                                                                      | `DQ26`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ27}  | `DecisionQuotient.eth_lower_bound_informal`                                                                          | ::: {#lh:DQ28} | `DecisionQuotient.exact_certainty_inflation_under_hardness_core`                                                      |
+| `DQ27`          |                                                                                                                      | `DQ28`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ30}  | `DecisionQuotient.hard_family_all_coords_core`                                                                       | ::: {#lh:DQ31} | `DecisionQuotient.integrity_resource_bound_for_sufficiency`                                                           |
+| `DQ30`          |                                                                                                                      | `DQ31`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ32}  | `DecisionQuotient.min_sufficient_factor_inapprox_of_set_cover_factor_inapprox`                                       | ::: {#lh:DQ34} | `DecisionQuotient.min_sufficient_set_cover_equiv`                                                                     |
+| `DQ32`          |                                                                                                                      | `DQ34`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ36}  | `DecisionQuotient.minsuff_conp_complete_conditional`                                                                 | ::: {#lh:DQ38} | `DecisionQuotient.no_exact_claim_admissible_under_hardness_core`                                                      |
+| `DQ36`          |                                                                                                                      | `DQ38`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ39}  | `DecisionQuotient.singleton_gate_sufficient_of_tautology`                                                            | ::: {#lh:DQ40} | `DecisionQuotient.sufficiency_conp_complete_conditional`                                                              |
+| `DQ39`          |                                                                                                                      | `DQ40`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ42}  | `DecisionQuotient.sufficient_means_factorizable`                                                                     | ::: {#lh:DQ43} | `DecisionQuotient.tautology_decidable_from_factor_approx`                                                             |
+| `DQ42`          |                                                                                                                      | `DQ43`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ44}  | `DecisionQuotient.tractable_subcases_conditional`                                                                    | ::: {#lh:DQ45} | `DecisionQuotient.tractable_tree_core`                                                                                |
+| `DQ44`          |                                                                                                                      | `DQ45`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ51}  | `DecisionQuotient.bounded_actions_tractable`                                                                         | ::: {#lh:DQ56} | `DecisionQuotient.orbitType_count_bound`                                                                              |
+| `DQ51`          |                                                                                                                      | `DQ56`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ57}  | `DecisionQuotient.separable_utility_tractable`                                                                       | ::: {#lh:DQ58} | `DecisionQuotient.stochastic_objective_bridge_can_fail_on_sufficiency`                                                |
+| `DQ57`          |                                                                                                                      | `DQ58`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ62}  | `DecisionQuotient.transition_coupled_bridge_can_fail_on_sufficiency`                                                 | ::: {#lh:DQ63} | `DecisionQuotient.tree_structure_tractable`                                                                           |
+| `DQ62`          |                                                                                                                      | `DQ63`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ72}  | `DecisionQuotient.bounded_actions_complexity`                                                                        | ::: {#lh:DQ74} | `DecisionQuotient.sufficiency_poly_separable`                                                                         |
+| `DQ72`          |                                                                                                                      | `DQ74`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ75}  | `DecisionQuotient.tensor_contraction_tractable`                                                                      | ::: {#lh:DQ76} | `DecisionQuotient.low_rank_utility_admits_factored_computation`                                                       |
+| `DQ75`          |                                                                                                                      | `DQ76`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ77}  | `DecisionQuotient.low_rank_tractability`                                                                             | ::: {#lh:DQ78} | `DecisionQuotient.sufficiency_poly_tree_structured`                                                                   |
+| `DQ77`          |                                                                                                                      | `DQ78`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ79}  | `DecisionQuotient.csp_treewidth_tractable`                                                                           | ::: {#lh:DQ80} | `DecisionQuotient.sufficiency_reduces_to_interaction_csp`                                                             |
+| `DQ79`          |                                                                                                                      | `DQ80`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ81}  | `DecisionQuotient.bounded_treewidth_tractability`                                                                    | ::: {#lh:DQ82} | `DecisionQuotient.orbitType_eq_iff`                                                                                   |
+| `DQ81`          |                                                                                                                      | `DQ82`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ83}  | `DecisionQuotient.symmetric_optimalActions_orbit_invariant`                                                          | ::: {#lh:DQ84} | `DecisionQuotient.sufficiency_reduces_to_cross_orbit_check`                                                           |
+| `DQ83`          |                                                                                                                      | `DQ84`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ85}  | `DecisionQuotient.symmetric_sufficiency_complexity_bound`                                                            | ::: {#lh:DQ86} | `DecisionQuotient.StochasticSequential.countedStochasticAnchorPreservationSearch_spec`                                |
+| `DQ85`          |                                                                                                                      | `DQ86`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ87}  | `DecisionQuotient.StochasticSequential.countedStochasticAnchorPreservationSearch_steps`                              | ::: {#lh:DQ88} | `DecisionQuotient.StochasticSequential.countedStochasticMinimumPreservationSearch_spec`                               |
+| `DQ87`          |                                                                                                                      | `DQ88`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ89}  | `DecisionQuotient.StochasticSequential.countedStochasticMinimumPreservationSearch_steps`                             | ::: {#lh:DQ90} | `DecisionQuotient.StochasticSequential.static_anchor_implies_stochastic_anchor_preservation_of_positive_anchor_fiber` |
+| `DQ89`          |                                                                                                                      | `DQ90`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ91}  | `DecisionQuotient.StochasticSequential.static_sufficiency_implies_stochastic_preservation_of_positive_fiber_support` | ::: {#lh:DQ92} | `DecisionQuotient.StochasticSequential.stochasticAnchorPreservation_counted_search_witness`                           |
+| `DQ91`          |                                                                                                                      | `DQ92`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ93}  | `DecisionQuotient.StochasticSequential.stochasticMinimumPreservation_counted_search_witness`                         | ::: {#lh:DQ94} | `DecisionQuotient.StochasticSequential.stochastic_anchor_preservation_iff_static_anchor_of_full_support`              |
+| `DQ93`          |                                                                                                                      | `DQ94`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ95}  | `DecisionQuotient.StochasticSequential.stochastic_minimum_preservation_iff_static_of_full_support`                   | ::: {#lh:DQ96} | `DecisionQuotient.StochasticSequential.stochastic_minimum_preservation_static_relevant_card_le`                       |
+| `DQ95`          |                                                                                                                      | `DQ96`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:DQ97}  | `DecisionQuotient.StochasticSequential.stochastic_preservation_contains_static_relevant`                             | ::: {#lh:DQ98} | `DecisionQuotient.anchor_sufficiency_sigma2p`                                                                         |
+| `DQ97`          |                                                                                                                      | `DQ98`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:EH1}   | `StochasticSequential.existential_anchor_source_fits_np_over_ppstyle_honest`                                         | ::: {#lh:EH2}  | `StochasticSequential.existential_anchor_hard_honest`                                                                 |
+| `EH1`           |                                                                                                                      | `EH2`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:EH3}   | `StochasticSequential.existential_anchor_query_family_hard_honest`                                                   | ::: {#lh:EH4}  | `StochasticSequential.existential_anchor_np_over_ppstyle_hard_honest`                                                 |
+| `EH3`           |                                                                                                                      | `EH4`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:EH5}   | `StochasticSequential.existential_anchor_query_family_np_over_ppstyle_hard_honest`                                   | ::: {#lh:EH6}  | `StochasticSequential.existential_anchor_query_family_np_over_ppstyle_complete_honest`                                |
+| `EH5`           |                                                                                                                      | `EH6`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:EH7}   | `StochasticSequential.existential_decisiveness_complement_np_over_ppstyle_hard_honest`                               | ::: {#lh:EH8}  | `StochasticSequential.existential_decisiveness_complement_np_over_ppstyle_complete_honest`                            |
+| `EH7`           |                                                                                                                      | `EH8`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:EH9}   | `StochasticSequential.existential_decisiveness_query_family_np_over_ppstyle_hard_honest`                             | ::: {#lh:EH10} | `StochasticSequential.existential_decisiveness_query_family_np_over_ppstyle_complete_honest`                          |
+| `EH9`           |                                                                                                                      | `EH10`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:EX1}   | `Examples.pomdp_reduction_to_preservation`                                                                           | ::: {#lh:EX2}  | `Examples.hyperparam_reduction_to_static`                                                                             |
+| `EX1`           |                                                                                                                      | `EX2`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:EX3}   | `Examples.toy_full_opt_s1_contains_a`                                                                                | ::: {#lh:HD4}  | `DecisionQuotient.HardnessDistribution.complete_model_dominates_after_threshold`                                      |
+| `EX3`           |                                                                                                                      | `HD4`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:HD5}   | `DecisionQuotient.HardnessDistribution.gap_conservation_card`                                                        | ::: {#lh:HD14} | `DecisionQuotient.HardnessDistribution.linear_lt_exponential_plus_constant_eventually`                                |
+| `HD5`           |                                                                                                                      | `HD14`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:HD23}  | `DecisionQuotient.HardnessDistribution.hardness_is_irreducible_required_work`                                        | ::: {#lh:HD26} | `DecisionQuotient.HardnessDistribution.totalExternalWork_eq_n_mul_gapCard`                                            |
+| `HD23`          |                                                                                                                      | `HD26`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:IC30}  | `DecisionQuotient.IntegrityCompetence.exactCertaintyInflation_iff_no_exact_competence`                               | ::: {#lh:IC32} | `DecisionQuotient.IntegrityCompetence.integrity_forces_abstention`                                                    |
+| `IC30`          |                                                                                                                      | `IC32`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:IC33}  | `DecisionQuotient.IntegrityCompetence.integrity_not_competent_of_nonempty_scope`                                     | ::: {#lh:IC34} | `DecisionQuotient.IntegrityCompetence.integrity_resource_bound`                                                       |
+| `IC33`          |                                                                                                                      | `IC34`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:OU1}   | `StochasticSequential.stochastic_anchor_query_fits_np_over_ppstyle`                                                  | ::: {#lh:OU2}  | `StochasticSequential.stochastic_minimum_query_fits_np_over_ppstyle`                                                  |
+| `OU1`           |                                                                                                                      | `OU2`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:OU6}   | `StochasticSequential.stochastic_anchor_inP_explicit_via_witness_schema`                                             | ::: {#lh:OU7}  | `StochasticSequential.stochastic_minimum_inP_explicit_via_witness_schema`                                             |
+| `OU6`           |                                                                                                                      | `OU7`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:OU8}   | `StochasticSequential.fitsCoNPOverPPStyle_of_no_witness`                                                             | ::: {#lh:OU9}  | `StochasticSequential.stochastic_decisiveness_query_fits_conp_over_ppstyle`                                           |
+| `OU8`           |                                                                                                                      | `OU9`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:OU10}  | `StochasticSequential.stochastic_decisiveness_complement_fits_np_over_ppstyle`                                       | ::: {#lh:OU11} | `StochasticSequential.stochastic_decisiveness_scoped_oracle_bounds`                                                   |
+| `OU10`          |                                                                                                                      | `OU11`         |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:OU12}  | `StochasticSequential.stochastic_preservation_explicit_summary`                                                      | ::: {#lh:PA3}  | `Physics.AnchorChecks.stochastic_anchor_check_iff_exists_anchor_singleton`                                            |
+| `OU12`          |                                                                                                                      | `PA3`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:QT1}   | `DecisionProblem.quotient_is_coarsest`                                                                               | ::: {#lh:QT7}  | `DecisionProblem.quotient_has_unique_factorization`                                                                   |
+| `QT1`           |                                                                                                                      | `QT7`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:WD1}   | `DecisionQuotient.checking_witnessing_duality_budget`                                                                | ::: {#lh:WD2}  | `DecisionQuotient.no_sound_checker_below_witness_budget`                                                              |
+| `WD1`           |                                                                                                                      | `WD2`          |                                                                                                                       |
+| :::             |                                                                                                                      | :::            |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+| ::: {#lh:WD3}   | `DecisionQuotient.checking_time_ge_witness_budget`                                                                   |                |                                                                                                                       |
+| `WD3`           |                                                                                                                      |                |                                                                                                                       |
+| :::             |                                                                                                                      |                |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
+|                 |                                                                                                                      |                |                                                                                                                       |
++-----------------+----------------------------------------------------------------------------------------------------------------------+----------------+-----------------------------------------------------------------------------------------------------------------------+
 
 
 

@@ -4442,6 +4442,37 @@ end {module_root}
             shutil.copy2(pdf_src, pdf_dest)
             print(f"[build] ✓ {paper_id}.pdf → releases/")
 
+        # Build supplementary PDF if supplementary.tex exists
+        supp_file = latex_dir / "supplementary.tex"
+        if supp_file.exists():
+            print(f"[build] Building supplementary material...")
+            supp_build_steps = [
+                (
+                    ["pdflatex", "-interaction=nonstopmode", "supplementary.tex"],
+                    "pdflatex (1/2)",
+                ),
+                (
+                    ["pdflatex", "-interaction=nonstopmode", "supplementary.tex"],
+                    "pdflatex (2/2)",
+                ),
+            ]
+            for cmd, step_name in supp_build_steps:
+                if verbose:
+                    print(f"[build]   Running: {step_name}")
+                result = subprocess.run(
+                    cmd,
+                    cwd=latex_dir,
+                    capture_output=True,
+                    text=True,
+                    encoding="latin-1",
+                    errors="replace",
+                )
+            supp_pdf = latex_dir / "supplementary.pdf"
+            if supp_pdf.exists():
+                supp_dest = releases_dir / f"{paper_id}_supplementary.pdf"
+                shutil.copy2(supp_pdf, supp_dest)
+                print(f"[build] ✓ {paper_id}_supplementary.pdf → releases/")
+
     def build_submission(self, paper_id: str, verbose: bool = False):
         """Build review-submission PDF with venue-specific formatting.
 
@@ -4643,12 +4674,14 @@ end {module_root}
             r"% the SSOT macros.",
             r"\AtBeginDocument{}",
             r"\AtEndDocument{%",
-            r"  \IfFileExists{content/lean_handle_ids_auto.tex}{%",
-            r"    \par\smallskip\begingroup",
-            r"    \footnotesize\noindent\textbf{Lean Handle Index.}\par\smallskip",
-            r"    \input{content/lean_handle_ids_auto.tex}%",
-            r"    \endgroup",
-            r"  }{}%",
+            r"  \ifdefined\JSAITREVIEW% Only include Lean handle index in review mode",
+            r"    \IfFileExists{content/lean_handle_ids_auto.tex}{%",
+            r"      \par\smallskip\begingroup",
+            r"      \footnotesize\noindent\textbf{Lean Handle Index.}\par\smallskip",
+            r"      \input{content/lean_handle_ids_auto.tex}%",
+            r"      \endgroup",
+            r"    }{}%",
+            r"  \fi",
             r"}",
             r"\fi",
         ]

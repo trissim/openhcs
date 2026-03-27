@@ -54,11 +54,11 @@ Equivalently, barrier-freedom certification is also non-computable.
 \leanmeta{\LHrng{UND}{1}{2}}
 
 \begin{proof}
-Assume there is a computable certifier for $P(c):=\mathrm{HasBarrier}(\mathrm{eval}(c))$. The property is non-trivial: some generators produce collisions and some do not. Rice's theorem therefore implies that if membership in the corresponding semantic class were computable from code, every partial recursive function would have to satisfy it, contradiction. The barrier-free statement is equivalent by negation.
+Assume there is a computable certifier for $P(c):=\mathrm{HasBarrier}(\mathrm{eval}(c))$. The property is non-trivial (some generators produce collisions and some do not), so membership in the corresponding semantic class cannot be computable from code. The barrier-free statement follows by negation.
 \end{proof}
 
 \begin{remark}[Certification interpretation]
-The Rice-style theorem is the algorithmic counterpart to extension instability. Even when a current deployment appears collision-free, there is no general computable procedure that certifies this property for arbitrary future-generating code. For compression system designers deploying learned representations, this means that any zero-error recovery guarantee derived from a finite training corpus cannot be automatically relied upon to hold for new classes that the encoder will encounter in production; explicit identity metadata or a restrictive growth model becomes necessary to maintain formal guarantees.
+The theorem is the algorithmic counterpart to extension instability: there is no general computable procedure that certifies barrier-freedom for arbitrary future-generating code, even when a current deployment appears collision-free. For compression system designers deploying learned representations, this means zero-error recovery guarantees derived from a finite training corpus cannot be automatically relied upon for new classes encountered in production; explicit identity metadata or a restrictive growth model becomes necessary.
 \end{remark}
 
 \begin{corollary}[Certification consequence for persistent \texorpdfstring{$D=0$}{D=0} claims]

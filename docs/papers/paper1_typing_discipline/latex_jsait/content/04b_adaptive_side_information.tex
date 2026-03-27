@@ -19,7 +19,7 @@ Consequently, the pointwise optimal number of auxiliary bits on fiber $u$ is
 \leanmeta{\LH{GPH32}}
 
 \begin{proof}
-Once $u$ is fixed, the decoder only needs to distinguish classes inside the fiber $\pi^{-1}(u)$. With $\ell(u)$ binary bits there are at most $2^{\ell(u)}$ auxiliary outcomes, so exact recovery is possible exactly when that many outcomes suffice to name the fiber elements injectively. The minimal feasible budget is therefore the least integer whose power of two dominates the fiber size, namely $\lceil \log_2 |\pi^{-1}(u)| \rceil$.
+Once $u$ is fixed, the decoder only needs to distinguish classes inside the fiber $\pi^{-1}(u)$. With $\ell(u)$ binary bits there are at most $2^{\ell(u)}$ auxiliary outcomes, so recovery is possible when that many outcomes suffice to name the fiber elements injectively. The minimal feasible budget is therefore the least integer whose power of two dominates the fiber size, namely $\lceil \log_2 |\pi^{-1}(u)| \rceil$.
 \end{proof}
 
 \begin{definition}[Expected adaptive description length]
@@ -107,5 +107,5 @@ The fixed-length law pays for the worst collision fiber; the adaptive law pays f
 \end{remark}
 
 \begin{remark}[Entropy comparison]
-The conditional-entropy lower and upper bounds place the adaptive theorem inside classical source-coding language. Zero-error adaptive side information is sandwiched around $H(C\mid U)$ up to the standard one-bit prefix-coding overhead, but the exact zero-error law remains fiberwise and combinatorial rather than purely entropic.
+The conditional-entropy lower and upper bounds place the adaptive theorem inside classical source-coding language. Zero-error adaptive side information is sandwiched around $H(C\mid U)$ up to the standard one-bit prefix-coding overhead, but the zero-error law remains fiberwise and combinatorial rather than purely entropic.
 \end{remark}

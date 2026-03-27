@@ -1,6 +1,6 @@
 # Paper: Computational Complexity of Physical Counting
 
-**Status**: Theory of Computing-ready | **Lean**: 40837 lines, 1714 theorems
+**Status**: Theory of Computing-ready | **Lean**: 45442 lines, 1823 theorems
 
 ---
 
@@ -914,7 +914,7 @@ Then the induced optimization problem is exactly the static decision problem of 
 If any bridge condition fails, direct transfer from this paper's static complexity theorems is not licensed by this rule.
 
 ::: remark
-Beyond Proposition [\[prop:one-step-bridge\]](#prop:one-step-bridge){reference-type="ref" reference="prop:one-step-bridge"} (multi-step horizon, stochastic transitions/rewards, or regret objectives), the governing complexity objects change. Those regimes are natural extensions, but they are distinct formal classes from the static sufficiency class analyzed in this paper.
+Beyond Proposition [\[prop:one-step-bridge\]](#prop:one-step-bridge){reference-type="ref" reference="prop:one-step-bridge"} (multi-step horizon, stochastic transitions/rewards, or regret objectives), the governing complexity objects change. Those regimes are extensions, but they are distinct formal classes from the static sufficiency class analyzed in this paper.
 :::
 
 ::: proposition
@@ -3927,7 +3927,7 @@ Informally: if exact support is not certified, do not make exact claims; when co
 
 # Lean 4 Proof Listings {#app:lean}
 
-The complete Lean 4 formalization is available at the Zenodo DOI listed on the title page. The mechanization consists of 40837 lines across 143 files, with 1714 theorem/lemma statements.
+The complete Lean 4 formalization is available at the Zenodo DOI listed on the title page. The mechanization consists of 45442 lines across 176 files, with 1823 theorem/lemma statements.
 
 **Handle IDs.** Inline theorem metadata now cites compact IDs (for example, `HD6`, `CC12`, `IC4`) instead of full theorem constants. The full ID-to-handle mapping is listed in Section [1.1](#sec:lean-handle-id-map){reference-type="ref" reference="sec:lean-handle-id-map"}.
 
@@ -8962,6 +8962,6 @@ This provides a set-valued baseline in the stochastic regime while preserving th
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper4_decision_quotient/proofs/`
-- Lines: 40837
-- Theorems: 1714
+- Lines: 45442
+- Theorems: 1823
 - `sorry` placeholders: 0

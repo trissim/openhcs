@@ -1,6 +1,6 @@
 # Paper: Decision Quotient Structure and Convergence: Optimizer Quotients, Structural Rank, and Bayesian Optimality
 
-**Status**: IEEE Transactions on Information Theory-ready | **Lean**: 66580 lines, 2945 theorems
+**Status**: IEEE Transactions on Information Theory-ready | **Lean**: 72512 lines, 3086 theorems
 
 ---
 
@@ -496,6 +496,6 @@ For readability, this appendix provides a focused manual summary rather than rep
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper4_decision_quotient/proofs/`
-- Lines: 66580
-- Theorems: 2945
+- Lines: 72512
+- Theorems: 3086
 - `sorry` placeholders: 0

@@ -1,12 +1,12 @@
 # Paper: Exact Consistency Under Partial Views: Graph Colorability, Capacity, and Equality in Multi-Location Encodings
 
-**Status**: IEEE Transactions on Information Theory-ready | **Lean**: 25743 lines, 1231 theorems
+**Status**: IEEE Transactions on Information Theory-ready | **Lean**: 25743 lines, 1234 theorems
 
 ---
 
 ## Abstract
 
-We construct a structural theory of failure and a graph-capacity framework for analyzing structural integrity under distributed source coding. Structural integrity means the code can correct erasures: the mapping from source to observable syndrome is injective. Admissible partial views induce a confusability graph on latent tuples; in the exact coordinate-view model, this graph class is exactly characterized by upward-closed families of coordinate-agreement sets, and exact recovery with a $T$-ary tag is equivalent to $T$-colorability. Repeated composition yields strong powers, so the normalized block-rate sequence converges to asymptotic Shannon capacity bounded above by Lovász-$\vartheta$. The upper theory is sharp whenever confusability is transitive; meet-witnessing and fiber coherence provide checkable sufficient conditions for that collapse. Under an affine restriction, the coordinate structure yields a representable matroid whose rank bounds confusability. The theory yields verifiable structural integrity criteria with applications to programming-language runtimes, databases, and dependency managers.
+We construct a structural theory of failure and a graph-capacity framework for analyzing structural integrity under distributed source coding. Structural integrity means the code can correct erasures: the mapping from source to observable syndrome is injective. Admissible partial views induce a confusability graph on latent tuples; in the exact coordinate-view model, this graph class is exactly characterized by upward-closed families of coordinate-agreement sets, and exact recovery with a $T$-ary tag is equivalent to $T$-colorability. Repeated composition yields strong powers, so the normalized block-rate sequence converges to asymptotic Shannon capacity bounded above by Lovász-$\vartheta$. The upper theory is sharp whenever confusability is transitive; meet-witnessing and fiber coherence provide checkable sufficient conditions for that collapse. Under an affine restriction, the coordinate structure yields a representable matroid whose rank bounds confusability. The theory yields verifiable structural integrity criteria with predictive instantiations in programming-language runtimes, databases, and dependency managers.
 
 
 # Introduction
@@ -47,9 +47,9 @@ The same deterministic model also raises a realizability question at its opposit
 
 ## Paper Organization {#overview}
 
-The main theorem arc is: partial views induce a confusability graph; exact recovery becomes graph colorability; block composition turns that graph into strong powers; the resulting normalized rates converge to the classical Shannon-capacity value of the induced graph; a fixed Lovász-$\vartheta$ upper theory bounds that value; and transitivity of confusability gives the model-side export to the classical cluster-graph equality case. The deterministic converse is the finite foundation of that arc. The affine and realizability sections are later specializations and boundary consequences of the same model rather than separate primary claims.
+The main theorem family is: partial views induce a confusability graph; exact recovery becomes graph colorability; block composition turns that graph into strong powers; the resulting normalized rates converge to the classical Shannon-capacity value of the induced graph; a fixed Lovász-$\vartheta$ upper theory bounds that value; and transitivity of confusability gives the model-side export to the classical cluster-graph equality case. The deterministic converse is the finite foundation of that family. The affine and realizability sections are later specializations and boundary consequences of the same model rather than separate primary claims.
 
-Section [\[sec:foundations\]](#sec:foundations){reference-type="ref" reference="sec:foundations"} gives the minimum model and threshold setup. Section [\[sec:converse\]](#sec:converse){reference-type="ref" reference="sec:converse"} develops the finite converse foundation. Sections [\[sec:graph-characterization\]](#sec:graph-characterization){reference-type="ref" reference="sec:graph-characterization"}--[\[sec:equality\]](#sec:equality){reference-type="ref" reference="sec:equality"} contain the main graph-capacity arc: graph characterization, block and asymptotic capacity, upper theory, and equality characterization. Section [\[sec:affine\]](#sec:affine){reference-type="ref" reference="sec:affine"} then records the affine fact-side specialization as a second lens on the same confusability structure. Section [\[sec:ssot\]](#sec:ssot){reference-type="ref" reference="sec:ssot"}, Section [\[sec:rate-corollaries\]](#sec:rate-corollaries){reference-type="ref" reference="sec:rate-corollaries"}, and Section [\[sec:requirements\]](#sec:requirements){reference-type="ref" reference="sec:requirements"} return to the unit-rate boundary of the same model and develop its structural, operational, and rate-complexity consequences. Appendix [\[sec:appendix-classification\]](#sec:appendix-classification){reference-type="ref" reference="sec:appendix-classification"} records representative host-level readings, and Supplement A contains case-study details and traces. A supplementary Lean 4 artifact machine-checks the converse family, graph extension, theta upper theory, affine fact-matroid specialization, threshold chain, operational realizability criterion, and rate-complexity arguments [@demoura2021lean4].
+Section [\[sec:foundations\]](#sec:foundations){reference-type="ref" reference="sec:foundations"} gives the minimum model and threshold setup. Section [\[sec:converse\]](#sec:converse){reference-type="ref" reference="sec:converse"} develops the finite converse foundation. Sections [\[sec:graph-characterization\]](#sec:graph-characterization){reference-type="ref" reference="sec:graph-characterization"}--[\[sec:equality\]](#sec:equality){reference-type="ref" reference="sec:equality"} contain the main graph-capacity arc: graph characterization, block and asymptotic capacity, upper theory, and equality characterization. Section [\[sec:affine\]](#sec:affine){reference-type="ref" reference="sec:affine"} then records the affine fact-side specialization as a second lens on the same confusability structure. Section [\[sec:ssot\]](#sec:ssot){reference-type="ref" reference="sec:ssot"}, Section [\[sec:rate-corollaries\]](#sec:rate-corollaries){reference-type="ref" reference="sec:rate-corollaries"}, and Section [\[sec:requirements\]](#sec:requirements){reference-type="ref" reference="sec:requirements"} return to the unit-rate boundary of the same model and develop its structural consequences. Section [\[sec:evaluation\]](#sec:evaluation){reference-type="ref" reference="sec:evaluation"} instantiates the theory on representative systems as predictive validation. Appendix [\[sec:appendix-classification\]](#sec:appendix-classification){reference-type="ref" reference="sec:appendix-classification"} records the full system classification, and Supplement A contains case-study details and traces. A supplementary Lean 4 artifact machine-checks the converse family, graph extension, theta upper theory, affine fact-matroid specialization, threshold chain, structural-consequence criterion, and rate-complexity arguments [@demoura2021lean4].
 
 ## Scope {#sec:scope}
 
@@ -73,9 +73,11 @@ The main contributions are grouped into the core graph-capacity arc and the appl
 
 #### Consequence contributions.
 
--   **An affine fact-matroid specialization from the same latent-state framework** in which affine realized-state families induce a representable matroid on fact indices: semantic determination becomes span membership, and the resulting matroid rank yields tractable upper bounds for the main confusability/capacity problem.
+-   **An affine fact-matroid specialization** in which affine realized-state families induce a representable matroid on fact indices: semantic determination becomes span membership, and the resulting matroid rank yields tractable upper bounds for the main confusability/capacity problem.
 
--   **Threshold and realizability corollaries** showing that unit rate is the unique zero-incoherence regime, that unit rate is exactly the structural-integrity regime, that unit rate has $O(1)$ manual update cost while higher rates incur an $\Omega(n)$ lower bound, and that causal propagation together with provenance observability gives an operational criterion for realizable verifiable structural integrity in concrete hosts.
+-   **Threshold and structural-consequence corollaries** showing that unit rate is the unique zero-incoherence regime, that unit rate is exactly the structural-integrity regime, that unit rate has $O(1)$ manual update cost while higher rates incur an $\Omega(n)$ lower bound, and that causal propagation together with provenance observability gives a criterion for realizable verifiable structural integrity in concrete hosts.
+
+-   **Predictive validation** in which the theory correctly classifies representative systems---including programming-language runtimes, databases, and dependency managers---as achieving rate-1 or not, providing real-world evidence for the theory's predictive power.
 
 -   **A supplementary machine-checked artifact** verifying the theorem chain in Lean 4.
 
@@ -121,7 +123,7 @@ The admissible edit set $E(C)$ is part of the primitive specification of an enco
 :::
 
 ::: definition
-[]{#def:dof label="def:dof"} The *degrees of freedom* (DOF), or *independent rate*, of an encoding system for fact $F$ is the number of pairwise independent source locations encoding $F$ under the specified admissible edit set $E(C)$. In the single-fact model, the remaining encoding locations are treated as derived views of those independent sources.
+[]{#def:dof label="def:dof"} The *degrees of freedom* (DOF) is used as shorthand for the independent rate, defined as the number of pairwise independent source locations encoding $F$ under the specified admissible edit set $E(C)$. In the single-fact model, the remaining encoding locations are treated as derived views of those independent sources.
 :::
 
 ::: definition
@@ -187,124 +189,7 @@ This threshold is an early architectural consequence of the deterministic model.
 The remainder of the paper sharpens this counting statement into a unified finite converse family, asks how that one-shot obstruction acquires non-clique topology under partial views, and then develops the corresponding asymptotic capacity and upper-bound theory.
 
 
-# Unified Finite Converse {#sec:converse}
-
-This section supplies the one-shot obstruction that the later graph-capacity theory lifts from clique-shaped ambiguity to non-clique failure geometry. Its role is foundational and unifying rather than graph-theoretically novel: in the single-fact setting, every surviving ambiguity class is effectively clique-shaped under the observation transcript, so the same deterministic obstruction can be stated as injectivity, clique counting, entropy, decoder-output, and finite-error bounds. The cleanest zero-error formulation starts from the joint observation-tag map itself. The first theorem gives the basic criterion; the remaining statements package the same obstruction in the forms reused later in the graph and realizability arcs.
-
-::: theorem
-[]{#thm:pair-injective label="thm:pair-injective"} Let $X$ range over a finite latent alphabet, let $Y$ be the deterministic observation transcript, and let $T$ be a finite auxiliary tag. Exact zero-error recovery from $(Y,T)$ is possible if and only if the pair map $x \mapsto (Y(x),T(x))$ is injective on the ambiguity class under consideration.
-:::
-
-::: proof
-*Proof.* Let $\phi(x):=(Y(x),T(x))$.
-
-*Necessity.* If $\phi$ is not injective, then there exist distinct latent states $x_1\neq x_2$ with $\phi(x_1)=\phi(x_2)$. Any deterministic decoder $D$ therefore receives the same input on both states and must satisfy $D(\phi(x_1))=D(\phi(x_2))$. Since $x_1\neq x_2$, the common output cannot equal both latent states, so $D$ errs on at least one of them.
-
-*Sufficiency.* If $\phi$ is injective, define a decoder on the image of $\phi$ by $D(y,t)=\phi^{-1}(y,t)$, with arbitrary extension off the image. Injectivity makes $\phi^{-1}$ single-valued on the image, and for every latent state $x$ we then have $D(Y(x),T(x))=x$. Thus exact zero-error recovery is possible. ◻
-:::
-
-::: proposition
-[]{#thm:confusability-converse label="thm:confusability-converse"} Fix a deterministic observation transcript and an $L$-bit side-information tag. If $K$ latent states induce the same observation transcript, then exact zero-error decoding on that ambiguity class requires $K$ distinct tag outcomes. Equivalently, a $K$-way ambiguity class forms a confusability clique whose size cannot exceed the available tag alphabet.
-:::
-
-::: proof
-*Proof.* Apply Theorem [\[thm:pair-injective\]](#thm:pair-injective){reference-type="ref" reference="thm:pair-injective"} on an ambiguity class on which the observation is constant. Then injectivity of $(Y,T)$ reduces to injectivity of the tag coordinate alone on that class. Since an $L$-bit tag provides at most $2^L$ outcomes, the clique size cannot exceed $2^L$. ◻
-:::
-
-#### Global observation-tag budget.
-
-If the observation alphabet has size $O$ and the auxiliary tag alphabet has size $T$, then exact zero-error recovery on a latent alphabet of size $K$ requires $$K \le O\,T.$$
-
-::: proof
-*Proof.* Let $\phi(x)=(Y(x),T(x))$. By Theorem [\[thm:pair-injective\]](#thm:pair-injective){reference-type="ref" reference="thm:pair-injective"}, exact zero-error recovery requires $\phi$ to be injective on the latent alphabet under consideration. The codomain of $\phi$ is the finite product alphabet $\mathcal Y\times\mathcal T$, which has cardinality $|\mathcal Y\times\mathcal T|=OT$. An injective map from a set of size $K$ into a set of size $OT$ can exist only if $K\le OT$. This is exactly the claimed global budget bound. ◻
-:::
-
-#### Fiber-level injectivity and cardinality.
-
-Fix an observation value $y$. On the observation fiber $$\mathcal F_y=\{x : Y(x)=y\},$$ exact zero-error recovery forces the tag map to be injective. Consequently, $$|\mathcal F_y| \le |\mathcal T|.$$
-
-::: proof
-*Proof.* Fix $y$ and restrict attention to the fiber $\mathcal F_y=\{x:Y(x)=y\}$. On this set the observation coordinate is constant, so for $x,x'\in\mathcal F_y$ one has $$(Y(x),T(x))=(Y(x'),T(x')) \iff T(x)=T(x').$$ Hence Theorem [\[thm:pair-injective\]](#thm:pair-injective){reference-type="ref" reference="thm:pair-injective"} implies that exact recovery on $\mathcal F_y$ is possible only if the tag map $x\mapsto T(x)$ is injective on that fiber. Since the image of an injective map cannot be larger than its codomain, one obtains $|\mathcal F_y|\le |\mathcal T|$. ◻
-:::
-
-::: proposition
-[]{#thm:fano-converse label="thm:fano-converse"} Let $F$ range over $K$ possible latent values. Suppose exact recovery is attempted from a fixed observation transcript together with an $L$-bit side-information tag. Then $$K \le 2^L.$$ Equivalently, exact zero-error recovery of $K$ ambiguous states requires at least $\log_2 K$ bits of side information.
-:::
-
-::: proof
-*Proof.* This is Theorem [\[thm:confusability-converse\]](#thm:confusability-converse){reference-type="ref" reference="thm:confusability-converse"} specialized to a single $K$-way ambiguity class. ◻
-:::
-
-The counting bound is the coarsest form of the obstruction. The next step is to weight the same argument by source mass. Exact recovery still enforces injectivity on successful confusability classes, but now the question is how much entropy can remain once the source is partitioned into success and failure branches.
-
-#### Conditional-entropy formulation.
-
-Let $X$ be uniform on a $K$-way ambiguity class and let $Y$ be the deterministic observation transcript. If $Y$ is constant on that class, then $H(X\mid Y)=\log_2 K$. In particular, any tag-observation pair $(Y,T)$ that resolves the class exactly must satisfy $$H(X\mid Y,T)=0
-\qquad\text{and}\qquad
-H(T\mid Y)\ge \log_2 K .$$
-
-::: proof
-*Proof.* If $Y$ is constant on the $K$-point ambiguity class, then conditioning on $Y$ does not refine the distribution of $X$. Because $X$ is uniform on that class, this gives $H(X\mid Y)=\log_2 K$. Exact recovery from $(Y,T)$ means that $X$ is a deterministic function of $(Y,T)$, so $H(X\mid Y,T)=0$. Using the chain rule, $$H(X\mid Y)=I(X;T\mid Y)+H(X\mid Y,T)=I(X;T\mid Y).$$ Therefore $I(X;T\mid Y)=\log_2 K$. Since conditional mutual information is bounded by conditional entropy, $I(X;T\mid Y)\le H(T\mid Y)$, and the lower bound $H(T\mid Y)\ge \log_2 K$ follows. ◻
-:::
-
-#### Mass-weighted clique entropy bound.
-
-Let $S$ be a success set for a zero-error decoder, and suppose $S$ forms a confusability clique under the observation transcript. If $p_S$ denotes the total probability mass of $S$, then the entropy carried by the successful states obeys $$\sum_{x\in S} p(x)\log_2 \frac{1}{p(x)}
-\;\le\;
-h_2(p_S) + p_S \log_2 |\mathcal T|,$$ where $h_2$ is binary entropy and $|\mathcal T|$ is the tag alphabet size.
-
-::: proof
-*Proof.* Let $B$ be the indicator of the event $\{X\in S\}$. Then $\Pr[B=1]=p_S$, so $H(B)=h_2(p_S)$. Decompose the source entropy carried by the successful states by conditioning on $B$: $$H(X)=H(B)+H(X\mid B).$$ Restricting to the success branch $B=1$, exact recovery on the clique $S$ forces injectivity of the tag map on $S$, hence at most $|\mathcal T|$ successful states can be resolved. Therefore $$H(X\mid B=1) \le \log_2 |\mathcal T|.$$ Multiplying by the success probability gives a contribution of at most $p_S\log_2 |\mathcal T|$ from that branch. Combining this with the Bernoulli split term $h_2(p_S)$ yields the displayed inequality for the entropy mass carried by the successful states. ◻
-:::
-
-In particular, on any exact success set inside a confusability clique, the restricted observation-tag map is injective by Theorem [\[thm:pair-injective\]](#thm:pair-injective){reference-type="ref" reference="thm:pair-injective"}, so the same entropy inequality applies directly to the successful branch rather than only to the whole clique.
-
-#### Decoder-output and gap formulations.
-
-In the same deterministic finite model, the obstruction can also be expressed as output-entropy and finite-budget gap constraints: any deterministic decoder output $\hat X$ satisfies $$H(\hat X)\le H(Y,T)\le H(X),$$ and the observation-tag entropy and decoded-output entropy are bounded by their corresponding finite alphabet ceilings, so the deficits $$\log_2 |\mathcal Y\times \mathcal T|-H(Y,T),
-\qquad
-\log_2 |\widehat{\mathcal X}|-H(\hat X)$$ are nonnegative and vanish only in the uniform saturation cases formalized in the supplement.
-
-::: proof
-*Proof.* Because the decoder is deterministic, $\hat X=D(Y,T)$ is a deterministic function of the pair $(Y,T)$. The deterministic data-processing statement below therefore gives $$H(\hat X)\le H(Y,T).$$ The pair $(Y,T)$ is itself a deterministic function of the latent source $X$, so another application of deterministic data processing yields $H(Y,T)\le H(X)$. Since $(Y,T)$ takes values in the finite alphabet $\mathcal Y\times\mathcal T$, one also has $$H(Y,T)\le \log_2 |\mathcal Y\times\mathcal T|.$$ Likewise $H(\hat X)\le \log_2 |\widehat{\mathcal X}|$. Subtracting these entropies from their respective alphabet ceilings gives the nonnegative gap quantities claimed in the statement. ◻
-:::
-
-#### Deterministic data processing.
-
-Let $\kappa$ be any deterministic coarsening of the observation-tag pair $(Y,T)$. Then $$H(\kappa(Y,T)) \le H(Y,T).$$ In particular, since any deterministic decoder output $\hat X$ is a coarsening of $(Y,T)$, $$H(\hat X)\le H(Y,T)\le \log_2 |\mathcal Y\times \mathcal T|.$$
-
-::: proof
-*Proof.* Write $Z=(Y,T)$. If $\kappa$ is deterministic, then $\kappa(Z)$ is a function of $Z$, so the conditional entropy $H(\kappa(Z)\mid Z)$ is zero. By the chain rule, $$H(Z)=H(\kappa(Z),Z)=H(\kappa(Z))+H(Z\mid \kappa(Z)),$$ and since conditional entropy is nonnegative, $H(\kappa(Z))\le H(Z)$. Taking $\kappa$ to be the decoder map gives $H(\hat X)\le H(Y,T)$. Finally, because $Z$ ranges over the finite alphabet $\mathcal Y\times\mathcal T$, one has the standard finite-alphabet ceiling $H(Y,T)\le \log_2 |\mathcal Y\times\mathcal T|$. ◻
-:::
-
-This theorem is the structural reason the output and gap formulations are not independent embellishments of the counting converse. Once the observation is coarsened, every derived representation inherits the same obstruction through deterministic data processing rather than escaping it.
-
-::: proposition
-[]{#thm:equivalence-viewpoint label="thm:equivalence-viewpoint"} The confusability, counting, conditional-entropy, decoder-output, and finite-gap statements above are different normal forms of the same deterministic finite zero-error obstruction: a surviving $K$-way ambiguity class requires a budget of at least $\log_2 K$ bits to be resolved exactly.
-:::
-
-::: proof
-*Proof.* Pair injectivity is the structural core. The confusability and counting theorems express the injectivity requirement combinatorially; the conditional-entropy and weighted-entropy theorems express it in source-mass coordinates; the decoder-output and gap theorems express it through deterministic coarsening and finite alphabet ceilings; and the finite-error theorem is the relaxed version obtained by allowing a nonzero failure branch. Each theorem therefore measures the same failure of exact isolation in a different coordinate system. ◻
-:::
-
-## Finite-error extension {#sec:finite-error-extension}
-
-The main body of the paper studies exact zero error. The same deterministic finite model also supports a budgeted finite-error extension, which should be read as a deterministic finite analogue of the classical Fano line of argument rather than as a separate asymptotic coding theorem [@fano1961transmission; @witsenhausen1975conditional; @cover2006elements].
-
-::: proposition
-[]{#thm:finite-error-budgeted label="thm:finite-error-budgeted"} Let $P_e$ denote the decoder error probability on a finite source of size $K$, observed through a deterministic transcript alphabet of size $O$ together with a tag alphabet of size $T$. Then the decoded-output entropy obeys $$H(\hat X)
-\;\le\;
-h_2(P_e) + (1-P_e)\log_2 (OT) + P_e \log_2 (K-1).$$
-:::
-
-::: proof
-*Proof.* Partition the source into success and failure events. On the success branch, the decoded output is constrained by the observation-tag budget and contributes at most $\log_2(OT)$. On the failure branch, the decoder can still output at most one of the remaining $K-1$ alternatives. The Bernoulli split between the two branches contributes the binary-entropy term. Equivalently, $$H(\hat X)=H(\hat X \mid \text{success/failure}) + H(\text{success/failure})$$ is bounded by combining the support bound on each branch with the binary entropy of the branch variable itself. ◻
-:::
-
-The zero-error theorems are the $P_e=0$ boundary of this inequality. In that regime the success branch occupies all probability mass, the Bernoulli term vanishes, the failure contribution disappears, and the budget collapses back to the unified finite converse above.
-
-The next section asks what survives when admissible views separate some latent alternatives but not others. In that regime the same one-shot obstruction is no longer represented by a single clique; it becomes an induced confusability graph that can carry genuinely non-clique failure structure.
-
+_Failed to convert 06_converse.tex_
 
 # Graph Characterization of Partial Views {#sec:graph-characterization}
 
@@ -404,7 +289,7 @@ Equivalently, this optimum can be packaged as an explicit exact finite rate-dist
 []{#thm:multifact-product label="thm:multifact-product"} If two partial-observation systems are colorable with tag alphabets of sizes $T_1$ and $T_2$, then their block-composed product system is colorable with a tag alphabet of size $T_1T_2$.
 :::
 
-For later use, recall the strong product definition: if $G$ and $H$ are graphs, then $G\boxtimes H$ has vertex set $V(G)\times V(H)$, and $(u,v)$ is adjacent to $(u',v')$ exactly when either $u=u'$ and $v\sim v'$, or $u\sim u'$ and $v=v'$, or $u\sim u'$ and $v\sim v'$. The block-composition theorem is model-specific because the admissible product views generate exactly these three adjacency cases.
+The strong product of graphs $G$ and $H$, denoted $G\boxtimes H$, is defined as follows. The vertex set is $V(G)\times V(H)$. Two vertices $(u,v)$ and $(u',v')$ are adjacent exactly when either $u=u'$ and $v\sim v'$, or $u\sim u'$ and $v=v'$, or $u\sim u'$ and $v\sim v'$. The block-composition theorem is model-specific because the admissible product views generate exactly these three adjacency cases.
 
 ::: proof
 *Proof.* Take proper colorings of the two component confusability graphs and encode the pair of colors as one color in the product alphabet. If two product states are confusable, then some allowed product view fails to separate them. In the product system this means that either the first coordinates agree and the second coordinates are confusable, or the second coordinates agree and the first coordinates are confusable, or both coordinates are confusable. These are exactly the three adjacency cases in the strong product $G_1\boxtimes G_2$. Hence every confusable product pair is separated by at least one component coloring, and therefore by the paired color as well. ◻
@@ -467,7 +352,7 @@ An "OR-product" would mark these confusable because block 1 matches. But the act
 
 Iterating the same construction yields the derived $n$-block lower bound. If $\alpha_1$ denotes the one-shot maximum independent-set code size, then the mechanized block-power theorem gives $$\alpha_1^n \;\le\; \alpha_n,$$ where $\alpha_n$ is the largest one-shot zero-error code size in the $n$-fold block-composed system. This is the first asymptotic-capacity scaffold in the extended model: repeated block composition already forces the expected exponential growth law before any Shannon-capacity or $\vartheta$-style upper theory is introduced. Once the architecture determines the one-shot failure graph, that same graph already controls the asymptotic lower law.
 
-For notation, write $\Theta(G)$ for the Shannon capacity of a confusability graph $G$ in logarithmic units, and write $\vartheta_\infty(G)$ for the corresponding asymptotic Lovász-$\vartheta$ upper value. When the object is a view family $\mathcal V$ rather than an abstract graph, we write $\Theta(G_{\mathcal V})$ and $\vartheta_\infty(G_{\mathcal V})$ for the same quantities computed on the induced confusability graph $G_{\mathcal V}$.
+For notation, write $\Theta(G)$ for the Shannon capacity of a confusability graph $G$ (in logarithmic base-2 units, i.e., bits), and write $\vartheta_\infty(G)$ for the corresponding asymptotic Lovász-$\vartheta$ upper value. When the object is a view family $\mathcal V$ rather than an abstract graph, we write $\Theta(G_{\mathcal V})$ and $\vartheta_\infty(G_{\mathcal V})$ for the same quantities computed on the induced confusability graph $G_{\mathcal V}$.
 
 These normalized block rates can be packaged into an explicit lower asymptotic capacity envelope $$C_* \;:=\; \sup_{n\ge 1} \frac{\log \alpha_n}{n},$$ implemented as an $\mathrm{ENNReal}$ supremum of the positive block-rate sequence. Formally, $\alpha_n$ is identified directly with the maximum finite independent-set size of the $n$-block confusability graph, the block graph is identified with the $n$-fold strong power of the one-shot confusability graph, and the same envelope is proved equal to the graph-side Shannon lower-capacity expression built from those strong powers.
 
@@ -519,7 +404,7 @@ What remains open is the sharpness of this upper theory for the graph classes ge
 
 This section asks when the upper theory of the induced failure graph is exactly sharp. The graph-theoretic equality facts used here are classical for cluster graphs; the model-specific question is when the partial-view architecture generates that collapse regime. Transitivity of confusability is the key structural condition exporting the view-family model to the cluster-graph equality case.
 
-**Open question.** A precise open problem is to characterize which upward‑closed agreement‑set families produce transitive confusability, and therefore trigger the cluster‑graph equality collapse. We have identified boundary facts: the binary square is a small witness where transitivity fails, while trivial single‑view families and the fiber‑coherent/meet‑witnessed families provably produce transitive confusability and hence the equality collapse. A complete classification of upward‑closed families that yield transitivity remains open and is an attractive direction for further work.
+**Open problem.** A precise open problem is to characterize which upward‑closed agreement‑set families produce transitive confusability, and therefore trigger the cluster‑graph equality collapse. We have identified boundary facts: the binary square is a small witness where transitivity fails, while trivial single‑view families and the fiber‑coherent/meet‑witnessed families provably produce transitive confusability and hence the equality collapse. A complete classification of upward‑closed families that yield transitivity remains open and is an attractive direction for further work.
 
 The original clique-fiber regime is now isolated as an equality subclass rather than only a threshold corollary. If a graph is generated by a surjective label map $x \mapsto b(x)$ with adjacency exactly between distinct vertices in the same fiber, then one representative from each fiber forms an independent set of size $|\mathcal B|$, while the complement graph is colorable by the same label map using $|\mathcal B|$ colors. This equality for cluster-graph structure is classical; the mechanized development packages the model-specific export needed here into a restricted-class theorem: $$C(G)=\vartheta_{\infty}(G)=\log |\mathcal B|.$$ Thus the extended theory now contains both a genuine non-clique graph regime with strict upper/lower separation and a clean equality regime recovering the original fiber picture inside the same asymptotic Lovász-$\vartheta$ framework. In particular, transitivity of confusability exports the model-generated graph directly to the classical cluster-graph setting through the following mechanized implication: $$\text{confusability is transitive}
 \Longrightarrow
@@ -683,7 +568,7 @@ Only manual edits are counted. Derived locations updated automatically by the ho
 Once a fact is duplicated across many independently writable locations, the cost of preserving exact consistency scales with the number of independent copies, not with the visibility of the fact.
 
 
-# Operational Realizability Criterion {#sec:requirements}
+# Structural Consequences {#sec:requirements}
 
 The main graph-capacity arc characterizes what happens once ambiguity survives and must be resolved structurally. This section turns to the opposite boundary case of the same model: when can a concrete host system realize the unit-rate corner isolated earlier, and what two structural properties are needed for that purpose? In integrity language, the question is when structural integrity can be both enforced and certified by the host itself. The resulting criterion is architectural rather than a new graph-capacity theorem.
 
@@ -979,5 +864,5 @@ The supplementary artifact contains the theorem-to-declaration coverage matrix, 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper2_ssot/proofs/`
 - Lines: 25743
-- Theorems: 1231
+- Theorems: 1234
 - `sorry` placeholders: 0

@@ -1,6 +1,6 @@
 # Paper: Leverage, Structural Rank, and Thermodynamic Selection in Information-Processing Systems
 
-**Status**: Draft-ready | **Lean**: 70700 lines, 3155 theorems
+**Status**: Draft-ready | **Lean**: 76634 lines, 3296 theorems
 
 ---
 
@@ -35,14 +35,14 @@ This paper proves thermodynamic bounds on information-processing systems from fi
 ::: center
   **Metric**                                    **Value**
   ------------------------------------- -----------------
-  Lines of Lean 4 (local layer)                      4120
+  Lines of Lean 4 (local layer)                      4122
   Theorems/lemmas (local layer)                       210
   `sorry` placeholders (local layer)                    0
   Proof files (local layer)                            17
-  Total imported Lean lines                         70700
-  Total theorem/lemma statements                     3155
+  Total imported Lean lines                         76634
+  Total theorem/lemma statements                     3296
   Total imported `sorry` placeholders                   0
-  Total proof files in import closure                 244
+  Total proof files in import closure                 302
   **Dependencies (live imports)**       
   `AbstractClassSystem`                   lines, theorems
   `Ssot`                                  lines, theorems
@@ -1355,7 +1355,7 @@ All proofs verified in Lean: `Leverage/WeightedLeverage.lean` (348 lines, 0 sorr
 
 **Role of LLMs in this work.** This paper was developed through human-AI collaboration. The author provided the core insight (that DOF $= 1$ is selected by five independent scientific frameworks) while large language models (Claude, GPT-4) served as implementation partners for formalization, proof drafting, and LaTeX generation.
 
-The Lean 4 proofs (70700 lines, 0 `sorry` placeholders) were iteratively developed: the author specified theorems, the LLM proposed proof strategies, and the Lean compiler verified correctness. Machine-checked proofs are correct regardless of generation method.
+The Lean 4 proofs (76634 lines, 0 `sorry` placeholders) were iteratively developed: the author specified theorems, the LLM proposed proof strategies, and the Lean compiler verified correctness. Machine-checked proofs are correct regardless of generation method.
 
 **What the author contributed:** The five-way convergence insight, the identification of structural rank as the information-geometric coordinate of DOF, the thermodynamic selection theorem, the cross-paper dependency chain, the open conjectures, and the OpenHCS case study selection.
 
@@ -1449,7 +1449,7 @@ This appendix reports machine-check status and proof traceability directly from 
 
 ## Verification Status
 
-**Lean summary:** 70700 lines, 3155 theorems/lemmas, 0 `sorry`, across 244 files.
+**Lean summary:** 76634 lines, 3296 theorems/lemmas, 0 `sorry`, across 302 files.
 
 ::: center
   **File**                                  **Lines**   **Theorems/Lemmas**
@@ -1466,8 +1466,8 @@ This appendix reports machine-check status and proof traceability directly from 
   `Leverage/BridgeToDQ.lean`                   433              26
   `Leverage/FiveWayEquivalence.lean`           149               7
   `Leverage/CrossPaperDependencies.lean`       332              22
-  `lakefile.lean`                              19                0
-  **Total**                                 **70700**        **3155**
+  `lakefile.lean`                              21                0
+  **Total**                                 **76634**        **3296**
 :::
 
 Build command: `cd proofs && lake build`
@@ -2095,7 +2095,7 @@ Paper-level labeled claims in this manuscript:
 
 -   Theorem [\[thm:nominal-leverage\]](#thm:nominal-leverage){reference-type="ref" reference="thm:nominal-leverage"}
 
-**Mechanization status:** 70700 lines, 3155 theorems/lemmas, 0 `sorry`, 244 files.
+**Mechanization status:** 76634 lines, 3296 theorems/lemmas, 0 `sorry`, 302 files.
 
 **Primary Lean sources:**
 
@@ -2128,6 +2128,6 @@ Paper-level labeled claims in this manuscript:
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper3_leverage/proofs/`
-- Lines: 70700
-- Theorems: 3155
+- Lines: 76634
+- Theorems: 3296
 - `sorry` placeholders: 0

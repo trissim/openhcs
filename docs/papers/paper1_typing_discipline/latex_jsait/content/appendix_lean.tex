@@ -2,37 +2,7 @@
 
 The Lean formalization certifies the paper's model, admissibility contract, and main theorem chain in the finite explicit setting. Mechanization therefore provides a formal check that the stated impossibility and optimality claims follow from the declared regime and that no unstated side channels are required. For transparency we keep the appendix concise and provide the full proof artifacts as a supplementary formalization release.
 
-\newcommand{\LeanLinesAbstractClassSystemAggregate}{\number\numexpr\LeanLinesAbstractClassSystemBZeroFourFiveefNineFour+\LeanLinesAbstractClassSystemAxisClosure+\LeanLinesAbstractClassSystemBridge+\LeanLinesAbstractClassSystemCore+\LeanLinesAbstractClassSystemExtended+\LeanLinesAbstractClassSystemGraphBridges+\LeanLinesAbstractClassSystemTyping+\LeanLinesAbstractClassSystemEightOneSixTwoFourOnebFour\relax}
-\newcommand{\LeanTheoremsAbstractClassSystemAggregate}{\number\numexpr\LeanTheoremsAbstractClassSystemBZeroFourFiveefNineFour+\LeanTheoremsAbstractClassSystemAxisClosure+\LeanTheoremsAbstractClassSystemBridge+\LeanTheoremsAbstractClassSystemCore+\LeanTheoremsAbstractClassSystemExtended+\LeanTheoremsAbstractClassSystemGraphBridges+\LeanTheoremsAbstractClassSystemTyping+\LeanTheoremsAbstractClassSystemEightOneSixTwoFourOnebFour\relax}
-\newcommand{\LeanLinesCoreShown}{\number\numexpr\LeanLinesAbstractClassSystemAggregate+\LeanLinesAxisFramework+\LeanLinesNominalResolution+\LeanLinesDisciplineMigration+\LeanLinesContextFormalization+\LeanLinesPythonInstantiation+\LeanLinesTypescriptInstantiation+\LeanLinesJavaInstantiation+\LeanLinesRustInstantiation+\LeanLinesLwdConverse\relax}
-\newcommand{\LeanTheoremsCoreShown}{\number\numexpr\LeanTheoremsAbstractClassSystemAggregate+\LeanTheoremsAxisFramework+\LeanTheoremsNominalResolution+\LeanTheoremsDisciplineMigration+\LeanTheoremsContextFormalization+\LeanTheoremsPythonInstantiation+\LeanTheoremsTypescriptInstantiation+\LeanTheoremsJavaInstantiation+\LeanTheoremsRustInstantiation+\LeanTheoremsLwdConverse\relax}
-\newcommand{\LeanLinesSupportFiles}{\number\numexpr\LeanTotalLines-\LeanLinesCoreShown\relax}
-\newcommand{\LeanTheoremsSupportFiles}{\number\numexpr\LeanTotalTheorems-\LeanTheoremsCoreShown\relax}
-
-\begin{table*}[t]
-\centering
-\caption{Representative Lean 4 Modules Cited by the Main Text}
-\label{tab:lean-modules}
-\small
-\begin{tabular}{@{}llll@{}}
-\toprule
-Module & Lines & Theorems & Purpose \\
-\midrule
-\texttt{abstract\_class\_system.lean} & \LeanLinesAbstractClassSystemAggregate & \LeanTheoremsAbstractClassSystemAggregate & Two-axis instantiation, barrier, dominance \\
-\texttt{axis\_framework.lean} & \LeanLinesAxisFramework & \LeanTheoremsAxisFramework & Structured axis families, derivability, matroid bridge \\
-\texttt{nominal\_resolution.lean} & \LeanLinesNominalResolution & \LeanTheoremsNominalResolution & Nominal identification and witness procedures \\
-\texttt{discipline\_migration.lean} & \LeanLinesDisciplineMigration & \LeanTheoremsDisciplineMigration & Discipline vs. migration consequences \\
-\texttt{context\_formalization.lean} & \LeanLinesContextFormalization & \LeanTheoremsContextFormalization & Greenfield/retrofit context model \\
-\texttt{python\_instantiation.lean} & \LeanLinesPythonInstantiation & \LeanTheoremsPythonInstantiation & Python instantiation \\
-\texttt{typescript\_instantiation.lean} & \LeanLinesTypescriptInstantiation & \LeanTheoremsTypescriptInstantiation & TypeScript instantiation \\
-\texttt{java\_instantiation.lean} & \LeanLinesJavaInstantiation & \LeanTheoremsJavaInstantiation & Java instantiation \\
-\texttt{rust\_instantiation.lean} & \LeanLinesRustInstantiation & \LeanTheoremsRustInstantiation & Rust instantiation \\
-\texttt{lwd\_converse.lean} & \LeanLinesLwdConverse & \LeanTheoremsLwdConverse & Zero-error converse chain on collision blocks \\
-\midrule
-\textbf{Core modules subtotal} & \textbf{\LeanLinesCoreShown} & \textbf{\LeanTheoremsCoreShown} & \textbf{10 representative modules shown} \\
-\bottomrule
-\end{tabular}
-\end{table*}
+The detailed Lean module table is provided in supplementary material. It lists the 10 core modules with line counts, theorem counts, and purposes.
 
 \paragraph{What is in scope in the mechanization.}
 The formalization covers the abstract observer model, the information barrier, adaptive fiberwise side-information budgets, task-level sufficiency under fixed representations, helper-view fusion laws, exact product-fiber laws for factorized representations, structured axis families with derivability-aware closure, and the zero-error frontier claims stated in the main text. The structured-axis layer includes closure, exchange, equicardinality, and basis results, with representative handles \LH{L1}, \LH{L4}, and \LH{L5}. The converse chain includes \LH{LWDC1}, \LH{LWDC2}, and \LH{LWDC3}. The graph-confusability threshold and block-scaling results include \LH{GPH13}, \LH{GPH16}, \LH{GPH18}, \LH{GPH19}, and \LH{GPH24}. The adaptive side-information layer includes the pointwise fiber budget and expected-length lower bounds \LH{GPH32}, \LH{GPH33}, together with a conditional-entropy comparison \LH{GPH34} and a fiberwise prefix-coding achievability theorem \LH{GPH35}. The task-level layer adds exact task sufficiency, monotonicity under representation coarsening, pair-view recovery criteria, and factorized product laws \LH{GPH38}, \LH{GPH39}, \LH{GPH40}, \LH{GPH41}, \LH{GPH42}, \LH{GPH43}. The positive-distortion slice also includes a uniform-fiber error bound \LH{GPH30}. Follow-up finite explicit corollaries for learned-representation settings include \LH{GPH27}, \LH{GPH28}, \LH{GPH36}, and \LH{GPH37}. The Lean development works in the finite explicit setting used by the theorem statements: finite class sets, finite attribute families, and explicit profile maps or induced finite relations. It certifies the converse, block-scaling laws, adaptive fiberwise lower and upper bounds, task-level sufficiency, helper-view fusion laws, factorized product laws, the finite deterministic distortion floor, and the restricted structured-axis matroid bridge in that setting rather than the complexity of estimating $A_\pi$ from an implicit representation such as a circuit, program, or learned model.

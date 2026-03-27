@@ -5,7 +5,7 @@
 This section supplies the one-shot obstruction that the later graph-capacity theory lifts from clique-shaped ambiguity to non-clique failure geometry. Its role is foundational and unifying rather than graph-theoretically novel: in the single-fact setting, every surviving ambiguity class is effectively clique-shaped under the observation transcript, so the same deterministic obstruction can be stated as injectivity, clique counting, entropy, decoder-output, and finite-error bounds. The cleanest zero-error formulation starts from the joint observation-tag map itself. The first theorem gives the basic criterion; the remaining statements package the same obstruction in the forms reused later in the graph and realizability arcs.
 
 \begin{theorem}[Pair-injectivity characterization]\label{thm:pair-injective}
-Let $X$ range over a finite latent alphabet, let $Y$ be the deterministic observation transcript, and let $T$ be a finite auxiliary tag. Exact zero-error recovery from $(Y,T)$ is possible if and only if the pair map $x \mapsto (Y(x),T(x))$ is injective on the ambiguity class under consideration.
+Let $X$ range over a finite latent alphabet, let $Y$ be the deterministic observation transcript, and let $T$ be a finite auxiliary tag. Zero-error recovery from $(Y,T)$ is possible if and only if the pair map $x \mapsto (Y(x),T(x))$ is injective on the ambiguity class under consideration.
 \end{theorem}
 \leanmeta{\LHrng{OBS}{1}{2}}
 
@@ -14,12 +14,12 @@ Let $\phi(x):=(Y(x),T(x))$.
 
 \emph{Necessity.} If $\phi$ is not injective, then there exist distinct latent states $x_1\neq x_2$ with $\phi(x_1)=\phi(x_2)$. Any deterministic decoder $D$ therefore receives the same input on both states and must satisfy $D(\phi(x_1))=D(\phi(x_2))$. Since $x_1\neq x_2$, the common output cannot equal both latent states, so $D$ errs on at least one of them.
 
-\emph{Sufficiency.} If $\phi$ is injective, define a decoder on the image of $\phi$ by $D(y,t)=\phi^{-1}(y,t)$, with arbitrary extension off the image. Injectivity makes $\phi^{-1}$ single-valued on the image, and for every latent state $x$ we then have $D(Y(x),T(x))=x$. Thus exact zero-error recovery is possible.
+\emph{Sufficiency.} If $\phi$ is injective, define a decoder on the image of $\phi$ by $D(y,t)=\phi^{-1}(y,t)$, with arbitrary extension off the image. Injectivity makes $\phi^{-1}$ single-valued on the image, and for every latent state $x$ we then have $D(Y(x),T(x))=x$. Thus zero-error recovery is possible.
 \end{proof}
 
-\begin{proposition}[Confusability formulation]\label{thm:confusability-converse}
-Fix a deterministic observation transcript and an $L$-bit side-information tag. If $K$ latent states induce the same observation transcript, then exact zero-error decoding on that ambiguity class requires $K$ distinct tag outcomes. Equivalently, a $K$-way ambiguity class forms a confusability clique whose size cannot exceed the available tag alphabet.
-\end{proposition}
+\begin{theorem}[Confusability formulation]\label{thm:confusability-converse}
+Fix a deterministic observation transcript and an $L$-bit side-information tag. If $K$ latent states induce the same observation transcript, then zero-error decoding on that ambiguity class requires $K$ distinct tag outcomes. Equivalently, a $K$-way ambiguity class forms a confusability clique whose size cannot exceed the available tag alphabet.
+\end{theorem}
 \leanmeta{\LH{OBS5}}
 
 \begin{proof}
@@ -27,14 +27,14 @@ Apply Theorem~\ref{thm:pair-injective} on an ambiguity class on which the observ
 \end{proof}
 
 \paragraph{Global observation-tag budget.}
-If the observation alphabet has size $O$ and the auxiliary tag alphabet has size $T$, then exact zero-error recovery on a latent alphabet of size $K$ requires
+If the observation alphabet has size $O$ and the auxiliary tag alphabet has size $T$, then zero-error recovery on a latent alphabet of size $K$ requires
 \[
 K \le O\,T.
 \]
 \leanmeta{\LH{OBS4}}
 
 \begin{proof}
-Let $\phi(x)=(Y(x),T(x))$. By Theorem~\ref{thm:pair-injective}, exact zero-error recovery requires $\phi$ to be injective on the latent alphabet under consideration. The codomain of $\phi$ is the finite product alphabet $\mathcal Y\times\mathcal T$, which has cardinality $|\mathcal Y\times\mathcal T|=OT$. An injective map from a set of size $K$ into a set of size $OT$ can exist only if $K\le OT$. This is exactly the claimed global budget bound.
+Let $\phi(x)=(Y(x),T(x))$. By Theorem~\ref{thm:pair-injective}, zero-error recovery requires $\phi$ to be injective on the latent alphabet under consideration. The codomain of $\phi$ is the finite product alphabet $\mathcal Y\times\mathcal T$, which has cardinality $|\mathcal Y\times\mathcal T|=OT$. An injective map from a set of size $K$ into a set of size $OT$ can exist only if $K\le OT$. This is exactly the claimed global budget bound.
 \end{proof}
 
 \paragraph{Fiber-level injectivity and cardinality.}
@@ -42,7 +42,7 @@ Fix an observation value $y$. On the observation fiber
 \[
 \mathcal F_y=\{x : Y(x)=y\},
 \]
-exact zero-error recovery forces the tag map to be injective. Consequently,
+zero-error recovery forces the tag map to be injective. Consequently,
 \[
 |\mathcal F_y| \le |\mathcal T|.
 \]
@@ -56,13 +56,13 @@ Fix $y$ and restrict attention to the fiber $\mathcal F_y=\{x:Y(x)=y\}$. On this
 Hence Theorem~\ref{thm:pair-injective} implies that exact recovery on $\mathcal F_y$ is possible only if the tag map $x\mapsto T(x)$ is injective on that fiber. Since the image of an injective map cannot be larger than its codomain, one obtains $|\mathcal F_y|\le |\mathcal T|$.
 \end{proof}
 
-\begin{proposition}[Finite counting converse]\label{thm:fano-converse}
+\begin{theorem}[Finite counting converse]\label{thm:fano-converse}
 Let $F$ range over $K$ possible latent values. Suppose exact recovery is attempted from a fixed observation transcript together with an $L$-bit side-information tag. Then
 \[
 K \le 2^L.
 \]
-Equivalently, exact zero-error recovery of $K$ ambiguous states requires at least $\log_2 K$ bits of side information.
-\end{proposition}
+Equivalently, zero-error recovery of $K$ ambiguous states requires at least $\log_2 K$ bits of side information.
+\end{theorem}
 \leanmeta{\LH{CIA3}}
 
 \begin{proof}
@@ -170,7 +170,7 @@ Pair injectivity is the structural core. The confusability and counting theorems
 
 \subsection{Finite-error extension}\label{sec:finite-error-extension}
 
-The main body of the paper studies exact zero error. The same deterministic finite model also supports a budgeted finite-error extension, which should be read as a deterministic finite analogue of the classical Fano line of argument rather than as a separate asymptotic coding theorem~\cite{fano1961transmission,witsenhausen1975conditional,cover2006elements}.
+The main body of the paper studies zero error. The same deterministic finite model also supports a budgeted finite-error extension, which should be read as a deterministic finite analogue of the classical Fano line of argument rather than as a separate asymptotic coding theorem~\cite{fano1961transmission,witsenhausen1975conditional,cover2006elements}.
 
 \begin{proposition}[Budgeted finite-error converse]\label{thm:finite-error-budgeted}
 Let $P_e$ denote the decoder error probability on a finite source of size $K$, observed through a deterministic transcript alphabet of size $O$ together with a tag alphabet of size $T$. Then the decoded-output entropy obeys

@@ -126,7 +126,7 @@ papers:
     dir: "paper4_decision_quotient"
     latex_dir: "latex"
     latex_file: "decision_quotient_arxiv.tex"
-    venue: "Computational Complexity"
+    venue: "SICOMP"
     lean_stats_scope: "content_cited"
     lean_dependencies:
       - "paper1"
@@ -203,7 +203,7 @@ papers:
 
   paper8:
     name: "DQDock"
-    full_name: "DQDock: A Formally Verified Virtual Docking Engine"
+    full_name: "DQDock: Decision-Relevant Locality and Certified Approximation in Virtual Docking"
     dir: "paper8_dqdock"
     latex_dir: "latex"
     latex_file: "main.tex"
@@ -212,7 +212,17 @@ papers:
       - "paper1"
       - "paper2"
       - "paper4"
-    assumption_ledger_sources:
-      - "DQDock/ClaimClosure.lean"
-      - "DQDock/HandleAliases.lean"
     claim_mapping_file: "content/claim_mapping_auto.tex"
+
+  paper9:
+    name: "Pattern"
+    full_name: "Zero-Error Design Patterns in Python: OpenHCS Case Studies"
+    dir: "paper9_pattern"
+    latex_dir: "latex"
+    latex_file: "pattern_arxiv.tex"
+    venue: "Draft"
+    lean_dependencies:
+      - "paper1"
+      - "paper2"
+      - "paper3"
+      - "paper4"

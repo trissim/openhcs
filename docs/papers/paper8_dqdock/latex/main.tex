@@ -6,8 +6,10 @@
 \providecommand{\claimstamp}[2]{\allowbreak{\scriptsize\textit{[C:#1;R:#2]}}}
 \providecommand{\LHrng}[3]{\hyperlink{lh:#1#2}{\nolinkurl{#1#2-#3}}}
 \providecommand{\leanmeta}[1]{\allowbreak{\scriptsize\textit{(L: #1)}}}
+\providecommand{\srank}{\operatorname{srank}}
+\providecommand{\kB}{k_{\mathrm B}}
 
-\title{DQDock: A Formally Verified Virtual Docking Engine}
+\title{DQDock:\\Decision-Relevant Locality and Certified Approximation in Virtual Docking}
 \author{Anonymous Author\\Anonymous Institution\\\texttt{anonymous@example.com}}
 \date{\today}
 
@@ -19,6 +21,14 @@
 \end{abstract}
 
 \input{content/01_introduction.tex}
+\input{content/02_framework.tex}
+\input{content/03_physics_locality.tex}
+\input{content/04_system_architecture.tex}
+\input{content/04b_theorem_map.tex}
+\input{content/05_evaluation.tex}
+\input{content/05b_related_work.tex}
+\input{content/06_limitations.tex}
+\input{content/07_conclusion.tex}
 
 \bibliographystyle{plain}
 \bibliography{references}
