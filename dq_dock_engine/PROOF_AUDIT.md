@@ -3,6 +3,14 @@
 
 Generated: 2026-03-18
 
+> Status note (Mar 2026): this audit is now historically useful but not fully
+> synchronized with the current theorem-owned runtime-plan architecture. In
+> particular, the certified runtime now distinguishes returned-pose contract
+> states explicitly in benchmark output. The strongest remaining product-level
+> theorem gap is that ``target_rmsd`` is not yet a fully proved returned-pose
+> guarantee on conformer-active outputs, and even rigid outputs still lack the
+> final global model-truth bridge needed for the strongest end-user semantics.
+
 ---
 
 ## Summary

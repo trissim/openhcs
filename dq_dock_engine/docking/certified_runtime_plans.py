@@ -674,6 +674,12 @@ class CertifiedRigidSeedFamilyPlan:
             "rotation support is quaternion_dictionary8, not a tensor-product of three scalar rotation center sets"
         )
 
+        rigid_dictionary_bridge_obstructions: list[str] = []
+        if continuous_cover_radius is None:
+            rigid_dictionary_bridge_obstructions.append(
+                "translation cover radius over the enclosing box is unavailable for this region kind"
+            )
+
         return {
             "region_kind": self.region_kind.value,
             "pose_count": self.pose_count,
@@ -704,6 +710,37 @@ class CertifiedRigidSeedFamilyPlan:
             "translation_cover_theorem_handles": (
                 () if continuous_cover_radius is None else ("CSC61", "CSC64")
             ),
+            "rotation_dictionary_theorem_handles": (
+                "CSC65",
+                "CSC70",
+                "CSC72",
+                "CSC74",
+                "CSC76",
+                "CSC78",
+                "CSC79",
+                "CSC80",
+                "CSC81",
+                "CSC82",
+                "CSC84",
+                "CSC85",
+                "CSC86",
+                "CSC87",
+                "CSC88",
+                "CSC89",
+                "CSC90",
+                "CSC91",
+                "CSC92",
+            ),
+            "rotation_winner_bridge_theorem_handles": (
+                "CSC67",
+                "CSC69",
+                "CSC71",
+                "CSC73",
+                "CSC75",
+                "CSC77",
+                "CSC83",
+            ),
+            "quaternion_signed_distance_witness_radius": 1.0,
             "actual_translation_points": tuple(
                 tuple(float(v) for v in row.tolist()) for row in translation_points
             ),
@@ -717,6 +754,8 @@ class CertifiedRigidSeedFamilyPlan:
             "csc61_csc62_obstructions": tuple(obstructions),
             "translation_full_lattice": self.translation_full_lattice,
             "target_translation_cover_radius": self.target_translation_cover_radius,
+            "csc63_csc77_ready": len(rigid_dictionary_bridge_obstructions) == 0,
+            "csc63_csc77_obstructions": tuple(rigid_dictionary_bridge_obstructions),
             "theorem_handles": self.theorem_handles,
             "witness_handles": self.witness_handles,
             "note": self.note,

@@ -1031,6 +1031,8 @@ abbrev HB13 := @Tractability.DirectionalHBondApproximation.totalScore_native_bea
 abbrev HB14 := @Tractability.DirectionalHBondApproximation.totalScore_equal_of_equal_background_and_silent_donor
 abbrev HB15 := @Tractability.DirectionalHBondApproximation.native_unique_top1_of_certified_margin_over_background
 abbrev HB16 := @Tractability.DirectionalHBondApproximation.directionalHBond_angular_factors_tighten_tail
+abbrev HB17 := @Tractability.DirectionalHBondApproximation.directionalHBond_term_le_pairStrength
+abbrev HB18 := @Tractability.DirectionalHBondApproximation.weighted_directionalHBond_le_weighted_radial
 abbrev AH1 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_uniformApprox
 abbrev AH2 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_certified_top1_sound
 noncomputable abbrev AH3 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_certified_top1
@@ -1097,6 +1099,8 @@ abbrev PP7 := @Tractability.PiStackingApproximation.exact_vs_coarse_attractivePi
 noncomputable abbrev PP8 := @Tractability.PiStackingApproximation.exact_vs_coarse_attractivePiStacking_certified_top1
 noncomputable abbrev PP9 := @Tractability.PiStackingApproximation.exact_vs_coarse_attractivePiStacking_optimizer_witness
 noncomputable abbrev PP10 := @Tractability.PiStackingApproximation.exact_vs_coarse_attractivePiStacking_coherent_optimizer_witness
+abbrev PP11 := @Tractability.PiStackingApproximation.weighted_piStacking_le_weighted_radial
+abbrev PP12 := @Tractability.PiStackingApproximation.weighted_piStacking_tail_bound
 
 abbrev PC1 := @Tractability.PiCationApproximation.exact_vs_coarse_piCation_uniformApprox
 abbrev PC2 := @Tractability.PiCationApproximation.exact_vs_coarse_piCation_certified_top1_sound
@@ -1108,6 +1112,8 @@ abbrev PC7 := @Tractability.PiCationApproximation.exact_vs_coarse_attractivePiCa
 noncomputable abbrev PC8 := @Tractability.PiCationApproximation.exact_vs_coarse_attractivePiCation_certified_top1
 noncomputable abbrev PC9 := @Tractability.PiCationApproximation.exact_vs_coarse_attractivePiCation_optimizer_witness
 noncomputable abbrev PC10 := @Tractability.PiCationApproximation.exact_vs_coarse_attractivePiCation_coherent_optimizer_witness
+abbrev PC11 := @Tractability.PiCationApproximation.weighted_piCationTwoFactor_le_weighted_radial
+abbrev PC12 := @Tractability.PiCationApproximation.weighted_piCationTwoFactor_tail_bound
 
 abbrev XB1 := @Tractability.HalogenBondApproximation.exact_vs_coarse_halogenBond_uniformApprox
 abbrev XB2 := @Tractability.HalogenBondApproximation.exact_vs_coarse_halogenBond_certified_top1_sound
@@ -1121,6 +1127,8 @@ noncomputable abbrev XB9 := @Tractability.HalogenBondApproximation.exact_vs_coar
 noncomputable abbrev XB10 := @Tractability.HalogenBondApproximation.exact_vs_coarse_attractiveHalogenBond_coherent_optimizer_witness
 abbrev XB11 := @Tractability.HalogenBondApproximation.attractiveHalogenBond_native_unique_top1_of_certified_background_margin
 abbrev XB12 := @Tractability.HalogenBondApproximation.attractiveHalogenBond_native_unique_top1_of_equal_background_and_active
+abbrev XB13 := @Tractability.HalogenBondApproximation.weighted_halogenBond_le_weighted_radial
+abbrev XB14 := @Tractability.HalogenBondApproximation.weighted_halogenBond_tail_bound
 
 abbrev WB1 := @Tractability.WaterMediatedHBondApproximation.exact_vs_coarse_waterMediatedHBond_uniformApprox
 abbrev WB2 := @Tractability.WaterMediatedHBondApproximation.exact_vs_coarse_waterMediatedHBond_certified_top1_sound
@@ -1132,6 +1140,8 @@ abbrev WB7 := @Tractability.WaterMediatedHBondApproximation.exact_vs_coarse_attr
 noncomputable abbrev WB8 := @Tractability.WaterMediatedHBondApproximation.exact_vs_coarse_attractiveWaterMediatedHBond_certified_top1
 noncomputable abbrev WB9 := @Tractability.WaterMediatedHBondApproximation.exact_vs_coarse_attractiveWaterMediatedHBond_optimizer_witness
 noncomputable abbrev WB10 := @Tractability.WaterMediatedHBondApproximation.exact_vs_coarse_attractiveWaterMediatedHBond_coherent_optimizer_witness
+abbrev WB11 := @Tractability.WaterMediatedHBondApproximation.weighted_waterMediatedHBond_le_weighted_radial
+abbrev WB12 := @Tractability.WaterMediatedHBondApproximation.weighted_waterMediatedHBond_tail_bound
 
 abbrev XR1 := @Tractability.ExtendedRichChemistryApproximation.exact_vs_coarse_attractiveExtendedChemistry_uniformApprox
 abbrev XR2 := @Tractability.ExtendedRichChemistryApproximation.exact_vs_coarse_attractiveExtendedChemistry_certified_top1_sound
@@ -2036,6 +2046,9 @@ abbrev GD4 := @Tractability.GaussianDecayBounds.gaussianMinCutoff_sufficient
 abbrev GD5 := @Tractability.GaussianDecayBounds.gaussianMinCutoff_tight
 -- GD6: Minimum cutoff is optimal (any smaller has error > ε)
 abbrev GD6 := @Tractability.GaussianDecayBounds.gaussianMinCutoff_optimal
+abbrev GD7 := @Tractability.GaussianDecayBounds.abs_gaussianScore_eq_absWeight_mul_exp
+abbrev GD8 := @Tractability.GaussianDecayBounds.shiftedGaussianScore_abs_le_abs_weight
+abbrev GD9 := @Tractability.GaussianDecayBounds.shiftedGaussian_tail_bound
 
 /-! ## Thermal Fluctuation Bounds (TF) handles
     ThermalFluctuationBounds.lean - Statistical mechanics derivation of σ
@@ -2125,6 +2138,7 @@ abbrev DMC3 := @Tractability.DirectionalMetalCoordinationApproximation.direction
 abbrev DMC4 := @Tractability.DirectionalMetalCoordinationApproximation.directionalMetalCutoffErrorRadius_nonneg
 -- DMC5: Attractive directional metal cutoff uniform approximation
 abbrev DMC5 := @Tractability.DirectionalMetalCoordinationApproximation.attractive_directional_metal_cutoff_uniformApprox
+abbrev DMC6 := @Tractability.DirectionalMetalCoordinationApproximation.weighted_directionalMetal_le_weighted_radial
 
 /-! ## Cooperative H-Bond Network (CHN) handles
     CooperativeHBondApproximation.lean - Bounded perturbation |α|·N²
@@ -2411,6 +2425,7 @@ abbrev RPG8 := @Tractability.ReturnedPoseGuarantee.exact_energy_gap_certified_ch
 abbrev RPG9 := @Tractability.ReturnedPoseGuarantee.returned_choice_of_exact_singleton_winner_misses_rmsd_target_without_cover
 -- RPG10: A sampled rigid-pose epsilon-net plus singleton exact/coarse certification yields the RMSD target
 abbrev RPG10 := @Tractability.ReturnedPoseGuarantee.sampledActionFamily_exact_energy_gap_certified_rigid_choice_of_cover_yields_rmsd_target
+abbrev RPG11 := @Tractability.ReturnedPoseGuarantee.returned_choice_of_patched_omitted_support_singleton_winner_of_cover_yields_rmsd_target
 
 -- CSC45: Torsion locality radius (single atom)
 abbrev CSC45 := @DecisionQuotient.Tractability.ConformerSupportCoverage.torsion_locality_radius
@@ -2432,6 +2447,58 @@ abbrev CSC64 := @Tractability.ConformerSupportCoverage.hypercubeSupportCoversOnB
 abbrev CSC65 := @Tractability.ConformerSupportCoverage.quaternionDictionary8_contains_rotation_witness
 -- CSC66: The current translation-subset × quaternionDictionary8 family contains an explicit RMSD witness from explicit translation and rotation witnesses
 abbrev CSC66 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Support_contains_explicit_rmsd_witness
+-- CSC67: The exact winner of the current rigid seed library is RMSD-certified from component covers and exact rescoring
+abbrev CSC67 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Library_winner_of_component_covers_yields_rmsd_target
+-- CSC68: The current rigid seed family contains an RMSD witness once explicit translation and rotation pointwise budgets compose within the target cover radius
+abbrev CSC68 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Support_contains_rmsd_witness_of_split_component_budgets
+-- CSC69: The exact winner of the current rigid seed library is RMSD-certified once explicit translation and rotation pointwise budgets compose within the target cover radius
+abbrev CSC69 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Library_winner_of_split_component_budgets_yields_rmsd_target
+-- CSC70: The current rigid seed family contains an RMSD witness once translation budgets and a coordinate-based quaternionDictionary8 witness budget are certified
+abbrev CSC70 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Support_contains_rmsd_witness_of_coordinate_witness_budget
+-- CSC71: The exact winner of the current rigid seed library is RMSD-certified from translation budgets and a coordinate-based quaternionDictionary8 witness budget
+abbrev CSC71 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Library_winner_of_coordinate_witness_budget_yields_rmsd_target
+-- CSC72: The current rigid seed family contains an RMSD witness once translation budgets and a signed quaternion-distance budget against quaternionDictionary8 are certified
+abbrev CSC72 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Support_contains_rmsd_witness_of_signed_quaternion_distance_budget
+-- CSC73: The exact winner of the current rigid seed library is RMSD-certified from translation budgets and a signed quaternion-distance budget against quaternionDictionary8
+abbrev CSC73 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Library_winner_of_signed_quaternion_distance_budget_yields_rmsd_target
+-- CSC74: The current rigid seed family contains an RMSD witness from translation budgets plus a signed-distance quaternion Lipschitz constant bounded by rBound
+abbrev CSC74 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Support_contains_rmsd_witness_of_signed_quaternion_distance_lipschitz_budget
+-- CSC75: The exact winner of the current rigid seed library is RMSD-certified from translation budgets plus a signed-distance quaternion Lipschitz constant bounded by rBound
+abbrev CSC75 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Library_winner_of_signed_quaternion_distance_lipschitz_budget_yields_rmsd_target
+-- CSC76: The current rigid seed family contains an RMSD witness from translation budgets plus a coordinate-witness-driven signed-distance quaternion Lipschitz bound
+abbrev CSC76 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Support_contains_rmsd_witness_of_coordinate_witness_lipschitz_budget
+-- CSC77: The exact winner of the current rigid seed library is RMSD-certified from translation budgets plus a coordinate-witness-driven signed-distance quaternion Lipschitz bound
+abbrev CSC77 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Library_winner_of_coordinate_witness_lipschitz_budget_yields_rmsd_target
+-- CSC78: Any coordinate witness in quaternionDictionary8 implies signed quaternion distance at most 1 to that same dictionary element
+abbrev CSC78 := @Tractability.ConformerSupportCoverage.quaternionDictionary8_signed_distance_le_one_of_coordinate_witness
+-- CSC79: The runtime dictionary contains a witness carrying both coordinate and signed-distance guarantees
+abbrev CSC79 := @Tractability.ConformerSupportCoverage.quaternionDictionary8_contains_coordinate_and_signed_distance_witness
+-- CSC80: The runtime dictionary contains a signed-distance witness for any unit target quaternion
+abbrev CSC80 := @Tractability.ConformerSupportCoverage.quaternionDictionary8_contains_signed_distance_witness
+-- CSC81: Signed-distance pointwise orientation bounds can be assembled from separate unsigned `q_k` and `-q_k` geometric bounds
+abbrev CSC81 := @Tractability.ConformerSupportCoverage.pointwise_signed_quaternion_distance_lipschitz_of_two_sided_unsigned_bounds
+-- CSC82: The current rigid seed family contains an RMSD witness from translation budgets plus two-sided unsigned quaternion-distance Lipschitz bounds
+abbrev CSC82 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Support_contains_rmsd_witness_of_signed_quaternion_distance_two_sided_lipschitz_budget
+-- CSC83: The exact winner of the current rigid seed library is RMSD-certified from translation budgets plus two-sided unsigned quaternion-distance Lipschitz bounds
+abbrev CSC83 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Library_winner_of_signed_quaternion_distance_two_sided_lipschitz_budget_yields_rmsd_target
+-- CSC84: Signed-distance pointwise orientation bounds can be assembled when supported coordinates depend on runtime context and both unsigned bounds are provided
+abbrev CSC84 := @Tractability.ConformerSupportCoverage.pointwise_signed_quaternion_distance_lipschitz_of_two_sided_unsigned_bounds_dep
+-- CSC85: Signed-distance pointwise orientation bounds can be assembled from one unsigned bound plus runtime-context sign invariance
+abbrev CSC85 := @Tractability.ConformerSupportCoverage.pointwise_signed_quaternion_distance_lipschitz_of_unsigned_bound_and_neg_invariance_dep
+-- CSC86: Rigid-transform pointwise signed-distance orientation budget from a single unsigned parametric quaternion-distance bound
+abbrev CSC86 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwise_signed_quaternion_distance_lipschitz_of_unsigned_parametric_bound
+-- CSC87: Rigid-transform unsigned quaternion-distance bound reduces to the zero-translation case
+abbrev CSC87 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwise_unsigned_parametric_bound_of_zero_translation
+-- CSC88: Coordinate-witness rigid-transform signed-distance budget from a zero-translation unsigned basis-bound
+abbrev CSC88 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwise_signed_quaternion_distance_lipschitz_of_basis_unsigned_parametric_bound_on_coordinate_witness
+-- CSC89: Coordinate-witness rigid-transform pointwise orientation budget in runtime rBound form from a zero-translation unsigned basis-bound
+abbrev CSC89 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_parametric_bound
+-- CSC90: Zero-translation unsigned basis-bound over all Fin4 indices reduces to the four concrete basis cases
+abbrev CSC90 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwise_unsigned_parametric_bound_zero_translation_of_basis_cases
+-- CSC91: Coordinate-witness rigid-transform runtime rBound budget from the four zero-translation unsigned basis cases
+abbrev CSC91 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_parametric_bound_of_basis_cases
+-- CSC92: Uniform point-L1 arm bounds yield a concrete zero-translation basis0 rigid-transform displacement budget
+abbrev CSC92 := @Computation.ArrayDSL.rigidTransform3D_zero_translation_dist_to_basis0_le_of_uniform_pointL1Radius_bound
 
 /-! ## Blind Conformer Runtime Certificates (BCRC) handles
     BlindConformerRuntimeCertificates.lean - runtime pruning/budget safety
@@ -2480,6 +2547,34 @@ abbrev BCPO2 := @Tractability.BlindConformerPipelineOptimality.universalRetain_c
 abbrev BCRP1 := @Tractability.BlindConformerPipelineRefinements.canonical_twoStage_le_allExact
 -- BCRP2: Minimal adequate seed budget is optimal among adequate budgets
 abbrev BCRP2 := @Tractability.BlindConformerPipelineRefinements.minimal_adequate_seedBudget_optimal
+-- BCRP3: Any exact top-1 pose scores no worse than an arbitrary witness pose
+abbrev BCRP3 := @Tractability.BlindConformerPipelineRefinements.top1_energy_le_witness
+-- BCRP4: A witness exact score defines a certified-safe canonical retain set for exact top-1 via any lower bound family
+abbrev BCRP4 := @Tractability.BlindConformerPipelineRefinements.top1_subset_canonicalRetain_of_lowerBound_and_witness
+-- BCRP5: Omitted-attractive lower bounds plus an exact witness define a certified-safe top-1 support set
+abbrev BCRP5 := @Tractability.BlindConformerPipelineRefinements.top1_subset_canonicalRetain_of_omittedAttractiveLowerBound_and_witness
+-- BCRP6: If the witness exact score is no worse than its base score, the base witness threshold itself is certified-safe for omitted-attractive support
+abbrev BCRP6 := @Tractability.BlindConformerPipelineRefinements.top1_subset_canonicalRetain_of_omittedAttractiveLowerBound_and_baseWitness
+-- BCRP7: An exact argmin over a support set containing a top-1 witness is globally exact-optimal
+abbrev BCRP7 := @Tractability.BlindConformerPipelineRefinements.support_argmin_is_global_of_top1_member
+-- BCRP8: An exact argmin over the omitted-attractive canonical retain set built from a base witness is globally exact-optimal
+abbrev BCRP8 := @Tractability.BlindConformerPipelineRefinements.canonicalRetain_argmin_is_global_of_omittedAttractiveLowerBound_and_baseWitness
+-- BCRP9: An exact argmin on a support set stays the argmin of the runtime-patched support-only score family
+abbrev BCRP9 := @Tractability.BlindConformerPipelineRefinements.support_argmin_is_patched_global_argmin
+-- BCRP10: An exact argmin on the omitted-attractive canonical support stays the argmin after patching outside scores to the base witness threshold
+abbrev BCRP10 := @Tractability.BlindConformerPipelineRefinements.omittedAttractive_support_argmin_is_patched_global_argmin_of_baseWitness
+-- BCRP11: Exact top-k survives into the patched support-only score family when the fallback clears the top-k threshold
+abbrev BCRP11 := @Tractability.BlindConformerPipelineRefinements.energyTopK_subset_patchedSupportEnergy_topK
+-- BCRP12: An exact argmin over any support containing the exact top-1 set is globally exact-optimal
+abbrev BCRP12 := @Tractability.BlindConformerPipelineRefinements.support_argmin_is_global_of_top1_subset
+-- BCRP13: An exact argmin over the omitted-attractive canonical support built from a base witness threshold is globally exact-optimal
+abbrev BCRP13 := @Tractability.BlindConformerPipelineRefinements.canonicalRetain_argmin_is_global_of_omittedAttractiveLowerBound_and_baseWitness_subset
+-- BCRP14: The omitted-attractive canonical support argmin stays the global argmin of the patched support-only runtime score family without needing an explicit top-1 witness handle at runtime
+abbrev BCRP14 := @Tractability.BlindConformerPipelineRefinements.omittedAttractive_support_argmin_is_patched_global_argmin_of_baseWitness_subset
+-- BCRP15: A strict support argmin over a support containing exact top-1 yields exact singleton top-1
+abbrev BCRP15 := @Tractability.BlindConformerPipelineRefinements.support_strict_argmin_is_exact_singleton_of_top1_subset
+-- BCRP16: A strict support argmin with fallback above the winner yields singleton top-1 for the patched support-only score family
+abbrev BCRP16 := @Tractability.BlindConformerPipelineRefinements.patchedSupportEnergy_singleton_of_strict_support_argmin
 
 /-! ## Additional runtime-proof hooks for theorem-gap roadmap integration -/
 
@@ -2497,6 +2592,10 @@ abbrev LJ22 := @Tractability.SoftLJApproximation.canonicalSoftened_lipschitz_ste
 abbrev PERF6 := @Tractability.PerformanceCertificates.canonical_softened_step_at_least_raw
 -- PERF7: A softened local-improvement certificate lifts to an exact local-improvement bound once pose-wise softening discrepancies are bounded
 abbrev PERF7 := @Tractability.PerformanceCertificates.exact_local_improvement_bound_of_softened_bound
+-- PERF8: A refined winner with energy Ew certifiably prunes any candidate whose certified lower bound exceeds Ew
+abbrev PERF8 := @Tractability.PerformanceCertificates.refined_winner_prunes_candidate_of_lower_bound
+-- PERF9: An exact incumbent prunes a candidate when coarse score minus delta and refinement budget already exceeds the incumbent
+abbrev PERF9 := @Tractability.PerformanceCertificates.exact_incumbent_prunes_candidate_of_coarse_lower_bound
 -- LJ23: Exact LJ is Lipschitz on [rSoft, ∞) with the softened-domain constant
 abbrev LJ23 := @Tractability.SoftLJApproximation.exactLJ_lipschitz_on_Ici
 -- LJ24: Exact LJ tail is Lipschitz on [r0, ∞) with local constant 24ε/r0 for r0 ≥ σ

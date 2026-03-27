@@ -333,6 +333,35 @@ theorem exact_local_improvement_bound_of_softened_bound
     linarith
   linarith
 
+/-- Winner-incumbent local-refinement pruning rule.
+
+    If a candidate's certified post-refinement lower bound `Lᵢ` satisfies
+    `E_winner < Lᵢ`, then the candidate cannot beat the refined winner. -/
+theorem refined_winner_prunes_candidate_of_lower_bound
+    (winnerEnergy candidateLowerBound candidateFinal : ℝ)
+    (hLower : candidateLowerBound ≤ candidateFinal)
+    (hDom : winnerEnergy < candidateLowerBound) :
+    winnerEnergy < candidateFinal := by
+  linarith
+
+/-- Coarse-to-exact incumbent pruning rule for rigid local refinement.
+
+    If a candidate's coarse rigid score lower-bounds its exact refined score up to
+    uniform coarse error `δ` and certified refinement budget `B`, then an exact
+    incumbent `Ew` prunes the candidate whenever `Ew < coarse - δ - B`. -/
+theorem exact_incumbent_prunes_candidate_of_coarse_lower_bound
+    (winnerEnergy exactRigid coarseRigid delta budget candidateFinal : ℝ)
+    (hApprox : |exactRigid - coarseRigid| ≤ delta)
+    (hImprove : exactRigid - budget ≤ candidateFinal)
+    (hDom : winnerEnergy < coarseRigid - delta - budget) :
+    winnerEnergy < candidateFinal := by
+  have hLower : coarseRigid - delta - budget ≤ candidateFinal := by
+    have hApproxLeft : coarseRigid - delta ≤ exactRigid := by
+      have h := abs_le.mp hApprox
+      linarith
+    linarith
+  linarith
+
 -- ---------------------------------------------------------------------------
 -- Certificate 6: Batch amortization bound
 -- ---------------------------------------------------------------------------

@@ -574,6 +574,17 @@ class CertifiedContactSurrogateSpec(CertifiedOptionalInteractionTerm):
         )
         return tail_per_pair * n_pairs
 
+    def max_total_score_bound(self) -> float:
+        """Certified upper bound on the full contact channel score.
+
+        Each pair contribution is bounded by its absolute pair weight because the
+        Gaussian radial factor stays in `(0, 1]`. Lean: `GD7`, `GD8`.
+        """
+        pair_weight = jnp.abs(
+            self.receptor_weights[:, None] * self.ligand_weights[None, :]
+        )
+        return float(jnp.sum(pair_weight))
+
     def receptor_subset(self, indices: jnp.ndarray) -> "CertifiedContactSurrogateSpec":
         return CertifiedContactSurrogateSpec(
             receptor_weights=self.receptor_weights[indices],
@@ -728,6 +739,17 @@ class CertifiedMetalCoordinationSpec(CertifiedOptionalInteractionTerm):
             )
         )
         return tail_per_pair * n_pairs
+
+    def max_total_score_bound(self) -> float:
+        """Certified upper bound on the full metal-coordination channel score.
+
+        Each pair term is bounded by its absolute strength product because the
+        radial Gaussian and geometry factor lie in `[0, 1]`. Lean: `DMC6`.
+        """
+        pair_strength = jnp.abs(
+            self.receptor_strengths[:, None] * self.ligand_strengths[None, :]
+        )
+        return float(jnp.sum(pair_strength))
 
     def receptor_subset(self, indices: jnp.ndarray) -> "CertifiedMetalCoordinationSpec":
         return CertifiedMetalCoordinationSpec(
@@ -913,6 +935,19 @@ class CertifiedDirectionalHBondSpec(CertifiedOptionalInteractionTerm):
             )
         )
         return tail_per_pair * n_pairs
+
+    def max_total_score_bound(self) -> float:
+        """Certified upper bound on the full directional H-bond channel score.
+
+        Each pair contribution is bounded by its clipped pair-strength envelope
+        because the radial and angular factors lie in `[0, 1]`. Lean: `HB17`.
+        """
+        pair_strength = jnp.clip(
+            self.receptor_strengths[:, None] * self.ligand_strengths[None, :],
+            0.0,
+            1.0,
+        )
+        return float(jnp.sum(pair_strength))
 
     def receptor_subset(self, indices: jnp.ndarray) -> "CertifiedDirectionalHBondSpec":
         if indices.shape[0] == 0:

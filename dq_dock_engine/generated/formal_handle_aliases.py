@@ -319,6 +319,10 @@ HB11 = "HB11"
 HB12 = "HB12"
 HB13 = "HB13"
 HB14 = "HB14"
+HB15 = "HB15"
+HB16 = "HB16"
+HB17 = "HB17"
+HB18 = "HB18"
 AH1 = "AH1"
 AH2 = "AH2"
 AH3 = "AH3"
@@ -329,6 +333,8 @@ AH7 = "AH7"
 AH8 = "AH8"
 AH9 = "AH9"
 AH10 = "AH10"
+AH11 = "AH11"
+AH12 = "AH12"
 NG1 = "NG1"
 NG2 = "NG2"
 NG3 = "NG3"
@@ -374,6 +380,8 @@ PP7 = "PP7"
 PP8 = "PP8"
 PP9 = "PP9"
 PP10 = "PP10"
+PP11 = "PP11"
+PP12 = "PP12"
 PC1 = "PC1"
 PC2 = "PC2"
 PC3 = "PC3"
@@ -384,6 +392,8 @@ PC7 = "PC7"
 PC8 = "PC8"
 PC9 = "PC9"
 PC10 = "PC10"
+PC11 = "PC11"
+PC12 = "PC12"
 XB1 = "XB1"
 XB2 = "XB2"
 XB3 = "XB3"
@@ -394,6 +404,10 @@ XB7 = "XB7"
 XB8 = "XB8"
 XB9 = "XB9"
 XB10 = "XB10"
+XB11 = "XB11"
+XB12 = "XB12"
+XB13 = "XB13"
+XB14 = "XB14"
 WB1 = "WB1"
 WB2 = "WB2"
 WB3 = "WB3"
@@ -404,6 +418,8 @@ WB7 = "WB7"
 WB8 = "WB8"
 WB9 = "WB9"
 WB10 = "WB10"
+WB11 = "WB11"
+WB12 = "WB12"
 XR1 = "XR1"
 XR2 = "XR2"
 XR3 = "XR3"
@@ -936,6 +952,9 @@ GD3 = "GD3"
 GD4 = "GD4"
 GD5 = "GD5"
 GD6 = "GD6"
+GD7 = "GD7"
+GD8 = "GD8"
+GD9 = "GD9"
 TF1 = "TF1"
 TF2 = "TF2"
 TF3 = "TF3"
@@ -961,15 +980,19 @@ LSA5 = "LSA5"
 LSA6 = "LSA6"
 LSA7 = "LSA7"
 LSA8 = "LSA8"
+LSA9 = "LSA9"
+LSA10 = "LSA10"
 DMC1 = "DMC1"
 DMC2 = "DMC2"
 DMC3 = "DMC3"
 DMC4 = "DMC4"
 DMC5 = "DMC5"
+DMC6 = "DMC6"
 CHN1 = "CHN1"
 CHN2 = "CHN2"
 CHN3 = "CHN3"
 CHN4 = "CHN4"
+CHN5 = "CHN5"
 EWP1 = "EWP1"
 EWP2 = "EWP2"
 EWP3 = "EWP3"
@@ -1091,9 +1114,44 @@ RPG5 = "RPG5"
 RPG6 = "RPG6"
 RPG7 = "RPG7"
 RPG8 = "RPG8"
+RPG9 = "RPG9"
+RPG10 = "RPG10"
+RPG11 = "RPG11"
 CSC45 = "CSC45"
 CSC46 = "CSC46"
 CSC47 = "CSC47"
+CSC61 = "CSC61"
+CSC62 = "CSC62"
+CSC63 = "CSC63"
+CSC64 = "CSC64"
+CSC65 = "CSC65"
+CSC66 = "CSC66"
+CSC67 = "CSC67"
+CSC68 = "CSC68"
+CSC69 = "CSC69"
+CSC70 = "CSC70"
+CSC71 = "CSC71"
+CSC72 = "CSC72"
+CSC73 = "CSC73"
+CSC74 = "CSC74"
+CSC75 = "CSC75"
+CSC76 = "CSC76"
+CSC77 = "CSC77"
+CSC78 = "CSC78"
+CSC79 = "CSC79"
+CSC80 = "CSC80"
+CSC81 = "CSC81"
+CSC82 = "CSC82"
+CSC83 = "CSC83"
+CSC84 = "CSC84"
+CSC85 = "CSC85"
+CSC86 = "CSC86"
+CSC87 = "CSC87"
+CSC88 = "CSC88"
+CSC89 = "CSC89"
+CSC90 = "CSC90"
+CSC91 = "CSC91"
+CSC92 = "CSC92"
 BCRC1 = "BCRC1"
 BCRC2 = "BCRC2"
 BCRC3 = "BCRC3"
@@ -1110,15 +1168,32 @@ BCRC13 = "BCRC13"
 BCRC14 = "BCRC14"
 BCRC15 = "BCRC15"
 BCPO1 = "BCPO1"
+BCPO2 = "BCPO2"
 BCRP1 = "BCRP1"
-LSA9 = "LSA9"
-LSA10 = "LSA10"
 BCRP2 = "BCRP2"
+BCRP3 = "BCRP3"
+BCRP4 = "BCRP4"
+BCRP5 = "BCRP5"
+BCRP6 = "BCRP6"
+BCRP7 = "BCRP7"
+BCRP8 = "BCRP8"
+BCRP9 = "BCRP9"
+BCRP10 = "BCRP10"
+BCRP11 = "BCRP11"
+BCRP12 = "BCRP12"
+BCRP13 = "BCRP13"
+BCRP14 = "BCRP14"
+BCRP15 = "BCRP15"
+BCRP16 = "BCRP16"
 LJ18 = "LJ18"
 LJ19 = "LJ19"
 LJ20 = "LJ20"
 LJ21 = "LJ21"
 LJ22 = "LJ22"
+PERF6 = "PERF6"
+PERF7 = "PERF7"
+PERF8 = "PERF8"
+PERF9 = "PERF9"
 LJ23 = "LJ23"
 LJ24 = "LJ24"
 LJ25 = "LJ25"
@@ -1451,6 +1526,10 @@ __all__ = [
     "HB12",
     "HB13",
     "HB14",
+    "HB15",
+    "HB16",
+    "HB17",
+    "HB18",
     "AH1",
     "AH2",
     "AH3",
@@ -1461,6 +1540,8 @@ __all__ = [
     "AH8",
     "AH9",
     "AH10",
+    "AH11",
+    "AH12",
     "NG1",
     "NG2",
     "NG3",
@@ -1506,6 +1587,8 @@ __all__ = [
     "PP8",
     "PP9",
     "PP10",
+    "PP11",
+    "PP12",
     "PC1",
     "PC2",
     "PC3",
@@ -1516,6 +1599,8 @@ __all__ = [
     "PC8",
     "PC9",
     "PC10",
+    "PC11",
+    "PC12",
     "XB1",
     "XB2",
     "XB3",
@@ -1526,6 +1611,10 @@ __all__ = [
     "XB8",
     "XB9",
     "XB10",
+    "XB11",
+    "XB12",
+    "XB13",
+    "XB14",
     "WB1",
     "WB2",
     "WB3",
@@ -1536,6 +1625,8 @@ __all__ = [
     "WB8",
     "WB9",
     "WB10",
+    "WB11",
+    "WB12",
     "XR1",
     "XR2",
     "XR3",
@@ -2068,6 +2159,9 @@ __all__ = [
     "GD4",
     "GD5",
     "GD6",
+    "GD7",
+    "GD8",
+    "GD9",
     "TF1",
     "TF2",
     "TF3",
@@ -2100,10 +2194,12 @@ __all__ = [
     "DMC3",
     "DMC4",
     "DMC5",
+    "DMC6",
     "CHN1",
     "CHN2",
     "CHN3",
     "CHN4",
+    "CHN5",
     "EWP1",
     "EWP2",
     "EWP3",
@@ -2225,9 +2321,44 @@ __all__ = [
     "RPG6",
     "RPG7",
     "RPG8",
+    "RPG9",
+    "RPG10",
+    "RPG11",
     "CSC45",
     "CSC46",
     "CSC47",
+    "CSC61",
+    "CSC62",
+    "CSC63",
+    "CSC64",
+    "CSC65",
+    "CSC66",
+    "CSC67",
+    "CSC68",
+    "CSC69",
+    "CSC70",
+    "CSC71",
+    "CSC72",
+    "CSC73",
+    "CSC74",
+    "CSC75",
+    "CSC76",
+    "CSC77",
+    "CSC78",
+    "CSC79",
+    "CSC80",
+    "CSC81",
+    "CSC82",
+    "CSC83",
+    "CSC84",
+    "CSC85",
+    "CSC86",
+    "CSC87",
+    "CSC88",
+    "CSC89",
+    "CSC90",
+    "CSC91",
+    "CSC92",
     "BCRC1",
     "BCRC2",
     "BCRC3",
@@ -2244,13 +2375,32 @@ __all__ = [
     "BCRC14",
     "BCRC15",
     "BCPO1",
+    "BCPO2",
     "BCRP1",
     "BCRP2",
+    "BCRP3",
+    "BCRP4",
+    "BCRP5",
+    "BCRP6",
+    "BCRP7",
+    "BCRP8",
+    "BCRP9",
+    "BCRP10",
+    "BCRP11",
+    "BCRP12",
+    "BCRP13",
+    "BCRP14",
+    "BCRP15",
+    "BCRP16",
     "LJ18",
     "LJ19",
     "LJ20",
     "LJ21",
     "LJ22",
+    "PERF6",
+    "PERF7",
+    "PERF8",
+    "PERF9",
     "LJ23",
     "LJ24",
     "LJ25",

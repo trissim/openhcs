@@ -86,7 +86,13 @@ from dq_dock_engine.docking.certified_runtime_plans import (
     ReturnedPoseProofCase,
 )
 from dq_dock_engine.docking.scoring import (
+    CertifiedBatchResult,
+    CertifiedContactSurrogateSpec,
+    CertifiedDirectionalHBondSpec,
+    CertifiedMetalCoordinationSpec,
     CertifiedRealSpaceEwaldSpec,
+    CertifiedRichChemistryPlan,
+    cooperative_hbond_correction_bound,
     route_scoring,
     score_certified_lj,
 )
@@ -110,6 +116,13 @@ from dq_dock_engine.docking.pocket_sampling import (
     extract_local_pocket_region_view,
 )
 from dq_dock_engine.docking.placement import apply_poses
+from dq_dock_engine.docking.chemistry_runtime import (
+    HalogenBondInteractionTerm,
+    PiCationInteractionTerm,
+    PiStackingInteractionTerm,
+    WaterMediatedHBondInteractionTerm,
+    indexed_site_positions,
+)
 from dq_dock_engine.docking.se3_refinement import (
     RefinementCertificate,
     compute_se3_spectral_certificate,
@@ -206,6 +219,7 @@ def _runtime_profile_log(label: str, start_time: float) -> None:
 # target RMSD. These constants control only the calibration phase size.
 SEED_BUDGET_PROBE_POSES = 16
 SEED_BUDGET_PROBE_TOP_K = 4
+RIGID_EXACT_INCUMBENT_PREFILTER_TOP_K = 16
 
 # Exact certified rescoring can be invoked over the full canonical retain survivor set.
 # Keep it chunked so theorem-honest Top-K pruning remains usable on large pose sets
@@ -213,6 +227,7 @@ SEED_BUDGET_PROBE_TOP_K = 4
 EXACT_RESCORING_CHUNK_SIZE = 2048
 CERTIFIED_PRUNING_CHUNK_SIZE = 512
 CERTIFIED_PRUNING_MONOLITHIC_THRESHOLD = 2048
+FINAL_EXACT_RESCORING_PAD_SIZE = 64
 
 # Formal local refinement expands each survivor into a finite local action family.
 # Chunk that stage as well so large certified survivor sets do not need one giant
@@ -1628,6 +1643,317 @@ def _per_receptor_atom_rigid_omission_bounds(
         )
 
     return np.asarray(bounds, dtype=np.float64)
+
+
+def _posewise_directional_hbond_current_upper_bound(
+    request: "PipelineDockingRequest",
+    spec: CertifiedDirectionalHBondSpec,
+    *,
+    poses_coords: jnp.ndarray,
+) -> np.ndarray:
+    poses_np = np.asarray(jax.device_get(poses_coords), dtype=np.float32)
+    if not bool(np.asarray(jax.device_get(spec.is_active))):
+        return np.zeros((poses_np.shape[0],), dtype=np.float64)
+    receptor_anchor_idx = np.asarray(
+        jax.device_get(spec.receptor_anchor_indices), dtype=np.int32
+    )
+    ligand_anchor_idx = np.asarray(
+        jax.device_get(spec.ligand_anchor_indices), dtype=np.int32
+    )
+    receptor_strengths = np.asarray(
+        jax.device_get(spec.receptor_strengths), dtype=np.float32
+    )
+    ligand_strengths = np.asarray(
+        jax.device_get(spec.ligand_strengths), dtype=np.float32
+    )
+    receptor_anchor_coords = np.asarray(
+        jax.device_get(request.protein_coords[receptor_anchor_idx]),
+        dtype=np.float32,
+    )
+    ligand_anchor_coords = poses_np[:, ligand_anchor_idx, :]
+    dists = np.linalg.norm(
+        receptor_anchor_coords[None, :, None, :] - ligand_anchor_coords[:, None, :, :],
+        axis=-1,
+    )
+    pair_strength = np.clip(
+        receptor_strengths[:, None] * ligand_strengths[None, :],
+        0.0,
+        1.0,
+    ).astype(np.float64)
+    radial = np.exp(
+        -(((dists - float(spec.ideal_distance)) / float(spec.distance_width)) ** 2)
+    )
+    return np.asarray(
+        np.sum(pair_strength[None, :, :] * radial, axis=(1, 2), dtype=np.float64),
+        dtype=np.float64,
+    )
+
+
+def _posewise_anchored_indexed_gaussian_upper_bound_current(
+    receptor_positions: np.ndarray,
+    receptor_strengths: np.ndarray,
+    ligand_positions: np.ndarray,
+    ligand_strengths: np.ndarray,
+    *,
+    ideal_distance: float,
+    distance_width: float,
+) -> np.ndarray:
+    if receptor_positions.shape[0] == 0 or ligand_positions.shape[1] == 0:
+        return np.zeros((ligand_positions.shape[0],), dtype=np.float64)
+    dists = np.linalg.norm(
+        receptor_positions[None, :, None, :] - ligand_positions[:, None, :, :],
+        axis=-1,
+    )
+    pair_strength = np.abs(
+        receptor_strengths[None, :, None] * ligand_strengths[None, None, :]
+    ).astype(np.float64)
+    radial = np.exp(-(((dists - ideal_distance) / distance_width) ** 2))
+    return np.asarray(
+        np.sum(pair_strength * radial, axis=(1, 2), dtype=np.float64),
+        dtype=np.float64,
+    )
+
+
+def _posewise_contact_omission_bounds_fast(
+    request: "PipelineDockingRequest",
+    contact_spec: "CertifiedContactSurrogateSpec",
+    *,
+    poses_coords: jnp.ndarray,
+) -> np.ndarray:
+    if not bool(np.asarray(jax.device_get(contact_spec.is_active))):
+        return np.zeros((int(poses_coords.shape[0]),), dtype=np.float64)
+    receptor_coords = np.asarray(
+        jax.device_get(request.protein_coords), dtype=np.float32
+    )
+    poses_np = np.asarray(jax.device_get(poses_coords), dtype=np.float32)
+    receptor_weights = np.asarray(
+        jax.device_get(contact_spec.receptor_weights), dtype=np.float32
+    )
+    ligand_weights = np.asarray(
+        jax.device_get(contact_spec.ligand_weights), dtype=np.float32
+    )
+    dists = np.linalg.norm(
+        receptor_coords[None, :, None, :] - poses_np[:, None, :, :],
+        axis=-1,
+    )
+    pair_strength = np.abs(
+        receptor_weights[None, :, None] * ligand_weights[None, None, :]
+    )
+    return np.asarray(
+        np.sum(
+            pair_strength * np.exp(-((float(contact_spec.beta) * dists) ** 2)),
+            axis=(1, 2),
+            dtype=np.float64,
+        ),
+        dtype=np.float64,
+    )
+
+
+def _posewise_metal_omission_bounds_fast(
+    request: "PipelineDockingRequest",
+    metal_spec: "CertifiedMetalCoordinationSpec",
+    *,
+    poses_coords: jnp.ndarray,
+) -> np.ndarray:
+    if not bool(np.asarray(jax.device_get(metal_spec.is_active))):
+        return np.zeros((int(poses_coords.shape[0]),), dtype=np.float64)
+    receptor_coords = np.asarray(
+        jax.device_get(request.protein_coords), dtype=np.float32
+    )
+    poses_np = np.asarray(jax.device_get(poses_coords), dtype=np.float32)
+    receptor_strengths = np.asarray(
+        jax.device_get(metal_spec.receptor_strengths), dtype=np.float32
+    )
+    ligand_strengths = np.asarray(
+        jax.device_get(metal_spec.ligand_strengths), dtype=np.float32
+    )
+    dists = np.linalg.norm(
+        receptor_coords[None, :, None, :] - poses_np[:, None, :, :],
+        axis=-1,
+    )
+    pair_strength = np.abs(
+        receptor_strengths[None, :, None] * ligand_strengths[None, None, :]
+    )
+    radial = np.exp(
+        -(
+            (
+                (dists - float(metal_spec.ideal_distance))
+                / float(metal_spec.distance_width)
+            )
+            ** 2
+        )
+    )
+    return np.asarray(
+        np.sum(pair_strength * radial, axis=(1, 2), dtype=np.float64),
+        dtype=np.float64,
+    )
+
+
+def _posewise_rich_channel_omission_bounds_fast(
+    request: "PipelineDockingRequest",
+    rich_plan: CertifiedRichChemistryPlan,
+    *,
+    poses_coords: jnp.ndarray,
+) -> np.ndarray:
+    poses_np = np.asarray(jax.device_get(poses_coords), dtype=np.float32)
+    contact_bound = _posewise_contact_omission_bounds_fast(
+        request,
+        rich_plan.contact,
+        poses_coords=poses_coords,
+    )
+    hbond_rec_bound = _posewise_directional_hbond_current_upper_bound(
+        request,
+        rich_plan.hbond_receptor_donor,
+        poses_coords=poses_coords,
+    )
+    hbond_lig_bound = _posewise_directional_hbond_current_upper_bound(
+        request,
+        rich_plan.hbond_ligand_donor,
+        poses_coords=poses_coords,
+    )
+    hbond_bound = hbond_rec_bound + hbond_lig_bound
+    metal_bound = _posewise_metal_omission_bounds_fast(
+        request,
+        rich_plan.metal_coordination,
+        poses_coords=poses_coords,
+    )
+    cooperative_bound = (
+        np.abs(float(rich_plan.cooperative_alpha))
+        * (hbond_rec_bound + hbond_lig_bound) ** 2
+    )
+
+    extended_bound = np.zeros((poses_np.shape[0],), dtype=np.float64)
+    for term in rich_plan.extended_terms.terms:
+        if not bool(np.asarray(jax.device_get(term.is_active))):
+            continue
+        if isinstance(term, PiStackingInteractionTerm):
+            ligand_positions = np.asarray(
+                jax.device_get(indexed_site_positions(poses_coords, term.ligand_rings)),
+                dtype=np.float32,
+            )
+            extended_bound += _posewise_anchored_indexed_gaussian_upper_bound_current(
+                np.asarray(
+                    jax.device_get(term.receptor_rings.positions), dtype=np.float32
+                ),
+                np.asarray(
+                    jax.device_get(term.receptor_rings.strengths), dtype=np.float32
+                ),
+                ligand_positions,
+                np.asarray(
+                    jax.device_get(term.ligand_rings.strengths), dtype=np.float32
+                ),
+                ideal_distance=float(term.ideal_distance),
+                distance_width=float(term.distance_width),
+            )
+        elif isinstance(term, PiCationInteractionTerm):
+            ligand_cation_positions = np.asarray(
+                jax.device_get(
+                    indexed_site_positions(poses_coords, term.ligand_cations)
+                ),
+                dtype=np.float32,
+            )
+            ligand_ring_positions = np.asarray(
+                jax.device_get(indexed_site_positions(poses_coords, term.ligand_rings)),
+                dtype=np.float32,
+            )
+            extended_bound += _posewise_anchored_indexed_gaussian_upper_bound_current(
+                np.asarray(
+                    jax.device_get(term.receptor_rings.positions), dtype=np.float32
+                ),
+                np.asarray(
+                    jax.device_get(term.receptor_rings.strengths), dtype=np.float32
+                ),
+                ligand_cation_positions,
+                np.asarray(
+                    jax.device_get(term.ligand_cations.strengths), dtype=np.float32
+                ),
+                ideal_distance=float(term.ideal_distance),
+                distance_width=float(term.distance_width),
+            )
+            extended_bound += _posewise_anchored_indexed_gaussian_upper_bound_current(
+                np.asarray(
+                    jax.device_get(term.receptor_cations.positions), dtype=np.float32
+                ),
+                np.asarray(
+                    jax.device_get(term.receptor_cations.strengths), dtype=np.float32
+                ),
+                ligand_ring_positions,
+                np.asarray(
+                    jax.device_get(term.ligand_rings.strengths), dtype=np.float32
+                ),
+                ideal_distance=float(term.ideal_distance),
+                distance_width=float(term.distance_width),
+            )
+        elif isinstance(term, HalogenBondInteractionTerm):
+            ligand_donor_positions = np.asarray(
+                jax.device_get(
+                    indexed_site_positions(poses_coords, term.ligand_donors)
+                ),
+                dtype=np.float32,
+            )
+            ligand_acceptor_positions = np.asarray(
+                jax.device_get(
+                    indexed_site_positions(poses_coords, term.ligand_acceptors)
+                ),
+                dtype=np.float32,
+            )
+            extended_bound += _posewise_anchored_indexed_gaussian_upper_bound_current(
+                np.asarray(
+                    jax.device_get(term.receptor_acceptors.positions), dtype=np.float32
+                ),
+                np.asarray(
+                    jax.device_get(term.receptor_acceptors.strengths), dtype=np.float32
+                ),
+                ligand_donor_positions,
+                np.asarray(
+                    jax.device_get(term.ligand_donors.strengths), dtype=np.float32
+                ),
+                ideal_distance=float(term.ideal_distance),
+                distance_width=float(term.distance_width),
+            )
+            extended_bound += _posewise_anchored_indexed_gaussian_upper_bound_current(
+                np.asarray(
+                    jax.device_get(term.receptor_donors.positions), dtype=np.float32
+                ),
+                np.asarray(
+                    jax.device_get(term.receptor_donors.strengths), dtype=np.float32
+                ),
+                ligand_acceptor_positions,
+                np.asarray(
+                    jax.device_get(term.ligand_acceptors.strengths), dtype=np.float32
+                ),
+                ideal_distance=float(term.ideal_distance),
+                distance_width=float(term.distance_width),
+            )
+        elif isinstance(term, WaterMediatedHBondInteractionTerm):
+            ligand_polar_positions = np.asarray(
+                jax.device_get(
+                    indexed_site_positions(poses_coords, term.ligand_polar_sites)
+                ),
+                dtype=np.float32,
+            )
+            extended_bound += _posewise_anchored_indexed_gaussian_upper_bound_current(
+                np.asarray(
+                    jax.device_get(term.receptor_waters.positions), dtype=np.float32
+                ),
+                np.asarray(
+                    jax.device_get(term.receptor_waters.strengths), dtype=np.float32
+                ),
+                ligand_polar_positions,
+                np.asarray(
+                    jax.device_get(term.ligand_polar_sites.strengths), dtype=np.float32
+                ),
+                ideal_distance=float(term.ideal_distance),
+                distance_width=float(term.distance_width),
+            )
+        else:
+            bound_fn = getattr(term, "max_total_score_bound", None)
+            if bound_fn is None:
+                return np.full((poses_np.shape[0],), np.inf, dtype=np.float64)
+            extended_bound += float(bound_fn())
+    return (
+        contact_bound + hbond_bound + metal_bound + cooperative_bound + extended_bound
+    )
 
 
 def _posewise_rigid_local_improvement_bounds(
@@ -4348,6 +4674,9 @@ def _certified_pruning_pass(
     electrostatics: Optional[CertifiedRealSpaceEwaldSpec],
     *,
     scoring_context: CertifiedScoringContext | None = None,
+    extra_pruning_delta_budget: CertifiedPruningDeltaBudget | None = None,
+    exact_chunk_scoring_context: CertifiedScoringContext | None = None,
+    extra_posewise_correction_fn: Callable[[jnp.ndarray], np.ndarray] | None = None,
     rotatable_bonds: tuple[RotatableBond, ...] = (),
     rigid_improvement_scoring_context: CertifiedScoringContext | None = None,
     rigid_refinement_plan: "CertifiedRigidLocalRefinementPlan | None" = None,
@@ -4422,17 +4751,46 @@ def _certified_pruning_pass(
     for start in range(0, n_total, chunk_size):
         stop = min(start + chunk_size, n_total)
         chunk_coords = poses_coords[start:stop]
-        (
-            chunk_scores,
-            chunk_delta_budget,
-            chunk_posewise_softening_error,
-        ) = _score_softened_pose_batch(
-            request,
-            poses_coords=chunk_coords,
-            electrostatics=electrostatics,
-            scoring_context=scoring_context,
+        n_chunk_real = int(stop - start)
+        scored_chunk_coords = chunk_coords
+        if n_chunk_real < chunk_size:
+            pad_count = int(chunk_size - n_chunk_real)
+            pad_coords = jnp.repeat(chunk_coords[:1], pad_count, axis=0)
+            scored_chunk_coords = jnp.concatenate((chunk_coords, pad_coords), axis=0)
+        phase_start = time.perf_counter()
+        if exact_chunk_scoring_context is not None:
+            exact_zero_delta_handles = (
+                ("CB10", "CB11", "CB12")
+                if electrostatics is not None
+                else ("LJ10", "LJ11", "LJ12")
+            )
+            chunk_scores = _score_rigid_exact_pose_batch(
+                request,
+                poses_coords=scored_chunk_coords,
+                electrostatics=electrostatics,
+                scoring_context=exact_chunk_scoring_context,
+            )
+            chunk_delta_budget = CertifiedPruningDeltaBudget.from_components(
+                source="exact_base_physics_pruning_delta_zero",
+                components=(),
+                theorem_handles=exact_zero_delta_handles,
+            )
+            chunk_posewise_softening_error = jnp.zeros_like(chunk_scores)
+        else:
+            (
+                chunk_scores,
+                chunk_delta_budget,
+                chunk_posewise_softening_error,
+            ) = _score_softened_pose_batch(
+                request,
+                poses_coords=scored_chunk_coords,
+                electrostatics=electrostatics,
+                scoring_context=scoring_context,
+            )
+        _runtime_profile_log("certified_pruning_chunk_softened_scores", phase_start)
+        chunk_scores_np = np.asarray(
+            jax.device_get(chunk_scores[:n_chunk_real]), dtype=np.float32
         )
-        chunk_scores_np = np.asarray(jax.device_get(chunk_scores), dtype=np.float32)
         coarse_scores_np[start:stop] = chunk_scores_np
 
         if pruning_delta_budget is None:
@@ -4444,10 +4802,15 @@ def _certified_pruning_pass(
             )
 
         chunk_correction_np = np.array(
-            jax.device_get(chunk_posewise_softening_error),
+            jax.device_get(chunk_posewise_softening_error[:n_chunk_real]),
             dtype=np.float32,
             copy=True,
         )
+        if extra_posewise_correction_fn is not None:
+            chunk_correction_np += np.asarray(
+                extra_posewise_correction_fn(chunk_coords),
+                dtype=np.float32,
+            )
         if use_conf:
             chunk_family = _active_subset_budget_family(
                 chunk_coords,
@@ -4491,6 +4854,11 @@ def _certified_pruning_pass(
         additive_correction_np[start:stop] = chunk_correction_np
 
     assert pruning_delta_budget is not None
+    if extra_pruning_delta_budget is not None:
+        pruning_delta_budget = _merge_pruning_delta_budgets(
+            pruning_delta_budget,
+            extra_pruning_delta_budget,
+        )
     if use_rigid_improvement:
         assert rigid_refinement_plan is not None
         assert rigid_improvement_scoring_context is not None
@@ -4510,15 +4878,64 @@ def _certified_pruning_pass(
 
         rigid_pre_exact_count = int(rigid_tighten_indices.size)
         if rigid_tighten_indices.size > 0:
-            exact_candidates = _score_rigid_exact_pose_batch(
+            phase_start = time.perf_counter()
+            incumbent_prefilter_count = min(
+                RIGID_EXACT_INCUMBENT_PREFILTER_TOP_K,
+                int(rigid_tighten_indices.size),
+            )
+            incumbent_probe_indices = rigid_tighten_indices[
+                np.argsort(coarse_scores_np[rigid_tighten_indices])[
+                    :incumbent_prefilter_count
+                ]
+            ]
+            incumbent_probe_scores = _score_rigid_exact_pose_batch(
                 request,
-                poses_coords=poses_coords[rigid_tighten_indices],
+                poses_coords=poses_coords[incumbent_probe_indices],
                 electrostatics=electrostatics,
                 scoring_context=rigid_improvement_scoring_context,
             )
-            exact_candidates_np = np.asarray(
-                jax.device_get(exact_candidates), dtype=np.float32
+            incumbent_exact_best = float(
+                np.min(
+                    np.asarray(jax.device_get(incumbent_probe_scores), dtype=np.float32)
+                )
             )
+            coarse_lower_bound = (
+                coarse_scores_np[rigid_tighten_indices]
+                - float(pruning_delta_budget.total_delta)
+                - rigid_global_cap
+            )
+            prefilter_keep = coarse_lower_bound <= incumbent_exact_best
+            if rigid_forced_prune_mask is not None:
+                rigid_forced_prune_mask[rigid_tighten_indices[~prefilter_keep]] = True
+            rigid_tighten_indices = rigid_tighten_indices[prefilter_keep]
+            _runtime_profile_log(
+                "certified_pruning_exact_incumbent_prefilter", phase_start
+            )
+
+        if rigid_tighten_indices.size > 0:
+            phase_start = time.perf_counter()
+            exact_candidates_np = np.empty(
+                (int(rigid_tighten_indices.size),),
+                dtype=np.float32,
+            )
+            exact_chunk_size = (
+                int(rigid_tighten_indices.size)
+                if int(rigid_tighten_indices.size)
+                <= CERTIFIED_PRUNING_MONOLITHIC_THRESHOLD
+                else CERTIFIED_PRUNING_CHUNK_SIZE
+            )
+            for s in range(0, int(rigid_tighten_indices.size), exact_chunk_size):
+                e = min(s + exact_chunk_size, int(rigid_tighten_indices.size))
+                idx_chunk = rigid_tighten_indices[s:e]
+                exact_chunk = _score_rigid_exact_pose_batch(
+                    request,
+                    poses_coords=poses_coords[idx_chunk],
+                    electrostatics=electrostatics,
+                    scoring_context=rigid_improvement_scoring_context,
+                )
+                exact_candidates_np[s:e] = np.asarray(
+                    jax.device_get(exact_chunk), dtype=np.float32
+                )
             if exact_candidates_np.size > 0:
                 best_exact = float(np.min(exact_candidates_np))
                 keep_exact_mask = exact_candidates_np <= (best_exact + rigid_global_cap)
@@ -4529,10 +4946,12 @@ def _certified_pruning_pass(
                 rigid_tighten_indices = rigid_tighten_indices[keep_exact_mask]
             else:
                 best_exact = float("inf")
+            _runtime_profile_log("certified_pruning_exact_rigid_scores", phase_start)
         else:
             best_exact = float("inf")
 
         if rigid_tighten_indices.size > 0:
+            phase_start = time.perf_counter()
             rigid_chunk_size = (
                 rigid_tighten_indices.size
                 if rigid_tighten_indices.size <= CERTIFIED_PRUNING_MONOLITHIC_THRESHOLD
@@ -4564,6 +4983,7 @@ def _certified_pruning_pass(
                 additive_correction_np[idx_chunk] += (
                     chunk_rigid_correction_np - np.float32(rigid_global_cap)
                 )
+            _runtime_profile_log("certified_pruning_rigid_posewise_bounds", phase_start)
         print(
             "[CERTIFIED PRUNING DEBUG] "
             f"rigid_tighten_candidates={int(rigid_tighten_indices.size)}/{n_total} "
@@ -4593,6 +5013,13 @@ def _certified_pruning_pass(
         f"[CERTIFIED PRUNING] Pruned {n_total} -> {n_surv_val} poses "
         f"({efficiency:.1f}% reduction, delta={pruning_delta_budget.total_delta:.3f} kcal/mol)"
     )
+    if pruning_delta_budget.total_delta > 0.0:
+        print(
+            "[CERTIFIED PRUNING DEBUG] "
+            f"delta_source={pruning_delta_budget.source} "
+            f"delta_breakdown={[(item.label, round(float(item.value), 3)) for item in pruning_delta_budget.breakdown]}",
+            flush=True,
+        )
     if rigid_improvement_budgets:
         rigid_budget_totals_np = np.asarray(
             [budget.total_budget for budget in rigid_improvement_budgets],
@@ -5240,6 +5667,29 @@ def _canonical_retain_mask(
         - additive_correction
     )
     return lower_bounds <= tau, tau, lower_bounds
+
+
+def _retain_mask_for_explicit_threshold(
+    reference_scores: jnp.ndarray,
+    *,
+    threshold: float,
+    additive_correction: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    if reference_scores.ndim != 1:
+        raise ValueError("reference_scores must be 1D")
+    if additive_correction.shape != reference_scores.shape:
+        raise ValueError("additive_correction must match reference_scores shape")
+    if not math.isfinite(float(threshold)):
+        return jnp.ones_like(reference_scores, dtype=bool), reference_scores
+    additive_correction_np = np.asarray(
+        jax.device_get(additive_correction), dtype=np.float32
+    )
+    if not np.all(np.isfinite(additive_correction_np)):
+        return jnp.ones_like(reference_scores, dtype=bool), reference_scores
+    lower_bounds = reference_scores - additive_correction
+    return lower_bounds <= jnp.asarray(
+        threshold, dtype=reference_scores.dtype
+    ), lower_bounds
 
 
 def _score_softened_pose_batch(
@@ -6297,6 +6747,66 @@ def _score_exact_pose_batch(
     return jnp.concatenate(scored_chunks, axis=0)
 
 
+def _score_exact_pose_batch_padded(
+    request: PipelineDockingRequest,
+    *,
+    poses_coords: jnp.ndarray,
+    electrostatics: CertifiedRealSpaceEwaldSpec | None,
+    scoring_context: CertifiedScoringContext | None = None,
+    pad_size: int = FINAL_EXACT_RESCORING_PAD_SIZE,
+) -> jnp.ndarray:
+    if poses_coords.shape[0] == 0:
+        return jnp.zeros((0,), dtype=request.protein_coords.dtype)
+    if pad_size <= 0:
+        raise ValueError("pad_size must be positive")
+    if poses_coords.shape[0] > pad_size:
+        return _score_exact_pose_batch(
+            request,
+            poses_coords=poses_coords,
+            electrostatics=electrostatics,
+            scoring_context=scoring_context,
+        )
+    padded = poses_coords
+    if poses_coords.shape[0] < pad_size:
+        pad_count = int(pad_size - poses_coords.shape[0])
+        pad_coords = jnp.repeat(poses_coords[:1], pad_count, axis=0)
+        padded = jnp.concatenate((poses_coords, pad_coords), axis=0)
+    scored = _score_exact_pose_batch(
+        request,
+        poses_coords=padded,
+        electrostatics=electrostatics,
+        scoring_context=scoring_context,
+    )
+    return scored[: poses_coords.shape[0]]
+
+
+def _score_certified_batch_padded(
+    score_fn: Callable[[jnp.ndarray], CertifiedBatchResult],
+    poses_coords: jnp.ndarray,
+    *,
+    pad_size: int = FINAL_EXACT_RESCORING_PAD_SIZE,
+) -> CertifiedBatchResult:
+    if poses_coords.shape[0] == 0:
+        raise ValueError("poses_coords must be non-empty")
+    padded = poses_coords
+    if 0 < poses_coords.shape[0] < pad_size:
+        pad_count = int(pad_size - poses_coords.shape[0])
+        pad_coords = jnp.repeat(poses_coords[:1], pad_count, axis=0)
+        padded = jnp.concatenate((poses_coords, pad_coords), axis=0)
+    batch = score_fn(padded)
+    if padded.shape[0] == poses_coords.shape[0]:
+        return batch
+    return replace(
+        batch,
+        scores=batch.scores[: poses_coords.shape[0]],
+        posewise_error_bound=(
+            None
+            if batch.posewise_error_bound is None
+            else batch.posewise_error_bound[: poses_coords.shape[0]]
+        ),
+    )
+
+
 def _score_rigid_exact_pose_batch(
     request: PipelineDockingRequest,
     *,
@@ -6588,6 +7098,7 @@ class CertifiedPipelineRoute(PipelineRoute):
             if request.is_certified_mode
             else None
         )
+        do_conf = _request_uses_conformer_search(request)
         pruning_scoring_context = (
             None
             if full_scoring_context is None
@@ -6600,17 +7111,27 @@ class CertifiedPipelineRoute(PipelineRoute):
             if full_scoring_context.uses_extended_rich
             else full_scoring_context
         )
-        do_conf = _request_uses_conformer_search(request)
         rotatable_bonds = _request_rotatable_bonds(request) if do_conf else ()
         rigid_refinement_plan = _derive_certified_rigid_local_refinement_plan(
             request, cast(CertifiedScoringContext, scoring_context)
         )
+        extra_pruning_delta_budget = None
+        exact_pruning_scoring_context = None
+        if (
+            full_scoring_context is not None
+            and full_scoring_context.uses_extended_rich
+            and not do_conf
+        ):
+            exact_pruning_scoring_context = full_scoring_context.optimization_context()
+            pruning_scoring_context = None
         phase_start = time.perf_counter()
         execution_plan = _certified_pruning_pass(
             request,
             poses_coords=batched_coords,
             electrostatics=electrostatics,
             scoring_context=pruning_scoring_context,
+            extra_pruning_delta_budget=extra_pruning_delta_budget,
+            exact_chunk_scoring_context=exact_pruning_scoring_context,
             rotatable_bonds=rotatable_bonds,
             rigid_improvement_scoring_context=cast(
                 CertifiedScoringContext, scoring_context
@@ -6858,6 +7379,7 @@ class CertifiedPipelineRoute(PipelineRoute):
             full_scoring_context is not None
             and full_scoring_context.uses_extended_rich
             and survivor_coords.shape[0] > 0
+            and do_conf
         ):
             rich_survivor_batch = full_scoring_context.score_exact_batch(
                 receptor_coords=request.protein_coords,
@@ -7266,6 +7788,7 @@ def _run_docking_pipeline_request(
     rich_ranking_certified = False
     rigid_clearance_certified = True
     use_softened_local_objective = False
+    winner_incumbent_filter_applied = False
 
     if backend == OptimizerBackend.FORMAL:
         from dq_dock_engine.docking.formal_optimizer import (
@@ -7489,6 +8012,7 @@ def _run_docking_pipeline_request(
                 refinement_input_coords = initial_coords[
                     jnp.asarray(local_refine_indices)
                 ]
+                winner_incumbent_filter_applied = True
                 print(
                     "[LOCAL REFINEMENT DEBUG] "
                     f"winner_incumbent_filter retained={int(local_refine_indices.size)}/{old_count} "
@@ -7662,55 +8186,300 @@ def _run_docking_pipeline_request(
     )
 
     orientation_margin_certified = False
+    patched_rich_support_fast_path = False
+    patched_rich_support_indices: tuple[int, ...] = ()
     if request.is_certified_mode:
         phase_start = time.perf_counter()
         if scoring_context.uses_extended_rich:
-            rich_final_batch = scoring_context.score_exact_batch(
-                receptor_coords=request.protein_coords,
-                poses_coords=opt_coords,
-                receptor_radii=request.receptor_radii,
-                ligand_radii=request.ligand_ctx.base_radii,
-                target_error=request.target_error,
-                epsilon=0.2,
-            )
-            disambiguation_batch = scoring_context.score_flip_disambiguation_batch(
-                receptor_coords=request.protein_coords,
-                poses_coords=opt_coords,
-                receptor_radii=request.receptor_radii,
-                ligand_radii=request.ligand_ctx.base_radii,
-                target_error=request.target_error,
-                epsilon=0.2,
-            )
-            # Only let the richer orientation-sensitive score decide the winner
-            # when it shares the same certified singleton top-1 action as the
-            # simpler H-bond-backed disambiguation score. Lean: FLO21.
-            rich_ranking_certified = _shared_certified_singleton_top1(
-                rich_final_batch.scores,
-                float(np.asarray(jax.device_get(rich_final_batch.error_bound))),
-                disambiguation_batch.scores,
-                float(np.asarray(jax.device_get(disambiguation_batch.error_bound))),
-            )
-            orientation_margin_certified = _orientation_margin_certified_singleton_top1(
-                scoring_context,
-                disambiguation_batch.scores,
-                float(np.asarray(jax.device_get(disambiguation_batch.error_bound))),
-            )
-            final_batch = (
-                rich_final_batch if rich_ranking_certified else disambiguation_batch
-            )
+            if not do_conf and scoring_context.rich_chemistry_plan is not None:
+                base_scores = _score_exact_pose_batch_padded(
+                    request,
+                    poses_coords=opt_coords,
+                    electrostatics=electrostatics,
+                    scoring_context=optimization_scoring_context,
+                )
+                witness_index = int(
+                    np.argmin(np.asarray(jax.device_get(base_scores), dtype=np.float64))
+                )
+                witness_coords = opt_coords[witness_index : witness_index + 1]
+                witness_rich_batch = scoring_context.score_exact_batch(
+                    receptor_coords=request.protein_coords,
+                    poses_coords=witness_coords,
+                    receptor_radii=request.receptor_radii,
+                    ligand_radii=request.ligand_ctx.base_radii,
+                    target_error=request.target_error,
+                    epsilon=0.2,
+                )
+                witness_disambiguation_batch = (
+                    scoring_context.score_flip_disambiguation_batch(
+                        receptor_coords=request.protein_coords,
+                        poses_coords=witness_coords,
+                        receptor_radii=request.receptor_radii,
+                        ligand_radii=request.ligand_ctx.base_radii,
+                        target_error=request.target_error,
+                        epsilon=0.2,
+                    )
+                )
+                witness_threshold = max(
+                    float(
+                        np.asarray(
+                            jax.device_get(witness_rich_batch.scores), dtype=np.float32
+                        )[0]
+                    ),
+                    float(
+                        np.asarray(
+                            jax.device_get(witness_disambiguation_batch.scores),
+                            dtype=np.float32,
+                        )[0]
+                    ),
+                )
+                rich_omitted_bounds = _posewise_rich_channel_omission_bounds_fast(
+                    request,
+                    scoring_context.rich_chemistry_plan,
+                    poses_coords=opt_coords,
+                )
+                rich_support_mask, _ = _retain_mask_for_explicit_threshold(
+                    base_scores,
+                    threshold=witness_threshold,
+                    additive_correction=jnp.asarray(
+                        rich_omitted_bounds, dtype=jnp.float32
+                    ),
+                )
+                rich_support_indices_np = np.flatnonzero(
+                    np.asarray(jax.device_get(rich_support_mask), dtype=bool)
+                ).astype(np.int32)
+                if 0 < rich_support_indices_np.size < int(opt_coords.shape[0]):
+                    support_coords = opt_coords[jnp.asarray(rich_support_indices_np)]
+                    rescoring_coords = support_coords
+                    if 0 < support_coords.shape[0] < FINAL_EXACT_RESCORING_PAD_SIZE:
+                        pad_count = int(
+                            FINAL_EXACT_RESCORING_PAD_SIZE - support_coords.shape[0]
+                        )
+                        pad_coords = jnp.repeat(support_coords[:1], pad_count, axis=0)
+                        rescoring_coords = jnp.concatenate(
+                            (support_coords, pad_coords), axis=0
+                        )
+                    rich_final_batch = scoring_context.score_exact_batch(
+                        receptor_coords=request.protein_coords,
+                        poses_coords=rescoring_coords,
+                        receptor_radii=request.receptor_radii,
+                        ligand_radii=request.ligand_ctx.base_radii,
+                        target_error=request.target_error,
+                        epsilon=0.2,
+                    )
+                    disambiguation_batch = (
+                        scoring_context.score_flip_disambiguation_batch(
+                            receptor_coords=request.protein_coords,
+                            poses_coords=rescoring_coords,
+                            receptor_radii=request.receptor_radii,
+                            ligand_radii=request.ligand_ctx.base_radii,
+                            target_error=request.target_error,
+                            epsilon=0.2,
+                        )
+                    )
+                    rich_scores = rich_final_batch.scores[: support_coords.shape[0]]
+                    disambiguation_scores = disambiguation_batch.scores[
+                        : support_coords.shape[0]
+                    ]
+                    support_singleton = support_coords.shape[0] == 1
+                    support_rich_singleton = support_singleton or _certified_top1_gap(
+                        rich_scores,
+                        float(np.asarray(jax.device_get(rich_final_batch.error_bound))),
+                    )
+                    support_dis_singleton = support_singleton or _certified_top1_gap(
+                        disambiguation_scores,
+                        float(
+                            np.asarray(jax.device_get(disambiguation_batch.error_bound))
+                        ),
+                    )
+                    rich_ranking_certified = (
+                        int(jnp.argmin(rich_scores))
+                        == int(jnp.argmin(disambiguation_scores))
+                        and support_rich_singleton
+                        and support_dis_singleton
+                    )
+                    orientation_margin_certified = (
+                        support_dis_singleton
+                        or _orientation_margin_certified_singleton_top1(
+                            scoring_context,
+                            disambiguation_scores,
+                            float(
+                                np.asarray(
+                                    jax.device_get(disambiguation_batch.error_bound)
+                                )
+                            ),
+                        )
+                    )
+                    chosen_scores = (
+                        rich_scores if rich_ranking_certified else disambiguation_scores
+                    )
+                    chosen_error_bound = float(
+                        np.asarray(
+                            jax.device_get(
+                                rich_final_batch.error_bound
+                                if rich_ranking_certified
+                                else disambiguation_batch.error_bound
+                            )
+                        )
+                    )
+                    fallback_score = witness_threshold + max(1.0e-6, chosen_error_bound)
+                    final_scores_np = np.full(
+                        (int(opt_coords.shape[0]),),
+                        fallback_score,
+                        dtype=np.float32,
+                    )
+                    final_scores_np[rich_support_indices_np] = np.asarray(
+                        jax.device_get(chosen_scores), dtype=np.float32
+                    )
+                    final_scores = jnp.asarray(final_scores_np)
+                    final_error_bound = chosen_error_bound
+                    patched_rich_support_fast_path = True
+                    patched_rich_support_indices = tuple(
+                        int(i) for i in rich_support_indices_np.tolist()
+                    )
+                    print(
+                        "[RICH SUPPORT FASTPATH] "
+                        f"support={len(patched_rich_support_indices)}/{int(opt_coords.shape[0])} "
+                        f"witness_idx={witness_index} threshold={witness_threshold:.3f} "
+                        f"fallback={fallback_score:.3f}",
+                        flush=True,
+                    )
+                else:
+                    rescoring_coords = opt_coords
+                    if 0 < opt_coords.shape[0] < FINAL_EXACT_RESCORING_PAD_SIZE:
+                        pad_count = int(
+                            FINAL_EXACT_RESCORING_PAD_SIZE - opt_coords.shape[0]
+                        )
+                        pad_coords = jnp.repeat(opt_coords[:1], pad_count, axis=0)
+                        rescoring_coords = jnp.concatenate(
+                            (opt_coords, pad_coords), axis=0
+                        )
+                    rich_final_batch = scoring_context.score_exact_batch(
+                        receptor_coords=request.protein_coords,
+                        poses_coords=rescoring_coords,
+                        receptor_radii=request.receptor_radii,
+                        ligand_radii=request.ligand_ctx.base_radii,
+                        target_error=request.target_error,
+                        epsilon=0.2,
+                    )
+                    disambiguation_batch = (
+                        scoring_context.score_flip_disambiguation_batch(
+                            receptor_coords=request.protein_coords,
+                            poses_coords=rescoring_coords,
+                            receptor_radii=request.receptor_radii,
+                            ligand_radii=request.ligand_ctx.base_radii,
+                            target_error=request.target_error,
+                            epsilon=0.2,
+                        )
+                    )
+                    rich_scores = rich_final_batch.scores[: opt_coords.shape[0]]
+                    disambiguation_scores = disambiguation_batch.scores[
+                        : opt_coords.shape[0]
+                    ]
+                    rich_ranking_certified = _shared_certified_singleton_top1(
+                        rich_scores,
+                        float(np.asarray(jax.device_get(rich_final_batch.error_bound))),
+                        disambiguation_scores,
+                        float(
+                            np.asarray(jax.device_get(disambiguation_batch.error_bound))
+                        ),
+                    )
+                    orientation_margin_certified = (
+                        _orientation_margin_certified_singleton_top1(
+                            scoring_context,
+                            disambiguation_scores,
+                            float(
+                                np.asarray(
+                                    jax.device_get(disambiguation_batch.error_bound)
+                                )
+                            ),
+                        )
+                    )
+                    final_scores = (
+                        rich_scores if rich_ranking_certified else disambiguation_scores
+                    )
+                    final_error_bound = float(
+                        np.asarray(
+                            jax.device_get(
+                                rich_final_batch.error_bound
+                                if rich_ranking_certified
+                                else disambiguation_batch.error_bound
+                            )
+                        )
+                    )
+            else:
+                rescoring_coords = opt_coords
+                if 0 < opt_coords.shape[0] < FINAL_EXACT_RESCORING_PAD_SIZE:
+                    pad_count = int(
+                        FINAL_EXACT_RESCORING_PAD_SIZE - opt_coords.shape[0]
+                    )
+                    pad_coords = jnp.repeat(opt_coords[:1], pad_count, axis=0)
+                    rescoring_coords = jnp.concatenate((opt_coords, pad_coords), axis=0)
+                rich_final_batch = scoring_context.score_exact_batch(
+                    receptor_coords=request.protein_coords,
+                    poses_coords=rescoring_coords,
+                    receptor_radii=request.receptor_radii,
+                    ligand_radii=request.ligand_ctx.base_radii,
+                    target_error=request.target_error,
+                    epsilon=0.2,
+                )
+                disambiguation_batch = scoring_context.score_flip_disambiguation_batch(
+                    receptor_coords=request.protein_coords,
+                    poses_coords=rescoring_coords,
+                    receptor_radii=request.receptor_radii,
+                    ligand_radii=request.ligand_ctx.base_radii,
+                    target_error=request.target_error,
+                    epsilon=0.2,
+                )
+                rich_scores = rich_final_batch.scores[: opt_coords.shape[0]]
+                disambiguation_scores = disambiguation_batch.scores[
+                    : opt_coords.shape[0]
+                ]
+                rich_ranking_certified = _shared_certified_singleton_top1(
+                    rich_scores,
+                    float(np.asarray(jax.device_get(rich_final_batch.error_bound))),
+                    disambiguation_scores,
+                    float(np.asarray(jax.device_get(disambiguation_batch.error_bound))),
+                )
+                orientation_margin_certified = (
+                    _orientation_margin_certified_singleton_top1(
+                        scoring_context,
+                        disambiguation_scores,
+                        float(
+                            np.asarray(jax.device_get(disambiguation_batch.error_bound))
+                        ),
+                    )
+                )
+                final_scores = (
+                    rich_scores if rich_ranking_certified else disambiguation_scores
+                )
+                final_error_bound = float(
+                    np.asarray(
+                        jax.device_get(
+                            rich_final_batch.error_bound
+                            if rich_ranking_certified
+                            else disambiguation_batch.error_bound
+                        )
+                    )
+                )
         else:
             rich_ranking_certified = False
             orientation_margin_certified = False
-            final_batch = ranking_scoring_context.score_exact_batch(
-                receptor_coords=request.protein_coords,
-                poses_coords=opt_coords,
-                receptor_radii=request.receptor_radii,
-                ligand_radii=request.ligand_ctx.base_radii,
-                target_error=request.target_error,
-                epsilon=0.2,
+            final_batch = _score_certified_batch_padded(
+                lambda coords: ranking_scoring_context.score_exact_batch(
+                    receptor_coords=request.protein_coords,
+                    poses_coords=coords,
+                    receptor_radii=request.receptor_radii,
+                    ligand_radii=request.ligand_ctx.base_radii,
+                    target_error=request.target_error,
+                    epsilon=0.2,
+                ),
+                opt_coords,
             )
-        final_scores = final_batch.scores
-        final_error_bound = float(np.asarray(jax.device_get(final_batch.error_bound)))
+            final_scores = final_batch.scores
+            final_error_bound = float(
+                np.asarray(jax.device_get(final_batch.error_bound))
+            )
         _runtime_profile_log("post_refinement_exact_scoring", phase_start)
     else:
         phase_start = time.perf_counter()
@@ -7725,6 +8494,7 @@ def _run_docking_pipeline_request(
         final_error_bound = None
         _runtime_profile_log("post_refinement_route_scoring", phase_start)
 
+    final_scores = jnp.asarray(final_scores)
     pre_conformer_final_scores = final_scores
 
     phase_start = time.perf_counter()
@@ -7739,9 +8509,28 @@ def _run_docking_pipeline_request(
     )
     _runtime_profile_log("native_certification", phase_start)
 
-    best_final_indices = jnp.argsort(final_scores)[:n_to_opt]
+    output_limit = 1 if patched_rich_support_fast_path else n_to_opt
+    best_final_indices = jnp.argsort(final_scores)[:output_limit]
 
     runtime_diagnostic_handles: tuple[str, ...] = ()
+    if winner_incumbent_filter_applied:
+        runtime_diagnostic_handles = _merge_theorem_handles(
+            runtime_diagnostic_handles,
+            ("PERF8", "PERF9"),
+        )
+    if patched_rich_support_fast_path:
+        runtime_diagnostic_handles = _merge_theorem_handles(
+            runtime_diagnostic_handles,
+            (
+                "BCRP5",
+                "BCRP9",
+                "BCRP11",
+                "BCRP12",
+                "BCRP15",
+                "BCRP16",
+                "RPG11",
+            ),
+        )
     rigid_ambiguity_detected = False
     if (
         request.is_certified_mode
@@ -8142,10 +8931,14 @@ def _run_docking_pipeline_request(
                 )
             )
             refinement_certificates[winner_index] = cert_obj
-            opt_coords = opt_coords.at[winner_index].set(cert_coords)
-            opt_pose_translations = opt_pose_translations.at[winner_index].set(cert_t)
-            opt_pose_quaternions = opt_pose_quaternions.at[winner_index].set(cert_q)
-            final_scores = final_scores.at[winner_index].set(cert_energy)
+            opt_coords = jnp.asarray(opt_coords).at[winner_index].set(cert_coords)
+            opt_pose_translations = (
+                jnp.asarray(opt_pose_translations).at[winner_index].set(cert_t)
+            )
+            opt_pose_quaternions = (
+                jnp.asarray(opt_pose_quaternions).at[winner_index].set(cert_q)
+            )
+            final_scores = jnp.asarray(final_scores).at[winner_index].set(cert_energy)
             print(
                 f"[REFINE_CERTS] Winner-only certification pose_idx={winner_index}: {cert_obj is not None}, score={cert_energy:.3f}",
                 flush=True,

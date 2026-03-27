@@ -126,6 +126,23 @@ theorem angular_factor_tightens_tail
     _ = |w * radial| := mul_one _
     _ ≤ B := h_radial_bound
 
+/-- A nonnegative external weight times a directional metal score is bounded by
+    the same weight times the radial factor when the geometry factor lies in
+    `[0, 1]`. -/
+theorem weighted_directionalMetal_le_weighted_radial
+    (w radial geometry : ℝ)
+    (hw_nonneg : 0 ≤ w)
+    (hRadial_nonneg : 0 ≤ radial)
+    (hGeom_nonneg : 0 ≤ geometry)
+    (hGeom_le_one : geometry ≤ 1) :
+    w * directionalMetalScore radial geometry ≤ w * radial := by
+  unfold directionalMetalScore
+  have hInner : radial * geometry ≤ radial := by
+    have htmp : radial * geometry ≤ radial * 1 := by
+      exact mul_le_mul_of_nonneg_left hGeom_le_one hRadial_nonneg
+    simpa using htmp
+  exact mul_le_mul_of_nonneg_left hInner hw_nonneg
+
 -- ---------------------------------------------------------------------------
 -- Section 4: Finite-domain exact/coarse pair
 -- ---------------------------------------------------------------------------

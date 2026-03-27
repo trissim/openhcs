@@ -7,12 +7,14 @@
   families.
 -/
 import DecisionQuotient.Tractability.DirectionalHBondApproximation
+import DecisionQuotient.Tractability.GaussianDecayBounds
 
 namespace DecisionQuotient
 namespace Tractability
 namespace HalogenBondApproximation
 
 open DirectionalHBondApproximation
+open GaussianDecayBounds
 
 universe u v
 
@@ -160,6 +162,53 @@ abbrev attractiveHalogenBond_native_unique_top1_of_equal_background_and_active
     (r_flip := r_flip)
     (a_flip := a_flip)
     hbg hr hd ha
+
+/-- A nonnegative external weight times a halogen-bond score is bounded by the
+    same weight times its radial factor when both angular factors lie in `[0,1]`. -/
+theorem weighted_halogenBond_le_weighted_radial
+    (w radial donor acceptor : ℝ)
+    (hw_nonneg : 0 ≤ w)
+    (hRadial_nonneg : 0 ≤ radial)
+    (hDon_nonneg : 0 ≤ donor)
+    (hDon_le_one : donor ≤ 1)
+    (hAcc_nonneg : 0 ≤ acceptor)
+    (hAcc_le_one : acceptor ≤ 1) :
+    w * halogenBondScore radial donor acceptor ≤ w * radial := by
+  simpa [halogenBondScore] using
+    weighted_directionalHBond_le_weighted_radial
+      w radial donor acceptor hw_nonneg hRadial_nonneg
+      hDon_nonneg hDon_le_one hAcc_nonneg hAcc_le_one
+
+/-- Tail bound for weighted halogen-bond scores once the radial distance is beyond
+    cutoff and both angular factors stay in `[0,1]`. -/
+theorem weighted_halogenBond_tail_bound
+    (w ideal width cutoff r donor acceptor : ℝ)
+    (hw_nonneg : 0 ≤ w)
+    (hwidth : 0 < width)
+    (hcut : ideal ≤ cutoff)
+    (hr : cutoff ≤ r)
+    (hDon_nonneg : 0 ≤ donor)
+    (hDon_le_one : donor ≤ 1)
+    (hAcc_nonneg : 0 ≤ acceptor)
+    (hAcc_le_one : acceptor ≤ 1) :
+    w * halogenBondScore (Real.exp (-(((r - ideal) / width) ^ 2))) donor acceptor ≤
+      w * Real.exp (-(((cutoff - ideal) / width) ^ 2)) := by
+  have hRadial_nonneg : 0 ≤ Real.exp (-(((r - ideal) / width) ^ 2)) :=
+    (Real.exp_pos _).le
+  have hUpper :=
+    weighted_halogenBond_le_weighted_radial
+      w (Real.exp (-(((r - ideal) / width) ^ 2))) donor acceptor
+      hw_nonneg hRadial_nonneg hDon_nonneg hDon_le_one hAcc_nonneg hAcc_le_one
+  have hTail :
+      Real.exp (-(((r - ideal) / width) ^ 2)) ≤ Real.exp (-(((cutoff - ideal) / width) ^ 2)) := by
+    have hBound :=
+      GaussianDecayBounds.shiftedGaussian_tail_bound 1 ideal width cutoff r
+        hwidth hcut hr
+    simpa [shiftedGaussianScore] using hBound
+  have hScaledTail :
+      w * Real.exp (-(((r - ideal) / width) ^ 2)) ≤ w * Real.exp (-(((cutoff - ideal) / width) ^ 2)) := by
+    exact mul_le_mul_of_nonneg_left hTail hw_nonneg
+  exact le_trans hUpper hScaledTail
 
 end HalogenBondApproximation
 end Tractability

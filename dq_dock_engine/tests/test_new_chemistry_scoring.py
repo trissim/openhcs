@@ -30,6 +30,7 @@ from dq_dock_engine.docking.formal_handles import (
     pose_specific_improvement_budget_theorem_handles,
     receptor_flexibility_theorem_handles,
     rigid_seed_family_theorem_handles,
+    rigid_seed_runtime_bridge_theorem_handles,
     returned_pose_guarantee_theorem_handles,
     rich_chemistry_theorem_handles,
     screened_coulomb_theorem_handles,
@@ -192,6 +193,7 @@ def test_new_chemistry_handle_helpers_surface_new_theorem_families() -> None:
         "CT4",
         "CT5",
         "CT6",
+        "GD7",
     }
     assert {"SC1", "SC6"}.issubset(set(screened_coulomb_theorem_handles()))
     assert {"HB1", "HB9", "HB10", "HB11", "HB12", "HB16"}.issubset(
@@ -263,6 +265,31 @@ def test_new_chemistry_handle_helpers_surface_new_theorem_families() -> None:
         set(seed_budget_minimality_theorem_handles())
     )
     assert {"BD7", "SD9", "SD10"}.issubset(set(rigid_seed_family_theorem_handles()))
+    assert {
+        "CSC61",
+        "CSC64",
+        "CSC70",
+        "CSC72",
+        "CSC74",
+        "CSC76",
+        "CSC78",
+        "CSC79",
+        "CSC80",
+        "CSC81",
+        "CSC82",
+        "CSC84",
+        "CSC85",
+        "CSC86",
+        "CSC87",
+        "CSC88",
+        "CSC89",
+        "CSC90",
+        "CSC91",
+        "CSC92",
+    }.issubset(set(rigid_seed_runtime_bridge_theorem_handles()))
+    assert {"CSC67", "CSC69", "CSC71", "CSC73", "CSC75", "CSC77", "CSC83"}.issubset(
+        set(rigid_seed_family_theorem_handles())
+    )
     assert {"CSC25", "CSC26", "CSC44", "CSC50", "CSC51"}.issubset(
         set(conformer_coverage_theorem_handles())
     )

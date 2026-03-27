@@ -6,6 +6,32 @@ Close the remaining proof-to-runtime gaps so that certified docking derives as m
 runtime behavior as possible from proved theorems, with one authoritative source
 for each fact family and no manually synchronized shadow logic.
 
+### User-facing `target_rmsd` contract
+
+For the certified product surface, ``target_rmsd`` must mean a guarantee on the
+**returned pose**, not just on search coverage or budget sizing.
+
+The intended semantics are:
+
+- given the certified docking model assumptions, the returned pose should be
+  theorem-backed as lying within ``target_rmsd`` of the model-truth pose
+- benchmark crystal RMSD is then a retrospective proxy for that contract and
+  should usually track it reasonably closely when the benchmark structure is a
+  good realization of the model assumptions
+- if the certified path cannot establish that returned-pose guarantee, it should
+  eventually fail loud or explicitly downgrade the contract, rather than quietly
+  reinterpreting ``target_rmsd`` as a mere coverage threshold
+
+This roadmap therefore distinguishes two different notions that must not be
+confused:
+
+- **coverage / adequacy threshold:** enough seeds / support / refinement budget so
+  that a near-native witness should exist somewhere in the certified family
+- **returned-pose guarantee:** the actual emitted top pose is certified to satisfy
+  the requested RMSD threshold
+
+The current pipeline is materially stronger on the former than the latter.
+
 This roadmap is specifically about the remaining gaps after the recent progress on:
 
 - theorem-derived seed-budget computation from `confidence`, `target_rmsd`, and geometry
@@ -107,6 +133,80 @@ except for the explicit axiom/docs cleanup work that was intentionally deferred.
   out on purpose for now, per user direction that it is epistemically unnecessary
   for the current runtime-leverage push
 
+### Additional foundational gaps raised during review
+
+These two items were not spelled out as numbered sections below in the original
+draft, but they were valid architectural gaps and are now implemented.
+
+- [x] **Gap 0 complete:** the rigid certified seed family is now theorem-owned via
+  ``CertifiedRigidSeedFamilyPlan`` instead of being treated as an unstructured
+  ``n_poses`` scalar. Seed-budget planning now selects a matching rigid-family
+  plan and threads it into the certified pose-generation path.
+- [x] **Conformer-coverage ownership complete:** conformer coverage is now owned by
+  ``CertifiedConformerCoveragePlan`` and ``BranchAndBoundConfig`` is treated as a
+  derived runtime view produced from that plan instead of being the authoritative
+  theorem-facing object.
+- [ ] **Still unresolved after the new plan layers:** ``1hk4`` auto-budget runs are
+  materially better but still too large because probe certification remains too
+  weak. The strict certified known-conformer path dropped from roughly
+  ``4,983,998`` seeds to ``2,609,614`` seeds after the rigid-family ownership
+  refactor, but that is still far above the tractable ``16384`` debug budget that
+  already succeeds at about ``0.23 A`` raw RMSD.
+
+### Returned-pose contract implementation update
+
+The runtime now distinguishes between:
+
+- a **partially certified runtime chain** on the rigid certified path, where the
+  final emitted top pose may carry both a certified singleton-winner proof and a
+  rigid SE(3) refinement certificate, but the global model-truth bridge needed for
+  the full product meaning of ``target_rmsd`` is still not claimed
+- an **explicitly downgraded contract** on paths where the current theorem chain is
+  still incomplete (most importantly conformer-active outputs, rigid ambiguity
+  cases, and any path lacking final winner / refinement certification)
+
+This is implemented via ``ReturnedPoseCertification`` attached directly to the
+returned ``ScoredPose`` and surfaced into benchmark/CSV/JSON/report output.
+
+What is now true:
+
+- strict certified rigid outputs no longer silently reuse ``target_rmsd`` as a
+  mere search-sizing parameter; the runtime now exposes whether only the internal
+  winner/refinement chain is certified versus whether the end-user contract is
+  still downgraded for lack of a full proof bridge
+- returned-pose certification now derives from one authoritative runtime proof
+  object rather than scattered scalar branches. The runtime first derives a
+  proof-plan object from final exact scores, ambiguity-band width, conformer
+  coverage, and refinement witnesses, and only then dispatches to contract output
+  states.
+- conformer-active ranking now rescans **all** rigid survivors in exact-score
+  order and may skip a conformer search only when the theorem-backed
+  ``pose_conf_improvement_budget`` proves the skipped pose cannot beat the current
+  best energy. Returned ranking is then recomputed from the final exact scores of
+  the post-conformer coordinates rather than reusing a pre-conformer rigid order.
+- benchmark reports now show the returned-pose contract summary separately from the
+  old native-energy gap proof
+- certified ambiguity-set output semantics are now checked through a dedicated
+  theorem-chain validator rather than only through coarse proof-plan flags
+- certified mode now fails loud instead of returning successful outputs with an
+  uncertified returned-pose contract; non-optimized certified outputs are
+  rejected outright
+- rich certified pruning is now tighter in two theorem-aligned ways:
+  - omitted explicit-water slack is bounded by the omitted **best bridge** channel
+    (`<= 2`) rather than by the number of candidate water placements
+  - the certified pruning context now uses the finite-batch exact delta whenever
+    the pruning score family exactly matches the disambiguation score family and
+    the softening radius matches the exact family assumptions
+
+What is still not true:
+
+- even rigid certified outputs do **not yet** claim the strongest product meaning
+  of ``target_rmsd`` unless the instantiated theorem chain is complete; the runtime
+  now fails loud rather than quietly downgrading successful certified outputs
+- some real benchmark cases (for example current ``1hk4`` strict certified paths)
+  may now fail specifically because the runtime refuses to emit a certified result
+  unless the proof-plan hypotheses are fully satisfied
+
 ## Architectural rules for this work
 
 1. **One authoritative source per budget family.**
@@ -142,6 +242,116 @@ These are not the current gaps; they are the already-live baseline the roadmap m
 | Dyadic adequacy rounds | joint adequate dyadic-round theorem family | `pipeline.py::_certified_refinement()`, formal local optimizer shell budgeting |
 | Canonical retain safety | `BlindConformerPipelineOptimality.lean::canonicalRetain` / safety theorem | `pipeline.py::_canonical_retain_mask()` |
 | Top-1 certified pruning and optimizer witnesses | CP / TK / FLO families | `formal_surrogates.py`, `formal_optimizer.py`, `formal_handles.py` |
+
+### Strongest remaining blockers to the returned-pose `target_rmsd` contract
+
+These are the specific theorem/runtime gaps preventing the stronger end-user
+meaning of ``target_rmsd`` today.
+
+1. **Existence is stronger than nothing, but weaker than returned-pose correctness.**
+   - Seed-budget adequacy, support coverage, and SE(3) iteration budgets currently
+     certify that a good witness should exist or that a given local trajectory can
+     converge within the target, but they do not yet certify that the actual pose
+     emitted by the pipeline is one of those certified witnesses.
+
+2. **There is no final winner certificate tying the emitted pose to the certified winner.**
+   - Certified pruning proves that the exact winner stays inside a safe retain set,
+     and ranking witnesses prove agreement between some score families, but the
+     runtime still returns poses by plain score sorting rather than by a first-class
+     final winner object carrying the relevant TK / FLO witness chain.
+
+3. **Rigid SE(3) refinement certificates are not propagated into the output contract.**
+   - The pipeline computes per-pose rigid refinement certificates, but the emitted
+     pose is not currently required to carry a successful certificate before being
+     returned.
+
+4. **Conformer-active runs have no corresponding returned-pose RMSD certificate.**
+   - When conformer search is active, the rigid SE(3) certificate is explicitly not
+     applied to the final torsion-adjusted pose, so the strongest returned-pose
+     `target_rmsd` story currently breaks on the conformer-enabled path.
+
+5. **Ambiguity handling is diagnostic, not contractual.**
+   - Rigid-equivalence ambiguity and uncertified rich-orientation ranking currently
+     only add runtime diagnostic handles. They do not block return, widen the
+     output to an ambiguity set, or explicitly downgrade the `target_rmsd`
+     guarantee.
+
+6. **Benchmark/native certification is not the product contract.**
+   - The current `NativeCertification` / `GapCertification` path is benchmark-side
+     energy-gap reporting relative to a known native pose. It cannot justify the
+     production meaning of `target_rmsd`, and in the optimized path it is not even
+     certifying the final returned pose identity.
+
+7. **There is still no global model-truth bridge from exact winner to geometry.**
+   - Existing theorem surfaces are strong on local energy-to-RMSD convergence and
+   sampled-top-1 correctness inside the modeled score landscape, but the runtime
+   still lacks an end-to-end theorem-backed bridge that says the final exact-score
+   winner is within `target_rmsd` of model truth under the advertised certified
+   contract.
+
+### Immediate proof work now prioritized
+
+To make the downgraded cases above disappear rather than merely becoming explicit,
+the next proof-facing work should concentrate on the following theorem families.
+
+1. **Returned winner theorem for rigid certified outputs.**
+   - Bridge a certified singleton exact winner plus a certified rigid local basin
+     certificate into the end-user ``target_rmsd`` contract, rather than stopping
+     at "winner and refinement certificates both exist".
+
+2. **Ambiguity-set output theorem.**
+   - Use the existing ambiguity-band witness machinery to formalize an output-set
+     contract: when a unique certified winner cannot be proved, the runtime should
+     be able to return a certified ambiguity set whose members preserve the stated
+     target semantics.
+
+3. **Generalized rigid-plus-conformer local certificate.**
+   - Extend the current SE(3)-only refinement certificate to a combined rigid +
+     torsion parameterization, or otherwise prove a composition theorem that turns
+     conformer support coverage plus rigid certification into a returned-pose RMSD
+     guarantee.
+
+4. **Split-budget composition theorem.**
+   - Mechanize the runtime idea of allocating the requested ``target_rmsd`` across
+     rigid refinement and conformer support error, then combining them via
+     ``rmsd_le_of_pointwiseSplitDist_le`` or an equivalent theorem-facing bridge.
+
+Recent progress on this front:
+
+- `ConformerSupportCoverage.lean::rmsd_cover_yields_library_rmsd_target` is now
+  proved and exported as `CSC51`. This gives a direct geometry-energy bridge for
+  conformer libraries inside a certified quadratic basin: if RMSD coverage induces
+  an energy slack below the basin target-energy threshold, then the library
+  contains a conformer within the requested RMSD target.
+
+What still remains after `CSC51`:
+
+- threading a runtime basin certificate that is valid for the conformer-active
+  returned pose, not just a rigid SE(3) subproblem
+- connecting final exact winner selection to the conformer-library witness chosen
+  by the geometry-energy bridge
+- composing the rigid and conformer-side certificates into one returned-pose
+  contract rather than reporting them as separate theorem-backed ingredients
+
+Further proof progress (current branch):
+
+- `CSC52`: a concrete `δ`-approx-optimal conformer witness now directly yields an
+  RMSD target once `δ` fits under the quadratic-basin target-energy threshold
+- `CSC53`: a supported approx-optimal witness inside a finite conformer library now
+  yields a library member satisfying the requested RMSD target
+- `CSC54`: the exact rescored winner of a finite conformer library inherits the
+  same approximate-optimality budget from any supported witness it dominates
+- `CSC55`: exact library winner + RMSD support coverage + basin budget now compose
+  into a conformer-library RMSD target theorem
+- `FLO23`-`FLO28`: optimizer-choice inheritance lemmas now explicitly transport
+  support-level properties to the returned selected action
+- `RPG1`-`RPG4`: new returned-pose theorems now cover ambiguity-band energy gaps,
+  ambiguity-set RMSD contracts, and the singleton exact-winner returned-pose path
+
+These theorems do not yet finish the full product contract on the runtime side,
+but they substantially reduce the remaining proof gap: the missing work is now
+more about matching runtime witness objects to these theorem shapes than about
+lacking the core geometry-energy compositions themselves.
 
 ## Remaining gaps, ranked by impact
 

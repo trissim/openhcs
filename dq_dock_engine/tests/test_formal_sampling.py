@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 import pytest
+from typing import cast
 
 from dq_dock_engine.docking.core import CertifiedBindingSite, DockingBox
 from dq_dock_engine.docking.formal_sampling import (
@@ -104,3 +105,77 @@ def test_rigid_seed_family_plan_uses_cover_floor_without_overwriting_adequacy() 
     assert plan.translation_full_lattice is False
     assert plan.target_translation_cover_radius == pytest.approx(1.0)
     assert family.translations.shape[0] == plan.pose_count
+
+
+def test_rigid_seed_family_plan_debug_summary_exposes_quaternion_bridge_handles() -> (
+    None
+):
+    box = DockingBox(
+        center=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+    )
+
+    plan = derive_certified_rigid_seed_family_plan(
+        box,
+        16,
+        target_translation_cover_radius=1.0,
+    )
+    summary = plan.debug_summary()
+    rotation_dictionary_handles = cast(
+        tuple[str, ...], summary["rotation_dictionary_theorem_handles"]
+    )
+    rotation_winner_handles = cast(
+        tuple[str, ...], summary["rotation_winner_bridge_theorem_handles"]
+    )
+
+    assert summary["csc63_csc77_ready"] is True
+    assert summary["quaternion_signed_distance_witness_radius"] == pytest.approx(1.0)
+    assert {
+        "CSC65",
+        "CSC70",
+        "CSC72",
+        "CSC74",
+        "CSC76",
+        "CSC78",
+        "CSC79",
+        "CSC80",
+        "CSC81",
+        "CSC82",
+        "CSC84",
+        "CSC85",
+        "CSC86",
+        "CSC87",
+        "CSC88",
+        "CSC89",
+        "CSC90",
+        "CSC91",
+        "CSC92",
+    }.issubset(set(rotation_dictionary_handles))
+    assert {"CSC67", "CSC69", "CSC71", "CSC73", "CSC75", "CSC77", "CSC83"}.issubset(
+        set(rotation_winner_handles)
+    )
+
+
+def test_binding_site_rigid_seed_plan_debug_summary_reports_bridge_obstruction() -> (
+    None
+):
+    box = DockingBox(
+        center=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+    )
+    binding_site = CertifiedBindingSite(
+        center=jnp.array([1.0, -2.0, 3.0], dtype=jnp.float32),
+        radius=2.0,
+        theorem_handles=("SD10",),
+    )
+
+    plan = derive_certified_rigid_seed_family_plan(
+        box,
+        64,
+        certified_binding_site=binding_site,
+    )
+    summary = plan.debug_summary()
+    bridge_obstructions = cast(tuple[str, ...], summary["csc63_csc77_obstructions"])
+
+    assert summary["csc63_csc77_ready"] is False
+    assert len(bridge_obstructions) > 0

@@ -362,6 +362,41 @@ class CertifiedScoringContext:
             theorem_handles=scoring_handles,
         )
 
+    def optimization_to_disambiguation_pruning_delta_budget(
+        self,
+    ) -> CertifiedPruningDeltaBudget:
+        """Certified extra pruning slack when replacing disambiguation score with base physics.
+
+        For the current extended-rich runtime, the pruning/disambiguation context
+        differs from `optimization_context()` only by the two directional H-bond
+        channels. Each omitted channel is globally bounded by the sum of its
+        clipped pair-strength envelopes (`HB17`).
+        """
+        if not self.uses_extended_rich or self.rich_chemistry_plan is None:
+            return CertifiedPruningDeltaBudget.from_components(
+                source="optimization_to_disambiguation_zero",
+                components=(),
+                theorem_handles=(),
+            )
+        omitted_delta = (
+            self.rich_chemistry_plan.hbond_receptor_donor.max_total_score_bound()
+            + self.rich_chemistry_plan.hbond_ligand_donor.max_total_score_bound()
+        )
+        return CertifiedPruningDeltaBudget.from_components(
+            source="optimization_to_disambiguation_hbond_omission",
+            components=(
+                CertifiedPruningDeltaComponent(
+                    label="directional_hbond_omission",
+                    kind=CertifiedPruningDeltaComponentKind.OMITTED_VALUE,
+                    active=omitted_delta > 0.0,
+                    delta=omitted_delta,
+                    theorem_handles=("HB17",),
+                    note="Base-physics pruning omits directional H-bond disambiguation channels",
+                ),
+            ),
+            theorem_handles=("HB17",),
+        )
+
     def receptor_subset(
         self, retained_indices: jnp.ndarray
     ) -> "CertifiedScoringContext":

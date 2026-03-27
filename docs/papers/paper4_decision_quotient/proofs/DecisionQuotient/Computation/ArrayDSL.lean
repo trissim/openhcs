@@ -1058,6 +1058,3318 @@ theorem norm_sq_eq_sum_sq {n : ℕ} (arr : MDArray n) :
   intro i _
   ring
 
+theorem coord_abs_le_norm {n : ℕ} (arr : MDArray n) (i : Fin n) :
+    |arr i| ≤ norm arr := by
+  have hiSqLe : (arr i) ^ 2 ≤ ∑ j : Fin n, (arr j) ^ 2 := by
+    have htermNonneg : ∀ j : Fin n, 0 ≤ (arr j) ^ 2 := by
+      intro j
+      nlinarith
+    exact Finset.single_le_sum (fun j _ => htermNonneg j) (Finset.mem_univ i)
+  have hnormSq : (arr i) ^ 2 ≤ norm arr ^ 2 := by
+    simpa [norm_sq_eq_sum_sq] using hiSqLe
+  have habsSq : |arr i| ^ 2 ≤ (norm arr) ^ 2 := by
+    simpa [sq_abs] using hnormSq
+  exact le_of_sq_le_sq habsSq (norm_nonneg arr)
+
+/-- Any unit vector in 4D has some coordinate with absolute value at least 1/2. -/
+theorem unit_norm_mdarray4_has_coordinate_abs_ge_half (arr : MDArray 4)
+    (hNorm : norm arr = 1) :
+    ∃ i : Fin 4, 1 / 2 ≤ |arr i| := by
+  by_contra hNo
+  push_neg at hNo
+  have hCoordSq : ∀ i : Fin 4, (arr i) ^ 2 < (1 / 2 : ℝ) ^ 2 := by
+    intro i
+    have hAbs := hNo i
+    have hSqAbs : |arr i| * |arr i| < (1 / 2 : ℝ) * (1 / 2 : ℝ) := by
+      have hNonneg : 0 ≤ |arr i| := abs_nonneg _
+      nlinarith
+    simpa [pow_two, sq_abs] using hSqAbs
+  have hSumLt : ∑ i : Fin 4, (arr i) ^ 2 < ∑ _i : Fin 4, ((1 / 2 : ℝ) ^ 2) := by
+    apply Finset.sum_lt_sum
+    · intro i _
+      exact le_of_lt (hCoordSq i)
+    · exact ⟨0, by simp, hCoordSq 0⟩
+  have hNormSq : ∑ i : Fin 4, (arr i) ^ 2 = 1 := by
+    rw [← norm_sq_eq_sum_sq, hNorm]
+    norm_num
+  have hHalfSum : (∑ _i : Fin 4, ((1 / 2 : ℝ) ^ 2)) = 1 := by
+    norm_num
+  rw [hNormSq, hHalfSum] at hSumLt
+  linarith
+
+theorem quaternionDictionary8_basis0_eq :
+    quaternionDictionary8 ⟨0, by decide⟩ = EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary8, mkMDArray, EuclideanSpace.single_apply]
+
+theorem quaternionDictionary8_basis1_eq :
+    quaternionDictionary8 ⟨1, by decide⟩ = EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary8, mkMDArray, EuclideanSpace.single_apply]
+
+theorem quaternionDictionary8_basis2_eq :
+    quaternionDictionary8 ⟨2, by decide⟩ = EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary8, mkMDArray, EuclideanSpace.single_apply]
+
+theorem quaternionDictionary8_basis3_eq :
+    quaternionDictionary8 ⟨3, by decide⟩ = EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary8, mkMDArray, EuclideanSpace.single_apply]
+
+theorem rigidTransformPoint3D_negQuaternion_eq
+    (point : MDArray 3)
+    (quaternion : MDArray 4)
+    (translation : MDArray 3) :
+    rigidTransformPoint3D point (-quaternion) translation =
+      rigidTransformPoint3D point quaternion translation := by
+  ext j
+  fin_cases j <;>
+    simp [rigidTransformPoint3D, mkMDArray] <;> ring
+
+theorem rigidTransform3D_negQuaternion_eq
+    {n : ℕ}
+    (coords : CoordSet n)
+    (quaternion : MDArray 4)
+    (translation : MDArray 3) :
+    rigidTransform3D coords (-quaternion) translation =
+      rigidTransform3D coords quaternion translation := by
+  funext i
+  simpa [rigidTransform3D] using
+    rigidTransformPoint3D_negQuaternion_eq (coords i) quaternion translation
+
+theorem rigidTransformPoint3D_basis0_eq
+    (point : MDArray 3)
+    (translation : MDArray 3) :
+    rigidTransformPoint3D point (quaternionDictionary8 ⟨0, by decide⟩) translation =
+      point + translation := by
+  ext j
+  fin_cases j <;>
+    simp [rigidTransformPoint3D, quaternionDictionary8, mkMDArray]
+
+theorem rigidTransformPoint3D_basis1_eq
+    (point : MDArray 3)
+    (translation : MDArray 3) :
+    rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) translation =
+      mkMDArray (fun j => if j = ⟨0, by decide⟩ then point ⟨0, by decide⟩ + translation ⟨0, by decide⟩
+        else -(point j) + translation j) := by
+  ext j
+  fin_cases j <;>
+    simp [rigidTransformPoint3D, quaternionDictionary8, mkMDArray] <;> ring
+
+theorem rigidTransformPoint3D_basis2_eq
+    (point : MDArray 3)
+    (translation : MDArray 3) :
+    rigidTransformPoint3D point (quaternionDictionary8 ⟨2, by decide⟩) translation =
+      mkMDArray (fun j => if j = ⟨1, by decide⟩ then point ⟨1, by decide⟩ + translation ⟨1, by decide⟩
+        else -(point j) + translation j) := by
+  ext j
+  fin_cases j <;>
+    simp [rigidTransformPoint3D, quaternionDictionary8, mkMDArray] <;> ring
+
+theorem rigidTransformPoint3D_basis3_eq
+    (point : MDArray 3)
+    (translation : MDArray 3) :
+    rigidTransformPoint3D point (quaternionDictionary8 ⟨3, by decide⟩) translation =
+      mkMDArray (fun j => if j = ⟨2, by decide⟩ then point ⟨2, by decide⟩ + translation ⟨2, by decide⟩
+        else -(point j) + translation j) := by
+  ext j
+  fin_cases j <;>
+    simp [rigidTransformPoint3D, quaternionDictionary8, mkMDArray] <;> ring
+
+theorem rigidTransformPoint3D_translation_decompose
+    (point : MDArray 3)
+    (quaternion : MDArray 4)
+    (translation : MDArray 3) :
+    rigidTransformPoint3D point quaternion translation =
+      rigidTransformPoint3D point quaternion (mkMDArray (fun _ => 0)) + translation := by
+  ext j
+  fin_cases j <;>
+    simp [rigidTransformPoint3D, mkMDArray] <;> ring
+
+theorem rigidTransformPoint3D_same_translation_dist_eq_zero_translation
+    (point : MDArray 3)
+    (q1 q2 : MDArray 4)
+    (translation : MDArray 3) :
+    dist (rigidTransformPoint3D point q1 translation)
+         (rigidTransformPoint3D point q2 translation) =
+      dist (rigidTransformPoint3D point q1 (mkMDArray (fun _ => 0)))
+           (rigidTransformPoint3D point q2 (mkMDArray (fun _ => 0))) := by
+  rw [rigidTransformPoint3D_translation_decompose point q1 translation]
+  rw [rigidTransformPoint3D_translation_decompose point q2 translation]
+  set a : MDArray 3 := rigidTransformPoint3D point q1 (mkMDArray (fun _ => 0))
+  set b : MDArray 3 := rigidTransformPoint3D point q2 (mkMDArray (fun _ => 0))
+  have hcancel : translation + (a + (-translation + -b)) = a + -b := by
+    abel_nf
+  calc
+    dist (a + translation) (b + translation)
+        = ‖translation + (a + (-translation + -b))‖ := by
+            simp [dist_eq_norm, sub_eq_add_neg, add_assoc, add_left_comm, add_comm]
+    _ = ‖a + -b‖ := by simp [hcancel]
+    _ = dist a b := by simp [dist_eq_norm, sub_eq_add_neg, add_assoc, add_left_comm, add_comm]
+
+theorem rigidTransform3D_same_translation_dist_eq_zero_translation
+    {n : ℕ}
+    (coords : CoordSet n)
+    (q1 q2 : MDArray 4)
+    (translation : MDArray 3)
+    (j : Fin n) :
+    dist (rigidTransform3D coords q1 translation j)
+         (rigidTransform3D coords q2 translation j) =
+      dist (rigidTransform3D coords q1 (mkMDArray (fun _ => 0)) j)
+           (rigidTransform3D coords q2 (mkMDArray (fun _ => 0)) j) := by
+  simpa [rigidTransform3D] using
+    rigidTransformPoint3D_same_translation_dist_eq_zero_translation (coords j) q1 q2 translation
+
+/-- L1 radius of a 3D point. This is a tractable coarse arm-length surrogate for
+    runtime rigid-rotation displacement bounds. -/
+def pointL1Radius (point : MDArray 3) : ℝ :=
+  |point ⟨0, by decide⟩| + |point ⟨1, by decide⟩| + |point ⟨2, by decide⟩|
+
+theorem rigidTransformPoint3D_basis0_zero_eq_self
+    (point : MDArray 3) :
+    rigidTransformPoint3D point (quaternionDictionary8 ⟨0, by decide⟩) (mkMDArray (fun _ => 0)) = point := by
+  calc
+    rigidTransformPoint3D point (quaternionDictionary8 ⟨0, by decide⟩) (mkMDArray (fun _ => 0))
+        = point + mkMDArray (fun _ => 0) := rigidTransformPoint3D_basis0_eq point (mkMDArray (fun _ => 0))
+    _ = point := by
+      ext j
+      fin_cases j <;> simp [mkMDArray]
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis0
+    (point : MDArray 3)
+    (quaternion : MDArray 4) :
+    rigidTransformPoint3D point quaternion (mkMDArray (fun _ => 0)) - point =
+      mkMDArray (fun j =>
+        if h0 : j = ⟨0, by decide⟩ then
+          (-2 * (quaternion ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (quaternion ⟨3, by decide⟩) ^ (2 : ℕ)) * point ⟨0, by decide⟩ +
+            (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨2, by decide⟩ - 2 * quaternion ⟨3, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨1, by decide⟩ +
+            (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨3, by decide⟩ + 2 * quaternion ⟨2, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨2, by decide⟩
+        else if h1 : j = ⟨1, by decide⟩ then
+          (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨2, by decide⟩ + 2 * quaternion ⟨3, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨0, by decide⟩ +
+            (-2 * quaternion ⟨1, by decide⟩ ^ (2 : ℕ) - 2 * quaternion ⟨3, by decide⟩ ^ (2 : ℕ)) * point ⟨1, by decide⟩ +
+            (2 * quaternion ⟨2, by decide⟩ * quaternion ⟨3, by decide⟩ - 2 * quaternion ⟨1, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨2, by decide⟩
+        else
+          (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨3, by decide⟩ - 2 * quaternion ⟨2, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨0, by decide⟩ +
+            (2 * quaternion ⟨2, by decide⟩ * quaternion ⟨3, by decide⟩ + 2 * quaternion ⟨1, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨1, by decide⟩ +
+            (-2 * quaternion ⟨1, by decide⟩ ^ (2 : ℕ) - 2 * quaternion ⟨2, by decide⟩ ^ (2 : ℕ)) * point ⟨2, by decide⟩) := by
+  ext j
+  fin_cases j <;>
+    simp [rigidTransformPoint3D, mkMDArray] <;> ring
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis1
+    (point : MDArray 3)
+    (quaternion : MDArray 4) :
+    rigidTransformPoint3D point quaternion (mkMDArray (fun _ => 0)) -
+        rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0)) =
+      mkMDArray (fun j =>
+        if h0 : j = ⟨0, by decide⟩ then
+          (-2 * (quaternion ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (quaternion ⟨3, by decide⟩) ^ (2 : ℕ)) * point ⟨0, by decide⟩ +
+            (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨2, by decide⟩ - 2 * quaternion ⟨3, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨1, by decide⟩ +
+            (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨3, by decide⟩ + 2 * quaternion ⟨2, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨2, by decide⟩
+        else if h1 : j = ⟨1, by decide⟩ then
+          (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨2, by decide⟩ + 2 * quaternion ⟨3, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨0, by decide⟩ +
+            (-2 * quaternion ⟨1, by decide⟩ ^ (2 : ℕ) - 2 * quaternion ⟨3, by decide⟩ ^ (2 : ℕ) + 2) * point ⟨1, by decide⟩ +
+            (2 * quaternion ⟨2, by decide⟩ * quaternion ⟨3, by decide⟩ - 2 * quaternion ⟨1, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨2, by decide⟩
+        else
+          (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨3, by decide⟩ - 2 * quaternion ⟨2, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨0, by decide⟩ +
+            (2 * quaternion ⟨2, by decide⟩ * quaternion ⟨3, by decide⟩ + 2 * quaternion ⟨1, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨1, by decide⟩ +
+            (-2 * quaternion ⟨1, by decide⟩ ^ (2 : ℕ) - 2 * quaternion ⟨2, by decide⟩ ^ (2 : ℕ) + 2) * point ⟨2, by decide⟩) := by
+  ext j
+  fin_cases j <;>
+    simp [rigidTransformPoint3D, quaternionDictionary8, mkMDArray] <;> ring
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis2
+    (point : MDArray 3)
+    (quaternion : MDArray 4) :
+    rigidTransformPoint3D point quaternion (mkMDArray (fun _ => 0)) -
+        rigidTransformPoint3D point (quaternionDictionary8 ⟨2, by decide⟩) (mkMDArray (fun _ => 0)) =
+      mkMDArray (fun j =>
+        if h0 : j = ⟨0, by decide⟩ then
+          (-2 * (quaternion ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (quaternion ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point ⟨0, by decide⟩ +
+            (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨2, by decide⟩ - 2 * quaternion ⟨3, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨1, by decide⟩ +
+            (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨3, by decide⟩ + 2 * quaternion ⟨2, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨2, by decide⟩
+        else if h1 : j = ⟨1, by decide⟩ then
+          (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨2, by decide⟩ + 2 * quaternion ⟨3, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨0, by decide⟩ +
+            (-2 * quaternion ⟨1, by decide⟩ ^ (2 : ℕ) - 2 * quaternion ⟨3, by decide⟩ ^ (2 : ℕ)) * point ⟨1, by decide⟩ +
+            (2 * quaternion ⟨2, by decide⟩ * quaternion ⟨3, by decide⟩ - 2 * quaternion ⟨1, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨2, by decide⟩
+        else
+          (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨3, by decide⟩ - 2 * quaternion ⟨2, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨0, by decide⟩ +
+            (2 * quaternion ⟨2, by decide⟩ * quaternion ⟨3, by decide⟩ + 2 * quaternion ⟨1, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨1, by decide⟩ +
+            (-2 * quaternion ⟨1, by decide⟩ ^ (2 : ℕ) - 2 * quaternion ⟨2, by decide⟩ ^ (2 : ℕ) + 2) * point ⟨2, by decide⟩) := by
+  ext j
+  fin_cases j <;>
+    simp [rigidTransformPoint3D, quaternionDictionary8, mkMDArray] <;> ring
+
+theorem norm_mdarray3_le_two_of_abs_le
+    (arr : MDArray 3)
+    (B : ℝ)
+    (hBnonneg : 0 ≤ B)
+    (h0 : |arr ⟨0, by decide⟩| ≤ B)
+    (h1 : |arr ⟨1, by decide⟩| ≤ B)
+    (h2 : |arr ⟨2, by decide⟩| ≤ B) :
+    ‖arr‖ ≤ 2 * B := by
+  have hsq : ‖arr‖ ^ 2 =
+      (arr ⟨0, by decide⟩) ^ 2 + (arr ⟨1, by decide⟩) ^ 2 + (arr ⟨2, by decide⟩) ^ 2 := by
+    simpa [Fin.sum_univ_three] using (norm_sq_eq_sum_sq arr)
+  have h0sq : (arr ⟨0, by decide⟩) ^ 2 ≤ B ^ 2 := by
+    have habs : |arr ⟨0, by decide⟩| * |arr ⟨0, by decide⟩| ≤ B * B :=
+      mul_le_mul h0 h0 (abs_nonneg _) hBnonneg
+    simpa [sq_abs, pow_two] using habs
+  have h1sq : (arr ⟨1, by decide⟩) ^ 2 ≤ B ^ 2 := by
+    have habs : |arr ⟨1, by decide⟩| * |arr ⟨1, by decide⟩| ≤ B * B :=
+      mul_le_mul h1 h1 (abs_nonneg _) hBnonneg
+    simpa [sq_abs, pow_two] using habs
+  have h2sq : (arr ⟨2, by decide⟩) ^ 2 ≤ B ^ 2 := by
+    have habs : |arr ⟨2, by decide⟩| * |arr ⟨2, by decide⟩| ≤ B * B :=
+      mul_le_mul h2 h2 (abs_nonneg _) hBnonneg
+    simpa [sq_abs, pow_two] using habs
+  have hsumSqLe :
+      (arr ⟨0, by decide⟩) ^ 2 + (arr ⟨1, by decide⟩) ^ 2 + (arr ⟨2, by decide⟩) ^ 2 ≤ 3 * B ^ 2 := by
+    nlinarith
+  have hnormLe : ‖arr‖ ^ 2 ≤ 3 * B ^ 2 := by
+    simpa [hsq] using hsumSqLe
+  have hsquare : ‖arr‖ ^ 2 ≤ (Real.sqrt 3 * B) ^ 2 := by
+    nlinarith [hnormLe, Real.sq_sqrt (by positivity : 0 ≤ (3 : ℝ))]
+  have hbound : ‖arr‖ ≤ Real.sqrt 3 * B := by
+    exact le_of_sq_le_sq hsquare (by positivity)
+  have hsqrt3_le : Real.sqrt 3 ≤ 2 := by
+    nlinarith [Real.sq_sqrt (by positivity : 0 ≤ (3 : ℝ))]
+  have hmul : Real.sqrt 3 * B ≤ 2 * B := by
+    nlinarith [hsqrt3_le, hBnonneg]
+  exact le_trans hbound hmul
+
+theorem unit_norm_mdarray4_coord_abs_le_one
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (i : Fin 4) :
+    |q i| ≤ 1 := by
+  exact (coord_abs_le_norm q i).trans_eq hNorm
+
+theorem unit_norm_mdarray4_dist_to_basis0_le_two
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ≤ 2 := by
+  let i0 : Fin 4 := ⟨0, by decide⟩
+  have hqNorm : ‖q‖ = 1 := by simpa using hNorm
+  calc
+    ‖q - EuclideanSpace.single i0 (1 : ℝ)‖ ≤
+        ‖q‖ + ‖EuclideanSpace.single i0 (1 : ℝ)‖ := norm_sub_le _ _
+    _ = 2 := by rw [hqNorm]; norm_num [i0]
+
+theorem unit_norm_mdarray4_dist_to_basis_le_two
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (i : Fin 4) :
+    ‖q - EuclideanSpace.single i (1 : ℝ)‖ ≤ 2 := by
+  have hqNorm : ‖q‖ = 1 := by simpa using hNorm
+  calc
+    ‖q - EuclideanSpace.single i (1 : ℝ)‖ ≤ ‖q‖ + ‖EuclideanSpace.single i (1 : ℝ)‖ := norm_sub_le _ _
+    _ = 2 := by rw [hqNorm]; norm_num [EuclideanSpace.norm_single]
+
+theorem point_coord_abs_le_pointL1Radius
+    (point : MDArray 3)
+    (i : Fin 3) :
+    |point i| ≤ pointL1Radius point := by
+  fin_cases i
+  · unfold pointL1Radius
+    nlinarith [abs_nonneg (point ⟨1, by decide⟩), abs_nonneg (point ⟨2, by decide⟩)]
+  · unfold pointL1Radius
+    nlinarith [abs_nonneg (point ⟨0, by decide⟩), abs_nonneg (point ⟨2, by decide⟩)]
+  · unfold pointL1Radius
+    nlinarith [abs_nonneg (point ⟨0, by decide⟩), abs_nonneg (point ⟨1, by decide⟩)]
+
+theorem basis0_error_coord0_abs_le_norm
+    (q : MDArray 4) :
+    |q ⟨0, by decide⟩ - 1| ≤ ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  simpa [EuclideanSpace.single_apply] using
+    coord_abs_le_norm (q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)) ⟨0, by decide⟩
+
+theorem basis0_error_coord1_abs_le_norm
+    (q : MDArray 4) :
+    |q ⟨1, by decide⟩| ≤ ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  let i0 : Fin 4 := ⟨0, by decide⟩
+  let i1 : Fin 4 := ⟨1, by decide⟩
+  have hcoord : |(q - EuclideanSpace.single i0 (1 : ℝ)) i1| ≤ ‖q - EuclideanSpace.single i0 (1 : ℝ)‖ :=
+    coord_abs_le_norm (q - EuclideanSpace.single i0 (1 : ℝ)) i1
+  simpa [i0, i1, EuclideanSpace.single_apply] using hcoord
+
+theorem basis0_error_coord2_abs_le_norm
+    (q : MDArray 4) :
+    |q ⟨2, by decide⟩| ≤ ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  let i0 : Fin 4 := ⟨0, by decide⟩
+  let i2 : Fin 4 := ⟨2, by decide⟩
+  have hcoord : |(q - EuclideanSpace.single i0 (1 : ℝ)) i2| ≤ ‖q - EuclideanSpace.single i0 (1 : ℝ)‖ :=
+    coord_abs_le_norm (q - EuclideanSpace.single i0 (1 : ℝ)) i2
+  simpa [i0, i2, EuclideanSpace.single_apply] using hcoord
+
+theorem basis0_error_coord3_abs_le_norm
+    (q : MDArray 4) :
+    |q ⟨3, by decide⟩| ≤ ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  let i0 : Fin 4 := ⟨0, by decide⟩
+  let i3 : Fin 4 := ⟨3, by decide⟩
+  have hcoord : |(q - EuclideanSpace.single i0 (1 : ℝ)) i3| ≤ ‖q - EuclideanSpace.single i0 (1 : ℝ)‖ :=
+    coord_abs_le_norm (q - EuclideanSpace.single i0 (1 : ℝ)) i3
+  simpa [i0, i3, EuclideanSpace.single_apply] using hcoord
+
+theorem unit_basis0_error_offaxis_sq_le_two_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (i : Fin 4)
+    (hi : i ≠ ⟨0, by decide⟩) :
+    (q i) ^ 2 ≤ 2 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  have hcoord : |q i| ≤ ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+    fin_cases i
+    · contradiction
+    · simpa using basis0_error_coord1_abs_le_norm q
+    · simpa using basis0_error_coord2_abs_le_norm q
+    · simpa using basis0_error_coord3_abs_le_norm q
+  have hsq : (q i) ^ 2 ≤ ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ^ 2 := by
+    have habs : |q i| * |q i| ≤ ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ :=
+      mul_le_mul hcoord hcoord (abs_nonneg _) (norm_nonneg _)
+    simpa [sq_abs, pow_two] using habs
+  have hdistLeTwo : ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ≤ 2 :=
+    unit_norm_mdarray4_dist_to_basis0_le_two q hNorm
+  have hdistSqLe : ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ^ 2 ≤
+      2 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+    nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)), hdistLeTwo]
+  exact le_trans hsq hdistSqLe
+
+theorem unit_basis0_error_offaxis_product_abs_le_two_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (i j : Fin 4)
+    (hi : i ≠ ⟨0, by decide⟩)
+    (hj : j ≠ ⟨0, by decide⟩) :
+    |q i * q j| ≤ 2 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  have hiAbs : |q i| ≤ ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+    fin_cases i
+    · contradiction
+    · simpa using basis0_error_coord1_abs_le_norm q
+    · simpa using basis0_error_coord2_abs_le_norm q
+    · simpa using basis0_error_coord3_abs_le_norm q
+  have hjAbs : |q j| ≤ ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+    fin_cases j
+    · contradiction
+    · simpa using basis0_error_coord1_abs_le_norm q
+    · simpa using basis0_error_coord2_abs_le_norm q
+    · simpa using basis0_error_coord3_abs_le_norm q
+  have habs : |q i * q j| ≤ ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ^ 2 := by
+    rw [abs_mul]
+    have hmul : |q i| * |q j| ≤ ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ :=
+      mul_le_mul hiAbs hjAbs (abs_nonneg _) (norm_nonneg _)
+    simpa [pow_two] using hmul
+  have hdistLeTwo : ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ≤ 2 :=
+    unit_norm_mdarray4_dist_to_basis0_le_two q hNorm
+  have hdistSqLe : ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ^ 2 ≤
+      2 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+    nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)), hdistLeTwo]
+  exact le_trans habs hdistSqLe
+
+theorem unit_basis0_error_axis_product_abs_le_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (i : Fin 4)
+    (hi : i ≠ ⟨0, by decide⟩) :
+    |q i * q ⟨0, by decide⟩| ≤ ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  have hiAbs : |q i| ≤ ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+    fin_cases i
+    · contradiction
+    · simpa using basis0_error_coord1_abs_le_norm q
+    · simpa using basis0_error_coord2_abs_le_norm q
+    · simpa using basis0_error_coord3_abs_le_norm q
+  have h0Abs : |q ⟨0, by decide⟩| ≤ 1 := unit_norm_mdarray4_coord_abs_le_one q hNorm ⟨0, by decide⟩
+  rw [abs_mul]
+  calc
+    |q i| * |q ⟨0, by decide⟩| ≤ ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ * 1 := by
+      exact mul_le_mul hiAbs h0Abs (by positivity) (norm_nonneg _)
+  _ = ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by ring
+
+theorem unit_norm_mdarray4_offaxis_coord_abs_le_dist_to_basis
+    (q : MDArray 4)
+    (b i : Fin 4)
+    (hi : i ≠ b) :
+    |q i| ≤ ‖q - EuclideanSpace.single b (1 : ℝ)‖ := by
+  have hcoord : |(q - EuclideanSpace.single b (1 : ℝ)) i| ≤ ‖q - EuclideanSpace.single b (1 : ℝ)‖ :=
+    coord_abs_le_norm (q - EuclideanSpace.single b (1 : ℝ)) i
+  simpa [EuclideanSpace.single_apply, hi] using hcoord
+
+theorem unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (b i : Fin 4)
+    (hi : i ≠ b) :
+    (q i) ^ 2 ≤ 2 * ‖q - EuclideanSpace.single b (1 : ℝ)‖ := by
+  have hcoord : |q i| ≤ ‖q - EuclideanSpace.single b (1 : ℝ)‖ :=
+    unit_norm_mdarray4_offaxis_coord_abs_le_dist_to_basis q b i hi
+  have hsq : (q i) ^ 2 ≤ ‖q - EuclideanSpace.single b (1 : ℝ)‖ ^ 2 := by
+    have habs : |q i| * |q i| ≤ ‖q - EuclideanSpace.single b (1 : ℝ)‖ * ‖q - EuclideanSpace.single b (1 : ℝ)‖ :=
+      mul_le_mul hcoord hcoord (abs_nonneg _) (norm_nonneg _)
+    simpa [sq_abs, pow_two] using habs
+  have hdistLeTwo : ‖q - EuclideanSpace.single b (1 : ℝ)‖ ≤ 2 :=
+    unit_norm_mdarray4_dist_to_basis_le_two q hNorm b
+  have hdistSqLe : ‖q - EuclideanSpace.single b (1 : ℝ)‖ ^ 2 ≤ 2 * ‖q - EuclideanSpace.single b (1 : ℝ)‖ := by
+    nlinarith [norm_nonneg (q - EuclideanSpace.single b (1 : ℝ)), hdistLeTwo]
+  exact le_trans hsq hdistSqLe
+
+theorem unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (b i j : Fin 4)
+    (hi : i ≠ b)
+    (hj : j ≠ b) :
+    |q i * q j| ≤ 2 * ‖q - EuclideanSpace.single b (1 : ℝ)‖ := by
+  have hiAbs : |q i| ≤ ‖q - EuclideanSpace.single b (1 : ℝ)‖ :=
+    unit_norm_mdarray4_offaxis_coord_abs_le_dist_to_basis q b i hi
+  have hjAbs : |q j| ≤ ‖q - EuclideanSpace.single b (1 : ℝ)‖ :=
+    unit_norm_mdarray4_offaxis_coord_abs_le_dist_to_basis q b j hj
+  have habs : |q i * q j| ≤ ‖q - EuclideanSpace.single b (1 : ℝ)‖ ^ 2 := by
+    rw [abs_mul]
+    have hmul : |q i| * |q j| ≤ ‖q - EuclideanSpace.single b (1 : ℝ)‖ * ‖q - EuclideanSpace.single b (1 : ℝ)‖ :=
+      mul_le_mul hiAbs hjAbs (abs_nonneg _) (norm_nonneg _)
+    simpa [pow_two] using hmul
+  have hdistLeTwo : ‖q - EuclideanSpace.single b (1 : ℝ)‖ ≤ 2 :=
+    unit_norm_mdarray4_dist_to_basis_le_two q hNorm b
+  have hdistSqLe : ‖q - EuclideanSpace.single b (1 : ℝ)‖ ^ 2 ≤ 2 * ‖q - EuclideanSpace.single b (1 : ℝ)‖ := by
+    nlinarith [norm_nonneg (q - EuclideanSpace.single b (1 : ℝ)), hdistLeTwo]
+  exact le_trans habs hdistSqLe
+
+theorem unit_norm_mdarray4_axis_coord_abs_le_one
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (b : Fin 4) :
+    |q b| ≤ 1 :=
+  unit_norm_mdarray4_coord_abs_le_one q hNorm b
+
+theorem unit_norm_mdarray4_axis_product_abs_le_dist_to_basis
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (b i : Fin 4)
+    (hi : i ≠ b) :
+    |q i * q b| ≤ ‖q - EuclideanSpace.single b (1 : ℝ)‖ := by
+  have hiAbs : |q i| ≤ ‖q - EuclideanSpace.single b (1 : ℝ)‖ :=
+    unit_norm_mdarray4_offaxis_coord_abs_le_dist_to_basis q b i hi
+  have hbAbs : |q b| ≤ 1 := unit_norm_mdarray4_axis_coord_abs_le_one q hNorm b
+  rw [abs_mul]
+  calc
+    |q i| * |q b| ≤ ‖q - EuclideanSpace.single b (1 : ℝ)‖ * 1 := by
+      exact mul_le_mul hiAbs hbAbs (by positivity) (norm_nonneg _)
+    _ = ‖q - EuclideanSpace.single b (1 : ℝ)‖ := by ring
+
+theorem unit_basis1_quad23_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ))|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  have hq2sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨2, by decide⟩ (by decide)
+  have hq3sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨3, by decide⟩ (by decide)
+  have hsum : 2 * (q ⟨2, by decide⟩) ^ 2 + 2 * (q ⟨3, by decide⟩) ^ 2
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+    nlinarith [hq2sq, hq3sq]
+  have hnonneg : 0 ≤ 2 * (q ⟨2, by decide⟩) ^ 2 + 2 * (q ⟨3, by decide⟩) ^ 2 := by positivity
+  have hrewrite :
+      |(-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ))|
+        = 2 * (q ⟨2, by decide⟩) ^ 2 + 2 * (q ⟨3, by decide⟩) ^ 2 := by
+    have hneg :
+        -2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) =
+          -(2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) := by ring
+    rw [hneg, abs_neg, abs_of_nonneg hnonneg]
+  rw [hrewrite]
+  exact hsum
+
+theorem unit_basis1_mix12_30_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖
+  have h12 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨2, by decide⟩ (by decide)
+  have h30 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨3, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨2, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨2, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨2, by decide⟩ * q ⟨1, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * d := by gcongr
+  have hB : |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨3, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| + |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs, sub_eq_add_neg] using
+              (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩) (-2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis1_mix13_20_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖
+  have h13 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨3, by decide⟩ (by decide)
+  have h20 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨2, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨3, by decide⟩ * q ⟨1, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * d := by
+        have h13' : |q ⟨3, by decide⟩ * q ⟨1, by decide⟩| ≤ d := by simpa [d] using h13
+        nlinarith [h13']
+  have hB : |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨2, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨0, by decide⟩ * q ⟨2, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * (2 * d) := by
+        have h20' : |q ⟨0, by decide⟩ * q ⟨2, by decide⟩| ≤ 2 * d := by simpa [d, mul_comm] using h20
+        nlinarith [h20']
+      _ = 4 * d := by ring
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs] using
+              (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩) (2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis1_mix12_plus30_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖
+  have h12 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨2, by decide⟩ (by decide)
+  have h30 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨3, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨2, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨2, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ = 2 * |q ⟨2, by decide⟩ * q ⟨1, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * d := by gcongr
+  have hB : |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨3, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| + |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs] using
+              (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩) (2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis1_mix23_10_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖
+  have h23 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨2, by decide⟩ ⟨3, by decide⟩ (by decide) (by decide)
+  have h10 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨0, by decide⟩ (by decide)
+  have hA : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨2, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨2, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  have hB : |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ = 2 * |q ⟨0, by decide⟩ * q ⟨1, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * d := by gcongr
+  calc
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs, sub_eq_add_neg] using
+              (norm_add_le (2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩) (-2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 4 * d + 2 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis1_diag13_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2)|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  have hq0sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨0, by decide⟩ (by decide)
+  have hq2sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨2, by decide⟩ (by decide)
+  have hsum : 2 * (q ⟨0, by decide⟩) ^ 2 + 2 * (q ⟨2, by decide⟩) ^ 2
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+    nlinarith [hq0sq, hq2sq]
+  have hrewrite :
+      2 - 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)
+        = 2 * (q ⟨0, by decide⟩) ^ (2 : ℕ) + 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) := by
+    have hsumSq :
+        (q ⟨0, by decide⟩) ^ (2 : ℕ) + (q ⟨1, by decide⟩) ^ (2 : ℕ) +
+          (q ⟨2, by decide⟩) ^ (2 : ℕ) + (q ⟨3, by decide⟩) ^ (2 : ℕ) = 1 := by
+      have hsumSq' := norm_sq_eq_sum_sq q
+      rw [Fin.sum_univ_four] at hsumSq'
+      rw [hNorm] at hsumSq'
+      norm_num at hsumSq'
+      exact hsumSq'.symm
+    nlinarith [hsumSq]
+  have hform :
+      (-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) =
+        2 - 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) := by ring
+  rw [hform, hrewrite, abs_of_nonneg (by positivity)]
+  exact hsum
+
+theorem unit_basis1_diag12_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2)|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  have hq0sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨0, by decide⟩ (by decide)
+  have hq3sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨3, by decide⟩ (by decide)
+  have hsum : 2 * (q ⟨0, by decide⟩) ^ 2 + 2 * (q ⟨3, by decide⟩) ^ 2
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+    nlinarith [hq0sq, hq3sq]
+  have hrewrite :
+      2 - 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)
+        = 2 * (q ⟨0, by decide⟩) ^ (2 : ℕ) + 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) := by
+    have hsumSq :
+        (q ⟨0, by decide⟩) ^ (2 : ℕ) + (q ⟨1, by decide⟩) ^ (2 : ℕ) +
+          (q ⟨2, by decide⟩) ^ (2 : ℕ) + (q ⟨3, by decide⟩) ^ (2 : ℕ) = 1 := by
+      have hsumSq' := norm_sq_eq_sum_sq q
+      rw [Fin.sum_univ_four] at hsumSq'
+      rw [hNorm] at hsumSq'
+      norm_num at hsumSq'
+      exact hsumSq'.symm
+    nlinarith [hsumSq]
+  have hform :
+      (-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2) =
+        2 - 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) := by ring
+  rw [hform, hrewrite, abs_of_nonneg (by positivity)]
+  exact hsum
+
+theorem unit_basis2_diag23_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2)|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+  have hq0sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨0, by decide⟩ (by decide)
+  have hq1sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨1, by decide⟩ (by decide)
+  have hsum : 2 * (q ⟨0, by decide⟩) ^ 2 + 2 * (q ⟨1, by decide⟩) ^ 2
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+    nlinarith [hq0sq, hq1sq]
+  have hrewrite :
+      2 - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)
+        = 2 * (q ⟨0, by decide⟩) ^ (2 : ℕ) + 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) := by
+    have hsumSq' := norm_sq_eq_sum_sq q
+    rw [Fin.sum_univ_four] at hsumSq'
+    rw [hNorm] at hsumSq'
+    norm_num at hsumSq'
+    have hsumSq :
+        (q ⟨0, by decide⟩) ^ (2 : ℕ) + (q ⟨1, by decide⟩) ^ (2 : ℕ) +
+          (q ⟨2, by decide⟩) ^ (2 : ℕ) + (q ⟨3, by decide⟩) ^ (2 : ℕ) = 1 := hsumSq'.symm
+    nlinarith [hsumSq]
+  have hform :
+      (-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) =
+        2 - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) := by ring
+  rw [hform, hrewrite, abs_of_nonneg (by positivity)]
+  exact hsum
+
+theorem unit_basis2_quad13_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ))|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+  have hq1sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨1, by decide⟩ (by decide)
+  have hq3sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨3, by decide⟩ (by decide)
+  have hsum : 2 * (q ⟨1, by decide⟩) ^ 2 + 2 * (q ⟨3, by decide⟩) ^ 2
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+    nlinarith [hq1sq, hq3sq]
+  have hnonneg : 0 ≤ 2 * (q ⟨1, by decide⟩) ^ 2 + 2 * (q ⟨3, by decide⟩) ^ 2 := by positivity
+  have hrewrite :
+      |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ))|
+        = 2 * (q ⟨1, by decide⟩) ^ 2 + 2 * (q ⟨3, by decide⟩) ^ 2 := by
+    have hneg :
+        -2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) =
+          -(2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) + 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) := by ring
+    rw [hneg, abs_neg, abs_of_nonneg hnonneg]
+  rw [hrewrite]
+  exact hsum
+
+theorem unit_basis2_mix12_30_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖
+  have h12 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨1, by decide⟩ (by decide)
+  have h30 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨3, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨2, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨2, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * d := by gcongr
+  have hB : |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨3, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| + |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs, sub_eq_add_neg] using
+              (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩) (-2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis2_mix13_20_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖
+  have h13 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨1, by decide⟩ ⟨3, by decide⟩ (by decide) (by decide)
+  have h20 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨0, by decide⟩ (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  have hB : |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨2, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨0, by decide⟩ * q ⟨2, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * d := by gcongr
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs] using
+              (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩) (2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 4 * d + 2 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis2_mix13_minus20_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖
+  have h13 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨1, by decide⟩ ⟨3, by decide⟩ (by decide) (by decide)
+  have h20 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨0, by decide⟩ (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  have hB : |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨2, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨0, by decide⟩ * q ⟨2, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * d := by gcongr
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs, sub_eq_add_neg] using (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩) (-2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 4 * d + 2 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis2_mix23_plus10_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖
+  have h23 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨3, by decide⟩ (by decide)
+  have h10 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨1, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨2, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨2, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨3, by decide⟩ * q ⟨2, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * d := by
+        simpa [d] using h23
+  have hB : |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨0, by decide⟩ * q ⟨1, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * (2 * d) := by
+        have h10' : |q ⟨0, by decide⟩ * q ⟨1, by decide⟩| ≤ 2 * d := by simpa [d, mul_comm] using h10
+        nlinarith [h10']
+      _ = 4 * d := by ring
+  calc
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs] using (norm_add_le (2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩) (2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis2_mix12_plus30_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖
+  have h12 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨1, by decide⟩ (by decide)
+  have h30 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨3, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨2, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨2, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * d := by gcongr
+  have hB : |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨3, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| + |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs] using (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩) (2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis2_mix23_10_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖
+  have h23 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨3, by decide⟩ (by decide)
+  have h10 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨1, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨2, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨2, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨3, by decide⟩ * q ⟨2, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * d := by
+        have h23' : |q ⟨3, by decide⟩ * q ⟨2, by decide⟩| ≤ d := by simpa [d] using h23
+        nlinarith [h23']
+  have hB : |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * (2 * d) := by
+        have h10' : |q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 2 * d := by simpa [d] using h10
+        nlinarith [h10']
+      _ = 4 * d := by ring
+  calc
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs, sub_eq_add_neg] using (norm_add_le (2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩) (-2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis2_diag12_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2)|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+  have hq0sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨0, by decide⟩ (by decide)
+  have hq3sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨2, by decide⟩ ⟨3, by decide⟩ (by decide)
+  have hsum : 2 * (q ⟨0, by decide⟩) ^ 2 + 2 * (q ⟨3, by decide⟩) ^ 2
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+    nlinarith [hq0sq, hq3sq]
+  have hrewrite :
+      2 - 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)
+        = 2 * (q ⟨0, by decide⟩) ^ (2 : ℕ) + 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) := by
+    have hsumSq' := norm_sq_eq_sum_sq q
+    rw [Fin.sum_univ_four] at hsumSq'
+    rw [hNorm] at hsumSq'
+    norm_num at hsumSq'
+    have hsumSq :
+        (q ⟨0, by decide⟩) ^ (2 : ℕ) + (q ⟨1, by decide⟩) ^ (2 : ℕ) +
+          (q ⟨2, by decide⟩) ^ (2 : ℕ) + (q ⟨3, by decide⟩) ^ (2 : ℕ) = 1 := hsumSq'.symm
+    nlinarith [hsumSq]
+  have hform :
+      (-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2) =
+        2 - 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) := by ring
+  rw [hform, hrewrite, abs_of_nonneg (by positivity)]
+  exact hsum
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis2_coord0_abs_le'
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+        rigidTransformPoint3D point (quaternionDictionary8 ⟨2, by decide⟩) (mkMDArray (fun _ => 0))) ⟨0, by decide⟩|
+      ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+  let p0 : Fin 3 := ⟨0, by decide⟩
+  let p1 : Fin 3 := ⟨1, by decide⟩
+  let p2 : Fin 3 := ⟨2, by decide⟩
+  let q2 : Fin 4 := ⟨2, by decide⟩
+  let S : ℝ := pointL1Radius point
+  let e : ℝ := ‖q - EuclideanSpace.single q2 (1 : ℝ)‖
+  have hp0 : |point p0| ≤ S := by simpa [S, p0] using point_coord_abs_le_pointL1Radius point p0
+  have hp1 : |point p1| ≤ S := by simpa [S, p1] using point_coord_abs_le_pointL1Radius point p1
+  have hp2 : |point p2| ≤ S := by simpa [S, p2] using point_coord_abs_le_pointL1Radius point p2
+  have hAcoef : |(-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2)| ≤ 8 * e := by
+    simpa [e, q2] using unit_basis2_diag23_abs_le_eight_mul_dist q hNorm
+  have hBcoef : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q2] using unit_basis2_mix12_30_abs_le_eight_mul_dist q hNorm
+  have hCcoef : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q2] using unit_basis2_mix13_20_abs_le_eight_mul_dist q hNorm
+  have hA : |((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2)| * |point p0| ≤ (8 * e) * S :=
+      mul_le_mul hAcoef hp0 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hB : |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩)| * |point p1| ≤ (8 * e) * S :=
+      mul_le_mul hBcoef hp1 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hC : |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩)| * |point p2| ≤ (8 * e) * S :=
+      mul_le_mul hCcoef hp2 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hEq :
+      (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+          rigidTransformPoint3D point (quaternionDictionary8 ⟨2, by decide⟩) (mkMDArray (fun _ => 0))) p0 =
+        ((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0) +
+        ((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+        ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2) := by
+    simpa [p0, p1, p2, q2] using congrArg (fun v : MDArray 3 => v p0) (rigidTransformPoint3D_zero_translation_sub_basis2 point q)
+  rw [hEq]
+  have htri2 :
+      |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+        ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)|
+      ≤ |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1)| +
+        |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1)
+        ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2))
+  have htri1 :
+      |((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0) +
+        (((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2))|
+      ≤ |((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0)| +
+        |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0)
+        (((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)))
+  calc
+    |((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0) +
+      ((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+      ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)|
+        = |((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0) +
+            (((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+             ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2))| := by rw [add_assoc]
+    _ ≤ |((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0)| +
+          |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+            ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := htri1
+    _ ≤ 8 * S * e + (|((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1)| +
+          |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)|) := by gcongr
+    _ ≤ 8 * S * e + (8 * S * e + 8 * S * e) := by gcongr
+    _ = 24 * S * e := by ring
+
+theorem unit_basis1_mix13_minus20_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖
+  have h13 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨3, by decide⟩ (by decide)
+  have h20 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨2, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| ≤ 2 * d := by
+    have h13' : |q ⟨3, by decide⟩ * q ⟨1, by decide⟩| ≤ d := by simpa [d, mul_comm] using h13
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨3, by decide⟩ * q ⟨1, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨3, by decide⟩ * q ⟨1, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * d := by nlinarith [h13']
+  have hB : |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    have h20' : |q ⟨0, by decide⟩ * q ⟨2, by decide⟩| ≤ 2 * d := by simpa [d, mul_comm] using h20
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨0, by decide⟩ * q ⟨2, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨0, by decide⟩ * q ⟨2, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 4 * d := by nlinarith [h20']
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs, sub_eq_add_neg] using (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩) (-2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ))]
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis2_coord1_abs_le'
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+        rigidTransformPoint3D point (quaternionDictionary8 ⟨2, by decide⟩) (mkMDArray (fun _ => 0))) ⟨1, by decide⟩|
+      ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+  let p0 : Fin 3 := ⟨0, by decide⟩
+  let p1 : Fin 3 := ⟨1, by decide⟩
+  let p2 : Fin 3 := ⟨2, by decide⟩
+  let q2 : Fin 4 := ⟨2, by decide⟩
+  let S : ℝ := pointL1Radius point
+  let e : ℝ := ‖q - EuclideanSpace.single q2 (1 : ℝ)‖
+  have hp0 : |point p0| ≤ S := by simpa [S, p0] using point_coord_abs_le_pointL1Radius point p0
+  have hp1 : |point p1| ≤ S := by simpa [S, p1] using point_coord_abs_le_pointL1Radius point p1
+  have hp2 : |point p2| ≤ S := by simpa [S, p2] using point_coord_abs_le_pointL1Radius point p2
+  have hAcoef : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q2] using unit_basis2_mix12_plus30_abs_le_eight_mul_dist q hNorm
+  have hBcoef : |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ))| ≤ 8 * e := by
+    simpa [e, q2] using unit_basis2_quad13_abs_le_eight_mul_dist q hNorm
+  have hCcoef : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q2] using unit_basis2_mix23_10_abs_le_eight_mul_dist q hNorm
+  have hA : |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩)| * |point p0| ≤ (8 * e) * S :=
+      mul_le_mul hAcoef hp0 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hB : |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) * point p1)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ))| * |point p1| ≤ (8 * e) * S :=
+      mul_le_mul hBcoef hp1 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hC : |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩)| * |point p2| ≤ (8 * e) * S :=
+      mul_le_mul hCcoef hp2 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hEq :
+      (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+          rigidTransformPoint3D point (quaternionDictionary8 ⟨2, by decide⟩) (mkMDArray (fun _ => 0))) p1 =
+        ((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) * point p1) +
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2) := by
+    simpa [p0, p1, p2, q2] using congrArg (fun v : MDArray 3 => v p1) (rigidTransformPoint3D_zero_translation_sub_basis2 point q)
+  rw [hEq]
+  have htri2 :
+      |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) * point p1) +
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)|
+      ≤ |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) * point p1)| +
+        |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) * point p1)
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2))
+  have htri1 :
+      |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        (((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) * point p1) +
+         ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2))|
+      ≤ |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+        |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) * point p1) +
+         ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)
+        (((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) * point p1) +
+         ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)))
+  calc
+    |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+      ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) * point p1) +
+      ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)|
+        = |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+            (((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) * point p1) +
+             ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2))| := by rw [add_assoc]
+    _ ≤ |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+          |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) * point p1) +
+            ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := htri1
+    _ ≤ 8 * S * e + (|((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) * point p1)| +
+          |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)|) := by gcongr
+    _ ≤ 8 * S * e + (8 * S * e + 8 * S * e) := by gcongr
+    _ = 24 * S * e := by ring
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis2_coord2_abs_le'
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+        rigidTransformPoint3D point (quaternionDictionary8 ⟨2, by decide⟩) (mkMDArray (fun _ => 0))) ⟨2, by decide⟩|
+      ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+  let p0 : Fin 3 := ⟨0, by decide⟩
+  let p1 : Fin 3 := ⟨1, by decide⟩
+  let p2 : Fin 3 := ⟨2, by decide⟩
+  let q2 : Fin 4 := ⟨2, by decide⟩
+  let S : ℝ := pointL1Radius point
+  let e : ℝ := ‖q - EuclideanSpace.single q2 (1 : ℝ)‖
+  have hp0 : |point p0| ≤ S := by simpa [S, p0] using point_coord_abs_le_pointL1Radius point p0
+  have hp1 : |point p1| ≤ S := by simpa [S, p1] using point_coord_abs_le_pointL1Radius point p1
+  have hp2 : |point p2| ≤ S := by simpa [S, p2] using point_coord_abs_le_pointL1Radius point p2
+  have hAcoef : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q2] using unit_basis2_mix13_minus20_abs_le_eight_mul_dist q hNorm
+  have hBcoef : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q2] using unit_basis2_mix23_plus10_abs_le_eight_mul_dist q hNorm
+  have hCcoef : |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2)| ≤ 8 * e := by
+    simpa [e, q2] using unit_basis2_diag12_abs_le_eight_mul_dist q hNorm
+  have hA : |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩)| * |point p0| ≤ (8 * e) * S :=
+      mul_le_mul hAcoef hp0 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hB : |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩)| * |point p1| ≤ (8 * e) * S :=
+      mul_le_mul hBcoef hp1 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hC : |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)| * |point p2| ≤ (8 * e) * S :=
+      mul_le_mul hCcoef hp2 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hEq :
+      (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+          rigidTransformPoint3D point (quaternionDictionary8 ⟨2, by decide⟩) (mkMDArray (fun _ => 0))) p2 =
+        ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+        (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2) := by
+    simpa [p0, p1, p2, q2] using congrArg (fun v : MDArray 3 => v p2) (rigidTransformPoint3D_zero_translation_sub_basis2 point q)
+  rw [hEq]
+  have htri2 :
+      |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+        (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)|
+      ≤ |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)| +
+        |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)
+        (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2))
+  have htri1 :
+      |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        (((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2))|
+      ≤ |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+        |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)
+        (((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+        (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)))
+  calc
+    |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+      ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+      (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)|
+        = |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+            (((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+             (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2))| := by rw [add_assoc]
+    _ ≤ |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+          |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+            (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)| := htri1
+    _ ≤ 8 * S * e + (|((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)| +
+          |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)|) := by gcongr
+    _ ≤ 8 * S * e + (8 * S * e + 8 * S * e) := by gcongr
+    _ = 24 * S * e := by ring
+
+theorem rigidTransformPoint3D_zero_translation_dist_to_basis2_le'
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    dist (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)))
+         (rigidTransformPoint3D point (quaternionDictionary8 ⟨2, by decide⟩) (mkMDArray (fun _ => 0))) ≤
+      48 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+  let diff : MDArray 3 :=
+    rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+      rigidTransformPoint3D point (quaternionDictionary8 ⟨2, by decide⟩) (mkMDArray (fun _ => 0))
+  have h0 : |diff ⟨0, by decide⟩| ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+    simpa [diff] using rigidTransformPoint3D_zero_translation_sub_basis2_coord0_abs_le' point q hNorm
+  have h1 : |diff ⟨1, by decide⟩| ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+    simpa [diff] using rigidTransformPoint3D_zero_translation_sub_basis2_coord1_abs_le' point q hNorm
+  have h2 : |diff ⟨2, by decide⟩| ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+    simpa [diff] using rigidTransformPoint3D_zero_translation_sub_basis2_coord2_abs_le' point q hNorm
+  have hBnonneg : 0 ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+    unfold pointL1Radius
+    positivity
+  have hnorm : ‖diff‖ ≤ 2 * (24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖) := by
+    exact norm_mdarray3_le_two_of_abs_le diff
+      (24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖)
+      hBnonneg h0 h1 h2
+  have hEqDist :
+      dist (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)))
+          (rigidTransformPoint3D point (quaternionDictionary8 ⟨2, by decide⟩) (mkMDArray (fun _ => 0))) = ‖diff‖ := by
+    simp [diff, dist_eq_norm, sub_eq_add_neg]
+  calc
+    dist (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)))
+        (rigidTransformPoint3D point (quaternionDictionary8 ⟨2, by decide⟩) (mkMDArray (fun _ => 0))) = ‖diff‖ := hEqDist
+    _ ≤ 2 * (24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖) := hnorm
+    _ = 48 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by ring
+
+theorem rigidTransform3D_zero_translation_dist_to_basis2_le_of_pointL1Radius_bound'
+    {n : ℕ}
+    (coords : CoordSet n)
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (armBound : ℝ)
+    (hArm : ∀ j, pointL1Radius (coords j) ≤ armBound) :
+    ∀ j,
+      dist (rigidTransform3D coords q (mkMDArray (fun _ => 0)) j)
+          (rigidTransform3D coords (quaternionDictionary8 ⟨2, by decide⟩) (mkMDArray (fun _ => 0)) j) ≤
+        48 * armBound * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+  intro j
+  have hPoint :
+      dist (rigidTransformPoint3D (coords j) q (mkMDArray (fun _ => 0)))
+          (rigidTransformPoint3D (coords j) (quaternionDictionary8 ⟨2, by decide⟩) (mkMDArray (fun _ => 0))) ≤
+        48 * pointL1Radius (coords j) * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ :=
+    rigidTransformPoint3D_zero_translation_dist_to_basis2_le' (coords j) q hNorm
+  have hScale :
+      48 * pointL1Radius (coords j) * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ ≤
+        48 * armBound * ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := by
+    have h48 : (0 : ℝ) ≤ 48 := by norm_num
+    have hNormNonneg : 0 ≤ ‖q - EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ)‖ := norm_nonneg _
+    nlinarith [hArm j, h48, hNormNonneg]
+  exact le_trans (by simpa [rigidTransform3D] using hPoint) hScale
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis3
+    (point : MDArray 3)
+    (quaternion : MDArray 4) :
+    rigidTransformPoint3D point quaternion (mkMDArray (fun _ => 0)) -
+        rigidTransformPoint3D point (quaternionDictionary8 ⟨3, by decide⟩) (mkMDArray (fun _ => 0)) =
+      mkMDArray (fun j =>
+        if h0 : j = ⟨0, by decide⟩ then
+          (-2 * (quaternion ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (quaternion ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point ⟨0, by decide⟩ +
+            (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨2, by decide⟩ - 2 * quaternion ⟨3, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨1, by decide⟩ +
+            (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨3, by decide⟩ + 2 * quaternion ⟨2, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨2, by decide⟩
+        else if h1 : j = ⟨1, by decide⟩ then
+          (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨2, by decide⟩ + 2 * quaternion ⟨3, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨0, by decide⟩ +
+            (-2 * quaternion ⟨1, by decide⟩ ^ (2 : ℕ) - 2 * quaternion ⟨3, by decide⟩ ^ (2 : ℕ) + 2) * point ⟨1, by decide⟩ +
+            (2 * quaternion ⟨2, by decide⟩ * quaternion ⟨3, by decide⟩ - 2 * quaternion ⟨1, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨2, by decide⟩
+        else
+          (2 * quaternion ⟨1, by decide⟩ * quaternion ⟨3, by decide⟩ - 2 * quaternion ⟨2, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨0, by decide⟩ +
+            (2 * quaternion ⟨2, by decide⟩ * quaternion ⟨3, by decide⟩ + 2 * quaternion ⟨1, by decide⟩ * quaternion ⟨0, by decide⟩) * point ⟨1, by decide⟩ +
+            (-2 * quaternion ⟨1, by decide⟩ ^ (2 : ℕ) - 2 * quaternion ⟨2, by decide⟩ ^ (2 : ℕ)) * point ⟨2, by decide⟩) := by
+  ext j
+  fin_cases j <;>
+    simp [rigidTransformPoint3D, quaternionDictionary8, mkMDArray] <;> ring
+
+theorem unit_basis3_diag23_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2)|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  have hq0sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨0, by decide⟩ (by decide)
+  have hq1sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨1, by decide⟩ (by decide)
+  have hsum : 2 * (q ⟨0, by decide⟩) ^ 2 + 2 * (q ⟨1, by decide⟩) ^ 2
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+    nlinarith [hq0sq, hq1sq]
+  have hrewrite :
+      2 - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)
+        = 2 * (q ⟨0, by decide⟩) ^ (2 : ℕ) + 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) := by
+    have hsumSq' := norm_sq_eq_sum_sq q
+    rw [Fin.sum_univ_four] at hsumSq'
+    rw [hNorm] at hsumSq'
+    norm_num at hsumSq'
+    have hsumSq :
+        (q ⟨0, by decide⟩) ^ (2 : ℕ) + (q ⟨1, by decide⟩) ^ (2 : ℕ) +
+          (q ⟨2, by decide⟩) ^ (2 : ℕ) + (q ⟨3, by decide⟩) ^ (2 : ℕ) = 1 := hsumSq'.symm
+    nlinarith [hsumSq]
+  have hform :
+      (-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) =
+        2 - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) := by ring
+  rw [hform, hrewrite, abs_of_nonneg (by positivity)]
+  exact hsum
+
+theorem unit_basis3_diag13_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2)|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  have hq0sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨0, by decide⟩ (by decide)
+  have hq2sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨2, by decide⟩ (by decide)
+  have hsum : 2 * (q ⟨0, by decide⟩) ^ 2 + 2 * (q ⟨2, by decide⟩) ^ 2
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+    nlinarith [hq0sq, hq2sq]
+  have hrewrite :
+      2 - 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)
+        = 2 * (q ⟨0, by decide⟩) ^ (2 : ℕ) + 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) := by
+    have hsumSq' := norm_sq_eq_sum_sq q
+    rw [Fin.sum_univ_four] at hsumSq'
+    rw [hNorm] at hsumSq'
+    norm_num at hsumSq'
+    have hsumSq :
+        (q ⟨0, by decide⟩) ^ (2 : ℕ) + (q ⟨1, by decide⟩) ^ (2 : ℕ) +
+          (q ⟨2, by decide⟩) ^ (2 : ℕ) + (q ⟨3, by decide⟩) ^ (2 : ℕ) = 1 := hsumSq'.symm
+    nlinarith [hsumSq]
+  have hform :
+      (-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) =
+        2 - 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) := by ring
+  rw [hform, hrewrite, abs_of_nonneg (by positivity)]
+  exact hsum
+
+theorem unit_basis3_quad12_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ))|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  have hq1sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨1, by decide⟩ (by decide)
+  have hq2sq := unit_norm_mdarray4_offaxis_sq_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨2, by decide⟩ (by decide)
+  have hsum : 2 * (q ⟨1, by decide⟩) ^ 2 + 2 * (q ⟨2, by decide⟩) ^ 2
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+    nlinarith [hq1sq, hq2sq]
+  have hnonneg : 0 ≤ 2 * (q ⟨1, by decide⟩) ^ 2 + 2 * (q ⟨2, by decide⟩) ^ 2 := by positivity
+  have hrewrite :
+      |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ))|
+        = 2 * (q ⟨1, by decide⟩) ^ 2 + 2 * (q ⟨2, by decide⟩) ^ 2 := by
+    have hneg :
+        -2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) =
+          -(2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) + 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) := by ring
+    rw [hneg, abs_neg, abs_of_nonneg hnonneg]
+  rw [hrewrite]
+  exact hsum
+
+/- theorem unit_basis3_mix12_30_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖
+  have h12 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨1, by decide⟩ ⟨2, by decide⟩ (by decide) (by decide)
+  have h30 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨0, by decide⟩ (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨2, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨2, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  have hB : |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨3, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨0, by decide⟩ * q ⟨3, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * d := by gcongr
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| + |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs, sub_eq_add_neg] using (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩) (-2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 4 * d + 2 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis3_mix13_20_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖
+  have h13 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨1, by decide⟩ (by decide)
+  have h20 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨2, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨3, by decide⟩ * q ⟨1, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * d := by
+        simpa [d] using h13
+  have hB : |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨2, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨0, by decide⟩ * q ⟨2, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * (2 * d) := by
+        have h20' : |q ⟨0, by decide⟩ * q ⟨2, by decide⟩| ≤ 2 * d := by simpa [d, mul_comm] using h20
+        nlinarith [h20']
+      _ = 4 * d := by ring
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs] using (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩) (2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis3_mix12_plus30_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖
+  have h12 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨1, by decide⟩ ⟨2, by decide⟩ (by decide) (by decide)
+  have h30 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨0, by decide⟩ (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨2, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨2, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  have hB : |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨3, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨0, by decide⟩ * q ⟨3, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * d := by gcongr
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| + |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs] using (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩) (2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 4 * d + 2 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis3_mix23_10_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖
+  have h23 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨2, by decide⟩ (by decide)
+  have h10 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨1, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨2, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨2, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨3, by decide⟩ * q ⟨2, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * d := by
+        simpa [d] using h23
+  have hB : |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨0, by decide⟩ * q ⟨1, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * (2 * d) := by
+        have h10' : |q ⟨0, by decide⟩ * q ⟨1, by decide⟩| ≤ 2 * d := by simpa [d, mul_comm] using h10
+        nlinarith [h10']
+      _ = 4 * d := by ring
+  calc
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs, sub_eq_add_neg] using (norm_add_le (2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩) (-2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis3_mix13_minus20_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖
+  have h13 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨1, by decide⟩ (by decide)
+  have h20 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨2, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨3, by decide⟩ * q ⟨1, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * d := by gcongr
+  have hB : |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨2, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs, sub_eq_add_neg] using (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩) (-2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis3_mix23_plus10_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖
+  have h23 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨2, by decide⟩ (by decide)
+  have h10 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨1, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨2, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨2, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ = 2 * |q ⟨3, by decide⟩ * q ⟨2, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * d := by gcongr
+  have hB : |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  calc
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs] using (norm_add_le (2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩) (2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ))] -/
+
+theorem unit_basis3_mix12_30_abs_le_eight_mul_dist'
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖
+  have h12 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨1, by decide⟩ ⟨2, by decide⟩ (by decide) (by decide)
+  have h30 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨0, by decide⟩ (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| ≤ 4 * d := by
+    have h12' : |q ⟨1, by decide⟩ * q ⟨2, by decide⟩| ≤ 2 * d := by simpa [d] using h12
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨2, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨2, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 4 * d := by nlinarith [h12']
+  have hB : |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 2 * d := by
+    have h30' : |q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ d := by simpa [d, mul_comm] using h30
+    calc
+      |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨3, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * d := by nlinarith [h30']
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| + |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs, sub_eq_add_neg] using (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩) (-2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 4 * d + 2 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis3_mix13_20_abs_le_eight_mul_dist'
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖
+  have h13 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨1, by decide⟩ (by decide)
+  have h20 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨2, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| ≤ 2 * d := by
+    have h13' : |q ⟨3, by decide⟩ * q ⟨1, by decide⟩| ≤ d := by simpa [d, mul_comm] using h13
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨3, by decide⟩ * q ⟨1, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨3, by decide⟩ * q ⟨1, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * d := by nlinarith [h13']
+  have hB : |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    have h20' : |q ⟨0, by decide⟩ * q ⟨2, by decide⟩| ≤ 2 * d := by simpa [d, mul_comm] using h20
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨0, by decide⟩ * q ⟨2, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨0, by decide⟩ * q ⟨2, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 4 * d := by nlinarith [h20']
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs] using (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩) (2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis3_mix12_plus30_abs_le_eight_mul_dist'
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖
+  have h12 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨1, by decide⟩ ⟨2, by decide⟩ (by decide) (by decide)
+  have h30 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨0, by decide⟩ (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| ≤ 4 * d := by
+    have h12' : |q ⟨1, by decide⟩ * q ⟨2, by decide⟩| ≤ 2 * d := by simpa [d] using h12
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨2, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨2, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 4 * d := by nlinarith [h12']
+  have hB : |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 2 * d := by
+    have h30' : |q ⟨0, by decide⟩ * q ⟨3, by decide⟩| ≤ d := by simpa [d, mul_comm] using h30
+    calc
+      |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨0, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨0, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * d := by nlinarith [h30']
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| + |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs] using (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩) (2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 4 * d + 2 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis3_mix23_10_abs_le_eight_mul_dist'
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖
+  have h23 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨2, by decide⟩ (by decide)
+  have h10 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨1, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| ≤ 2 * d := by
+    have h23' : |q ⟨3, by decide⟩ * q ⟨2, by decide⟩| ≤ d := by simpa [d, mul_comm] using h23
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨3, by decide⟩ * q ⟨2, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨3, by decide⟩ * q ⟨2, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * d := by nlinarith [h23']
+  have hB : |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    have h10' : |q ⟨0, by decide⟩ * q ⟨1, by decide⟩| ≤ 2 * d := by simpa [d, mul_comm] using h10
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨0, by decide⟩ * q ⟨1, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨0, by decide⟩ * q ⟨1, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 4 * d := by nlinarith [h10']
+  calc
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs, sub_eq_add_neg] using (norm_add_le (2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩) (-2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis3_mix13_minus20_abs_le_eight_mul_dist'
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖
+  have h13 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨1, by decide⟩ (by decide)
+  have h20 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨2, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| ≤ 2 * d := by
+    have h13' : |q ⟨3, by decide⟩ * q ⟨1, by decide⟩| ≤ d := by simpa [d, mul_comm] using h13
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨3, by decide⟩ * q ⟨1, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨3, by decide⟩ * q ⟨1, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * d := by nlinarith [h13']
+  have hB : |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    have h20' : |q ⟨0, by decide⟩ * q ⟨2, by decide⟩| ≤ 2 * d := by simpa [d, mul_comm] using h20
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨0, by decide⟩ * q ⟨2, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨0, by decide⟩ * q ⟨2, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 4 * d := by nlinarith [h20']
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs, sub_eq_add_neg] using (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩) (-2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis3_mix23_plus10_abs_le_eight_mul_dist'
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖
+  have h23 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨2, by decide⟩ (by decide)
+  have h10 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨3, by decide⟩ ⟨1, by decide⟩ ⟨0, by decide⟩ (by decide) (by decide)
+  have hA : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| ≤ 2 * d := by
+    have h23' : |q ⟨3, by decide⟩ * q ⟨2, by decide⟩| ≤ d := by simpa [d, mul_comm] using h23
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨3, by decide⟩ * q ⟨2, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨3, by decide⟩ * q ⟨2, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 2 * d := by nlinarith [h23']
+  have hB : |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 4 * d := by
+    have h10' : |q ⟨0, by decide⟩ * q ⟨1, by decide⟩| ≤ 2 * d := by simpa [d, mul_comm] using h10
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨0, by decide⟩ * q ⟨1, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨0, by decide⟩ * q ⟨1, by decide⟩) by ring]
+        rw [abs_mul]; norm_num
+      _ ≤ 4 * d := by nlinarith [h10']
+  calc
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs] using (norm_add_le (2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩) (2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 2 * d + 4 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ))]
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis3_coord0_abs_le'
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+        rigidTransformPoint3D point (quaternionDictionary8 ⟨3, by decide⟩) (mkMDArray (fun _ => 0))) ⟨0, by decide⟩|
+      ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let p0 : Fin 3 := ⟨0, by decide⟩
+  let p1 : Fin 3 := ⟨1, by decide⟩
+  let p2 : Fin 3 := ⟨2, by decide⟩
+  let q3 : Fin 4 := ⟨3, by decide⟩
+  let S : ℝ := pointL1Radius point
+  let e : ℝ := ‖q - EuclideanSpace.single q3 (1 : ℝ)‖
+  have hp0 : |point p0| ≤ S := by simpa [S, p0] using point_coord_abs_le_pointL1Radius point p0
+  have hp1 : |point p1| ≤ S := by simpa [S, p1] using point_coord_abs_le_pointL1Radius point p1
+  have hp2 : |point p2| ≤ S := by simpa [S, p2] using point_coord_abs_le_pointL1Radius point p2
+  have hAcoef : |(-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2)| ≤ 8 * e := by
+    simpa [e, q3] using unit_basis3_diag23_abs_le_eight_mul_dist q hNorm
+  have hBcoef : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q3] using unit_basis3_mix12_30_abs_le_eight_mul_dist' q hNorm
+  have hCcoef : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q3] using unit_basis3_mix13_20_abs_le_eight_mul_dist' q hNorm
+  have hA : |((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2)| * |point p0| ≤ (8 * e) * S :=
+      mul_le_mul hAcoef hp0 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hB : |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩)| * |point p1| ≤ (8 * e) * S :=
+      mul_le_mul hBcoef hp1 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hC : |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩)| * |point p2| ≤ (8 * e) * S :=
+      mul_le_mul hCcoef hp2 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hEq :
+      (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+          rigidTransformPoint3D point (quaternionDictionary8 ⟨3, by decide⟩) (mkMDArray (fun _ => 0))) p0 =
+        ((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0) +
+        ((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+        ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2) := by
+    simpa [p0, p1, p2, q3] using congrArg (fun v : MDArray 3 => v p0) (rigidTransformPoint3D_zero_translation_sub_basis3 point q)
+  rw [hEq]
+  have htri2 :
+      |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+        ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)|
+      ≤ |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1)| +
+        |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1)
+        ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2))
+  have htri1 :
+      |((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0) +
+        (((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2))|
+      ≤ |((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0)| +
+        |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0)
+        (((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)))
+  calc
+    |((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0) +
+      ((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+      ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)|
+        = |((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0) +
+            (((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+             ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2))| := by rw [add_assoc]
+    _ ≤ |((-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p0)| +
+          |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+            ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := htri1
+    _ ≤ 8 * S * e + (|((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p1)| +
+          |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p2)|) := by gcongr
+    _ ≤ 8 * S * e + (8 * S * e + 8 * S * e) := by gcongr
+    _ = 24 * S * e := by ring
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis3_coord1_abs_le'
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+        rigidTransformPoint3D point (quaternionDictionary8 ⟨3, by decide⟩) (mkMDArray (fun _ => 0))) ⟨1, by decide⟩|
+      ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let p0 : Fin 3 := ⟨0, by decide⟩
+  let p1 : Fin 3 := ⟨1, by decide⟩
+  let p2 : Fin 3 := ⟨2, by decide⟩
+  let q3 : Fin 4 := ⟨3, by decide⟩
+  let S : ℝ := pointL1Radius point
+  let e : ℝ := ‖q - EuclideanSpace.single q3 (1 : ℝ)‖
+  have hp0 : |point p0| ≤ S := by simpa [S, p0] using point_coord_abs_le_pointL1Radius point p0
+  have hp1 : |point p1| ≤ S := by simpa [S, p1] using point_coord_abs_le_pointL1Radius point p1
+  have hp2 : |point p2| ≤ S := by simpa [S, p2] using point_coord_abs_le_pointL1Radius point p2
+  have hAcoef : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q3] using unit_basis3_mix12_plus30_abs_le_eight_mul_dist' q hNorm
+  have hBcoef : |(-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)| ≤ 8 * e := by
+    simpa [e, q3] using unit_basis3_diag13_abs_le_eight_mul_dist q hNorm
+  have hCcoef : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q3] using unit_basis3_mix23_10_abs_le_eight_mul_dist' q hNorm
+  have hA : |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩)| * |point p0| ≤ (8 * e) * S :=
+      mul_le_mul hAcoef hp0 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hB : |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)| * |point p1| ≤ (8 * e) * S :=
+      mul_le_mul hBcoef hp1 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hC : |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩)| * |point p2| ≤ (8 * e) * S :=
+      mul_le_mul hCcoef hp2 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hEq :
+      (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+          rigidTransformPoint3D point (quaternionDictionary8 ⟨3, by decide⟩) (mkMDArray (fun _ => 0))) p1 =
+        ((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2) := by
+    simpa [p0, p1, p2, q3] using congrArg (fun v : MDArray 3 => v p1) (rigidTransformPoint3D_zero_translation_sub_basis3 point q)
+  rw [hEq]
+  have htri2 :
+      |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)|
+      ≤ |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1)| +
+        |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1)
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2))
+  have htri1 :
+      |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        ((((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+         ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2))|
+      ≤ |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+        |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+         ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)
+        ((((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+         ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)))
+  calc
+    |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+      (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+      ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)|
+        = |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+            ((((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+             ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2))| := by rw [add_assoc]
+    _ ≤ |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+          |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+            ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := htri1
+    _ ≤ 8 * S * e + (|(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1)| +
+          |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)|) := by gcongr
+    _ ≤ 8 * S * e + (8 * S * e + 8 * S * e) := by gcongr
+    _ = 24 * S * e := by ring
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis3_coord2_abs_le'
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+        rigidTransformPoint3D point (quaternionDictionary8 ⟨3, by decide⟩) (mkMDArray (fun _ => 0))) ⟨2, by decide⟩|
+      ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let p0 : Fin 3 := ⟨0, by decide⟩
+  let p1 : Fin 3 := ⟨1, by decide⟩
+  let p2 : Fin 3 := ⟨2, by decide⟩
+  let q3 : Fin 4 := ⟨3, by decide⟩
+  let S : ℝ := pointL1Radius point
+  let e : ℝ := ‖q - EuclideanSpace.single q3 (1 : ℝ)‖
+  have hp0 : |point p0| ≤ S := by simpa [S, p0] using point_coord_abs_le_pointL1Radius point p0
+  have hp1 : |point p1| ≤ S := by simpa [S, p1] using point_coord_abs_le_pointL1Radius point p1
+  have hp2 : |point p2| ≤ S := by simpa [S, p2] using point_coord_abs_le_pointL1Radius point p2
+  have hAcoef : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q3] using unit_basis3_mix13_minus20_abs_le_eight_mul_dist' q hNorm
+  have hBcoef : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q3] using unit_basis3_mix23_plus10_abs_le_eight_mul_dist' q hNorm
+  have hCcoef : |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ))| ≤ 8 * e := by
+    simpa [e, q3] using unit_basis3_quad12_abs_le_eight_mul_dist q hNorm
+  have hA : |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩)| * |point p0| ≤ (8 * e) * S :=
+      mul_le_mul hAcoef hp0 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hB : |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩)| * |point p1| ≤ (8 * e) * S :=
+      mul_le_mul hBcoef hp1 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hC : |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ))| * |point p2| ≤ (8 * e) * S :=
+      mul_le_mul hCcoef hp2 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hEq :
+      (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+          rigidTransformPoint3D point (quaternionDictionary8 ⟨3, by decide⟩) (mkMDArray (fun _ => 0))) p2 =
+        ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+        ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2) := by
+    simpa [p0, p1, p2, q3] using congrArg (fun v : MDArray 3 => v p2) (rigidTransformPoint3D_zero_translation_sub_basis3 point q)
+  rw [hEq]
+  have htri2 :
+      |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+        ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2)|
+      ≤ |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)| +
+        |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)
+        ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2))
+  have htri1 :
+      |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        (((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2))|
+      ≤ |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+        |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)
+        (((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2)))
+  calc
+    |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+      ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+      ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2)|
+        = |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+            (((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+             ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2))| := by rw [add_assoc]
+    _ ≤ |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+          |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+            ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2)| := htri1
+    _ ≤ 8 * S * e + (|((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)| +
+          |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2)|) := by gcongr
+    _ ≤ 8 * S * e + (8 * S * e + 8 * S * e) := by gcongr
+    _ = 24 * S * e := by ring
+
+theorem rigidTransformPoint3D_zero_translation_dist_to_basis3_le'
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    dist (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)))
+         (rigidTransformPoint3D point (quaternionDictionary8 ⟨3, by decide⟩) (mkMDArray (fun _ => 0))) ≤
+      48 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  let diff : MDArray 3 :=
+    rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+      rigidTransformPoint3D point (quaternionDictionary8 ⟨3, by decide⟩) (mkMDArray (fun _ => 0))
+  have h0 : |diff ⟨0, by decide⟩| ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+    simpa [diff] using rigidTransformPoint3D_zero_translation_sub_basis3_coord0_abs_le' point q hNorm
+  have h1 : |diff ⟨1, by decide⟩| ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+    simpa [diff] using rigidTransformPoint3D_zero_translation_sub_basis3_coord1_abs_le' point q hNorm
+  have h2 : |diff ⟨2, by decide⟩| ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+    simpa [diff] using rigidTransformPoint3D_zero_translation_sub_basis3_coord2_abs_le' point q hNorm
+  have hBnonneg : 0 ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+    unfold pointL1Radius
+    positivity
+  have hnorm : ‖diff‖ ≤ 2 * (24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖) := by
+    exact norm_mdarray3_le_two_of_abs_le diff
+      (24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖)
+      hBnonneg h0 h1 h2
+  have hEqDist :
+      dist (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)))
+          (rigidTransformPoint3D point (quaternionDictionary8 ⟨3, by decide⟩) (mkMDArray (fun _ => 0))) = ‖diff‖ := by
+    simp [diff, dist_eq_norm, sub_eq_add_neg]
+  calc
+    dist (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)))
+        (rigidTransformPoint3D point (quaternionDictionary8 ⟨3, by decide⟩) (mkMDArray (fun _ => 0))) = ‖diff‖ := hEqDist
+    _ ≤ 2 * (24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖) := hnorm
+    _ = 48 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by ring
+
+theorem rigidTransform3D_zero_translation_dist_to_basis3_le_of_pointL1Radius_bound'
+    {n : ℕ}
+    (coords : CoordSet n)
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (armBound : ℝ)
+    (hArm : ∀ j, pointL1Radius (coords j) ≤ armBound) :
+    ∀ j,
+      dist (rigidTransform3D coords q (mkMDArray (fun _ => 0)) j)
+          (rigidTransform3D coords (quaternionDictionary8 ⟨3, by decide⟩) (mkMDArray (fun _ => 0)) j) ≤
+        48 * armBound * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+  intro j
+  have hPoint :
+      dist (rigidTransformPoint3D (coords j) q (mkMDArray (fun _ => 0)))
+          (rigidTransformPoint3D (coords j) (quaternionDictionary8 ⟨3, by decide⟩) (mkMDArray (fun _ => 0))) ≤
+        48 * pointL1Radius (coords j) * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ :=
+    rigidTransformPoint3D_zero_translation_dist_to_basis3_le' (coords j) q hNorm
+  have hScale :
+      48 * pointL1Radius (coords j) * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ ≤
+        48 * armBound * ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := by
+    have h48 : (0 : ℝ) ≤ 48 := by norm_num
+    have hNormNonneg : 0 ≤ ‖q - EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ)‖ := norm_nonneg _
+    nlinarith [hArm j, h48, hNormNonneg]
+  exact le_trans (by simpa [rigidTransform3D] using hPoint) hScale
+
+
+theorem unit_basis1_mix23_plus10_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖
+  have h23 := unit_norm_mdarray4_offaxis_product_abs_le_two_mul_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨2, by decide⟩ ⟨3, by decide⟩ (by decide) (by decide)
+  have h10 := unit_norm_mdarray4_axis_product_abs_le_dist_to_basis q hNorm ⟨1, by decide⟩ ⟨0, by decide⟩ (by decide)
+  have hA : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨2, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨2, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  have hB : |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ = 2 * |q ⟨0, by decide⟩ * q ⟨1, by decide⟩| := by congr 1; ring
+      _ ≤ 2 * d := by gcongr
+  calc
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+            simpa [Real.norm_eq_abs] using
+              (norm_add_le (2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩) (2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩))
+    _ ≤ 4 * d + 2 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ))]
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis1_coord0_abs_le
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+        rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) ⟨0, by decide⟩|
+      ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  let p0 : Fin 3 := ⟨0, by decide⟩
+  let p1 : Fin 3 := ⟨1, by decide⟩
+  let p2 : Fin 3 := ⟨2, by decide⟩
+  let q0 : Fin 4 := ⟨0, by decide⟩
+  let q1 : Fin 4 := ⟨1, by decide⟩
+  let q2 : Fin 4 := ⟨2, by decide⟩
+  let q3 : Fin 4 := ⟨3, by decide⟩
+  let S : ℝ := pointL1Radius point
+  let e : ℝ := ‖q - EuclideanSpace.single q1 (1 : ℝ)‖
+  have hp0 : |point p0| ≤ S := by simpa [S, p0] using point_coord_abs_le_pointL1Radius point p0
+  have hp1 : |point p1| ≤ S := by simpa [S, p1] using point_coord_abs_le_pointL1Radius point p1
+  have hp2 : |point p2| ≤ S := by simpa [S, p2] using point_coord_abs_le_pointL1Radius point p2
+  have hAcoef : |(-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ))| ≤ 8 * e := by
+    simpa [e, q1] using unit_basis1_quad23_abs_le_eight_mul_dist q hNorm
+  have hBcoef : |2 * q q1 * q q2 - 2 * q q3 * q q0| ≤ 8 * e := by
+    simpa [e, q1] using unit_basis1_mix12_30_abs_le_eight_mul_dist q hNorm
+  have hCcoef : |2 * q q1 * q q3 + 2 * q q2 * q q0| ≤ 8 * e := by
+    simpa [e, q1] using unit_basis1_mix13_20_abs_le_eight_mul_dist q hNorm
+  have hA : |((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ))| * |point p0| ≤ (8 * e) * S :=
+      mul_le_mul hAcoef hp0 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hB : |((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q q1 * q q2 - 2 * q q3 * q q0)| * |point p1| ≤ (8 * e) * S :=
+      mul_le_mul hBcoef hp1 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hC : |((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q q1 * q q3 + 2 * q q2 * q q0)| * |point p2| ≤ (8 * e) * S :=
+      mul_le_mul hCcoef hp2 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hEq :
+      (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+          rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) p0 =
+        ((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0) +
+        ((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+        ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2) := by
+    simpa [p0, p1, p2, q0, q1, q2, q3] using
+      congrArg (fun v : MDArray 3 => v p0) (rigidTransformPoint3D_zero_translation_sub_basis1 point q)
+  rw [hEq]
+  have htri2 :
+      |((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+        ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)|
+      ≤ |((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1)| +
+        |((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1)
+        ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2))
+  have htri1 :
+      |((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0) +
+        (((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+         ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2))|
+      ≤ |((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0)| +
+        |((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+         ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0)
+        (((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+         ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)))
+  calc
+    |((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0) +
+      ((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+      ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)|
+        = |((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0) +
+            (((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+             ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2))| := by rw [add_assoc]
+    _ ≤ |((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0)| +
+          |((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+            ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)| := htri1
+    _ ≤ 8 * S * e + (|((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1)| +
+          |((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)|) := by gcongr
+    _ ≤ 8 * S * e + (8 * S * e + 8 * S * e) := by gcongr
+    _ = 24 * S * e := by ring
+
+/- theorem rigidTransformPoint3D_zero_translation_sub_basis1_coord1_abs_le
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+        rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) ⟨1, by decide⟩|
+      ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  let p0 : Fin 3 := ⟨0, by decide⟩
+  let p1 : Fin 3 := ⟨1, by decide⟩
+  let p2 : Fin 3 := ⟨2, by decide⟩
+  let q1 : Fin 4 := ⟨1, by decide⟩
+  let S : ℝ := pointL1Radius point
+  let e : ℝ := ‖q - EuclideanSpace.single q1 (1 : ℝ)‖
+  have hp0 : |point p0| ≤ S := by simpa [S, p0] using point_coord_abs_le_pointL1Radius point p0
+  have hp1 : |point p1| ≤ S := by simpa [S, p1] using point_coord_abs_le_pointL1Radius point p1
+  have hp2 : |point p2| ≤ S := by simpa [S, p2] using point_coord_abs_le_pointL1Radius point p2
+  have hAcoef : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q1] using unit_basis1_mix12_plus30_abs_le_eight_mul_dist q hNorm
+  have hBcoef : |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2)| ≤ 8 * e := by
+    simpa [e, q1] using unit_basis1_diag13_abs_le_eight_mul_dist q hNorm
+  have hCcoef : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q1] using unit_basis1_mix23_10_abs_le_eight_mul_dist q hNorm
+  have hA : |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩)| * |point p0| ≤ (8 * e) * S :=
+      mul_le_mul hAcoef hp0 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hB : |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p1)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2)| * |point p1| ≤ (8 * e) * S :=
+      mul_le_mul hBcoef hp1 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hC : |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩)| * |point p2| ≤ (8 * e) * S :=
+      mul_le_mul hCcoef hp2 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hEq :
+      (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+          rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) p1 =
+        ((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p1) +
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2) := by
+    simpa [p0, p1, p2, q1] using
+      congrArg (fun v : MDArray 3 => v p1) (rigidTransformPoint3D_zero_translation_sub_basis1 point q)
+  rw [hEq]
+  have htri2 :
+      |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p1) +
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)|
+      ≤ |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p1)| +
+        |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p1)
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2))
+  have htri1 :
+      |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        (((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p1) +
+         ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2))|
+      ≤ |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+        |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p1) +
+         ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)
+        (((2 - 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) * point p1) +
+         ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)))
+  calc
+    |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+      ((2 - 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) * point p1) +
+      ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)|
+        = |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+            (((2 - 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) * point p1) +
+             ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2))| := by rw [add_assoc]
+    _ ≤ |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+          |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p1) +
+            ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := htri1
+    _ ≤ 8 * S * e + (|((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ) + 2) * point p1)| +
+          |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)|) := by gcongr
+    _ ≤ 8 * S * e + (8 * S * e + 8 * S * e) := by gcongr
+    _ = 24 * S * e := by ring
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis1_coord2_abs_le
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+        rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) ⟨2, by decide⟩|
+      ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  let p0 : Fin 3 := ⟨0, by decide⟩
+  let p1 : Fin 3 := ⟨1, by decide⟩
+  let p2 : Fin 3 := ⟨2, by decide⟩
+  let q1 : Fin 4 := ⟨1, by decide⟩
+  let S : ℝ := pointL1Radius point
+  let e : ℝ := ‖q - EuclideanSpace.single q1 (1 : ℝ)‖
+  have hp0 : |point p0| ≤ S := by simpa [S, p0] using point_coord_abs_le_pointL1Radius point p0
+  have hp1 : |point p1| ≤ S := by simpa [S, p1] using point_coord_abs_le_pointL1Radius point p1
+  have hp2 : |point p2| ≤ S := by simpa [S, p2] using point_coord_abs_le_pointL1Radius point p2
+  have hAcoef : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q1] using unit_basis1_mix13_minus20_abs_le_eight_mul_dist q hNorm
+  have hBcoef : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q1] using unit_basis1_mix23_plus10_abs_le_eight_mul_dist q hNorm
+  have hCcoef : |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2)| ≤ 8 * e := by
+    simpa [e, q1] using unit_basis1_diag12_abs_le_eight_mul_dist q hNorm
+  have hA : |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩)| * |point p0| ≤ (8 * e) * S :=
+      mul_le_mul hAcoef hp0 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hB : |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩)| * |point p1| ≤ (8 * e) * S :=
+      mul_le_mul hBcoef hp1 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hC : |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2) * point p2)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2)| * |point p2| ≤ (8 * e) * S :=
+      mul_le_mul hCcoef hp2 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hEq :
+      (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+          rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) p2 =
+        ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+        ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2) * point p2) := by
+    simpa [p0, p1, p2, q1] using
+      congrArg (fun v : MDArray 3 => v p2) (rigidTransformPoint3D_zero_translation_sub_basis1 point q)
+  rw [hEq]
+  have htri2 :
+      |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+        ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2) * point p2)|
+      ≤ |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)| +
+        |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)
+        ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2) * point p2))
+  have htri1 :
+      |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        (((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2) * point p2))|
+      ≤ |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+        |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         ((2 - 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)
+        (((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         ((2 - 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2)))
+  calc
+    |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+      ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+      ((2 - 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2)|
+        = |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+            (((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+             ((2 - 2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) * point p2))| := by rw [add_assoc]
+    _ ≤ |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+          |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         ((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2) * point p2)| := htri1
+    _ ≤ 8 * S * e + (|((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)| +
+          |((-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2) * point p2)|) := by gcongr
+    _ ≤ 8 * S * e + (8 * S * e + 8 * S * e) := by gcongr
+    _ = 24 * S * e := by ring
+
+theorem rigidTransformPoint3D_zero_translation_dist_to_basis1_le
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    dist (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)))
+         (rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) ≤
+      48 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  let diff : MDArray 3 :=
+    rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+      rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))
+  have h0 : |diff ⟨0, by decide⟩| ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+    simpa [diff] using rigidTransformPoint3D_zero_translation_sub_basis1_coord0_abs_le point q hNorm
+  have h1 : |diff ⟨1, by decide⟩| ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+    simpa [diff] using rigidTransformPoint3D_zero_translation_sub_basis1_coord1_abs_le point q hNorm
+  have h2 : |diff ⟨2, by decide⟩| ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+    simpa [diff] using rigidTransformPoint3D_zero_translation_sub_basis1_coord2_abs_le point q hNorm
+  have hBnonneg : 0 ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+    unfold pointL1Radius
+    positivity
+  have hnorm : ‖diff‖ ≤ 2 * (24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖) := by
+    exact norm_mdarray3_le_two_of_abs_le diff
+      (24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖)
+      hBnonneg h0 h1 h2
+  have hEqDist :
+      dist (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)))
+          (rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) = ‖diff‖ := by
+    simp [diff, dist_eq_norm, sub_eq_add_neg]
+  calc
+    dist (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)))
+        (rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) = ‖diff‖ := hEqDist
+    _ ≤ 2 * (24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖) := hnorm
+    _ = 48 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by ring
+
+theorem rigidTransform3D_zero_translation_dist_to_basis1_le_of_pointL1Radius_bound
+    {n : ℕ}
+    (coords : CoordSet n)
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (armBound : ℝ)
+    (hArm : ∀ j, pointL1Radius (coords j) ≤ armBound) :
+    ∀ j,
+      dist (rigidTransform3D coords q (mkMDArray (fun _ => 0)) j)
+          (rigidTransform3D coords (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0)) j) ≤
+        48 * armBound * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  intro j
+  have hPoint :
+      dist (rigidTransformPoint3D (coords j) q (mkMDArray (fun _ => 0)))
+          (rigidTransformPoint3D (coords j) (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) ≤
+        48 * pointL1Radius (coords j) * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ :=
+    rigidTransformPoint3D_zero_translation_dist_to_basis1_le (coords j) q hNorm
+  have hScale :
+      48 * pointL1Radius (coords j) * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ ≤
+        48 * armBound * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+    have h48 : (0 : ℝ) ≤ 48 := by norm_num
+    have hNormNonneg : 0 ≤ ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := norm_nonneg _
+    nlinarith [hArm j, h48, hNormNonneg]
+  exact le_trans (by simpa [rigidTransform3D] using hPoint) hScale -/
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis1_coord1_abs_le'
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+        rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) ⟨1, by decide⟩|
+      ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  let p0 : Fin 3 := ⟨0, by decide⟩
+  let p1 : Fin 3 := ⟨1, by decide⟩
+  let p2 : Fin 3 := ⟨2, by decide⟩
+  let q1 : Fin 4 := ⟨1, by decide⟩
+  let S : ℝ := pointL1Radius point
+  let e : ℝ := ‖q - EuclideanSpace.single q1 (1 : ℝ)‖
+  have hp0 : |point p0| ≤ S := by simpa [S, p0] using point_coord_abs_le_pointL1Radius point p0
+  have hp1 : |point p1| ≤ S := by simpa [S, p1] using point_coord_abs_le_pointL1Radius point p1
+  have hp2 : |point p2| ≤ S := by simpa [S, p2] using point_coord_abs_le_pointL1Radius point p2
+  have hAcoef : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q1] using unit_basis1_mix12_plus30_abs_le_eight_mul_dist q hNorm
+  have hBcoef : |(-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)| ≤ 8 * e := by
+    simpa [e, q1] using unit_basis1_diag13_abs_le_eight_mul_dist q hNorm
+  have hCcoef : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q1] using unit_basis1_mix23_10_abs_le_eight_mul_dist q hNorm
+  have hA : |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩)| * |point p0| ≤ (8 * e) * S :=
+      mul_le_mul hAcoef hp0 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hB : |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)| * |point p1| ≤ (8 * e) * S :=
+      mul_le_mul hBcoef hp1 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hC : |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩)| * |point p2| ≤ (8 * e) * S :=
+      mul_le_mul hCcoef hp2 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hEq :
+      (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+          rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) p1 =
+        ((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2) := by
+    simpa [p0, p1, p2, q1] using congrArg (fun v : MDArray 3 => v p1) (rigidTransformPoint3D_zero_translation_sub_basis1 point q)
+  rw [hEq]
+  have htri2 :
+      |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)|
+      ≤ |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1)| +
+        |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1)
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2))
+  have htri1 :
+      |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        ((((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+         ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2))|
+      ≤ |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+        |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+         ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)
+        ((((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+         ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)))
+  calc
+    |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+      (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+      ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)|
+        = |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+            ((((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+             ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2))| := by rw [add_assoc]
+    _ ≤ |((2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+          |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1) +
+            ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)| := htri1
+    _ ≤ 8 * S * e + (|(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨3, by decide⟩ ^ (2 : ℕ)) + 2)) * point p1)| +
+          |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p2)|) := by gcongr
+    _ ≤ 8 * S * e + (8 * S * e + 8 * S * e) := by gcongr
+    _ = 24 * S * e := by ring
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis1_coord2_abs_le'
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+        rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) ⟨2, by decide⟩|
+      ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  let p0 : Fin 3 := ⟨0, by decide⟩
+  let p1 : Fin 3 := ⟨1, by decide⟩
+  let p2 : Fin 3 := ⟨2, by decide⟩
+  let q1 : Fin 4 := ⟨1, by decide⟩
+  let S : ℝ := pointL1Radius point
+  let e : ℝ := ‖q - EuclideanSpace.single q1 (1 : ℝ)‖
+  have hp0 : |point p0| ≤ S := by simpa [S, p0] using point_coord_abs_le_pointL1Radius point p0
+  have hp1 : |point p1| ≤ S := by simpa [S, p1] using point_coord_abs_le_pointL1Radius point p1
+  have hp2 : |point p2| ≤ S := by simpa [S, p2] using point_coord_abs_le_pointL1Radius point p2
+  have hAcoef : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q1] using unit_basis1_mix13_minus20_abs_le_eight_mul_dist q hNorm
+  have hBcoef : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 8 * e := by
+    simpa [e, q1] using unit_basis1_mix23_plus10_abs_le_eight_mul_dist q hNorm
+  have hCcoef : |(-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)| ≤ 8 * e := by
+    simpa [e, q1] using unit_basis1_diag12_abs_le_eight_mul_dist q hNorm
+  have hA : |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩)| * |point p0| ≤ (8 * e) * S :=
+      mul_le_mul hAcoef hp0 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hB : |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩)| * |point p1| ≤ (8 * e) * S :=
+      mul_le_mul hBcoef hp1 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hC : |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)| * |point p2| ≤ (8 * e) * S :=
+      mul_le_mul hCcoef hp2 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hEq :
+      (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+          rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) p2 =
+        ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+        (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2) := by
+    simpa [p0, p1, p2, q1] using congrArg (fun v : MDArray 3 => v p2) (rigidTransformPoint3D_zero_translation_sub_basis1 point q)
+  rw [hEq]
+  have htri2 :
+      |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+        (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)|
+      ≤ |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)| +
+        |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)
+        (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2))
+  have htri1 :
+      |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+        (((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2))|
+      ≤ |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+        |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+         (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)
+        (((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+        (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)))
+  calc
+    |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+      ((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+      (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)|
+        = |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0) +
+            (((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+             (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2))| := by rw [add_assoc]
+    _ ≤ |((2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩) * point p0)| +
+          |((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1) +
+            (((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)| := htri1
+    _ ≤ 8 * S * e + (|((2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩) * point p1)| +
+          |(((-2 * (q ⟨1, by decide⟩ ^ (2 : ℕ)) - 2 * (q ⟨2, by decide⟩ ^ (2 : ℕ)) + 2)) * point p2)|) := by gcongr
+    _ ≤ 8 * S * e + (8 * S * e + 8 * S * e) := by gcongr
+    _ = 24 * S * e := by ring
+
+theorem rigidTransformPoint3D_zero_translation_dist_to_basis1_le'
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    dist (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)))
+         (rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) ≤
+      48 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  let diff : MDArray 3 :=
+    rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) -
+      rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))
+  have h0 : |diff ⟨0, by decide⟩| ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+    simpa [diff] using rigidTransformPoint3D_zero_translation_sub_basis1_coord0_abs_le point q hNorm
+  have h1 : |diff ⟨1, by decide⟩| ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+    simpa [diff] using rigidTransformPoint3D_zero_translation_sub_basis1_coord1_abs_le' point q hNorm
+  have h2 : |diff ⟨2, by decide⟩| ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+    simpa [diff] using rigidTransformPoint3D_zero_translation_sub_basis1_coord2_abs_le' point q hNorm
+  have hBnonneg : 0 ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+    unfold pointL1Radius
+    positivity
+  have hnorm : ‖diff‖ ≤ 2 * (24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖) := by
+    exact norm_mdarray3_le_two_of_abs_le diff
+      (24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖)
+      hBnonneg h0 h1 h2
+  have hEqDist :
+      dist (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)))
+          (rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) = ‖diff‖ := by
+    simp [diff, dist_eq_norm, sub_eq_add_neg]
+  calc
+    dist (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)))
+        (rigidTransformPoint3D point (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) = ‖diff‖ := hEqDist
+    _ ≤ 2 * (24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖) := hnorm
+    _ = 48 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by ring
+
+theorem rigidTransform3D_zero_translation_dist_to_basis1_le_of_pointL1Radius_bound'
+    {n : ℕ}
+    (coords : CoordSet n)
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (armBound : ℝ)
+    (hArm : ∀ j, pointL1Radius (coords j) ≤ armBound) :
+    ∀ j,
+      dist (rigidTransform3D coords q (mkMDArray (fun _ => 0)) j)
+          (rigidTransform3D coords (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0)) j) ≤
+        48 * armBound * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+  intro j
+  have hPoint :
+      dist (rigidTransformPoint3D (coords j) q (mkMDArray (fun _ => 0)))
+          (rigidTransformPoint3D (coords j) (quaternionDictionary8 ⟨1, by decide⟩) (mkMDArray (fun _ => 0))) ≤
+        48 * pointL1Radius (coords j) * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ :=
+    rigidTransformPoint3D_zero_translation_dist_to_basis1_le' (coords j) q hNorm
+  have hScale :
+      48 * pointL1Radius (coords j) * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ ≤
+        48 * armBound * ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := by
+    have h48 : (0 : ℝ) ≤ 48 := by norm_num
+    have hNormNonneg : 0 ≤ ‖q - EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ)‖ := norm_nonneg _
+    nlinarith [hArm j, h48, hNormNonneg]
+  exact le_trans (by simpa [rigidTransform3D] using hPoint) hScale
+
+theorem unit_basis0_quad23_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ))|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  have hq2sq := unit_basis0_error_offaxis_sq_le_two_mul_dist q hNorm ⟨2, by decide⟩ (by decide)
+  have hq3sq := unit_basis0_error_offaxis_sq_le_two_mul_dist q hNorm ⟨3, by decide⟩ (by decide)
+  have hsum : 2 * (q ⟨2, by decide⟩) ^ 2 + 2 * (q ⟨3, by decide⟩) ^ 2
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+    nlinarith [hq2sq, hq3sq]
+  have hnonneg : 0 ≤ 2 * (q ⟨2, by decide⟩) ^ 2 + 2 * (q ⟨3, by decide⟩) ^ 2 := by
+    positivity
+  have hrewrite :
+      |(-2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ))|
+        = 2 * (q ⟨2, by decide⟩) ^ 2 + 2 * (q ⟨3, by decide⟩) ^ 2 := by
+    have hneg :
+        -2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)
+          = -(2 * (q ⟨2, by decide⟩) ^ (2 : ℕ) + 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) := by
+      ring
+    rw [hneg, abs_neg, abs_of_nonneg hnonneg]
+  rw [hrewrite]
+  exact hsum
+
+theorem unit_basis0_quad13_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ))|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  have hq1sq := unit_basis0_error_offaxis_sq_le_two_mul_dist q hNorm ⟨1, by decide⟩ (by decide)
+  have hq3sq := unit_basis0_error_offaxis_sq_le_two_mul_dist q hNorm ⟨3, by decide⟩ (by decide)
+  have hsum : 2 * (q ⟨1, by decide⟩) ^ 2 + 2 * (q ⟨3, by decide⟩) ^ 2
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+    nlinarith [hq1sq, hq3sq]
+  have hnonneg : 0 ≤ 2 * (q ⟨1, by decide⟩) ^ 2 + 2 * (q ⟨3, by decide⟩) ^ 2 := by
+    positivity
+  have hrewrite :
+      |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ))|
+        = 2 * (q ⟨1, by decide⟩) ^ 2 + 2 * (q ⟨3, by decide⟩) ^ 2 := by
+    have hneg :
+        -2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)
+          = -(2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) + 2 * (q ⟨3, by decide⟩) ^ (2 : ℕ)) := by
+      ring
+    rw [hneg, abs_neg, abs_of_nonneg hnonneg]
+  rw [hrewrite]
+  exact hsum
+
+theorem unit_basis0_quad12_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ))|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  have hq1sq := unit_basis0_error_offaxis_sq_le_two_mul_dist q hNorm ⟨1, by decide⟩ (by decide)
+  have hq2sq := unit_basis0_error_offaxis_sq_le_two_mul_dist q hNorm ⟨2, by decide⟩ (by decide)
+  have hsum : 2 * (q ⟨1, by decide⟩) ^ 2 + 2 * (q ⟨2, by decide⟩) ^ 2
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+    nlinarith [hq1sq, hq2sq]
+  have hnonneg : 0 ≤ 2 * (q ⟨1, by decide⟩) ^ 2 + 2 * (q ⟨2, by decide⟩) ^ 2 := by
+    positivity
+  have hrewrite :
+      |(-2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ))|
+        = 2 * (q ⟨1, by decide⟩) ^ 2 + 2 * (q ⟨2, by decide⟩) ^ 2 := by
+    have hneg :
+        -2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) - 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)
+          = -(2 * (q ⟨1, by decide⟩) ^ (2 : ℕ) + 2 * (q ⟨2, by decide⟩) ^ (2 : ℕ)) := by
+      ring
+    rw [hneg, abs_neg, abs_of_nonneg hnonneg]
+  rw [hrewrite]
+  exact hsum
+
+theorem unit_basis0_mix12_30_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖
+  have h12 := unit_basis0_error_offaxis_product_abs_le_two_mul_dist q hNorm ⟨1, by decide⟩ ⟨2, by decide⟩ (by decide) (by decide)
+  have h30 := unit_basis0_error_axis_product_abs_le_dist q hNorm ⟨3, by decide⟩ (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨2, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨2, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  have hB : |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨3, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ ≤ 2 * d := by gcongr
+  have htri :
+      |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| + |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+    simpa [Real.norm_eq_abs, sub_eq_add_neg] using
+      (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩) (- (2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩)))
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ - 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| + |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := htri
+    _ ≤ 4 * d + 2 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis0_mix13_20_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖
+  have h13 := unit_basis0_error_offaxis_product_abs_le_two_mul_dist q hNorm ⟨1, by decide⟩ ⟨3, by decide⟩ (by decide) (by decide)
+  have h20 := unit_basis0_error_axis_product_abs_le_dist q hNorm ⟨2, by decide⟩ (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  have hB : |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨2, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ ≤ 2 * d := by gcongr
+  have htri :
+      |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩) (2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩))
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := htri
+    _ ≤ 4 * d + 2 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis0_mix23_10_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖
+  have h23 := unit_basis0_error_offaxis_product_abs_le_two_mul_dist q hNorm ⟨2, by decide⟩ ⟨3, by decide⟩ (by decide) (by decide)
+  have h10 := unit_basis0_error_axis_product_abs_le_dist q hNorm ⟨1, by decide⟩ (by decide)
+  have hA : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨2, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨2, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  have hB : |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ ≤ 2 * d := by gcongr
+  have htri :
+      |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+    simpa [Real.norm_eq_abs, sub_eq_add_neg] using
+      (norm_add_le (2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩) (- (2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩)))
+  calc
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := htri
+    _ ≤ 4 * d + 2 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis0_mix12_plus30_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖
+  have h12 := unit_basis0_error_offaxis_product_abs_le_two_mul_dist q hNorm ⟨1, by decide⟩ ⟨2, by decide⟩ (by decide) (by decide)
+  have h30 := unit_basis0_error_axis_product_abs_le_dist q hNorm ⟨3, by decide⟩ (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨2, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨2, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  have hB : |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨3, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ ≤ 2 * d := by gcongr
+  have htri :
+      |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| + |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩) (2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩))
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩ + 2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨2, by decide⟩| + |2 * q ⟨3, by decide⟩ * q ⟨0, by decide⟩| := htri
+    _ ≤ 4 * d + 2 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis0_mix13_minus20_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖
+  have h13 := unit_basis0_error_offaxis_product_abs_le_two_mul_dist q hNorm ⟨1, by decide⟩ ⟨3, by decide⟩ (by decide) (by decide)
+  have h20 := unit_basis0_error_axis_product_abs_le_dist q hNorm ⟨2, by decide⟩ (by decide)
+  have hA : |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  have hB : |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨2, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ ≤ 2 * d := by gcongr
+  have htri :
+      |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := by
+    simpa [Real.norm_eq_abs, sub_eq_add_neg] using
+      (norm_add_le (2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩) (- (2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩)))
+  calc
+    |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩ - 2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨1, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨2, by decide⟩ * q ⟨0, by decide⟩| := htri
+    _ ≤ 4 * d + 2 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ))]
+
+theorem unit_basis0_mix23_plus10_abs_le_eight_mul_dist
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+      ≤ 8 * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  let d := ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖
+  have h23 := unit_basis0_error_offaxis_product_abs_le_two_mul_dist q hNorm ⟨2, by decide⟩ ⟨3, by decide⟩ (by decide) (by decide)
+  have h10 := unit_basis0_error_axis_product_abs_le_dist q hNorm ⟨1, by decide⟩ (by decide)
+  have hA : |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| ≤ 4 * d := by
+    calc
+      |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| = 2 * |q ⟨2, by decide⟩ * q ⟨3, by decide⟩| := by
+        rw [show 2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ = (2 : ℝ) * (q ⟨2, by decide⟩ * q ⟨3, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ ≤ 2 * (2 * d) := by gcongr
+      _ = 4 * d := by ring
+  have hB : |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| ≤ 2 * d := by
+    calc
+      |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| = 2 * |q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+        rw [show 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩ = (2 : ℝ) * (q ⟨1, by decide⟩ * q ⟨0, by decide⟩) by ring]
+        rw [abs_mul]
+        norm_num
+      _ ≤ 2 * d := by gcongr
+  have htri :
+      |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le (2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩) (2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩))
+  calc
+    |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩ + 2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩|
+        ≤ |2 * q ⟨2, by decide⟩ * q ⟨3, by decide⟩| + |2 * q ⟨1, by decide⟩ * q ⟨0, by decide⟩| := htri
+    _ ≤ 4 * d + 2 * d := add_le_add hA hB
+    _ ≤ 8 * d := by nlinarith [norm_nonneg (q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ))]
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis0_coord0_abs_le
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) - point) ⟨0, by decide⟩|
+      ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  let p0 : Fin 3 := ⟨0, by decide⟩
+  let p1 : Fin 3 := ⟨1, by decide⟩
+  let p2 : Fin 3 := ⟨2, by decide⟩
+  let q0 : Fin 4 := ⟨0, by decide⟩
+  let q1 : Fin 4 := ⟨1, by decide⟩
+  let q2 : Fin 4 := ⟨2, by decide⟩
+  let q3 : Fin 4 := ⟨3, by decide⟩
+  let S : ℝ := pointL1Radius point
+  let e : ℝ := ‖q - EuclideanSpace.single q0 (1 : ℝ)‖
+  have hp0 : |point p0| ≤ S := by simpa [S, p0] using point_coord_abs_le_pointL1Radius point p0
+  have hp1 : |point p1| ≤ S := by simpa [S, p1] using point_coord_abs_le_pointL1Radius point p1
+  have hp2 : |point p2| ≤ S := by simpa [S, p2] using point_coord_abs_le_pointL1Radius point p2
+  have hAcoef : |(-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ))| ≤ 8 * e := by
+    simpa [e, q0] using unit_basis0_quad23_abs_le_eight_mul_dist q hNorm
+  have hBcoef : |2 * q q1 * q q2 - 2 * q q3 * q q0| ≤ 8 * e := by
+    simpa [e, q0] using unit_basis0_mix12_30_abs_le_eight_mul_dist q hNorm
+  have hCcoef : |2 * q q1 * q q3 + 2 * q q2 * q q0| ≤ 8 * e := by
+    simpa [e, q0] using unit_basis0_mix13_20_abs_le_eight_mul_dist q hNorm
+  have hA : |((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ))| * |point p0| ≤ (8 * e) * S :=
+      mul_le_mul hAcoef hp0 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hB : |((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q q1 * q q2 - 2 * q q3 * q q0)| * |point p1| ≤ (8 * e) * S :=
+      mul_le_mul hBcoef hp1 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hC : |((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q q1 * q q3 + 2 * q q2 * q q0)| * |point p2| ≤ (8 * e) * S :=
+      mul_le_mul hCcoef hp2 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hEq :
+      (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) - point) p0 =
+        ((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0) +
+        ((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+        ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2) := by
+    simpa [p0, p1, p2, q0, q1, q2, q3] using
+      congrArg (fun v : MDArray 3 => v p0) (rigidTransformPoint3D_zero_translation_sub_basis0 point q)
+  rw [hEq]
+  have htri2 :
+      |((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+        ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)|
+      ≤ |((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1)| +
+        |((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1)
+        ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2))
+  have htri1 :
+      |((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0) +
+        (((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+         ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2))|
+      ≤ |((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0)| +
+        |((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+         ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0)
+        (((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+         ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)))
+  calc
+    |((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0) +
+      ((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+      ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)|
+        = |((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0) +
+            (((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+             ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2))| := by
+              rw [add_assoc]
+    _ ≤ |((-2 * (q q2) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p0)| +
+          |((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1) +
+            ((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)| := htri1
+    _ ≤ 8 * S * e + (|((2 * q q1 * q q2 - 2 * q q3 * q q0) * point p1)| +
+          |((2 * q q1 * q q3 + 2 * q q2 * q q0) * point p2)|) := by
+            gcongr
+    _ ≤ 8 * S * e + (8 * S * e + 8 * S * e) := by
+            gcongr
+    _ = 24 * S * e := by ring
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis0_coord1_abs_le
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) - point) ⟨1, by decide⟩|
+      ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  let p0 : Fin 3 := ⟨0, by decide⟩
+  let p1 : Fin 3 := ⟨1, by decide⟩
+  let p2 : Fin 3 := ⟨2, by decide⟩
+  let q0 : Fin 4 := ⟨0, by decide⟩
+  let q1 : Fin 4 := ⟨1, by decide⟩
+  let q2 : Fin 4 := ⟨2, by decide⟩
+  let q3 : Fin 4 := ⟨3, by decide⟩
+  let S : ℝ := pointL1Radius point
+  let e : ℝ := ‖q - EuclideanSpace.single q0 (1 : ℝ)‖
+  have hp0 : |point p0| ≤ S := by simpa [S, p0] using point_coord_abs_le_pointL1Radius point p0
+  have hp1 : |point p1| ≤ S := by simpa [S, p1] using point_coord_abs_le_pointL1Radius point p1
+  have hp2 : |point p2| ≤ S := by simpa [S, p2] using point_coord_abs_le_pointL1Radius point p2
+  have hAcoef : |2 * q q1 * q q2 + 2 * q q3 * q q0| ≤ 8 * e := by
+    simpa [e, q0] using unit_basis0_mix12_plus30_abs_le_eight_mul_dist q hNorm
+  have hBcoef : |(-2 * (q q1) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ))| ≤ 8 * e := by
+    simpa [e, q0] using unit_basis0_quad13_abs_le_eight_mul_dist q hNorm
+  have hCcoef : |2 * q q2 * q q3 - 2 * q q1 * q q0| ≤ 8 * e := by
+    simpa [e, q0] using unit_basis0_mix23_10_abs_le_eight_mul_dist q hNorm
+  have hA : |((2 * q q1 * q q2 + 2 * q q3 * q q0) * point p0)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q q1 * q q2 + 2 * q q3 * q q0)| * |point p0| ≤ (8 * e) * S :=
+      mul_le_mul hAcoef hp0 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hB : |((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p1)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(-2 * (q q1) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ))| * |point p1| ≤ (8 * e) * S :=
+      mul_le_mul hBcoef hp1 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hC : |((2 * q q2 * q q3 - 2 * q q1 * q q0) * point p2)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q q2 * q q3 - 2 * q q1 * q q0)| * |point p2| ≤ (8 * e) * S :=
+      mul_le_mul hCcoef hp2 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hEq :
+      (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) - point) p1 =
+        ((2 * q q1 * q q2 + 2 * q q3 * q q0) * point p0) +
+        ((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p1) +
+        ((2 * q q2 * q q3 - 2 * q q1 * q q0) * point p2) := by
+    simpa [p0, p1, p2, q0, q1, q2, q3] using
+      congrArg (fun v : MDArray 3 => v p1) (rigidTransformPoint3D_zero_translation_sub_basis0 point q)
+  rw [hEq]
+  have htri2 :
+      |((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p1) +
+        ((2 * q q2 * q q3 - 2 * q q1 * q q0) * point p2)|
+      ≤ |((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p1)| +
+        |((2 * q q2 * q q3 - 2 * q q1 * q q0) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p1)
+        ((2 * q q2 * q q3 - 2 * q q1 * q q0) * point p2))
+  have htri1 :
+      |((2 * q q1 * q q2 + 2 * q q3 * q q0) * point p0) +
+        (((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p1) +
+         ((2 * q q2 * q q3 - 2 * q q1 * q q0) * point p2))|
+      ≤ |((2 * q q1 * q q2 + 2 * q q3 * q q0) * point p0)| +
+        |((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p1) +
+         ((2 * q q2 * q q3 - 2 * q q1 * q q0) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q q1 * q q2 + 2 * q q3 * q q0) * point p0)
+        (((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p1) +
+         ((2 * q q2 * q q3 - 2 * q q1 * q q0) * point p2)))
+  calc
+    |((2 * q q1 * q q2 + 2 * q q3 * q q0) * point p0) +
+      ((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p1) +
+      ((2 * q q2 * q q3 - 2 * q q1 * q q0) * point p2)|
+        = |((2 * q q1 * q q2 + 2 * q q3 * q q0) * point p0) +
+            (((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p1) +
+             ((2 * q q2 * q q3 - 2 * q q1 * q q0) * point p2))| := by
+              rw [add_assoc]
+    _ ≤ |((2 * q q1 * q q2 + 2 * q q3 * q q0) * point p0)| +
+          |((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p1) +
+            ((2 * q q2 * q q3 - 2 * q q1 * q q0) * point p2)| := htri1
+    _ ≤ 8 * S * e + (|((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q3) ^ (2 : ℕ)) * point p1)| +
+          |((2 * q q2 * q q3 - 2 * q q1 * q q0) * point p2)|) := by
+            gcongr
+    _ ≤ 8 * S * e + (8 * S * e + 8 * S * e) := by
+            gcongr
+    _ = 24 * S * e := by ring
+
+theorem rigidTransformPoint3D_zero_translation_sub_basis0_coord2_abs_le
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    |(rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) - point) ⟨2, by decide⟩|
+      ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  let p0 : Fin 3 := ⟨0, by decide⟩
+  let p1 : Fin 3 := ⟨1, by decide⟩
+  let p2 : Fin 3 := ⟨2, by decide⟩
+  let q0 : Fin 4 := ⟨0, by decide⟩
+  let q1 : Fin 4 := ⟨1, by decide⟩
+  let q2 : Fin 4 := ⟨2, by decide⟩
+  let q3 : Fin 4 := ⟨3, by decide⟩
+  let S : ℝ := pointL1Radius point
+  let e : ℝ := ‖q - EuclideanSpace.single q0 (1 : ℝ)‖
+  have hp0 : |point p0| ≤ S := by simpa [S, p0] using point_coord_abs_le_pointL1Radius point p0
+  have hp1 : |point p1| ≤ S := by simpa [S, p1] using point_coord_abs_le_pointL1Radius point p1
+  have hp2 : |point p2| ≤ S := by simpa [S, p2] using point_coord_abs_le_pointL1Radius point p2
+  have hAcoef : |2 * q q1 * q q3 - 2 * q q2 * q q0| ≤ 8 * e := by
+    simpa [e, q0] using unit_basis0_mix13_minus20_abs_le_eight_mul_dist q hNorm
+  have hBcoef : |2 * q q2 * q q3 + 2 * q q1 * q q0| ≤ 8 * e := by
+    simpa [e, q0] using unit_basis0_mix23_plus10_abs_le_eight_mul_dist q hNorm
+  have hCcoef : |(-2 * (q q1) ^ (2 : ℕ) - 2 * (q q2) ^ (2 : ℕ))| ≤ 8 * e := by
+    simpa [e, q0] using unit_basis0_quad12_abs_le_eight_mul_dist q hNorm
+  have hA : |((2 * q q1 * q q3 - 2 * q q2 * q q0) * point p0)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q q1 * q q3 - 2 * q q2 * q q0)| * |point p0| ≤ (8 * e) * S :=
+      mul_le_mul hAcoef hp0 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hB : |((2 * q q2 * q q3 + 2 * q q1 * q q0) * point p1)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(2 * q q2 * q q3 + 2 * q q1 * q q0)| * |point p1| ≤ (8 * e) * S :=
+      mul_le_mul hBcoef hp1 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hC : |((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q2) ^ (2 : ℕ)) * point p2)| ≤ 8 * S * e := by
+    rw [abs_mul]
+    have hmul : |(-2 * (q q1) ^ (2 : ℕ) - 2 * (q q2) ^ (2 : ℕ))| * |point p2| ≤ (8 * e) * S :=
+      mul_le_mul hCcoef hp2 (abs_nonneg _) (by positivity)
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hmul
+  have hEq :
+      (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) - point) p2 =
+        ((2 * q q1 * q q3 - 2 * q q2 * q q0) * point p0) +
+        ((2 * q q2 * q q3 + 2 * q q1 * q q0) * point p1) +
+        ((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q2) ^ (2 : ℕ)) * point p2) := by
+    simpa [p0, p1, p2, q0, q1, q2, q3] using
+      congrArg (fun v : MDArray 3 => v p2) (rigidTransformPoint3D_zero_translation_sub_basis0 point q)
+  rw [hEq]
+  have htri2 :
+      |((2 * q q2 * q q3 + 2 * q q1 * q q0) * point p1) +
+        ((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q2) ^ (2 : ℕ)) * point p2)|
+      ≤ |((2 * q q2 * q q3 + 2 * q q1 * q q0) * point p1)| +
+        |((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q2) ^ (2 : ℕ)) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q q2 * q q3 + 2 * q q1 * q q0) * point p1)
+        ((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q2) ^ (2 : ℕ)) * point p2))
+  have htri1 :
+      |((2 * q q1 * q q3 - 2 * q q2 * q q0) * point p0) +
+        (((2 * q q2 * q q3 + 2 * q q1 * q q0) * point p1) +
+         ((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q2) ^ (2 : ℕ)) * point p2))|
+      ≤ |((2 * q q1 * q q3 - 2 * q q2 * q q0) * point p0)| +
+        |((2 * q q2 * q q3 + 2 * q q1 * q q0) * point p1) +
+         ((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q2) ^ (2 : ℕ)) * point p2)| := by
+    simpa [Real.norm_eq_abs] using
+      (norm_add_le
+        ((2 * q q1 * q q3 - 2 * q q2 * q q0) * point p0)
+        (((2 * q q2 * q q3 + 2 * q q1 * q q0) * point p1) +
+         ((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q2) ^ (2 : ℕ)) * point p2)))
+  calc
+    |((2 * q q1 * q q3 - 2 * q q2 * q q0) * point p0) +
+      ((2 * q q2 * q q3 + 2 * q q1 * q q0) * point p1) +
+      ((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q2) ^ (2 : ℕ)) * point p2)|
+        = |((2 * q q1 * q q3 - 2 * q q2 * q q0) * point p0) +
+            (((2 * q q2 * q q3 + 2 * q q1 * q q0) * point p1) +
+             ((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q2) ^ (2 : ℕ)) * point p2))| := by
+              rw [add_assoc]
+    _ ≤ |((2 * q q1 * q q3 - 2 * q q2 * q q0) * point p0)| +
+          |((2 * q q2 * q q3 + 2 * q q1 * q q0) * point p1) +
+            ((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q2) ^ (2 : ℕ)) * point p2)| := htri1
+    _ ≤ 8 * S * e + (|((2 * q q2 * q q3 + 2 * q q1 * q q0) * point p1)| +
+          |((-2 * (q q1) ^ (2 : ℕ) - 2 * (q q2) ^ (2 : ℕ)) * point p2)|) := by
+            gcongr
+    _ ≤ 8 * S * e + (8 * S * e + 8 * S * e) := by
+            gcongr
+    _ = 24 * S * e := by ring
+
+theorem rigidTransformPoint3D_zero_translation_dist_to_basis0_le
+    (point : MDArray 3)
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    dist (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)))
+         (rigidTransformPoint3D point (quaternionDictionary8 ⟨0, by decide⟩) (mkMDArray (fun _ => 0))) ≤
+      48 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  let diff : MDArray 3 := rigidTransformPoint3D point q (mkMDArray (fun _ => 0)) - point
+  have h0 : |diff ⟨0, by decide⟩| ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+    simpa [diff] using rigidTransformPoint3D_zero_translation_sub_basis0_coord0_abs_le point q hNorm
+  have h1 : |diff ⟨1, by decide⟩| ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+    simpa [diff] using rigidTransformPoint3D_zero_translation_sub_basis0_coord1_abs_le point q hNorm
+  have h2 : |diff ⟨2, by decide⟩| ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+    simpa [diff] using rigidTransformPoint3D_zero_translation_sub_basis0_coord2_abs_le point q hNorm
+  have hBnonneg : 0 ≤ 24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+    unfold pointL1Radius
+    positivity
+  have hnorm : ‖diff‖ ≤ 2 * (24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖) := by
+    exact norm_mdarray3_le_two_of_abs_le diff
+      (24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖)
+      hBnonneg h0 h1 h2
+  have hEqDist :
+      dist (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)))
+          (rigidTransformPoint3D point (quaternionDictionary8 ⟨0, by decide⟩) (mkMDArray (fun _ => 0))) = ‖diff‖ := by
+    rw [rigidTransformPoint3D_basis0_zero_eq_self]
+    simp [diff, dist_eq_norm, sub_eq_add_neg]
+  calc
+    dist (rigidTransformPoint3D point q (mkMDArray (fun _ => 0)))
+        (rigidTransformPoint3D point (quaternionDictionary8 ⟨0, by decide⟩) (mkMDArray (fun _ => 0))) = ‖diff‖ := hEqDist
+    _ ≤ 2 * (24 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖) := hnorm
+    _ = 48 * pointL1Radius point * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by ring
+
+theorem rigidTransform3D_zero_translation_dist_to_basis0_le_of_pointL1Radius_bound
+    {n : ℕ}
+    (coords : CoordSet n)
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (armBound : ℝ)
+    (hArm : ∀ j, pointL1Radius (coords j) ≤ armBound) :
+    ∀ j,
+      dist (rigidTransform3D coords q (mkMDArray (fun _ => 0)) j)
+          (rigidTransform3D coords (quaternionDictionary8 ⟨0, by decide⟩) (mkMDArray (fun _ => 0)) j) ≤
+        48 * armBound * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  intro j
+  have hPoint :
+      dist (rigidTransformPoint3D (coords j) q (mkMDArray (fun _ => 0)))
+          (rigidTransformPoint3D (coords j) (quaternionDictionary8 ⟨0, by decide⟩) (mkMDArray (fun _ => 0))) ≤
+        48 * pointL1Radius (coords j) * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ :=
+    rigidTransformPoint3D_zero_translation_dist_to_basis0_le (coords j) q hNorm
+  have hScale :
+      48 * pointL1Radius (coords j) * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ≤
+        48 * armBound * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+    have h48 : (0 : ℝ) ≤ 48 := by norm_num
+    have hNormNonneg : 0 ≤ ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := norm_nonneg _
+    nlinarith [hArm j, h48, hNormNonneg]
+  exact le_trans (by simpa [rigidTransform3D] using hPoint) hScale
+
+theorem rigidTransform3D_zero_translation_dist_to_basis0_le_of_uniform_pointL1Radius_bound
+    {Ω : Type u}
+    {n : ℕ}
+    (baseCoords : Ω → CoordSet n)
+    (armBound : ℝ)
+    (hArm : ∀ ω j, pointL1Radius (baseCoords ω j) ≤ armBound) :
+    ∀ ω q,
+      norm q = 1 →
+      ∀ j,
+        dist (rigidTransform3D (baseCoords ω) q (mkMDArray (fun _ => 0)) j)
+            (rigidTransform3D (baseCoords ω) (quaternionDictionary8 ⟨0, by decide⟩) (mkMDArray (fun _ => 0)) j) ≤
+          48 * armBound * ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  intro ω q hNorm j
+  exact rigidTransform3D_zero_translation_dist_to_basis0_le_of_pointL1Radius_bound
+    (baseCoords ω) q hNorm armBound (hArm ω) j
+
+theorem unit_norm_mdarray4_dist_sq_to_basis0_eq
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ^ 2 = 2 - 2 * q ⟨0, by decide⟩ := by
+  let i0 : Fin 4 := ⟨0, by decide⟩
+  have hInner : (@inner ℝ _ _ q (EuclideanSpace.single i0 (1 : ℝ)) : ℝ) = q i0 := by
+    simpa using (EuclideanSpace.inner_single_right i0 (1 : ℝ) q)
+  have hSingleSq : ‖EuclideanSpace.single i0 (1 : ℝ)‖ ^ 2 = 1 := by
+    simp [EuclideanSpace.norm_single, i0]
+  have hNorm' : ‖q‖ = 1 := by simpa using hNorm
+  rw [norm_sub_sq_real, hNorm', hInner, hSingleSq]
+  ring
+
+theorem unit_norm_mdarray4_dist_sq_to_neg_basis0_eq
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    ‖q + EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ^ 2 = 2 + 2 * q ⟨0, by decide⟩ := by
+  let i0 : Fin 4 := ⟨0, by decide⟩
+  have hInner : (@inner ℝ _ _ q (EuclideanSpace.single i0 (1 : ℝ)) : ℝ) = q i0 := by
+    simpa using (EuclideanSpace.inner_single_right i0 (1 : ℝ) q)
+  have hSingleSq : ‖EuclideanSpace.single i0 (1 : ℝ)‖ ^ 2 = 1 := by
+    simp [EuclideanSpace.norm_single, i0]
+  have hNorm' : ‖q‖ = 1 := by simpa using hNorm
+  rw [norm_add_sq_real, hNorm', hInner, hSingleSq]
+  ring
+
+theorem unit_norm_mdarray4_dist_to_basis0_le_dist_to_neg_basis0_of_nonneg_coord0
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q ⟨0, by decide⟩) :
+    ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ≤
+      ‖q + EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  have hsq : ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ^ 2 ≤
+      ‖q + EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ^ 2 := by
+    rw [unit_norm_mdarray4_dist_sq_to_basis0_eq q hNorm, unit_norm_mdarray4_dist_sq_to_neg_basis0_eq q hNorm]
+    nlinarith
+  exact le_of_sq_le_sq hsq (norm_nonneg _)
+
+theorem unit_norm_mdarray4_dist_to_neg_basis0_le_dist_to_basis0_of_nonpos_coord0
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : q ⟨0, by decide⟩ ≤ 0) :
+    ‖q + EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ≤
+      ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ := by
+  have hsq : ‖q + EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ^ 2 ≤
+      ‖q - EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ)‖ ^ 2 := by
+    rw [unit_norm_mdarray4_dist_sq_to_neg_basis0_eq q hNorm, unit_norm_mdarray4_dist_sq_to_basis0_eq q hNorm]
+    nlinarith
+  exact le_of_sq_le_sq hsq (norm_nonneg _)
+
+/-! ## 6. Quaternion Cover Geometry -/
+
+/-- For a unit quaternion, a basis-coordinate witness of size at least `1/2`
+    at a fixed index `i` yields Euclidean distance at most `1` to either the
+    matching basis quaternion or its negation. -/
+theorem unit_norm_mdarray4_dist_to_basis_or_negBasis_le_one_of_coordinate_abs_ge_half
+    (q : MDArray 4)
+    (i : Fin 4)
+    (hNorm : norm q = 1)
+    (hi : 1 / 2 ≤ |q i|) :
+    min ‖q - EuclideanSpace.single i (1 : ℝ)‖ ‖q + EuclideanSpace.single i (1 : ℝ)‖ ≤ 1 := by
+  by_cases hsign : 0 ≤ q i
+  · have hLower : 1 / 2 ≤ q i := by simpa [abs_of_nonneg hsign] using hi
+    have hNorm' : ‖q‖ = 1 := hNorm
+    have hInner : (@inner ℝ _ _ q (EuclideanSpace.single i (1 : ℝ)) : ℝ) = q i := by
+      simpa using (EuclideanSpace.inner_single_right i (1 : ℝ) q)
+    have hSingleSq : ‖EuclideanSpace.single i (1 : ℝ)‖ ^ 2 = 1 := by
+      simp [EuclideanSpace.norm_single]
+    have hSq : ‖q - EuclideanSpace.single i (1 : ℝ)‖ ^ 2 ≤ 1 := by
+      rw [norm_sub_sq_real, hNorm', hInner, hSingleSq]
+      nlinarith
+    have hLe : ‖q - EuclideanSpace.single i (1 : ℝ)‖ ≤ 1 := by
+      nlinarith [norm_nonneg (q - EuclideanSpace.single i (1 : ℝ)), hSq]
+    exact le_trans (min_le_left _ _) hLe
+  · have hUpper : q i ≤ -(1 / 2 : ℝ) := by
+      have hAbs : 1 / 2 ≤ -q i := by
+        simpa [abs_of_nonpos (le_of_not_ge hsign)] using hi
+      linarith
+    have hNorm' : ‖q‖ = 1 := hNorm
+    have hInner : (@inner ℝ _ _ q (EuclideanSpace.single i (1 : ℝ)) : ℝ) = q i := by
+      simpa using (EuclideanSpace.inner_single_right i (1 : ℝ) q)
+    have hSingleSq : ‖EuclideanSpace.single i (1 : ℝ)‖ ^ 2 = 1 := by
+      simp [EuclideanSpace.norm_single]
+    have hSq : ‖q + EuclideanSpace.single i (1 : ℝ)‖ ^ 2 ≤ 1 := by
+      rw [norm_add_sq_real, hNorm', hInner, hSingleSq]
+      nlinarith
+    have hLe : ‖q + EuclideanSpace.single i (1 : ℝ)‖ ≤ 1 := by
+      nlinarith [norm_nonneg (q + EuclideanSpace.single i (1 : ℝ)), hSq]
+    exact le_trans (min_le_right _ _) hLe
+
+/-- For a unit quaternion, a basis-coordinate witness of size at least `1/2`
+    yields Euclidean distance at most `1` to either the matching basis quaternion
+    or its negation. This is the low-level sign-aware cover fact behind the
+    current `quaternionDictionary8` proof plan. -/
+theorem unit_norm_mdarray4_dist_to_basis_or_negBasis_le_one
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    ∃ i : Fin 4,
+      1 / 2 ≤ |q i| ∧
+      min ‖q - EuclideanSpace.single i (1 : ℝ)‖ ‖q + EuclideanSpace.single i (1 : ℝ)‖ ≤ 1 := by
+  rcases unit_norm_mdarray4_has_coordinate_abs_ge_half q hNorm with ⟨i, hi⟩
+  exact ⟨i, hi, unit_norm_mdarray4_dist_to_basis_or_negBasis_le_one_of_coordinate_abs_ge_half q i hNorm hi⟩
+
 /-! ## 7. Energy Gradient (Force Computation) -/
 
 /-- Compute forces from potential energy function.

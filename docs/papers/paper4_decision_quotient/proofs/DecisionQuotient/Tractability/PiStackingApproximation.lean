@@ -7,6 +7,7 @@
   already proved for directional three-factor surrogates.
 -/
 import DecisionQuotient.Tractability.DirectionalHBondApproximation
+import DecisionQuotient.Tractability.GaussianDecayBounds
 
 namespace DecisionQuotient
 namespace Tractability
@@ -14,6 +15,7 @@ namespace PiStackingApproximation
 
 open DirectionalHBondApproximation
 open GridConvergence
+open GaussianDecayBounds
 
 universe u v
 
@@ -197,6 +199,54 @@ theorem scaledPiStackingRadial_lipschitz {A : Type u} {Scont : Type v} {Sgrid : 
       (fun a sGrid => strCont (lift sGrid) * radGrid a sGrid)
       lift stateError Lr :=
   scaledByStateWeight_lipschitz strCont radCont radGrid lift stateError Lr hStr hLip
+
+/-- A nonnegative external weight times a pi-stacking score is bounded by the same
+    weight times its radial factor when face-alignment and offset factors lie in
+    `[0,1]`. -/
+theorem weighted_piStacking_le_weighted_radial
+    (w radial face offset : ℝ)
+    (hw_nonneg : 0 ≤ w)
+    (hRadial_nonneg : 0 ≤ radial)
+    (hFace_nonneg : 0 ≤ face)
+    (hFace_le_one : face ≤ 1)
+    (hOffset_nonneg : 0 ≤ offset)
+    (hOffset_le_one : offset ≤ 1) :
+    w * piStackingScore radial face offset ≤ w * radial := by
+  simpa [piStackingScore] using
+    weighted_directionalHBond_le_weighted_radial
+      w radial face offset hw_nonneg hRadial_nonneg
+      hFace_nonneg hFace_le_one hOffset_nonneg hOffset_le_one
+
+/-- Tail bound for weighted pi-stacking once the radial distance is beyond the
+    cutoff and the non-radial factors stay in `[0,1]`. -/
+theorem weighted_piStacking_tail_bound
+    (w ideal width cutoff r face offset : ℝ)
+    (hw_nonneg : 0 ≤ w)
+    (hwidth : 0 < width)
+    (hcut : ideal ≤ cutoff)
+    (hr : cutoff ≤ r)
+    (hFace_nonneg : 0 ≤ face)
+    (hFace_le_one : face ≤ 1)
+    (hOffset_nonneg : 0 ≤ offset)
+    (hOffset_le_one : offset ≤ 1) :
+    w * piStackingScore (Real.exp (-(((r - ideal) / width) ^ 2))) face offset ≤
+      w * Real.exp (-(((cutoff - ideal) / width) ^ 2)) := by
+  have hRadial_nonneg : 0 ≤ Real.exp (-(((r - ideal) / width) ^ 2)) :=
+    (Real.exp_pos _).le
+  have hUpper :=
+    weighted_piStacking_le_weighted_radial
+      w (Real.exp (-(((r - ideal) / width) ^ 2))) face offset
+      hw_nonneg hRadial_nonneg hFace_nonneg hFace_le_one hOffset_nonneg hOffset_le_one
+  have hTail :
+      Real.exp (-(((r - ideal) / width) ^ 2)) ≤ Real.exp (-(((cutoff - ideal) / width) ^ 2)) := by
+    have hBound :=
+      GaussianDecayBounds.shiftedGaussian_tail_bound 1 ideal width cutoff r
+        hwidth hcut hr
+    simpa [shiftedGaussianScore] using hBound
+  have hScaledTail :
+      w * Real.exp (-(((r - ideal) / width) ^ 2)) ≤ w * Real.exp (-(((cutoff - ideal) / width) ^ 2)) := by
+    exact mul_le_mul_of_nonneg_left hTail hw_nonneg
+  exact le_trans hUpper hScaledTail
 
 end PiStackingApproximation
 end Tractability

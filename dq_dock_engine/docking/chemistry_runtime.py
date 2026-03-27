@@ -5,6 +5,7 @@ from enum import Enum
 from typing import ClassVar
 
 import jax.numpy as jnp
+import numpy as np
 from jax.tree_util import register_pytree_node_class
 
 from dq_dock_engine.docking.scoring import CertifiedOptionalInteractionTerm
@@ -216,6 +217,22 @@ class DerivedInteractionTerm(CertifiedOptionalInteractionTerm, DerivedPytreeReco
         """Short-range interactions (Gaussian/exponential decay) have negligible
         tail beyond cutoff. Conservative bound: 0.0 kcal/mol."""
         return 0.0
+
+    def max_total_score_bound(self) -> float:
+        """Conservative omitted-channel bound from site-strength envelopes.
+
+        The derived attractive interaction terms all use nonnegative strength
+        products multiplied by geometric factors in `[0, 1]`, so each branch is
+        bounded by the product of the summed absolute site strengths.
+        """
+        total = 0.0
+        for group in type(self)._activity_field_groups:
+            branch = 1.0
+            for name in group:
+                strengths = np.asarray(getattr(self, name).strengths, dtype=np.float64)
+                branch *= float(np.sum(np.abs(strengths)))
+            total += branch
+        return total
 
     @property
     def is_active(self) -> jnp.ndarray:

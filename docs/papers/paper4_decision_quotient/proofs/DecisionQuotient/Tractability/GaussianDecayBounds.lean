@@ -15,18 +15,25 @@
 import Mathlib.Analysis.SpecialFunctions.Exp
 import Mathlib.Analysis.SpecialFunctions.Log.Basic
 import Mathlib.Analysis.SpecialFunctions.Pow.Real
+import Mathlib.Algebra.Order.BigOperators.Group.Finset
+import Mathlib.Data.Finset.Basic
 
 namespace DecisionQuotient
 namespace Tractability
 namespace GaussianDecayBounds
 
 open Real
+open scoped BigOperators
 
 /-! ### Core Gaussian Decay Functions -/
 
 /-- Gaussian decay potential: w × exp(-(βr)²) -/
 noncomputable def gaussianScore (w β r : ℝ) : ℝ :=
   w * exp (-(β * r) ^ 2)
+
+/-- Shifted Gaussian decay potential: w × exp(-(((r-ideal)/width)²)). -/
+noncomputable def shiftedGaussianScore (w ideal width r : ℝ) : ℝ :=
+  w * exp (-(((r - ideal) / width) ^ 2))
 
 /-- Hard-cutoff Gaussian score -/
 noncomputable def cutoffGaussianScore (w β R r : ℝ) : ℝ :=
@@ -51,6 +58,117 @@ theorem gaussian_tail_bound
     have hβr_ge_βR : β * R ≤ β * r := mul_le_mul_of_nonneg_left hr_ge_R (le_of_lt hβ_pos)
     exact sq_le_sq' (by linarith) hβr_ge_βR
   linarith
+
+/-- The shifted Gaussian score has absolute value bounded by the absolute weight. -/
+theorem shiftedGaussianScore_abs_le_abs_weight
+    (w ideal width r : ℝ) (hwidth : 0 < width) :
+    |shiftedGaussianScore w ideal width r| ≤ |w| := by
+  let t : ℝ := exp (-(((r - ideal) / width) ^ 2))
+  have hEq : |shiftedGaussianScore w ideal width r| = |w| * t := by
+    unfold shiftedGaussianScore t
+    rw [abs_mul, abs_of_nonneg (exp_pos _).le]
+  have hExp : t ≤ 1 := by
+    have hNonpos : -(((r - ideal) / width) ^ 2) ≤ 0 := by
+      exact neg_nonpos.mpr (sq_nonneg _)
+    simpa [t] using (exp_le_one_iff.mpr hNonpos)
+  calc
+    |shiftedGaussianScore w ideal width r| = |w| * t := hEq
+    _ ≤ |w| * 1 := by
+      exact mul_le_mul_of_nonneg_left hExp (abs_nonneg _)
+    _ = |w| := by ring
+
+/-- Tail bound for shifted Gaussian scores once the cutoff lies on or beyond the
+    Gaussian center. -/
+theorem shiftedGaussian_tail_bound
+    (w ideal width cutoff r : ℝ)
+    (hwidth : 0 < width)
+    (hcut : ideal ≤ cutoff)
+    (hr : cutoff ≤ r) :
+    |shiftedGaussianScore w ideal width r| ≤
+      |w| * exp (-(((cutoff - ideal) / width) ^ 2)) := by
+  have hEq : |shiftedGaussianScore w ideal width r| = |w| * exp (-(((r - ideal) / width) ^ 2)) := by
+    unfold shiftedGaussianScore
+    rw [abs_mul, abs_of_nonneg (exp_pos _).le]
+  calc
+    |shiftedGaussianScore w ideal width r| = |w| * exp (-(((r - ideal) / width) ^ 2)) := hEq
+    _ ≤ |w| * exp (-(((cutoff - ideal) / width) ^ 2)) := by
+      apply mul_le_mul_of_nonneg_left
+      · apply exp_le_exp_of_le
+        have hNum : cutoff - ideal ≤ r - ideal := by linarith
+        have hCut_nonneg : 0 ≤ cutoff - ideal := by linarith
+        have hDiv_nonneg : 0 ≤ (cutoff - ideal) / width := by
+          exact div_nonneg hCut_nonneg (le_of_lt hwidth)
+        have hDiv : (cutoff - ideal) / width ≤ (r - ideal) / width := by
+          exact div_le_div_of_nonneg_right hNum (le_of_lt hwidth)
+        have hSq : (((cutoff - ideal) / width) ^ 2) ≤ (((r - ideal) / width) ^ 2) := by
+          nlinarith [hDiv_nonneg, hDiv]
+        linarith
+      · exact abs_nonneg _
+
+/-- Summing nonnegative shifted Gaussian terms is bounded by the sum of their
+    weights. -/
+theorem sum_shiftedGaussianScore_le_sum_weight
+    {A : Type*}
+    (s : Finset A)
+    (weight radius : A → ℝ)
+    (ideal width : ℝ)
+    (hwidth : 0 < width)
+    (hWeight : ∀ a ∈ s, 0 ≤ weight a) :
+    Finset.sum s (fun a => shiftedGaussianScore (weight a) ideal width (radius a))
+      ≤ Finset.sum s (fun a => weight a) := by
+  apply Finset.sum_le_sum
+  intro a ha
+  have hNonnegWeight : 0 ≤ weight a := hWeight a ha
+  have hNonnegTerm : 0 ≤ shiftedGaussianScore (weight a) ideal width (radius a) := by
+    unfold shiftedGaussianScore
+    positivity
+  have hAbs := shiftedGaussianScore_abs_le_abs_weight (weight a) ideal width (radius a) hwidth
+  rw [abs_of_nonneg hNonnegTerm, abs_of_nonneg hNonnegWeight] at hAbs
+  exact hAbs
+
+/-- Summing nonnegative shifted Gaussian tail terms beyond cutoff is bounded by
+    the cutoff tail factor times the sum of their weights. -/
+theorem sum_shiftedGaussian_tail_le_sum_weight
+    {A : Type*}
+    (s : Finset A)
+    (weight radius : A → ℝ)
+    (ideal width cutoff : ℝ)
+    (hwidth : 0 < width)
+    (hcut : ideal ≤ cutoff)
+    (hWeight : ∀ a ∈ s, 0 ≤ weight a)
+    (hRadius : ∀ a ∈ s, cutoff ≤ radius a) :
+    Finset.sum s (fun a => shiftedGaussianScore (weight a) ideal width (radius a))
+      ≤ Finset.sum s (fun a => weight a) * exp (-(((cutoff - ideal) / width) ^ 2)) := by
+  have hPointwise :
+      ∀ a ∈ s,
+        shiftedGaussianScore (weight a) ideal width (radius a)
+          ≤ weight a * exp (-(((cutoff - ideal) / width) ^ 2)) := by
+    intro a ha
+    have hNonnegWeight : 0 ≤ weight a := hWeight a ha
+    have hNonnegTerm : 0 ≤ shiftedGaussianScore (weight a) ideal width (radius a) := by
+      unfold shiftedGaussianScore
+      positivity
+    have hAbs :=
+      shiftedGaussian_tail_bound (weight a) ideal width cutoff (radius a)
+        hwidth hcut (hRadius a ha)
+    rw [abs_of_nonneg hNonnegTerm, abs_of_nonneg hNonnegWeight] at hAbs
+    exact hAbs
+  calc
+    Finset.sum s (fun a => shiftedGaussianScore (weight a) ideal width (radius a))
+        ≤ Finset.sum s (fun a => weight a * exp (-(((cutoff - ideal) / width) ^ 2))) := by
+            apply Finset.sum_le_sum
+            intro a ha
+            exact hPointwise a ha
+    _ = Finset.sum s (fun a => weight a) * exp (-(((cutoff - ideal) / width) ^ 2)) := by
+          rw [Finset.sum_mul]
+
+/-- Exact absolute Gaussian score equals the absolute weight times the Gaussian
+    radial factor. -/
+theorem abs_gaussianScore_eq_absWeight_mul_exp
+    (w β r : ℝ) :
+    |gaussianScore w β r| = |w| * exp (-(β * r) ^ 2) := by
+  unfold gaussianScore
+  rw [abs_mul, abs_of_nonneg (exp_pos _).le]
 
 /-- Error bound: W × exp(-(βR)²) ≤ ε when R ≥ √(ln(W/ε)) / β -/
 theorem gaussian_exp_bound
@@ -156,4 +274,3 @@ theorem gaussianMinCutoff_optimal
 end GaussianDecayBounds
 end Tractability
 end DecisionQuotient
-

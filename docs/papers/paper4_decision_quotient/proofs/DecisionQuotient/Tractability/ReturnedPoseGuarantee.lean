@@ -13,6 +13,7 @@
 -/
 
 import DecisionQuotient.Tractability.ConformerSupportCoverage
+import DecisionQuotient.Tractability.BlindConformerPipelineRefinements
 import DecisionQuotient.Tractability.FormalLocalOptimizer
 import DecisionQuotient.Tractability.NearTieBand
 import DecisionQuotient.Computation.ArrayDSL
@@ -22,6 +23,7 @@ namespace Tractability
 namespace ReturnedPoseGuarantee
 
 open ConformerSupportCoverage
+open BlindConformerPipelineRefinements
 open EnergyRMSDConvergence
 open FiniteTopK
 open NearTieBand
@@ -261,6 +263,87 @@ theorem returned_choice_of_exact_singleton_winner_of_cover_yields_rmsd_target
       basin hn hεTarget hGapBudget
   let w := coherentOptimizerWitness_of_exact_singleton_top1
       (fun a => -runtimeEnergy a) winner hSingleton
+  have hChoiceEq : w.belief.selection.choice = winner := by
+    exact (coherentOptimizerWitness_of_exact_singleton_top1_choice
+      (fun a => -runtimeEnergy a) winner hSingleton).1
+  simpa [w, hChoiceEq] using hWinnerRMSD
+
+/-- Winner-only fast-path contract for patched support-only exact rescoring.
+
+    If the runtime patches every pose outside a certified omitted-attractive support
+    set to the base witness threshold, the exact argmin on that support is strict,
+    and the support was built from theorem-backed omitted-channel lower bounds, then
+    the coherent optimizer witness over the patched runtime family returns a pose
+    satisfying the same RMSD target as the exact library winner. -/
+theorem returned_choice_of_patched_omitted_support_singleton_winner_of_cover_yields_rmsd_target
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (coords : A → CoordSet n)
+    (baseScore exactEnergy omittedBound : A → ℝ)
+    (xStar : CoordSet n)
+    (winner witness : A)
+    (fallback L εCover epsTarget : ℝ)
+    (hEnergy : ∀ a, exactEnergy a = coordEnergy (coords a))
+    (hLower : ∀ a, baseScore a - omittedBound a ≤ exactEnergy a)
+    (hWitness : exactEnergy witness ≤ baseScore witness)
+    (hWinnerMem : winner ∈ canonicalRetain (fun p => baseScore p - omittedBound p) (baseScore witness))
+    (hWinnerStrict : ∀ z,
+      z ∈ canonicalRetain (fun p => baseScore p - omittedBound p) (baseScore witness) →
+      z ≠ winner → exactEnergy winner < exactEnergy z)
+    (hL : 0 ≤ L)
+    (hCover : RMSDSupportCovers ((Finset.univ : Finset A).image coords) εCover)
+    (hεCover : 0 ≤ εCover)
+    (hOpt : IsOptimal (fun x => -coordEnergy x) xStar)
+    (hLip : RMSDLipschitzEnergy coordEnergy L)
+    (basin : CertifiedQuadraticBasin coordEnergy xStar)
+    (hn : 0 < n)
+    (hεTarget : 0 ≤ epsTarget)
+    (hGapBudget : L * εCover ≤ targetEnergyGap basin.μ n epsTarget) :
+    (hFallback : exactEnergy winner < fallback) :
+    let support := canonicalRetain (fun p => baseScore p - omittedBound p) (baseScore witness)
+    let runtimeEnergy := patchedSupportEnergy support exactEnergy fallback
+    let hSingleton : topKSet (fun a => -runtimeEnergy a) 1 = ({winner} : Finset A) := by
+      simpa [runtimeEnergy, energyTopK, support] using
+        patchedSupportEnergy_singleton_of_strict_support_argmin
+          exactEnergy support winner fallback
+          hWinnerMem hWinnerStrict
+          (top1_subset_canonicalRetain_of_omittedAttractiveLowerBound_and_baseWitness
+            baseScore exactEnergy omittedBound witness hLower hWitness)
+          hFallback
+    rmsd ((coherentOptimizerWitness_of_exact_singleton_top1 (fun a => -runtimeEnergy a) winner hSingleton).belief.selection.choice |> coords) xStar ≤ epsTarget := by
+  let support := canonicalRetain (fun p => baseScore p - omittedBound p) (baseScore witness)
+  let runtimeEnergy := patchedSupportEnergy support exactEnergy (baseScore witness)
+  have hWinnerBestExact : IsOptimal exactEnergy winner :=
+    canonicalRetain_argmin_is_global_of_omittedAttractiveLowerBound_and_baseWitness_subset
+      baseScore exactEnergy omittedBound hWinnerMem
+      (fun z hz => by
+        by_cases hEq : z = winner
+        · simpa [hEq]
+        · exact le_of_lt (hWinnerStrict z hz hEq))
+      hLower hWitness
+  have hWinnerMemImage : coords winner ∈ ((Finset.univ : Finset A).image coords) := by
+    exact Finset.mem_image.mpr ⟨winner, Finset.mem_univ _, rfl⟩
+  have hWinnerBestCoord :
+      ∀ z, z ∈ ((Finset.univ : Finset A).image coords) → coordEnergy (coords winner) ≤ coordEnergy z := by
+    intro z hz
+    rcases Finset.mem_image.mp hz with ⟨a, _, rfl⟩
+    have hBest := hWinnerBestExact a
+    have hEw := hEnergy winner
+    have hEa := hEnergy a
+    linarith
+  have hWinnerRMSD : rmsd (coords winner) xStar ≤ epsTarget := by
+    exact exact_library_winner_of_cover_yields_rmsd_target
+      coordEnergy ((Finset.univ : Finset A).image coords)
+      L εCover epsTarget hL hCover hεCover hOpt hLip hWinnerMemImage hWinnerBestCoord
+      basin hn hεTarget hGapBudget
+  have hSingleton : topKSet (fun a => -runtimeEnergy a) 1 = ({winner} : Finset A) := by
+    simpa [runtimeEnergy, energyTopK, support] using
+      patchedSupportEnergy_singleton_of_strict_support_argmin
+        exactEnergy support winner fallback
+        hWinnerMem hWinnerStrict
+        (top1_subset_canonicalRetain_of_omittedAttractiveLowerBound_and_baseWitness
+          baseScore exactEnergy omittedBound witness hLower hWitness)
+        hFallback
+  let w := coherentOptimizerWitness_of_exact_singleton_top1 (fun a => -runtimeEnergy a) winner hSingleton
   have hChoiceEq : w.belief.selection.choice = winner := by
     exact (coherentOptimizerWitness_of_exact_singleton_top1_choice
       (fun a => -runtimeEnergy a) winner hSingleton).1

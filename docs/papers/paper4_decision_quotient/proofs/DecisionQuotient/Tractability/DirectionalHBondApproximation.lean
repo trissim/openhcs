@@ -195,6 +195,55 @@ theorem directionalHBond_angular_factors_tighten_tail
     _ = |w * radial| := by ring
     _ ≤ B := hRadial_bound
 
+/-- A nonnegative directional H-bond term is bounded by its clipped pair-strength
+    envelope when the angular factors lie in `[0,1]`. -/
+theorem directionalHBond_term_le_pairStrength
+    (pairStrength radial donorAngle acceptorAngle : ℝ)
+    (hPair_nonneg : 0 ≤ pairStrength)
+    (hRadial_nonneg : 0 ≤ radial)
+    (hRadial_le : radial ≤ pairStrength)
+    (hDon_nonneg : 0 ≤ donorAngle)
+    (hDon_le_one : donorAngle ≤ 1)
+    (hAcc_nonneg : 0 ≤ acceptorAngle)
+    (hAcc_le_one : acceptorAngle ≤ 1) :
+    radial * donorAngle * acceptorAngle ≤ pairStrength := by
+  have hDonAcc_le_one : donorAngle * acceptorAngle ≤ 1 := by
+    have hstep : donorAngle * acceptorAngle ≤ donorAngle * 1 := by
+      exact mul_le_mul_of_nonneg_left hAcc_le_one hDon_nonneg
+    have hstep' : donorAngle * 1 ≤ 1 * 1 := by
+      exact mul_le_mul_of_nonneg_right hDon_le_one (by positivity)
+    linarith
+  have hProd_le_radial : radial * donorAngle * acceptorAngle ≤ radial := by
+    have htmp : radial * (donorAngle * acceptorAngle) ≤ radial * 1 := by
+      exact mul_le_mul_of_nonneg_left hDonAcc_le_one hRadial_nonneg
+    simpa [mul_assoc] using htmp
+  exact le_trans hProd_le_radial hRadial_le
+
+/-- A nonnegative external weight times a directional H-bond score is bounded by
+    the same weight times the radial factor when both angular factors lie in
+    `[0, 1]`. -/
+theorem weighted_directionalHBond_le_weighted_radial
+    (w radial donorAngle acceptorAngle : ℝ)
+    (hw_nonneg : 0 ≤ w)
+    (hRadial_nonneg : 0 ≤ radial)
+    (hDon_nonneg : 0 ≤ donorAngle)
+    (hDon_le_one : donorAngle ≤ 1)
+    (hAcc_nonneg : 0 ≤ acceptorAngle)
+    (hAcc_le_one : acceptorAngle ≤ 1) :
+    w * directionalHBondScore radial donorAngle acceptorAngle ≤ w * radial := by
+  unfold directionalHBondScore
+  have hDonAcc_le_one : donorAngle * acceptorAngle ≤ 1 := by
+    have hstep : donorAngle * acceptorAngle ≤ donorAngle * 1 := by
+      exact mul_le_mul_of_nonneg_left hAcc_le_one hDon_nonneg
+    have hstep' : donorAngle * 1 ≤ 1 * 1 := by
+      exact mul_le_mul_of_nonneg_right hDon_le_one (by positivity)
+    linarith
+  have hFactor_le : radial * donorAngle * acceptorAngle ≤ radial := by
+    have htmp : radial * (donorAngle * acceptorAngle) ≤ radial * 1 := by
+      exact mul_le_mul_of_nonneg_left hDonAcc_le_one hRadial_nonneg
+    simpa [mul_assoc] using htmp
+  exact mul_le_mul_of_nonneg_left hFactor_le hw_nonneg
+
 /-- Any two finite directional H-bond score families admit a canonical finite-domain discrepancy radius. -/
 noncomputable def finiteDirectionalHBondErrorRadius
     {A : Type u} {S : Type v}

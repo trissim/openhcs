@@ -43,6 +43,13 @@ def _selected_handles(*names: str) -> tuple[str, ...]:
     return names
 
 
+def _merge_theorem_handles(*groups: tuple[str, ...]) -> tuple[str, ...]:
+    merged: list[str] = []
+    for group in groups:
+        merged.extend(group)
+    return tuple(dict.fromkeys(merged))
+
+
 @dataclass(frozen=True)
 class FormalHandleBundle:
     theorem_handles: tuple[str, ...]
@@ -216,7 +223,7 @@ def scoring_family_theorem_handles(
 
 
 def contact_surrogate_theorem_handles() -> tuple[str, ...]:
-    return _prefixed_handles("CT")
+    return _merge_theorem_handles(_prefixed_handles("CT"), ("GD7",))
 
 
 def screened_coulomb_theorem_handles() -> tuple[str, ...]:
@@ -232,7 +239,7 @@ def directional_hbond_theorem_handles() -> tuple[str, ...]:
 
 
 def directional_hbond_finite_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(HB1, HB9, HB10, HB11, HB12, "HB16")
+    return _selected_handles(HB1, HB9, HB10, HB11, HB12, "HB16", "HB18")
 
 
 def attractive_directional_hbond_theorem_handles() -> tuple[str, ...]:
@@ -274,7 +281,7 @@ def pi_stacking_theorem_handles() -> tuple[str, ...]:
 
 
 def attractive_pi_stacking_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(PP6, PP7, PP8, PP9, PP10)
+    return _selected_handles(PP6, PP7, PP8, PP9, PP10, "PP11", "PP12")
 
 
 def pi_cation_theorem_handles() -> tuple[str, ...]:
@@ -282,7 +289,7 @@ def pi_cation_theorem_handles() -> tuple[str, ...]:
 
 
 def attractive_pi_cation_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(PC6, PC7, PC8, PC9, PC10)
+    return _selected_handles(PC6, PC7, PC8, PC9, PC10, "PC11", "PC12")
 
 
 def halogen_bond_theorem_handles() -> tuple[str, ...]:
@@ -290,7 +297,7 @@ def halogen_bond_theorem_handles() -> tuple[str, ...]:
 
 
 def attractive_halogen_bond_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(XB6, XB7, XB8, XB9, XB10)
+    return _selected_handles(XB6, XB7, XB8, XB9, XB10, "XB13", "XB14")
 
 
 def water_mediated_hbond_theorem_handles() -> tuple[str, ...]:
@@ -298,7 +305,7 @@ def water_mediated_hbond_theorem_handles() -> tuple[str, ...]:
 
 
 def attractive_water_mediated_hbond_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(WB6, WB7, WB8, WB9, WB10)
+    return _selected_handles(WB6, WB7, WB8, WB9, WB10, "WB11", "WB12")
 
 
 def attractive_extended_chemistry_theorem_handles() -> tuple[str, ...]:
@@ -383,7 +390,7 @@ def cross_docking_theorem_handles() -> tuple[str, ...]:
 
 
 def directional_metal_coordination_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(DMC1, DMC2, DMC3, DMC4, DMC5)
+    return _selected_handles(DMC1, DMC2, DMC3, DMC4, DMC5, "DMC6")
 
 
 def cooperative_hbond_theorem_handles() -> tuple[str, ...]:
@@ -470,8 +477,49 @@ def seed_budget_minimality_theorem_handles() -> tuple[str, ...]:
     return _selected_handles(SB2, SB5, SB7, BCRP2, ERC43)
 
 
+def rigid_seed_runtime_bridge_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(
+        CSC61,
+        CSC63,
+        CSC64,
+        CSC65,
+        CSC66,
+        CSC67,
+        CSC68,
+        CSC69,
+        CSC70,
+        CSC71,
+        CSC72,
+        CSC73,
+        CSC74,
+        CSC75,
+        CSC76,
+        CSC77,
+        CSC78,
+        CSC79,
+        CSC80,
+        CSC81,
+        CSC82,
+        CSC83,
+        CSC84,
+        CSC85,
+        CSC86,
+        CSC87,
+        CSC88,
+        CSC89,
+        CSC90,
+        CSC91,
+        CSC92,
+    )
+
+
 def rigid_seed_family_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(BD3, BD4, BD7, BD8, BD9, BD10, SD4, SD5, SD8, SD9, SD10)
+    return tuple(
+        dict.fromkeys(
+            _selected_handles(BD3, BD4, BD7, BD8, BD9, BD10, SD4, SD5, SD8, SD9, SD10)
+            + rigid_seed_runtime_bridge_theorem_handles()
+        )
+    )
 
 
 def conformer_coverage_theorem_handles() -> tuple[str, ...]:
@@ -529,7 +577,7 @@ def rich_pruning_delta_theorem_handles() -> tuple[str, ...]:
 
 
 def performance_certificate_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(PERF1, PERF2, PERF3, PERF4, PERF5, PERF6)
+    return _selected_handles(PERF1, PERF2, PERF3, PERF4, PERF5, PERF6, "PERF8", "PERF9")
 
 
 def receptor_flexibility_theorem_handles() -> tuple[str, ...]:

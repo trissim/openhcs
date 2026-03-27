@@ -38,6 +38,19 @@ noncomputable def squaredDisplacement {n : ℕ} (x y : CoordSet n) : ℝ :=
 noncomputable def rmsd {n : ℕ} (x y : CoordSet n) : ℝ :=
   Real.sqrt (squaredDisplacement x y / (n : ℝ))
 
+theorem squaredDisplacement_comm {n : ℕ} (x y : CoordSet n) :
+    squaredDisplacement x y = squaredDisplacement y x := by
+  unfold squaredDisplacement
+  apply Finset.sum_congr rfl
+  intro i _
+  have hnorm : ‖x i - y i‖ = ‖y i - x i‖ := by
+    simpa [dist_eq_norm] using (dist_comm (x i) (y i))
+  exact congrArg (fun t : ℝ => t ^ 2) hnorm
+
+theorem rmsd_comm {n : ℕ} (x y : CoordSet n) : rmsd x y = rmsd y x := by
+  unfold rmsd
+  rw [squaredDisplacement_comm]
+
 /-- Energy gap sufficient for RMSD tolerance `eps` under quadratic growth `μ`. -/
 noncomputable def targetEnergyGap (μ : ℝ) (n : ℕ) (eps : ℝ) : ℝ :=
   μ * (n : ℝ) * eps ^ 2 / 2
