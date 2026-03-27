@@ -33,6 +33,7 @@ from dq_dock_engine.docking.formal_handles import (
     attractive_water_mediated_hbond_theorem_handles,
     contact_surrogate_theorem_handles,
     cooperative_hbond_theorem_handles,
+    directional_metal_coordination_theorem_handles,
     directional_hbond_finite_theorem_handles,
     metal_coordination_cutoff_theorem_handles,
     omitted_channel_bound_theorem_handles,
@@ -708,7 +709,9 @@ class CertifiedMetalCoordinationSpec(CertifiedOptionalInteractionTerm):
     def analytic_cutoff_tail_bound(self) -> float:
         """Metal coordination Gaussian tail: S_max² × exp(-((R-d₀)/σ)²) × N_pairs.
 
-        Lean: MetalCoordinationApproximation.lean::MC3.
+        Lean: MC11-MC13 for the radial Gaussian tail envelope, plus DMC2 since
+        the directional angular factor lies in [0, 1] and can only tighten the
+        tail bound.
         """
         import math
 
@@ -892,7 +895,8 @@ class CertifiedDirectionalHBondSpec(CertifiedOptionalInteractionTerm):
     def analytic_cutoff_tail_bound(self) -> float:
         """H-bond Gaussian tail: S_max² × exp(-((R-d₀)/σ)²) × N_pairs.
 
-        Lean: ThermalFluctuationBounds.lean — Gaussian envelope decay.
+        Lean: radial Gaussian tail envelope plus HB16 (angular factors in [0,1]
+        cannot worsen the radial tail bound).
         """
         import math
 
@@ -1114,13 +1118,7 @@ class CertifiedRichChemistryPlan:
             metal_coordination=self.metal_coordination.zeroed(),
             pairwise_sigma=self.pairwise_sigma,
             cooperative_alpha=0.0,
-            extended_terms=CertifiedExtendedInteractionBundle(
-                terms=tuple(
-                    term
-                    for term in self.extended_terms.terms
-                    if term.__class__.__name__ == "HalogenBondInteractionTerm"
-                )
-            ).filter_active(),
+            extended_terms=CertifiedExtendedInteractionBundle(),
         )
 
     def default_softening_radius(self) -> float:
@@ -1140,16 +1138,33 @@ class CertifiedRichChemistryPlan:
             + self.metal_coordination.analytic_cutoff_tail_bound()
             + sum(t.analytic_cutoff_tail_bound() for t in self.extended_terms.terms)
         )
+        cooperative_channel_abs_bound = max(
+            1.0,
+            float(
+                self.hbond_receptor_donor.receptor_strengths.shape[0]
+                * self.hbond_receptor_donor.ligand_strengths.shape[0]
+            ),
+            float(
+                self.hbond_ligand_donor.receptor_strengths.shape[0]
+                * self.hbond_ligand_donor.ligand_strengths.shape[0]
+            ),
+        )
         cooperative_bound = cooperative_hbond_correction_bound(
             self.cooperative_alpha,
             2,
+            per_channel_abs_bound=cooperative_channel_abs_bound,
         )
         water_bridge_bound = 2.0 if has_water_bridge_channel else 0.0
         cutoff_tail_handles = (
             screened_coulomb_theorem_handles()
             + contact_surrogate_theorem_handles()
             + directional_hbond_finite_theorem_handles()
-            + metal_coordination_cutoff_theorem_handles()
+            + tuple(
+                dict.fromkeys(
+                    metal_coordination_cutoff_theorem_handles()
+                    + directional_metal_coordination_theorem_handles()
+                )
+            )
             + attractive_extended_chemistry_theorem_handles()
         )
         cooperative_active = bool(
@@ -1459,6 +1474,13 @@ def _default_softening_radius(
     return sigma_min
 
 
+@conditionally_certified(
+    "LatticeSum.lean::lj6_tail_bound; HandleAliases.lean::CB5; HandleAliases.lean::CB6; HandleAliases.lean::CB10; HandleAliases.lean::CB11; HandleAliases.lean::CB12; HandleAliases.lean::CB13; HandleAliases.lean::CB14",
+    assumptions=[
+        "Dispatch selects exactly one theorem-backed base-physics branch: certified LJ when electrostatics is absent, or the certified LJ plus conditionally certified real-space Ewald branch when electrostatics is present",
+        "When electrostatics is present, the runtime uses the same exact and coarse real-space Ewald family as the Lean-backed Ewald branch",
+    ],
+)
 def score_certified_batch(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
@@ -1876,16 +1898,20 @@ def total_torsion_strain_bound(barrier_heights: jnp.ndarray) -> float:
 # CHN2: independent_approximates_cooperative — UniformUtilityApprox
 
 
-@certified("CooperativeHBondApproximation.lean::cooperative_correction_bounded")
+@certified(
+    "CooperativeHBondApproximation.lean::cooperative_correction_bounded_of_abs_le"
+)
 def cooperative_hbond_correction_bound(
     alpha: float,
     n_hbonds: int,
+    per_channel_abs_bound: float = 1.0,
 ) -> float:
-    """Upper bound on cooperative correction: |α| · N².
+    """Upper bound on cooperative correction: |α| · (N · B)^2.
 
-    For typical α ≈ 0.2 and N ≈ 5: bound = 0.2 × 25 = 5.0 kcal/mol.
+    `B` is a certified per-channel absolute bound on each aggregated score.
+    With `B=1` this recovers the classical |α|·N² bound.
     """
-    return abs(alpha) * n_hbonds**2
+    return abs(alpha) * (n_hbonds * per_channel_abs_bound) ** 2
 
 
 @jax.jit
@@ -1895,10 +1921,10 @@ def _cooperative_hbond_correction_batch(
 ) -> jnp.ndarray:
     """Cooperative correction: α · Σᵢ<ⱼ sᵢ·sⱼ for each pose.
 
-    hbond_scores: (batch, n_hbonds) individual H-bond scores in [0, 1].
+    hbond_scores: (batch, n_hbonds) aggregated H-bond channel scores.
     Returns: (batch,) cooperative correction per pose.
 
-    Certified by CHN1 (bounded by |α|·N²), CHN2 (independent approximates cooperative).
+    Certified by CHN5 (runtime-shape bound on α·(Σs)²), CHN2.
     """
     # Σᵢ Σⱼ sᵢ·sⱼ = (Σ sᵢ)² — use this for efficiency
     sums = jnp.sum(hbond_scores, axis=-1)
@@ -2128,9 +2154,9 @@ def score_certified_contact_batch(
 
 
 @conditionally_certified(
-    "Summary.lean::attractive_metal_coordination_cutoff_certified_top1",
+    "HandleAliases.lean::DMC1; HandleAliases.lean::DMC2; HandleAliases.lean::DMC3; HandleAliases.lean::DMC4; HandleAliases.lean::DMC5",
     assumptions=[
-        "The runtime uses the exact same Gaussian surrogate as the Lean theorem family",
+        "The runtime uses the same directional metal-coordination score family as the Lean theorem: radial Gaussian times an angular factor in [0, 1]",
         "The reported error bound is the exact finite-batch max discrepancy between exact and cutoff metal coordination scores",
     ],
 )
@@ -2305,7 +2331,7 @@ def score_certified_attractive_chemistry_batch(
         poses_coords,
         rich_chemistry_plan.extended_terms,
     )
-    # CHN1/CHN2: cooperative H-bond correction α·(Σs)²
+    # CHN5/CHN2: cooperative H-bond correction α·(Σs)²
     # hbond scores are raw (positive = attractive), stack for cooperative calc
     cooperative_correction = _cooperative_hbond_correction_batch(
         jnp.stack(
@@ -2315,8 +2341,21 @@ def score_certified_attractive_chemistry_batch(
         rich_chemistry_plan.cooperative_alpha,
     )
     n_hbond_channels = 2
+    per_channel_abs_bound = max(
+        1.0,
+        float(
+            rich_chemistry_plan.hbond_receptor_donor.receptor_strengths.shape[0]
+            * rich_chemistry_plan.hbond_receptor_donor.ligand_strengths.shape[0]
+        ),
+        float(
+            rich_chemistry_plan.hbond_ligand_donor.receptor_strengths.shape[0]
+            * rich_chemistry_plan.hbond_ligand_donor.ligand_strengths.shape[0]
+        ),
+    )
     cooperative_error = cooperative_hbond_correction_bound(
-        rich_chemistry_plan.cooperative_alpha, n_hbond_channels
+        rich_chemistry_plan.cooperative_alpha,
+        n_hbond_channels,
+        per_channel_abs_bound=per_channel_abs_bound,
     )
     return _combine_certified_batches(
         CertifiedBatchResult(

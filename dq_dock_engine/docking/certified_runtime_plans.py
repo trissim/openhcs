@@ -40,8 +40,14 @@ def _cover_stats_against_selected_subset(
     return axis_half_widths, float(np.max(distances))
 
 
+class PoseSpecificImprovementBudgetKind(str, Enum):
+    ACTIVE_SUBSET = "active_subset"
+    RIGID_LOCAL = "rigid_local"
+
+
 def _validate_pose_budget_shape(
     *,
+    budget_kind: PoseSpecificImprovementBudgetKind,
     active_subset_source: str,
     theorem_handles: tuple[str, ...],
     active_torsion_mask: tuple[bool, ...],
@@ -49,13 +55,19 @@ def _validate_pose_budget_shape(
     total_budget: float,
 ) -> None:
     _ensure_handle_provenance(theorem_handles, owner=active_subset_source)
+    _ensure_nonnegative(total_budget, field_name="total_budget")
+    if budget_kind == PoseSpecificImprovementBudgetKind.RIGID_LOCAL:
+        if active_torsion_mask or per_bond_local_bounds:
+            raise ValueError(
+                "rigid_local pose budgets must not carry torsion-mask or per-bond data"
+            )
+        return
     if len(active_torsion_mask) != len(per_bond_local_bounds):
         raise ValueError(
             "active_torsion_mask and per_bond_local_bounds must have matching lengths"
         )
     for index, bound in enumerate(per_bond_local_bounds):
         _ensure_nonnegative(bound, field_name=f"per_bond_local_bounds[{index}]")
-    _ensure_nonnegative(total_budget, field_name="total_budget")
     expected_total = sum(
         bound
         for is_active, bound in zip(
@@ -327,9 +339,13 @@ class PoseSpecificImprovementBudget:
     active_subset_source: str
     theorem_handles: tuple[str, ...]
     witness_handles: tuple[str, ...] = ()
+    kind: PoseSpecificImprovementBudgetKind = (
+        PoseSpecificImprovementBudgetKind.ACTIVE_SUBSET
+    )
 
     def __post_init__(self) -> None:
         _validate_pose_budget_shape(
+            budget_kind=self.kind,
             active_subset_source=self.active_subset_source,
             theorem_handles=self.theorem_handles,
             active_torsion_mask=self.active_torsion_mask,
@@ -344,6 +360,7 @@ class PoseSpecificImprovementBudget:
     ) -> "PoseSpecificImprovementBudget":
         return cls(
             pose_index=budget.pose_index,
+            kind=PoseSpecificImprovementBudgetKind.ACTIVE_SUBSET,
             active_torsion_indices=budget.active_torsion_indices,
             active_torsion_mask=budget.active_torsion_mask,
             per_bond_local_bounds=budget.per_bond_local_bounds,
@@ -377,6 +394,10 @@ class PoseSpecificImprovementBudgetFamily:
     def totals_array(self) -> np.ndarray:
         return np.asarray(self.totals, dtype=np.dtype("float32"))
 
+    @property
+    def pose_indices(self) -> tuple[int | None, ...]:
+        return tuple(budget.pose_index for budget in self.budgets)
+
     @classmethod
     def from_active_subset_family(
         cls,
@@ -390,6 +411,16 @@ class PoseSpecificImprovementBudgetFamily:
             theorem_handles=family.theorem_handles,
             witness_handles=family.witness_handles,
         )
+
+    def debug_summary(self) -> dict[str, object]:
+        return {
+            "budget_count": len(self.budgets),
+            "max_total_budget": self.max_total_budget,
+            "totals": self.totals,
+            "pose_indices": self.pose_indices,
+            "kinds": tuple(dict.fromkeys(budget.kind.value for budget in self.budgets)),
+            "theorem_handles": self.theorem_handles,
+        }
 
 
 @dataclass(frozen=True)
@@ -405,6 +436,7 @@ class CertifiedActiveSubsetBudget:
 
     def __post_init__(self) -> None:
         _validate_pose_budget_shape(
+            budget_kind=PoseSpecificImprovementBudgetKind.ACTIVE_SUBSET,
             active_subset_source=self.active_subset_source,
             theorem_handles=self.theorem_handles,
             active_torsion_mask=self.active_torsion_mask,
@@ -467,6 +499,7 @@ class CertifiedRigidSeedRegionKind(str, Enum):
 class CertifiedRigidSeedFamilyPlan:
     region_kind: CertifiedRigidSeedRegionKind
     pose_count: int
+    adequate_pose_count: int
     translation_point_count: int
     lattice_resolution: int
     quaternion_count: int
@@ -485,6 +518,7 @@ class CertifiedRigidSeedFamilyPlan:
         _ensure_handle_provenance(self.theorem_handles, owner=self.region_kind.value)
         for field_name, value in (
             ("pose_count", self.pose_count),
+            ("adequate_pose_count", self.adequate_pose_count),
             ("translation_point_count", self.translation_point_count),
             ("lattice_resolution", self.lattice_resolution),
             ("quaternion_count", self.quaternion_count),
@@ -503,6 +537,10 @@ class CertifiedRigidSeedFamilyPlan:
         if self.translation_point_count * self.quaternion_count < self.pose_count:
             raise ValueError(
                 "translation_point_count * quaternion_count must cover pose_count"
+            )
+        if self.adequate_pose_count > self.pose_count:
+            raise ValueError(
+                "adequate_pose_count must not exceed the realized pose_count"
             )
         if self.region_kind == CertifiedRigidSeedRegionKind.BOX:
             if self.box_center is None or self.box_size is None:
@@ -639,6 +677,7 @@ class CertifiedRigidSeedFamilyPlan:
         return {
             "region_kind": self.region_kind.value,
             "pose_count": self.pose_count,
+            "adequate_pose_count": self.adequate_pose_count,
             "translation_point_count": self.translation_point_count,
             "lattice_resolution": self.lattice_resolution,
             "quaternion_count": self.quaternion_count,
@@ -884,6 +923,11 @@ class CertifiedPipelineExecutionPlan:
                 if self.active_subset_budget_family is None
                 else self.active_subset_budget_family.debug_summary()
             ),
+            "improvement_budget_family": (
+                None
+                if self.improvement_budget_family is None
+                else self.improvement_budget_family.debug_summary()
+            ),
             "refinement_pose_indices": self.refinement_pose_indices,
             "native_witness_debug": self.native_witness_debug,
             "theorem_handles": self.theorem_handles,
@@ -911,9 +955,9 @@ class CertifiedSeedBudgetCandidate:
             raise ValueError(f"budget must be positive, got {self.budget}")
         _ensure_nonnegative(self.capture_rmsd, field_name="capture_rmsd")
         if self.rigid_seed_family_plan is not None:
-            if self.rigid_seed_family_plan.pose_count != self.budget:
+            if self.rigid_seed_family_plan.adequate_pose_count != self.budget:
                 raise ValueError(
-                    "rigid_seed_family_plan.pose_count must match the candidate budget"
+                    "rigid_seed_family_plan.adequate_pose_count must match the candidate budget"
                 )
 
     def debug_summary(self) -> dict[str, object]:

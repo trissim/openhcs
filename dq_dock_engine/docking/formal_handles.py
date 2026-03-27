@@ -232,7 +232,7 @@ def directional_hbond_theorem_handles() -> tuple[str, ...]:
 
 
 def directional_hbond_finite_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(HB1, HB9, HB10, HB11, HB12)
+    return _selected_handles(HB1, HB9, HB10, HB11, HB12, "HB16")
 
 
 def attractive_directional_hbond_theorem_handles() -> tuple[str, ...]:
@@ -387,7 +387,7 @@ def directional_metal_coordination_theorem_handles() -> tuple[str, ...]:
 
 
 def cooperative_hbond_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(CHN1, CHN2, CHN3, CHN4)
+    return _selected_handles(CHN1, CHN2, CHN3, CHN4, "CHN5")
 
 
 def explicit_water_placement_theorem_handles() -> tuple[str, ...]:
@@ -399,7 +399,24 @@ def softened_lj_shared_base_delta_theorem_handles() -> tuple[str, ...]:
 
 
 def omitted_channel_bound_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(BCRC4, BCRC5, BCRC6, CHN1, CHN2, EWP6)
+    return _selected_handles(
+        BCRC4,
+        BCRC5,
+        BCRC6,
+        BCRC7,
+        BCRC8,
+        BCRC9,
+        BCRC10,
+        BCRC11,
+        BCRC12,
+        BCRC13,
+        BCRC14,
+        BCRC15,
+        CHN1,
+        CHN2,
+        "CHN5",
+        EWP6,
+    )
 
 
 def pose_specific_improvement_budget_theorem_handles() -> tuple[str, ...]:
@@ -413,8 +430,35 @@ def pose_specific_improvement_budget_theorem_handles() -> tuple[str, ...]:
         LJ24,
         LJ25,
         LJ26,
+        LJ27,
+        LJ28,
         CB5,
         CB6,
+        CB15,
+        CB16,
+        CB17,
+        CB18,
+        CB19,
+    )
+
+
+def rigid_posewise_improvement_budget_theorem_handles() -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            support_expansion_theorem_handles()
+            + _selected_handles(
+                LJ24,
+                LJ25,
+                LJ26,
+                LJ27,
+                LJ28,
+                CB5,
+                CB6,
+                CB18,
+                CB19,
+            )
+            + omitted_channel_bound_theorem_handles()
+        )
     )
 
 

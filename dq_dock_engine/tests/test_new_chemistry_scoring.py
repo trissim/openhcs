@@ -38,6 +38,8 @@ from dq_dock_engine.docking.formal_handles import (
     support_expansion_theorem_handles,
     topk_bridge_theorem_handles,
 )
+from dq_dock_engine.docking.scoring_context import CertifiedScoringContext
+from dq_dock_engine.proof_status import ProofStatus, get_status, get_theorem
 from dq_dock_engine.docking.scoring import (
     CertifiedContactSurrogateSpec,
     CertifiedDirectionalHBondSpec,
@@ -192,7 +194,7 @@ def test_new_chemistry_handle_helpers_surface_new_theorem_families() -> None:
         "CT6",
     }
     assert {"SC1", "SC6"}.issubset(set(screened_coulomb_theorem_handles()))
-    assert {"HB1", "HB9", "HB10", "HB11", "HB12"}.issubset(
+    assert {"HB1", "HB9", "HB10", "HB11", "HB12", "HB16"}.issubset(
         set(directional_hbond_finite_theorem_handles())
     )
     assert {"AH1", "AH8"}.issubset(set(attractive_directional_hbond_theorem_handles()))
@@ -246,9 +248,16 @@ def test_new_chemistry_handle_helpers_surface_new_theorem_families() -> None:
     assert {"BCRC4", "BCRC6", "EWP6"}.issubset(
         set(omitted_channel_bound_theorem_handles())
     )
-    assert {"BCRC1", "BCRC2", "CSC47"} == set(
-        pose_specific_improvement_budget_theorem_handles()
-    )
+    assert {
+        "BCRC1",
+        "BCRC2",
+        "CSC47",
+        "LSA10",
+        "LJ26",
+        "LJ27",
+        "LJ28",
+        "CB19",
+    }.issubset(set(pose_specific_improvement_budget_theorem_handles()))
     assert {"BCPO1", "BCRP1", "BCRC3"} == set(joint_pruning_budget_optimality_handles())
     assert {"SB2", "SB7", "BCRP2", "ERC43"}.issubset(
         set(seed_budget_minimality_theorem_handles())
@@ -585,7 +594,7 @@ def test_directional_hbond_spec_accepts_site_based_geometry() -> None:
 
 def test_ligand_strain_handles_exist() -> None:
     handles = ligand_strain_theorem_handles()
-    assert len(handles) == 8
+    assert len(handles) == 10
     assert handles[0] == "LSA1"
 
 
@@ -597,8 +606,9 @@ def test_directional_metal_coordination_handles_exist() -> None:
 
 def test_cooperative_hbond_handles_exist() -> None:
     handles = cooperative_hbond_theorem_handles()
-    assert len(handles) == 4
+    assert len(handles) == 5
     assert handles[0] == "CHN1"
+    assert "CHN5" in handles
 
 
 def test_explicit_water_placement_handles_exist() -> None:
@@ -612,6 +622,48 @@ def test_receptor_flexibility_handles_exist() -> None:
     handles = receptor_flexibility_theorem_handles()
     assert len(handles) == 6
     assert handles[0] == "RFE1"
+
+
+def test_metal_coordination_batch_proof_metadata_uses_directional_handles() -> None:
+    assert (
+        get_status(scoring.score_certified_metal_coordination_batch)
+        == ProofStatus.CONDITIONALLY_CERTIFIED
+    )
+    theorem = get_theorem(scoring.score_certified_metal_coordination_batch)
+    assert "HandleAliases.lean::DMC1" in theorem
+    assert (
+        "Summary.lean::attractive_metal_coordination_cutoff_certified_top1"
+        not in theorem
+    )
+
+
+def test_score_certified_batch_proof_metadata_covers_base_dispatch() -> None:
+    assert (
+        get_status(scoring.score_certified_batch) == ProofStatus.CONDITIONALLY_CERTIFIED
+    )
+    theorem = get_theorem(scoring.score_certified_batch)
+    assert "LatticeSum.lean::lj6_tail_bound" in theorem
+    assert "HandleAliases.lean::CB10" in theorem
+
+
+def test_scoring_context_exact_batch_proof_metadata_mentions_water_and_flex() -> None:
+    assert (
+        get_status(CertifiedScoringContext.score_exact_batch)
+        == ProofStatus.CONDITIONALLY_CERTIFIED
+    )
+    theorem = get_theorem(CertifiedScoringContext.score_exact_batch)
+    assert "HandleAliases.lean::EWP3" in theorem
+    assert "HandleAliases.lean::RFE2" in theorem
+
+
+def test_scoring_context_softened_batch_proof_metadata_mentions_rich_chain() -> None:
+    assert (
+        get_status(CertifiedScoringContext.score_softened_batch)
+        == ProofStatus.CONDITIONALLY_CERTIFIED
+    )
+    theorem = get_theorem(CertifiedScoringContext.score_softened_batch)
+    assert "HandleAliases.lean::XR6" in theorem
+    assert "HandleAliases.lean::EWP3" in theorem
 
 
 # =========================================================================
@@ -700,9 +752,18 @@ def test_directional_metal_angular_tightens_tail() -> None:
 
 
 def test_cooperative_correction_bound() -> None:
-    """CHN1: |α · Σ fᵢ·fⱼ| ≤ |α| · N²."""
+    """CHN5: |α · (Σf)^2| ≤ |α| · (N·B)^2."""
     bound = cooperative_hbond_correction_bound(alpha=0.2, n_hbonds=5)
     assert np.isclose(bound, 0.2 * 25)
+
+
+def test_cooperative_correction_bound_with_channel_abs_bound() -> None:
+    bound = cooperative_hbond_correction_bound(
+        alpha=0.2,
+        n_hbonds=2,
+        per_channel_abs_bound=3.0,
+    )
+    assert np.isclose(bound, 0.2 * (2 * 3.0) ** 2)
 
 
 def test_cooperative_correction_batch_bounded() -> None:

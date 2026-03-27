@@ -10,6 +10,7 @@ import pytest
 
 from dq_dock_engine.docking.conformer_search import (
     BranchAndBoundConfig,
+    CertifiedCellLowerBoundState,
     EnergyLowerBound,
     RigidBodyKinematics,
     RotatableBond,
@@ -382,6 +383,159 @@ class TestBranchAndBound:
         )
 
         assert len(result.conformer_coords) >= 1
+
+    def test_root_cell_bound_state_can_relax_pruning_with_omission_budget(self):
+        score_calls = 0
+
+        def score_fn(coords: jnp.ndarray) -> float:
+            nonlocal score_calls
+            score_calls += 1
+            return 1.0
+
+        base_coords = jnp.array([[1.0, 0.0, 0.0]], dtype=jnp.float32)
+        bonds = (RotatableBond(0, 0, (0,), max_arm_length=1.0),)
+        kine = build_torsion_kinematics(bonds, np.array([[1.0, 0.0, 0.0]]), n_atoms=1)
+        initial_cell = TorsionCell(
+            lower=jnp.array([-jnp.pi]),
+            upper=jnp.array([jnp.pi]),
+        )
+        config = BranchAndBoundConfig(
+            max_cells=8,
+            min_cell_radius=0.1,
+            score_lipschitz_constant=0.0,
+            max_conformers=5,
+            per_bond_lipschitz=(0.0,),
+        )
+
+        result = branch_and_bound_search(
+            kinematics=kine,
+            base_coords=base_coords,
+            score_fn=score_fn,
+            initial_cell=initial_cell,
+            config=config,
+            pruning_incumbent_energy=0.0,
+            cell_bound_state_fn=lambda cell, center: CertifiedCellLowerBoundState(
+                omitted_energy_bound=2.0,
+                theorem_handles=("BCRC14",),
+                score_is_exact=False,
+            ),
+            score_is_exact=False,
+        )
+
+        assert score_calls > 1
+        assert "BCRC14" in result.theorem_handles
+
+    def test_child_cell_lower_bounds_can_prune_before_enqueue(self):
+        score_calls = 0
+
+        def score_fn(coords: jnp.ndarray) -> float:
+            nonlocal score_calls
+            score_calls += 1
+            return 1.0
+
+        base_coords = jnp.array([[1.0, 0.0, 0.0]], dtype=jnp.float32)
+        bonds = (RotatableBond(0, 0, (0,), max_arm_length=1.0),)
+        kine = build_torsion_kinematics(bonds, np.array([[1.0, 0.0, 0.0]]), n_atoms=1)
+        initial_cell = TorsionCell(
+            lower=jnp.array([-jnp.pi]),
+            upper=jnp.array([jnp.pi]),
+        )
+        config = BranchAndBoundConfig(
+            max_cells=8,
+            min_cell_radius=0.1,
+            score_lipschitz_constant=0.0,
+            max_conformers=5,
+            per_bond_lipschitz=(0.0,),
+        )
+
+        result = branch_and_bound_search(
+            kinematics=kine,
+            base_coords=base_coords,
+            score_fn=score_fn,
+            initial_cell=initial_cell,
+            config=config,
+            pruning_incumbent_energy=0.0,
+            cell_bound_state_fn=lambda cell, center: CertifiedCellLowerBoundState(
+                omitted_energy_bound=2.0,
+                theorem_handles=("BCRC10", "BCRC13"),
+                score_is_exact=False,
+            ),
+            child_cell_bound_state_fn=lambda parent, child: (
+                CertifiedCellLowerBoundState(
+                    cell_lower_bound=2.0,
+                    theorem_handles=("BCRC14", "BCRC15"),
+                    score_is_exact=False,
+                )
+            ),
+            score_is_exact=False,
+        )
+
+        assert score_calls == 1
+        assert "BCRC14" in result.theorem_handles
+        assert "BCRC15" in result.theorem_handles
+
+    def test_child_cell_state_fn_avoids_rebuilding_children_from_scratch(self):
+        score_calls = 0
+        root_state_calls = 0
+        child_state_calls = 0
+
+        def score_fn(coords: jnp.ndarray) -> float:
+            nonlocal score_calls
+            score_calls += 1
+            return 1.0
+
+        def root_state_fn(
+            cell: TorsionCell, center: np.ndarray
+        ) -> CertifiedCellLowerBoundState:
+            nonlocal root_state_calls
+            root_state_calls += 1
+            return CertifiedCellLowerBoundState(
+                omitted_energy_bound=2.0,
+                theorem_handles=("BCRC10",),
+                score_is_exact=False,
+            )
+
+        def child_state_fn(
+            parent: CertifiedCellLowerBoundState, child: TorsionCell
+        ) -> CertifiedCellLowerBoundState:
+            nonlocal child_state_calls
+            child_state_calls += 1
+            return CertifiedCellLowerBoundState(
+                cell_lower_bound=2.0,
+                theorem_handles=("BCRC14",),
+                score_is_exact=False,
+            )
+
+        base_coords = jnp.array([[1.0, 0.0, 0.0]], dtype=jnp.float32)
+        bonds = (RotatableBond(0, 0, (0,), max_arm_length=1.0),)
+        kine = build_torsion_kinematics(bonds, np.array([[1.0, 0.0, 0.0]]), n_atoms=1)
+        initial_cell = TorsionCell(
+            lower=jnp.array([-jnp.pi]),
+            upper=jnp.array([jnp.pi]),
+        )
+        config = BranchAndBoundConfig(
+            max_cells=8,
+            min_cell_radius=0.1,
+            score_lipschitz_constant=0.0,
+            max_conformers=5,
+            per_bond_lipschitz=(0.0,),
+        )
+
+        branch_and_bound_search(
+            kinematics=kine,
+            base_coords=base_coords,
+            score_fn=score_fn,
+            initial_cell=initial_cell,
+            config=config,
+            pruning_incumbent_energy=0.0,
+            cell_bound_state_fn=root_state_fn,
+            child_cell_bound_state_fn=child_state_fn,
+            score_is_exact=False,
+        )
+
+        assert score_calls == 1
+        assert root_state_calls == 1
+        assert child_state_calls == 2
 
     def test_rigid_ligand_returns_single_conformer(self):
         """A ligand with no rotatable bonds returns its input as the only conformer."""

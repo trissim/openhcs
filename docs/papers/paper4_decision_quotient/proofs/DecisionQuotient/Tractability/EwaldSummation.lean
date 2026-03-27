@@ -32,6 +32,14 @@ noncomputable def erfc (x : ℝ) : ℝ := 0
 axiom erfc_abs_le_exp_neg_sq {x : ℝ} (hx : 0 < x) :
   |erfc x| ≤ exp (-(x ^ 2))
 
+/-- Trusted positivity of the complementary error function on positive inputs. -/
+axiom erfc_nonneg {x : ℝ} (hx : 0 < x) :
+  0 ≤ erfc x
+
+/-- Trusted monotonicity of the complementary error function on the nonnegative ray. -/
+axiom erfc_antitone {x y : ℝ} (hx : 0 ≤ x) (hxy : x ≤ y) :
+  erfc y ≤ erfc x
+
 /-- 
   The bare Coulomb interaction potential: V(r) = q_i q_j / r.
   This diverges when summed over an infinite 3D lattice.

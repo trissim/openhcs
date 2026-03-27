@@ -82,6 +82,7 @@ from dq_dock_engine.docking.certified_runtime_plans import (
     InactiveConformerReturnedPoseWitness,
     PoseSpecificImprovementBudget,
     PoseSpecificImprovementBudgetFamily,
+    PoseSpecificImprovementBudgetKind,
     ReturnedPoseProofCase,
 )
 from dq_dock_engine.docking.scoring import (
@@ -126,9 +127,11 @@ from dq_dock_engine.docking.scoring_context import (
 )
 from dq_dock_engine.docking.conformer_search import (
     BranchAndBoundConfig,
+    CertifiedCellLowerBoundState,
     RotatableBond,
     TorsionCell,
     TorsionStrainParams,
+    build_torsion_kinematics,
     compute_raw_lj_lipschitz,
     compute_softened_lipschitz_constant,
     derive_mmff_torsion_current_headroom,
@@ -144,9 +147,11 @@ from dq_dock_engine.docking.formal_handles import (
     branch_and_bound_cross_docking_handles,
     conformer_coverage_theorem_handles,
     joint_pruning_budget_optimality_handles,
+    omitted_channel_bound_theorem_handles,
     optimizer_output_contract_theorem_handles,
     pocket_cross_docking_handles,
     pose_specific_improvement_budget_theorem_handles,
+    rigid_posewise_improvement_budget_theorem_handles,
     returned_pose_energy_guarantee_theorem_handles,
     returned_pose_guarantee_theorem_handles,
     rigid_seed_family_theorem_handles,
@@ -174,6 +179,11 @@ if TYPE_CHECKING:
 def _runtime_profile_enabled() -> bool:
     value = os.environ.get("OPENHCS_PROFILE_RUNTIME", "")
     return value not in ("", "0", "false", "False")
+
+
+def _certify_all_refined_enabled() -> bool:
+    value = os.environ.get("OPENHCS_CERTIFY_ALL_REFINED", "")
+    return value in ("1", "true", "True")
 
 
 def _runtime_profile_log(label: str, start_time: float) -> None:
@@ -326,13 +336,7 @@ def _orientation_margin_theorem_handles(
 ) -> tuple[str, ...]:
     if scoring_context is None or scoring_context.rich_chemistry_plan is None:
         return ()
-    has_halogen = any(
-        term.__class__.__name__ == "HalogenBondInteractionTerm"
-        and bool(np.asarray(term.is_active))
-        for term in scoring_context.rich_chemistry_plan.extended_terms.terms
-    )
-    base_handles: tuple[str, ...] = ("HB15", "AH11")
-    return base_handles + (("XB11",) if has_halogen else ())
+    return ("HB15", "AH11")
 
 
 def _winner_ambiguity_size(
@@ -1114,6 +1118,7 @@ def derive_seed_budget_plan(
         rigid_seed_box=rigid_seed_box,
         certified_binding_site=certified_binding_site,
     )
+    candidate_specs: list[dict[str, object]] = []
     baseline_budget = derive_seed_budget(
         confidence=confidence,
         box_size=box_size,
@@ -1123,28 +1128,20 @@ def derive_seed_budget_plan(
         probe_certificate=None,
         translation_search_volume=translation_search_volume,
     )
-    baseline_family_plan = _derive_rigid_seed_family_plan_for_budget(
-        rigid_seed_box=rigid_seed_box,
-        certified_binding_site=certified_binding_site,
-        budget=baseline_budget,
-        target_rmsd=target_rmsd,
+    candidate_specs.append(
+        {
+            "budget": baseline_budget,
+            "source": "baseline_zero_step_capture",
+            "adequate": True,
+            "capture_rmsd": _certified_capture_rmsd(
+                target_rmsd=target_rmsd,
+                probe_certificate=None,
+            ),
+            "theorem_handles": ("SB2", "SB5"),
+            "probe_rank": None,
+            "provenance_note": None,
+        }
     )
-    baseline_candidate = CertifiedSeedBudgetCandidate(
-        budget=(
-            baseline_budget
-            if baseline_family_plan is None
-            else baseline_family_plan.pose_count
-        ),
-        source="baseline_zero_step_capture",
-        adequate=True,
-        capture_rmsd=_certified_capture_rmsd(
-            target_rmsd=target_rmsd,
-            probe_certificate=None,
-        ),
-        rigid_seed_family_plan=baseline_family_plan,
-        theorem_handles=("SB2", "SB5"),
-    )
-    candidates: list[CertifiedSeedBudgetCandidate] = [baseline_candidate]
     for probe_rank, probe_certificate in probe_candidates:
         if probe_certificate is None:
             continue
@@ -1157,41 +1154,51 @@ def derive_seed_budget_plan(
             probe_certificate=probe_certificate,
             translation_search_volume=translation_search_volume,
         )
-        probe_family_plan = _derive_rigid_seed_family_plan_for_budget(
-            rigid_seed_box=rigid_seed_box,
-            certified_binding_site=certified_binding_site,
-            budget=probe_budget,
-            target_rmsd=target_rmsd,
-        )
-        candidates.append(
-            CertifiedSeedBudgetCandidate(
-                budget=(
-                    probe_budget
-                    if probe_family_plan is None
-                    else probe_family_plan.pose_count
-                ),
-                source="observed_probe_capture",
-                adequate=True,
-                capture_rmsd=_certified_capture_rmsd(
+        candidate_specs.append(
+            {
+                "budget": probe_budget,
+                "source": "observed_probe_capture",
+                "adequate": True,
+                "capture_rmsd": _certified_capture_rmsd(
                     target_rmsd=target_rmsd,
                     probe_certificate=probe_certificate,
                 ),
-                rigid_seed_family_plan=probe_family_plan,
-                theorem_handles=("SB2", "SB5", "SB7", "ERC43"),
-                probe_rank=probe_rank,
-                provenance_note=(
+                "theorem_handles": ("SB2", "SB5", "SB7", "ERC43"),
+                "probe_rank": probe_rank,
+                "provenance_note": (
                     "Probe ranking limits are engineering calibration bounds and do not "
                     "change the selected theorem-backed seed budget fact once a probe "
                     "certificate is admitted"
                 ),
-            )
+            }
         )
     selected_index = min(
-        range(len(candidates)),
-        key=lambda idx: (candidates[idx].budget, idx),
+        range(len(candidate_specs)),
+        key=lambda idx: (cast(int, candidate_specs[idx]["budget"]), idx),
+    )
+    selected_family_plan = _derive_rigid_seed_family_plan_for_budget(
+        rigid_seed_box=rigid_seed_box,
+        certified_binding_site=certified_binding_site,
+        budget=cast(int, candidate_specs[selected_index]["budget"]),
+        target_rmsd=target_rmsd,
+    )
+    candidates = tuple(
+        CertifiedSeedBudgetCandidate(
+            budget=cast(int, spec["budget"]),
+            source=cast(str, spec["source"]),
+            adequate=cast(bool, spec["adequate"]),
+            capture_rmsd=cast(float, spec["capture_rmsd"]),
+            theorem_handles=cast(tuple[str, ...], spec["theorem_handles"]),
+            rigid_seed_family_plan=(
+                selected_family_plan if idx == selected_index else None
+            ),
+            probe_rank=cast(int | None, spec["probe_rank"]),
+            provenance_note=cast(str | None, spec["provenance_note"]),
+        )
+        for idx, spec in enumerate(candidate_specs)
     )
     return CertifiedSeedBudgetPlan(
-        candidates=tuple(candidates),
+        candidates=candidates,
         selected_index=selected_index,
         theorem_handles=seed_budget_minimality_theorem_handles(),
         engineering_probe_pose_cap=SEED_BUDGET_PROBE_POSES,
@@ -1447,6 +1454,177 @@ def _rigid_local_improvement_bound(
     return lipschitz * path_displacement
 
 
+_LJ_SINGULARITY_FLOOR = 1.0e-10
+
+
+def _exact_lj_pair_score_with_floor(
+    *,
+    epsilon_pair: float,
+    sigma: np.ndarray,
+    distance: np.ndarray,
+) -> np.ndarray:
+    positive_mask = distance > _LJ_SINGULARITY_FLOOR
+    score = np.full(distance.shape, 1.0e12, dtype=np.float64)
+    if not np.any(positive_mask):
+        return score
+    sigma_pos = np.asarray(sigma[positive_mask], dtype=np.float64)
+    dist_pos = np.asarray(distance[positive_mask], dtype=np.float64)
+    sr = sigma_pos / dist_pos
+    sr6 = sr**6
+    score[positive_mask] = 4.0 * float(epsilon_pair) * (sr6 * sr6 - sr6)
+    return score
+
+
+def _exact_lj_interval_lower_bound(
+    *,
+    epsilon_pair: float,
+    sigma: np.ndarray,
+    current_distance: np.ndarray,
+    max_displacement: np.ndarray,
+    cutoff_safe: np.ndarray,
+) -> np.ndarray:
+    """Piecewise theorem-backed lower bound for reachable exact LJ on an interval.
+
+    Uses:
+    - `LJ27`: repulsive-side right endpoint lower bound above floor
+    - `LJ28`: repulsive-side right endpoint lower bound with floor clamp
+    - `LJ26`: attractive/tail-side left endpoint lower bound
+    - `LJ25`: global fallback lower bound `-epsilon`
+    """
+
+    reachable_lo = current_distance - max_displacement
+    reachable_hi = current_distance + max_displacement
+    in_range_possible = reachable_lo <= cutoff_safe
+
+    lj_min_distance = np.asarray(
+        sigma * float(2.0 ** (1.0 / 6.0)),
+        dtype=np.float64,
+    )
+    floor_safe = reachable_lo > _LJ_SINGULARITY_FLOOR
+    repulsive_mask = reachable_hi <= lj_min_distance
+    tail_mask = np.logical_and(floor_safe, reachable_lo >= lj_min_distance)
+
+    repulsive_lower = np.minimum(
+        _exact_lj_pair_score_with_floor(
+            epsilon_pair=epsilon_pair,
+            sigma=sigma,
+            distance=reachable_hi,
+        ),
+        (10.0**12.0),
+    )
+    tail_lower = _exact_lj_pair_score_with_floor(
+        epsilon_pair=epsilon_pair,
+        sigma=sigma,
+        distance=reachable_lo,
+    )
+
+    lower_in_range = np.where(
+        repulsive_mask,
+        repulsive_lower,
+        np.where(tail_mask, tail_lower, -epsilon_pair),
+    )
+    return np.where(in_range_possible, lower_in_range, 0.0)
+
+
+def _dyadic_action_path_displacement_bound_per_atom(
+    base_translation_step: float,
+    base_rotation_step_rad: float,
+    atom_arm_lengths: np.ndarray,
+    n_rounds: int,
+) -> np.ndarray:
+    scales = np.array([1.0 / (2.0**k) for k in range(n_rounds)], dtype=np.float64)
+    trans = base_translation_step * scales[None, :]
+    rot = (
+        np.asarray(atom_arm_lengths, dtype=np.float64)[:, None]
+        * base_rotation_step_rad
+        * scales[None, :]
+    )
+    return np.sum(np.maximum(trans, rot), axis=1)
+
+
+def _per_receptor_atom_rigid_omission_bounds(
+    *,
+    epsilon_pair: float,
+    dists: np.ndarray,
+    sigma: np.ndarray,
+    atom_displacements: np.ndarray,
+    cutoff: float,
+    receptor_charges_local: np.ndarray | None,
+    ligand_charges: np.ndarray | None,
+    electro_cutoff: float | None,
+    electro_alpha: float | None,
+    electro_dielectric: float | None,
+) -> np.ndarray:
+    disp = np.broadcast_to(
+        np.asarray(atom_displacements, dtype=np.float64)[None, :], dists.shape
+    )
+    cutoff_safe = np.maximum(cutoff, sigma)
+    current_in_range = dists < cutoff_safe
+    current_lj = np.where(
+        current_in_range,
+        _exact_lj_pair_score_with_floor(
+            epsilon_pair=epsilon_pair,
+            sigma=sigma,
+            distance=dists,
+        ),
+        0.0,
+    )
+    lower_lj = _exact_lj_interval_lower_bound(
+        epsilon_pair=epsilon_pair,
+        sigma=sigma,
+        current_distance=dists,
+        max_displacement=disp,
+        cutoff_safe=cutoff_safe,
+    )
+    bounds = np.sum(np.maximum(0.0, current_lj - lower_lj), axis=1, dtype=np.float64)
+
+    if (
+        receptor_charges_local is not None
+        and ligand_charges is not None
+        and electro_cutoff is not None
+        and electro_alpha is not None
+        and electro_dielectric is not None
+    ):
+        charge_products = (
+            receptor_charges_local[:, None] * ligand_charges[None, :]
+        ) / electro_dielectric
+        electro_current_in_range = dists < electro_cutoff
+        safe_electro_dists = np.where(
+            electro_current_in_range,
+            np.maximum(dists, 1.0e-6),
+            electro_cutoff,
+        )
+        electro_current = np.where(
+            electro_current_in_range,
+            charge_products
+            * scipy_special.erfc(electro_alpha * safe_electro_dists)
+            / safe_electro_dists,
+            0.0,
+        )
+        reach_lo = dists - disp
+        reach_hi = dists + disp
+        electro_lower = np.where(
+            reach_lo > electro_cutoff,
+            0.0,
+            np.where(
+                charge_products < 0.0,
+                charge_products
+                * scipy_special.erfc(electro_alpha * np.maximum(reach_lo, 1.0e-6))
+                / np.maximum(reach_lo, 1.0e-6),
+                charge_products
+                * scipy_special.erfc(electro_alpha * np.maximum(reach_hi, 1.0e-6))
+                / np.maximum(reach_hi, 1.0e-6),
+            ),
+        )
+        bounds += np.sum(
+            np.maximum(0.0, electro_current - electro_lower),
+            axis=1,
+            dtype=np.float64,
+        )
+
+    return np.asarray(bounds, dtype=np.float64)
+
+
 def _posewise_rigid_local_improvement_bounds(
     request: "PipelineDockingRequest",
     scoring_context: CertifiedScoringContext,
@@ -1457,56 +1635,201 @@ def _posewise_rigid_local_improvement_bounds(
     ligand_radius: float,
     n_rounds: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    from dq_dock_engine.docking.formal_surrogates import (
-        select_exact_receptor_subset_for_local_family,
-    )
+    from dq_dock_engine.docking.scoring import _EPSILON_KCAL_MOL
 
-    path_displacement = _dyadic_action_path_displacement_bound(
-        base_translation_step,
-        base_rotation_step_rad,
-        ligand_radius,
-        n_rounds,
+    global_improvement_cap = _rigid_local_improvement_bound(
+        request,
+        scoring_context,
+        base_translation_step=base_translation_step,
+        base_rotation_step_rad=base_rotation_step_rad,
+        ligand_radius=ligand_radius,
+        n_rounds=n_rounds,
     )
     posewise_bounds = np.empty((int(poses_coords.shape[0]),), dtype=np.float32)
-    clearance_safe_mask = np.zeros((int(poses_coords.shape[0]),), dtype=bool)
+    clearance_safe_mask = np.ones((int(poses_coords.shape[0]),), dtype=bool)
     posewise_clearance = np.empty((int(poses_coords.shape[0]),), dtype=np.float32)
-    receptor_coords = request.protein_coords
-    receptor_radii = request.receptor_radii
-    ligand_radii = request.ligand_ctx.base_radii
+    receptor_coords = np.asarray(
+        jax.device_get(request.protein_coords), dtype=np.float32
+    )
+    receptor_radii = np.asarray(
+        jax.device_get(request.receptor_radii), dtype=np.float32
+    )
+    ligand_radii = np.asarray(
+        jax.device_get(request.ligand_ctx.base_radii), dtype=np.float32
+    )
+    max_ligand_radius = float(np.max(ligand_radii))
+    poses_np = np.asarray(jax.device_get(poses_coords), dtype=np.float32)
+    cutoff = float(compute_certified_cutoff(request.target_error))
+    epsilon_pair = float(_EPSILON_KCAL_MOL / 4.0)
 
-    for idx in range(int(poses_coords.shape[0])):
-        retained_indices = select_exact_receptor_subset_for_local_family(
-            receptor_coords=receptor_coords,
-            receptor_radii=receptor_radii,
-            reference_coords_batch=poses_coords[idx : idx + 1],
-            ligand_radii=ligand_radii,
-            translation_step=base_translation_step,
-            target_error=request.target_error,
+    receptor_charges = ligand_charges = None
+    electro_cutoff = electro_alpha = electro_dielectric = None
+    ligand_charge_sum_abs = 0.0
+    if scoring_context.electrostatics is not None:
+        receptor_charges = np.asarray(
+            jax.device_get(scoring_context.electrostatics.receptor_charges),
+            dtype=np.float32,
         )
-        subset_context = scoring_context.receptor_subset(retained_indices)
-        subset_lipschitz = _derive_subset_optimization_score_lipschitz_constant(
-            receptor_radii=receptor_radii[retained_indices],
-            ligand_radii=ligand_radii,
-            electrostatics=subset_context.electrostatics,
+        ligand_charges = np.asarray(
+            jax.device_get(scoring_context.electrostatics.ligand_charges),
+            dtype=np.float32,
         )
-        receptor_subset_coords = np.asarray(
-            jax.device_get(receptor_coords[retained_indices]), dtype=np.float32
+        electro_cutoff = float(scoring_context.electrostatics.cutoff)
+        electro_alpha = float(scoring_context.electrostatics.alpha)
+        electro_dielectric = float(scoring_context.electrostatics.dielectric)
+        ligand_charge_sum_abs = float(np.sum(np.abs(ligand_charges)))
+
+    for idx, pose_coords_np in enumerate(poses_np):
+        pose_center = np.mean(pose_coords_np, axis=0)
+        atom_arm_lengths = np.linalg.norm(
+            pose_coords_np - pose_center[None, :], axis=-1
         )
-        receptor_subset_radii = np.asarray(
-            jax.device_get(receptor_radii[retained_indices]), dtype=np.float32
+        atom_path_displacement = _dyadic_action_path_displacement_bound_per_atom(
+            base_translation_step,
+            base_rotation_step_rad,
+            atom_arm_lengths,
+            n_rounds,
         )
-        pose_coords_np = np.asarray(jax.device_get(poses_coords[idx]), dtype=np.float32)
-        pairwise_dists = np.linalg.norm(
-            receptor_subset_coords[:, None, :] - pose_coords_np[None, :, :], axis=-1
+        path_displacement = float(np.max(atom_path_displacement))
+        ligand_extent = float(np.max(atom_arm_lengths))
+        center_distances = np.linalg.norm(
+            receptor_coords - pose_center[None, :], axis=-1
         )
-        pairwise_sigma = 0.8 * (
-            receptor_subset_radii[:, None]
-            + np.asarray(jax.device_get(ligand_radii), dtype=np.float32)[None, :]
+        safe_cutoff_center = np.maximum(cutoff, receptor_radii + max_ligand_radius)
+        support_radius = ligand_extent + path_displacement + safe_cutoff_center
+        retained_mask = center_distances <= support_radius
+        if not bool(np.any(retained_mask)):
+            retained_mask[int(np.argmin(center_distances))] = True
+
+        receptor_coords_local = receptor_coords[retained_mask]
+        receptor_radii_local = receptor_radii[retained_mask]
+        receptor_charges_local = (
+            None if receptor_charges is None else receptor_charges[retained_mask]
         )
-        clearance = float(np.min(pairwise_dists - pairwise_sigma))
-        posewise_clearance[idx] = np.float32(clearance)
-        clearance_safe_mask[idx] = clearance > path_displacement
-        posewise_bounds[idx] = np.float32(subset_lipschitz * path_displacement)
+
+        local_lj_lipschitz = 0.0
+        local_electro_lipschitz = 0.0
+        local_improvement_cap = global_improvement_cap
+
+        dists = np.linalg.norm(
+            receptor_coords_local[:, None, :] - pose_coords_np[None, :, :],
+            axis=-1,
+        )
+        sigma = receptor_radii_local[:, None] + ligand_radii[None, :]
+        disp = np.broadcast_to(atom_path_displacement[None, :], dists.shape)
+        cutoff_safe = np.maximum(cutoff, sigma)
+        in_range_possible = (dists - disp) <= cutoff_safe
+        if bool(np.any(in_range_possible)):
+            min_sigma_interacting = float(np.min(sigma[in_range_possible]))
+            local_lj_lipschitz = compute_raw_lj_lipschitz(
+                _EPSILON_KCAL_MOL,
+                min_sigma_interacting,
+            )
+            if (
+                receptor_charges_local is not None
+                and electro_alpha is not None
+                and electro_dielectric is not None
+                and ligand_charge_sum_abs > 0.0
+            ):
+                receptor_active_mask = np.any(in_range_possible, axis=1)
+                receptor_charge_sum_abs = float(
+                    np.sum(np.abs(receptor_charges_local[receptor_active_mask]))
+                )
+                if receptor_charge_sum_abs > 0.0:
+                    radial_bound = (2.0 * electro_alpha) / (
+                        math.sqrt(math.pi) * min_sigma_interacting
+                    ) + 1.0 / (min_sigma_interacting**2)
+                    local_electro_lipschitz = (
+                        (receptor_charge_sum_abs * ligand_charge_sum_abs)
+                        / electro_dielectric
+                    ) * radial_bound
+        local_improvement_cap = min(
+            global_improvement_cap,
+            (local_lj_lipschitz + local_electro_lipschitz) * path_displacement,
+        )
+        posewise_clearance[idx] = np.float32(np.min(dists - sigma))
+
+        omission_bounds = _per_receptor_atom_rigid_omission_bounds(
+            epsilon_pair=epsilon_pair,
+            dists=dists,
+            sigma=sigma,
+            atom_displacements=atom_path_displacement,
+            cutoff=cutoff,
+            receptor_charges_local=receptor_charges_local,
+            ligand_charges=ligand_charges,
+            electro_cutoff=electro_cutoff,
+            electro_alpha=electro_alpha,
+            electro_dielectric=electro_dielectric,
+        )
+        local_bound = float(np.sum(omission_bounds))
+
+        tail_interval_mask = np.logical_and(
+            dists - disp >= sigma,
+            dists - disp > _LJ_SINGULARITY_FLOOR,
+        )
+        if bool(np.all(np.logical_or(~in_range_possible, tail_interval_mask))):
+            tail_lj_cap = float(
+                np.sum(
+                    np.where(
+                        in_range_possible,
+                        (
+                            24.0
+                            * epsilon_pair
+                            / np.maximum(dists - disp, _LJ_SINGULARITY_FLOOR)
+                        )
+                        * disp,
+                        0.0,
+                    ),
+                    dtype=np.float64,
+                )
+            )
+            local_improvement_cap = min(
+                local_improvement_cap,
+                tail_lj_cap + local_electro_lipschitz * path_displacement,
+            )
+
+        if omission_bounds.shape[0] > 1:
+            local_subset, omitted_bound = _select_receptor_subset_by_omission_budget(
+                omission_bounds,
+                omission_budget=request.target_error,
+            )
+            if int(local_subset.shape[0]) < omission_bounds.shape[0]:
+                subset_idx = np.asarray(local_subset, dtype=np.int32)
+                subset_radii = receptor_radii_local[subset_idx]
+                subset_sigma = subset_radii[:, None] + ligand_radii[None, :]
+                subset_in_range = in_range_possible[subset_idx]
+                subset_lj_lipschitz = 0.0
+                if bool(np.any(subset_in_range)):
+                    subset_lj_lipschitz = compute_raw_lj_lipschitz(
+                        _EPSILON_KCAL_MOL,
+                        float(np.min(subset_sigma[subset_in_range])),
+                    )
+                subset_electro_lipschitz = 0.0
+                if (
+                    receptor_charges_local is not None
+                    and electro_alpha is not None
+                    and electro_dielectric is not None
+                    and ligand_charge_sum_abs > 0.0
+                    and bool(np.any(subset_in_range))
+                ):
+                    subset_charge_sum_abs = float(
+                        np.sum(np.abs(receptor_charges_local[subset_idx]))
+                    )
+                    if subset_charge_sum_abs > 0.0:
+                        r_min_subset = float(np.min(subset_sigma[subset_in_range]))
+                        radial_bound_subset = (2.0 * electro_alpha) / (
+                            math.sqrt(math.pi) * r_min_subset
+                        ) + 1.0 / (r_min_subset**2)
+                        subset_electro_lipschitz = (
+                            (subset_charge_sum_abs * ligand_charge_sum_abs)
+                            / electro_dielectric
+                        ) * radial_bound_subset
+                local_improvement_cap = min(
+                    local_improvement_cap,
+                    (subset_lj_lipschitz + subset_electro_lipschitz) * path_displacement
+                    + float(omitted_bound),
+                )
+        posewise_bounds[idx] = np.float32(min(local_bound, local_improvement_cap))
     return posewise_bounds, clearance_safe_mask, posewise_clearance
 
 
@@ -2236,6 +2559,7 @@ def _probe_seed_budget_certificate(
             rigid_seed_family_plan=_derive_request_rigid_seed_family_plan(
                 request,
                 n_poses=SEED_BUDGET_PROBE_POSES,
+                enforce_target_translation_cover_radius=False,
             ),
         ),
     )
@@ -2297,6 +2621,13 @@ def _probe_seed_budget_certificate(
                     ligand_radius=ligand_radius,
                     n_torsions=n_torsions,
                     probe_certificate=item[1],
+                    translation_search_volume=_translation_search_volume_for_seed_family(
+                        box_size=probe_request.box.size,
+                        rigid_seed_box=probe_request.box,
+                        certified_binding_site=_resolved_certified_seed_binding_site(
+                            probe_request
+                        ),
+                    ),
                 ),
                 item[0],
             ),
@@ -2349,10 +2680,10 @@ class DockingRequestBase:
             if (
                 self.seed_budget_plan is not None
                 and self.seed_budget_plan.selected_budget
-                != self.rigid_seed_family_plan.pose_count
+                != self.rigid_seed_family_plan.adequate_pose_count
             ):
                 raise ValueError(
-                    "rigid_seed_family_plan.pose_count must agree with the selected seed budget"
+                    "rigid_seed_family_plan.adequate_pose_count must agree with the selected seed budget"
                 )
             return self.rigid_seed_family_plan.pose_count
         if self.seed_budget_plan is not None:
@@ -3228,6 +3559,7 @@ def _derive_request_rigid_seed_family_plan(
     request: DockingRequestBase,
     *,
     n_poses: int,
+    enforce_target_translation_cover_radius: bool = True,
 ) -> CertifiedRigidSeedFamilyPlan:
     from dq_dock_engine.docking.formal_sampling import (
         derive_certified_rigid_seed_family_plan,
@@ -3238,7 +3570,9 @@ def _derive_request_rigid_seed_family_plan(
         n_poses,
         certified_binding_site=_resolved_certified_seed_binding_site(request),
         target_translation_cover_radius=(
-            None if request.config is None else request.config.target_rmsd
+            None
+            if request.config is None or not enforce_target_translation_cover_radius
+            else request.config.target_rmsd
         ),
     )
 
@@ -3944,6 +4278,62 @@ def _posewise_improvement_budget_family(
     ).as_pose_specific_improvement_family()
 
 
+def _posewise_rigid_improvement_budget_family(
+    request: "PipelineDockingRequest",
+    scoring_context: CertifiedScoringContext,
+    *,
+    poses_coords: jnp.ndarray,
+    base_translation_step: float,
+    base_rotation_step_rad: float,
+    ligand_radius: float,
+    n_rounds: int,
+    pose_indices: np.ndarray | None = None,
+    budget_source: str = "rigid_local_refinement",
+) -> tuple[PoseSpecificImprovementBudgetFamily, np.ndarray, np.ndarray, np.ndarray]:
+    posewise_bounds, clearance_safe_mask, posewise_clearance = (
+        _posewise_rigid_local_improvement_bounds(
+            request,
+            scoring_context,
+            poses_coords=poses_coords,
+            base_translation_step=base_translation_step,
+            base_rotation_step_rad=base_rotation_step_rad,
+            ligand_radius=ligand_radius,
+            n_rounds=n_rounds,
+        )
+    )
+    if pose_indices is None:
+        pose_indices = np.arange(int(poses_coords.shape[0]), dtype=np.int32)
+    theorem_handles = rigid_posewise_improvement_budget_theorem_handles()
+    correction_np = np.zeros((int(poses_coords.shape[0]),), dtype=np.float32)
+    budgets: list[PoseSpecificImprovementBudget] = []
+    for local_idx, pose_index in enumerate(pose_indices.tolist()):
+        if not bool(clearance_safe_mask[local_idx]):
+            continue
+        total_budget = float(posewise_bounds[local_idx])
+        correction_np[local_idx] = np.float32(total_budget)
+        budgets.append(
+            PoseSpecificImprovementBudget(
+                pose_index=int(pose_index),
+                active_torsion_indices=(),
+                active_torsion_mask=(),
+                per_bond_local_bounds=(),
+                total_budget=total_budget,
+                active_subset_source=budget_source,
+                theorem_handles=theorem_handles,
+                kind=PoseSpecificImprovementBudgetKind.RIGID_LOCAL,
+            )
+        )
+    return (
+        PoseSpecificImprovementBudgetFamily(
+            budgets=tuple(budgets),
+            theorem_handles=theorem_handles,
+        ),
+        correction_np,
+        np.asarray(clearance_safe_mask, dtype=bool),
+        np.asarray(posewise_clearance, dtype=np.float32),
+    )
+
+
 def _certified_pruning_pass(
     request: PipelineDockingRequest,
     poses_coords: jnp.ndarray,
@@ -3951,6 +4341,8 @@ def _certified_pruning_pass(
     *,
     scoring_context: CertifiedScoringContext | None = None,
     rotatable_bonds: tuple[RotatableBond, ...] = (),
+    rigid_improvement_scoring_context: CertifiedScoringContext | None = None,
+    rigid_refinement_plan: "CertifiedRigidLocalRefinementPlan | None" = None,
 ) -> CertifiedPipelineExecutionPlan:
     """
     Perform a formally justified pruning pass on the global pose set.
@@ -3985,12 +4377,24 @@ def _certified_pruning_pass(
     )
     coarse_scores_np = np.empty((n_total,), dtype=np.float32)
     use_conf = _request_uses_conformer_search(request)
+    use_rigid_improvement = (
+        (not use_conf)
+        and rigid_improvement_scoring_context is not None
+        and rigid_refinement_plan is not None
+    )
     needs_receptor_flex = (
         scoring_context is not None
         and scoring_context.receptor_conformations is not None
     )
     additive_correction_np = np.zeros((n_total,), dtype=np.float32)
     active_subset_budgets: list[CertifiedActiveSubsetBudget] = []
+    rigid_improvement_budgets: list[PoseSpecificImprovementBudget] = []
+    rigid_clearance_safe_mask_full: np.ndarray | None = (
+        np.ones((n_total,), dtype=bool) if use_rigid_improvement else None
+    )
+    rigid_forced_prune_mask: np.ndarray | None = (
+        np.zeros((n_total,), dtype=bool) if use_rigid_improvement else None
+    )
 
     conformer_config = None
     per_bond_bounds = None
@@ -4047,6 +4451,10 @@ def _certified_pruning_pass(
             )
             active_subset_budgets.extend(chunk_family.budgets)
             chunk_correction_np += chunk_family.totals_array()
+        elif use_rigid_improvement:
+            # Defer rigid local-improvement tightening to a second pass so we can
+            # cheaply pre-prune by the global certified rigid cap first.
+            pass
         if needs_receptor_flex:
             assert scoring_context is not None
             posewise_flex_error, coarse_phys_delta = (
@@ -4075,6 +4483,87 @@ def _certified_pruning_pass(
         additive_correction_np[start:stop] = chunk_correction_np
 
     assert pruning_delta_budget is not None
+    if use_rigid_improvement:
+        assert rigid_refinement_plan is not None
+        assert rigid_improvement_scoring_context is not None
+        rigid_global_cap = float(rigid_refinement_plan.local_improvement_bound)
+        additive_correction_np += np.float32(rigid_global_cap)
+
+        best_coarse = (
+            float(np.min(coarse_scores_np)) if coarse_scores_np.size > 0 else 0.0
+        )
+        admissible_cutoff = (
+            best_coarse
+            + float(pruning_delta_budget.total_delta)
+            + additive_correction_np
+        )
+        rigid_tighten_mask = coarse_scores_np <= admissible_cutoff
+        rigid_tighten_indices = np.flatnonzero(rigid_tighten_mask).astype(np.int32)
+
+        rigid_pre_exact_count = int(rigid_tighten_indices.size)
+        if rigid_tighten_indices.size > 0:
+            exact_candidates = _score_rigid_exact_pose_batch(
+                request,
+                poses_coords=poses_coords[rigid_tighten_indices],
+                electrostatics=electrostatics,
+                scoring_context=rigid_improvement_scoring_context,
+            )
+            exact_candidates_np = np.asarray(
+                jax.device_get(exact_candidates), dtype=np.float32
+            )
+            if exact_candidates_np.size > 0:
+                best_exact = float(np.min(exact_candidates_np))
+                keep_exact_mask = exact_candidates_np <= (best_exact + rigid_global_cap)
+                if rigid_forced_prune_mask is not None:
+                    rigid_forced_prune_mask[rigid_tighten_indices[~keep_exact_mask]] = (
+                        True
+                    )
+                rigid_tighten_indices = rigid_tighten_indices[keep_exact_mask]
+            else:
+                best_exact = float("inf")
+        else:
+            best_exact = float("inf")
+
+        if rigid_tighten_indices.size > 0:
+            rigid_chunk_size = (
+                rigid_tighten_indices.size
+                if rigid_tighten_indices.size <= CERTIFIED_PRUNING_MONOLITHIC_THRESHOLD
+                else CERTIFIED_PRUNING_CHUNK_SIZE
+            )
+            for s in range(0, rigid_tighten_indices.size, rigid_chunk_size):
+                e = min(s + rigid_chunk_size, rigid_tighten_indices.size)
+                idx_chunk = rigid_tighten_indices[s:e]
+                (
+                    chunk_family,
+                    chunk_rigid_correction_np,
+                    chunk_clearance_safe_mask,
+                    _chunk_posewise_clearance,
+                ) = _posewise_rigid_improvement_budget_family(
+                    request,
+                    rigid_improvement_scoring_context,
+                    poses_coords=poses_coords[idx_chunk],
+                    base_translation_step=rigid_refinement_plan.base_translation_step,
+                    base_rotation_step_rad=rigid_refinement_plan.base_rotation_step_rad,
+                    ligand_radius=rigid_refinement_plan.ligand_radius,
+                    n_rounds=rigid_refinement_plan.n_search_rounds,
+                    pose_indices=idx_chunk,
+                )
+                rigid_improvement_budgets.extend(chunk_family.budgets)
+                if rigid_clearance_safe_mask_full is not None:
+                    rigid_clearance_safe_mask_full[idx_chunk] = (
+                        chunk_clearance_safe_mask
+                    )
+                additive_correction_np[idx_chunk] += (
+                    chunk_rigid_correction_np - np.float32(rigid_global_cap)
+                )
+        print(
+            "[CERTIFIED PRUNING DEBUG] "
+            f"rigid_tighten_candidates={int(rigid_tighten_indices.size)}/{n_total} "
+            f"(pre_exact={rigid_pre_exact_count}, best_exact={best_exact:.3f}) "
+            f"global_cap={rigid_global_cap:.3f}",
+            flush=True,
+        )
+
     survivor_mask, tau, lower_bounds = _canonical_retain_mask(
         jnp.asarray(coarse_scores_np),
         delta=pruning_delta_budget.total_delta,
@@ -4082,6 +4571,13 @@ def _certified_pruning_pass(
     )
     survivor_mask_np = np.asarray(jax.device_get(survivor_mask), dtype=bool)
     lower_bounds_np = np.asarray(jax.device_get(lower_bounds), dtype=np.float32)
+    rigid_clearance_safe_mask_np = rigid_clearance_safe_mask_full
+    if rigid_clearance_safe_mask_np is not None:
+        survivor_mask_np = np.logical_or(
+            survivor_mask_np, ~rigid_clearance_safe_mask_np
+        )
+    if rigid_forced_prune_mask is not None:
+        survivor_mask_np = np.logical_and(survivor_mask_np, ~rigid_forced_prune_mask)
 
     n_surv_val = int(np.count_nonzero(survivor_mask_np))
     efficiency = 100.0 * (1.0 - n_surv_val / n_total)
@@ -4089,6 +4585,66 @@ def _certified_pruning_pass(
         f"[CERTIFIED PRUNING] Pruned {n_total} -> {n_surv_val} poses "
         f"({efficiency:.1f}% reduction, delta={pruning_delta_budget.total_delta:.3f} kcal/mol)"
     )
+    if rigid_improvement_budgets:
+        rigid_budget_totals_np = np.asarray(
+            [budget.total_budget for budget in rigid_improvement_budgets],
+            dtype=np.float64,
+        )
+        global_cap = (
+            None
+            if rigid_refinement_plan is None
+            else float(rigid_refinement_plan.local_improvement_bound)
+        )
+        topk = min(5, rigid_budget_totals_np.size)
+        top_idx = np.argsort(rigid_budget_totals_np)[-topk:][::-1]
+        top_pose_indices = [
+            int(cast(int, rigid_improvement_budgets[idx].pose_index))
+            for idx in top_idx.tolist()
+        ]
+        top_bounds = [float(rigid_budget_totals_np[idx]) for idx in top_idx.tolist()]
+        top_scores = [float(coarse_scores_np[idx]) for idx in top_pose_indices]
+        print(
+            "[CERTIFIED PRUNING DEBUG] "
+            f"rigid_budget_p50={float(np.median(rigid_budget_totals_np)):.3f} "
+            f"p90={float(np.quantile(rigid_budget_totals_np, 0.9)):.3f} "
+            f"p99={float(np.quantile(rigid_budget_totals_np, 0.99)):.3f} "
+            f"max={float(np.max(rigid_budget_totals_np)):.3f} "
+            f"gt1e12={int(np.count_nonzero(rigid_budget_totals_np > 1.0e12))} "
+            f"gt1e15={int(np.count_nonzero(rigid_budget_totals_np > 1.0e15))} "
+            f"gt1e18={int(np.count_nonzero(rigid_budget_totals_np > 1.0e18))}"
+            + (
+                ""
+                if global_cap is None
+                else (
+                    f" cap={global_cap:.3f} "
+                    f"at_cap={int(np.count_nonzero(np.isclose(rigid_budget_totals_np, global_cap, rtol=1.0e-6, atol=1.0e-6)))}"
+                )
+            ),
+            flush=True,
+        )
+        print(
+            "[CERTIFIED PRUNING DEBUG] "
+            f"top_pose_indices={top_pose_indices} "
+            f"top_bounds={[round(val, 3) for val in top_bounds]} "
+            f"top_coarse_scores={[round(val, 3) for val in top_scores]}",
+            flush=True,
+        )
+        if coarse_scores_np.size > 0:
+            best_coarse = float(np.min(coarse_scores_np))
+            coarse_margin = coarse_scores_np - best_coarse
+            correction_np = np.asarray(additive_correction_np, dtype=np.float64)
+            print(
+                "[CERTIFIED PRUNING DEBUG] "
+                f"coarse_margin_p50={float(np.median(coarse_margin)):.3f} "
+                f"p90={float(np.quantile(coarse_margin, 0.9)):.3f} "
+                f"max={float(np.max(coarse_margin)):.3f} "
+                f"corr_p50={float(np.median(correction_np)):.3f} "
+                f"p90={float(np.quantile(correction_np, 0.9)):.3f} "
+                f"max={float(np.max(correction_np)):.3f} "
+                f"margin_minus_corr_p50={float(np.median(coarse_margin - correction_np)):.3f} "
+                f"margin_minus_corr_max={float(np.max(coarse_margin - correction_np)):.3f}",
+                flush=True,
+            )
     active_subset_budget_family = (
         CertifiedActiveSubsetBudgetFamily(
             budgets=tuple(active_subset_budgets),
@@ -4102,6 +4658,17 @@ def _certified_pruning_pass(
         if active_subset_budget_family is None
         else active_subset_budget_family.as_pose_specific_improvement_family()
     )
+    if improvement_budget_family is None and rigid_improvement_budgets:
+        improvement_budget_family = PoseSpecificImprovementBudgetFamily(
+            budgets=tuple(rigid_improvement_budgets),
+            theorem_handles=rigid_posewise_improvement_budget_theorem_handles(),
+        )
+    pruning_optimality_handles = (
+        joint_pruning_budget_optimality_handles()
+        if rigid_clearance_safe_mask_np is None
+        or bool(np.all(rigid_clearance_safe_mask_np))
+        else ()
+    )
     return CertifiedPipelineExecutionPlan(
         coarse_scores=jnp.asarray(coarse_scores_np),
         lower_bounds=jnp.asarray(lower_bounds_np),
@@ -4112,7 +4679,7 @@ def _certified_pruning_pass(
         improvement_budget_family=improvement_budget_family,
         theorem_handles=_merge_theorem_handles(
             ("TK11", "BD5"),
-            joint_pruning_budget_optimality_handles(),
+            pruning_optimality_handles,
             pruning_delta_budget.theorem_handles,
             ()
             if improvement_budget_family is None
@@ -4392,22 +4959,22 @@ def _posewise_conformer_interaction_bounds(
             max_displacement = 2.0 * arm_lengths[:, None]
             cutoff_safe = np.maximum(cutoff, sigma)
             current_in_range = dists < cutoff_safe
-            safe_dists = np.where(current_in_range, dists, cutoff_safe)
-            sr = sigma / safe_dists
             current_pair_energy = np.where(
                 current_in_range,
-                4.0 * epsilon_pair * (sr**12 - sr**6),
+                _exact_lj_pair_score_with_floor(
+                    epsilon_pair=epsilon_pair,
+                    sigma=sigma,
+                    distance=dists,
+                ),
                 0.0,
             )
             reachable_dists = dists - max_displacement
-            reachable_safe = np.maximum(reachable_dists, sigma)
-            reachable_sr = sigma / reachable_safe
-            tail_mask = reachable_sr**6 <= 0.5
-            tail_lower_bound = 4.0 * epsilon_pair * (reachable_sr**12 - reachable_sr**6)
-            lower_bound_pair = np.where(
-                reachable_dists > cutoff_safe,
-                0.0,
-                np.where(tail_mask, tail_lower_bound, -epsilon_pair),
+            lower_bound_pair = _exact_lj_interval_lower_bound(
+                epsilon_pair=epsilon_pair,
+                sigma=sigma,
+                current_distance=dists,
+                max_displacement=max_displacement,
+                cutoff_safe=cutoff_safe,
             )
             local_lj_bound = np.float32(
                 np.sum(np.maximum(0.0, current_pair_energy - lower_bound_pair))
@@ -4442,15 +5009,16 @@ def _posewise_conformer_interaction_bounds(
                     0.0,
                     np.where(
                         charge_products < 0.0,
-                        -np.abs(charge_products)
-                        * np.exp(
-                            -(
-                                (electro_alpha * np.maximum(reachable_dists, 1.0e-6))
-                                ** 2
-                            )
+                        charge_products
+                        * scipy_special.erfc(
+                            electro_alpha * np.maximum(reachable_dists, 1.0e-6)
                         )
                         / np.maximum(reachable_dists, 1.0e-6),
-                        0.0,
+                        charge_products
+                        * scipy_special.erfc(
+                            electro_alpha * np.maximum(dists + max_displacement, 1.0e-6)
+                        )
+                        / np.maximum(dists + max_displacement, 1.0e-6),
                     ),
                 )
                 local_bound += float(
@@ -4547,22 +5115,22 @@ def _posewise_atomwise_conformer_budget_totals(
 
             cutoff_safe = np.maximum(cutoff, sigma)
             current_in_range = dists < cutoff_safe
-            safe_dists = np.where(current_in_range, dists, cutoff_safe)
-            sr = sigma / safe_dists
             current_lj = np.where(
                 current_in_range,
-                4.0 * epsilon_pair * (sr**12 - sr**6),
+                _exact_lj_pair_score_with_floor(
+                    epsilon_pair=epsilon_pair,
+                    sigma=sigma,
+                    distance=dists,
+                ),
                 0.0,
             )
             reachable_dists = dists - displacement
-            reachable_safe = np.maximum(reachable_dists, sigma)
-            reachable_sr = sigma / reachable_safe
-            tail_mask = reachable_sr**6 <= 0.5
-            tail_lower = 4.0 * epsilon_pair * (reachable_sr**12 - reachable_sr**6)
-            lower_lj = np.where(
-                reachable_dists > cutoff_safe,
-                0.0,
-                np.where(tail_mask, tail_lower, -epsilon_pair),
+            lower_lj = _exact_lj_interval_lower_bound(
+                epsilon_pair=epsilon_pair,
+                sigma=sigma,
+                current_distance=dists,
+                max_displacement=np.full_like(dists, displacement),
+                cutoff_safe=cutoff_safe,
             )
             atom_bound = np.sum(np.maximum(0.0, current_lj - lower_lj))
 
@@ -4594,15 +5162,16 @@ def _posewise_atomwise_conformer_budget_totals(
                     0.0,
                     np.where(
                         charge_products < 0.0,
-                        -np.abs(charge_products)
-                        * np.exp(
-                            -(
-                                (electro_alpha * np.maximum(reachable_dists, 1.0e-6))
-                                ** 2
-                            )
+                        charge_products
+                        * scipy_special.erfc(
+                            electro_alpha * np.maximum(reachable_dists, 1.0e-6)
                         )
                         / np.maximum(reachable_dists, 1.0e-6),
-                        0.0,
+                        charge_products
+                        * scipy_special.erfc(
+                            electro_alpha * np.maximum(dists + displacement, 1.0e-6)
+                        )
+                        / np.maximum(dists + displacement, 1.0e-6),
                     ),
                 )
                 atom_bound += np.sum(np.maximum(0.0, electro_current - electro_lower))
@@ -4623,12 +5192,16 @@ def _canonical_retain_mask(
     delta: float,
     additive_correction: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Retain all poses whose lower bound is within δ of the best score.
+    """Retain poses whose certified lower bound is below the coarse incumbent.
 
-    The retain set size k is DERIVED from the scores and δ — not specified.
-    Lean: canonicalRetain_certifiedSafe guarantees the true energy minimum
-    is in this set. A fixed k would either miss winners (too small) or
-    waste compute (too large).
+    The authoritative lower bound is:
+
+      coarse_score - delta - additive_correction
+
+    where `delta` is the certified coarse approximation slack and
+    `additive_correction` aggregates pose-specific certified omission /
+    improvement budgets. If those pruning ingredients are unavailable or
+    non-finite, the theorem-honest fallback is to retain every pose.
 
     Returns (mask, tau, lower_bounds).
     """
@@ -4642,9 +5215,22 @@ def _canonical_retain_mask(
             jnp.array(jnp.inf, dtype=reference_scores.dtype),
             jnp.full_like(reference_scores, jnp.inf),
         )
+    if not np.isfinite(float(delta)):
+        tau = jnp.max(reference_scores)
+        return jnp.ones_like(reference_scores, dtype=bool), tau, reference_scores
+    additive_correction_np = np.asarray(
+        jax.device_get(additive_correction), dtype=np.float32
+    )
+    if not np.all(np.isfinite(additive_correction_np)):
+        tau = jnp.max(reference_scores)
+        return jnp.ones_like(reference_scores, dtype=bool), tau, reference_scores
     best_score = jnp.min(reference_scores)
     tau = best_score
-    lower_bounds = reference_scores - additive_correction
+    lower_bounds = (
+        reference_scores
+        - jnp.asarray(delta, dtype=reference_scores.dtype)
+        - additive_correction
+    )
     return lower_bounds <= tau, tau, lower_bounds
 
 
@@ -4863,6 +5449,207 @@ def _build_conformer_coarse_score_fns(
     return score_fn, score_fn_batch
 
 
+@dataclass(frozen=True)
+class _ConformerCellOmissionPayload:
+    retained_indices: jnp.ndarray
+
+
+def _build_conformer_cell_bound_state_fns(
+    *,
+    request: "PipelineDockingRequest",
+    quaternion: jnp.ndarray,
+    translation: jnp.ndarray,
+    scoring_context: CertifiedScoringContext | None,
+    electrostatics: "CertifiedRealSpaceEwaldSpec | None",
+    rotatable_bonds: tuple[RotatableBond, ...],
+    exact_subset_indices: jnp.ndarray,
+    omission_budget: float,
+    local_activity_mask_fn: Callable[[TorsionCell, np.ndarray], np.ndarray] | None,
+) -> tuple[
+    Callable[[TorsionCell, np.ndarray], CertifiedCellLowerBoundState | None] | None,
+    Callable[
+        [CertifiedCellLowerBoundState, TorsionCell],
+        CertifiedCellLowerBoundState | None,
+    ]
+    | None,
+]:
+    if (
+        scoring_context is None
+        or not rotatable_bonds
+        or omission_budget <= 0.0
+        or int(exact_subset_indices.shape[0]) == 0
+    ):
+        return None, None
+
+    coords_np = np.asarray(
+        jax.device_get(request.ligand_ctx.base_coords), dtype=np.float32
+    )
+    kinematics = build_torsion_kinematics(
+        rotatable_bonds,
+        coords_np,
+        request.ligand_ctx.base_coords.shape[0],
+    )
+    full_subset_tuple = tuple(
+        int(i) for i in np.asarray(exact_subset_indices, dtype=np.int32).tolist()
+    )
+    scorer_cache: dict[
+        tuple[int, ...],
+        tuple[
+            Callable[[jnp.ndarray], float], Callable[[jnp.ndarray], jnp.ndarray] | None
+        ],
+    ] = {}
+
+    def _get_subset_scorers(
+        retained_indices: jnp.ndarray,
+    ) -> tuple[
+        Callable[[jnp.ndarray], float], Callable[[jnp.ndarray], jnp.ndarray] | None
+    ]:
+        subset_tuple = tuple(
+            int(i) for i in np.asarray(retained_indices, dtype=np.int32).tolist()
+        )
+        cached = scorer_cache.get(subset_tuple)
+        if cached is not None:
+            return cached
+        local_context = scoring_context.receptor_subset(retained_indices)
+        local_electrostatics = (
+            None
+            if electrostatics is None
+            else electrostatics.receptor_subset(retained_indices)
+        )
+        built = _build_conformer_score_fns(
+            request,
+            quaternion,
+            translation,
+            local_context,
+            local_electrostatics,
+            receptor_coords=request.protein_coords[retained_indices],
+            receptor_radii=request.receptor_radii[retained_indices],
+        )
+        scorer_cache[subset_tuple] = built
+        return built
+
+    def _active_mask_for_cell(
+        cell: TorsionCell,
+        center_coords_local: np.ndarray,
+    ) -> np.ndarray:
+        if local_activity_mask_fn is None:
+            return np.ones((len(rotatable_bonds),), dtype=bool)
+        return np.asarray(local_activity_mask_fn(cell, center_coords_local), dtype=bool)
+
+    def _build_state(
+        *,
+        cell: TorsionCell,
+        center_coords_local: np.ndarray,
+        parent_retained_indices: jnp.ndarray,
+        parent_omitted_bound: float,
+    ) -> CertifiedCellLowerBoundState:
+        active_mask = _active_mask_for_cell(cell, center_coords_local)
+        active_bonds = tuple(
+            bond
+            for is_active, bond in zip(
+                active_mask.tolist(), rotatable_bonds, strict=False
+            )
+            if is_active
+        )
+        actual_subset = parent_retained_indices
+        additional_omitted_bound = 0.0
+        if active_bonds and int(parent_retained_indices.shape[0]) > 1:
+            center_world_coords = rigid_transform_3d(
+                jnp.asarray(
+                    center_coords_local, dtype=request.ligand_ctx.base_coords.dtype
+                ),
+                quaternion,
+                translation,
+            )
+            omission_bounds = _per_receptor_atom_conformer_omission_bounds(
+                ligand_world_coords=center_world_coords,
+                ligand_radii=request.ligand_ctx.base_radii,
+                receptor_coords=request.protein_coords[parent_retained_indices],
+                receptor_radii=request.receptor_radii[parent_retained_indices],
+                rotatable_bonds=active_bonds,
+                ligand_charges=(
+                    None
+                    if request.ligand_ctx.charges is None
+                    else request.ligand_ctx.charges
+                ),
+                receptor_charges=(
+                    None
+                    if electrostatics is None
+                    else electrostatics.receptor_charges[parent_retained_indices]
+                ),
+                electro_alpha=(
+                    None if electrostatics is None else electrostatics.alpha
+                ),
+                electro_dielectric=(
+                    None if electrostatics is None else electrostatics.dielectric
+                ),
+            )
+            local_subset, additional_omitted_bound = (
+                _select_receptor_subset_by_omission_budget(
+                    omission_bounds,
+                    omission_budget=omission_budget,
+                )
+            )
+            actual_subset = parent_retained_indices[local_subset]
+
+        total_omitted_bound = float(parent_omitted_bound + additional_omitted_bound)
+        local_score_fn, local_score_fn_batch = _get_subset_scorers(actual_subset)
+        actual_subset_tuple = tuple(
+            int(i) for i in np.asarray(actual_subset, dtype=np.int32).tolist()
+        )
+        uses_omission = (
+            total_omitted_bound > 0.0 or actual_subset_tuple != full_subset_tuple
+        )
+        return CertifiedCellLowerBoundState(
+            omitted_energy_bound=total_omitted_bound,
+            theorem_handles=(
+                omitted_channel_bound_theorem_handles() if uses_omission else ()
+            ),
+            score_fn=local_score_fn,
+            score_fn_batch=local_score_fn_batch,
+            active_mask=active_mask,
+            score_is_exact=not uses_omission,
+            payload=_ConformerCellOmissionPayload(retained_indices=actual_subset),
+        )
+
+    def _root_state_fn(
+        cell: TorsionCell,
+        center_coords_local: np.ndarray,
+    ) -> CertifiedCellLowerBoundState:
+        return _build_state(
+            cell=cell,
+            center_coords_local=np.asarray(center_coords_local, dtype=np.float32),
+            parent_retained_indices=exact_subset_indices,
+            parent_omitted_bound=0.0,
+        )
+
+    def _child_state_fn(
+        parent_state: CertifiedCellLowerBoundState,
+        child_cell: TorsionCell,
+    ) -> CertifiedCellLowerBoundState:
+        payload = cast(_ConformerCellOmissionPayload | None, parent_state.payload)
+        parent_retained_indices = (
+            exact_subset_indices if payload is None else payload.retained_indices
+        )
+        child_center_coords = np.asarray(
+            jax.device_get(
+                kinematics.forward(
+                    request.ligand_ctx.base_coords,
+                    child_cell.center(),
+                )
+            ),
+            dtype=np.float32,
+        )
+        return _build_state(
+            cell=child_cell,
+            center_coords_local=child_center_coords,
+            parent_retained_indices=parent_retained_indices,
+            parent_omitted_bound=float(parent_state.omitted_energy_bound),
+        )
+
+    return _root_state_fn, _child_state_fn
+
+
 def _run_conformer_search_for_pose(
     request: "PipelineDockingRequest",
     quaternion: jnp.ndarray,
@@ -4874,6 +5661,7 @@ def _run_conformer_search_for_pose(
     conformer_config: BranchAndBoundConfig | None = None,
     strain_params: TorsionStrainParams | None = None,
     pruning_incumbent_energy: float | None = None,
+    omission_budget: float | None = None,
     scan_only: bool = False,
 ) -> tuple[jnp.ndarray, float, tuple[str, ...]] | None:
     """Run conformer search for a single posed ligand.
@@ -4930,9 +5718,14 @@ def _run_conformer_search_for_pose(
             f"[RUNTIME PROFILE] conformer_pose_setup: active_bonds={len(bonds)}, subset={int(subset_indices.shape[0])}",
             flush=True,
         )
+    effective_omission_budget = (
+        request.target_error if omission_budget is None else omission_budget
+    )
+    search_subset_indices = subset_indices
+    search_omitted_bound = 0.0
     scan_subset_indices = subset_indices
     scan_omitted_bound = 0.0
-    if scan_only:
+    if bonds:
         omission_bounds = _per_receptor_atom_conformer_omission_bounds(
             ligand_world_coords=base_world_coords,
             ligand_radii=request.ligand_ctx.base_radii,
@@ -4954,19 +5747,29 @@ def _run_conformer_search_for_pose(
                 None if electrostatics is None else electrostatics.dielectric
             ),
         )
-        local_scan_subset, scan_omitted_bound = (
+        local_search_subset, search_omitted_bound = (
             _select_receptor_subset_by_omission_budget(
                 omission_bounds,
-                omission_budget=request.target_error,
+                omission_budget=effective_omission_budget,
             )
         )
-        scan_subset_indices = subset_indices[local_scan_subset]
-    conformer_scoring_context = (
+        search_subset_indices = subset_indices[local_search_subset]
+        if scan_only:
+            scan_subset_indices = search_subset_indices
+            scan_omitted_bound = search_omitted_bound
+    local_activity_mask_fn = _build_cell_local_activity_mask_fn(
+        receptor_coords=request.protein_coords,
+        quaternion=quaternion,
+        translation=translation,
+        rotatable_bonds=bonds,
+        scoring_cutoff=compute_certified_cutoff(request.target_error),
+    )
+    exact_conformer_scoring_context = (
         None
         if scoring_context is None
         else scoring_context.receptor_subset(subset_indices)
     )
-    conformer_electrostatics = (
+    exact_conformer_electrostatics = (
         None
         if electrostatics is None
         else electrostatics.receptor_subset(subset_indices)
@@ -4975,8 +5778,8 @@ def _run_conformer_search_for_pose(
         request,
         quaternion,
         translation,
-        conformer_scoring_context,
-        conformer_electrostatics,
+        exact_conformer_scoring_context,
+        exact_conformer_electrostatics,
         receptor_coords=request.protein_coords[subset_indices],
         receptor_radii=request.receptor_radii[subset_indices],
     )
@@ -4994,8 +5797,8 @@ def _run_conformer_search_for_pose(
         request,
         quaternion,
         translation,
-        scan_scoring_context if scan_only else conformer_scoring_context,
-        scan_electrostatics if scan_only else conformer_electrostatics,
+        scan_scoring_context if scan_only else exact_conformer_scoring_context,
+        scan_electrostatics if scan_only else exact_conformer_electrostatics,
         receptor_coords=(
             request.protein_coords[scan_subset_indices]
             if scan_only
@@ -5022,6 +5825,158 @@ def _run_conformer_search_for_pose(
             active_mask,
             bonds,
         )
+
+    cell_bound_state_fn = None
+    child_cell_bound_state_fn = None
+    if not scan_only:
+        cell_bound_state_fn, child_cell_bound_state_fn = (
+            _build_conformer_cell_bound_state_fns(
+                request=request,
+                quaternion=quaternion,
+                translation=translation,
+                scoring_context=scoring_context,
+                electrostatics=electrostatics,
+                rotatable_bonds=bonds,
+                exact_subset_indices=subset_indices,
+                omission_budget=float(effective_omission_budget),
+                local_activity_mask_fn=local_activity_mask_fn,
+            )
+        )
+
+    single_bond_scan_provider = None
+    if scan_only and bonds:
+        scan_score_cache: dict[
+            tuple[int, ...],
+            tuple[
+                Callable[[jnp.ndarray], float],
+                Callable[[jnp.ndarray], jnp.ndarray] | None,
+            ],
+        ] = {}
+        single_bond_budgets = np.asarray(
+            jax.device_get(
+                _conformer_local_improvement_bounds(
+                    request,
+                    bonds,
+                    tuple(float(v) for v in config.per_bond_lipschitz)
+                    if config.per_bond_lipschitz is not None
+                    else None,
+                )
+            )
+            if config.per_bond_lipschitz is not None
+            else np.zeros((len(bonds),), dtype=np.float32),
+            dtype=np.float32,
+        )
+
+        any_single_bond_omission = False
+        for bond_idx, bond in enumerate(bonds):
+            omission_bounds = _per_receptor_atom_conformer_omission_bounds(
+                ligand_world_coords=base_world_coords,
+                ligand_radii=request.ligand_ctx.base_radii,
+                receptor_coords=request.protein_coords[subset_indices],
+                receptor_radii=request.receptor_radii[subset_indices],
+                rotatable_bonds=(bond,),
+                ligand_charges=(
+                    None
+                    if request.ligand_ctx.charges is None
+                    else request.ligand_ctx.charges
+                ),
+                receptor_charges=(
+                    None
+                    if electrostatics is None
+                    else electrostatics.receptor_charges[subset_indices]
+                ),
+                electro_alpha=(
+                    None if electrostatics is None else electrostatics.alpha
+                ),
+                electro_dielectric=(
+                    None if electrostatics is None else electrostatics.dielectric
+                ),
+            )
+            local_subset, _ = _select_receptor_subset_by_omission_budget(
+                omission_bounds,
+                omission_budget=float(single_bond_budgets[bond_idx]),
+            )
+            if int(local_subset.shape[0]) < int(subset_indices.shape[0]):
+                any_single_bond_omission = True
+                break
+
+        if any_single_bond_omission:
+
+            def _single_bond_scan_provider(
+                bond_idx: int,
+                current_local_coords: jnp.ndarray,
+            ) -> tuple[
+                Callable[[jnp.ndarray], float],
+                Callable[[jnp.ndarray], jnp.ndarray] | None,
+            ]:
+                current_world_coords = rigid_transform_3d(
+                    current_local_coords,
+                    quaternion,
+                    translation,
+                )
+                single_bond = (bonds[bond_idx],)
+                omission_bounds = _per_receptor_atom_conformer_omission_bounds(
+                    ligand_world_coords=current_world_coords,
+                    ligand_radii=request.ligand_ctx.base_radii,
+                    receptor_coords=request.protein_coords[subset_indices],
+                    receptor_radii=request.receptor_radii[subset_indices],
+                    rotatable_bonds=single_bond,
+                    ligand_charges=(
+                        None
+                        if request.ligand_ctx.charges is None
+                        else request.ligand_ctx.charges
+                    ),
+                    receptor_charges=(
+                        None
+                        if electrostatics is None
+                        else electrostatics.receptor_charges[subset_indices]
+                    ),
+                    electro_alpha=(
+                        None if electrostatics is None else electrostatics.alpha
+                    ),
+                    electro_dielectric=(
+                        None if electrostatics is None else electrostatics.dielectric
+                    ),
+                )
+                local_subset, _ = _select_receptor_subset_by_omission_budget(
+                    omission_bounds,
+                    omission_budget=float(single_bond_budgets[bond_idx]),
+                )
+                actual_subset = subset_indices[local_subset]
+                actual_subset_tuple = tuple(
+                    int(i) for i in np.asarray(actual_subset, dtype=np.int32).tolist()
+                )
+                full_subset_tuple = tuple(
+                    int(i) for i in np.asarray(subset_indices, dtype=np.int32).tolist()
+                )
+                if actual_subset_tuple == full_subset_tuple:
+                    return coarse_score_fn, coarse_score_fn_batch
+                cached = scan_score_cache.get(actual_subset_tuple)
+                if cached is not None:
+                    return cached
+                local_ctx = (
+                    None
+                    if scoring_context is None
+                    else scoring_context.receptor_subset(actual_subset)
+                )
+                local_electro = (
+                    None
+                    if electrostatics is None
+                    else electrostatics.receptor_subset(actual_subset)
+                )
+                built = _build_conformer_coarse_score_fns(
+                    request,
+                    quaternion,
+                    translation,
+                    local_ctx,
+                    local_electro,
+                    receptor_coords=request.protein_coords[actual_subset],
+                    receptor_radii=request.receptor_radii[actual_subset],
+                )
+                scan_score_cache[actual_subset_tuple] = built
+                return built
+
+            single_bond_scan_provider = _single_bond_scan_provider
     active_coverage_plan = None
     if bonds and config.per_bond_lipschitz is not None:
         active_coverage_plan = _derive_conformer_coverage_plan_from_lipschitz(
@@ -5031,19 +5986,13 @@ def _run_conformer_search_for_pose(
             target_rmsd=request.target_rmsd,
             max_arm=max(bond.max_arm_length for bond in bonds),
         )
-    local_activity_mask_fn = _build_cell_local_activity_mask_fn(
-        receptor_coords=request.protein_coords,
-        quaternion=quaternion,
-        translation=translation,
-        rotatable_bonds=bonds,
-        scoring_cutoff=compute_certified_cutoff(request.target_error),
-    )
     if _runtime_profile_enabled():
         print(
             "[RUNTIME PROFILE] conformer_search_start: "
             f"active_bonds={len(bonds)}, max_cells={config.max_cells}, "
-            f"incumbent={pruning_incumbent_energy}, receptor_subset={int(subset_indices.shape[0])}, "
-            f"scan_subset={int(scan_subset_indices.shape[0])}, omitted_bound={scan_omitted_bound:.3f}",
+            f"incumbent={pruning_incumbent_energy}, receptor_subset={int(search_subset_indices.shape[0])}, "
+            f"scan_subset={int(scan_subset_indices.shape[0])}, omitted_bound={scan_omitted_bound:.3f}, "
+            f"search_omitted_bound={search_omitted_bound:.3f}",
             flush=True,
         )
     phase_start = time.perf_counter()
@@ -5056,6 +6005,7 @@ def _run_conformer_search_for_pose(
             strain_params=active_strain_params,
             score_fn_batch=coarse_score_fn_batch,
             rotatable_bonds=bonds,
+            single_bond_score_provider=single_bond_scan_provider,
         )
         if scan_only
         else search_conformers_support_grid(
@@ -5087,8 +6037,19 @@ def _run_conformer_search_for_pose(
             strain_params=active_strain_params,
             score_fn_batch=score_fn_batch,
             rotatable_bonds=bonds,
-            pruning_incumbent_energy=pruning_incumbent_energy,
+            pruning_incumbent_energy=(
+                None
+                if pruning_incumbent_energy is None
+                else (
+                    float(pruning_incumbent_energy)
+                    if cell_bound_state_fn is not None
+                    else float(pruning_incumbent_energy + search_omitted_bound)
+                )
+            ),
             local_activity_mask_fn=local_activity_mask_fn,
+            cell_bound_state_fn=cell_bound_state_fn,
+            child_cell_bound_state_fn=child_cell_bound_state_fn,
+            score_is_exact=True,
         )
     )
     _runtime_profile_log("single_pose_conformer_search", phase_start)
@@ -5096,9 +6057,13 @@ def _run_conformer_search_for_pose(
         return None
     best_conf = result.conformer_coords[0]
     world_coords = rigid_transform_3d(best_conf, quaternion, translation)
-    best_energy = (
-        float(result.conformer_energies[0]) if scan_only else float(score_fn(best_conf))
+    exact_energy = _score_exact_pose_batch(
+        request,
+        poses_coords=world_coords[None, ...],
+        electrostatics=electrostatics,
+        scoring_context=scoring_context,
     )
+    best_energy = float(np.asarray(jax.device_get(exact_energy[0])))
     theorem_handles = _merge_theorem_handles(
         result.theorem_handles,
         _conformer_runtime_theorem_handles(
@@ -5111,7 +6076,8 @@ def _run_conformer_search_for_pose(
         ),
         (
             omitted_channel_bound_theorem_handles()
-            if scan_only and scan_omitted_bound > 0.0
+            if (scan_only and scan_omitted_bound > 0.0)
+            or ((not scan_only) and search_omitted_bound > 0.0)
             else ()
         ),
     )
@@ -5638,6 +6604,10 @@ class CertifiedPipelineRoute(PipelineRoute):
             electrostatics=electrostatics,
             scoring_context=pruning_scoring_context,
             rotatable_bonds=rotatable_bonds,
+            rigid_improvement_scoring_context=cast(
+                CertifiedScoringContext, scoring_context
+            ),
+            rigid_refinement_plan=rigid_refinement_plan,
         )
         _runtime_profile_log("certified_pruning_pass", phase_start)
         survivor_mask = execution_plan.retain_mask
@@ -5712,8 +6682,21 @@ class CertifiedPipelineRoute(PipelineRoute):
                 exact_improvement_family.totals_array(),
                 dtype=survivor_rigid_scores.dtype,
             )
+            (
+                posewise_rigid_improvement_bounds,
+                exact_clearance_safe_mask,
+                posewise_clearance,
+            ) = _posewise_rigid_local_improvement_bounds(
+                request,
+                cast(CertifiedScoringContext, scoring_context),
+                poses_coords=survivor_coords,
+                base_translation_step=rigid_refinement_plan.base_translation_step,
+                base_rotation_step_rad=rigid_refinement_plan.base_rotation_step_rad,
+                ligand_radius=rigid_refinement_plan.ligand_radius,
+                n_rounds=rigid_refinement_plan.n_search_rounds,
+            )
             exact_additive_correction = exact_additive_correction + jnp.asarray(
-                rigid_refinement_plan.local_improvement_bound,
+                posewise_rigid_improvement_bounds,
                 dtype=survivor_rigid_scores.dtype,
             )
             if (
@@ -5731,11 +6714,19 @@ class CertifiedPipelineRoute(PipelineRoute):
                         epsilon=0.2,
                     )
                 )
-            exact_survivor_mask, _, _ = _canonical_retain_mask(
+            bound_exact_survivor_mask, _, _ = _canonical_retain_mask(
                 survivor_rigid_scores,
                 delta=0.0,
                 additive_correction=exact_additive_correction,
             )
+            exact_survivor_mask_np = np.asarray(
+                jax.device_get(bound_exact_survivor_mask), dtype=bool
+            )
+            exact_survivor_mask_np = np.logical_or(
+                exact_survivor_mask_np,
+                ~np.asarray(exact_clearance_safe_mask, dtype=bool),
+            )
+            exact_survivor_mask = jnp.asarray(exact_survivor_mask_np, dtype=bool)
             if (
                 native_witness_debug is not None
                 and native_witness_pose_index is not None
@@ -5747,6 +6738,27 @@ class CertifiedPipelineRoute(PipelineRoute):
                     survivor_global_indices == native_witness_pose_index
                 )[0]
                 native_witness_debug["retained_after_exact_pruning"] = False
+                native_witness_debug.update(
+                    {
+                        "exact_pruning_clearance_safe_pose_count": int(
+                            np.count_nonzero(exact_clearance_safe_mask)
+                        ),
+                        "exact_pruning_clearance_unsafe_pose_count": int(
+                            np.count_nonzero(~np.asarray(exact_clearance_safe_mask))
+                        ),
+                        "exact_pruning_bound_retained_pose_count": int(
+                            np.count_nonzero(
+                                np.asarray(
+                                    jax.device_get(bound_exact_survivor_mask),
+                                    dtype=bool,
+                                )
+                            )
+                        ),
+                        "exact_pruning_combined_retained_pose_count": int(
+                            np.count_nonzero(exact_survivor_mask_np)
+                        ),
+                    }
+                )
                 if matches.size > 0:
                     witness_local_idx = int(matches[0])
                     survivor_scores_np = np.asarray(
@@ -5754,6 +6766,9 @@ class CertifiedPipelineRoute(PipelineRoute):
                     )
                     correction_np = np.asarray(
                         jax.device_get(exact_additive_correction), dtype=np.float64
+                    )
+                    bound_exact_survivor_mask_np = np.asarray(
+                        jax.device_get(bound_exact_survivor_mask), dtype=bool
                     )
                     native_witness_debug.update(
                         {
@@ -5769,15 +6784,34 @@ class CertifiedPipelineRoute(PipelineRoute):
                             + 1,
                             "rigid_exact_best_score": float(np.min(survivor_scores_np)),
                             "rigid_local_improvement_bound": float(
-                                rigid_refinement_plan.local_improvement_bound
+                                posewise_rigid_improvement_bounds[witness_local_idx]
                             ),
                             "posewise_improvement_budget": float(
                                 correction_np[witness_local_idx]
                             ),
+                            "exact_pruning_clearance_safe": bool(
+                                np.asarray(exact_clearance_safe_mask, dtype=bool)[
+                                    witness_local_idx
+                                ]
+                            ),
+                            "exact_pruning_clearance": float(
+                                np.asarray(posewise_clearance, dtype=np.float32)[
+                                    witness_local_idx
+                                ]
+                            ),
+                            "retained_after_exact_pruning_by_bound": bool(
+                                bound_exact_survivor_mask_np[witness_local_idx]
+                            ),
+                            "retained_after_exact_pruning_by_clearance_fallback": bool(
+                                (
+                                    not np.asarray(
+                                        exact_clearance_safe_mask, dtype=bool
+                                    )[witness_local_idx]
+                                )
+                                and exact_survivor_mask_np[witness_local_idx]
+                            ),
                             "retained_after_exact_pruning": bool(
-                                np.asarray(
-                                    jax.device_get(exact_survivor_mask), dtype=bool
-                                )[witness_local_idx]
+                                exact_survivor_mask_np[witness_local_idx]
                             ),
                         }
                     )
@@ -6434,7 +7468,7 @@ def _run_docking_pipeline_request(
         flush=True,
     )
     subset_certificates_debug = None
-    if local_refine_indices.size > 0 and not do_conf:
+    if local_refine_indices.size > 0 and not do_conf and _certify_all_refined_enabled():
         phase_start = time.perf_counter()
         pre_se3_translations = opt_pose_translations[jnp.asarray(local_refine_indices)]
         pre_se3_quaternions = opt_pose_quaternions[jnp.asarray(local_refine_indices)]
@@ -6492,15 +7526,19 @@ def _run_docking_pipeline_request(
                     f"spectral={cert.spectral if cert else 'None'}",
                     flush=True,
                 )
-    elif local_refine_indices.size > 0 and do_conf:
+    elif local_refine_indices.size > 0:
         print(
-            "[REFINE_CERTS] Deferring rigid certificate computation to final candidate poses",
+            "[REFINE_CERTS] Deferring rigid certificate computation to winner pose",
             flush=True,
         )
 
+    refinement_cert_count = int(
+        sum(cert is not None for cert in refinement_certificates)
+    )
     print(
-        f"[PROOF_PLAN] Before proof plan: refinement_certs = {[c is not None for c in refinement_certificates]}, "
-        f"winner would be index 0",
+        "[PROOF_PLAN] Before proof plan: "
+        f"refinement_cert_count={refinement_cert_count}/{len(refinement_certificates)}, "
+        "winner would be index 0",
         flush=True,
     )
 
@@ -6812,6 +7850,7 @@ def _run_docking_pipeline_request(
                 rotatable_bonds=rotatable_bonds,
                 conformer_config=conformer_config,
                 strain_params=strain_params,
+                omission_budget=pose_conf_improvement_budget,
                 scan_only=True,
             )
             if scan_conf is not None:
@@ -6865,6 +7904,7 @@ def _run_docking_pipeline_request(
                     conformer_config=conformer_config,
                     strain_params=strain_params,
                     pruning_incumbent_energy=float(best_energy_with_conf),
+                    omission_budget=pose_conf_improvement_budget,
                 )
                 if conf is not None and conf[1] < resolved_energies[idx_i]:
                     conformer_improved_mask[idx_i] = True

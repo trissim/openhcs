@@ -435,6 +435,141 @@ theorem exactLJ_tail_lower_bound_of_ratio_le_half
     exactLJScore ε_lj σ r₀ ≤ exactLJScore ε_lj σ r := by
   exact exactLJ_tail_monotoneOn ε_lj σ r₀ hε hσ hσ_floor hr₀ hTail (by simp) hr hr
 
+/-- On any interval strictly above the ArrayDSL singularity floor and fully inside the
+    repulsive side of the LJ well, the exact LJ score is antitone. Equivalently, the
+    right endpoint certifies a lower bound for the entire reachable interval. -/
+theorem exactLJ_repulsive_antitoneOn
+    (ε_lj σ r₀ r₁ : ℝ)
+    (hε : 0 ≤ ε_lj) (hσ : 0 < σ)
+    (hr₀_floor : (1 / (10 : ℝ) ^ (10 : ℕ)) < r₀)
+    (hr : r₀ ≤ r₁)
+    (hRep : (1 / 2 : ℝ) ≤ (σ * r₁⁻¹) ^ (6 : ℕ)) :
+    AntitoneOn (fun r : ℝ => exactLJScore ε_lj σ r) (Set.Icc r₀ r₁) := by
+  have hr₀_pos : 0 < r₀ := lt_trans (by positivity : 0 < (1 / (10 : ℝ) ^ (10 : ℕ))) hr₀_floor
+  have hr₁_pos : 0 < r₁ := lt_of_lt_of_le hr₀_pos hr
+  refine antitoneOn_of_deriv_nonpos (convex_Icc r₀ r₁) ?_ ?_ ?_
+  · intro x hx
+    have hx_floor : (1 / (10 : ℝ) ^ (10 : ℕ)) < x := lt_of_lt_of_le hr₀_floor hx.1
+    have hx_pos : 0 < x := lt_trans (by positivity : 0 < (1 / (10 : ℝ) ^ (10 : ℕ))) hx_floor
+    have hx_ne : x ≠ 0 := ne_of_gt hx_pos
+    have hderiv := DecisionQuotient.Computation.grad_of_lennardJones ε_lj σ x hx_ne
+    have hevent : (fun r : ℝ => exactLJScore ε_lj σ r) =ᶠ[nhds x]
+        (fun r : ℝ => 4 * ε_lj * ((σ * r⁻¹) ^ (12 : ℕ) - (σ * r⁻¹) ^ (6 : ℕ))) := by
+      filter_upwards [Ioi_mem_nhds hx_floor] with r hrx
+      have hrlt : (1 / (10 : ℝ) ^ (10 : ℕ)) < r := by simpa using hrx
+      dsimp [exactLJScore, LJApproximation.exactLJScore,
+        DecisionQuotient.Computation.ArrayDSL.lennardJones]
+      split_ifs with h
+      · exfalso
+        linarith
+      · simp [div_eq_mul_inv]
+    have hderiv_at : HasDerivAt (fun r : ℝ => exactLJScore ε_lj σ r)
+        ((24 * ε_lj * x⁻¹) * ((σ * x⁻¹) ^ (6 : ℕ) - 2 * (σ * x⁻¹) ^ (12 : ℕ))) x :=
+      hderiv.congr_of_eventuallyEq hevent
+    exact hderiv_at.differentiableAt.continuousAt.continuousWithinAt
+  · intro x hx
+    rw [interior_Icc] at hx
+    have hx_floor : (1 / (10 : ℝ) ^ (10 : ℕ)) < x := lt_of_lt_of_le hr₀_floor (le_of_lt hx.1)
+    have hx_pos : 0 < x := lt_trans (by positivity : 0 < (1 / (10 : ℝ) ^ (10 : ℕ))) hx_floor
+    have hx_ne : x ≠ 0 := ne_of_gt hx_pos
+    have hderiv := DecisionQuotient.Computation.grad_of_lennardJones ε_lj σ x hx_ne
+    have hevent : (fun r : ℝ => exactLJScore ε_lj σ r) =ᶠ[nhds x]
+        (fun r : ℝ => 4 * ε_lj * ((σ * r⁻¹) ^ (12 : ℕ) - (σ * r⁻¹) ^ (6 : ℕ))) := by
+      filter_upwards [Ioi_mem_nhds hx_floor] with r hrx
+      have hrlt : (1 / (10 : ℝ) ^ (10 : ℕ)) < r := by simpa using hrx
+      dsimp [exactLJScore, LJApproximation.exactLJScore,
+        DecisionQuotient.Computation.ArrayDSL.lennardJones]
+      split_ifs with h
+      · exfalso
+        linarith
+      · simp [div_eq_mul_inv]
+    have hderiv_at : HasDerivAt (fun r : ℝ => exactLJScore ε_lj σ r)
+        ((24 * ε_lj * x⁻¹) * ((σ * x⁻¹) ^ (6 : ℕ) - 2 * (σ * x⁻¹) ^ (12 : ℕ))) x :=
+      hderiv.congr_of_eventuallyEq hevent
+    exact hderiv_at.differentiableAt.differentiableWithinAt
+  · intro x hx
+    rw [interior_Icc] at hx
+    have hx_floor : (1 / (10 : ℝ) ^ (10 : ℕ)) < x := lt_trans hr₀_floor hx.1
+    have hx_pos : 0 < x := lt_trans (by positivity : 0 < (1 / (10 : ℝ) ^ (10 : ℕ))) hx_floor
+    have hx_ne : x ≠ 0 := ne_of_gt hx_pos
+    have hx_le_r₁ : x ≤ r₁ := le_of_lt hx.2
+    have hderiv := DecisionQuotient.Computation.grad_of_lennardJones ε_lj σ x hx_ne
+    have hevent : (fun r : ℝ => exactLJScore ε_lj σ r) =ᶠ[nhds x]
+        (fun r : ℝ => 4 * ε_lj * ((σ * r⁻¹) ^ (12 : ℕ) - (σ * r⁻¹) ^ (6 : ℕ))) := by
+      filter_upwards [Ioi_mem_nhds hx_floor] with r hrx
+      have hrlt : (1 / (10 : ℝ) ^ (10 : ℕ)) < r := by simpa using hrx
+      dsimp [exactLJScore, LJApproximation.exactLJScore,
+        DecisionQuotient.Computation.ArrayDSL.lennardJones]
+      split_ifs with h
+      · exfalso
+        linarith
+      · simp [div_eq_mul_inv]
+    have hderiv_eq : deriv (fun r : ℝ => exactLJScore ε_lj σ r) x =
+        (24 * ε_lj * x⁻¹) * ((σ * x⁻¹) ^ (6 : ℕ) - 2 * (σ * x⁻¹) ^ (12 : ℕ)) := by
+      simpa using (hderiv.congr_of_eventuallyEq hevent).deriv
+    have hr_inv : r₁⁻¹ ≤ x⁻¹ := by
+      exact (inv_le_inv₀ hr₁_pos hx_pos).2 hx_le_r₁
+    have hσx : σ * r₁⁻¹ ≤ σ * x⁻¹ := by
+      exact mul_le_mul_of_nonneg_left hr_inv (le_of_lt hσ)
+    have hbase_r₁_nonneg : 0 ≤ σ * r₁⁻¹ := by positivity
+    have hu_ge_half : (1 / 2 : ℝ) ≤ (σ * x⁻¹) ^ (6 : ℕ) := by
+      have hpow : (σ * r₁⁻¹) ^ (6 : ℕ) ≤ (σ * x⁻¹) ^ (6 : ℕ) := by
+        exact pow_le_pow_left₀ hbase_r₁_nonneg hσx 6
+      exact le_trans hRep hpow
+    have hfactor_nonpos :
+        (σ * x⁻¹) ^ (6 : ℕ) - 2 * (σ * x⁻¹) ^ (12 : ℕ) ≤ 0 := by
+      set u : ℝ := (σ * x⁻¹) ^ (6 : ℕ)
+      have hu0 : 0 ≤ u := by positivity
+      have huHalf : (1 / 2 : ℝ) ≤ u := by simpa [u] using hu_ge_half
+      nlinarith [hu0, huHalf]
+    have hderiv_nonpos :
+        (24 * ε_lj * x⁻¹) * ((σ * x⁻¹) ^ (6 : ℕ) - 2 * (σ * x⁻¹) ^ (12 : ℕ)) ≤ 0 := by
+      have hscale_nonneg : 0 ≤ 24 * ε_lj * x⁻¹ := by positivity
+      exact mul_nonpos_of_nonneg_of_nonpos hscale_nonneg hfactor_nonpos
+    simpa [hderiv_eq] using hderiv_nonpos
+
+/-- Repulsive-side lower bound corollary: if a reachable LJ interval stays strictly above the
+    ArrayDSL singularity floor and entirely on the repulsive side of the well, the exact score
+    at the right endpoint lower-bounds the entire interval. -/
+theorem exactLJ_repulsive_lower_bound_at_right_endpoint_of_ratio_ge_half
+    (ε_lj σ r r₁ : ℝ)
+    (hε : 0 ≤ ε_lj) (hσ : 0 < σ)
+    (hr_floor : (1 / (10 : ℝ) ^ (10 : ℕ)) < r)
+    (hr : r ≤ r₁)
+    (hRep : (1 / 2 : ℝ) ≤ (σ * r₁⁻¹) ^ (6 : ℕ)) :
+    exactLJScore ε_lj σ r₁ ≤ exactLJScore ε_lj σ r := by
+  have hAnti := exactLJ_repulsive_antitoneOn ε_lj σ r r₁ hε hσ hr_floor hr hRep
+  exact hAnti ⟨le_rfl, hr⟩ ⟨hr, le_rfl⟩ hr
+
+/-- Repulsive-side lower bound that remains valid even when the reachable interval
+    crosses into the ArrayDSL floor-clamp branch.
+
+    If `r ≤ r₁` and `r₁` is still on the repulsive side, then
+    `min(exactLJScore(r₁), 1e12)` lower-bounds `exactLJScore(r)`.
+    This combines:
+    - monotonicity on the analytic branch above the floor, and
+    - the constant clamp value on and below the floor. -/
+theorem exactLJ_repulsive_lower_bound_at_right_endpoint_with_floor_clamp
+    (ε_lj σ r r₁ : ℝ)
+    (hε : 0 ≤ ε_lj) (hσ : 0 < σ)
+    (hr : r ≤ r₁)
+    (hRep : (1 / 2 : ℝ) ≤ (σ * r₁⁻¹) ^ (6 : ℕ)) :
+    min (exactLJScore ε_lj σ r₁) ((10 : ℝ) ^ (12 : ℕ)) ≤ exactLJScore ε_lj σ r := by
+  by_cases hr_floor : (1 / (10 : ℝ) ^ (10 : ℕ)) < r
+  · have hmono :=
+      exactLJ_repulsive_lower_bound_at_right_endpoint_of_ratio_ge_half
+        ε_lj σ r r₁ hε hσ hr_floor hr hRep
+    exact le_trans (min_le_left _ _) hmono
+  · have hr_le_floor : r ≤ (1 / (10 : ℝ) ^ (10 : ℕ)) := le_of_not_gt hr_floor
+    have hclamp : exactLJScore ε_lj σ r = (10 : ℝ) ^ (12 : ℕ) := by
+      dsimp [exactLJScore, LJApproximation.exactLJScore,
+        DecisionQuotient.Computation.ArrayDSL.lennardJones]
+      exact if_pos hr_le_floor
+    calc
+      min (exactLJScore ε_lj σ r₁) ((10 : ℝ) ^ (12 : ℕ)) ≤ (10 : ℝ) ^ (12 : ℕ) :=
+        min_le_right _ _
+      _ = exactLJScore ε_lj σ r := by simpa [hclamp]
+
 /-- The softened Lipschitz constant is nonneg when ε_lj ≥ 0 and rSoft > 0. -/
 theorem softenedLipschitzConstant_nonneg (ε_lj σ rSoft : ℝ)
     (hε : 0 ≤ ε_lj) (hr : 0 < rSoft) :

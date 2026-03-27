@@ -270,6 +270,11 @@ CB3 = "CB3"
 CB4 = "CB4"
 CB5 = "CB5"
 CB6 = "CB6"
+CB15 = "CB15"
+CB16 = "CB16"
+CB17 = "CB17"
+CB18 = "CB18"
+CB19 = "CB19"
 CB7 = "CB7"
 CB8 = "CB8"
 CB9 = "CB9"
@@ -1095,6 +1100,15 @@ BCRC3 = "BCRC3"
 BCRC4 = "BCRC4"
 BCRC5 = "BCRC5"
 BCRC6 = "BCRC6"
+BCRC7 = "BCRC7"
+BCRC8 = "BCRC8"
+BCRC9 = "BCRC9"
+BCRC10 = "BCRC10"
+BCRC11 = "BCRC11"
+BCRC12 = "BCRC12"
+BCRC13 = "BCRC13"
+BCRC14 = "BCRC14"
+BCRC15 = "BCRC15"
 BCPO1 = "BCPO1"
 BCRP1 = "BCRP1"
 LSA9 = "LSA9"
@@ -1109,6 +1123,8 @@ LJ23 = "LJ23"
 LJ24 = "LJ24"
 LJ25 = "LJ25"
 LJ26 = "LJ26"
+LJ27 = "LJ27"
+LJ28 = "LJ28"
 MC11 = "MC11"
 MC12 = "MC12"
 MC13 = "MC13"
@@ -1386,6 +1402,11 @@ __all__ = [
     "CB4",
     "CB5",
     "CB6",
+    "CB15",
+    "CB16",
+    "CB17",
+    "CB18",
+    "CB19",
     "CB7",
     "CB8",
     "CB9",
@@ -2213,6 +2234,15 @@ __all__ = [
     "BCRC4",
     "BCRC5",
     "BCRC6",
+    "BCRC7",
+    "BCRC8",
+    "BCRC9",
+    "BCRC10",
+    "BCRC11",
+    "BCRC12",
+    "BCRC13",
+    "BCRC14",
+    "BCRC15",
     "BCPO1",
     "BCRP1",
     "BCRP2",
@@ -2225,6 +2255,8 @@ __all__ = [
     "LJ24",
     "LJ25",
     "LJ26",
+    "LJ27",
+    "LJ28",
     "MC11",
     "MC12",
     "MC13",

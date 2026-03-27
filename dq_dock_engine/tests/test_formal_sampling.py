@@ -52,6 +52,7 @@ def test_rigid_seed_family_plan_round_trips_box_family() -> None:
     family = materialize_certified_rigid_seed_family(plan)
 
     assert plan.pose_count == 32
+    assert plan.adequate_pose_count == 32
     assert plan.translation_search_volume == 48.0
     assert family.translations.shape[0] == 32
     assert family.quaternions.shape[0] == 32
@@ -83,3 +84,23 @@ def test_rigid_seed_family_plan_uses_binding_site_volume() -> None:
         family.translations - binding_site.center[None, :], axis=-1
     )
     assert bool(jnp.all(distances <= binding_site.radius + 1e-6))
+
+
+def test_rigid_seed_family_plan_uses_cover_floor_without_overwriting_adequacy() -> None:
+    box = DockingBox(
+        center=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+    )
+
+    plan = derive_certified_rigid_seed_family_plan(
+        box,
+        8,
+        target_translation_cover_radius=1.0,
+    )
+    family = materialize_certified_rigid_seed_family(plan)
+
+    assert plan.adequate_pose_count == 8
+    assert plan.pose_count > plan.adequate_pose_count
+    assert plan.translation_full_lattice is False
+    assert plan.target_translation_cover_radius == pytest.approx(1.0)
+    assert family.translations.shape[0] == plan.pose_count

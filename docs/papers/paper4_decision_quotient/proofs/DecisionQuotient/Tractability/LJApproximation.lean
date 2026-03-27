@@ -50,7 +50,9 @@ theorem exactLJScore_ge_neg_epsilon (ε σ r : ℝ) (hε : 0 ≤ ε) :
       nlinarith
     have hscale : -ε ≤ 4 * ε * (u ^ (2 : ℕ) - u) := by
       nlinarith [hquad, hε]
-    simpa [u, pow_two] using hscale
+    have hu12 : u ^ (2 : ℕ) = (σ / r) ^ (12 : ℕ) := by
+      simpa [u] using (pow_mul (σ / r) 6 2).symm
+    simpa [u, hu12] using hscale
 
 /-- Decision problem induced by an exact LJ score over a sampled distance map. -/
 noncomputable def exactLJDecisionProblem {A : Type u} {S : Type v}

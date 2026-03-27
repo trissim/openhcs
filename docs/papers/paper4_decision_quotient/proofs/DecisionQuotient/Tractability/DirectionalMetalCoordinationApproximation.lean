@@ -75,12 +75,12 @@ def MetalUnitIntervalFactor {A : Type u} {S : Type v} (f : A → S → ℝ) : Pr
     Proof via telescope: f₁g₁ - f₂g₂ = (f₁-f₂)g₁ + f₂(g₁-g₂). -/
 theorem directionalMetalScore_sub_le_component_sum
     {f1 f2 g1 g2 Lf Lg err : ℝ}
-    (hf1 : 0 ≤ f1) (hf1b : f1 ≤ 1)
+    (_hf1 : 0 ≤ f1) (_hf1b : f1 ≤ 1)
     (hf2 : 0 ≤ f2) (hf2b : f2 ≤ 1)
     (hg1 : 0 ≤ g1) (hg1b : g1 ≤ 1)
-    (hg2 : 0 ≤ g2) (hg2b : g2 ≤ 1)
-    (hLf : 0 ≤ Lf) (hLg : 0 ≤ Lg)
-    (herr : 0 ≤ err)
+    (_hg2 : 0 ≤ g2) (_hg2b : g2 ≤ 1)
+    (_hLf : 0 ≤ Lf) (_hLg : 0 ≤ Lg)
+    (_herr : 0 ≤ err)
     (hRadial : |f1 - f2| ≤ Lf * err)
     (hGeometry : |g1 - g2| ≤ Lg * err) :
     |directionalMetalScore f1 g1 - directionalMetalScore f2 g2| ≤
@@ -113,7 +113,7 @@ theorem directionalMetalScore_sub_le_component_sum
     terms. The geometry factor is "free" — it refines the score without
     increasing the certified error. -/
 theorem angular_factor_tightens_tail
-    (w radial angular : ℝ)
+    (w radial angular B : ℝ)
     (h_angular_nonneg : 0 ≤ angular)
     (h_angular_le_one : angular ≤ 1)
     (h_radial_bound : |w * radial| ≤ B) :

@@ -165,6 +165,36 @@ theorem directionalHBondScore_sub_le_component_sum
           linarith [hTerm1, hTerm2, hTerm3]
     _ = (Lr + Ld + La) * err := by ring
 
+/-- If both angular factors stay in `[0,1]`, multiplying by them cannot increase
+    a radial tail envelope. This lets a radial-only cutoff tail bound remain
+    valid for the directional score. -/
+theorem directionalHBond_angular_factors_tighten_tail
+    (w radial donorAngle acceptorAngle B : ℝ)
+    (hDon_nonneg : 0 ≤ donorAngle)
+    (hDon_le_one : donorAngle ≤ 1)
+    (hAcc_nonneg : 0 ≤ acceptorAngle)
+    (hAcc_le_one : acceptorAngle ≤ 1)
+    (hRadial_bound : |w * radial| ≤ B) :
+    |w * radial * donorAngle * acceptorAngle| ≤ B := by
+  have hDon_abs : |donorAngle| = donorAngle := abs_of_nonneg hDon_nonneg
+  have hAcc_abs : |acceptorAngle| = acceptorAngle := abs_of_nonneg hAcc_nonneg
+  have hDon_abs_le_one : |donorAngle| ≤ 1 := by simpa [hDon_abs] using hDon_le_one
+  have hAcc_abs_le_one : |acceptorAngle| ≤ 1 := by simpa [hAcc_abs] using hAcc_le_one
+  calc
+    |w * radial * donorAngle * acceptorAngle|
+        = |w * radial| * |donorAngle| * |acceptorAngle| := by
+            rw [show w * radial * donorAngle * acceptorAngle = ((w * radial) * donorAngle) * acceptorAngle by ring,
+              abs_mul, abs_mul]
+    _ ≤ |w * radial| * |donorAngle| * 1 := by
+          exact mul_le_mul_of_nonneg_left hAcc_abs_le_one
+            (mul_nonneg (abs_nonneg _) (abs_nonneg _))
+    _ ≤ |w * radial| * 1 * 1 := by
+          have hDon_step : |w * radial| * |donorAngle| ≤ |w * radial| * 1 :=
+            mul_le_mul_of_nonneg_left hDon_abs_le_one (abs_nonneg _)
+          exact mul_le_mul_of_nonneg_right hDon_step (by positivity)
+    _ = |w * radial| := by ring
+    _ ≤ B := hRadial_bound
+
 /-- Any two finite directional H-bond score families admit a canonical finite-domain discrepancy radius. -/
 noncomputable def finiteDirectionalHBondErrorRadius
     {A : Type u} {S : Type v}

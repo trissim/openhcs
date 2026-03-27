@@ -8,8 +8,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from dq_dock_engine.docking import pipeline as docking_pipeline
 from dq_dock_engine.docking.chemistry_runtime import (
     AnchoredSiteArray,
+    HalogenBondInteractionTerm,
     IndexedSiteArray,
     PiStackingInteractionTerm,
     SiteGeometry,
@@ -26,6 +28,106 @@ from dq_dock_engine.docking.scoring import (
 )
 from dq_dock_engine.docking.scoring_context import CertifiedScoringContext
 from dq_dock_engine.docking_config import ExactChemistryMode
+
+
+def _directional_anchored_sites(
+    *,
+    positions: tuple[tuple[float, float, float], ...],
+    vectors: tuple[tuple[float, float, float], ...],
+    strengths: tuple[float, ...],
+    anchors: tuple[int, ...],
+) -> AnchoredSiteArray:
+    return AnchoredSiteArray(
+        geometry=SiteGeometry.DIRECTIONAL,
+        positions=jnp.array(positions, dtype=jnp.float32),
+        vectors=jnp.array(vectors, dtype=jnp.float32),
+        strengths=jnp.array(strengths, dtype=jnp.float32),
+        anchor_indices=jnp.array(anchors, dtype=jnp.int32),
+    )
+
+
+def _directional_indexed_sites(
+    *,
+    atoms: tuple[tuple[int, ...], ...],
+    refs: tuple[tuple[int, ...], ...],
+    strengths: tuple[float, ...],
+) -> IndexedSiteArray:
+    return IndexedSiteArray(
+        geometry=SiteGeometry.DIRECTIONAL,
+        atom_index_rows=jnp.array(atoms, dtype=jnp.int32),
+        atom_index_mask=jnp.ones((len(atoms), len(atoms[0])), dtype=bool),
+        reference_index_rows=jnp.array(refs, dtype=jnp.int32),
+        reference_index_mask=jnp.ones((len(refs), len(refs[0])), dtype=bool),
+        strengths=jnp.array(strengths, dtype=jnp.float32),
+    )
+
+
+def _make_halogen_context(n_receptor: int) -> CertifiedScoringContext:
+    halogen = HalogenBondInteractionTerm(
+        receptor_acceptors=_directional_anchored_sites(
+            positions=((0.0, 0.0, 0.0),),
+            vectors=((1.0, 0.0, 0.0),),
+            strengths=(1.0,),
+            anchors=(0,),
+        ),
+        receptor_donors=_directional_anchored_sites(
+            positions=((0.0, 0.0, 0.0),),
+            vectors=((1.0, 0.0, 0.0),),
+            strengths=(0.0,),
+            anchors=(0,),
+        ),
+        ligand_acceptors=_directional_indexed_sites(
+            atoms=((0,),),
+            refs=((1,),),
+            strengths=(0.0,),
+        ),
+        ligand_donors=_directional_indexed_sites(
+            atoms=((0,),),
+            refs=((1,),),
+            strengths=(1.0,),
+        ),
+    )
+    rich_plan = CertifiedRichChemistryPlan(
+        screened_coulomb=CertifiedScreenedCoulombSpec(
+            receptor_charges=jnp.zeros((n_receptor,), dtype=jnp.float32),
+            ligand_charges=jnp.zeros((2,), dtype=jnp.float32),
+        ),
+        contact=CertifiedContactSurrogateSpec(
+            receptor_weights=jnp.zeros((n_receptor,), dtype=jnp.float32),
+            ligand_weights=jnp.zeros((2,), dtype=jnp.float32),
+        ),
+        hbond_receptor_donor=CertifiedDirectionalHBondSpec(
+            receptor_anchor_indices=jnp.zeros((n_receptor,), dtype=jnp.int32),
+            receptor_directions=jnp.zeros((n_receptor, 3), dtype=jnp.float32),
+            ligand_anchor_indices=jnp.zeros((2,), dtype=jnp.int32),
+            ligand_local_directions=jnp.zeros((2, 3), dtype=jnp.float32),
+            ligand_frame_coords=jnp.zeros((2, 3), dtype=jnp.float32),
+            receptor_strengths=jnp.zeros((n_receptor,), dtype=jnp.float32),
+            ligand_strengths=jnp.zeros((2,), dtype=jnp.float32),
+        ),
+        hbond_ligand_donor=CertifiedDirectionalHBondSpec(
+            receptor_anchor_indices=jnp.zeros((n_receptor,), dtype=jnp.int32),
+            receptor_directions=jnp.zeros((n_receptor, 3), dtype=jnp.float32),
+            ligand_anchor_indices=jnp.zeros((2,), dtype=jnp.int32),
+            ligand_local_directions=jnp.zeros((2, 3), dtype=jnp.float32),
+            ligand_frame_coords=jnp.zeros((2, 3), dtype=jnp.float32),
+            receptor_strengths=jnp.zeros((n_receptor,), dtype=jnp.float32),
+            ligand_strengths=jnp.zeros((2,), dtype=jnp.float32),
+            receptor_alignment_sign=-1.0,
+            ligand_alignment_sign=1.0,
+        ),
+        metal_coordination=CertifiedMetalCoordinationSpec(
+            receptor_strengths=jnp.zeros((n_receptor,), dtype=jnp.float32),
+            ligand_strengths=jnp.zeros((2,), dtype=jnp.float32),
+            receptor_ideal_angles=jnp.zeros((n_receptor,), dtype=jnp.float32),
+        ),
+        pairwise_sigma=jnp.full((n_receptor, 2), 3.22, dtype=jnp.float32),
+        extended_terms=CertifiedExtendedInteractionBundle(terms=(halogen,)),
+    )
+    return CertifiedScoringContext(
+        exact_chemistry_mode=ExactChemistryMode.EXTENDED_RICH,
+        rich_chemistry_plan=rich_plan,
+    )
 
 
 def _make_pi_stacking_context(n_receptor: int) -> CertifiedScoringContext:
@@ -172,3 +274,65 @@ def test_optimization_context_strips_extended_rich_terms_but_keeps_electrostatic
     assert optimization_context.water_grid is None
     assert optimization_context.receptor_conformations is None
     assert ranking_context.exact_chemistry_mode == ExactChemistryMode.NONE
+
+
+def test_halogen_only_context_does_not_activate_orientation_disambiguation():
+    context = _make_halogen_context(1)
+
+    assert context.rich_orientation_disambiguation_active() is False
+    assert context.ranking_context().exact_chemistry_mode == ExactChemistryMode.NONE
+
+
+def test_pruning_context_strips_halogen_and_reenables_batch_pruning_delta():
+    context = _make_halogen_context(1)
+
+    pruning_context = context.pruning_context()
+
+    assert pruning_context.rich_chemistry_plan is not None
+    assert pruning_context.uses_batch_pruning_delta() is True
+    assert bool(np.asarray(pruning_context.rich_chemistry_plan.has_active_extended_terms)) is False
+    assert pruning_context.rich_chemistry_plan.extended_terms.terms == ()
+
+
+def test_halogen_only_flip_disambiguation_matches_base_physics_score():
+    context = _make_halogen_context(1)
+    receptor_coords = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+    poses_coords = jnp.array([[[3.2, 0.0, 0.0], [2.2, 0.0, 0.0]]], dtype=jnp.float32)
+    receptor_radii = jnp.array([1.7], dtype=jnp.float32)
+    ligand_radii = jnp.array([1.5, 1.5], dtype=jnp.float32)
+
+    base_result = context.optimization_context().score_exact_batch(
+        receptor_coords=receptor_coords,
+        poses_coords=poses_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_radii,
+        target_error=0.001,
+        epsilon=0.086,
+    )
+    disambiguation_result = context.score_flip_disambiguation_batch(
+        receptor_coords=receptor_coords,
+        poses_coords=poses_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_radii,
+        target_error=0.001,
+        epsilon=0.086,
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(disambiguation_result.scores),
+        np.asarray(base_result.scores),
+    )
+    np.testing.assert_allclose(
+        np.asarray(disambiguation_result.posewise_error_bound),
+        np.asarray(base_result.posewise_error_bound),
+    )
+    assert float(disambiguation_result.error_bound) == float(base_result.error_bound)
+
+
+def test_orientation_margin_handles_ignore_halogen_terms():
+    context = _make_halogen_context(1)
+
+    assert docking_pipeline._orientation_margin_theorem_handles(context) == (
+        "HB15",
+        "AH11",
+    )

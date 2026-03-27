@@ -216,26 +216,118 @@ def _minimal_translation_points_for_cover(
     ):
         return base_points
 
-    def cover_radius(n_points: int) -> float:
-        if binding_site is not None:
-            return _binding_site_translation_grid_cover_radius(binding_site, n_points)
-        assert box is not None
-        return _translation_grid_cover_radius(box, n_points)
+    if binding_site is not None:
+        enclosing_box = DockingBox(
+            center=binding_site.center,
+            size=jnp.full((3,), 2.0 * binding_site.radius),
+        )
+        resolution = _required_full_lattice_resolution(
+            enclosing_box.size,
+            target_translation_cover_radius,
+        )
+        full_grid = np.asarray(
+            _translation_grid_at_resolution(enclosing_box, resolution), dtype=np.float64
+        )
+        in_sphere = (
+            np.linalg.norm(
+                full_grid - np.asarray(binding_site.center, dtype=np.float64)[None, :],
+                axis=1,
+            )
+            <= float(binding_site.radius) + 1e-9
+        )
+        cover_floor = int(np.count_nonzero(in_sphere))
+        return max(base_points, cover_floor)
 
-    low = max(1, base_points)
-    if cover_radius(low) <= target_translation_cover_radius:
-        return low
-    high = low * 2
-    while cover_radius(high) > target_translation_cover_radius:
-        low = high
-        high *= 2
-    while low + 1 < high:
-        mid = (low + high) // 2
-        if cover_radius(mid) <= target_translation_cover_radius:
-            high = mid
-        else:
-            low = mid
-    return high
+    assert box is not None
+    resolution = _required_full_lattice_resolution(
+        box.size,
+        target_translation_cover_radius,
+    )
+    cover_floor = int(resolution**3)
+    return max(base_points, cover_floor)
+
+
+def _global_action_family_shape(
+    box: DockingBox,
+    n_poses: int,
+    *,
+    target_translation_cover_radius: float | None = None,
+) -> tuple[jax.Array, int, int, int, int, bool]:
+    quaternions = _quaternion_dictionary()
+    n_quaternions = int(quaternions.shape[0])
+    base_points = int(jnp.ceil(n_poses / n_quaternions))
+    n_translation_points = _minimal_translation_points_for_cover(
+        base_points=base_points,
+        target_translation_cover_radius=target_translation_cover_radius,
+        box=box,
+    )
+    resolution = _minimal_even_grid_resolution(n_translation_points)
+    translation_tightened = n_translation_points > base_points
+    pose_count = (
+        n_translation_points * n_quaternions if translation_tightened else n_poses
+    )
+    return (
+        quaternions,
+        n_quaternions,
+        n_translation_points,
+        resolution,
+        pose_count,
+        translation_tightened,
+    )
+
+
+def _binding_site_translation_resolution(
+    binding_site: CertifiedBindingSite,
+    n_points: int,
+) -> int:
+    resolution = _minimal_even_grid_resolution(n_points)
+    box = DockingBox(
+        center=binding_site.center,
+        size=jnp.full((3,), 2.0 * binding_site.radius),
+    )
+    while True:
+        full_grid = np.asarray(
+            _translation_grid_at_resolution(box, resolution), dtype=np.float64
+        )
+        in_sphere = (
+            np.linalg.norm(
+                full_grid - np.asarray(binding_site.center, dtype=np.float64)[None, :],
+                axis=1,
+            )
+            <= float(binding_site.radius) + 1e-9
+        )
+        if int(np.count_nonzero(in_sphere)) >= n_points:
+            return resolution
+        resolution += 2
+
+
+def _binding_site_action_family_shape(
+    binding_site: CertifiedBindingSite,
+    n_poses: int,
+    *,
+    target_translation_cover_radius: float | None = None,
+) -> tuple[jax.Array, int, int, int, int, bool]:
+    quaternions = _quaternion_dictionary()
+    n_quaternions = int(quaternions.shape[0])
+    base_points = int(jnp.ceil(n_poses / n_quaternions))
+    n_translation_points = _minimal_translation_points_for_cover(
+        base_points=base_points,
+        target_translation_cover_radius=target_translation_cover_radius,
+        binding_site=binding_site,
+    )
+    resolution = _binding_site_translation_resolution(binding_site, n_translation_points)
+    translation_tightened = n_translation_points > base_points
+    pose_count = (
+        n_translation_points * n_quaternions if translation_tightened else n_poses
+    )
+    return (
+        quaternions,
+        n_quaternions,
+        n_translation_points,
+        resolution,
+        pose_count,
+        translation_tightened,
+    )
 
 
 def create_certified_global_action_family(
@@ -248,6 +340,8 @@ def create_certified_global_action_family(
     quaternions = _quaternion_dictionary()
     n_quaternions = quaternions.shape[0]
     if translation_full_lattice:
+        quaternions = _quaternion_dictionary()
+        n_quaternions = quaternions.shape[0]
         if target_translation_cover_radius is None:
             raise ValueError(
                 "translation_full_lattice requires target_translation_cover_radius"
@@ -257,20 +351,31 @@ def create_certified_global_action_family(
         )
         translations = _translation_grid_at_resolution(box, resolution)
     else:
-        n_translation_points = int(jnp.ceil(n_poses / n_quaternions))
-        translations, resolution = _translation_grid(box, n_translation_points)
+        (
+            quaternions,
+            n_quaternions,
+            n_translation_points,
+            resolution,
+            pose_count,
+            translation_tightened,
+        ) = _global_action_family_shape(
+            box,
+            n_poses,
+            target_translation_cover_radius=target_translation_cover_radius,
+        )
+        translations, _ = _translation_grid(box, n_translation_points)
     tiled_translations = jnp.repeat(translations, n_quaternions, axis=0)
     tiled_quaternions = jnp.tile(quaternions, (translations.shape[0], 1))
     return CertifiedGlobalActionFamily(
         translations=(
             tiled_translations
             if translation_full_lattice
-            else tiled_translations[:n_poses]
+            else tiled_translations if translation_tightened else tiled_translations[:n_poses]
         ),
         quaternions=(
             tiled_quaternions
             if translation_full_lattice
-            else tiled_quaternions[:n_poses]
+            else tiled_quaternions if translation_tightened else tiled_quaternions[:n_poses]
         ),
         lattice_resolution=resolution,
         quaternion_count=n_quaternions,
@@ -287,6 +392,8 @@ def create_certified_binding_site_action_family(
     quaternions = _quaternion_dictionary()
     n_quaternions = quaternions.shape[0]
     if translation_full_lattice:
+        quaternions = _quaternion_dictionary()
+        n_quaternions = quaternions.shape[0]
         if target_translation_cover_radius is None:
             raise ValueError(
                 "translation_full_lattice requires target_translation_cover_radius"
@@ -300,23 +407,31 @@ def create_certified_binding_site_action_family(
         )
         translations = _translation_grid_at_resolution(box, resolution)
     else:
-        n_translation_points = int(jnp.ceil(n_poses / n_quaternions))
-        translations, resolution = _binding_site_translation_grid(
-            binding_site,
+        (
+            quaternions,
+            n_quaternions,
             n_translation_points,
+            resolution,
+            pose_count,
+            translation_tightened,
+        ) = _binding_site_action_family_shape(
+            binding_site,
+            n_poses,
+            target_translation_cover_radius=target_translation_cover_radius,
         )
+        translations, _ = _binding_site_translation_grid(binding_site, n_translation_points)
     tiled_translations = jnp.repeat(translations, n_quaternions, axis=0)
     tiled_quaternions = jnp.tile(quaternions, (translations.shape[0], 1))
     return CertifiedGlobalActionFamily(
         translations=(
             tiled_translations
             if translation_full_lattice
-            else tiled_translations[:n_poses]
+            else tiled_translations if translation_tightened else tiled_translations[:n_poses]
         ),
         quaternions=(
             tiled_quaternions
             if translation_full_lattice
-            else tiled_quaternions[:n_poses]
+            else tiled_quaternions if translation_tightened else tiled_quaternions[:n_poses]
         ),
         lattice_resolution=resolution,
         quaternion_count=n_quaternions,
@@ -330,27 +445,26 @@ def derive_certified_rigid_seed_family_plan(
     *,
     target_translation_cover_radius: float | None = None,
 ) -> CertifiedRigidSeedFamilyPlan:
-    enforce_cover = (
-        target_translation_cover_radius is not None
-        and target_translation_cover_radius > 0.0
-    )
     if certified_binding_site is None:
-        family = create_certified_global_action_family(
+        (
+            _,
+            n_quaternions,
+            n_translation_points,
+            resolution,
+            pose_count,
+            _,
+        ) = _global_action_family_shape(
             box,
             n_poses,
-            translation_full_lattice=enforce_cover,
             target_translation_cover_radius=target_translation_cover_radius,
         )
-        n_translation_points = int(
-            family.translations.shape[0] // family.quaternion_count
-        )
-        pose_count = int(family.translations.shape[0])
         return CertifiedRigidSeedFamilyPlan(
             region_kind=CertifiedRigidSeedRegionKind.BOX,
             pose_count=pose_count,
+            adequate_pose_count=n_poses,
             translation_point_count=n_translation_points,
-            lattice_resolution=family.lattice_resolution,
-            quaternion_count=family.quaternion_count,
+            lattice_resolution=resolution,
+            quaternion_count=n_quaternions,
             translation_search_volume=_box_search_volume(box),
             theorem_handles=rigid_seed_family_theorem_handles(),
             box_center=cast(
@@ -361,7 +475,7 @@ def derive_certified_rigid_seed_family_plan(
                 tuple[float, float, float],
                 tuple(float(v) for v in np.asarray(box.size).tolist()),
             ),
-            translation_full_lattice=enforce_cover,
+            translation_full_lattice=False,
             target_translation_cover_radius=target_translation_cover_radius,
             note=(
                 "Certified rigid seed family over the docking box lattice"
@@ -370,20 +484,25 @@ def derive_certified_rigid_seed_family_plan(
                 f"(translation-tightened from {n_poses} to {pose_count} poses)"
             ),
         )
-    family = create_certified_binding_site_action_family(
+    (
+        _,
+        n_quaternions,
+        n_translation_points,
+        resolution,
+        pose_count,
+        _,
+    ) = _binding_site_action_family_shape(
         certified_binding_site,
         n_poses,
-        translation_full_lattice=enforce_cover,
         target_translation_cover_radius=target_translation_cover_radius,
     )
-    n_translation_points = int(family.translations.shape[0] // family.quaternion_count)
-    pose_count = int(family.translations.shape[0])
     return CertifiedRigidSeedFamilyPlan(
         region_kind=CertifiedRigidSeedRegionKind.CERTIFIED_BINDING_SITE,
         pose_count=pose_count,
+        adequate_pose_count=n_poses,
         translation_point_count=n_translation_points,
-        lattice_resolution=family.lattice_resolution,
-        quaternion_count=family.quaternion_count,
+        lattice_resolution=resolution,
+        quaternion_count=n_quaternions,
         translation_search_volume=_binding_site_search_volume(certified_binding_site),
         theorem_handles=tuple(
             dict.fromkeys(
@@ -396,7 +515,7 @@ def derive_certified_rigid_seed_family_plan(
             tuple(float(v) for v in np.asarray(certified_binding_site.center).tolist()),
         ),
         binding_site_radius=float(certified_binding_site.radius),
-        translation_full_lattice=enforce_cover,
+        translation_full_lattice=False,
         target_translation_cover_radius=target_translation_cover_radius,
         note=(
             "Certified rigid seed family over the certified binding-site sphere"

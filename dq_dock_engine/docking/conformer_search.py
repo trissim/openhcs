@@ -120,6 +120,28 @@ class ConformerResult:
     theorem_handles: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class CertifiedCellLowerBoundState:
+    """Optional theorem-backed reduced-family state for a torsion cell.
+
+    `score_fn` / `score_fn_batch` may evaluate a reduced receptor family for the
+    cell. `omitted_energy_bound` certifies the worst-case omitted-channel shift
+    between that local family and the authoritative exact score. When
+    `cell_lower_bound` is supplied, it is treated as an already-composed exact
+    lower bound for the full cell and can be used directly for incumbent-based
+    pruning without evaluating the child center first.
+    """
+
+    omitted_energy_bound: float = 0.0
+    theorem_handles: tuple[str, ...] = ()
+    score_fn: Callable[[jnp.ndarray], float] | None = None
+    score_fn_batch: Callable[[jnp.ndarray], jnp.ndarray] | None = None
+    active_mask: np.ndarray | None = None
+    cell_lower_bound: float | None = None
+    score_is_exact: bool = True
+    payload: object | None = None
+
+
 # ---------------------------------------------------------------------------
 # Section 2: ABC hierarchy
 # ---------------------------------------------------------------------------
@@ -697,6 +719,9 @@ class _PrioritizedCell:
     insertion_order: int
     cell: SearchCell = field(compare=False)
     center_energy: float = field(compare=False)
+    bound_state: CertifiedCellLowerBoundState | None = field(
+        compare=False, default=None
+    )
 
 
 # Fixed pad size for batch scoring — ensures JIT compiles exactly once per
@@ -729,6 +754,13 @@ def _sequential_scan_incumbent(
     initial_params: jnp.ndarray,
     initial_energy: float,
     initial_coords: jnp.ndarray,
+    single_bond_score_provider: Callable[
+        [int, jnp.ndarray],
+        tuple[
+            Callable[[jnp.ndarray], float], Callable[[jnp.ndarray], jnp.ndarray] | None
+        ],
+    ]
+    | None = None,
 ) -> tuple[float, jnp.ndarray]:
     if n_bonds < _SEQUENTIAL_SCAN_ACTIVE_BOND_THRESHOLD:
         return initial_energy, initial_coords
@@ -746,6 +778,13 @@ def _sequential_scan_incumbent(
 
     improved_any = False
     for bond_idx in range(n_bonds):
+        bond_score_fn = score_fn
+        bond_score_fn_batch = score_fn_batch
+        if single_bond_score_provider is not None:
+            bond_score_fn, bond_score_fn_batch = single_bond_score_provider(
+                bond_idx,
+                jnp.asarray(best_coords),
+            )
         batch_params = np.repeat(params[None, :], grid.shape[0], axis=0)
         batch_params[:, bond_idx] = grid
         params_batch_jnp = jnp.asarray(batch_params, dtype=base_coords.dtype)
@@ -763,13 +802,13 @@ def _sequential_scan_incumbent(
             axis=0,
         )
         coords_batch = jnp.asarray(coords_batch_np, dtype=base_coords.dtype)
-        if score_fn_batch is not None:
+        if bond_score_fn_batch is not None:
             scores = np.asarray(
-                jax.device_get(score_fn_batch(coords_batch)), dtype=np.float32
+                jax.device_get(bond_score_fn_batch(coords_batch)), dtype=np.float32
             )
         else:
             scores = np.array(
-                [float(score_fn(coords_batch[i])) for i in range(grid.shape[0])],
+                [float(bond_score_fn(coords_batch[i])) for i in range(grid.shape[0])],
                 dtype=np.float32,
             )
         if strain_fn is not None:
@@ -808,6 +847,55 @@ def _collapse_torsion_cell_to_active_subset(
     return TorsionCell(lower=lower, upper=upper)
 
 
+def _combine_active_masks(*masks: np.ndarray | None) -> np.ndarray | None:
+    combined: np.ndarray | None = None
+    for mask in masks:
+        if mask is None:
+            continue
+        mask_np = np.asarray(mask, dtype=bool)
+        combined = mask_np if combined is None else np.logical_and(combined, mask_np)
+    return combined
+
+
+def _collapse_torsion_cell_with_masks(
+    cell: TorsionCell,
+    *masks: np.ndarray | None,
+) -> TorsionCell:
+    combined = _combine_active_masks(*masks)
+    if combined is None:
+        return cell
+    return _collapse_torsion_cell_to_active_subset(cell, combined)
+
+
+def _evaluate_score_with_optional_batch(
+    coords: jnp.ndarray,
+    *,
+    default_score_fn: Callable[[jnp.ndarray], float],
+    local_score_fn: Callable[[jnp.ndarray], float] | None,
+    local_score_fn_batch: Callable[[jnp.ndarray], jnp.ndarray] | None,
+) -> float:
+    if local_score_fn is not None:
+        return float(local_score_fn(coords))
+    if local_score_fn_batch is not None:
+        scores = np.asarray(
+            jax.device_get(local_score_fn_batch(coords[None, ...])), dtype=np.float32
+        )
+        return float(scores[0])
+    return float(default_score_fn(coords))
+
+
+def _cell_lower_bound_value(
+    *,
+    center_energy: float,
+    slack: float,
+    bound_state: CertifiedCellLowerBoundState | None,
+) -> float:
+    if bound_state is not None and bound_state.cell_lower_bound is not None:
+        return float(bound_state.cell_lower_bound)
+    omitted = 0.0 if bound_state is None else float(bound_state.omitted_energy_bound)
+    return center_energy - omitted - slack
+
+
 def branch_and_bound_search(
     kinematics: KinematicMap,
     base_coords: jnp.ndarray,
@@ -819,6 +907,16 @@ def branch_and_bound_search(
     pruning_incumbent_energy: float | None = None,
     local_activity_mask_fn: Callable[[TorsionCell, np.ndarray], np.ndarray | None]
     | None = None,
+    cell_bound_state_fn: Callable[
+        [TorsionCell, np.ndarray], CertifiedCellLowerBoundState | None
+    ]
+    | None = None,
+    child_cell_bound_state_fn: Callable[
+        [CertifiedCellLowerBoundState, TorsionCell],
+        CertifiedCellLowerBoundState | None,
+    ]
+    | None = None,
+    score_is_exact: bool = True,
 ) -> ConformerResult:
     """Branch-and-bound over torsion space with certified Lipschitz pruning.
 
@@ -848,64 +946,108 @@ def branch_and_bound_search(
 
     def _compute_slack(cell: SearchCell) -> float:
         if use_per_dim and isinstance(cell, TorsionCell):
-            return cell.weighted_l1_slack(per_dim_lip_arr)
+            return cell.weighted_l1_slack(cast(jnp.ndarray, per_dim_lip_arr))
         return composed_lipschitz * cell.radius()
 
     def _subdivide(cell: SearchCell) -> tuple[SearchCell, ...]:
         if use_per_dim and isinstance(cell, TorsionCell):
-            return cell.subdivide(per_dim_lip_arr)
+            return cell.subdivide(cast(jnp.ndarray, per_dim_lip_arr))
         return cell.subdivide()
 
     n_atoms = base_coords.shape[0]
-    use_batch = score_fn_batch is not None
+    use_batch = (
+        score_fn_batch is not None
+        and cell_bound_state_fn is None
+        and child_cell_bound_state_fn is None
+    )
+    extra_theorem_handles: list[str] = []
 
     # --- Score initial cell center ---
     center_params = initial_cell.center()
     center_coords = kinematics.forward(base_coords, center_params)
-    center_score = float(score_fn(center_coords))
+    root_state = None
+    if cell_bound_state_fn is not None and isinstance(initial_cell, TorsionCell):
+        root_state = cell_bound_state_fn(
+            initial_cell,
+            np.asarray(jax.device_get(center_coords), dtype=np.float32),
+        )
+        if root_state is not None:
+            extra_theorem_handles.extend(root_state.theorem_handles)
+    center_score = _evaluate_score_with_optional_batch(
+        center_coords,
+        default_score_fn=score_fn,
+        local_score_fn=None if root_state is None else root_state.score_fn,
+        local_score_fn_batch=None if root_state is None else root_state.score_fn_batch,
+    )
     center_strain = float(strain_fn(center_params)) if strain_fn is not None else 0.0
     root_energy = center_score + center_strain
     local_best_energy = root_energy if config.reuse_initial_conformer else float("inf")
-    best_energy = local_best_energy
+    best_return_energy = local_best_energy
     if pruning_incumbent_energy is not None and math.isfinite(pruning_incumbent_energy):
-        best_energy = min(best_energy, float(pruning_incumbent_energy))
+        best_return_energy = min(best_return_energy, float(pruning_incumbent_energy))
+    best_pruning_energy = float("inf")
+    if pruning_incumbent_energy is not None and math.isfinite(pruning_incumbent_energy):
+        best_pruning_energy = float(pruning_incumbent_energy)
+    root_score_is_exact = (
+        score_is_exact if root_state is None else root_state.score_is_exact
+    )
+    if config.reuse_initial_conformer and root_score_is_exact:
+        best_pruning_energy = min(best_pruning_energy, root_energy)
     best_coords = center_coords
 
-    scan_energy, scan_coords = _sequential_scan_incumbent(
-        kinematics=cast(TorsionKinematics, kinematics),
-        base_coords=base_coords,
-        n_atoms=n_atoms,
-        n_bonds=len(config.per_bond_lipschitz or ()),
-        score_fn=score_fn,
-        score_fn_batch=score_fn_batch,
-        strain_fn=strain_fn,
-        initial_params=center_params,
-        initial_energy=root_energy,
-        initial_coords=center_coords,
-    )
-    if scan_energy < local_best_energy:
-        local_best_energy = scan_energy
-        best_coords = scan_coords
-    if scan_energy < best_energy:
-        best_energy = scan_energy
-        best_coords = scan_coords
+    if pruning_incumbent_energy is None or not math.isfinite(pruning_incumbent_energy):
+        scan_energy, scan_coords = _sequential_scan_incumbent(
+            kinematics=cast(TorsionKinematics, kinematics),
+            base_coords=base_coords,
+            n_atoms=n_atoms,
+            n_bonds=len(config.per_bond_lipschitz or ()),
+            score_fn=score_fn
+            if root_state is None or root_state.score_fn is None
+            else root_state.score_fn,
+            score_fn_batch=(
+                score_fn_batch
+                if root_state is None or root_state.score_fn_batch is None
+                else root_state.score_fn_batch
+            ),
+            strain_fn=strain_fn,
+            initial_params=center_params,
+            initial_energy=root_energy,
+            initial_coords=center_coords,
+        )
+        if scan_energy < local_best_energy:
+            local_best_energy = scan_energy
+            best_coords = scan_coords
+        if scan_energy < best_return_energy:
+            best_return_energy = scan_energy
+            best_coords = scan_coords
+        if root_score_is_exact and scan_energy < best_pruning_energy:
+            best_pruning_energy = scan_energy
 
     leaf_conformers: list[tuple[float, jnp.ndarray]] = [(root_energy, center_coords)]
 
     root_cell = initial_cell
-    if local_activity_mask_fn is not None and isinstance(initial_cell, TorsionCell):
-        root_active_mask = local_activity_mask_fn(
-            initial_cell,
-            np.asarray(jax.device_get(center_coords), dtype=np.float32),
-        )
-        if root_active_mask is not None:
-            root_cell = _collapse_torsion_cell_to_active_subset(
+    if isinstance(initial_cell, TorsionCell):
+        root_active_mask = None
+        if local_activity_mask_fn is not None:
+            root_active_mask = local_activity_mask_fn(
                 initial_cell,
-                np.asarray(root_active_mask, dtype=bool),
+                np.asarray(jax.device_get(center_coords), dtype=np.float32),
             )
+        root_cell = _collapse_torsion_cell_with_masks(
+            initial_cell,
+            None if root_state is None else root_state.active_mask,
+            None
+            if root_active_mask is None
+            else np.asarray(root_active_mask, dtype=bool),
+        )
 
     root_slack = _compute_slack(root_cell)
-    if root_energy - root_slack >= best_energy:
+    root_lower_bound = _cell_lower_bound_value(
+        center_energy=root_energy,
+        slack=root_slack,
+        bound_state=root_state,
+    )
+    if best_pruning_energy < root_lower_bound:
         theorem_handles = tuple(
             dict.fromkeys(
                 (
@@ -928,11 +1070,12 @@ def branch_and_bound_search(
                     if strain_fn is not None
                     else ()
                 )
+                + tuple(extra_theorem_handles)
             )
         )
         return ConformerResult(
             conformer_coords=(best_coords,),
-            conformer_energies=(best_energy,),
+            conformer_energies=(best_return_energy,),
             theorem_handles=theorem_handles,
         )
 
@@ -940,14 +1083,39 @@ def branch_and_bound_search(
     insertion_counter = 0
     if root_cell.radius() >= config.min_cell_radius:
         for child in _subdivide(root_cell):
-            child_bound_value = root_energy - _compute_slack(child)
+            child_state = None
+            child_cell = child
+            if (
+                child_cell_bound_state_fn is not None
+                and root_state is not None
+                and isinstance(child, TorsionCell)
+            ):
+                child_state = child_cell_bound_state_fn(root_state, child)
+                if child_state is not None:
+                    extra_theorem_handles.extend(child_state.theorem_handles)
+                    child_cell = _collapse_torsion_cell_with_masks(
+                        child,
+                        child_state.active_mask,
+                    )
+            child_bound_value = _cell_lower_bound_value(
+                center_energy=root_energy,
+                slack=_compute_slack(child_cell),
+                bound_state=child_state if child_state is not None else root_state,
+            )
+            if (
+                child_state is not None
+                and child_state.cell_lower_bound is not None
+                and best_pruning_energy < child_bound_value
+            ):
+                continue
             heapq.heappush(
                 heap,
                 _PrioritizedCell(
                     priority=child_bound_value,
                     insertion_order=insertion_counter,
-                    cell=child,
+                    cell=child_cell,
                     center_energy=0.0,
+                    bound_state=child_state if child_state is not None else root_state,
                 ),
             )
             insertion_counter += 1
@@ -959,20 +1127,20 @@ def branch_and_bound_search(
         # derived from the *parent* cell's energy, not the child's own center.
         # Only the post-evaluation check (CS5: energy_conformer_dominated) is
         # a certified bound — it uses the cell's own evaluated center energy.
-        batch_cells: list[SearchCell] = []
+        batch_entries: list[_PrioritizedCell] = []
         batch_limit = _BB_BATCH_SIZE if use_batch else 1
-        while heap and len(batch_cells) < batch_limit:
-            entry = heapq.heappop(heap)
-            batch_cells.append(entry.cell)
+        while heap and len(batch_entries) < batch_limit:
+            batch_entries.append(heapq.heappop(heap))
 
-        if not batch_cells:
+        if not batch_entries:
             break
 
         # --- Evaluate: fixed-pad batch or single-cell fallback ---
+        batch_cells = [entry.cell for entry in batch_entries]
         batch_params = [cell.center() for cell in batch_cells]
         n_real = len(batch_cells)
 
-        if use_batch and n_real > 1:
+        if use_batch and n_real > 1 and score_fn_batch is not None:
             # Forward kinematics for real cells
             params_stack = jnp.stack(batch_params, axis=0)
             real_coords = kinematics.forward_batch(base_coords, params_stack)
@@ -984,18 +1152,54 @@ def branch_and_bound_search(
             scores_np = np.asarray(all_scores[:n_real])
             coords_np = np.asarray(real_coords)
         else:
-            single_coords = [
-                np.asarray(kinematics.forward(base_coords, p)) for p in batch_params
-            ]
+            single_coords = []
+            scores_list: list[float] = []
+            for entry, params in zip(batch_entries, batch_params, strict=False):
+                coords_jnp = kinematics.forward(base_coords, params)
+                single_coords.append(np.asarray(coords_jnp))
+                bound_state = entry.bound_state
+                scores_list.append(
+                    _evaluate_score_with_optional_batch(
+                        coords_jnp,
+                        default_score_fn=score_fn,
+                        local_score_fn=(
+                            None if bound_state is None else bound_state.score_fn
+                        ),
+                        local_score_fn_batch=(
+                            None if bound_state is None else bound_state.score_fn_batch
+                        ),
+                    )
+                )
             coords_np = np.stack(single_coords, axis=0)
-            scores_np = np.array(
-                [float(score_fn(jnp.asarray(c))) for c in single_coords],
-            )
+            scores_np = np.array(scores_list, dtype=np.float32)
 
         # --- Process results (all numpy — no JAX dispatch) ---
-        for i, cell in enumerate(batch_cells):
+        for i, (entry, cell) in enumerate(
+            zip(batch_entries, batch_cells, strict=False)
+        ):
             center_coords_i = jnp.asarray(coords_np[i])
-            center_score_i = float(scores_np[i])
+            bound_state = entry.bound_state
+            if (
+                bound_state is None
+                and cell_bound_state_fn is not None
+                and isinstance(cell, TorsionCell)
+            ):
+                bound_state = cell_bound_state_fn(
+                    cell,
+                    np.asarray(coords_np[i], dtype=np.float32),
+                )
+                if bound_state is not None:
+                    extra_theorem_handles.extend(bound_state.theorem_handles)
+                    center_score_i = _evaluate_score_with_optional_batch(
+                        center_coords_i,
+                        default_score_fn=score_fn,
+                        local_score_fn=bound_state.score_fn,
+                        local_score_fn_batch=bound_state.score_fn_batch,
+                    )
+                else:
+                    center_score_i = float(scores_np[i])
+            else:
+                center_score_i = float(scores_np[i])
             center_strain_i = (
                 float(strain_fn(batch_params[i])) if strain_fn is not None else 0.0
             )
@@ -1005,31 +1209,44 @@ def branch_and_bound_search(
             if center_energy < local_best_energy:
                 local_best_energy = center_energy
                 best_coords = center_coords_i
-            if center_energy < best_energy:
-                best_energy = center_energy
+            if center_energy < best_return_energy:
+                best_return_energy = center_energy
+            score_exact_here = (
+                score_is_exact if bound_state is None else bound_state.score_is_exact
+            )
+            if score_exact_here and center_energy < best_pruning_energy:
+                best_pruning_energy = center_energy
 
             local_cell = cell
-            if local_activity_mask_fn is not None and isinstance(cell, TorsionCell):
-                local_active_mask = local_activity_mask_fn(
-                    cell,
-                    np.asarray(coords_np[i], dtype=np.float32),
-                )
-                if local_active_mask is not None:
-                    local_cell = _collapse_torsion_cell_to_active_subset(
+            if isinstance(cell, TorsionCell):
+                local_active_mask = None
+                if local_activity_mask_fn is not None:
+                    local_active_mask = local_activity_mask_fn(
                         cell,
-                        np.asarray(local_active_mask, dtype=bool),
+                        np.asarray(coords_np[i], dtype=np.float32),
                     )
+                local_cell = _collapse_torsion_cell_with_masks(
+                    cell,
+                    None if bound_state is None else bound_state.active_mask,
+                    None
+                    if local_active_mask is None
+                    else np.asarray(local_active_mask, dtype=bool),
+                )
 
             slack = _compute_slack(local_cell)
             bound = EnergyLowerBound(
-                center_energy=center_energy,
+                center_energy=_cell_lower_bound_value(
+                    center_energy=center_energy,
+                    slack=0.0,
+                    bound_state=bound_state,
+                ),
                 lipschitz_constant=composed_lipschitz,
                 cell_radius=local_cell.radius(),
                 per_dim_slack=slack if use_per_dim else None,
             )
 
             # CS5: energy_conformer_dominated — prune if dominated
-            if bound.is_dominated_by(best_energy):
+            if bound.is_dominated_by(best_pruning_energy):
                 continue
 
             if local_cell.radius() < config.min_cell_radius:
@@ -1037,14 +1254,41 @@ def branch_and_bound_search(
                 continue
 
             for child in _subdivide(local_cell):
-                child_lb = center_energy - _compute_slack(child)
+                child_state = None
+                child_cell = child
+                if (
+                    child_cell_bound_state_fn is not None
+                    and bound_state is not None
+                    and isinstance(child, TorsionCell)
+                ):
+                    child_state = child_cell_bound_state_fn(bound_state, child)
+                    if child_state is not None:
+                        extra_theorem_handles.extend(child_state.theorem_handles)
+                        child_cell = _collapse_torsion_cell_with_masks(
+                            child,
+                            child_state.active_mask,
+                        )
+                child_lb = _cell_lower_bound_value(
+                    center_energy=center_energy,
+                    slack=_compute_slack(child_cell),
+                    bound_state=child_state if child_state is not None else bound_state,
+                )
+                if (
+                    child_state is not None
+                    and child_state.cell_lower_bound is not None
+                    and best_pruning_energy < child_lb
+                ):
+                    continue
                 heapq.heappush(
                     heap,
                     _PrioritizedCell(
                         priority=child_lb,
                         insertion_order=insertion_counter,
-                        cell=child,
+                        cell=child_cell,
                         center_energy=0.0,
+                        bound_state=(
+                            child_state if child_state is not None else bound_state
+                        ),
                     ),
                 )
                 insertion_counter += 1
@@ -1112,6 +1356,7 @@ def branch_and_bound_search(
                 if strain_fn is not None
                 else ()
             )
+            + tuple(extra_theorem_handles)
         )
     )
 
@@ -1337,6 +1582,16 @@ def search_conformers(
     pruning_incumbent_energy: float | None = None,
     local_activity_mask_fn: Callable[[TorsionCell, np.ndarray], np.ndarray | None]
     | None = None,
+    cell_bound_state_fn: Callable[
+        [TorsionCell, np.ndarray], CertifiedCellLowerBoundState | None
+    ]
+    | None = None,
+    child_cell_bound_state_fn: Callable[
+        [CertifiedCellLowerBoundState, TorsionCell],
+        CertifiedCellLowerBoundState | None,
+    ]
+    | None = None,
+    score_is_exact: bool = True,
 ) -> ConformerResult:
     """Search for distinct low-energy conformers via certified branch-and-bound.
 
@@ -1409,6 +1664,9 @@ def search_conformers(
         score_fn_batch=score_fn_batch,
         pruning_incumbent_energy=pruning_incumbent_energy,
         local_activity_mask_fn=local_activity_mask_fn,
+        cell_bound_state_fn=cell_bound_state_fn,
+        child_cell_bound_state_fn=child_cell_bound_state_fn,
+        score_is_exact=score_is_exact,
     )
 
 
@@ -1420,6 +1678,13 @@ def search_conformers_sequential_scan(
     strain_params: TorsionStrainParams | None = None,
     score_fn_batch: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
     rotatable_bonds: tuple[RotatableBond, ...] | None = None,
+    single_bond_score_provider: Callable[
+        [int, jnp.ndarray],
+        tuple[
+            Callable[[jnp.ndarray], float], Callable[[jnp.ndarray], jnp.ndarray] | None
+        ],
+    ]
+    | None = None,
 ) -> ConformerResult:
     coords_np = np.asarray(base_coords, dtype=np.float32)
     bonds = (
@@ -1451,6 +1716,7 @@ def search_conformers_sequential_scan(
         initial_params=initial_params,
         initial_energy=center_score + center_strain,
         initial_coords=center_coords,
+        single_bond_score_provider=single_bond_score_provider,
     )
     return ConformerResult(
         conformer_coords=(best_coords,),

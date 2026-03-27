@@ -976,6 +976,11 @@ abbrev CB3 := @Tractability.CoulombApproximation.exactCoulomb_satisfiesBoundedPo
 abbrev CB4 := @Tractability.CoulombApproximation.exactRealEwald_satisfiesBoundedPotential_of_tailBound
 abbrev CB5 := @Tractability.CoulombApproximation.abs_exactRealEwaldScore_le_charge_envelope
 abbrev CB6 := @Tractability.Ewald.ewaldRealSpaceCore_le_alpha_tail
+abbrev CB15 := @Tractability.CoulombApproximation.exactRealEwaldScore_nonneg_of_nonneg_charge_product
+abbrev CB16 := @Tractability.CoulombApproximation.exactRealEwaldScore_nonpos_of_nonpos_charge_product
+abbrev CB17 := @Tractability.CoulombApproximation.exactRealEwaldScore_ge_neg_charge_envelope
+abbrev CB18 := @Tractability.CoulombApproximation.exactRealEwaldScore_lower_bound_at_left_endpoint_of_nonpos_charge_product
+abbrev CB19 := @Tractability.CoulombApproximation.exactRealEwaldScore_lower_bound_at_right_endpoint_of_nonneg_charge_product
 abbrev CB7 := @Tractability.CoulombApproximation.exact_vs_cutoff_coulomb_certified_top1_sound
 noncomputable abbrev CB8 := @Tractability.CoulombApproximation.exact_vs_cutoff_coulomb_certified_top1
 noncomputable abbrev CB9 := @Tractability.CoulombApproximation.exact_vs_cutoff_coulomb_optimizer_witness
@@ -1025,6 +1030,7 @@ noncomputable abbrev HB12 := @Tractability.DirectionalHBondApproximation.exact_v
 abbrev HB13 := @Tractability.DirectionalHBondApproximation.totalScore_native_beats_flipped_of_equal_background
 abbrev HB14 := @Tractability.DirectionalHBondApproximation.totalScore_equal_of_equal_background_and_silent_donor
 abbrev HB15 := @Tractability.DirectionalHBondApproximation.native_unique_top1_of_certified_margin_over_background
+abbrev HB16 := @Tractability.DirectionalHBondApproximation.directionalHBond_angular_factors_tighten_tail
 abbrev AH1 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_uniformApprox
 abbrev AH2 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_certified_top1_sound
 noncomputable abbrev AH3 := @Tractability.DirectionalHBondApproximation.exact_vs_coarse_attractiveDirectionalHBond_certified_top1
@@ -2132,6 +2138,8 @@ abbrev CHN2 := @Tractability.CooperativeHBondApproximation.independent_approxima
 abbrev CHN3 := @Tractability.CooperativeHBondApproximation.cooperative_error_nonneg
 -- CHN4: Pairwise product sum bounded by N²
 abbrev CHN4 := @Tractability.CooperativeHBondApproximation.pairwise_product_sum_le_of_unit_interval
+-- CHN5: Runtime-shape aggregated cooperative correction bound |α·(Σf)^2| ≤ |α|·(N·B)^2
+abbrev CHN5 := @Tractability.CooperativeHBondApproximation.cooperative_correction_bounded_of_abs_le
 
 /-! ## Explicit Water Placement (EWP) handles
     ExplicitWaterPlacement.lean - Bridging water placement with certified bounds
@@ -2442,6 +2450,24 @@ abbrev BCRC4 := @Tractability.BlindConformerRuntimeCertificates.base_plus_omitte
 abbrev BCRC5 := @Tractability.BlindConformerRuntimeCertificates.exact_with_omitted_ge_coarse_minus_totalError
 -- BCRC6: Omitted nonnegative channels are bounded by a certified supremum budget
 abbrev BCRC6 := @Tractability.BlindConformerRuntimeCertificates.omitted_channel_is_bounded_by_supremum
+-- BCRC7: Shifting the incumbent by the omitted-channel budget is certified-safe
+abbrev BCRC7 := @Tractability.BlindConformerRuntimeCertificates.incumbent_shift_safe_of_bounded_omitted_channels
+-- BCRC8: Receptor-atom omission preserves a uniform approximation budget
+abbrev BCRC8 := @Tractability.BlindConformerRuntimeCertificates.receptor_atom_omission_uniformApprox
+-- BCRC9: Shifting the incumbent by the receptor-atom omission budget is certified-safe
+abbrev BCRC9 := @Tractability.BlindConformerRuntimeCertificates.incumbent_shift_safe_of_receptor_atom_omission
+-- BCRC10: Pointwise smaller omitted bounds induce no larger total omission budget
+abbrev BCRC10 := @Tractability.BlindConformerRuntimeCertificates.omitted_channel_budget_mono
+-- BCRC11: A larger omitted-channel budget safely upper-bounds every smaller one
+abbrev BCRC11 := @Tractability.BlindConformerRuntimeCertificates.incumbent_shift_safe_of_larger_omitted_budget
+-- BCRC12: Receptor-atom omission budgets are monotone under pointwise smaller bounds
+abbrev BCRC12 := @Tractability.BlindConformerRuntimeCertificates.receptor_atom_omission_budget_mono
+-- BCRC13: Parent-cell receptor omission safely upper-bounds child-cell omission
+abbrev BCRC13 := @Tractability.BlindConformerRuntimeCertificates.incumbent_shift_safe_of_receptor_atom_omission_mono
+-- BCRC14: Receptor-atom omission plus cell slack yields a certified exact lower bound
+abbrev BCRC14 := @Tractability.BlindConformerRuntimeCertificates.exact_with_receptor_atom_omission_ge_coarse_minus_budget_minus_slack
+-- BCRC15: Receptor-atom omission plus cell slack safely prunes an entire cell against an incumbent
+abbrev BCRC15 := @Tractability.BlindConformerRuntimeCertificates.incumbent_shift_safe_of_receptor_atom_omission_and_cell_slack
 
 /-! ## Blind Conformer Pipeline Optimality / Refinement handles -/
 
@@ -2479,6 +2505,10 @@ abbrev LJ24 := @Tractability.SoftLJApproximation.exactLJ_tail_lipschitzOnWith
 abbrev LJ25 := @Tractability.LJApproximation.exactLJScore_ge_neg_epsilon
 -- LJ26: Exact LJ on the tail is lower-bounded by its value at the left endpoint
 abbrev LJ26 := @Tractability.SoftLJApproximation.exactLJ_tail_lower_bound_of_ratio_le_half
+-- LJ27: Exact LJ on the repulsive side is lower-bounded by its value at the right endpoint
+abbrev LJ27 := @Tractability.SoftLJApproximation.exactLJ_repulsive_lower_bound_at_right_endpoint_of_ratio_ge_half
+-- LJ28: Repulsive-side right-endpoint lower bound remains valid with floor-clamp branch via min(score(r1), 1e12)
+abbrev LJ28 := @Tractability.SoftLJApproximation.exactLJ_repulsive_lower_bound_at_right_endpoint_with_floor_clamp
 
 -- MC11: Metal-coordination pointwise Gaussian tail bound
 abbrev MC11 := @Tractability.MetalCoordinationApproximation.metalCoordination_tail_bound

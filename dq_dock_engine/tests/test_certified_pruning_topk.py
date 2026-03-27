@@ -3,6 +3,7 @@ from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from dq_dock_engine.docking import pipeline as docking_pipeline
@@ -11,8 +12,15 @@ from dq_dock_engine.docking.certified_runtime_plans import (
     CertifiedPruningDeltaComponent,
     CertifiedPruningDeltaComponentKind,
     CertifiedPruningDeltaBudget,
+    PoseSpecificImprovementBudget,
+    PoseSpecificImprovementBudgetFamily,
+    PoseSpecificImprovementBudgetKind,
 )
 from dq_dock_engine.docking.core import DockingBox, LigandContext, PoseVector
+from dq_dock_engine.docking.formal_handles import (
+    rigid_posewise_improvement_budget_theorem_handles,
+)
+from dq_dock_engine.docking.scoring import CertifiedRealSpaceEwaldSpec
 from dq_dock_engine.docking.scoring_context import CertifiedScoringContext
 from dq_dock_engine.docking_config import (
     CertifiedScoringFamily,
@@ -67,7 +75,9 @@ def _make_delta_budget(total_delta: float) -> CertifiedPruningDeltaBudget:
     )
 
 
-def test_certified_pruning_pass_uses_top1_coarse_ambiguity_band(monkeypatch) -> None:
+def test_certified_pruning_pass_includes_certified_coarse_delta_in_lower_bound(
+    monkeypatch,
+) -> None:
     coarse_scores = jnp.array([0.0, 10.0, 0.1], dtype=jnp.float32)
     request = _make_request(target_error=0.1)
 
@@ -89,9 +99,13 @@ def test_certified_pruning_pass_uses_top1_coarse_ambiguity_band(monkeypatch) -> 
 
     assert jnp.array_equal(
         execution_plan.retain_mask,
-        jnp.array([True, False, False], dtype=bool),
+        jnp.array([True, False, True], dtype=bool),
     )
     assert jnp.array_equal(execution_plan.coarse_scores, coarse_scores)
+    assert jnp.allclose(
+        execution_plan.lower_bounds,
+        jnp.array([-0.1, 9.9, 0.0], dtype=jnp.float32),
+    )
     assert execution_plan.pruning_delta_budget.total_delta == 0.1
 
 
@@ -121,6 +135,120 @@ def test_certified_pruning_pass_uses_posewise_softening_correction(monkeypatch) 
         jnp.array([True, False, True], dtype=bool),
     )
     assert execution_plan.pruning_delta_budget.total_delta == pytest.approx(0.0)
+
+
+def test_canonical_retain_mask_falls_back_to_retain_all_on_nonfinite_inputs() -> None:
+    scores = jnp.array([0.0, 1.0, 2.0], dtype=jnp.float32)
+
+    retain_mask, tau, lower_bounds = docking_pipeline._canonical_retain_mask(
+        scores,
+        delta=0.1,
+        additive_correction=jnp.array([0.0, jnp.inf, 0.0], dtype=jnp.float32),
+    )
+
+    assert jnp.array_equal(retain_mask, jnp.array([True, True, True], dtype=bool))
+    assert tau == pytest.approx(2.0)
+    assert jnp.array_equal(lower_bounds, scores)
+
+
+def test_pose_specific_improvement_budget_allows_rigid_scalar_budget() -> None:
+    budget = PoseSpecificImprovementBudget(
+        pose_index=7,
+        active_torsion_indices=(),
+        active_torsion_mask=(),
+        per_bond_local_bounds=(),
+        total_budget=1.25,
+        active_subset_source="rigid_local_refinement",
+        theorem_handles=("SH12",),
+        kind=PoseSpecificImprovementBudgetKind.RIGID_LOCAL,
+    )
+
+    assert budget.kind == PoseSpecificImprovementBudgetKind.RIGID_LOCAL
+    assert budget.total_budget == pytest.approx(1.25)
+
+
+def test_rigid_posewise_improvement_budget_handles_match_reachable_lower_bound_math() -> (
+    None
+):
+    handles = set(rigid_posewise_improvement_budget_theorem_handles())
+
+    assert {
+        "LJ24",
+        "LJ25",
+        "LJ26",
+        "LJ27",
+        "LJ28",
+        "CB5",
+        "CB6",
+        "CB18",
+        "CB19",
+        "BCRC4",
+        "BCRC5",
+        "BCRC6",
+        "SH12",
+    }.issubset(handles)
+    assert {"LJ20", "CB15", "CB16", "CB17"}.isdisjoint(handles)
+
+
+def test_posewise_rigid_local_improvement_bounds_budget_close_pose_without_clearance_gate() -> (
+    None
+):
+    request = _make_request(target_error=0.1)
+    scoring_context = CertifiedScoringContext(
+        exact_chemistry_mode=ExactChemistryMode.NONE
+    )
+
+    bounds, clearance_safe_mask, clearance = (
+        docking_pipeline._posewise_rigid_local_improvement_bounds(
+            request,
+            scoring_context,
+            poses_coords=jnp.zeros((1, 1, 3), dtype=jnp.float32),
+            base_translation_step=0.25,
+            base_rotation_step_rad=0.0,
+            ligand_radius=1.0,
+            n_rounds=1,
+        )
+    )
+
+    assert bounds.shape == (1,)
+    assert np.isfinite(bounds[0])
+    assert bounds[0] >= 0.0
+    assert np.array_equal(clearance_safe_mask, np.array([True], dtype=bool))
+    assert clearance.shape == (1,)
+
+
+def test_posewise_rigid_local_improvement_bounds_supports_realspace_ewald_branch() -> (
+    None
+):
+    request = _make_request(target_error=0.1)
+    scoring_context = CertifiedScoringContext(
+        exact_chemistry_mode=ExactChemistryMode.NONE,
+        electrostatics=CertifiedRealSpaceEwaldSpec(
+            receptor_charges=jnp.array([1.0], dtype=jnp.float32),
+            ligand_charges=jnp.array([-1.0], dtype=jnp.float32),
+            cutoff=12.0,
+            alpha=0.2,
+            dielectric=4.0,
+        ),
+    )
+
+    bounds, clearance_safe_mask, clearance = (
+        docking_pipeline._posewise_rigid_local_improvement_bounds(
+            request,
+            scoring_context,
+            poses_coords=jnp.array([[[2.5, 0.0, 0.0]]], dtype=jnp.float32),
+            base_translation_step=0.25,
+            base_rotation_step_rad=0.0,
+            ligand_radius=1.0,
+            n_rounds=2,
+        )
+    )
+
+    assert bounds.shape == (1,)
+    assert np.isfinite(bounds[0])
+    assert bounds[0] >= 0.0
+    assert np.array_equal(clearance_safe_mask, np.array([True], dtype=bool))
+    assert clearance.shape == (1,)
 
 
 def test_merge_pruning_delta_budgets_preserves_component_provenance() -> None:
@@ -236,6 +364,122 @@ def test_score_softened_pose_batch_uses_softening_bound_for_base_physics() -> No
     assert jnp.array_equal(posewise_delta, jnp.array([0.125, 0.025], dtype=jnp.float32))
     assert delta_budget.total_delta == pytest.approx(0.0)
     assert delta_budget.softening_mismatch_delta == pytest.approx(0.0)
+
+
+def test_certified_pruning_pass_uses_rigid_posewise_improvement_correction(
+    monkeypatch,
+) -> None:
+    coarse_scores = jnp.array([0.0, 0.2, 0.3], dtype=jnp.float32)
+    request = _make_request(target_error=0.1)
+
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_score_softened_pose_batch",
+        lambda request, *, poses_coords, electrostatics, scoring_context: (
+            coarse_scores,
+            _make_delta_budget(0.0),
+            jnp.zeros_like(coarse_scores),
+        ),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_posewise_rigid_improvement_budget_family",
+        lambda request, scoring_context, *, poses_coords, **kwargs: (
+            PoseSpecificImprovementBudgetFamily(
+                budgets=(
+                    PoseSpecificImprovementBudget(
+                        pose_index=1,
+                        active_torsion_indices=(),
+                        active_torsion_mask=(),
+                        per_bond_local_bounds=(),
+                        total_budget=0.25,
+                        active_subset_source="rigid_local_refinement",
+                        theorem_handles=("SH12",),
+                        kind=PoseSpecificImprovementBudgetKind.RIGID_LOCAL,
+                    ),
+                ),
+                theorem_handles=("SH12",),
+            ),
+            np.array([0.0, 0.25, 0.0], dtype=np.float32),
+            np.array([True, True, True], dtype=bool),
+            np.array([1.0, 1.0, 1.0], dtype=np.float32),
+        ),
+    )
+
+    execution_plan = docking_pipeline._certified_pruning_pass(
+        request,
+        poses_coords=jnp.zeros((3, 1, 3), dtype=jnp.float32),
+        electrostatics=None,
+        rigid_improvement_scoring_context=cast(CertifiedScoringContext, object()),
+        rigid_refinement_plan=cast(
+            Any,
+            SimpleNamespace(
+                base_translation_step=0.25,
+                base_rotation_step_rad=0.1,
+                ligand_radius=1.0,
+                n_search_rounds=1,
+            ),
+        ),
+    )
+
+    assert jnp.array_equal(
+        execution_plan.retain_mask,
+        jnp.array([True, True, False], dtype=bool),
+    )
+    assert execution_plan.improvement_budget_family is not None
+    assert execution_plan.improvement_budget_family.totals == pytest.approx((0.25,))
+
+
+def test_certified_pruning_pass_retains_rigid_clearance_unsafe_poses(
+    monkeypatch,
+) -> None:
+    coarse_scores = jnp.array([0.0, 0.2, 0.3], dtype=jnp.float32)
+    request = _make_request(target_error=0.1)
+
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_score_softened_pose_batch",
+        lambda request, *, poses_coords, electrostatics, scoring_context: (
+            coarse_scores,
+            _make_delta_budget(0.0),
+            jnp.zeros_like(coarse_scores),
+        ),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_posewise_rigid_improvement_budget_family",
+        lambda request, scoring_context, *, poses_coords, **kwargs: (
+            PoseSpecificImprovementBudgetFamily(
+                budgets=(),
+                theorem_handles=("SH12",),
+            ),
+            np.zeros((3,), dtype=np.float32),
+            np.array([True, False, True], dtype=bool),
+            np.array([1.0, -0.1, 1.0], dtype=np.float32),
+        ),
+    )
+
+    execution_plan = docking_pipeline._certified_pruning_pass(
+        request,
+        poses_coords=jnp.zeros((3, 1, 3), dtype=jnp.float32),
+        electrostatics=None,
+        rigid_improvement_scoring_context=cast(CertifiedScoringContext, object()),
+        rigid_refinement_plan=cast(
+            Any,
+            SimpleNamespace(
+                base_translation_step=0.25,
+                base_rotation_step_rad=0.1,
+                ligand_radius=1.0,
+                n_search_rounds=1,
+            ),
+        ),
+    )
+
+    assert jnp.array_equal(
+        execution_plan.retain_mask,
+        jnp.array([True, True, False], dtype=bool),
+    )
+    assert {"BCPO1", "BCRP1", "BCRC3"}.isdisjoint(set(execution_plan.theorem_handles))
 
 
 def test_score_softened_pose_batch_uses_analytic_delta_for_rich_pruning_context() -> (
@@ -527,6 +771,141 @@ def test_certified_pipeline_route_keeps_all_certified_survivors(
     assert initial_scores.survivor_pose_vecs.translation.shape[0] == n_survivors
     assert initial_scores.survivor_exact_scores is not None
     assert initial_scores.survivor_exact_scores.shape[0] == n_survivors
+
+
+def test_certified_pipeline_route_exact_repruning_retains_uncertified_clearance_pose(
+    monkeypatch,
+) -> None:
+    request = _make_request()
+    pose_vecs = PoseVector(
+        translation=jnp.array(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=jnp.float32
+        ),
+        quaternion=jnp.tile(
+            jnp.array([[1.0, 0.0, 0.0, 0.0]], dtype=jnp.float32), (3, 1)
+        ),
+    )
+    batched_coords = jnp.array(
+        [[[0.0, 0.0, 0.0]], [[1.0, 0.0, 0.0]], [[2.0, 0.0, 0.0]]], dtype=jnp.float32
+    )
+
+    class FakeImprovementFamily:
+        def totals_array(self):
+            return np.zeros((3,), dtype=np.float32)
+
+    class FakeFullContext:
+        uses_extended_rich = False
+        receptor_conformations = None
+
+        def pruning_context(self):
+            return self
+
+        def optimization_context(self):
+            return self
+
+    monkeypatch.setattr(
+        docking_pipeline,
+        "resolve_request_scoring_context",
+        lambda request, *, engine=None: FakeFullContext(),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_certified_pruning_pass",
+        lambda request, *, poses_coords, electrostatics, **kwargs: (
+            CertifiedPipelineExecutionPlan(
+                coarse_scores=jnp.array([0.0, 0.1, 0.2], dtype=jnp.float32),
+                lower_bounds=jnp.array([0.0, 0.1, 0.2], dtype=jnp.float32),
+                tau=0.0,
+                retain_mask=jnp.array([True, True, True], dtype=bool),
+                pruning_delta_budget=_make_delta_budget(0.0),
+                theorem_handles=("TK11",),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_request_uses_conformer_search",
+        lambda request: True,
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_request_rotatable_bonds",
+        lambda request: (),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_derive_certified_rigid_local_refinement_plan",
+        lambda request, scoring_context: SimpleNamespace(
+            local_improvement_bound=0.0,
+            base_translation_step=0.5,
+            base_rotation_step_rad=0.25,
+            ligand_radius=1.0,
+            n_search_rounds=1,
+        ),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_score_rigid_exact_pose_batch",
+        lambda request, *, poses_coords, electrostatics, scoring_context=None: (
+            jnp.array([0.0, 0.2, 0.3], dtype=jnp.float32)
+        ),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_build_conformer_search_config",
+        lambda request, *, rotatable_bonds: SimpleNamespace(per_bond_lipschitz=()),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_conformer_local_improvement_bounds",
+        lambda request, rotatable_bonds, per_bond_lipschitz: jnp.zeros(
+            (0,), dtype=jnp.float32
+        ),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_posewise_improvement_budget_family",
+        lambda *args, **kwargs: FakeImprovementFamily(),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_posewise_rigid_local_improvement_bounds",
+        lambda request, scoring_context, *, poses_coords, **kwargs: (
+            np.zeros((3,), dtype=np.float32),
+            np.array([True, False, True], dtype=bool),
+            np.array([1.0, -0.1, 1.0], dtype=np.float32),
+        ),
+    )
+
+    def fake_score_exact(
+        request, *, poses_coords, electrostatics, scoring_context=None
+    ):
+        del request, electrostatics, scoring_context
+        assert poses_coords.shape[0] == 2
+        return jnp.array([0.0, 0.2], dtype=jnp.float32)
+
+    monkeypatch.setattr(docking_pipeline, "_score_exact_pose_batch", fake_score_exact)
+
+    initial_scores = docking_pipeline.CertifiedPipelineRoute().score_pose_batch(
+        request,
+        batched_coords,
+        pose_vecs,
+    )
+
+    assert initial_scores.survivor_pose_vecs is not None
+    assert jnp.allclose(
+        initial_scores.survivor_pose_vecs.translation,
+        jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float32),
+    )
+    assert initial_scores.survivor_exact_scores is not None
+    assert jnp.allclose(
+        initial_scores.survivor_exact_scores,
+        jnp.array([0.0, 0.2], dtype=jnp.float32),
+    )
+    assert jnp.allclose(
+        initial_scores.final_scores,
+        jnp.array([0.0, 0.2, 1e6], dtype=jnp.float32),
+    )
 
 
 def test_certified_pipeline_route_uses_pruning_context_for_pruning(

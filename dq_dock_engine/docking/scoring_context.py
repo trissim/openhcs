@@ -28,14 +28,12 @@ from dq_dock_engine.docking.receptor_flexibility import (
     ensemble_score_upper_bound,
 )
 from dq_dock_engine.docking.rich_chemistry import build_certified_rich_chemistry_plan
-from dq_dock_engine.docking.chemistry_runtime import HalogenBondInteractionTerm
 from dq_dock_engine.docking.scoring import (
     CertifiedBatchResult,
     CertifiedRealSpaceEwaldSpec,
     CertifiedRichChemistryPlan,
     CertifiedSoftenedBatchResult,
     score_certified_directional_hbond_batch,
-    score_certified_halogen_bond_batch,
     score_certified_batch,
     score_certified_rich_chemistry_batch,
     score_certified_softened_lj,
@@ -43,6 +41,7 @@ from dq_dock_engine.docking.scoring import (
     score_certified_softened_rich_chemistry_batch,
 )
 from dq_dock_engine.docking_config import ExactChemistryMode
+from dq_dock_engine.proof_status import conditionally_certified
 
 
 @register_pytree_node_class
@@ -141,15 +140,7 @@ class CertifiedScoringContext:
         """
         if not self.uses_extended_rich or self.rich_chemistry_plan is None:
             return False
-        halogen_active = any(
-            isinstance(term, HalogenBondInteractionTerm)
-            and bool(np.asarray(term.is_active))
-            for term in self.rich_chemistry_plan.extended_terms.terms
-        )
-        return (
-            bool(np.asarray(self.rich_chemistry_plan.has_active_directional_hbond))
-            or halogen_active
-        )
+        return bool(np.asarray(self.rich_chemistry_plan.has_active_directional_hbond))
 
     def ranking_context(self) -> "CertifiedScoringContext":
         """Final ranking context respecting current flip-disambiguation proofs."""
@@ -252,53 +243,16 @@ class CertifiedScoringContext:
             poses_coords,
             self.rich_chemistry_plan.hbond_ligand_donor,
         )
-        halogen_scores = []
-        halogen_error_bounds = []
-        halogen_cutoffs = []
-        halogen_posewise = []
-        for term in self.rich_chemistry_plan.extended_terms.terms:
-            if isinstance(term, HalogenBondInteractionTerm) and bool(
-                np.asarray(term.is_active)
-            ):
-                halogen_batch = score_certified_halogen_bond_batch(
-                    receptor_coords,
-                    poses_coords,
-                    term,
-                )
-                halogen_scores.append(halogen_batch.scores)
-                halogen_error_bounds.append(halogen_batch.error_bound)
-                halogen_cutoffs.append(jnp.asarray(halogen_batch.cutoff_radius))
-                halogen_posewise.append(halogen_batch.posewise_error_bound)
-        halogen_score_total = (
-            jnp.zeros_like(base_result.scores)
-            if not halogen_scores
-            else jnp.sum(jnp.stack(halogen_scores, axis=0), axis=0)
-        )
-        halogen_error_total = (
-            0.0 if not halogen_error_bounds else float(sum(halogen_error_bounds))
-        )
-        halogen_cutoff_max = (
-            jnp.asarray(0.0)
-            if not halogen_cutoffs
-            else jnp.max(jnp.stack(halogen_cutoffs, axis=0))
-        )
-        halogen_posewise_total = (
-            jnp.zeros_like(base_result.posewise_error_bound)
-            if not halogen_posewise
-            else jnp.sum(jnp.stack(halogen_posewise, axis=0), axis=0)
-        )
         return CertifiedBatchResult(
             scores=(
                 base_result.scores
                 - hbond_receptor_donor.scores
                 - hbond_ligand_donor.scores
-                - halogen_score_total
             ),
             error_bound=(
                 base_result.error_bound
                 + hbond_receptor_donor.error_bound
                 + hbond_ligand_donor.error_bound
-                + halogen_error_total
             ),
             target_error=base_result.target_error,
             cutoff_radius=jnp.max(
@@ -307,7 +261,6 @@ class CertifiedScoringContext:
                         jnp.asarray(base_result.cutoff_radius),
                         jnp.asarray(hbond_receptor_donor.cutoff_radius),
                         jnp.asarray(hbond_ligand_donor.cutoff_radius),
-                        halogen_cutoff_max,
                     ],
                     axis=0,
                 )
@@ -316,7 +269,6 @@ class CertifiedScoringContext:
                 base_result.posewise_error_bound
                 + hbond_receptor_donor.posewise_error_bound
                 + hbond_ligand_donor.posewise_error_bound
-                + halogen_posewise_total
             ),
         )
 
@@ -583,6 +535,13 @@ class CertifiedScoringContext:
         ]
         return jnp.max(jnp.stack(diffs, axis=0), axis=0)
 
+    @conditionally_certified(
+        "LatticeSum.lean::lj6_tail_bound; HandleAliases.lean::CB5; HandleAliases.lean::CB6; HandleAliases.lean::CB10; HandleAliases.lean::CB11; HandleAliases.lean::CB12; HandleAliases.lean::CB13; HandleAliases.lean::CB14; HandleAliases.lean::XR6; HandleAliases.lean::XR7; HandleAliases.lean::XR8; HandleAliases.lean::XR9; HandleAliases.lean::XR10",
+        assumptions=[
+            "This rigid inner-loop score is exactly the physics-only branch selected by _score_physics_only, with no added water or receptor-flex channels",
+            "When extended rich chemistry is active, the runtime uses the same exact/coarse rich-chemistry family as the Lean-backed XR theorem chain",
+        ],
+    )
     def score_rigid_exact_batch(
         self,
         *,
@@ -608,6 +567,14 @@ class CertifiedScoringContext:
             epsilon,
         )
 
+    @conditionally_certified(
+        "HandleAliases.lean::LJ10; HandleAliases.lean::LJ11; HandleAliases.lean::LJ12; HandleAliases.lean::CB10; HandleAliases.lean::CB11; HandleAliases.lean::CB12; HandleAliases.lean::XR6; HandleAliases.lean::XR7; HandleAliases.lean::XR8; HandleAliases.lean::XR9; HandleAliases.lean::XR10; HandleAliases.lean::EWP3",
+        assumptions=[
+            "The softened batch score is exactly the softened physics branch selected by _score_softened_physics_only, plus the additive water-bridge contribution when present",
+            "Water bridges are added once, with the same sign convention as the exact scorer, and contribute their certified grid discrepancy additively",
+            "Receptor-flex ensemble corrections are not folded into this softened score family and are handled separately by posewise_receptor_flex_error_softened_batch",
+        ],
+    )
     def score_rigid_softened_batch(
         self,
         *,
@@ -710,6 +677,14 @@ class CertifiedScoringContext:
             flex_delta,
         )
 
+    @conditionally_certified(
+        "LatticeSum.lean::lj6_tail_bound; HandleAliases.lean::CB5; HandleAliases.lean::CB6; HandleAliases.lean::CB10; HandleAliases.lean::CB11; HandleAliases.lean::CB12; HandleAliases.lean::CB13; HandleAliases.lean::CB14; HandleAliases.lean::XR6; HandleAliases.lean::XR7; HandleAliases.lean::XR8; HandleAliases.lean::XR9; HandleAliases.lean::XR10; HandleAliases.lean::EWP3; HandleAliases.lean::RFE1; HandleAliases.lean::RFE2; HandleAliases.lean::RFE3",
+        assumptions=[
+            "The exact score is the exact base-physics or exact rich-chemistry score, plus the additive water-bridge contribution when present",
+            "For receptor flexibility, the runtime returns the minimum over the reference receptor and the enumerated receptor conformations, with conformationalErrorRadius computed against that same rigid reference score family",
+            "Water contributions are receptor-global and are added uniformly to the rigid and flexible per-conformation scores before taking the ensemble minimum",
+        ],
+    )
     def score_exact_batch(
         self,
         *,
@@ -766,6 +741,14 @@ class CertifiedScoringContext:
             cutoff_radius=ref_result.cutoff_radius,
         )
 
+    @conditionally_certified(
+        "HandleAliases.lean::LJ10; HandleAliases.lean::LJ11; HandleAliases.lean::LJ12; HandleAliases.lean::CB10; HandleAliases.lean::CB11; HandleAliases.lean::CB12; HandleAliases.lean::XR6; HandleAliases.lean::XR7; HandleAliases.lean::XR8; HandleAliases.lean::XR9; HandleAliases.lean::XR10; HandleAliases.lean::EWP3",
+        assumptions=[
+            "The softened score is the softened physics branch selected by _score_softened_physics_only, plus the additive water-bridge contribution when present",
+            "When extended rich chemistry is active, the runtime uses the same softened rich-chemistry family as the Lean-backed XR theorem chain",
+            "Receptor-flex ensemble corrections are not part of this softened score and remain a separate certified correction path",
+        ],
+    )
     def score_softened_batch(
         self,
         *,

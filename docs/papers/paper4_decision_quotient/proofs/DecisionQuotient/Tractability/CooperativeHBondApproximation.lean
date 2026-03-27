@@ -116,6 +116,37 @@ theorem cooperative_correction_bounded {A : Type u} {S : Type v}
     intro j _
     exact (pairwise_product_unit_interval _ (h_unit a s) i j).1
 
+/-- Runtime-shape cooperative correction bound for aggregated channels.
+
+    If each channel score satisfies `|fᵢ| ≤ B`, then
+    `|α · (Σᵢ fᵢ)^2| ≤ |α| · (N·B)^2`.
+
+    This theorem directly matches the runtime correction form
+    `alpha * (sum(scores))^2`. -/
+theorem cooperative_correction_bounded_of_abs_le {N : ℕ}
+    (fs : Fin N → ℝ) (α B : ℝ)
+    (hB : 0 ≤ B)
+    (habs : ∀ i, |fs i| ≤ B) :
+    |α * (Finset.univ.sum (fun i => fs i)) ^ (2 : ℕ)| ≤ |α| * ((N : ℝ) * B) ^ (2 : ℕ) := by
+  have hsum_abs : |Finset.univ.sum (fun i => fs i)| ≤ (N : ℝ) * B := by
+    calc
+      |Finset.univ.sum (fun i => fs i)|
+          ≤ Finset.univ.sum (fun i => |fs i|) := Finset.abs_sum_le_sum_abs _ _
+      _ ≤ Finset.univ.sum (fun _ : Fin N => B) := by
+            apply Finset.sum_le_sum
+            intro i _
+            exact habs i
+      _ = (N : ℝ) * B := by simp [Finset.sum_const, Finset.card_fin]
+  have hpow_abs : |(Finset.univ.sum (fun i => fs i)) ^ (2 : ℕ)| ≤ ((N : ℝ) * B) ^ (2 : ℕ) := by
+    calc
+      |(Finset.univ.sum (fun i => fs i)) ^ (2 : ℕ)|
+          = |Finset.univ.sum (fun i => fs i)| ^ (2 : ℕ) := by
+              simpa [pow_two] using (abs_mul (Finset.univ.sum (fun i => fs i)) (Finset.univ.sum (fun i => fs i)))
+      _ ≤ ((N : ℝ) * B) ^ (2 : ℕ) := by
+            exact pow_le_pow_left₀ (abs_nonneg _) hsum_abs 2
+  rw [abs_mul]
+  exact mul_le_mul_of_nonneg_left hpow_abs (abs_nonneg α)
+
 -- ---------------------------------------------------------------------------
 -- Section 3: Independent model as uniform approximation
 -- ---------------------------------------------------------------------------

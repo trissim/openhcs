@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -18,13 +18,18 @@ from dq_dock_engine.docking.certified_runtime_plans import (
     InactiveConformerReturnedPoseWitness,
     ReturnedPoseProofCase,
 )
-from dq_dock_engine.docking.conformer_search import BranchAndBoundConfig, RotatableBond
+from dq_dock_engine.docking.conformer_search import (
+    BranchAndBoundConfig,
+    RotatableBond,
+    TorsionCell,
+)
 from dq_dock_engine.docking.formal_handles import conformer_coverage_theorem_handles
 from dq_dock_engine.docking.pipeline import (
     PipelineDockingRequest,
     PipelineInitialScores,
     PipelinePoseBatch,
     PipelineRoute,
+    SEED_BUDGET_PROBE_POSES,
     _build_returned_pose_certification,
     _derive_returned_pose_proof_plan,
     _has_conformer_ambiguity_set_certificate_chain,
@@ -213,6 +218,15 @@ class _FakeRoute(PipelineRoute):
         return PipelineInitialScores(final_scores=jnp.arange(n, dtype=jnp.float32))
 
 
+class _InspectProbeRoute(_FakeRoute):
+    def __init__(self) -> None:
+        self.probe_request: PipelineDockingRequest | None = None
+
+    def generate_pose_batch(self, request: PipelineDockingRequest) -> PipelinePoseBatch:
+        self.probe_request = request
+        return super().generate_pose_batch(request)
+
+
 def test_probe_seed_budget_certificate_overrides_request_budget(monkeypatch) -> None:
     cert = _dummy_certificate(q=0.5, n_steps=4)
 
@@ -254,8 +268,45 @@ def test_probe_seed_budget_certificate_overrides_request_budget(monkeypatch) -> 
     assert updated_request.seed_budget_plan is not None
     assert updated_request.seed_budget_plan.selected_budget == expected_budget
     assert updated_request.rigid_seed_family_plan is not None
-    assert updated_request.rigid_seed_family_plan.pose_count == expected_budget
-    assert updated_request.n_poses == expected_budget
+    assert updated_request.rigid_seed_family_plan.adequate_pose_count == expected_budget
+    assert updated_request.n_poses == updated_request.rigid_seed_family_plan.pose_count
+
+
+def test_probe_seed_budget_certificate_keeps_probe_family_small(monkeypatch) -> None:
+    cert = _dummy_certificate(q=0.5, n_steps=4)
+
+    monkeypatch.setattr(
+        "dq_dock_engine.docking.pipeline._certified_refinement",
+        lambda **kwargs: (
+            kwargs["initial_translations"],
+            kwargs["initial_quaternions"],
+            [cert],
+        ),
+    )
+
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_dummy_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+    )
+    route = _InspectProbeRoute()
+
+    _updated_request, _probe_cert = _probe_seed_budget_certificate(request, route)
+
+    assert route.probe_request is not None
+    assert route.probe_request.rigid_seed_family_plan is not None
+    assert route.probe_request.rigid_seed_family_plan.adequate_pose_count == (
+        SEED_BUDGET_PROBE_POSES
+    )
+    assert route.probe_request.rigid_seed_family_plan.pose_count == (
+        SEED_BUDGET_PROBE_POSES
+    )
 
 
 def test_probe_seed_budget_certificate_falls_back_to_original_request(
@@ -292,7 +343,11 @@ def test_probe_seed_budget_certificate_falls_back_to_original_request(
         updated_request.seed_budget_plan.selected_candidate.source
         == "baseline_zero_step_capture"
     )
-    assert updated_request.n_poses == request.n_poses
+    assert (
+        updated_request.seed_budget_plan.selected_budget
+        == updated_request.rigid_seed_family_plan.adequate_pose_count
+    )
+    assert updated_request.n_poses == updated_request.rigid_seed_family_plan.pose_count
 
 
 def test_probe_seed_budget_certificate_uses_smallest_successful_budget(
@@ -378,7 +433,11 @@ def test_probe_seed_budget_certificate_uses_smallest_successful_budget(
         updated_request.seed_budget_plan.selected_budget
         == expected_plan.selected_budget
     )
-    assert updated_request.n_poses == expected_plan.selected_budget
+    assert (
+        updated_request.rigid_seed_family_plan.adequate_pose_count
+        == expected_plan.selected_budget
+    )
+    assert updated_request.n_poses == updated_request.rigid_seed_family_plan.pose_count
 
 
 def test_derive_seed_budget_plan_keeps_baseline_and_probe_candidates() -> None:
@@ -401,7 +460,8 @@ def test_derive_seed_budget_plan_keeps_baseline_and_probe_candidates() -> None:
     assert plan.candidates[1].source == "observed_probe_capture"
     assert plan.selected_candidate.budget <= plan.candidates[0].budget
     assert plan.selected_family_plan is not None
-    assert plan.selected_family_plan.pose_count == plan.selected_budget
+    assert plan.selected_family_plan.adequate_pose_count == plan.selected_budget
+    assert plan.selected_family_plan.pose_count >= plan.selected_budget
     assert plan.engineering_probe_pose_cap is not None
     assert plan.engineering_probe_top_k is not None
 
@@ -972,6 +1032,161 @@ def test_run_conformer_search_restricts_config_to_active_bonds(monkeypatch) -> N
     assert captured["per_bond_lipschitz"] == (1.0, 3.0)
     assert cast(int, captured["max_cells"]) != 999999
     assert len(cast(tuple[RotatableBond, ...], captured["rotatable_bonds"])) == 2
+
+
+def test_run_conformer_search_wires_cellwise_omission_hooks(monkeypatch) -> None:
+    request = PipelineDockingRequest(
+        protein_coords=jnp.array(
+            [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [4.0, 0.0, 0.0]],
+            dtype=jnp.float32,
+        ),
+        receptor_radii=jnp.ones((3,), dtype=jnp.float32),
+        ligand_ctx=_flexible_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+    )
+    rotatable_bonds = (
+        RotatableBond(
+            atom_i=0,
+            atom_j=1,
+            rotating_atom_indices=(1, 2),
+            max_arm_length=1.0,
+        ),
+        RotatableBond(
+            atom_i=1,
+            atom_j=2,
+            rotating_atom_indices=(2, 3),
+            max_arm_length=1.0,
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    class _FakeScoringContext:
+        receptor_conformations = None
+
+        def receptor_subset(self, indices):
+            return self
+
+    def _fake_build_conformer_score_fns(*args, receptor_coords=None, **kwargs):
+        assert receptor_coords is not None
+        return (lambda coords: float(receptor_coords.shape[0])), None
+
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_active_rotatable_bonds_for_pose",
+        lambda *args, **kwargs: (rotatable_bonds, np.array([True, True], dtype=bool)),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_select_receptor_subset_for_conformer_family",
+        lambda **kwargs: jnp.array([0, 1, 2], dtype=jnp.int32),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_per_receptor_atom_conformer_omission_bounds",
+        lambda **kwargs: np.linspace(
+            0.3,
+            0.1,
+            int(kwargs["receptor_coords"].shape[0]),
+            dtype=np.float32,
+        ),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_select_receptor_subset_by_omission_budget",
+        lambda omission_bounds, omission_budget: (
+            (
+                jnp.array([int(np.argmin(omission_bounds))], dtype=jnp.int32),
+                float(np.sum(omission_bounds) - np.min(omission_bounds)),
+            )
+            if omission_bounds.shape[0] > 1
+            else (jnp.array([0], dtype=jnp.int32), 0.0)
+        ),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_build_cell_local_activity_mask_fn",
+        lambda **kwargs: lambda cell, center: np.array([True, False], dtype=bool),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_build_conformer_score_fns",
+        _fake_build_conformer_score_fns,
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_build_conformer_coarse_score_fns",
+        lambda *args, **kwargs: (lambda coords: 0.0, None),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_derive_conformer_coverage_plan_from_lipschitz",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_restrict_conformer_search_config",
+        lambda request, config, active_mask, bonds: config,
+    )
+
+    def _fake_search_conformers(**kwargs):
+        cell_fn = kwargs["cell_bound_state_fn"]
+        child_fn = kwargs["child_cell_bound_state_fn"]
+        assert cell_fn is not None
+        assert child_fn is not None
+        root_cell = TorsionCell(
+            lower=jnp.full((len(rotatable_bonds),), -jnp.pi, dtype=jnp.float32),
+            upper=jnp.full((len(rotatable_bonds),), jnp.pi, dtype=jnp.float32),
+        )
+        root_state = cell_fn(root_cell, np.asarray(request.ligand_ctx.base_coords))
+        child_state = child_fn(root_state, root_cell.subdivide()[0])
+        captured["root_subset"] = int(root_state.payload.retained_indices.shape[0])
+        captured["child_subset"] = int(child_state.payload.retained_indices.shape[0])
+        captured["root_omitted"] = root_state.omitted_energy_bound
+        captured["child_omitted"] = child_state.omitted_energy_bound
+        captured["root_score_is_exact"] = root_state.score_is_exact
+        captured["child_score_is_exact"] = child_state.score_is_exact
+        captured["pruning_incumbent_energy"] = kwargs["pruning_incumbent_energy"]
+        return SimpleNamespace(
+            conformer_coords=(),
+            conformer_energies=(),
+            theorem_handles=(),
+        )
+
+    monkeypatch.setattr(docking_pipeline, "search_conformers", _fake_search_conformers)
+
+    result = _run_conformer_search_for_pose(
+        request,
+        quaternion=jnp.array([1.0, 0.0, 0.0, 0.0], dtype=jnp.float32),
+        translation=jnp.zeros((3,), dtype=jnp.float32),
+        scoring_context=cast(Any, _FakeScoringContext()),
+        electrostatics=None,
+        rotatable_bonds=rotatable_bonds,
+        conformer_config=BranchAndBoundConfig(
+            max_cells=16,
+            min_cell_radius=0.1,
+            score_lipschitz_constant=1.0,
+            max_conformers=1,
+            per_bond_lipschitz=(1.0, 1.0),
+        ),
+        pruning_incumbent_energy=5.0,
+        omission_budget=0.25,
+    )
+
+    assert result is None
+    assert captured["root_subset"] == 1
+    assert captured["child_subset"] == 1
+    assert cast(float, captured["root_omitted"]) > 0.0
+    assert cast(float, captured["child_omitted"]) >= cast(
+        float, captured["root_omitted"]
+    )
+    assert captured["root_score_is_exact"] is False
+    assert captured["child_score_is_exact"] is False
+    assert captured["pruning_incumbent_energy"] == pytest.approx(5.0)
 
 
 def test_certified_mode_rejects_non_optimized_outputs() -> None:

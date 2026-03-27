@@ -113,6 +113,14 @@ theorem bounded_channel_sum_uniformApprox_zero
       intro i _
       exact hBound i a s
 
+/-- Pointwise smaller omitted-channel bounds induce no larger total omission budget. -/
+theorem omitted_channel_budget_mono
+    {I : Type*} [Fintype I]
+    (bounds₁ bounds₂ : I → ℝ)
+    (hPointwise : ∀ i, bounds₁ i ≤ bounds₂ i) :
+    (∑ i, bounds₁ i) ≤ ∑ i, bounds₂ i := by
+  exact Finset.sum_le_sum (fun i _ => hPointwise i)
+
 /-- Base exact/coarse approximation composes with omitted bounded channels. -/
 theorem base_plus_omitted_uniformApprox
     {I : Type*} [Fintype I]
@@ -161,6 +169,164 @@ theorem exact_with_omitted_ge_coarse_minus_totalError
     (δ + ∑ i, bounds i)
     (base_plus_omitted_uniformApprox exactBase coarseBase channels δ bounds hApprox hBound hNonneg)
     a s
+
+/-- Runtime-facing incumbent pruning corollary for bounded omitted channels: if the
+    reduced/coarse family lower bound stays above the incumbent after paying the
+    omitted-channel budget, then the full exact family also stays above the same
+    incumbent. This is the theorem used when a conformer-search subproblem runs on
+    a theorem-backed receptor subset instead of the full receptor. -/
+theorem incumbent_shift_safe_of_bounded_omitted_channels
+    {I : Type*} [Fintype I]
+    {A : Type u} {S : Type v}
+    (exactBase coarseBase : DecisionProblem A S)
+    (channels : I → A → S → ℝ)
+    (δ incumbent : ℝ)
+    (bounds : I → ℝ)
+    (hApprox : UniformUtilityApprox exactBase coarseBase δ)
+    (hBound : ∀ i a s, |channels i a s| ≤ bounds i)
+    (hNonneg : ∀ i, 0 ≤ bounds i)
+    (a : A) (s : S)
+    (hInc : incumbent ≤ coarseBase.utility a s - (δ + ∑ i, bounds i)) :
+    incumbent ≤ (sumDecisionProblems exactBase (omittedChannelSumDecisionProblem channels)).utility a s := by
+  have hLower := exact_with_omitted_ge_coarse_minus_totalError
+    exactBase coarseBase channels δ bounds hApprox hBound hNonneg a s
+  linarith
+
+/-- If an incumbent shift is safe for a larger omitted-channel budget, it remains
+    safe for every pointwise smaller omitted budget. This is the generic theorem
+    needed to justify pruning child cells using a parent-cell omission budget. -/
+theorem incumbent_shift_safe_of_larger_omitted_budget
+    {I : Type*} [Fintype I]
+    {A : Type u} {S : Type v}
+    (exactBase coarseBase : DecisionProblem A S)
+    (channels : I → A → S → ℝ)
+    (δ incumbent : ℝ)
+    (boundsSmall boundsLarge : I → ℝ)
+    (hApprox : UniformUtilityApprox exactBase coarseBase δ)
+    (hBoundSmall : ∀ i a s, |channels i a s| ≤ boundsSmall i)
+    (hBoundLarge : ∀ i a s, |channels i a s| ≤ boundsLarge i)
+    (hNonnegLarge : ∀ i, 0 ≤ boundsLarge i)
+    (hBudgetMono : ∀ i, boundsSmall i ≤ boundsLarge i)
+    (a : A) (s : S)
+    (hInc : incumbent ≤ coarseBase.utility a s - (δ + ∑ i, boundsLarge i)) :
+    incumbent ≤ (sumDecisionProblems exactBase (omittedChannelSumDecisionProblem channels)).utility a s := by
+  have hLarge := incumbent_shift_safe_of_bounded_omitted_channels
+    exactBase coarseBase channels δ incumbent boundsLarge hApprox hBoundLarge hNonnegLarge a s hInc
+  exact hLarge
+
+/-- A receptor-family omission map is just a bounded omitted-channel family, but this
+    corollary names the runtime pattern directly: dropping a finite set of receptor
+    contributions with certified per-atom bounds yields a valid uniform approximation
+    budget for the reduced conformer-search family. -/
+theorem receptor_atom_omission_uniformApprox
+    {I : Type*} [Fintype I]
+    {A : Type u} {S : Type v}
+    (exactBase coarseBase : DecisionProblem A S)
+    (receptorChannels : I → A → S → ℝ)
+    (δ : ℝ)
+    (bounds : I → ℝ)
+    (hApprox : UniformUtilityApprox exactBase coarseBase δ)
+    (hBound : ∀ i a s, |receptorChannels i a s| ≤ bounds i)
+    (hNonneg : ∀ i, 0 ≤ bounds i) :
+    UniformUtilityApprox
+      (sumDecisionProblems exactBase (omittedChannelSumDecisionProblem receptorChannels))
+      coarseBase
+      (δ + ∑ i, bounds i) := by
+  exact base_plus_omitted_uniformApprox exactBase coarseBase receptorChannels δ bounds hApprox hBound hNonneg
+
+/-- Receptor-family omitted-channel corollary for incumbent pruning. This is the
+    theorem-shaped statement the conformer-search runtime uses when it searches on a
+    reduced receptor subset and shifts the incumbent by the certified omitted budget. -/
+theorem incumbent_shift_safe_of_receptor_atom_omission
+    {I : Type*} [Fintype I]
+    {A : Type u} {S : Type v}
+    (exactBase coarseBase : DecisionProblem A S)
+    (receptorChannels : I → A → S → ℝ)
+    (δ incumbent : ℝ)
+    (bounds : I → ℝ)
+    (hApprox : UniformUtilityApprox exactBase coarseBase δ)
+    (hBound : ∀ i a s, |receptorChannels i a s| ≤ bounds i)
+    (hNonneg : ∀ i, 0 ≤ bounds i)
+    (a : A) (s : S)
+    (hInc : incumbent ≤ coarseBase.utility a s - (δ + ∑ i, bounds i)) :
+    incumbent ≤ (sumDecisionProblems exactBase (omittedChannelSumDecisionProblem receptorChannels)).utility a s := by
+  exact incumbent_shift_safe_of_bounded_omitted_channels
+    exactBase coarseBase receptorChannels δ incumbent bounds hApprox hBound hNonneg a s hInc
+
+/-- Receptor-atom omission budgets are monotone under pointwise smaller per-atom
+    bounds. This is the DQ-Dock-facing corollary used when moving from a parent
+    cell to a child cell with a tighter geometric reachability envelope. -/
+theorem receptor_atom_omission_budget_mono
+    {I : Type*} [Fintype I]
+    (boundsSmall boundsLarge : I → ℝ)
+    (hPointwise : ∀ i, boundsSmall i ≤ boundsLarge i) :
+    (∑ i, boundsSmall i) ≤ ∑ i, boundsLarge i := by
+  exact omitted_channel_budget_mono boundsSmall boundsLarge hPointwise
+
+/-- Child-cell receptor omission inherits incumbent-shift safety from any parent-cell
+    budget that pointwise dominates the child budget. This is the theorem-shaped
+    justification for reusing parent omitted-channel certificates while refining a
+    conformer-search cell. -/
+theorem incumbent_shift_safe_of_receptor_atom_omission_mono
+    {I : Type*} [Fintype I]
+    {A : Type u} {S : Type v}
+    (exactBase coarseBase : DecisionProblem A S)
+    (receptorChannels : I → A → S → ℝ)
+    (δ incumbent : ℝ)
+    (boundsSmall boundsLarge : I → ℝ)
+    (hApprox : UniformUtilityApprox exactBase coarseBase δ)
+    (hBoundSmall : ∀ i a s, |receptorChannels i a s| ≤ boundsSmall i)
+    (hBoundLarge : ∀ i a s, |receptorChannels i a s| ≤ boundsLarge i)
+    (hNonnegLarge : ∀ i, 0 ≤ boundsLarge i)
+    (hBudgetMono : ∀ i, boundsSmall i ≤ boundsLarge i)
+    (a : A) (s : S)
+    (hInc : incumbent ≤ coarseBase.utility a s - (δ + ∑ i, boundsLarge i)) :
+    incumbent ≤ (sumDecisionProblems exactBase (omittedChannelSumDecisionProblem receptorChannels)).utility a s := by
+  exact incumbent_shift_safe_of_larger_omitted_budget
+    exactBase coarseBase receptorChannels δ incumbent boundsSmall boundsLarge
+    hApprox hBoundSmall hBoundLarge hNonnegLarge hBudgetMono a s hInc
+
+/-- If a reduced/coarse center score lower-bounds every exact point in a cell up to
+    a certified slack term, then paying both the omitted-channel budget and the cell
+    slack yields a certified lower bound for the full exact family on that cell. -/
+theorem exact_with_receptor_atom_omission_ge_coarse_minus_budget_minus_slack
+    {I : Type*} [Fintype I]
+    {A : Type u} {S : Type v}
+    (exactBase coarseBase : DecisionProblem A S)
+    (receptorChannels : I → A → S → ℝ)
+    (δ slack : ℝ)
+    (bounds : I → ℝ)
+    (hApprox : UniformUtilityApprox exactBase coarseBase δ)
+    (hBound : ∀ i a s, |receptorChannels i a s| ≤ bounds i)
+    (hNonneg : ∀ i, 0 ≤ bounds i)
+    (hSlack : 0 ≤ slack)
+    (a : A) (s : S) :
+    coarseBase.utility a s - ((δ + ∑ i, bounds i) + slack)
+      ≤ (sumDecisionProblems exactBase (omittedChannelSumDecisionProblem receptorChannels)).utility a s := by
+  have hLower := exact_with_omitted_ge_coarse_minus_totalError
+    exactBase coarseBase receptorChannels δ bounds hApprox hBound hNonneg a s
+  linarith
+
+/-- Runtime-facing cell-pruning corollary for receptor-atom omission: if the reduced
+    center score minus omitted budget minus cell slack already exceeds the incumbent,
+    then the full exact family also exceeds the incumbent everywhere in that cell. -/
+theorem incumbent_shift_safe_of_receptor_atom_omission_and_cell_slack
+    {I : Type*} [Fintype I]
+    {A : Type u} {S : Type v}
+    (exactBase coarseBase : DecisionProblem A S)
+    (receptorChannels : I → A → S → ℝ)
+    (δ incumbent slack : ℝ)
+    (bounds : I → ℝ)
+    (hApprox : UniformUtilityApprox exactBase coarseBase δ)
+    (hBound : ∀ i a s, |receptorChannels i a s| ≤ bounds i)
+    (hNonneg : ∀ i, 0 ≤ bounds i)
+    (hSlack : 0 ≤ slack)
+    (a : A) (s : S)
+    (hInc : incumbent ≤ coarseBase.utility a s - ((δ + ∑ i, bounds i) + slack)) :
+    incumbent ≤ (sumDecisionProblems exactBase (omittedChannelSumDecisionProblem receptorChannels)).utility a s := by
+  have hLower := exact_with_receptor_atom_omission_ge_coarse_minus_budget_minus_slack
+    exactBase coarseBase receptorChannels δ slack bounds hApprox hBound hNonneg hSlack a s
+  linarith
 
 /-- Pose-specific improvement bound from a subset of active torsions. -/
 noncomputable def torsionImprovementBudget

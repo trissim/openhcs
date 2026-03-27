@@ -189,6 +189,95 @@ theorem abs_exactRealEwaldScore_le_charge_envelope
     _ = |q_i * q_j| * (Real.exp (-((alpha * r) ^ 2)) / r) := by
       field_simp [hr.ne']
 
+/-- Real-space Ewald is nonnegative when the charge product is nonnegative. -/
+theorem exactRealEwaldScore_nonneg_of_nonneg_charge_product
+    (q_i q_j alpha r : ℝ) (hQ : 0 ≤ q_i * q_j) (hr : 0 < r) (ha : 0 < alpha) :
+    0 ≤ exactRealEwaldScore q_i q_j alpha r := by
+  have hx : 0 < alpha * r := by positivity
+  unfold exactRealEwaldScore coulombPotential
+  have hdiv : 0 ≤ (q_i * q_j) / r := by
+    exact div_nonneg hQ hr.le
+  have herfc : 0 ≤ Ewald.erfc (alpha * r) := Ewald.erfc_nonneg hx
+  exact mul_nonneg hdiv herfc
+
+/-- Real-space Ewald is nonpositive when the charge product is nonpositive. -/
+theorem exactRealEwaldScore_nonpos_of_nonpos_charge_product
+    (q_i q_j alpha r : ℝ) (hQ : q_i * q_j ≤ 0) (hr : 0 < r) (ha : 0 < alpha) :
+    exactRealEwaldScore q_i q_j alpha r ≤ 0 := by
+  have hx : 0 < alpha * r := by positivity
+  unfold exactRealEwaldScore coulombPotential
+  have hdiv : (q_i * q_j) / r ≤ 0 := by
+    exact div_nonpos_of_nonpos_of_nonneg hQ hr.le
+  have herfc : 0 ≤ Ewald.erfc (alpha * r) := Ewald.erfc_nonneg hx
+  exact mul_nonpos_of_nonpos_of_nonneg hdiv herfc
+
+/-- Lower bound corollary from the absolute real-space Ewald envelope. -/
+theorem exactRealEwaldScore_ge_neg_charge_envelope
+    (q_i q_j alpha r : ℝ) (hr : 0 < r) (ha : 0 < alpha) :
+    -(|q_i * q_j| * ewaldRealSpaceCore r alpha) ≤ exactRealEwaldScore q_i q_j alpha r := by
+  have hAbs := abs_exactRealEwaldScore_le_charge_envelope q_i q_j alpha r hr ha
+  have hLower : -(|q_i * q_j| * ewaldRealSpaceCore r alpha) ≤ -|exactRealEwaldScore q_i q_j alpha r| := by
+    nlinarith [hAbs]
+  exact le_trans hLower (neg_abs_le _)
+
+/-- For attractive charge products, the exact real-space Ewald score is monotone
+    nondecreasing in distance, so the left endpoint of a reachable interval gives a
+    certified lower bound for the whole interval. -/
+theorem exactRealEwaldScore_lower_bound_at_left_endpoint_of_nonpos_charge_product
+    (q_i q_j alpha r₀ r : ℝ)
+    (hQ : q_i * q_j ≤ 0)
+    (ha : 0 < alpha)
+    (hr₀ : 0 < r₀)
+    (hr : r₀ ≤ r) :
+    exactRealEwaldScore q_i q_j alpha r₀ ≤ exactRealEwaldScore q_i q_j alpha r := by
+  have hx0 : 0 ≤ alpha * r₀ := by positivity
+  have hxy : alpha * r₀ ≤ alpha * r := by gcongr
+  have herfc_mono : Ewald.erfc (alpha * r) ≤ Ewald.erfc (alpha * r₀) :=
+    Ewald.erfc_antitone hx0 hxy
+  have hr_pos : 0 < r := lt_of_lt_of_le hr₀ hr
+  have hr_inv : r⁻¹ ≤ r₀⁻¹ := by
+    exact (inv_le_inv₀ hr_pos hr₀).2 hr
+  have hdiv_nonpos₀ : (q_i * q_j) / r₀ ≤ 0 := by
+    exact div_nonpos_of_nonpos_of_nonneg hQ hr₀.le
+  unfold exactRealEwaldScore coulombPotential
+  have hstep1 : (q_i * q_j) / r₀ * Ewald.erfc (alpha * r₀) ≤ (q_i * q_j) / r₀ * Ewald.erfc (alpha * r) := by
+    exact mul_le_mul_of_nonpos_left herfc_mono hdiv_nonpos₀
+  have herfc_nonneg : 0 ≤ Ewald.erfc (alpha * r) := Ewald.erfc_nonneg (by positivity)
+  have hdiv_mono : (q_i * q_j) / r₀ ≤ (q_i * q_j) / r := by
+    simpa [div_eq_mul_inv] using mul_le_mul_of_nonpos_left hr_inv hQ
+  have hstep2 : (q_i * q_j) / r₀ * Ewald.erfc (alpha * r) ≤ (q_i * q_j) / r * Ewald.erfc (alpha * r) := by
+    exact mul_le_mul_of_nonneg_right hdiv_mono herfc_nonneg
+  exact le_trans hstep1 hstep2
+
+/-- For nonnegative charge products, the exact real-space Ewald score is monotone
+    nonincreasing in distance, so the right endpoint of a reachable interval gives a
+    certified lower bound for the whole interval. -/
+theorem exactRealEwaldScore_lower_bound_at_right_endpoint_of_nonneg_charge_product
+    (q_i q_j alpha r r₁ : ℝ)
+    (hQ : 0 ≤ q_i * q_j)
+    (ha : 0 < alpha)
+    (hr : 0 < r)
+    (hrr : r ≤ r₁)
+    (hr₁ : 0 < r₁) :
+    exactRealEwaldScore q_i q_j alpha r₁ ≤ exactRealEwaldScore q_i q_j alpha r := by
+  have hx0 : 0 ≤ alpha * r := by positivity
+  have hxy : alpha * r ≤ alpha * r₁ := by gcongr
+  have herfc_mono : Ewald.erfc (alpha * r₁) ≤ Ewald.erfc (alpha * r) :=
+    Ewald.erfc_antitone hx0 hxy
+  have hr_inv : r₁⁻¹ ≤ r⁻¹ := by
+    exact (inv_le_inv₀ hr₁ hr).2 hrr
+  have hdiv_nonneg : 0 ≤ (q_i * q_j) / r₁ := by
+    exact div_nonneg hQ hr₁.le
+  have hdiv_mono : (q_i * q_j) / r₁ ≤ (q_i * q_j) / r := by
+    simpa [div_eq_mul_inv] using mul_le_mul_of_nonneg_left hr_inv hQ
+  unfold exactRealEwaldScore coulombPotential
+  have hstep1 : (q_i * q_j) / r₁ * Ewald.erfc (alpha * r₁) ≤ (q_i * q_j) / r₁ * Ewald.erfc (alpha * r) := by
+    exact mul_le_mul_of_nonneg_left herfc_mono hdiv_nonneg
+  have herfc_nonneg : 0 ≤ Ewald.erfc (alpha * r) := Ewald.erfc_nonneg (by positivity)
+  have hstep2 : (q_i * q_j) / r₁ * Ewald.erfc (alpha * r) ≤ (q_i * q_j) / r * Ewald.erfc (alpha * r) := by
+    exact mul_le_mul_of_nonneg_right hdiv_mono herfc_nonneg
+  exact le_trans hstep1 hstep2
+
 /-- Explicit far-field error bound for the real-space Ewald correction. -/
 noncomputable def realEwaldFarFieldErrorBound (q_i q_j alpha R : ℝ) : ℝ :=
   |q_i * q_j| * ((2 / alpha ^ 4) / R ^ 3)
