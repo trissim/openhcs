@@ -51,6 +51,8 @@ Consider a stochastic decision problem with $S=\{s_1,s_2\}$, $A=\{a,b\}$, unifor
 
 \paragraph{Table 2.} Regime classification summary for the stochastic row. Open entries mark explicit scope boundaries. Under full support, stochastic preservation is completely classified in the full-support base case.
 
+\bigskip
+
 \begingroup
 \renewcommand{\tabularxcolumn}[1]{m{#1}}
 \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash\hyphenpenalty=10000\exhyphenpenalty=10000}m{0.15\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}m{0.22\linewidth}>{\RaggedRight\arraybackslash}m{0.18\linewidth}@{}}
@@ -65,6 +67,7 @@ Stochastic decisiveness & Polynomial-time under explicit-state encoding; PP-hard
 \midrule
 Minimum / anchor decisiveness & PP-hard; in $\textsf{NP}^{\textsf{PP}}$ at paper level & Existential witness/checking schemata; bounded explicit-state searches & No oracle-class membership formalization \\
 \bottomrule
+\label{tab:stochastic-summary}
 \end{tabularx}
 \endgroup
 
@@ -173,6 +176,8 @@ Then:
 Consequently, under full support, stochastic minimum preservation is coNP-complete and stochastic anchor preservation is $\Sigma_2^P$-complete.
 \end{theorem}
 
+\leanmeta{\LHrng{DQ}{94}{95}.}
+
 \begin{proof}
 For minimum preservation, Proposition~\ref{prop:stochastic-full-support-equiv} applies pointwise to each candidate coordinate set $I$, so the existential minimization problem is unchanged under full support. For anchor preservation, if one anchor fiber preserves the full-information optimizer, then the optimizer is already constant on that fiber, giving static anchor sufficiency. Conversely, if the static optimizer is constant on one $I$-fiber, then under full support the same conditional-expectation argument used in Proposition~\ref{prop:stochastic-full-support-equiv} shows that the coarse conditional optimizer agrees with the full-information optimizer throughout that fiber. The complexity claims therefore inherit directly from Theorems~\ref{thm:minsuff-conp} and~\ref{thm:anchor-sigma2p}.
 \end{proof}
@@ -181,6 +186,8 @@ For minimum preservation, Proposition~\ref{prop:stochastic-full-support-equiv} a
 For finite instances, the artifact contains counted exhaustive-search procedures for stochastic minimum preservation and stochastic anchor preservation. Their certified step bounds are $O(2^n)$ and $O(|S|)$, respectively.
 \end{proposition}
 
+\leanmeta{\LHrng{DQ}{86}{89}.}
+
 \begin{proof}
 The minimum-preservation search scans the subset lattice and invokes the explicit-state preservation checker on each candidate set. The anchor-preservation search scans candidate anchor states and checks preservation on the induced fiber. Both procedures are packaged with correctness theorems and explicit step bounds in the artifact.
 \end{proof}
@@ -188,6 +195,8 @@ The minimum-preservation search scans the subset lattice and invokes the explici
 \begin{theorem}[Explicit-State Tractability for Preservation Variants]\label{thm:stochastic-preservation-variants-explicit}
 Under the explicit-state encoding, \textsc{Stochastic-Minimum-Preservation} and \textsc{Stochastic-Anchor-Preservation} are both decidable in polynomial time.
 \end{theorem}
+
+\leanmeta{\LHrng{DQ}{92}{93}.}
 
 \begin{proof}
 For minimum preservation, the explicit-state search enumerates coordinate subsets and invokes the explicit preservation checker on each candidate set; the resulting counted procedure is polynomial in the explicit input size for fixed state and coordinate budgets. For anchor preservation, the explicit-state search enumerates anchor states and checks preservation on the induced fiber, yielding a polynomial-time verifier. Both wrappers are mechanized in the artifact.
@@ -202,6 +211,8 @@ Let $I$ be a coordinate set.
 \item If the underlying static decision problem is anchor-sufficient on $I$ and the anchor fiber contains a positive-probability state, then $I$ is stochastically anchor-preserving.
 \end{enumerate}
 \end{proposition}
+
+\leanmeta{\LHrng{DQ}{90}{91}, \LHrng{DQ}{96}{97}.}
 
 \begin{proof}
 The first statement composes the unconditional bridge from stochastic preservation to static sufficiency with the static theorem that every sufficient set contains all relevant coordinates. The second is the resulting cardinality bound for any witness set in the minimum query. For the positive-support statements, the mechanized proof refines the full-support argument: it uses positivity only on one representative state per relevant fiber, together with fiberwise invariance of the conditional optimizer, to propagate static sufficiency or anchor sufficiency into stochastic preservation on the whole fiber.

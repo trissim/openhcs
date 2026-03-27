@@ -43,9 +43,11 @@ Let $(S,A,O,p,o,r)$ be a one-step POMDP and let $\phi:S\to O'$ be as above. Defi
 In particular, checking whether the coarse observation $\phi$ preserves Bayes-optimal actions is exactly an instance of our stochastic preservation predicate for $\mathcal{D}$.
 \end{proposition}
 
+\leanmeta{\LH{EX1}.}
+
 \begin{proof}
 By construction $U(a,s)=r(a,s)$ so the full-information optimal-action set in $\mathcal{D}$ equals $\Opt_{\mathrm{full}}(s)$. The coarse-induced optimizer for $\phi$ is, by definition, the set of actions maximizing the conditional expectation of $U$ given the coarse signal. That conditional expectation is exactly the Bayes expectation used to define $\Opt_{\mathrm{obs}}$. Therefore the preservation condition from Section~\ref{sec:stochastic} (equality of full-information and coarse-induced optimizers on every state) is equivalent to the displayed identity.
-\end{proof} \leanmeta{\LH{EX1}.}
+\end{proof}
 
 \paragraph{Worked numeric instance.}
 Consider the one-step POMDP with states $S=\{s_1,s_2\}$, actions $A=\{a,b\}$, prior $p(s_1)=p(s_2)=1/2$, observation map $o(s_1)=o_1,o(s_2)=o_2$, and reward table
@@ -86,9 +88,11 @@ h\in\Opt_e \quad\Longleftrightarrow\quad \exists h_0\in\Opt_e\text{ with }\pi(h_
 which is exactly the condition that the projection $\pi$ preserves the optimal-action correspondence when the decision problem is read with environments as the existential choices.
 \end{proposition}
 
+\leanmeta{\LH{EX2}.}
+
 \begin{proof}
 By definition $\gamma$ is redundant when every full maximizer projects to a maximizer of the collapsed objective and conversely every maximizer of the collapsed objective has a witness in the full space; the displayed equivalence is a restatement of that property. The left-to-right implication is immediate from the definition of $g_e$, and the right-to-left implication follows because if some projected maximizer has a preimage that attains the collapsed optimum, then there exists a full configuration achieving the same maximum in the original objective. Rewriting these statements as equalities of optimal-action sets for the derived decision problem $\mathcal{D}_{\mathrm{hp}}$ yields the claimed reduction to a static-style preservation check.
-\end{proof} \leanmeta{\LH{EX2}.}
+\end{proof}
 
 The construction above is explicit and elementary. It shows that hyperparameter redundancy questions can be phrased exactly as decision-preservation predicates within our static regime, and that succinct encodings of the environment family or return functions translate into succinct encodings of the corresponding static instance. In practice this lets one import the static-regime hardness and tractability statements directly into the hyperparameter setting.
 

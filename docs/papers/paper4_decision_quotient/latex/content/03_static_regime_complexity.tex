@@ -53,7 +53,7 @@ For membership, Proposition~\ref{prop:insufficiency-counterexample} gives a poly
 For hardness, reduce TAUTOLOGY to the empty-set instance. Given formula $\varphi(x_1,\ldots,x_n)$, build a two-action decision problem where one action tracks $\varphi$ and the other is a baseline action. Then $I=\emptyset$ is sufficient iff $\varphi$ is a tautology, because empty-set sufficiency is exactly constancy of $\Opt$ (Proposition~\ref{prop:empty-sufficient-constant}). The reduction is polynomial in formula size.
 \end{proof}
 
-\begin{theorem}[Static Structural Theorem and Complexity Consequence]\label{thm:minsuff-conp}
+\begin{theorem}[Static Collapse Theorem]\label{thm:minsuff-conp}
 In the static regime, the apparent existential layer in \textsc{Minimum-Sufficient-Set} collapses to relevance containment. Consequently, \textsc{Minimum-Sufficient-Set} is coNP-complete.
 \end{theorem}
 
@@ -77,7 +77,7 @@ Membership follows the visible quantifier pattern: guess an anchor assignment an
 ANCHOR-SUFFICIENCY is $\Sigma_2^P$-complete.
 \end{theorem}
 
-\leanmeta{\LHrng{DQ}{21}{22}.}
+\leanmeta{\LH{DQ98}, \LH{CC4}.}
 
 \begin{proof}
 Membership follows directly from the quantifier pattern:

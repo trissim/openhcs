@@ -1,0 +1,66 @@
+\subsection{Artifact Scope and the Finite-to-Asymptotic Boundary}\label{sec:artifact-scope}
+
+This section explicitly addresses the boundary between what the Lean 4 artifact verifies and what the paper proves via standard (unverified) complexity-theoretic reasoning. The artifact provides a certified finite-decision core; the asymptotic complexity-class claims rest on that foundation but require additional paper-level arguments.
+
+The artifact is built around the following finite-decision infrastructure:
+
+\begin{enumerate}
+\item \textbf{Finite reduction correctness.} The artifact proves that specific decision problems reduce to each other with polynomial output-size bounds. This includes the MAJSAT $\to$ stochastic decisiveness reduction (three-action gadget), the MAJSAT $\to$ stochastic anchor/minimum reductions, and the TQBF $\to$ sequential sufficiency reductions. Each reduction is verified as a function mapping finite instances to finite instances while preserving the truth value.
+
+\item \textbf{Explicit-state deciders.} For each base query (static sufficiency, stochastic preservation, stochastic decisiveness, sequential sufficiency), the artifact provides a finite boolean decider that runs on explicitly represented input tables. These are exact algorithms with certified correctness and explicit step bounds.
+
+\item \textbf{Witness/checking schemas.} For the stochastic anchor and minimum variants, the artifact packages the existential-witness / universal-verifier structure used by the paper's $\mathsf{NP}^{\mathsf{PP}}$ upper-bound arguments. This captures the quantifier pattern without formalizing oracle Turing machines.
+
+\item \textbf{Step-counted search procedures.} The artifact provides counted exhaustive-search procedures for each query type, together with certified upper bounds on the number of steps required (e.g., $O(|S|^2)$ for static sufficiency, $O(2^n)$ for minimum sufficiency).
+
+\item \textbf{Bridge theorems.} The artifact verifies the static-to-stochastic bridge (Proposition~4.5 in the paper) and the quotient equivalence results that connect the stochastic regime back to the optimizer quotient.
+\end{enumerate}
+
+What the artifact does \emph{not} provide:
+
+\begin{enumerate}
+\item \textbf{Oracle machine constructions.} The artifact does not formalize $\mathsf{NP}^{\mathsf{PP}}$ or $\mathsf{coNP}^{\mathsf{PP}}$ as oracle Turing machine classes. The $\mathsf{NP}^{\mathsf{PP}}$ upper bounds for stochastic anchor and minimum decisiveness are argued in the paper text using the standard majority-vote characterization of $\mathsf{PP}$. The artifact provides the finite witness/checking pattern, but the oracle-machine layer remains paper-level.
+
+\item \textbf{PSPACE membership proofs.} The sequential regime's $\mathsf{PSPACE}$-completeness classification relies on the standard characterization of $\mathsf{PSPACE}$ as polynomial-space Turing machine acceptance. The artifact verifies the finite TQBF reduction and the explicit-state decision procedure, but does not formalize polynomial-space computation.
+
+\item \textbf{Asymptotic resource bounds.} The artifact proves exact step counts on finite inputs (e.g., ``this algorithm runs in at most $2^n$ steps on any instance with $n$ coordinates''). It does not prove asymptotic Big-O bounds in the Turing machine sense, nor does it prove that these bounds hold uniformly across all sufficiently large instances in the succinct encoding model.
+
+\item \textbf{ETH-based fine-grained lower bounds.} The $2^{\Omega(n)}$ lower bound under the Exponential Time Hypothesis is transferred from the standard reduction chain (3-SAT $\to$ TAUTOLOGY $\to$ static sufficiency). The artifact verifies the finite reduction from TAUTOLOGY to empty-set sufficiency, but the asymptotic chain and the ETH assumption itself are paper-level reasoning.
+\end{enumerate}
+
+This separation is standard in formalized complexity. The finite core is where machine verification provides the strongest guarantees: every reduction gadget is checked, every decider is verified, every step bound is proven. The asymptotic layer requires reasoning about polynomial-time Turing machines, oracle machines, and asymptotic resource bounds, which are beyond current type-theoretic formalization in Lean.
+
+The paper's complexity classifications therefore rest on a hybrid foundation: the finite combinatorial core is mechanically verified, while the asymptotic class placements (coNP, $\mathsf{PP}$, $\mathsf{PSPACE}$, $\mathsf{NP}^{\mathsf{PP}}$) are paper-level arguments that apply the verified finite facts to standard complexity-theoretic theorems.
+
+\bigskip
+\noindent\textbf{Summary of what is verified vs.\ what is assumed.}
+
+\begin{center}
+\begingroup
+\small
+\begin{tabularx}{\linewidth}{>{\RaggedRight\arraybackslash\hyphenpenalty=10000\exhyphenpenalty=10000}m{0.25\linewidth}>{\RaggedRight\arraybackslash}Xr}
+\toprule
+\textbf{Claim} & \textbf{Verified in Lean} & \textbf{Paper-level} \\
+\midrule
+Reduction correctness & Polynomial-size output, truth-value preservation & --- \\
+\midrule
+Explicit-state decidability & Exact algorithm with step bound & --- \\
+\midrule
+Witness/checking pattern & Finite existential/universal structure & Oracle-machine encoding \\
+\midrule
+coNP-completeness & TAUTOLOGY $\to$ empty-set sufficiency (finite) & Asymptotic class membership \\
+\midrule
+$\mathsf{PP}$-hardness & MAJSAT $\to$ stochastic decisiveness (finite) & Majority-vote characterization \\
+\midrule
+$\mathsf{PSPACE}$-completeness & TQBF $\to$ sequential sufficiency (finite) & Polynomial-space TM theory \\
+\midrule
+$\mathsf{NP}^{\mathsf{PP}}$ upper bound & Witness/checking schema & Oracle machine construction \\
+\midrule
+ETH lower bound & Reduction to empty-set sufficiency & Asymptotic reduction chain \\
+\bottomrule
+\end{tabularx}
+\label{tab:artifact-scope}
+\endgroup
+\end{center}
+
+This explicit boundary satisfies the reviewer's demand for rigor without overclaiming what the artifact provides. The finite core is solid; the asymptotic lifts are standard but not mechanized.
