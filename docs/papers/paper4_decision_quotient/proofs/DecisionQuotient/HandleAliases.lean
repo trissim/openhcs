@@ -2507,6 +2507,8 @@ abbrev CSC94 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwis
 abbrev CSC95 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_parametric_bound_of_uniform_pointL1Radius_bound
 -- CSC96: End-to-end runtime bridge for translation subset × quaternionDictionary8 using closed basis0/1/2/3 arm-bound geometry
 abbrev CSC96 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Library_winner_of_coordinate_witness_basis_uniform_pointL1Radius_bound_yields_rmsd_target
+-- CSC97: Concrete support witness bridge for translation subset × quaternionDictionary8 from closed basis0/1/2/3 arm-bound geometry
+abbrev CSC97 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Support_contains_rmsd_witness_of_coordinate_witness_basis_uniform_pointL1Radius_bound
 
 /-! ## Blind Conformer Runtime Certificates (BCRC) handles
     BlindConformerRuntimeCertificates.lean - runtime pruning/budget safety
