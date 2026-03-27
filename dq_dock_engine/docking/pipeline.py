@@ -186,11 +186,6 @@ def _certify_all_refined_enabled() -> bool:
     return value in ("1", "true", "True")
 
 
-def _skip_seed_probe_enabled() -> bool:
-    value = os.environ.get("OPENHCS_SKIP_SEED_PROBE", "")
-    return value in ("1", "true", "True")
-
-
 def _force_seed_probe_enabled() -> bool:
     value = os.environ.get("OPENHCS_FORCE_SEED_PROBE", "")
     return value in ("1", "true", "True")
@@ -7113,8 +7108,8 @@ def _run_docking_pipeline_request(
         and request.seed_budget_plan is None
         and request.config is not None
     ):
-        should_probe_seed_budget = _force_seed_probe_enabled() or (
-            _request_uses_conformer_search(request) and not _skip_seed_probe_enabled()
+        should_probe_seed_budget = (
+            _force_seed_probe_enabled() or _request_uses_conformer_search(request)
         )
         if not should_probe_seed_budget:
             baseline_plan = derive_seed_budget_plan(
