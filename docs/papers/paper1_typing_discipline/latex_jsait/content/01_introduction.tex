@@ -27,11 +27,7 @@ We study the finite, fixed-representation, zero-error regime: the decoder uses o
 
 \paragraph{Graph-theoretic interpretation.} The confusability graph in our setting is a disjoint union of cliques: each collision fiber forms a complete subgraph, and the fiber geometry is the clique-size profile of this graph. This is a highly structured special case of the general graph-entropy problem \cite{korner1973coding, simonyi1995graph, lovasz1979shannon, alon1996source, haemers1978upper, zuiddam2019asymptotic}. The specialization is not a limitation but an opportunity: while general graph entropy lacks closed-form solutions, the clique-union structure yields exact finite formulas. The largest fiber size $A_\pi$ is exactly the chromatic number of the complement graph in this special case, and our results give precise operational meaning to this combinatorial invariant.
 
-Unlike classical zero-error source coding where confusability graphs yield intractable capacities, we prove that representation-induced confusability graphs decompose into disjoint cliques. Each collision fiber is a clique, and this structural simplification yields exact finite closed-form budgets rather than asymptotic bounds. The interpretation for neurosymbolic systems is direct: if $\pi$ is a learned embedding, then collision fibers measure the irreducible identity ambiguity left by semantic compression. Injective representations need no auxiliary metadata; non-injective representations impose an exact-recovery cost that no downstream reasoning layer can remove \cite{koh2020concept, garcez2020neurosymbolic, jing2022understanding, wang2020understanding}.
-
-The closest classical objects are zero-error coding with confusability constraints \cite{korner1973coding, witsenhausen1976zero}, source coding with side information, and more recent task-oriented or semantics-aware communication models \cite{gunduz2023beyond, uysal2022semantic, bao2011towards, kountouris2021semantics}. Our setting isolates a different question: given a fixed deterministic representation already available at the decoder, what residual coding burden does it leave behind for exact identity recovery? That question admits exact finite answers.
-
-Viewed through the semantics-aware communication lens, the fiber geometry of the meaning map $\pi$ is the governing object in the finite fixed-representation regime \cite{gunduz2023beyond, uysal2022semantic}. All coding laws, query results, and distortion bounds follow from this single combinatorial invariant, making them precise building blocks for any semantics-aware analysis that operates under exact identity-recovery assumptions.
+The closest classical objects are zero-error coding with confusability constraints \cite{korner1973coding, witsenhausen1976zero}, source coding with side information, and more recent task-oriented or semantics-aware communication models \cite{gunduz2023beyond, uysal2022semantic, bao2011towards, kountouris2021semantics}. Unlike general zero-error settings where confusability capacities are often intractable, representation-induced confusability graphs here decompose into disjoint cliques, giving exact finite closed-form budgets rather than only asymptotic bounds. This also gives a direct neurosymbolic reading: if $\pi$ is a learned embedding, collision fibers measure irreducible identity ambiguity under semantic compression; injective representations need no auxiliary metadata, while non-injective ones impose an exact-recovery cost no downstream reasoning layer can remove \cite{koh2020concept, garcez2020neurosymbolic, jing2022understanding, wang2020understanding}. Viewed through the semantics-aware communication lens, this fiber geometry is the governing object in the finite fixed-representation regime. Our setting isolates a different question: given a fixed deterministic representation already available at the decoder, what residual coding burden does it leave behind for exact identity recovery? That question admits exact finite answers.
 
 \subsection{Contributions}
 
@@ -56,26 +52,8 @@ A=000,\quad B=000,\quad C=100,\quad D=110,\quad E=111.
 \]
 Then $A$ and $B$ form a collision fiber of size two, so the exact worst-case fixed-length budget is one bit. The adaptive picture is equally simple: the fiber over profile $000$ needs one auxiliary bit, while the singleton fibers need none. In the learned-representation reading, this is the exact price of one residual collision in the representation.
 
-\begin{table}[h]
-\centering
-\small
-\caption{Encoding pipeline for the worked example}
-\label{tab:encoding-pipeline}
-\begin{tabular}{|>{\raggedright\arraybackslash}m{0.15\linewidth}|>{\raggedright\arraybackslash}m{0.20\linewidth}|>{\raggedright\arraybackslash}m{0.20\linewidth}|>{\raggedright\arraybackslash}m{0.25\linewidth}|}
-\hline
-\textbf{Class} & \textbf{Representation $U=\pi(C)$} & \textbf{Auxiliary $M$} & \textbf{Decoded $\hat C$} \\
-\hline
-$A$ & $000$ & $0$ & $A$ \\
-$B$ & $000$ & $1$ & $B$ \\
-$C$ & $100$ & $0$ & $C$ \\
-$D$ & $110$ & $0$ & $D$ \\
-$E$ & $111$ & $0$ & $E$ \\
-\hline
-\end{tabular}
-\end{table}
-
-Table~\ref{tab:encoding-pipeline} illustrates the encoding pipeline. Classes $A$ and $B$ share representation $000$, forming a collision fiber of size two. One auxiliary bit suffices to distinguish them, matching the fixed-length budget $L \ge \log_2 A_\pi = \log_2 2 = 1$. The other classes have singleton fibers and require no auxiliary bits. Under the adaptive scheme, the encoder observes $U$ first, then transmits $M$ only when needed: $U=000$ requires one bit, while $U\in\{100,110,111\}$ requires none. The fiber geometry $A_\pi$ governs both the worst-case budget and the pointwise adaptive budget.
+In this example, classes $A$ and $B$ share representation $000$, forming a collision fiber of size two. One auxiliary bit suffices to separate them, matching the fixed-length budget $L \ge \log_2 A_\pi = 1$. The remaining classes are singleton fibers and need no auxiliary bits. Under the adaptive scheme, the encoder sends one bit only when $U=000$ and sends no extra bit for $U\in\{100,110,111\}$.
 
 \subsection{Paper Organization}
 
-The paper develops three interlocking threads. Sections~\ref{sec:model} and~\ref{sec:bits} establish the bit-currency backbone. Section~\ref{sec:queries} develops the query-currency thread and its canonical matroid structure. Section~\ref{sec:distortion} gives the distortion currency via fiberwise recoverable-mass decomposition. Section~\ref{sec:systems} explains why symbolic identity layers are necessary in semantics-aware systems. Section~\ref{sec:robustness} records open-world consequences of the fiber-geometry framework. \ifdefined\JSAITREVIEW Section~\ref{sec:conclusion} then closes the paper. \else Section~\ref{sec:extensions} records extensions and open directions, and Section~\ref{sec:conclusion} concludes. \fi
+The paper develops three interlocking threads. Sections~\ref{sec:model} and~\ref{sec:bits} establish the bit-currency backbone. Section~\ref{sec:queries} develops the query-currency thread and its canonical matroid structure. Section~\ref{sec:distortion} gives the distortion currency via fiberwise recoverable-mass decomposition. Section~\ref{sec:systems} explains why symbolic identity layers are necessary in semantics-aware systems. Section~\ref{sec:robustness} records open-world consequences of the fiber-geometry framework, and Section~\ref{sec:conclusion} closes the paper.
