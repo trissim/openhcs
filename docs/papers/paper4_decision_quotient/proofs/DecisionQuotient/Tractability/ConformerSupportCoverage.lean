@@ -1383,6 +1383,238 @@ theorem rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_p
       baseCoords rotLipschitz h0 h1 h2 h3)
     ts ω k hkCoord j
 
+/-- Unit-quaternion variant of the coordinate-witness rigid-transform runtime
+    budget bridge. This version matches the geometric basis-case theorems that
+    are proved under `norm q = 1`. -/
+theorem rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_parametric_bound_unit
+    {Ω : Type u}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (baseCoords : Ω → CoordSet n)
+    (targetQuaternion : Ω → MDArray 4)
+    (rotLipschitz rBound : ℝ)
+    (hQuatUnit : ∀ ω, Computation.ArrayDSL.norm (targetQuaternion ω) = 1)
+    (hRotLipNonneg : 0 ≤ rotLipschitz)
+    (hRotScale : rotLipschitz ≤ rBound)
+    (hRotParamZeroBasisUnit : ∀ ω q,
+      Computation.ArrayDSL.norm q = 1 →
+      ∀ i : Fin 4, ∀ j,
+        dist (rigidTransform3D (baseCoords ω) q (mkMDArray (fun _ => 0)) j)
+            (rigidTransform3D (baseCoords ω) (EuclideanSpace.single i (1 : ℝ)) (mkMDArray (fun _ => 0)) j) ≤
+          rotLipschitz * ‖q - EuclideanSpace.single i (1 : ℝ)‖) :
+    ∀ ts ω k,
+      quaternionDictionary8CoordinateWitness (targetQuaternion ω) k →
+      ∀ j,
+        dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j)
+            (rigidTransform3D (baseCoords ω) (quaternionDictionary8 k) (mkMDArray ts) j) ≤ rBound := by
+  intro ts ω k hkCoord j
+  rcases hkCoord with ⟨hk, hAbs⟩
+  let i : Fin 4 := ⟨k.1, hk⟩
+  have hDict : quaternionDictionary8 k = EuclideanSpace.single i (1 : ℝ) := by
+    fin_cases k
+    · simpa [i] using quaternionDictionary8_basis0_eq
+    · simpa [i] using quaternionDictionary8_basis1_eq
+    · simpa [i] using quaternionDictionary8_basis2_eq
+    · simpa [i] using quaternionDictionary8_basis3_eq
+    · simp at hk
+    · simp at hk
+    · simp at hk
+    · simp at hk
+  have hPlusZero :
+      dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray (fun _ => 0)) j)
+          (rigidTransform3D (baseCoords ω) (quaternionDictionary8 k) (mkMDArray (fun _ => 0)) j) ≤
+        rotLipschitz * ‖targetQuaternion ω - quaternionDictionary8 k‖ := by
+    simpa [hDict] using
+      hRotParamZeroBasisUnit ω (targetQuaternion ω) (hQuatUnit ω) i j
+  have hPlus :
+      dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j)
+          (rigidTransform3D (baseCoords ω) (quaternionDictionary8 k) (mkMDArray ts) j) ≤
+        rotLipschitz * ‖targetQuaternion ω - quaternionDictionary8 k‖ := by
+    have hTransEq :=
+      Computation.ArrayDSL.rigidTransform3D_same_translation_dist_eq_zero_translation
+        (baseCoords ω) (targetQuaternion ω) (quaternionDictionary8 k) (mkMDArray ts) j
+    rw [hTransEq]
+    exact hPlusZero
+  have hNegQuatUnit : Computation.ArrayDSL.norm (-targetQuaternion ω) = 1 := by
+    simpa [Computation.ArrayDSL.norm] using hQuatUnit ω
+  have hMinusZero :
+      dist (rigidTransform3D (baseCoords ω) (-targetQuaternion ω) (mkMDArray (fun _ => 0)) j)
+          (rigidTransform3D (baseCoords ω) (quaternionDictionary8 k) (mkMDArray (fun _ => 0)) j) ≤
+        rotLipschitz * ‖(-targetQuaternion ω) - quaternionDictionary8 k‖ := by
+    simpa [hDict] using
+      hRotParamZeroBasisUnit ω (-targetQuaternion ω) hNegQuatUnit i j
+  have hMinusWithNegMid :
+      dist (rigidTransform3D (baseCoords ω) (-targetQuaternion ω) (mkMDArray ts) j)
+          (rigidTransform3D (baseCoords ω) (quaternionDictionary8 k) (mkMDArray ts) j) ≤
+        rotLipschitz * ‖(-targetQuaternion ω) - quaternionDictionary8 k‖ := by
+    have hTransEq :=
+      Computation.ArrayDSL.rigidTransform3D_same_translation_dist_eq_zero_translation
+        (baseCoords ω) (-targetQuaternion ω) (quaternionDictionary8 k) (mkMDArray ts) j
+    rw [hTransEq]
+    exact hMinusZero
+  have hMidNegEq :
+      rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j =
+        rigidTransform3D (baseCoords ω) (-targetQuaternion ω) (mkMDArray ts) j := by
+    have hEq :
+        rigidTransform3D (baseCoords ω) (-targetQuaternion ω) (mkMDArray ts) =
+          rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) :=
+      rigidTransform3D_negQuaternion_eq (baseCoords ω) (targetQuaternion ω) (mkMDArray ts)
+    simpa using congrArg (fun c : CoordSet n => c j) hEq.symm
+  have hMinus :
+      dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j)
+          (rigidTransform3D (baseCoords ω) (quaternionDictionary8 k) (mkMDArray ts) j) ≤
+        rotLipschitz * ‖targetQuaternion ω + quaternionDictionary8 k‖ := by
+    have hA :
+        dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j)
+            (rigidTransform3D (baseCoords ω) (quaternionDictionary8 k) (mkMDArray ts) j)
+          = dist (rigidTransform3D (baseCoords ω) (-targetQuaternion ω) (mkMDArray ts) j)
+              (rigidTransform3D (baseCoords ω) (quaternionDictionary8 k) (mkMDArray ts) j) := by
+      simpa [hMidNegEq]
+    have hNorm :
+        ‖(-targetQuaternion ω) - quaternionDictionary8 k‖ =
+          ‖targetQuaternion ω + quaternionDictionary8 k‖ := by
+      calc
+        ‖(-targetQuaternion ω) - quaternionDictionary8 k‖
+            = ‖-quaternionDictionary8 k + -targetQuaternion ω‖ := by
+                simp [sub_eq_add_neg, add_comm]
+        _ = ‖targetQuaternion ω + quaternionDictionary8 k‖ := by
+                simpa [neg_add, add_comm, add_left_comm, add_assoc] using
+                  (norm_neg (quaternionDictionary8 k + targetQuaternion ω))
+    rw [hA]
+    exact (hMinusWithNegMid.trans (by simpa [hNorm]))
+  have hMinScaled :
+      dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j)
+          (rigidTransform3D (baseCoords ω) (quaternionDictionary8 k) (mkMDArray ts) j) ≤
+        min (rotLipschitz * ‖targetQuaternion ω - quaternionDictionary8 k‖)
+            (rotLipschitz * ‖targetQuaternion ω + quaternionDictionary8 k‖) :=
+    le_min hPlus hMinus
+  have hScaleMin :
+      min (rotLipschitz * ‖targetQuaternion ω - quaternionDictionary8 k‖)
+          (rotLipschitz * ‖targetQuaternion ω + quaternionDictionary8 k‖)
+        = rotLipschitz *
+            min ‖targetQuaternion ω - quaternionDictionary8 k‖
+                ‖targetQuaternion ω + quaternionDictionary8 k‖ := by
+    by_cases hab : ‖targetQuaternion ω - quaternionDictionary8 k‖ ≤ ‖targetQuaternion ω + quaternionDictionary8 k‖
+    · have hmul :
+          rotLipschitz * ‖targetQuaternion ω - quaternionDictionary8 k‖ ≤
+            rotLipschitz * ‖targetQuaternion ω + quaternionDictionary8 k‖ :=
+        mul_le_mul_of_nonneg_left hab hRotLipNonneg
+      rw [min_eq_left hmul, min_eq_left hab]
+    · have hba : ‖targetQuaternion ω + quaternionDictionary8 k‖ ≤ ‖targetQuaternion ω - quaternionDictionary8 k‖ :=
+        le_of_not_ge hab
+      have hmul :
+          rotLipschitz * ‖targetQuaternion ω + quaternionDictionary8 k‖ ≤
+            rotLipschitz * ‖targetQuaternion ω - quaternionDictionary8 k‖ :=
+        mul_le_mul_of_nonneg_left hba hRotLipNonneg
+      rw [min_eq_right hmul, min_eq_right hba]
+  have hSignedBase :
+      dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j)
+          (rigidTransform3D (baseCoords ω) (quaternionDictionary8 k) (mkMDArray ts) j) ≤
+        rotLipschitz *
+          min ‖targetQuaternion ω - quaternionDictionary8 k‖
+              ‖targetQuaternion ω + quaternionDictionary8 k‖ :=
+    le_trans hMinScaled (by simpa [hScaleMin])
+  have hkSigned :
+      min ‖targetQuaternion ω - quaternionDictionary8 k‖
+          ‖targetQuaternion ω + quaternionDictionary8 k‖ ≤ 1 :=
+    quaternionDictionary8_signed_distance_le_one_of_coordinate_witness
+      (targetQuaternion ω) (hQuatUnit ω) k ⟨hk, hAbs⟩
+  have hUnitScale :
+      rotLipschitz *
+          min ‖targetQuaternion ω - quaternionDictionary8 k‖
+              ‖targetQuaternion ω + quaternionDictionary8 k‖ ≤ rotLipschitz :=
+    mul_le_of_le_one_right hRotLipNonneg hkSigned
+  exact le_trans hSignedBase (le_trans hUnitScale hRotScale)
+
+/-- Unit-quaternion basis-case assembly for the coordinate-witness runtime budget.
+    This matches the concrete basis0/1/2/3 closure theorems in `ArrayDSL`. -/
+theorem rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_parametric_bound_of_basis_cases_unit
+    {Ω : Type u}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (baseCoords : Ω → CoordSet n)
+    (targetQuaternion : Ω → MDArray 4)
+    (rotLipschitz rBound : ℝ)
+    (hQuatUnit : ∀ ω, Computation.ArrayDSL.norm (targetQuaternion ω) = 1)
+    (hRotLipNonneg : 0 ≤ rotLipschitz)
+    (hRotScale : rotLipschitz ≤ rBound)
+    (h0 : ∀ ω q,
+      Computation.ArrayDSL.norm q = 1 →
+      ∀ j,
+        dist (rigidTransform3D (baseCoords ω) q (mkMDArray (fun _ => 0)) j)
+            (rigidTransform3D (baseCoords ω) (EuclideanSpace.single (0 : Fin 4) (1 : ℝ)) (mkMDArray (fun _ => 0)) j) ≤
+          rotLipschitz * ‖q - EuclideanSpace.single (0 : Fin 4) (1 : ℝ)‖)
+    (h1 : ∀ ω q,
+      Computation.ArrayDSL.norm q = 1 →
+      ∀ j,
+        dist (rigidTransform3D (baseCoords ω) q (mkMDArray (fun _ => 0)) j)
+            (rigidTransform3D (baseCoords ω) (EuclideanSpace.single (1 : Fin 4) (1 : ℝ)) (mkMDArray (fun _ => 0)) j) ≤
+          rotLipschitz * ‖q - EuclideanSpace.single (1 : Fin 4) (1 : ℝ)‖)
+    (h2 : ∀ ω q,
+      Computation.ArrayDSL.norm q = 1 →
+      ∀ j,
+        dist (rigidTransform3D (baseCoords ω) q (mkMDArray (fun _ => 0)) j)
+            (rigidTransform3D (baseCoords ω) (EuclideanSpace.single (2 : Fin 4) (1 : ℝ)) (mkMDArray (fun _ => 0)) j) ≤
+          rotLipschitz * ‖q - EuclideanSpace.single (2 : Fin 4) (1 : ℝ)‖)
+    (h3 : ∀ ω q,
+      Computation.ArrayDSL.norm q = 1 →
+      ∀ j,
+        dist (rigidTransform3D (baseCoords ω) q (mkMDArray (fun _ => 0)) j)
+            (rigidTransform3D (baseCoords ω) (EuclideanSpace.single (3 : Fin 4) (1 : ℝ)) (mkMDArray (fun _ => 0)) j) ≤
+          rotLipschitz * ‖q - EuclideanSpace.single (3 : Fin 4) (1 : ℝ)‖) :
+    ∀ ts ω k,
+      quaternionDictionary8CoordinateWitness (targetQuaternion ω) k →
+      ∀ j,
+        dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j)
+            (rigidTransform3D (baseCoords ω) (quaternionDictionary8 k) (mkMDArray ts) j) ≤ rBound := by
+  intro ts ω k hkCoord j
+  exact rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_parametric_bound_unit
+    baseCoords targetQuaternion rotLipschitz rBound hQuatUnit hRotLipNonneg hRotScale
+    (fun ω q hNorm i j => by
+      fin_cases i
+      · simpa using h0 ω q hNorm j
+      · simpa using h1 ω q hNorm j
+      · simpa using h2 ω q hNorm j
+      · simpa using h3 ω q hNorm j)
+    ts ω k hkCoord j
+
+/-- Concrete runtime pointwise orientation budget from the closed basis0/1/2/3
+    zero-translation arm-bound theorems in `ArrayDSL`. -/
+theorem rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_parametric_bound_of_uniform_pointL1Radius_bound
+    {Ω : Type u}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (baseCoords : Ω → CoordSet n)
+    (targetQuaternion : Ω → MDArray 4)
+    (armBound rBound : ℝ)
+    (hQuatUnit : ∀ ω, Computation.ArrayDSL.norm (targetQuaternion ω) = 1)
+    (hArm : ∀ ω j, pointL1Radius (baseCoords ω j) ≤ armBound)
+    (hArmNonneg : 0 ≤ armBound)
+    (hRotScale : 48 * armBound ≤ rBound) :
+    ∀ ts ω k,
+      quaternionDictionary8CoordinateWitness (targetQuaternion ω) k →
+      ∀ j,
+        dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j)
+            (rigidTransform3D (baseCoords ω) (quaternionDictionary8 k) (mkMDArray ts) j) ≤ rBound := by
+  have hRotLipNonneg : 0 ≤ 48 * armBound := by nlinarith
+  intro ts ω k hkCoord j
+  exact rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_parametric_bound_of_basis_cases_unit
+    baseCoords targetQuaternion (48 * armBound) rBound hQuatUnit hRotLipNonneg hRotScale
+    (fun ω q hNorm j => by
+      simpa [quaternionDictionary8_basis0_eq] using
+        rigidTransform3D_zero_translation_dist_to_basis0_le_of_pointL1Radius_bound
+          (baseCoords ω) q hNorm armBound (hArm ω) j)
+    (fun ω q hNorm j => by
+      simpa [quaternionDictionary8_basis1_eq] using
+        rigidTransform3D_zero_translation_dist_to_basis1_le_of_pointL1Radius_bound'
+          (baseCoords ω) q hNorm armBound (hArm ω) j)
+    (fun ω q hNorm j => by
+      simpa [quaternionDictionary8_basis2_eq] using
+        rigidTransform3D_zero_translation_dist_to_basis2_le_of_pointL1Radius_bound'
+          (baseCoords ω) q hNorm armBound (hArm ω) j)
+    (fun ω q hNorm j => by
+      simpa [quaternionDictionary8_basis3_eq] using
+        rigidTransform3D_zero_translation_dist_to_basis3_le_of_pointL1Radius_bound'
+          (baseCoords ω) q hNorm armBound (hArm ω) j)
+    ts ω k hkCoord j
+
 /-- Runtime-facing signed-distance bridge using two unsigned geometric
     sub-bounds. This theorem is intended for the next proof step where the
     runtime supplies separate geometric displacement bounds for `q_k` and

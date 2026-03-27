@@ -2499,6 +2499,12 @@ abbrev CSC90 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwis
 abbrev CSC91 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_parametric_bound_of_basis_cases
 -- CSC92: Uniform point-L1 arm bounds yield a concrete zero-translation basis0 rigid-transform displacement budget
 abbrev CSC92 := @Computation.ArrayDSL.rigidTransform3D_zero_translation_dist_to_basis0_le_of_uniform_pointL1Radius_bound
+-- CSC93: Coordinate-witness rigid-transform runtime budget from unit-quaternion zero-translation basis bounds
+abbrev CSC93 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_parametric_bound_unit
+-- CSC94: Unit-quaternion zero-translation basis0/1/2/3 cases assemble into the coordinate-witness runtime budget bridge
+abbrev CSC94 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_parametric_bound_of_basis_cases_unit
+-- CSC95: Closed basis0/1/2/3 arm-bound theorems yield the concrete coordinate-witness runtime pointwise budget under a uniform arm bound
+abbrev CSC95 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_parametric_bound_of_uniform_pointL1Radius_bound
 
 /-! ## Blind Conformer Runtime Certificates (BCRC) handles
     BlindConformerRuntimeCertificates.lean - runtime pruning/budget safety
