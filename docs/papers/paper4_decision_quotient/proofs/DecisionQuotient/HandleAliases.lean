@@ -2505,6 +2505,8 @@ abbrev CSC93 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwis
 abbrev CSC94 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_parametric_bound_of_basis_cases_unit
 -- CSC95: Closed basis0/1/2/3 arm-bound theorems yield the concrete coordinate-witness runtime pointwise budget under a uniform arm bound
 abbrev CSC95 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_parametric_bound_of_uniform_pointL1Radius_bound
+-- CSC96: End-to-end runtime bridge for translation subset × quaternionDictionary8 using closed basis0/1/2/3 arm-bound geometry
+abbrev CSC96 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Library_winner_of_coordinate_witness_basis_uniform_pointL1Radius_bound_yields_rmsd_target
 
 /-! ## Blind Conformer Runtime Certificates (BCRC) handles
     BlindConformerRuntimeCertificates.lean - runtime pruning/budget safety

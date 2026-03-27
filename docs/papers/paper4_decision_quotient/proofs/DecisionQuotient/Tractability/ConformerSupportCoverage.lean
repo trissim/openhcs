@@ -2273,6 +2273,96 @@ theorem translationSubsetQuaternionDictionary8Library_winner_of_coordinate_witne
       exact le_trans hBase (le_trans hUnitScale hRotScale))
     hL hεCover hBox hOpt hLip hWinnerMem hWinnerBest basin hεTarget hGapBudget
 
+/-- End-to-end runtime bridge for the concrete rigid-transform support shape with
+    fixed base coordinates: translation subset × `quaternionDictionary8`,
+    translation pointwise budget `tBound`, and orientation budget discharged from
+    the closed basis0/1/2/3 zero-translation arm-bound theorems. -/
+theorem translationSubsetQuaternionDictionary8Library_winner_of_coordinate_witness_basis_uniform_pointL1Radius_bound_yields_rmsd_target
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (translationSupport : Finset (Fin 3 → ℝ))
+    (lower upper halfWidths : Fin 3 → ℝ)
+    (baseCoords : CoordSet n)
+    (targetQuaternion : MDArray 4)
+    (energy : CoordSet n → ℝ)
+    (tBound armBound rBound L εCover εTarget : ℝ)
+    (hTransCover : HypercubeSupportCoversOnBox 3 translationSupport lower upper halfWidths)
+    (hQuatUnit : Computation.ArrayDSL.norm targetQuaternion = 1)
+    (hn : 0 < n)
+    (ht : 0 ≤ tBound)
+    (hr : 0 ≤ rBound)
+    (hBudget : tBound + rBound ≤ εCover)
+    (hArm : ∀ j, pointL1Radius (baseCoords j) ≤ armBound)
+    (hArmNonneg : 0 ≤ armBound)
+    (hRotScale : 48 * armBound ≤ rBound)
+    (hTrans : ∀ t ts,
+      (∀ i, |t i - ts i| ≤ halfWidths i) →
+      ∀ j,
+        dist (rigidTransform3D baseCoords targetQuaternion (mkMDArray t) j)
+            (rigidTransform3D baseCoords targetQuaternion (mkMDArray ts) j) ≤ tBound)
+    (hL : 0 ≤ L)
+    (hεCover : 0 ≤ εCover)
+    {t : Fin 3 → ℝ}
+    (hBox : ∀ i, lower i ≤ t i ∧ t i ≤ upper i)
+    (hOpt : IsOptimal (fun x => -energy x)
+      (rigidTransform3D baseCoords targetQuaternion (mkMDArray t)))
+    (hLip : RMSDLipschitzEnergy energy L)
+    {winner : CoordSet n}
+    (hWinnerMem : winner ∈
+      (translationSubsetQuaternionDictionary8Support translationSupport).image
+        (fun seed => rigidTransform3D baseCoords (quaternionDictionary8 seed.2) (mkMDArray seed.1)))
+    (hWinnerBest : ∀ z,
+      z ∈ (translationSubsetQuaternionDictionary8Support translationSupport).image
+            (fun seed => rigidTransform3D baseCoords (quaternionDictionary8 seed.2) (mkMDArray seed.1)) →
+      energy winner ≤ energy z)
+    (basin : CertifiedQuadraticBasin energy
+      (rigidTransform3D baseCoords targetQuaternion (mkMDArray t)))
+    (hεTarget : 0 ≤ εTarget)
+    (hGapBudget : L * εCover ≤ targetEnergyGap basin.μ n εTarget) :
+    rmsd winner (rigidTransform3D baseCoords targetQuaternion (mkMDArray t)) ≤ εTarget := by
+  let baseCoords' : Unit → CoordSet n := fun _ => baseCoords
+  let targetQuaternion' : Unit → MDArray 4 := fun _ => targetQuaternion
+  have hQuatUnit' : ∀ ω : Unit, Computation.ArrayDSL.norm (targetQuaternion' ω) = 1 := by
+    intro ω
+    cases ω
+    simpa [targetQuaternion'] using hQuatUnit
+  have hArm' : ∀ ω : Unit, ∀ j, pointL1Radius (baseCoords' ω j) ≤ armBound := by
+    intro ω j
+    cases ω
+    simpa [baseCoords'] using hArm j
+  have hTrans' : ∀ (t' ts' : Fin 3 → ℝ) (ω : Unit),
+      (∀ i, |t' i - ts' i| ≤ halfWidths i) →
+      ∀ j,
+        dist (rigidTransform3D (baseCoords' ω) (targetQuaternion' ω) (mkMDArray t') j)
+            (rigidTransform3D (baseCoords' ω) (targetQuaternion' ω) (mkMDArray ts') j) ≤ tBound := by
+    intro t' ts' ω hCell j
+    cases ω
+    simpa [baseCoords', targetQuaternion'] using hTrans t' ts' hCell j
+  have hRot' : ∀ (ts' : Fin 3 → ℝ) (ω : Unit) k,
+      quaternionDictionary8CoordinateWitness (targetQuaternion' ω) k →
+      ∀ j,
+        dist (rigidTransform3D (baseCoords' ω) (targetQuaternion' ω) (mkMDArray ts') j)
+            (rigidTransform3D baseCoords (quaternionDictionary8 k) (mkMDArray ts') j) ≤ rBound := by
+    intro ts' ω k hkCoord j
+    cases ω
+    simpa [baseCoords', targetQuaternion'] using
+      rigidTransform3D_pointwise_budget_of_coordinate_witness_basis_unsigned_parametric_bound_of_uniform_pointL1Radius_bound
+        baseCoords' targetQuaternion' armBound rBound hQuatUnit' hArm' hArmNonneg hRotScale
+        ts' Unit.unit k hkCoord j
+  exact translationSubsetQuaternionDictionary8Library_winner_of_coordinate_witness_budget_yields_rmsd_target
+    (Ω := Unit)
+    translationSupport lower upper halfWidths
+    (fun t' _ => rigidTransform3D baseCoords targetQuaternion (mkMDArray t'))
+    (fun ts' _ => rigidTransform3D baseCoords targetQuaternion (mkMDArray ts'))
+    (fun ts' k => rigidTransform3D baseCoords (quaternionDictionary8 k) (mkMDArray ts'))
+    targetQuaternion' energy tBound rBound L εCover εTarget
+    hTransCover hQuatUnit' hn ht hr hBudget hTrans' hRot' hL hεCover
+    (t := t) (ω := Unit.unit)
+    hBox (by simpa using hOpt) hLip
+    (by simpa using hWinnerMem)
+    (by simpa using hWinnerBest)
+    (by simpa using basin)
+    hεTarget hGapBudget
+
 /-- If the exact optimum lies in a certified hypercube cell centered at `center`,
     then the center is delta-near-optimal with delta equal to the weighted-L1
     Lipschitz slack over that cell. -/
