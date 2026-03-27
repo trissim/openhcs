@@ -374,7 +374,7 @@ def test_probe_seed_budget_certificate_uses_smallest_successful_budget(
         lambda **kwargs: (
             kwargs["initial_translations"],
             kwargs["initial_quaternions"],
-            [next(calls)],
+            [next(calls) for _ in range(int(kwargs["initial_translations"].shape[0]))],
         ),
     )
 

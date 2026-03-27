@@ -186,6 +186,16 @@ def _certify_all_refined_enabled() -> bool:
     return value in ("1", "true", "True")
 
 
+def _skip_seed_probe_enabled() -> bool:
+    value = os.environ.get("OPENHCS_SKIP_SEED_PROBE", "")
+    return value in ("1", "true", "True")
+
+
+def _force_seed_probe_enabled() -> bool:
+    value = os.environ.get("OPENHCS_FORCE_SEED_PROBE", "")
+    return value in ("1", "true", "True")
+
+
 def _runtime_profile_log(label: str, start_time: float) -> None:
     if _runtime_profile_enabled():
         print(
@@ -2576,20 +2586,23 @@ def _probe_seed_budget_certificate(
     n_torsions = _seed_budget_torsion_count(probe_request)
     ligand_radius = _ligand_radius(probe_request.ligand_ctx)
 
-    for probe_rank, idx in enumerate(
-        ranked[: min(SEED_BUDGET_PROBE_TOP_K, ranked.shape[0])]
-    ):
-        opt_t, opt_q, certs = _certified_refinement(
+    probe_candidate_indices = ranked[: min(SEED_BUDGET_PROBE_TOP_K, ranked.shape[0])]
+    if probe_candidate_indices.size > 0:
+        _opt_t, _opt_q, probe_certs = _certified_refinement(
             request=probe_request,
-            initial_translations=probe_batch.pose_vecs.translation[idx : idx + 1],
-            initial_quaternions=probe_batch.pose_vecs.quaternion[idx : idx + 1],
+            initial_translations=probe_batch.pose_vecs.translation[
+                jnp.asarray(probe_candidate_indices)
+            ],
+            initial_quaternions=probe_batch.pose_vecs.quaternion[
+                jnp.asarray(probe_candidate_indices)
+            ],
             mode_override=RefinementCertificationMode.OBSERVED,
         )
-        del opt_t, opt_q
-        cert = certs[0]
-        if cert is None:
-            continue
-        successful_probe_candidates.append((probe_rank, cert))
+        del _opt_t, _opt_q
+        for probe_rank, cert in enumerate(probe_certs):
+            if cert is None:
+                continue
+            successful_probe_candidates.append((probe_rank, cert))
 
     config = cast(DockingConfig, probe_request.config)
     seed_budget_plan = derive_seed_budget_plan(
@@ -7100,7 +7113,25 @@ def _run_docking_pipeline_request(
         and request.seed_budget_plan is None
         and request.config is not None
     ):
-        request, _ = _probe_seed_budget_certificate(request, route)
+        should_probe_seed_budget = _force_seed_probe_enabled() or (
+            _request_uses_conformer_search(request) and not _skip_seed_probe_enabled()
+        )
+        if not should_probe_seed_budget:
+            baseline_plan = derive_seed_budget_plan(
+                confidence=request.config.confidence,
+                box_size=request.box.size,
+                target_rmsd=request.config.target_rmsd,
+                ligand_radius=_ligand_radius(request.ligand_ctx),
+                n_torsions=_seed_budget_torsion_count(request),
+                rigid_seed_box=request.box,
+                certified_binding_site=_resolved_certified_seed_binding_site(request),
+            )
+            request = request.with_updates(
+                seed_budget_plan=baseline_plan,
+                rigid_seed_family_plan=baseline_plan.selected_family_plan,
+            )
+        else:
+            request, _ = _probe_seed_budget_certificate(request, route)
     if _request_uses_conformer_search(request):
         rotatable_bonds = _request_rotatable_bonds(request)
         if not _conformer_coverage_plan_matches_rotatable_bonds(
