@@ -1,0 +1,30 @@
+\documentclass[11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\begin{document}
+
+\title{Supplementary Material: Semantic Identity Compression}
+\author{Tristan Simas}
+\date{\today}
+\maketitle
+
+\section{Full Lean Handle Ledger}
+
+This supplement provides the complete Lean handle ledger cited by the manuscript.
+It includes every handle identifier, declaration name, and source module path.
+
+\IfFileExists{content/lean_handle_ids_auto.tex}{%
+  \input{content/lean_handle_ids_auto.tex}
+}{%
+  \textbf{Error:} \texttt{content/lean\_handle\_ids\_auto.tex} not found.
+}
+
+\end{document}

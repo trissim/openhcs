@@ -81,6 +81,7 @@ papers:
     submission_format:
       latex_flag: "\\JSAITREVIEW"
       description: "JSAIT review: single column, double spaced, 12pt, 1in margins"
+    supplementary_file: "supplementary.tex"
 
   paper2:
     name: "SSOT Foundations"
@@ -107,6 +108,7 @@ papers:
       - "Ssot/ClaimClosure.lean"
     claim_mapping_file: "content/claim_mapping_auto.tex"
     forcing_prefixes: ["ENT", "COH", "BAS", "INS", "CAP", "AXM"]
+    supplementary_file: "supplementary.tex"
 
   paper3:
     name: "Leverage Framework"
@@ -134,6 +136,7 @@ papers:
     assumption_ledger_sources:
       - "DecisionQuotient/ClaimClosure.lean"
     claim_mapping_file: "content/claim_mapping_auto.tex"
+    supplementary_file: "supplementary.tex"
 
   paper4_toc:
     name: "Decision Quotient (ToC)"

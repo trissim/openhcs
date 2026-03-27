@@ -279,6 +279,7 @@ class PaperMeta:
     scaffold_from: str = ""
     experiment_paths: Tuple[str, ...] = ()
     experiment_commands: Tuple[str, ...] = ()
+    supplementary_file: str = ""
 
     @classmethod
     def from_dict(cls, paper_id: str, d: dict) -> "PaperMeta":
@@ -301,6 +302,7 @@ class PaperMeta:
             scaffold_from=d.get("scaffold_from", ""),
             experiment_paths=tuple(d.get("experiment_paths", [])),
             experiment_commands=tuple(d.get("experiment_commands", [])),
+            supplementary_file=d.get("supplementary_file", ""),
         )
 
 
@@ -4436,23 +4438,25 @@ end {module_root}
         # Use variant-specific naming to avoid conflicts
         pdf_name = latex_file.stem + ".pdf"
         pdf_src = latex_dir / pdf_name
+        releases_dir = self._get_releases_dir(paper_id)
         if pdf_src.exists():
-            releases_dir = self._get_releases_dir(paper_id)
             pdf_dest = releases_dir / f"{paper_id}.pdf"
             shutil.copy2(pdf_src, pdf_dest)
             print(f"[build] ✓ {paper_id}.pdf → releases/")
 
-        # Build supplementary PDF if supplementary.tex exists
-        supp_file = latex_dir / "supplementary.tex"
+        # Build supplementary PDF if configured supplementary source exists.
+        # Falls back to legacy default supplementary.tex when not specified.
+        supp_file_name = meta.supplementary_file or "supplementary.tex"
+        supp_file = latex_dir / supp_file_name
         if supp_file.exists():
             print(f"[build] Building supplementary material...")
             supp_build_steps = [
                 (
-                    ["pdflatex", "-interaction=nonstopmode", "supplementary.tex"],
+                    ["pdflatex", "-interaction=nonstopmode", supp_file_name],
                     "pdflatex (1/2)",
                 ),
                 (
-                    ["pdflatex", "-interaction=nonstopmode", "supplementary.tex"],
+                    ["pdflatex", "-interaction=nonstopmode", supp_file_name],
                     "pdflatex (2/2)",
                 ),
             ]
@@ -4467,7 +4471,7 @@ end {module_root}
                     encoding="latin-1",
                     errors="replace",
                 )
-            supp_pdf = latex_dir / "supplementary.pdf"
+            supp_pdf = latex_dir / (Path(supp_file_name).stem + ".pdf")
             if supp_pdf.exists():
                 supp_dest = releases_dir / f"{paper_id}_supplementary.pdf"
                 shutil.copy2(supp_pdf, supp_dest)
