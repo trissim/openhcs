@@ -7442,8 +7442,101 @@ def _run_docking_pipeline_request(
             FormalRoundStrategy.SINGLETON_HYBRID: _run_singleton_hybrid_formal_refinement,
         }
         formal_refiner = formal_refiners[request.formal_round_strategy]
+        winner_pre_refined_coords: jnp.ndarray | None = None
+        winner_global_index: int | None = None
+
+        if (
+            request.is_certified_mode
+            and not do_conf
+            and not use_softened_local_objective
+            and local_refine_indices.size > 1
+        ):
+            winner_global_index = int(
+                local_refine_indices[
+                    int(np.argmin(initial_local_scores[local_refine_indices]))
+                ]
+            )
+            winner_input = initial_coords[winner_global_index : winner_global_index + 1]
+            winner_refined_batch = formal_refiner(
+                **(dict(refinement_kwargs) | {"coords_batch": winner_input})
+            )
+            winner_pre_refined_coords = winner_refined_batch[0]
+            winner_refined_score = float(
+                np.asarray(
+                    jax.device_get(
+                        _score_exact_pose_batch(
+                            request,
+                            poses_coords=winner_refined_batch,
+                            electrostatics=electrostatics,
+                            scoring_context=optimization_scoring_context,
+                        )
+                    ),
+                    dtype=np.float32,
+                )[0]
+            )
+            candidate_lower_bounds = (
+                initial_local_scores[local_refine_indices]
+                - posewise_local_improvement_bounds[local_refine_indices]
+            )
+            retain_mask = candidate_lower_bounds <= winner_refined_score
+            winner_local_pos = int(
+                np.flatnonzero(local_refine_indices == winner_global_index)[0]
+            )
+            retain_mask[winner_local_pos] = True
+            if int(np.count_nonzero(retain_mask)) < local_refine_indices.size:
+                old_count = int(local_refine_indices.size)
+                local_refine_indices = local_refine_indices[retain_mask]
+                refinement_input_coords = initial_coords[
+                    jnp.asarray(local_refine_indices)
+                ]
+                print(
+                    "[LOCAL REFINEMENT DEBUG] "
+                    f"winner_incumbent_filter retained={int(local_refine_indices.size)}/{old_count} "
+                    f"winner_refined_score={winner_refined_score:.3f}",
+                    flush=True,
+                )
+
         phase_start = time.perf_counter()
-        if refinement_input_coords.shape[0] <= FORMAL_REFINEMENT_CHUNK_SIZE:
+        if winner_pre_refined_coords is not None and local_refine_indices.size == 1:
+            refined_subset = winner_pre_refined_coords[None, ...]
+        elif (
+            winner_pre_refined_coords is not None
+            and winner_global_index is not None
+            and local_refine_indices.size > 1
+        ):
+            winner_local_pos = int(
+                np.flatnonzero(local_refine_indices == winner_global_index)[0]
+            )
+            other_positions = np.array(
+                [i for i in range(local_refine_indices.size) if i != winner_local_pos],
+                dtype=np.int32,
+            )
+            other_coords = refinement_input_coords[jnp.asarray(other_positions)]
+            if other_coords.shape[0] > 0:
+                refined_others = formal_refiner(
+                    **(dict(refinement_kwargs) | {"coords_batch": other_coords})
+                )
+            else:
+                refined_others = jnp.empty(
+                    (0,) + tuple(refinement_input_coords.shape[1:]),
+                    dtype=refinement_input_coords.dtype,
+                )
+            assembled: list[jnp.ndarray | None] = [None] * int(
+                local_refine_indices.size
+            )
+            winner_coords = cast(jnp.ndarray, winner_pre_refined_coords)
+            assembled[winner_local_pos] = winner_coords
+            for pos, coords in zip(
+                other_positions.tolist(), np.asarray(refined_others), strict=False
+            ):
+                assembled[pos] = jnp.asarray(
+                    coords, dtype=refinement_input_coords.dtype
+                )
+            refined_subset = jnp.stack(
+                cast(list[jnp.ndarray], assembled),
+                axis=0,
+            )
+        elif refinement_input_coords.shape[0] <= FORMAL_REFINEMENT_CHUNK_SIZE:
             refined_subset = formal_refiner(**refinement_kwargs)
         else:
             refined_chunks: list[jnp.ndarray] = []
