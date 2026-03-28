@@ -19,6 +19,7 @@
 \RequirePackage{geometry}
 \RequirePackage{hyperref}
 \RequirePackage{url}
+\RequirePackage[para,flushmargin]{footmisc}
 \RequirePackage{listings}
 \RequirePackage{algorithm}
 \RequirePackage{algpseudocode}
@@ -45,12 +46,20 @@
 \renewcommand{\qed}{\hspace{0.5em}\qedsymbol}
 
 % Theorem environments
+\providecommand{\leanmetaheadmark}{}
+\makeatletter
+\newtheoremstyle{leanplain}{3pt}{3pt}{\itshape}{}{}{.}{ }{\thmname{#1}\thmnumber{ #2}\leanmetaheadmark\thmnote{ (#3)}}
+\newtheoremstyle{leandef}{3pt}{3pt}{}{}{}{.}{ }{\thmname{#1}\thmnumber{ #2}\leanmetaheadmark\thmnote{ (#3)}}
+\newtheoremstyle{leanremark}{3pt}{3pt}{}{}{}{.}{ }{\thmname{#1}\thmnumber{ #2}\leanmetaheadmark\thmnote{ (#3)}}
+\makeatother
+
+\theoremstyle{leanplain}
 \newtheorem{theorem}{Theorem}[section]
 \newtheorem{lemma}[theorem]{Lemma}
 \newtheorem{corollary}[theorem]{Corollary}
 \newtheorem{proposition}[theorem]{Proposition}
 \newtheorem{axiom}[theorem]{Axiom}
-\theoremstyle{definition}
+\theoremstyle{leandef}
 \newtheorem{definition}[theorem]{Definition}
 \newtheorem{example}[theorem]{Example}
 \newtheorem{problem}[theorem]{Problem}
@@ -58,7 +67,7 @@
 \newtheorem{notation}[theorem]{Notation}
 \newtheorem{construction}[theorem]{Construction}
 \newtheorem{claimthm}[theorem]{Claim}
-\theoremstyle{remark}
+\theoremstyle{leanremark}
 \newtheorem{remark}[theorem]{Remark}
 \newtheorem{observation}[theorem]{Observation}
 \newtheorem{conjecture}[theorem]{Conjecture}

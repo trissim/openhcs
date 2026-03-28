@@ -4703,17 +4703,8 @@ end {module_root}
             r"% and copied into each paper's LaTeX dir by the pipeline. Avoid redefining",
             r"% them here to prevent conflicting render behaviour between build hooks and",
             r"% the SSOT macros.",
+            r"% Lean Handle Index stays in supplementary material (never in submission main text).",
             r"\AtBeginDocument{}",
-            r"\AtEndDocument{%",
-            r"  \ifdefined\JSAITREVIEW% Only include Lean handle index in review mode",
-            r"    \IfFileExists{content/lean_handle_ids_auto.tex}{%",
-            r"      \par\smallskip\begingroup",
-            r"      \footnotesize\noindent\textbf{Lean Handle Index.}\par\smallskip",
-            r"      \input{content/lean_handle_ids_auto.tex}%",
-            r"      \endgroup",
-            r"    }{}%",
-            r"  \fi",
-            r"}",
             r"\fi",
         ]
         (target_dir / hook_name).write_text("\n".join(lines) + "\n", encoding="utf-8")

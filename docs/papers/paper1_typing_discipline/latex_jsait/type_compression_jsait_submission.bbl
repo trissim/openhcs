@@ -159,6 +159,16 @@ M.~Kountouris and N.~Pappas, ``Semantics-empowered communication for networked
   intelligent systems,'' \emph{IEEE Communications Magazine}, vol.~59, no.~6,
   pp. 96--102, 2021.
 
+\bibitem{koh2020concept}
+P.~W. Koh, T.~Nguyen, Y.~S. Tang, S.~Mussmann, E.~Pierson, B.~Kim, and
+  P.~Liang, ``Concept bottleneck models,'' in \emph{Proceedings of the 37th
+  International Conference on Machine Learning}, ser. Proceedings of Machine
+  Learning Research, vol. 119, 2020, pp. 5338--5348.
+
+\bibitem{garcez2020neurosymbolic}
+A.~d'Avila Garcez and L.~C. Lamb, ``Neurosymbolic {AI}: The 3rd wave,''
+  \emph{CoRR}, vol. abs/2012.05876, 2020.
+
 \bibitem{polyanskiy2010channel}
 Y.~Polyanskiy, H.~V. Poor, and S.~Verd{\'u}, ``Channel coding rate in the
   finite blocklength regime,'' \emph{IEEE Transactions on Information Theory},

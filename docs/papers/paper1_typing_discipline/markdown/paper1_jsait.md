@@ -33,7 +33,7 @@ Symbolic handles, identifiers, keys, pointers, nominal tags, registry entries, a
 
 #### Privacy and security perspective.
 
-The fiber geometry directly governs identity disclosure. When distinct entities share the same representation, recovering which specific entity is meant constitutes an *identity disclosure*, and the auxiliary description required to resolve the collision fiber is exactly the information that is protected if privacy is to be maintained. This connects the problem to the Special Issue theme of "data compression and storage under privacy and security constraints": our results characterize the precise disclosure-recovery tradeoff for semantic representations. The formal development establishes a finite explicit disclosure separation between nominal-tag access and attribute-only identification (PRIV3), aligning with formal exactness requirements in logic-based explanation frameworks [@ignatiev2019abduction; @marquessilva2022trustworthy], complementing broader privacy frameworks such as differential privacy [@dwork2006differential], and proving that provenance is not recoverable from observable profiles when collisions exist (PRV1).
+The fiber geometry directly governs identity disclosure. When distinct entities share the same representation, recovering which specific entity is meant constitutes an *identity disclosure*, and the auxiliary description required to resolve the collision fiber is exactly the information that is protected if privacy is to be maintained. This connects the problem to the Special Issue theme of "data compression and storage under privacy and security constraints": our results characterize the precise disclosure-recovery tradeoff for semantic representations. The formal development establishes a finite explicit disclosure separation between nominal-tag access and attribute-only identification, aligning with formal exactness requirements in logic-based explanation frameworks [@ignatiev2019abduction; @marquessilva2022trustworthy], complementing broader privacy frameworks such as differential privacy [@dwork2006differential], and proving that provenance is not recoverable from observable profiles when collisions exist.
 
 #### Relation to classical source coding with side information.
 
@@ -43,7 +43,7 @@ The problem is closely related to the Wyner--Ziv framework [@slepian1973noiseles
 
 The confusability graph in our setting is a disjoint union of cliques: each collision fiber forms a complete subgraph, and the fiber geometry is the clique-size profile of this graph. This is a highly structured special case of the general graph-entropy problem [@korner1973coding; @simonyi1995graph; @lovasz1979shannon; @alon1996source; @haemers1978upper; @zuiddam2019asymptotic]. The specialization is not a limitation but an opportunity: while general graph entropy lacks closed-form solutions, the clique-union structure yields exact finite formulas. The largest fiber size $A_\pi$ is exactly the chromatic number of the complement graph in this special case, and our results give precise operational meaning to this combinatorial invariant.
 
-The closest classical objects are zero-error coding with confusability constraints [@korner1973coding; @witsenhausen1976zero], source coding with side information, and more recent task-oriented or semantics-aware communication models [@gunduz2023beyond; @uysal2022semantic; @bao2011towards; @kountouris2021semantics]. Our setting isolates a different question: given a fixed deterministic representation already available at the decoder, what residual coding burden does it leave behind for exact identity recovery? That question admits exact finite answers.
+The closest classical objects are zero-error coding with confusability constraints [@korner1973coding; @witsenhausen1976zero], source coding with side information, and more recent task-oriented or semantics-aware communication models [@gunduz2023beyond; @uysal2022semantic; @bao2011towards; @kountouris2021semantics]. Unlike general zero-error settings where confusability capacities are often intractable, representation-induced confusability graphs here decompose into disjoint cliques, giving exact finite closed-form budgets rather than only asymptotic bounds. This also gives a direct neurosymbolic reading: if $\pi$ is a learned embedding, collision fibers measure irreducible identity ambiguity under semantic compression; injective representations need no auxiliary metadata, while non-injective ones impose an exact-recovery cost no downstream reasoning layer can remove [@koh2020concept; @garcez2020neurosymbolic; @jing2022understanding; @wang2020understanding]. Viewed through the semantics-aware communication lens, this fiber geometry is the governing object in the finite fixed-representation regime. Our setting isolates a different question: given a fixed deterministic representation already available at the decoder, what residual coding burden does it leave behind for exact identity recovery? That question admits exact finite answers.
 
 ## Contributions
 
@@ -162,7 +162,7 @@ Let $C$ be a random class label, let $U=\pi(C)$ be its representation, and let t
 *Converse*: Suppose two distinct classes $c_1 \neq c_2$ share the same representation value: $\pi(c_1)=\pi(c_2)$. Then any decoder $g(U)$ outputs the same class label on both inputs, so it cannot be correct for both. Hence zero-error recovery without auxiliary description is impossible. ◻
 :::
 
-In the finite explicit setting, the same condition can be read directly from the representation channel: one-symbol zero-error feasibility is equivalent to injectivity (GPH27). Interpreting $\pi$ as a learned embedding, this is the exact threshold for zero-error class recovery from the representation alone.
+In the finite explicit setting, the same condition can be read directly from the representation channel: one-symbol zero-error feasibility is equivalent to injectivity. Interpreting $\pi$ as a learned embedding, this is the exact threshold for zero-error class recovery from the representation alone.
 
 ::: remark
 Under any distribution with positive mass on both colliding classes, $I(C;U) < H(C)$. This is an average-case consequence of the deterministic barrier above.
@@ -204,7 +204,7 @@ In graph terms, the fixed-representation setting is a structured zero-error spec
 Every implementable representation operates on finite-precision values. The representation alphabet is therefore finite, and $A_\pi$ is computable by fiber enumeration. If the deployed representation uses $M$ output values, then the pigeonhole principle yields the lower bound $\lceil |\mathcal C|/M \rceil \le A_\pi$. Conversely, to guarantee $A_\pi \le k$ on an entity set of size $n$, at least $\lceil n/k \rceil$ distinct representation values are necessary. The coding theorems identify the operational meaning of $A_\pi$ once the representation is fixed at its deployed precision.
 :::
 
-If one observation channel factors through a richer one, collision multiplicity cannot increase (GPH28). Thus adding observable structure can only lower the corresponding zero-error tag bound. Under the same representation reading, enriching the embedding cannot worsen zero-error separability.
+If one observation channel factors through a richer one, collision multiplicity cannot increase. Thus adding observable structure can only lower the corresponding zero-error tag bound. Under the same representation reading, enriching the embedding cannot worsen zero-error separability.
 
 ::: corollary
 []{#cor:concept-bottleneck-mono label="cor:concept-bottleneck-mono"} Let $\pi_{\mathrm{fine}}$ and $\pi_{\mathrm{coarse}}$ be two representations on the same class domain, and assume $$\pi_{\mathrm{coarse}} = f \circ \pi_{\mathrm{fine}}$$ for some map $f$. Then $$A_{\pi_{\mathrm{fine}}} \le A_{\pi_{\mathrm{coarse}}},
@@ -467,7 +467,7 @@ These three propositions identify the canonical regime of the query problem. One
 :::
 
 ::: proof
-*Proof.* By Proposition [\[prop:query-orthogonal-core\]](#prop:query-orthogonal-core){reference-type="ref" reference="prop:query-orthogonal-core"}, every complete derivability-aware query system contains an orthogonal semantically minimal core. On an orthogonal core, exchange holds (L4, L5). Standard matroid theory then implies that the minimal complete families are exactly the bases of a matroid and therefore all have the same cardinality (L1). ◻
+*Proof.* By Proposition [\[prop:query-orthogonal-core\]](#prop:query-orthogonal-core){reference-type="ref" reference="prop:query-orthogonal-core"}, every complete derivability-aware query system contains an orthogonal semantically minimal core. On an orthogonal core, exchange holds. Standard matroid theory then implies that the minimal complete families are exactly the bases of a matroid and therefore all have the same cardinality. ◻
 :::
 
 ::: remark
@@ -475,7 +475,7 @@ Arbitrary overcomplete families need not be matroidal (GPH31), but after derivab
 :::
 
 ::: remark
-The lower bound $\lceil \log_2 A_{\pi} \rceil \le d$ is exact whenever the canonical query family realizes full binary transcript capacity on the relevant worst fibers, in which case the query side meets the same counting floor as the fixed-length bit side and any strict gap above the floor is an expressivity gap of the observable family, not a redundancy artifact. The corresponding equality and gap statements are mechanized in GPH60 through GPH64.
+The lower bound $\lceil \log_2 A_{\pi} \rceil \le d$ is exact whenever the canonical query family realizes full binary transcript capacity on the relevant worst fibers, in which case the query side meets the same counting floor as the fixed-length bit side and any strict gap above the floor is an expressivity gap of the observable family, not a redundancy artifact. The corresponding equality and gap statements are mechanized.
 :::
 
 ## Witness Cost Comparison
@@ -578,7 +578,7 @@ If $2^L \ge a$, assign distinct auxiliary outcomes to the classes in $G$ and dec
 :::
 
 ::: remark
-This corollary quantifies the price of relying only on semantic attributes. If one omits the auxiliary identifier required by the fixed-length law, the saved $\lceil \log_2 A_\pi \rceil$ bits are exchanged for a nonzero error floor. For example, a collision fiber of size $2$ forces at least $50\%$ error at zero budget, while size $100$ forces at least $99\%$. Identity is paid either in bits or in distortion.
+This corollary quantifies the price of relying only on semantic attributes. If one omits the auxiliary identifier required by the fixed-length law, the saved $\lceil \log_2 A_\pi \rceil$ bits are exchanged for a nonzero error floor. The tradeoff is steep near the exact-recovery threshold: for a collision block of size $100$, zero distortion needs $7$ bits, while using $6$ bits still forces at least $36\%$ distortion. At zero budget, size $2$ already forces at least $50\%$ error, and size $100$ forces at least $99\%$. Identity is paid either in bits or in distortion.
 :::
 
 ::: remark
@@ -589,7 +589,7 @@ The exact formula above is stated for the uniform source on a single collision b
 
 The counting-based converses above are combinatorial: they bound distortion in terms of fiber sizes and tag budgets. A complementary family of converses connects distortion to information-theoretic quantities [@CoverThomas2006; @csiszar2011information; @barron1998information], placing the semantic identity problem inside classical Shannon theory.
 
-The following theorems are mechanized in the RDC series, from RDC1 through RDC9. They apply to any finite source, any observation map, and any tag/decoder pair.
+The following theorems are mechanized in the RDC series. They apply to any finite source, any observation map, and any tag/decoder pair.
 
 ::: theorem
 []{#thm:fano-converse label="thm:fano-converse"} Let $\mu$ be a finite source on $K$ classes, let $(O, T)$ be the observation and tag alphabet sizes, and let $D$ be the distortion (error probability) of any deterministic decoder. Then $$H_\mu(C) \le h_b(D) + (1-D) \log(O \cdot T) + D \log(K - 1),$$ where $H_\mu(C)$ is the source entropy and $h_b$ is binary entropy.
@@ -644,25 +644,25 @@ Whenever $A_\pi>1$, the coding laws imply a sharp design dichotomy. In an attrib
 
 This is why symbolic identifiers are ubiquitous in high-reliability systems. Primary keys, memory addresses, retrieval identifiers, and similar handles are the mechanisms by which systems avoid the distortion floor mandated by the coding laws. In settings where such handles are already available, the design lesson is stronger than mere feasibility.
 
-**Corollary (Pareto domination, cf. Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}).** In applied systems where tags are free by default (databases with primary keys, object stores, programming languages with nominal identity), tag-augmented design strictly Pareto dominates attribute-only design for exact identity recovery: it achieves zero-error while attribute-only cannot, at no additional cost. See Table [\[tab:witness-comparison\]](#tab:witness-comparison){reference-type="ref" reference="tab:witness-comparison"} for the operational cost comparison. PD1
+**Corollary (Pareto domination, cf. Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}).** In applied systems where tags are free by default (databases with primary keys, object stores, programming languages with nominal identity), tag-augmented design strictly Pareto dominates attribute-only design for exact identity recovery: it achieves zero-error while attribute-only cannot, at no additional cost. See Table [\[tab:witness-comparison\]](#tab:witness-comparison){reference-type="ref" reference="tab:witness-comparison"} for the operational cost comparison.
 
-The mechanization sharpens this operational claim with an admissibility guarantee for the symbolic layer: in any valid execution trace, every registry read or write names a registry that was declared in the system specification. Thus the formal registry semantics is closed under the declared interface; undeclared registries are semantically inert and cannot appear in certified traces. This does not rule out arbitrary hidden state in real implementations, but it does show that the formal model does not smuggle in extra symbolic storage beyond the declared registry surface. NOH1
+The mechanization sharpens this operational claim with an admissibility guarantee for the symbolic layer: in any valid execution trace, every registry read or write names a registry that was declared in the system specification. Thus the formal registry semantics is closed under the declared interface; undeclared registries are semantically inert and cannot appear in certified traces. This does not rule out arbitrary hidden state in real implementations, but it does show that the formal model does not smuggle in extra symbolic storage beyond the declared registry surface.
 
 #### Formal instantiation.
 
-The paper also develops a concrete formal identity domain in Lean. In that model, entities carry an explicit attribute family $\mathcal I$, primitive observables are the associated binary maps $q_I$, and the representation is the induced profile map $\pi(v)=(q_I(v))_{I\in\mathcal I}$. The generic coding laws then specialize to a machine-checked formal instance. In particular, equal observable profiles cannot distinguish identity (ACS8), provenance is not recoverable from the profile alone when collisions exist (ACS9), and nominal identity cannot be embedded back into the semantic layer (EMB1).
+The paper also develops a concrete formal identity domain in Lean. In that model, entities carry an explicit attribute family $\mathcal I$, primitive observables are the associated binary maps $q_I$, and the representation is the induced profile map $\pi(v)=(q_I(v))_{I\in\mathcal I}$. The generic coding laws then specialize to a machine-checked formal instance. In particular, equal observable profiles cannot distinguish identity, provenance is not recoverable from the profile alone when collisions exist, and nominal identity cannot be embedded back into the semantic layer.
 
 #### Instantiated neurosymbolic linking theorems.
 
-Within that formal identity domain, the generic helper-view theorems specialize by setting the task to identity $Y = C$. The mechanization (NSL1 through NSL6) proves the following instantiated claims.
+Within that formal identity domain, the generic helper-view theorems specialize by setting the task to identity $Y = C$. The mechanization proves the following instantiated claims.
 
--   If the symbolic handle $\sigma$ is injective, the neurosymbolic link $(\pi, \sigma)$ achieves zero-error identity recovery (NSL1). This is the identity-task instantiation of the injectivity criterion GPH25.
+-   If the symbolic handle $\sigma$ is injective, the neurosymbolic link $(\pi, \sigma)$ achieves zero-error identity recovery. This is the identity-task instantiation of the injectivity criterion.
 
--   If $\pi$ has collisions, semantic representation alone cannot achieve zero-error identity (NSL2), and no decoder can recover the collapsed identities without identity-resolving side information (NSL3).
+-   If $\pi$ has collisions, semantic representation alone cannot achieve zero-error identity, and no decoder can recover the collapsed identities without identity-resolving side information.
 
--   The exact characterization is: $(\pi, \sigma)$ recovers identity if and only if $\sigma$ distinguishes all entities within each semantic fiber (NSL4). An injective handle therefore suffices (NSL5). This is the identity-task instantiation of the helper-view theorem GPH40.
+-   The exact characterization is: $(\pi, \sigma)$ recovers identity if and only if $\sigma$ distinguishes all entities within each semantic fiber. An injective handle therefore suffices. This is the identity-task instantiation of the helper-view theorem.
 
--   The pair $(\pi, \sigma)$ is the canonical helper view for open-world identity systems (NSL6).
+-   The pair $(\pi, \sigma)$ is the canonical helper view for open-world identity systems.
 
 ## Task Sufficiency, Helper Views, and Factorization
 
@@ -716,7 +716,7 @@ For learned representations, estimating quantities such as $A_\pi$, $A_{\pi \to 
 
 Concretely, the task-sufficiency theorem says the representation is sufficient precisely when every fiber carries one task label, and the helper-view and factorized laws say when added views contribute genuinely new exact information.
 
-In the finite explicit setting, one-symbol zero-error feasibility is equivalent to injectivity and refinement cannot increase collision multiplicity (GPH27, GPH28). The same setting also yields a disclosure separation between nominal access and tag-free identity resolution (PRIV3).
+In the finite explicit setting, one-symbol zero-error feasibility is equivalent to injectivity and refinement cannot increase collision multiplicity. The same setting also yields a disclosure separation between nominal access and tag-free identity resolution.
 
 
 ## Secondary Robustness and Decidability Boundary
@@ -782,7 +782,7 @@ The same ambiguity-fiber geometry governs when a representation is sufficient fo
 
 The central systems-level consequence is a formal account of symbolic mechanisms in semantic systems. The coding laws prove that semantic abstraction imposes an exact identity cost: a non-injective representation requires auxiliary description to resolve its collision fibers, with worst-case cost $\log_2 A_\pi$ bits and fiberwise cost $\lceil \log_2 |\pi^{-1}(u)| \rceil$. Systems that require both semantic generalization and exact identity therefore implement a mechanism to pay this cost.
 
-Symbolic handles, identifiers, pointers, keys, type systems, and index entries are standard computational instantiations of that payment. Consequently, the integration of symbolic identity layers into neurosymbolic, retrieval, type-theoretic, and other semantics-aware systems is implied by the coding laws. In the instantiated formal domain, the pair consisting of a neural encoder and an injective symbolic handle achieves zero-error identity recovery if and only if the handle distinguishes entities within each semantic fiber (NSL1 through NSL6).
+Symbolic handles, identifiers, pointers, keys, type systems, and index entries are standard computational instantiations of that payment. Consequently, the integration of symbolic identity layers into neurosymbolic, retrieval, type-theoretic, and other semantics-aware systems is implied by the coding laws. In the instantiated formal domain, the pair consisting of a neural encoder and an injective symbolic handle achieves zero-error identity recovery if and only if the handle distinguishes entities within each semantic fiber.
 
 #### Secondary robustness consequence.
 
@@ -794,9 +794,9 @@ The main theorem chain is machine-checked in Lean 4. The mechanization certifies
 
 ## Acknowledgment: AI-use Disclosure {#acknowledgment-ai-use-disclosure .unnumbered}
 
-Generative AI tools (including Codex, Claude Code, Augment, Kilo, and OpenCode) were used during drafting and revision for prose refinement, LaTeX cleanup, and transformation of informal proof ideas into candidate formal artifacts. The author retained full intellectual and editorial control over problem selection, theorem statements, assumptions, novelty framing, and all inclusion decisions.
+Generative AI tools (including Codex, Claude Code, Augment, Kilo, and OpenCode) were used throughout this manuscript, across all sections (Abstract, Introduction, theoretical development, proof sketches, applications, conclusion, and appendix) and across all stages from initial drafting to final revision. The tools were used for boilerplate generation, prose and notation refinement, LaTeX and structure cleanup, translation of informal proof ideas into candidate formal artifacts (Lean and LaTeX), and repeated adversarial reviewer-style critique passes to identify blind spots and clarity gaps.
 
-No technical claim was accepted solely from AI output. Claims reported as machine-verified were admitted only after Lean verification (no `sorry` in cited modules) and direct author review. The author is solely responsible for all statements, citations, and conclusions.
+The author retained full intellectual and editorial control, including problem selection, theorem statements, assumptions, novelty framing, acceptance criteria, and final inclusion or exclusion decisions. No technical claim was accepted solely from AI output. Formal claims reported as machine-verified were admitted only after Lean verification (no `sorry` in cited modules) and direct author review; Lean was used as an integrity gate for responsible AI-assisted research. The author is solely responsible for all statements, citations, and conclusions.
 
 
 

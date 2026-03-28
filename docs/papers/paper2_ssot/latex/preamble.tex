@@ -6,6 +6,7 @@
 \usepackage{longtable}
 \usepackage{array}
 \usepackage{calc}
+\usepackage[para,flushmargin]{footmisc}
 \usepackage{fancyvrb}
 
 % Fix for pandoc's \tightlist
@@ -13,15 +14,23 @@
   \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
 
 % Theorem environments (numbered within section)
+\providecommand{\leanmetaheadmark}{}
+\makeatletter
+\newtheoremstyle{leanplain}{3pt}{3pt}{\itshape}{}{}{.}{ }{\thmname{#1}\thmnumber{ #2}\leanmetaheadmark\thmnote{ (#3)}}
+\newtheoremstyle{leandef}{3pt}{3pt}{}{}{}{.}{ }{\thmname{#1}\thmnumber{ #2}\leanmetaheadmark\thmnote{ (#3)}}
+\newtheoremstyle{leanremark}{3pt}{3pt}{}{}{}{.}{ }{\thmname{#1}\thmnumber{ #2}\leanmetaheadmark\thmnote{ (#3)}}
+\makeatother
+
+\theoremstyle{leanplain}
 \newtheorem{theorem}{Theorem}[section]
 \newtheorem{lemma}[theorem]{Lemma}
 \newtheorem{corollary}[theorem]{Corollary}
 \newtheorem{proposition}[theorem]{Proposition}
 \newtheorem{axiom}[theorem]{Axiom}
-\theoremstyle{definition}
+\theoremstyle{leandef}
 \newtheorem{definition}[theorem]{Definition}
 \newtheorem{example}[theorem]{Example}
-\theoremstyle{remark}
+\theoremstyle{leanremark}
 \newtheorem{remark}[theorem]{Remark}
 \newtheorem{observation}[theorem]{Observation}
 
