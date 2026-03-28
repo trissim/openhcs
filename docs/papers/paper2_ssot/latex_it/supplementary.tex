@@ -4,10 +4,16 @@
 \usepackage[utf8]{inputenc}
 \usepackage{lmodern}
 \usepackage[margin=1in]{geometry}
+\usepackage{tabularx}
+\usepackage{ragged2e}
+\usepackage{xcolor}
 \usepackage{longtable}
 \usepackage{booktabs}
 \usepackage{url}
 \usepackage[hidelinks]{hyperref}
+
+% Lean-handle helpers
+\InputIfFileExists{../../shared/lean-handle-macros.tex}{}{}
 
 \begin{document}
 
@@ -26,5 +32,14 @@ It includes every handle identifier, declaration name, and source module path.
 }{%
   \textbf{Error:} \texttt{content/lean\_handle\_ids\_auto.tex} not found.
 }
+
+\vfill
+\newpage
+
+\section{Claim Mapping to Lean Handles}
+
+This section provides the direct mapping between paper handles (Theorem, Corollary, Lemma) and the mechanized proof handles in the Lean 4 artifact.
+
+\input{content/claim_mapping_appendix.tex}
 
 \end{document}

@@ -22,7 +22,11 @@ Whenever $A_\pi>1$, the coding laws imply a sharp design dichotomy. In an attrib
 
 This is why symbolic identifiers are ubiquitous in high-reliability systems. Primary keys, memory addresses, retrieval identifiers, and similar handles are the mechanisms by which systems avoid the distortion floor mandated by the coding laws. In settings where such handles are already available, the design lesson is stronger than mere feasibility.
 
-\textbf{Corollary (Pareto domination, cf. Theorem~\ref*{thm:converse}).} In applied systems where tags are free by default (databases with primary keys, object stores, programming languages with nominal identity), tag-augmented design strictly Pareto dominates attribute-only design for exact identity recovery: it achieves zero-error while attribute-only cannot, at no additional cost. See Table~\ref{tab:witness-comparison} for the operational cost comparison. \leanmeta{\LH{PD1}}
+\leanmetapending{\LH{PD1}}
+\begin{corollary}[Pareto domination, cf. Theorem~\ref*{thm:converse}]\label{cor:pareto-domination}
+In any system where nominal identity is provided for free (databases with primary keys, object stores with stable identifiers, programming languages with inheritance hierarchies\leanmeta{\LH{EMB1}, \LH{ACS9}}), the nominal architecture must be chosen for exact identity recovery: attribute-only alternatives cannot achieve zero error, while the nominal system does at no additional cost.
+\end{corollary}
+
 
 The mechanization sharpens this operational claim with an admissibility guarantee for the symbolic layer: in any valid execution trace, every registry read or write names a registry that was declared in the system specification. Thus the formal registry semantics is closed under the declared interface; undeclared registries are semantically inert and cannot appear in certified traces. This does not rule out arbitrary hidden state in real implementations, but it does show that the formal model does not smuggle in extra symbolic storage beyond the declared registry surface. \leanmeta{\LH{NOH1}}
 
