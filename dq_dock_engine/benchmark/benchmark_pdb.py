@@ -145,6 +145,9 @@ if TYPE_CHECKING:
     from dq_dock_engine.docking_config import DockingConfig
 
 
+_DQ_DOCK_PREWARMED_SIGNATURES: set[tuple[object, ...]] = set()
+
+
 DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS = 12.0
 DEFAULT_BENCHMARK_CHARGE_METHOD = ChargeMethod.GASTEIGER
 DEFAULT_BENCHMARK_OPTIMIZER_BACKEND = OptimizerBackend.FORMAL
@@ -3186,7 +3189,80 @@ class DQDockBenchmarkJobResult:
     dq_pose_coords: np.ndarray | None
 
 
+def _dq_dock_job_runtime_signature(job: DQDockBenchmarkJob) -> tuple[object, ...]:
+    complex_entry = job.complex_entry
+    return (
+        int(np.asarray(complex_entry.pocket_coords).shape[0]),
+        int(np.asarray(complex_entry.ligand_coords).shape[0]),
+        tuple(int(x) for x in np.asarray(complex_entry.pocket_coords).shape),
+        tuple(int(x) for x in np.asarray(complex_entry.ligand_coords).shape),
+        job.charge_method.value,
+        job.certified_scoring_family.value,
+        job.exact_chemistry_mode.value,
+        float(job.box_size),
+        job.formal_round_strategy.value,
+        bool(job.use_multi_stage),
+        bool(job.use_pocket_guided),
+        job.optimizer_backend.name,
+        bool(job.conformer_search),
+        bool(job.reuse_initial_conformer),
+        bool(job.use_crystal_ligand_geometry),
+        float(job.target_rmsd),
+        float(job.confidence),
+        job.n_poses_override,
+    )
+
+
+def _maybe_prewarm_dq_dock_benchmark_job(job: DQDockBenchmarkJob) -> None:
+    signature = _dq_dock_job_runtime_signature(job)
+    if signature in _DQ_DOCK_PREWARMED_SIGNATURES:
+        return
+    prewarm_start = time.perf_counter()
+    result, dq_pose_coords = run_dq_dock(
+        job.complex_entry.pocket_coords,
+        job.complex_entry.pocket_radii,
+        job.complex_entry.ligand_coords,
+        job.complex_entry.ligand_radii,
+        job.complex_entry.center,
+        ligand_file=job.complex_entry.ligand_pdb,
+        ligand_source_path=job.complex_entry.ligand_source_path,
+        receptor_file=job.complex_entry.pocket_receptor_pdb,
+        charge_method=job.charge_method,
+        precomputed_ligand_charges=job.precomputed_ligand_charges,
+        precomputed_receptor_charges=job.precomputed_receptor_charges,
+        exact_chemistry_mode=job.exact_chemistry_mode,
+        use_multi_stage=job.use_multi_stage,
+        use_pocket_guided=job.use_pocket_guided,
+        ligand_elements=job.complex_entry.ligand_elements,
+        receptor_elements=job.complex_entry.pocket_elements,
+        optimizer_backend=job.optimizer_backend,
+        conformer_search=job.conformer_search,
+        reuse_initial_conformer=job.reuse_initial_conformer,
+        use_crystal_ligand_geometry=job.use_crystal_ligand_geometry,
+        formal_round_strategy=job.formal_round_strategy,
+        certified_scoring_family=job.certified_scoring_family,
+        max_retries=1,
+        retry_break_rmsd=job.retry_break_rmsd,
+        retry_preserve_seed=job.retry_preserve_seed,
+        box_size=job.box_size,
+        target_rmsd=job.target_rmsd,
+        confidence=job.confidence,
+        n_poses_override=job.n_poses_override,
+    )
+    del result, dq_pose_coords
+    _DQ_DOCK_PREWARMED_SIGNATURES.add(signature)
+    print(
+        "[DQ-DOCK PREWARM] Compiled runtime kernels for signature "
+        f"(ligand_atoms={int(np.asarray(job.complex_entry.ligand_coords).shape[0])}, "
+        f"pocket_atoms={int(np.asarray(job.complex_entry.pocket_coords).shape[0])}) "
+        f"in {time.perf_counter() - prewarm_start:.2f}s",
+        flush=True,
+    )
+
+
 def run_dq_dock_benchmark_job(job: DQDockBenchmarkJob) -> DQDockBenchmarkJobResult:
+    if job.optimizer_backend == OptimizerBackend.FORMAL:
+        _maybe_prewarm_dq_dock_benchmark_job(job)
     result, dq_pose_coords = run_dq_dock(
         job.complex_entry.pocket_coords,
         job.complex_entry.pocket_radii,
@@ -3504,15 +3580,17 @@ class DQDockBenchmarkEngine(BenchmarkEngine[DQDockBenchmarkJobResult]):
             )
         )
 
-        checkpoint_start = time.perf_counter()
-        state.save(
-            "dq_dock",
-            context,
-            excluded_rows=excluded_rows,
-            render_report=True,
-            report_pdb_ids={complex_entry.pdb_id},
-        )
-        checkpoint_elapsed = time.perf_counter() - checkpoint_start
+        checkpoint_elapsed = 0.0
+        if len(context.complexes) > 1:
+            checkpoint_start = time.perf_counter()
+            state.save(
+                "dq_dock",
+                context,
+                excluded_rows=excluded_rows,
+                render_report=False,
+                report_pdb_ids={complex_entry.pdb_id},
+            )
+            checkpoint_elapsed = time.perf_counter() - checkpoint_start
         wall_time = dock_time + pose_save_elapsed + checkpoint_elapsed
         finalized_result = replace(
             result,
