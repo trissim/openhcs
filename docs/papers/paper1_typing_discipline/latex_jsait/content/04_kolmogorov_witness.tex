@@ -19,13 +19,15 @@ Let $\mathcal{C}$ be a finite class space and let $\pi : \mathcal{C} \to \mathca
 
 In the finite explicit setting, the same condition can be read directly from the representation channel: one-symbol zero-error feasibility is equivalent to injectivity. Interpreting $\pi$ as a learned embedding, this is the exact threshold for zero-error class recovery from the representation alone. \leanmeta{\LH{GPH27}}
 
+\leanmetapending{\LH{ACS8}}
 \begin{remark}[Information-theoretic corollary]
 Under any distribution with positive mass on both colliding classes, $I(C;U) < H(C)$. This is an average-case consequence of the deterministic barrier above.
-\end{remark} \leanmeta{\LH{ACS8}}
+\end{remark}
 
+\leanmetapending{\LH{ACS8}}
 \begin{remark}[Relation to Ahlswede-Dueck]
 In the identification paradigm of \cite{ahlswede1989identification}, the decoder asks ``is the message $m$?'' rather than ``what is the message?'' This yields double-exponential codebook sizes. Our setting is different: we require zero-error identification of the \emph{class}, not hypothesis testing. The one-shot zero-error identification feasibility threshold is binary rather than asymptotic.
-\end{remark} \leanmeta{\LH{ACS8}}
+\end{remark}
 
 \subsection{Fixed-Length Auxiliary Description}
 
@@ -62,9 +64,10 @@ A_\pi := \max_{u \in \operatorname{Im}(\pi)} \left|\{c \in \mathcal{C} : \pi(c)=
 Thus $A_\pi$ is the size of the largest class-collision block under the representation.
 \end{definition}
 
+\leanmetapending{\LHrng{GPH}{44}{45}, \LH{GPH48}, \LH{GPH50}}
 \begin{remark}[Computability under finite precision]
 Every implementable representation operates on finite-precision values. The representation alphabet is therefore finite, and $A_\pi$ is computable by fiber enumeration. If the deployed representation uses $M$ output values, then the pigeonhole principle yields the lower bound $\lceil |\mathcal C|/M \rceil \le A_\pi$. Conversely, to guarantee $A_\pi \le k$ on an entity set of size $n$, at least $\lceil n/k \rceil$ distinct representation values are necessary. The coding theorems identify the operational meaning of $A_\pi$ once the representation is fixed at its deployed precision.
-\end{remark} \leanmeta{\LHrng{GPH}{44}{45}, \LH{GPH48}, \LH{GPH50}}
+\end{remark}
 
 If one observation channel factors through a richer one, collision multiplicity cannot increase. Thus adding observable structure can only lower the corresponding zero-error tag bound. Under the same representation reading, enriching the embedding cannot worsen zero-error separability. \leanmeta{\LH{GPH28}}
 
