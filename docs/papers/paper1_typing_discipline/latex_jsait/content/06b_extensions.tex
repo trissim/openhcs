@@ -1,49 +1,23 @@
-The main theorem chain identifies the structural laws governing zero-error identity recovery from fixed representations. This section records forward-looking directions that change one model assumption while preserving the central insight: residual ambiguity must be paid for in some currency.
+The main theorem chain identifies structural laws for zero-error identity recovery. This section records generalizations that relax specific model assumptions while preserving the core insight: residual ambiguity must be paid for in some resource currency.
 
-\subsection{Scope and Completeness}
+\subsection{Stochastic and Semantic Generalizations}
 
-The paper provides complete zero-error theory for the fixed-representation setting. The fiberwise decomposition theorem applies to any finite source distribution. The entropy converses apply to any observation map and tag budget. The query laws apply to any attribute family. Section~\ref{sec:robustness} then records secondary robustness consequences for system growth, while the uniform single-block closed form is the special case that collapses to an explicit formula.
+The paper provides exact zero-error theory for fixed representations. Several extensions relax this deterministic assumption. With noisy representations or lossy side channels, deterministic fibers are replaced by probabilistic confusion neighborhoods, and the problem moves toward the graph-entropy regime \cite{korner1973coding}. In such settings, repeated sampling or increased side-information rate can reduce error, relaxing the exact fiber laws into probabilistic coding theorems.
 
-Several extensions remain open. Stochastic representations, noisy channels, and asymptotic block analysis would each modify the model while preserving the core insight that fiber geometry governs residual cost.
+A lossy extension would replace binary misidentification with semantic distortion measures such as hierarchical penalties or task-specific losses. This matters when classes carry internal geometry: the current theory distinguishes zero error from nonzero error, whereas a lossy theory must distinguish tolerable confusion from unacceptable failure. For learned representations, the theoretic task remains identifying what the resulting fiber statistics mean once they are estimated via discretization or empirical audits.
 
-\subsection{Noisy and Lossy Observation}
+\subsection{Dynamic Growth and Trigger Conditions}
 
-With noisy representations or noisy side channels, repeated sampling can reduce error, so the problem becomes the tradeoff among side-information rate, repeated evidence, and target error level. In this regime, the deterministic fibers are replaced by probabilistic confusion neighborhoods, and the main open question is how the exact fiber laws relax into probabilistic coding theorems. (This paragraph is a forward-looking sketch rather than a theorem; formal treatment is left to future work.) Once the deterministic representation assumption is relaxed, the confusability structure is no longer a disjoint union of cliques, and the problem moves closer to the richer graph-entropy regime studied by K\"orner and Witsenhausen.
+The static theorems also suggest operational limits for evolving systems. In a Poissonized growth model for representation cells with arrival rate $\lambda$, the probability of at least one collision in a cell is $1 - e^{-\lambda}(1+\lambda)$, which isolates the onset of identity pressure. The required exact identity budget becomes positive exactly when occupancy reaches two or more items per cell. These formulas identify the dynamic trigger conditions at which auxiliary symbolic handles become necessary to prevent identity collapse. \leanmeta{\LH{GRC1}, \LH{GRC3}, \LHrng{GTB}{1}{2}}
 
-\subsection{Growth and Budgeting}
+\subsection{Information-Theoretic Vistas: Privacy and Entropy}
 
-The deterministic theorems also suggest operational extensions for systems that evolve over time. In a Poissonized growth model for representation cells, the probability that one cell has already developed a collision takes the explicit form
-\[
-1 - e^{-\lambda}(1+\lambda),
-\]
-which isolates the onset of identity pressure as occupancy grows. In particular, the collision pressure is strictly positive exactly when the arrival rate is positive. On the budgeting side, the required exact tag budget becomes positive exactly when occupancy reaches two or more items in a cell, and vanishes exactly when occupancy is at most one. These formulas illustrate how the static collision laws induce dynamic trigger conditions for when auxiliary identity information becomes necessary. \leanmeta{\LH{GRC1}, \LH{GRC3}, \LHrng{GTB}{1}{2}}
+The entropy-sensitive converses (Section~\ref{sec:entropy-converses}) are mirrored by machine-checked Fano-style inequalities connecting distortion to source entropy and budget lower bounds. \leanmeta{\LHrng{RDC}{1}{9}} 
+These also imply privacy-preserving disclosure limits: nominal access has unit disclosure cost, while tag-free identity resolution can require $n-1$ primitive disclosures in adversarial settings. \leanmeta{\LH{PRIV3}} 
+This "three-resource geometry" suggest that one may pay for exact identification with side-information bits, additional disclosures, or higher semantic error.
 
-Natural extensions. Important follow-on work studies how representation design and training shape the fiber geometry that our theorems take as input. Examples include (i) analysis of how training objectives change expected collision counts, (ii) quantization and embedding-dimension effects on empirical collision statistics, and (iii) continuous or asymptotic models that require careful discretization to connect with the finite explicit setting used here. Each such line of work supplies estimates or bounds on the fiber quantities (for example, $A_\pi$) which then determine the exact operational costs described in this paper. \leanmeta{\LHrng{BST}{1}{3}}
+\subsection{Empirical Audit: Embedding Collapse}
 
-\subsection{Entropy-Sensitive Converses}
-
-The entropy-sensitive converses (RDC series) are now presented in the main text as Section~\ref{sec:entropy-converses}. The mechanization supports Fano-style inequalities connecting distortion to source entropy, budget lower bounds from error targets, and min-entropy bounds for observation-only schemes. These connect cleanly to the PMF bridge in the proof stack, which identifies finite-source entropy quantities with explicit PMF entropies. \leanmeta{\LHrng{RDC}{1}{2}, \LHrng{RDC}{5}{9}, \LHrng{PMF}{1}{3}}
-
-\subsection{Semantic Distortion Measures}
-
-The paper treats $D$ as binary misidentification probability. A lossy extension would replace that with hierarchical distortion, weighted misclassification penalties, or other task-specific semantic losses. The open problem is then to characterize how the side-information rate changes when near misses and catastrophic confusions are not penalized equally, so that the fiber geometry interacts with a distortion matrix rather than a binary error indicator.
-
-This matters most in settings where classes carry internal geometry or hierarchy: the current theory distinguishes zero error from nonzero error, while a lossy theory would need to distinguish tolerable confusion from unacceptable confusion.
-
-\subsection{Privacy, Security, and Three-Resource Geometry}
-
-Nominal tags also suggest privacy-preserving class-membership proofs and stronger verification mechanisms in model-registry settings. The intro and main results already record the finite explicit disclosure separation: nominal access has unit disclosure budget, while tag-free zero-error identity resolution can require $n-1$ primitive disclosures in the adversarial family. This is another facet of the same residual ambiguity: one may pay for exact identification with side-information bits or with additional disclosures. One direction is to study how imposing explicit leakage constraints changes the feasible naming information that can be exposed while still certifying identity or class membership. \leanmeta{\LH{PRIV3}}
-
-More broadly, the present side-information viewpoint invites comparison with rate-distortion-perception formulations \cite{blau2019rethinking} and with conditional source coding more directly. The main missing theorem is a genuinely entropy-sensitive zero-error variable-length characterization.
-
-In explicit finite registries, auditing residual ambiguity means computing fiber statistics exactly. In learned or implicit models, the same quantities become representation-analysis targets: one may estimate collision profiles through discretization bounds, quantized or empirical collision statistics, class-conditional entropy surrogates, or task-conditioned quantities such as $A_{\pi \to Y}$. The theoretic contribution of the present paper is to identify what these quantities mean once they are available; the computational task of extracting them from arbitrary models is a separate engineering and estimation problem.
-
-The empirical audit path can also be connected back to the mechanization. Once a deployed representation and quantization rule are fixed, the resulting fiber histogram and finite budget curve can be exported as a Lean certificate whose checks reduce to the same finite formulas used in the paper: the reported $A_\pi$, the threshold budget $\lceil \log_2 A_\pi \rceil$, the worst-fiber floor, and the finite exact recoverable mass under each tag budget. This does not mechanize the neural encoder itself, but it does make the post-quantization collision audit machine-checkable.
-
-The present distortion floor should therefore be read as a deterministic exact-recovery analogue of rate-distortion-perception constraints, not as a full solution of that stochastic theory.
-
-\subsection{Learned Representations and Embedding Collapse}
-
-In learned classification systems, the observation map $\pi$ can be instantiated by an embedding or representation map whose coordinates are then queried or thresholded. The earlier sections isolate the finite explicit corollaries: one-symbol zero-error feasibility is equivalent to injectivity, and refining the observation channel cannot increase collision multiplicity. The extension question is how far that representation reading can be pushed once $\pi$ is implicit, high-dimensional, or learned from data. In that setting, the fixed-length and adaptive fiber laws become a formal measure of residual ambiguity under the representation: unresolved embedding collisions must be paid for either by explicit naming information or by accepting nonzero semantic error. \leanmeta{\LHrng{GPH}{27}{28}}
+For learned representations, the fixed-length and adaptive fiber laws provide a formal measure of residual ambiguity. Once a quantization rule is fixed, the collision audit can be connected back to the mechanization: the resulting fiber histogram and budget curve are exported as Lean certificates whose consistency checks reduce to the same finite formulas proved in the paper. This does not mechanize the neural encoder itself, but it does make the empirical collision audits machine-checkable.
 
 \InputIfFileExists{content/experiment_results_auto.tex}{}{}
