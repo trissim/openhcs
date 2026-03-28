@@ -148,6 +148,24 @@ if TYPE_CHECKING:
 _DQ_DOCK_PREWARMED_SIGNATURES: set[tuple[object, ...]] = set()
 
 
+def _resolved_openhcs_jax_cache_dir() -> Path:
+    raw = os.environ.get("OPENHCS_JAX_CACHE_DIR")
+    if raw is None:
+        raw = os.path.expanduser("~/.cache/openhcs/jax")
+    return Path(raw)
+
+
+def _openhcs_jax_cache_populated() -> bool:
+    cache_dir = _resolved_openhcs_jax_cache_dir()
+    if not cache_dir.exists():
+        return False
+    try:
+        next(cache_dir.rglob("*"))
+        return True
+    except StopIteration:
+        return False
+
+
 DEFAULT_BENCHMARK_BOX_SIZE_ANGSTROMS = 12.0
 DEFAULT_BENCHMARK_CHARGE_METHOD = ChargeMethod.GASTEIGER
 DEFAULT_BENCHMARK_OPTIMIZER_BACKEND = OptimizerBackend.FORMAL
@@ -2255,6 +2273,25 @@ def _augment_pipeline_debug_with_native_rigid_seed_witness(
     ligand_elements: Sequence[str],
     target_rmsd: float,
 ) -> dict[str, object] | None:
+    def _projective_quaternion_dictionary12() -> np.ndarray:
+        return np.array(
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+                [0.5, 0.5, 0.5, 0.5],
+                [0.5, 0.5, 0.5, -0.5],
+                [0.5, 0.5, -0.5, 0.5],
+                [0.5, 0.5, -0.5, -0.5],
+                [0.5, -0.5, 0.5, 0.5],
+                [0.5, -0.5, 0.5, -0.5],
+                [0.5, -0.5, -0.5, 0.5],
+                [0.5, -0.5, -0.5, -0.5],
+            ],
+            dtype=np.float64,
+        )
+
     if pipeline_debug_summary is None:
         return None
     rigid_summary_raw = pipeline_debug_summary.get("rigid_seed_family_plan")
@@ -2362,6 +2399,49 @@ def _augment_pipeline_debug_with_native_rigid_seed_witness(
         if csc98_pointwise_upper_bound is not None
         else None
     )
+    projective12_quaternions = _projective_quaternion_dictionary12()
+    best_projective12_index = 0
+    best_projective12_pointwise = math.inf
+    best_projective12_rmsd = math.inf
+    for index, quaternion in enumerate(projective12_quaternions):
+        witness_orientation_coords = np.asarray(
+            rigid_transform_3d(
+                base_coords_jnp,
+                jnp.asarray(quaternion, dtype=jnp.float32),
+                zero_translation,
+            ),
+            dtype=np.float64,
+        )
+        displacements = np.linalg.norm(
+            witness_orientation_coords - native_orientation_coords,
+            axis=1,
+        )
+        pointwise_max = float(np.max(displacements))
+        orientation_rmsd = float(
+            np.sqrt(
+                np.mean(
+                    np.sum(
+                        (witness_orientation_coords - native_orientation_coords) ** 2,
+                        axis=1,
+                    )
+                )
+            )
+        )
+        if (pointwise_max, orientation_rmsd, index) < (
+            best_projective12_pointwise,
+            best_projective12_rmsd,
+            best_projective12_index,
+        ):
+            best_projective12_pointwise = pointwise_max
+            best_projective12_rmsd = orientation_rmsd
+            best_projective12_index = index
+    projective12_radius = math.sqrt(2.0 - math.sqrt(2.0))
+    projective12_pointwise_upper_bound = float(
+        48.0 * arm_bound_l1 * projective12_radius
+    )
+    projective12_rmsd_upper_bound = float(
+        translation_distance + projective12_pointwise_upper_bound
+    )
     witness_seed_coords = np.asarray(
         rigid_transform_3d(
             base_coords_jnp,
@@ -2419,6 +2499,15 @@ def _augment_pipeline_debug_with_native_rigid_seed_witness(
         "csc98_signed_distance_radius_bound": (csc98_radius if csc98_applies else None),
         "csc98_pointwise_upper_bound": csc98_pointwise_upper_bound,
         "csc98_rmsd_upper_bound": csc98_rmsd_upper_bound,
+        "projective12_quaternion_witness_index": best_projective12_index,
+        "projective12_quaternion_witness_wxyz": tuple(
+            float(v) for v in projective12_quaternions[best_projective12_index].tolist()
+        ),
+        "projective12_orientation_witness_pointwise_max_displacement": best_projective12_pointwise,
+        "projective12_orientation_witness_rmsd": best_projective12_rmsd,
+        "projective12_signed_distance_radius_bound": projective12_radius,
+        "projective12_pointwise_upper_bound": projective12_pointwise_upper_bound,
+        "projective12_rmsd_upper_bound": projective12_rmsd_upper_bound,
         "csc63_rmsd_upper_bound": csc63_rmsd_upper_bound,
         "exact_seed_witness_rmsd": exact_seed_rmsd,
         "target_rmsd": float(target_rmsd),
@@ -3216,6 +3305,13 @@ def _dq_dock_job_runtime_signature(job: DQDockBenchmarkJob) -> tuple[object, ...
 def _maybe_prewarm_dq_dock_benchmark_job(job: DQDockBenchmarkJob) -> None:
     signature = _dq_dock_job_runtime_signature(job)
     if signature in _DQ_DOCK_PREWARMED_SIGNATURES:
+        return
+    if _openhcs_jax_cache_populated():
+        _DQ_DOCK_PREWARMED_SIGNATURES.add(signature)
+        print(
+            "[DQ-DOCK PREWARM] Skipping explicit prewarm because the OpenHCS JAX cache is already populated",
+            flush=True,
+        )
         return
     prewarm_start = time.perf_counter()
     result, dq_pose_coords = run_dq_dock(

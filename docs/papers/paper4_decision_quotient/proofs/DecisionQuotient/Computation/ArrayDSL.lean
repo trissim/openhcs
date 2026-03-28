@@ -275,6 +275,27 @@ noncomputable def quaternionDictionary8 : MDTensor 8 4 :=
     | 6 => mkMDArray (fun j => if j.1 = 0 ∨ j.1 = 3 then half else 0)
     | _ => mkMDArray (fun _ => 1 / 2)
 
+/-- Projective 24-cell quaternion dictionary: four basis quaternions plus the
+    eight half-coordinate sign patterns with positive first coordinate. This is
+    the next candidate deterministic rotation dictionary for tightening the
+    signed witness radius under antipodal identification. -/
+noncomputable def quaternionDictionary12 : MDTensor 12 4 :=
+  let half := (1 : ℝ) / 2
+  fun i =>
+    match i.1 with
+    | 0 => mkMDArray (fun j => if j.1 = 0 then 1 else 0)
+    | 1 => mkMDArray (fun j => if j.1 = 1 then 1 else 0)
+    | 2 => mkMDArray (fun j => if j.1 = 2 then 1 else 0)
+    | 3 => mkMDArray (fun j => if j.1 = 3 then 1 else 0)
+    | 4 => mkMDArray (fun _ => half)
+    | 5 => mkMDArray (fun j => if j.1 = 3 then -half else half)
+    | 6 => mkMDArray (fun j => if j.1 = 2 then -half else half)
+    | 7 => mkMDArray (fun j => if j.1 = 2 ∨ j.1 = 3 then -half else half)
+    | 8 => mkMDArray (fun j => if j.1 = 1 then -half else half)
+    | 9 => mkMDArray (fun j => if j.1 = 1 ∨ j.1 = 3 then -half else half)
+    | 10 => mkMDArray (fun j => if j.1 = 1 ∨ j.1 = 2 then -half else half)
+    | _ => mkMDArray (fun j => if j.1 = 0 then half else -half)
+
 /-! ## 3. Derivative Definitions -/
 
 /-- The formal gradient of any array function mapped to JAX autodiff. -/
@@ -1116,6 +1137,73 @@ theorem quaternionDictionary8_basis3_eq :
     quaternionDictionary8 ⟨3, by decide⟩ = EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ) := by
   ext j
   fin_cases j <;> simp [quaternionDictionary8, mkMDArray, EuclideanSpace.single_apply]
+
+theorem quaternionDictionary12_basis0_eq :
+    quaternionDictionary12 ⟨0, by decide⟩ = EuclideanSpace.single ⟨0, by decide⟩ (1 : ℝ) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary12, mkMDArray, EuclideanSpace.single_apply]
+
+theorem quaternionDictionary12_basis1_eq :
+    quaternionDictionary12 ⟨1, by decide⟩ = EuclideanSpace.single ⟨1, by decide⟩ (1 : ℝ) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary12, mkMDArray, EuclideanSpace.single_apply]
+
+theorem quaternionDictionary12_basis2_eq :
+    quaternionDictionary12 ⟨2, by decide⟩ = EuclideanSpace.single ⟨2, by decide⟩ (1 : ℝ) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary12, mkMDArray, EuclideanSpace.single_apply]
+
+theorem quaternionDictionary12_basis3_eq :
+    quaternionDictionary12 ⟨3, by decide⟩ = EuclideanSpace.single ⟨3, by decide⟩ (1 : ℝ) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary12, mkMDArray, EuclideanSpace.single_apply]
+
+theorem quaternionDictionary12_half4_eq :
+    quaternionDictionary12 ⟨4, by decide⟩ = mkMDArray (fun _ => (1 : ℝ) / 2) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary12, mkMDArray]
+
+theorem quaternionDictionary12_half5_eq :
+    quaternionDictionary12 ⟨5, by decide⟩ =
+      mkMDArray (fun j => if j = ⟨3, by decide⟩ then -(1 : ℝ) / 2 else (1 : ℝ) / 2) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary12, mkMDArray] <;> norm_num
+
+theorem quaternionDictionary12_half6_eq :
+    quaternionDictionary12 ⟨6, by decide⟩ =
+      mkMDArray (fun j => if j = ⟨2, by decide⟩ then -(1 : ℝ) / 2 else (1 : ℝ) / 2) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary12, mkMDArray] <;> norm_num
+
+theorem quaternionDictionary12_half7_eq :
+    quaternionDictionary12 ⟨7, by decide⟩ =
+      mkMDArray (fun j => if j = ⟨2, by decide⟩ ∨ j = ⟨3, by decide⟩ then -(1 : ℝ) / 2 else (1 : ℝ) / 2) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary12, mkMDArray] <;> norm_num
+
+theorem quaternionDictionary12_half8_eq :
+    quaternionDictionary12 ⟨8, by decide⟩ =
+      mkMDArray (fun j => if j = ⟨1, by decide⟩ then -(1 : ℝ) / 2 else (1 : ℝ) / 2) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary12, mkMDArray] <;> norm_num
+
+theorem quaternionDictionary12_half9_eq :
+    quaternionDictionary12 ⟨9, by decide⟩ =
+      mkMDArray (fun j => if j = ⟨1, by decide⟩ ∨ j = ⟨3, by decide⟩ then -(1 : ℝ) / 2 else (1 : ℝ) / 2) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary12, mkMDArray] <;> norm_num
+
+theorem quaternionDictionary12_half10_eq :
+    quaternionDictionary12 ⟨10, by decide⟩ =
+      mkMDArray (fun j => if j = ⟨1, by decide⟩ ∨ j = ⟨2, by decide⟩ then -(1 : ℝ) / 2 else (1 : ℝ) / 2) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary12, mkMDArray] <;> norm_num
+
+theorem quaternionDictionary12_half11_eq :
+    quaternionDictionary12 ⟨11, by decide⟩ =
+      mkMDArray (fun j => if j = ⟨0, by decide⟩ then (1 : ℝ) / 2 else -(1 : ℝ) / 2) := by
+  ext j
+  fin_cases j <;> simp [quaternionDictionary12, mkMDArray] <;> norm_num
 
 theorem rigidTransformPoint3D_negQuaternion_eq
     (point : MDArray 3)

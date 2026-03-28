@@ -38,6 +38,23 @@ import jax.numpy as jnp
 import numpy as np
 from scipy import special as scipy_special
 
+
+def _configure_jax_compilation_cache() -> None:
+    if os.environ.get("OPENHCS_DISABLE_JAX_CACHE") == "1":
+        return
+    cache_dir = os.environ.get("OPENHCS_JAX_CACHE_DIR")
+    if cache_dir is None:
+        cache_dir = os.path.expanduser("~/.cache/openhcs/jax")
+    try:
+        Path(cache_dir).mkdir(parents=True, exist_ok=True)
+        jax.config.update("jax_compilation_cache_dir", cache_dir)
+        jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+    except Exception:
+        return
+
+
+_configure_jax_compilation_cache()
+
 from dq_dock_engine.docking.core import (
     BindingSite,
     BlindDockingPlan,
