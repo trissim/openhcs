@@ -26,6 +26,7 @@ These notions differ: an inclusion-minimal distinguishing family may be larger t
 
 In the running example from Section~\ref{sec:bits}, $\{q_1,q_2,q_3\}$ is distinguishing and no pair of primitive queries is distinguishing, so the minimum distinguishing number is $d=3$. The exact operational law is that any attribute-only zero-error witness procedure must pay at least this many queries in the worst case.
 
+\leanmetapending{\LH{ACS1}}
 \begin{theorem}[Attribute-only lower bound]\label{thm:interface-lower-bound}
 For attribute-only observers, zero-error class identity checking requires
 \[
@@ -33,7 +34,6 @@ W(\text{class-identity}) \ge d
 \]
 in the worst case, where $d$ is the minimum distinguishing number.
 \end{theorem}
-\leanmeta{\LH{ACS1}}
 
 \begin{proof}
 Assume a zero-error attribute-only procedure halts after fewer than $d$ queries on every execution path. Fix one execution path and let $Q \subseteq \mathcal I$ be the set of queried attributes on that path, so $|Q|<d$. By definition of $d$, no set of size less than $d$ is distinguishing. Hence there exist values $v,w$ from different classes with identical answers on all attributes in $Q$. An adversary can answer the procedure's queries consistently with both $v$ and $w$, so the transcript and output coincide on two different classes, contradicting zero-error identification.
@@ -41,10 +41,10 @@ Assume a zero-error attribute-only procedure halts after fewer than $d$ queries 
 
 This exact finite lower bound is the operational query law in full generality.
 
+\leanmetapending{\LH{ACS1}}
 \begin{corollary}[Asymptotic reading of the attribute-only witness cost]\label{cor:attribute-only-witness-lb}
 For any attribute-only observer, $W(\text{class-identity}) = \Omega(d)$.
 \end{corollary}
-\leanmeta{\LH{ACS1}}
 
 It says how much interrogation is needed when the representation leaves ambiguity unresolved and no explicit identity bits are transmitted.
 
@@ -56,6 +56,7 @@ There is also a direct quantitative bridge back to the compression side. A famil
 \]
 This is the query-side analogue of the fixed-length converse: binary interrogation cannot beat the same counting barrier that governs auxiliary bits.
 
+\leanmetapending{\LHrng{GPH}{54}{55}}
 \begin{proposition}[Binary query counting bound]\label{prop:binary-query-counting-bound}
 Let $S$ be a binary query family of size $d$ that distinguishes a finite set $T$ of classes. Then
 \[
@@ -66,19 +67,18 @@ Equivalently,
 \left\lceil \log_2 |T| \right\rceil \le d.
 \]
 \end{proposition}
-\leanmeta{\LHrng{GPH}{54}{55}}
 
 \begin{proof}
 Each class in $T$ produces one binary transcript in $\{0,1\}^d$. Distinguishability means that the transcript map is injective on $T$. There are only $2^d$ binary transcripts, so injectivity forces $|T| \le 2^d$. The ceiling-log form is the exact converse of this counting bound.
 \end{proof}
 
+\leanmetapending{\LHrng{GPH}{56}{57}}
 \begin{corollary}[Worst-fiber query lower bound]\label{cor:worst-fiber-query-lower-bound}
 If a binary query family distinguishes every class inside a worst collision fiber, then
 \[
 \left\lceil \log_2 A_{\pi} \right\rceil \le d.
 \]
 \end{corollary}
-\leanmeta{\LHrng{GPH}{56}{57}}
 
 \begin{proof}
 Apply Proposition~\ref{prop:binary-query-counting-bound} to a fiber attaining the maximal size $A_{\pi}$. The induced bound is exactly the stated ceiling-log inequality.
@@ -92,28 +92,28 @@ The right structural invariant is not the size of an arbitrary raw query family,
 A \emph{derivability-aware axis presentation} specifies primitive observables together with a derivability relation recording when one observable can be recovered from another. A family is \emph{orthogonal} if no primitive observable is derivable from a distinct primitive observable in the family.
 \end{definition}
 
+\leanmetapending{\LH{L6}}
 \begin{proposition}[Non-orthogonal complete families have removable redundancy]\label{prop:query-redundancy}
 If a semantically complete derivability-aware query family is non-orthogonal, then some primitive observable can be removed without destroying semantic completeness.
 \end{proposition}
-\leanmeta{\LH{L6}}
 
 \begin{proof}
 If the family is non-orthogonal, some observable $a$ is derivable from a distinct observable $b$ already in the family. Any query requirement satisfied via $a$ can therefore be satisfied via $b$ instead. Erasing $a$ preserves semantic completeness, so $a$ was redundant.
 \end{proof}
 
+\leanmetapending{\LH{L7}}
 \begin{proposition}[Existence of a minimal complete core]\label{prop:query-minimal-core}
 Every semantically complete derivability-aware query family contains a semantically minimal complete subfamily.
 \end{proposition}
-\leanmeta{\LH{L7}}
 
 \begin{proof}
 The family is finite. If it is not already semantically minimal, Proposition~\ref{prop:query-redundancy} removes a redundant observable while preserving completeness. Repeating this elimination process must terminate, producing a semantically minimal complete subfamily.
 \end{proof}
 
+\leanmetapending{\LH{L8}}
 \begin{proposition}[Canonical orthogonal core]\label{prop:query-orthogonal-core}
 Every semantically complete derivability-aware query family contains an orthogonal semantically minimal complete subfamily.
 \end{proposition}
-\leanmeta{\LH{L8}}
 
 \begin{proof}
 Choose a semantically minimal complete subfamily using Proposition~\ref{prop:query-minimal-core}. If that subfamily were still non-orthogonal, Proposition~\ref{prop:query-redundancy} would remove another observable while preserving completeness, contradicting minimality. Hence the minimal core is orthogonal.
@@ -121,13 +121,13 @@ Choose a semantically minimal complete subfamily using Proposition~\ref{prop:que
 
 These three propositions identify the canonical regime of the query problem. One starts from an arbitrary complete family, removes derivable redundancy until no further reduction is possible, and arrives at an orthogonal minimal core. The clean query invariant lives on that core \cite{Welsh1976}. The remaining gap above the counting floor, if any, is then a genuine structural limitation of the available primitive observables rather than an artifact of redundant presentation.
 
+\leanmetapending{\LH{L1}, \LHrng{L}{4}{5}, \LH{L8}}
 \begin{theorem}[Matroid of canonical distinguishing families]\label{thm:matroid-bases}
 For the canonical orthogonal core of a complete derivability-aware query system, the semantically minimal distinguishing families are the bases of a matroid. Consequently, all such families have equal cardinality.
 \end{theorem}
-\leanmeta{\LH{L1}, \LHrng{L}{4}{5}, \LH{L8}}
 
 \begin{proof}
-By Proposition~\ref{prop:query-orthogonal-core}, every complete derivability-aware query system contains an orthogonal semantically minimal core. On an orthogonal core, exchange holds (\LH{L4}, \LH{L5}). Standard matroid theory then implies that the minimal complete families are exactly the bases of a matroid and therefore all have the same cardinality (\LH{L1}).
+By Proposition~\ref{prop:query-orthogonal-core}, every complete derivability-aware query system contains an orthogonal semantically minimal core. On an orthogonal core, exchange holds. Standard matroid theory then implies that the minimal complete families are exactly the bases of a matroid and therefore all have the same cardinality. \leanmeta{\LH{L1}, \LHrng{L}{4}{5}}
 \end{proof}
 
 \begin{remark}[Why the unrestricted counterexample does not undercut the theorem]
@@ -135,7 +135,7 @@ Arbitrary overcomplete families need not be matroidal (GPH31), but after derivab
 \end{remark}
 
 \begin{remark}[When the counting floor is tight]
-The lower bound $\lceil \log_2 A_{\pi} \rceil \le d$ is exact whenever the canonical query family realizes full binary transcript capacity on the relevant worst fibers, in which case the query side meets the same counting floor as the fixed-length bit side and any strict gap above the floor is an expressivity gap of the observable family, not a redundancy artifact. The corresponding equality and gap statements are mechanized in \LH{GPH60} through \LH{GPH64}.
+The lower bound $\lceil \log_2 A_{\pi} \rceil \le d$ is exact whenever the canonical query family realizes full binary transcript capacity on the relevant worst fibers, in which case the query side meets the same counting floor as the fixed-length bit side and any strict gap above the floor is an expressivity gap of the observable family, not a redundancy artifact. The corresponding equality and gap statements are mechanized. \leanmeta{\LHrng{GPH}{60}{64}}
 \end{remark}
 
 \subsection{Witness Cost Comparison}

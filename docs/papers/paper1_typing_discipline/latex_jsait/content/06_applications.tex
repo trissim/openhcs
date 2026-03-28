@@ -22,24 +22,24 @@ Whenever $A_\pi>1$, the coding laws imply a sharp design dichotomy. In an attrib
 
 This is why symbolic identifiers are ubiquitous in high-reliability systems. Primary keys, memory addresses, retrieval identifiers, and similar handles are the mechanisms by which systems avoid the distortion floor mandated by the coding laws. In settings where such handles are already available, the design lesson is stronger than mere feasibility.
 
-\textbf{Corollary (Pareto domination, cf. Theorem~\ref*{thm:converse}).} In applied systems where tags are free by default (databases with primary keys, object stores, programming languages with nominal identity), tag-augmented design strictly Pareto dominates attribute-only design for exact identity recovery: it achieves zero-error while attribute-only cannot, at no additional cost. See Table~\ref{tab:witness-comparison} for the operational cost comparison.\ \LH{PD1}
+\textbf{Corollary (Pareto domination, cf. Theorem~\ref*{thm:converse}).} In applied systems where tags are free by default (databases with primary keys, object stores, programming languages with nominal identity), tag-augmented design strictly Pareto dominates attribute-only design for exact identity recovery: it achieves zero-error while attribute-only cannot, at no additional cost. See Table~\ref{tab:witness-comparison} for the operational cost comparison. \leanmeta{\LH{PD1}}
 
-The mechanization sharpens this operational claim with an admissibility guarantee for the symbolic layer: in any valid execution trace, every registry read or write names a registry that was declared in the system specification. Thus the formal registry semantics is closed under the declared interface; undeclared registries are semantically inert and cannot appear in certified traces. This does not rule out arbitrary hidden state in real implementations, but it does show that the formal model does not smuggle in extra symbolic storage beyond the declared registry surface.\ \LH{NOH1}
+The mechanization sharpens this operational claim with an admissibility guarantee for the symbolic layer: in any valid execution trace, every registry read or write names a registry that was declared in the system specification. Thus the formal registry semantics is closed under the declared interface; undeclared registries are semantically inert and cannot appear in certified traces. This does not rule out arbitrary hidden state in real implementations, but it does show that the formal model does not smuggle in extra symbolic storage beyond the declared registry surface. \leanmeta{\LH{NOH1}}
 
 \paragraph{Formal instantiation.}
-The paper also develops a concrete formal identity domain in Lean. In that model, entities carry an explicit attribute family $\mathcal I$, primitive observables are the associated binary maps $q_I$, and the representation is the induced profile map $\pi(v)=(q_I(v))_{I\in\mathcal I}$. The generic coding laws then specialize to a machine-checked formal instance. In particular, equal observable profiles cannot distinguish identity (\LH{ACS8}), provenance is not recoverable from the profile alone when collisions exist (\LH{ACS9}), and nominal identity cannot be embedded back into the semantic layer (\LH{EMB1}).
+The paper also develops a concrete formal identity domain in Lean. In that model, entities carry an explicit attribute family $\mathcal I$, primitive observables are the associated binary maps $q_I$, and the representation is the induced profile map $\pi(v)=(q_I(v))_{I\in\mathcal I}$. The generic coding laws then specialize to a machine-checked formal instance. In particular, equal observable profiles cannot distinguish identity, provenance is not recoverable from the profile alone when collisions exist, and nominal identity cannot be embedded back into the semantic layer. \leanmeta{\LHrng{ACS}{8}{9}, \LH{EMB1}}
 
 \paragraph{Instantiated neurosymbolic linking theorems.}
-Within that formal identity domain, the generic helper-view theorems specialize by setting the task to identity $Y = C$. The mechanization (\LH{NSL1} through \LH{NSL6}) proves the following instantiated claims.
+Within that formal identity domain, the generic helper-view theorems specialize by setting the task to identity $Y = C$. The mechanization proves the following instantiated claims. \leanmeta{\LHrng{NSL}{1}{6}}
 
 \begin{itemize}
-\item If the symbolic handle $\sigma$ is injective, the neurosymbolic link $(\pi, \sigma)$ achieves zero-error identity recovery (\LH{NSL1}). This is the identity-task instantiation of the injectivity criterion \LH{GPH25}.
+\item If the symbolic handle $\sigma$ is injective, the neurosymbolic link $(\pi, \sigma)$ achieves zero-error identity recovery. This is the identity-task instantiation of the injectivity criterion. \leanmeta{\LH{NSL1}, \LH{GPH25}}
 
-\item If $\pi$ has collisions, semantic representation alone cannot achieve zero-error identity (\LH{NSL2}), and no decoder can recover the collapsed identities without identity-resolving side information (\LH{NSL3}).
+\item If $\pi$ has collisions, semantic representation alone cannot achieve zero-error identity, and no decoder can recover the collapsed identities without identity-resolving side information. \leanmeta{\LHrng{NSL}{2}{3}}
 
-\item The exact characterization is: $(\pi, \sigma)$ recovers identity if and only if $\sigma$ distinguishes all entities within each semantic fiber (\LH{NSL4}). An injective handle therefore suffices (\LH{NSL5}). This is the identity-task instantiation of the helper-view theorem \LH{GPH40}.
+\item The exact characterization is: $(\pi, \sigma)$ recovers identity if and only if $\sigma$ distinguishes all entities within each semantic fiber. An injective handle therefore suffices. This is the identity-task instantiation of the helper-view theorem. \leanmeta{\LHrng{NSL}{4}{5}, \LH{GPH40}}
 
-\item The pair $(\pi, \sigma)$ is the canonical helper view for open-world identity systems (\LH{NSL6}).
+\item The pair $(\pi, \sigma)$ is the canonical helper view for open-world identity systems. \leanmeta{\LH{NSL6}}
 \end{itemize}
 
 \subsection{Task Sufficiency, Helper Views, and Factorization}
@@ -54,15 +54,16 @@ A_{\pi \to Y} := \max_u \left|\{f(c) : \pi(c)=u\}\right|.
 This is the maximum number of task labels that remain unresolved inside one representation fiber.
 \end{definition}
 
+\leanmetapending{\LH{GPH38}}
 \begin{theorem}[Task sufficiency criterion]\label{thm:task-sufficiency}
 The representation alone supports zero-error recovery of $Y$ if and only if $A_{\pi \to Y} \le 1$.
 \end{theorem}
-\leanmeta{\LH{GPH38}}
 
 \begin{proof}
 Zero-error recovery of $Y$ from $U$ alone is possible exactly when every representation fiber carries a single task label. That condition is equivalent to the statement that the largest task-fiber ambiguity is at most one.
 \end{proof}
 
+\leanmetapending{\LH{GPH39}}
 \begin{corollary}[Task-level coarsening monotonicity]\label{cor:task-coarsening-mono}
 If $\pi_{\mathrm{coarse}} = g \circ \pi_{\mathrm{fine}}$, then
 \[
@@ -70,34 +71,33 @@ A_{\pi_{\mathrm{fine}} \to Y} \le A_{\pi_{\mathrm{coarse}} \to Y}.
 \]
 In particular, coarsening a representation cannot improve exact downstream task sufficiency.
 \end{corollary}
-\leanmeta{\LH{GPH39}}
 
 \begin{proof}
 Every coarse fiber is a union of fine fibers, so collapsing from $\pi_{\mathrm{fine}}$ to $\pi_{\mathrm{coarse}}$ cannot reduce the number of task labels realizable inside the worst fiber.
 \end{proof}
 
+\leanmetapending{\LH{GPH40}}
 \begin{theorem}[Helper-view sufficiency]\label{thm:helper-view-sufficiency}
 Let $S=\sigma(C)$ be an additional deterministic view available to the decoder. Then exact recovery of $Y$ from $(U,S)$ is possible if and only if each joint fiber of $(\pi,\sigma)$ carries at most one task label.
 \end{theorem}
-\leanmeta{\LH{GPH40}}
 
 \begin{proof}
 The pair $(U,S)$ is a refined deterministic representation. Exact recovery is therefore possible exactly when the downstream task is constant on the fibers of that refined representation.
 \end{proof}
 
+\leanmetapending{\LH{GPH41}}
 \begin{corollary}[Helper-view monotonicity]\label{cor:helper-view-mono}
 Adding a deterministic helper view cannot worsen task ambiguity. In particular, the task-fiber ambiguity under $(U,S)$ is at most the task-fiber ambiguity under $U$ alone.
 \end{corollary}
-\leanmeta{\LH{GPH41}}
 
 \begin{proof}
 Passing from $U$ to $(U,S)$ refines the representation fibers, so the largest number of task labels per fiber can only decrease.
 \end{proof}
 
+\leanmetapending{\LHrng{GPH}{42}{43}}
 \begin{corollary}[Factorized product law]\label{cor:factorized-product-law}
 In a genuinely factorized product setting, where the class space decomposes as a product and the representation decomposes coordinatewise, the joint fiber is the product of the component fibers and the worst-case residual ambiguity multiplies exactly across modules.
 \end{corollary}
-\leanmeta{\LHrng{GPH}{42}{43}}
 
 \begin{proof}
 For coordinatewise product representations, each joint fiber is exactly the product of the corresponding component fibers, so their cardinalities multiply. Taking the largest such product yields multiplicativity of the worst-case residual ambiguity.
@@ -107,4 +107,4 @@ For learned representations, estimating quantities such as $A_\pi$, $A_{\pi \to 
 
 Concretely, the task-sufficiency theorem says the representation is sufficient precisely when every fiber carries one task label, and the helper-view and factorized laws say when added views contribute genuinely new exact information.
 
-In the finite explicit setting, one-symbol zero-error feasibility is equivalent to injectivity and refinement cannot increase collision multiplicity (\LH{GPH27}, \LH{GPH28}). The same setting also yields a disclosure separation between nominal access and tag-free identity resolution (\LH{PRIV3}).
+In the finite explicit setting, one-symbol zero-error feasibility is equivalent to injectivity and refinement cannot increase collision multiplicity. The same setting also yields a disclosure separation between nominal access and tag-free identity resolution. \leanmeta{\LHrng{GPH}{27}{28}, \LH{PRIV3}}

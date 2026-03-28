@@ -4,6 +4,7 @@ The regime hierarchy matters for more than class labels. The same exact question
 
 \subsection{Exact Simplification and Over-Specification}
 
+\leanmetapending{\LH{CR1}, \LH{CT12}}
 \begin{proposition}[Configuration Simplification as \textsc{Sufficiency-Check}]
 \label{prop:config-sufficiency}
 Let $P=\{p_1,\ldots,p_n\}$ be configuration parameters and let $B$ be a finite set of observable behaviors. Suppose each configuration state determines the subset of behaviors that remain feasible or optimal. Then the question
@@ -13,7 +14,6 @@ Let $P=\{p_1,\ldots,p_n\}$ be configuration parameters and let $B$ be a finite s
 is an instance of \textnormal{\textsc{Sufficiency-Check}}.
 \end{proposition}
 
-\leanmeta{\LH{CR1}, \LH{CT12}.}
 
 \begin{proof}
 Construct a decision problem $\mathcal{D}=(A,X_1,\ldots,X_n,U)$ by taking actions $A=B$, coordinate domains $X_i$ equal to the domains of the parameters $p_i$, and defining $U(b,s)=1$ exactly when behavior $b$ is realized or admissible under configuration state $s$. Then $\Opt(s)$ is the behavior set induced by $s$, and coordinate subset $I$ is sufficient exactly when agreement on the parameters in $I$ forces agreement on the induced optimal-behavior set.
@@ -35,6 +35,7 @@ Write $\Opt_{\mathrm{full}}(s):=\arg\max_{a\in A} r(a,s)$ for the full-informati
 
 Let $g:O\to O'$ be any coarsening of observations and write $\phi:=g\circ o:S\to O'$ for the induced coarse signal.
 
+\leanmetapending{\LH{EX1}}
 \begin{proposition}[Reduction to stochastic preservation]\label{prop:pomdp-to-preservation}
 Let $(S,A,O,p,o,r)$ be a one-step POMDP and let $\phi:S\to O'$ be as above. Define the decision problem $\mathcal{D}=(A,S,U)$ with $U(a,s):=r(a,s)$ and state distribution $p$. Then $\phi$ is stochastically preserving for $\mathcal{D}$ in the sense of Section~\ref{sec:stochastic} if and only if for every $s\in S$ we have
 \[
@@ -43,7 +44,6 @@ Let $(S,A,O,p,o,r)$ be a one-step POMDP and let $\phi:S\to O'$ be as above. Defi
 In particular, checking whether the coarse observation $\phi$ preserves Bayes-optimal actions is exactly an instance of our stochastic preservation predicate for $\mathcal{D}$.
 \end{proposition}
 
-\leanmeta{\LH{EX1}.}
 
 \begin{proof}
 By construction $U(a,s)=r(a,s)$ so the full-information optimal-action set in $\mathcal{D}$ equals $\Opt_{\mathrm{full}}(s)$. The coarse-induced optimizer for $\phi$ is, by definition, the set of actions maximizing the conditional expectation of $U$ given the coarse signal. That conditional expectation is exactly the Bayes expectation used to define $\Opt_{\mathrm{obs}}$. Therefore the preservation condition from Section~\ref{sec:stochastic} (equality of full-information and coarse-induced optimizers on every state) is equivalent to the displayed identity.
@@ -80,6 +80,7 @@ projects under $\pi$ to the set of maximizers of the collapsed objective
 \[g_e(h'):=\max_{\gamma\in X_{\gamma}} f_e(h',\gamma),\qquad h'\in H'.
 \]
 
+\leanmetapending{\LH{EX2}}
 \begin{proposition}[Reduction to a static preservation check]\label{prop:hp-to-static}
 With notation as above, the statement "$\gamma$ is redundant for tuning" is equivalent to a static preservation property for the decision problem $\mathcal{D}_{\mathrm{hp}}$ under the action-space projection $\pi$. Concretely, $\gamma$ is redundant if and only if for every $e\in E$ and every $h\in H$ we have
 \[
@@ -88,27 +89,26 @@ h\in\Opt_e \quad\Longleftrightarrow\quad \exists h_0\in\Opt_e\text{ with }\pi(h_
 which is exactly the condition that the projection $\pi$ preserves the optimal-action correspondence when the decision problem is read with environments as the existential choices.
 \end{proposition}
 
-\leanmeta{\LH{EX2}.}
 
 \begin{proof}
 By definition $\gamma$ is redundant when every full maximizer projects to a maximizer of the collapsed objective and conversely every maximizer of the collapsed objective has a witness in the full space; the displayed equivalence is a restatement of that property. The left-to-right implication is immediate from the definition of $g_e$, and the right-to-left implication follows because if some projected maximizer has a preimage that attains the collapsed optimum, then there exists a full configuration achieving the same maximum in the original objective. Rewriting these statements as equalities of optimal-action sets for the derived decision problem $\mathcal{D}_{\mathrm{hp}}$ yields the claimed reduction to a static-style preservation check.
 \end{proof}
 
-The construction above is explicit and elementary. It shows that hyperparameter redundancy questions can be phrased exactly as decision-preservation predicates within our static regime, and that succinct encodings of the environment family or return functions translate into succinct encodings of the corresponding static instance. In practice this lets one import the static-regime hardness and tractability statements directly into the hyperparameter setting.
+The construction above is explicit and elementary. It shows that hyperparameter redundancy questions can be phrased exactly as decision-preservation predicates within our static regime, and that succinct encodings of the environment family or return functions translate into succinct encodings of the corresponding static instance. In practice this lets one import the static-regime hardness and tractability statements directly into the hyperparameter setting. \leanmeta{\LH{CR1}, \LH{CT12}.}
 
-\leanmeta{\LH{CR1}, \LH{CT12}.}
 
+\leanmetapending{\LHrng{DQ}{36}{37}}
 \begin{corollary}[No General-Purpose Exact Configuration Minimizer]
 \label{cor:no-general-minimizer}
 Assuming $\Pclass \neq \coNP$, there is no polynomial-time general-purpose procedure that takes an arbitrary succinctly encoded configuration problem and always returns a smallest behavior-preserving parameter subset.
 \end{corollary}
 
-\leanmeta{\LHrng{DQ}{36}{37}.}
 
 \begin{proof}
 Such a procedure would solve \textsc{Minimum-Sufficient-Set} in polynomial time for arbitrary succinctly encoded instances, contradicting Theorem~\ref{thm:minsuff-conp} under the assumption $\Pclass \neq \coNP$.
 \end{proof}
 
+\leanmetapending{\LH{DQ26}, \LH{HD14}}
 \begin{proposition}[Model-Conditional Rationality of Over-Specification]
 \label{prop:rational-overspecification}
 Consider a design process in which:
@@ -120,7 +120,6 @@ Consider a design process in which:
 Then, for sufficiently expressive succinctly encoded instances, retaining extra parameters can minimize total cost under the stated cost model.
 \end{proposition}
 
-\leanmeta{\LH{DQ26}, \LH{HD14}.}
 
 \begin{proof}
 By Theorems~\ref{thm:sufficiency-conp} and~\ref{thm:minsuff-conp}, exact sufficiency certification and exact minimization are coNP-complete in the general succinct regime. By Section~\ref{sec:dichotomy}, this hardness is accompanied by exponential lower bounds under ETH in the linear-support regime. If the cost of carrying extra parameters grows only linearly while exact minimization inherits worst-case exponential cost, then beyond a problem-dependent threshold the latter dominates the former. Under that cost model, retaining extra parameters minimizes total cost.
@@ -132,12 +131,12 @@ This does not rule out useful simplification tools. It rules out a fully general
 
 \subsection{Regime-Limited Exact Certification}
 
+\leanmetapending{\LH{DQ36}, \LH{DQ40}, \LH{DQ44}}
 \begin{proposition}[Exact Certification Competence Depends on Regime]
 \label{prop:competence-by-regime}
 Within the model of this paper, exact certification competence is regime-dependent. In the general succinct regime, exact relevance certification and exact minimization inherit the hardness results of Sections~\ref{sec:hardness} and~\ref{sec:dichotomy}. In the structured regimes of Section~\ref{sec:tractable}, exact certification becomes available in polynomial time.
 \end{proposition}
 
-\leanmeta{\LH{DQ36}, \LH{DQ40}, \LH{DQ44}.}
 
 \begin{proof}
 The negative side is given by Theorems~\ref{thm:sufficiency-conp} and~\ref{thm:minsuff-conp}, together with the ETH-conditioned lower bounds summarized in Section~\ref{sec:dichotomy}. The positive side is given by the tractability results of Section~\ref{sec:tractable}, which provide explicit polynomial-time certification procedures under structural restrictions.

@@ -72,7 +72,7 @@ The model is empirically vulnerable. No counterexample has been produced.
 
 \textbf{Objection:} ``Your claim that DOF = 1 is optimal is too restrictive. Real-world encoding systems have acceptable levels of redundancy.''
 
-\textbf{Response:} The optimality is \textbf{derived}, not chosen. DOF = 1 is the unique optimal encoding rate under coherence constraints (\LH{UNQ1}, \LH{UNQ1}):
+\textbf{Response:} The optimality is \textbf{derived}, not chosen. DOF = 1 is the unique optimal encoding rate under coherence constraints: \leanmeta{\LH{UNQ1}}
 
 \begin{center}
 \begin{tabular}{cl}
@@ -86,7 +86,7 @@ $>$1 & Multiple sources can diverge (incoherence reachable) \\
 \end{tabular}
 \end{center}
 
-DOF = 2 means two independent encoding locations can hold different values for the same fact. The \emph{possibility} of incoherence exists. The definition is information-theoretic: optimal encoding requires DOF = 1 (\LH{UNQ1}). Systems with DOF $>$ 1 can be pragmatically acceptable but do not achieve the optimal encoding rate.
+DOF = 2 means two independent encoding locations can hold different values for the same fact. The \emph{possibility} of incoherence exists. The definition is information-theoretic: optimal encoding requires DOF = 1. Systems with DOF $>$ 1 can be pragmatically acceptable but do not achieve the optimal encoding rate. \leanmeta{\LH{UNQ1}}
 
 \subsubsection{External Tools vs System-Native DOF = 1}
 
@@ -302,16 +302,16 @@ The macro generates the registry at compile time. There's no second DOF that can
 \textbf{Response:} This conflates \emph{enabling} a pattern with \emph{enforcing} it. The critical distinction:
 
 \begin{enumerate}
-\item \textbf{Proc macros are per-item isolated.} When \texttt{\#[derive(AutoRegister)]} executes on \texttt{MyHandler}, it cannot see \texttt{OtherHandler}. Each macro invocation is independent--there is no shared state during compilation. Therefore, no single macro can generate a complete registry. This is why compile-time macros are insufficient (\LH{ADV3}).
+\item \textbf{Proc macros are per-item isolated.} When \texttt{\#[derive(AutoRegister)]} executes on \texttt{MyHandler}, it cannot see \texttt{OtherHandler}. Each macro invocation is independent--there is no shared state during compilation. Therefore, no single macro can generate a complete registry. This is why compile-time macros are insufficient. \leanmeta{\LH{ADV3}}
 
 \item \textbf{Registration is bypassable.} You can write:
 \begin{code}
 struct SneakyHandler;
 impl Handler for SneakyHandler { ... }  // No #[derive]--NOT in registry
 \end{code}
-The impl exists; the registry entry does not. \textbf{DOF = 2}: the impl and the registry are independent locations that can disagree (\LH{UNQ1}).
+The impl exists; the registry entry does not. \textbf{DOF = 2}: the impl and the registry are independent locations that can disagree. \leanmeta{\LH{UNQ1}}
 
-\item \textbf{The \texttt{inventory} crate uses linker tricks, not language semantics.} It works by emitting items into special linker sections and collecting them at link time. This is external to language semantics (\LH{IND3}):
+\item \textbf{The \texttt{inventory} crate uses linker tricks, not language semantics.} It works by emitting items into special linker sections and collecting them at link time. This is external to language semantics: \leanmeta{\LH{IND3}}
 \begin{itemize}
 \tightlist
 \item Platform-specific (different on Linux, macOS, Windows)

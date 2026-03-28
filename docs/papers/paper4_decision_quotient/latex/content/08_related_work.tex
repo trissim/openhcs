@@ -19,11 +19,11 @@ The key structural difference is this: general decision tables can admit multipl
 
 Both settings ask which coordinates can be removed without losing decision distinctions.
 
+\leanmetapending{\LHrng{DP}{1}{2}}
 \begin{proposition}[Static Sufficiency as Reduct Preservation for the Induced Decision Table]\label{prop:static-rough-set-bridge}
 Given a finite decision problem $\mathcal{D}=(A,X_1,\ldots,X_n,U)$, form the induced decision table whose condition attributes are the coordinates $X_i$ and whose decision label at state $s$ is the set-valued class label $\Opt(s) \subseteq A$. Then a coordinate set $I$ is sufficient in the sense of this paper if and only if the projection to $I$ preserves the decision label of the induced table. Consequently, the minimal sufficient sets of $\mathcal{D}$ are exactly the reducts of this induced decision table.
 \end{proposition}
 
-\leanmeta{\LHrng{DP}{1}{2}.}
 
 \begin{proof}
 By definition, $I$ is sufficient exactly when any two states agreeing on $I$ have the same optimal-action set. In the induced decision table, the decision label of state $s$ is precisely $\Opt(s)$, so the same condition says that projection to $I$ preserves the decision label. Minimality on the present side is therefore exactly reduct minimality for the induced table.

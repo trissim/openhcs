@@ -53,11 +53,11 @@ When the action set is bounded, brute-force enumeration becomes polynomial.
 A decision problem has \emph{bounded actions} with parameter $k$ if $|A| \leq k$ for some constant $k$ independent of the state space size.
 \end{definition}
 
+\leanmetapending{\LH{DQ51}, \LH{DQ72}}
 \begin{theorem}[Bounded Actions Tractability]\label{thm:bounded-actions}
 If $|A| \leq k$ for constant $k$, then SUFFICIENCY-CHECK runs in $O(|S|^2 \cdot k^2)$ time.
 \end{theorem}
 
-\leanmeta{\LH{DQ51}, \LH{DQ72}.}
 
 \begin{proof}
 Given the full table of $U(a,s)$:
@@ -78,11 +78,11 @@ Separable utility decouples actions from states, making sufficiency trivial.
 A utility function is \emph{separable} if there exist functions $f : A \to \mathbb{R}$ and $g : S \to \mathbb{R}$ such that $U(a,s) = f(a) + g(s)$ for all $(a,s) \in A \times S$.
 \end{definition}
 
+\leanmetapending{\LH{DQ57}, \LH{DQ74}}
 \begin{theorem}[Separable Tractability]\label{thm:separable}
 If utility is separable, then $I = \emptyset$ is always sufficient.
 \end{theorem}
 
-\leanmeta{\LH{DQ57}, \LH{DQ74}.}
 
 \begin{proof}
 If $U(a, s) = f(a) + g(s)$, then:
@@ -108,11 +108,11 @@ U(a, s) = \sum_{r=1}^R w_r \cdot f_r(a) \cdot \prod_{i=1}^n g_{ri}(s_i)
 Separable utility (Definition~\ref{def:separable}) is the special case $R = 1$ with $w_1 = 1$, $f_1(a) = f(a)$, and $\prod_i g_{1i}(s_i) = g(s)$.
 \end{remark}
 
+\leanmetapending{\LHrng{DQ}{75}{77}}
 \begin{theorem}[Low Tensor Rank Reduction]\label{thm:tensor-rank}
 If utility has tensor rank $R$, the artifact certifies a reduction of the relevant optimization step to factored computation with bound $O(|A| \cdot R \cdot n)$.
 \end{theorem}
 
-\leanmeta{\LHrng{DQ}{75}{77}.}
 
 \begin{proof}
 The artifact certifies three ingredients. First, bounded-rank tensor contraction admits a polynomial bound \leanmeta{\LH{DQ75}.} Second, the low-rank utility representation reduces the relevant optimization step to factored computation in $O(|A| \cdot R \cdot n)$ steps \leanmeta{\LHrng{DQ}{76}{77}.} Third, these are exactly the paper-specific ingredients needed to invoke the standard tensor-network algorithms cited in the text. Thus the formal support here is a certified reduction-and-transfer statement rather than an end-to-end formalization of the tensor-network backbone itself.
@@ -131,11 +131,11 @@ U(a, s) = \sum_{i=1}^n u_i(a, s_i, s_{\mathrm{parent}(i)})
 where $\mathrm{parent}(i) < i$ for all $i > 1$, and the root term depends only on $(a, s_1)$.
 \end{definition}
 
+\leanmetapending{\LH{DQ63}, \LH{DQ78}}
 \begin{theorem}[Tree Structure Tractability]\label{thm:tree-struct}
 If dependencies are tree-structured with explicit local tables, SUFFICIENCY-CHECK runs in $O(n \cdot |A| \cdot k_{\max})$ time where $k_{\max} = \max_i |X_i|$.
 \end{theorem}
 
-\leanmeta{\LH{DQ63}, \LH{DQ78}.}
 
 \begin{proof}
 Dynamic programming on the tree order:
@@ -169,11 +169,11 @@ U(a, s) = \sum_{i=1}^n u_i(a, s_i) + \sum_{(i,j) \in E} u_{ij}(a, s_i, s_j)
 with unary terms $u_i$ and binary terms $u_{ij}$ given explicitly.
 \end{definition}
 
+\leanmetapending{\LHrng{DQ}{79}{81}}
 \begin{theorem}[Bounded Treewidth Reduction]\label{thm:treewidth}
 If the interaction graph has treewidth $\le w$ and utility is pairwise with explicit factors, the artifact certifies a reduction to bounded-treewidth CSP together with standard complexity bound $O(n \cdot k^{w+1})$, where $k = \max_i |X_i|$. The reduction bridges to established CSP algorithms~\cite{bodlaender1993tourist, freuder1990complexity, bessiere2013detecting}.
 \end{theorem}
 
-\leanmeta{\LHrng{DQ}{79}{81}.}
 
 \begin{proof}
 The artifact certifies the paper-specific reduction from pairwise sufficiency checking to a CSP on the interaction graph \leanmeta{\LH{DQ80}.} It also certifies the transfer of the standard bounded-treewidth complexity bound \leanmeta{\LH{DQ79}, \LH{DQ81}.} Thus formal support here is a certified reduction-and-transfer theorem: the bounded-treewidth algorithm itself is standard (drawing on backdoor tractability methods~\cite{bessiere2013detecting}), while the paper-specific bridge to that algorithm is mechanized.
@@ -203,17 +203,18 @@ The \emph{orbit type} of a state $s \in \{0, \ldots, k-1\}^d$ is the multiset of
 Two states have the same orbit type iff they lie in the same orbit under coordinate permutation.
 \end{definition}
 
+\leanmetapending{\LH{DQ82}}
 \begin{theorem}[Orbit Type Characterization]\label{thm:orbit-type}
 For dimensional state spaces, two states $s, s'$ have equal orbit types if and only if there exists a coordinate permutation $\sigma$ such that $\sigma \cdot s = s'$.
 \end{theorem}
 
-\leanmeta{\LH{DQ82}.}
 
 \begin{proof}
 \textbf{If:} Permuting coordinates preserves the multiset of values.
 \textbf{Only if:} If $s$ and $s'$ have the same multiset of values, we can construct a permutation mapping each occurrence in $s$ to the corresponding occurrence in $s'$.
 \end{proof}
 
+\leanmetapending{\LHrng{DQ}{83}{84}}
 \begin{theorem}[Symmetric Sufficiency Reduction]\label{thm:symmetric-reduction}
 Under symmetric utility, optimal actions depend only on orbit type:
 \[
@@ -222,7 +223,6 @@ Under symmetric utility, optimal actions depend only on orbit type:
 Thus SUFFICIENCY-CHECK reduces to checking pairs with \emph{different} orbit types.
 \end{theorem}
 
-\leanmeta{\LHrng{DQ}{83}{84}.}
 
 \begin{proof}
 If $\text{orbitType}(s) = \text{orbitType}(s')$, then by Theorem~\ref{thm:orbit-type} there exists $\sigma$ with $\sigma \cdot s = s'$. By symmetry, $U(a, s) = U(a, s')$ for all $a$, so $\Opt(s) = \Opt(s')$.
@@ -230,6 +230,7 @@ If $\text{orbitType}(s) = \text{orbitType}(s')$, then by Theorem~\ref{thm:orbit-
 For sufficiency, we need only check pairs $(s, s')$ agreeing on $I$ with \emph{different} orbit types; same-orbit pairs are automatically equal.
 \end{proof}
 
+\leanmetapending{\LH{DQ56}, \LH{DQ85}}
 \begin{theorem}[Symmetric Complexity Bound]\label{thm:symmetric-complexity}
 Under symmetric utility, the artifact certifies that the number of orbit types is bounded by the stars-and-bars count:
 \[
@@ -238,7 +239,6 @@ Under symmetric utility, the artifact certifies that the number of orbit types i
 and that sufficiency checking reduces to cross-orbit comparisons. Thus the effective number of representative pair checks is at most $\binom{d + k - 1}{k - 1}^2$, which is polynomial in $d$ for fixed $k$.
 \end{theorem}
 
-\leanmeta{\LH{DQ56}, \LH{DQ85}.}
 
 \begin{proof}
 An orbit type is a multiset of $d$ values from $\{0, \ldots, k-1\}$, equivalently a $k$-tuple of non-negative integers summing to $d$. By stars-and-bars, the count is $\binom{d + k - 1}{k - 1}$. The mechanized content here is the orbit-type reduction and the resulting representative-count bound; the resulting polynomial-time conclusion then follows from this certified compression of the comparison space.

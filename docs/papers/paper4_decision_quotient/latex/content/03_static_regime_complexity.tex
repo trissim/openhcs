@@ -41,11 +41,11 @@ The first two results show that exact certification is already harder than point
 \paragraph{Proof idea.}
 Membership is immediate from short counterexamples: a ``no'' witness is just a pair of states that agree on $I$ but induce different optimal-action sets. Hardness comes from reducing TAUTOLOGY to an empty-information instance whose optimizer map is constant exactly in the tautology case.
 
+\leanmetapending{\LHrng{DQ}{40}{41}}
 \begin{theorem}[SUFFICIENCY-CHECK is coNP-complete]\label{thm:sufficiency-conp}
 SUFFICIENCY-CHECK is coNP-complete.
 \end{theorem}
 
-\leanmeta{\LHrng{DQ}{40}{41}.}
 
 \begin{proof}
 For membership, Proposition~\ref{prop:insufficiency-counterexample} gives a polynomial witness $(s,s')$ with $s_I=s'_I$ and $\Opt(s)\ne\Opt(s')$ whenever $I$ is not sufficient, so the complement is in NP.
@@ -53,11 +53,11 @@ For membership, Proposition~\ref{prop:insufficiency-counterexample} gives a poly
 For hardness, reduce TAUTOLOGY to the empty-set instance. Given formula $\varphi(x_1,\ldots,x_n)$, build a two-action decision problem where one action tracks $\varphi$ and the other is a baseline action. Then $I=\emptyset$ is sufficient iff $\varphi$ is a tautology, because empty-set sufficiency is exactly constancy of $\Opt$ (Proposition~\ref{prop:empty-sufficient-constant}). The reduction is polynomial in formula size.
 \end{proof}
 
+\leanmetapending{\LHrng{DQ}{35}{36}}
 \begin{theorem}[Static Collapse Theorem]\label{thm:minsuff-conp}
 In the static regime, the apparent existential layer in \textsc{Minimum-Sufficient-Set} collapses to relevance containment. Consequently, \textsc{Minimum-Sufficient-Set} is coNP-complete.
 \end{theorem}
 
-\leanmeta{\LHrng{DQ}{35}{36}.}
 
 \paragraph{Proof idea.}
 Once sufficiency is equivalent to containing all relevant coordinates, the question ``is there a sufficient set of size at most $k$?'' becomes ``are there at most $k$ relevant coordinates?'' The search component disappears, and the problem inherits the same coNP character as direct sufficiency checking.
@@ -73,11 +73,11 @@ Anchor sufficiency adds one more layer of choice that the previous collapse does
 \paragraph{Proof idea.}
 Membership follows the visible quantifier pattern: guess an anchor assignment and then verify constancy on its fiber. Hardness is obtained by encoding the existential variables of an $\exists\forall$ formula into the anchor choice and the universal variables into the residual coordinates that must be checked.
 
+\leanmetapending{\LH{DQ98}, \LH{CC4}}
 \begin{theorem}[ANCHOR-SUFFICIENCY is Sigma-2-P-complete]\label{thm:anchor-sigma2p}
 ANCHOR-SUFFICIENCY is $\Sigma_2^P$-complete.
 \end{theorem}
 
-\leanmeta{\LH{DQ98}, \LH{CC4}.}
 
 \begin{proof}
 Membership follows directly from the quantifier pattern:
@@ -91,11 +91,11 @@ For hardness, reduce from $\exists\forall$-SAT: existential variables encode the
 
 The next theorem sharpens the static picture. It is not only that exact certification is hard in the complexity-class sense; even a checker restricted to the empty-set core may be forced to inspect exponentially many witness locations in the worst case.
 
+\leanmetapending{\LHrng{WD}{1}{3}}
 \begin{theorem}[Witness-Checking Duality]\label{thm:witness-checking-duality}
 For Boolean state spaces $S=\{0,1\}^n$, any sound checker for the empty-set sufficiency core must inspect at least $2^{n-1}$ witness pairs in the worst case.
 \end{theorem}
 
-\leanmeta{\LHrng{WD}{1}{3}.}
 
 \begin{proof}
 Empty-set sufficiency asks whether $\Opt$ is constant on all $2^n$ states. A sound refutation-complete checker must be able to separate constant maps from maps that differ on some hidden antipodal partition. An adversary can place the first disagreement in any of $2^{n-1}$ independent pair slots; if fewer than $2^{n-1}$ slots are inspected, two instances remain indistinguishable to the checker but have opposite truth values. Therefore at least $2^{n-1}$ pair checks are necessary.

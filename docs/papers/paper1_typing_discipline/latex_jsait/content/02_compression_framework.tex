@@ -41,6 +41,7 @@ P(c) = f(\pi(c))
 Equivalently, $P$ depends only on the representation value.
 \end{definition}
 
+\leanmetapending{\LH{INF1}}
 \begin{theorem}[Information barrier]\label{thm:information-barrier}\label{thm:info-barrier}
 Let $P: \mathcal C \to Y$ be any function. If $P$ is representation-computable, then $P$ is constant on every representation fiber:
 \[
@@ -48,7 +49,6 @@ Let $P: \mathcal C \to Y$ be any function. If $P$ is representation-computable, 
 \]
 Equivalently, no observer restricted to the representation alone can compute a property that varies within one fiber.
 \end{theorem}
-\leanmeta{\LH{INF1}}
 
 \begin{proof}
 Suppose $P$ is representation-computable via $f$, so $P(c)=f(\pi(c))$ for all $c$. If $\pi(c_1)=\pi(c_2)$, then
@@ -61,31 +61,31 @@ P(c_1)=f(\pi(c_1))=f(\pi(c_2))=P(c_2).
 The barrier is informational rather than computational: once the representation is identical, unlimited time or memory does not help. We state it explicitly because the later converse, adaptive coding, query, and robustness results all reuse the same invariance premise.
 \end{remark}
 
+\leanmetapending{\LH{PRV1}}
 \begin{corollary}[Class identity is not representation-computable]\label{cor:provenance-barrier}
 If there exist classes $c_1,c_2$ with $\pi(c_1)=\pi(c_2)$ but $c_1 \neq c_2$, then class identity is not representation-computable.
 \end{corollary}
-\leanmeta{\LH{PRV1}}
 
 \begin{proof}
 Direct application of Theorem~\ref{thm:information-barrier} to the identity map on classes.
 \end{proof}
 
+\leanmetapending{\LH{ACS5}}
 \begin{theorem}[Observable-state sufficiency]\label{thm:model-completeness}
 Let $\alpha : \mathcal C \to \mathcal A$ be any declared observable state such that every admissible primitive observation factors through $\alpha$. Then every in-scope semantic property factors through $\alpha$: there exists $\tilde P$ with
 \[
 P(c)=\tilde P(\alpha(c)) \quad \text{for all } c\in\mathcal C.
 \]
 \end{theorem}
-\leanmeta{\LH{ACS5}}
 
 \begin{proof}
 If every admissible primitive observation factors through $\alpha$, then every admissible transcript factors through $\alpha$, and so does any output computed from that transcript.
 \end{proof}
 
+\leanmetapending{\LH{FXI1}}
 \begin{corollary}[Observable-state insufficiency]\label{cor:fixed-axis-incompleteness}
 If $\alpha(c_1)=\alpha(c_2)$ but $P(c_1)\neq P(c_2)$, then no admissible strategy can compute $P$ with zero error without adding new information beyond the declared observable state.
 \end{corollary}
-\leanmeta{\LH{FXI1}}
 
 \begin{remark}[Interpretation]
 The sufficiency and insufficiency statements are the helper-view version of the information barrier: if a task varies inside one declared state fiber, that state is not sufficient and must be refined by additional information.

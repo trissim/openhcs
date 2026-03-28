@@ -58,10 +58,10 @@ At the same time, the exact current coordinate-subset model is \emph{not} graph-
 \]
 such that two distinct tuples are adjacent if and only if their agreement set lies in $\mathcal U$. Conversely, every upward-closed family $\mathcal U$ arises from some coordinate-view architecture, so on the full labeled tuple space the realizable confusability relations are exactly the agreement-set relations cut out by upward-closed families.\leanmeta{\LHrng{MFT}{125}{128}} When the alphabet has at least two symbols, every proper coordinate subset occurs as the agreement set of some distinct pair of tuples, so this characterization is complete up to the irrelevant full-agreement case corresponding to identical tuples.\leanmeta{\LHrng{MFT}{129}{131}} Equivalently, coordinatewise alphabet permutations preserve the confusability relation and induce graph automorphisms; for any two latent tuples there exists such an automorphism carrying one to the other.\leanmeta{\LHrng{MFT}{120}{124}} Thus the exact model realizes a specific monotone agreement-set graph class rather than an arbitrary finite graph family. In particular, non-vertex-transitive graphs such as a three-vertex path cannot arise as full confusability graphs in this exact model. What remains open is a classification up to unlabeled graph isomorphism, and the corresponding classification for restricted realized-state subsets or for the stochastic support-overlap extension.
 
+\leanmetapending{\LHrng{MFT}{3}{4}, \LH{MFT20}}
 \begin{theorem}[Exact recovery as graph colorability]\label{thm:multifact-colorability}
 For a finite multi-fact latent tuple observed through a finite family of partial-coordinate views, exact zero-error recovery with a $T$-ary auxiliary tag exists if and only if the induced confusability graph is $T$-colorable.
 \end{theorem}
-\leanmeta{\LHrng{MFT}{3}{4}, \LH{MFT20}}
 
 \begin{proof}
 Let $G_{\mathrm{conf}}$ be the confusability graph.
@@ -75,15 +75,16 @@ An edge of $G_{\mathrm{conf}}$ records a specific pair of latent states that the
 
 This statement is packaged through an explicit simple confusability graph object, and for $n$ repeated copies the full block confusability graph is identified with the $n$-fold strong power of the one-shot confusability graph. The zero-error criterion is therefore literally a graph-colorability theorem on an explicit power family rather than only an analogy.\leanmeta{\LHrng{MFT}{34}{35}}
 
+\leanmetapending{\LH{MFT9}}
 \begin{theorem}[Success-set characterization]\label{thm:multifact-success-set}
 In the same model, exact decoding on a designated success set $S$ is equivalent to $T$-colorability of the induced confusability subgraph on $S$.
 \end{theorem}
-\leanmeta{\LH{MFT9}}
 
 \begin{proof}
 Restrict the argument of Theorem~\ref{thm:multifact-colorability} to the success set. Exactness is required only on $S$, so the coloring condition is required only on confusable pairs inside $S$.
 \end{proof}
 
+\leanmetapending{\LHrng{MFT}{14}{15}}
 \begin{theorem}[Exact finite-error success budget]\label{thm:multifact-max-success}
 For each tag alphabet size $T>0$, there is a largest success-set size
 \[
@@ -91,7 +92,6 @@ M_T := \max\{|S| : S \text{ induces a } T\text{-colorable confusability subgraph
 \]
 An exact decoder with $T$ tags exists on a success set $S$ if and only if $|S|\le M_T$ after replacing $S$ by some $T$-colorable success set of size $M_T$. Under the uniform source, the optimal exact success probability is therefore $M_T/|\mathcal X|$.
 \end{theorem}
-\leanmeta{\LHrng{MFT}{14}{15}}
 
 \begin{proof}
 Theorem~\ref{thm:multifact-success-set} identifies exact success sets with induced $T$-colorable subgraphs. Since the latent alphabet is finite, a maximum-cardinality such set exists. The mechanized characterization exposes this optimum directly. In the binary four-cycle witness, the optimum at $T=1$ is exactly two states, so the best uniform exact success probability is $2/4=1/2$.
@@ -101,19 +101,19 @@ The same characterization is also available in weighted form. For any finite sou
 
 Equivalently, this optimum can be packaged as an explicit exact finite rate-distortion value for the extended model at tag budget $T$: every exact success set has weighted mass at most this value, and some exact decoder attains it. Thus the extended model no longer has only a converse inequality; at the one-shot level it has an exact weighted success law rather than merely an upper bound.\leanmeta{\LHrng{MFT}{23}{24}}
 
+\leanmetapending{\LHrng{MFT}{5}{8}, \LH{MFT10}}
 \begin{theorem}[First non-clique witness]\label{thm:multifact-nonclique}
 There exists a binary two-fact system with single-coordinate observation views whose confusability graph is not a clique. In that system, two tags suffice for exact recovery, one tag is impossible, and any one-tag decoder can be exact on at most half of the four latent states under the uniform source.
 \end{theorem}
-\leanmeta{\LHrng{MFT}{5}{8}, \LH{MFT10}}
 
 \begin{proof}
 The witness is the four-state binary square with one location revealing the first coordinate and the other revealing the second. States that agree on one coordinate are confusable through the corresponding location, but opposite corners are not confusable, so the graph is a $4$-cycle rather than a clique. An explicit exact two-tag decoder is obtained by the parity coloring $c(x_1,x_2)=x_1\oplus x_2$. With one tag, any exact success set must be an independent set of the cycle, hence has size at most two, yielding success probability at most $1/2$ under the uniform source.
 \end{proof}
 
+\leanmetapending{\LHrng{MFT}{11}{13}, \LH{MFT16}}
 \begin{theorem}[Block-composition law]\label{thm:multifact-product}
 If two partial-observation systems are colorable with tag alphabets of sizes $T_1$ and $T_2$, then their block-composed product system is colorable with a tag alphabet of size $T_1T_2$.
 \end{theorem}
-\leanmeta{\LHrng{MFT}{11}{13}, \LH{MFT16}}
 
 The strong product of graphs $G$ and $H$, denoted $G\boxtimes H$, is defined as follows. The vertex set is $V(G)\times V(H)$. Two vertices $(u,v)$ and $(u',v')$ are adjacent exactly when either $u=u'$ and $v\sim v'$, or $u\sim u'$ and $v=v'$, or $u\sim u'$ and $v\sim v'$. The block-composition theorem is model-specific because the admissible product views generate exactly these three adjacency cases.
 

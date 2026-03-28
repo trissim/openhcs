@@ -23,6 +23,7 @@ Succinct & $k^* = \Omega(n)$ & exact certification inherits an ETH-conditioned $
 \textbf{Boundary summary.} The tractable-hard contrast is controlled jointly by encoding and by the size of the true sufficient support.
 \endgroup
 
+\leanmetapending{\LH{DQ26}, \LHrng{DQ}{29}{30}}
 \begin{theorem}[Encoding-Sensitive Contrast]\label{thm:dichotomy}
 Let $\mathcal{D} = (A, X_1, \ldots, X_n, U)$ be a decision problem with $|S| = N$ states. Let $k^*$ be the size of the minimal sufficient set.
 
@@ -33,7 +34,6 @@ Let $\mathcal{D} = (A, X_1, \ldots, X_n, U)$ be a decision problem with $|S| = N
 \end{enumerate}
 \end{theorem}
 
-\leanmeta{\LH{DQ26}, \LHrng{DQ}{29}{30}.}
 
 \begin{proof}
 \textbf{Part 1 (Logarithmic case):} If $k^* = O(\log N)$, then the number of distinct projections $|S_{I^*}|$ is at most $2^{k^*} = O(N^c)$ for some constant $c$. Under the explicit-state encoding, we enumerate all projections and verify sufficiency in polynomial time.
@@ -49,6 +49,7 @@ The lower bound in Part 2 of Theorem~\ref{thm:dichotomy} follows from a short st
 There exists a constant $\delta > 0$ such that 3-SAT on $n$ variables cannot be solved in time $O(2^{\delta n})$~\cite{impagliazzo2001complexity}.
 \end{definition}
 
+\leanmetapending{\LH{DQ27}, \LH{DQ30}}
 \begin{proposition}[Tight Constant]\label{prop:eth-constant}
 The reduction in Theorem~\ref{thm:sufficiency-conp} preserves the number of variables up to an additive constant: an $n$-variable formula yields an $(n+1)$-coordinate decision problem. Therefore, the constant $c$ in the $2^{n/c}$ lower bound is asymptotically 1:
 \[
@@ -57,7 +58,6 @@ The reduction in Theorem~\ref{thm:sufficiency-conp} preserves the number of vari
 where $\delta$ is the ETH constant for 3-SAT.
 \end{proposition}
 
-\leanmeta{\LH{DQ27}, \LH{DQ30}.}
 
 \begin{proof}
 The TAUTOLOGY reduction (Theorem~\ref{thm:sufficiency-conp}) constructs:
@@ -70,6 +70,7 @@ When $\varphi$ has $n$ variables, the constructed problem has $n+1$ coordinates.
 
 \subsection{Cross-Model Contrast}
 
+\leanmetapending{\LH{DQ3}, \LH{DQ26}}
 \begin{corollary}[Cross-Model Contrast for Exact Certification]\label{cor:phase-transition}
 Across the explicit-state and succinct encodings of Section~\ref{sec:encoding}, exact certification exhibits the following contrast:
 \begin{itemize}
@@ -79,7 +80,6 @@ Across the explicit-state and succinct encodings of Section~\ref{sec:encoding}, 
 For Boolean coordinate spaces ($N = 2^n$), one has $\log N = n$. So the explicit-state upper bound should be read as polynomial in the explicit table size when $k^* = O(n)$, while the succinct lower bound is exponential in the succinct variable count when $k^* = \Omega(n)$. The comparison is therefore between two encodings of the same Boolean family, not between $O(\log n)$ and $\Omega(n)$ inside a single model.
 \end{corollary}
 
-\leanmeta{\LH{DQ3}, \LH{DQ26}.}
 
 \begin{proof}
 The logarithmic case (Part 1 of Theorem~\ref{thm:dichotomy}) gives polynomial time when $k^* = O(\log N)$. More precisely, when $k^* \leq c \log N$ for constant $c$, the algorithm runs in time $O(N^c \cdot \text{poly}(n))$.

@@ -62,21 +62,21 @@ A coordinate set $I \subseteq \{1, \ldots, n\}$ is \emph{sufficient} for decisio
 Equivalently, the optimal action depends only on coordinates in $I$.
 \end{definition}
 
+\leanmetapending{\LH{DP6}}
 \begin{proposition}[Empty-Set Sufficiency Equals Constant Decision Boundary]\label{prop:empty-sufficient-constant}
 The empty set $\emptyset$ is sufficient if and only if $\Opt(s)$ is constant over the entire state space.
 \end{proposition}
 
-\leanmeta{\LH{DP6}.}
 
 \begin{proof}
 If $\emptyset$ is sufficient, then every two states agree on their empty projection, so sufficiency forces $\Opt(s)=\Opt(s')$ for all $s,s' \in S$. The converse is immediate.
 \end{proof}
 
+\leanmetapending{\LH{DP7}}
 \begin{proposition}[Insufficiency Equals Counterexample Witness]\label{prop:insufficiency-counterexample}
 Coordinate set $I$ is not sufficient if and only if there exist states $s,s' \in S$ such that $s_I=s'_I$ but $\Opt(s)\neq\Opt(s')$.
 \end{proposition}
 
-\leanmeta{\LH{DP7}.}
 
 \begin{proof}
 This is the direct negation of Definition~\ref{def:sufficient}.
@@ -98,6 +98,7 @@ i \text{ is relevant}
 \]
 \end{definition}
 
+\leanmetapending{\LHrng{DP}{1}{2}}
 \begin{proposition}[Minimal-Set/Relevance Equivalence]\label{prop:minimal-relevant-equiv}
 For any minimal sufficient set $I$ and any coordinate $i$,
 \[
@@ -106,7 +107,6 @@ i \in I \iff i \text{ is relevant}.
 Hence every minimal sufficient set is exactly the relevant-coordinate set.
 \end{proposition}
 
-\leanmeta{\LHrng{DP}{1}{2}.}
 
 \begin{proof}
 If $i \in I$ were not relevant, then changing coordinate $i$ while keeping all others fixed would never alter the optimal-action set, so removing $i$ would preserve sufficiency, contradicting minimality. Conversely, every sufficient set must contain each relevant coordinate, because omitting a relevant coordinate leaves a witness pair with identical $I$-projection but different optimal-action sets.
@@ -145,16 +145,17 @@ Its equivalence classes are exactly the maximal subsets of states on which the o
 
 The decision quotient is the canonical mathematical object associated with exact decision preservation. It quotients the state space by optimizer-equivalence and thereby isolates precisely the distinctions that any decision-preserving abstraction must respect.
 
+\leanmetapending{\LHrng{DQ}{6}{7}}
 \begin{proposition}[Optimizer Quotient as Coimage/Image Factorization]\label{prop:optimizer-coimage}
 The decision quotient $Q_{\mathcal{D}}$ is canonically in bijection with $\operatorname{range}(\Opt)$. Equivalently, in \textbf{Set}, it is the coimage/image factorization of the optimizer map.
 \end{proposition}
 
-\leanmeta{\LHrng{DQ}{6}{7}.}
 
 \begin{proof}
 Two states are identified by $\sim_{\Opt}$ exactly when they have the same optimizer value. Hence quotient classes are in one-to-one correspondence with attained values of $\Opt$.
 \end{proof}
 
+\leanmetapending{\LH{QT1}, \LH{QT7}}
 \begin{theorem}[Universal Property of the Optimizer Quotient]\label{thm:quotient-universal}
 Let $Q_{\mathcal{D}}=S/{\sim_{\Opt}}$ be the decision quotient with quotient map $\pi:S\to Q_{\mathcal{D}}$. For any surjective abstraction $\phi:S\to T$ such that
 \[
@@ -166,7 +167,6 @@ there exists a unique map $\psi:T\to Q_{\mathcal{D}}$ such that
 \]
 \end{theorem}
 
-\leanmeta{\LH{QT1}, \LH{QT7}.}
 
 \begin{proof}
 Because $\phi$ preserves optimizer values on its fibers, any two states identified by $\phi$ are decision-equivalent. So each fiber of $\phi$ is contained in a single $\sim_{\Opt}$-class.
@@ -180,16 +180,15 @@ Hence $\psi=\psi'$.
 
 \begin{remark}[Canonical Status]\label{rem:quotient-canonical}
 The optimizer quotient is therefore the coarsest abstraction of the state space that preserves optimal-action distinctions. Any surjective abstraction that is strictly coarser must erase some decision-relevant distinction.
-\end{remark}
+\end{remark} \leanmeta{\LH{QT7}, \LH{AB2}.}
 
-\leanmeta{\LH{QT7}, \LH{AB2}.}
 
 \begin{remark}[Decision Noise]\label{rem:decision-noise}
 The quotient viewpoint identifies decision noise exactly. At the state level, decision noise is the kernel of the optimizer map: two states differ only by decision noise if and only if they determine the same class in $Q_{\mathcal{D}}$. At the coordinate level, a coordinate is pure decision noise if and only if varying it alone never changes the decision, equivalently if and only if it is irrelevant. In the finite probabilistic reading used later, this is also equivalent to conditional independence of the decision from that coordinate given the remaining coordinates.
-\end{remark}
+\end{remark} \leanmeta{\LHrng{DN}{1}{2}, \LH{DN5}.}
 
-\leanmeta{\LHrng{DN}{1}{2}, \LH{DN5}.}
 
+\leanmetapending{\LH{DQ42}}
 \begin{proposition}[Sufficiency Characterization]\label{prop:sufficiency-char}
 Coordinate set $I$ is sufficient if and only if the optimizer map factors through the projection $\pi_I : S \to S_I$. Equivalently, there exists a function $\overline{\Opt}_I : S_I \to \mathcal{P}(A)$ such that
 \[
@@ -197,7 +196,6 @@ Coordinate set $I$ is sufficient if and only if the optimizer map factors throug
 \]
 \end{proposition}
 
-\leanmeta{\LH{DQ42}.}
 
 \begin{proof}
 If $I$ is sufficient, define $\overline{\Opt}_I(x)$ to be $\Opt(s)$ for any state $s$ with $s_I = x$; this is well defined exactly because sufficiency makes $\Opt$ constant on each projection fiber. Conversely, any such factorization forces states with equal $I$-projection to have equal optimal-action sets.

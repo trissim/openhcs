@@ -33,11 +33,11 @@ The decisiveness results combine standard hardness claims with mechanized upper-
 
 The stochastic anchor and minimum decisiveness queries are not presently collapsed to PP-completeness: Theorem~\ref{thm:stochastic-nppp-upper} places them in $\textsf{NP}^{\textsf{PP}}$, while Theorems~\ref{thm:stochastic-anchor-hard} and~\ref{thm:stochastic-minimum-hard} give PP-hardness. The artifact verifies the finite witness/checking structure and explicit-state bounded-witness recoveries behind that upper-bound story, and it also packages existential-majority hardness/completeness surrogates for the anchor and decisiveness query families \leanmeta{\LHrng{EH}{2}{10}.} The oracle-class memberships themselves remain paper-level proofs under the succinct encoding. By contrast, the sequential anchor and minimum variants admit paper-level PSPACE membership via guess-and-verify over anchors or coordinate subsets together with the sequential sufficiency verifier.
 
+\leanmetapending{\LH{DC100}, \LH{DQ1}, \LHrng{DQ}{17}{19}, \LHrng{OU}{1}{2}, \LHrng{OU}{11}{12}, \LHrng{EH}{4}{10}}
 \begin{theorem}[Regime-Sensitive Complexity Matrix]\label{thm:regime-main}
 Under the encoding conventions of Section~\ref{sec:encoding}, the classification is as follows. In the static regime, sufficiency and minimum sufficiency are coNP-complete and anchor sufficiency is $\Sigma_2^P$-complete. In the stochastic regime, preservation (stochastic sufficiency) has a polynomial-time base query under explicit-state encoding with proved bridges back to static sufficiency and the optimizer quotient; the minimum and anchor preservation variants are also polynomial-time under explicit-state encoding, are coNP-complete and $\Sigma_2^P$-complete under full support, and satisfy the support-sensitive partial results of Proposition~\ref{prop:stochastic-preservation-partial-general}. Decisiveness (stochastic decisiveness) has a polynomial-time base query under explicit-state encoding and is PP-hard under the succinct encoding; the anchor and minimum decisiveness queries are PP-hard and lie in $\textsf{NP}^{\textsf{PP}}$, with those oracle-class memberships proved in the paper text and their finite witness/checking cores mechanized. In the sequential regime, sufficiency, minimum, and anchor queries are PSPACE-complete.
 \end{theorem}
 
-\leanmeta{\LH{DC100}, \LH{DQ1}, \LHrng{DQ}{17}{19}, \LHrng{OU}{1}{2}, \LHrng{OU}{11}{12}, \LHrng{EH}{4}{10}.}
 
 \begin{proof}
 The matrix entries are exactly Theorems~\ref{thm:sufficiency-conp}, \ref{thm:minsuff-conp}, \ref{thm:anchor-sigma2p}, \ref{thm:stochastic-preservation-explicit}, \ref{thm:stochastic-preservation-full-support-variants}, \ref{thm:stochastic-preservation-variants-explicit}, Proposition~\ref{prop:stochastic-preservation-partial-general}, \ref{thm:stochastic-pp}, \ref{thm:stochastic-anchor-hard}, \ref{thm:stochastic-minimum-hard}, \ref{thm:stochastic-nppp-upper}, \ref{thm:sequential-pspace}, \ref{thm:sequential-anchor-hard}, and \ref{thm:sequential-minimum-hard}, together with the stochastic sufficiency bridge package. The strict regime comparisons are isolated separately in Theorems~\ref{thm:static-stochastic-strict} and~\ref{thm:stochastic-sequential-strict}.
@@ -45,21 +45,21 @@ The matrix entries are exactly Theorems~\ref{thm:sufficiency-conp}, \ref{thm:min
 
 \subsection{Strict Regime Gaps}
 
+\leanmetapending{\LH{DQ18}}
 \begin{theorem}[Static-to-Stochastic Complexity Gap]\label{thm:static-stochastic-strict}
 Assuming $\coNP \ne \PP$, the succinct stochastic decisiveness classification is strictly harder in worst-case complexity than the static sufficiency classification.
 \end{theorem}
 
-\leanmeta{\LH{DQ18}.}
 
 \begin{proof}
 Static sufficiency checking is coNP-complete (Theorem~\ref{thm:sufficiency-conp}), while stochastic decisiveness is PP-hard under the succinct encoding (Theorem~\ref{thm:stochastic-pp}). Under the assumption $\coNP \ne \PP$, this yields a strict complexity gap between the two classifications.
 \end{proof}
 
+\leanmetapending{\LH{DQ19}}
 \begin{theorem}[Stochastic-to-Sequential Complexity Gap]\label{thm:stochastic-sequential-strict}
 Assuming $\PP \ne \PSPACE$, the sequential sufficiency classification is strictly harder in worst-case complexity than the stochastic decisiveness classification.
 \end{theorem}
 
-\leanmeta{\LH{DQ19}.}
 
 \begin{proof}
 Stochastic decisiveness is PP-hard under the succinct encoding (Theorem~\ref{thm:stochastic-pp}), while sequential sufficiency is PSPACE-complete (Theorem~\ref{thm:sequential-pspace}). The class gap yields a strict complexity separation between the two classifications under the assumption $\PP \ne \PSPACE$.
@@ -69,6 +69,7 @@ Stochastic decisiveness is PP-hard under the succinct encoding (Theorem~\ref{thm
 
 The regime matrix has a methodological consequence as well: as one moves upward in the hierarchy, exact certification becomes less compatible with fixed polynomial resource budgets.
 
+\leanmetapending{\LH{IC32}, \LH{DQ2}}
 \begin{proposition}[Abstention Frontier Expands with Regime Complexity]\label{prop:abstention-frontier}
 For polynomial-time exact certifiers that abstain whenever they cannot certify correctness within budget, the set of instances requiring abstention expands along
 \[
@@ -76,7 +77,6 @@ For polynomial-time exact certifiers that abstain whenever they cannot certify c
 \]
 \end{proposition}
 
-\leanmeta{\LH{IC32}, \LH{DQ2}.}
 
 \begin{proof}
 As the decision predicate moves from coNP to PP to PSPACE hardness, exact worst-case certification requires strictly stronger resources. Fixed polynomial resources therefore force abstention on a larger instance family in higher regimes.

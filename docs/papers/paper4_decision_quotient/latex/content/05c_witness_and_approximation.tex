@@ -14,11 +14,11 @@ and, for each queried slot, learns whether the optimizer agrees or disagrees on 
 
 The lower bound below is for deterministic checkers in exactly this access model.
 
+\leanmetapending{\LHrng{WD}{1}{3}}
 \begin{theorem}[Witness-Checking Lower Bound]\label{thm:witness-lower-bound-4}
 For Boolean decision problems with $n$ coordinates, any sound slot-inspection checker for the empty-set sufficiency core must inspect at least $2^{n-1}$ witness pairs in the worst case.
 \end{theorem}
 
-\leanmeta{\LHrng{WD}{1}{3}.}
 
 \begin{proof}
 Let $S=\{0,1\}^n$. Empty-set sufficiency is exactly the claim that $\Opt$ is constant on all states.
@@ -50,6 +50,7 @@ For the shifted reduction family used in the mechanization, the optimum support 
 \]
 One coordinate acts as a gate: toggling it changes the optimizer even before the formula variables are considered, so optimum size is never $0$. If $\varphi$ is a tautology, every branch behind that gate behaves identically, so all non-gate coordinates become irrelevant and the singleton gate coordinate is sufficient. If $\varphi$ is not a tautology, choose a falsifying assignment $a$. For each formula coordinate $i$, compare the open reference state with the state that inserts $a$ at coordinate $i$: these states agree on all other coordinates but induce different optimal-action sets, so coordinate $i$ is relevant. Together with gate relevance, this forces every coordinate to be present in every sufficient set. That is what creates the exact $1$ versus $n+1$ gap.
 
+\leanmetapending{\LH{DQ20}, \LH{DQ39}, \LH{DQ43}}
 \begin{theorem}[Approximation-hardness theorem on the shifted family]
 Fix $\rho\in\mathbb{N}$. Let $\mathcal{A}$ be any solver that, on every shifted-family instance, returns a sufficient set whose cardinality is within factor $\rho$ of optimum. Then for every formula on $n$ coordinates with $\rho<n+1$,
 \[
@@ -59,7 +60,6 @@ Fix $\rho\in\mathbb{N}$. Let $\mathcal{A}$ be any solver that, on every shifted-
 \]
 \end{theorem}
 
-\leanmeta{\LH{DQ20}, \LH{DQ39}, \LH{DQ43}.}
 
 \begin{proof}
 \textbf{Tautology $\Rightarrow$ threshold passes.}
@@ -71,6 +71,7 @@ Assume $|\mathcal{A}(\varphi)|\le \rho$ with $\rho<n+1$. If $\varphi$ were not a
 Therefore $|\mathcal{A}(\varphi)|\le \rho$ holds exactly in the tautology case.
 \end{proof}
 
+\leanmetapending{\LHrng{DQ}{23}{24}}
 \begin{theorem}[Counted-runtime threshold decider]
 Fix $\rho\in\mathbb{N}$. Let $\mathcal{A}$ be any counted polynomial-time factor-$\rho$ solver for the shifted minimum-sufficient-set family. Then the derived procedure
 \[
@@ -79,7 +80,6 @@ Fix $\rho\in\mathbb{N}$. Let $\mathcal{A}$ be any counted polynomial-time factor
 is a counted polynomial-time tautology decider on the gap regime $\rho<n+1$.
 \end{theorem}
 
-\leanmeta{\LHrng{DQ}{23}{24}.}
 
 \begin{proof}
 Correctness is exactly the gap-threshold theorem above: on the regime $\rho<n+1$, the predicate $|\mathcal{A}(\varphi)|\le \rho$ is equivalent to tautology.
@@ -89,11 +89,11 @@ For runtime, the derived decider performs two operations: one call to the counte
 
 \subsubsection{Set-Cover Transfer Boundary}
 
+\leanmetapending{\LH{DQ11}, \LH{DQ34}}
 \begin{theorem}[Exact set-cover equivalence on the gadget family]
 On the mechanized gadget family, a coordinate set is sufficient if and only if the corresponding set family is a cover. In particular, feasible solutions are in bijection and optimum cardinalities coincide exactly.
 \end{theorem}
 
-\leanmeta{\LH{DQ11}, \LH{DQ34}.}
 
 \begin{proof}
 The gadget is constructed so that each universe element $u$ gives two states, $(\mathsf{false},u)$ and $(\mathsf{true},u)$, with different optimal-action sets. A coordinate $i$ distinguishes this pair exactly when the corresponding set covers $u$.
@@ -105,11 +105,11 @@ The gadget is constructed so that each universe element $u$ gives two states, $(
 This yields an exact bijection between feasible sufficient sets and feasible covers, preserving cardinality. Therefore optimum values coincide on the gadget family.
 \end{proof}
 
+\leanmetapending{\LH{DQ25}, \LHrng{DQ}{32}{33}}
 \begin{corollary}[Conditional approximation transfer]
 Any factor guarantee or instance-dependent ratio guarantee for minimum sufficiency on the gadget family induces the same guarantee for set cover on that family. Consequently, any impossibility result proved for set cover on that family transfers immediately to minimum sufficiency.
 \end{corollary}
 
-\leanmeta{\LH{DQ25}, \LHrng{DQ}{32}{33}.}
 
 \begin{proof}
 Compose the candidate minimum-sufficiency solver with the gadget translation and then use the exact equivalence theorem above. Because feasible sets correspond bijectively and preserve cardinality, both approximation factors and instance-dependent ratios are unchanged.

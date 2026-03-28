@@ -23,10 +23,10 @@ Location $L_{\text{derived}}$ is \emph{derived from} $L_{\text{source}}$ for fac
 
 Derivation may occur at creation time, build time, commit time, or query time depending on the host system. The abstract point is unchanged: a derived location does not contribute an additional independently writable value for the same fact.
 
+\leanmetapending{\LH{DER2}}
 \begin{proposition}[Derivation Preserves Coherence]\label{thm:derivation-excludes}
 If $L_{\text{derived}}$ is derived from $L_{\text{source}}$, then $L_{\text{derived}}$ cannot diverge from $L_{\text{source}}$ and does not contribute to DOF.
 \end{proposition}
-\leanmeta{\LH{DER2}}
 
 \begin{proof}
 By Definition~\ref{def:derivation}, the value at $L_{\text{derived}}$ is determined by the value at $L_{\text{source}}$ under admissible updates. There is therefore no reachable state in which the two locations carry incompatible values for the same fact. Since the derived location has no independently writable contribution, it does not increase DOF.

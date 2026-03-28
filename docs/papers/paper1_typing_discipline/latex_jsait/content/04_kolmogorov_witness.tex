@@ -6,10 +6,10 @@ We now state the zero-error coding problem in generic representation-map form. L
 Let $C$ be a random class label, let $U=\pi(C)$ be its representation, and let the decoder observe $U$ together with any charged auxiliary description supplied by the encoder.
 \end{definition}
 
+\leanmetapending{\LH{ACS8}}
 \begin{theorem}[Zero auxiliary description iff injective representation]\label{thm:identification-capacity}
 Let $\mathcal{C}$ be a finite class space and let $\pi : \mathcal{C} \to \mathcal{U}$ be a representation map. Zero-error recovery of $C$ from $U=\pi(C)$ with no auxiliary description is achievable if and only if $\pi$ is injective on classes.
 \end{theorem}
-\leanmeta{\LH{ACS8}}
 
 \begin{proof}
 \emph{Achievability}: If $\pi$ is injective on classes, then observing $\pi(c)$ determines $c$ uniquely. The decoder inverts the class-to-representation map.
@@ -17,31 +17,29 @@ Let $\mathcal{C}$ be a finite class space and let $\pi : \mathcal{C} \to \mathca
 \emph{Converse}: Suppose two distinct classes $c_1 \neq c_2$ share the same representation value: $\pi(c_1)=\pi(c_2)$. Then any decoder $g(U)$ outputs the same class label on both inputs, so it cannot be correct for both. Hence zero-error recovery without auxiliary description is impossible.
 \end{proof}
 
-In the finite explicit setting, the same condition can be read directly from the representation channel: one-symbol zero-error feasibility is equivalent to injectivity (\LH{GPH27}). Interpreting $\pi$ as a learned embedding, this is the exact threshold for zero-error class recovery from the representation alone.
+In the finite explicit setting, the same condition can be read directly from the representation channel: one-symbol zero-error feasibility is equivalent to injectivity. Interpreting $\pi$ as a learned embedding, this is the exact threshold for zero-error class recovery from the representation alone. \leanmeta{\LH{GPH27}}
 
 \begin{remark}[Information-theoretic corollary]
 Under any distribution with positive mass on both colliding classes, $I(C;U) < H(C)$. This is an average-case consequence of the deterministic barrier above.
-\end{remark}
-\leanmeta{\LH{ACS8}}
+\end{remark} \leanmeta{\LH{ACS8}}
 
 \begin{remark}[Relation to Ahlswede-Dueck]
 In the identification paradigm of \cite{ahlswede1989identification}, the decoder asks ``is the message $m$?'' rather than ``what is the message?'' This yields double-exponential codebook sizes. Our setting is different: we require zero-error identification of the \emph{class}, not hypothesis testing. The one-shot zero-error identification feasibility threshold is binary rather than asymptotic.
-\end{remark}
-\leanmeta{\LH{ACS8}}
+\end{remark} \leanmeta{\LH{ACS8}}
 
 \subsection{Fixed-Length Auxiliary Description}
 
 We now show that augmenting the representation with an auxiliary codeword restores exact recovery.
 
+\leanmetapending{\LH{ACS7}}
 \begin{definition}[Auxiliary description]
 An \emph{auxiliary description} is a value $M(c)$ associated with each class $c \in \mathcal C$ and transmitted in addition to the representation value $\pi(c)$. In the fixed-length setting, the auxiliary description alphabet has size $2^L$.
 \end{definition}
-\leanmeta{\LH{ACS7}}
 
+\leanmetapending{\LH{ACS7}}
 \begin{theorem}[Fixed-length sufficiency]\label{thm:tag-restored-sufficiency}
 If $|\mathcal C|=k$, then an auxiliary description of length $L \geq \lceil \log_2 k \rceil$ bits suffices for zero-error identification, regardless of whether $\pi$ is class-injective.
 \end{theorem}
-\leanmeta{\LH{ACS7}}
 
 \begin{proof}
 A class-injective auxiliary description assigns a unique identifier to each class. Reading that description together with the representation determines the class exactly.
@@ -55,6 +53,7 @@ The next theorem is the paper's main zero-error compression statement. It conver
 
 In graph terms, the fixed-representation setting is a structured zero-error special case: confusable classes are exactly those lying in the same representation fiber, so the confusability graph is a disjoint union of cliques. This special structure yields exact finite laws for the residual coding burden left by a representation.
 
+\leanmetapending{\LH{LWDC1}, \LH{LWDC3}}
 \begin{definition}[Collision multiplicity]\label{def:collision-multiplicity}
 Let $\mathcal{C}$ be a finite class space and let $\pi : \mathcal{C} \to \mathcal U$ be a representation map. Define
 \[
@@ -62,15 +61,14 @@ A_\pi := \max_{u \in \operatorname{Im}(\pi)} \left|\{c \in \mathcal{C} : \pi(c)=
 \]
 Thus $A_\pi$ is the size of the largest class-collision block under the representation.
 \end{definition}
-\leanmeta{\LH{LWDC1}, \LH{LWDC3}}
 
 \begin{remark}[Computability under finite precision]
 Every implementable representation operates on finite-precision values. The representation alphabet is therefore finite, and $A_\pi$ is computable by fiber enumeration. If the deployed representation uses $M$ output values, then the pigeonhole principle yields the lower bound $\lceil |\mathcal C|/M \rceil \le A_\pi$. Conversely, to guarantee $A_\pi \le k$ on an entity set of size $n$, at least $\lceil n/k \rceil$ distinct representation values are necessary. The coding theorems identify the operational meaning of $A_\pi$ once the representation is fixed at its deployed precision.
-\end{remark}
-\leanmeta{\LHrng{GPH}{44}{45}, \LH{GPH48}, \LH{GPH50}}
+\end{remark} \leanmeta{\LHrng{GPH}{44}{45}, \LH{GPH48}, \LH{GPH50}}
 
-If one observation channel factors through a richer one, collision multiplicity cannot increase (\LH{GPH28}). Thus adding observable structure can only lower the corresponding zero-error tag bound. Under the same representation reading, enriching the embedding cannot worsen zero-error separability.
+If one observation channel factors through a richer one, collision multiplicity cannot increase. Thus adding observable structure can only lower the corresponding zero-error tag bound. Under the same representation reading, enriching the embedding cannot worsen zero-error separability. \leanmeta{\LH{GPH28}}
 
+\leanmetapending{\LH{GPH28}, \LH{GPH37}}
 \begin{corollary}[Coarsening a bottleneck cannot reduce residual coding cost]\label{cor:concept-bottleneck-mono}
 Let $\pi_{\mathrm{fine}}$ and $\pi_{\mathrm{coarse}}$ be two representations on the same class domain, and assume
 \[
@@ -89,17 +87,17 @@ Moreover, for each fine representation value $u$,
 \left\lceil \log_2 \left|\pi_{\mathrm{coarse}}^{-1}(f(u))\right| \right\rceil.
 \]
 \end{corollary}
-\leanmeta{\LH{GPH28}, \LH{GPH37}}
 
 \begin{proof}
 The first inequality is the monotonicity of collision multiplicity under factorization. Taking binary logarithms gives the worst-case fixed-length comparison. The pointwise adaptive comparison is the same monotonicity statement applied fiberwise before taking ceiling logarithms.
 \end{proof}
 
+\leanmetapending{\LH{LWDC3}}
 \begin{definition}[Maximal-Barrier Regime]\label{def:max-barrier}
 The domain is \emph{maximal-barrier} if $A_\pi = k$, i.e., all classes collide under the observation map.
 \end{definition}
-\leanmeta{\LH{LWDC3}}
 
+\leanmetapending{\LH{LWDC1}}
 \begin{theorem}[Converse]\label{thm:converse}
 For any classification domain, any fixed-length scheme achieving $D=0$ requires
 \[
@@ -109,7 +107,6 @@ L \ge \log_2 A_\pi,
 \]
 where $A_\pi$ is the collision multiplicity.
 \end{theorem}
-\leanmeta{\LH{LWDC1}}
 
 \begin{proof}
 Fix a collision block $G \subseteq \mathcal{C}$ with $|G|=A_\pi$ and identical representation profile. For classes in $G$, the decoder's side information is identical, so zero-error decoding must separate those classes using auxiliary description outcomes. With $L$ bits there are at most $2^L$ outcomes, hence $2^L \ge |G| = A_\pi$.
@@ -119,10 +116,10 @@ Fix a collision block $G \subseteq \mathcal{C}$ with $|G|=A_\pi$ and identical r
 The converse is a lossless coding law for semantic identity \cite{csiszar2011information}. The relevant confusable alphabet is the largest representation-collision block, and zero-error separation of that block requires exactly enough auxiliary outcomes to name its members. The theorem therefore has the same fixed-length form as a classical zero-error side-information budget, but the governing alphabet size is induced by the representation rather than by the ambient class set alone.
 \end{remark}
 
+\leanmetapending{\LH{LWDC3}}
 \begin{corollary}[Maximal-Barrier Converse]\label{cor:max-barrier-converse}
 If the domain is maximal-barrier ($A_\pi = k$), any zero-error scheme satisfies $L \ge \log_2 k$.
 \end{corollary}
-\leanmeta{\LH{LWDC3}}
 
 In the running example, the collision block $\{A,B\}$ shows that $A_\pi = 2$, so Theorem~\ref{thm:converse} already forces $L \ge 1$ bit of auxiliary description for zero-error identification.
 
@@ -130,18 +127,19 @@ In the running example, the collision block $\{A,B\}$ shows that $A_\pi = 2$, so
 
 The ambiguity converse extends exactly to blocks: the next theorem family gives exact finite-block scaling rather than an asymptotic approximation.
 
+\leanmetapending{\LH{GPH13}}
 \begin{theorem}[Exact one-shot feasibility threshold]\label{thm:graph-one-shot-threshold}
 For an alphabet of $n$ auxiliary descriptions, zero-error class recovery is feasible if and only if
 \[
 A_\pi \le n.
 \]
 \end{theorem}
-\leanmeta{\LH{GPH13}}
 
 \begin{proof}
 By definition, two classes are adjacent in the confusability graph exactly when they have the same representation profile and are distinct. Hence each nonempty profile fiber is a clique, and there are no edges between different fibers. The confusability graph is therefore a disjoint union of profile-fiber cliques. Zero-error auxiliary description is equivalent to a proper coloring of this graph, so an alphabet of size $n$ is feasible exactly when each fiber can be colored injectively, i.e., exactly when every profile fiber has size at most $n$. Taking the maximum over fibers gives the criterion $A_\pi \le n$.
 \end{proof}
 
+\leanmetapending{\LHrng{GPH}{16}{17}, \LH{GPH20}}
 \begin{theorem}[Exact block feasibility law]\label{thm:graph-block-threshold}
 For block length $t\ge 1$ with coordinatewise observation on $\mathcal{C}^t$, zero-error auxiliary description with alphabet size $n_t$ is feasible if and only if
 \[
@@ -149,8 +147,8 @@ A_\pi^t \le n_t.
 \]
 Equivalently, the minimal feasible block alphabet is exactly $A_\pi^t$.
 \end{theorem}
-\leanmeta{\LHrng{GPH}{16}{17}, \LH{GPH20}}
 
+\leanmetapending{\LHrng{GPH}{18}{19}, \LH{GPH24}}
 \begin{corollary}[Linear log-bit scaling]\label{cor:graph-logbit-scaling}
 Let $L_t^\star := \log_2(A_\pi^t)$ be the minimum block auxiliary-description budget in bits. Then
 \[
@@ -160,7 +158,6 @@ L_t^\star = t\,\log_2 A_\pi,
 \]
 So per-entity tag rate is exactly stable across block length.
 \end{corollary}
-\leanmeta{\LHrng{GPH}{18}{19}, \LH{GPH24}}
 
 \begin{remark}[Why this block model]
 The block construction repeats the same semantic identification task across $t$ entities while keeping the representation map fixed and applying it coordinatewise. It is therefore the direct block analogue of repeated one-shot classification in this model: the collision structure multiplies across coordinates, and the required zero-error side-information budget scales accordingly.
@@ -170,28 +167,28 @@ The block construction repeats the same semantic identification task across $t$ 
 
 The confusability graph induced by a fixed deterministic representation has special structure: two classes are adjacent exactly when they share the same representation value. The next observations explain why several general zero-error graph quantities collapse in this setting.
 
+\leanmetapending{\LH{GPH52}}
 \begin{proposition}[Transitivity of representation confusability]
 Let $\pi : \mathcal C \to \mathcal U$. Define $c_1 \sim_\pi c_2$ iff $\pi(c_1)=\pi(c_2)$ and $c_1 \ne c_2$. Then $\sim_\pi$ is transitive on distinct classes inside a fiber.
 \end{proposition}
-\leanmeta{\LH{GPH52}}
 
 \begin{proof}
 If $\pi(c_1)=\pi(c_2)$ and $\pi(c_2)=\pi(c_3)$, then $\pi(c_1)=\pi(c_3)$ by equality. Thus any two distinct classes linked through one fiber are directly confusable as well.
 \end{proof}
 
+\leanmetapending{\LHrng{GPH}{52}{53}}
 \begin{proposition}[Cluster-graph structure]
 The confusability graph $G_\pi$, with edges between distinct classes sharing the same representation, is a disjoint union of cliques. Each connected component is exactly one representation fiber.
 \end{proposition}
-\leanmeta{\LHrng{GPH}{52}{53}}
 
 \begin{proof}
 Each fiber is a clique because all of its classes share the same representation value. No edge connects distinct fibers by construction. Hence each connected component is exactly one fiber, and the graph is a disjoint union of cliques.
 \end{proof}
 
+\leanmetapending{\LHrng{GPH}{52}{53}}
 \begin{corollary}[Capacity collapse for representation-induced graphs]
 For a representation-induced cluster graph, the standard one-shot zero-error parameters collapse to fiber counts, so the fixed-length auxiliary-description law is governed exactly by the largest fiber.
 \end{corollary}
-\leanmeta{\LHrng{GPH}{52}{53}}
 
 \begin{proof}
 In a disjoint union of cliques, proper coloring, clique size, and independence counting reduce to choosing or naming one element per component. In this setting, the general graph inequalities collapse to the same fiber-counting law.

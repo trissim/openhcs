@@ -41,19 +41,19 @@ An encoding system has \emph{structural integrity} for fact $F$ if every reachab
 A reachable \emph{integrity violation} is a reachable incoherent state for fact $F$.
 \end{definition}
 
+\leanmetapending{\LH{COH1}}
 \begin{proposition}[Unit Independent Rate Guarantees Coherence]\label{thm:dof-one-coherence}
 If the independent rate is $1$, then all reachable states are coherent.
 \end{proposition}
-\leanmeta{\LH{COH1}}
 
 \begin{proof}
 At independent rate $1$, exactly one location is independent and all remaining locations are derived from it. Derived locations cannot diverge from their source, so disagreement is unreachable.
 \end{proof}
 
+\leanmetapending{\LH{COH2}}
 \begin{proposition}[Independent Rate Above One Permits Incoherence]\label{thm:dof-gt-one-incoherence}
 If the independent rate exceeds $1$, then incoherent states are reachable.
 \end{proposition}
-\leanmeta{\LH{COH2}}
 
 \begin{proof}
 With at least two independent locations, admissible edits can assign different values to those locations, producing a reachable disagreement state.
@@ -65,10 +65,10 @@ With at least two independent locations, admissible edits can assign different v
 The \emph{zero-incoherence threshold} is the largest independent rate for which incoherent states are unreachable.
 \end{definition}
 
+\leanmetapending{\LH{RAT1}, \LHrng{CAP}{2}{3}}
 \begin{corollary}[Threshold Corollary]\label{thm:coherence-capacity}
 For deterministic multi-location encodings, the zero-incoherence threshold equals $1$.
 \end{corollary}
-\leanmeta{\LH{RAT1}, \LHrng{CAP}{2}{3}}
 
 \begin{proof}
 \emph{Achievability.} Suppose $\mathrm{DOF}(C,F)=1$, and let $L_s$ be the unique independent location. By Definition~\ref{def:dof}, every other encoding location is non-independent and is therefore treated in this model as a derived view of $L_s$. By Definition~\ref{def:derived}, updating $L_s$ determines the value of each such derived location without an additional manual edit. Hence all encoding locations agree in every reachable state, so zero incoherence is achieved.
@@ -78,10 +78,10 @@ For deterministic multi-location encodings, the zero-incoherence threshold equal
 Thus zero-error recovery is possible exactly at independent rate $1$, so the zero-incoherence threshold equals $1$.
 \end{proof}
 
+\leanmetapending{\LHrng{COH}{1}{2}}
 \begin{corollary}[Exact Structural-Integrity Threshold]\label{cor:integrity-threshold}
 A deterministic multi-location encoding has structural integrity if and only if its independent rate equals $1$.
 \end{corollary}
-\leanmeta{\LHrng{COH}{1}{2}}
 
 \begin{proof}
 If the independent rate is $1$, Proposition~\ref{thm:dof-one-coherence} shows that all reachable states are coherent, hence Definition~\ref{def:structural-integrity} holds. If the independent rate exceeds $1$, Proposition~\ref{thm:dof-gt-one-incoherence} gives a reachable incoherent state, so structural integrity fails.
@@ -89,10 +89,10 @@ If the independent rate is $1$, Proposition~\ref{thm:dof-one-coherence} shows th
 
 This threshold is an early architectural consequence of the deterministic model. It identifies the unique trivial no-failure corner and, equivalently, the exact structural-integrity regime. Above that boundary, integrity violations are reachable by construction. The deeper theorems of the paper begin once one asks how much finite side information is needed whenever the transcript leaves a nontrivial ambiguity class.
 
+\leanmetapending{\LH{CIA1}}
 \begin{corollary}[Side-Information Lower Bound]\label{thm:side-info}
 If a surviving ambiguity class has size $k$, then exact zero-error resolution requires at least $\log_2 k$ bits of side information.
 \end{corollary}
-\leanmeta{\LH{CIA1}}
 
 \begin{proof}
 Exact resolution of $k$ surviving alternatives requires at least $k$ distinguishable tags, hence at least $\log_2 k$ bits.

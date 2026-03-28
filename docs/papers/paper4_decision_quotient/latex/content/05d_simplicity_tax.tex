@@ -27,6 +27,7 @@ For a model $M$ with native coordinate set $A_M \subseteq \{1,\ldots,n\}$:
 
 The following partition identity makes this precise: any exact simplification that removes relevant coordinates from the central interface must discharge their effect somewhere else in the system.
 
+\leanmetapending{\LH{HD5}, \LH{DQ9}}
 \begin{proposition}[Simplicity-Tax Identity]
 For every finite-coordinate pair $(M,\mathcal{D})$,
 \[
@@ -36,7 +37,6 @@ For every finite-coordinate pair $(M,\mathcal{D})$,
 \]
 \end{proposition}
 
-\leanmeta{\LH{HD5}, \LH{DQ9}.}
 
 \begin{proof}
 Immediate from the partition $R(\mathcal{D}) = (R(\mathcal{D}) \cap A_M) \;\dot\cup\; (R(\mathcal{D}) \setminus A_M)$.
@@ -44,6 +44,7 @@ Immediate from the partition $R(\mathcal{D}) = (R(\mathcal{D}) \cap A_M) \;\dot\
 
 In other words, central simplification changes where exact relevance is handled, not how much exact relevance the deployment must ultimately account for.
 
+\leanmetapending{\LH{HD26}}
 \begin{proposition}[Linear Externalization Under a Per-Site Cost Model]
 If each unresolved relevant coordinate induces one unit of per-site external work, then for $N$ decision sites:
 \[
@@ -51,12 +52,12 @@ If each unresolved relevant coordinate induces one unit of per-site external wor
 \]
 \end{proposition}
 
-\leanmeta{\LH{HD26}.}
 
 \begin{proof}
 Each site pays one unit for each unresolved relevant coordinate, so the total cost is the number of sites times the number of unresolved relevant coordinates.
 \end{proof}
 
+\leanmetapending{\LH{HD4}}
 \begin{theorem}[Amortization Threshold]
 Let $H_{\mathrm{central}}>0$ be one-time centralization cost and $\lambda>0$ the per-site cost coefficient. If $\mathrm{simplicityTax}(M,\mathcal{D})>0$, then for
 \[
@@ -68,17 +69,16 @@ H_{\mathrm{central}} < \lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D}).
 \]
 \end{theorem}
 
-\leanmeta{\LH{HD4}.}
 
 \begin{proof}
 Repeated external handling costs $\lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D})$, while the complete model costs $H_{\mathrm{central}}$ once. Solving the strict inequality $H_{\mathrm{central}} < \lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D})$ for $N$ gives the stated threshold.
 \end{proof}
 
+\leanmetapending{\LH{DQ9}, \LH{HD23}}
 \begin{corollary}[Hardness Conservation]
 Fix a model $M$ and decision problem $\mathcal{D}$. Coordinates in $R(\mathcal{D})\setminus A_M$ are still decision-relevant for exact behavior preservation. Hence any exact deployment must handle them somewhere: by enlarging the central model, by performing local resolution, by demanding extra queries, or by abstaining on some cases. In the hard exact regime, Theorem~\ref{thm:witness-lower-bound-4} and Theorem~\ref{thm:integrity-resource} imply that this burden cannot be discharged for free by a polynomial-budget exact certifier.
 \end{corollary}
 
-\leanmeta{\LH{DQ9}, \LH{HD23}.}
 
 \begin{proof}
 Take any coordinate $i\in R(\mathcal{D})\setminus A_M$. Because $i$ is relevant, there exist witness states whose optimal-action sets differ in a way that cannot be ignored in any exact representation. If a deployment neither models $i$ centrally nor resolves its effect elsewhere, then its exact behavior would factor through the smaller interface $A_M$, making every coordinate outside $A_M$ irrelevant. That contradicts $i\in R(\mathcal{D})$.

@@ -27,6 +27,7 @@ M^\star(u, T) := \max\left\{\sum_{c \in S} \mu(c) : S \subseteq \pi^{-1}(u),\ |S
 This is the maximum source mass recoverable inside fiber $u$ using at most $T$ tag values.
 \end{definition}
 
+\leanmetapending{\LH{FRD1}}
 \begin{theorem}[Fiberwise decomposition]\label{thm:fiberwise-decomposition}
 Let $\mu$ be any finite source distribution and let $T$ be a uniform per-fiber tag budget. Then the global optimum under the fiber-budget constraint is the sum of the fiberwise optima:
 \[
@@ -37,19 +38,18 @@ Moreover, any feasible subset $S$ satisfies
 \mu(S) \le \sum_u M^\star(u, T).
 \]
 \end{theorem}
-\leanmeta{\LH{FRD1}}
 
 \begin{proof}
 Any feasible subset decomposes into its fiber slices, each bounded by its fiberwise optimum. Summing over fibers gives the upper bound. Conversely, choosing a mass-maximizing subset of size at most $T$ independently in each fiber yields a globally feasible subset attaining equality.
 \end{proof}
 
+\leanmetapending{\LH{FRD2}}
 \begin{corollary}[Fiberwise attainment]\label{cor:fiberwise-attainment}
 There exists a globally feasible subset $S^\star$ that attains the decomposition bound:
 \[
 \mu(S^\star) = \sum_u M^\star(u, T).
 \]
 \end{corollary}
-\leanmeta{\LH{FRD2}}
 
 \begin{proof}
 Take $S^\star = \bigcup_u S^\star_u$ where $S^\star_u$ is a maximizing subset in fiber $u$. The union is feasible because each fiber contributes at most $T$ elements, and the mass is the sum of the fiberwise maxima.
@@ -67,6 +67,7 @@ The decomposition is analogous to coding independent sub-sources separately: eac
 
 The fiberwise decomposition theorem reduces the general problem to independent per-fiber optimization. When the source is uniform on a single collision block, this optimization collapses to a simple closed form. The following theorem is therefore a corollary of the structural law above, specialized to the uniform corner.
 
+\leanmetapending{\LH{GPH30}}
 \begin{theorem}[Semantic identity rate-distortion theorem]\label{thm:semantic-identity-rate-distortion}
 Let $G \subseteq \mathcal{C}$ be a collision block of size $a$, so all classes in $G$ have the same representation profile. Assume the source class $C$ is uniform on $G$. Then the optimal distortion under a fixed-length auxiliary budget of $L$ bits is exactly
 \[
@@ -80,7 +81,6 @@ D = \Pr[\hat C \neq C] \ge 1 - \frac{2^L}{a}.
 \]
 If $2^L \ge a$, then zero distortion is achievable; if $2^L < a$, then the lower bound is tight.
 \end{theorem}
-\leanmeta{\LH{GPH30}}
 
 \begin{proof}
 Fix a realization of all internal randomness used by the scheme. Because every class in $G$ has the same representation profile, the decoder's side information is the same on all classes in $G$; on that block, the decoder can therefore distinguish classes only through the auxiliary outcome. With $L$ bits there are at most $2^L$ outcomes, and for each such outcome the decoder can be correct on at most one class in $G$. Hence, for the fixed randomness, the scheme is correct on at most $2^L$ of the $a$ classes in $G$, so its success probability under the uniform distribution on $G$ is at most $2^L/a$. Averaging over the scheme's randomness preserves the same bound. The distortion lower bound is the complement of the success bound.
@@ -88,18 +88,19 @@ Fix a realization of all internal randomness used by the scheme. Because every c
 If $2^L \ge a$, assign distinct auxiliary outcomes to the classes in $G$ and decode injectively; this gives zero distortion. If $2^L < a$, choose $2^L$ classes in $G$, assign them distinct auxiliary outcomes, and map all remaining classes to arbitrary auxiliary outcomes. Then the decoder is correct on exactly $2^L$ of the $a$ classes, so the success probability is $2^L/a$ and the distortion is exactly $1-2^L/a$. This matches the converse.
 \end{proof}
 
+\leanmetapending{\LH{ZDT1}}
 \begin{corollary}[Zero-error threshold]\label{cor:zero-error-threshold-distortion}
 Under the hypotheses of Theorem~\ref{thm:semantic-identity-rate-distortion}, zero distortion is achievable if and only if
 \[
 L \ge \log_2 a.
 \]
 \end{corollary}
-\leanmeta{\LH{ZDT1}}
 
 \begin{proof}
 By Theorem~\ref{thm:semantic-identity-rate-distortion}, zero distortion is achievable exactly when $D^\star(L)=0$, equivalently when $2^L \ge a$, which is the same as $L \ge \log_2 a$.
 \end{proof}
 
+\leanmetapending{\LH{GPH30}}
 \begin{corollary}[Zero-budget error floor]\label{cor:zero-budget-error-floor}
 If $L=0$ and the source is uniform on a collision block of size $a$, then any scheme relying only on the representation satisfies
 \[
@@ -110,7 +111,6 @@ In particular, if the source is uniform on a worst collision block with $a=A_\pi
 D \ge 1 - \frac{1}{A_\pi}.
 \]
 \end{corollary}
-\leanmeta{\LH{GPH30}}
 
 \begin{proof}
 Set $L=0$ in Theorem~\ref{thm:semantic-identity-rate-distortion}. Since $2^0=1$, the distortion lower bound becomes $1-1/a$. Choosing a worst collision block gives the second statement.
@@ -128,8 +128,9 @@ The exact formula above is stated for the uniform source on a single collision b
 
 The counting-based converses above are combinatorial: they bound distortion in terms of fiber sizes and tag budgets. A complementary family of converses connects distortion to information-theoretic quantities \cite{CoverThomas2006,csiszar2011information,barron1998information}, placing the semantic identity problem inside classical Shannon theory.
 
-The following theorems are mechanized in the RDC series, from \LH{RDC1} through \LH{RDC9}. They apply to any finite source, any observation map, and any tag/decoder pair.
+The following theorems are mechanized in the RDC series. They apply to any finite source, any observation map, and any tag/decoder pair. \leanmeta{\LHrng{RDC}{1}{9}}
 
+\leanmetapending{\LH{RDC1}}
 \begin{theorem}[Fano-style finite converse]\label{thm:fano-converse}
 Let $\mu$ be a finite source on $K$ classes, let $(O, T)$ be the observation and tag alphabet sizes, and let $D$ be the distortion (error probability) of any deterministic decoder. Then
 \[
@@ -137,24 +138,24 @@ H_\mu(C) \le h_b(D) + (1-D) \log(O \cdot T) + D \log(K - 1),
 \]
 where $H_\mu(C)$ is the source entropy and $h_b$ is binary entropy.
 \end{theorem}
-\leanmeta{\LH{RDC1}}
 
 \begin{proof}
 Partition the source into success and failure sets. The success set has cardinality at most $O \cdot T$ (injection into observation/tag pairs), and the failure set has cardinality at most $K-1$. Applying the entropy bound for each partition and combining via the chain rule yields the stated inequality. The mechanization follows the standard Fano argument adapted to the finite budgeted setting.
 \end{proof}
 
+\leanmetapending{\LHrng{RDC}{6}{7}}
 \begin{corollary}[Budget lower bound from distortion]\label{cor:budget-from-error}
 Under the hypotheses of Theorem~\ref{thm:fano-converse}, if $D < 1$ then
 \[
 H_\mu(C) - h_b(D) - D \log(K-1) \le \log(O \cdot T).
 \]
 \end{corollary}
-\leanmeta{\LHrng{RDC}{6}{7}}
 
 \begin{proof}
 Rearrange Theorem~\ref{thm:fano-converse}. The left-hand side is the ``entropy gap'' that must be absorbed by the observation/tag budget.
 \end{proof}
 
+\leanmetapending{\LH{RDC9}}
 \begin{theorem}[Observation-only min-entropy bound]\label{thm:min-entropy-bound}
 For observation-only schemes (no tags, $T=1$), any decoder with error probability at most $\varepsilon < 1$ satisfies
 \[
@@ -162,7 +163,6 @@ H_\infty(\mu) \le -\log(1 - \varepsilon),
 \]
 where $H_\infty(\mu)$ is the min-entropy of the source.
 \end{theorem}
-\leanmeta{\LH{RDC9}}
 
 \begin{proof}
 The success probability is bounded by the maximum atom mass times the budget (unity, for observation-only). Rearranging and taking logarithms gives the min-entropy bound.
