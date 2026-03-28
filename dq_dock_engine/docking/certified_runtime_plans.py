@@ -516,6 +516,21 @@ class CertifiedRigidSeedFamilyPlan:
 
     def __post_init__(self) -> None:
         _ensure_handle_provenance(self.theorem_handles, owner=self.region_kind.value)
+        required_runtime_bridge_handles = {
+            "CSC93",
+            "CSC94",
+            "CSC95",
+            "CSC96",
+            "CSC97",
+        }
+        missing_runtime_bridge_handles = tuple(
+            sorted(required_runtime_bridge_handles - set(self.theorem_handles))
+        )
+        if missing_runtime_bridge_handles:
+            raise ValueError(
+                "rigid seed family plans must carry closed basis/runtime bridge handles "
+                f"{missing_runtime_bridge_handles}"
+            )
         for field_name, value in (
             ("pose_count", self.pose_count),
             ("adequate_pose_count", self.adequate_pose_count),
@@ -679,6 +694,22 @@ class CertifiedRigidSeedFamilyPlan:
             rigid_dictionary_bridge_obstructions.append(
                 "translation cover radius over the enclosing box is unavailable for this region kind"
             )
+        required_runtime_bridge_handles = {
+            "CSC93",
+            "CSC94",
+            "CSC95",
+            "CSC96",
+            "CSC97",
+        }
+        missing_runtime_bridge_handles = tuple(
+            sorted(required_runtime_bridge_handles - set(self.theorem_handles))
+        )
+        if missing_runtime_bridge_handles:
+            rigid_dictionary_bridge_obstructions.append(
+                "rigid seed runtime bridge handles missing from theorem provenance: "
+                + ", ".join(missing_runtime_bridge_handles)
+            )
+        rigid_dictionary_bridge_ready = len(rigid_dictionary_bridge_obstructions) == 0
 
         return {
             "region_kind": self.region_kind.value,
@@ -730,7 +761,11 @@ class CertifiedRigidSeedFamilyPlan:
                 "CSC90",
                 "CSC91",
                 "CSC92",
+                "CSC93",
+                "CSC94",
+                "CSC95",
             ),
+            "rotation_support_bridge_theorem_handles": ("CSC97",),
             "rotation_winner_bridge_theorem_handles": (
                 "CSC67",
                 "CSC69",
@@ -739,6 +774,7 @@ class CertifiedRigidSeedFamilyPlan:
                 "CSC75",
                 "CSC77",
                 "CSC83",
+                "CSC96",
             ),
             "quaternion_signed_distance_witness_radius": 1.0,
             "actual_translation_points": tuple(
@@ -754,7 +790,9 @@ class CertifiedRigidSeedFamilyPlan:
             "csc61_csc62_obstructions": tuple(obstructions),
             "translation_full_lattice": self.translation_full_lattice,
             "target_translation_cover_radius": self.target_translation_cover_radius,
-            "csc63_csc77_ready": len(rigid_dictionary_bridge_obstructions) == 0,
+            "csc63_csc97_ready": rigid_dictionary_bridge_ready,
+            "csc63_csc77_ready": rigid_dictionary_bridge_ready,
+            "csc63_csc97_obstructions": tuple(rigid_dictionary_bridge_obstructions),
             "csc63_csc77_obstructions": tuple(rigid_dictionary_bridge_obstructions),
             "theorem_handles": self.theorem_handles,
             "witness_handles": self.witness_handles,

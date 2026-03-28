@@ -234,7 +234,8 @@ As of the current debugging pass, the most important confirmed facts are:
     inside the certified binding-site sphere. This is not a heuristic penalty;
     it is enforcing the known-pocket search domain.
 
-10. The current probe-phase reduction is blocked by a real proof/runtime gap.
+10. The current probe-phase reduction is blocked by an observed-certificate gap,
+    not by the rigid seed runtime bridge theorem.
 
     Even on near-native ``1hk4`` seeds, the observed SE(3) refinement certificate
     can still be ``None`` because the local SE(3) Hessian is not positive-definite
@@ -244,9 +245,10 @@ As of the current debugging pass, the most important confirmed facts are:
 
 11. ``n_poses_override`` exists again on the benchmark CLI.
 
-    This is explicitly for controlled debugging runs while the theorem-backed
-    seed-budget reduction path is still incomplete. It should not be treated as a
-    conceptual user control for certified mode.
+    This is explicitly for controlled debugging runs while the observed
+    Hessian/spectral certificate path for probe-time seed-budget reduction is
+    still incomplete. It should not be treated as a conceptual user control for
+    certified mode.
 
 How To Diagnose A Failure Quickly
 ---------------------------------

@@ -510,6 +510,11 @@ def rigid_seed_runtime_bridge_theorem_handles() -> tuple[str, ...]:
         CSC90,
         CSC91,
         CSC92,
+        CSC93,
+        CSC94,
+        CSC95,
+        CSC96,
+        CSC97,
     )
 
 

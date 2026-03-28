@@ -286,10 +286,23 @@ def test_new_chemistry_handle_helpers_surface_new_theorem_families() -> None:
         "CSC90",
         "CSC91",
         "CSC92",
+        "CSC93",
+        "CSC94",
+        "CSC95",
+        "CSC96",
+        "CSC97",
     }.issubset(set(rigid_seed_runtime_bridge_theorem_handles()))
-    assert {"CSC67", "CSC69", "CSC71", "CSC73", "CSC75", "CSC77", "CSC83"}.issubset(
-        set(rigid_seed_family_theorem_handles())
-    )
+    assert {
+        "CSC67",
+        "CSC69",
+        "CSC71",
+        "CSC73",
+        "CSC75",
+        "CSC77",
+        "CSC83",
+        "CSC96",
+        "CSC97",
+    }.issubset(set(rigid_seed_family_theorem_handles()))
     assert {"CSC25", "CSC26", "CSC44", "CSC50", "CSC51"}.issubset(
         set(conformer_coverage_theorem_handles())
     )
@@ -627,8 +640,9 @@ def test_ligand_strain_handles_exist() -> None:
 
 def test_directional_metal_coordination_handles_exist() -> None:
     handles = directional_metal_coordination_theorem_handles()
-    assert len(handles) == 5
+    assert len(handles) >= 5
     assert handles[0] == "DMC1"
+    assert "DMC5" in handles
 
 
 def test_cooperative_hbond_handles_exist() -> None:

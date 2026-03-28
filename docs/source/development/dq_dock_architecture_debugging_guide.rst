@@ -716,6 +716,9 @@ As of the current debugging pass:
 
 - known-conformer ``1hk4`` succeeds at about ``0.23 A`` raw RMSD when run with
   ``--n-poses-override 16384``
+- the Lean-backed rigid runtime bridge for the runtime seed shape
+  (translation subset x ``quaternionDictionary8`` with closed basis0/1/2/3 arm
+  bounds) is now wired through runtime theorem provenance handles
 - certified local refinement is cut from ``16384`` poses to ``17`` by a
   theorem-backed rigid future-improvement bound
 - the observed probe certificate can now exist on ``1hk4``, but it is still too

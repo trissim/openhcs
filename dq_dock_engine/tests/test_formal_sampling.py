@@ -128,6 +128,7 @@ def test_rigid_seed_family_plan_debug_summary_exposes_quaternion_bridge_handles(
         tuple[str, ...], summary["rotation_winner_bridge_theorem_handles"]
     )
 
+    assert summary["csc63_csc97_ready"] is True
     assert summary["csc63_csc77_ready"] is True
     assert summary["quaternion_signed_distance_witness_radius"] == pytest.approx(1.0)
     assert {
@@ -150,9 +151,22 @@ def test_rigid_seed_family_plan_debug_summary_exposes_quaternion_bridge_handles(
         "CSC90",
         "CSC91",
         "CSC92",
+        "CSC93",
+        "CSC94",
+        "CSC95",
     }.issubset(set(rotation_dictionary_handles))
-    assert {"CSC67", "CSC69", "CSC71", "CSC73", "CSC75", "CSC77", "CSC83"}.issubset(
-        set(rotation_winner_handles)
+    assert {
+        "CSC67",
+        "CSC69",
+        "CSC71",
+        "CSC73",
+        "CSC75",
+        "CSC77",
+        "CSC83",
+        "CSC96",
+    }.issubset(set(rotation_winner_handles))
+    assert "CSC97" in cast(
+        tuple[str, ...], summary["rotation_support_bridge_theorem_handles"]
     )
 
 
@@ -175,7 +189,8 @@ def test_binding_site_rigid_seed_plan_debug_summary_reports_bridge_obstruction()
         certified_binding_site=binding_site,
     )
     summary = plan.debug_summary()
-    bridge_obstructions = cast(tuple[str, ...], summary["csc63_csc77_obstructions"])
+    bridge_obstructions = cast(tuple[str, ...], summary["csc63_csc97_obstructions"])
 
+    assert summary["csc63_csc97_ready"] is False
     assert summary["csc63_csc77_ready"] is False
     assert len(bridge_obstructions) > 0

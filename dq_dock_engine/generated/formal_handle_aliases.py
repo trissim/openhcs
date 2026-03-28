@@ -1152,6 +1152,11 @@ CSC89 = "CSC89"
 CSC90 = "CSC90"
 CSC91 = "CSC91"
 CSC92 = "CSC92"
+CSC93 = "CSC93"
+CSC94 = "CSC94"
+CSC95 = "CSC95"
+CSC96 = "CSC96"
+CSC97 = "CSC97"
 BCRC1 = "BCRC1"
 BCRC2 = "BCRC2"
 BCRC3 = "BCRC3"
@@ -2359,6 +2364,11 @@ __all__ = [
     "CSC90",
     "CSC91",
     "CSC92",
+    "CSC93",
+    "CSC94",
+    "CSC95",
+    "CSC96",
+    "CSC97",
     "BCRC1",
     "BCRC2",
     "BCRC3",
