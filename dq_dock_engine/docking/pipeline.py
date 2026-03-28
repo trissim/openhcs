@@ -390,7 +390,7 @@ def _winner_ambiguity_size(
         return None
     ambiguity_mask = np.asarray(
         jax.device_get(
-            ambiguity_band_mask(jnp.asarray(scores), k=1, epsilon=error_bound)
+            ambiguity_band_mask(jnp.asarray(scores), k=1, epsilon=2.0 * error_bound)
         ),
         dtype=bool,
     )
@@ -405,7 +405,7 @@ def _winner_ambiguity_indices(
         return ()
     ambiguity_mask = np.asarray(
         jax.device_get(
-            ambiguity_band_mask(jnp.asarray(scores), k=1, epsilon=error_bound)
+            ambiguity_band_mask(jnp.asarray(scores), k=1, epsilon=2.0 * error_bound)
         ),
         dtype=bool,
     )
@@ -738,6 +738,33 @@ def _has_conformer_energy_ambiguity_set_certificate_chain(
     )
 
 
+def _has_rigid_energy_ambiguity_set_certificate_chain(
+    proof_plan: CertifiedReturnedPoseProofPlan,
+) -> bool:
+    witness = proof_plan.conformer_witness
+    if not isinstance(witness, ActiveRigidEnergyGapWitness):
+        return False
+    if proof_plan.proof_case != ReturnedPoseProofCase.CERTIFIED_ENERGY_AMBIGUITY_SET:
+        return False
+    if proof_plan.total_gap_budget is None:
+        return False
+    if proof_plan.total_gap_budget > witness.certified_energy_gap + proof_plan.ambiguity_band_width:
+        return False
+    if len(proof_plan.support_indices) <= 1:
+        return False
+    if not _contains_theorem_handle_group(
+        proof_plan.theorem_handles,
+        ambiguity_output_energy_contract_theorem_handles(),
+    ):
+        return False
+    if witness.selection_gap_budget > 0.0:
+        return _contains_theorem_handle_group(
+            proof_plan.theorem_handles,
+            enriched_support_selection_transfer_theorem_handles(),
+        )
+    return True
+
+
 def _missing_conformer_proof_requirements(
     *,
     conformer_coverage_plan: CertifiedConformerCoveragePlan | None,
@@ -923,22 +950,13 @@ def _derive_returned_pose_proof_plan(
         ReturnedPoseContractDecision.DOWNGRADED_NO_REFINEMENT_CERTIFICATE
     )
     note = None
-    if rigid_ambiguity_detected:
-        proof_case = ReturnedPoseProofCase.RIGID_AMBIGUITY
-        downgrade_decision = None
-        note = "rigid-equivalence ambiguity prevents a unique returned-pose guarantee"
-    elif ambiguity_set_certified:
+    if ambiguity_set_certified:
         proof_case = ReturnedPoseProofCase.CERTIFIED_AMBIGUITY_SET
         downgrade_decision = None
         note = (
             "returned pose belongs to a certified ambiguity set whose members all satisfy "
             "the requested target_rmsd contract"
         )
-    elif not winner_singleton:
-        downgrade_decision = (
-            ReturnedPoseContractDecision.DOWNGRADED_NO_FINAL_SCORE_CERTIFICATE
-        )
-        note = "final exact winner does not have a certified singleton top-1 gap"
     elif not do_conf and total_gap_budget is not None:
         proof_case = ReturnedPoseProofCase.CERTIFIED_SINGLETON
         downgrade_decision = None
@@ -950,6 +968,30 @@ def _derive_returned_pose_proof_plan(
             "returned rigid pose is certified to lie within the rigid-cover energy gap budget "
             f"({cast(float, total_gap_budget):.3f} kcal/mol) of the optimal covered rigid pose"
         )
+    elif not do_conf and rigid_energy_gap_witness is not None and not winner_singleton:
+        if final_error_bound is not None:
+            proof_case = ReturnedPoseProofCase.CERTIFIED_ENERGY_AMBIGUITY_SET
+            total_gap_budget = rigid_energy_gap_witness.certified_energy_gap + final_error_bound
+            downgrade_decision = None
+            note = (
+                "every pose in the returned rigid ambiguity band is certified to lie within the combined "
+                f"cover-plus-band energy gap budget ({cast(float, total_gap_budget):.3f} kcal/mol) "
+                "of the optimal covered rigid pose"
+            )
+        else:
+            downgrade_decision = (
+                ReturnedPoseContractDecision.DOWNGRADED_NO_FINAL_SCORE_CERTIFICATE
+            )
+            note = "final exact rigid ambiguity band lacks an error bound to certify its width"
+    elif rigid_ambiguity_detected:
+        proof_case = ReturnedPoseProofCase.RIGID_AMBIGUITY
+        downgrade_decision = None
+        note = "rigid-equivalence ambiguity prevents a unique returned-pose guarantee"
+    elif not winner_singleton:
+        downgrade_decision = (
+            ReturnedPoseContractDecision.DOWNGRADED_NO_FINAL_SCORE_CERTIFICATE
+        )
+        note = "final exact winner does not have a certified singleton top-1 gap"
     elif total_gap_budget is None:
         downgrade_decision = (
             ReturnedPoseContractDecision.DOWNGRADED_NO_REFINEMENT_CERTIFICATE
@@ -1056,7 +1098,10 @@ def _derive_returned_pose_proof_plan(
     if (
         not do_conf
         and rigid_energy_gap_witness is not None
-        and proof_case == ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON
+        and proof_case in (
+            ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON,
+            ReturnedPoseProofCase.CERTIFIED_ENERGY_AMBIGUITY_SET,
+        )
     ):
         conformer_witness = rigid_energy_gap_witness
     proof_case_handles = ()
@@ -1117,9 +1162,19 @@ def _build_returned_pose_certification(
         proof_plan.decision
         == ReturnedPoseContractDecision.CERTIFIED_AMBIGUITY_SET_ENERGY_GAP
     ):
-        if not _has_conformer_energy_ambiguity_set_certificate_chain(proof_plan):
+        if isinstance(proof_plan.conformer_witness, ActiveConformerEnergyGapWitness):
+            if not _has_conformer_energy_ambiguity_set_certificate_chain(proof_plan):
+                raise ValueError(
+                    "Certified energy ambiguity-set proof plan lacks a complete conformer certificate chain"
+                )
+        elif isinstance(proof_plan.conformer_witness, ActiveRigidEnergyGapWitness):
+            if not _has_rigid_energy_ambiguity_set_certificate_chain(proof_plan):
+                raise ValueError(
+                    "Certified energy ambiguity-set proof plan lacks a complete rigid certificate chain"
+                )
+        else:
             raise ValueError(
-                "Certified energy ambiguity-set proof plan lacks a complete conformer certificate chain"
+                "Certified energy ambiguity-set proof plan has invalid witness type"
             )
     elif (
         proof_plan.decision == ReturnedPoseContractDecision.CERTIFIED_TARGET_RMSD

@@ -1435,9 +1435,12 @@ class CertifiedReturnedPoseProofPlan:
                 raise ValueError(
                     "Certified energy ambiguity-set proof plans require total_gap_budget"
                 )
-            if not isinstance(self.conformer_witness, ActiveConformerEnergyGapWitness):
+            if not isinstance(
+                self.conformer_witness,
+                (ActiveConformerEnergyGapWitness, ActiveRigidEnergyGapWitness),
+            ):
                 raise ValueError(
-                    "Certified energy ambiguity-set proof plans require an active conformer energy witness"
+                    "Certified energy ambiguity-set proof plans require an active energy-gap witness"
                 )
             if self.downgrade_decision is not None:
                 raise ValueError(

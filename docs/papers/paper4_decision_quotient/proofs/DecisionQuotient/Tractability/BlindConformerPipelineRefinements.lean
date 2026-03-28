@@ -12,6 +12,7 @@
 -/
 
 import DecisionQuotient.Tractability.BlindConformerPipelineOptimality
+import DecisionQuotient.Tractability.ConformerSupportCoverage
 import Mathlib.Data.Nat.Basic
 import Mathlib.Tactic
 
@@ -20,6 +21,7 @@ namespace Tractability
 namespace BlindConformerPipelineRefinements
 
 open BlindConformerPipelineOptimality
+open ConformerSupportCoverage
 
 variable {P : Type*} [Fintype P] [DecidableEq P]
 
@@ -128,12 +130,12 @@ theorem support_argmin_is_global_of_top1_member
     (hArgmin : ∀ b ∈ support, exactEnergy a ≤ exactEnergy b)
     (hwTop : w ∈ energyTopK exactEnergy 1)
     (hwSupport : w ∈ support) :
-    IsOptimal exactEnergy a := by
+    IsOptimal (fun x => -exactEnergy x) a := by
   intro b
   have hA : exactEnergy a ≤ exactEnergy w := hArgmin w hwSupport
   have hW : exactEnergy w ≤ exactEnergy b :=
     top1_energy_le_witness exactEnergy b hwTop
-  exact le_trans hA hW
+  linarith
 
 /-- If a support set contains the entire exact top-1 set and `a` is an exact
     argmin on that support, then `a` is globally exact-optimal. -/
@@ -145,13 +147,20 @@ theorem support_argmin_is_global_of_top1_subset
     (ha : a ∈ support)
     (hArgmin : ∀ b ∈ support, exactEnergy a ≤ exactEnergy b)
     (hTopSubset : energyTopK exactEnergy 1 ⊆ support) :
-    IsOptimal exactEnergy a := by
+    IsOptimal (fun x => -exactEnergy x) a := by
   have hTopNonempty : (energyTopK exactEnergy 1).Nonempty := by
     classical
-    have hFinTop : (FiniteTopK.topKSet (fun x => - exactEnergy x) 1).Nonempty := by
-      simpa [FiniteTopK.topKSet, FiniteTopK.topKWithTies, strictLowerCount, energyTopK] using
-        (FiniteTopK.topKSet_nonempty (u := fun x => - exactEnergy x) (k := 1) (by omega))
-    simpa [energyTopK, strictLowerCount] using hFinTop
+    have hFin := FiniteTopK.topKSet_nonempty (u := fun x => - exactEnergy x) (k := 1) (by omega)
+    rw [FiniteTopK.topKSet, FiniteTopK.topKWithTies] at hFin
+    have heq : ∀ x, strictLowerCount exactEnergy x = FiniteTopK.strictBetterCount (fun q => -exactEnergy q) x := by
+      intro x
+      unfold strictLowerCount FiniteTopK.strictBetterCount
+      apply congrArg
+      apply Finset.filter_congr
+      intro y _
+      exact ⟨fun h => by linarith, fun h => by linarith⟩
+    simp only [energyTopK, heq]
+    exact hFin
   rcases hTopNonempty with ⟨w, hwTop⟩
   have hwSupport : w ∈ support := hTopSubset hwTop
   exact support_argmin_is_global_of_top1_member exactEnergy support ha hArgmin hwTop hwSupport
@@ -178,7 +187,7 @@ theorem support_strict_argmin_is_exact_singleton_of_top1_subset
       have hTopLe : exactEnergy p ≤ exactEnergy winner := top1_energy_le_witness exactEnergy winner hp
       exact False.elim ((not_lt_of_ge hTopLe) hStrictPW)
   · intro hp
-    have hWinnerGlobal : IsOptimal exactEnergy winner :=
+    have hWinnerGlobal : IsOptimal (fun x => -exactEnergy x) winner :=
       support_argmin_is_global_of_top1_subset exactEnergy support hWinnerMem
         (fun z hz => by
           by_cases hEq : z = winner
@@ -188,11 +197,21 @@ theorem support_strict_argmin_is_exact_singleton_of_top1_subset
     have hWinnerTop : winner ∈ energyTopK exactEnergy 1 := by
       classical
       have hFinTop : winner ∈ FiniteTopK.topKSet (fun x => - exactEnergy x) 1 :=
-        FiniteTopK.optimal_mem_topKSet_one (u := fun x => - exactEnergy x) (by
-          intro z
-          simpa using hWinnerGlobal z)
-      simpa [FiniteTopK.topKSet, FiniteTopK.topKWithTies, strictLowerCount, energyTopK] using hFinTop
-    simpa using hWinnerTop
+        optimal_mem_topKSet_one (u := fun x => - exactEnergy x) hWinnerGlobal
+      rw [FiniteTopK.mem_topKSet_iff] at hFinTop
+      simp only [energyTopK]
+      simp only [Finset.mem_filter, Finset.mem_univ, true_and]
+      have heq : FiniteTopK.strictBetterCount (fun q => -exactEnergy q) winner =
+                 ((Finset.univ : Finset P).filter fun q => exactEnergy q < exactEnergy winner).card := by
+        unfold FiniteTopK.strictBetterCount
+        apply congrArg
+        apply Finset.filter_congr
+        intro y _
+        exact ⟨fun h => by linarith, fun h => by linarith⟩
+      rwa [heq] at hFinTop
+    have hEq : p = winner := Finset.mem_singleton.mp hp
+    subst hEq
+    exact hWinnerTop
 
 /-- If a pose is the exact argmin over the canonical omitted-attractive support set
     built from a base-score witness, then it is globally exact-optimal. -/
@@ -205,7 +224,7 @@ theorem canonicalRetain_argmin_is_global_of_omittedAttractiveLowerBound_and_base
     (hwTop : w ∈ energyTopK exactEnergy 1)
     (hLower : ∀ p, baseScore p - omittedBound p ≤ exactEnergy p)
     (hWitness : exactEnergy w ≤ baseScore w) :
-    IsOptimal exactEnergy a := by
+    IsOptimal (fun x => -exactEnergy x) a := by
   have hTopSubset :=
     top1_subset_canonicalRetain_of_omittedAttractiveLowerBound_and_baseWitness
       baseScore exactEnergy omittedBound w hLower hWitness
@@ -227,7 +246,7 @@ theorem canonicalRetain_argmin_is_global_of_omittedAttractiveLowerBound_and_base
       exactEnergy a ≤ exactEnergy b)
     (hLower : ∀ p, baseScore p - omittedBound p ≤ exactEnergy p)
     (hWitness : exactEnergy w ≤ baseScore w) :
-    IsOptimal exactEnergy a := by
+    IsOptimal (fun x => -exactEnergy x) a := by
   have hTopSubset :=
     top1_subset_canonicalRetain_of_omittedAttractiveLowerBound_and_baseWitness
       baseScore exactEnergy omittedBound w hLower hWitness
@@ -288,7 +307,13 @@ theorem omittedAttractive_support_argmin_is_patched_global_argmin_of_baseWitness
     exactEnergy
     (canonicalRetain (fun p => baseScore p - omittedBound p) (baseScore w))
     (baseScore w)
-    hWinnerMem hWinnerBest hWitness
+    hWinnerMem hWinnerBest (by
+      have hwSupport : w ∈ canonicalRetain (fun p => baseScore p - omittedBound p) (baseScore w) := by
+        simp [canonicalRetain]
+        linarith [hLower w, hWitness]
+      have h1 : exactEnergy winner ≤ exactEnergy w := hWinnerBest w hwSupport
+      linarith
+    )
 
 /-- Runtime-facing patched-support theorem: if `winner` is the exact argmin on the
     omitted-attractive canonical support built from a base witness threshold, then
@@ -311,11 +336,12 @@ theorem omittedAttractive_support_argmin_is_patched_global_argmin_of_baseWitness
       patchedSupportEnergy
         (canonicalRetain (fun p => baseScore p - omittedBound p) (baseScore w))
         exactEnergy (baseScore w) z := by
-  have hGlobal : IsOptimal exactEnergy winner :=
+  have hGlobal : IsOptimal (fun x => -exactEnergy x) winner :=
     canonicalRetain_argmin_is_global_of_omittedAttractiveLowerBound_and_baseWitness_subset
       baseScore exactEnergy omittedBound hWinnerMem hWinnerBest hLower hWitness
   have hFallback : exactEnergy winner ≤ baseScore w := by
-    exact le_trans (hGlobal w) hWitness
+    have h : -exactEnergy w ≤ -exactEnergy winner := hGlobal w
+    linarith
   exact support_argmin_is_patched_global_argmin
     exactEnergy
     (canonicalRetain (fun p => baseScore p - omittedBound p) (baseScore w))
@@ -345,15 +371,14 @@ theorem patchedSupportEnergy_singleton_of_strict_support_argmin
     · simp [patchedSupportEnergy, hWinnerMem, hzSupport]
       exact hFallback
   · intro p hp
-    rw [energyTopK] at hp ⊢
-    simp only [Finset.mem_filter, Finset.mem_univ, true_and] at hp ⊢
+    simp only [energyTopK] at hp
+    simp only [Finset.mem_filter, Finset.mem_univ, true_and] at hp
     have hpCount : strictLowerCount (patchedSupportEnergy support exactEnergy fallback) p < 1 := hp
     by_cases hpSupport : p ∈ support
     · exact hpSupport
-    · have hOutsideLower : exactEnergy winner < patchedSupportEnergy support exactEnergy fallback p := by
-        simp [patchedSupportEnergy, hpSupport, hFallback]
-      have hmem : winner ∈ (Finset.univ : Finset P).filter fun q => patchedSupportEnergy support exactEnergy fallback q < patchedSupportEnergy support exactEnergy fallback p := by
-        simp [patchedSupportEnergy, hWinnerMem, hpSupport, hOutsideLower]
+    · have hmem : winner ∈ (Finset.univ : Finset P).filter fun q => patchedSupportEnergy support exactEnergy fallback q < patchedSupportEnergy support exactEnergy fallback p := by
+        simp [patchedSupportEnergy, hWinnerMem, hpSupport]
+        exact hFallback
       have hcardPos : 0 < ((Finset.univ : Finset P).filter fun q => patchedSupportEnergy support exactEnergy fallback q < patchedSupportEnergy support exactEnergy fallback p).card := by
         exact Finset.card_pos.mpr ⟨winner, hmem⟩
       have : ¬ strictLowerCount (patchedSupportEnergy support exactEnergy fallback) p < 1 := by
@@ -376,8 +401,7 @@ theorem energyTopK_subset_patchedSupportEnergy_topK
   intro p hp
   have hpSupport : p ∈ support := hSupport hp
   have hpTau : exactEnergy p ≤ τ := hCover hp
-  rw [energyTopK]
-  rw [energyTopK] at hp
+  simp only [energyTopK] at hp ⊢
   simp only [Finset.mem_filter, Finset.mem_univ, true_and] at hp ⊢
   have hCount : strictLowerCount exactEnergy p < k := hp
   have hCountMono :
@@ -395,7 +419,7 @@ theorem energyTopK_subset_patchedSupportEnergy_topK
         simp [patchedSupportEnergy, hpSupport]
       rw [hPatchedQ, hPatchedP] at hq
       have : ¬ fallback < exactEnergy p := by
-        exact not_lt_of_ge (le_trans hFallback hpTau)
+        exact not_lt_of_ge (le_trans hpTau hFallback)
       exact False.elim (this hq)
   exact lt_of_le_of_lt hCountMono hCount
 

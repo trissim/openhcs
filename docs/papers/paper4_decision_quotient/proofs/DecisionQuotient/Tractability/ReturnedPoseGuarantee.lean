@@ -23,6 +23,7 @@ namespace Tractability
 namespace ReturnedPoseGuarantee
 
 open ConformerSupportCoverage
+open BlindConformerPipelineOptimality
 open BlindConformerPipelineRefinements
 open EnergyRMSDConvergence
 open FiniteTopK
@@ -278,6 +279,7 @@ theorem returned_choice_of_exact_singleton_winner_of_cover_yields_rmsd_target
 theorem returned_choice_of_patched_omitted_support_singleton_winner_of_cover_yields_rmsd_target
     {n : ℕ} [DecidableEq (CoordSet n)]
     (coords : A → CoordSet n)
+    (coordEnergy : CoordSet n → ℝ)
     (baseScore exactEnergy omittedBound : A → ℝ)
     (xStar : CoordSet n)
     (winner witness : A)
@@ -292,27 +294,39 @@ theorem returned_choice_of_patched_omitted_support_singleton_winner_of_cover_yie
     (hL : 0 ≤ L)
     (hCover : RMSDSupportCovers ((Finset.univ : Finset A).image coords) εCover)
     (hεCover : 0 ≤ εCover)
-    (hOpt : IsOptimal (fun x => -coordEnergy x) xStar)
+    (hOpt : @IsOptimal (CoordSet n) (fun x => -coordEnergy x) xStar)
     (hLip : RMSDLipschitzEnergy coordEnergy L)
     (basin : CertifiedQuadraticBasin coordEnergy xStar)
     (hn : 0 < n)
     (hεTarget : 0 ≤ epsTarget)
-    (hGapBudget : L * εCover ≤ targetEnergyGap basin.μ n epsTarget) :
+    (hGapBudget : L * εCover ≤ targetEnergyGap basin.μ n epsTarget)
     (hFallback : exactEnergy winner < fallback) :
     let support := canonicalRetain (fun p => baseScore p - omittedBound p) (baseScore witness)
     let runtimeEnergy := patchedSupportEnergy support exactEnergy fallback
     let hSingleton : topKSet (fun a => -runtimeEnergy a) 1 = ({winner} : Finset A) := by
-      simpa [runtimeEnergy, energyTopK, support] using
-        patchedSupportEnergy_singleton_of_strict_support_argmin
-          exactEnergy support winner fallback
-          hWinnerMem hWinnerStrict
-          (top1_subset_canonicalRetain_of_omittedAttractiveLowerBound_and_baseWitness
-            baseScore exactEnergy omittedBound witness hLower hWitness)
-          hFallback
+      have hBase := patchedSupportEnergy_singleton_of_strict_support_argmin
+        exactEnergy support winner fallback
+        hWinnerMem hWinnerStrict
+        (top1_subset_canonicalRetain_of_omittedAttractiveLowerBound_and_baseWitness
+          baseScore exactEnergy omittedBound witness hLower hWitness)
+        hFallback
+      ext p
+      rw [Finset.mem_singleton]
+      have hpBase := Finset.ext_iff.mp hBase p
+      simp only [energyTopK, Finset.mem_filter, Finset.mem_univ, true_and, Finset.mem_singleton] at hpBase
+      have hEqCounts : strictLowerCount runtimeEnergy p = strictBetterCount (fun q => -runtimeEnergy q) p := by
+        unfold strictLowerCount strictBetterCount
+        congr 1
+        ext q
+        simp
+      have hpTop : p ∈ topKSet (fun a => -runtimeEnergy a) 1 ↔ strictBetterCount (fun q => -runtimeEnergy q) p < 1 :=
+        mem_topKSet_iff (fun a => -runtimeEnergy a) 1 p
+      rw [hpTop, <-hEqCounts]
+      exact hpBase
     rmsd ((coherentOptimizerWitness_of_exact_singleton_top1 (fun a => -runtimeEnergy a) winner hSingleton).belief.selection.choice |> coords) xStar ≤ epsTarget := by
   let support := canonicalRetain (fun p => baseScore p - omittedBound p) (baseScore witness)
-  let runtimeEnergy := patchedSupportEnergy support exactEnergy (baseScore witness)
-  have hWinnerBestExact : IsOptimal exactEnergy winner :=
+  let runtimeEnergy := patchedSupportEnergy support exactEnergy fallback
+  have hWinnerBestExact : IsOptimal (fun a => -exactEnergy a) winner :=
     canonicalRetain_argmin_is_global_of_omittedAttractiveLowerBound_and_baseWitness_subset
       baseScore exactEnergy omittedBound hWinnerMem
       (fun z hz => by
@@ -336,13 +350,25 @@ theorem returned_choice_of_patched_omitted_support_singleton_winner_of_cover_yie
       L εCover epsTarget hL hCover hεCover hOpt hLip hWinnerMemImage hWinnerBestCoord
       basin hn hεTarget hGapBudget
   have hSingleton : topKSet (fun a => -runtimeEnergy a) 1 = ({winner} : Finset A) := by
-    simpa [runtimeEnergy, energyTopK, support] using
-      patchedSupportEnergy_singleton_of_strict_support_argmin
-        exactEnergy support winner fallback
-        hWinnerMem hWinnerStrict
-        (top1_subset_canonicalRetain_of_omittedAttractiveLowerBound_and_baseWitness
-          baseScore exactEnergy omittedBound witness hLower hWitness)
-        hFallback
+    have hBase := patchedSupportEnergy_singleton_of_strict_support_argmin
+      exactEnergy support winner fallback
+      hWinnerMem hWinnerStrict
+      (top1_subset_canonicalRetain_of_omittedAttractiveLowerBound_and_baseWitness
+        baseScore exactEnergy omittedBound witness hLower hWitness)
+      hFallback
+    ext p
+    rw [Finset.mem_singleton]
+    have hpBase := Finset.ext_iff.mp hBase p
+    simp only [energyTopK, Finset.mem_filter, Finset.mem_univ, true_and, Finset.mem_singleton] at hpBase
+    have hEqCounts : strictLowerCount runtimeEnergy p = strictBetterCount (fun q => -runtimeEnergy q) p := by
+      unfold strictLowerCount strictBetterCount
+      congr 1
+      ext q
+      simp
+    have hpTop : p ∈ topKSet (fun a => -runtimeEnergy a) 1 ↔ strictBetterCount (fun q => -runtimeEnergy q) p < 1 :=
+      mem_topKSet_iff (fun a => -runtimeEnergy a) 1 p
+    rw [hpTop, <-hEqCounts]
+    exact hpBase
   let w := coherentOptimizerWitness_of_exact_singleton_top1 (fun a => -runtimeEnergy a) winner hSingleton
   have hChoiceEq : w.belief.selection.choice = winner := by
     exact (coherentOptimizerWitness_of_exact_singleton_top1_choice
@@ -471,61 +497,6 @@ theorem sampledActionFamily_exact_energy_gap_certified_rigid_choice_of_cover_yie
     (epsTarget := epsTarget)
     hEnergy hApprox hStrict hL hCover hεCover hOpt hLip basin hn hεTarget hGapBudget
 
-/-- Rigid-docking specialization of the non-convex singleton energy-gap
-    contract. If a sampled rigid support RMSD-covers the ambient rigid library and
-    the runtime certifies singleton top-1 identity via an exact/coarse gap margin,
-    then the returned rigid choice has exact energy at most `L * εCover` above the
-    optimal covered rigid pose. This avoids any quadratic-basin hypothesis. -/
-theorem sampledActionFamily_exact_energy_gap_certified_rigid_choice_of_cover_has_energy_gap_le
-    {A : Type u} {S : Type v} [DecidableEq A] [LinearOrder A]
-    (exactDP coarseDP : DecisionProblem A S)
-    (F : SampledDocking.SampledActionFamily A)
-    (s : S)
-    {n : ℕ} [DecidableEq (CoordSet n)]
-    (coords : SampledDocking.SupportedAction F → CoordSet n)
-    (coordEnergy : CoordSet n → ℝ)
-    (xStar : CoordSet n)
-    (aStar : SampledDocking.SupportedAction F)
-    (δ L εCover : ℝ)
-    (hEnergy : ∀ a : SampledDocking.SupportedAction F,
-      (SampledDocking.restrictedDecisionProblem exactDP F).utility a s = coordEnergy (coords a))
-    (hApprox : ∀ x : SampledDocking.SupportedAction F,
-      |(SampledDocking.restrictedDecisionProblem exactDP F).utility x s -
-        (SampledDocking.restrictedDecisionProblem coarseDP F).utility x s| ≤ δ)
-    (hStrict : ∀ b : SampledDocking.SupportedAction F, b ≠ aStar →
-      (SampledDocking.restrictedDecisionProblem coarseDP F).utility aStar s + 2 * δ <
-        (SampledDocking.restrictedDecisionProblem coarseDP F).utility b s)
-    (hL : 0 ≤ L)
-    (hCover : RMSDSupportCovers
-      ((Finset.univ : Finset (SampledDocking.SupportedAction F)).image coords) εCover)
-    (hεCover : 0 ≤ εCover)
-    (hOpt : IsOptimal (fun x => -coordEnergy x) xStar)
-    (hLip : RMSDLipschitzEnergy coordEnergy L) :
-    let hSingleton := RankingPreservation.exact_top1_eq_singleton_of_coarse_energy_gap_margin
-      (fun a : SampledDocking.SupportedAction F =>
-        (SampledDocking.restrictedDecisionProblem exactDP F).utility a s)
-      (fun a : SampledDocking.SupportedAction F =>
-        (SampledDocking.restrictedDecisionProblem coarseDP F).utility a s)
-      aStar δ hApprox hStrict
-    let w := coherentOptimizerWitness_of_exact_singleton_top1
-      (fun a : SampledDocking.SupportedAction F =>
-        -(SampledDocking.restrictedDecisionProblem exactDP F).utility a s)
-      aStar hSingleton
-    coordEnergy (coords w.belief.selection.choice) - coordEnergy xStar ≤ L * εCover := by
-  exact exact_energy_gap_certified_choice_of_cover_has_energy_gap_le
-    (coords := coords)
-    (eExact := fun a : SampledDocking.SupportedAction F =>
-      (SampledDocking.restrictedDecisionProblem exactDP F).utility a s)
-    (eCoarse := fun a : SampledDocking.SupportedAction F =>
-      (SampledDocking.restrictedDecisionProblem coarseDP F).utility a s)
-    (coordEnergy := coordEnergy)
-    (xStar := xStar)
-    (aStar := aStar)
-    (δ := δ)
-    (L := L)
-    (εCover := εCover)
-    hEnergy hApprox hStrict hL hCover hεCover hOpt hLip
-
 /-- Runtime-facing singleton energy certificate for non-convex settings: if an
     exact/coarse energy gap margin certifies singleton top-1 identity `aStar`, and
     the finite runtime family satisfies the conformer coverage assumptions, then
@@ -592,6 +563,61 @@ theorem exact_energy_gap_certified_choice_of_cover_has_energy_gap_le
   exact exact_energy_gap_certified_choice_inherits_property
     (P := fun a => coordEnergy (coords a) - coordEnergy xStar ≤ L * εCover)
     eExact eCoarse aStar δ hApprox hStrict hGap
+
+/-- Rigid-docking specialization of the non-convex singleton energy-gap
+    contract. If a sampled rigid support RMSD-covers the ambient rigid library and
+    the runtime certifies singleton top-1 identity via an exact/coarse gap margin,
+    then the returned rigid choice has exact energy at most `L * εCover` above the
+    optimal covered rigid pose. This avoids any quadratic-basin hypothesis. -/
+theorem sampledActionFamily_exact_energy_gap_certified_rigid_choice_of_cover_has_energy_gap_le
+    {A : Type u} {S : Type v} [DecidableEq A] [LinearOrder A]
+    (exactDP coarseDP : DecisionProblem A S)
+    (F : SampledDocking.SampledActionFamily A)
+    (s : S)
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (coords : SampledDocking.SupportedAction F → CoordSet n)
+    (coordEnergy : CoordSet n → ℝ)
+    (xStar : CoordSet n)
+    (aStar : SampledDocking.SupportedAction F)
+    (δ L εCover : ℝ)
+    (hEnergy : ∀ a : SampledDocking.SupportedAction F,
+      (SampledDocking.restrictedDecisionProblem exactDP F).utility a s = coordEnergy (coords a))
+    (hApprox : ∀ x : SampledDocking.SupportedAction F,
+      |(SampledDocking.restrictedDecisionProblem exactDP F).utility x s -
+        (SampledDocking.restrictedDecisionProblem coarseDP F).utility x s| ≤ δ)
+    (hStrict : ∀ b : SampledDocking.SupportedAction F, b ≠ aStar →
+      (SampledDocking.restrictedDecisionProblem coarseDP F).utility aStar s + 2 * δ <
+        (SampledDocking.restrictedDecisionProblem coarseDP F).utility b s)
+    (hL : 0 ≤ L)
+    (hCover : RMSDSupportCovers
+      ((Finset.univ : Finset (SampledDocking.SupportedAction F)).image coords) εCover)
+    (hεCover : 0 ≤ εCover)
+    (hOpt : IsOptimal (fun x => -coordEnergy x) xStar)
+    (hLip : RMSDLipschitzEnergy coordEnergy L) :
+    let hSingleton := RankingPreservation.exact_top1_eq_singleton_of_coarse_energy_gap_margin
+      (fun a : SampledDocking.SupportedAction F =>
+        (SampledDocking.restrictedDecisionProblem exactDP F).utility a s)
+      (fun a : SampledDocking.SupportedAction F =>
+        (SampledDocking.restrictedDecisionProblem coarseDP F).utility a s)
+      aStar δ hApprox hStrict
+    let w := coherentOptimizerWitness_of_exact_singleton_top1
+      (fun a : SampledDocking.SupportedAction F =>
+        -(SampledDocking.restrictedDecisionProblem exactDP F).utility a s)
+      aStar hSingleton
+    coordEnergy (coords w.belief.selection.choice) - coordEnergy xStar ≤ L * εCover := by
+  exact exact_energy_gap_certified_choice_of_cover_has_energy_gap_le
+    (coords := coords)
+    (eExact := fun a : SampledDocking.SupportedAction F =>
+      (SampledDocking.restrictedDecisionProblem exactDP F).utility a s)
+    (eCoarse := fun a : SampledDocking.SupportedAction F =>
+      (SampledDocking.restrictedDecisionProblem coarseDP F).utility a s)
+    (coordEnergy := coordEnergy)
+    (xStar := xStar)
+    (aStar := aStar)
+    (δ := δ)
+    (L := L)
+    (εCover := εCover)
+    hEnergy hApprox hStrict hL hCover hεCover hOpt hLip
 
 end ReturnedPoseGuarantee
 end Tractability
