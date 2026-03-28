@@ -2154,6 +2154,10 @@ abbrev CHN3 := @Tractability.CooperativeHBondApproximation.cooperative_error_non
 abbrev CHN4 := @Tractability.CooperativeHBondApproximation.pairwise_product_sum_le_of_unit_interval
 -- CHN5: Runtime-shape aggregated cooperative correction bound |α·(Σf)^2| ≤ |α|·(N·B)^2
 abbrev CHN5 := @Tractability.CooperativeHBondApproximation.cooperative_correction_bounded_of_abs_le
+-- CHN6: Cooperative correction bound from per-channel absolute envelopes |α·(Σf)^2| ≤ |α|·(ΣB)^2
+abbrev CHN6 := @Tractability.CooperativeHBondApproximation.cooperative_correction_bounded_of_abs_le_sum_bounds
+-- CHN7: Support-specific cooperative correction bound from coarse support envelopes plus certified discrepancies
+abbrev CHN7 := @Tractability.CooperativeHBondApproximation.cooperative_correction_bounded_of_support_coarse_abs_and_error
 
 /-! ## Explicit Water Placement (EWP) handles
     ExplicitWaterPlacement.lean - Bridging water placement with certified bounds
@@ -2428,6 +2432,8 @@ abbrev RPG10 := @Tractability.ReturnedPoseGuarantee.sampledActionFamily_exact_en
 abbrev RPG11 := @Tractability.ReturnedPoseGuarantee.returned_choice_of_patched_omitted_support_singleton_winner_of_cover_yields_rmsd_target
 -- RPG12: A sampled rigid-pose epsilon-net plus singleton exact/coarse certification yields a bounded exact energy gap without a basin hypothesis
 abbrev RPG12 := @Tractability.ReturnedPoseGuarantee.sampledActionFamily_exact_energy_gap_certified_rigid_choice_of_cover_has_energy_gap_le
+-- RPG13: Any auxiliary singleton chosen inside a certified output support is safe to return
+abbrev RPG13 := @Tractability.ReturnedPoseGuarantee.returned_choice_of_auxiliary_patched_support_singleton_of_certified_output_set
 
 -- CSC45: Torsion locality radius (single atom)
 abbrev CSC45 := @DecisionQuotient.Tractability.ConformerSupportCoverage.torsion_locality_radius
@@ -2625,6 +2631,14 @@ abbrev BCRP14 := @Tractability.BlindConformerPipelineRefinements.omittedAttracti
 abbrev BCRP15 := @Tractability.BlindConformerPipelineRefinements.support_strict_argmin_is_exact_singleton_of_top1_subset
 -- BCRP16: A strict support argmin with fallback above the winner yields singleton top-1 for the patched support-only score family
 abbrev BCRP16 := @Tractability.BlindConformerPipelineRefinements.patchedSupportEnergy_singleton_of_strict_support_argmin
+-- BCRP17: A support-restricted coarse `2δ` margin yields exact singleton top-1 on any support containing exact top-1
+abbrev BCRP17 := @Tractability.BlindConformerPipelineRefinements.support_strict_argmin_is_exact_singleton_of_support_coarse_energy_gap_margin
+-- BCRP18: A support-restricted coarse `2δ` margin plus fallback-above-winner yields patched-support singleton top-1
+abbrev BCRP18 := @Tractability.BlindConformerPipelineRefinements.patchedSupportEnergy_singleton_of_support_coarse_energy_gap_margin
+-- BCRP19: A strict support argmin plus fallback-above-winner yields patched-support singleton top-1 without a separate top1-subset premise
+abbrev BCRP19 := @Tractability.BlindConformerPipelineRefinements.patchedSupportEnergy_singleton_of_strict_support_argmin_without_top1_subset
+-- BCRP20: A support-restricted coarse `2δ` margin plus fallback-above-winner yields patched-support singleton top-1 without a separate top1-subset premise
+abbrev BCRP20 := @Tractability.BlindConformerPipelineRefinements.patchedSupportEnergy_singleton_of_support_coarse_energy_gap_margin_without_top1_subset
 
 /-! ## Additional runtime-proof hooks for theorem-gap roadmap integration -/
 

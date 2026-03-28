@@ -213,6 +213,38 @@ theorem support_strict_argmin_is_exact_singleton_of_top1_subset
     subst hEq
     exact hWinnerTop
 
+/-- Support-restricted energy-gap singleton bridge.
+
+    If a coarse guide score is uniformly within `δ` of the exact energy on a
+    certified support set that contains the exact top-1 poses, and `winner`
+    enjoys a strict `2δ` coarse margin over every other support member, then the
+    exact top-1 set is already the singleton `{winner}`. -/
+theorem support_strict_argmin_is_exact_singleton_of_support_coarse_energy_gap_margin
+    [Nonempty P]
+    (exactEnergy coarseEnergy : P → ℝ)
+    (support : Finset P)
+    (winner : P)
+    (δ : ℝ)
+    (hWinnerMem : winner ∈ support)
+    (hApprox : ∀ z, z ∈ support → |exactEnergy z - coarseEnergy z| ≤ δ)
+    (hStrict : ∀ z, z ∈ support → z ≠ winner → coarseEnergy winner + 2 * δ < coarseEnergy z)
+    (hTopSubset : energyTopK exactEnergy 1 ⊆ support) :
+    energyTopK exactEnergy 1 = ({winner} : Finset P) := by
+  apply support_strict_argmin_is_exact_singleton_of_top1_subset
+  · exact hWinnerMem
+  · intro z hz hne
+    have hWinnerApprox := hApprox winner hWinnerMem
+    have hZApprox := hApprox z hz
+    have hWinnerUpper : exactEnergy winner ≤ coarseEnergy winner + δ := by
+      have hRight := (abs_le.mp hWinnerApprox).2
+      linarith
+    have hZLower : coarseEnergy z - δ ≤ exactEnergy z := by
+      have hLeft := (abs_le.mp hZApprox).1
+      linarith
+    have hGuideGap : coarseEnergy winner + 2 * δ < coarseEnergy z := hStrict z hz hne
+    linarith
+  · exact hTopSubset
+
 /-- If a pose is the exact argmin over the canonical omitted-attractive support set
     built from a base-score witness, then it is globally exact-optimal. -/
 theorem canonicalRetain_argmin_is_global_of_omittedAttractiveLowerBound_and_baseWitness
@@ -385,6 +417,110 @@ theorem patchedSupportEnergy_singleton_of_strict_support_argmin
         unfold strictLowerCount
         omega
       exact False.elim (this hpCount)
+
+/-- A strict support argmin plus a fallback above the winner already forces the
+    patched support-only energy family to have singleton top-1, without any
+    separate global-top1-subset hypothesis. -/
+theorem patchedSupportEnergy_singleton_of_strict_support_argmin_without_top1_subset
+    [Nonempty P]
+    (exactEnergy : P → ℝ)
+    (support : Finset P)
+    (winner : P)
+    (fallback : ℝ)
+    (hWinnerMem : winner ∈ support)
+    (hStrict : ∀ z, z ∈ support → z ≠ winner → exactEnergy winner < exactEnergy z)
+    (hFallback : exactEnergy winner < fallback) :
+    energyTopK (patchedSupportEnergy support exactEnergy fallback) 1 = ({winner} : Finset P) := by
+  have hPatchedTopSubset : energyTopK (patchedSupportEnergy support exactEnergy fallback) 1 ⊆ support := by
+    intro p hp
+    simp only [energyTopK] at hp
+    simp only [Finset.mem_filter, Finset.mem_univ, true_and] at hp
+    have hpCount : strictLowerCount (patchedSupportEnergy support exactEnergy fallback) p < 1 := hp
+    by_cases hpSupport : p ∈ support
+    · exact hpSupport
+    · have hmem : winner ∈ (Finset.univ : Finset P).filter fun q =>
+          patchedSupportEnergy support exactEnergy fallback q <
+            patchedSupportEnergy support exactEnergy fallback p := by
+        simp [patchedSupportEnergy, hWinnerMem, hpSupport]
+        exact hFallback
+      have hcardPos : 0 < ((Finset.univ : Finset P).filter fun q =>
+          patchedSupportEnergy support exactEnergy fallback q <
+            patchedSupportEnergy support exactEnergy fallback p).card := by
+        exact Finset.card_pos.mpr ⟨winner, hmem⟩
+      have : ¬ strictLowerCount (patchedSupportEnergy support exactEnergy fallback) p < 1 := by
+        unfold strictLowerCount
+        omega
+      exact False.elim (this hpCount)
+  apply support_strict_argmin_is_exact_singleton_of_top1_subset
+  · exact hWinnerMem
+  · intro z hz hne
+    simp [patchedSupportEnergy, hWinnerMem, hz]
+    exact hStrict z hz hne
+  · exact hPatchedTopSubset
+
+/-- Patched-support singleton bridge from a support-restricted coarse margin.
+
+    If a coarse guide score is uniformly within `δ` of the exact energy on a
+    support set containing the exact top-1 poses, `winner` has a strict `2δ`
+    guide-score margin on that support, and the fallback score sits strictly
+    above the exact winner energy, then the patched support-only energy family
+    has singleton top-1 `{winner}`. -/
+theorem patchedSupportEnergy_singleton_of_support_coarse_energy_gap_margin
+    [Nonempty P]
+    (exactEnergy coarseEnergy : P → ℝ)
+    (support : Finset P)
+    (winner : P)
+    (fallback δ : ℝ)
+    (hWinnerMem : winner ∈ support)
+    (hApprox : ∀ z, z ∈ support → |exactEnergy z - coarseEnergy z| ≤ δ)
+    (hStrict : ∀ z, z ∈ support → z ≠ winner → coarseEnergy winner + 2 * δ < coarseEnergy z)
+    (hTopSubset : energyTopK exactEnergy 1 ⊆ support)
+    (hFallback : exactEnergy winner < fallback) :
+    energyTopK (patchedSupportEnergy support exactEnergy fallback) 1 = ({winner} : Finset P) := by
+  apply patchedSupportEnergy_singleton_of_strict_support_argmin
+  · exact hWinnerMem
+  · intro z hz hne
+    have hWinnerApprox := hApprox winner hWinnerMem
+    have hZApprox := hApprox z hz
+    have hWinnerUpper : exactEnergy winner ≤ coarseEnergy winner + δ := by
+      have hRight := (abs_le.mp hWinnerApprox).2
+      linarith
+    have hZLower : coarseEnergy z - δ ≤ exactEnergy z := by
+      have hLeft := (abs_le.mp hZApprox).1
+      linarith
+    have hGuideGap : coarseEnergy winner + 2 * δ < coarseEnergy z := hStrict z hz hne
+    linarith
+  · exact hTopSubset
+  · exact hFallback
+
+/-- Support-restricted coarse-margin bridge without a separate global-top1-subset
+    premise. The fallback excludes everything outside `support`, so a strict
+    support witness suffices to make the patched family singleton. -/
+theorem patchedSupportEnergy_singleton_of_support_coarse_energy_gap_margin_without_top1_subset
+    [Nonempty P]
+    (exactEnergy coarseEnergy : P → ℝ)
+    (support : Finset P)
+    (winner : P)
+    (fallback δ : ℝ)
+    (hWinnerMem : winner ∈ support)
+    (hApprox : ∀ z, z ∈ support → |exactEnergy z - coarseEnergy z| ≤ δ)
+    (hStrict : ∀ z, z ∈ support → z ≠ winner → coarseEnergy winner + 2 * δ < coarseEnergy z)
+    (hFallback : exactEnergy winner < fallback) :
+    energyTopK (patchedSupportEnergy support exactEnergy fallback) 1 = ({winner} : Finset P) := by
+  apply patchedSupportEnergy_singleton_of_strict_support_argmin_without_top1_subset
+  · exact hWinnerMem
+  · intro z hz hne
+    have hWinnerApprox := hApprox winner hWinnerMem
+    have hZApprox := hApprox z hz
+    have hWinnerUpper : exactEnergy winner ≤ coarseEnergy winner + δ := by
+      have hRight := (abs_le.mp hWinnerApprox).2
+      linarith
+    have hZLower : coarseEnergy z - δ ≤ exactEnergy z := by
+      have hLeft := (abs_le.mp hZApprox).1
+      linarith
+    have hGuideGap : coarseEnergy winner + 2 * δ < coarseEnergy z := hStrict z hz hne
+    linarith
+  · exact hFallback
 
 /-- If a support set contains the exact top-k and the fallback score is no better
     than the exact top-k threshold, then every exact top-k pose remains in the

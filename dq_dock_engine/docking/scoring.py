@@ -11,7 +11,7 @@ PROOF STATUS SUMMARY:
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import List, Dict, Callable, Union
+from typing import List, Dict, Callable, Union, Sequence
 import os
 import subprocess
 import tempfile
@@ -1173,21 +1173,12 @@ class CertifiedRichChemistryPlan:
             + self.metal_coordination.analytic_cutoff_tail_bound()
             + sum(t.analytic_cutoff_tail_bound() for t in self.extended_terms.terms)
         )
-        cooperative_channel_abs_bound = max(
-            1.0,
-            float(
-                self.hbond_receptor_donor.receptor_strengths.shape[0]
-                * self.hbond_receptor_donor.ligand_strengths.shape[0]
-            ),
-            float(
-                self.hbond_ligand_donor.receptor_strengths.shape[0]
-                * self.hbond_ligand_donor.ligand_strengths.shape[0]
-            ),
-        )
-        cooperative_bound = cooperative_hbond_correction_bound(
+        cooperative_bound = cooperative_hbond_correction_bound_sum_bounds(
             self.cooperative_alpha,
-            2,
-            per_channel_abs_bound=cooperative_channel_abs_bound,
+            (
+                self.hbond_receptor_donor.max_total_score_bound(),
+                self.hbond_ligand_donor.max_total_score_bound(),
+            ),
         )
         water_bridge_bound = 2.0 if has_water_bridge_channel else 0.0
         cutoff_tail_handles = (
@@ -1949,6 +1940,35 @@ def cooperative_hbond_correction_bound(
     return abs(alpha) * (n_hbonds * per_channel_abs_bound) ** 2
 
 
+@certified(
+    "CooperativeHBondApproximation.lean::cooperative_correction_bounded_of_abs_le_sum_bounds"
+)
+def cooperative_hbond_correction_bound_sum_bounds(
+    alpha: float,
+    per_channel_abs_bounds: Sequence[float],
+) -> float:
+    """Upper bound on cooperative correction from per-channel envelopes.
+
+    If channel `i` satisfies `|f_i| <= B_i`, then
+    `|alpha * (sum_i f_i)^2| <= |alpha| * (sum_i B_i)^2`.
+    """
+    total_bound = sum(max(0.0, float(bound)) for bound in per_channel_abs_bounds)
+    return abs(alpha) * total_bound**2
+
+
+def _cooperative_hbond_correction_bound_sum_bounds_jax(
+    alpha: float,
+    per_channel_abs_bounds: Sequence[jax.Array | float],
+) -> jax.Array:
+    total_bound = jnp.sum(
+        jnp.stack(
+            [jnp.maximum(0.0, jnp.asarray(bound)) for bound in per_channel_abs_bounds],
+            axis=0,
+        )
+    )
+    return jnp.abs(jnp.asarray(alpha, dtype=total_bound.dtype)) * total_bound**2
+
+
 @jax.jit
 def _cooperative_hbond_correction_batch(
     hbond_scores: jnp.ndarray,
@@ -2340,6 +2360,8 @@ def score_certified_attractive_chemistry_batch(
     receptor_coords: jnp.ndarray,
     poses_coords: jnp.ndarray,
     rich_chemistry_plan: CertifiedRichChemistryPlan,
+    *,
+    cooperative_channel_abs_bounds: tuple[float, ...] | None = None,
 ) -> CertifiedBatchResult:
     contact_batch = score_certified_contact_batch(
         receptor_coords,
@@ -2375,22 +2397,30 @@ def score_certified_attractive_chemistry_batch(
         ),
         rich_chemistry_plan.cooperative_alpha,
     )
-    n_hbond_channels = 2
-    per_channel_abs_bound = max(
-        1.0,
-        float(
-            rich_chemistry_plan.hbond_receptor_donor.receptor_strengths.shape[0]
-            * rich_chemistry_plan.hbond_receptor_donor.ligand_strengths.shape[0]
-        ),
-        float(
-            rich_chemistry_plan.hbond_ligand_donor.receptor_strengths.shape[0]
-            * rich_chemistry_plan.hbond_ligand_donor.ligand_strengths.shape[0]
-        ),
-    )
-    cooperative_error = cooperative_hbond_correction_bound(
+    if cooperative_channel_abs_bounds is None:
+        cooperative_channel_abs_bounds = (
+            jnp.sum(
+                jnp.clip(
+                    rich_chemistry_plan.hbond_receptor_donor.receptor_strengths[:, None]
+                    * rich_chemistry_plan.hbond_receptor_donor.ligand_strengths[
+                        None, :
+                    ],
+                    0.0,
+                    1.0,
+                )
+            ),
+            jnp.sum(
+                jnp.clip(
+                    rich_chemistry_plan.hbond_ligand_donor.receptor_strengths[:, None]
+                    * rich_chemistry_plan.hbond_ligand_donor.ligand_strengths[None, :],
+                    0.0,
+                    1.0,
+                )
+            ),
+        )
+    cooperative_error = _cooperative_hbond_correction_bound_sum_bounds_jax(
         rich_chemistry_plan.cooperative_alpha,
-        n_hbond_channels,
-        per_channel_abs_bound=per_channel_abs_bound,
+        cooperative_channel_abs_bounds,
     )
     return _combine_certified_batches(
         CertifiedBatchResult(
@@ -2491,6 +2521,8 @@ def score_certified_rich_chemistry_batch(
     rich_chemistry_plan: CertifiedRichChemistryPlan,
     target_error: float,
     epsilon: float = _EPSILON_KCAL_MOL,
+    *,
+    cooperative_channel_abs_bounds: tuple[float, ...] | None = None,
 ) -> CertifiedBatchResult:
     softened_lj = score_certified_softened_lj(
         receptor_coords=receptor_coords,
@@ -2511,6 +2543,7 @@ def score_certified_rich_chemistry_batch(
         receptor_coords,
         poses_coords,
         rich_chemistry_plan,
+        cooperative_channel_abs_bounds=cooperative_channel_abs_bounds,
     )
     combined_cutoff = jnp.maximum(
         jnp.maximum(softened_lj.cutoff_radius, screened_batch.cutoff_radius),

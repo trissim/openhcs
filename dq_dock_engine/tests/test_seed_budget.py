@@ -15,6 +15,7 @@ from dq_dock_engine.docking.certified_runtime_plans import (
     ActiveConformerEnergyGapWitness,
     ActiveConformerReturnedPoseWitness,
     ActiveRigidEnergyGapWitness,
+    ActiveRigidReturnedPoseWitness,
     CertifiedConformerCoveragePlan,
     InactiveConformerReturnedPoseWitness,
     ReturnedPoseProofCase,
@@ -28,8 +29,11 @@ from dq_dock_engine.docking.conformer_search import (
     TorsionCell,
 )
 from dq_dock_engine.docking.formal_handles import (
+    auxiliary_patched_support_output_set_theorem_handles,
     conformer_coverage_theorem_handles,
     enriched_support_selection_transfer_theorem_handles,
+    patched_support_coarse_margin_returned_pose_theorem_handles,
+    patched_support_singleton_returned_pose_theorem_handles,
     returned_pose_energy_guarantee_theorem_handles,
 )
 from dq_dock_engine.docking.pipeline import (
@@ -39,6 +43,8 @@ from dq_dock_engine.docking.pipeline import (
     PipelineRoute,
     SEED_BUDGET_PROBE_POSES,
     _build_returned_pose_certification,
+    _auxiliary_support_representative_choice,
+    _certified_support_coarse_margin_singleton_choice,
     _derive_rigid_energy_gap_proof_plan,
     _derive_returned_pose_proof_plan,
     _has_conformer_ambiguity_set_certificate_chain,
@@ -49,6 +55,8 @@ from dq_dock_engine.docking.pipeline import (
     _derive_local_rotation_step_rad,
     _detect_rigid_equivalence_ambiguity,
     _ligand_radius,
+    _patched_support_singleton_score_slice,
+    _resolved_patched_support_local_indices,
     _probe_seed_budget_certificate,
     _select_base_anchored_rigid_candidate,
     _run_conformer_search_for_pose,
@@ -586,6 +594,255 @@ def test_returned_pose_certification_uses_rigid_energy_gap_witness_when_cover_ch
     assert not returned_cert.is_target_rmsd_certified
 
 
+def test_returned_pose_certification_uses_patched_support_singleton_chain_for_rigid_target_rmsd() -> (
+    None
+):
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_dummy_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=10.0),
+        rigid_seed_family_plan=derive_certified_rigid_seed_family_plan(
+            DockingBox(
+                center=jnp.zeros((3,), dtype=jnp.float32),
+                size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+            ),
+            16,
+            target_translation_cover_radius=1.0,
+        ),
+    )
+
+    proof_plan = _derive_returned_pose_proof_plan(
+        request=request,
+        final_scores=jnp.array([4.0, 0.0, 2.0], dtype=jnp.float32),
+        final_error_bound=0.25,
+        final_pose_coords=None,
+        refinement_certificates=[None, _dummy_certificate(q=0.25, n_steps=2), None],
+        conformer_coverage_plan=None,
+        winner_theorem_handles=("TK16",),
+        do_conf=False,
+        patched_support_singleton_winner_index=1,
+        patched_support_singleton_support_indices=(1, 2),
+    )
+    returned_cert = _build_returned_pose_certification(proof_plan=proof_plan)
+
+    assert proof_plan.proof_case == ReturnedPoseProofCase.CERTIFIED_SINGLETON
+    assert proof_plan.winner_index == 1
+    assert proof_plan.support_indices == (1,)
+    assert isinstance(proof_plan.conformer_witness, ActiveRigidReturnedPoseWitness)
+    assert returned_cert is not None
+    assert returned_cert.decision == ReturnedPoseContractDecision.CERTIFIED_TARGET_RMSD
+    assert set(patched_support_singleton_returned_pose_theorem_handles()).issubset(
+        set(proof_plan.theorem_handles)
+    )
+
+
+def test_patched_support_singleton_score_slice_recomputes_when_scores_not_full_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_dummy_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+    )
+    opt_coords = jnp.array(
+        [
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            [[10.0, 0.0, 0.0], [11.0, 0.0, 0.0]],
+            [[20.0, 0.0, 0.0], [21.0, 0.0, 0.0]],
+            [[30.0, 0.0, 0.0], [31.0, 0.0, 0.0]],
+        ],
+        dtype=jnp.float32,
+    )
+
+    class _FakeScoringContext:
+        def score_exact_batch(self, **kwargs):
+            poses_coords = kwargs["poses_coords"]
+            return SimpleNamespace(
+                scores=jnp.asarray(poses_coords[:, 0, 0], dtype=jnp.float32),
+                error_bound=jnp.asarray(0.5, dtype=jnp.float32),
+            )
+
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_support_specific_cooperative_channel_abs_bounds",
+        lambda *args, **kwargs: None,
+    )
+
+    support_scores, support_error_bound = _patched_support_singleton_score_slice(
+        request=request,
+        scoring_context=cast(Any, _FakeScoringContext()),
+        opt_coords=opt_coords,
+        support_local_indices=np.array([1, 3], dtype=np.int32),
+        rich_scores=jnp.array([111.0, 222.0], dtype=jnp.float32),
+        rich_error_bound=9.0,
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(jax.device_get(support_scores), dtype=np.float32),
+        np.array([10.0, 30.0], dtype=np.float32),
+    )
+    assert support_error_bound == pytest.approx(0.5)
+
+
+def test_resolved_patched_support_local_indices_prefers_authoritative_plan_support() -> (
+    None
+):
+    execution_plan = SimpleNamespace(
+        patched_support_indices=(11, 17, 23),
+        final_survivor_indices=(5, 11, 13, 17, 19, 23),
+    )
+
+    support_local_indices = _resolved_patched_support_local_indices(
+        cast(Any, execution_plan),
+        np.array([0, 2], dtype=np.int32),
+        total_count=6,
+    )
+
+    np.testing.assert_array_equal(
+        support_local_indices,
+        np.array([1, 3, 5], dtype=np.int32),
+    )
+
+
+def test_certified_support_coarse_margin_singleton_choice_certifies_exact_support_winner() -> (
+    None
+):
+    winner_index, singleton, delta = _certified_support_coarse_margin_singleton_choice(
+        exact_scores=jnp.array([0.0, 3.0, 4.0], dtype=jnp.float32),
+        exact_error_bound=0.1,
+        guide_scores=jnp.array([0.0, 3.0, 4.0], dtype=jnp.float32),
+        guide_error_bound=0.1,
+        support_indices=np.array([5, 7, 9], dtype=np.int32),
+        omitted_posewise_bounds=np.array([0.2, 0.2, 0.2], dtype=np.float64),
+        fallback_score=10.0,
+    )
+
+    assert singleton is True
+    assert winner_index == 5
+    assert delta == pytest.approx(0.4)
+
+
+def test_auxiliary_support_representative_choice_prefers_disambiguation_plus_omission() -> (
+    None
+):
+    winner_index = _auxiliary_support_representative_choice(
+        support_indices=np.array([0, 2, 3], dtype=np.int32),
+        disambiguation_scores=jnp.array([-0.5, -0.2, -0.1], dtype=jnp.float32),
+        omitted_posewise_bounds=np.array([4.0, 1.0, 0.2], dtype=np.float64),
+    )
+
+    assert winner_index == 3
+
+
+def test_returned_pose_proof_plan_uses_custom_patched_support_singleton_theorem_handles() -> (
+    None
+):
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_dummy_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=10.0),
+        rigid_seed_family_plan=derive_certified_rigid_seed_family_plan(
+            DockingBox(
+                center=jnp.zeros((3,), dtype=jnp.float32),
+                size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+            ),
+            16,
+            target_translation_cover_radius=1.0,
+        ),
+    )
+
+    proof_plan = _derive_returned_pose_proof_plan(
+        request=request,
+        final_scores=jnp.array([4.0, 0.0, 2.0], dtype=jnp.float32),
+        final_error_bound=0.25,
+        final_pose_coords=None,
+        refinement_certificates=[None, _dummy_certificate(q=0.25, n_steps=2), None],
+        conformer_coverage_plan=None,
+        winner_theorem_handles=("BCRC4",),
+        do_conf=False,
+        patched_support_singleton_theorem_handles=(
+            patched_support_coarse_margin_returned_pose_theorem_handles() + ("BCRC4",)
+        ),
+        patched_support_singleton_winner_index=1,
+        patched_support_singleton_support_indices=(1, 2),
+    )
+
+    assert proof_plan.proof_case == ReturnedPoseProofCase.CERTIFIED_SINGLETON
+    assert set(patched_support_coarse_margin_returned_pose_theorem_handles()).issubset(
+        set(proof_plan.theorem_handles)
+    )
+
+
+def test_rigid_energy_ambiguity_plan_can_return_auxiliary_support_representative() -> (
+    None
+):
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_dummy_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=10.0),
+        rigid_seed_family_plan=derive_certified_rigid_seed_family_plan(
+            DockingBox(
+                center=jnp.zeros((3,), dtype=jnp.float32),
+                size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+            ),
+            16,
+            target_translation_cover_radius=1.0,
+        ),
+    )
+
+    proof_plan = _derive_returned_pose_proof_plan(
+        request=request,
+        final_scores=jnp.array([0.0, 0.05, 0.08], dtype=jnp.float32),
+        final_error_bound=0.1,
+        final_pose_coords=None,
+        refinement_certificates=[None, None, None],
+        conformer_coverage_plan=None,
+        winner_theorem_handles=("BCRP5",),
+        do_conf=False,
+        auxiliary_output_set_theorem_handles=(
+            auxiliary_patched_support_output_set_theorem_handles()
+        ),
+        auxiliary_output_set_winner_index=2,
+    )
+    returned_cert = _build_returned_pose_certification(proof_plan=proof_plan)
+
+    assert proof_plan.proof_case == ReturnedPoseProofCase.CERTIFIED_ENERGY_AMBIGUITY_SET
+    assert proof_plan.winner_index == 2
+    assert proof_plan.support_indices == (0, 1, 2)
+    assert returned_cert is not None
+    assert (
+        returned_cert.decision
+        == ReturnedPoseContractDecision.CERTIFIED_AMBIGUITY_SET_ENERGY_GAP
+    )
+    assert set(auxiliary_patched_support_output_set_theorem_handles()).issubset(
+        set(proof_plan.theorem_handles)
+    )
+
+
 def test_select_base_anchored_rigid_candidate_uses_combined20_base_subset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -678,6 +935,7 @@ def test_rigid_energy_gap_certificate_does_not_skip_formal_refinement(
         def __init__(self) -> None:
             self.theorem_handles: tuple[str, ...] = ()
             self.final_survivor_indices: tuple[int, ...] | None = (0, 1)
+            self.patched_support_indices: tuple[int, ...] | None = None
             self.refinement_budget = None
 
         @property

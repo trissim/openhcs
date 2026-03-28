@@ -1017,6 +1017,7 @@ class CertifiedPipelineExecutionPlan:
     theorem_handles: tuple[str, ...] = ()
     witness_handles: tuple[str, ...] = ()
     final_survivor_indices: tuple[int, ...] | None = None
+    patched_support_indices: tuple[int, ...] | None = None
     native_witness_debug: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
@@ -1073,6 +1074,12 @@ class CertifiedPipelineExecutionPlan:
     ) -> "CertifiedPipelineExecutionPlan":
         return replace(self, final_survivor_indices=final_survivor_indices)
 
+    def with_patched_support_indices(
+        self,
+        patched_support_indices: tuple[int, ...],
+    ) -> "CertifiedPipelineExecutionPlan":
+        return replace(self, patched_support_indices=patched_support_indices)
+
     def with_native_witness_debug(
         self,
         native_witness_debug: dict[str, object],
@@ -1084,6 +1091,7 @@ class CertifiedPipelineExecutionPlan:
             "tau": self.tau,
             "retain_count": self.retain_count,
             "final_survivor_indices": self.final_survivor_indices,
+            "patched_support_indices": self.patched_support_indices,
             "pruning_delta_budget": self.pruning_delta_budget.debug_summary(),
             "active_subset_budget_family": (
                 None
@@ -1294,11 +1302,39 @@ class ActiveRigidEnergyGapWitness:
         return False
 
 
+@dataclass(frozen=True)
+class ActiveRigidReturnedPoseWitness:
+    cover_rmsd_radius: float
+    cover_gap_budget: float
+    basin_mu_coord: float
+    target_energy_gap: float
+    theorem_handles: tuple[str, ...]
+    witness_handles: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _ensure_handle_provenance(
+            self.theorem_handles,
+            owner="ActiveRigidReturnedPoseWitness",
+        )
+        for field_name, value in (
+            ("cover_rmsd_radius", self.cover_rmsd_radius),
+            ("cover_gap_budget", self.cover_gap_budget),
+            ("basin_mu_coord", self.basin_mu_coord),
+            ("target_energy_gap", self.target_energy_gap),
+        ):
+            _ensure_nonnegative(value, field_name=field_name)
+
+    @property
+    def conformer_active(self) -> bool:
+        return False
+
+
 CertifiedConformerAwareReturnedPoseWitness = (
     InactiveConformerReturnedPoseWitness
     | ActiveConformerReturnedPoseWitness
     | ActiveConformerEnergyGapWitness
     | ActiveRigidEnergyGapWitness
+    | ActiveRigidReturnedPoseWitness
 )
 
 
@@ -1362,7 +1398,11 @@ class CertifiedReturnedPoseProofPlan:
             raise ValueError("support_indices must contain winner_index")
         active_conformer = isinstance(
             self.conformer_witness,
-            (ActiveConformerReturnedPoseWitness, ActiveConformerEnergyGapWitness),
+            (
+                ActiveConformerReturnedPoseWitness,
+                ActiveConformerEnergyGapWitness,
+                ActiveRigidReturnedPoseWitness,
+            ),
         )
         if active_conformer and self.total_gap_budget is None:
             raise ValueError("Active conformer witnesses require total_gap_budget")
@@ -1510,6 +1550,8 @@ class CertifiedReturnedPoseProofPlan:
             return "active_energy_only"
         if isinstance(witness, ActiveRigidEnergyGapWitness):
             return "active_rigid_energy_only"
+        if isinstance(witness, ActiveRigidReturnedPoseWitness):
+            return "active_rigid_complete"
         return "inactive"
 
     def debug_summary(self) -> dict[str, object]:

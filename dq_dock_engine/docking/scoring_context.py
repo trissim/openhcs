@@ -482,6 +482,7 @@ class CertifiedScoringContext:
         ligand_radii: jnp.ndarray,
         target_error: float,
         epsilon: float,
+        cooperative_channel_abs_bounds: tuple[float, ...] | None = None,
     ) -> CertifiedBatchResult:
         """Score physics only — no water bridges, no ensemble.
 
@@ -501,6 +502,7 @@ class CertifiedScoringContext:
                 rich_chemistry_plan=self.rich_chemistry_plan,
                 target_error=target_error,
                 epsilon=epsilon,
+                cooperative_channel_abs_bounds=cooperative_channel_abs_bounds,
             )
         return score_certified_batch(
             receptor_coords=receptor_coords,
@@ -729,6 +731,7 @@ class CertifiedScoringContext:
         ligand_radii: jnp.ndarray,
         target_error: float,
         epsilon: float,
+        cooperative_channel_abs_bounds: tuple[float, ...] | None = None,
     ) -> CertifiedBatchResult:
         # Step 1: Score reference receptor (physics only)
         ref_result = self._score_physics_only(
@@ -738,6 +741,7 @@ class CertifiedScoringContext:
             ligand_radii,
             target_error,
             epsilon,
+            cooperative_channel_abs_bounds=cooperative_channel_abs_bounds,
         )
         # Step 2: EWP3 — water bridges compose additively (computed once)
         water_scores, water_error = self._water_bridge_contribution(
@@ -758,6 +762,7 @@ class CertifiedScoringContext:
                     ligand_radii,
                     target_error,
                     epsilon,
+                    cooperative_channel_abs_bounds=cooperative_channel_abs_bounds,
                 )
                 conf_scores_with_water = conf_result.scores + water_scores
                 all_conf_scores.append(conf_result.scores)

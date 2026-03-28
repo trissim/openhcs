@@ -147,6 +147,72 @@ theorem cooperative_correction_bounded_of_abs_le {N : ℕ}
   rw [abs_mul]
   exact mul_le_mul_of_nonneg_left hpow_abs (abs_nonneg α)
 
+/-- Runtime-shape cooperative correction bound with per-channel absolute budgets.
+
+    If each channel score satisfies `|fᵢ| ≤ Bᵢ`, then the cooperative correction
+    is bounded by `|α| * (Σᵢ Bᵢ)^2`. This is strictly tighter than the symmetric
+    `|α| * (N * B)^2` specialization whenever the channels have unequal budgets. -/
+theorem cooperative_correction_bounded_of_abs_le_sum_bounds {N : ℕ}
+    (fs : Fin N → ℝ) (α : ℝ) (Bs : Fin N → ℝ)
+    (hBs : ∀ i, 0 ≤ Bs i)
+    (habs : ∀ i, |fs i| ≤ Bs i) :
+    |α * (Finset.univ.sum (fun i => fs i)) ^ (2 : ℕ)|
+      ≤ |α| * (Finset.univ.sum fun i => Bs i) ^ (2 : ℕ) := by
+  have hsum_abs : |Finset.univ.sum (fun i => fs i)| ≤ Finset.univ.sum (fun i => Bs i) := by
+    calc
+      |Finset.univ.sum (fun i => fs i)|
+          ≤ Finset.univ.sum (fun i => |fs i|) := Finset.abs_sum_le_sum_abs _ _
+      _ ≤ Finset.univ.sum (fun i => Bs i) := by
+            apply Finset.sum_le_sum
+            intro i _
+            exact habs i
+  have hsum_nonneg : 0 ≤ Finset.univ.sum (fun i => Bs i) := by
+    exact Finset.sum_nonneg fun i _ => hBs i
+  have hpow_abs : |(Finset.univ.sum (fun i => fs i)) ^ (2 : ℕ)|
+      ≤ (Finset.univ.sum fun i => Bs i) ^ (2 : ℕ) := by
+    calc
+      |(Finset.univ.sum (fun i => fs i)) ^ (2 : ℕ)|
+          = |Finset.univ.sum (fun i => fs i)| ^ (2 : ℕ) := by
+              simpa [pow_two] using
+                (abs_mul (Finset.univ.sum (fun i => fs i)) (Finset.univ.sum (fun i => fs i)))
+      _ ≤ (Finset.univ.sum fun i => Bs i) ^ (2 : ℕ) := by
+            exact pow_le_pow_left₀ (abs_nonneg _) hsum_abs 2
+  rw [abs_mul]
+  exact mul_le_mul_of_nonneg_left hpow_abs (abs_nonneg α)
+
+/-- Triangle-inequality transfer from a coarse absolute budget and a certified
+    exact-vs-coarse discrepancy budget to an exact absolute budget. -/
+theorem abs_le_add_of_abs_sub_le_and_abs_le
+    {x xCoarse B ε : ℝ}
+    (hε : |x - xCoarse| ≤ ε)
+    (hCoarse : |xCoarse| ≤ B) :
+    |x| ≤ B + ε := by
+  calc
+    |x| = |(x - xCoarse) + xCoarse| := by ring_nf
+    _ ≤ |x - xCoarse| + |xCoarse| := abs_add_le _ _
+    _ ≤ ε + B := by gcongr
+    _ = B + ε := by ring
+
+/-- Support-specific cooperative correction bound obtained from per-channel
+    coarse support envelopes plus certified exact-vs-coarse discrepancies. -/
+theorem cooperative_correction_bounded_of_support_coarse_abs_and_error
+    {N : ℕ}
+    (exactFs coarseFs : Fin N → ℝ)
+    (α : ℝ)
+    (Bs εs : Fin N → ℝ)
+    (hBs : ∀ i, 0 ≤ Bs i)
+    (hεs : ∀ i, 0 ≤ εs i)
+    (hApprox : ∀ i, |exactFs i - coarseFs i| ≤ εs i)
+    (hCoarse : ∀ i, |coarseFs i| ≤ Bs i) :
+    |α * (Finset.univ.sum (fun i => exactFs i)) ^ (2 : ℕ)|
+      ≤ |α| * (Finset.univ.sum fun i => (Bs i + εs i)) ^ (2 : ℕ) := by
+  apply cooperative_correction_bounded_of_abs_le_sum_bounds
+    (fs := exactFs) (α := α) (Bs := fun i => Bs i + εs i)
+  · intro i
+    linarith [hBs i, hεs i]
+  · intro i
+    exact abs_le_add_of_abs_sub_le_and_abs_le (hApprox i) (hCoarse i)
+
 -- ---------------------------------------------------------------------------
 -- Section 3: Independent model as uniform approximation
 -- ---------------------------------------------------------------------------

@@ -394,7 +394,7 @@ def directional_metal_coordination_theorem_handles() -> tuple[str, ...]:
 
 
 def cooperative_hbond_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(CHN1, CHN2, CHN3, CHN4, "CHN5")
+    return _selected_handles(CHN1, CHN2, CHN3, CHN4, "CHN5", "CHN6", "CHN7")
 
 
 def explicit_water_placement_theorem_handles() -> tuple[str, ...]:
@@ -422,6 +422,8 @@ def omitted_channel_bound_theorem_handles() -> tuple[str, ...]:
         CHN1,
         CHN2,
         "CHN5",
+        "CHN6",
+        "CHN7",
         EWP6,
     )
 
@@ -574,6 +576,18 @@ def ambiguity_output_contract_theorem_handles() -> tuple[str, ...]:
 
 def returned_pose_guarantee_theorem_handles() -> tuple[str, ...]:
     return _selected_handles(RPG4, RPG6, TK16, ERC39, ERC43, DC104)
+
+
+def patched_support_singleton_returned_pose_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(BCRP5, BCRP9, BCRP11, BCRP15, BCRP16, RPG11, TK16)
+
+
+def patched_support_coarse_margin_returned_pose_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(BCRP5, BCRP9, BCRP11, BCRP17, BCRP18, RPG11)
+
+
+def auxiliary_patched_support_output_set_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(BCRP19, RPG13)
 
 
 def ambiguity_output_energy_contract_theorem_handles() -> tuple[str, ...]:

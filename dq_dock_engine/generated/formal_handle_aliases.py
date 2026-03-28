@@ -993,6 +993,8 @@ CHN2 = "CHN2"
 CHN3 = "CHN3"
 CHN4 = "CHN4"
 CHN5 = "CHN5"
+CHN6 = "CHN6"
+CHN7 = "CHN7"
 EWP1 = "EWP1"
 EWP2 = "EWP2"
 EWP3 = "EWP3"
@@ -1118,6 +1120,7 @@ RPG9 = "RPG9"
 RPG10 = "RPG10"
 RPG11 = "RPG11"
 RPG12 = "RPG12"
+RPG13 = "RPG13"
 CSC45 = "CSC45"
 CSC46 = "CSC46"
 CSC47 = "CSC47"
@@ -1210,6 +1213,10 @@ BCRP13 = "BCRP13"
 BCRP14 = "BCRP14"
 BCRP15 = "BCRP15"
 BCRP16 = "BCRP16"
+BCRP17 = "BCRP17"
+BCRP18 = "BCRP18"
+BCRP19 = "BCRP19"
+BCRP20 = "BCRP20"
 LJ18 = "LJ18"
 LJ19 = "LJ19"
 LJ20 = "LJ20"
@@ -2225,6 +2232,8 @@ __all__ = [
     "CHN3",
     "CHN4",
     "CHN5",
+    "CHN6",
+    "CHN7",
     "EWP1",
     "EWP2",
     "EWP3",
@@ -2350,6 +2359,7 @@ __all__ = [
     "RPG10",
     "RPG11",
     "RPG12",
+    "RPG13",
     "CSC45",
     "CSC46",
     "CSC47",
@@ -2442,6 +2452,10 @@ __all__ = [
     "BCRP14",
     "BCRP15",
     "BCRP16",
+    "BCRP17",
+    "BCRP18",
+    "BCRP19",
+    "BCRP20",
     "LJ18",
     "LJ19",
     "LJ20",

@@ -195,6 +195,74 @@ theorem ambiguityBand_support_of_cover_yields_certified_energy_output_set
   have hEw : runtimeEnergy winner = coordEnergy (coords winner) := hEnergy winner
   linarith
 
+/-- Any strict singleton winner of an auxiliary patched-support score family may be
+    returned safely once that support set is already certified as an output set.
+
+    This theorem separates certification of the *set* from deterministic choice of
+    a single representative inside the set: the auxiliary score only needs to stay
+    inside the certified support and be singleton there after patching. -/
+theorem returned_choice_of_auxiliary_patched_support_singleton_of_certified_output_set
+    (support : Finset A)
+    (prop : A → Prop)
+    (auxEnergy : A → ℝ)
+    (winner : A)
+    (fallback : ℝ)
+    (hCertified : CertifiedOutputSet support prop)
+    (hWinnerMem : winner ∈ support)
+    (hWinnerStrict : ∀ z, z ∈ support → z ≠ winner → auxEnergy winner < auxEnergy z)
+    (hFallback : auxEnergy winner < fallback) :
+    let runtimeEnergy := patchedSupportEnergy support auxEnergy fallback
+    let hSingleton : topKSet (fun a => -runtimeEnergy a) 1 = ({winner} : Finset A) := by
+      have hBase :=
+        patchedSupportEnergy_singleton_of_strict_support_argmin_without_top1_subset
+          auxEnergy support winner fallback hWinnerMem hWinnerStrict hFallback
+      ext p
+      rw [Finset.mem_singleton]
+      have hpBase := Finset.ext_iff.mp hBase p
+      simp only [energyTopK, Finset.mem_filter, Finset.mem_univ, true_and,
+        Finset.mem_singleton] at hpBase
+      have hEqCounts :
+          strictLowerCount runtimeEnergy p = strictBetterCount (fun q => -runtimeEnergy q) p := by
+        unfold strictLowerCount strictBetterCount
+        congr 1
+        ext q
+        simp
+      have hpTop : p ∈ topKSet (fun a => -runtimeEnergy a) 1 ↔
+          strictBetterCount (fun q => -runtimeEnergy q) p < 1 :=
+        mem_topKSet_iff (fun a => -runtimeEnergy a) 1 p
+      rw [hpTop, <- hEqCounts]
+      exact hpBase
+    prop ((coherentOptimizerWitness_of_exact_singleton_top1
+      (fun a => -runtimeEnergy a) winner hSingleton).belief.selection.choice) := by
+  let runtimeEnergy := patchedSupportEnergy support auxEnergy fallback
+  let hSingleton : topKSet (fun a => -runtimeEnergy a) 1 = ({winner} : Finset A) := by
+    have hBase :=
+      patchedSupportEnergy_singleton_of_strict_support_argmin_without_top1_subset
+        auxEnergy support winner fallback hWinnerMem hWinnerStrict hFallback
+    ext p
+    rw [Finset.mem_singleton]
+    have hpBase := Finset.ext_iff.mp hBase p
+    simp only [energyTopK, Finset.mem_filter, Finset.mem_univ, true_and,
+      Finset.mem_singleton] at hpBase
+    have hEqCounts :
+        strictLowerCount runtimeEnergy p = strictBetterCount (fun q => -runtimeEnergy q) p := by
+      unfold strictLowerCount strictBetterCount
+      congr 1
+      ext q
+      simp
+    have hpTop : p ∈ topKSet (fun a => -runtimeEnergy a) 1 ↔
+        strictBetterCount (fun q => -runtimeEnergy q) p < 1 :=
+      mem_topKSet_iff (fun a => -runtimeEnergy a) 1 p
+    rw [hpTop, <- hEqCounts]
+    exact hpBase
+  have hChoiceEq :
+      (coherentOptimizerWitness_of_exact_singleton_top1
+        (fun a => -runtimeEnergy a) winner hSingleton).belief.selection.choice = winner := by
+    exact (coherentOptimizerWitness_of_exact_singleton_top1_choice
+      (fun a => -runtimeEnergy a) winner hSingleton).1
+  have hWinnerProp : prop winner := hCertified winner hWinnerMem
+  simpa [hChoiceEq] using hWinnerProp
+
 /-- Coverage is necessary for the singleton returned-pose contract: if every
     runtime action lies outside the requested RMSD target ball, then the
     singleton winner returned by the optimizer also lies outside that ball. This

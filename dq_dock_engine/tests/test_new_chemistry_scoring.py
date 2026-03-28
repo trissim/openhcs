@@ -48,6 +48,7 @@ from dq_dock_engine.docking.scoring import (
     CertifiedRichChemistryPlan,
     CertifiedScreenedCoulombSpec,
     cooperative_hbond_correction_bound,
+    cooperative_hbond_correction_bound_sum_bounds,
     cosine_torsion_strain,
     score_certified_attractive_chemistry_batch,
     score_certified_contact_batch,
@@ -647,9 +648,11 @@ def test_directional_metal_coordination_handles_exist() -> None:
 
 def test_cooperative_hbond_handles_exist() -> None:
     handles = cooperative_hbond_theorem_handles()
-    assert len(handles) == 5
+    assert len(handles) == 7
     assert handles[0] == "CHN1"
     assert "CHN5" in handles
+    assert "CHN6" in handles
+    assert "CHN7" in handles
 
 
 def test_explicit_water_placement_handles_exist() -> None:
@@ -805,6 +808,54 @@ def test_cooperative_correction_bound_with_channel_abs_bound() -> None:
         per_channel_abs_bound=3.0,
     )
     assert np.isclose(bound, 0.2 * (2 * 3.0) ** 2)
+
+
+def test_cooperative_correction_bound_sum_bounds() -> None:
+    bound = cooperative_hbond_correction_bound_sum_bounds(
+        alpha=0.2,
+        per_channel_abs_bounds=(3.0, 1.5),
+    )
+    assert np.isclose(bound, 0.2 * (3.0 + 1.5) ** 2)
+
+
+def test_attractive_chemistry_batch_accepts_tighter_support_specific_cooperative_bounds() -> (
+    None
+):
+    (
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        plan,
+    ) = _toy_geometry()
+    plan = CertifiedRichChemistryPlan(
+        screened_coulomb=plan.screened_coulomb,
+        contact=plan.contact,
+        hbond_receptor_donor=plan.hbond_receptor_donor,
+        hbond_ligand_donor=plan.hbond_ligand_donor,
+        metal_coordination=plan.metal_coordination,
+        pairwise_sigma=plan.pairwise_sigma,
+        cooperative_alpha=0.2,
+    )
+
+    default_batch = score_certified_attractive_chemistry_batch(
+        receptor_coords=receptor_coords,
+        poses_coords=poses_coords,
+        rich_chemistry_plan=plan,
+    )
+    tightened_batch = score_certified_attractive_chemistry_batch(
+        receptor_coords=receptor_coords,
+        poses_coords=poses_coords,
+        rich_chemistry_plan=plan,
+        cooperative_channel_abs_bounds=(0.3, 0.1),
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(default_batch.scores),
+        np.asarray(tightened_batch.scores),
+        atol=1e-6,
+    )
+    assert float(tightened_batch.error_bound) < float(default_batch.error_bound)
 
 
 def test_cooperative_correction_batch_bounded() -> None:
