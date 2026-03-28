@@ -2513,6 +2513,42 @@ abbrev CSC96 := @Tractability.ConformerSupportCoverage.translationSubsetQuaterni
 abbrev CSC97 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Support_contains_rmsd_witness_of_coordinate_witness_basis_uniform_pointL1Radius_bound
 -- CSC98: A stronger coordinate witness with abs coordinate at least sqrt(2)/2 yields signed quaternion distance squared at most 2 - sqrt(2)
 abbrev CSC98 := @Tractability.ConformerSupportCoverage.quaternionDictionary8_signed_distance_sq_le_two_sub_sqrt_two_of_coordinate_witness
+-- CSC99: The half4 projective quaternion witness attains signed distance squared at most 2 - sqrt(2) when all quaternion coordinates are nonnegative and their absolute sum is at least sqrt(2)
+abbrev CSC99 := @Tractability.ConformerSupportCoverage.quaternionDictionary12_contains_half4_signed_distance_witness_of_nonnegative_coordinates
+-- CSC100: The half5 projective quaternion witness attains signed distance squared at most 2 - sqrt(2) when the first three quaternion coordinates are nonnegative, the fourth is nonpositive, and their absolute sum is at least sqrt(2)
+abbrev CSC100 := @Tractability.ConformerSupportCoverage.quaternionDictionary12_contains_half5_signed_distance_witness_of_signs
+-- CSC101: The half6 projective quaternion witness attains signed distance squared at most 2 - sqrt(2) when coordinates 0,1,3 are nonnegative, coordinate 2 is nonpositive, and their absolute sum is at least sqrt(2)
+abbrev CSC101 := @Tractability.ConformerSupportCoverage.quaternionDictionary12_contains_half6_signed_distance_witness_of_signs
+-- CSC102: The half7 projective quaternion witness attains signed distance squared at most 2 - sqrt(2) when coordinates 0,1 are nonnegative, coordinates 2,3 are nonpositive, and their absolute sum is at least sqrt(2)
+abbrev CSC102 := @Tractability.ConformerSupportCoverage.quaternionDictionary12_contains_half7_signed_distance_witness_of_signs
+-- CSC103: The half8 projective quaternion witness attains signed distance squared at most 2 - sqrt(2) when coordinates 0,2,3 are nonnegative, coordinate 1 is nonpositive, and their absolute sum is at least sqrt(2)
+abbrev CSC103 := @Tractability.ConformerSupportCoverage.quaternionDictionary12_contains_half8_signed_distance_witness_of_signs
+-- CSC104: The half9 projective quaternion witness attains signed distance squared at most 2 - sqrt(2) when coordinates 0,2 are nonnegative, coordinates 1,3 are nonpositive, and their absolute sum is at least sqrt(2)
+abbrev CSC104 := @Tractability.ConformerSupportCoverage.quaternionDictionary12_contains_half9_signed_distance_witness_of_signs
+-- CSC105: The half10 projective quaternion witness attains signed distance squared at most 2 - sqrt(2) when coordinates 0,3 are nonnegative, coordinates 1,2 are nonpositive, and their absolute sum is at least sqrt(2)
+abbrev CSC105 := @Tractability.ConformerSupportCoverage.quaternionDictionary12_contains_half10_signed_distance_witness_of_signs
+-- CSC106: The half11 projective quaternion witness attains signed distance squared at most 2 - sqrt(2) when coordinate 0 is nonnegative, coordinates 1,2,3 are nonpositive, and their absolute sum is at least sqrt(2)
+abbrev CSC106 := @Tractability.ConformerSupportCoverage.quaternionDictionary12_contains_half11_signed_distance_witness_of_signs
+-- CSC107: Projective quaternionDictionary12 globally witnesses signed distance squared at most 2 - sqrt(2) for every unit quaternion
+abbrev CSC107 := @Tractability.ConformerSupportCoverage.quaternionDictionary12_contains_signed_distance_sq_witness_le_two_sub_sqrt_two
+-- CSC108: translation subset × quaternionDictionary12 support inherits RMSD witness adequacy from split translation/orientation pointwise budgets
+abbrev CSC108 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary12Support_contains_rmsd_witness_of_split_component_budgets
+-- CSC109: the exact winner over translation subset × quaternionDictionary12 inherits the RMSD target from the split-budget witness theorem and energy-gap basin chain
+abbrev CSC109 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary12Library_winner_of_split_component_budgets_yields_rmsd_target
+-- CSC110: Concrete quaternionDictionary12 winner adequacy theorem from the signed projective cover radius and split translation/orientation budgets
+abbrev CSC110 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary12Library_winner_of_signed_quaternion_budget_yields_rmsd_target
+-- CSC111: quaternionDictionary20 inherits the global projective cover radius by containing quaternionDictionary12
+abbrev CSC111 := @Tractability.ConformerSupportCoverage.quaternionDictionary20_contains_signed_distance_witness
+-- CSC112: translation subset × quaternionDictionary20 support inherits RMSD witness adequacy from split translation/orientation pointwise budgets
+abbrev CSC112 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary20Support_contains_rmsd_witness_of_split_component_budgets
+-- CSC113: concrete quaternionDictionary20 winner adequacy theorem from the signed projective cover radius and split translation/orientation budgets
+abbrev CSC113 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary20Library_winner_of_signed_quaternion_budget_yields_rmsd_target
+-- CSC114: an exact winner over an enriched finite library is no worse than any member of a certified base sublibrary included in it
+abbrev CSC114 := @Tractability.ConformerSupportCoverage.exact_library_winner_energy_le_of_subset_member
+-- CSC115: a base-library candidate within exact gap Δ of an enriched covered-library winner inherits an explicit additive exact energy-gap budget
+abbrev CSC115 := @Tractability.ConformerSupportCoverage.exact_candidate_with_gap_to_library_winner_of_cover_has_energy_gap_le
+-- CSC116: a base-library candidate within exact gap Δ of an enriched covered-library winner inherits the RMSD target whenever the inflated gap budget fits the basin slack
+abbrev CSC116 := @Tractability.ConformerSupportCoverage.exact_candidate_with_gap_to_library_winner_of_cover_yields_rmsd_target
 
 /-! ## Blind Conformer Runtime Certificates (BCRC) handles
     BlindConformerRuntimeCertificates.lean - runtime pruning/budget safety

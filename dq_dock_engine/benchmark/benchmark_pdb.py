@@ -49,6 +49,10 @@ import zlib
 
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
+# Suppress repetitive PJRT/XLA warning lines like
+# `pjrt_executable.cc:642 Assume version compatibility...` during benchmarks.
+# Users can still override this explicitly in their shell if they want full logs.
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
 import jax
 import jax.numpy as jnp
@@ -2442,6 +2446,14 @@ def _augment_pipeline_debug_with_native_rigid_seed_witness(
     projective12_rmsd_upper_bound = float(
         translation_distance + projective12_pointwise_upper_bound
     )
+    projective12_global_theorem_applies = True
+    projective12_half4_theorem_applies = bool(
+        native_quaternion[0] >= -1.0e-8
+        and native_quaternion[1] >= -1.0e-8
+        and native_quaternion[2] >= -1.0e-8
+        and native_quaternion[3] >= -1.0e-8
+        and np.sum(np.abs(native_quaternion)) >= math.sqrt(2.0) - 1.0e-8
+    )
     witness_seed_coords = np.asarray(
         rigid_transform_3d(
             base_coords_jnp,
@@ -2508,6 +2520,14 @@ def _augment_pipeline_debug_with_native_rigid_seed_witness(
         "projective12_signed_distance_radius_bound": projective12_radius,
         "projective12_pointwise_upper_bound": projective12_pointwise_upper_bound,
         "projective12_rmsd_upper_bound": projective12_rmsd_upper_bound,
+        "projective12_global_theorem_applies": projective12_global_theorem_applies,
+        "projective12_global_theorem_rmsd_upper_bound": projective12_rmsd_upper_bound,
+        "projective12_half4_theorem_applies": projective12_half4_theorem_applies,
+        "projective12_half4_theorem_rmsd_upper_bound": (
+            projective12_rmsd_upper_bound
+            if projective12_half4_theorem_applies
+            else None
+        ),
         "csc63_rmsd_upper_bound": csc63_rmsd_upper_bound,
         "exact_seed_witness_rmsd": exact_seed_rmsd,
         "target_rmsd": float(target_rmsd),
@@ -2515,9 +2535,17 @@ def _augment_pipeline_debug_with_native_rigid_seed_witness(
         "required_full_lattice_resolution_for_target": required_full_lattice_resolution,
         "required_full_lattice_pose_count_for_target": required_full_lattice_pose_count,
         "theorem_handles": (
-            ("CSC63", "CSC65", "CSC66", "CSC98", "ERC45")
-            if csc98_applies
-            else ("CSC63", "CSC65", "CSC66", "ERC45")
+            ("CSC63", "CSC65", "CSC66", "CSC98", "CSC99", "CSC107", "ERC45")
+            if projective12_half4_theorem_applies and csc98_applies
+            else (
+                ("CSC63", "CSC65", "CSC66", "CSC99", "CSC107", "ERC45")
+                if projective12_half4_theorem_applies
+                else (
+                    ("CSC63", "CSC65", "CSC66", "CSC98", "CSC107", "ERC45")
+                    if csc98_applies
+                    else ("CSC63", "CSC65", "CSC66", "CSC107", "ERC45")
+                )
+            )
         ),
     }
     pipeline_debug_summary["rigid_seed_family_plan"] = rigid_summary

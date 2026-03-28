@@ -715,6 +715,114 @@ class CertifiedRigidSeedFamilyPlan:
                 + ", ".join(missing_runtime_bridge_handles)
             )
         rigid_dictionary_bridge_ready = len(rigid_dictionary_bridge_obstructions) == 0
+        projective_radius = math.sqrt(2.0 - math.sqrt(2.0))
+        using_projective_dictionary = self.quaternion_count >= 12
+        using_combined_dictionary = self.quaternion_count >= 20
+        rotation_dictionary_theorem_handles = (
+            (
+                "CSC65",
+                "CSC70",
+                "CSC72",
+                "CSC74",
+                "CSC76",
+                "CSC78",
+                "CSC79",
+                "CSC80",
+                "CSC81",
+                "CSC82",
+                "CSC84",
+                "CSC85",
+                "CSC86",
+                "CSC87",
+                "CSC88",
+                "CSC89",
+                "CSC90",
+                "CSC91",
+                "CSC92",
+                "CSC93",
+                "CSC94",
+                "CSC95",
+                "CSC98",
+                "CSC99",
+                "CSC100",
+                "CSC101",
+                "CSC102",
+                "CSC103",
+                "CSC104",
+                "CSC105",
+                "CSC106",
+                "CSC107",
+            )
+            if using_projective_dictionary
+            else (
+                "CSC65",
+                "CSC70",
+                "CSC72",
+                "CSC74",
+                "CSC76",
+                "CSC78",
+                "CSC79",
+                "CSC80",
+                "CSC81",
+                "CSC82",
+                "CSC84",
+                "CSC85",
+                "CSC86",
+                "CSC87",
+                "CSC88",
+                "CSC89",
+                "CSC90",
+                "CSC91",
+                "CSC92",
+                "CSC93",
+                "CSC94",
+                "CSC95",
+            )
+        )
+        rotation_support_bridge_theorem_handles = (
+            ("CSC97", "CSC108", "CSC112")
+            if using_combined_dictionary
+            else ("CSC97", "CSC108")
+            if self.quaternion_count == 12
+            else ("CSC97",)
+        )
+        rotation_winner_bridge_theorem_handles = (
+            (
+                "CSC67",
+                "CSC69",
+                "CSC71",
+                "CSC73",
+                "CSC75",
+                "CSC77",
+                "CSC83",
+                "CSC96",
+                "CSC109",
+            )
+            if self.quaternion_count == 12
+            else (
+                "CSC67",
+                "CSC69",
+                "CSC71",
+                "CSC73",
+                "CSC75",
+                "CSC77",
+                "CSC83",
+                "CSC96",
+                "CSC109",
+                "CSC113",
+            )
+            if using_combined_dictionary
+            else (
+                "CSC67",
+                "CSC69",
+                "CSC71",
+                "CSC73",
+                "CSC75",
+                "CSC77",
+                "CSC83",
+                "CSC96",
+            )
+        )
 
         return {
             "region_kind": self.region_kind.value,
@@ -746,42 +854,19 @@ class CertifiedRigidSeedFamilyPlan:
             "translation_cover_theorem_handles": (
                 () if continuous_cover_radius is None else ("CSC61", "CSC64")
             ),
-            "rotation_dictionary_theorem_handles": (
-                "CSC65",
-                "CSC70",
-                "CSC72",
-                "CSC74",
-                "CSC76",
-                "CSC78",
-                "CSC79",
-                "CSC80",
-                "CSC81",
-                "CSC82",
-                "CSC84",
-                "CSC85",
-                "CSC86",
-                "CSC87",
-                "CSC88",
-                "CSC89",
-                "CSC90",
-                "CSC91",
-                "CSC92",
-                "CSC93",
-                "CSC94",
-                "CSC95",
+            "rotation_dictionary_theorem_handles": rotation_dictionary_theorem_handles,
+            "rotation_support_bridge_theorem_handles": rotation_support_bridge_theorem_handles,
+            "rotation_winner_bridge_theorem_handles": rotation_winner_bridge_theorem_handles,
+            "quaternion_signed_distance_witness_radius": (
+                projective_radius if using_projective_dictionary else 1.0
             ),
-            "rotation_support_bridge_theorem_handles": ("CSC97",),
-            "rotation_winner_bridge_theorem_handles": (
-                "CSC67",
-                "CSC69",
-                "CSC71",
-                "CSC73",
-                "CSC75",
-                "CSC77",
-                "CSC83",
-                "CSC96",
+            "quaternion_dictionary_mode": (
+                "combined20"
+                if using_combined_dictionary
+                else "projective12"
+                if self.quaternion_count == 12
+                else "dictionary8"
             ),
-            "quaternion_signed_distance_witness_radius": 1.0,
             "actual_translation_points": tuple(
                 tuple(float(v) for v in row.tolist()) for row in translation_points
             ),
@@ -1188,6 +1273,7 @@ class ActiveRigidEnergyGapWitness:
     cover_gap_budget: float
     certified_energy_gap: float
     theorem_handles: tuple[str, ...]
+    selection_gap_budget: float = 0.0
     witness_handles: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -1199,6 +1285,7 @@ class ActiveRigidEnergyGapWitness:
             ("cover_rmsd_radius", self.cover_rmsd_radius),
             ("cover_gap_budget", self.cover_gap_budget),
             ("certified_energy_gap", self.certified_energy_gap),
+            ("selection_gap_budget", self.selection_gap_budget),
         ):
             _ensure_nonnegative(value, field_name=field_name)
 

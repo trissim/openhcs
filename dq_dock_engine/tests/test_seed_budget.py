@@ -27,7 +27,11 @@ from dq_dock_engine.docking.conformer_search import (
     RotatableBond,
     TorsionCell,
 )
-from dq_dock_engine.docking.formal_handles import conformer_coverage_theorem_handles
+from dq_dock_engine.docking.formal_handles import (
+    conformer_coverage_theorem_handles,
+    enriched_support_selection_transfer_theorem_handles,
+    returned_pose_energy_guarantee_theorem_handles,
+)
 from dq_dock_engine.docking.pipeline import (
     PipelineDockingRequest,
     PipelineInitialScores,
@@ -35,6 +39,7 @@ from dq_dock_engine.docking.pipeline import (
     PipelineRoute,
     SEED_BUDGET_PROBE_POSES,
     _build_returned_pose_certification,
+    _derive_rigid_energy_gap_proof_plan,
     _derive_returned_pose_proof_plan,
     _has_conformer_ambiguity_set_certificate_chain,
     _conformer_local_improvement_bounds,
@@ -45,10 +50,12 @@ from dq_dock_engine.docking.pipeline import (
     _detect_rigid_equivalence_ambiguity,
     _ligand_radius,
     _probe_seed_budget_certificate,
+    _select_base_anchored_rigid_candidate,
     _run_conformer_search_for_pose,
     _recertify_conformer_updated_pose,
     _seed_budget_torsion_count,
     _shared_certified_singleton_top1,
+    _with_rigid_selection_gap,
     derive_seed_budget,
     derive_seed_budget_plan,
     run_docking_pipeline_request,
@@ -577,6 +584,223 @@ def test_returned_pose_certification_uses_rigid_energy_gap_witness_when_cover_ch
     assert returned_cert.decision == ReturnedPoseContractDecision.CERTIFIED_ENERGY_GAP
     assert returned_cert.is_energy_gap_certified
     assert not returned_cert.is_target_rmsd_certified
+
+
+def test_select_base_anchored_rigid_candidate_uses_combined20_base_subset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENHCS_QUATERNION_DICTIONARY", "20")
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_dummy_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+        rigid_seed_family_plan=derive_certified_rigid_seed_family_plan(
+            DockingBox(
+                center=jnp.zeros((3,), dtype=jnp.float32),
+                size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+            ),
+            16,
+            target_translation_cover_radius=1.0,
+        ),
+    )
+    selected_index, selection_gap, debug = _select_base_anchored_rigid_candidate(
+        request=request,
+        survivor_scores=jnp.array([0.0, 0.25], dtype=jnp.float32),
+        survivor_global_indices=np.array([12, 0], dtype=np.int32),
+    )
+
+    assert selected_index == 1
+    assert selection_gap == pytest.approx(0.25)
+    assert debug is not None
+    assert debug["applied"] is True
+    assert debug["base_winner_index"] == 1
+    assert debug["exact_winner_index"] == 0
+
+
+def test_rigid_energy_gap_certificate_chain_requires_selection_transfer_handles() -> (
+    None
+):
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_dummy_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+    )
+    witness = ActiveRigidEnergyGapWitness(
+        cover_rmsd_radius=0.1,
+        cover_gap_budget=0.2,
+        certified_energy_gap=0.5,
+        theorem_handles=returned_pose_energy_guarantee_theorem_handles(),
+        selection_gap_budget=0.3,
+    )
+    proof_plan = _derive_rigid_energy_gap_proof_plan(
+        request=request,
+        witness=witness,
+        winner_theorem_handles=(),
+        winner_refinement_failure_reason="test",
+        note="test",
+    )
+
+    with pytest.raises(ValueError, match="complete rigid certificate chain"):
+        _build_returned_pose_certification(proof_plan=proof_plan)
+
+    certified_witness = _with_rigid_selection_gap(witness, selection_gap_budget=0.3)
+    certified_proof_plan = _derive_rigid_energy_gap_proof_plan(
+        request=request,
+        witness=certified_witness,
+        winner_theorem_handles=enriched_support_selection_transfer_theorem_handles(),
+        winner_refinement_failure_reason="test",
+        note="test",
+    )
+    returned_cert = _build_returned_pose_certification(proof_plan=certified_proof_plan)
+
+    assert returned_cert is not None
+    assert returned_cert.certified_energy_gap == pytest.approx(0.5)
+
+
+def test_rigid_energy_gap_certificate_does_not_skip_formal_refinement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import dq_dock_engine.docking.formal_optimizer as formal_optimizer_module
+
+    class _FakeExecutionPlan:
+        def __init__(self) -> None:
+            self.theorem_handles: tuple[str, ...] = ()
+            self.final_survivor_indices: tuple[int, ...] | None = (0, 1)
+            self.refinement_budget = None
+
+        @property
+        def refinement_pose_indices(self) -> tuple[int, ...]:
+            return (
+                ()
+                if self.refinement_budget is None
+                else self.refinement_budget.pose_indices
+            )
+
+        def with_refinement_budget(self, refinement_budget, *, postfilter_cost_model):
+            del postfilter_cost_model
+            updated = _FakeExecutionPlan()
+            updated.refinement_budget = refinement_budget
+            return updated
+
+        def debug_summary(self) -> dict[str, object]:
+            return {}
+
+    class _FakeRoute(docking_pipeline.PipelineRoute):
+        def generate_pose_batch(self, request):
+            pose_vecs = PoseVector(
+                translation=jnp.zeros((2, 3), dtype=jnp.float32),
+                quaternion=jnp.array(
+                    [[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]],
+                    dtype=jnp.float32,
+                ),
+            )
+            return PipelinePoseBatch(request=request, pose_vecs=pose_vecs)
+
+        def score_pose_batch(self, request, batched_coords, pose_vecs):
+            del request, batched_coords, pose_vecs
+            return PipelineInitialScores(
+                final_scores=jnp.array([0.0, 1.0], dtype=jnp.float32),
+                execution_plan=cast(Any, _FakeExecutionPlan()),
+            )
+
+    def _raise_if_refinement_runs(**kwargs):
+        del kwargs
+        raise RuntimeError("formal refinement reached")
+
+    class _FakeCertifiedContext:
+        uses_extended_rich = False
+        receptor_conformations = None
+        electrostatics = None
+
+        def optimization_context(self):
+            return self
+
+        def ranking_context(self):
+            return self
+
+        def pruning_context(self):
+            return self
+
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_dummy_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+        n_poses_override=2,
+        rigid_seed_family_plan=derive_certified_rigid_seed_family_plan(
+            DockingBox(
+                center=jnp.zeros((3,), dtype=jnp.float32),
+                size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+            ),
+            2,
+            target_translation_cover_radius=1.0,
+        ),
+    )
+
+    monkeypatch.setattr(
+        docking_pipeline, "derive_pipeline_route", lambda request: _FakeRoute()
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "resolve_request_scoring_context",
+        lambda *args, **kwargs: _FakeCertifiedContext(),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_derive_certified_rigid_local_refinement_plan",
+        lambda *args, **kwargs: SimpleNamespace(
+            translation_cell_width=1.0,
+            ligand_radius=1.0,
+            base_translation_step=0.5,
+            base_rotation_step_rad=0.5,
+            n_search_rounds=1,
+            local_improvement_bound=1.0,
+        ),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_score_exact_pose_batch",
+        lambda *args, **kwargs: jnp.array([0.0, 1.0], dtype=jnp.float32),
+    )
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_posewise_rigid_local_improvement_bounds",
+        lambda *args, **kwargs: (
+            np.array([1.0, 1.0], dtype=np.float32),
+            np.array([True, True], dtype=bool),
+            np.array([1.0, 1.0], dtype=np.float32),
+        ),
+    )
+    monkeypatch.setattr(
+        formal_optimizer_module,
+        "_run_exact_formal_refinement",
+        _raise_if_refinement_runs,
+    )
+    monkeypatch.setattr(
+        formal_optimizer_module,
+        "_run_singleton_hybrid_formal_refinement",
+        _raise_if_refinement_runs,
+    )
+
+    with pytest.raises(RuntimeError, match="formal refinement reached"):
+        run_docking_pipeline_request(request)
 
 
 def test_returned_pose_certification_promotes_conformer_ambiguity_set_when_certified() -> (

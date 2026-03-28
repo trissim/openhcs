@@ -296,6 +296,11 @@ noncomputable def quaternionDictionary12 : MDTensor 12 4 :=
     | 10 => mkMDArray (fun j => if j.1 = 1 ∨ j.1 = 2 then -half else half)
     | _ => mkMDArray (fun j => if j.1 = 0 then half else -half)
 
+/-- Combined certified quaternion dictionary that retains the original
+    quaternionDictionary8 seeds and adjoins the projective-12 witnesses. -/
+noncomputable def quaternionDictionary20 : MDTensor 20 4 :=
+  fun i => if h : i.1 < 8 then quaternionDictionary8 ⟨i.1, h⟩ else quaternionDictionary12 ⟨i.1 - 8, by omega⟩
+
 /-! ## 3. Derivative Definitions -/
 
 /-- The formal gradient of any array function mapped to JAX autodiff. -/
@@ -1204,6 +1209,630 @@ theorem quaternionDictionary12_half11_eq :
       mkMDArray (fun j => if j = ⟨0, by decide⟩ then (1 : ℝ) / 2 else -(1 : ℝ) / 2) := by
   ext j
   fin_cases j <;> simp [quaternionDictionary12, mkMDArray] <;> norm_num
+
+theorem quaternionDictionary20_includes_quaternionDictionary8 (k : Fin 8) :
+    quaternionDictionary20 ⟨k.1, by omega⟩ = quaternionDictionary8 k := by
+  simp [quaternionDictionary20, k.2]
+
+theorem quaternionDictionary20_includes_quaternionDictionary12 (k : Fin 12) :
+    quaternionDictionary20 ⟨k.1 + 8, by omega⟩ = quaternionDictionary12 k := by
+  have hNot : ¬ k.1 + 8 < 8 := by omega
+  simp [quaternionDictionary20, hNot]
+
+theorem unit_norm_mdarray4_sum_abs_ge_sqrt_two_of_all_coords_le_inv_sqrt_two
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (hSmall : ∀ i : Fin 4, |q i| ≤ Real.sqrt 2 / 2) :
+    Real.sqrt 2 ≤ |q ⟨0, by decide⟩| + |q ⟨1, by decide⟩| + |q ⟨2, by decide⟩| + |q ⟨3, by decide⟩| := by
+  have hsumSq :
+      |q ⟨0, by decide⟩| ^ 2 + |q ⟨1, by decide⟩| ^ 2 + |q ⟨2, by decide⟩| ^ 2 + |q ⟨3, by decide⟩| ^ 2 = 1 := by
+    have hsumSq' := norm_sq_eq_sum_sq q
+    rw [hNorm] at hsumSq'
+    rw [Fin.sum_univ_four] at hsumSq'
+    simpa [sq_abs] using hsumSq'.symm
+  have h0 : |q ⟨0, by decide⟩| ^ 2 ≤ (Real.sqrt 2 / 2) * |q ⟨0, by decide⟩| := by
+    nlinarith [hSmall ⟨0, by decide⟩, abs_nonneg (q ⟨0, by decide⟩)]
+  have h1 : |q ⟨1, by decide⟩| ^ 2 ≤ (Real.sqrt 2 / 2) * |q ⟨1, by decide⟩| := by
+    nlinarith [hSmall ⟨1, by decide⟩, abs_nonneg (q ⟨1, by decide⟩)]
+  have h2 : |q ⟨2, by decide⟩| ^ 2 ≤ (Real.sqrt 2 / 2) * |q ⟨2, by decide⟩| := by
+    nlinarith [hSmall ⟨2, by decide⟩, abs_nonneg (q ⟨2, by decide⟩)]
+  have h3 : |q ⟨3, by decide⟩| ^ 2 ≤ (Real.sqrt 2 / 2) * |q ⟨3, by decide⟩| := by
+    nlinarith [hSmall ⟨3, by decide⟩, abs_nonneg (q ⟨3, by decide⟩)]
+  have hMain :
+      1 ≤ (Real.sqrt 2 / 2) * (|q ⟨0, by decide⟩| + |q ⟨1, by decide⟩| + |q ⟨2, by decide⟩| + |q ⟨3, by decide⟩|) := by
+    rw [← hsumSq]
+    nlinarith [h0, h1, h2, h3]
+  by_contra hLt
+  have hLtS :
+      |q ⟨0, by decide⟩| + |q ⟨1, by decide⟩| + |q ⟨2, by decide⟩| + |q ⟨3, by decide⟩| < Real.sqrt 2 := by
+    exact lt_of_not_ge hLt
+  have hLt' :
+      (Real.sqrt 2 / 2) * (|q ⟨0, by decide⟩| + |q ⟨1, by decide⟩| + |q ⟨2, by decide⟩| + |q ⟨3, by decide⟩|) < 1 := by
+    have hsqrtPos : 0 < Real.sqrt 2 / 2 := by positivity
+    have hmul :
+        (Real.sqrt 2 / 2) * (|q ⟨0, by decide⟩| + |q ⟨1, by decide⟩| + |q ⟨2, by decide⟩| + |q ⟨3, by decide⟩|)
+          < (Real.sqrt 2 / 2) * Real.sqrt 2 := by
+      exact mul_lt_mul_of_pos_left hLtS hsqrtPos
+    have hrhs : (Real.sqrt 2 / 2) * Real.sqrt 2 = 1 := by
+      nlinarith [Real.sq_sqrt (show 0 ≤ (2 : ℝ) by positivity)]
+    linarith
+  linarith
+
+theorem unit_norm_mdarray4_has_coordinate_abs_ge_inv_sqrt_two_or_sum_abs_ge_sqrt_two
+    (q : MDArray 4)
+    (hNorm : norm q = 1) :
+    (∃ i : Fin 4, Real.sqrt 2 / 2 ≤ |q i|) ∨
+      Real.sqrt 2 ≤ |q ⟨0, by decide⟩| + |q ⟨1, by decide⟩| + |q ⟨2, by decide⟩| + |q ⟨3, by decide⟩| := by
+  by_cases hLarge : ∃ i : Fin 4, Real.sqrt 2 / 2 ≤ |q i|
+  · exact Or.inl hLarge
+  · right
+    push_neg at hLarge
+    exact unit_norm_mdarray4_sum_abs_ge_sqrt_two_of_all_coords_le_inv_sqrt_two q hNorm (fun i => le_of_lt (hLarge i))
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half4_eq_two_sub_sum_of_nonneg
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : 0 ≤ q (1 : Fin 4))
+    (h2 : 0 ≤ q (2 : Fin 4))
+    (h3 : 0 ≤ q (3 : Fin 4)) :
+    ‖q - quaternionDictionary12 ⟨4, by decide⟩‖ ^ 2 =
+      2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+  have hsumSq :
+      q (0 : Fin 4) ^ 2 + q (1 : Fin 4) ^ 2 + q (2 : Fin 4) ^ 2 + q (3 : Fin 4) ^ 2 = 1 := by
+    have hsumSq' := norm_sq_eq_sum_sq q
+    rw [hNorm] at hsumSq'
+    rw [Fin.sum_univ_four] at hsumSq'
+    simpa using hsumSq'.symm
+  rw [quaternionDictionary12_half4_eq]
+  have hdistSq := norm_sq_eq_sum_sq (q - mkMDArray (fun _ => (1 : ℝ) / 2))
+  rw [Fin.sum_univ_four, mkMDArray] at hdistSq
+  calc
+    ‖q - mkMDArray (fun _ => (1 : ℝ) / 2)‖ ^ 2
+        = (q (0 : Fin 4) - (1 : ℝ) / 2) ^ 2 +
+            ((q (1 : Fin 4) - (1 : ℝ) / 2) ^ 2 +
+              ((q (2 : Fin 4) - (1 : ℝ) / 2) ^ 2 +
+                (q (3 : Fin 4) - (1 : ℝ) / 2) ^ 2)) := by
+              simpa [add_assoc] using hdistSq
+    _ = 2 - (q (0 : Fin 4) + q (1 : Fin 4) + q (2 : Fin 4) + q (3 : Fin 4)) := by
+          nlinarith
+    _ = 2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+          simp [abs_of_nonneg h0, abs_of_nonneg h1, abs_of_nonneg h2, abs_of_nonneg h3]
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half4_le_two_sub_sqrt_two_of_nonneg
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : 0 ≤ q (1 : Fin 4))
+    (h2 : 0 ≤ q (2 : Fin 4))
+    (h3 : 0 ≤ q (3 : Fin 4))
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ‖q - quaternionDictionary12 ⟨4, by decide⟩‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  rw [unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half4_eq_two_sub_sum_of_nonneg q hNorm h0 h1 h2 h3]
+  linarith
+
+theorem sub_quaternionDictionary12_half5_coord0
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨5, by decide⟩) (0 : Fin 4) = q (0 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half5_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half5_coord1
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨5, by decide⟩) (1 : Fin 4) = q (1 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half5_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half5_coord2
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨5, by decide⟩) (2 : Fin 4) = q (2 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half5_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half5_coord3
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨5, by decide⟩) (3 : Fin 4) = q (3 : Fin 4) + (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half5_eq]
+  simp [mkMDArray, sub_eq_add_neg]
+  ring_nf
+
+theorem sub_quaternionDictionary12_half6_coord0
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨6, by decide⟩) (0 : Fin 4) = q (0 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half6_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half6_coord1
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨6, by decide⟩) (1 : Fin 4) = q (1 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half6_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half6_coord2
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨6, by decide⟩) (2 : Fin 4) = q (2 : Fin 4) + (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half6_eq]
+  simp [mkMDArray, sub_eq_add_neg]
+  ring_nf
+
+theorem sub_quaternionDictionary12_half6_coord3
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨6, by decide⟩) (3 : Fin 4) = q (3 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half6_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half7_coord0
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨7, by decide⟩) (0 : Fin 4) = q (0 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half7_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half7_coord1
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨7, by decide⟩) (1 : Fin 4) = q (1 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half7_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half7_coord2
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨7, by decide⟩) (2 : Fin 4) = q (2 : Fin 4) + (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half7_eq]
+  simp [mkMDArray, sub_eq_add_neg]
+  ring_nf
+
+theorem sub_quaternionDictionary12_half7_coord3
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨7, by decide⟩) (3 : Fin 4) = q (3 : Fin 4) + (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half7_eq]
+  simp [mkMDArray, sub_eq_add_neg]
+  ring_nf
+
+theorem sub_quaternionDictionary12_half8_coord0
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨8, by decide⟩) (0 : Fin 4) = q (0 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half8_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half8_coord1
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨8, by decide⟩) (1 : Fin 4) = q (1 : Fin 4) + (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half8_eq]
+  simp [mkMDArray, sub_eq_add_neg]
+  ring_nf
+
+theorem sub_quaternionDictionary12_half8_coord2
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨8, by decide⟩) (2 : Fin 4) = q (2 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half8_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half8_coord3
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨8, by decide⟩) (3 : Fin 4) = q (3 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half8_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half9_coord0
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨9, by decide⟩) (0 : Fin 4) = q (0 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half9_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half9_coord1
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨9, by decide⟩) (1 : Fin 4) = q (1 : Fin 4) + (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half9_eq]
+  simp [mkMDArray, sub_eq_add_neg]
+  ring_nf
+
+theorem sub_quaternionDictionary12_half9_coord2
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨9, by decide⟩) (2 : Fin 4) = q (2 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half9_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half9_coord3
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨9, by decide⟩) (3 : Fin 4) = q (3 : Fin 4) + (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half9_eq]
+  simp [mkMDArray, sub_eq_add_neg]
+  ring_nf
+
+theorem sub_quaternionDictionary12_half10_coord0
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨10, by decide⟩) (0 : Fin 4) = q (0 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half10_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half10_coord1
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨10, by decide⟩) (1 : Fin 4) = q (1 : Fin 4) + (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half10_eq]
+  simp [mkMDArray, sub_eq_add_neg]
+  ring_nf
+
+theorem sub_quaternionDictionary12_half10_coord2
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨10, by decide⟩) (2 : Fin 4) = q (2 : Fin 4) + (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half10_eq]
+  simp [mkMDArray, sub_eq_add_neg]
+  ring_nf
+
+theorem sub_quaternionDictionary12_half10_coord3
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨10, by decide⟩) (3 : Fin 4) = q (3 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half10_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half11_coord0
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨11, by decide⟩) (0 : Fin 4) = q (0 : Fin 4) - (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half11_eq]
+  simp [mkMDArray]
+
+theorem sub_quaternionDictionary12_half11_coord1
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨11, by decide⟩) (1 : Fin 4) = q (1 : Fin 4) + (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half11_eq]
+  simp [mkMDArray, sub_eq_add_neg]
+  ring_nf
+
+theorem sub_quaternionDictionary12_half11_coord2
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨11, by decide⟩) (2 : Fin 4) = q (2 : Fin 4) + (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half11_eq]
+  simp [mkMDArray, sub_eq_add_neg]
+  ring_nf
+
+theorem sub_quaternionDictionary12_half11_coord3
+    (q : MDArray 4) :
+    (q - quaternionDictionary12 ⟨11, by decide⟩) (3 : Fin 4) = q (3 : Fin 4) + (1 : ℝ) / 2 := by
+  rw [quaternionDictionary12_half11_eq]
+  simp [mkMDArray, sub_eq_add_neg]
+  ring_nf
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half5_eq_two_sub_sum_of_signs
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : 0 ≤ q (1 : Fin 4))
+    (h2 : 0 ≤ q (2 : Fin 4))
+    (h3 : q (3 : Fin 4) ≤ 0) :
+    ‖q - quaternionDictionary12 ⟨5, by decide⟩‖ ^ 2 =
+      2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+  have hsumSq :
+      q (0 : Fin 4) ^ 2 + q (1 : Fin 4) ^ 2 + q (2 : Fin 4) ^ 2 + q (3 : Fin 4) ^ 2 = 1 := by
+    have hsumSq' := norm_sq_eq_sum_sq q
+    rw [hNorm] at hsumSq'
+    rw [Fin.sum_univ_four] at hsumSq'
+    simpa using hsumSq'.symm
+  have hdistSq := norm_sq_eq_sum_sq (q - quaternionDictionary12 ⟨5, by decide⟩)
+  rw [Fin.sum_univ_four] at hdistSq
+  rw [sub_quaternionDictionary12_half5_coord0, sub_quaternionDictionary12_half5_coord1,
+      sub_quaternionDictionary12_half5_coord2, sub_quaternionDictionary12_half5_coord3] at hdistSq
+  have hpoly :
+      (q (0 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (1 : Fin 4) - (1 : ℝ) / 2) ^ 2 +
+          (q (2 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (3 : Fin 4) + (1 : ℝ) / 2) ^ 2
+        = 2 - (q (0 : Fin 4) + q (1 : Fin 4) + q (2 : Fin 4) + -q (3 : Fin 4)) := by
+    nlinarith
+  have habs :
+      |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)| =
+        q (0 : Fin 4) + q (1 : Fin 4) + q (2 : Fin 4) + -q (3 : Fin 4) := by
+    simp [abs_of_nonneg h0, abs_of_nonneg h1, abs_of_nonneg h2, abs_of_nonpos h3]
+  calc
+    ‖q - quaternionDictionary12 ⟨5, by decide⟩‖ ^ 2
+        = (q (0 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (1 : Fin 4) - (1 : ℝ) / 2) ^ 2 +
+            (q (2 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (3 : Fin 4) + (1 : ℝ) / 2) ^ 2 := by
+              simpa [add_assoc] using hdistSq
+    _ = 2 - (q (0 : Fin 4) + q (1 : Fin 4) + q (2 : Fin 4) + -q (3 : Fin 4)) := hpoly
+    _ = 2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+          rw [habs]
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half5_le_two_sub_sqrt_two_of_signs
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : 0 ≤ q (1 : Fin 4))
+    (h2 : 0 ≤ q (2 : Fin 4))
+    (h3 : q (3 : Fin 4) ≤ 0)
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ‖q - quaternionDictionary12 ⟨5, by decide⟩‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  rw [unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half5_eq_two_sub_sum_of_signs q hNorm h0 h1 h2 h3]
+  linarith
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half6_eq_two_sub_sum_of_signs
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : 0 ≤ q (1 : Fin 4))
+    (h2 : q (2 : Fin 4) ≤ 0)
+    (h3 : 0 ≤ q (3 : Fin 4)) :
+    ‖q - quaternionDictionary12 ⟨6, by decide⟩‖ ^ 2 =
+      2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+  have hsumSq :
+      q (0 : Fin 4) ^ 2 + q (1 : Fin 4) ^ 2 + q (2 : Fin 4) ^ 2 + q (3 : Fin 4) ^ 2 = 1 := by
+    have hsumSq' := norm_sq_eq_sum_sq q
+    rw [hNorm] at hsumSq'
+    rw [Fin.sum_univ_four] at hsumSq'
+    simpa using hsumSq'.symm
+  have hdistSq := norm_sq_eq_sum_sq (q - quaternionDictionary12 ⟨6, by decide⟩)
+  rw [Fin.sum_univ_four] at hdistSq
+  rw [sub_quaternionDictionary12_half6_coord0, sub_quaternionDictionary12_half6_coord1,
+      sub_quaternionDictionary12_half6_coord2, sub_quaternionDictionary12_half6_coord3] at hdistSq
+  have hpoly :
+      (q (0 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (1 : Fin 4) - (1 : ℝ) / 2) ^ 2 +
+          (q (2 : Fin 4) + (1 : ℝ) / 2) ^ 2 + (q (3 : Fin 4) - (1 : ℝ) / 2) ^ 2
+        = 2 - (q (0 : Fin 4) + q (1 : Fin 4) + -q (2 : Fin 4) + q (3 : Fin 4)) := by
+    nlinarith
+  have habs :
+      |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)| =
+        q (0 : Fin 4) + q (1 : Fin 4) + -q (2 : Fin 4) + q (3 : Fin 4) := by
+    simp [abs_of_nonneg h0, abs_of_nonneg h1, abs_of_nonpos h2, abs_of_nonneg h3]
+  calc
+    ‖q - quaternionDictionary12 ⟨6, by decide⟩‖ ^ 2
+        = (q (0 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (1 : Fin 4) - (1 : ℝ) / 2) ^ 2 +
+            (q (2 : Fin 4) + (1 : ℝ) / 2) ^ 2 + (q (3 : Fin 4) - (1 : ℝ) / 2) ^ 2 := by
+              simpa [add_assoc] using hdistSq
+    _ = 2 - (q (0 : Fin 4) + q (1 : Fin 4) + -q (2 : Fin 4) + q (3 : Fin 4)) := hpoly
+    _ = 2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+          rw [habs]
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half6_le_two_sub_sqrt_two_of_signs
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : 0 ≤ q (1 : Fin 4))
+    (h2 : q (2 : Fin 4) ≤ 0)
+    (h3 : 0 ≤ q (3 : Fin 4))
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ‖q - quaternionDictionary12 ⟨6, by decide⟩‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  rw [unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half6_eq_two_sub_sum_of_signs q hNorm h0 h1 h2 h3]
+  linarith
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half7_eq_two_sub_sum_of_signs
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : 0 ≤ q (1 : Fin 4))
+    (h2 : q (2 : Fin 4) ≤ 0)
+    (h3 : q (3 : Fin 4) ≤ 0) :
+    ‖q - quaternionDictionary12 ⟨7, by decide⟩‖ ^ 2 =
+      2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+  have hsumSq :
+      q (0 : Fin 4) ^ 2 + q (1 : Fin 4) ^ 2 + q (2 : Fin 4) ^ 2 + q (3 : Fin 4) ^ 2 = 1 := by
+    have hsumSq' := norm_sq_eq_sum_sq q
+    rw [hNorm] at hsumSq'
+    rw [Fin.sum_univ_four] at hsumSq'
+    simpa using hsumSq'.symm
+  have hdistSq := norm_sq_eq_sum_sq (q - quaternionDictionary12 ⟨7, by decide⟩)
+  rw [Fin.sum_univ_four] at hdistSq
+  rw [sub_quaternionDictionary12_half7_coord0, sub_quaternionDictionary12_half7_coord1,
+      sub_quaternionDictionary12_half7_coord2, sub_quaternionDictionary12_half7_coord3] at hdistSq
+  have hpoly :
+      (q (0 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (1 : Fin 4) - (1 : ℝ) / 2) ^ 2 +
+          (q (2 : Fin 4) + (1 : ℝ) / 2) ^ 2 + (q (3 : Fin 4) + (1 : ℝ) / 2) ^ 2
+        = 2 - (q (0 : Fin 4) + q (1 : Fin 4) + -q (2 : Fin 4) + -q (3 : Fin 4)) := by
+    nlinarith
+  have habs :
+      |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)| =
+        q (0 : Fin 4) + q (1 : Fin 4) + -q (2 : Fin 4) + -q (3 : Fin 4) := by
+    simp [abs_of_nonneg h0, abs_of_nonneg h1, abs_of_nonpos h2, abs_of_nonpos h3]
+  calc
+    ‖q - quaternionDictionary12 ⟨7, by decide⟩‖ ^ 2
+        = (q (0 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (1 : Fin 4) - (1 : ℝ) / 2) ^ 2 +
+            (q (2 : Fin 4) + (1 : ℝ) / 2) ^ 2 + (q (3 : Fin 4) + (1 : ℝ) / 2) ^ 2 := by
+              simpa [add_assoc] using hdistSq
+    _ = 2 - (q (0 : Fin 4) + q (1 : Fin 4) + -q (2 : Fin 4) + -q (3 : Fin 4)) := hpoly
+    _ = 2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+          rw [habs]
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half7_le_two_sub_sqrt_two_of_signs
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : 0 ≤ q (1 : Fin 4))
+    (h2 : q (2 : Fin 4) ≤ 0)
+    (h3 : q (3 : Fin 4) ≤ 0)
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ‖q - quaternionDictionary12 ⟨7, by decide⟩‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  rw [unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half7_eq_two_sub_sum_of_signs q hNorm h0 h1 h2 h3]
+  linarith
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half8_eq_two_sub_sum_of_signs
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : q (1 : Fin 4) ≤ 0)
+    (h2 : 0 ≤ q (2 : Fin 4))
+    (h3 : 0 ≤ q (3 : Fin 4)) :
+    ‖q - quaternionDictionary12 ⟨8, by decide⟩‖ ^ 2 =
+      2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+  have hsumSq :
+      q (0 : Fin 4) ^ 2 + q (1 : Fin 4) ^ 2 + q (2 : Fin 4) ^ 2 + q (3 : Fin 4) ^ 2 = 1 := by
+    have hsumSq' := norm_sq_eq_sum_sq q
+    rw [hNorm] at hsumSq'
+    rw [Fin.sum_univ_four] at hsumSq'
+    simpa using hsumSq'.symm
+  have hdistSq := norm_sq_eq_sum_sq (q - quaternionDictionary12 ⟨8, by decide⟩)
+  rw [Fin.sum_univ_four] at hdistSq
+  rw [sub_quaternionDictionary12_half8_coord0, sub_quaternionDictionary12_half8_coord1,
+      sub_quaternionDictionary12_half8_coord2, sub_quaternionDictionary12_half8_coord3] at hdistSq
+  have hpoly :
+      (q (0 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (1 : Fin 4) + (1 : ℝ) / 2) ^ 2 +
+          (q (2 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (3 : Fin 4) - (1 : ℝ) / 2) ^ 2
+        = 2 - (q (0 : Fin 4) + -q (1 : Fin 4) + q (2 : Fin 4) + q (3 : Fin 4)) := by
+    nlinarith
+  have habs :
+      |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)| =
+        q (0 : Fin 4) + -q (1 : Fin 4) + q (2 : Fin 4) + q (3 : Fin 4) := by
+    simp [abs_of_nonneg h0, abs_of_nonpos h1, abs_of_nonneg h2, abs_of_nonneg h3]
+  calc
+    ‖q - quaternionDictionary12 ⟨8, by decide⟩‖ ^ 2
+        = (q (0 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (1 : Fin 4) + (1 : ℝ) / 2) ^ 2 +
+            (q (2 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (3 : Fin 4) - (1 : ℝ) / 2) ^ 2 := by
+              simpa [add_assoc] using hdistSq
+    _ = 2 - (q (0 : Fin 4) + -q (1 : Fin 4) + q (2 : Fin 4) + q (3 : Fin 4)) := hpoly
+    _ = 2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+          rw [habs]
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half8_le_two_sub_sqrt_two_of_signs
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : q (1 : Fin 4) ≤ 0)
+    (h2 : 0 ≤ q (2 : Fin 4))
+    (h3 : 0 ≤ q (3 : Fin 4))
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ‖q - quaternionDictionary12 ⟨8, by decide⟩‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  rw [unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half8_eq_two_sub_sum_of_signs q hNorm h0 h1 h2 h3]
+  linarith
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half9_eq_two_sub_sum_of_signs
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : q (1 : Fin 4) ≤ 0)
+    (h2 : 0 ≤ q (2 : Fin 4))
+    (h3 : q (3 : Fin 4) ≤ 0) :
+    ‖q - quaternionDictionary12 ⟨9, by decide⟩‖ ^ 2 =
+      2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+  have hsumSq :
+      q (0 : Fin 4) ^ 2 + q (1 : Fin 4) ^ 2 + q (2 : Fin 4) ^ 2 + q (3 : Fin 4) ^ 2 = 1 := by
+    have hsumSq' := norm_sq_eq_sum_sq q
+    rw [hNorm] at hsumSq'
+    rw [Fin.sum_univ_four] at hsumSq'
+    simpa using hsumSq'.symm
+  have hdistSq := norm_sq_eq_sum_sq (q - quaternionDictionary12 ⟨9, by decide⟩)
+  rw [Fin.sum_univ_four] at hdistSq
+  rw [sub_quaternionDictionary12_half9_coord0, sub_quaternionDictionary12_half9_coord1,
+      sub_quaternionDictionary12_half9_coord2, sub_quaternionDictionary12_half9_coord3] at hdistSq
+  have hpoly :
+      (q (0 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (1 : Fin 4) + (1 : ℝ) / 2) ^ 2 +
+          (q (2 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (3 : Fin 4) + (1 : ℝ) / 2) ^ 2
+        = 2 - (q (0 : Fin 4) + -q (1 : Fin 4) + q (2 : Fin 4) + -q (3 : Fin 4)) := by
+    nlinarith
+  have habs :
+      |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)| =
+        q (0 : Fin 4) + -q (1 : Fin 4) + q (2 : Fin 4) + -q (3 : Fin 4) := by
+    simp [abs_of_nonneg h0, abs_of_nonpos h1, abs_of_nonneg h2, abs_of_nonpos h3]
+  calc
+    ‖q - quaternionDictionary12 ⟨9, by decide⟩‖ ^ 2
+        = (q (0 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (1 : Fin 4) + (1 : ℝ) / 2) ^ 2 +
+            (q (2 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (3 : Fin 4) + (1 : ℝ) / 2) ^ 2 := by
+              simpa [add_assoc] using hdistSq
+    _ = 2 - (q (0 : Fin 4) + -q (1 : Fin 4) + q (2 : Fin 4) + -q (3 : Fin 4)) := hpoly
+    _ = 2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+          rw [habs]
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half9_le_two_sub_sqrt_two_of_signs
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : q (1 : Fin 4) ≤ 0)
+    (h2 : 0 ≤ q (2 : Fin 4))
+    (h3 : q (3 : Fin 4) ≤ 0)
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ‖q - quaternionDictionary12 ⟨9, by decide⟩‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  rw [unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half9_eq_two_sub_sum_of_signs q hNorm h0 h1 h2 h3]
+  linarith
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half10_eq_two_sub_sum_of_signs
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : q (1 : Fin 4) ≤ 0)
+    (h2 : q (2 : Fin 4) ≤ 0)
+    (h3 : 0 ≤ q (3 : Fin 4)) :
+    ‖q - quaternionDictionary12 ⟨10, by decide⟩‖ ^ 2 =
+      2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+  have hsumSq :
+      q (0 : Fin 4) ^ 2 + q (1 : Fin 4) ^ 2 + q (2 : Fin 4) ^ 2 + q (3 : Fin 4) ^ 2 = 1 := by
+    have hsumSq' := norm_sq_eq_sum_sq q
+    rw [hNorm] at hsumSq'
+    rw [Fin.sum_univ_four] at hsumSq'
+    simpa using hsumSq'.symm
+  have hdistSq := norm_sq_eq_sum_sq (q - quaternionDictionary12 ⟨10, by decide⟩)
+  rw [Fin.sum_univ_four] at hdistSq
+  rw [sub_quaternionDictionary12_half10_coord0, sub_quaternionDictionary12_half10_coord1,
+      sub_quaternionDictionary12_half10_coord2, sub_quaternionDictionary12_half10_coord3] at hdistSq
+  have hpoly :
+      (q (0 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (1 : Fin 4) + (1 : ℝ) / 2) ^ 2 +
+          (q (2 : Fin 4) + (1 : ℝ) / 2) ^ 2 + (q (3 : Fin 4) - (1 : ℝ) / 2) ^ 2
+        = 2 - (q (0 : Fin 4) + -q (1 : Fin 4) + -q (2 : Fin 4) + q (3 : Fin 4)) := by
+    nlinarith
+  have habs :
+      |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)| =
+        q (0 : Fin 4) + -q (1 : Fin 4) + -q (2 : Fin 4) + q (3 : Fin 4) := by
+    simp [abs_of_nonneg h0, abs_of_nonpos h1, abs_of_nonpos h2, abs_of_nonneg h3]
+  calc
+    ‖q - quaternionDictionary12 ⟨10, by decide⟩‖ ^ 2
+        = (q (0 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (1 : Fin 4) + (1 : ℝ) / 2) ^ 2 +
+            (q (2 : Fin 4) + (1 : ℝ) / 2) ^ 2 + (q (3 : Fin 4) - (1 : ℝ) / 2) ^ 2 := by
+              simpa [add_assoc] using hdistSq
+    _ = 2 - (q (0 : Fin 4) + -q (1 : Fin 4) + -q (2 : Fin 4) + q (3 : Fin 4)) := hpoly
+    _ = 2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+          rw [habs]
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half10_le_two_sub_sqrt_two_of_signs
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : q (1 : Fin 4) ≤ 0)
+    (h2 : q (2 : Fin 4) ≤ 0)
+    (h3 : 0 ≤ q (3 : Fin 4))
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ‖q - quaternionDictionary12 ⟨10, by decide⟩‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  rw [unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half10_eq_two_sub_sum_of_signs q hNorm h0 h1 h2 h3]
+  linarith
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half11_eq_two_sub_sum_of_signs
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : q (1 : Fin 4) ≤ 0)
+    (h2 : q (2 : Fin 4) ≤ 0)
+    (h3 : q (3 : Fin 4) ≤ 0) :
+    ‖q - quaternionDictionary12 ⟨11, by decide⟩‖ ^ 2 =
+      2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+  have hsumSq :
+      q (0 : Fin 4) ^ 2 + q (1 : Fin 4) ^ 2 + q (2 : Fin 4) ^ 2 + q (3 : Fin 4) ^ 2 = 1 := by
+    have hsumSq' := norm_sq_eq_sum_sq q
+    rw [hNorm] at hsumSq'
+    rw [Fin.sum_univ_four] at hsumSq'
+    simpa using hsumSq'.symm
+  have hdistSq := norm_sq_eq_sum_sq (q - quaternionDictionary12 ⟨11, by decide⟩)
+  rw [Fin.sum_univ_four] at hdistSq
+  rw [sub_quaternionDictionary12_half11_coord0, sub_quaternionDictionary12_half11_coord1,
+      sub_quaternionDictionary12_half11_coord2, sub_quaternionDictionary12_half11_coord3] at hdistSq
+  have hpoly :
+      (q (0 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (1 : Fin 4) + (1 : ℝ) / 2) ^ 2 +
+          (q (2 : Fin 4) + (1 : ℝ) / 2) ^ 2 + (q (3 : Fin 4) + (1 : ℝ) / 2) ^ 2
+        = 2 - (q (0 : Fin 4) + -q (1 : Fin 4) + -q (2 : Fin 4) + -q (3 : Fin 4)) := by
+    nlinarith
+  have habs :
+      |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)| =
+        q (0 : Fin 4) + -q (1 : Fin 4) + -q (2 : Fin 4) + -q (3 : Fin 4) := by
+    simp [abs_of_nonneg h0, abs_of_nonpos h1, abs_of_nonpos h2, abs_of_nonpos h3]
+  calc
+    ‖q - quaternionDictionary12 ⟨11, by decide⟩‖ ^ 2
+        = (q (0 : Fin 4) - (1 : ℝ) / 2) ^ 2 + (q (1 : Fin 4) + (1 : ℝ) / 2) ^ 2 +
+            (q (2 : Fin 4) + (1 : ℝ) / 2) ^ 2 + (q (3 : Fin 4) + (1 : ℝ) / 2) ^ 2 := by
+              simpa [add_assoc] using hdistSq
+    _ = 2 - (q (0 : Fin 4) + -q (1 : Fin 4) + -q (2 : Fin 4) + -q (3 : Fin 4)) := hpoly
+    _ = 2 - (|q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) := by
+          rw [habs]
+
+theorem unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half11_le_two_sub_sqrt_two_of_signs
+    (q : MDArray 4)
+    (hNorm : norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : q (1 : Fin 4) ≤ 0)
+    (h2 : q (2 : Fin 4) ≤ 0)
+    (h3 : q (3 : Fin 4) ≤ 0)
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ‖q - quaternionDictionary12 ⟨11, by decide⟩‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  rw [unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half11_eq_two_sub_sum_of_signs q hNorm h0 h1 h2 h3]
+  linarith
 
 theorem rigidTransformPoint3D_negQuaternion_eq
     (point : MDArray 3)

@@ -418,6 +418,119 @@ theorem exact_library_winner_inherits_approxOptimal_of_supportedWitness
   have hWinnerLeWitness : energy winner ≤ energy witness := hWinnerBest witness hWitnessMem
   linarith
 
+theorem exact_candidate_with_gap_to_supportedWitness_inherits_approxOptimal
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (energy : CoordSet n → ℝ)
+    {candidate witness : CoordSet n}
+    (δ Δ : ℝ)
+    (hWitnessApprox : IsApproxOptimal (fun x => -energy x) δ witness)
+    (hCandidateGap : energy candidate ≤ energy witness + Δ) :
+    IsApproxOptimal (fun x => -energy x) (δ + Δ) candidate := by
+  intro x
+  have hApproxWitness : -energy x ≤ -energy witness + δ := hWitnessApprox x
+  linarith
+
+theorem exact_sublibrary_winner_with_gap_to_library_winner_inherits_approxOptimal
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (energy : CoordSet n → ℝ)
+    (library : Finset (CoordSet n))
+    {candidate winner witness : CoordSet n}
+    (δ Δ : ℝ)
+    (hWitnessMem : witness ∈ library)
+    (hWitnessApprox : IsApproxOptimal (fun x => -energy x) δ witness)
+    (hWinnerMem : winner ∈ library)
+    (hWinnerBest : ∀ z, z ∈ library → energy winner ≤ energy z)
+    (hCandidateGap : energy candidate ≤ energy winner + Δ) :
+    IsApproxOptimal (fun x => -energy x) (δ + Δ) candidate := by
+  have hWinnerApprox : IsApproxOptimal (fun x => -energy x) δ winner :=
+    exact_library_winner_inherits_approxOptimal_of_supportedWitness
+      energy library δ hWitnessMem hWitnessApprox hWinnerMem hWinnerBest
+  exact exact_candidate_with_gap_to_supportedWitness_inherits_approxOptimal
+    energy δ Δ hWinnerApprox hCandidateGap
+
+theorem exact_library_winner_energy_le_of_subset_member
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (energy : CoordSet n → ℝ)
+    {baseLibrary enrichedLibrary : Finset (CoordSet n)}
+    {candidate winner : CoordSet n}
+    (hSubset : baseLibrary ⊆ enrichedLibrary)
+    (hCandidateMem : candidate ∈ baseLibrary)
+    (hWinnerBest : ∀ z, z ∈ enrichedLibrary → energy winner ≤ energy z) :
+    energy winner ≤ energy candidate := by
+  exact hWinnerBest candidate (hSubset hCandidateMem)
+
+theorem exact_candidate_with_gap_to_library_winner_of_cover_has_energy_gap_le
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (energy : CoordSet n → ℝ)
+    (library : Finset (CoordSet n))
+    (L εCover Δ : ℝ)
+    (hL : 0 ≤ L)
+    (hCover : RMSDSupportCovers library εCover)
+    (hεCover : 0 ≤ εCover)
+    {xStar candidate winner : CoordSet n}
+    (hOpt : IsOptimal (fun x => -energy x) xStar)
+    (hLip : RMSDLipschitzEnergy energy L)
+    (hWinnerMem : winner ∈ library)
+    (hWinnerBest : ∀ z, z ∈ library → energy winner ≤ energy z)
+    (hCandidateGap : energy candidate ≤ energy winner + Δ) :
+    energy candidate - energy xStar ≤ L * εCover + Δ := by
+  rcases rmsd_cover_yields_library_approxOptimal
+      (energy := fun x => -energy x)
+      (library := library)
+      (L := L)
+      (ε := εCover)
+      hL hCover hεCover hOpt
+      (by
+        intro x y
+        calc
+          |(-energy x) - (-energy y)| = |energy y - energy x| := by ring_nf
+          _ = |energy x - energy y| := abs_sub_comm _ _
+          _ ≤ L * rmsd x y := hLip x y)
+      with ⟨witness, hWitnessMem, hWitnessApprox⟩
+  have hCandidateApprox : IsApproxOptimal (fun x => -energy x) (L * εCover + Δ) candidate :=
+    exact_sublibrary_winner_with_gap_to_library_winner_inherits_approxOptimal
+      energy library (L * εCover) Δ hWitnessMem hWitnessApprox hWinnerMem hWinnerBest hCandidateGap
+  have hApproxStar : -energy xStar ≤ -energy candidate + (L * εCover + Δ) := hCandidateApprox xStar
+  linarith
+
+theorem exact_candidate_with_gap_to_library_winner_of_cover_yields_rmsd_target
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (energy : CoordSet n → ℝ)
+    (library : Finset (CoordSet n))
+    (L εCover Δ εTarget : ℝ)
+    (hL : 0 ≤ L)
+    (hCover : RMSDSupportCovers library εCover)
+    (hεCover : 0 ≤ εCover)
+    {xStar candidate winner : CoordSet n}
+    (hOpt : IsOptimal (fun x => -energy x) xStar)
+    (hLip : RMSDLipschitzEnergy energy L)
+    (hWinnerMem : winner ∈ library)
+    (hWinnerBest : ∀ z, z ∈ library → energy winner ≤ energy z)
+    (hCandidateGap : energy candidate ≤ energy winner + Δ)
+    (basin : CertifiedQuadraticBasin energy xStar)
+    (hn : 0 < n)
+    (hεTarget : 0 ≤ εTarget)
+    (hGapBudget : L * εCover + Δ ≤ targetEnergyGap basin.μ n εTarget) :
+    rmsd candidate xStar ≤ εTarget := by
+  rcases rmsd_cover_yields_library_approxOptimal
+      (energy := fun x => -energy x)
+      (library := library)
+      (L := L)
+      (ε := εCover)
+      hL hCover hεCover hOpt
+      (by
+        intro x y
+        calc
+          |(-energy x) - (-energy y)| = |energy y - energy x| := by ring_nf
+          _ = |energy x - energy y| := abs_sub_comm _ _
+          _ ≤ L * rmsd x y := hLip x y)
+      with ⟨witness, hWitnessMem, hWitnessApprox⟩
+  have hCandidateApprox : IsApproxOptimal (fun x => -energy x) (L * εCover + Δ) candidate :=
+    exact_sublibrary_winner_with_gap_to_library_winner_inherits_approxOptimal
+      energy library (L * εCover) Δ hWitnessMem hWitnessApprox hWinnerMem hWinnerBest hCandidateGap
+  exact approxOptimal_negEnergy_yields_rmsd_target
+    energy (L * εCover + Δ) εTarget hOpt hCandidateApprox basin hn hεTarget hGapBudget
+
 /-- End-to-end geometry-energy theorem on a finite conformer library: if the
     library RMSD-covers conformer space well enough, and the exact rescored winner
     of that library is selected, then that returned winner satisfies the requested
@@ -669,6 +782,14 @@ noncomputable def translationSubsetQuaternionDictionary8Support
     (translationSupport : Finset (Fin 3 → ℝ)) : Finset ((Fin 3 → ℝ) × Fin 8) :=
   translationSupport.product (Finset.univ : Finset (Fin 8))
 
+noncomputable def translationSubsetQuaternionDictionary12Support
+    (translationSupport : Finset (Fin 3 → ℝ)) : Finset ((Fin 3 → ℝ) × Fin 12) :=
+  translationSupport.product (Finset.univ : Finset (Fin 12))
+
+noncomputable def translationSubsetQuaternionDictionary20Support
+    (translationSupport : Finset (Fin 3 → ℝ)) : Finset ((Fin 3 → ℝ) × Fin 20) :=
+  translationSupport.product (Finset.univ : Finset (Fin 20))
+
 /-- Concrete low-level witness predicate for the current runtime dictionary:
     one of the first four quaternion dictionary entries matches a coordinate of the
     target unit quaternion with absolute value at least `1/2`. -/
@@ -724,6 +845,273 @@ theorem quaternionDictionary8_signed_distance_sq_le_two_sub_sqrt_two_of_coordina
       q i hNorm (by simpa [i] using hCoord)
   simpa [hBasis] using hDistBasis
 
+theorem quaternionDictionary12_contains_basis_signed_distance_witness_of_large_coordinate
+    (q : MDArray 4)
+    (hNorm : Computation.ArrayDSL.norm q = 1)
+    (hWitness : ∃ i : Fin 4, Real.sqrt 2 / 2 ≤ |q i|) :
+    ∃ k : Fin 12,
+      min (‖q - quaternionDictionary12 k‖ ^ 2) (‖q + quaternionDictionary12 k‖ ^ 2) ≤ 2 - Real.sqrt 2 := by
+  rcases hWitness with ⟨i, hi⟩
+  refine ⟨⟨i.1, by omega⟩, ?_⟩
+  have hBasis : quaternionDictionary12 ⟨i.1, by omega⟩ = EuclideanSpace.single i (1 : ℝ) := by
+    fin_cases i
+    · simpa using quaternionDictionary12_basis0_eq
+    · simpa using quaternionDictionary12_basis1_eq
+    · simpa using quaternionDictionary12_basis2_eq
+    · simpa using quaternionDictionary12_basis3_eq
+  have hDistBasis :
+      min (‖q - EuclideanSpace.single i (1 : ℝ)‖ ^ 2) (‖q + EuclideanSpace.single i (1 : ℝ)‖ ^ 2)
+        ≤ 2 - Real.sqrt 2 := by
+    exact unit_norm_mdarray4_dist_sq_to_basis_or_negBasis_le_two_sub_sqrt_two_of_coordinate_abs_ge_inv_sqrt_two
+      q i hNorm hi
+  simpa [hBasis] using hDistBasis
+
+theorem quaternionDictionary12_contains_half4_signed_distance_witness_of_nonnegative_coordinates
+    (q : MDArray 4)
+    (hNorm : Computation.ArrayDSL.norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : 0 ≤ q (1 : Fin 4))
+    (h2 : 0 ≤ q (2 : Fin 4))
+    (h3 : 0 ≤ q (3 : Fin 4))
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ∃ k : Fin 12,
+      ‖q - quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  refine ⟨⟨4, by decide⟩, ?_⟩
+  simpa using
+    unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half4_le_two_sub_sqrt_two_of_nonneg
+      q hNorm h0 h1 h2 h3 hSumAbs
+
+theorem quaternionDictionary12_contains_half5_signed_distance_witness_of_signs
+    (q : MDArray 4)
+    (hNorm : Computation.ArrayDSL.norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : 0 ≤ q (1 : Fin 4))
+    (h2 : 0 ≤ q (2 : Fin 4))
+    (h3 : q (3 : Fin 4) ≤ 0)
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ∃ k : Fin 12,
+      ‖q - quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  refine ⟨⟨5, by decide⟩, ?_⟩
+  simpa using
+    unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half5_le_two_sub_sqrt_two_of_signs
+      q hNorm h0 h1 h2 h3 hSumAbs
+
+theorem quaternionDictionary12_contains_half6_signed_distance_witness_of_signs
+    (q : MDArray 4)
+    (hNorm : Computation.ArrayDSL.norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : 0 ≤ q (1 : Fin 4))
+    (h2 : q (2 : Fin 4) ≤ 0)
+    (h3 : 0 ≤ q (3 : Fin 4))
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ∃ k : Fin 12,
+      ‖q - quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  refine ⟨⟨6, by decide⟩, ?_⟩
+  simpa using
+    unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half6_le_two_sub_sqrt_two_of_signs
+      q hNorm h0 h1 h2 h3 hSumAbs
+
+theorem quaternionDictionary12_contains_half7_signed_distance_witness_of_signs
+    (q : MDArray 4)
+    (hNorm : Computation.ArrayDSL.norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : 0 ≤ q (1 : Fin 4))
+    (h2 : q (2 : Fin 4) ≤ 0)
+    (h3 : q (3 : Fin 4) ≤ 0)
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ∃ k : Fin 12,
+      ‖q - quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  refine ⟨⟨7, by decide⟩, ?_⟩
+  simpa using
+    unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half7_le_two_sub_sqrt_two_of_signs
+      q hNorm h0 h1 h2 h3 hSumAbs
+
+theorem quaternionDictionary12_contains_half8_signed_distance_witness_of_signs
+    (q : MDArray 4)
+    (hNorm : Computation.ArrayDSL.norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : q (1 : Fin 4) ≤ 0)
+    (h2 : 0 ≤ q (2 : Fin 4))
+    (h3 : 0 ≤ q (3 : Fin 4))
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ∃ k : Fin 12,
+      ‖q - quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  refine ⟨⟨8, by decide⟩, ?_⟩
+  simpa using
+    unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half8_le_two_sub_sqrt_two_of_signs
+      q hNorm h0 h1 h2 h3 hSumAbs
+
+theorem quaternionDictionary12_contains_half9_signed_distance_witness_of_signs
+    (q : MDArray 4)
+    (hNorm : Computation.ArrayDSL.norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : q (1 : Fin 4) ≤ 0)
+    (h2 : 0 ≤ q (2 : Fin 4))
+    (h3 : q (3 : Fin 4) ≤ 0)
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ∃ k : Fin 12,
+      ‖q - quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  refine ⟨⟨9, by decide⟩, ?_⟩
+  simpa using
+    unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half9_le_two_sub_sqrt_two_of_signs
+      q hNorm h0 h1 h2 h3 hSumAbs
+
+theorem quaternionDictionary12_contains_half10_signed_distance_witness_of_signs
+    (q : MDArray 4)
+    (hNorm : Computation.ArrayDSL.norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : q (1 : Fin 4) ≤ 0)
+    (h2 : q (2 : Fin 4) ≤ 0)
+    (h3 : 0 ≤ q (3 : Fin 4))
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ∃ k : Fin 12,
+      ‖q - quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  refine ⟨⟨10, by decide⟩, ?_⟩
+  simpa using
+    unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half10_le_two_sub_sqrt_two_of_signs
+      q hNorm h0 h1 h2 h3 hSumAbs
+
+theorem quaternionDictionary12_contains_half11_signed_distance_witness_of_signs
+    (q : MDArray 4)
+    (hNorm : Computation.ArrayDSL.norm q = 1)
+    (h0 : 0 ≤ q (0 : Fin 4))
+    (h1 : q (1 : Fin 4) ≤ 0)
+    (h2 : q (2 : Fin 4) ≤ 0)
+    (h3 : q (3 : Fin 4) ≤ 0)
+    (hSumAbs : Real.sqrt 2 ≤ |q (0 : Fin 4)| + |q (1 : Fin 4)| + |q (2 : Fin 4)| + |q (3 : Fin 4)|) :
+    ∃ k : Fin 12,
+      ‖q - quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+  refine ⟨⟨11, by decide⟩, ?_⟩
+  simpa using
+    unit_norm_mdarray4_dist_sq_to_quaternionDictionary12_half11_le_two_sub_sqrt_two_of_signs
+      q hNorm h0 h1 h2 h3 hSumAbs
+
+theorem quaternionDictionary12_contains_signed_distance_sq_witness_le_two_sub_sqrt_two
+    (q : MDArray 4)
+    (hNorm : Computation.ArrayDSL.norm q = 1) :
+    ∃ k : Fin 12,
+      min (‖q - quaternionDictionary12 k‖ ^ 2) (‖q + quaternionDictionary12 k‖ ^ 2) ≤ 2 - Real.sqrt 2 := by
+  rcases unit_norm_mdarray4_has_coordinate_abs_ge_inv_sqrt_two_or_sum_abs_ge_sqrt_two q hNorm with hLarge | hSumAbs
+  · rcases quaternionDictionary12_contains_basis_signed_distance_witness_of_large_coordinate q hNorm hLarge with ⟨k, hk⟩
+    exact ⟨k, hk⟩
+  · by_cases hq0 : 0 ≤ q (0 : Fin 4)
+    · by_cases hq1 : 0 ≤ q (1 : Fin 4)
+      · by_cases hq2 : 0 ≤ q (2 : Fin 4)
+        · by_cases hq3 : 0 ≤ q (3 : Fin 4)
+          · rcases quaternionDictionary12_contains_half4_signed_distance_witness_of_nonnegative_coordinates q hNorm hq0 hq1 hq2 hq3 hSumAbs with ⟨k, hk⟩
+            exact ⟨k, le_trans (min_le_left _ _) hk⟩
+          · have hq3' : q (3 : Fin 4) ≤ 0 := le_of_not_ge hq3
+            rcases quaternionDictionary12_contains_half5_signed_distance_witness_of_signs q hNorm hq0 hq1 hq2 hq3' hSumAbs with ⟨k, hk⟩
+            exact ⟨k, le_trans (min_le_left _ _) hk⟩
+        · have hq2' : q (2 : Fin 4) ≤ 0 := le_of_not_ge hq2
+          by_cases hq3 : 0 ≤ q (3 : Fin 4)
+          · rcases quaternionDictionary12_contains_half6_signed_distance_witness_of_signs q hNorm hq0 hq1 hq2' hq3 hSumAbs with ⟨k, hk⟩
+            exact ⟨k, le_trans (min_le_left _ _) hk⟩
+          · have hq3' : q (3 : Fin 4) ≤ 0 := le_of_not_ge hq3
+            rcases quaternionDictionary12_contains_half7_signed_distance_witness_of_signs q hNorm hq0 hq1 hq2' hq3' hSumAbs with ⟨k, hk⟩
+            exact ⟨k, le_trans (min_le_left _ _) hk⟩
+      · have hq1' : q (1 : Fin 4) ≤ 0 := le_of_not_ge hq1
+        by_cases hq2 : 0 ≤ q (2 : Fin 4)
+        · by_cases hq3 : 0 ≤ q (3 : Fin 4)
+          · rcases quaternionDictionary12_contains_half8_signed_distance_witness_of_signs q hNorm hq0 hq1' hq2 hq3 hSumAbs with ⟨k, hk⟩
+            exact ⟨k, le_trans (min_le_left _ _) hk⟩
+          · have hq3' : q (3 : Fin 4) ≤ 0 := le_of_not_ge hq3
+            rcases quaternionDictionary12_contains_half9_signed_distance_witness_of_signs q hNorm hq0 hq1' hq2 hq3' hSumAbs with ⟨k, hk⟩
+            exact ⟨k, le_trans (min_le_left _ _) hk⟩
+        · have hq2' : q (2 : Fin 4) ≤ 0 := le_of_not_ge hq2
+          by_cases hq3 : 0 ≤ q (3 : Fin 4)
+          · rcases quaternionDictionary12_contains_half10_signed_distance_witness_of_signs q hNorm hq0 hq1' hq2' hq3 hSumAbs with ⟨k, hk⟩
+            exact ⟨k, le_trans (min_le_left _ _) hk⟩
+          · have hq3' : q (3 : Fin 4) ≤ 0 := le_of_not_ge hq3
+            rcases quaternionDictionary12_contains_half11_signed_distance_witness_of_signs q hNorm hq0 hq1' hq2' hq3' hSumAbs with ⟨k, hk⟩
+            exact ⟨k, le_trans (min_le_left _ _) hk⟩
+    · have hNegNorm : Computation.ArrayDSL.norm (-q) = 1 := by
+        simpa [Computation.ArrayDSL.norm] using hNorm
+      have hNegq0 : 0 ≤ (-q) (0 : Fin 4) := by
+        have hq0' : q (0 : Fin 4) ≤ 0 := le_of_not_ge hq0
+        simpa using neg_nonneg.mpr hq0'
+      have hNegSumAbs :
+          Real.sqrt 2 ≤ |(-q) (0 : Fin 4)| + |(-q) (1 : Fin 4)| + |(-q) (2 : Fin 4)| + |(-q) (3 : Fin 4)| := by
+        simpa using hSumAbs
+      by_cases hq1' : 0 ≤ (-q) (1 : Fin 4)
+      · by_cases hq2' : 0 ≤ (-q) (2 : Fin 4)
+        · by_cases hq3' : 0 ≤ (-q) (3 : Fin 4)
+          · rcases quaternionDictionary12_contains_half4_signed_distance_witness_of_nonnegative_coordinates (-q) hNegNorm hNegq0 hq1' hq2' hq3' hNegSumAbs with ⟨k, hk⟩
+            have hNormEq : ‖-q - quaternionDictionary12 k‖ = ‖q + quaternionDictionary12 k‖ := by
+              simpa [sub_eq_add_neg, add_assoc, add_left_comm, add_comm] using
+                (norm_neg (q + quaternionDictionary12 k))
+            have hk' : ‖q + quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+              rw [← hNormEq]
+              exact hk
+            exact ⟨k, le_trans (min_le_right _ _) hk'⟩
+          · have hq3'' : (-q) (3 : Fin 4) ≤ 0 := le_of_not_ge hq3'
+            rcases quaternionDictionary12_contains_half5_signed_distance_witness_of_signs (-q) hNegNorm hNegq0 hq1' hq2' hq3'' hNegSumAbs with ⟨k, hk⟩
+            have hNormEq : ‖-q - quaternionDictionary12 k‖ = ‖q + quaternionDictionary12 k‖ := by
+              simpa [sub_eq_add_neg, add_assoc, add_left_comm, add_comm] using
+                (norm_neg (q + quaternionDictionary12 k))
+            have hk' : ‖q + quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+              rw [← hNormEq]
+              exact hk
+            exact ⟨k, le_trans (min_le_right _ _) hk'⟩
+        · have hq2'' : (-q) (2 : Fin 4) ≤ 0 := le_of_not_ge hq2'
+          by_cases hq3' : 0 ≤ (-q) (3 : Fin 4)
+          · rcases quaternionDictionary12_contains_half6_signed_distance_witness_of_signs (-q) hNegNorm hNegq0 hq1' hq2'' hq3' hNegSumAbs with ⟨k, hk⟩
+            have hNormEq : ‖-q - quaternionDictionary12 k‖ = ‖q + quaternionDictionary12 k‖ := by
+              simpa [sub_eq_add_neg, add_assoc, add_left_comm, add_comm] using
+                (norm_neg (q + quaternionDictionary12 k))
+            have hk' : ‖q + quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+              rw [← hNormEq]
+              exact hk
+            exact ⟨k, le_trans (min_le_right _ _) hk'⟩
+          · have hq3'' : (-q) (3 : Fin 4) ≤ 0 := le_of_not_ge hq3'
+            rcases quaternionDictionary12_contains_half7_signed_distance_witness_of_signs (-q) hNegNorm hNegq0 hq1' hq2'' hq3'' hNegSumAbs with ⟨k, hk⟩
+            have hNormEq : ‖-q - quaternionDictionary12 k‖ = ‖q + quaternionDictionary12 k‖ := by
+              simpa [sub_eq_add_neg, add_assoc, add_left_comm, add_comm] using
+                (norm_neg (q + quaternionDictionary12 k))
+            have hk' : ‖q + quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+              rw [← hNormEq]
+              exact hk
+            exact ⟨k, le_trans (min_le_right _ _) hk'⟩
+      · have hq1'' : (-q) (1 : Fin 4) ≤ 0 := le_of_not_ge hq1'
+        by_cases hq2' : 0 ≤ (-q) (2 : Fin 4)
+        · by_cases hq3' : 0 ≤ (-q) (3 : Fin 4)
+          · rcases quaternionDictionary12_contains_half8_signed_distance_witness_of_signs (-q) hNegNorm hNegq0 hq1'' hq2' hq3' hNegSumAbs with ⟨k, hk⟩
+            have hNormEq : ‖-q - quaternionDictionary12 k‖ = ‖q + quaternionDictionary12 k‖ := by
+              simpa [sub_eq_add_neg, add_assoc, add_left_comm, add_comm] using
+                (norm_neg (q + quaternionDictionary12 k))
+            have hk' : ‖q + quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+              rw [← hNormEq]
+              exact hk
+            exact ⟨k, le_trans (min_le_right _ _) hk'⟩
+          · have hq3'' : (-q) (3 : Fin 4) ≤ 0 := le_of_not_ge hq3'
+            rcases quaternionDictionary12_contains_half9_signed_distance_witness_of_signs (-q) hNegNorm hNegq0 hq1'' hq2' hq3'' hNegSumAbs with ⟨k, hk⟩
+            have hNormEq : ‖-q - quaternionDictionary12 k‖ = ‖q + quaternionDictionary12 k‖ := by
+              simpa [sub_eq_add_neg, add_assoc, add_left_comm, add_comm] using
+                (norm_neg (q + quaternionDictionary12 k))
+            have hk' : ‖q + quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+              rw [← hNormEq]
+              exact hk
+            exact ⟨k, le_trans (min_le_right _ _) hk'⟩
+        · have hq2'' : (-q) (2 : Fin 4) ≤ 0 := le_of_not_ge hq2'
+          by_cases hq3' : 0 ≤ (-q) (3 : Fin 4)
+          · rcases quaternionDictionary12_contains_half10_signed_distance_witness_of_signs (-q) hNegNorm hNegq0 hq1'' hq2'' hq3' hNegSumAbs with ⟨k, hk⟩
+            have hNormEq : ‖-q - quaternionDictionary12 k‖ = ‖q + quaternionDictionary12 k‖ := by
+              simpa [sub_eq_add_neg, add_assoc, add_left_comm, add_comm] using
+                (norm_neg (q + quaternionDictionary12 k))
+            have hk' : ‖q + quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+              rw [← hNormEq]
+              exact hk
+            exact ⟨k, le_trans (min_le_right _ _) hk'⟩
+          · have hq3'' : (-q) (3 : Fin 4) ≤ 0 := le_of_not_ge hq3'
+            rcases quaternionDictionary12_contains_half11_signed_distance_witness_of_signs (-q) hNegNorm hNegq0 hq1'' hq2'' hq3'' hNegSumAbs with ⟨k, hk⟩
+            have hNormEq : ‖-q - quaternionDictionary12 k‖ = ‖q + quaternionDictionary12 k‖ := by
+              simpa [sub_eq_add_neg, add_assoc, add_left_comm, add_comm] using
+                (norm_neg (q + quaternionDictionary12 k))
+            have hk' : ‖q + quaternionDictionary12 k‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+              rw [← hNormEq]
+              exact hk
+            exact ⟨k, le_trans (min_le_right _ _) hk'⟩
+
 theorem quaternionDictionary8_contains_coordinate_witness
     (q : MDArray 4)
     (hNorm : Computation.ArrayDSL.norm q = 1) :
@@ -754,6 +1142,92 @@ theorem quaternionDictionary8_contains_signed_distance_witness
   rcases quaternionDictionary8_contains_coordinate_and_signed_distance_witness q hNorm with
       ⟨k, hkMem, _hkCoord, hkDist⟩
   exact ⟨k, hkMem, hkDist⟩
+
+theorem quaternionDictionary12_contains_signed_distance_sq_witness
+    (q : MDArray 4)
+    (hNorm : Computation.ArrayDSL.norm q = 1) :
+    ∃ k : Fin 12,
+      k ∈ (Finset.univ : Finset (Fin 12)) ∧
+      min (‖q - quaternionDictionary12 k‖ ^ 2) (‖q + quaternionDictionary12 k‖ ^ 2) ≤ 2 - Real.sqrt 2 := by
+  rcases quaternionDictionary12_contains_signed_distance_sq_witness_le_two_sub_sqrt_two q hNorm with ⟨k, hk⟩
+  exact ⟨k, by simp, hk⟩
+
+theorem quaternionDictionary12_contains_signed_distance_witness
+    (q : MDArray 4)
+    (hNorm : Computation.ArrayDSL.norm q = 1) :
+    ∃ k : Fin 12,
+      k ∈ (Finset.univ : Finset (Fin 12)) ∧
+      min ‖q - quaternionDictionary12 k‖ ‖q + quaternionDictionary12 k‖ ≤ Real.sqrt (2 - Real.sqrt 2) := by
+  rcases quaternionDictionary12_contains_signed_distance_sq_witness q hNorm with ⟨k, hkMem, hkSq⟩
+  have hMinSq :
+      (min ‖q - quaternionDictionary12 k‖ ‖q + quaternionDictionary12 k‖) ^ 2 ≤ 2 - Real.sqrt 2 := by
+    by_cases hab : ‖q - quaternionDictionary12 k‖ ≤ ‖q + quaternionDictionary12 k‖
+    · rw [min_eq_left hab]
+      have hsqab : ‖q - quaternionDictionary12 k‖ ^ 2 ≤ ‖q + quaternionDictionary12 k‖ ^ 2 := by
+        nlinarith [hab, norm_nonneg (q - quaternionDictionary12 k), norm_nonneg (q + quaternionDictionary12 k)]
+      simpa [min_eq_left hsqab] using hkSq
+    · have hba : ‖q + quaternionDictionary12 k‖ ≤ ‖q - quaternionDictionary12 k‖ := le_of_not_ge hab
+      rw [min_eq_right hba]
+      have hsqba : ‖q + quaternionDictionary12 k‖ ^ 2 ≤ ‖q - quaternionDictionary12 k‖ ^ 2 := by
+        nlinarith [hba, norm_nonneg (q + quaternionDictionary12 k), norm_nonneg (q - quaternionDictionary12 k)]
+      simpa [min_eq_right hsqba] using hkSq
+  have hNonneg : 0 ≤ min ‖q - quaternionDictionary12 k‖ ‖q + quaternionDictionary12 k‖ := by
+    exact le_min (norm_nonneg _) (norm_nonneg _)
+  have hTwoSubNonneg : 0 ≤ 2 - Real.sqrt 2 := by
+    nlinarith [Real.sq_sqrt (show 0 ≤ (2 : ℝ) by positivity)]
+  have hRadiusNonneg : 0 ≤ Real.sqrt (2 - Real.sqrt 2) := by
+    exact Real.sqrt_nonneg _
+  have hUnsq : min ‖q - quaternionDictionary12 k‖ ‖q + quaternionDictionary12 k‖ ≤ Real.sqrt (2 - Real.sqrt 2) := by
+    nlinarith [hMinSq, Real.sq_sqrt hTwoSubNonneg, hNonneg, hRadiusNonneg]
+  exact ⟨k, hkMem, hUnsq⟩
+
+theorem quaternionDictionary20_contains_signed_distance_witness
+    (q : MDArray 4)
+    (hNorm : Computation.ArrayDSL.norm q = 1) :
+    ∃ k : Fin 20,
+      k ∈ (Finset.univ : Finset (Fin 20)) ∧
+      min ‖q - quaternionDictionary20 k‖ ‖q + quaternionDictionary20 k‖ ≤ Real.sqrt (2 - Real.sqrt 2) := by
+  rcases quaternionDictionary12_contains_signed_distance_witness q hNorm with ⟨k12, hkMem, hkDist⟩
+  refine ⟨⟨k12.1 + 8, by omega⟩, by simp, ?_⟩
+  simpa [quaternionDictionary20_includes_quaternionDictionary12] using hkDist
+
+theorem translationSubsetQuaternionDictionary20Support_contains_rmsd_witness_of_split_component_budgets
+    {Ω : Type u}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (translationSupport : Finset (Fin 3 → ℝ))
+    (lower upper halfWidths : Fin 3 → ℝ)
+    (targetCoords : (Fin 3 → ℝ) → Ω → CoordSet n)
+    (midCoords : (Fin 3 → ℝ) → Ω → CoordSet n)
+    (supportedCoords : (Fin 3 → ℝ) → Ω → Fin 20 → CoordSet n)
+    (rotationWitness : Ω → Fin 20 → Prop)
+    (tBound rBound εCover : ℝ)
+    (hTransCover : HypercubeSupportCoversOnBox 3 translationSupport lower upper halfWidths)
+    (hRotCover : ∀ ω, ∃ k : Fin 20, rotationWitness ω k)
+    (hn : 0 < n)
+    (ht : 0 ≤ tBound)
+    (hr : 0 ≤ rBound)
+    (hBudget : tBound + rBound ≤ εCover)
+    (hTrans : ∀ t ts ω,
+      (∀ i, |t i - ts i| ≤ halfWidths i) →
+      ∀ j, dist (targetCoords t ω j) (midCoords ts ω j) ≤ tBound)
+    (hRot : ∀ ts ω k,
+      rotationWitness ω k →
+      ∀ j, dist (midCoords ts ω j) (supportedCoords ts ω k j) ≤ rBound) :
+    ∀ t ω,
+      (∀ i, lower i ≤ t i ∧ t i ≤ upper i) →
+      ∃ seed ∈ translationSubsetQuaternionDictionary20Support translationSupport,
+        rmsd (supportedCoords seed.1 ω seed.2) (targetCoords t ω) ≤ εCover := by
+  intro t ω hBox
+  rcases hTransCover t hBox with ⟨ts, hts, hcell⟩
+  rcases hRotCover ω with ⟨k, hk⟩
+  have hRMSD : rmsd (supportedCoords ts ω k) (targetCoords t ω) ≤ εCover := by
+    exact rmsd_le_of_pointwiseSplitDist_le
+      (supportedCoords ts ω k) (midCoords ts ω) (targetCoords t ω)
+      hn rBound tBound εCover hr ht (by simpa [add_comm] using hBudget)
+      (fun j => by simpa [dist_comm] using hRot ts ω k hk j)
+      (fun j => by simpa [dist_comm] using hTrans t ts ω hcell j)
+  refine ⟨(ts, k), ?_, hRMSD⟩
+  simp [translationSubsetQuaternionDictionary20Support, hts]
 
 theorem quaternionDictionary8_contains_rotation_witness
     {Ω : Type u}
@@ -794,6 +1268,69 @@ theorem translationSubsetQuaternionDictionary8Support_contains_rmsd_witness_of_c
   rcases hRotCover ω with ⟨k, hk⟩
   refine ⟨(ts, k), ?_, hCompose t ts ω k hcell hk⟩
   simp [translationSubsetQuaternionDictionary8Support, hts]
+
+theorem translationSubsetQuaternionDictionary12Support_contains_rmsd_witness_of_component_covers
+    {Ω : Type u}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (translationSupport : Finset (Fin 3 → ℝ))
+    (lower upper halfWidths : Fin 3 → ℝ)
+    (targetCoords : (Fin 3 → ℝ) → Ω → CoordSet n)
+    (supportedCoords : (Fin 3 → ℝ) → Fin 12 → CoordSet n)
+    (rotationWitness : Ω → Fin 12 → Prop)
+    (εCover : ℝ)
+    (hTransCover : HypercubeSupportCoversOnBox 3 translationSupport lower upper halfWidths)
+    (hRotCover : ∀ ω, ∃ k : Fin 12, rotationWitness ω k)
+    (hCompose : ∀ t ts ω k,
+      (∀ i, |t i - ts i| ≤ halfWidths i) →
+      rotationWitness ω k →
+      rmsd (supportedCoords ts k) (targetCoords t ω) ≤ εCover) :
+    ∀ t ω,
+      (∀ i, lower i ≤ t i ∧ t i ≤ upper i) →
+      ∃ seed ∈ translationSubsetQuaternionDictionary12Support translationSupport,
+        rmsd (supportedCoords seed.1 seed.2) (targetCoords t ω) ≤ εCover := by
+  intro t ω hBox
+  rcases hTransCover t hBox with ⟨ts, hts, hcell⟩
+  rcases hRotCover ω with ⟨k, hk⟩
+  refine ⟨(ts, k), ?_, hCompose t ts ω k hcell hk⟩
+  simp [translationSubsetQuaternionDictionary12Support, hts]
+
+theorem translationSubsetQuaternionDictionary12Support_contains_rmsd_witness_of_split_component_budgets
+    {Ω : Type u}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (translationSupport : Finset (Fin 3 → ℝ))
+    (lower upper halfWidths : Fin 3 → ℝ)
+    (targetCoords : (Fin 3 → ℝ) → Ω → CoordSet n)
+    (midCoords : (Fin 3 → ℝ) → Ω → CoordSet n)
+    (supportedCoords : (Fin 3 → ℝ) → Ω → Fin 12 → CoordSet n)
+    (rotationWitness : Ω → Fin 12 → Prop)
+    (tBound rBound εCover : ℝ)
+    (hTransCover : HypercubeSupportCoversOnBox 3 translationSupport lower upper halfWidths)
+    (hRotCover : ∀ ω, ∃ k : Fin 12, rotationWitness ω k)
+    (hn : 0 < n)
+    (ht : 0 ≤ tBound)
+    (hr : 0 ≤ rBound)
+    (hBudget : tBound + rBound ≤ εCover)
+    (hTrans : ∀ t ts ω,
+      (∀ i, |t i - ts i| ≤ halfWidths i) →
+      ∀ j, dist (targetCoords t ω j) (midCoords ts ω j) ≤ tBound)
+    (hRot : ∀ ts ω k,
+      rotationWitness ω k →
+      ∀ j, dist (midCoords ts ω j) (supportedCoords ts ω k j) ≤ rBound) :
+    ∀ t ω,
+      (∀ i, lower i ≤ t i ∧ t i ≤ upper i) →
+      ∃ seed ∈ translationSubsetQuaternionDictionary12Support translationSupport,
+        rmsd (supportedCoords seed.1 ω seed.2) (targetCoords t ω) ≤ εCover := by
+  intro t ω hBox
+  rcases hTransCover t hBox with ⟨ts, hts, hcell⟩
+  rcases hRotCover ω with ⟨k, hk⟩
+  have hRMSD : rmsd (supportedCoords ts ω k) (targetCoords t ω) ≤ εCover := by
+    exact rmsd_le_of_pointwiseSplitDist_le
+      (supportedCoords ts ω k) (midCoords ts ω) (targetCoords t ω)
+      hn rBound tBound εCover hr ht (by simpa [add_comm] using hBudget)
+      (fun j => by simpa [dist_comm] using hRot ts ω k hk j)
+      (fun j => by simpa [dist_comm] using hTrans t ts ω hcell j)
+  refine ⟨(ts, k), ?_, hRMSD⟩
+  simp [translationSubsetQuaternionDictionary12Support, hts]
 
 theorem translationSubsetQuaternionDictionary8Support_contains_explicit_rmsd_witness
     {Ω : Type u}
@@ -1049,6 +1586,48 @@ theorem pointwise_signed_quaternion_distance_lipschitz_of_two_sided_unsigned_bou
       rw [min_eq_right hmul, min_eq_right hba]
   exact (le_trans hMinScaled (by simpa [a, b, hScaleMin]))
 
+theorem pointwise_signed_quaternion_distance_lipschitz_of_two_sided_unsigned_bounds_dep_family
+    {Ω : Type u} {K : Type v}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (midCoords : (Fin 3 → ℝ) → Ω → CoordSet n)
+    (supportedCoords : (Fin 3 → ℝ) → Ω → K → CoordSet n)
+    (targetQuaternion : Ω → MDArray 4)
+    (supportQuaternion : K → MDArray 4)
+    (rotLipschitz : ℝ)
+    (hRotLipNonneg : 0 ≤ rotLipschitz)
+    (hRotPlus : ∀ ts ω k j,
+      dist (midCoords ts ω j) (supportedCoords ts ω k j) ≤
+        rotLipschitz * ‖targetQuaternion ω - supportQuaternion k‖)
+    (hRotMinus : ∀ ts ω k j,
+      dist (midCoords ts ω j) (supportedCoords ts ω k j) ≤
+        rotLipschitz * ‖targetQuaternion ω + supportQuaternion k‖) :
+    ∀ ts ω k j,
+      dist (midCoords ts ω j) (supportedCoords ts ω k j) ≤
+        rotLipschitz *
+          min ‖targetQuaternion ω - supportQuaternion k‖
+              ‖targetQuaternion ω + supportQuaternion k‖ := by
+  intro ts ω k j
+  set a : ℝ := ‖targetQuaternion ω - supportQuaternion k‖
+  set b : ℝ := ‖targetQuaternion ω + supportQuaternion k‖
+  have hPlus : dist (midCoords ts ω j) (supportedCoords ts ω k j) ≤ rotLipschitz * a := by
+    simpa [a] using hRotPlus ts ω k j
+  have hMinus : dist (midCoords ts ω j) (supportedCoords ts ω k j) ≤ rotLipschitz * b := by
+    simpa [b] using hRotMinus ts ω k j
+  have hMinScaled :
+      dist (midCoords ts ω j) (supportedCoords ts ω k j) ≤
+        min (rotLipschitz * a) (rotLipschitz * b) :=
+    le_min hPlus hMinus
+  have hScaleMin : min (rotLipschitz * a) (rotLipschitz * b) = rotLipschitz * min a b := by
+    by_cases hab : a ≤ b
+    · have hmul : rotLipschitz * a ≤ rotLipschitz * b :=
+        mul_le_mul_of_nonneg_left hab hRotLipNonneg
+      rw [min_eq_left hmul, min_eq_left hab]
+    · have hba : b ≤ a := le_of_not_ge hab
+      have hmul : rotLipschitz * b ≤ rotLipschitz * a :=
+        mul_le_mul_of_nonneg_left hba hRotLipNonneg
+      rw [min_eq_right hmul, min_eq_right hba]
+  exact (le_trans hMinScaled (by simpa [a, b, hScaleMin]))
+
 theorem pointwise_signed_quaternion_distance_lipschitz_of_unsigned_bound_and_neg_invariance_dep
     {Ω : Type u}
     {n : ℕ} [DecidableEq (CoordSet n)]
@@ -1094,6 +1673,54 @@ theorem pointwise_signed_quaternion_distance_lipschitz_of_unsigned_bound_and_neg
             simpa [hnorm, add_comm]
   exact pointwise_signed_quaternion_distance_lipschitz_of_two_sided_unsigned_bounds_dep
     midCoords supportedCoords targetQuaternion rotLipschitz hRotLipNonneg hRotPlus hRotMinus
+
+theorem pointwise_signed_quaternion_distance_lipschitz_of_unsigned_bound_and_neg_invariance_dep_family
+    {Ω : Type u} {K : Type v}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (midCoords : (Fin 3 → ℝ) → Ω → CoordSet n)
+    (midCoordsNeg : (Fin 3 → ℝ) → Ω → CoordSet n)
+    (supportedCoords : (Fin 3 → ℝ) → Ω → K → CoordSet n)
+    (targetQuaternion : Ω → MDArray 4)
+    (supportQuaternion : K → MDArray 4)
+    (rotLipschitz : ℝ)
+    (hRotLipNonneg : 0 ≤ rotLipschitz)
+    (hMidNeg : ∀ ts ω j, midCoords ts ω j = midCoordsNeg ts ω j)
+    (hRotPlus : ∀ ts ω k j,
+      dist (midCoords ts ω j) (supportedCoords ts ω k j) ≤
+        rotLipschitz * ‖targetQuaternion ω - supportQuaternion k‖)
+    (hRotPlusNeg : ∀ ts ω k j,
+      dist (midCoordsNeg ts ω j) (supportedCoords ts ω k j) ≤
+        rotLipschitz * ‖(-targetQuaternion ω) - supportQuaternion k‖) :
+    ∀ ts ω k j,
+      dist (midCoords ts ω j) (supportedCoords ts ω k j) ≤
+        rotLipschitz *
+          min ‖targetQuaternion ω - supportQuaternion k‖
+              ‖targetQuaternion ω + supportQuaternion k‖ := by
+  have hRotMinus : ∀ ts ω k j,
+      dist (midCoords ts ω j) (supportedCoords ts ω k j) ≤
+        rotLipschitz * ‖targetQuaternion ω + supportQuaternion k‖ := by
+    intro ts ω k j
+    calc
+      dist (midCoords ts ω j) (supportedCoords ts ω k j)
+          = dist (midCoordsNeg ts ω j) (supportedCoords ts ω k j) := by
+              simpa [hMidNeg ts ω j]
+      _ ≤ rotLipschitz * ‖(-targetQuaternion ω) - supportQuaternion k‖ :=
+            hRotPlusNeg ts ω k j
+      _ = rotLipschitz * ‖targetQuaternion ω + supportQuaternion k‖ := by
+            have hnorm :
+                ‖(-targetQuaternion ω) - supportQuaternion k‖ =
+                  ‖supportQuaternion k + targetQuaternion ω‖ := by
+              calc
+                ‖(-targetQuaternion ω) - supportQuaternion k‖
+                    = ‖-supportQuaternion k + -targetQuaternion ω‖ := by
+                        simp [sub_eq_add_neg, add_comm]
+                _ = ‖supportQuaternion k + targetQuaternion ω‖ := by
+                        simpa [neg_add, add_comm, add_left_comm, add_assoc] using
+                          (norm_neg (supportQuaternion k + targetQuaternion ω))
+            simpa [hnorm, add_comm]
+  exact pointwise_signed_quaternion_distance_lipschitz_of_two_sided_unsigned_bounds_dep_family
+    midCoords supportedCoords targetQuaternion supportQuaternion rotLipschitz
+    hRotLipNonneg hRotPlus hRotMinus
 
 theorem rigidTransform3D_pointwise_signed_quaternion_distance_lipschitz_of_unsigned_parametric_bound
     {Ω : Type u}
@@ -1144,6 +1771,53 @@ theorem rigidTransform3D_pointwise_signed_quaternion_distance_lipschitz_of_unsig
     hMidNeg hRotPlus hRotPlusNeg
   simpa [midCoords, supportedCoords] using hMain ts ω k j
 
+theorem rigidTransform3D_pointwise_signed_quaternion_distance_lipschitz_of_unsigned_parametric_bound_family
+    {Ω : Type u} {K : Type v}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (baseCoords : Ω → CoordSet n)
+    (targetQuaternion : Ω → MDArray 4)
+    (supportQuaternion : K → MDArray 4)
+    (rotLipschitz : ℝ)
+    (hRotLipNonneg : 0 ≤ rotLipschitz)
+    (hRotParam : ∀ ts ω q k j,
+      dist (rigidTransform3D (baseCoords ω) q (mkMDArray ts) j)
+          (rigidTransform3D (baseCoords ω) (supportQuaternion k) (mkMDArray ts) j) ≤
+        rotLipschitz * ‖q - supportQuaternion k‖) :
+    ∀ ts ω k j,
+      dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j)
+          (rigidTransform3D (baseCoords ω) (supportQuaternion k) (mkMDArray ts) j) ≤
+        rotLipschitz *
+          min ‖targetQuaternion ω - supportQuaternion k‖
+              ‖targetQuaternion ω + supportQuaternion k‖ := by
+  let midCoords : (Fin 3 → ℝ) → Ω → CoordSet n :=
+    fun ts ω => rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts)
+  let midCoordsNeg : (Fin 3 → ℝ) → Ω → CoordSet n :=
+    fun ts ω => rigidTransform3D (baseCoords ω) (-targetQuaternion ω) (mkMDArray ts)
+  let supportedCoords : (Fin 3 → ℝ) → Ω → K → CoordSet n :=
+    fun ts ω k => rigidTransform3D (baseCoords ω) (supportQuaternion k) (mkMDArray ts)
+  have hMidNeg : ∀ ts ω j, midCoords ts ω j = midCoordsNeg ts ω j := by
+    intro ts ω j
+    have hEq :
+        rigidTransform3D (baseCoords ω) (-targetQuaternion ω) (mkMDArray ts) =
+          rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) :=
+      rigidTransform3D_negQuaternion_eq (baseCoords ω) (targetQuaternion ω) (mkMDArray ts)
+    simpa [midCoords, midCoordsNeg] using congrArg (fun c : CoordSet n => c j) hEq.symm
+  have hRotPlus : ∀ ts ω k j,
+      dist (midCoords ts ω j) (supportedCoords ts ω k j) ≤
+        rotLipschitz * ‖targetQuaternion ω - supportQuaternion k‖ := by
+    intro ts ω k j
+    simpa [midCoords, supportedCoords] using hRotParam ts ω (targetQuaternion ω) k j
+  have hRotPlusNeg : ∀ ts ω k j,
+      dist (midCoordsNeg ts ω j) (supportedCoords ts ω k j) ≤
+        rotLipschitz * ‖(-targetQuaternion ω) - supportQuaternion k‖ := by
+    intro ts ω k j
+    simpa [midCoordsNeg, supportedCoords] using hRotParam ts ω (-targetQuaternion ω) k j
+  intro ts ω k j
+  have hMain := pointwise_signed_quaternion_distance_lipschitz_of_unsigned_bound_and_neg_invariance_dep_family
+    midCoords midCoordsNeg supportedCoords targetQuaternion supportQuaternion rotLipschitz
+    hRotLipNonneg hMidNeg hRotPlus hRotPlusNeg
+  simpa [midCoords, supportedCoords] using hMain ts ω k j
+
 /-- Rigid-transform unsigned quaternion-distance bounds are translation-invariant:
     it is enough to prove the geometric inequality at zero translation. -/
 theorem rigidTransform3D_pointwise_unsigned_parametric_bound_of_zero_translation
@@ -1168,6 +1842,137 @@ theorem rigidTransform3D_pointwise_unsigned_parametric_bound_of_zero_translation
               exact Computation.ArrayDSL.rigidTransform3D_same_translation_dist_eq_zero_translation
                 (baseCoords ω) q (quaternionDictionary8 k) (mkMDArray ts) j
     _ ≤ rotLipschitz * ‖q - quaternionDictionary8 k‖ := hRotParamZero ω q k j
+
+theorem rigidTransform3D_pointwise_unsigned_parametric_bound_of_zero_translation_family
+    {Ω : Type u} {K : Type v}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (baseCoords : Ω → CoordSet n)
+    (supportQuaternion : K → MDArray 4)
+    (rotLipschitz : ℝ)
+    (hRotParamZero : ∀ ω q k j,
+      dist (rigidTransform3D (baseCoords ω) q (mkMDArray (fun _ => 0)) j)
+          (rigidTransform3D (baseCoords ω) (supportQuaternion k) (mkMDArray (fun _ => 0)) j) ≤
+        rotLipschitz * ‖q - supportQuaternion k‖) :
+    ∀ ts ω q k j,
+      dist (rigidTransform3D (baseCoords ω) q (mkMDArray ts) j)
+          (rigidTransform3D (baseCoords ω) (supportQuaternion k) (mkMDArray ts) j) ≤
+        rotLipschitz * ‖q - supportQuaternion k‖ := by
+  intro ts ω q k j
+  calc
+    dist (rigidTransform3D (baseCoords ω) q (mkMDArray ts) j)
+        (rigidTransform3D (baseCoords ω) (supportQuaternion k) (mkMDArray ts) j)
+        = dist (rigidTransform3D (baseCoords ω) q (mkMDArray (fun _ => 0)) j)
+            (rigidTransform3D (baseCoords ω) (supportQuaternion k) (mkMDArray (fun _ => 0)) j) := by
+              exact Computation.ArrayDSL.rigidTransform3D_same_translation_dist_eq_zero_translation
+                (baseCoords ω) q (supportQuaternion k) (mkMDArray ts) j
+    _ ≤ rotLipschitz * ‖q - supportQuaternion k‖ := hRotParamZero ω q k j
+
+theorem rigidTransform3D_pointwise_budget_of_quaternionDictionary12_signed_witness_of_unsigned_parametric_bound
+    {Ω : Type u}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (baseCoords : Ω → CoordSet n)
+    (targetQuaternion : Ω → MDArray 4)
+    (rotLipschitz rBound : ℝ)
+    (hQuatUnit : ∀ ω, Computation.ArrayDSL.norm (targetQuaternion ω) = 1)
+    (hRotLipNonneg : 0 ≤ rotLipschitz)
+    (hRotScale : rotLipschitz * Real.sqrt (2 - Real.sqrt 2) ≤ rBound)
+    (hRotParamZero : ∀ ω q k j,
+      dist (rigidTransform3D (baseCoords ω) q (mkMDArray (fun _ => 0)) j)
+          (rigidTransform3D (baseCoords ω) (quaternionDictionary12 k) (mkMDArray (fun _ => 0)) j) ≤
+        rotLipschitz * ‖q - quaternionDictionary12 k‖) :
+    ∀ ts ω,
+      ∃ k : Fin 12,
+        ∀ j,
+          dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j)
+              (rigidTransform3D (baseCoords ω) (quaternionDictionary12 k) (mkMDArray ts) j) ≤ rBound := by
+  intro ts ω
+  rcases quaternionDictionary12_contains_signed_distance_witness (targetQuaternion ω) (hQuatUnit ω) with ⟨k, _hkMem, hkDist⟩
+  refine ⟨k, ?_⟩
+  intro j
+  have hUnsigned := rigidTransform3D_pointwise_unsigned_parametric_bound_of_zero_translation_family
+    baseCoords quaternionDictionary12 rotLipschitz hRotParamZero ts ω (targetQuaternion ω) k j
+  have hSigned := rigidTransform3D_pointwise_signed_quaternion_distance_lipschitz_of_unsigned_parametric_bound_family
+    baseCoords targetQuaternion quaternionDictionary12 rotLipschitz hRotLipNonneg
+    (rigidTransform3D_pointwise_unsigned_parametric_bound_of_zero_translation_family
+      baseCoords quaternionDictionary12 rotLipschitz hRotParamZero)
+    ts ω k j
+  have hWitnessScale :
+      rotLipschitz * min ‖targetQuaternion ω - quaternionDictionary12 k‖ ‖targetQuaternion ω + quaternionDictionary12 k‖
+        ≤ rBound := by
+    have hScaled :
+        rotLipschitz * min ‖targetQuaternion ω - quaternionDictionary12 k‖ ‖targetQuaternion ω + quaternionDictionary12 k‖
+          ≤ rotLipschitz * Real.sqrt (2 - Real.sqrt 2) :=
+      mul_le_mul_of_nonneg_left hkDist hRotLipNonneg
+    exact le_trans hScaled hRotScale
+  exact le_trans hSigned hWitnessScale
+
+theorem rigidTransform3D_pointwise_budget_of_fixed_quaternionDictionary12_signed_witness_of_unsigned_parametric_bound
+    {Ω : Type u}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (baseCoords : Ω → CoordSet n)
+    (targetQuaternion : Ω → MDArray 4)
+    (rotLipschitz rBound : ℝ)
+    (hRotLipNonneg : 0 ≤ rotLipschitz)
+    (hRotScale : rotLipschitz * Real.sqrt (2 - Real.sqrt 2) ≤ rBound)
+    (hRotParamZero : ∀ ω q k j,
+      dist (rigidTransform3D (baseCoords ω) q (mkMDArray (fun _ => 0)) j)
+          (rigidTransform3D (baseCoords ω) (quaternionDictionary12 k) (mkMDArray (fun _ => 0)) j) ≤
+        rotLipschitz * ‖q - quaternionDictionary12 k‖) :
+    ∀ ts ω k,
+      min ‖targetQuaternion ω - quaternionDictionary12 k‖ ‖targetQuaternion ω + quaternionDictionary12 k‖
+        ≤ Real.sqrt (2 - Real.sqrt 2) →
+      ∀ j,
+        dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j)
+            (rigidTransform3D (baseCoords ω) (quaternionDictionary12 k) (mkMDArray ts) j) ≤ rBound := by
+  intro ts ω k hk j
+  have hSigned := rigidTransform3D_pointwise_signed_quaternion_distance_lipschitz_of_unsigned_parametric_bound_family
+    baseCoords targetQuaternion quaternionDictionary12 rotLipschitz hRotLipNonneg
+    (rigidTransform3D_pointwise_unsigned_parametric_bound_of_zero_translation_family
+      baseCoords quaternionDictionary12 rotLipschitz hRotParamZero)
+    ts ω k j
+  have hWitnessScale :
+      rotLipschitz * min ‖targetQuaternion ω - quaternionDictionary12 k‖ ‖targetQuaternion ω + quaternionDictionary12 k‖
+        ≤ rBound := by
+    have hScaled :
+        rotLipschitz * min ‖targetQuaternion ω - quaternionDictionary12 k‖ ‖targetQuaternion ω + quaternionDictionary12 k‖
+          ≤ rotLipschitz * Real.sqrt (2 - Real.sqrt 2) :=
+      mul_le_mul_of_nonneg_left hk hRotLipNonneg
+    exact le_trans hScaled hRotScale
+  exact le_trans hSigned hWitnessScale
+
+theorem rigidTransform3D_pointwise_budget_of_fixed_quaternionDictionary20_signed_witness_of_unsigned_parametric_bound
+    {Ω : Type u}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (baseCoords : Ω → CoordSet n)
+    (targetQuaternion : Ω → MDArray 4)
+    (rotLipschitz rBound : ℝ)
+    (hRotLipNonneg : 0 ≤ rotLipschitz)
+    (hRotScale : rotLipschitz * Real.sqrt (2 - Real.sqrt 2) ≤ rBound)
+    (hRotParamZero : ∀ ω q k j,
+      dist (rigidTransform3D (baseCoords ω) q (mkMDArray (fun _ => 0)) j)
+          (rigidTransform3D (baseCoords ω) (quaternionDictionary20 k) (mkMDArray (fun _ => 0)) j) ≤
+        rotLipschitz * ‖q - quaternionDictionary20 k‖) :
+    ∀ ts ω k,
+      min ‖targetQuaternion ω - quaternionDictionary20 k‖ ‖targetQuaternion ω + quaternionDictionary20 k‖
+        ≤ Real.sqrt (2 - Real.sqrt 2) →
+      ∀ j,
+        dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j)
+            (rigidTransform3D (baseCoords ω) (quaternionDictionary20 k) (mkMDArray ts) j) ≤ rBound := by
+  intro ts ω k hk j
+  have hSigned := rigidTransform3D_pointwise_signed_quaternion_distance_lipschitz_of_unsigned_parametric_bound_family
+    baseCoords targetQuaternion quaternionDictionary20 rotLipschitz hRotLipNonneg
+    (rigidTransform3D_pointwise_unsigned_parametric_bound_of_zero_translation_family
+      baseCoords quaternionDictionary20 rotLipschitz hRotParamZero)
+    ts ω k j
+  have hWitnessScale :
+      rotLipschitz * min ‖targetQuaternion ω - quaternionDictionary20 k‖ ‖targetQuaternion ω + quaternionDictionary20 k‖
+        ≤ rBound := by
+    have hScaled :
+        rotLipschitz * min ‖targetQuaternion ω - quaternionDictionary20 k‖ ‖targetQuaternion ω + quaternionDictionary20 k‖
+          ≤ rotLipschitz * Real.sqrt (2 - Real.sqrt 2) :=
+      mul_le_mul_of_nonneg_left hk hRotLipNonneg
+    exact le_trans hScaled hRotScale
+  exact le_trans hSigned hWitnessScale
 
 /-- Coordinate-witness rigid-transform signed-distance budget from a zero-translation
     unsigned parametric bound against the first four basis quaternions.
@@ -1998,6 +2803,274 @@ theorem translationSubsetQuaternionDictionary8Library_winner_of_split_component_
       hWitnessMem hWitnessApprox hWinnerMem hWinnerBest
   exact approxOptimal_negEnergy_yields_rmsd_target
     energy (L * εCover) εTarget hOpt hWinnerApprox basin hn hεTarget hGapBudget
+
+theorem translationSubsetQuaternionDictionary12Library_winner_of_split_component_budgets_yields_rmsd_target
+    {Ω : Type u}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (translationSupport : Finset (Fin 3 → ℝ))
+    (lower upper halfWidths : Fin 3 → ℝ)
+    (targetCoords : (Fin 3 → ℝ) → Ω → CoordSet n)
+    (midCoords : (Fin 3 → ℝ) → Ω → CoordSet n)
+    (supportedCoords : (Fin 3 → ℝ) → Ω → Fin 12 → CoordSet n)
+    (rotationWitness : Ω → Fin 12 → Prop)
+    (energy : CoordSet n → ℝ)
+    (tBound rBound L εCover εTarget : ℝ)
+    (hTransCover : HypercubeSupportCoversOnBox 3 translationSupport lower upper halfWidths)
+    (hRotCover : ∀ ω, ∃ k : Fin 12, rotationWitness ω k)
+    (hn : 0 < n)
+    (ht : 0 ≤ tBound)
+    (hr : 0 ≤ rBound)
+    (hBudget : tBound + rBound ≤ εCover)
+    (hTrans : ∀ t ts ω,
+      (∀ i, |t i - ts i| ≤ halfWidths i) →
+      ∀ j, dist (targetCoords t ω j) (midCoords ts ω j) ≤ tBound)
+    (hRot : ∀ ts ω k,
+      rotationWitness ω k →
+      ∀ j, dist (midCoords ts ω j) (supportedCoords ts ω k j) ≤ rBound)
+    (hL : 0 ≤ L)
+    (hεCover : 0 ≤ εCover)
+    {t : Fin 3 → ℝ}
+    {ω : Ω}
+    (hBox : ∀ i, lower i ≤ t i ∧ t i ≤ upper i)
+    (hOpt : IsOptimal (fun x => -energy x) (targetCoords t ω))
+    (hLip : RMSDLipschitzEnergy energy L)
+    {winner : CoordSet n}
+    (hWinnerMem : winner ∈ (translationSubsetQuaternionDictionary12Support translationSupport).image (fun seed => supportedCoords seed.1 ω seed.2))
+    (hWinnerBest : ∀ z,
+      z ∈ (translationSubsetQuaternionDictionary12Support translationSupport).image (fun seed => supportedCoords seed.1 ω seed.2) →
+      energy winner ≤ energy z)
+    (basin : CertifiedQuadraticBasin energy (targetCoords t ω))
+    (hεTarget : 0 ≤ εTarget)
+    (hGapBudget : L * εCover ≤ targetEnergyGap basin.μ n εTarget) :
+    rmsd winner (targetCoords t ω) ≤ εTarget := by
+  rcases translationSubsetQuaternionDictionary12Support_contains_rmsd_witness_of_split_component_budgets
+      translationSupport lower upper halfWidths targetCoords midCoords supportedCoords rotationWitness
+      tBound rBound εCover hTransCover hRotCover hn ht hr hBudget hTrans hRot t ω hBox with
+      ⟨seed, hSeedMem, hSeedRMSD⟩
+  let witness : CoordSet n := supportedCoords seed.1 ω seed.2
+  have hWitnessMem :
+      witness ∈ (translationSubsetQuaternionDictionary12Support translationSupport).image (fun seed => supportedCoords seed.1 ω seed.2) := by
+    exact Finset.mem_image.mpr ⟨seed, hSeedMem, rfl⟩
+  have hWitnessApprox : IsApproxOptimal (fun x => -energy x) (L * εCover) witness := by
+    intro x
+    have hOptX : -energy x ≤ -energy (targetCoords t ω) := hOpt x
+    have hGap : |energy witness - energy (targetCoords t ω)| ≤ L * εCover := by
+      exact energyBudget_of_rmsdTarget energy L εCover hL hLip hSeedRMSD
+    have hWitnessNear : -energy (targetCoords t ω) ≤ -energy witness + L * εCover := by
+      have hGap' := abs_le.mp hGap
+      linarith
+    linarith
+  have hWinnerApprox : IsApproxOptimal (fun x => -energy x) (L * εCover) winner :=
+    exact_library_winner_inherits_approxOptimal_of_supportedWitness
+      energy
+      ((translationSubsetQuaternionDictionary12Support translationSupport).image (fun seed => supportedCoords seed.1 ω seed.2))
+      (L * εCover)
+      hWitnessMem hWitnessApprox hWinnerMem hWinnerBest
+  exact approxOptimal_negEnergy_yields_rmsd_target
+    energy (L * εCover) εTarget hOpt hWinnerApprox basin hn hεTarget hGapBudget
+
+theorem translationSubsetQuaternionDictionary12Support_contains_rmsd_witness_of_signed_quaternion_budget
+    {Ω : Type u}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (translationSupport : Finset (Fin 3 → ℝ))
+    (lower upper halfWidths : Fin 3 → ℝ)
+    (baseCoords : Ω → CoordSet n)
+    (targetQuaternion : Ω → MDArray 4)
+    (tBound rotLipschitz εCover : ℝ)
+    (hTransCover : HypercubeSupportCoversOnBox 3 translationSupport lower upper halfWidths)
+    (hQuatUnit : ∀ ω, Computation.ArrayDSL.norm (targetQuaternion ω) = 1)
+    (hn : 0 < n)
+    (ht : 0 ≤ tBound)
+    (hRotLipNonneg : 0 ≤ rotLipschitz)
+    (hBudget : tBound + rotLipschitz * Real.sqrt (2 - Real.sqrt 2) ≤ εCover)
+    (hTrans : ∀ t ts ω,
+      (∀ i, |t i - ts i| ≤ halfWidths i) →
+      ∀ j,
+        dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t) j)
+            (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j) ≤ tBound)
+    (hRotParamZero : ∀ ω q k j,
+      dist (rigidTransform3D (baseCoords ω) q (mkMDArray (fun _ => 0)) j)
+          (rigidTransform3D (baseCoords ω) (quaternionDictionary12 k) (mkMDArray (fun _ => 0)) j) ≤
+        rotLipschitz * ‖q - quaternionDictionary12 k‖) :
+    ∀ t ω,
+      (∀ i, lower i ≤ t i ∧ t i ≤ upper i) →
+      ∃ seed ∈ translationSubsetQuaternionDictionary12Support translationSupport,
+        rmsd
+          (rigidTransform3D (baseCoords ω) (quaternionDictionary12 seed.2) (mkMDArray seed.1))
+          (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t)) ≤ εCover := by
+  apply translationSubsetQuaternionDictionary12Support_contains_rmsd_witness_of_split_component_budgets
+    translationSupport lower upper halfWidths
+    (fun t ω => rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t))
+    (fun ts ω => rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts))
+    (fun ts ω k => rigidTransform3D (baseCoords ω) (quaternionDictionary12 k) (mkMDArray ts))
+    (fun ω k =>
+      min ‖targetQuaternion ω - quaternionDictionary12 k‖ ‖targetQuaternion ω + quaternionDictionary12 k‖
+        ≤ Real.sqrt (2 - Real.sqrt 2))
+    tBound (rotLipschitz * Real.sqrt (2 - Real.sqrt 2)) εCover
+    hTransCover
+    (fun ω => by
+      rcases quaternionDictionary12_contains_signed_distance_witness (targetQuaternion ω) (hQuatUnit ω) with ⟨k, _hkMem, hkDist⟩
+      exact ⟨k, hkDist⟩)
+    hn ht (by positivity) hBudget hTrans
+    (fun ts ω k hk j => by
+      exact rigidTransform3D_pointwise_budget_of_fixed_quaternionDictionary12_signed_witness_of_unsigned_parametric_bound
+        baseCoords targetQuaternion rotLipschitz (rotLipschitz * Real.sqrt (2 - Real.sqrt 2))
+        hRotLipNonneg (le_rfl) hRotParamZero ts ω k hk j)
+
+theorem translationSubsetQuaternionDictionary12Library_winner_of_signed_quaternion_budget_yields_rmsd_target
+    {Ω : Type u}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (translationSupport : Finset (Fin 3 → ℝ))
+    (lower upper halfWidths : Fin 3 → ℝ)
+    (baseCoords : Ω → CoordSet n)
+    (targetQuaternion : Ω → MDArray 4)
+    (energy : CoordSet n → ℝ)
+    (tBound rotLipschitz L εCover εTarget : ℝ)
+    (hTransCover : HypercubeSupportCoversOnBox 3 translationSupport lower upper halfWidths)
+    (hQuatUnit : ∀ ω, Computation.ArrayDSL.norm (targetQuaternion ω) = 1)
+    (hn : 0 < n)
+    (ht : 0 ≤ tBound)
+    (hRotLipNonneg : 0 ≤ rotLipschitz)
+    (hBudget : tBound + rotLipschitz * Real.sqrt (2 - Real.sqrt 2) ≤ εCover)
+    (hTrans : ∀ t ts ω,
+      (∀ i, |t i - ts i| ≤ halfWidths i) →
+      ∀ j,
+        dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t) j)
+            (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j) ≤ tBound)
+    (hRotParamZero : ∀ ω q k j,
+      dist (rigidTransform3D (baseCoords ω) q (mkMDArray (fun _ => 0)) j)
+          (rigidTransform3D (baseCoords ω) (quaternionDictionary12 k) (mkMDArray (fun _ => 0)) j) ≤
+        rotLipschitz * ‖q - quaternionDictionary12 k‖)
+    (hL : 0 ≤ L)
+    (hεCover : 0 ≤ εCover)
+    {t : Fin 3 → ℝ}
+    {ω : Ω}
+    (hBox : ∀ i, lower i ≤ t i ∧ t i ≤ upper i)
+    (hOpt : IsOptimal (fun x => -energy x)
+      (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t)))
+    (hLip : RMSDLipschitzEnergy energy L)
+    {winner : CoordSet n}
+    (hWinnerMem : winner ∈
+      (translationSubsetQuaternionDictionary12Support translationSupport).image
+        (fun seed => rigidTransform3D (baseCoords ω) (quaternionDictionary12 seed.2) (mkMDArray seed.1)))
+    (hWinnerBest : ∀ z,
+      z ∈ (translationSubsetQuaternionDictionary12Support translationSupport).image
+            (fun seed => rigidTransform3D (baseCoords ω) (quaternionDictionary12 seed.2) (mkMDArray seed.1)) →
+      energy winner ≤ energy z)
+    (basin : CertifiedQuadraticBasin energy
+      (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t)))
+    (hεTarget : 0 ≤ εTarget)
+    (hGapBudget : L * εCover ≤ targetEnergyGap basin.μ n εTarget) :
+    rmsd winner (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t)) ≤ εTarget := by
+  exact translationSubsetQuaternionDictionary12Library_winner_of_split_component_budgets_yields_rmsd_target
+    translationSupport lower upper halfWidths
+    (fun t ω => rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t))
+    (fun ts ω => rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts))
+    (fun ts ω k => rigidTransform3D (baseCoords ω) (quaternionDictionary12 k) (mkMDArray ts))
+    (fun ω k =>
+      min ‖targetQuaternion ω - quaternionDictionary12 k‖ ‖targetQuaternion ω + quaternionDictionary12 k‖
+        ≤ Real.sqrt (2 - Real.sqrt 2))
+    energy tBound (rotLipschitz * Real.sqrt (2 - Real.sqrt 2)) L εCover εTarget
+    hTransCover
+    (fun ω => by
+      rcases quaternionDictionary12_contains_signed_distance_witness (targetQuaternion ω) (hQuatUnit ω) with ⟨k, _hkMem, hkDist⟩
+      exact ⟨k, hkDist⟩)
+    hn ht (by positivity) hBudget hTrans
+    (fun ts ω k hk j => by
+      exact rigidTransform3D_pointwise_budget_of_fixed_quaternionDictionary12_signed_witness_of_unsigned_parametric_bound
+        baseCoords targetQuaternion rotLipschitz (rotLipschitz * Real.sqrt (2 - Real.sqrt 2))
+        hRotLipNonneg (le_rfl) hRotParamZero ts ω k hk j)
+    hL hεCover hBox hOpt hLip hWinnerMem hWinnerBest basin hεTarget hGapBudget
+
+theorem translationSubsetQuaternionDictionary20Library_winner_of_signed_quaternion_budget_yields_rmsd_target
+    {Ω : Type u}
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (translationSupport : Finset (Fin 3 → ℝ))
+    (lower upper halfWidths : Fin 3 → ℝ)
+    (baseCoords : Ω → CoordSet n)
+    (targetQuaternion : Ω → MDArray 4)
+    (energy : CoordSet n → ℝ)
+    (tBound rotLipschitz L εCover εTarget : ℝ)
+    (hTransCover : HypercubeSupportCoversOnBox 3 translationSupport lower upper halfWidths)
+    (hQuatUnit : ∀ ω, Computation.ArrayDSL.norm (targetQuaternion ω) = 1)
+    (hn : 0 < n)
+    (ht : 0 ≤ tBound)
+    (hRotLipNonneg : 0 ≤ rotLipschitz)
+    (hBudget : tBound + rotLipschitz * Real.sqrt (2 - Real.sqrt 2) ≤ εCover)
+    (hTrans : ∀ t ts ω,
+      (∀ i, |t i - ts i| ≤ halfWidths i) →
+      ∀ j,
+        dist (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t) j)
+            (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts) j) ≤ tBound)
+    (hRotParamZero : ∀ ω q k j,
+      dist (rigidTransform3D (baseCoords ω) q (mkMDArray (fun _ => 0)) j)
+          (rigidTransform3D (baseCoords ω) (quaternionDictionary20 k) (mkMDArray (fun _ => 0)) j) ≤
+        rotLipschitz * ‖q - quaternionDictionary20 k‖)
+    (hL : 0 ≤ L)
+    (hεCover : 0 ≤ εCover)
+    {t : Fin 3 → ℝ}
+    {ω : Ω}
+    (hBox : ∀ i, lower i ≤ t i ∧ t i ≤ upper i)
+    (hOpt : IsOptimal (fun x => -energy x)
+      (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t)))
+    (hLip : RMSDLipschitzEnergy energy L)
+    {winner : CoordSet n}
+    (hWinnerMem : winner ∈
+      (translationSubsetQuaternionDictionary20Support translationSupport).image
+        (fun seed => rigidTransform3D (baseCoords ω) (quaternionDictionary20 seed.2) (mkMDArray seed.1)))
+    (hWinnerBest : ∀ z,
+      z ∈ (translationSubsetQuaternionDictionary20Support translationSupport).image
+            (fun seed => rigidTransform3D (baseCoords ω) (quaternionDictionary20 seed.2) (mkMDArray seed.1)) →
+      energy winner ≤ energy z)
+    (basin : CertifiedQuadraticBasin energy
+      (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t)))
+    (hεTarget : 0 ≤ εTarget)
+    (hGapBudget : L * εCover ≤ targetEnergyGap basin.μ n εTarget) :
+    rmsd winner (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t)) ≤ εTarget := by
+  rcases translationSubsetQuaternionDictionary20Support_contains_rmsd_witness_of_split_component_budgets
+      translationSupport lower upper halfWidths
+      (fun t ω => rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t))
+      (fun ts ω => rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray ts))
+      (fun ts ω k => rigidTransform3D (baseCoords ω) (quaternionDictionary20 k) (mkMDArray ts))
+      (fun ω k =>
+        min ‖targetQuaternion ω - quaternionDictionary20 k‖ ‖targetQuaternion ω + quaternionDictionary20 k‖
+          ≤ Real.sqrt (2 - Real.sqrt 2))
+      tBound (rotLipschitz * Real.sqrt (2 - Real.sqrt 2)) εCover
+      hTransCover
+      (fun ω => by
+        rcases quaternionDictionary20_contains_signed_distance_witness (targetQuaternion ω) (hQuatUnit ω) with ⟨k, _hkMem, hkDist⟩
+        exact ⟨k, hkDist⟩)
+      hn ht (by positivity) hBudget hTrans
+      (fun ts ω k hk j => by
+        exact rigidTransform3D_pointwise_budget_of_fixed_quaternionDictionary20_signed_witness_of_unsigned_parametric_bound
+          baseCoords targetQuaternion rotLipschitz (rotLipschitz * Real.sqrt (2 - Real.sqrt 2))
+          hRotLipNonneg (le_rfl) hRotParamZero ts ω k hk j)
+      t ω hBox with ⟨seed, hSeedMem, hSeedRMSD⟩
+  let witness : CoordSet n := rigidTransform3D (baseCoords ω) (quaternionDictionary20 seed.2) (mkMDArray seed.1)
+  have hWitnessMem :
+      witness ∈ (translationSubsetQuaternionDictionary20Support translationSupport).image
+        (fun seed => rigidTransform3D (baseCoords ω) (quaternionDictionary20 seed.2) (mkMDArray seed.1)) := by
+    exact Finset.mem_image.mpr ⟨seed, hSeedMem, rfl⟩
+  have hWitnessApprox : IsApproxOptimal (fun x => -energy x) (L * εCover) witness := by
+    intro x
+    have hOptX : -energy x ≤ -energy (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t)) := hOpt x
+    have hGap : |energy witness - energy (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t))| ≤ L * εCover := by
+      exact energyBudget_of_rmsdTarget energy L εCover hL hLip hSeedRMSD
+    have hWitnessNear :
+        -energy (rigidTransform3D (baseCoords ω) (targetQuaternion ω) (mkMDArray t)) ≤ -energy witness + L * εCover := by
+      have hGap' := abs_le.mp hGap
+      linarith
+    linarith
+  have hWinnerApprox : IsApproxOptimal (fun x => -energy x) (L * εCover) winner :=
+    exact_library_winner_inherits_approxOptimal_of_supportedWitness
+      energy
+      ((translationSubsetQuaternionDictionary20Support translationSupport).image
+        (fun seed => rigidTransform3D (baseCoords ω) (quaternionDictionary20 seed.2) (mkMDArray seed.1)))
+      (L * εCover)
+      hWitnessMem hWitnessApprox hWinnerMem hWinnerBest
+  exact approxOptimal_negEnergy_yields_rmsd_target
+    energy (L * εCover) εTarget hOpt hWinnerApprox basin hn hεTarget hGapBudget
+
 
 /-- Concrete end-to-end rigid-seed adequacy bridge for the current runtime family
     using the coordinate-based quaternionDictionary8 witness predicate. -/

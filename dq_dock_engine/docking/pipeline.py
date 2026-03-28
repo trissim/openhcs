@@ -180,6 +180,7 @@ from dq_dock_engine.docking.formal_handles import (
     ambiguity_output_contract_theorem_handles,
     branch_and_bound_cross_docking_handles,
     conformer_coverage_theorem_handles,
+    enriched_support_selection_transfer_theorem_handles,
     joint_pruning_budget_optimality_handles,
     omitted_channel_bound_theorem_handles,
     optimizer_output_contract_theorem_handles,
@@ -498,6 +499,136 @@ def _derive_rigid_energy_gap_witness(
     )
 
 
+def _with_rigid_selection_gap(
+    witness: ActiveRigidEnergyGapWitness,
+    *,
+    selection_gap_budget: float,
+) -> ActiveRigidEnergyGapWitness:
+    if selection_gap_budget <= 0.0:
+        return witness
+    return ActiveRigidEnergyGapWitness(
+        cover_rmsd_radius=witness.cover_rmsd_radius,
+        cover_gap_budget=witness.cover_gap_budget,
+        certified_energy_gap=witness.cover_gap_budget + selection_gap_budget,
+        theorem_handles=_merge_theorem_handles(
+            witness.theorem_handles,
+            enriched_support_selection_transfer_theorem_handles(),
+        ),
+        selection_gap_budget=selection_gap_budget,
+        witness_handles=witness.witness_handles,
+    )
+
+
+def _combined20_base_subset_mask(survivor_global_indices: np.ndarray) -> np.ndarray:
+    return np.asarray(survivor_global_indices % 20 < 8, dtype=bool)
+
+
+def _select_base_anchored_rigid_candidate(
+    *,
+    request: "PipelineDockingRequest",
+    survivor_scores: jnp.ndarray | np.ndarray,
+    survivor_global_indices: np.ndarray,
+) -> tuple[int, float, dict[str, object] | None]:
+    if request.rigid_seed_family_plan is None:
+        return (
+            int(
+                np.argmin(np.asarray(jax.device_get(survivor_scores), dtype=np.float64))
+            ),
+            0.0,
+            None,
+        )
+    rigid_summary = request.rigid_seed_family_plan.debug_summary()
+    if rigid_summary.get("quaternion_dictionary_mode") != "combined20":
+        return (
+            int(
+                np.argmin(np.asarray(jax.device_get(survivor_scores), dtype=np.float64))
+            ),
+            0.0,
+            None,
+        )
+
+    scores_np = np.asarray(jax.device_get(survivor_scores), dtype=np.float64)
+    exact_winner_index = int(np.argmin(scores_np))
+    base_mask = _combined20_base_subset_mask(survivor_global_indices)
+    base_indices = np.flatnonzero(base_mask)
+    if base_indices.size == 0:
+        return (
+            exact_winner_index,
+            0.0,
+            {
+                "policy": "combined20_base_anchor",
+                "applied": False,
+                "reason": "no surviving base-subset candidates remained after certified pruning",
+                "exact_winner_index": exact_winner_index,
+            },
+        )
+
+    base_local_index = int(base_indices[np.argmin(scores_np[base_indices])])
+    candidate_gap = max(
+        0.0, float(scores_np[base_local_index] - scores_np[exact_winner_index])
+    )
+    if base_local_index == exact_winner_index:
+        return (
+            exact_winner_index,
+            0.0,
+            {
+                "policy": "combined20_base_anchor",
+                "applied": False,
+                "reason": "exact enriched winner already lies in the certified base subset",
+                "exact_winner_index": exact_winner_index,
+                "base_winner_index": base_local_index,
+                "base_subset_survivor_count": int(base_indices.size),
+            },
+        )
+
+    return (
+        base_local_index,
+        candidate_gap,
+        {
+            "policy": "combined20_base_anchor",
+            "applied": True,
+            "reason": "returned pose anchored to exact base-subset winner with theorem-backed additive candidate-gap transfer",
+            "exact_winner_index": exact_winner_index,
+            "base_winner_index": base_local_index,
+            "base_subset_survivor_count": int(base_indices.size),
+            "selection_gap_budget": candidate_gap,
+            "exact_winner_energy": float(scores_np[exact_winner_index]),
+            "base_winner_energy": float(scores_np[base_local_index]),
+        },
+    )
+
+
+def _derive_rigid_energy_gap_proof_plan(
+    *,
+    request: "PipelineDockingRequest",
+    witness: ActiveRigidEnergyGapWitness,
+    winner_theorem_handles: tuple[str, ...],
+    winner_refinement_failure_reason: str,
+    note: str,
+) -> CertifiedReturnedPoseProofPlan:
+    theorem_handles = _merge_theorem_handles(
+        winner_theorem_handles,
+        witness.theorem_handles,
+        returned_pose_energy_guarantee_theorem_handles(),
+    )
+    return CertifiedReturnedPoseProofPlan(
+        proof_case=ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON,
+        target_rmsd=request.target_rmsd,
+        winner_index=0,
+        support_indices=(0,),
+        ambiguity_band_width=0.0,
+        atom_count=int(request.ligand_ctx.base_coords.shape[0]),
+        dimension=int(3 * request.ligand_ctx.base_coords.shape[0]),
+        total_gap_budget=witness.certified_energy_gap,
+        theorem_handles=theorem_handles,
+        conformer_witness=witness,
+        winner_refinement_certificate_present=False,
+        winner_basin_witness_source="missing",
+        winner_refinement_failure_reason=winner_refinement_failure_reason,
+        note=note,
+    )
+
+
 def _contains_theorem_handle_group(
     theorem_handles: tuple[str, ...], required_handles: tuple[str, ...]
 ) -> bool:
@@ -553,10 +684,17 @@ def _has_rigid_energy_singleton_certificate_chain(
         return False
     if proof_plan.total_gap_budget > witness.certified_energy_gap:
         return False
-    return _contains_theorem_handle_group(
+    if not _contains_theorem_handle_group(
         proof_plan.theorem_handles,
         returned_pose_energy_guarantee_theorem_handles(),
-    )
+    ):
+        return False
+    if witness.selection_gap_budget > 0.0:
+        return _contains_theorem_handle_group(
+            proof_plan.theorem_handles,
+            enriched_support_selection_transfer_theorem_handles(),
+        )
+    return True
 
 
 def _has_conformer_ambiguity_set_certificate_chain(
@@ -7994,121 +8132,10 @@ def _run_docking_pipeline_request(
             )
         return outputs, cert
 
-    do_conf_fast = _request_uses_conformer_search(request)
-    if (
-        request.is_certified_mode
-        and not do_conf_fast
-        and initial_scores.survivor_exact_scores is not None
-        and initial_scores.survivor_coords is not None
-        and initial_scores.survivor_pose_vecs is not None
-    ):
-        rigid_energy_gap_witness = _derive_rigid_energy_gap_witness(request)
-        survivor_ranked = jnp.argsort(initial_scores.survivor_exact_scores)
-        sorted_scores = jnp.asarray(initial_scores.survivor_exact_scores)[
-            survivor_ranked
-        ]
-        if rigid_energy_gap_witness is not None and _certified_top1_gap(
-            sorted_scores, 0.0
-        ):
-            phase_start = time.perf_counter()
-            sorted_coords = jnp.asarray(initial_scores.survivor_coords)[survivor_ranked]
-            sorted_pose_vecs = PoseVector(
-                translation=jnp.asarray(initial_scores.survivor_pose_vecs.translation)[
-                    survivor_ranked
-                ],
-                quaternion=jnp.asarray(initial_scores.survivor_pose_vecs.quaternion)[
-                    survivor_ranked
-                ],
-            )
-            best_poses = [
-                ScoredPose(
-                    coords=sorted_coords[0],
-                    energy=float(np.asarray(jax.device_get(sorted_scores[0]))),
-                    engine=request.effective_engine,
-                    theorem_handles=(
-                        () if execution_plan is None else execution_plan.theorem_handles
-                    ),
-                )
-            ]
-            cert = _compute_native_certification(
-                config=request.config,
-                protein_coords=request.protein_coords,
-                coords=sorted_coords,
-                pre_opt_scores=sorted_scores,
-                receptor_radii=request.receptor_radii,
-                ligand_ctx=request.ligand_ctx,
-                include_native=request.include_native,
-            )
-            _runtime_profile_log("native_certification", phase_start)
-            pipeline_debug_summary = (
-                None if execution_plan is None else execution_plan.debug_summary()
-            )
-            if request.rigid_seed_family_plan is not None:
-                if pipeline_debug_summary is None:
-                    pipeline_debug_summary = {}
-                pipeline_debug_summary["rigid_seed_family_plan"] = (
-                    request.rigid_seed_family_plan.debug_summary()
-                )
-            if request.seed_budget_plan is not None:
-                if pipeline_debug_summary is None:
-                    pipeline_debug_summary = {}
-                pipeline_debug_summary["seed_budget_plan"] = (
-                    request.seed_budget_plan.debug_summary()
-                )
-            phase_start = time.perf_counter()
-            returned_pose_proof_plan = _derive_returned_pose_proof_plan(
-                request=request,
-                final_scores=sorted_scores,
-                final_error_bound=0.0,
-                final_pose_coords=sorted_coords,
-                refinement_certificates=[None] * int(sorted_scores.shape[0]),
-                winner_refinement_failure_reason=(
-                    "skipped_formal_refinement_due_to_rigid_energy_gap_certificate"
-                ),
-                pose_basin_mu_coords=None,
-                conformer_improved_mask=None,
-                conformer_coverage_plan=request.conformer_coverage_plan,
-                winner_theorem_handles=best_poses[0].theorem_handles,
-                do_conf=False,
-            )
-            returned_pose_cert = _build_returned_pose_certification(
-                proof_plan=returned_pose_proof_plan,
-            )
-            _runtime_profile_log("returned_pose_certification", phase_start)
-            best_poses[0] = replace(
-                best_poses[0],
-                theorem_handles=(
-                    best_poses[0].theorem_handles
-                    if returned_pose_cert is None
-                    else _merge_theorem_handles(
-                        best_poses[0].theorem_handles,
-                        returned_pose_cert.theorem_handles,
-                    )
-                ),
-                returned_pose_certification=returned_pose_cert,
-                returned_pose_proof_debug=returned_pose_proof_plan.debug_summary(),
-                pipeline_debug_summary=pipeline_debug_summary,
-            )
-            if (
-                returned_pose_cert is not None
-                and not returned_pose_cert.is_target_rmsd_certified
-            ):
-                tag = (
-                    "[RETURNED POSE CERTIFIED] "
-                    if returned_pose_cert.is_energy_gap_certified
-                    else "[RETURNED POSE DOWNGRADE] "
-                )
-                print(
-                    tag
-                    + f"{returned_pose_cert.summary()} | proof_plan={returned_pose_proof_plan.debug_summary()}",
-                    flush=True,
-                )
-            print(
-                "[RIGID FASTPATH] Skipping formal local refinement because exact survivor singleton and theorem-backed rigid energy-gap certification are already available",
-                flush=True,
-            )
-            return best_poses, cert
-
+    # A rigid energy-gap certificate is a valid fallback returned-pose contract,
+    # but it is not by itself a theorem-backed reason to skip formal refinement.
+    # Continue through local search/refinement and only use the rigid witness later
+    # if stronger winner-side certification is unavailable.
     opt_translations, opt_quaternions, n_to_opt = route.optimization_inputs(
         request,
         pose_batch.pose_vecs,

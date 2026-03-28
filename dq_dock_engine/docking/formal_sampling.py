@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import os
 
 import jax
 import jax.numpy as jnp
@@ -58,6 +59,52 @@ def _quaternion_dictionary() -> jax.Array:
     base = jnp.asarray(quaternionDictionary8())
     norms = jnp.linalg.norm(base, axis=1, keepdims=True)
     return base / norms
+
+
+def _projective_quaternion_dictionary12() -> jax.Array:
+    base = jnp.asarray(
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+            [0.5, 0.5, 0.5, 0.5],
+            [0.5, 0.5, 0.5, -0.5],
+            [0.5, 0.5, -0.5, 0.5],
+            [0.5, 0.5, -0.5, -0.5],
+            [0.5, -0.5, 0.5, 0.5],
+            [0.5, -0.5, 0.5, -0.5],
+            [0.5, -0.5, -0.5, 0.5],
+            [0.5, -0.5, -0.5, -0.5],
+        ],
+        dtype=jnp.float32,
+    )
+    norms = jnp.linalg.norm(base, axis=1, keepdims=True)
+    return base / norms
+
+
+def _combined_quaternion_dictionary20() -> jax.Array:
+    return jnp.concatenate(
+        (_quaternion_dictionary(), _projective_quaternion_dictionary12()), axis=0
+    )
+
+
+def _active_quaternion_dictionary() -> jax.Array:
+    mode = os.environ.get("OPENHCS_QUATERNION_DICTIONARY", "8").strip()
+    if mode == "20":
+        return _combined_quaternion_dictionary20()
+    if mode == "12" or os.environ.get("OPENHCS_USE_PROJECTIVE12", "0") != "0":
+        return _projective_quaternion_dictionary12()
+    return _quaternion_dictionary()
+
+
+def _budget_quaternion_count(n_quaternions: int) -> int:
+    if (
+        os.environ.get("OPENHCS_QUATERNION_DICTIONARY", "8").strip() == "20"
+        and os.environ.get("OPENHCS_PRESERVE_Q8_TRANSLATIONS", "0") != "0"
+    ):
+        return 8
+    return n_quaternions
 
 
 def _minimal_even_grid_resolution(n_points: int) -> int:
@@ -253,9 +300,10 @@ def _global_action_family_shape(
     *,
     target_translation_cover_radius: float | None = None,
 ) -> tuple[jax.Array, int, int, int, int, bool]:
-    quaternions = _quaternion_dictionary()
+    quaternions = _active_quaternion_dictionary()
     n_quaternions = int(quaternions.shape[0])
-    base_points = int(jnp.ceil(n_poses / n_quaternions))
+    budget_quaternions = _budget_quaternion_count(n_quaternions)
+    base_points = int(jnp.ceil(n_poses / budget_quaternions))
     n_translation_points = _minimal_translation_points_for_cover(
         base_points=base_points,
         target_translation_cover_radius=target_translation_cover_radius,
@@ -263,8 +311,11 @@ def _global_action_family_shape(
     )
     resolution = _minimal_even_grid_resolution(n_translation_points)
     translation_tightened = n_translation_points > base_points
+    quaternion_augmented = n_quaternions > budget_quaternions
     pose_count = (
-        n_translation_points * n_quaternions if translation_tightened else n_poses
+        n_translation_points * n_quaternions
+        if translation_tightened or quaternion_augmented
+        else n_poses
     )
     return (
         quaternions,
@@ -307,9 +358,10 @@ def _binding_site_action_family_shape(
     *,
     target_translation_cover_radius: float | None = None,
 ) -> tuple[jax.Array, int, int, int, int, bool]:
-    quaternions = _quaternion_dictionary()
+    quaternions = _active_quaternion_dictionary()
     n_quaternions = int(quaternions.shape[0])
-    base_points = int(jnp.ceil(n_poses / n_quaternions))
+    budget_quaternions = _budget_quaternion_count(n_quaternions)
+    base_points = int(jnp.ceil(n_poses / budget_quaternions))
     n_translation_points = _minimal_translation_points_for_cover(
         base_points=base_points,
         target_translation_cover_radius=target_translation_cover_radius,
@@ -319,8 +371,11 @@ def _binding_site_action_family_shape(
         binding_site, n_translation_points
     )
     translation_tightened = n_translation_points > base_points
+    quaternion_augmented = n_quaternions > budget_quaternions
     pose_count = (
-        n_translation_points * n_quaternions if translation_tightened else n_poses
+        n_translation_points * n_quaternions
+        if translation_tightened or quaternion_augmented
+        else n_poses
     )
     return (
         quaternions,
@@ -339,11 +394,11 @@ def create_certified_global_action_family(
     translation_full_lattice: bool = False,
     target_translation_cover_radius: float | None = None,
 ) -> CertifiedGlobalActionFamily:
-    quaternions = _quaternion_dictionary()
+    quaternions = _active_quaternion_dictionary()
     n_quaternions = quaternions.shape[0]
     translation_tightened = False
     if translation_full_lattice:
-        quaternions = _quaternion_dictionary()
+        quaternions = _active_quaternion_dictionary()
         n_quaternions = quaternions.shape[0]
         if target_translation_cover_radius is None:
             raise ValueError(
@@ -369,21 +424,18 @@ def create_certified_global_action_family(
         translations, _ = _translation_grid(box, n_translation_points)
     tiled_translations = jnp.repeat(translations, n_quaternions, axis=0)
     tiled_quaternions = jnp.tile(quaternions, (translations.shape[0], 1))
+    use_full_family = (
+        translation_full_lattice
+        or translation_tightened
+        or int(tiled_translations.shape[0]) > n_poses
+    )
     return CertifiedGlobalActionFamily(
-        translations=(
-            tiled_translations
-            if translation_full_lattice
-            else tiled_translations
-            if translation_tightened
-            else tiled_translations[:n_poses]
-        ),
-        quaternions=(
-            tiled_quaternions
-            if translation_full_lattice
-            else tiled_quaternions
-            if translation_tightened
-            else tiled_quaternions[:n_poses]
-        ),
+        translations=tiled_translations
+        if use_full_family
+        else tiled_translations[:n_poses],
+        quaternions=tiled_quaternions
+        if use_full_family
+        else tiled_quaternions[:n_poses],
         lattice_resolution=resolution,
         quaternion_count=n_quaternions,
     )
@@ -396,11 +448,11 @@ def create_certified_binding_site_action_family(
     translation_full_lattice: bool = False,
     target_translation_cover_radius: float | None = None,
 ) -> CertifiedGlobalActionFamily:
-    quaternions = _quaternion_dictionary()
+    quaternions = _active_quaternion_dictionary()
     n_quaternions = quaternions.shape[0]
     translation_tightened = False
     if translation_full_lattice:
-        quaternions = _quaternion_dictionary()
+        quaternions = _active_quaternion_dictionary()
         n_quaternions = quaternions.shape[0]
         if target_translation_cover_radius is None:
             raise ValueError(
@@ -432,21 +484,18 @@ def create_certified_binding_site_action_family(
         )
     tiled_translations = jnp.repeat(translations, n_quaternions, axis=0)
     tiled_quaternions = jnp.tile(quaternions, (translations.shape[0], 1))
+    use_full_family = (
+        translation_full_lattice
+        or translation_tightened
+        or int(tiled_translations.shape[0]) > n_poses
+    )
     return CertifiedGlobalActionFamily(
-        translations=(
-            tiled_translations
-            if translation_full_lattice
-            else tiled_translations
-            if translation_tightened
-            else tiled_translations[:n_poses]
-        ),
-        quaternions=(
-            tiled_quaternions
-            if translation_full_lattice
-            else tiled_quaternions
-            if translation_tightened
-            else tiled_quaternions[:n_poses]
-        ),
+        translations=tiled_translations
+        if use_full_family
+        else tiled_translations[:n_poses],
+        quaternions=tiled_quaternions
+        if use_full_family
+        else tiled_quaternions[:n_poses],
         lattice_resolution=resolution,
         quaternion_count=n_quaternions,
     )

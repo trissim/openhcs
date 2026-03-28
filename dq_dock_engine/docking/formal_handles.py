@@ -515,6 +515,19 @@ def rigid_seed_runtime_bridge_theorem_handles() -> tuple[str, ...]:
         CSC95,
         CSC96,
         CSC97,
+        CSC98,
+        CSC99,
+        CSC100,
+        CSC101,
+        CSC102,
+        CSC103,
+        CSC104,
+        CSC105,
+        CSC106,
+        CSC107,
+        CSC108,
+        CSC109,
+        CSC110,
     )
 
 
@@ -525,6 +538,10 @@ def rigid_seed_family_theorem_handles() -> tuple[str, ...]:
             + rigid_seed_runtime_bridge_theorem_handles()
         )
     )
+
+
+def enriched_support_selection_transfer_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(CSC114, CSC115, CSC116)
 
 
 def conformer_coverage_theorem_handles() -> tuple[str, ...]:
