@@ -699,6 +699,31 @@ theorem quaternionDictionary8_signed_distance_le_one_of_coordinate_witness
     exact unit_norm_mdarray4_dist_to_basis_or_negBasis_le_one_of_coordinate_abs_ge_half q i hNorm (by simpa [i] using hCoord)
   simpa [hBasis] using hDistBasis
 
+theorem quaternionDictionary8_signed_distance_sq_le_two_sub_sqrt_two_of_coordinate_witness
+    (q : MDArray 4)
+    (hNorm : Computation.ArrayDSL.norm q = 1)
+    (k : Fin 8)
+    (hWitness : ∃ h : k.1 < 4, Real.sqrt 2 / 2 ≤ |q ⟨k.1, h⟩|) :
+    min (‖q - quaternionDictionary8 k‖ ^ 2) (‖q + quaternionDictionary8 k‖ ^ 2) ≤ 2 - Real.sqrt 2 := by
+  rcases hWitness with ⟨hk, hCoord⟩
+  let i : Fin 4 := ⟨k.1, hk⟩
+  have hBasis : quaternionDictionary8 k = EuclideanSpace.single i (1 : ℝ) := by
+    fin_cases k
+    · simpa [i] using quaternionDictionary8_basis0_eq
+    · simpa [i] using quaternionDictionary8_basis1_eq
+    · simpa [i] using quaternionDictionary8_basis2_eq
+    · simpa [i] using quaternionDictionary8_basis3_eq
+    · simp at hk
+    · simp at hk
+    · simp at hk
+    · simp at hk
+  have hDistBasis :
+      min (‖q - EuclideanSpace.single i (1 : ℝ)‖ ^ 2) (‖q + EuclideanSpace.single i (1 : ℝ)‖ ^ 2)
+        ≤ 2 - Real.sqrt 2 := by
+    exact unit_norm_mdarray4_dist_sq_to_basis_or_negBasis_le_two_sub_sqrt_two_of_coordinate_abs_ge_inv_sqrt_two
+      q i hNorm (by simpa [i] using hCoord)
+  simpa [hBasis] using hDistBasis
+
 theorem quaternionDictionary8_contains_coordinate_witness
     (q : MDArray 4)
     (hNorm : Computation.ArrayDSL.norm q = 1) :

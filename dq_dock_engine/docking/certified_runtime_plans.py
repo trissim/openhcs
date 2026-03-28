@@ -676,9 +676,14 @@ class CertifiedRigidSeedFamilyPlan:
                         sphere_grid, translation_points
                     )
                 )
-                full_cell_half_widths = None
-                total_axis_half_widths = None
-                continuous_cover_radius = None
+                box_subset_axis_half_widths, _box_subset_cover_radius = (
+                    _cover_stats_against_selected_subset(full_grid, translation_points)
+                )
+                full_cell_half_widths = step / 2.0
+                total_axis_half_widths = (
+                    full_cell_half_widths + box_subset_axis_half_widths
+                )
+                continuous_cover_radius = float(np.linalg.norm(total_axis_half_widths))
 
         obstructions: list[str] = []
         if translation_subset_filtered:
@@ -1177,10 +1182,36 @@ class ActiveConformerEnergyGapWitness:
         return True
 
 
+@dataclass(frozen=True)
+class ActiveRigidEnergyGapWitness:
+    cover_rmsd_radius: float
+    cover_gap_budget: float
+    certified_energy_gap: float
+    theorem_handles: tuple[str, ...]
+    witness_handles: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _ensure_handle_provenance(
+            self.theorem_handles,
+            owner="ActiveRigidEnergyGapWitness",
+        )
+        for field_name, value in (
+            ("cover_rmsd_radius", self.cover_rmsd_radius),
+            ("cover_gap_budget", self.cover_gap_budget),
+            ("certified_energy_gap", self.certified_energy_gap),
+        ):
+            _ensure_nonnegative(value, field_name=field_name)
+
+    @property
+    def conformer_active(self) -> bool:
+        return False
+
+
 CertifiedConformerAwareReturnedPoseWitness = (
     InactiveConformerReturnedPoseWitness
     | ActiveConformerReturnedPoseWitness
     | ActiveConformerEnergyGapWitness
+    | ActiveRigidEnergyGapWitness
 )
 
 
@@ -1209,6 +1240,7 @@ class CertifiedReturnedPoseProofPlan:
     conformer_witness: CertifiedConformerAwareReturnedPoseWitness | None = None
     winner_refinement_certificate_present: bool = False
     winner_basin_witness_source: str = "missing"
+    winner_refinement_failure_reason: str | None = None
     winner_conformer_improved: bool = False
     missing_conformer_requirements: tuple[str, ...] = ()
     downgrade_decision: ReturnedPoseContractDecision | None = None
@@ -1279,9 +1311,12 @@ class CertifiedReturnedPoseProofPlan:
                 raise ValueError(
                     "Certified energy singleton proof plans require total_gap_budget"
                 )
-            if not isinstance(self.conformer_witness, ActiveConformerEnergyGapWitness):
+            if not isinstance(
+                self.conformer_witness,
+                (ActiveConformerEnergyGapWitness, ActiveRigidEnergyGapWitness),
+            ):
                 raise ValueError(
-                    "Certified energy singleton proof plans require an active conformer energy witness"
+                    "Certified energy singleton proof plans require an active energy-gap witness"
                 )
             if self.downgrade_decision is not None:
                 raise ValueError(
@@ -1383,11 +1418,16 @@ class CertifiedReturnedPoseProofPlan:
             return "active_complete"
         if isinstance(witness, ActiveConformerEnergyGapWitness):
             return "active_energy_only"
+        if isinstance(witness, ActiveRigidEnergyGapWitness):
+            return "active_rigid_energy_only"
         return "inactive"
 
     def debug_summary(self) -> dict[str, object]:
         certified_energy_gap = None
-        if isinstance(self.conformer_witness, ActiveConformerEnergyGapWitness):
+        if isinstance(
+            self.conformer_witness,
+            (ActiveConformerEnergyGapWitness, ActiveRigidEnergyGapWitness),
+        ):
             certified_energy_gap = self.conformer_witness.certified_energy_gap
         return {
             "proof_case": self.proof_case.value,
@@ -1400,6 +1440,7 @@ class CertifiedReturnedPoseProofPlan:
             "conformer_witness_status": self.conformer_witness_status,
             "winner_refinement_certificate_present": self.winner_refinement_certificate_present,
             "winner_basin_witness_source": self.winner_basin_witness_source,
+            "winner_refinement_failure_reason": self.winner_refinement_failure_reason,
             "winner_conformer_improved": self.winner_conformer_improved,
             "certified_energy_gap": certified_energy_gap,
             "missing_conformer_requirements": self.missing_conformer_requirements,

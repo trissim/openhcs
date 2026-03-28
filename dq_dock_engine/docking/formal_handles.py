@@ -564,7 +564,7 @@ def ambiguity_output_energy_contract_theorem_handles() -> tuple[str, ...]:
 
 
 def returned_pose_energy_guarantee_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(RPG8, CSC56)
+    return _selected_handles(RPG8, RPG12, CSC56)
 
 
 def rich_pruning_delta_theorem_handles() -> tuple[str, ...]:

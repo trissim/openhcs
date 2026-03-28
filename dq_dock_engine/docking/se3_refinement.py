@@ -227,6 +227,19 @@ def compute_se3_spectral_certificate(
     kinematics_fn,
     optimized_params: jnp.ndarray,
 ) -> SE3SpectralCertificate | None:
+    cert, _reason = compute_se3_spectral_certificate_with_reason(
+        energy_fn,
+        kinematics_fn,
+        optimized_params,
+    )
+    return cert
+
+
+def compute_se3_spectral_certificate_with_reason(
+    energy_fn,
+    kinematics_fn,
+    optimized_params: jnp.ndarray,
+) -> tuple[SE3SpectralCertificate | None, str | None]:
     """Compute spectral certificate from 6×6 Hessian and kinematics Jacobian.
 
     Cost: ~6 reverse-mode passes for Hessian + 1 Jacobian.
@@ -239,39 +252,39 @@ def compute_se3_spectral_certificate(
     try:
         energy_at_point = energy_fn(optimized_params)
         if not math.isfinite(float(energy_at_point)):
-            return None
+            return None, "energy_nonfinite_at_probe"
     except Exception:
-        return None
+        return None, "energy_evaluation_failed"
 
     try:
         H = jax.hessian(energy_fn)(optimized_params)  # (6, 6)
     except Exception:
-        return None
+        return None, "hessian_evaluation_failed"
 
     if jnp.any(jnp.isnan(H)):
-        return None
+        return None, "hessian_nan"
 
     try:
         eigs = jnp.linalg.eigvalsh(H)
     except Exception:
-        return None
+        return None, "hessian_eigendecomposition_failed"
 
     lmin_param = float(eigs[0])
     lmax_param = float(eigs[-1])
 
     if not math.isfinite(lmin_param) or not math.isfinite(lmax_param):
-        return None
+        return None, "hessian_eigenvalues_nonfinite"
 
     if lmin_param <= 0:
-        return None  # not in a convex basin
+        return None, "nonconvex_local_basin"
 
     try:
         J = jax.jacobian(kinematics_fn)(optimized_params)  # (N_atoms, 3, 6)
     except Exception:
-        return None
+        return None, "kinematics_jacobian_failed"
 
     if jnp.any(jnp.isnan(J)):
-        return None
+        return None, "kinematics_jacobian_nan"
 
     J_flat = J.reshape(-1, 6)  # (3*N_atoms, 6)
     singular_values = jnp.linalg.svdvals(J_flat)
@@ -279,9 +292,9 @@ def compute_se3_spectral_certificate(
     sigma_max_sq = float(jnp.max(singular_values) ** 2)
 
     if not math.isfinite(sigma_min_sq) or not math.isfinite(sigma_max_sq):
-        return None
+        return None, "kinematics_singular_values_nonfinite"
     if sigma_max_sq <= 0:
-        return None
+        return None, "degenerate_kinematics_upper_singularity"
 
     mu_coord = lmin_param / sigma_max_sq
     M_coord = (
@@ -291,15 +304,18 @@ def compute_se3_spectral_certificate(
     )
 
     if not math.isfinite(mu_coord):
-        return None
+        return None, "coordinate_curvature_nonfinite"
 
-    return SE3SpectralCertificate(
-        lmin_param=lmin_param,
-        lmax_param=lmax_param,
-        sigma_min_sq=sigma_min_sq,
-        sigma_max_sq=sigma_max_sq,
-        mu_coord=mu_coord,
-        M_coord=M_coord,
+    return (
+        SE3SpectralCertificate(
+            lmin_param=lmin_param,
+            lmax_param=lmax_param,
+            sigma_min_sq=sigma_min_sq,
+            sigma_max_sq=sigma_max_sq,
+            mu_coord=mu_coord,
+            M_coord=M_coord,
+        ),
+        None,
     )
 
 
@@ -413,6 +429,21 @@ def certify_observed(
     target_rmsd: float,
     n_atoms: int,
 ) -> RefinementCertificate | None:
+    cert, _reason = certify_observed_with_reason(
+        spectral,
+        energy_trajectory,
+        target_rmsd,
+        n_atoms,
+    )
+    return cert
+
+
+def certify_observed_with_reason(
+    spectral: SE3SpectralCertificate,
+    energy_trajectory: list[float],
+    target_rmsd: float,
+    n_atoms: int,
+) -> tuple[RefinementCertificate | None, str | None]:
     """Approach A: certify an already-completed optimization run.
 
     Returns None if the energy trajectory is not monotonically converging
@@ -420,10 +451,10 @@ def certify_observed(
     """
     q = extract_observed_contraction_rate(energy_trajectory)
     if q is None:
-        return None
+        return None, "observed_contraction_not_certified"
     initial_gap = energy_trajectory[0] - energy_trajectory[-1]
     if initial_gap <= 0:
-        return None
+        return None, "observed_nonpositive_initial_gap"
     iteration_budget_plan = certified_iteration_budget_plan(
         spectral.mu_coord,
         q,
@@ -432,15 +463,18 @@ def certify_observed(
         n_atoms,
     )
     if iteration_budget_plan is None:
-        return None
-    return RefinementCertificate(
-        spectral=spectral,
-        q=q,
-        initial_gap=initial_gap,
-        target_rmsd=target_rmsd,
-        n_steps=iteration_budget_plan.budget.n_steps,
-        mode=RefinementCertificationMode.OBSERVED,
-        iteration_budget_plan=iteration_budget_plan,
+        return None, "observed_iteration_budget_unavailable"
+    return (
+        RefinementCertificate(
+            spectral=spectral,
+            q=q,
+            initial_gap=initial_gap,
+            target_rmsd=target_rmsd,
+            n_steps=iteration_budget_plan.budget.n_steps,
+            mode=RefinementCertificationMode.OBSERVED,
+            iteration_budget_plan=iteration_budget_plan,
+        ),
+        None,
     )
 
 
@@ -616,28 +650,59 @@ def _best_observed_certificate_from_trajectory(
     target_rmsd: float,
     n_atoms: int,
 ) -> tuple[jnp.ndarray, RefinementCertificate | None]:
+    best_params, cert, _reason = _best_observed_certificate_from_trajectory_with_reason(
+        params_trajectory,
+        energy_trajectory,
+        energy_fn,
+        kinematics_fn,
+        target_rmsd=target_rmsd,
+        n_atoms=n_atoms,
+    )
+    return best_params, cert
+
+
+def _best_observed_certificate_from_trajectory_with_reason(
+    params_trajectory: list[jnp.ndarray],
+    energy_trajectory: list[float],
+    energy_fn,
+    kinematics_fn,
+    *,
+    target_rmsd: float,
+    n_atoms: int,
+) -> tuple[jnp.ndarray, RefinementCertificate | None, str | None]:
     """Return the latest certifiable prefix of an observed probe trajectory.
 
     Lean: EnergyRMSDConvergence.rmsd_target_of_maxCertifiedPrefix.
     """
     best_params = params_trajectory[-1]
+    last_reason = "observed_no_certifiable_prefix"
     for end in range(len(params_trajectory) - 1, 0, -1):
-        spectral = compute_se3_spectral_certificate(
+        spectral, spectral_reason = compute_se3_spectral_certificate_with_reason(
             energy_fn,
             kinematics_fn,
             params_trajectory[end],
         )
         if spectral is None:
+            last_reason = (
+                f"observed_prefix_{end}:{spectral_reason}"
+                if spectral_reason is not None
+                else f"observed_prefix_{end}:spectral_unavailable"
+            )
             continue
-        cert = certify_observed(
+        cert, cert_reason = certify_observed_with_reason(
             spectral=spectral,
             energy_trajectory=energy_trajectory[: end + 1],
             target_rmsd=target_rmsd,
             n_atoms=n_atoms,
         )
         if cert is not None:
-            return params_trajectory[end], cert
-    return best_params, None
+            return params_trajectory[end], cert, None
+        last_reason = (
+            f"observed_prefix_{end}:{cert_reason}"
+            if cert_reason is not None
+            else f"observed_prefix_{end}:certificate_unavailable"
+        )
+    return best_params, None, last_reason
 
 
 def observe_gd_trajectory(
@@ -649,6 +714,27 @@ def observe_gd_trajectory(
     n_atoms: int,
     ligand_radius: float,
 ) -> tuple[jnp.ndarray, RefinementCertificate | None]:
+    optimized, cert, _reason = observe_gd_trajectory_with_reason(
+        initial_params,
+        energy_fn,
+        kinematics_fn,
+        n_steps,
+        target_rmsd,
+        n_atoms,
+        ligand_radius,
+    )
+    return optimized, cert
+
+
+def observe_gd_trajectory_with_reason(
+    initial_params: jnp.ndarray,
+    energy_fn,
+    kinematics_fn,
+    n_steps: int,
+    target_rmsd: float,
+    n_atoms: int,
+    ligand_radius: float,
+) -> tuple[jnp.ndarray, RefinementCertificate | None, str | None]:
     """Approach A: follow the negative gradient with dyadically derived step
     budgets, record the realized energy trajectory, then certify post-hoc via
     spectral certificate + observed contraction rate.
@@ -669,7 +755,7 @@ def observe_gd_trajectory(
         target_rmsd=target_rmsd,
     )
 
-    optimized, cert = _best_observed_certificate_from_trajectory(
+    optimized, cert, reason = _best_observed_certificate_from_trajectory_with_reason(
         params_trajectory,
         energy_trajectory,
         energy_fn,
@@ -677,7 +763,7 @@ def observe_gd_trajectory(
         target_rmsd=target_rmsd,
         n_atoms=n_atoms,
     )
-    return optimized, cert
+    return optimized, cert, reason
 
 
 def optimize_certified_gd(
@@ -689,6 +775,27 @@ def optimize_certified_gd(
     ligand_radius: float,
     max_probe_steps: int,
 ) -> tuple[jnp.ndarray, RefinementCertificate | None]:
+    optimized, cert, _reason = optimize_certified_gd_with_reason(
+        initial_params,
+        energy_fn,
+        kinematics_fn,
+        target_rmsd,
+        n_atoms,
+        ligand_radius,
+        max_probe_steps,
+    )
+    return optimized, cert
+
+
+def optimize_certified_gd_with_reason(
+    initial_params: jnp.ndarray,
+    energy_fn,
+    kinematics_fn,
+    target_rmsd: float,
+    n_atoms: int,
+    ligand_radius: float,
+    max_probe_steps: int,
+) -> tuple[jnp.ndarray, RefinementCertificate | None, str | None]:
     """Two-phase certified optimization (Approach B).
 
     Phase 1: Quick probe with the same dyadically derived observed-step policy.
@@ -709,9 +816,11 @@ def optimize_certified_gd(
     probed = probe_params[-1]
 
     # Compute spectral certificate at probed point
-    spectral = compute_se3_spectral_certificate(energy_fn, kinematics_fn, probed)
+    spectral, spectral_reason = compute_se3_spectral_certificate_with_reason(
+        energy_fn, kinematics_fn, probed
+    )
     if spectral is None:
-        return probed, None
+        return probed, None, spectral_reason
     if (
         not math.isfinite(spectral.lmin_param)
         or not math.isfinite(spectral.lmax_param)
@@ -720,7 +829,7 @@ def optimize_certified_gd(
         or spectral.lmax_param < spectral.lmin_param
         or spectral.mu_coord <= 0.0
     ):
-        return probed, None
+        return probed, None, "certified_gd_invalid_spectral_bounds"
 
     # Phase 2: certified GD
     alpha = 2.0 / (spectral.lmin_param + spectral.lmax_param)
@@ -728,10 +837,10 @@ def optimize_certified_gd(
         spectral.lmax_param + spectral.lmin_param
     )
     if not math.isfinite(alpha) or alpha <= 0.0 or not math.isfinite(q):
-        return probed, None
+        return probed, None, "certified_gd_invalid_step_or_contraction"
     initial_gap = float(energy_fn(initial_params)) - float(energy_fn(probed))
     if initial_gap <= 0:
-        return probed, None
+        return probed, None, "certified_gd_nonpositive_initial_gap"
 
     budget = certified_iteration_budget(
         spectral.mu_coord,
@@ -741,7 +850,7 @@ def optimize_certified_gd(
         n_atoms,
     )
     if budget < 0:
-        return probed, None
+        return probed, None, "certified_gd_iteration_budget_unavailable"
 
     optimized = _run_gd_steps(probed, energy_fn, alpha=alpha, n_steps=budget)
     cert = RefinementCertificate(
@@ -752,4 +861,4 @@ def optimize_certified_gd(
         n_steps=budget,
         mode=RefinementCertificationMode.CERTIFIED_GD,
     )
-    return optimized, cert
+    return optimized, cert, None

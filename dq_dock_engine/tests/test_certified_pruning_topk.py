@@ -16,9 +16,17 @@ from dq_dock_engine.docking.certified_runtime_plans import (
     PoseSpecificImprovementBudgetFamily,
     PoseSpecificImprovementBudgetKind,
 )
-from dq_dock_engine.docking.core import DockingBox, LigandContext, PoseVector
+from dq_dock_engine.docking.core import (
+    CertifiedBindingSite,
+    DockingBox,
+    LigandContext,
+    PoseVector,
+)
 from dq_dock_engine.docking.formal_handles import (
     rigid_posewise_improvement_budget_theorem_handles,
+)
+from dq_dock_engine.docking.formal_sampling import (
+    derive_certified_rigid_seed_family_plan,
 )
 from dq_dock_engine.docking.scoring import CertifiedRealSpaceEwaldSpec
 from dq_dock_engine.docking.scoring_context import CertifiedScoringContext
@@ -107,6 +115,36 @@ def test_certified_pruning_pass_includes_certified_coarse_delta_in_lower_bound(
         jnp.array([-0.1, 9.9, 0.0], dtype=jnp.float32),
     )
     assert execution_plan.pruning_delta_budget.total_delta == 0.1
+
+
+def test_rigid_local_refinement_plan_uses_seed_family_geometry(monkeypatch) -> None:
+    request = _make_request()
+    binding_site = CertifiedBindingSite(
+        center=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        radius=3.0,
+        theorem_handles=("SD10",),
+    )
+    rigid_seed_family_plan = derive_certified_rigid_seed_family_plan(
+        request.box,
+        64,
+        certified_binding_site=binding_site,
+    )
+    request = request.with_updates(rigid_seed_family_plan=rigid_seed_family_plan)
+
+    monkeypatch.setattr(
+        docking_pipeline,
+        "_rigid_local_improvement_bound",
+        lambda request, scoring_context, **kwargs: 0.0,
+    )
+
+    plan = docking_pipeline._derive_certified_rigid_local_refinement_plan(
+        request,
+        cast(CertifiedScoringContext, SimpleNamespace()),
+    )
+
+    assert plan.translation_cell_width == pytest.approx(
+        (2.0 * binding_site.radius) / rigid_seed_family_plan.lattice_resolution
+    )
 
 
 def test_certified_pruning_pass_uses_posewise_softening_correction(monkeypatch) -> None:
@@ -400,17 +438,30 @@ def test_certified_pruning_pass_uses_rigid_posewise_improvement_correction(
                 ),
                 theorem_handles=("SH12",),
             ),
-            np.array([0.0, 0.25, 0.0], dtype=np.float32),
-            np.array([True, True, True], dtype=bool),
-            np.array([1.0, 1.0, 1.0], dtype=np.float32),
+            np.array(
+                [0.25 if i == 1 else 0.0 for i in range(int(poses_coords.shape[0]))],
+                dtype=np.float32,
+            ),
+            np.ones((int(poses_coords.shape[0]),), dtype=bool),
+            np.ones((int(poses_coords.shape[0]),), dtype=np.float32),
         ),
+    )
+    rigid_improvement_context = SimpleNamespace(
+        score_rigid_exact_batch=lambda **kwargs: SimpleNamespace(
+            scores=jnp.asarray(
+                [0.0] * int(kwargs["poses_coords"].shape[0]), dtype=jnp.float32
+            ),
+            error_bound=jnp.asarray(0.0, dtype=jnp.float32),
+        )
     )
 
     execution_plan = docking_pipeline._certified_pruning_pass(
         request,
         poses_coords=jnp.zeros((3, 1, 3), dtype=jnp.float32),
         electrostatics=None,
-        rigid_improvement_scoring_context=cast(CertifiedScoringContext, object()),
+        rigid_improvement_scoring_context=cast(
+            CertifiedScoringContext, rigid_improvement_context
+        ),
         rigid_refinement_plan=cast(
             Any,
             SimpleNamespace(
@@ -418,6 +469,7 @@ def test_certified_pruning_pass_uses_rigid_posewise_improvement_correction(
                 base_rotation_step_rad=0.1,
                 ligand_radius=1.0,
                 n_search_rounds=1,
+                local_improvement_bound=0.25,
             ),
         ),
     )
@@ -453,17 +505,33 @@ def test_certified_pruning_pass_retains_rigid_clearance_unsafe_poses(
                 budgets=(),
                 theorem_handles=("SH12",),
             ),
-            np.zeros((3,), dtype=np.float32),
-            np.array([True, False, True], dtype=bool),
-            np.array([1.0, -0.1, 1.0], dtype=np.float32),
+            np.zeros((int(poses_coords.shape[0]),), dtype=np.float32),
+            np.array(
+                [False if i == 1 else True for i in range(int(poses_coords.shape[0]))],
+                dtype=bool,
+            ),
+            np.array(
+                [-0.1 if i == 1 else 1.0 for i in range(int(poses_coords.shape[0]))],
+                dtype=np.float32,
+            ),
         ),
+    )
+    rigid_improvement_context = SimpleNamespace(
+        score_rigid_exact_batch=lambda **kwargs: SimpleNamespace(
+            scores=jnp.asarray(
+                [0.0] * int(kwargs["poses_coords"].shape[0]), dtype=jnp.float32
+            ),
+            error_bound=jnp.asarray(0.0, dtype=jnp.float32),
+        )
     )
 
     execution_plan = docking_pipeline._certified_pruning_pass(
         request,
         poses_coords=jnp.zeros((3, 1, 3), dtype=jnp.float32),
         electrostatics=None,
-        rigid_improvement_scoring_context=cast(CertifiedScoringContext, object()),
+        rigid_improvement_scoring_context=cast(
+            CertifiedScoringContext, rigid_improvement_context
+        ),
         rigid_refinement_plan=cast(
             Any,
             SimpleNamespace(
@@ -471,6 +539,7 @@ def test_certified_pruning_pass_retains_rigid_clearance_unsafe_poses(
                 base_rotation_step_rad=0.1,
                 ligand_radius=1.0,
                 n_search_rounds=1,
+                local_improvement_bound=0.25,
             ),
         ),
     )
@@ -989,5 +1058,5 @@ def test_certified_pipeline_route_uses_pruning_context_for_pruning(
         pose_vecs,
     )
 
-    assert isinstance(seen["pruning_context"], FakePruningContext)
+    assert seen["pruning_context"] is None
     assert initial_scores.survivor_exact_scores is not None

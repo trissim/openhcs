@@ -14,9 +14,13 @@ from dq_dock_engine.docking.core import DockingBox, LigandContext, PoseVector
 from dq_dock_engine.docking.certified_runtime_plans import (
     ActiveConformerEnergyGapWitness,
     ActiveConformerReturnedPoseWitness,
+    ActiveRigidEnergyGapWitness,
     CertifiedConformerCoveragePlan,
     InactiveConformerReturnedPoseWitness,
     ReturnedPoseProofCase,
+)
+from dq_dock_engine.docking.formal_sampling import (
+    derive_certified_rigid_seed_family_plan,
 )
 from dq_dock_engine.docking.conformer_search import (
     BranchAndBoundConfig,
@@ -529,6 +533,50 @@ def test_returned_pose_certification_proves_rigid_target_rmsd_when_winner_and_re
     assert returned_cert is not None
     assert returned_cert.decision == ReturnedPoseContractDecision.CERTIFIED_TARGET_RMSD
     assert returned_cert.is_target_rmsd_certified
+
+
+def test_returned_pose_certification_uses_rigid_energy_gap_witness_when_cover_chain_is_available() -> (
+    None
+):
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_dummy_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=0.5),
+        rigid_seed_family_plan=derive_certified_rigid_seed_family_plan(
+            DockingBox(
+                center=jnp.zeros((3,), dtype=jnp.float32),
+                size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+            ),
+            16,
+            target_translation_cover_radius=1.0,
+        ),
+    )
+
+    proof_plan = _derive_returned_pose_proof_plan(
+        request=request,
+        final_scores=jnp.array([0.0, 3.0], dtype=jnp.float32),
+        final_error_bound=0.1,
+        final_pose_coords=None,
+        refinement_certificates=[None, None],
+        conformer_coverage_plan=None,
+        winner_theorem_handles=("TK16",),
+        do_conf=False,
+    )
+    returned_cert = _build_returned_pose_certification(proof_plan=proof_plan)
+
+    assert proof_plan.proof_case == ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON
+    assert isinstance(proof_plan.conformer_witness, ActiveRigidEnergyGapWitness)
+    assert proof_plan.conformer_witness_status == "active_rigid_energy_only"
+    assert returned_cert is not None
+    assert returned_cert.decision == ReturnedPoseContractDecision.CERTIFIED_ENERGY_GAP
+    assert returned_cert.is_energy_gap_certified
+    assert not returned_cert.is_target_rmsd_certified
 
 
 def test_returned_pose_certification_promotes_conformer_ambiguity_set_when_certified() -> (

@@ -1117,6 +1117,7 @@ RPG8 = "RPG8"
 RPG9 = "RPG9"
 RPG10 = "RPG10"
 RPG11 = "RPG11"
+RPG12 = "RPG12"
 CSC45 = "CSC45"
 CSC46 = "CSC46"
 CSC47 = "CSC47"
@@ -1157,6 +1158,7 @@ CSC94 = "CSC94"
 CSC95 = "CSC95"
 CSC96 = "CSC96"
 CSC97 = "CSC97"
+CSC98 = "CSC98"
 BCRC1 = "BCRC1"
 BCRC2 = "BCRC2"
 BCRC3 = "BCRC3"
@@ -2329,6 +2331,7 @@ __all__ = [
     "RPG9",
     "RPG10",
     "RPG11",
+    "RPG12",
     "CSC45",
     "CSC46",
     "CSC47",
@@ -2369,6 +2372,7 @@ __all__ = [
     "CSC95",
     "CSC96",
     "CSC97",
+    "CSC98",
     "BCRC1",
     "BCRC2",
     "BCRC3",

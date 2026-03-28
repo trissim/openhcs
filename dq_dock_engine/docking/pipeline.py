@@ -64,6 +64,7 @@ from dq_dock_engine.docking.charges import ChargeMethod, create_charge_assigner
 from dq_dock_engine.docking.certified_runtime_plans import (
     ActiveConformerEnergyGapWitness,
     ActiveConformerReturnedPoseWitness,
+    ActiveRigidEnergyGapWitness,
     CertifiedActiveSubsetBudget,
     CertifiedActiveSubsetBudgetFamily,
     CertifiedConformerCoveragePlan,
@@ -76,6 +77,7 @@ from dq_dock_engine.docking.certified_runtime_plans import (
     CertifiedRefinementBudget,
     CertifiedRefinementBudgetKind,
     CertifiedRigidSeedFamilyPlan,
+    CertifiedRigidSeedRegionKind,
     CertifiedReturnedPoseProofPlan,
     CertifiedSeedBudgetCandidate,
     CertifiedSeedBudgetPlan,
@@ -129,7 +131,9 @@ from dq_dock_engine.docking.se3_refinement import (
     make_se3_energy_fn,
     make_se3_kinematics_fn,
     observe_gd_trajectory,
+    observe_gd_trajectory_with_reason,
     optimize_certified_gd,
+    optimize_certified_gd_with_reason,
     _pose_to_se3_params,
     _se3_params_to_pose,
 )
@@ -168,6 +172,7 @@ from dq_dock_engine.docking.formal_handles import (
     returned_pose_energy_guarantee_theorem_handles,
     returned_pose_guarantee_theorem_handles,
     rigid_seed_family_theorem_handles,
+    rigid_seed_runtime_bridge_theorem_handles,
     receptor_flex_cross_docking_handles,
     receptor_flexibility_theorem_handles,
     seed_budget_minimality_theorem_handles,
@@ -425,6 +430,57 @@ def _conformer_runtime_contract_handles(
     return base_handles
 
 
+def _rigid_runtime_energy_contract_handles(
+    *,
+    rigid_seed_family_plan: CertifiedRigidSeedFamilyPlan,
+) -> tuple[str, ...]:
+    return _merge_theorem_handles(
+        rigid_seed_family_plan.theorem_handles,
+        rigid_seed_runtime_bridge_theorem_handles(),
+        returned_pose_energy_guarantee_theorem_handles(),
+    )
+
+
+def _derive_rigid_energy_gap_witness(
+    request: "PipelineDockingRequest",
+) -> ActiveRigidEnergyGapWitness | None:
+    if request.rigid_seed_family_plan is None or request.config is None:
+        return None
+    rigid_summary = request.rigid_seed_family_plan.debug_summary()
+    if not bool(rigid_summary.get("csc63_csc97_ready", False)):
+        return None
+    translation_cover_radius = rigid_summary.get("translation_cover_radius_over_box")
+    signed_witness_radius = rigid_summary.get(
+        "quaternion_signed_distance_witness_radius"
+    )
+    if not isinstance(translation_cover_radius, (int, float)):
+        return None
+    if not isinstance(signed_witness_radius, (int, float)):
+        return None
+    base_coords = np.asarray(request.ligand_ctx.base_coords, dtype=np.float64)
+    arm_bound = float(np.max(np.sum(np.abs(base_coords), axis=1)))
+    cover_rmsd_radius = float(
+        translation_cover_radius + 48.0 * arm_bound * float(signed_witness_radius)
+    )
+    cover_gap_budget = float(
+        _derive_exact_score_lipschitz_constant(
+            request.receptor_radii,
+            request.ligand_ctx.base_radii,
+            request.exact_chemistry_mode,
+            request.config.softening_policy,
+        )
+        * cover_rmsd_radius
+    )
+    return ActiveRigidEnergyGapWitness(
+        cover_rmsd_radius=cover_rmsd_radius,
+        cover_gap_budget=cover_gap_budget,
+        certified_energy_gap=cover_gap_budget,
+        theorem_handles=_rigid_runtime_energy_contract_handles(
+            rigid_seed_family_plan=request.rigid_seed_family_plan
+        ),
+    )
+
+
 def _contains_theorem_handle_group(
     theorem_handles: tuple[str, ...], required_handles: tuple[str, ...]
 ) -> bool:
@@ -455,6 +511,24 @@ def _has_conformer_energy_singleton_certificate_chain(
 ) -> bool:
     witness = proof_plan.conformer_witness
     if not isinstance(witness, ActiveConformerEnergyGapWitness):
+        return False
+    if proof_plan.proof_case != ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON:
+        return False
+    if not proof_plan.winner_singleton or proof_plan.total_gap_budget is None:
+        return False
+    if proof_plan.total_gap_budget > witness.certified_energy_gap:
+        return False
+    return _contains_theorem_handle_group(
+        proof_plan.theorem_handles,
+        returned_pose_energy_guarantee_theorem_handles(),
+    )
+
+
+def _has_rigid_energy_singleton_certificate_chain(
+    proof_plan: CertifiedReturnedPoseProofPlan,
+) -> bool:
+    witness = proof_plan.conformer_witness
+    if not isinstance(witness, ActiveRigidEnergyGapWitness):
         return False
     if proof_plan.proof_case != ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON:
         return False
@@ -541,6 +615,7 @@ def _derive_returned_pose_proof_plan(
     final_error_bound: float | None,
     final_pose_coords: jnp.ndarray | np.ndarray | None,
     refinement_certificates: list[RefinementCertificate | None],
+    winner_refinement_failure_reason: str | None = None,
     pose_basin_mu_coords: tuple[float | None, ...] | None = None,
     conformer_improved_mask: tuple[bool, ...] | None = None,
     conformer_coverage_plan: CertifiedConformerCoveragePlan | None,
@@ -612,6 +687,9 @@ def _derive_returned_pose_proof_plan(
         cover_gap_budget = float(
             conformer_coverage_plan.score_lipschitz_constant * cover_rmsd_radius
         )
+    rigid_energy_gap_witness = (
+        None if do_conf else _derive_rigid_energy_gap_witness(request)
+    )
     print(
         f"[PROOF_PLAN] conformer_coverage_plan={conformer_coverage_plan is not None}, "
         f"cover_rmsd_radius={cover_rmsd_radius}, cover_gap_budget={cover_gap_budget}, do_conf={do_conf}",
@@ -709,14 +787,23 @@ def _derive_returned_pose_proof_plan(
     elif not do_conf and total_gap_budget is not None:
         proof_case = ReturnedPoseProofCase.CERTIFIED_SINGLETON
         downgrade_decision = None
+    elif not do_conf and rigid_energy_gap_witness is not None and winner_singleton:
+        proof_case = ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON
+        total_gap_budget = rigid_energy_gap_witness.certified_energy_gap
+        downgrade_decision = None
+        note = (
+            "returned rigid pose is certified to lie within the rigid-cover energy gap budget "
+            f"({cast(float, total_gap_budget):.3f} kcal/mol) of the optimal covered rigid pose"
+        )
     elif total_gap_budget is None:
         downgrade_decision = (
             ReturnedPoseContractDecision.DOWNGRADED_NO_REFINEMENT_CERTIFICATE
         )
-        note = (
-            "returned winner lacks the quantitative witness budget needed for certification"
-            f" (missing: {', '.join(missing_conformer_requirements)})"
-        )
+        note = "returned winner lacks the quantitative witness budget needed for certification"
+        if not do_conf and winner_refinement_failure_reason is not None:
+            note += f" (rigid refinement failure: {winner_refinement_failure_reason})"
+        else:
+            note += f" (missing: {', '.join(missing_conformer_requirements)})"
     elif conformer_path_certified:
         proof_case = ReturnedPoseProofCase.CERTIFIED_SINGLETON
         downgrade_decision = None
@@ -811,6 +898,12 @@ def _derive_returned_pose_proof_plan(
             theorem_handles=winner_theorem_handles,
             note="conformer search inactive for returned-pose certification",
         )
+    if (
+        not do_conf
+        and rigid_energy_gap_witness is not None
+        and proof_case == ReturnedPoseProofCase.CERTIFIED_ENERGY_SINGLETON
+    ):
+        conformer_witness = rigid_energy_gap_witness
     proof_case_handles = ()
     if proof_case == ReturnedPoseProofCase.CERTIFIED_SINGLETON and not do_conf:
         proof_case_handles = returned_pose_guarantee_theorem_handles()
@@ -836,6 +929,7 @@ def _derive_returned_pose_proof_plan(
         conformer_witness=conformer_witness,
         winner_refinement_certificate_present=winner_refinement_cert is not None,
         winner_basin_witness_source=basin_witness_source,
+        winner_refinement_failure_reason=winner_refinement_failure_reason,
         winner_conformer_improved=winner_conformer_improved,
         missing_conformer_requirements=(
             missing_conformer_requirements
@@ -887,6 +981,14 @@ def _build_returned_pose_certification(
     ):
         raise ValueError(
             "Certified energy singleton proof plan lacks a complete conformer certificate chain"
+        )
+    elif (
+        proof_plan.decision == ReturnedPoseContractDecision.CERTIFIED_ENERGY_GAP
+        and isinstance(proof_plan.conformer_witness, ActiveRigidEnergyGapWitness)
+        and not _has_rigid_energy_singleton_certificate_chain(proof_plan)
+    ):
+        raise ValueError(
+            "Certified energy singleton proof plan lacks a complete rigid certificate chain"
         )
     if not proof_plan.has_winner:
         return ReturnedPoseCertification(
@@ -2174,6 +2276,34 @@ class CertifiedRigidLocalRefinementPlan:
     local_improvement_bound: float
 
 
+def _rigid_seed_translation_support_size(
+    request: "PipelineDockingRequest",
+) -> jnp.ndarray:
+    rigid_seed_family_plan = request.rigid_seed_family_plan
+    if rigid_seed_family_plan is None:
+        return request.box.size
+    if rigid_seed_family_plan.region_kind == CertifiedRigidSeedRegionKind.BOX:
+        if rigid_seed_family_plan.box_size is None:
+            raise ValueError("box rigid seed family plan requires box_size")
+        return jnp.asarray(rigid_seed_family_plan.box_size, dtype=jnp.float32)
+    if (
+        rigid_seed_family_plan.region_kind
+        == CertifiedRigidSeedRegionKind.CERTIFIED_BINDING_SITE
+    ):
+        if rigid_seed_family_plan.binding_site_radius is None:
+            raise ValueError(
+                "binding-site rigid seed family plan requires binding_site_radius"
+            )
+        return jnp.full(
+            (3,),
+            2.0 * float(rigid_seed_family_plan.binding_site_radius),
+            dtype=jnp.float32,
+        )
+    raise ValueError(
+        f"unsupported rigid seed region kind {rigid_seed_family_plan.region_kind}"
+    )
+
+
 def _derive_certified_rigid_local_refinement_plan(
     request: "PipelineDockingRequest",
     scoring_context: CertifiedScoringContext,
@@ -2186,8 +2316,10 @@ def _derive_certified_rigid_local_refinement_plan(
         raise ValueError(
             "Certified rigid local refinement requires rigid_seed_family_plan"
         )
-    translation_cell_width = float(jnp.min(request.box.size)) / float(
-        request.rigid_seed_family_plan.lattice_resolution
+    rigid_seed_family_plan = request.rigid_seed_family_plan
+    translation_support_size = _rigid_seed_translation_support_size(request)
+    translation_cell_width = float(jnp.min(translation_support_size)) / float(
+        rigid_seed_family_plan.lattice_resolution
     )
     base_translation_step = translation_cell_width / 2.0
     ligand_radius = float(
@@ -2908,22 +3040,71 @@ def _probe_seed_budget_certificate(
     ligand_radius = _ligand_radius(probe_request.ligand_ctx)
 
     probe_candidate_indices = ranked[: min(SEED_BUDGET_PROBE_TOP_K, ranked.shape[0])]
-    if probe_candidate_indices.size > 0:
+    attempted_probe_indices = probe_candidate_indices
+    if attempted_probe_indices.size > 0:
+        probe_failure_reasons: list[str | None] = []
         _opt_t, _opt_q, probe_certs = _certified_refinement(
             request=probe_request,
             initial_translations=probe_batch.pose_vecs.translation[
-                jnp.asarray(probe_candidate_indices)
+                jnp.asarray(attempted_probe_indices)
             ],
             initial_quaternions=probe_batch.pose_vecs.quaternion[
-                jnp.asarray(probe_candidate_indices)
+                jnp.asarray(attempted_probe_indices)
             ],
             mode_override=RefinementCertificationMode.OBSERVED,
+            failure_reasons_out=probe_failure_reasons,
         )
         del _opt_t, _opt_q
         for probe_rank, cert in enumerate(probe_certs):
             if cert is None:
                 continue
             successful_probe_candidates.append((probe_rank, cert))
+        if not successful_probe_candidates:
+            print(
+                "[SEED BUDGET PROBE] Top-ranked observed probe failures: "
+                + ", ".join(
+                    f"rank{rank}={reason}"
+                    for rank, reason in enumerate(probe_failure_reasons)
+                ),
+                flush=True,
+            )
+    if (
+        not successful_probe_candidates
+        and ranked.shape[0] > probe_candidate_indices.size
+    ):
+        print(
+            "[SEED BUDGET PROBE] No observed certificate in the top-ranked probe subset; expanding to the full engineering probe cap",
+            flush=True,
+        )
+        attempted_probe_indices = ranked[
+            : min(SEED_BUDGET_PROBE_POSES, ranked.shape[0])
+        ]
+        probe_failure_reasons = []
+        _opt_t, _opt_q, probe_certs = _certified_refinement(
+            request=probe_request,
+            initial_translations=probe_batch.pose_vecs.translation[
+                jnp.asarray(attempted_probe_indices)
+            ],
+            initial_quaternions=probe_batch.pose_vecs.quaternion[
+                jnp.asarray(attempted_probe_indices)
+            ],
+            mode_override=RefinementCertificationMode.OBSERVED,
+            failure_reasons_out=probe_failure_reasons,
+        )
+        del _opt_t, _opt_q
+        for probe_rank, cert in enumerate(probe_certs):
+            if cert is None:
+                continue
+            successful_probe_candidates.append((probe_rank, cert))
+        if not successful_probe_candidates:
+            print(
+                "[SEED BUDGET PROBE] Full-cap observed probe failures: "
+                + ", ".join(
+                    f"rank{rank}={reason}"
+                    for rank, reason in enumerate(probe_failure_reasons)
+                ),
+                flush=True,
+            )
 
     config = cast(DockingConfig, probe_request.config)
     seed_budget_plan = derive_seed_budget_plan(
@@ -6648,43 +6829,87 @@ def _certify_single_rigid_pose(
     electrostatics: "CertifiedRealSpaceEwaldSpec | None",
     site_center: jnp.ndarray | None,
     site_radius: float,
+    failure_reasons_out: list[str | None] | None = None,
 ) -> tuple[jnp.ndarray, float, RefinementCertificate | None, jnp.ndarray, jnp.ndarray]:
-    opt_t_subset, opt_q_subset, subset_certificates = _certified_refinement(
-        request=request,
-        initial_translations=translation[None, ...],
-        initial_quaternions=quaternion[None, ...],
-    )
-    subset_coords = apply_poses(
-        request.ligand_ctx,
-        PoseVector(translation=opt_t_subset, quaternion=opt_q_subset),
-    )[0]
-    cert = subset_certificates[0]
-    if site_center is not None and site_radius > 0.0:
-        subset_center = np.asarray(jax.device_get(jnp.mean(subset_coords, axis=0)))
-        if np.linalg.norm(subset_center - np.asarray(site_center)) > float(site_radius):
-            subset_coords = apply_poses(
-                request.ligand_ctx,
-                PoseVector(
-                    translation=translation[None, ...],
-                    quaternion=quaternion[None, ...],
-                ),
-            )[0]
-            cert = None
-            opt_t_subset = translation[None, ...]
-            opt_q_subset = quaternion[None, ...]
-    exact_score = _score_exact_pose_batch(
-        request,
-        poses_coords=subset_coords[None, ...],
-        electrostatics=electrostatics,
-        scoring_context=scoring_context,
-    )
-    return (
-        subset_coords,
-        float(exact_score[0]),
-        cert,
-        opt_t_subset[0],
-        opt_q_subset[0],
-    )
+    attempt_modes: list[RefinementCertificationMode | None] = [None]
+    if (
+        request.config is not None
+        and request.config.refinement_certification
+        != RefinementCertificationMode.OBSERVED
+    ):
+        attempt_modes.append(RefinementCertificationMode.OBSERVED)
+
+    best_result: (
+        tuple[
+            jnp.ndarray,
+            float,
+            RefinementCertificate | None,
+            jnp.ndarray,
+            jnp.ndarray,
+        ]
+        | None
+    ) = None
+    best_failure_reason: str | None = None
+
+    for mode_override in attempt_modes:
+        attempt_failure_reasons: list[str | None] = []
+        opt_t_subset, opt_q_subset, subset_certificates = _certified_refinement(
+            request=request,
+            initial_translations=translation[None, ...],
+            initial_quaternions=quaternion[None, ...],
+            mode_override=mode_override,
+            failure_reasons_out=attempt_failure_reasons,
+        )
+        subset_coords = apply_poses(
+            request.ligand_ctx,
+            PoseVector(translation=opt_t_subset, quaternion=opt_q_subset),
+        )[0]
+        cert = subset_certificates[0]
+        if site_center is not None and site_radius > 0.0:
+            subset_center = np.asarray(jax.device_get(jnp.mean(subset_coords, axis=0)))
+            if np.linalg.norm(subset_center - np.asarray(site_center)) > float(
+                site_radius
+            ):
+                subset_coords = apply_poses(
+                    request.ligand_ctx,
+                    PoseVector(
+                        translation=translation[None, ...],
+                        quaternion=quaternion[None, ...],
+                    ),
+                )[0]
+                cert = None
+                opt_t_subset = translation[None, ...]
+                opt_q_subset = quaternion[None, ...]
+        exact_score = _score_exact_pose_batch(
+            request,
+            poses_coords=subset_coords[None, ...],
+            electrostatics=electrostatics,
+            scoring_context=scoring_context,
+        )
+        result = (
+            subset_coords,
+            float(exact_score[0]),
+            cert,
+            opt_t_subset[0],
+            opt_q_subset[0],
+        )
+        if best_result is None or result[1] < best_result[1]:
+            best_result = result
+            best_failure_reason = attempt_failure_reasons[0]
+        if cert is not None:
+            if mode_override == RefinementCertificationMode.OBSERVED:
+                print(
+                    "[REFINE_CERTS] Winner-only certification fell back to observed mode",
+                    flush=True,
+                )
+            if failure_reasons_out is not None:
+                failure_reasons_out.append(None)
+            return result
+
+    assert best_result is not None
+    if failure_reasons_out is not None:
+        failure_reasons_out.append(best_failure_reason)
+    return best_result
 
 
 def _score_exact_pose_batch(
@@ -7752,6 +7977,121 @@ def _run_docking_pipeline_request(
             )
         return outputs, cert
 
+    do_conf_fast = _request_uses_conformer_search(request)
+    if (
+        request.is_certified_mode
+        and not do_conf_fast
+        and initial_scores.survivor_exact_scores is not None
+        and initial_scores.survivor_coords is not None
+        and initial_scores.survivor_pose_vecs is not None
+    ):
+        rigid_energy_gap_witness = _derive_rigid_energy_gap_witness(request)
+        survivor_ranked = jnp.argsort(initial_scores.survivor_exact_scores)
+        sorted_scores = jnp.asarray(initial_scores.survivor_exact_scores)[
+            survivor_ranked
+        ]
+        if rigid_energy_gap_witness is not None and _certified_top1_gap(
+            sorted_scores, 0.0
+        ):
+            phase_start = time.perf_counter()
+            sorted_coords = jnp.asarray(initial_scores.survivor_coords)[survivor_ranked]
+            sorted_pose_vecs = PoseVector(
+                translation=jnp.asarray(initial_scores.survivor_pose_vecs.translation)[
+                    survivor_ranked
+                ],
+                quaternion=jnp.asarray(initial_scores.survivor_pose_vecs.quaternion)[
+                    survivor_ranked
+                ],
+            )
+            best_poses = [
+                ScoredPose(
+                    coords=sorted_coords[0],
+                    energy=float(np.asarray(jax.device_get(sorted_scores[0]))),
+                    engine=request.effective_engine,
+                    theorem_handles=(
+                        () if execution_plan is None else execution_plan.theorem_handles
+                    ),
+                )
+            ]
+            cert = _compute_native_certification(
+                config=request.config,
+                protein_coords=request.protein_coords,
+                coords=sorted_coords,
+                pre_opt_scores=sorted_scores,
+                receptor_radii=request.receptor_radii,
+                ligand_ctx=request.ligand_ctx,
+                include_native=request.include_native,
+            )
+            _runtime_profile_log("native_certification", phase_start)
+            pipeline_debug_summary = (
+                None if execution_plan is None else execution_plan.debug_summary()
+            )
+            if request.rigid_seed_family_plan is not None:
+                if pipeline_debug_summary is None:
+                    pipeline_debug_summary = {}
+                pipeline_debug_summary["rigid_seed_family_plan"] = (
+                    request.rigid_seed_family_plan.debug_summary()
+                )
+            if request.seed_budget_plan is not None:
+                if pipeline_debug_summary is None:
+                    pipeline_debug_summary = {}
+                pipeline_debug_summary["seed_budget_plan"] = (
+                    request.seed_budget_plan.debug_summary()
+                )
+            phase_start = time.perf_counter()
+            returned_pose_proof_plan = _derive_returned_pose_proof_plan(
+                request=request,
+                final_scores=sorted_scores,
+                final_error_bound=0.0,
+                final_pose_coords=sorted_coords,
+                refinement_certificates=[None] * int(sorted_scores.shape[0]),
+                winner_refinement_failure_reason=(
+                    "skipped_formal_refinement_due_to_rigid_energy_gap_certificate"
+                ),
+                pose_basin_mu_coords=None,
+                conformer_improved_mask=None,
+                conformer_coverage_plan=request.conformer_coverage_plan,
+                winner_theorem_handles=best_poses[0].theorem_handles,
+                do_conf=False,
+            )
+            returned_pose_cert = _build_returned_pose_certification(
+                proof_plan=returned_pose_proof_plan,
+            )
+            _runtime_profile_log("returned_pose_certification", phase_start)
+            best_poses[0] = replace(
+                best_poses[0],
+                theorem_handles=(
+                    best_poses[0].theorem_handles
+                    if returned_pose_cert is None
+                    else _merge_theorem_handles(
+                        best_poses[0].theorem_handles,
+                        returned_pose_cert.theorem_handles,
+                    )
+                ),
+                returned_pose_certification=returned_pose_cert,
+                returned_pose_proof_debug=returned_pose_proof_plan.debug_summary(),
+                pipeline_debug_summary=pipeline_debug_summary,
+            )
+            if (
+                returned_pose_cert is not None
+                and not returned_pose_cert.is_target_rmsd_certified
+            ):
+                tag = (
+                    "[RETURNED POSE CERTIFIED] "
+                    if returned_pose_cert.is_energy_gap_certified
+                    else "[RETURNED POSE DOWNGRADE] "
+                )
+                print(
+                    tag
+                    + f"{returned_pose_cert.summary()} | proof_plan={returned_pose_proof_plan.debug_summary()}",
+                    flush=True,
+                )
+            print(
+                "[RIGID FASTPATH] Skipping formal local refinement because exact survivor singleton and theorem-backed rigid energy-gap certification are already available",
+                flush=True,
+            )
+            return best_poses, cert
+
     opt_translations, opt_quaternions, n_to_opt = route.optimization_inputs(
         request,
         pose_batch.pose_vecs,
@@ -7781,6 +8121,7 @@ def _run_docking_pipeline_request(
         PoseVector(translation=opt_pose_translations, quaternion=opt_pose_quaternions),
     )
     local_refine_indices = np.arange(int(opt_coords.shape[0]), dtype=np.int32)
+    initial_ranked_exact_scores: jnp.ndarray | None = None
     binding_site_center: jnp.ndarray | None = None
     binding_site_radius = -1.0
 
@@ -7789,6 +8130,8 @@ def _run_docking_pipeline_request(
     rigid_clearance_certified = True
     use_softened_local_objective = False
     winner_incumbent_filter_applied = False
+    winner_global_index: int | None = None
+    winner_pre_refined_score: float | None = None
 
     if backend == OptimizerBackend.FORMAL:
         from dq_dock_engine.docking.formal_optimizer import (
@@ -7806,8 +8149,15 @@ def _run_docking_pipeline_request(
             initial_coords = jnp.asarray(initial_scores.survivor_coords)[
                 survivor_ranked
             ]
+            initial_ranked_exact_scores = jnp.asarray(
+                initial_scores.survivor_exact_scores
+            )[survivor_ranked]
         else:
             initial_coords = apply_poses(request.ligand_ctx, initial_opt_vecs)
+            if initial_scores.survivor_exact_scores is not None:
+                initial_ranked_exact_scores = jnp.asarray(
+                    initial_scores.survivor_exact_scores
+                )
         rigid_refinement_plan = _derive_certified_rigid_local_refinement_plan(
             request, optimization_scoring_context
         )
@@ -7966,7 +8316,6 @@ def _run_docking_pipeline_request(
         }
         formal_refiner = formal_refiners[request.formal_round_strategy]
         winner_pre_refined_coords: jnp.ndarray | None = None
-        winner_global_index: int | None = None
 
         if (
             request.is_certified_mode
@@ -7997,6 +8346,7 @@ def _run_docking_pipeline_request(
                     dtype=np.float32,
                 )[0]
             )
+            winner_pre_refined_score = winner_refined_score
             candidate_lower_bounds = (
                 initial_local_scores[local_refine_indices]
                 - posewise_local_improvement_bounds[local_refine_indices]
@@ -8104,6 +8454,7 @@ def _run_docking_pipeline_request(
     site_center = binding_site_center
     site_radius = binding_site_radius
     refinement_certificates = [None] * int(opt_coords.shape[0])
+    refinement_failure_reasons: list[str | None] = [None] * int(opt_coords.shape[0])
     print(
         f"[REFINE_CERTS] local_refine_indices size: {local_refine_indices.size}, "
         f"opt_coords shape[0]: {opt_coords.shape[0]}, "
@@ -8116,10 +8467,12 @@ def _run_docking_pipeline_request(
         pre_se3_translations = opt_pose_translations[jnp.asarray(local_refine_indices)]
         pre_se3_quaternions = opt_pose_quaternions[jnp.asarray(local_refine_indices)]
         pre_se3_coords = opt_coords[jnp.asarray(local_refine_indices)]
+        subset_failure_reasons: list[str | None] = []
         opt_t_subset, opt_q_subset, subset_certificates = _certified_refinement(
             request=request,
             initial_translations=pre_se3_translations,
             initial_quaternions=pre_se3_quaternions,
+            failure_reasons_out=subset_failure_reasons,
         )
         print(
             f"[REFINE_CERTS] After refinement: subset_certificates = {subset_certificates}, "
@@ -8164,10 +8517,15 @@ def _run_docking_pipeline_request(
             if subset_in_site[local_idx]:
                 cert = subset_certificates[local_idx]
                 refinement_certificates[pose_idx] = cert
+                refinement_failure_reasons[pose_idx] = subset_failure_reasons[local_idx]
                 print(
                     f"[REFINE_CERTS] Assigned cert to pose_idx={pose_idx}: {cert is not None}, "
-                    f"spectral={cert.spectral if cert else 'None'}",
+                    f"spectral={cert.spectral if cert else 'None'}, reason={subset_failure_reasons[local_idx]}",
                     flush=True,
+                )
+            else:
+                refinement_failure_reasons[pose_idx] = (
+                    "refined_pose_left_certified_site"
                 )
     elif local_refine_indices.size > 0:
         print(
@@ -8465,21 +8823,61 @@ def _run_docking_pipeline_request(
         else:
             rich_ranking_certified = False
             orientation_margin_certified = False
-            final_batch = _score_certified_batch_padded(
-                lambda coords: ranking_scoring_context.score_exact_batch(
-                    receptor_coords=request.protein_coords,
-                    poses_coords=coords,
-                    receptor_radii=request.receptor_radii,
-                    ligand_radii=request.ligand_ctx.base_radii,
-                    target_error=request.target_error,
-                    epsilon=0.2,
-                ),
-                opt_coords,
-            )
-            final_scores = final_batch.scores
-            final_error_bound = float(
-                np.asarray(jax.device_get(final_batch.error_bound))
-            )
+            if (
+                initial_ranked_exact_scores is not None
+                and ranking_scoring_context.receptor_conformations is None
+                and local_refine_indices.size > 0
+            ):
+                can_reuse_winner_refined_score = bool(
+                    winner_pre_refined_score is not None
+                    and winner_global_index is not None
+                    and local_refine_indices.size == 1
+                    and int(local_refine_indices[0]) == int(winner_global_index)
+                )
+                if can_reuse_winner_refined_score:
+                    winner_idx_for_reuse = int(cast(int, winner_global_index))
+                    winner_score_for_reuse = float(
+                        cast(float, winner_pre_refined_score)
+                    )
+                    final_scores = (
+                        jnp.asarray(initial_ranked_exact_scores)
+                        .at[jnp.asarray([winner_idx_for_reuse])]
+                        .set(jnp.asarray([winner_score_for_reuse], dtype=jnp.float32))
+                    )
+                    final_error_bound = 0.0
+                else:
+                    rescored_subset = ranking_scoring_context.score_exact_batch(
+                        receptor_coords=request.protein_coords,
+                        poses_coords=opt_coords[jnp.asarray(local_refine_indices)],
+                        receptor_radii=request.receptor_radii,
+                        ligand_radii=request.ligand_ctx.base_radii,
+                        target_error=request.target_error,
+                        epsilon=0.2,
+                    )
+                    final_scores = (
+                        jnp.asarray(initial_ranked_exact_scores)
+                        .at[jnp.asarray(local_refine_indices)]
+                        .set(rescored_subset.scores)
+                    )
+                    final_error_bound = float(
+                        np.asarray(jax.device_get(rescored_subset.error_bound))
+                    )
+            else:
+                final_batch = _score_certified_batch_padded(
+                    lambda coords: ranking_scoring_context.score_exact_batch(
+                        receptor_coords=request.protein_coords,
+                        poses_coords=coords,
+                        receptor_radii=request.receptor_radii,
+                        ligand_radii=request.ligand_ctx.base_radii,
+                        target_error=request.target_error,
+                        epsilon=0.2,
+                    ),
+                    opt_coords,
+                )
+                final_scores = final_batch.scores
+                final_error_bound = float(
+                    np.asarray(jax.device_get(final_batch.error_bound))
+                )
         _runtime_profile_log("post_refinement_exact_scoring", phase_start)
     else:
         phase_start = time.perf_counter()
@@ -8914,11 +9312,28 @@ def _run_docking_pipeline_request(
             )
             final_error_bound = None
 
+    rigid_energy_gap_witness_for_skip = (
+        None if do_conf else _derive_rigid_energy_gap_witness(request)
+    )
+    winner_refinement_failure_reason: str | None = None
+    if request.is_certified_mode:
         winner_index = int(
             np.argmin(np.asarray(jax.device_get(final_scores), dtype=np.float64))
         )
-        if refinement_certificates[winner_index] is None:
+        if (
+            refinement_certificates[winner_index] is None
+            and rigid_energy_gap_witness_for_skip is not None
+        ):
+            winner_refinement_failure_reason = (
+                "skipped_due_to_rigid_energy_gap_certificate"
+            )
+            print(
+                f"[REFINE_CERTS] Skipping winner-only rigid certification for pose_idx={winner_index} because a theorem-backed rigid energy-gap certificate is already available",
+                flush=True,
+            )
+        elif refinement_certificates[winner_index] is None:
             phase_start = time.perf_counter()
+            winner_failure_reasons: list[str | None] = []
             cert_coords, cert_energy, cert_obj, cert_t, cert_q = (
                 _certify_single_rigid_pose(
                     request,
@@ -8928,9 +9343,14 @@ def _run_docking_pipeline_request(
                     electrostatics=electrostatics,
                     site_center=site_center,
                     site_radius=site_radius,
+                    failure_reasons_out=winner_failure_reasons,
                 )
             )
             refinement_certificates[winner_index] = cert_obj
+            refinement_failure_reasons[winner_index] = (
+                None if cert_obj is not None else winner_failure_reasons[0]
+            )
+            winner_refinement_failure_reason = refinement_failure_reasons[winner_index]
             opt_coords = jnp.asarray(opt_coords).at[winner_index].set(cert_coords)
             opt_pose_translations = (
                 jnp.asarray(opt_pose_translations).at[winner_index].set(cert_t)
@@ -8940,7 +9360,7 @@ def _run_docking_pipeline_request(
             )
             final_scores = jnp.asarray(final_scores).at[winner_index].set(cert_energy)
             print(
-                f"[REFINE_CERTS] Winner-only certification pose_idx={winner_index}: {cert_obj is not None}, score={cert_energy:.3f}",
+                f"[REFINE_CERTS] Winner-only certification pose_idx={winner_index}: {cert_obj is not None}, score={cert_energy:.3f}, reason={refinement_failure_reasons[winner_index]}",
                 flush=True,
             )
             _runtime_profile_log("winner_rigid_certification", phase_start)
@@ -8996,6 +9416,7 @@ def _run_docking_pipeline_request(
             final_error_bound=final_error_bound,
             final_pose_coords=opt_coords,
             refinement_certificates=refinement_certificates,
+            winner_refinement_failure_reason=winner_refinement_failure_reason,
             pose_basin_mu_coords=(
                 None if pose_basin_mu_coords is None else tuple(pose_basin_mu_coords)
             ),
@@ -9031,9 +9452,14 @@ def _run_docking_pipeline_request(
                 request.is_certified_mode
                 and not returned_pose_cert.is_target_rmsd_certified
             ):
+                tag = (
+                    "[RETURNED POSE CERTIFIED] "
+                    if returned_pose_cert.is_energy_gap_certified
+                    else "[RETURNED POSE DOWNGRADE] "
+                )
                 print(
-                    "[RETURNED POSE DOWNGRADE] "
-                    f"{returned_pose_cert.summary()} | proof_plan={returned_pose_proof_plan.debug_summary()}",
+                    tag
+                    + f"{returned_pose_cert.summary()} | proof_plan={returned_pose_proof_plan.debug_summary()}",
                     flush=True,
                 )
 
@@ -9219,6 +9645,7 @@ def _certified_refinement(
     initial_quaternions: jnp.ndarray,
     *,
     mode_override: RefinementCertificationMode | None = None,
+    failure_reasons_out: list[str | None] | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, list[RefinementCertificate | None]]:
     """Certified SE(3) refinement: replaces fixed n_opt_steps with per-pose
     theorem-derived budgets.
@@ -9273,7 +9700,9 @@ def _certified_refinement(
         least_positive_joint_adequate_dyadic_round,
     )
 
-    translation_extent = float(jnp.max(request.box.size)) / 2.0
+    translation_extent = (
+        float(jnp.max(_rigid_seed_translation_support_size(request))) / 2.0
+    )
     rotation_displacement_extent = ligand_radius * float(jnp.pi / 2.0)
     # Use the same canonical joint dyadic adequacy budget that drives the formal
     # local optimizer shells, rather than a fixed heuristic probe length.
@@ -9295,7 +9724,7 @@ def _certified_refinement(
         )
 
         if mode == RefinementCertificationMode.OBSERVED:
-            optimized_params, cert = observe_gd_trajectory(
+            optimized_params, cert, failure_reason = observe_gd_trajectory_with_reason(
                 initial_params=initial_params,
                 energy_fn=energy_fn,
                 kinematics_fn=kinematics_fn,
@@ -9305,7 +9734,7 @@ def _certified_refinement(
                 ligand_radius=ligand_radius,
             )
         elif mode == RefinementCertificationMode.CERTIFIED_GD:
-            optimized_params, cert = optimize_certified_gd(
+            optimized_params, cert, failure_reason = optimize_certified_gd_with_reason(
                 initial_params=initial_params,
                 energy_fn=energy_fn,
                 kinematics_fn=kinematics_fn,
@@ -9321,6 +9750,8 @@ def _certified_refinement(
         opt_translations_list.append(t_opt)
         opt_quaternions_list.append(q_opt)
         certificates.append(cert)
+        if failure_reasons_out is not None:
+            failure_reasons_out.append(None if cert is not None else failure_reason)
 
     return (
         jnp.stack(opt_translations_list),

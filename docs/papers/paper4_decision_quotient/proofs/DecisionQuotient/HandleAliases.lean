@@ -2426,6 +2426,8 @@ abbrev RPG9 := @Tractability.ReturnedPoseGuarantee.returned_choice_of_exact_sing
 -- RPG10: A sampled rigid-pose epsilon-net plus singleton exact/coarse certification yields the RMSD target
 abbrev RPG10 := @Tractability.ReturnedPoseGuarantee.sampledActionFamily_exact_energy_gap_certified_rigid_choice_of_cover_yields_rmsd_target
 abbrev RPG11 := @Tractability.ReturnedPoseGuarantee.returned_choice_of_patched_omitted_support_singleton_winner_of_cover_yields_rmsd_target
+-- RPG12: A sampled rigid-pose epsilon-net plus singleton exact/coarse certification yields a bounded exact energy gap without a basin hypothesis
+abbrev RPG12 := @Tractability.ReturnedPoseGuarantee.sampledActionFamily_exact_energy_gap_certified_rigid_choice_of_cover_has_energy_gap_le
 
 -- CSC45: Torsion locality radius (single atom)
 abbrev CSC45 := @DecisionQuotient.Tractability.ConformerSupportCoverage.torsion_locality_radius
@@ -2509,6 +2511,8 @@ abbrev CSC95 := @Tractability.ConformerSupportCoverage.rigidTransform3D_pointwis
 abbrev CSC96 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Library_winner_of_coordinate_witness_basis_uniform_pointL1Radius_bound_yields_rmsd_target
 -- CSC97: Concrete support witness bridge for translation subset × quaternionDictionary8 from closed basis0/1/2/3 arm-bound geometry
 abbrev CSC97 := @Tractability.ConformerSupportCoverage.translationSubsetQuaternionDictionary8Support_contains_rmsd_witness_of_coordinate_witness_basis_uniform_pointL1Radius_bound
+-- CSC98: A stronger coordinate witness with abs coordinate at least sqrt(2)/2 yields signed quaternion distance squared at most 2 - sqrt(2)
+abbrev CSC98 := @Tractability.ConformerSupportCoverage.quaternionDictionary8_signed_distance_sq_le_two_sub_sqrt_two_of_coordinate_witness
 
 /-! ## Blind Conformer Runtime Certificates (BCRC) handles
     BlindConformerRuntimeCertificates.lean - runtime pruning/budget safety

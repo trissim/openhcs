@@ -4357,6 +4357,43 @@ theorem unit_norm_mdarray4_dist_to_basis_or_negBasis_le_one_of_coordinate_abs_ge
       nlinarith [norm_nonneg (q + EuclideanSpace.single i (1 : ℝ)), hSq]
     exact le_trans (min_le_right _ _) hLe
 
+/-- Stronger basis-cover geometry: if a unit quaternion has a coordinate of
+    absolute value at least `sqrt 2 / 2`, then the signed distance to the
+    matching basis quaternion is bounded by `sqrt (2 - sqrt 2)`, strictly better
+    than the generic radius `1`. -/
+theorem unit_norm_mdarray4_dist_sq_to_basis_or_negBasis_le_two_sub_sqrt_two_of_coordinate_abs_ge_inv_sqrt_two
+    (q : MDArray 4)
+    (i : Fin 4)
+    (hNorm : norm q = 1)
+    (hi : Real.sqrt 2 / 2 ≤ |q i|) :
+    min (‖q - EuclideanSpace.single i (1 : ℝ)‖ ^ 2) (‖q + EuclideanSpace.single i (1 : ℝ)‖ ^ 2)
+      ≤ 2 - Real.sqrt 2 := by
+  by_cases hsign : 0 ≤ q i
+  · have hLower : Real.sqrt 2 / 2 ≤ q i := by
+      simpa [abs_of_nonneg hsign] using hi
+    have hNorm' : ‖q‖ = 1 := hNorm
+    have hInner : (@inner ℝ _ _ q (EuclideanSpace.single i (1 : ℝ)) : ℝ) = q i := by
+      simpa using (EuclideanSpace.inner_single_right i (1 : ℝ) q)
+    have hSingleSq : ‖EuclideanSpace.single i (1 : ℝ)‖ ^ 2 = 1 := by
+      simp [EuclideanSpace.norm_single]
+    have hSq : ‖q - EuclideanSpace.single i (1 : ℝ)‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+      rw [norm_sub_sq_real, hNorm', hInner, hSingleSq]
+      nlinarith [sq_nonneg (Real.sqrt 2 - 2 * q i), Real.sq_sqrt (show 0 ≤ (2 : ℝ) by positivity)]
+    exact le_trans (min_le_left _ _) hSq
+  · have hUpper : q i ≤ -(Real.sqrt 2 / 2 : ℝ) := by
+      have hAbs : Real.sqrt 2 / 2 ≤ -q i := by
+        simpa [abs_of_nonpos (le_of_not_ge hsign)] using hi
+      linarith
+    have hNorm' : ‖q‖ = 1 := hNorm
+    have hInner : (@inner ℝ _ _ q (EuclideanSpace.single i (1 : ℝ)) : ℝ) = q i := by
+      simpa using (EuclideanSpace.inner_single_right i (1 : ℝ) q)
+    have hSingleSq : ‖EuclideanSpace.single i (1 : ℝ)‖ ^ 2 = 1 := by
+      simp [EuclideanSpace.norm_single]
+    have hSq : ‖q + EuclideanSpace.single i (1 : ℝ)‖ ^ 2 ≤ 2 - Real.sqrt 2 := by
+      rw [norm_add_sq_real, hNorm', hInner, hSingleSq]
+      nlinarith [sq_nonneg (Real.sqrt 2 + 2 * q i), Real.sq_sqrt (show 0 ≤ (2 : ℝ) by positivity)]
+    exact le_trans (min_le_right _ _) hSq
+
 /-- For a unit quaternion, a basis-coordinate witness of size at least `1/2`
     yields Euclidean distance at most `1` to either the matching basis quaternion
     or its negation. This is the low-level sign-aware cover fact behind the

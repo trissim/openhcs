@@ -170,9 +170,7 @@ def test_rigid_seed_family_plan_debug_summary_exposes_quaternion_bridge_handles(
     )
 
 
-def test_binding_site_rigid_seed_plan_debug_summary_reports_bridge_obstruction() -> (
-    None
-):
+def test_binding_site_rigid_seed_plan_debug_summary_reports_box_cover_bridge() -> None:
     box = DockingBox(
         center=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
         size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
@@ -189,8 +187,7 @@ def test_binding_site_rigid_seed_plan_debug_summary_reports_bridge_obstruction()
         certified_binding_site=binding_site,
     )
     summary = plan.debug_summary()
-    bridge_obstructions = cast(tuple[str, ...], summary["csc63_csc97_obstructions"])
 
-    assert summary["csc63_csc97_ready"] is False
-    assert summary["csc63_csc77_ready"] is False
-    assert len(bridge_obstructions) > 0
+    assert summary["csc63_csc97_ready"] is True
+    assert summary["csc63_csc77_ready"] is True
+    assert summary["translation_cover_radius_over_box"] is not None

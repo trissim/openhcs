@@ -471,6 +471,61 @@ theorem sampledActionFamily_exact_energy_gap_certified_rigid_choice_of_cover_yie
     (epsTarget := epsTarget)
     hEnergy hApprox hStrict hL hCover hεCover hOpt hLip basin hn hεTarget hGapBudget
 
+/-- Rigid-docking specialization of the non-convex singleton energy-gap
+    contract. If a sampled rigid support RMSD-covers the ambient rigid library and
+    the runtime certifies singleton top-1 identity via an exact/coarse gap margin,
+    then the returned rigid choice has exact energy at most `L * εCover` above the
+    optimal covered rigid pose. This avoids any quadratic-basin hypothesis. -/
+theorem sampledActionFamily_exact_energy_gap_certified_rigid_choice_of_cover_has_energy_gap_le
+    {A : Type u} {S : Type v} [DecidableEq A] [LinearOrder A]
+    (exactDP coarseDP : DecisionProblem A S)
+    (F : SampledDocking.SampledActionFamily A)
+    (s : S)
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (coords : SampledDocking.SupportedAction F → CoordSet n)
+    (coordEnergy : CoordSet n → ℝ)
+    (xStar : CoordSet n)
+    (aStar : SampledDocking.SupportedAction F)
+    (δ L εCover : ℝ)
+    (hEnergy : ∀ a : SampledDocking.SupportedAction F,
+      (SampledDocking.restrictedDecisionProblem exactDP F).utility a s = coordEnergy (coords a))
+    (hApprox : ∀ x : SampledDocking.SupportedAction F,
+      |(SampledDocking.restrictedDecisionProblem exactDP F).utility x s -
+        (SampledDocking.restrictedDecisionProblem coarseDP F).utility x s| ≤ δ)
+    (hStrict : ∀ b : SampledDocking.SupportedAction F, b ≠ aStar →
+      (SampledDocking.restrictedDecisionProblem coarseDP F).utility aStar s + 2 * δ <
+        (SampledDocking.restrictedDecisionProblem coarseDP F).utility b s)
+    (hL : 0 ≤ L)
+    (hCover : RMSDSupportCovers
+      ((Finset.univ : Finset (SampledDocking.SupportedAction F)).image coords) εCover)
+    (hεCover : 0 ≤ εCover)
+    (hOpt : IsOptimal (fun x => -coordEnergy x) xStar)
+    (hLip : RMSDLipschitzEnergy coordEnergy L) :
+    let hSingleton := RankingPreservation.exact_top1_eq_singleton_of_coarse_energy_gap_margin
+      (fun a : SampledDocking.SupportedAction F =>
+        (SampledDocking.restrictedDecisionProblem exactDP F).utility a s)
+      (fun a : SampledDocking.SupportedAction F =>
+        (SampledDocking.restrictedDecisionProblem coarseDP F).utility a s)
+      aStar δ hApprox hStrict
+    let w := coherentOptimizerWitness_of_exact_singleton_top1
+      (fun a : SampledDocking.SupportedAction F =>
+        -(SampledDocking.restrictedDecisionProblem exactDP F).utility a s)
+      aStar hSingleton
+    coordEnergy (coords w.belief.selection.choice) - coordEnergy xStar ≤ L * εCover := by
+  exact exact_energy_gap_certified_choice_of_cover_has_energy_gap_le
+    (coords := coords)
+    (eExact := fun a : SampledDocking.SupportedAction F =>
+      (SampledDocking.restrictedDecisionProblem exactDP F).utility a s)
+    (eCoarse := fun a : SampledDocking.SupportedAction F =>
+      (SampledDocking.restrictedDecisionProblem coarseDP F).utility a s)
+    (coordEnergy := coordEnergy)
+    (xStar := xStar)
+    (aStar := aStar)
+    (δ := δ)
+    (L := L)
+    (εCover := εCover)
+    hEnergy hApprox hStrict hL hCover hεCover hOpt hLip
+
 /-- Runtime-facing singleton energy certificate for non-convex settings: if an
     exact/coarse energy gap margin certifies singleton top-1 identity `aStar`, and
     the finite runtime family satisfies the conformer coverage assumptions, then

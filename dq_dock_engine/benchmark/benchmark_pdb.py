@@ -2273,6 +2273,7 @@ def _augment_pipeline_debug_with_native_rigid_seed_witness(
         elements=list(ligand_elements),
     )
     base_coords = np.asarray(ligand_ctx.base_coords, dtype=np.float64)
+    arm_bound_l1 = float(np.max(np.sum(np.abs(base_coords), axis=1)))
     native_translation, native_quaternion = _fit_rigid_pose_vector(
         base_coords, ligand_coords
     )
@@ -2341,6 +2342,23 @@ def _augment_pipeline_debug_with_native_rigid_seed_witness(
             best_quaternion_index = index
 
     quaternion_witness = quaternions[best_quaternion_index]
+    dominant_quaternion_coordinate_abs = float(np.max(np.abs(native_quaternion)))
+    csc98_radius = math.sqrt(2.0 - math.sqrt(2.0))
+    basis_witness = bool(
+        np.count_nonzero(np.abs(quaternion_witness) > 1e-6) == 1
+        and np.isclose(np.max(np.abs(quaternion_witness)), 1.0, atol=1e-6)
+    )
+    csc98_applies = bool(
+        basis_witness and dominant_quaternion_coordinate_abs >= math.sqrt(2.0) / 2.0
+    )
+    csc98_pointwise_upper_bound = (
+        float(48.0 * arm_bound_l1 * csc98_radius) if csc98_applies else None
+    )
+    csc98_rmsd_upper_bound = (
+        float(translation_distance + csc98_pointwise_upper_bound)
+        if csc98_pointwise_upper_bound is not None
+        else None
+    )
     witness_seed_coords = np.asarray(
         rigid_transform_3d(
             base_coords_jnp,
@@ -2385,20 +2403,30 @@ def _augment_pipeline_debug_with_native_rigid_seed_witness(
     rigid_summary["native_rigid_seed_witness"] = {
         "native_translation": tuple(float(v) for v in native_translation.tolist()),
         "native_quaternion_wxyz": tuple(float(v) for v in native_quaternion.tolist()),
+        "native_quaternion_dominant_coordinate_abs": dominant_quaternion_coordinate_abs,
         "translation_witness_index": translation_index,
         "translation_witness": tuple(float(v) for v in translation_witness.tolist()),
         "translation_witness_distance": float(translation_distance),
         "quaternion_witness_index": best_quaternion_index,
         "quaternion_witness_wxyz": tuple(float(v) for v in quaternion_witness.tolist()),
+        "quaternion_witness_is_basis": basis_witness,
         "orientation_witness_pointwise_max_displacement": best_orientation_pointwise,
         "orientation_witness_rmsd": best_orientation_rmsd,
+        "csc98_applies": csc98_applies,
+        "csc98_signed_distance_radius_bound": (csc98_radius if csc98_applies else None),
+        "csc98_pointwise_upper_bound": csc98_pointwise_upper_bound,
+        "csc98_rmsd_upper_bound": csc98_rmsd_upper_bound,
         "csc63_rmsd_upper_bound": csc63_rmsd_upper_bound,
         "exact_seed_witness_rmsd": exact_seed_rmsd,
         "target_rmsd": float(target_rmsd),
         "csc63_target_rmsd_certified": csc63_rmsd_upper_bound <= float(target_rmsd),
         "required_full_lattice_resolution_for_target": required_full_lattice_resolution,
         "required_full_lattice_pose_count_for_target": required_full_lattice_pose_count,
-        "theorem_handles": ("CSC63", "CSC65", "CSC66", "ERC45"),
+        "theorem_handles": (
+            ("CSC63", "CSC65", "CSC66", "CSC98", "ERC45")
+            if csc98_applies
+            else ("CSC63", "CSC65", "CSC66", "ERC45")
+        ),
     }
     pipeline_debug_summary["rigid_seed_family_plan"] = rigid_summary
     return pipeline_debug_summary

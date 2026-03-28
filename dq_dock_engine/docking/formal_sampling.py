@@ -315,7 +315,9 @@ def _binding_site_action_family_shape(
         target_translation_cover_radius=target_translation_cover_radius,
         binding_site=binding_site,
     )
-    resolution = _binding_site_translation_resolution(binding_site, n_translation_points)
+    resolution = _binding_site_translation_resolution(
+        binding_site, n_translation_points
+    )
     translation_tightened = n_translation_points > base_points
     pose_count = (
         n_translation_points * n_quaternions if translation_tightened else n_poses
@@ -339,6 +341,7 @@ def create_certified_global_action_family(
 ) -> CertifiedGlobalActionFamily:
     quaternions = _quaternion_dictionary()
     n_quaternions = quaternions.shape[0]
+    translation_tightened = False
     if translation_full_lattice:
         quaternions = _quaternion_dictionary()
         n_quaternions = quaternions.shape[0]
@@ -370,12 +373,16 @@ def create_certified_global_action_family(
         translations=(
             tiled_translations
             if translation_full_lattice
-            else tiled_translations if translation_tightened else tiled_translations[:n_poses]
+            else tiled_translations
+            if translation_tightened
+            else tiled_translations[:n_poses]
         ),
         quaternions=(
             tiled_quaternions
             if translation_full_lattice
-            else tiled_quaternions if translation_tightened else tiled_quaternions[:n_poses]
+            else tiled_quaternions
+            if translation_tightened
+            else tiled_quaternions[:n_poses]
         ),
         lattice_resolution=resolution,
         quaternion_count=n_quaternions,
@@ -391,6 +398,7 @@ def create_certified_binding_site_action_family(
 ) -> CertifiedGlobalActionFamily:
     quaternions = _quaternion_dictionary()
     n_quaternions = quaternions.shape[0]
+    translation_tightened = False
     if translation_full_lattice:
         quaternions = _quaternion_dictionary()
         n_quaternions = quaternions.shape[0]
@@ -419,19 +427,25 @@ def create_certified_binding_site_action_family(
             n_poses,
             target_translation_cover_radius=target_translation_cover_radius,
         )
-        translations, _ = _binding_site_translation_grid(binding_site, n_translation_points)
+        translations, _ = _binding_site_translation_grid(
+            binding_site, n_translation_points
+        )
     tiled_translations = jnp.repeat(translations, n_quaternions, axis=0)
     tiled_quaternions = jnp.tile(quaternions, (translations.shape[0], 1))
     return CertifiedGlobalActionFamily(
         translations=(
             tiled_translations
             if translation_full_lattice
-            else tiled_translations if translation_tightened else tiled_translations[:n_poses]
+            else tiled_translations
+            if translation_tightened
+            else tiled_translations[:n_poses]
         ),
         quaternions=(
             tiled_quaternions
             if translation_full_lattice
-            else tiled_quaternions if translation_tightened else tiled_quaternions[:n_poses]
+            else tiled_quaternions
+            if translation_tightened
+            else tiled_quaternions[:n_poses]
         ),
         lattice_resolution=resolution,
         quaternion_count=n_quaternions,
