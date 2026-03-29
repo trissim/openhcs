@@ -7,6 +7,11 @@ import Ssot.CrossPaperDependencies  -- Bridge theorems linking Paper 2 → Paper
 import Ssot.Foundations
 import Ssot.Inconsistency
 import Ssot.LangPython
+import Ssot.LangRust
+import Ssot.LangStatic
+import Ssot.LangEvaluation
+import Ssot.LangDeps
+import Ssot.LangDatabase
 import Ssot.MultiFact
 import Ssot.ObserverModel
 import Paper1IT.EntropyGeneral
@@ -341,6 +346,17 @@ abbrev REG4 := ClaimClosure.amortized_complexity_core
 
 abbrev PYH1 := Python.python_has_hooks
 abbrev PYI1 := Python.python_has_introspection
+abbrev RUH1 := Rust.rust_has_definition_hooks
+abbrev RUI1 := Rust.rust_lacks_introspection
+abbrev JVA1 := StaticLang.java_lacks_definition_hooks
+abbrev TSE1 := StaticLang.ts_types_erased
+abbrev TSN1 := StaticLang.ts_no_runtime_type_definitions
+abbrev GOL1 := StaticLang.go_no_inheritance_hooks
+abbrev PYSS1 := LanguageEvaluation.python_can_achieve_ssot
+abbrev RUSS1 := LanguageEvaluation.rust_cannot_achieve_ssot
+abbrev JAVSS1 := LanguageEvaluation.java_cannot_achieve_ssot
+abbrev TSSS1 := LanguageEvaluation.typescript_cannot_achieve_ssot
+abbrev GOSS1 := LanguageEvaluation.go_cannot_achieve_ssot
 
 -- Affine fact-matroid layer (AFM*): fact closure becomes a representable matroid
 abbrev AFM1 := @FactMatroid.determinesFact_iff_mem_factSpan
@@ -396,3 +412,25 @@ abbrev ADV5 := runtime_reflection_too_late       -- Runtime reflection fails
 abbrev IND3 := external_tools_not_derivation     -- External tools can be bypassed
 abbrev IND4 := language_semantics_is_derivation  -- Language semantics is derivation
 abbrev IND5 := ide_refactoring_not_derivation    -- IDE refactoring not derivation
+
+/-! ## DATABASE CLASSIFICATION -/
+abbrev DBV1 := Database.engine_view_ssot_complete
+abbrev DBV2 := Database.engine_view_has_hooks
+abbrev DBV3 := Database.engine_view_has_introspection
+abbrev DBE1 := Database.external_etl_ssot_incomplete
+abbrev DBE2 := Database.external_etl_no_hooks
+abbrev DBE3 := Database.external_etl_no_introspection
+
+/-! ## DEPENDENCY MANAGER CLASSIFICATION -/
+abbrev NPM1 := Deps.npm_ssot_incomplete
+abbrev NPM2 := Deps.npm_has_introspection
+abbrev NPM3 := Deps.npm_no_hooks
+abbrev CRG1 := Deps.cargo_ssot_incomplete
+abbrev CRG2 := Deps.cargo_has_introspection
+abbrev CRG3 := Deps.cargo_no_hooks
+abbrev POT1 := Deps.poetry_ssot_incomplete
+abbrev POT2 := Deps.poetry_has_introspection
+abbrev POT3 := Deps.poetry_no_hooks
+abbrev PNM1 := Deps.pnpm_ssot_incomplete
+abbrev PNM2 := Deps.pnpm_has_introspection
+abbrev PNM3 := Deps.pnpm_no_hooks

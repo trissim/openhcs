@@ -14,7 +14,7 @@ The coding laws have immediate consequences for learned-representation systems.
 
 \item \textbf{Retrieval-augmented systems.} The retrieval index pays the identity-bit budget. If two artifacts have the same embedding, the system must preserve distinguishing metadata elsewhere, such as document identifiers, source pointers, or exact lookup keys. Otherwise exact retrieval is impossible on the collided fiber. Retrieval failures in which one real entity is substituted for a distinct entity sharing the same representation are exactly the failure mode of representation non-injectivity. This is the same architectural role played by explicit non-parametric memory in retrieval-augmented generation systems \cite{lewis2020retrieval}. The minimum metadata budget that prevents such substitutions is $\lceil \log_2 A_\pi \rceil$ bits, which is necessary by Theorem~\ref{thm:converse} and sufficient by Theorem~\ref{thm:tag-restored-sufficiency}.
 
-\item \textbf{Pure representation schemes and open-world deployments.} Systems that attempt to avoid any nominal layer do not escape the theorem. Any system that must identify entities exactly in an open world must either use an injective encoder or carry explicit identity metadata. A third option does not exist.
+\item \textbf{Pure representation schemes and open-world deployments.} Systems that rely only on semantic representations face the same barrier: any system that must identify entities exactly in an open world must either use an injective encoder or carry explicit identity metadata. A third option does not exist.
 \end{itemize}
 
 \paragraph{Attribute-only versus tag-augmented design.}

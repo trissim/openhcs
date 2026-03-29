@@ -53,7 +53,7 @@ This is the ambient worst-case naming bound over the full class set. The represe
 
 The next theorem is the paper's main zero-error compression statement. It converts representation collision multiplicity directly into a necessary fixed-length side-information budget.
 
-In graph terms, the fixed-representation setting is a structured zero-error special case: confusable classes are exactly those lying in the same representation fiber, so the confusability graph is a disjoint union of cliques. This special structure yields exact finite laws for the residual coding burden left by a representation.
+In graph terms, confusable classes are exactly those lying in the same representation fiber, so the confusability graph is a disjoint union of cliques. This structure yields exact finite laws for the residual coding burden left by a representation.
 
 \leanmetapending{\LH{LWDC1}, \LH{LWDC3}}
 \begin{definition}[Collision multiplicity]\label{def:collision-multiplicity}
@@ -124,8 +124,6 @@ The converse is a lossless coding law for semantic identity \cite{csiszar2011inf
 If the domain is maximal-barrier ($A_\pi = k$), any zero-error scheme satisfies $L \ge \log_2 k$.
 \end{corollary}
 
-In the running example, the collision block $\{A,B\}$ shows that $A_\pi = 2$, so Theorem~\ref{thm:converse} already forces $L \ge 1$ bit of auxiliary description for zero-error identification.
-
 \subsection{Exact Finite-Block Law}
 
 The ambiguity converse extends exactly to blocks: the next theorem family gives exact finite-block scaling rather than an asymptotic approximation.
@@ -166,35 +164,24 @@ So per-entity tag rate is exactly stable across block length.
 The block construction repeats the same semantic identification task across $t$ entities while keeping the representation map fixed and applying it coordinatewise. It is therefore the direct block analogue of repeated one-shot classification in this model: the collision structure multiplies across coordinates, and the required zero-error side-information budget scales accordingly.
 \end{remark}
 
-\subsection{Why the General Zero-Error Theory Simplifies Here}
+\subsection{Collision Fibers as Graph Components}
 
-The confusability graph induced by a fixed deterministic representation has special structure: two classes are adjacent exactly when they share the same representation value. The next observations explain why several general zero-error graph quantities collapse in this setting.
+The confusability graph induced by a fixed deterministic representation has special structure: two classes are adjacent exactly when they share the same representation value. This section makes that structure explicit.
 
-\leanmetapending{\LH{GPH52}}
-\begin{proposition}[Transitivity of representation confusability]
-Let $\pi : \mathcal C \to \mathcal U$. Define $c_1 \sim_\pi c_2$ iff $\pi(c_1)=\pi(c_2)$ and $c_1 \ne c_2$. Then $\sim_\pi$ is transitive on distinct classes inside a fiber.
+\leanmetapending{\LHrng{GPH}{52}{53}}
+\begin{proposition}[Cluster-graph structure]\label{prop:cluster-graph}
+The confusability graph $G_\pi$, with edges between distinct classes sharing the same representation, is a disjoint union of cliques. Each connected component is exactly one representation fiber. Moreover, confusability is transitive on distinct classes inside a fiber.
 \end{proposition}
 
 \begin{proof}
-If $\pi(c_1)=\pi(c_2)$ and $\pi(c_2)=\pi(c_3)$, then $\pi(c_1)=\pi(c_3)$ by equality. Thus any two distinct classes linked through one fiber are directly confusable as well.
+Each fiber is a clique because all of its classes share the same representation value. No edge connects distinct fibers by construction. Transitivity is immediate: if $\pi(c_1)=\pi(c_2)$ and $\pi(c_2)=\pi(c_3)$, then $\pi(c_1)=\pi(c_3)$ by equality.
 \end{proof}
 
 \leanmetapending{\LHrng{GPH}{52}{53}}
-\begin{proposition}[Cluster-graph structure]
-The confusability graph $G_\pi$, with edges between distinct classes sharing the same representation, is a disjoint union of cliques. Each connected component is exactly one representation fiber.
-\end{proposition}
-
-\begin{proof}
-Each fiber is a clique because all of its classes share the same representation value. No edge connects distinct fibers by construction. Hence each connected component is exactly one fiber, and the graph is a disjoint union of cliques.
-\end{proof}
-
-\leanmetapending{\LHrng{GPH}{52}{53}}
-\begin{corollary}[Capacity collapse for representation-induced graphs]
+\begin{corollary}[Capacity collapse for representation-induced graphs]\label{cor:capacity-collapse}
 For a representation-induced cluster graph, the standard one-shot zero-error parameters collapse to fiber counts, so the fixed-length auxiliary-description law is governed exactly by the largest fiber.
 \end{corollary}
 
 \begin{proof}
-In a disjoint union of cliques, proper coloring, clique size, and independence counting reduce to choosing or naming one element per component. In this setting, the general graph inequalities collapse to the same fiber-counting law.
+In a disjoint union of cliques, proper coloring, clique size, and independence counting reduce to choosing or naming one element per component. The general graph inequalities collapse to the same fiber-counting law.
 \end{proof}
-
-In the running example, $A_\pi = 2$, so the exact block law gives $L_t^\star = t$ bits.

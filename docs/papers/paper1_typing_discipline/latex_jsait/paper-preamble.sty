@@ -1,4 +1,4 @@
-% paper-preamble.sty - Shared LaTeX infrastructure for all pentalogy papers
+% paper-preamble.sty - Shared LaTeX infrastructure
 % Single Source of Truth for paper formatting
 \NeedsTeXFormat{LaTeX2e}
 \ProvidesPackage{paper-preamble}[2026/02/23 Shared paper preamble]
@@ -145,10 +145,10 @@
 \newcommand{\Opt}{\ensuremath{\text{Opt}}}
 
 % Author information - SINGLE SOURCE
-\newcommand{\pentalogytitle}[1]{\title{#1}}
-\newcommand{\pentalogydateJan}{\date{\today}}
+\newcommand{\papertitle}[1]{\title{#1}}
+\newcommand{\paperdate}{\date{\today}}
 
-\newcommand{\pentalogyauthor}{%
+\newcommand{\paperauthor}{%
   \author{
     Tristan Simas\\
     McGill University\\
@@ -157,7 +157,7 @@
 }
 
 % Copyright footer - call after \maketitle
-\newcommand{\pentalogyfooter}{%
+\newcommand{\paperfooter}{%
   \renewcommand{\thefootnote}{}%
   \footnotetext{%
     \textcopyright\ 2026 Tristan Simas.

@@ -57,10 +57,6 @@ P(c_1)=f(\pi(c_1))=f(\pi(c_2))=P(c_2).
 \]
 \end{proof}
 
-\begin{remark}[Role of the barrier]
-The barrier is informational rather than computational: once the representation is identical, unlimited time or memory does not help. We state it explicitly because the later converse, adaptive coding, query, and robustness results all reuse the same invariance premise.
-\end{remark}
-
 \leanmetapending{\LH{PRV1}}
 \begin{corollary}[Class identity is not representation-computable]\label{cor:provenance-barrier}
 If there exist classes $c_1,c_2$ with $\pi(c_1)=\pi(c_2)$ but $c_1 \neq c_2$, then class identity is not representation-computable.
@@ -86,7 +82,3 @@ If every admissible primitive observation factors through $\alpha$, then every a
 \begin{corollary}[Observable-state insufficiency]\label{cor:fixed-axis-incompleteness}
 If $\alpha(c_1)=\alpha(c_2)$ but $P(c_1)\neq P(c_2)$, then no admissible strategy can compute $P$ with zero error without adding new information beyond the declared observable state.
 \end{corollary}
-
-\begin{remark}[Interpretation]
-The sufficiency and insufficiency statements are the helper-view version of the information barrier: if a task varies inside one declared state fiber, that state is not sufficient and must be refined by additional information.
-\end{remark}

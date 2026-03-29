@@ -91,6 +91,7 @@ papers:
     latex_file: "main.tex"
     venue: "Draft"
     forcing_prefixes: ["ENT", "COH", "BAS", "INS", "CAP", "AXM"]
+    supplementary_file: "supplementary.tex"
 
   paper2_it:
     name: "Coherence Theory (IT)"

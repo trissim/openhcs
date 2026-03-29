@@ -3370,11 +3370,23 @@ end {module_root}
                 suffix_locations.setdefault(suffix, source_file)
 
         def format_handle_cell(handle: str) -> str:
-            handle_tex = (
-                rf"{{\fontsize{{8}}{{9}}\selectfont\nolinkurl{{{handle}}}}}"
-            )
-            source_file = handle_locations.get(handle, "") or suffix_locations.get(
-                handle, ""
+            handle_tex = rf"{{\fontsize{{8}}{{9}}\selectfont\nolinkurl{{{handle}}}}}"
+            source_file = handle_locations.get(handle, "")
+            if not source_file:
+                source_file = suffix_locations.get(handle, "")
+            if not source_file:
+                parts = handle.split(".")
+                for idx in range(1, len(parts)):
+                    suffix = ".".join(parts[idx:])
+                    source_file = suffix_locations.get(suffix, "")
+                    if source_file:
+                        break
+            if not source_file:
+                return handle_tex
+            safe_file = source_file.replace("_", r"\_").replace("/", r"/\allowbreak ")
+            return (
+                handle_tex
+                + rf"\par\vspace{{0.1ex}}{{\fontsize{{8}}{{9}}\selectfont\ttfamily {safe_file}}}"
             )
             if not source_file:
                 return handle_tex
@@ -3408,10 +3420,14 @@ end {module_root}
         if code_to_handle:
             for code in sorted(code_to_handle.keys(), key=sort_key):
                 handle = code_to_handle[code]
-                source_file = handle_locations.get(handle, "") or suffix_locations.get(handle, "")
+                source_file = handle_locations.get(handle, "") or suffix_locations.get(
+                    handle, ""
+                )
                 file_part = ""
                 if source_file:
-                    safe = source_file.replace("_", r"\_").replace("/", r"/\allowbreak ")
+                    safe = source_file.replace("_", r"\_").replace(
+                        "/", r"/\allowbreak "
+                    )
                     file_part = rf" {{\tiny\ttfamily {safe}}}"
                 lines.append(
                     rf"\item \textbf{{\nolinkurl{{{code}}}}}\hypertarget{{lh:{code}}}{{}}\enspace"
@@ -3433,7 +3449,6 @@ end {module_root}
                 r"\textbf{ID} & \textbf{Lean Handle / Source} & \textbf{ID} & \textbf{Lean Handle / Source} \\",
                 r"\midrule",
                 r"\endhead",
-                r"\midrule",
                 r"\multicolumn{4}{r@{}}{\small\itshape (continued\ldots)} \\",
                 r"\endfoot",
                 r"\bottomrule",

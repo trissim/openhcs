@@ -11,21 +11,21 @@ This appendix provides a consolidated classification of representative systems a
 \toprule
 \textbf{Host family} & \textbf{Host / Pattern} & \textbf{Class} & \textbf{Prop.} & \textbf{Prov.} & \textbf{Rate 1} & \textbf{Mechanism} \\
 \midrule
-Prog. languages & Python~\cite{pep487,pythondatamodel2025} & C & yes & yes & yes & For the structural facts considered here, class-definition hooks and runtime hierarchy introspection are host-native. \\
-Databases & Engine-maintained materialized view~\cite{postgresMaterializedViews2025,postgresPgMatviews2025} & C & yes & yes & yes & The engine maintains the derived relation and exposes catalog metadata for it. \\
-Prog. languages & Rust~\cite{rustref2024} & B & partial & no & no & Compile-time macro generation exists, but the compiled runtime artifact does not retain derivation provenance. \\
-Prog. languages & TypeScript / JavaScript~\cite{typescriptDecorators2025,javascriptDecorators2025} & B & partial & no & no & Decorators can attach metadata, but type erasure and missing subclass provenance block exact verification in the host runtime. \\
-Prog. languages & Java~\cite{gosling2021java} & A/B & no & no & no & Under the runtime-only host interpretation used here, annotations and related derivation tooling are external to the JVM runtime. \\
-Prog. languages & Go~\cite{gospec2024} & A/B & no & no & no & Reflection exists, but there are no definition-time hooks or host-native implementer registries. \\
-Databases & External ETL copy / duplicate summary table & A/B & no & no & no & Synchronization is externalized, and provenance is no longer intrinsic to the host database. \\
-Deps. & npm~\cite{npmLock2026,npmExplain2026,npmLs2026} & A & no & yes & no & Lockfile and query commands expose provenance, but manifest edits require explicit npm operations before the derived state is updated. \\
-Deps. & Cargo~\cite{cargoLockGuide2026,cargoTree2026,cargoMetadata2026} & A & no & yes & no & Resolved-dependency provenance is exposed, but \texttt{Cargo.lock} remains a distinct derived artifact synchronized through Cargo commands. \\
-Deps. & Poetry~\cite{poetryCli2026} & A & no & yes & no & The resolved graph is queryable, but lock regeneration is an explicit step rather than part of the source edit itself. \\
-Deps. & pnpm~\cite{pnpmInstall2026,pnpmWhy2026,pnpmList2026} & A & no & yes & no & Provenance is queryable, but the lockfile remains separately maintained rather than automatically updated with source edits. \\
+Prog. languages & Python~\cite{pep487,pythondatamodel2025} & C & yes & yes & yes & For the structural facts considered here, class-definition hooks and runtime hierarchy introspection are host-native.\leanmeta{\LH{PYH1}, \LH{PYI1}} \\
+Databases & Engine-maintained materialized view~\cite{postgresMaterializedViews2025,postgresPgMatviews2025} & C & yes & yes & yes & The engine maintains the derived relation and exposes catalog metadata for it.\leanmeta{\LHrng{DBV}{1}{3}} \\
+Prog. languages & Rust~\cite{rustref2024} & B & partial & no & no & Compile-time macro generation exists, but the compiled runtime artifact does not retain derivation provenance.\leanmeta{\LH{RUH1}, \LH{RUI1}} \\
+Prog. languages & TypeScript / JavaScript~\cite{typescriptDecorators2025,javascriptDecorators2025} & B & partial & no & no & Decorators can attach metadata, but type erasure and missing subclass provenance block exact verification in the host runtime.\leanmeta{\LH{TSE1}, \LH{TSN1}} \\
+Prog. languages & Java~\cite{gosling2021java} & A/B & no & no & no & Under the runtime-only host interpretation used here, annotations and related derivation tooling are external to the JVM runtime.\leanmeta{\LH{JVA1}} \\
+Prog. languages & Go~\cite{gospec2024} & A/B & no & no & no & Reflection exists, but there are no definition-time hooks or host-native implementer registries.\leanmeta{\LH{GOL1}} \\
+Databases & External ETL copy / duplicate summary table & A/B & no & no & no & Synchronization is externalized, and provenance is no longer intrinsic to the host database.\leanmeta{\LHrng{DBE}{1}{3}} \\
+Deps. & npm~\cite{npmLock2026,npmExplain2026,npmLs2026} & A & no & yes & no & Lockfile and query commands expose provenance, but manifest edits require explicit npm operations before the derived state is updated.\leanmeta{\LHrng{NPM}{1}{3}} \\
+Deps. & Cargo~\cite{cargoLockGuide2026,cargoTree2026,cargoMetadata2026} & A & no & yes & no & Resolved-dependency provenance is exposed, but \texttt{Cargo.lock} remains a distinct derived artifact synchronized through Cargo commands.\leanmeta{\LHrng{CRG}{1}{3}} \\
+Deps. & Poetry~\cite{poetryCli2026} & A & no & yes & no & The resolved graph is queryable, but lock regeneration is an explicit step rather than part of the source edit itself.\leanmeta{\LHrng{POT}{1}{3}} \\
+Deps. & pnpm~\cite{pnpmInstall2026,pnpmWhy2026,pnpmList2026} & A & no & yes & no & Provenance is queryable, but the lockfile remains separately maintained rather than automatically updated with source edits.\leanmeta{\LHrng{PNM}{1}{3}} \\
 \bottomrule
 \end{tabularx}
 \par\smallskip
-\textbf{Table A.1.} Classification of representative systems. The same theorem-level coordinates apply uniformly across programming-language runtimes, databases, and dependency managers, so the systems analysis is a single validation table rather than a domain-by-domain survey.
+\textbf{Table A.1.} Classification of representative systems as of \today. The same theorem-level coordinates apply uniformly across programming-language runtimes, databases, and dependency managers, so the systems analysis is a single validation table rather than a domain-by-domain survey. Each classification is machine-checked against the sufficiency conditions of Corollary~\ref{thm:ssot-iff}; the feature assignments reflect documented host semantics as of the compilation date.
 \label{tab:host-checks-a-appendix}
 \par\medskip
 \endgroup

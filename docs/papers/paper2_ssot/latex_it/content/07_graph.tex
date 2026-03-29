@@ -73,7 +73,7 @@ Let $G_{\mathrm{conf}}$ be the confusability graph.
 
 An edge of $G_{\mathrm{conf}}$ records a specific pair of latent states that the view architecture cannot separate exactly, and a proper coloring is exactly a disambiguation budget that resolves those failures. Exact recovery cost is determined by failure topology, not by the count of sources alone.
 
-This statement is packaged through an explicit simple confusability graph object, and for $n$ repeated copies the full block confusability graph is identified with the $n$-fold strong power of the one-shot confusability graph. The zero-error criterion is therefore literally a graph-colorability theorem on an explicit power family rather than only an analogy.\leanmeta{\LHrng{MFT}{34}{35}}
+This statement is packaged through an explicit confusability graph object, and for $n$ repeated copies the full block confusability graph is identified with the $n$-fold strong power of the one-shot confusability graph. The zero-error criterion is therefore literally a graph-colorability theorem on an explicit power family rather than only an analogy.\leanmeta{\LHrng{MFT}{34}{35}}
 
 \leanmetapending{\LH{MFT9}}
 \begin{theorem}[Success-set characterization]\label{thm:multifact-success-set}
@@ -136,6 +136,6 @@ Because each copy of $W$ is exactly recoverable with two tags, repeated applicat
 \[
 T_{\mathrm{exact}}(W^{\otimes m}) = 2^m.
 \]
-This provides an infinite family of non-clique examples, generated directly by the model, on which the graph object, the exact budget, and the strong-product law all interact nontrivially rather than only in the single four-cycle case. At this point the paper has moved decisively beyond the trivial threshold story: above the unit-rate corner, not all failures are equally severe, because the architecture can induce a non-clique topology with a strictly more structured recovery law. \leanmeta{\LHrng{MFT}{11}{13}, \LHrng{MFT}{16}{17}, \LHrng{MFT}{29}{30}}
+This provides an infinite family of non-clique examples, generated directly by the model, on which the graph object, the exact budget, and the strong-product law all interact nontrivially rather than only in the single four-cycle case. At this point the paper has moved decisively beyond the unit-rate threshold story: above that corner, not all failures are equally severe, because the architecture can induce a non-clique topology with a strictly more structured recovery law. \leanmeta{\LHrng{MFT}{11}{13}, \LHrng{MFT}{16}{17}, \LHrng{MFT}{29}{30}}
 
 Once exact one-shot recovery is governed by graph colorability, repeated composition lifts the theory to strong graph powers and asymptotic zero-error rates. The next subsection makes that lift explicit.
