@@ -2930,14 +2930,14 @@ def _flat_landscape_structural_member_choice(
     scoring_context: CertifiedScoringContext,
     support_indices: np.ndarray,
     poses_coords: jnp.ndarray,
-) -> int | None:
+) -> tuple[int | None, tuple[str, ...]]:
     if not _flat_landscape_selector_enabled(
         ligand_atom_count=int(request.ligand_ctx.base_coords.shape[0]),
         pocket_atom_count=int(request.protein_coords.shape[0]),
     ):
-        return None
+        return None, ()
     if support_indices.size == 0 or scoring_context.rich_chemistry_plan is None:
-        return None
+        return None, ()
     rich_plan = cast(CertifiedRichChemistryPlan, scoring_context.rich_chemistry_plan)
     support_coords = poses_coords[jnp.asarray(support_indices)]
     contact_batch = _score_certified_batch_padded(
@@ -2964,7 +2964,7 @@ def _flat_landscape_structural_member_choice(
         ),
         support_coords,
     )
-    return _flat_landscape_structural_member_local_index(
+    idx = _flat_landscape_structural_member_local_index(
         support_indices=support_indices,
         structural_scores=-(
             contact_batch.scores
@@ -2972,6 +2972,7 @@ def _flat_landscape_structural_member_choice(
             + hbond_ligand_batch.scores
         ),
     )
+    return idx, ()
 
 
 def _patched_support_local_indices(
@@ -10854,19 +10855,22 @@ def _run_docking_pipeline_request(
                         member_exact_gap_rmsd_theorem_handles()
                     )
             if certified_energy_output_member_winner_index is None:
-                flat_choice_index = _flat_landscape_structural_member_choice(
-                    request=request,
-                    scoring_context=scoring_context,
-                    support_indices=np.asarray(
-                        support_indices_for_member,
-                        dtype=np.int32,
-                    ),
-                    poses_coords=opt_coords,
+                flat_choice_index, flat_handles = (
+                    _flat_landscape_structural_member_choice(
+                        request=request,
+                        scoring_context=scoring_context,
+                        support_indices=np.asarray(
+                            support_indices_for_member,
+                            dtype=np.int32,
+                        ),
+                        poses_coords=opt_coords,
+                    )
                 )
                 if flat_choice_index is not None:
                     flat_landscape_output_member_winner_index = int(flat_choice_index)
-                    flat_landscape_output_member_handles = (
-                        flat_landscape_output_member_theorem_handles()
+                    flat_landscape_output_member_handles = _merge_theorem_handles(
+                        flat_landscape_output_member_theorem_handles(),
+                        flat_handles,
                     )
             _runtime_profile_log("support_member_rigid_certification", phase_start)
     best_final_indices = jnp.argsort(final_scores)[:n_to_opt]

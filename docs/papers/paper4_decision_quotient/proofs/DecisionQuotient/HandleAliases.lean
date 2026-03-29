@@ -104,6 +104,8 @@ import DecisionQuotient.Tractability.PerformanceCertificates
 import DecisionQuotient.Tractability.EnergyRMSDConvergence
 import DecisionQuotient.Tractability.SeedBudgetDerivation
 import DecisionQuotient.Tractability.ConformerSupportCoverage
+import DecisionQuotient.Tractability.FlatLandscapeContract
+import DecisionQuotient.Tractability.SpectralEnclosureBasin
 import DecisionQuotient.Tractability.ReturnedPoseGuarantee
 import DecisionQuotient.Tractability.CrossDockingCertificates
 import DecisionQuotient.Tractability.BlindConformerPipelineOptimality
@@ -2704,5 +2706,19 @@ abbrev SB7 := @Tractability.SeedBudgetDerivation.composed_two_phase_seed_budget
 
 -- EWP6: Water-bridge omission is bounded by a certified omitted-channel budget
 abbrev EWP6 := @Tractability.ExplicitWaterPlacement.water_bridge_is_bounded_omitted_channel
+
+/-! ## Flat Landscape and Enclosure Handles -/
+abbrev FLC1 := @Tractability.FlatLandscapeContract.flat_support_representative_exists
+abbrev FLC2 := @Tractability.FlatLandscapeContract.flat_support_representative_prefix_stable
+abbrev FLC3 := @Tractability.FlatLandscapeContract.flat_support_representative_preserves_gap
+abbrev FLC4 := @Tractability.FlatLandscapeContract.singleton_choice_requires_structural_certificate
+abbrev FLC5 := @Tractability.FlatLandscapeContract.mcb1_singleton_insufficient_without_structure
+abbrev FLC6 := @Tractability.FlatLandscapeContract.mcb1_output_set_contract_admissible
+abbrev FLC7 := @Tractability.FlatLandscapeContract.mcb1_output_set_target_semantics
+abbrev FLC8 := @Tractability.FlatLandscapeContract.mcb1_requires_search_escalation_or_output_set
+
+abbrev SEB1 := @Tractability.SpectralEnclosureBasin.runtime_local_spectral_enclosure_to_basin
+abbrev SEB2 := @Tractability.SpectralEnclosureBasin.local_enclosure_dominates_point_probe_failure
+abbrev SEB3 := @Tractability.SpectralEnclosureBasin.enclosure_window_sufficient_for_target_gap
 
 end DecisionQuotient

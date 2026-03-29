@@ -70,6 +70,7 @@ import DecisionQuotient.Tractability.ExtendedRichChemistryApproximation
 import DecisionQuotient.Tractability.TopKLoweringBridge
 import DecisionQuotient.Tractability.SupportExpansion
 import DecisionQuotient.Tractability.ScreenedCoulombApproximation
+import DecisionQuotient.Tractability.SpectralEnclosureBasin
 import DecisionQuotient.AbstractionCollapse
 import DecisionQuotient.GraphNontriviality
 import DecisionQuotient.ClaimClosure
