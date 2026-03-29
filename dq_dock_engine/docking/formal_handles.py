@@ -596,6 +596,10 @@ def auxiliary_patched_support_output_set_theorem_handles() -> tuple[str, ...]:
     return _selected_handles(RPG14)
 
 
+def flat_landscape_output_member_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(MCB1, RPG14)
+
+
 def certified_energy_output_member_rmsd_theorem_handles() -> tuple[str, ...]:
     return _selected_handles(RPG15)
 

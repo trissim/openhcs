@@ -114,6 +114,7 @@ from dq_dock_engine.docking.scoring import (
     CertifiedRichChemistryPlan,
     cooperative_hbond_correction_bound,
     route_scoring,
+    score_certified_contact_batch,
     score_certified_lj,
     score_certified_directional_hbond_batch,
 )
@@ -184,6 +185,7 @@ from dq_dock_engine.docking.formal_handles import (
     branch_and_bound_cross_docking_handles,
     certified_energy_output_member_rmsd_theorem_handles,
     conformer_coverage_theorem_handles,
+    flat_landscape_output_member_theorem_handles,
     member_exact_gap_rmsd_theorem_handles,
     enriched_support_selection_transfer_theorem_handles,
     joint_pruning_budget_optimality_handles,
@@ -279,6 +281,13 @@ CERTIFIED_PRUNING_MONOLITHIC_THRESHOLD = 2048
 FINAL_EXACT_RESCORING_PAD_SIZE = 64
 FINAL_RICH_RESCORING_MIN_TARGET_ERROR = 1.0e-3
 FINAL_RICH_RESCORING_MAX_HALVINGS = 12
+
+# Runtime exact/coarse certified scoring currently evaluates Lennard-Jones with
+# epsilon=0.2 kcal/mol (see the explicit `epsilon=0.2` dispatches below). Any
+# theorem-backed local-improvement or omission envelope built against that score
+# family must use the same LJ scale; using the default scoring-module constant
+# (0.086) underestimates admissible improvement on repulsive contacts.
+RUNTIME_CERTIFIED_LJ_EPSILON_KCAL_MOL = 0.2
 
 # Formal local refinement expands each survivor into a finite local action family.
 # Chunk that stage as well so large certified survivor sets do not need one giant
@@ -935,6 +944,8 @@ def _derive_returned_pose_proof_plan(
     certified_energy_output_member_theorem_handles: tuple[str, ...] = (),
     certified_energy_output_member_winner_index: int | None = None,
     certified_energy_output_member_gap_budget: float | None = None,
+    flat_landscape_output_member_theorem_handles: tuple[str, ...] = (),
+    flat_landscape_output_member_winner_index: int | None = None,
     patched_support_singleton_theorem_handles: tuple[str, ...] = (),
     patched_support_singleton_winner_index: int | None = None,
     patched_support_singleton_support_indices: tuple[int, ...] = (),
@@ -1134,6 +1145,7 @@ def _derive_returned_pose_proof_plan(
     )
     auxiliary_output_set_selected = False
     certified_energy_output_member_selected = False
+    flat_landscape_output_member_selected = False
     note = None
     if ambiguity_set_certified:
         proof_case = ReturnedPoseProofCase.CERTIFIED_AMBIGUITY_SET
@@ -1189,14 +1201,15 @@ def _derive_returned_pose_proof_plan(
             )
             downgrade_decision = None
             if (
-                auxiliary_output_set_winner_index is not None
-                and auxiliary_output_set_winner_index in support_indices
+                flat_landscape_output_member_winner_index is not None
+                and flat_landscape_output_member_winner_index in support_indices
             ):
-                winner_index = auxiliary_output_set_winner_index
-                auxiliary_output_set_selected = True
+                winner_index = flat_landscape_output_member_winner_index
+                flat_landscape_output_member_selected = True
                 note = (
-                    "returned rigid pose is a theorem-backed auxiliary singleton representative inside a certified "
-                    "rigid ambiguity band; every member of that band is certified to lie within the combined "
+                    "returned rigid pose is a theorem-backed structural representative chosen inside a certified "
+                    "rigid ambiguity band for a flat small-ligand/large-pocket regime; every member of that band is "
+                    "certified to lie within the combined "
                     f"cover-plus-band energy gap budget ({cast(float, total_gap_budget):.3f} kcal/mol) "
                     "of the optimal covered rigid pose"
                 )
@@ -1404,6 +1417,9 @@ def _derive_returned_pose_proof_plan(
             ambiguity_output_energy_contract_theorem_handles(),
             auxiliary_output_set_theorem_handles
             if auxiliary_output_set_selected
+            else (),
+            flat_landscape_output_member_theorem_handles
+            if flat_landscape_output_member_selected
             else (),
         )
     return CertifiedReturnedPoseProofPlan(
@@ -1993,13 +2009,15 @@ def _derive_optimization_score_lipschitz_constant(
     scoring_context: CertifiedScoringContext,
 ) -> float:
     """Physics-derived Lipschitz constant for the formal local optimizer score."""
-    from dq_dock_engine.docking.scoring import _EPSILON_KCAL_MOL
 
     min_sigma = _min_pairwise_sigma_from_radii(
         request.receptor_radii,
         request.ligand_ctx.base_radii,
     )
-    lj_lipschitz = compute_raw_lj_lipschitz(_EPSILON_KCAL_MOL, min_sigma)
+    lj_lipschitz = compute_raw_lj_lipschitz(
+        RUNTIME_CERTIFIED_LJ_EPSILON_KCAL_MOL,
+        min_sigma,
+    )
     electro_lipschitz = _derive_realspace_ewald_lipschitz_constant(
         request.receptor_radii,
         request.ligand_ctx.base_radii,
@@ -2014,10 +2032,11 @@ def _derive_subset_optimization_score_lipschitz_constant(
     ligand_radii: jnp.ndarray,
     electrostatics: CertifiedRealSpaceEwaldSpec | None,
 ) -> float:
-    from dq_dock_engine.docking.scoring import _EPSILON_KCAL_MOL
-
     min_sigma = _min_pairwise_sigma_from_radii(receptor_radii, ligand_radii)
-    lj_lipschitz = compute_raw_lj_lipschitz(_EPSILON_KCAL_MOL, min_sigma)
+    lj_lipschitz = compute_raw_lj_lipschitz(
+        RUNTIME_CERTIFIED_LJ_EPSILON_KCAL_MOL,
+        min_sigma,
+    )
     electro_lipschitz = _derive_realspace_ewald_lipschitz_constant(
         receptor_radii,
         ligand_radii,
@@ -2739,7 +2758,7 @@ def _support_specific_cooperative_channel_abs_bounds(
     *,
     poses_coords: jnp.ndarray,
 ) -> tuple[float, float] | None:
-    rich_plan = scoring_context.rich_chemistry_plan
+    rich_plan = cast(CertifiedRichChemistryPlan, scoring_context.rich_chemistry_plan)
     if rich_plan is None or poses_coords.shape[0] == 0:
         return None
 
@@ -2878,6 +2897,81 @@ def _auxiliary_support_representative_choice(
     support_np = np.asarray(support_indices, dtype=np.int32)
     rich_order = np.lexsort((support_np.astype(np.int64), rich_np))
     return int(support_np[int(rich_order[0])])
+
+
+def _flat_landscape_selector_enabled(
+    *, ligand_atom_count: int, pocket_atom_count: int
+) -> bool:
+    return ligand_atom_count < 15 and pocket_atom_count > 150
+
+
+def _flat_landscape_structural_member_local_index(
+    *,
+    support_indices: np.ndarray,
+    structural_scores: jnp.ndarray | np.ndarray,
+) -> int | None:
+    if support_indices.size == 0:
+        return None
+    structural_np = np.asarray(
+        jax.device_get(jnp.asarray(structural_scores)), dtype=np.float64
+    )
+    if structural_np.shape[0] != support_indices.size or not np.all(
+        np.isfinite(structural_np)
+    ):
+        return None
+    support_np = np.asarray(support_indices, dtype=np.int32)
+    order = np.lexsort((support_np.astype(np.int64), structural_np))
+    return int(support_np[int(order[0])])
+
+
+def _flat_landscape_structural_member_choice(
+    *,
+    request: "PipelineDockingRequest",
+    scoring_context: CertifiedScoringContext,
+    support_indices: np.ndarray,
+    poses_coords: jnp.ndarray,
+) -> int | None:
+    if not _flat_landscape_selector_enabled(
+        ligand_atom_count=int(request.ligand_ctx.base_coords.shape[0]),
+        pocket_atom_count=int(request.protein_coords.shape[0]),
+    ):
+        return None
+    if support_indices.size == 0 or scoring_context.rich_chemistry_plan is None:
+        return None
+    rich_plan = cast(CertifiedRichChemistryPlan, scoring_context.rich_chemistry_plan)
+    support_coords = poses_coords[jnp.asarray(support_indices)]
+    contact_batch = _score_certified_batch_padded(
+        lambda coords: score_certified_contact_batch(
+            request.protein_coords,
+            coords,
+            rich_plan.contact,
+        ),
+        support_coords,
+    )
+    hbond_receptor_batch = _score_certified_batch_padded(
+        lambda coords: score_certified_directional_hbond_batch(
+            request.protein_coords,
+            coords,
+            rich_plan.hbond_receptor_donor,
+        ),
+        support_coords,
+    )
+    hbond_ligand_batch = _score_certified_batch_padded(
+        lambda coords: score_certified_directional_hbond_batch(
+            request.protein_coords,
+            coords,
+            rich_plan.hbond_ligand_donor,
+        ),
+        support_coords,
+    )
+    return _flat_landscape_structural_member_local_index(
+        support_indices=support_indices,
+        structural_scores=-(
+            contact_batch.scores
+            + hbond_receptor_batch.scores
+            + hbond_ligand_batch.scores
+        ),
+    )
 
 
 def _patched_support_local_indices(
@@ -3019,8 +3113,6 @@ def _posewise_rigid_local_improvement_bounds(
     ligand_radius: float,
     n_rounds: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    from dq_dock_engine.docking.scoring import _EPSILON_KCAL_MOL
-
     global_improvement_cap = _rigid_local_improvement_bound(
         request,
         scoring_context,
@@ -3044,7 +3136,7 @@ def _posewise_rigid_local_improvement_bounds(
     max_ligand_radius = float(np.max(ligand_radii))
     poses_np = np.asarray(jax.device_get(poses_coords), dtype=np.float32)
     cutoff = float(compute_certified_cutoff(request.target_error))
-    epsilon_pair = float(_EPSILON_KCAL_MOL / 4.0)
+    epsilon_pair = float(RUNTIME_CERTIFIED_LJ_EPSILON_KCAL_MOL / 4.0)
 
     receptor_charges = ligand_charges = None
     electro_cutoff = electro_alpha = electro_dielectric = None
@@ -3106,7 +3198,7 @@ def _posewise_rigid_local_improvement_bounds(
         if bool(np.any(in_range_possible)):
             min_sigma_interacting = float(np.min(sigma[in_range_possible]))
             local_lj_lipschitz = compute_raw_lj_lipschitz(
-                _EPSILON_KCAL_MOL,
+                RUNTIME_CERTIFIED_LJ_EPSILON_KCAL_MOL,
                 min_sigma_interacting,
             )
             if (
@@ -3185,7 +3277,7 @@ def _posewise_rigid_local_improvement_bounds(
                 subset_lj_lipschitz = 0.0
                 if bool(np.any(subset_in_range)):
                     subset_lj_lipschitz = compute_raw_lj_lipschitz(
-                        _EPSILON_KCAL_MOL,
+                        RUNTIME_CERTIFIED_LJ_EPSILON_KCAL_MOL,
                         float(np.min(subset_sigma[subset_in_range])),
                     )
                 subset_electro_lipschitz = 0.0
@@ -3262,6 +3354,9 @@ def _derive_certified_rigid_local_refinement_plan(
     from dq_dock_engine.docking.formal_actions import (
         least_positive_joint_adequate_dyadic_round,
     )
+    from dq_dock_engine.docking.formal_sampling import (
+        _required_full_lattice_resolution,
+    )
 
     if request.rigid_seed_family_plan is None:
         raise ValueError(
@@ -3269,8 +3364,39 @@ def _derive_certified_rigid_local_refinement_plan(
         )
     rigid_seed_family_plan = request.rigid_seed_family_plan
     translation_support_size = _rigid_seed_translation_support_size(request)
+    local_refinement_lattice_resolution = rigid_seed_family_plan.lattice_resolution
+    target_cover_radius = rigid_seed_family_plan.target_translation_cover_radius
+    if target_cover_radius is not None and target_cover_radius > 0.0:
+        if rigid_seed_family_plan.region_kind == CertifiedRigidSeedRegionKind.BOX:
+            local_refinement_lattice_resolution = _required_full_lattice_resolution(
+                jnp.asarray(
+                    cast(
+                        tuple[float, float, float],
+                        rigid_seed_family_plan.box_size,
+                    ),
+                    dtype=jnp.float32,
+                ),
+                target_cover_radius,
+            )
+        elif (
+            rigid_seed_family_plan.region_kind
+            == CertifiedRigidSeedRegionKind.CERTIFIED_BINDING_SITE
+        ):
+            if rigid_seed_family_plan.binding_site_radius is None:
+                raise ValueError(
+                    "binding-site rigid seed family plan requires binding_site_radius"
+                )
+            local_refinement_lattice_resolution = _required_full_lattice_resolution(
+                jnp.full(
+                    (3,),
+                    2.0
+                    * float(cast(float, rigid_seed_family_plan.binding_site_radius)),
+                    dtype=jnp.float32,
+                ),
+                target_cover_radius,
+            )
     translation_cell_width = float(jnp.min(translation_support_size)) / float(
-        rigid_seed_family_plan.lattice_resolution
+        local_refinement_lattice_resolution
     )
     base_translation_step = translation_cell_width / 2.0
     ligand_radius = float(
@@ -3311,15 +3437,16 @@ def _derive_exact_score_lipschitz_constant(
     exact_chemistry_mode: ExactChemistryMode,
     softening_policy: SofteningPolicy,
 ) -> float:
-    from dq_dock_engine.docking.scoring import _EPSILON_KCAL_MOL
-
     min_sigma = _min_pairwise_sigma_from_radii(receptor_radii, ligand_radii)
     if (
         exact_chemistry_mode == ExactChemistryMode.EXTENDED_RICH
         and softening_policy != SofteningPolicy.NONE
     ):
-        return 24.0 * _EPSILON_KCAL_MOL / min_sigma
-    return compute_raw_lj_lipschitz(_EPSILON_KCAL_MOL, min_sigma)
+        return 24.0 * RUNTIME_CERTIFIED_LJ_EPSILON_KCAL_MOL / min_sigma
+    return compute_raw_lj_lipschitz(
+        RUNTIME_CERTIFIED_LJ_EPSILON_KCAL_MOL,
+        min_sigma,
+    )
 
 
 def _derive_target_error_from_rmsd(
@@ -3576,8 +3703,6 @@ def _derive_conformer_coverage_plan(
     *,
     rotatable_bonds: tuple[RotatableBond, ...],
 ) -> CertifiedConformerCoveragePlan:
-    from dq_dock_engine.docking.scoring import _EPSILON_KCAL_MOL
-
     min_sigma = _min_pairwise_sigma_from_radii(
         request.receptor_radii,
         request.ligand_ctx.base_radii,
@@ -3597,7 +3722,7 @@ def _derive_conformer_coverage_plan(
                 f"resolved softening radius must be positive, got {r_soft}"
             )
         softened = compute_softened_lipschitz_constant(
-            _EPSILON_KCAL_MOL,
+            RUNTIME_CERTIFIED_LJ_EPSILON_KCAL_MOL,
             min_sigma,
             r_soft,
         )
@@ -3836,8 +3961,6 @@ def _per_receptor_atom_conformer_omission_bounds(
     electro_alpha: float | None,
     electro_dielectric: float | None,
 ) -> np.ndarray:
-    from dq_dock_engine.docking.scoring import _EPSILON_KCAL_MOL
-
     ligand_np = np.asarray(jax.device_get(ligand_world_coords), dtype=np.float32)
     ligand_radii_np = np.asarray(jax.device_get(ligand_radii), dtype=np.float32)
     receptor_np = np.asarray(jax.device_get(receptor_coords), dtype=np.float32)
@@ -3862,7 +3985,7 @@ def _per_receptor_atom_conformer_omission_bounds(
     if moving_indices.size == 0:
         return bounds
 
-    epsilon_pair = float(_EPSILON_KCAL_MOL / 4.0)
+    epsilon_pair = float(RUNTIME_CERTIFIED_LJ_EPSILON_KCAL_MOL / 4.0)
     if ligand_charges is not None:
         ligand_charges_np = np.asarray(jax.device_get(ligand_charges), dtype=np.float32)
     else:
@@ -6510,8 +6633,6 @@ def _posewise_conformer_interaction_bounds(
     global_per_bond_bounds: jnp.ndarray | None,
     electrostatics: CertifiedRealSpaceEwaldSpec | None,
 ) -> np.ndarray | None:
-    from dq_dock_engine.docking.scoring import _EPSILON_KCAL_MOL
-
     if global_per_bond_bounds is None or not rotatable_bonds:
         return None
     receptor_coords = np.asarray(
@@ -6529,7 +6650,7 @@ def _posewise_conformer_interaction_bounds(
     )
     posewise_bounds = np.tile(global_bounds_np[None, :], (poses_np.shape[0], 1))
     cutoff = float(compute_certified_cutoff(request.target_error))
-    epsilon_pair = float(_EPSILON_KCAL_MOL / 4.0)
+    epsilon_pair = float(RUNTIME_CERTIFIED_LJ_EPSILON_KCAL_MOL / 4.0)
     receptor_charges = None
     ligand_charges = None
     electro_cutoff = None
@@ -6650,8 +6771,6 @@ def _posewise_atomwise_conformer_budget_totals(
     per_bond_local_bounds: jnp.ndarray | None,
     electrostatics: CertifiedRealSpaceEwaldSpec | None,
 ) -> np.ndarray | None:
-    from dq_dock_engine.docking.scoring import _EPSILON_KCAL_MOL
-
     if per_bond_local_bounds is None or not rotatable_bonds:
         return None
     poses_np = np.asarray(jax.device_get(poses_coords), dtype=np.float32)
@@ -6665,7 +6784,7 @@ def _posewise_atomwise_conformer_budget_totals(
         jax.device_get(request.ligand_ctx.base_radii), dtype=np.float32
     )
     cutoff = float(compute_certified_cutoff(request.target_error))
-    epsilon_pair = float(_EPSILON_KCAL_MOL / 4.0)
+    epsilon_pair = float(RUNTIME_CERTIFIED_LJ_EPSILON_KCAL_MOL / 4.0)
     active_masks = _posewise_active_torsion_mask_np(
         poses_coords,
         request.protein_coords,
@@ -9126,6 +9245,8 @@ def _run_docking_pipeline_request(
             translation=opt_translations,
             quaternion=opt_quaternions,
         )
+        per_pose_base_translation_steps: jnp.ndarray | None = None
+        per_pose_base_rotation_step_rads: jnp.ndarray | None = None
         if initial_scores.survivor_coords is not None:
             assert initial_scores.survivor_exact_scores is not None
             survivor_ranked = jnp.argsort(initial_scores.survivor_exact_scores)
@@ -9135,11 +9256,36 @@ def _run_docking_pipeline_request(
             initial_ranked_exact_scores = jnp.asarray(
                 initial_scores.survivor_exact_scores
             )[survivor_ranked]
+            if (
+                pose_batch.certified_family is not None
+                and execution_plan is not None
+                and execution_plan.final_survivor_indices is not None
+            ):
+                survivor_indices = jnp.asarray(
+                    execution_plan.final_survivor_indices,
+                    dtype=jnp.int32,
+                )
+                survivor_cell_widths = (
+                    pose_batch.certified_family.pose_translation_cell_widths[
+                        survivor_indices
+                    ]
+                )
+                per_pose_base_translation_steps = (
+                    survivor_cell_widths[survivor_ranked] / 2.0
+                )
         else:
             initial_coords = apply_poses(request.ligand_ctx, initial_opt_vecs)
             if initial_scores.survivor_exact_scores is not None:
                 initial_ranked_exact_scores = jnp.asarray(
                     initial_scores.survivor_exact_scores
+                )
+            if pose_batch.certified_family is not None:
+                score_ranked = jnp.argsort(final_scores)[: int(initial_coords.shape[0])]
+                per_pose_base_translation_steps = (
+                    pose_batch.certified_family.pose_translation_cell_widths[
+                        score_ranked
+                    ]
+                    / 2.0
                 )
         rigid_refinement_plan = _derive_certified_rigid_local_refinement_plan(
             request, optimization_scoring_context
@@ -9161,6 +9307,22 @@ def _run_docking_pipeline_request(
         base_step = rigid_refinement_plan.base_translation_step
         base_rotation_step_rad = rigid_refinement_plan.base_rotation_step_rad
         n_search_rounds = rigid_refinement_plan.n_search_rounds
+        if per_pose_base_translation_steps is None:
+            per_pose_base_translation_steps = jnp.full(
+                (initial_coords.shape[0],),
+                base_step,
+                dtype=jnp.float32,
+            )
+        per_pose_base_rotation_step_rads = jnp.asarray(
+            [
+                _derive_local_rotation_step_rad(float(step), ligand_radius)
+                for step in np.asarray(
+                    jax.device_get(per_pose_base_translation_steps),
+                    dtype=np.float32,
+                )
+            ],
+            dtype=jnp.float32,
+        )
         binding_site = (
             None
             if request.certified_pocket_prep is None
@@ -9271,6 +9433,12 @@ def _run_docking_pipeline_request(
             )
             n_search_rounds = local_refinement_budget.n_steps
         refinement_input_coords = initial_coords[jnp.asarray(local_refine_indices)]
+        refinement_input_translation_steps = per_pose_base_translation_steps[
+            jnp.asarray(local_refine_indices)
+        ]
+        refinement_input_rotation_steps = per_pose_base_rotation_step_rads[
+            jnp.asarray(local_refine_indices)
+        ]
 
         refinement_kwargs: dict[str, object] = dict(
             coords_batch=refinement_input_coords,
@@ -9289,6 +9457,8 @@ def _run_docking_pipeline_request(
             use_softened_coarse=use_softened_local_objective,
             base_translation_step=base_step,
             base_rotation_step_rad=base_rotation_step_rad,
+            per_pose_base_translation_steps=refinement_input_translation_steps,
+            per_pose_base_rotation_step_rads=refinement_input_rotation_steps,
             scoring_context=optimization_scoring_context,
             binding_site_center=binding_site_center,
             binding_site_radius=binding_site_radius,
@@ -9546,6 +9716,8 @@ def _run_docking_pipeline_request(
     patched_rich_support_auxiliary_choice_index: int | None = None
     patched_rich_support_auxiliary_theorem_handles: tuple[str, ...] = ()
     patched_rich_support_singleton_certified = False
+    flat_landscape_output_member_winner_index: int | None = None
+    flat_landscape_output_member_handles: tuple[str, ...] = ()
     final_posewise_error_bound: np.ndarray | None = None
     if request.is_certified_mode:
         phase_start = time.perf_counter()
@@ -9840,13 +10012,10 @@ def _run_docking_pipeline_request(
                         rescoring_coords = jnp.concatenate(
                             (opt_coords, pad_coords), axis=0
                         )
-                    rich_final_batch = scoring_context.score_exact_batch(
-                        receptor_coords=request.protein_coords,
+                    rich_final_batch = _tightened_exact_rich_batch_for_ranking(
+                        request=request,
+                        scoring_context=scoring_context,
                         poses_coords=rescoring_coords,
-                        receptor_radii=request.receptor_radii,
-                        ligand_radii=request.ligand_ctx.base_radii,
-                        target_error=request.target_error,
-                        epsilon=0.2,
                         cooperative_channel_abs_bounds=full_cooperative_channel_abs_bounds,
                     )
                     disambiguation_batch = (
@@ -9867,13 +10036,20 @@ def _run_docking_pipeline_request(
                     disambiguation_scores = disambiguation_batch.scores[
                         : opt_coords.shape[0]
                     ]
-                    rich_ranking_certified = _shared_certified_singleton_top1(
-                        rich_scores,
-                        float(np.asarray(jax.device_get(rich_final_batch.error_bound))),
-                        disambiguation_scores,
-                        float(
-                            np.asarray(jax.device_get(disambiguation_batch.error_bound))
-                        ),
+                    rich_ranking_certified = bool(
+                        _posewise_certified_top1_gap(
+                            rich_scores,
+                            np.asarray(
+                                jax.device_get(rich_final_batch.posewise_error_bound),
+                                dtype=np.float64,
+                            )[: int(opt_coords.shape[0])],
+                        )
+                        or _certified_top1_gap(
+                            rich_scores,
+                            float(
+                                np.asarray(jax.device_get(rich_final_batch.error_bound))
+                            ),
+                        )
                     )
                     orientation_margin_certified = (
                         _orientation_margin_certified_singleton_top1(
@@ -9886,27 +10062,13 @@ def _run_docking_pipeline_request(
                             ),
                         )
                     )
-                    final_scores = (
-                        rich_scores
-                        if patched_support_proven or rich_ranking_certified
-                        else disambiguation_scores
-                    )
+                    final_scores = rich_scores
                     final_posewise_error_bound = np.asarray(
-                        jax.device_get(
-                            rich_final_batch.posewise_error_bound
-                            if patched_support_proven or rich_ranking_certified
-                            else disambiguation_batch.posewise_error_bound
-                        ),
+                        jax.device_get(rich_final_batch.posewise_error_bound),
                         dtype=np.float64,
                     )[: int(opt_coords.shape[0])]
                     final_error_bound = float(
-                        np.asarray(
-                            jax.device_get(
-                                rich_final_batch.error_bound
-                                if patched_support_proven or rich_ranking_certified
-                                else disambiguation_batch.error_bound
-                            )
-                        )
+                        np.asarray(jax.device_get(rich_final_batch.error_bound))
                     )
             else:
                 rescoring_coords = opt_coords
@@ -10691,6 +10853,21 @@ def _run_docking_pipeline_request(
                     certified_energy_output_member_theorem_handles = (
                         member_exact_gap_rmsd_theorem_handles()
                     )
+            if certified_energy_output_member_winner_index is None:
+                flat_choice_index = _flat_landscape_structural_member_choice(
+                    request=request,
+                    scoring_context=scoring_context,
+                    support_indices=np.asarray(
+                        support_indices_for_member,
+                        dtype=np.int32,
+                    ),
+                    poses_coords=opt_coords,
+                )
+                if flat_choice_index is not None:
+                    flat_landscape_output_member_winner_index = int(flat_choice_index)
+                    flat_landscape_output_member_handles = (
+                        flat_landscape_output_member_theorem_handles()
+                    )
             _runtime_profile_log("support_member_rigid_certification", phase_start)
     best_final_indices = jnp.argsort(final_scores)[:n_to_opt]
 
@@ -10773,6 +10950,12 @@ def _run_docking_pipeline_request(
             ),
             certified_energy_output_member_gap_budget=(
                 certified_energy_output_member_gap_budget
+            ),
+            flat_landscape_output_member_theorem_handles=(
+                flat_landscape_output_member_handles
+            ),
+            flat_landscape_output_member_winner_index=(
+                flat_landscape_output_member_winner_index
             ),
             patched_support_singleton_theorem_handles=(
                 patched_rich_support_singleton_theorem_handles
@@ -11041,8 +11224,6 @@ def _certified_refinement(
     The optimized poses come from the certified optimizer itself — this is
     "fixed-precision docking" not "fixed-cost docking".
     """
-    from dq_dock_engine.docking.scoring import _EPSILON_KCAL_MOL
-
     config = request.config
     assert config is not None
     mode = config.refinement_certification if mode_override is None else mode_override
@@ -11069,7 +11250,7 @@ def _certified_refinement(
         receptor_radii,
         ligand_radii,
         cutoff,
-        _EPSILON_KCAL_MOL,
+        RUNTIME_CERTIFIED_LJ_EPSILON_KCAL_MOL,
         scoring_context=refinement_scoring_context,
         target_error=request.target_error,
     )

@@ -1224,6 +1224,7 @@ BCRP19 = "BCRP19"
 BCRP20 = "BCRP20"
 BCRP21 = "BCRP21"
 BCRP22 = "BCRP22"
+MCB1 = "MCB1"
 LJ18 = "LJ18"
 LJ19 = "LJ19"
 LJ20 = "LJ20"
@@ -2470,6 +2471,7 @@ __all__ = [
     "BCRP20",
     "BCRP21",
     "BCRP22",
+    "MCB1",
     "LJ18",
     "LJ19",
     "LJ20",

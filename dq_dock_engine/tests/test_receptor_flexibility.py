@@ -14,6 +14,10 @@ from dq_dock_engine.docking.receptor_flexibility import (
     rigid_is_lower_bound,
     score_ensemble,
 )
+from dq_dock_engine.docking.core import LigandContext
+from dq_dock_engine.docking.explicit_water_placement import WaterPlacementGrid
+from dq_dock_engine.docking.scoring_context import build_certified_scoring_context
+from dq_dock_engine.docking_config import ExactChemistryMode
 
 
 def test_conformational_error_radius_nonneg():
@@ -105,3 +109,49 @@ def test_boltzmann_ensemble_score_bounded():
     # Check the bound holds
     diff = jnp.abs(result.weighted_scores - scores[0])
     assert jnp.all(diff <= result.error_bound + 1e-6)
+
+
+def test_build_scoring_context_does_not_synthesize_receptor_flex(monkeypatch):
+    ligand_ctx = LigandContext(
+        base_coords=jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32),
+        base_radii=jnp.array([1.5], dtype=jnp.float32),
+        center_of_mass=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        elements=("C",),
+    )
+
+    monkeypatch.setattr(
+        "dq_dock_engine.docking.scoring_context.build_certified_rich_chemistry_plan",
+        lambda **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "dq_dock_engine.docking.scoring_context.generate_water_grid",
+        lambda **kwargs: WaterPlacementGrid(
+            positions=jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32),
+            grid_spacing=0.5,
+        ),
+    )
+
+    def _unexpected_receptor_flex(*args, **kwargs):
+        raise AssertionError(
+            "strict certified scoring context must not synthesize receptor-flex ensembles"
+        )
+
+    monkeypatch.setattr(
+        "dq_dock_engine.docking.scoring_context._generate_receptor_conformations",
+        _unexpected_receptor_flex,
+    )
+
+    context = build_certified_scoring_context(
+        exact_chemistry_mode=ExactChemistryMode.EXTENDED_RICH,
+        electrostatics=None,
+        receptor_coords=jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32),
+        receptor_radii=jnp.array([1.7], dtype=jnp.float32),
+        receptor_elements=("C",),
+        receptor_file=None,
+        ligand_source_path=None,
+        ligand_ctx=ligand_ctx,
+        target_electrostatic_error=0.1,
+    )
+
+    assert context.receptor_conformations is None
+    assert context.water_grid is not None

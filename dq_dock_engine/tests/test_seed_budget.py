@@ -32,6 +32,7 @@ from dq_dock_engine.docking.formal_handles import (
     auxiliary_patched_support_output_set_theorem_handles,
     conformer_coverage_theorem_handles,
     enriched_support_selection_transfer_theorem_handles,
+    flat_landscape_output_member_theorem_handles,
     member_exact_gap_rmsd_theorem_handles,
     patched_support_coarse_margin_returned_pose_theorem_handles,
     patched_support_posewise_envelope_returned_pose_theorem_handles,
@@ -48,6 +49,8 @@ from dq_dock_engine.docking.pipeline import (
     _auxiliary_support_representative_choice,
     _certified_posewise_steric_dominance_singleton_choice,
     _certified_support_coarse_margin_singleton_choice,
+    _flat_landscape_selector_enabled,
+    _flat_landscape_structural_member_local_index,
     _derive_rigid_energy_gap_proof_plan,
     _derive_returned_pose_proof_plan,
     _has_conformer_ambiguity_set_certificate_chain,
@@ -803,6 +806,34 @@ def test_patched_support_posewise_envelope_handles_are_exposed() -> None:
         "BCRP22",
         "RPG11",
     }
+
+
+def test_flat_landscape_selector_enabled_matches_small_ligand_large_pocket_rule() -> (
+    None
+):
+    assert _flat_landscape_selector_enabled(ligand_atom_count=12, pocket_atom_count=203)
+    assert _flat_landscape_selector_enabled(ligand_atom_count=5, pocket_atom_count=211)
+    assert not _flat_landscape_selector_enabled(
+        ligand_atom_count=15, pocket_atom_count=203
+    )
+    assert not _flat_landscape_selector_enabled(
+        ligand_atom_count=12, pocket_atom_count=150
+    )
+
+
+def test_flat_landscape_structural_member_local_index_prefers_strongest_attraction() -> (
+    None
+):
+    winner_index = _flat_landscape_structural_member_local_index(
+        support_indices=np.array([0, 4, 7], dtype=np.int32),
+        structural_scores=jnp.array([-0.05, -1.29, -0.61], dtype=jnp.float32),
+    )
+
+    assert winner_index == 4
+
+
+def test_flat_landscape_output_member_handles_are_exposed() -> None:
+    assert set(flat_landscape_output_member_theorem_handles()) == {"MCB1", "RPG14"}
 
 
 def test_posewise_certified_top1_gap_detects_interval_separation() -> None:

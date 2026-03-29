@@ -21,6 +21,8 @@ from dq_dock_engine.docking.formal_handles import rigid_seed_family_theorem_hand
 class CertifiedGlobalActionFamily:
     translations: jax.Array
     quaternions: jax.Array
+    pose_translation_cell_widths: jax.Array
+    pose_translation_level_indices: jax.Array
     lattice_resolution: int
     quaternion_count: int
 
@@ -117,6 +119,19 @@ def _minimal_even_grid_resolution(n_points: int) -> int:
     return resolution
 
 
+def _base_box_translation_resolution(
+    box: DockingBox,
+    *,
+    target_translation_cover_radius: float | None,
+) -> int:
+    if (
+        target_translation_cover_radius is None
+        or target_translation_cover_radius <= 0.0
+    ):
+        return 2
+    return _required_full_lattice_resolution(box.size, target_translation_cover_radius)
+
+
 def _translation_grid_at_resolution(box: DockingBox, resolution: int) -> jax.Array:
     half_size = box.size / 2.0
     x_edges = jnp.linspace(
@@ -132,6 +147,185 @@ def _translation_grid_at_resolution(box: DockingBox, resolution: int) -> jax.Arr
     ys = 0.5 * (y_edges[:-1] + y_edges[1:])
     zs = 0.5 * (z_edges[:-1] + z_edges[1:])
     return jnp.stack(jnp.meshgrid(xs, ys, zs, indexing="ij"), axis=-1).reshape((-1, 3))
+
+
+def _binding_site_translation_candidates_at_resolution(
+    binding_site: CertifiedBindingSite,
+    resolution: int,
+) -> jax.Array:
+    box = DockingBox(
+        center=binding_site.center,
+        size=jnp.full((3,), 2.0 * binding_site.radius),
+    )
+    full_grid = _translation_grid_at_resolution(box, resolution)
+    in_sphere = (
+        jnp.linalg.norm(full_grid - binding_site.center[None, :], axis=-1)
+        <= binding_site.radius
+    )
+    return full_grid[in_sphere]
+
+
+def _ordered_points_by_farthest_distance(
+    points: np.ndarray,
+    *,
+    preselected: np.ndarray | None = None,
+) -> np.ndarray:
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("points must have shape (N, 3)")
+    if points.shape[0] == 0:
+        return np.zeros((0,), dtype=np.int32)
+
+    if preselected is None or preselected.size == 0:
+        center = np.mean(points, axis=0)
+        first_index = int(np.argmin(np.sum((points - center[None, :]) ** 2, axis=1)))
+        selected = [first_index]
+        min_sq_dist = np.sum((points - points[first_index][None, :]) ** 2, axis=1)
+        min_sq_dist[first_index] = -1.0
+    else:
+        deltas = points[:, None, :] - preselected[None, :, :]
+        min_sq_dist = np.min(np.sum(deltas * deltas, axis=2), axis=1)
+        selected = []
+
+    while len(selected) < points.shape[0]:
+        next_index = int(np.argmax(min_sq_dist))
+        selected.append(next_index)
+        new_sq_dist = np.sum((points - points[next_index][None, :]) ** 2, axis=1)
+        min_sq_dist = np.minimum(min_sq_dist, new_sq_dist)
+        min_sq_dist[selected] = -1.0
+    return np.asarray(selected, dtype=np.int32)
+
+
+def _nested_translation_subset_box(
+    box: DockingBox,
+    n_points: int,
+    *,
+    target_translation_cover_radius: float | None,
+) -> tuple[jax.Array, int, jax.Array, jax.Array]:
+    if n_points <= 0:
+        raise ValueError("n_points must be positive")
+
+    selected = np.zeros((0, 3), dtype=np.float64)
+    selected_levels = np.zeros((0,), dtype=np.int32)
+    selected_widths = np.zeros((0,), dtype=np.float32)
+    resolution = _base_box_translation_resolution(
+        box,
+        target_translation_cover_radius=target_translation_cover_radius,
+    )
+    finest_resolution = resolution
+    level_index = 0
+    min_support_size = float(np.min(np.asarray(box.size, dtype=np.float64)))
+
+    while selected.shape[0] < n_points:
+        level_points = np.asarray(
+            _translation_grid_at_resolution(box, resolution), dtype=np.float64
+        )
+        level_order = _ordered_points_by_farthest_distance(
+            level_points,
+            preselected=selected,
+        )
+        remaining = int(n_points - selected.shape[0])
+        chosen = level_points[level_order[:remaining]]
+        chosen_levels = np.full((chosen.shape[0],), level_index, dtype=np.int32)
+        chosen_widths = np.full(
+            (chosen.shape[0],),
+            min_support_size / float(resolution),
+            dtype=np.float32,
+        )
+        selected = (
+            chosen
+            if selected.shape[0] == 0
+            else np.concatenate((selected, chosen), axis=0)
+        )
+        selected_levels = (
+            chosen_levels
+            if selected_levels.size == 0
+            else np.concatenate((selected_levels, chosen_levels), axis=0)
+        )
+        selected_widths = (
+            chosen_widths
+            if selected_widths.size == 0
+            else np.concatenate((selected_widths, chosen_widths), axis=0)
+        )
+        finest_resolution = resolution
+        resolution *= 2
+        level_index += 1
+
+    return (
+        jnp.asarray(selected, dtype=jnp.float32),
+        finest_resolution,
+        jnp.asarray(selected_levels, dtype=jnp.int32),
+        jnp.asarray(selected_widths, dtype=jnp.float32),
+    )
+
+
+def _nested_translation_subset_binding_site(
+    binding_site: CertifiedBindingSite,
+    n_points: int,
+    *,
+    target_translation_cover_radius: float | None,
+) -> tuple[jax.Array, int, jax.Array, jax.Array]:
+    if n_points <= 0:
+        raise ValueError("n_points must be positive")
+
+    enclosing_box = DockingBox(
+        center=binding_site.center,
+        size=jnp.full((3,), 2.0 * binding_site.radius),
+    )
+    selected = np.zeros((0, 3), dtype=np.float64)
+    selected_levels = np.zeros((0,), dtype=np.int32)
+    selected_widths = np.zeros((0,), dtype=np.float32)
+    resolution = _base_box_translation_resolution(
+        enclosing_box,
+        target_translation_cover_radius=target_translation_cover_radius,
+    )
+    finest_resolution = resolution
+    level_index = 0
+    min_support_size = 2.0 * float(binding_site.radius)
+
+    while selected.shape[0] < n_points:
+        level_points = np.asarray(
+            _binding_site_translation_candidates_at_resolution(
+                binding_site, resolution
+            ),
+            dtype=np.float64,
+        )
+        level_order = _ordered_points_by_farthest_distance(
+            level_points,
+            preselected=selected,
+        )
+        remaining = int(n_points - selected.shape[0])
+        chosen = level_points[level_order[:remaining]]
+        chosen_levels = np.full((chosen.shape[0],), level_index, dtype=np.int32)
+        chosen_widths = np.full(
+            (chosen.shape[0],),
+            min_support_size / float(resolution),
+            dtype=np.float32,
+        )
+        selected = (
+            chosen
+            if selected.shape[0] == 0
+            else np.concatenate((selected, chosen), axis=0)
+        )
+        selected_levels = (
+            chosen_levels
+            if selected_levels.size == 0
+            else np.concatenate((selected_levels, chosen_levels), axis=0)
+        )
+        selected_widths = (
+            chosen_widths
+            if selected_widths.size == 0
+            else np.concatenate((selected_widths, chosen_widths), axis=0)
+        )
+        finest_resolution = resolution
+        resolution *= 2
+        level_index += 1
+
+    return (
+        jnp.asarray(selected, dtype=jnp.float32),
+        finest_resolution,
+        jnp.asarray(selected_levels, dtype=jnp.int32),
+        jnp.asarray(selected_widths, dtype=jnp.float32),
+    )
 
 
 def _required_full_lattice_resolution(
@@ -309,7 +503,11 @@ def _global_action_family_shape(
         target_translation_cover_radius=target_translation_cover_radius,
         box=box,
     )
-    resolution = _minimal_even_grid_resolution(n_translation_points)
+    _translations, resolution, _levels, _widths = _nested_translation_subset_box(
+        box,
+        n_translation_points,
+        target_translation_cover_radius=target_translation_cover_radius,
+    )
     translation_tightened = n_translation_points > base_points
     quaternion_augmented = n_quaternions > budget_quaternions
     pose_count = (
@@ -367,8 +565,12 @@ def _binding_site_action_family_shape(
         target_translation_cover_radius=target_translation_cover_radius,
         binding_site=binding_site,
     )
-    resolution = _binding_site_translation_resolution(
-        binding_site, n_translation_points
+    _translations, resolution, _levels, _widths = (
+        _nested_translation_subset_binding_site(
+            binding_site,
+            n_translation_points,
+            target_translation_cover_radius=target_translation_cover_radius,
+        )
     )
     translation_tightened = n_translation_points > base_points
     quaternion_augmented = n_quaternions > budget_quaternions
@@ -408,6 +610,12 @@ def create_certified_global_action_family(
             box.size, target_translation_cover_radius
         )
         translations = _translation_grid_at_resolution(box, resolution)
+        translation_widths = jnp.full(
+            (translations.shape[0],),
+            float(np.min(np.asarray(box.size, dtype=np.float64))) / float(resolution),
+            dtype=jnp.float32,
+        )
+        translation_levels = jnp.zeros((translations.shape[0],), dtype=jnp.int32)
     else:
         (
             quaternions,
@@ -421,9 +629,17 @@ def create_certified_global_action_family(
             n_poses,
             target_translation_cover_radius=target_translation_cover_radius,
         )
-        translations, _ = _translation_grid(box, n_translation_points)
+        translations, resolution, translation_levels, translation_widths = (
+            _nested_translation_subset_box(
+                box,
+                n_translation_points,
+                target_translation_cover_radius=target_translation_cover_radius,
+            )
+        )
     tiled_translations = jnp.repeat(translations, n_quaternions, axis=0)
     tiled_quaternions = jnp.tile(quaternions, (translations.shape[0], 1))
+    tiled_widths = jnp.repeat(translation_widths, n_quaternions, axis=0)
+    tiled_levels = jnp.repeat(translation_levels, n_quaternions, axis=0)
     use_full_family = (
         translation_full_lattice
         or translation_tightened
@@ -436,6 +652,12 @@ def create_certified_global_action_family(
         quaternions=tiled_quaternions
         if use_full_family
         else tiled_quaternions[:n_poses],
+        pose_translation_cell_widths=tiled_widths
+        if use_full_family
+        else tiled_widths[:n_poses],
+        pose_translation_level_indices=tiled_levels
+        if use_full_family
+        else tiled_levels[:n_poses],
         lattice_resolution=resolution,
         quaternion_count=n_quaternions,
     )
@@ -466,6 +688,12 @@ def create_certified_binding_site_action_family(
             box.size, target_translation_cover_radius
         )
         translations = _translation_grid_at_resolution(box, resolution)
+        translation_widths = jnp.full(
+            (translations.shape[0],),
+            (2.0 * float(binding_site.radius)) / float(resolution),
+            dtype=jnp.float32,
+        )
+        translation_levels = jnp.zeros((translations.shape[0],), dtype=jnp.int32)
     else:
         (
             quaternions,
@@ -479,11 +707,17 @@ def create_certified_binding_site_action_family(
             n_poses,
             target_translation_cover_radius=target_translation_cover_radius,
         )
-        translations, _ = _binding_site_translation_grid(
-            binding_site, n_translation_points
+        translations, resolution, translation_levels, translation_widths = (
+            _nested_translation_subset_binding_site(
+                binding_site,
+                n_translation_points,
+                target_translation_cover_radius=target_translation_cover_radius,
+            )
         )
     tiled_translations = jnp.repeat(translations, n_quaternions, axis=0)
     tiled_quaternions = jnp.tile(quaternions, (translations.shape[0], 1))
+    tiled_widths = jnp.repeat(translation_widths, n_quaternions, axis=0)
+    tiled_levels = jnp.repeat(translation_levels, n_quaternions, axis=0)
     use_full_family = (
         translation_full_lattice
         or translation_tightened
@@ -496,6 +730,12 @@ def create_certified_binding_site_action_family(
         quaternions=tiled_quaternions
         if use_full_family
         else tiled_quaternions[:n_poses],
+        pose_translation_cell_widths=tiled_widths
+        if use_full_family
+        else tiled_widths[:n_poses],
+        pose_translation_level_indices=tiled_levels
+        if use_full_family
+        else tiled_levels[:n_poses],
         lattice_resolution=resolution,
         quaternion_count=n_quaternions,
     )

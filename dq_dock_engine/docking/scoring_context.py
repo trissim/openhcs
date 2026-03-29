@@ -942,16 +942,14 @@ def build_certified_scoring_context(
         receptor_coords=receptor_coords_np,
         ligand_center=ligand_center,
     )
-    # Generate receptor conformations for RFE1-RFE6 ensemble scoring
-    receptor_conformations = _generate_receptor_conformations(
-        receptor_coords_np,
-        receptor_radii_np,
-        receptor_elements,
-    )
     return CertifiedScoringContext(
         exact_chemistry_mode=exact_chemistry_mode,
         electrostatics=electrostatics,
         rich_chemistry_plan=rich_plan,
         water_grid=water_grid if water_grid.positions.shape[0] > 0 else None,
-        receptor_conformations=receptor_conformations,
+        # Do not synthesize receptor-flex ensembles from random perturbations in
+        # the strict certified runtime. Until receptor alternatives come from a
+        # theorem-backed source, the exact score must stay on the rigid receptor
+        # plus formally mechanized channels only.
+        receptor_conformations=None,
     )

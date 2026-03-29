@@ -357,6 +357,8 @@ def refine_poses_certified(
     use_softened_exact: bool = False,
     use_softened_coarse: bool = False,
     adaptive_coarse_target_errors: tuple[float, ...] | None = None,
+    per_pose_base_translation_steps: jax.Array | None = None,
+    per_pose_base_rotation_step_rads: jax.Array | None = None,
 ) -> tuple[jax.Array, tuple[tuple[CertifiedOptimizerState, ...], ...]]:
     if n_rounds <= 0:
         raise ValueError("n_rounds must be positive")
@@ -369,6 +371,28 @@ def refine_poses_certified(
         CertifiedPriorSpec(kind="uniform") if prior_spec is None else prior_spec
     )
     support_expansion_levels = np.zeros((int(coords_batch.shape[0]),), dtype=np.int32)
+    pose_translation_steps = (
+        np.full(
+            (int(coords_batch.shape[0]),),
+            float(base_translation_step),
+            dtype=np.float32,
+        )
+        if per_pose_base_translation_steps is None
+        else np.asarray(
+            jax.device_get(per_pose_base_translation_steps), dtype=np.float32
+        )
+    )
+    pose_rotation_steps = (
+        np.full(
+            (int(coords_batch.shape[0]),),
+            float(base_rotation_step_rad),
+            dtype=np.float32,
+        )
+        if per_pose_base_rotation_step_rads is None
+        else np.asarray(
+            jax.device_get(per_pose_base_rotation_step_rads), dtype=np.float32
+        )
+    )
 
     retained_indices = np.arange(receptor_coords.shape[0], dtype=np.int32)
     retained_indices_jax = jnp.array(retained_indices)
@@ -385,29 +409,34 @@ def refine_poses_certified(
             )
             if pose_indices.size == 0:
                 continue
-            group_indices = jnp.asarray(pose_indices, dtype=jnp.int32)
-            next_group_coords, group_states = _refine_round(
-                coords_batch=current_coords[group_indices],
-                receptor_coords=receptor_coords,
-                receptor_radii=receptor_radii,
-                ligand_radii=ligand_radii,
-                target_error=target_error,
-                coarse_target_error=effective_coarse_target_error,
-                round_index=round_index,
-                base_translation_step=base_translation_step,
-                base_rotation_step_rad=float(base_rotation_step_rad),
-                support_expansion_level=int(support_expansion_level),
-                prior_spec=effective_prior_spec,
-                retained_indices=retained_indices_jax,
-                scoring_context=scoring_context,
-                binding_site_center=binding_site_center,
-                binding_site_radius=binding_site_radius,
-                use_softened_exact=use_softened_exact,
-                use_softened_coarse=use_softened_coarse,
-            )
-            for local_idx, pose_idx in enumerate(pose_indices.tolist()):
-                next_coords_rows[pose_idx] = next_group_coords[local_idx]
-                round_states[pose_idx] = group_states[local_idx]
+            # Refine each pose independently so the exact/coarse local-family
+            # receptor subset depends only on that pose's certified action family,
+            # never on unrelated peers that merely share a batch. This restores
+            # correctness-by-construction: enlarging the global seed set cannot
+            # perturb the local refinement trajectory of an existing seed.
+            for pose_idx in pose_indices.tolist():
+                single_index = jnp.asarray([pose_idx], dtype=jnp.int32)
+                next_group_coords, group_states = _refine_round(
+                    coords_batch=current_coords[single_index],
+                    receptor_coords=receptor_coords,
+                    receptor_radii=receptor_radii,
+                    ligand_radii=ligand_radii,
+                    target_error=target_error,
+                    coarse_target_error=effective_coarse_target_error,
+                    round_index=round_index,
+                    base_translation_step=float(pose_translation_steps[pose_idx]),
+                    base_rotation_step_rad=float(pose_rotation_steps[pose_idx]),
+                    support_expansion_level=int(support_expansion_level),
+                    prior_spec=effective_prior_spec,
+                    retained_indices=retained_indices_jax,
+                    scoring_context=scoring_context,
+                    binding_site_center=binding_site_center,
+                    binding_site_radius=binding_site_radius,
+                    use_softened_exact=use_softened_exact,
+                    use_softened_coarse=use_softened_coarse,
+                )
+                next_coords_rows[pose_idx] = next_group_coords[0]
+                round_states[pose_idx] = group_states[0]
 
         assert all(coords is not None for coords in next_coords_rows)
         assert all(state is not None for state in round_states)
@@ -452,6 +481,8 @@ def refine_poses_singleton_then_exact(
     use_softened_exact: bool = False,
     use_softened_coarse: bool = False,
     adaptive_coarse_target_errors: tuple[float, ...] | None = None,
+    per_pose_base_translation_steps: jax.Array | None = None,
+    per_pose_base_rotation_step_rads: jax.Array | None = None,
 ) -> HybridSingletonRefinementResult:
     opt_coords, history = refine_poses_certified(
         coords_batch=coords_batch,
@@ -470,6 +501,8 @@ def refine_poses_singleton_then_exact(
         use_softened_exact=use_softened_exact,
         use_softened_coarse=use_softened_coarse,
         adaptive_coarse_target_errors=adaptive_coarse_target_errors,
+        per_pose_base_translation_steps=per_pose_base_translation_steps,
+        per_pose_base_rotation_step_rads=per_pose_base_rotation_step_rads,
     )
     return HybridSingletonRefinementResult(
         coords=opt_coords,

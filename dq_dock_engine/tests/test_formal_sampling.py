@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from typing import cast
 
@@ -191,3 +192,142 @@ def test_binding_site_rigid_seed_plan_debug_summary_reports_box_cover_bridge() -
     assert summary["csc63_csc97_ready"] is True
     assert summary["csc63_csc77_ready"] is True
     assert summary["translation_cover_radius_over_box"] is not None
+
+
+def test_box_rigid_seed_family_materialization_is_nested_across_budgets() -> None:
+    box = DockingBox(
+        center=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+    )
+
+    small = materialize_certified_rigid_seed_family(
+        derive_certified_rigid_seed_family_plan(box, 64)
+    )
+    large = materialize_certified_rigid_seed_family(
+        derive_certified_rigid_seed_family_plan(box, 80)
+    )
+
+    assert large.translations.shape[0] > small.translations.shape[0]
+    np.testing.assert_allclose(
+        np.asarray(large.translations[: small.translations.shape[0]]),
+        np.asarray(small.translations),
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(large.quaternions[: small.quaternions.shape[0]]),
+        np.asarray(small.quaternions),
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(
+            large.pose_translation_cell_widths[
+                : small.pose_translation_cell_widths.shape[0]
+            ]
+        ),
+        np.asarray(small.pose_translation_cell_widths),
+        atol=1e-6,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(
+            large.pose_translation_level_indices[
+                : small.pose_translation_level_indices.shape[0]
+            ]
+        ),
+        np.asarray(small.pose_translation_level_indices),
+    )
+
+
+def test_binding_site_rigid_seed_family_materialization_is_nested_across_budgets() -> (
+    None
+):
+    box = DockingBox(
+        center=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        size=jnp.array([10.0, 10.0, 10.0], dtype=jnp.float32),
+    )
+    binding_site = CertifiedBindingSite(
+        center=jnp.array([1.0, -2.0, 3.0], dtype=jnp.float32),
+        radius=2.5,
+        theorem_handles=("SD10",),
+    )
+
+    small = materialize_certified_rigid_seed_family(
+        derive_certified_rigid_seed_family_plan(
+            box,
+            64,
+            certified_binding_site=binding_site,
+        )
+    )
+    large = materialize_certified_rigid_seed_family(
+        derive_certified_rigid_seed_family_plan(
+            box,
+            96,
+            certified_binding_site=binding_site,
+        )
+    )
+
+    assert large.translations.shape[0] > small.translations.shape[0]
+    np.testing.assert_allclose(
+        np.asarray(large.translations[: small.translations.shape[0]]),
+        np.asarray(small.translations),
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(large.quaternions[: small.quaternions.shape[0]]),
+        np.asarray(small.quaternions),
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(
+            large.pose_translation_cell_widths[
+                : small.pose_translation_cell_widths.shape[0]
+            ]
+        ),
+        np.asarray(small.pose_translation_cell_widths),
+        atol=1e-6,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(
+            large.pose_translation_level_indices[
+                : small.pose_translation_level_indices.shape[0]
+            ]
+        ),
+        np.asarray(small.pose_translation_level_indices),
+    )
+
+
+def test_cover_tightened_seed_family_marks_inserted_finer_seeds() -> None:
+    box = DockingBox(
+        center=jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        size=jnp.array([12.0, 12.0, 12.0], dtype=jnp.float32),
+    )
+
+    small = materialize_certified_rigid_seed_family(
+        derive_certified_rigid_seed_family_plan(
+            box,
+            1088,
+            target_translation_cover_radius=2.0,
+        )
+    )
+    large = materialize_certified_rigid_seed_family(
+        derive_certified_rigid_seed_family_plan(
+            box,
+            2048,
+            target_translation_cover_radius=2.0,
+        )
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(
+            large.pose_translation_cell_widths[
+                : small.pose_translation_cell_widths.shape[0]
+            ]
+        ),
+        np.asarray(small.pose_translation_cell_widths),
+        atol=1e-6,
+    )
+    assert float(np.min(np.asarray(large.pose_translation_cell_widths))) < float(
+        np.min(np.asarray(small.pose_translation_cell_widths))
+    )
+    assert int(np.max(np.asarray(large.pose_translation_level_indices))) > int(
+        np.max(np.asarray(small.pose_translation_level_indices))
+    )

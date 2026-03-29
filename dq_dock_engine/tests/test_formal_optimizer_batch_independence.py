@@ -91,8 +91,12 @@ def test_refine_poses_certified_tracks_support_expansion_per_pose(monkeypatch) -
         base_rotation_step_rad=float(jnp.pi / 12.0),
     )
 
-    assert call_log[0] == (0, 0, (0.0, 1.0))
-    assert sorted(call_log[1:]) == [(1, 0, (1.0,)), (1, 1, (0.0,))]
+    assert sorted(call_log) == [
+        (0, 0, (0.0,)),
+        (0, 0, (1.0,)),
+        (1, 0, (1.0,)),
+        (1, 1, (0.0,)),
+    ]
 
 
 def test_refine_round_masks_actions_outside_binding_site(monkeypatch) -> None:
