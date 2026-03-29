@@ -169,7 +169,6 @@ theorem exact_top1_eq_singleton_of_coarse_energy_gap_margin
     unfold PairwiseGap
     have h := hStrict b hb
     linarith
-
 end RankingPreservation
 end Tractability
 end DecisionQuotient

@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from dq_dock_engine.benchmark import benchmark_pdb
 from dq_dock_engine.benchmark import redocking_report
@@ -18,7 +19,7 @@ from dq_dock_engine.docking.core import (
     ReturnedPoseCertification,
     ReturnedPoseContractDecision,
 )
-from dq_dock_engine.docking.charges import ChargeAssigner, ChargeMethod
+from dq_dock_engine.docking.charges import ChargeAssigner, ChargeMethod, ChargeResult
 from dq_dock_engine.docking_config import ExactChemistryMode
 
 
@@ -562,7 +563,9 @@ def test_redocking_report_excludes_failed_dq_rows_from_rmsd_and_scatter(
     assert set(scatter_data["pdb_id"]) == {"1abc"}
 
 
-def test_prepare_benchmark_electrostatics_surfaces_charge_failures() -> None:
+def test_prepare_benchmark_electrostatics_surfaces_charge_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class FailingChargeAssigner(ChargeAssigner):
         @property
         def method(self) -> ChargeMethod:
@@ -573,11 +576,17 @@ def test_prepare_benchmark_electrostatics_surfaces_charge_failures() -> None:
                 "RDKit produced non-finite Gasteiger charge at atom index 0"
             )
 
+    monkeypatch.setattr(
+        benchmark_pdb,
+        "load_rdkit_molecule",
+        lambda path, *, remove_hs, sanitize: object(),
+    )
+
     try:
         benchmark_pdb.prepare_benchmark_electrostatics(
             assigner=FailingChargeAssigner(),
             pdb_id="1m0n",
-            ligand_pdb=Path("ligand.pdb"),
+            ligand_source_path=Path("ligand.pdb"),
             ligand_elements=("C",),
             ligand_atom_count=1,
             pocket_receptor_pdb=Path("pocket.pdb"),
@@ -588,6 +597,53 @@ def test_prepare_benchmark_electrostatics_surfaces_charge_failures() -> None:
         assert "non-finite Gasteiger charge" in str(exc)
         return
     raise AssertionError("expected raw charge preparation failure to bubble up")
+
+
+def test_prepare_benchmark_electrostatics_filters_hydrogen_charges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeAtom:
+        def __init__(self, atomic_num: int) -> None:
+            self._atomic_num = atomic_num
+
+        def GetAtomicNum(self) -> int:
+            return self._atomic_num
+
+    class _FakeMol:
+        def GetAtoms(self):
+            return [_FakeAtom(6), _FakeAtom(1), _FakeAtom(8)]
+
+    class _RecordingChargeAssigner(ChargeAssigner):
+        @property
+        def method(self) -> ChargeMethod:
+            return ChargeMethod.GASTEIGER
+
+        def assign(self, source):
+            assert isinstance(source, _FakeMol)
+            return ChargeResult(
+                charges=jnp.array([0.1, 0.9, -0.2]),
+                method=ChargeMethod.GASTEIGER,
+            )
+
+    monkeypatch.setattr(
+        benchmark_pdb,
+        "load_rdkit_molecule",
+        lambda path, *, remove_hs, sanitize: _FakeMol(),
+    )
+
+    electrostatics = benchmark_pdb.prepare_benchmark_electrostatics(
+        assigner=_RecordingChargeAssigner(),
+        pdb_id="1m0n",
+        ligand_source_path=Path("ligand.pdb"),
+        ligand_elements=("C", "O"),
+        ligand_atom_count=2,
+        pocket_receptor_pdb=Path("pocket.pdb"),
+        pocket_elements=("C", "O"),
+        pocket_atom_count=2,
+    )
+
+    np.testing.assert_allclose(electrostatics.ligand_charges, np.array([0.1, -0.2]))
+    np.testing.assert_allclose(electrostatics.pocket_charges, np.array([0.1, -0.2]))
 
 
 def test_generate_pose_comparison_figures_writes_png() -> None:

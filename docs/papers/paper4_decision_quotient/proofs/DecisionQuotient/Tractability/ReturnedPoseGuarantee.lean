@@ -195,6 +195,68 @@ theorem ambiguityBand_support_of_cover_yields_certified_energy_output_set
   have hEw : runtimeEnergy winner = coordEnergy (coords winner) := hEnergy winner
   linarith
 
+/-- Once a support is certified as an output set for some property, any concrete
+    member chosen from that support also satisfies the property. -/
+theorem returned_choice_of_member_of_certified_output_set
+    (support : Finset A)
+    (prop : A → Prop)
+    (winner : A)
+    (hCertified : CertifiedOutputSet support prop)
+    (hWinnerMem : winner ∈ support) :
+    prop winner := by
+  exact hCertified winner hWinnerMem
+
+/-- If a support set is already certified to satisfy a uniform exact-energy-gap
+    budget above `xStar`, then any chosen member whose shared budget fits inside a
+    certified quadratic basin inherits the requested RMSD target. -/
+theorem returned_choice_of_member_of_certified_energy_output_set_yields_rmsd_target
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (coords : A → CoordSet n)
+    (coordEnergy : CoordSet n → ℝ)
+    (xStar : CoordSet n)
+    (support : Finset A)
+    (winner : A)
+    (gapBudget epsTarget : ℝ)
+    (hCertified : CertifiedOutputSet support
+      (fun a => coordEnergy (coords a) - coordEnergy xStar ≤ gapBudget))
+    (hWinnerMem : winner ∈ support)
+    (basin : CertifiedQuadraticBasin coordEnergy xStar)
+    (hn : 0 < n)
+    (hεTarget : 0 ≤ epsTarget)
+    (hBudget : gapBudget ≤ targetEnergyGap basin.μ n epsTarget) :
+    rmsd (coords winner) xStar ≤ epsTarget := by
+  have hGap : coordEnergy (coords winner) - coordEnergy xStar ≤ gapBudget :=
+    hCertified winner hWinnerMem
+  apply rmsd_le_of_energyGap_le_target coordEnergy xStar (coords winner) basin hn epsTarget hεTarget
+  exact le_trans hGap hBudget
+
+/-- A selected member whose exact runtime energy sits within `gapMember` of the
+    exact top-1 winner inherits the RMSD target once the winner's certified cover
+    gap plus that exact member gap fits inside the member's certified basin. -/
+theorem member_with_energy_gap_to_top1_yields_rmsd_target_of_top1_gap
+    {n : ℕ} [DecidableEq (CoordSet n)]
+    (coords : A → CoordSet n)
+    (runtimeEnergy : A → ℝ)
+    (coordEnergy : CoordSet n → ℝ)
+    (xStar : CoordSet n)
+    {winner a : A}
+    (gapMember gapWinner epsTarget : ℝ)
+    (hEnergy : ∀ b, runtimeEnergy b = coordEnergy (coords b))
+    (hWinnerTop1 : winner ∈ topKSet (fun x => -runtimeEnergy x) 1)
+    (hMemberGap : runtimeEnergy a - runtimeEnergy winner ≤ gapMember)
+    (hWinnerGap : coordEnergy (coords winner) - coordEnergy xStar ≤ gapWinner)
+    (basin : CertifiedQuadraticBasin coordEnergy xStar)
+    (hn : 0 < n)
+    (hεTarget : 0 ≤ epsTarget)
+    (hBudget : gapWinner + gapMember ≤ targetEnergyGap basin.μ n epsTarget) :
+    rmsd (coords a) xStar ≤ epsTarget := by
+  have hCoordGap : coordEnergy (coords a) - coordEnergy xStar ≤ gapWinner + gapMember := by
+    have hEa : runtimeEnergy a = coordEnergy (coords a) := hEnergy a
+    have hEw : runtimeEnergy winner = coordEnergy (coords winner) := hEnergy winner
+    linarith
+  apply rmsd_le_of_energyGap_le_target coordEnergy xStar (coords a) basin hn epsTarget hεTarget
+  exact le_trans hCoordGap hBudget
+
 /-- Any strict singleton winner of an auxiliary patched-support score family may be
     returned safely once that support set is already certified as an output set.
 

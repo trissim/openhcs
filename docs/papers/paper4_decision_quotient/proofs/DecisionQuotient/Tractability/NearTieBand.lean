@@ -20,9 +20,106 @@ variable {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A]
 noncomputable def ambiguityBand (u : A → ℝ) (k : Nat) (hk : 0 < k) (eps : ℝ) : Finset A :=
   survivorSet u (kthUtility u k hk - eps)
 
+/-- Posewise ambiguity band around a reference action `aRef`: any action whose
+    coarse upper bound overlaps the reference coarse lower bound is retained. -/
+noncomputable def posewiseAmbiguityBandAround (u : A → ℝ) (delta : A → ℝ) (aRef : A) : Finset A :=
+  (Finset.univ : Finset A).filter fun a => u aRef - delta aRef ≤ u a + delta a
+
 theorem mem_ambiguityBand_iff (u : A → ℝ) (k : Nat) (hk : 0 < k) (eps : ℝ) (a : A) :
     a ∈ ambiguityBand u k hk eps ↔ kthUtility u k hk - eps ≤ u a := by
   rw [ambiguityBand, mem_survivorSet_iff]
+
+theorem mem_posewiseAmbiguityBandAround_iff
+    (u : A → ℝ) (delta : A → ℝ) (aRef a : A) :
+    a ∈ posewiseAmbiguityBandAround u delta aRef ↔ u aRef - delta aRef ≤ u a + delta a := by
+  rw [posewiseAmbiguityBandAround, Finset.mem_filter, Finset.mem_univ, true_and]
+
+/-- If the coarse lower bound of `a` exceeds the coarse upper bound of `b`, then
+    the exact ordering is preserved in the same direction. -/
+theorem exact_order_preserved_of_posewise_error
+    (uExact uCoarse : A → ℝ)
+    (delta : A → ℝ)
+    (a b : A)
+    (hApprox : ∀ x, |uExact x - uCoarse x| ≤ delta x)
+    (hGap : uCoarse a - delta a > uCoarse b + delta b) :
+    uExact b < uExact a := by
+  have hALower : uCoarse a - delta a ≤ uExact a := by
+    have h := (abs_le.mp (hApprox a)).left
+    linarith
+  have hBUpper : uExact b ≤ uCoarse b + delta b := by
+    have h := (abs_le.mp (hApprox b)).right
+    linarith
+  calc
+    uExact b ≤ uCoarse b + delta b := hBUpper
+    _ < uCoarse a - delta a := by linarith
+    _ ≤ uExact a := hALower
+
+/-- Under posewise approximation radii, every exact top-1 action lies in the
+    posewise ambiguity band around any reference action. -/
+theorem exact_top1_subset_posewiseAmbiguityBandAround_of_posewise_error
+    (uExact uCoarse : A → ℝ)
+    (delta : A → ℝ)
+    (aRef : A)
+    (hApprox : ∀ a, |uExact a - uCoarse a| ≤ delta a) :
+    topKSet uExact 1 ⊆ posewiseAmbiguityBandAround uCoarse delta aRef := by
+  intro a ha
+  rw [mem_posewiseAmbiguityBandAround_iff]
+  have hExactMax : uExact aRef ≤ uExact a := by
+    have haCount : strictBetterCount uExact a < 1 := (mem_topKSet_iff uExact 1 a).mp ha
+    have hNotBetter : ¬ uExact a < uExact aRef := by
+      intro hlt
+      have hmem : aRef ∈ (Finset.univ : Finset A).filter (fun x => uExact a < uExact x) := by
+        simp [hlt]
+      have hCardPos : 1 ≤ strictBetterCount uExact a := by
+        unfold strictBetterCount
+        exact Nat.succ_le_of_lt (Finset.card_pos.mpr ⟨aRef, hmem⟩)
+      omega
+    exact le_of_not_gt hNotBetter
+  have hRefLower : uCoarse aRef - delta aRef ≤ uExact aRef := by
+    have h := (abs_le.mp (hApprox aRef)).left
+    linarith
+  have hAUpper : uExact a ≤ uCoarse a + delta a := by
+    have h := (abs_le.mp (hApprox a)).right
+    linarith
+  linarith
+
+/-- Posewise coarse interval separation certifies an exact singleton top-1. -/
+theorem exact_top1_eq_singleton_of_posewise_coarse_gap_margin
+    (uExact uCoarse : A → ℝ)
+    (delta : A → ℝ)
+    (aStar : A)
+    (hApprox : ∀ a, |uExact a - uCoarse a| ≤ delta a)
+    (hStrict : ∀ b, b ≠ aStar → uCoarse aStar - delta aStar > uCoarse b + delta b) :
+    topKSet uExact 1 = ({aStar} : Finset A) := by
+  classical
+  ext a
+  rw [mem_topKSet_iff, Finset.mem_singleton]
+  constructor
+  · intro hTop
+    by_contra hne
+    have hlt : uExact a < uExact aStar :=
+      exact_order_preserved_of_posewise_error uExact uCoarse delta aStar a hApprox (hStrict a hne)
+    have hmem : aStar ∈ (Finset.univ : Finset A).filter (fun x => uExact a < uExact x) := by
+      simp [hlt]
+    unfold strictBetterCount at hTop
+    have hCardPos : 0 < ((Finset.univ : Finset A).filter (fun x => uExact a < uExact x)).card :=
+      Finset.card_pos.mpr ⟨aStar, hmem⟩
+    omega
+  · intro hEq
+    subst hEq
+    unfold strictBetterCount
+    have hEmpty : ((Finset.univ : Finset A).filter (fun b => uExact a < uExact b)).card = 0 := by
+      apply Finset.card_eq_zero.mpr
+      rw [Finset.filter_eq_empty_iff]
+      intro b hbUniv
+      by_cases hEq : b = a
+      · subst hEq
+        exact not_lt_of_ge le_rfl
+      · have hlt : uExact b < uExact a :=
+          exact_order_preserved_of_posewise_error uExact uCoarse delta a b hApprox (hStrict b hEq)
+        exact not_lt_of_ge (le_of_lt hlt)
+    rw [hEmpty]
+    omega
 
 /-- Every exact top-k action lies in the certified ambiguity band whenever the
     slack parameter `eps` is nonnegative. This is the conservative replacement

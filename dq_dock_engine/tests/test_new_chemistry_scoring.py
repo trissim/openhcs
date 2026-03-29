@@ -2,9 +2,29 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from typing import cast
 
 import dq_dock_engine.docking.scoring as scoring
-
+from dq_dock_engine.docking.chemistry_annotations import (
+    ChemistrySiteRole,
+    LigandHBondDonorExtractor,
+    LigandStructureModel,
+    MONOCATION_SITE_STRENGTH,
+    ReceptorHBondDonorExtractor,
+    ReceptorCationExtractor,
+    ReceptorStructureModel,
+    RingSiteAnnotation,
+    _merge_overlapping_ring_sites,
+    _ring_site,
+)
+from dq_dock_engine.docking.chemistry_runtime import (
+    AROMATIC_FACE_OFFSET_WIDTH_ANGSTROM,
+    AnchoredSiteArray,
+    IndexedSiteArray,
+    PiCationInteractionTerm,
+    PiStackingInteractionTerm,
+    SiteGeometry,
+)
 from dq_dock_engine.docking.formal_handles import (
     attractive_extended_chemistry_theorem_handles,
     attractive_directional_hbond_theorem_handles,
@@ -39,6 +59,8 @@ from dq_dock_engine.docking.formal_handles import (
     support_expansion_theorem_handles,
     topk_bridge_theorem_handles,
 )
+from dq_dock_engine.docking.receptor_preparation import PDBAtomRecord, ResidueKey
+from dq_dock_engine.docking_config import ExactChemistryMode
 from dq_dock_engine.docking.scoring_context import CertifiedScoringContext
 from dq_dock_engine.proof_status import ProofStatus, get_status, get_theorem
 from dq_dock_engine.docking.scoring import (
@@ -57,6 +79,7 @@ from dq_dock_engine.docking.scoring import (
     score_certified_metal_coordination_batch,
     score_certified_rich_chemistry_batch,
     score_certified_screened_coulomb_batch,
+    score_certified_softened_rich_chemistry_batch,
     total_torsion_strain,
     total_torsion_strain_bound,
     _cooperative_hbond_correction_batch,
@@ -184,6 +207,189 @@ def _toy_geometry_with_inactive_optional_terms():
         pairwise_sigma=plan.pairwise_sigma,
     )
     return receptor_coords, poses_coords, receptor_radii, ligand_radii, inactive_plan
+
+
+def test_merge_overlapping_ring_sites_merges_fused_ring_systems() -> None:
+    coords = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+            [4.0, 0.0, 0.0],
+            [2.0, 1.0, 0.0],
+            [3.0, 1.0, 0.0],
+            [4.0, 1.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    sites = (
+        _ring_site(
+            role=ChemistrySiteRole.AROMATIC_RING,
+            coords=coords,
+            atom_indices=(0, 1, 2, 3, 4),
+        ),
+        _ring_site(
+            role=ChemistrySiteRole.AROMATIC_RING,
+            coords=coords,
+            atom_indices=(2, 3, 5, 6, 7),
+        ),
+    )
+    sites = _merge_overlapping_ring_sites(sites, coords=coords, min_shared_atoms=2)
+    merged_site = cast(RingSiteAnnotation, sites[0])
+
+    assert len(sites) == 1
+    assert set(merged_site.atom_indices) == set(range(8))
+
+
+def test_aromatic_face_offset_width_is_geometry_derived() -> None:
+    expected = 1.39 * np.sqrt(3.0) / 2.0
+    assert AROMATIC_FACE_OFFSET_WIDTH_ANGSTROM == pytest.approx(expected)
+
+    pi_stacking = PiStackingInteractionTerm(
+        receptor_rings=AnchoredSiteArray.empty(SiteGeometry.RING),
+        ligand_rings=IndexedSiteArray.empty(SiteGeometry.RING),
+    )
+    pi_cation = PiCationInteractionTerm(
+        receptor_rings=AnchoredSiteArray.empty(SiteGeometry.RING),
+        receptor_cations=AnchoredSiteArray.empty(SiteGeometry.POINT),
+        ligand_rings=IndexedSiteArray.empty(SiteGeometry.RING),
+        ligand_cations=IndexedSiteArray.empty(SiteGeometry.POINT),
+    )
+
+    assert pi_stacking.offset_width == pytest.approx(expected)
+    assert pi_cation.offset_width == pytest.approx(expected)
+
+
+def test_receptor_monocations_use_unit_strength() -> None:
+    coords = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [4.0, 0.0, 0.0],
+            [4.5, 0.5, 0.0],
+            [5.0, 0.0, 0.0],
+            [4.5, -0.5, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    lys = ResidueKey(resname="LYS", chain_id="A", residue_id="1")
+    arg = ResidueKey(resname="ARG", chain_id="A", residue_id="2")
+    records = (
+        (0, PDBAtomRecord("", "ATOM", "NZ", lys, "N", coords[0])),
+        (1, PDBAtomRecord("", "ATOM", "NE", arg, "N", coords[1])),
+        (2, PDBAtomRecord("", "ATOM", "CZ", arg, "C", coords[2])),
+        (3, PDBAtomRecord("", "ATOM", "NH1", arg, "N", coords[3])),
+        (4, PDBAtomRecord("", "ATOM", "NH2", arg, "N", coords[4])),
+    )
+    structure = ReceptorStructureModel(
+        coords=coords,
+        elements=("N", "N", "C", "N", "N"),
+        adjacency=((), (), (), (), ()),
+        hydrogen_directions=((), (), (), (), ()),
+        indexed_records=records,
+        residue_records={
+            lys: (records[0],),
+            arg: (records[1], records[2], records[3], records[4]),
+        },
+    )
+
+    sites = ReceptorCationExtractor().extract(structure)
+
+    assert len(sites) == 2
+    assert [site.strength for site in sites] == [
+        pytest.approx(MONOCATION_SITE_STRENGTH),
+        pytest.approx(MONOCATION_SITE_STRENGTH),
+    ]
+
+
+def test_receptor_hbond_donor_extractor_rejects_impossible_backbone_oxygen_donors() -> (
+    None
+):
+    coords = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    val = ResidueKey(resname="VAL", chain_id="A", residue_id="29")
+    lys = ResidueKey(resname="LYS", chain_id="A", residue_id="33")
+    records = (
+        (0, PDBAtomRecord("", "ATOM", "O", val, "O", coords[0])),
+        (1, PDBAtomRecord("", "ATOM", "NZ", lys, "N", coords[1])),
+    )
+    structure = ReceptorStructureModel(
+        coords=coords,
+        elements=("O", "N"),
+        adjacency=((1,), (0,)),
+        hydrogen_directions=(
+            (np.array([0.0, 0.0, 1.0], dtype=np.float32),),
+            (np.array([1.0, 0.0, 0.0], dtype=np.float32),),
+        ),
+        indexed_records=records,
+        residue_records={
+            val: (records[0],),
+            lys: (records[1],),
+        },
+    )
+
+    sites = ReceptorHBondDonorExtractor().extract(structure)
+
+    assert len(sites) == 1
+    assert sites[0].anchor_index == 1
+
+
+def test_receptor_hbond_donor_strength_is_split_across_explicit_hydrogens() -> None:
+    coords = np.array([[1.0, 0.0, 0.0]], dtype=np.float32)
+    lys = ResidueKey(resname="LYS", chain_id="A", residue_id="33")
+    record = (0, PDBAtomRecord("", "ATOM", "NZ", lys, "N", coords[0]))
+    structure = ReceptorStructureModel(
+        coords=coords,
+        elements=("N",),
+        adjacency=((),),
+        hydrogen_directions=(
+            (
+                np.array([1.0, 0.0, 0.0], dtype=np.float32),
+                np.array([0.0, 1.0, 0.0], dtype=np.float32),
+                np.array([0.0, 0.0, 1.0], dtype=np.float32),
+            ),
+        ),
+        indexed_records=(record,),
+        residue_records={lys: (record,)},
+    )
+
+    sites = ReceptorHBondDonorExtractor().extract(structure)
+
+    assert len(sites) == 3
+    assert [site.strength for site in sites] == [
+        pytest.approx(1.0 / 3.0),
+        pytest.approx(1.0 / 3.0),
+        pytest.approx(1.0 / 3.0),
+    ]
+
+
+def test_ligand_hbond_donor_strength_is_split_across_explicit_hydrogens() -> None:
+    coords = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+    structure = LigandStructureModel(
+        coords=coords,
+        elements=("N",),
+        charges=np.array([0.0], dtype=np.float32),
+        adjacency=((),),
+        hydrogen_directions=(
+            (
+                np.array([1.0, 0.0, 0.0], dtype=np.float32),
+                np.array([0.0, 1.0, 0.0], dtype=np.float32),
+            ),
+        ),
+    )
+
+    sites = LigandHBondDonorExtractor().extract(structure)
+
+    assert len(sites) == 2
+    assert [site.strength for site in sites] == [
+        pytest.approx(0.5),
+        pytest.approx(0.5),
+    ]
 
 
 def test_new_chemistry_handle_helpers_surface_new_theorem_families() -> None:
@@ -458,7 +664,53 @@ def test_attractive_chemistry_is_attractive_negative_energy() -> None:
     )
 
 
-def test_rich_chemistry_composes_softened_nonbonded_with_attractive_chemistry() -> None:
+def test_rich_chemistry_composes_exact_nonbonded_with_attractive_chemistry() -> None:
+    (
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        plan,
+    ) = _toy_geometry()
+
+    nonbonded_batch = score_certified_lj_screened_coulomb_batch(
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        plan.screened_coulomb,
+        target_error=0.001,
+    )
+    attractive_batch = score_certified_attractive_chemistry_batch(
+        receptor_coords, poses_coords, plan
+    )
+    rich_batch = score_certified_rich_chemistry_batch(
+        receptor_coords=receptor_coords,
+        poses_coords=poses_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_radii,
+        rich_chemistry_plan=plan,
+        target_error=0.001,
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(rich_batch.scores),
+        np.asarray(nonbonded_batch.scores) + np.asarray(attractive_batch.scores),
+    )
+    np.testing.assert_allclose(
+        np.asarray(rich_batch.posewise_error_bound),
+        np.asarray(nonbonded_batch.posewise_error_bound)
+        + np.asarray(attractive_batch.posewise_error_bound),
+    )
+    assert np.isclose(
+        float(rich_batch.error_bound),
+        float(np.max(np.asarray(rich_batch.posewise_error_bound))),
+    )
+
+
+def test_softened_rich_chemistry_composes_softened_nonbonded_with_attractive_chemistry() -> (
+    None
+):
     (
         receptor_coords,
         poses_coords,
@@ -484,7 +736,7 @@ def test_rich_chemistry_composes_softened_nonbonded_with_attractive_chemistry() 
     attractive_batch = score_certified_attractive_chemistry_batch(
         receptor_coords, poses_coords, plan
     )
-    rich_batch = score_certified_rich_chemistry_batch(
+    softened_rich_batch = score_certified_softened_rich_chemistry_batch(
         receptor_coords=receptor_coords,
         poses_coords=poses_coords,
         receptor_radii=receptor_radii,
@@ -494,10 +746,41 @@ def test_rich_chemistry_composes_softened_nonbonded_with_attractive_chemistry() 
     )
 
     np.testing.assert_allclose(
-        np.asarray(rich_batch.scores),
+        np.asarray(softened_rich_batch.scores),
         np.asarray(softened_lj.scores)
         + np.asarray(screened_batch.scores)
         + np.asarray(attractive_batch.scores),
+    )
+
+
+def test_scoring_context_exact_batch_preserves_posewise_error_bounds_without_flex() -> (
+    None
+):
+    (
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        plan,
+    ) = _toy_geometry()
+
+    context = CertifiedScoringContext(
+        exact_chemistry_mode=ExactChemistryMode.EXTENDED_RICH,
+        rich_chemistry_plan=plan,
+    )
+    batch = context.score_exact_batch(
+        receptor_coords=receptor_coords,
+        poses_coords=poses_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_radii,
+        target_error=0.001,
+        epsilon=0.2,
+    )
+
+    assert batch.posewise_error_bound is not None
+    assert np.isclose(
+        float(batch.error_bound),
+        float(np.max(np.asarray(batch.posewise_error_bound))),
     )
 
 

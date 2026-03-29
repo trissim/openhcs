@@ -586,8 +586,22 @@ def patched_support_coarse_margin_returned_pose_theorem_handles() -> tuple[str, 
     return _selected_handles(BCRP5, BCRP9, BCRP11, BCRP17, BCRP18, RPG11)
 
 
+def patched_support_posewise_envelope_returned_pose_theorem_handles() -> tuple[
+    str, ...
+]:
+    return _selected_handles(BCRP5, BCRP9, BCRP11, BCRP21, BCRP22, RPG11)
+
+
 def auxiliary_patched_support_output_set_theorem_handles() -> tuple[str, ...]:
-    return _selected_handles(BCRP19, RPG13)
+    return _selected_handles(RPG14)
+
+
+def certified_energy_output_member_rmsd_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(RPG15)
+
+
+def member_exact_gap_rmsd_theorem_handles() -> tuple[str, ...]:
+    return _selected_handles(RPG16)
 
 
 def ambiguity_output_energy_contract_theorem_handles() -> tuple[str, ...]:

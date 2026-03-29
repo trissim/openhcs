@@ -7,6 +7,7 @@
   already proved for directional three-factor surrogates.
 -/
 import DecisionQuotient.Tractability.DirectionalHBondApproximation
+import DecisionQuotient.Tractability.AromaticRingGeometry
 import DecisionQuotient.Tractability.GaussianDecayBounds
 
 namespace DecisionQuotient
@@ -14,6 +15,7 @@ namespace Tractability
 namespace PiStackingApproximation
 
 open DirectionalHBondApproximation
+open AromaticRingGeometry
 open GridConvergence
 open GaussianDecayBounds
 
@@ -247,6 +249,12 @@ theorem weighted_piStacking_tail_bound
       w * Real.exp (-(((r - ideal) / width) ^ 2)) ≤ w * Real.exp (-(((cutoff - ideal) / width) ^ 2)) := by
     exact mul_le_mul_of_nonneg_left hTail hw_nonneg
   exact le_trans hUpper hScaledTail
+
+/-- The runtime pi-stacking lateral width is the theorem-backed aromatic-face
+    inradius derived from regular-hexagon geometry. -/
+theorem piStacking_offsetWidth_eq_aromaticFaceOffsetWidth :
+    aromaticFaceOffsetWidth = aromaticCarbonBondLength * Real.sqrt 3 / 2 :=
+  aromaticFaceOffsetWidth_eq_hexagonInradius
 
 end PiStackingApproximation
 end Tractability

@@ -1112,8 +1112,8 @@ abbrev PC7 := @Tractability.PiCationApproximation.exact_vs_coarse_attractivePiCa
 noncomputable abbrev PC8 := @Tractability.PiCationApproximation.exact_vs_coarse_attractivePiCation_certified_top1
 noncomputable abbrev PC9 := @Tractability.PiCationApproximation.exact_vs_coarse_attractivePiCation_optimizer_witness
 noncomputable abbrev PC10 := @Tractability.PiCationApproximation.exact_vs_coarse_attractivePiCation_coherent_optimizer_witness
-abbrev PC11 := @Tractability.PiCationApproximation.weighted_piCationTwoFactor_le_weighted_radial
-abbrev PC12 := @Tractability.PiCationApproximation.weighted_piCationTwoFactor_tail_bound
+abbrev PC11 := @Tractability.PiCationApproximation.weighted_piCation_le_weighted_radial
+abbrev PC12 := @Tractability.PiCationApproximation.weighted_piCation_tail_bound
 
 abbrev XB1 := @Tractability.HalogenBondApproximation.exact_vs_coarse_halogenBond_uniformApprox
 abbrev XB2 := @Tractability.HalogenBondApproximation.exact_vs_coarse_halogenBond_certified_top1_sound
@@ -1207,6 +1207,8 @@ abbrev TK13 := @Tractability.FiniteTopK.mem_topKSet_iff_kthUtility_le
 abbrev TK14 := @Tractability.FiniteTopK.topKSet_eq_survivorSet_at_kthUtility
 abbrev TK15 := @Tractability.TopKLoweringBridge.thresholdTopKWithTiesMask_eq_topKWithTiesMask
 abbrev TK16 := @Tractability.RankingPreservation.exact_top1_eq_singleton_of_coarse_energy_gap_margin
+abbrev TK17 := @Tractability.NearTieBand.exact_top1_eq_singleton_of_posewise_coarse_gap_margin
+abbrev TK18 := @Tractability.NearTieBand.exact_top1_subset_posewiseAmbiguityBandAround_of_posewise_error
 
 abbrev SH1 := @Tractability.SupportExpansion.roundIndex_mem_supportShellLevels
 abbrev SH2 := @Tractability.SupportExpansion.coarsestShell_mem_supportShellLevels
@@ -2434,6 +2436,12 @@ abbrev RPG11 := @Tractability.ReturnedPoseGuarantee.returned_choice_of_patched_o
 abbrev RPG12 := @Tractability.ReturnedPoseGuarantee.sampledActionFamily_exact_energy_gap_certified_rigid_choice_of_cover_has_energy_gap_le
 -- RPG13: Any auxiliary singleton chosen inside a certified output support is safe to return
 abbrev RPG13 := @Tractability.ReturnedPoseGuarantee.returned_choice_of_auxiliary_patched_support_singleton_of_certified_output_set
+-- RPG14: Any selected member of a certified output support is safe to return
+abbrev RPG14 := @Tractability.ReturnedPoseGuarantee.returned_choice_of_member_of_certified_output_set
+-- RPG15: Any selected member of a certified energy output support inherits an RMSD target once the shared gap fits a certified basin
+abbrev RPG15 := @Tractability.ReturnedPoseGuarantee.returned_choice_of_member_of_certified_energy_output_set_yields_rmsd_target
+-- RPG16: A selected member within an exact top-1 energy gap inherits the RMSD target once winner-gap plus member-gap fits a certified basin
+abbrev RPG16 := @Tractability.ReturnedPoseGuarantee.member_with_energy_gap_to_top1_yields_rmsd_target_of_top1_gap
 
 -- CSC45: Torsion locality radius (single atom)
 abbrev CSC45 := @DecisionQuotient.Tractability.ConformerSupportCoverage.torsion_locality_radius
@@ -2639,6 +2647,10 @@ abbrev BCRP18 := @Tractability.BlindConformerPipelineRefinements.patchedSupportE
 abbrev BCRP19 := @Tractability.BlindConformerPipelineRefinements.patchedSupportEnergy_singleton_of_strict_support_argmin_without_top1_subset
 -- BCRP20: A support-restricted coarse `2δ` margin plus fallback-above-winner yields patched-support singleton top-1 without a separate top1-subset premise
 abbrev BCRP20 := @Tractability.BlindConformerPipelineRefinements.patchedSupportEnergy_singleton_of_support_coarse_energy_gap_margin_without_top1_subset
+-- BCRP21: Posewise exact upper/lower envelopes certify a strict support argmin
+abbrev BCRP21 := @Tractability.BlindConformerPipelineRefinements.support_strict_argmin_is_exact_singleton_of_posewise_envelope_margin
+-- BCRP22: Posewise exact upper/lower envelopes plus fallback certify patched-support singleton top-1
+abbrev BCRP22 := @Tractability.BlindConformerPipelineRefinements.patchedSupportEnergy_singleton_of_posewise_envelope_margin_without_top1_subset
 
 /-! ## Additional runtime-proof hooks for theorem-gap roadmap integration -/
 

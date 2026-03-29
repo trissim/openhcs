@@ -32,7 +32,9 @@ from dq_dock_engine.docking.formal_handles import (
     auxiliary_patched_support_output_set_theorem_handles,
     conformer_coverage_theorem_handles,
     enriched_support_selection_transfer_theorem_handles,
+    member_exact_gap_rmsd_theorem_handles,
     patched_support_coarse_margin_returned_pose_theorem_handles,
+    patched_support_posewise_envelope_returned_pose_theorem_handles,
     patched_support_singleton_returned_pose_theorem_handles,
     returned_pose_energy_guarantee_theorem_handles,
 )
@@ -44,10 +46,12 @@ from dq_dock_engine.docking.pipeline import (
     SEED_BUDGET_PROBE_POSES,
     _build_returned_pose_certification,
     _auxiliary_support_representative_choice,
+    _certified_posewise_steric_dominance_singleton_choice,
     _certified_support_coarse_margin_singleton_choice,
     _derive_rigid_energy_gap_proof_plan,
     _derive_returned_pose_proof_plan,
     _has_conformer_ambiguity_set_certificate_chain,
+    _has_rigid_returned_pose_certificate_chain,
     _conformer_local_improvement_bounds,
     _derive_conformer_coverage_plan,
     _derive_target_error_from_rmsd,
@@ -55,6 +59,7 @@ from dq_dock_engine.docking.pipeline import (
     _derive_local_rotation_step_rad,
     _detect_rigid_equivalence_ambiguity,
     _ligand_radius,
+    _posewise_certified_top1_gap,
     _patched_support_singleton_score_slice,
     _resolved_patched_support_local_indices,
     _probe_seed_budget_certificate,
@@ -63,6 +68,7 @@ from dq_dock_engine.docking.pipeline import (
     _recertify_conformer_updated_pose,
     _seed_budget_torsion_count,
     _shared_certified_singleton_top1,
+    _winner_posewise_ambiguity_indices,
     _with_rigid_selection_gap,
     derive_seed_budget,
     derive_seed_budget_plan,
@@ -696,7 +702,7 @@ def test_patched_support_singleton_score_slice_recomputes_when_scores_not_full_l
     assert support_error_bound == pytest.approx(0.5)
 
 
-def test_resolved_patched_support_local_indices_prefers_authoritative_plan_support() -> (
+def test_resolved_patched_support_local_indices_unions_authoritative_and_fallback_support() -> (
     None
 ):
     execution_plan = SimpleNamespace(
@@ -712,7 +718,7 @@ def test_resolved_patched_support_local_indices_prefers_authoritative_plan_suppo
 
     np.testing.assert_array_equal(
         support_local_indices,
-        np.array([1, 3, 5], dtype=np.int32),
+        np.array([0, 1, 2, 3, 5], dtype=np.int32),
     )
 
 
@@ -739,11 +745,86 @@ def test_auxiliary_support_representative_choice_prefers_disambiguation_plus_omi
 ):
     winner_index = _auxiliary_support_representative_choice(
         support_indices=np.array([0, 2, 3], dtype=np.int32),
+        base_scores=jnp.array([0.6, 0.3, 0.2], dtype=jnp.float32),
+        rich_scores=jnp.array([0.6, 0.5, 0.4], dtype=jnp.float32),
         disambiguation_scores=jnp.array([-0.5, -0.2, -0.1], dtype=jnp.float32),
         omitted_posewise_bounds=np.array([4.0, 1.0, 0.2], dtype=np.float64),
     )
 
     assert winner_index == 3
+
+
+def test_auxiliary_support_representative_choice_prefers_rich_dis_agreement() -> None:
+    winner_index = _auxiliary_support_representative_choice(
+        support_indices=np.array([0, 2, 3], dtype=np.int32),
+        base_scores=jnp.array([0.1, 0.4, 0.5], dtype=jnp.float32),
+        rich_scores=jnp.array([-1.0, -0.5, -0.4], dtype=jnp.float32),
+        disambiguation_scores=jnp.array([-0.8, -0.1, 0.0], dtype=jnp.float32),
+        omitted_posewise_bounds=np.array([8.0, 0.1, 0.1], dtype=np.float64),
+    )
+
+    assert winner_index == 0
+
+
+def test_auxiliary_support_representative_choice_prefers_rich_argmin_when_scores_disagree() -> (
+    None
+):
+    winner_index = _auxiliary_support_representative_choice(
+        support_indices=np.array([0, 2, 3], dtype=np.int32),
+        base_scores=jnp.array([0.6, 0.1, 0.8], dtype=jnp.float32),
+        rich_scores=jnp.array([-1.0, -0.9, -0.4], dtype=jnp.float32),
+        disambiguation_scores=jnp.array([-0.7, -0.8, 0.0], dtype=jnp.float32),
+        omitted_posewise_bounds=np.array([4.0, 1.0, 0.1], dtype=np.float64),
+    )
+
+    assert winner_index == 0
+
+
+def test_certified_posewise_steric_dominance_singleton_choice_certifies_strict_envelope_gap() -> (
+    None
+):
+    winner_index, singleton = _certified_posewise_steric_dominance_singleton_choice(
+        guide_scores=jnp.array([0.0, 3.0, 4.0], dtype=jnp.float32),
+        support_indices=np.array([5, 7, 9], dtype=np.int32),
+        omitted_posewise_bounds=np.array([0.1, 0.2, 0.2], dtype=np.float64),
+        fallback_score=10.0,
+    )
+
+    assert singleton is True
+    assert winner_index == 5
+
+
+def test_patched_support_posewise_envelope_handles_are_exposed() -> None:
+    assert set(patched_support_posewise_envelope_returned_pose_theorem_handles()) == {
+        "BCRP5",
+        "BCRP9",
+        "BCRP11",
+        "BCRP21",
+        "BCRP22",
+        "RPG11",
+    }
+
+
+def test_posewise_certified_top1_gap_detects_interval_separation() -> None:
+    assert _posewise_certified_top1_gap(
+        jnp.array([0.0, 1.0, 1.5], dtype=jnp.float32),
+        np.array([0.1, 0.1, 0.1], dtype=np.float64),
+    )
+    assert not _posewise_certified_top1_gap(
+        jnp.array([0.0, 0.1, 1.5], dtype=jnp.float32),
+        np.array([0.1, 0.1, 0.1], dtype=np.float64),
+    )
+
+
+def test_winner_posewise_ambiguity_indices_uses_interval_overlap() -> None:
+    assert _winner_posewise_ambiguity_indices(
+        jnp.array([0.0, 0.2, 1.0], dtype=jnp.float32),
+        np.array([0.05, 0.05, 0.01], dtype=np.float64),
+    ) == (0,)
+    assert _winner_posewise_ambiguity_indices(
+        jnp.array([0.0, 0.2, 1.0], dtype=jnp.float32),
+        np.array([0.15, 0.15, 0.01], dtype=np.float64),
+    ) == (0, 1)
 
 
 def test_returned_pose_proof_plan_uses_custom_patched_support_singleton_theorem_handles() -> (
@@ -839,6 +920,55 @@ def test_rigid_energy_ambiguity_plan_can_return_auxiliary_support_representative
         == ReturnedPoseContractDecision.CERTIFIED_AMBIGUITY_SET_ENERGY_GAP
     )
     assert set(auxiliary_patched_support_output_set_theorem_handles()).issubset(
+        set(proof_plan.theorem_handles)
+    )
+
+
+def test_rigid_energy_output_member_can_upgrade_to_target_rmsd() -> None:
+    request = PipelineDockingRequest(
+        protein_coords=jnp.zeros((1, 3), dtype=jnp.float32),
+        receptor_radii=jnp.ones((1,), dtype=jnp.float32),
+        ligand_ctx=_dummy_ligand_context(),
+        box=DockingBox(
+            center=jnp.zeros((3,), dtype=jnp.float32),
+            size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+        ),
+        key=jax.random.PRNGKey(0),
+        config=create_config("certified", confidence=0.99, target_rmsd=10.0),
+        rigid_seed_family_plan=derive_certified_rigid_seed_family_plan(
+            DockingBox(
+                center=jnp.zeros((3,), dtype=jnp.float32),
+                size=jnp.array([6.0, 6.0, 6.0], dtype=jnp.float32),
+            ),
+            16,
+            target_translation_cover_radius=1.0,
+        ),
+    )
+
+    proof_plan = _derive_returned_pose_proof_plan(
+        request=request,
+        final_scores=jnp.array([0.0, 0.05, 0.08], dtype=jnp.float32),
+        final_error_bound=0.1,
+        final_pose_coords=None,
+        refinement_certificates=[None, None, _dummy_certificate(q=0.25, n_steps=2)],
+        conformer_coverage_plan=None,
+        winner_theorem_handles=("BCRP5",),
+        do_conf=False,
+        certified_energy_output_member_theorem_handles=(
+            member_exact_gap_rmsd_theorem_handles()
+        ),
+        certified_energy_output_member_winner_index=2,
+        certified_energy_output_member_gap_budget=1.0,
+    )
+    returned_cert = _build_returned_pose_certification(proof_plan=proof_plan)
+
+    assert proof_plan.proof_case == ReturnedPoseProofCase.CERTIFIED_SINGLETON
+    assert proof_plan.winner_index == 2
+    assert proof_plan.support_indices == (2,)
+    assert returned_cert is not None
+    assert returned_cert.decision == ReturnedPoseContractDecision.CERTIFIED_TARGET_RMSD
+    assert _has_rigid_returned_pose_certificate_chain(proof_plan)
+    assert set(member_exact_gap_rmsd_theorem_handles()).issubset(
         set(proof_plan.theorem_handles)
     )
 

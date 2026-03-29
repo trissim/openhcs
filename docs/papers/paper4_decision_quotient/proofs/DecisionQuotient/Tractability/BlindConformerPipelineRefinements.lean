@@ -522,6 +522,59 @@ theorem patchedSupportEnergy_singleton_of_support_coarse_energy_gap_margin_witho
     linarith
   · exact hFallback
 
+/-- Posewise upper/lower envelopes certify a strict support argmin.
+
+    If `winner` has an exact upper envelope strictly below every rival's exact
+    lower envelope on `support`, and the exact top-1 is known to lie in
+    `support`, then `winner` is the unique exact top-1 on that support. This is
+    the runtime-facing steric-dominance bridge used when a base or
+    disambiguation score is corrected by posewise omitted-channel envelopes. -/
+theorem support_strict_argmin_is_exact_singleton_of_posewise_envelope_margin
+    [Nonempty P]
+    (exactEnergy guideScore omittedBound : P → ℝ)
+    (support : Finset P)
+    (winner : P)
+    (hWinnerMem : winner ∈ support)
+    (hUpper : exactEnergy winner ≤ guideScore winner + omittedBound winner)
+    (hLower : ∀ z, z ∈ support → guideScore z - omittedBound z ≤ exactEnergy z)
+    (hStrict : ∀ z, z ∈ support → z ≠ winner →
+      guideScore winner + omittedBound winner < guideScore z - omittedBound z)
+    (hTopSubset : energyTopK exactEnergy 1 ⊆ support) :
+    energyTopK exactEnergy 1 = ({winner} : Finset P) := by
+  apply support_strict_argmin_is_exact_singleton_of_top1_subset
+  · exact hWinnerMem
+  · intro z hz hne
+    have hZLower := hLower z hz
+    have hGap := hStrict z hz hne
+    linarith
+  · exact hTopSubset
+
+/-- Patched-support singleton bridge from posewise upper/lower envelopes.
+
+    If `winner` has an exact upper envelope below every support rival's exact
+    lower envelope and also sits below the fallback score, then the patched
+    support-only family has singleton top-1 `{winner}`. -/
+theorem patchedSupportEnergy_singleton_of_posewise_envelope_margin_without_top1_subset
+    [Nonempty P]
+    (exactEnergy guideScore omittedBound : P → ℝ)
+    (support : Finset P)
+    (winner : P)
+    (fallback : ℝ)
+    (hWinnerMem : winner ∈ support)
+    (hUpper : exactEnergy winner ≤ guideScore winner + omittedBound winner)
+    (hLower : ∀ z, z ∈ support → guideScore z - omittedBound z ≤ exactEnergy z)
+    (hStrict : ∀ z, z ∈ support → z ≠ winner →
+      guideScore winner + omittedBound winner < guideScore z - omittedBound z)
+    (hFallback : exactEnergy winner < fallback) :
+    energyTopK (patchedSupportEnergy support exactEnergy fallback) 1 = ({winner} : Finset P) := by
+  apply patchedSupportEnergy_singleton_of_strict_support_argmin_without_top1_subset
+  · exact hWinnerMem
+  · intro z hz hne
+    have hZLower := hLower z hz
+    have hGap := hStrict z hz hne
+    linarith
+  · exact hFallback
+
 /-- If a support set contains the exact top-k and the fallback score is no better
     than the exact top-k threshold, then every exact top-k pose remains in the
     top-k set of the patched support-only score family. -/

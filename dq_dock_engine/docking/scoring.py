@@ -2335,9 +2335,13 @@ def _combine_certified_batches(
 ) -> CertifiedBatchResult:
     if not batches:
         raise ValueError("At least one certified batch is required")
+    posewise_error_bound = jnp.sum(
+        jnp.stack([batch.posewise_error_bound for batch in batches], axis=0),
+        axis=0,
+    )
     return CertifiedBatchResult(
         scores=jnp.sum(jnp.stack([batch.scores for batch in batches], axis=0), axis=0),
-        error_bound=sum(batch.error_bound for batch in batches),
+        error_bound=jnp.max(posewise_error_bound),
         target_error=(
             sum(batch.target_error for batch in batches)
             if target_error is None
@@ -2346,6 +2350,7 @@ def _combine_certified_batches(
         cutoff_radius=jnp.max(
             jnp.stack([jnp.asarray(batch.cutoff_radius) for batch in batches], axis=0)
         ),
+        posewise_error_bound=posewise_error_bound,
     )
 
 
@@ -2496,21 +2501,24 @@ def score_certified_lj_screened_coulomb_batch(
         jnp.array(optimal_cutoff(target_error, s=6.0)),
         jnp.array(screened_coulomb.cutoff),
     )
+    posewise_error_bound = (
+        jnp.full_like(screened_batch.scores, lj_error_bound)
+        + screened_batch.posewise_error_bound
+    )
     return CertifiedBatchResult(
         scores=lj_scores + screened_batch.scores,
-        error_bound=lj_error_bound + screened_batch.error_bound,
+        error_bound=jnp.max(posewise_error_bound),
         target_error=target_error,
         cutoff_radius=combined_cutoff,
+        posewise_error_bound=posewise_error_bound,
     )
 
 
 @conditionally_certified(
-    "HandleAliases.lean::XR6; HandleAliases.lean::XR7; HandleAliases.lean::XR8; HandleAliases.lean::XR9; HandleAliases.lean::XR10; "
-    "SoftLJApproximation.lean::soft_lj_lower_bound",
+    "HandleAliases.lean::XR6; HandleAliases.lean::XR7; HandleAliases.lean::XR8; HandleAliases.lean::XR9; HandleAliases.lean::XR10",
     assumptions=[
-        "The additive runtime score is exactly the sum of the certified softened-LJ term, the certified screened-Coulomb term, and the certified attractive extended chemistry term",
-        "The combined error bound is the sum of the certified softened-LJ bound (including softening error), the certified screened-Coulomb bound, and the certified attractive extended chemistry batch discrepancy bound",
-        "Soft-core LJ prevents the repulsive wall from penalizing genuine H-bond contact distances (2.7-3.0 A) that fall below Bondi sigma",
+        "The additive runtime score is exactly the sum of the certified exact LJ-screened-Coulomb term and the certified attractive extended chemistry term",
+        "The combined error bound is the sum of the certified exact LJ-screened-Coulomb bound and the certified attractive extended chemistry batch discrepancy bound",
     ],
 )
 def score_certified_rich_chemistry_batch(
@@ -2524,20 +2532,14 @@ def score_certified_rich_chemistry_batch(
     *,
     cooperative_channel_abs_bounds: tuple[float, ...] | None = None,
 ) -> CertifiedBatchResult:
-    softened_lj = score_certified_softened_lj(
+    nonbonded_batch = score_certified_lj_screened_coulomb_batch(
         receptor_coords=receptor_coords,
         poses_coords=poses_coords,
         receptor_radii=receptor_radii,
         ligand_radii=ligand_radii,
+        screened_coulomb=rich_chemistry_plan.screened_coulomb,
         target_error=target_error,
         epsilon=epsilon,
-        softening_radius=None,
-        pairwise_sigma=rich_chemistry_plan.pairwise_sigma,
-    )
-    screened_batch = score_certified_screened_coulomb_batch(
-        receptor_coords,
-        poses_coords,
-        rich_chemistry_plan.screened_coulomb,
     )
     attractive_batch = score_certified_attractive_chemistry_batch(
         receptor_coords,
@@ -2546,16 +2548,18 @@ def score_certified_rich_chemistry_batch(
         cooperative_channel_abs_bounds=cooperative_channel_abs_bounds,
     )
     combined_cutoff = jnp.maximum(
-        jnp.maximum(softened_lj.cutoff_radius, screened_batch.cutoff_radius),
+        nonbonded_batch.cutoff_radius,
         attractive_batch.cutoff_radius,
     )
+    posewise_error_bound = (
+        nonbonded_batch.posewise_error_bound + attractive_batch.posewise_error_bound
+    )
     return CertifiedBatchResult(
-        scores=softened_lj.scores + screened_batch.scores + attractive_batch.scores,
-        error_bound=softened_lj.softening_error_bound
-        + screened_batch.error_bound
-        + attractive_batch.error_bound,
+        scores=nonbonded_batch.scores + attractive_batch.scores,
+        error_bound=jnp.max(posewise_error_bound),
         target_error=target_error,
         cutoff_radius=combined_cutoff,
+        posewise_error_bound=posewise_error_bound,
     )
 
 

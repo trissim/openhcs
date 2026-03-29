@@ -748,7 +748,11 @@ class CertifiedScoringContext:
             receptor_coords, poses_coords
         )
         scores = ref_result.scores + water_scores
-        error = ref_result.error_bound + water_error
+        ref_posewise_error_bound = cast(jnp.ndarray, ref_result.posewise_error_bound)
+        posewise_error_bound = ref_posewise_error_bound + jnp.full_like(
+            ref_result.scores, water_error
+        )
+        error = jnp.max(posewise_error_bound)
 
         # Step 3: RFE1-RFE3 — ensemble scoring with early termination (RFE2)
         if self.receptor_conformations is not None:
@@ -772,13 +776,17 @@ class CertifiedScoringContext:
                 ref_result.scores, tuple(all_conf_scores[1:])
             )
             scores = best_scores
-            error = error + error_radius
+            posewise_error_bound = posewise_error_bound + jnp.full_like(
+                ref_result.scores, error_radius
+            )
+            error = jnp.max(posewise_error_bound)
 
         return CertifiedBatchResult(
             scores=scores,
             error_bound=error,
             target_error=target_error,
             cutoff_radius=ref_result.cutoff_radius,
+            posewise_error_bound=posewise_error_bound,
         )
 
     @conditionally_certified(

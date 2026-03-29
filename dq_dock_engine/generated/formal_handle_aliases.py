@@ -479,6 +479,8 @@ TK13 = "TK13"
 TK14 = "TK14"
 TK15 = "TK15"
 TK16 = "TK16"
+TK17 = "TK17"
+TK18 = "TK18"
 SH1 = "SH1"
 SH2 = "SH2"
 SH3 = "SH3"
@@ -1121,6 +1123,9 @@ RPG10 = "RPG10"
 RPG11 = "RPG11"
 RPG12 = "RPG12"
 RPG13 = "RPG13"
+RPG14 = "RPG14"
+RPG15 = "RPG15"
+RPG16 = "RPG16"
 CSC45 = "CSC45"
 CSC46 = "CSC46"
 CSC47 = "CSC47"
@@ -1217,6 +1222,8 @@ BCRP17 = "BCRP17"
 BCRP18 = "BCRP18"
 BCRP19 = "BCRP19"
 BCRP20 = "BCRP20"
+BCRP21 = "BCRP21"
+BCRP22 = "BCRP22"
 LJ18 = "LJ18"
 LJ19 = "LJ19"
 LJ20 = "LJ20"
@@ -1718,6 +1725,8 @@ __all__ = [
     "TK14",
     "TK15",
     "TK16",
+    "TK17",
+    "TK18",
     "SH1",
     "SH2",
     "SH3",
@@ -2360,6 +2369,9 @@ __all__ = [
     "RPG11",
     "RPG12",
     "RPG13",
+    "RPG14",
+    "RPG15",
+    "RPG16",
     "CSC45",
     "CSC46",
     "CSC47",
@@ -2456,6 +2468,8 @@ __all__ = [
     "BCRP18",
     "BCRP19",
     "BCRP20",
+    "BCRP21",
+    "BCRP22",
     "LJ18",
     "LJ19",
     "LJ20",

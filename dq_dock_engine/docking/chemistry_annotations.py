@@ -26,6 +26,8 @@ POSITIVE_ELEMENTS = frozenset(
     {"NA", "K", "CA", "MG", "MN", "FE", "CO", "NI", "CU", "ZN", "CD"}
 )
 
+MONOCATION_SITE_STRENGTH = 1.0
+
 _COVALENT_RADII = {
     "H": 0.31,
     "C": 0.76,
@@ -74,6 +76,16 @@ _DONOR_ONLY_RECEPTOR_NITROGENS = frozenset(
         ("TRP", "NE1"),
     }
 )
+
+_RECEPTOR_O_DONOR_ATOMS = frozenset(
+    {
+        ("SER", "OG"),
+        ("THR", "OG1"),
+        ("TYR", "OH"),
+    }
+)
+
+_RECEPTOR_S_DONOR_ATOMS = frozenset({("CYS", "SG")})
 
 
 def _normalize_element(element: str) -> str:
@@ -286,6 +298,45 @@ def _ring_site(
     )
 
 
+def _merge_overlapping_ring_sites(
+    sites: tuple[RingSiteAnnotation, ...],
+    *,
+    coords: np.ndarray,
+    min_shared_atoms: int,
+) -> tuple[RingSiteAnnotation, ...]:
+    if len(sites) <= 1:
+        return sites
+    remaining = list(range(len(sites)))
+    merged: list[RingSiteAnnotation] = []
+    while remaining:
+        seed = remaining.pop(0)
+        component = {seed}
+        changed = True
+        while changed:
+            changed = False
+            for idx in list(remaining):
+                site_atoms = set(sites[idx].atom_indices)
+                if any(
+                    len(site_atoms & set(sites[other].atom_indices)) >= min_shared_atoms
+                    for other in component
+                ):
+                    component.add(idx)
+                    remaining.remove(idx)
+                    changed = True
+        atom_indices = tuple(
+            sorted({atom for idx in component for atom in sites[idx].atom_indices})
+        )
+        merged.append(
+            _ring_site(
+                role=sites[seed].role,
+                coords=coords,
+                atom_indices=atom_indices,
+                strength=max(sites[idx].strength for idx in component),
+            )
+        )
+    return tuple(merged)
+
+
 def _indexed_site(
     *,
     role: ChemistrySiteRole,
@@ -373,6 +424,49 @@ def _ligand_acceptor_allowed(
         return False
     return charge <= 0.2 and hydrogen_count == 0 and heavy_degree <= 2
 
+
+def _receptor_donor_allowed(
+    residue: ResidueKey,
+    atom_name: str,
+    *,
+    element: str,
+    hydrogen_count: int,
+) -> bool:
+    if hydrogen_count == 0:
+        return False
+    normalized_element = _normalize_element(element)
+    normalized_atom_name = atom_name.upper()
+    normalized_resname = residue.resname.upper()
+    residue_atom = (normalized_resname, normalized_atom_name)
+    if normalized_element == "N":
+        if normalized_atom_name == "N":
+            return normalized_resname != "PRO"
+        if residue_atom in _DONOR_ONLY_RECEPTOR_NITROGENS:
+            return True
+        if normalized_resname in {
+            "HIS",
+            "HID",
+            "HIE",
+            "HIP",
+        } and normalized_atom_name in {
+            "ND1",
+            "NE2",
+        }:
+            return True
+        return False
+    if normalized_element == "O":
+        return residue_atom in _RECEPTOR_O_DONOR_ATOMS
+    if normalized_element == "S":
+        return residue_atom in _RECEPTOR_S_DONOR_ATOMS
+    return False
+
+
+def _split_donor_capacity(total_strength: float, hydrogen_count: int) -> float:
+    if hydrogen_count <= 0:
+        return 0.0
+    return float(total_strength) / float(hydrogen_count)
+
+
 class LigandSiteExtractor(ABC):
     _registered_types: ClassVar[list[type["LigandSiteExtractor"]]] = []
 
@@ -432,7 +526,11 @@ class LigandAromaticRingExtractor(LigandSiteExtractor):
                             atom_indices=atom_indices,
                         )
                     )
-        return tuple(sites)
+        return _merge_overlapping_ring_sites(
+            tuple(cast(tuple[RingSiteAnnotation, ...], tuple(sites))),
+            coords=structure.coords,
+            min_shared_atoms=2,
+        )
 
 
 class LigandCationExtractor(LigandSiteExtractor):
@@ -489,14 +587,16 @@ class LigandHBondDonorExtractor(LigandSiteExtractor):
         for atom_index, element in enumerate(structure.elements):
             if _normalize_element(element) not in HBOND_DONOR_ELEMENTS:
                 continue
-            for direction in structure.hydrogen_directions[atom_index]:
+            hydrogen_directions = structure.hydrogen_directions[atom_index]
+            donor_strength = _split_donor_capacity(1.0, len(hydrogen_directions))
+            for direction in hydrogen_directions:
                 sites.append(
                     _directional_site(
                         role=ChemistrySiteRole.HBOND_DONOR,
                         atom_indices=(atom_index,),
                         neighbor_indices=structure.adjacency[atom_index],
                         coords=structure.coords,
-                        strength=1.0,
+                        strength=donor_strength,
                         direction=direction,
                     )
                 )
@@ -617,7 +717,7 @@ class ReceptorCationExtractor(ReceptorSiteExtractor):
                         role=ChemistrySiteRole.CATION,
                         atom_indices=(atoms_by_name["NZ"],),
                         coords=structure.coords,
-                        strength=1.0,
+                        strength=MONOCATION_SITE_STRENGTH,
                     )
                 )
             if residue.resname.upper() == "ARG" and {"NE", "CZ", "NH1", "NH2"}.issubset(
@@ -632,7 +732,7 @@ class ReceptorCationExtractor(ReceptorSiteExtractor):
                         anchor_index=atoms_by_name["CZ"],
                         atom_indices=cation_atoms,
                         position=_safe_centroid(structure.coords[list(cation_atoms)]),
-                        strength=1.2,
+                        strength=MONOCATION_SITE_STRENGTH,
                     )
                 )
         return tuple(sites)
@@ -644,18 +744,27 @@ class ReceptorHBondDonorExtractor(ReceptorSiteExtractor):
     ) -> tuple[ChemistrySiteAnnotation, ...]:
         sites: list[ChemistrySiteAnnotation] = []
         for residue, indexed_records in structure.residue_records.items():
-            del residue
             for atom_index, record in indexed_records:
-                if _normalize_element(record.element) not in HBOND_DONOR_ELEMENTS:
+                element = _normalize_element(record.element)
+                if element not in HBOND_DONOR_ELEMENTS:
                     continue
-                for direction in structure.hydrogen_directions[atom_index]:
+                hydrogen_directions = structure.hydrogen_directions[atom_index]
+                if not _receptor_donor_allowed(
+                    residue,
+                    record.atom_name,
+                    element=element,
+                    hydrogen_count=len(hydrogen_directions),
+                ):
+                    continue
+                donor_strength = _split_donor_capacity(1.0, len(hydrogen_directions))
+                for direction in hydrogen_directions:
                     sites.append(
                         _directional_site(
                             role=ChemistrySiteRole.HBOND_DONOR,
                             atom_indices=(atom_index,),
                             neighbor_indices=structure.adjacency[atom_index],
                             coords=structure.coords,
-                            strength=1.0,
+                            strength=donor_strength,
                             direction=direction,
                         )
                     )

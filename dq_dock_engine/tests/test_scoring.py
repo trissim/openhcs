@@ -301,12 +301,35 @@ def test_score_certified_lj_screened_coulomb_batch_composes_error_bounds() -> No
         receptor_radii,
         ligand_radii,
         screened,
+        target_error=0.001,
+    )
+    lj_scores, lj_error_bound = score_certified_lj(
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        target_error=0.001,
+    )
+    del lj_scores
+    screened_batch = score_certified_screened_coulomb_batch(
+        receptor_coords,
+        poses_coords,
+        screened,
     )
 
     assert result.scores.shape == (2,)
     assert np.isfinite(result.error_bound)
     assert result.error_bound >= 0.0
     assert result.cutoff_radius >= screened.cutoff
+    np.testing.assert_allclose(
+        np.asarray(result.posewise_error_bound),
+        np.full((2,), lj_error_bound, dtype=np.float32)
+        + np.asarray(screened_batch.posewise_error_bound),
+    )
+    assert np.isclose(
+        float(result.error_bound),
+        float(np.max(np.asarray(result.posewise_error_bound))),
+    )
 
 
 def test_certified_softened_lj_matches_exact_when_outside_softening_radius() -> None:
@@ -769,3 +792,20 @@ def test_prepare_ligand_filters_non_a_altlocs() -> None:
     assert len(lines) == 2
     assert "AOLA" in lines[0]
     assert "BOLA" not in "\n".join(lines)
+
+
+def test_prepare_ligand_accepts_consistent_numeric_altlocs() -> None:
+    pdb_text = (
+        "HETATM    1  C1 1OLA A1004       7.453   6.475  17.189  0.50 46.96           C  \n"
+        "HETATM    2  C1 2OLA A1004      14.789  -5.215  28.955  0.50 60.73           C  \n"
+        "HETATM    3  O1 1OLA A1004       6.937   6.655  16.062  0.50 44.55           O  \n"
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdb_path = Path(tmpdir) / "complex.pdb"
+        pdb_path.write_text(pdb_text)
+        ligand_path = prepare_ligand(pdb_path)
+        lines = ligand_path.read_text().splitlines()
+
+    assert len(lines) == 2
+    assert " OLA " in lines[0]
+    assert all(line[16] == " " for line in lines)

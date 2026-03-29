@@ -86,6 +86,7 @@ from dq_dock_engine.docking.pdb_io import (
     generate_independent_ligand_geometry,
     parse_structure,
 )
+from dq_dock_engine.docking.rdkit_io import load_rdkit_molecule
 from dq_dock_engine.docking.receptor_preparation import (
     EssentialSiteComponentsPolicy,
     PreparedReceptorSystem,
@@ -176,6 +177,7 @@ DEFAULT_BENCHMARK_OPTIMIZER_BACKEND = OptimizerBackend.FORMAL
 DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY = FormalRoundStrategy.SINGLETON_HYBRID
 DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY = CertifiedScoringFamily.LJ_REALSPACE_EWALD
 DEFAULT_BENCHMARK_USE_POCKET_GUIDED = True
+DEFAULT_BENCHMARK_MAX_RETRIES = 1
 DEFAULT_BENCHMARK_USE_MULTI_STAGE = False
 DEFAULT_BENCHMARK_EXACT_CHEMISTRY_MODE = ExactChemistryMode.EXTENDED_RICH
 DEFAULT_BENCHMARK_PROCESS_START_METHOD = "spawn"
@@ -1564,18 +1566,38 @@ def prepare_ligand(pdb_path: Path, preferred_resname: str | None = None) -> Path
     }
     target_keys.update(target_residue.bonded_residues)
 
+    altloc_counts: dict[str, int] = {}
+    with open(pdb_path) as f:
+        for line in f:
+            if not line.startswith("HETATM"):
+                continue
+            chain_id = line[21].strip()
+            residue_id = f"{line[22:26].strip()}{line[26].strip()}"
+            resname = line[17:20].strip()
+            if (resname, chain_id, residue_id) not in target_keys:
+                continue
+            altloc = line[16].strip()
+            altloc_counts[altloc] = altloc_counts.get(altloc, 0) + 1
+
+    preferred_altloc = ""
+    if "" not in altloc_counts and altloc_counts:
+        preferred_altloc = max(
+            altloc_counts.items(),
+            key=lambda item: (item[1], item[0] == "A", item[0]),
+        )[0]
+
     ligand_lines = []
     with open(pdb_path) as f:
         for line in f:
             if not line.startswith("HETATM"):
                 continue
-            if line[16] not in (" ", "A"):
+            if line[16].strip() not in ("", preferred_altloc):
                 continue
             chain_id = line[21].strip()
             residue_id = f"{line[22:26].strip()}{line[26].strip()}"
             resname = line[17:20].strip()
             if (resname, chain_id, residue_id) in target_keys:
-                ligand_lines.append(line)
+                ligand_lines.append(f"{line[:16]} {line[17:]}")
 
     if not ligand_lines:
         raise ValueError(f"No ligand found in {pdb_path}")
@@ -1641,13 +1663,24 @@ def build_ordered_ligand_chemistry_source(
         return ligand_pdb
 
 
-def _charge_source(
+def _assigned_charges_for_atom_set(
     assigner: ChargeAssigner,
     *,
     elements: tuple[str, ...],
     pdb_path: Path,
-) -> tuple[str, ...] | Path:
-    return elements if assigner.method == ChargeMethod.SIMPLE else pdb_path
+) -> np.ndarray:
+    if assigner.method == ChargeMethod.SIMPLE:
+        return np.asarray(assigner.assign(elements).charges)
+
+    mol = load_rdkit_molecule(pdb_path, remove_hs=False, sanitize=True)
+    charges = np.asarray(assigner.assign(mol).charges)
+    heavy_mask = np.asarray(
+        [atom.GetAtomicNum() != 1 for atom in mol.GetAtoms()],
+        dtype=bool,
+    )
+    if charges.shape[0] == heavy_mask.shape[0]:
+        charges = charges[heavy_mask]
+    return charges
 
 
 def prepare_benchmark_electrostatics(
@@ -1661,21 +1694,15 @@ def prepare_benchmark_electrostatics(
     pocket_elements: tuple[str, ...],
     pocket_atom_count: int,
 ) -> PreparedBenchmarkElectrostatics:
-    ligand_charges = np.asarray(
-        assigner.assign(
-            _charge_source(
-                assigner, elements=ligand_elements, pdb_path=ligand_source_path
-            )
-        ).charges
+    ligand_charges = _assigned_charges_for_atom_set(
+        assigner,
+        elements=ligand_elements,
+        pdb_path=ligand_source_path,
     )
-    pocket_charges = np.asarray(
-        assigner.assign(
-            _charge_source(
-                assigner,
-                elements=pocket_elements,
-                pdb_path=pocket_receptor_pdb,
-            )
-        ).charges
+    pocket_charges = _assigned_charges_for_atom_set(
+        assigner,
+        elements=pocket_elements,
+        pdb_path=pocket_receptor_pdb,
     )
     if len(ligand_charges) != ligand_atom_count:
         raise ValueError(
@@ -2873,7 +2900,7 @@ def run_dq_dock(
     ligand_elements: list[str] | tuple[str, ...] | None = None,
     receptor_elements: list[str] | tuple[str, ...] | None = None,
     exact_chemistry_mode: ExactChemistryMode = DEFAULT_BENCHMARK_EXACT_CHEMISTRY_MODE,
-    max_retries: int = 6,
+    max_retries: int = DEFAULT_BENCHMARK_MAX_RETRIES,
     optimizer_backend: "OptimizerBackend" = DEFAULT_BENCHMARK_OPTIMIZER_BACKEND,
     formal_round_strategy: FormalRoundStrategy = DEFAULT_BENCHMARK_FORMAL_ROUND_STRATEGY,
     certified_scoring_family: CertifiedScoringFamily = DEFAULT_BENCHMARK_CERTIFIED_SCORING_FAMILY,
@@ -4228,7 +4255,7 @@ def run_benchmark(
     use_crystal_ligand_geometry: bool = False,
     parallelism: BenchmarkParallelism = BenchmarkParallelism(),
     attempt_timeout_seconds: float | None = None,
-    max_retries: int = 6,
+    max_retries: int = DEFAULT_BENCHMARK_MAX_RETRIES,
     retry_break_rmsd: float = 0.0,
     retry_preserve_seed: bool = False,
     target_rmsd: float = 0.5,
@@ -4543,7 +4570,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max-retries",
         type=int,
-        default=6,
+        default=DEFAULT_BENCHMARK_MAX_RETRIES,
         help="Maximum retry attempts for the canonical certified DQ-Dock run",
     )
     parser.add_argument(

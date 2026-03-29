@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, fields
 from enum import Enum
 from typing import ClassVar
@@ -9,6 +10,12 @@ import numpy as np
 from jax.tree_util import register_pytree_node_class
 
 from dq_dock_engine.docking.scoring import CertifiedOptionalInteractionTerm
+
+
+AROMATIC_CARBON_BOND_LENGTH_ANGSTROM = 1.39
+AROMATIC_FACE_OFFSET_WIDTH_ANGSTROM = (
+    AROMATIC_CARBON_BOND_LENGTH_ANGSTROM * math.sqrt(3.0) / 2.0
+)
 
 
 class SiteGeometry(Enum):
@@ -261,7 +268,7 @@ class PiStackingInteractionTerm(DerivedInteractionTerm):
     ligand_rings: IndexedSiteArray
     ideal_distance: float = 3.6
     distance_width: float = 0.6
-    offset_width: float = 1.2
+    offset_width: float = AROMATIC_FACE_OFFSET_WIDTH_ANGSTROM
     cutoff: float = 6.0
 
     _subset_fields = ("receptor_rings",)
@@ -333,6 +340,7 @@ class PiCationInteractionTerm(DerivedInteractionTerm):
     ligand_cations: IndexedSiteArray
     ideal_distance: float = 4.5
     distance_width: float = 0.8
+    offset_width: float = AROMATIC_FACE_OFFSET_WIDTH_ANGSTROM
     cutoff: float = 7.0
 
     _subset_fields = ("receptor_rings", "receptor_cations")
@@ -342,7 +350,12 @@ class PiCationInteractionTerm(DerivedInteractionTerm):
         "ligand_rings",
         "ligand_cations",
     )
-    _positive_scalar_fields = ("ideal_distance", "distance_width", "cutoff")
+    _positive_scalar_fields = (
+        "ideal_distance",
+        "distance_width",
+        "offset_width",
+        "cutoff",
+    )
     _activity_field_groups = (
         ("receptor_rings", "ligand_cations"),
         ("receptor_cations", "ligand_rings"),
@@ -353,7 +366,7 @@ class PiCationInteractionTerm(DerivedInteractionTerm):
         "ligand_rings": SiteGeometry.RING,
         "ligand_cations": SiteGeometry.POINT,
     }
-    _aux_fields = ("ideal_distance", "distance_width", "cutoff")
+    _aux_fields = ("ideal_distance", "distance_width", "offset_width", "cutoff")
 
     def _branch_scores(
         self, delta: jnp.ndarray, ring_normals: jnp.ndarray, strengths: jnp.ndarray
@@ -362,7 +375,14 @@ class PiCationInteractionTerm(DerivedInteractionTerm):
         radial = jnp.exp(-(((dists - self.ideal_distance) / self.distance_width) ** 2))
         unit = delta / jnp.maximum(dists[..., None], 1e-6)
         alignment = jnp.abs(jnp.sum(ring_normals * unit, axis=-1))
-        return dists, -(strengths * radial * alignment)
+
+        normal_components = (
+            jnp.sum(delta * ring_normals, axis=-1)[..., None] * ring_normals
+        )
+        lateral_offset = jnp.linalg.norm(delta - normal_components, axis=-1)
+        offset_factor = jnp.exp(-((lateral_offset / self.offset_width) ** 2))
+
+        return dists, -(strengths * radial * alignment * offset_factor)
 
     def _scores(self, poses_coords: jnp.ndarray, *, cutoff_only: bool) -> jnp.ndarray:
         total = jnp.zeros((poses_coords.shape[0],), dtype=poses_coords.dtype)
