@@ -2652,6 +2652,9 @@ abbrev BCRP21 := @Tractability.BlindConformerPipelineRefinements.support_strict_
 -- BCRP22: Posewise exact upper/lower envelopes plus fallback certify patched-support singleton top-1
 abbrev BCRP22 := @Tractability.BlindConformerPipelineRefinements.patchedSupportEnergy_singleton_of_posewise_envelope_margin_without_top1_subset
 
+-- MCB1: Small ligands in large pockets are structurally ill-conditioned for rigid curvature certificates
+abbrev MCB1 := @Tractability.MinimumCurvatureBinding.minimum_curvature_of_ligand_pocket
+
 /-! ## Additional runtime-proof hooks for theorem-gap roadmap integration -/
 
 -- LJ18: Explicit exact-vs-softened LJ error identity
