@@ -25,53 +25,32 @@ For a model $M$ with native coordinate set $A_M \subseteq \{1,\ldots,n\}$:
 \]
 \end{definition}
 
-The following partition identity makes this precise: any exact simplification that removes relevant coordinates from the central interface must discharge their effect somewhere else in the system.
+The next corollary records the core accounting identity and its immediate cost implication.
 
-\leanmetapending{\LH{HD5}, \LH{DQ9}}
-\begin{proposition}[Simplicity-Tax Identity]
+\leanmetapending{\LH{HD5}, \LH{DQ9}, \LH{HD26}, \LH{HD4}}
+\begin{corollary}[Simplicity-Tax Accounting]
 For every finite-coordinate pair $(M,\mathcal{D})$,
 \[
 \mathrm{centralDOF}(M,\mathcal{D}) + \mathrm{simplicityTax}(M,\mathcal{D})
 =
 \mathrm{intrinsicDOF}(\mathcal{D}).
 \]
-\end{proposition}
-
-
-\begin{proof}
-Immediate from the partition $R(\mathcal{D}) = (R(\mathcal{D}) \cap A_M) \;\dot\cup\; (R(\mathcal{D}) \setminus A_M)$.
-\end{proof}
-
-In other words, central simplification changes where exact relevance is handled, not how much exact relevance the deployment must ultimately account for.
-
-\leanmetapending{\LH{HD26}}
-\begin{proposition}[Linear Externalization Under a Per-Site Cost Model]
-If each unresolved relevant coordinate induces one unit of per-site external work, then for $N$ decision sites:
+If each unresolved relevant coordinate induces one unit of per-site external work, then for $N$ sites,
 \[
 \mathrm{ExternalWork}(N) = N \cdot \mathrm{simplicityTax}(M,\mathcal{D}).
 \]
-\end{proposition}
-
-
-\begin{proof}
-Each site pays one unit for each unresolved relevant coordinate, so the total cost is the number of sites times the number of unresolved relevant coordinates.
-\end{proof}
-
-\leanmetapending{\LH{HD4}}
-\begin{theorem}[Amortization Threshold]
-Let $H_{\mathrm{central}}>0$ be one-time centralization cost and $\lambda>0$ the per-site cost coefficient. If $\mathrm{simplicityTax}(M,\mathcal{D})>0$, then for
+Consequently, under per-site coefficient $\lambda>0$ and one-time centralization cost $H_{\mathrm{central}}>0$, whenever $\mathrm{simplicityTax}(M,\mathcal{D})>0$ and
 \[
 N > \frac{H_{\mathrm{central}}}{\lambda \cdot \mathrm{simplicityTax}(M,\mathcal{D})},
 \]
-the complete model is cheaper than repeated external handling:
-\[
-H_{\mathrm{central}} < \lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D}).
-\]
-\end{theorem}
-
+the complete model is cheaper than repeated external handling.
+\end{corollary}
 
 \begin{proof}
-Repeated external handling costs $\lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D})$, while the complete model costs $H_{\mathrm{central}}$ once. Solving the strict inequality $H_{\mathrm{central}} < \lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D})$ for $N$ gives the stated threshold.
+The identity is the partition
+$R(\mathcal{D}) = (R(\mathcal{D}) \cap A_M) \dot\cup (R(\mathcal{D}) \setminus A_M)$. The per-site cost formula is immediate from charging one unit per unresolved relevant coordinate at each site. The threshold follows by solving
+$H_{\mathrm{central}} < \lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D})$
+for $N$.
 \end{proof}
 
 \leanmetapending{\LH{DQ9}, \LH{HD23}}

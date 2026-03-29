@@ -94,31 +94,7 @@ For a fixed information set $I$, the verifier scans the finite state space and c
 Under the succinct encoding of Section~\ref{sec:encoding}, \textsc{Stochastic-Preservation-Check}
 for general distributions (without the full-support assumption) is coNP-hard.
 
-The structured justification is anchored to existing theorems and mechanized lemmas.
-First, what is known: under full support, preservation inherits the static coNP classification
-via Proposition~\ref{prop:stochastic-full-support-equiv} and
-Theorem~\ref{thm:stochastic-preservation-full-support-variants}; the explicit-state base
-query is polynomial for all distributions by Theorem~\ref{thm:stochastic-preservation-explicit};
-and decisiveness under the same encoding is PP-hard by Theorem~\ref{thm:stochastic-pp}.
-
-Second, the structural obstacle: the support-sensitive obstruction lemmas in the artifact
-(Proposition~\ref{prop:stochastic-preservation-partial-general}) isolate the exact mechanism.
-Preservation quantifies over all states while stochastic conditioning weights by probability.
-Zero-probability states can therefore witness static violations that the distribution never
-observes; full-support transfer fails exactly when such states are permitted. This is a
-structural obstruction, and the mechanized artifact isolates the finite combinatorial core
-any reduction must respect \leanmeta{\LH{OU12}, \LH{DC96}, \LH{DC98}}.
-
-Third, why coNP rather than PP: preservation is syntactically universal, because it asks whether the
-coarse optimizer matches the full optimizer at every state, so its quantifier shape matches
-the static coNP classification. Decisiveness is PP-hard because it requires majority-style
-conditional expected-utility comparisons. Preservation compares optimizer sets rather than
-aggregating utilities, so the hardness source is counterexample exclusion (coNP)
-rather than majority counting (PP); support-sensitivity complicates reduction engineering
-but not the high-level quantifier structure.
-
-\paragraph{Reduction intuition.}
-A candidate hardness reduction would encode static counterexample pairs into zero-probability witness states of the distribution. Concretely, from a TAUTOLOGY instance $\varphi$, one could construct a succinct stochastic decision problem where the distribution assigns zero mass to a carefully chosen set of states that encode the $\varphi$-violating assignments. Preservation must check the universal condition over ALL states, including these zero-probability witnesses, so a coNP-style verification can detect the hidden TAUTOLOGY counterexample even though the distribution never observes it. This intuition aligns with the support-sensitive obstruction lemmas (Proposition~\ref{prop:stochastic-preservation-partial-general}) but requires overcoming the technical challenge of succinctly encoding witness-state support.
+Intuition: preservation remains syntactically universal (statewise optimizer agreement), so its quantifier profile aligns with coNP-style counterexample exclusion rather than PP-style majority comparison. The support-sensitive obstruction lemmas (Proposition~\ref{prop:stochastic-preservation-partial-general}) isolate why full-support transfer fails: zero-probability states can witness violations even when they never appear in conditional averages. The mechanized finite core for this obstruction is available \leanmeta{\LH{OU12}, \LH{DC96}, \LH{DC98}}.
 
 Open Problem 4.2. Determine the exact succinct-encoding complexity of
 \textsc{Stochastic-Minimum-Preservation} and \textsc{Stochastic-Anchor-Preservation}
@@ -219,7 +195,7 @@ The first statement composes the unconditional bridge from stochastic preservati
 \end{proof}
 
 \paragraph{What this paper establishes for preservation.}
-For stochastic sufficiency in the preservation sense, this paper proves explicit-state tractability for the base, minimum, and anchor queries (Theorem~\ref{thm:stochastic-preservation-explicit}, Proposition~\ref{prop:stochastic-preservation-variant-search}, and Theorem~\ref{thm:stochastic-preservation-variants-explicit}), static-to-stochastic bridge theorems (Propositions~\ref{prop:stochastic-to-static-sufficiency} and~\ref{prop:stochastic-full-support-equiv}), quotient equivalence under full support (Proposition~\ref{prop:stochastic-quotient-equiv}), and full-support inheritance for the minimum and anchor variants (Theorem~\ref{thm:stochastic-preservation-full-support-variants}). Beyond full support, the paper now also isolates unconditional obstruction lemmas and positive-support bridge results (Proposition~\ref{prop:stochastic-preservation-partial-general}). This yields a complete classification for stochastic preservation under full support, the full-support base case in which every state has nonzero probability, together with support-sensitive partial theory beyond that base case. The general-distribution case still introduces technical complications from zero-probability fibers, and the paper does not claim a full general-distribution classification for the minimum and anchor preservation variants or a succinct-encoding hardness classification for the preservation predicate itself. The PP-hardness results in the stochastic row concern decisiveness and its anchor/minimum variants, not preservation itself.
+This yields a complete preservation classification under full support, together with support-sensitive partial theory beyond that base case. The PP-hardness results in the stochastic row concern decisiveness, not preservation.
 
 \begin{problem}[STOCHASTIC-DECISIVENESS-CHECK]\label{prob:stochastic-singleton-sufficiency}
 \textbf{Input:} $\mathcal{D}_S=(A,X_1,\ldots,X_n,U,P)$ and $I\subseteq\{1,\ldots,n\}$. \\
@@ -342,9 +318,7 @@ Theorem~\ref{thm:stochastic-nppp-upper} completes the complexity picture for sto
 \paragraph{Scope note.}
 For stochastic preservation, this paper establishes explicit-state tractability for the preservation family, full-support inheritance, quotient equivalence, and support-sensitive obstruction/bridge lemmas beyond full support. The general-distribution minimum and anchor variants still remain open as full classification problems and are not claimed. For stochastic decisiveness, the paper establishes PP-hardness and $\textsf{NP}^{\textsf{PP}}$ membership under the stated encoding. The open entries in Table~2 are explicit scope boundaries rather than unresolved subcases.
 
-The remaining gap is not a bookkeeping omission but a real structural issue. Stochastic decisiveness is a pure verification problem: once $I$ is fixed, one must check a family of majority-style conditional comparisons, which yields the stated encoding-sensitive complexity. By contrast, stochastic anchor and minimum sufficiency add an outer existential choice, namely to guess an anchor witness or a candidate coordinate set, before performing the same conditional verification. The current collapse theorem shows that anchor sufficiency reduces to existence of a fiber with a singleton conditional optimum, and the new existential-majority reduction shows that this extra witness layer is not vacuous. \leanmeta{\LH{PA3}} So the open question is genuinely whether that existential layer can be absorbed into PP under the present encoding, not whether the paper has simply stopped one step short of an obvious closure argument.
-
-For that reason, the paper's claim is intentionally calibrated. It does not present the stochastic row as one undifferentiated theorem about one predicate. Instead, it treats preservation and decisiveness as parallel exact questions. Preservation gives the direct stochastic analogue of the static question and the bridge back to the optimizer quotient. Decisiveness yields the strongest succinct-encoding complexity classification established in the paper. The split is part of the proved theory, not a temporary patch.
+The open entries in Table~2 are explicit scope boundaries. The gap between PP-hardness and $\textsf{NP}^{\textsf{PP}}$ membership for anchor/minimum decisiveness is structural, not a bookkeeping omission; resolving it requires determining whether the outer existential layer can be absorbed into PP.
 
 \paragraph{Relevance boundary.}
 The stochastic decisiveness query is fiber-indexed: fixing a candidate information set $I$
