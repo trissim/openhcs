@@ -3371,7 +3371,7 @@ end {module_root}
 
         def format_handle_cell(handle: str) -> str:
             handle_tex = (
-                rf"{{\fontsize{{5.1}}{{5.25}}\selectfont\nolinkurl{{{handle}}}}}"
+                rf"{{\fontsize{{6.5}}{{7.5}}\selectfont\nolinkurl{{{handle}}}}}"
             )
             source_file = handle_locations.get(handle, "") or suffix_locations.get(
                 handle, ""
@@ -3381,7 +3381,7 @@ end {module_root}
             safe_file = source_file.replace("_", r"\_").replace("/", r"/\allowbreak ")
             return (
                 handle_tex
-                + rf"\par\vspace{{-0.2ex}}{{\fontsize{{5.1}}{{5.35}}\selectfont\ttfamily {safe_file}}}"
+                + rf"\par\vspace{{0.1ex}}{{\fontsize{{6.5}}{{7.5}}\selectfont\ttfamily {safe_file}}}"
             )
 
         def sort_key(code: str) -> Tuple[str, int, str]:
@@ -3424,7 +3424,7 @@ end {module_root}
             [
                 r"\end{list}",
                 r"\else",
-                r"\begin{longtable}{@{\hspace{2pt}}p{0.09\linewidth}p{0.37\linewidth}p{0.09\linewidth}p{0.37\linewidth}@{\hspace{2pt}}}",
+                r"\begin{longtable}{@{\hspace{2pt}}p{0.065\linewidth}p{0.40\linewidth}p{0.065\linewidth}p{0.40\linewidth}@{\hspace{2pt}}}",
                 r"\toprule",
                 r"\textbf{ID} & \textbf{Lean Handle / Source} & \textbf{ID} & \textbf{Lean Handle / Source} \\",
                 r"\midrule",
@@ -3453,12 +3453,12 @@ end {module_root}
                         rf"\hypertarget{{lh:{left_code}}}{{\textbf{{\nolinkurl{{{left_code}}}}}}} & {format_handle_cell(left_handle)} & "
                         rf"\hypertarget{{lh:{right_code}}}{{\textbf{{\nolinkurl{{{right_code}}}}}}} & {format_handle_cell(right_handle)} \\"
                     )
-                    lines.append(r"[0.3ex]")
+                    lines.append(r"\hline")
                 else:
                     lines.append(
                         rf"\hypertarget{{lh:{left_code}}}{{\textbf{{\nolinkurl{{{left_code}}}}}}} & {format_handle_cell(left_handle)} & & \\"
                     )
-                    lines.append(r"[0.3ex]")
+                    lines.append(r"\hline")
         else:
             lines.append(
                 r"\multicolumn{4}{@{}l@{}}{\textit{No Lean handles parsed yet.}} \\"
