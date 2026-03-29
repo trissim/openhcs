@@ -24,11 +24,6 @@ In the finite explicit setting, the same condition can be read directly from the
 Under any distribution with positive mass on both colliding classes, $I(C;U) < H(C)$. This is an average-case consequence of the deterministic barrier above.
 \end{remark}
 
-\leanmetapending{\LH{ACS8}}
-\begin{remark}[Relation to Ahlswede-Dueck]
-In the identification paradigm of \cite{ahlswede1989identification}, the decoder asks ``is the message $m$?'' rather than ``what is the message?'' This yields double-exponential codebook sizes. Our setting is different: we require zero-error identification of the \emph{class}, not hypothesis testing. The one-shot zero-error identification feasibility threshold is binary rather than asymptotic.
-\end{remark}
-
 \subsection{Fixed-Length Auxiliary Description}
 
 We now show that augmenting the representation with an auxiliary codeword restores exact recovery.
@@ -43,15 +38,11 @@ An \emph{auxiliary description} is a value $M(c)$ associated with each class $c 
 If $|\mathcal C|=k$, then an auxiliary description of length $L \geq \lceil \log_2 k \rceil$ bits suffices for zero-error identification, regardless of whether $\pi$ is class-injective.
 \end{theorem}
 
-\begin{proof}
-A class-injective auxiliary description assigns a unique identifier to each class. Reading that description together with the representation determines the class exactly.
-\end{proof}
-
 This is the ambient worst-case naming bound over the full class set. The representation-sensitive law below is sharper and is the paper's actual governing converse: it depends on collision multiplicity $A_\pi$ rather than on $|\mathcal C|$.
 
 \subsection{Ambiguity Converse}
 
-The next theorem is the paper's main zero-error compression statement. It converts representation collision multiplicity directly into a necessary fixed-length side-information budget.
+The next theorem is the paper's main zero-error compression statement, in the same fixed-length form as a classical zero-error side-information budget \cite{csiszar2011information} but with the governing alphabet size induced by the representation rather than by the ambient class set alone. It converts representation collision multiplicity directly into a necessary fixed-length side-information budget.
 
 In graph terms, confusable classes are exactly those lying in the same representation fiber, so the confusability graph is a disjoint union of cliques. This structure yields exact finite laws for the residual coding burden left by a representation.
 
@@ -114,10 +105,6 @@ where $A_\pi$ is the collision multiplicity.
 \begin{proof}
 Fix a collision block $G \subseteq \mathcal{C}$ with $|G|=A_\pi$ and identical representation profile. For classes in $G$, the decoder's side information is identical, so zero-error decoding must separate those classes using auxiliary description outcomes. With $L$ bits there are at most $2^L$ outcomes, hence $2^L \ge |G| = A_\pi$.
 \end{proof}
-
-\begin{remark}[Coding interpretation]
-The converse is a lossless coding law for semantic identity \cite{csiszar2011information}. The relevant confusable alphabet is the largest representation-collision block, and zero-error separation of that block requires exactly enough auxiliary outcomes to name its members. The theorem therefore has the same fixed-length form as a classical zero-error side-information budget, but the governing alphabet size is induced by the representation rather than by the ambient class set alone.
-\end{remark}
 
 \leanmetapending{\LH{LWDC3}}
 \begin{corollary}[Maximal-Barrier Converse]\label{cor:max-barrier-converse}

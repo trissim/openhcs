@@ -1,10 +1,10 @@
 The main theorem chain identifies structural laws for zero-error identity recovery. This section records generalizations that relax specific model assumptions while preserving the core insight: residual ambiguity must be paid for in some resource currency.
 
+The zero-error identification setting differs from the identification paradigm of \cite{ahlswede1989identification}, where the decoder asks ``is the message $m$?'' yielding double-exponential codebook sizes; here zero-error class identification has a binary one-shot feasibility threshold rather than an asymptotic one.
+
 \subsection{Stochastic and Semantic Generalizations}
 
-The paper provides exact zero-error theory for fixed representations. Several extensions relax this deterministic assumption. With noisy representations or lossy side channels, deterministic fibers are replaced by probabilistic confusion neighborhoods, and the problem moves toward the graph-entropy regime \cite{korner1973coding}. In such settings, repeated sampling or increased side-information rate can reduce error, relaxing the exact fiber laws into probabilistic coding theorems.
-
-A lossy extension would replace binary misidentification with semantic distortion measures such as hierarchical penalties or task-specific losses. This matters when classes carry internal geometry: the current theory distinguishes zero error from nonzero error, whereas a lossy theory must distinguish tolerable confusion from unacceptable failure. For learned representations, the theoretic task remains identifying what the resulting fiber statistics mean once they are estimated via discretization or empirical audits.
+Noisy representations replace deterministic fibers with probabilistic confusion neighborhoods, moving the problem toward the graph-entropy regime \cite{korner1973coding}. A lossy extension with semantic distortion measures would distinguish tolerable confusion from unacceptable failure along the same fiber geometry.
 
 \subsection{Dynamic Growth and Trigger Conditions}
 
@@ -12,9 +12,7 @@ The static theorems also suggest operational limits for evolving systems. In a P
 
 \subsection{Information-Theoretic Vistas: Privacy and Entropy}
 
-The entropy-sensitive converses (Section~\ref{sec:entropy-converses}) are mirrored by machine-checked Fano-style inequalities connecting distortion to source entropy and budget lower bounds. \leanmeta{\LHrng{RDC}{1}{9}} 
-These also imply privacy-preserving disclosure limits: nominal access has unit disclosure cost, while tag-free identity resolution can require $n-1$ primitive disclosures in adversarial settings. \leanmeta{\LH{PRIV3}} 
-This "three-resource geometry" invites comparison with rate-distortion-perception formulations \cite{blau2019rethinking} and suggests that one may pay for exact identification with side-information bits, additional disclosures, or higher semantic error.
+The entropy converses (Section~\ref{sec:entropy-converses}) also imply privacy-preserving disclosure limits: nominal access has unit disclosure cost, while tag-free identity resolution can require $n-1$ primitive disclosures in adversarial settings. \leanmeta{\LH{PRIV3}} This three-resource geometry invites comparison with rate-distortion-perception formulations \cite{blau2019rethinking}.
 
 \subsection{Empirical Audit: Embedding Collapse}
 

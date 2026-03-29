@@ -102,10 +102,4 @@ If, after observing $U$, the decoder is allowed to ask adaptive binary clarifica
 Let $T$ be any repeated or noisy observation transcript whose realized value factors through the fixed representation, that is, $T = h(U)$ for some map $h$. Then recovering $C$ from $T$ cannot require less worst-case or pointwise adaptive side information than recovering $C$ from $U$ itself.
 \end{corollary}
 
-\begin{remark}[Bit currency at fiber resolution]
-The fixed-length law pays for the worst collision fiber; the adaptive law pays for each fiber separately and averages under the source-induced law of $U$. These are two resolutions of the same object: the cost of naming the classes that remain collapsed inside each representation fiber.
-\end{remark}
-
-\begin{remark}[Entropy comparison]
-The conditional-entropy lower and upper bounds place the adaptive theorem inside classical source-coding language. Zero-error adaptive side information is sandwiched around $H(C\mid U)$ up to the standard one-bit prefix-coding overhead, but the zero-error law remains fiberwise and combinatorial rather than purely entropic.
-\end{remark}
+The zero-error conditional-entropy sandwich places the expected adaptive cost between $H(C\mid U)/\log 2$ and $H(C\mid U)/\log 2 + 1$, but the zero-error law remains fiberwise and combinatorial rather than purely entropic.
