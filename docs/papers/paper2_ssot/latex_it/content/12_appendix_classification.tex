@@ -1,6 +1,6 @@
 \section{System Classification}\label{sec:appendix-classification}
 
-This appendix provides a consolidated classification of representative systems according to the architectural patterns identified by Corollary~\ref{thm:ssot-iff}. The pattern labels used in the table are: Pattern A (Blind Update), meaning missing causal propagation; Pattern B (Amnesiac Derivation), meaning missing provenance observability; and Pattern C (Coherent Kernel), meaning both conditions are present and verifiable rate $1$ is realizable.
+This appendix reports the zero-incoherence classification of representative deterministic partial-view channels according to Corollary~\ref{thm:ssot-iff}. The pattern labels used in the table are: Pattern A (Blind Update), meaning missing causal propagation; Pattern B (Amnesiac Derivation), meaning missing provenance observability; and Pattern C (Coherent Kernel), meaning both conditions are present and verifiable rate $1$ is realizable.
 
 \begingroup
 \centering
@@ -9,7 +9,7 @@ This appendix provides a consolidated classification of representative systems a
 \renewcommand{\arraystretch}{1.18}
 \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.12\linewidth}>{\RaggedRight\arraybackslash}p{0.11\linewidth}>{\centering\arraybackslash}p{0.06\linewidth}>{\centering\arraybackslash}p{0.055\linewidth}>{\centering\arraybackslash}p{0.055\linewidth}>{\centering\arraybackslash}p{0.08\linewidth}X@{}}
 \toprule
-\textbf{Host family} & \textbf{Host / Pattern} & \textbf{Class} & \textbf{Prop.} & \textbf{Prov.} & \textbf{Rate 1} & \textbf{Mechanism} \\
+\textbf{Channel family} & \textbf{Channel instance / Pattern} & \textbf{Class} & \textbf{Prop.} & \textbf{Prov.} & \textbf{Rate 1} & \textbf{Mechanism} \\
 \midrule
 Prog. languages & Python~\cite{pep487,pythondatamodel2025} & C & yes & yes & yes & For the structural facts considered here, class-definition hooks and runtime hierarchy introspection are host-native.\leanmeta{\LH{PYH1}, \LH{PYI1}} \\
 Databases & Engine-maintained materialized view~\cite{postgresMaterializedViews2025,postgresPgMatviews2025} & C & yes & yes & yes & The engine maintains the derived relation and exposes catalog metadata for it.\leanmeta{\LHrng{DBV}{1}{3}} \\
@@ -25,7 +25,7 @@ Deps. & pnpm~\cite{pnpmInstall2026,pnpmWhy2026,pnpmList2026} & A & no & yes & no
 \bottomrule
 \end{tabularx}
 \par\smallskip
-\textbf{Table A.1.} Classification of representative systems as of \today. The same theorem-level coordinates apply uniformly across programming-language runtimes, databases, and dependency managers, so the systems analysis is a single validation table rather than a domain-by-domain survey. Each classification is machine-checked against the sufficiency conditions of Corollary~\ref{thm:ssot-iff}; the feature assignments reflect documented host semantics as of the compilation date.
+\textbf{Table A.1.} Zero-incoherence classification of representative channel families in the deterministic partial-view model. The same theorem-level coordinates apply uniformly across programming-language runtimes, databases, and dependency managers. Each entry is verified against the mechanized sufficiency conditions of Corollary~\ref{thm:ssot-iff}.
 \label{tab:host-checks-a-appendix}
 \par\medskip
 \endgroup
