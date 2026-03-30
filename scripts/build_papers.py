@@ -4660,6 +4660,7 @@ end {module_root}
             shutil.copy2(pdf_src, pdf_dest)
             print(f"[build] ✓ {paper_id}_submission.pdf → releases/")
             self.package_submission_source(paper_id)
+            self.package_supplementary(paper_id)
         else:
             print(f"[build] ✗ Submission PDF not generated for {paper_id}")
 
@@ -4765,6 +4766,99 @@ end {module_root}
             ]
         )
         (package_dir / "README_SUBMISSION.txt").write_text(readme, encoding="utf-8")
+
+    def package_supplementary(self, paper_id: str) -> Optional[Path]:
+        """Package IEEE supplementary materials.
+
+        Creates two archives:
+        1. Supplementary LaTeX file (for "LaTeX Supplementary File" field)
+        2. Supplementary material (Lean proofs, experiments) for review
+
+        Reuses infrastructure from package_arxiv for Lean proofs and experiments.
+        """
+        raw_papers = self._raw_metadata.get("papers", {})
+        raw_meta = raw_papers.get(paper_id, {})
+        supp_file = raw_meta.get("supplementary_file")
+        if not supp_file:
+            print(f"[supplementary] No supplementary_file configured for {paper_id}")
+            return None
+
+        meta = self._get_paper_meta(paper_id)
+        releases_dir = self._get_releases_dir(paper_id)
+        archive_prefix = self._get_archive_prefix(paper_id)
+        package_dir = releases_dir / f"supplementary_package_{archive_prefix}"
+        if package_dir.exists():
+            shutil.rmtree(package_dir)
+        package_dir.mkdir(parents=True)
+
+        print(f"[supplementary] Packaging for {paper_id}...")
+
+        # Phase 1: Compile supplementary PDF from LaTeX
+        latex_dir = self._get_latex_dir(paper_id)
+        supp_src = latex_dir / supp_file
+        if supp_src.exists():
+            self._compile_supplementary_latex(paper_id, supp_src, package_dir)
+        else:
+            print(
+                f"[supplementary] Warning: supplementary source not found: {supp_src}"
+            )
+
+        # Phase 2: Copy Lean proofs (for "Supplementary Material for Review")
+        self._copy_lean_proofs(paper_id, package_dir)
+
+        # Phase 3: Copy experiments if configured
+        self._copy_experiments(paper_id, package_dir)
+
+        # Phase 4: Create archive
+        tar_path, zip_path = self._create_named_archive(
+            releases_dir=releases_dir,
+            package_dir=package_dir,
+            archive_stem=f"{archive_prefix}_supplementary",
+            root_dir_name=archive_prefix,
+        )
+
+        print(
+            f"[supplementary] ✓ {zip_path.name} → {releases_dir.relative_to(self.repo_root)}/"
+        )
+        return zip_path
+
+    def _compile_supplementary_latex(
+        self, paper_id: str, supp_src: Path, package_dir: Path
+    ) -> Optional[Path]:
+        """Compile supplementary LaTeX file to PDF."""
+        import subprocess
+
+        supp_dir = supp_src.parent
+        supp_name = supp_src.stem
+
+        # Build the supplementary material
+        cmd = ["pdflatex", "-interaction=nonstopmode", supp_name]
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=supp_dir,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            # Check for PDF output
+            pdf_path = supp_dir / f"{supp_name}.pdf"
+            if pdf_path.exists():
+                dest_pdf = package_dir / f"supplementary.pdf"
+                shutil.copy2(pdf_path, dest_pdf)
+                # Also copy the source
+                shutil.copy2(supp_src, package_dir / supp_src.name)
+                print(f"[supplementary] ✓ compiled {supp_name}.pdf")
+                return dest_pdf
+            else:
+                print(f"[supplementary] Warning: PDF not produced for {supp_name}")
+                return None
+        except subprocess.TimeoutExpired:
+            print(f"[supplementary] Warning: timeout compiling {supp_name}")
+            return None
+        except Exception as e:
+            print(f"[supplementary] Warning: error compiling {supp_name}: {e}")
+            return None
 
     def build_markdown(self, paper_id: str):
         """Build Markdown version of a paper.

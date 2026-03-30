@@ -4,7 +4,8 @@ The static, stochastic, and sequential formulations are the paper's central orga
 
 \subsection{Complexity Matrix}
 
-\begin{center}
+\begin{table}[h]
+\centering
 \begingroup
 \renewcommand{\tabularxcolumn}[1]{m{#1}}
 \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash\hyphenpenalty=10000\exhyphenpenalty=10000}m{0.14\linewidth}>{\RaggedRight\arraybackslash}m{0.18\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
@@ -19,10 +20,11 @@ Stochastic decisiveness & P (explicit), PP-hard (succinct) & PP-hard, in $\texts
 \midrule
 Sequential & PSPACE-complete & PSPACE-complete & PSPACE-complete \\
 \bottomrule
-\label{tab:regime-matrix}
 \end{tabularx}
+\caption{Complexity matrix across regimes and query types.}
+\label{tab:regime-matrix}
 \endgroup
-\end{center}
+\end{table}
 
 Table~\ref{tab:regime-matrix} is the main statement-level summary. The stochastic row is intentionally split: preservation and decisiveness are distinct predicates with different complexity behavior. Open cells are explicit scope boundaries.
 

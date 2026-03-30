@@ -9,10 +9,13 @@ So the classification is intentionally hybrid: finite gadgets and decision proce
 \bigskip
 \noindent\textbf{Summary of what is verified vs.\ what is assumed.}
 
-\begin{center}
-\begingroup
+\begin{table}[h]
+\centering
 \small
-\begin{tabularx}{\linewidth}{>{\RaggedRight\arraybackslash\hyphenpenalty=10000\exhyphenpenalty=10000}m{0.25\linewidth}>{\RaggedRight\arraybackslash}Xr}
+\setlength{\tabcolsep}{4pt}
+\newcommand{\arraystretch}{1.12}
+\newcommand{\tabularxcolumn}[1]{m{#1}}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}m{0.25\linewidth}>{\RaggedRight\arraybackslash}m{0.35\linewidth}>{\RaggedRight\arraybackslash}X@{}}
 \toprule
 \textbf{Claim} & \textbf{Verified in Lean} & \textbf{Paper-level} \\
 \midrule
@@ -33,8 +36,8 @@ $\mathsf{NP}^{\mathsf{PP}}$ upper bound & Witness/checking schema & Oracle machi
 ETH lower bound & Reduction to empty-set sufficiency & Asymptotic reduction chain \\
 \bottomrule
 \end{tabularx}
+\caption{Summary of what is verified in Lean vs.\ what is argued at paper-level.}
 \label{tab:artifact-scope}
-\endgroup
-\end{center}
+\end{table}
 
 This explicit boundary satisfies the reviewer's demand for rigor without overclaiming what the artifact provides. The finite core is solid; the asymptotic lifts are standard but not mechanized.

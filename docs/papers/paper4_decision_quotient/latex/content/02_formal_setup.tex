@@ -2,11 +2,11 @@
 
 This section fixes the abstract vocabulary used throughout the paper. We work with finite decision problems whose state spaces factor into coordinates, and we isolate the minimal terminology needed to state the later complexity results. The same setup will support the paper's three core regime classifications, the encoding-sensitive boundary, and the later consequence sections.
 
-\begingroup
+\begin{table}[h]
 \centering
 \small
 \setlength{\tabcolsep}{4pt}
-\renewcommand{\arraystretch}{1.12}
+\newcommand{\arraystretch}{1.12}
 \renewcommand{\tabularxcolumn}[1]{m{#1}}
 \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}m{0.18\linewidth}>{\RaggedRight\arraybackslash}m{0.30\linewidth}>{\RaggedRight\arraybackslash}m{0.21\linewidth}>{\RaggedRight\arraybackslash}X@{}}
 \toprule
@@ -21,9 +21,9 @@ ANCHOR-SUFFICIENCY & $\exists$ anchor, then universal fiber check & exact preser
 Optimizer quotient & universal factorization property & coarsest decision-preserving abstraction & canonical structural object \\
 \bottomrule
 \end{tabularx}
-\par\smallskip
-\textbf{Setup map.} The four central objects differ mainly in quantifier shape: minimum sufficiency collapses in the static regime, while anchor sufficiency keeps its existential fiber choice.
-\endgroup
+\caption{Setup map. The four central objects differ mainly in quantifier shape: minimum sufficiency collapses in the static regime, while anchor sufficiency keeps its existential fiber choice.}
+\label{tab:formal-setup}
+\end{table}
 
 \subsection{Decision Problems with Coordinate Structure}
 

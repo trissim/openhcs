@@ -4,24 +4,24 @@ The regime hierarchy identifies where exact relevance certification sits in the 
 
 \paragraph{Model note.} Part~1 is an explicit-state upper bound (time polynomial in $|S|$). Part~2 is a succinct-encoding lower bound under ETH (time exponential in $n$). The encodings are defined in Section~\ref{sec:encoding}.
 
-\begingroup
+\begin{table}[h]
 \centering
 \small
 \setlength{\tabcolsep}{4pt}
-\renewcommand{\arraystretch}{1.12}
+\newcommand{\arraystretch}{1.12}
 \renewcommand{\tabularxcolumn}[1]{m{#1}}
 \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}m{0.19\linewidth}>{\RaggedRight\arraybackslash}m{0.19\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}m{0.18\linewidth}@{}}
 \toprule
 \textbf{Encoding} & \textbf{Support regime} & \textbf{Complexity consequence} & \textbf{Source} \\
 \midrule
-Explicit-state & $k^* = O(\log N)$ & exact certification is polynomial in $N$ by projection enumeration & Theorem~\ref{thm:dichotomy}(1) \\
+Explicit-state & $k^* = O(\log N)$ & exact certification is polynomial in $N$ by projection enumeration & Theorem~\ref{tab:dichotomy}(1) \\
 \midrule
-Succinct & $k^* = \Omega(n)$ & exact certification inherits an ETH-conditioned $2^{\Omega(n)}$ lower bound & Theorem~\ref{thm:dichotomy}(2) \label{tab:dichotomy-boundary}\\
+Succinct & $k^* = \Omega(n)$ & exact certification inherits an ETH-conditioned $2^{\Omega(n)}$ lower bound & Theorem~\ref{tab:dichotomy}(2) \\
 \bottomrule
 \end{tabularx}
-\par\smallskip
-\textbf{Boundary summary.} The tractable-hard contrast is controlled jointly by encoding and by the size of the true sufficient support.
-\endgroup
+\caption{Boundary summary. The tractable-hard contrast is controlled jointly by encoding and by the size of the true sufficient support.}
+\label{tab:dichotomy-boundary}
+\end{table}
 
 \leanmetapending{\LH{DQ26}, \LHrng{DQ}{29}{30}}
 \begin{theorem}[Encoding-Sensitive Contrast]\label{thm:dichotomy}

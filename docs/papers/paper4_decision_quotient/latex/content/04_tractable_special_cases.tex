@@ -4,11 +4,11 @@ We distinguish the encodings of Section~\ref{sec:encoding}. The tractability res
 
 Our theory provides comprehensive coverage of tractable subcases. The artifact certifies explicit decision procedures for several families, and also certifies paper-specific reductions and complexity transfers connecting structurally interesting restrictions to standard polynomial-time algorithmic backbones. Each subcase removes one of the structural sources of hardness in exact certification: unrestricted action comparison, cross-coordinate interaction, high-width dependency structure, or unnecessary state-space multiplicity.
 
-\begingroup
+\begin{table}[h]
 \centering
 \small
 \setlength{\tabcolsep}{4pt}
-\renewcommand{\arraystretch}{1.12}
+\newcommand{\arraystretch}{1.12}
 \renewcommand{\tabularxcolumn}[1]{m{#1}}
 \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}m{0.18\linewidth}@{}}
 \toprule
@@ -26,11 +26,10 @@ Bounded treewidth & interaction checking reduces to low-width CSP & $O(n \cdot k
 \midrule
 Coordinate symmetry & orbit types replace raw state pairs & $O\!\bigl(\binom{d+k-1}{k-1}^2\bigr)$ \\
 \bottomrule
-\label{tab:tractability-map}
 \end{tabularx}
-\par\smallskip
-\textbf{Tractability map.} Each restriction above removes a structural hardness source. Formal definitions for all cases are retained in the subsections below.
-\endgroup
+\caption{Tractability map. Each restriction above removes a structural hardness source. Formal definitions for all cases are retained in the subsections below.}
+\label{tab:tractability-map}
+\end{table}
 
 \begin{theorem}[Tractable Subcases]\label{thm:tractable}
 The following structurally interesting tractable subcases are all mechanized in artifact. The artifact certifies paper-specific reductions and complexity transfers connecting each to standard polynomial-time algorithmic backbones. Formal definitions and trivial cases (single action, bounded state space, separable utility, dominance) are retained in the subsections below.
