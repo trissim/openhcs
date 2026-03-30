@@ -30,6 +30,18 @@ The paper is best read as a theory of exact decision-relevant information organi
 
 \end{enumerate}
 
+\subsection{Broader Implications for Exact Abstraction}
+
+The optimizer quotient supplies the long-missing canonical object for a notion that has been used informally across artificial intelligence, programming languages, and formal verification: \emph{exact relevance} in decision systems. In attention mechanisms, retrieval-augmented generation, and concept-bottleneck models, one repeatedly asks which coordinates of a representation are essential for downstream decisions. In compilers and static analysis, dead-code elimination seeks precisely the same distinction. In model checking and state-space reduction, the central question is again which components of a state affect acceptance or rejection.
+
+What has been absent is a single mathematical object that makes this notion precise, computationally meaningful, and model-agnostic. The optimizer quotient fills this gap: it is the coarsest abstraction that exactly preserves optimal-action distinctions, so every exact decision-preserving abstraction must refine it. Its universal property (Theorem~\ref{thm:quotient-universal}) therefore serves as the canonical reference point for exact relevance.
+
+The computational consequences are immediate and regime-sensitive. The complexity map of Section~\ref{sec:regime-hierarchy} shows that the cost of certifying exact relevance grows sharply with model expressiveness: coNP-complete in the static regime, PP-hard under stochastic conditioning, and PSPACE-complete once temporal contingency is introduced. Each of the six tractability conditions identified in Section~\ref{sec:tractable} removes a distinct structural barrier and collapses the problem to polynomial time.
+
+A direct corollary is the \emph{simplicity tax}: when exact relevance cannot be certified, systems are forced to carry irrelevant coordinates, paying a structural overhead that cannot be eliminated without sacrificing correctness. This tradeoff is fundamental---either invest in certification, or accept the representational cost of redundant information.
+
+Taken together, the optimizer quotient and the accompanying regime-sensitive complexity theory provide a common foundation for analyzing exact abstraction across subfields. Attention layers that discard tokens are implicitly approximating this quotient. Retrieval systems that select context are operating under stochastic relaxations of the same object. Verification tools that reduce state spaces are solving tractable special cases of the certification problem. The framework thus supplies a uniform language and precise complexity landscape for what it means to be ``exactly relevant'' in any of these settings.
+
 \subsection{Quantifier Structure}
 
 Insufficiency has short witnesses (a disagreeing state pair), while sufficiency is universal counterexample exclusion. This quantifier shape explains the static coNP base classification, the static $\Sigma_2^P$ anchor variant, and why stochastic/temporal enrichments raise complexity when conditional comparison or temporal contingency is added.
