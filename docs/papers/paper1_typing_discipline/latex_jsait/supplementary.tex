@@ -5,9 +5,13 @@
 \usepackage{lmodern}
 \usepackage[margin=1in]{geometry}
 \usepackage{longtable}
+\usepackage{tabularx}
 \usepackage{booktabs}
 \usepackage{url}
 \usepackage[hidelinks]{hyperref}
+
+% Lean-handle helpers
+\InputIfFileExists{../../shared/lean-handle-macros.tex}{}{}
 
 \begin{document}
 
@@ -25,6 +29,16 @@ It includes every handle identifier, declaration name, and source module path.
   \input{content/lean_handle_ids_auto.tex}
 }{%
   \textbf{Error:} \texttt{content/lean\_handle\_ids\_auto.tex} not found.
+}
+
+\section{Claim-to-Lean Handle Mapping}
+
+This section maps each paper claim to its corresponding Lean formalization.
+
+\IfFileExists{content/claim_mapping_auto.tex}{%
+  \input{content/claim_mapping_auto.tex}
+}{%
+  \textbf{Error:} \texttt{content/claim\_mapping\_auto.tex} not found.
 }
 
 \end{document}
