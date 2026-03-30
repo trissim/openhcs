@@ -36,43 +36,14 @@ It includes every handle identifier, declaration name, and source module path.
 \vfill
 \newpage
 
-\section{Mechanized Verification Details}
-
-The main theorem chains of this work are machine-checked in Lean 4, and the cited proof modules compile with zero \texttt{sorry} placeholders. The artifact covers the following theorem packages:
-
-\begin{itemize}
-\item \textbf{Threshold and Unified-Converse}: Coherence, independent rate, the side-information lower bound, pair injectivity, clique/fiber/global budget bounds, conditional-entropy and decoder-output reformulations, and deterministic data processing.
-\item \textbf{Graph and Asymptotic-Capacity}: Explicit confusability graph objects, exact recovery as colorability, strong-power identification for block confusability, Fekete-style asymptotic Shannon capacity, and a fixed Lov\'asz-$\vartheta$ upper theory.
-\item \textbf{Equality and SSOT}: The clique-fiber equality theorem, meet-witness sufficient conditions, the fiber-coherence collapse criterion, and the realizability iff theorem.
-\item \textbf{Affine Fact-Matroid}: Semantic determination as span membership of coordinate functionals and the identification of minimal determining fact sets with matroid bases.
-\end{itemize}
-
-\section{Verification Statistics}
-
-\input{content/lean_stats.tex}
-
-\begin{table}[h]
-\centering
-\small
-\begin{tabular}{lrr}
-\toprule
-\textbf{Metric} & \textbf{Local (Ssot/)} & \textbf{Total Development} \\
-\midrule
-Source Files & \LeanLocalFiles & \LeanTotalFiles \\
-Lines of Code & \LeanLocalLines & \LeanTotalLines \\
-Theorems/Lemmas & \LeanLocalTheorems & \LeanTotalTheorems \\
-Placeholders (\texttt{sorry}) & \LeanLocalSorry & \LeanTotalSorry \\
-\bottomrule
-\end{tabular}
-\caption{Summary of mechanized verification statistics for the Paper 2 artifact.}
-\end{table}
-
 \section{Claim Mapping to Lean Handles}
 
-This section provides the direct mapping between paper handles (Theorem, Corollary, Lemma) and the mechanized proof handles in the Lean 4 artifact.
+This section provides the direct mapping between paper claims and the mechanized proof handles in the Lean 4 artifact.
 
-\begin{center}
-\input{content/claim_mapping_appendix.tex}
-\end{center}
+\IfFileExists{content/claim_mapping_auto.tex}{%
+  \input{content/claim_mapping_auto.tex}
+}{%
+  \textbf{Error:} \texttt{content/claim\_mapping\_auto.tex} not found.
+}
 
 \end{document}
