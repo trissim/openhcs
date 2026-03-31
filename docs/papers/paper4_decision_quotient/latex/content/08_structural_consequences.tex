@@ -1,0 +1,37 @@
+\section{Structural Consequences for Exact Certification}\label{sec:structural-consequences}
+
+The regime hierarchy yields both theoretical barriers and practical implications. This section collects structural consequences that follow from the complexity classifications: witness-checking lower bounds, approximation gaps, configuration-simplification limits, regime-dependent certification competence, and the simplicity tax principle. The common theme is that exact relevance certification imposes constraints that cannot be circumvented without either restricting the regime or accepting tradeoffs.
+
+\subsection{Exact Simplification and Over-Specification}
+
+Many practical simplification questions are instances of sufficiency checking. For example, configuration parameter reduction asks whether a subset of parameters preserves all decision-relevant behavior, which directly reduces to \textsc{Sufficiency-Check} (Appendix~\ref{app:applications} contains detailed reductions). This connection yields immediate complexity consequences.
+
+\leanmetapending{\LHrng{DQ}{36}{37}}
+\begin{corollary}[No General-Purpose Exact Configuration Minimizer]
+\label{cor:no-general-minimizer}
+Assuming $\Pclass \neq \coNP$, there is no polynomial-time general-purpose procedure that takes an arbitrary succinctly encoded configuration problem and always returns a smallest behavior-preserving parameter subset.
+\end{corollary}
+
+\begin{proof}
+Such a procedure would solve \textsc{Minimum-Sufficient-Set} in polynomial time for arbitrary succinctly encoded instances, contradicting Theorem~\ref{thm:minsuff-conp} under the assumption $\Pclass \neq \coNP$.
+\end{proof}
+
+\leanmetapending{\LH{CR1}, \LH{CT12}, \LH{DQ26}, \LH{HD14}}
+\begin{remark}
+The corollary does not rule out useful simplification tools; it rules out a fully general exact minimizer with worst-case polynomial guarantees. The structured regimes isolated in Section~\ref{sec:tractable} remain viable precisely because they restrict the source of hardness. Moreover, when certification is computationally expensive but parameter maintenance is cheap, over-specification can be cost-optimal—another manifestation of the simplicity tax principle.
+\end{remark}
+
+\subsection{Regime-Limited Exact Certification}
+
+\leanmetapending{\LH{DQ36}, \LH{DQ40}, \LH{DQ44}}
+\begin{proposition}[Exact Certification Competence Depends on Regime]
+\label{prop:competence-by-regime}
+Within the model of this paper, exact certification competence is regime-dependent. In the general succinct regime, exact relevance certification and exact minimization inherit the hardness results of Sections~\ref{sec:hardness} and~\ref{sec:dichotomy}. In the structured regimes of Section~\ref{sec:tractable}, exact certification becomes available in polynomial time.
+\end{proposition}
+
+
+\begin{proof}
+The negative side is given by Theorems~\ref{thm:sufficiency-conp} and~\ref{thm:minsuff-conp}, together with the ETH-conditioned lower bounds summarized in Section~\ref{sec:dichotomy}. The positive side is given by the tractability results of Section~\ref{sec:tractable}, which provide explicit polynomial-time certification procedures under structural restrictions.
+\end{proof}
+
+The next three subsections sharpen that basic regime distinction in different directions: exact reliability under polynomial budgets, witness-checking and approximation limits, and the cost of compressing a central interface while leaving exact relevance unresolved.

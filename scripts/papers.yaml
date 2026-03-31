@@ -51,6 +51,7 @@ build:
     - ".aux"
     - ".cls"
     - ".sty"
+    - ".bst"
   lean_exclude_dirs:
     - ".lake"
     - "build"
@@ -80,7 +81,7 @@ papers:
     forcing_prefixes: ["COMPL", "IMP", "AXI", "EMB", "EXT", "ALT", "UNIQ", "FORC"]
     submission_format:
       latex_flag: "\\JSAITREVIEW"
-      description: "JSAIT review: single column, double spaced, 12pt, 1in margins"
+      description: "JSAIT submission: single column, double spaced, 12pt (per JSAIT author guidelines)"
     supplementary_file: "supplementary.tex"
 
   paper2:
@@ -102,7 +103,7 @@ papers:
     venue: "IEEE Transactions on Information Theory"
     submission_format:
       latex_flag: "\\ITSUBMISSION"
-      description: "IT submission variant"
+      description: "IT submission: single column, double spaced (per TIT author guidelines)"
     lean_dependencies:
       - "paper1"
     assumption_ledger_sources:

@@ -6,6 +6,14 @@ We now add a distribution over states. Once utilities are compared through condi
 
 In static decision problems, the exact question is whether hiding coordinates preserves the optimizer. In stochastic decision problems, preservation is still a well-defined exact question, but it is no longer the only one. One can also ask whether the retained signal is itself a complete decision interface, meaning that every observable fiber has a unique conditional optimum. That is the decisiveness predicate. The two predicates are not equivalent: a coordinate set may preserve the full-information optimizer without being decisive, and it may be decisive without preserving the full-information optimizer. Probability therefore produces two parallel exact questions rather than one uniform stochastic analogue.
 
+\begin{example}[Preservation without Decisiveness]
+Consider a decision problem with two coordinates $X_1,X_2 \in \{0,1\}$, actions $A=\{0,1\}$, uniform distribution over states, and utility $U(a,s)=1$ if $a = s_1 \oplus s_2$ (XOR), 0 otherwise. Hiding $X_2$ preserves the optimizer: given any value of $X_1$, the conditional optimal action is still $s_1 \oplus s_2$ (since the distribution is uniform, the conditional expectation equals pointwise utility). However, $X_1$ alone is not decisive: for each fixed $X_1$, both $s_2=0$ and $s_2=1$ yield different optimal actions (0 and 1, or 1 and 0), so no single action is conditionally optimal across the entire fiber.
+\end{example}
+
+\begin{example}[Decisiveness without Preservation]
+Consider the same coordinate structure but with utility $U(a,s)=1$ if $a = s_1$, 0 otherwise. Here $X_1$ is decisive: for each $x_1$, action $x_1$ is uniquely optimal. However, $X_1$ does not preserve the full optimizer: when $s_2$ is revealed, the optimal action depends on $s_1$ alone, but the utility values differ across $s_2$, so the conditional expectation at $X_1=x_1$ averages over utilities that $X_1$ cannot distinguish.
+\end{example}
+
 \subsection{Stochastic Decision Problems}
 
 \begin{definition}[Stochastic Decision Problem]\label{def:stochastic-decision-problem}
@@ -56,7 +64,7 @@ Consider a stochastic decision problem with $S=\{s_1,s_2\}$, $A=\{a,b\}$, unifor
 \toprule
 \textbf{Predicate/} \textbf{query} & \textbf{What is proved here} & \textbf{Mechanized core} & \textbf{Open / not formalized} \\
 \midrule
-Stochastic sufficiency (preservation) & Polynomial-time under explicit-state encoding; bridges to static sufficiency and the optimizer quotient & Explicit-state decider; full-support bridge package & No succinct-encoding hardness claimed \\
+Stochastic sufficiency (preservation) & Polynomial-time under explicit-state encoding; bridges to static sufficiency & Explicit-state decider; full-support bridge package & No succinct-encoding hardness claimed \\
 \midrule
 Minimum / anchor preservation & Polynomial-time in explicit state; under full support, inherit coNP-completeness / $\Sigma_2^P$-completeness from the static regime & Full-support inheritance theorems; finite searches; obstruction/bridge lemmas & Open; conjecture coNP-hard \\
 \midrule

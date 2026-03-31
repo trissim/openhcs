@@ -1,54 +1,38 @@
-The formal and coding results lead to a practical corollary: if a representation $\pi$ is non-injective, then no purely semantic pipeline can guarantee zero-error identity recovery. The identity debt is paid in one of three currencies: an injective encoder, explicit identity metadata of length at least $\log_2 A_\pi$ in the worst case, or a nonzero distortion floor. In deployed systems the usual payment mechanisms are symbolic handles, such as unique identifiers, pointers, retrieval keys, primary keys, and registry entries.
+Lossy compression and semantic abstraction necessarily create collision fibers by discarding distinguishing information. In closed-world systems, the deployed representation already contains collisions; in open-world systems, collisions cannot be certified away. The identity debt is paid in one of three currencies: an injective encoder, explicit identity metadata of length at least $\log_2 A_\pi$ in the worst case, or a nonzero distortion floor. In deployed systems the usual payment mechanisms are symbolic handles, such as unique identifiers, pointers, retrieval keys, primary keys, and registry entries.
 
 Example. In a retrieval system with $100$ documents sharing the same embedding, omitting the $\lceil \log_2 100 \rceil = 7$ identifier bits leaves a distortion floor of $1-1/100 = 99\%$ on that collision fiber. Even one bit below the exact-recovery threshold is costly: with only $6$ bits the distortion is still at least $36\%$.
 
 \subsection{Learned Representations and Formal Instantiations}
 
-The abstract coding framework applies to any representation map. In the learned-representation setting, semantic information is what the encoder exposes, while identity information is the exact class label or entity name that may still need to be carried explicitly. Zero-error recovery from semantic information alone is possible exactly when the representation is injective on identity classes. When it is not, the collision fibers quantify the irreducible identity residue that is restored by explicit metadata. This transfers directly to neurosymbolic systems: a neural encoder supplies the semantic side, and any symbolic layer that needs exact identity must be given the missing distinguishing information explicitly.
+The abstract coding framework applies to any representation map. Zero-error recovery from semantic information alone is possible exactly when the representation is injective on identity classes; otherwise, collision fibers quantify the irreducible identity residue restored by explicit metadata.
 
 \paragraph{What this means for ML systems.}
-The coding laws have immediate consequences for learned-representation systems.
-
 \begin{itemize}
-\item \textbf{Concept bottleneck models.} If the intermediate concept representation has collisions, then no downstream classifier can distinguish the collapsed concepts without extra identity information. Exact concept-level decisions therefore require an added disambiguation channel, retrieval key, or explicit symbolic concept identifier.
-
-\item \textbf{Retrieval-augmented systems.} The retrieval index pays the identity-bit budget. If two artifacts have the same embedding, the system must preserve distinguishing metadata elsewhere, such as document identifiers, source pointers, or exact lookup keys. Otherwise exact retrieval is impossible on the collided fiber. Retrieval failures in which one real entity is substituted for a distinct entity sharing the same representation are exactly the failure mode of representation non-injectivity. This is the same architectural role played by explicit non-parametric memory in retrieval-augmented generation systems \cite{lewis2020retrieval}. The minimum metadata budget that prevents such substitutions is $\lceil \log_2 A_\pi \rceil$ bits, which is necessary by Theorem~\ref{thm:converse} and sufficient by Theorem~\ref{thm:tag-restored-sufficiency}.
-
-\item \textbf{Pure representation schemes and open-world deployments.} Systems that rely only on semantic representations face the same barrier: any system that must identify entities exactly in an open world must either use an injective encoder or carry explicit identity metadata. A third option does not exist.
+\item \textbf{Concept bottleneck models.} Collapsed concepts require extra identity information: disambiguation channels, retrieval keys, or symbolic identifiers.
+\item \textbf{Retrieval-augmented systems.} The retrieval index pays the identity-bit budget $\lceil \log_2 A_\pi \rceil$; if embeddings collide, distinguishing metadata (document identifiers, lookup keys) must be preserved \cite{lewis2020retrieval}.
+\item \textbf{Pure representation schemes.} Open-world systems need either an injective encoder or explicit identity metadata.
 \end{itemize}
 
 \paragraph{Attribute-only versus tag-augmented design.}
-Whenever $A_\pi>1$, the coding laws imply a sharp design dichotomy. In an attribute-only strategy, the system stores or transmits only the semantic representation $\pi(v)$. This pays only for semantic description, but it inherits the distortion floor forced by the collision fibers; in the zero-budget case, the worst collided block incurs error at least $1-1/A_\pi$ by Corollary~\ref{cor:zero-budget-error-floor}. In a tag-augmented strategy, the system stores $\pi(v)$ together with auxiliary identity information. This increases storage by the exact identity budget, up to $\lceil \log_2 A_\pi \rceil$ bits in the worst case, but restores zero-error identity recovery.
+When $A_\pi>1$, attribute-only strategies inherit the distortion floor (error at least $1-1/A_\pi$), while tag-augmented strategies pay up to $\lceil \log_2 A_\pi \rceil$ bits for zero-error recovery. This is why symbolic identifiers are ubiquitous in high-reliability systems.
 
-This is why symbolic identifiers are ubiquitous in high-reliability systems. Primary keys, memory addresses, retrieval identifiers, and similar handles are the mechanisms by which systems avoid the distortion floor mandated by the coding laws. In settings where such handles are already available, the design lesson is stronger than mere feasibility.
-
-\leanmetapending{\LH{PD1}}
-\begin{corollary}[Pareto domination, cf. Theorem~\ref*{thm:converse}]\label{cor:pareto-domination}
-In any system where nominal identity is provided for free (databases with primary keys, object stores with stable identifiers, programming languages with inheritance hierarchies\leanmeta{\LH{EMB1}, \LH{ACS9}}), the nominal architecture must be chosen for exact identity recovery: attribute-only alternatives cannot achieve zero error, while the nominal system does at no additional cost.
+\leanmetapending{\LH{PD1}, \LH{ALT1}, \LH{ALT2}}
+\begin{corollary}[Pareto domination]\label{cor:pareto-domination}
+In any system where nominal identity is provided for free (databases with primary keys, object stores with stable identifiers, programming languages with inheritance hierarchies), the nominal architecture must be chosen for exact identity recovery: attribute-only alternatives cannot achieve zero error, while the nominal system does at no additional cost. By Theorem~\ref*{thm:converse}, the required bit budget is $\lceil \log_2 A_\pi \rceil$; when this budget is zero (nominal identity is free), the nominal architecture achieves zero error while attribute-only systems cannot. This follows from the information barrier \leanmeta{\LH{INF1}, \LH{PRV1}}, the impossibility of shape-based distinction \leanmeta{\LH{ACS8}} and provenance recovery \leanmeta{\LH{ACS9}}, the non-embeddability of semantic identity \leanmeta{\LH{EMB1}}, and the fact that shape-only systems are concessions not alternatives \leanmeta{\LHrng{ALT}{1}{2}}.
 \end{corollary}
 
 
-The mechanization sharpens this operational claim with an admissibility guarantee for the symbolic layer: in any valid execution trace, every registry read or write names a registry that was declared in the system specification. Thus the formal registry semantics is closed under the declared interface; undeclared registries are semantically inert and cannot appear in certified traces. This does not rule out arbitrary hidden state in real implementations, but it does show that the formal model does not smuggle in extra symbolic storage beyond the declared registry surface. \leanmeta{\LH{NOH1}}
+The mechanization guarantees that every registry read/write in a valid trace names a declared registry; undeclared registries cannot appear in certified traces. \leanmeta{\LH{NOH1}}
 
 \paragraph{Formal instantiation.}
-The paper also develops a concrete formal identity domain in Lean. In that model, entities carry an explicit attribute family $\mathcal I$, primitive observables are the associated binary maps $q_I$, and the representation is the induced profile map $\pi(v)=(q_I(v))_{I\in\mathcal I}$. The generic coding laws then specialize to a machine-checked formal instance. In particular, equal observable profiles cannot distinguish identity, provenance is not recoverable from the profile alone when collisions exist, and nominal identity cannot be embedded back into the semantic layer. \leanmeta{\LHrng{ACS}{8}{9}, \LH{EMB1}}
+The Lean formalization instantiates the generic coding laws with entities carrying attribute family $\mathcal I$ and profile map $\pi(v)=(q_I(v))_{I\in\mathcal I}$; equal profiles cannot distinguish identity, and provenance is unrecoverable when collisions exist. \leanmeta{\LHrng{ACS}{8}{9}, \LH{EMB1}}
 
 \paragraph{Instantiated neurosymbolic linking theorems.}
-Within that formal identity domain, the generic helper-view theorems specialize by setting the task to identity $Y = C$. The mechanization proves the following instantiated claims. \leanmeta{\LHrng{NSL}{1}{6}}
-
-\begin{itemize}
-\item If the symbolic handle $\sigma$ is injective, the neurosymbolic link $(\pi, \sigma)$ achieves zero-error identity recovery. This is the identity-task instantiation of the injectivity criterion. \leanmeta{\LH{NSL1}, \LH{GPH25}}
-
-\item If $\pi$ has collisions, semantic representation alone cannot achieve zero-error identity, and no decoder can recover the collapsed identities without identity-resolving side information. \leanmeta{\LHrng{NSL}{2}{3}}
-
-\item The exact characterization is: $(\pi, \sigma)$ recovers identity if and only if $\sigma$ distinguishes all entities within each semantic fiber. An injective handle therefore suffices. This is the identity-task instantiation of the helper-view theorem. \leanmeta{\LHrng{NSL}{4}{5}, \LH{GPH40}}
-
-\item The pair $(\pi, \sigma)$ is the canonical helper view for open-world identity systems. \leanmeta{\LH{NSL6}}
-\end{itemize}
+Setting the task to identity $Y=C$, the mechanization proves: injective $\sigma$ gives zero-error recovery via $(\pi,\sigma)$ \leanmeta{\LH{NSL1}, \LH{GPH25}}; if $\pi$ has collisions, semantic representation alone cannot achieve zero-error identity \leanmeta{\LHrng{NSL}{2}{3}}; $(\pi,\sigma)$ recovers identity iff $\sigma$ distinguishes entities within each semantic fiber \leanmeta{\LHrng{NSL}{4}{5}, \LH{GPH40}}; and $(\pi,\sigma)$ is the canonical helper view for open-world identity systems \leanmeta{\LH{NSL6}}.
 
 \subsection{Task Sufficiency, Helper Views, and Factorization}
 
-The neurosymbolic reading is one specialization of a broader theorem family. The same fiber geometry characterizes when a representation is sufficient for an arbitrary downstream task, when helper views genuinely help, and when factorized modules contribute real exact information. This connects to classical work on computing and task-sufficient representations \cite{orlitsky2001coding, doshi2010functional}.
+The fiber geometry characterizes task sufficiency, helper views, and factorized modules \cite{orlitsky2001coding, doshi2010functional}.
 
 \begin{definition}[Task-fiber ambiguity]
 Let $Y=f(C)$ be a downstream task label induced by the class. For a fixed representation $\pi$, define

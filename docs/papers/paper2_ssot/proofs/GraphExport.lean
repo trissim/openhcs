@@ -16,6 +16,8 @@ import Ssot.Foundations
 import Ssot.GraphBridges
 import Ssot.HandleAliases
 import Ssot.Inconsistency
+import Ssot.LangDatabase
+import Ssot.LangDeps
 import Ssot.LangEvaluation
 import Ssot.LangPython
 import Ssot.LangRust

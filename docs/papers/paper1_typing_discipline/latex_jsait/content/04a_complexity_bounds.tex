@@ -28,12 +28,10 @@ Take the empty world $W_0=\varnothing$, which is barrier-free. In this model, tw
 \end{proof}
 
 \begin{remark}[Safety interpretation]
-The theorem formalizes a fact about open-world systems: present collision-freedom does not by itself yield a stable future guarantee. Persistent zero-error claims therefore need an explicit growth model rather than a one-time snapshot argument.
+Present collision-freedom does not guarantee stability under extension; persistent zero-error claims need an explicit growth model rather than a one-time snapshot argument.
 \end{remark}
 
-The running example offers the same intuition in finite form: the realized world $\{A,C,D,E\}$ is collision-free, but adding class $B$ immediately restores the collision block $\{A,B\}$.
-
-For compression system design, the point is direct: a representation that currently needs no auxiliary identification bits can require a positive residual coding budget after extension if new classes enter existing fibers. Thus open-world growth can change the optimal exact side-information rate even when nothing about the deployed decoder changes.
+For compression system design: a representation needing no auxiliary bits today can require positive budget after extension. Open-world growth changes the optimal rate even when the deployed decoder is unchanged.
 
 \leanmetapending{\LHrng{UND}{1}{2}}
 \begin{definition}[Function-level barrier predicate]
@@ -54,14 +52,14 @@ Equivalently, barrier-freedom certification is also non-computable.
 \end{theorem}
 
 \begin{proof}
-Assume there is a computable certifier for $P(c):=\mathrm{HasBarrier}(\mathrm{eval}(c))$. The property is non-trivial (some generators produce collisions and some do not), so membership in the corresponding semantic class cannot be computable from code. The barrier-free statement follows by negation.
+The property is non-trivial (some generators produce collisions, some do not), so by Rice's theorem no computable predicate can decide it from code.
 \end{proof}
 
 \begin{remark}[Certification interpretation]
-The theorem is the algorithmic counterpart to extension instability: there is no general computable procedure that certifies barrier-freedom for arbitrary future-generating code, even when a current deployment appears collision-free. For compression system designers deploying learned representations, this means zero-error recovery guarantees derived from a finite training corpus cannot be automatically relied upon for new classes encountered in production; explicit identity metadata or a restrictive growth model becomes necessary.
+No general computable procedure can certify barrier-freedom for arbitrary future-generating code, even when deployment appears collision-free. Zero-error guarantees from finite training cannot extend to new production classes without explicit identity metadata or restrictive growth models.
 \end{remark}
 
-\leanmetapending{\LHrng{ROB}{1}{2}, \LHrng{UND}{1}{2}}
+\leanmetapending{\LH{ROB1}, \LH{ROB2}, \LH{UND1}, \LH{UND2}}
 \begin{corollary}[Certification consequence for persistent \texorpdfstring{$D=0$}{D=0} claims]
-For unrestricted open-world generators, one cannot computably certify that attribute-only identification remains barrier-free under all future extensions. Consequently, persistent $D=0$ guarantees cannot rely on ``currently collision-free'' attribute structure alone.
+For unrestricted open-world generators, one cannot computably certify that attribute-only identification remains barrier-free under all future extensions. Barrier-freedom fails under arbitrary extensions \leanmeta{\LHrng{ROB}{1}{2}}, and both barrier-existence and barrier-freedom certification are uncomputable by Rice's theorem \leanmeta{\LHrng{UND}{1}{2}}. Consequently, persistent $D=0$ guarantees cannot rely on ``currently collision-free'' attribute structure alone.
 \end{corollary}

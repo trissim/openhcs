@@ -1,0 +1,42 @@
+\subsection{Artifact Scope and the Finite-to-Asymptotic Boundary}\label{sec:artifact-scope}
+
+The Lean 4 artifact verifies the finite combinatorial core used throughout Sections~3--5: reduction correctness with size bounds, explicit-state deciders and step-counted searches, bridge lemmas, and witness/checking schemas used by stochastic upper-bound arguments. The artifact checks the finite mechanisms—reduction constructions, witness structures, explicit-state deciders—that underpin the paper's asymptotic complexity claims. The asymptotic class placements (coNP-completeness, PP-hardness, PSPACE-completeness, NP^PP membership) are argued in the text using standard complexity-theoretic conventions, as is typical for the field.
+
+The paper-level layer is the asymptotic lift: oracle-machine formulations, class memberships, and ETH-transfer arguments. In particular, the artifact does not formalize oracle Turing machines or polynomial-space machine semantics; those are argued in the manuscript using standard complexity-theoretic conventions.
+
+So the classification is intentionally hybrid: finite gadgets and decision procedures are mechanically checked, while coNP/PP/PSPACE/$\mathsf{NP}^{\mathsf{PP}}$ placements and ETH consequences are proved in text.
+
+\bigskip
+\noindent\textbf{Summary of what is verified vs.\ what is assumed.}
+
+\begin{table}[h]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}m{0.25\linewidth}>{\RaggedRight\arraybackslash}m{0.35\linewidth}>{\RaggedRight\arraybackslash}X@{}}
+\toprule
+\textbf{Claim} & \textbf{Verified in Lean} & \textbf{Paper-level} \\
+\midrule
+Reduction correctness & Polynomial-size output, truth-value preservation & --- \\
+\midrule
+Explicit-state decidability & Exact algorithm with step bound & --- \\
+\midrule
+Witness/checking pattern & Finite existential/universal structure & Oracle-machine encoding \\
+\midrule
+coNP-completeness & TAUTOLOGY $\to$ empty-set sufficiency (finite) & Asymptotic class membership \\
+\midrule
+$\mathsf{PP}$-hardness & MAJSAT $\to$ stochastic decisiveness (finite) & Majority-vote characterization \\
+\midrule
+$\mathsf{PSPACE}$-completeness & TQBF $\to$ sequential sufficiency (finite) & Polynomial-space TM theory \\
+\midrule
+$\mathsf{NP}^{\mathsf{PP}}$ upper bound & Witness/checking schema & Oracle machine construction \\
+\midrule
+ETH lower bound & Reduction to empty-set sufficiency & Asymptotic reduction chain \\
+\bottomrule
+\end{tabularx}
+\caption{Summary of what is verified in Lean vs.\ what is argued at paper-level.}
+\label{tab:artifact-scope}
+\end{table}
+
+The finite core is solid; the asymptotic lifts are standard but not mechanized.

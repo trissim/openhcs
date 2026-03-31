@@ -15,18 +15,18 @@ The paper's central object is the geometry of these fibers.
 \end{definition}
 
 \begin{remark}[Where the representation may come from]
-No further structure is assumed. The map $\pi$ may arise from a learned encoder, a database schema projection, a feature-extraction pipeline, or a hand-designed attribute family. The theoremic contribution is generic in the representation map once its fibers are fixed.
+No further structure is assumed. The map $\pi$ may arise from a learned encoder, database projection, feature-extraction pipeline, or hand-designed attribute family.
 \end{remark}
 
 \begin{remark}[Entity and random-variable notation]
-The coding statements are written in terms of a class variable $C$ and representation $U=\pi(C)$. When convenient, we also use an underlying entity variable $V$ together with a class assignment map $C(V)$. Thus $U=\pi(V)$ is the representation of the realized entity, and the induced class label is $C(V)$. The two viewpoints are interchangeable; the coding arc should be read through the pair $(C,U)$.
+The coding statements use a class variable $C$ and representation $U=\pi(C)$. When convenient, we also use an underlying entity variable $V$ with class assignment $C(V)$; thus $U=\pi(V)$. The two viewpoints are interchangeable.
 \end{remark}
 
 \begin{definition}[Admissibility contract]\label{def:admissibility-contract}
 All impossibility and optimality statements quantify over schemes that use only (1) the declared representation value and (2) explicitly charged auxiliary description. In particular, no hidden registry, reflection oracle, whole-universe preprocessing table, or amortized cross-instance cache may supply uncharged distinguishing information.
 \end{definition}
 
-This admissibility contract is the formal regime anchor for all impossibility and optimality claims in the paper. The contract that the decoder only has the declared representation and any explicitly charged auxiliary description (no hidden registries or undeclared side channels) is encoded in the mechanized development and thus mechanically enforced in the formal proofs.
+This contract is enforced in the mechanization; all impossibility claims assume no hidden registries or undeclared side channels.
 
 \subsection{Representation-Induced Information Barrier}
 

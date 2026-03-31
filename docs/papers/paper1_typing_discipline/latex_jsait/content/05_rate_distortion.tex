@@ -1,10 +1,6 @@
 \subsection{Rate-Distortion Law and Distortion Currency}
 
-Throughout this paper, we use the informal term ``currency'' to denote an operational modality for paying the residual ambiguity debt: auxiliary bits, query effort, or accepted distortion. This terminology is a conceptual shorthand rather than a formal definition; the precise statements are the theorems themselves.
-
-The counting and entropy converses above show that auxiliary bits, queries, and accepted distortion are alternative currencies for the same residual ambiguity. This section makes one exchange explicit: how many bits must be paid to drive distortion to zero on a collision fiber, and what floor remains when those bits are withheld.
-
-The general law is fiberwise. For arbitrary finite sources \cite{CoverThomas2006,berger1971rate}, the optimal recoverable mass decomposes exactly across representation fibers. The clean closed form arises in the uniform single-block corner, where the collision geometry alone determines the full budget-distortion tradeoff.
+Auxiliary bits, queries, and accepted distortion are alternative currencies for the same residual ambiguity. This section gives the fiberwise rate-distortion law: optimal recoverable mass decomposes exactly across representation fibers for arbitrary finite sources, with closed-form $D^\star(L)=\max(0,1-2^L/a)$ in the uniform single-block corner.
 
 \subsection{Finite Fiberwise Decomposition}\label{sec:fiberwise-decomposition}
 
@@ -56,11 +52,7 @@ Take $S^\star = \bigcup_u S^\star_u$ where $S^\star_u$ is a maximizing subset in
 \end{proof}
 
 \begin{remark}[The decomposition is the general law]
-The uniform single-block formula derived below is the special case where all source mass lies in one uniformly distributed fiber. Neither assumption is required for the decomposition itself: the decomposition is the general zero-error rate-distortion law for the fixed-representation setting, and the closed-form curve is its cleanest instantiation.
-\end{remark}
-
-\begin{remark}[Relation to classical source coding]
-The decomposition is analogous to coding independent sub-sources separately: each fiber acts like an independent sub-problem, and the global optimum is the sum of the sub-problem optima. The sub-sources are induced by the representation partition rather than independent a priori.
+The uniform single-block formula below is the special case where all source mass lies in one uniformly distributed fiber. Neither assumption is required for the decomposition itself, which is the general zero-error rate-distortion law for the fixed-representation setting.
 \end{remark}
 
 \subsection{The Uniform Single-Block Corner}
@@ -116,8 +108,8 @@ D \ge 1 - \frac{1}{A_\pi}.
 Set $L=0$ in Theorem~\ref{thm:semantic-identity-rate-distortion}. Since $2^0=1$, the distortion lower bound becomes $1-1/a$. Choosing a worst collision block gives the second statement.
 \end{proof}
 
-\begin{remark}[Scope of the exact curve]
-The exact formula above is stated for the uniform source on a single collision block. That restriction is intentional. It isolates a deterministic corner in which collision geometry alone determines the full tradeoff. For non-uniform sources on the same block, or for mixtures across multiple fibers, the optimal distortion curve depends on the source law as well as the fiber sizes; in those settings one expects a different shape, closer in spirit to entropy-weighted side-information bounds than to the uniform worst-block law treated here. The point of the present theorem is exact isolation of the geometry-only effect.
+\begin{remark}[Scope]
+The uniform single-block formula isolates geometry-only effects; non-uniform or multi-fiber sources introduce source-law dependence beyond this paper's scope.
 \end{remark}
 
 \subsection{Finite Entropy Converses}\label{sec:entropy-converses}
@@ -165,5 +157,5 @@ The success probability is bounded by the maximum atom mass times the budget (un
 \end{proof}
 
 \begin{remark}[Counting versus entropy converses]
-The counting converse $2^L \ge a$ is sharp in the zero-error regime but silent about source structure. The entropy converses fill this gap: for high-entropy sources the entropy bound may be tighter, while for low-entropy sources the counting bound dominates. Together they provide complementary views of the same fiber geometry.
+The counting converse $2^L \ge a$ is sharp for zero-error but silent on source structure; entropy converses complement this for high-entropy sources. \leanmeta{\LHrng{RDC}{1}{9}}
 \end{remark}

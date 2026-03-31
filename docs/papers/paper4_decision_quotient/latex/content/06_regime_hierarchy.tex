@@ -30,7 +30,7 @@ Table~\ref{tab:regime-matrix} is the main statement-level summary. The stochasti
 
 \leanmetapending{\LH{DC100}, \LH{DQ1}, \LHrng{DQ}{17}{19}, \LHrng{OU}{1}{2}, \LHrng{OU}{11}{12}, \LHrng{EH}{4}{10}}
 \begin{theorem}[Regime-Sensitive Complexity Matrix]\label{thm:regime-main}
-Under the encoding conventions of Section~\ref{sec:encoding}, the classification is as follows. In the static regime, sufficiency and minimum sufficiency are coNP-complete and anchor sufficiency is $\Sigma_2^P$-complete. In the stochastic regime, preservation (stochastic sufficiency) has a polynomial-time base query under explicit-state encoding with proved bridges back to static sufficiency and the optimizer quotient; the minimum and anchor preservation variants are also polynomial-time under explicit-state encoding, are coNP-complete and $\Sigma_2^P$-complete under full support, and satisfy the support-sensitive partial results of Proposition~\ref{prop:stochastic-preservation-partial-general}. Decisiveness (stochastic decisiveness) has a polynomial-time base query under explicit-state encoding and is PP-hard under the succinct encoding; the anchor and minimum decisiveness queries are PP-hard and lie in $\textsf{NP}^{\textsf{PP}}$, with those oracle-class memberships proved in the paper text and their finite witness/checking cores mechanized. In the sequential regime, sufficiency, minimum, and anchor queries are PSPACE-complete.
+Under the encoding conventions of Section~\ref{sec:encoding}, the classification is as follows. In the static regime, sufficiency and minimum sufficiency are coNP-complete and anchor sufficiency is $\Sigma_2^P$-complete. In the stochastic regime, preservation (stochastic sufficiency) has a polynomial-time base query under explicit-state encoding with proved bridges back to static sufficiency; the minimum and anchor preservation variants are also polynomial-time under explicit-state encoding, are coNP-complete and $\Sigma_2^P$-complete under full support, and satisfy the support-sensitive partial results of Proposition~\ref{prop:stochastic-preservation-partial-general}. Decisiveness (stochastic decisiveness) has a polynomial-time base query under explicit-state encoding and is PP-hard under the succinct encoding; the anchor and minimum decisiveness queries are PP-hard and lie in $\textsf{NP}^{\textsf{PP}}$, with those oracle-class memberships proved in the paper text and their finite witness/checking cores mechanized. In the sequential regime, sufficiency, minimum, and anchor queries are PSPACE-complete.
 \end{theorem}
 
 
@@ -60,22 +60,7 @@ Assuming $\PP \ne \PSPACE$, the sequential sufficiency classification is strictl
 Stochastic decisiveness is PP-hard under the succinct encoding (Theorem~\ref{thm:stochastic-pp}), while sequential sufficiency is PSPACE-complete (Theorem~\ref{thm:sequential-pspace}). The class gap yields a strict complexity separation between the two classifications under the assumption $\PP \ne \PSPACE$.
 \end{proof}
 
-\subsection{Integrity-Resource Bounds}
-
-The regime matrix has a methodological consequence as well: as one moves upward in the hierarchy, exact certification becomes less compatible with fixed polynomial resource budgets.
-
-\leanmetapending{\LH{IC32}, \LH{DQ2}}
-\begin{proposition}[Abstention Frontier Expands with Regime Complexity]\label{prop:abstention-frontier}
-For polynomial-time exact certifiers that abstain whenever they cannot certify correctness within budget, the set of instances requiring abstention expands along
-\[
-\text{static} \to \text{stochastic} \to \text{sequential}.
-\]
-\end{proposition}
-
-
-\begin{proof}
-As the decision predicate moves from coNP to PP to PSPACE hardness, exact worst-case certification requires strictly stronger resources. Fixed polynomial resources therefore force abstention on a larger instance family in higher regimes.
-\end{proof}
+% Moved to Section~7: The Certification Trilemma
 
 \paragraph{Forward-looking perspective.}
 The regime hierarchy extends to richer models: partially observable settings, multi-agent decision problems, and game-theoretic regimes would introduce additional layers of complexity such as knowledge reasoning or equilibrium computation. The optimizer-quotient framework extends to those regimes, though their detailed classification remains open.

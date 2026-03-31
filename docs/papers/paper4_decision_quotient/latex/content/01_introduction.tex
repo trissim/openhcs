@@ -1,54 +1,30 @@
 \section{Introduction}\label{sec:introduction}
 
-Exact decision-preserving information has a canonical form: the optimizer quotient. We study finite coordinate-structured decision problems $\mathcal{D}=(A,S,U)$ with $S = X_1 \times \cdots \times X_n$, and ask which coordinates can be hidden without changing the optimal-action correspondence. A coordinate set $I$ is sufficient when agreement on $I$ forces agreement on the optimal-action set:
-\[
-s_I = s'_I \implies \Opt(s) = \Opt(s').
-\]
+\subsection{The Optimizer Quotient: A Canonical Object}
 
-The optimizer quotient is the coarsest exact decision-preserving abstraction: every surjective abstraction that preserves optimal actions factors uniquely through it. Equivalently, in \textbf{Set}, it is the coimage/image factorization of the optimizer map. This canonical status is theorem-level in the artifact (Theorems~2.4--2.5), and it is the organizing object of the paper.
+Exact decision-preserving information has a canonical form: the optimizer quotient. For a finite coordinate-structured decision problem $\mathcal{D}=(A,S,U)$ with $S = X_1 \times \cdots \times X_n$, the optimizer quotient identifies states exactly when they induce the same optimal-action set $\Opt(s)$. This quotient is the coarsest exact decision-preserving abstraction (Theorem~\ref{thm:quotient-universal}): every surjective abstraction that preserves optimal actions factors uniquely through it. Equivalently, in \textbf{Set}, it is the coimage/image factorization of the optimizer map.
 
-From this object we derive a regime-sensitive complexity landscape. In the static regime, certification reduces to counterexample exclusion and minimum sufficiency collapses to relevance containment (coNP-complete). In the stochastic regime, conditioning splits the exact question into preservation and decisiveness; preservation bridges to static sufficiency, while decisiveness is PP-hard under succinct encoding. In the sequential regime, temporal contingency lifts exact certification to PSPACE-complete. Six structural restrictions yield polynomial-time certification.
+This canonical object exists for every decision problem and unifies separate literatures. In rough-set theory, attribute reduction asks which coordinates preserve decision distinctions; in constraint satisfaction, backdoor sets identify variables whose fixation yields tractability; in feature selection, minimal sufficient subsets are sought; in MDP abstraction, state aggregation preserves value or policy structure. The optimizer quotient provides a common mathematical foundation: it is the canonical object for exact relevance in all these settings.
 
-The structural target is the same throughout, but the cost of certifying it changes with the ambient model. \leanmeta{\LH{QT1}, \LH{QT7}.}
+\subsection{The Certification Trilemma: An Impossibility Theorem}
 
-This is a certification problem rather than a forward-evaluation problem: computing $\Opt(s)$ at one state is local, while proving irrelevance of coordinates is universal. That quantifier shift drives the hardness results and explains why the quotient perspective is central instead of cosmetic. Throughout, we work under the encoding conventions fixed in Section~\ref{sec:encoding}.
+From the optimizer quotient we derive a structural constraint on exact certifiers. Under P≠coNP, no solver can be simultaneously integrity-preserving, non-abstaining on all in-scope instances, and polynomial-budgeted (Theorem~7.1). This impossibility yields a trilemma: any exact certifier in the hard regime must either abstain on some instances, weaken its guarantee, or risk overclaiming. The trilemma is not merely a restatement of coNP-hardness; it is a certified-solver impossibility result with operational consequences for systems claiming exact reliability.
 
-\subsection{Contributions}
+\subsection{The Complexity Map as Evidence}
 
-The paper is best read as a theory of exact decision-relevant information organized around one canonical mathematical object: the optimizer quotient. The optimizer quotient is the coarsest abstraction that exactly preserves optimal-action distinctions (Theorem~\ref{thm:quotient-universal}), so every exact decision-preserving abstraction must refine it. Building on this canonical object, the paper develops a near-complete, regime-sensitive complexity map for exact relevance certification across the static, stochastic, and sequential models studied here, including twelve explicit cases (six nontrivial tractable subcases), impossibility results, and extensive machine-checked support. The conjecture and open problem are deliberate boundary markers that specify exactly what is settled and what remains open.
+The impossibility manifests differently across regimes. The static regime yields coNP-completeness for base and minimum queries (via relevance containment), while static anchor sufficiency is $\Sigma_2^P$-complete. In the stochastic regime, the problem splits: preservation bridges to static sufficiency (polynomial-time under explicit encoding), while decisiveness is PP-hard under succinct encoding. In the sequential regime, temporal contingency lifts all queries to PSPACE-complete. These classifications form a regime-sensitive complexity matrix (Table~\ref{tab:regime-matrix}) that shows the impossibility's reach expanding with model expressiveness.
 
-\begin{enumerate}
-\item \textbf{Optimizer quotient as canonical structure.} For a finite decision problem, the optimizer quotient identifies states exactly when they induce the same optimal-action set. In \textbf{Set}, it is the coarsest exact decision-preserving abstraction, equivalently the coimage/image factorization of the optimizer map. This gives the paper a common structural object through which the later static, stochastic, and sequential results can be compared.
+\subsection{Tractable Boundaries}
 
-\item \textbf{Regime-sensitive certification landscape.} The paper classifies exact certification across static, stochastic, and sequential regimes. Static sufficiency yields coNP-complete base and minimum queries (via relevance containment), while static anchor sufficiency is $\Sigma_2^P$-complete. Stochastic analysis splits into preservation and decisiveness: preservation is explicit-state polynomial with full-support inheritance to static classes, while decisiveness is explicit-state polynomial and PP-hard under succinct encoding, with anchor/minimum decisiveness PP-hard and in $\textsf{NP}^{\textsf{PP}}$ at paper level. Sequential sufficiency, minimum, and anchor queries are PSPACE-complete.
+Six structural restrictions collapse exact certification to polynomial time: bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, and coordinate symmetry. Each removes a distinct source of hardness, providing tractable boundaries to the impossibility theorem.
 
-\item \textbf{Tractability results.} The paper proves an explicit-state versus succinct-encoding contrast and identifies six natural structural restrictions under which exact certification becomes polynomial-time: bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, and coordinate symmetry. Each removes a distinct source of hardness.
+\subsection{Mechanized Core}
 
-\item \textbf{Consequences for exact certifiers.} In the hard exact regime, certifiers cannot in general be simultaneously sound, complete, and polynomial-budgeted. The same theory yields witness-checking lower bounds, approximation obstructions, and the practical consequence called the simplicity tax: when exact relevance is not certified, the unresolved burden is not removed but shifted elsewhere in the system.
-
-\item \textbf{Mechanized finite-decision core.} A Lean 4 artifact mechanically checks the optimizer-quotient universal-property core, the main finite deciders, search procedures, reduction-correctness lemmas, witness/checking schemas, and bridge results \leanmeta{\LH{QT1}, \LH{QT7}, \LHrng{DC}{91}{99}, \LHrng{OU}{1}{2}, \LHrng{OU}{8}{12}, \LHrng{EH}{1}{10}.} The oracle-class placements are proved in the paper text, while the artifact independently verifies the finite combinatorial core on which those arguments rely. This places the mechanization in the emerging category of problem-specific certified reduction infrastructure.
-
-\end{enumerate}
-
-\subsection{Broader Implications for Exact Abstraction}
-
-The optimizer quotient supplies the long-missing canonical object for a notion that has been used informally across artificial intelligence, programming languages, and formal verification: \emph{exact relevance} in decision systems. In attention mechanisms, retrieval-augmented generation, and concept-bottleneck models, one repeatedly asks which coordinates of a representation are essential for downstream decisions. In compilers and static analysis, dead-code elimination seeks precisely the same distinction. In model checking and state-space reduction, the central question is again which components of a state affect acceptance or rejection.
-
-What has been absent is a single mathematical object that makes this notion precise, computationally meaningful, and model-agnostic. The optimizer quotient fills this gap: it is the coarsest abstraction that exactly preserves optimal-action distinctions, so every exact decision-preserving abstraction must refine it. Its universal property (Theorem~\ref{thm:quotient-universal}) therefore serves as the canonical reference point for exact relevance.
-
-The computational consequences are immediate and regime-sensitive. The complexity map of Section~\ref{sec:regime-hierarchy} shows that the cost of certifying exact relevance grows sharply with model expressiveness: coNP-complete in the static regime, PP-hard under stochastic conditioning, and PSPACE-complete once temporal contingency is introduced. Each of the six tractability conditions identified in Section~\ref{sec:tractable} removes a distinct structural barrier and collapses the problem to polynomial time.
-
-A direct corollary is the \emph{simplicity tax}: when exact relevance cannot be certified, systems are forced to carry irrelevant coordinates, paying a structural overhead that cannot be eliminated without sacrificing correctness. This tradeoff is fundamental, either invest in certification, or accept the representational cost of redundant information.
-
-Taken together, the optimizer quotient and the accompanying regime-sensitive complexity theory provide a common foundation for analyzing exact abstraction across subfields. Attention layers that discard tokens are implicitly approximating this quotient. Retrieval systems that select context are operating under stochastic relaxations of the same object. Verification tools that reduce state spaces are solving tractable special cases of the certification problem. The framework thus supplies a uniform language and precise complexity landscape for what it means to be ``exactly relevant'' in any of these settings.
-
-\subsection{Quantifier Structure}
-
-Insufficiency has short witnesses (a disagreeing state pair), while sufficiency is universal counterexample exclusion. This quantifier shape explains the static coNP base classification, the static $\Sigma_2^P$ anchor variant, and why stochastic/temporal enrichments raise complexity when conditional comparison or temporal contingency is added.
+A Lean 4 artifact mechanically checks the optimizer-quotient universal property, finite deciders, reduction-correctness lemmas, witness schemas, and bridge results \leanmeta{\LH{QT1}, \LH{QT7}, \LHrng{DC}{91}{99}, \LHrng{OU}{1}{2}, \LHrng{OU}{8}{12}, \LHrng{EH}{1}{10}.} The 22K-line artifact verifies the combinatorial core, while oracle-class placements are argued in the paper text.
 
 \subsection{Paper Structure}
 
-Section~\ref{sec:formal-setup} introduces the formal setup and encoding conventions. Sections~\ref{sec:hardness}, \ref{sec:stochastic}, \ref{sec:sequential}, and~\ref{sec:regime-hierarchy} develop the core theorem package. Sections~\ref{sec:dichotomy} and~\ref{sec:tractable} give the encoding-sensitive contrast and tractable subcases. Section~\ref{sec:engineering-corollaries} and its follow-on subsections collect complexity consequences for exact certifiers. Section~\ref{sec:related} situates the work in the literature, and Appendix~\ref{app:applications} collects applied model translations.
+Section~\ref{sec:formal-setup} introduces the formal setup. Sections~\ref{sec:hardness}, \ref{sec:stochastic}, and \ref{sec:sequential} develop the static, stochastic, and sequential complexity classifications. Section~\ref{sec:regime-hierarchy} consolidates them into the regime matrix. Section~7 presents the impossibility theorem and trilemma. Section~8 collects structural consequences. Sections~\ref{sec:dichotomy} and~\ref{sec:tractable} cover encoding contrasts and tractable cases. Section~9 situates the work, and Appendix~\ref{app:applications} collects model translations.
 
 \subsection{Artifact Availability}
 

@@ -1,6 +1,6 @@
 \section{System Classification}\label{sec:appendix-classification}
 
-This appendix reports the zero-incoherence classification of representative deterministic partial-view channels according to Corollary~\ref{thm:ssot-iff}. The pattern labels used in the table are: Pattern A (Blind Update), meaning missing causal propagation; Pattern B (Amnesiac Derivation), meaning missing provenance observability; and Pattern C (Coherent Kernel), meaning both conditions are present and verifiable rate $1$ is realizable.
+To demonstrate the operational ubiquity of the deterministic partial-view model, we map real-world distributed state-maintenance architectures to our formal channel parameters. This appendix applies the realizability criterion of Corollary~\ref{thm:ssot-iff} to representative channel witnesses drawn from three infrastructure domains. Table~\ref{tab:host-checks-a-appendix} classifies these systems by their structural side-information capabilities and zero-delay state synchronization properties. Each entry instantiates our abstract confusability framework, with the deterministic coupling graph induced by the host's native update mechanism. The classification demonstrates that the graph-capacity limits and $\Omega(n)$ synchronization penalties established above are not theoretical curiosities: they are operationally unavoidable for the majority of widely deployed deterministic partial-view architectures. The pattern labels used in the table are: Pattern A (Blind Update), meaning missing causal propagation; Pattern B (Amnesiac Derivation), meaning missing provenance observability; and Pattern C (Coherent Kernel), meaning both conditions are present and verifiable rate $1$ is realizable.
 
 \begingroup
 \centering
@@ -18,14 +18,14 @@ Prog. languages & TypeScript / JavaScript~\cite{typescriptDecorators2025,javascr
 Prog. languages & Java~\cite{gosling2021java} & A/B & no & no & no & Under the runtime-only host interpretation used here, annotations and related derivation tooling are external to the JVM runtime.\leanmeta{\LH{JVA1}} \\
 Prog. languages & Go~\cite{gospec2024} & A/B & no & no & no & Reflection exists, but there are no definition-time hooks or host-native implementer registries.\leanmeta{\LH{GOL1}} \\
 Databases & External ETL copy / duplicate summary table & A/B & no & no & no & Synchronization is externalized, and provenance is no longer intrinsic to the host database.\leanmeta{\LHrng{DBE}{1}{3}} \\
-Deps. & npm~\cite{npmLock2026,npmExplain2026,npmLs2026} & A & no & yes & no & Lockfile and query commands expose provenance, but manifest edits require explicit npm operations before the derived state is updated.\leanmeta{\LHrng{NPM}{1}{3}} \\
-Deps. & Cargo~\cite{cargoLockGuide2026,cargoTree2026,cargoMetadata2026} & A & no & yes & no & Resolved-dependency provenance is exposed, but \texttt{Cargo.lock} remains a distinct derived artifact synchronized through Cargo commands.\leanmeta{\LHrng{CRG}{1}{3}} \\
+Deps. & npm~\cite{npmLock2026,npmExplain2026,npmLs2026} & A & no & yes & no & Lockfile (auxiliary tag) and query commands expose provenance, but manifest edits require explicit out-of-band operations before the derived state achieves coherence.\leanmeta{\LHrng{NPM}{1}{3}} \\
+Deps. & Cargo~\cite{cargoLockGuide2026,cargoTree2026,cargoMetadata2026} & A & no & yes & no & Resolved-dependency provenance is exposed, but the auxiliary tag (\texttt{Cargo.lock}) remains a distinct derived artifact requiring explicit out-of-band synchronization.\leanmeta{\LHrng{CRG}{1}{3}} \\
 Deps. & Poetry~\cite{poetryCli2026} & A & no & yes & no & The resolved graph is queryable, but lock regeneration is an explicit step rather than part of the source edit itself.\leanmeta{\LHrng{POT}{1}{3}} \\
 Deps. & pnpm~\cite{pnpmInstall2026,pnpmWhy2026,pnpmList2026} & A & no & yes & no & Provenance is queryable, but the lockfile remains separately maintained rather than automatically updated with source edits.\leanmeta{\LHrng{PNM}{1}{3}} \\
 \bottomrule
 \end{tabularx}
 \par\smallskip
-\textbf{Table A.1.} Zero-incoherence classification of representative channel families in the deterministic partial-view model. The same theorem-level coordinates apply uniformly across programming-language runtimes, databases, and dependency managers. Each entry is verified against the mechanized sufficiency conditions of Corollary~\ref{thm:ssot-iff}.
+\textbf{Table A.1.} Zero-incoherence classification of representative channel witnesses in the deterministic partial-view model. The same theorem-level coordinates apply uniformly across programming-language runtimes, databases, and dependency managers. Each entry is verified against the mechanized sufficiency conditions of Corollary~\ref{thm:ssot-iff}.
 \label{tab:host-checks-a-appendix}
 \par\medskip
 \endgroup

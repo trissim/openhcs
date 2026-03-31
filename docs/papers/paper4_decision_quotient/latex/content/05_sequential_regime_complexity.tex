@@ -25,6 +25,9 @@ There are two closely related readings of this definition. Formally, the sequent
 
 One can also read the same construction heuristically as a coordinate-restricted POMDP abstraction question. A full controller conditions on evolving observations and therefore on induced beliefs over latent states. Hiding coordinates changes the informational interface through which future decisions are made. That heuristic is useful for intuition and for understanding the TQBF gadget, but the formal theorems in this paper are stated for the state-based predicate above rather than for a fully developed history-dependent policy class.
 
+\paragraph{Scope and research direction.}
+The sequential model studied here is a state-indexed product model, not a POMDP with belief-state dynamics or an MDP with policy optimization. This captures the case where each time step's decision is governed by a time-indexed utility, and the question is which cross-temporal coordinates matter. Extending the optimizer quotient to belief-state POMDPs and history-dependent policies, where the quotient would be over belief states rather than world states and the complexity classification would need to engage with the policy optimization layer, remains a natural research direction.
+
 \begin{problem}[SEQUENTIAL-SUFFICIENCY-CHECK]\label{prob:sequential-sufficiency}
 \textbf{Input:} $\mathcal{D}_{\mathrm{seq}}$ and $I\subseteq\{1,\ldots,n\}$. \\
 \textbf{Question:} Is $I$ sequentially sufficient?

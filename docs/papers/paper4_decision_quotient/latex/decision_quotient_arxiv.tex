@@ -1,26 +1,36 @@
-\documentclass[11pt]{article}
+\documentclass[sigconf,review]{acmart}
+
+% ACM CCS 2012 Concepts
+\ccsdesc[5000]{Theory of computation~Design and analysis of algorithms}
+\ccsdesc[1000]{Mathematics of computing~Combinatorics}
+\ccsdesc[1000]{Computing methodologies~Knowledge representation and reasoning}
+\ccsdesc[1000]{Theory of computation~Computational complexity}
+
+% Copyright handled by acmart for submission
+\setcopyright{none}
+
 \usepackage{compat-preamble}
 \IfFileExists{content/lean_stats.tex}{\input{content/lean_stats.tex}}{}
 
-\title{Decision Quotient:\\
-A Regime-Sensitive Complexity Theory of Exact Relevance Certification}
-\paperauthor
-\paperdate
+\title{The Optimizer Quotient and the Certification Trilemma}
+
+\author{Tristan Simas}
+\affiliation{
+  \institution{McGill University}
+  \city{Montreal}
+  \state{Quebec}
+  \country{Canada}
+}
+\email{tristan.simas@mail.mcgill.ca}
 
 \begin{document}
 \maketitle
-\paperfooter
+
+\bigskip
 
 \begin{abstract}
 \input{content/abstract.tex}
 \end{abstract}
-
-\paragraph{Key words.}
-optimizer quotient, exact relevance certification, computational complexity,
-decision-preserving abstraction, mechanized proofs
-
-\paragraph{AMS subject classifications.}
-68Q17, 68Q25, 68Q15, 03B35
 
 \input{content/01_introduction.tex}
 \input{content/02_formal_setup.tex}
@@ -30,17 +40,17 @@ decision-preserving abstraction, mechanized proofs
 \input{content/06_regime_hierarchy.tex}
 \input{content/03_complexity_dichotomy.tex}
 \input{content/04_tractable_special_cases.tex}
-\input{content/05_engineering_corollaries.tex}
-\input{content/05b_integrity_competence_framework.tex}
-\input{content/05c_witness_and_approximation.tex}
-\input{content/05d_simplicity_tax.tex}
-\input{content/05_artifact_scope.tex}
-\input{content/08_related_work.tex}
-\input{content/09_conclusion.tex}
-\input{content/10_lean_4_proof_listings.tex}
-\input{content/11_applications_appendix.tex}
+\input{content/07_certification_trilemma.tex}
+\input{content/08_structural_consequences.tex}
+\input{content/08c_witness_and_approximation.tex}
+\input{content/08d_simplicity_tax.tex}
+\input{content/08_artifact_scope.tex}
+\input{content/09_related_work.tex}
+\input{content/10_conclusion.tex}
+\input{content/11_lean_4_proof_listings.tex}
+\input{content/12_applications_appendix.tex}
 
-\bibliographystyle{plain}
+\bibliographystyle{ACM-IEEE-Reference-Format}
 \bibliography{references}
 
 \end{document}

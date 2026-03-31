@@ -1,22 +1,20 @@
-This paper develops a fixed-representation compression theory for zero-error identity recovery, delivering exact finite laws for multiple operational modalities. Its governing object is the collision fiber geometry.
+This paper develops a fixed-representation compression theory for zero-error identity recovery, governed by the collision fiber geometry $A_\pi$.
 
 \paragraph{Compression contribution.}
-The same fiber geometry that forces $\log_2 A_\pi$ auxiliary bits also determines the adaptive fiberwise budget, the exact finite-block law, the exact fiberwise decomposition of recoverable mass for arbitrary finite sources, and the query-side counting law. The uniform single-block curve $D^\star(L)=\max(0,1-2^L/a)$ is the sharp closed-form specialization of that general distortion law. These are not separate phenomena but different currencies for the same residual ambiguity (see Section~\ref{sec:distortion} for the informal terminology). If the representation is injective, identity is free. If the representation is non-injective, the missing information must be paid somewhere: in auxiliary bits, in query effort, in helper views, or in distortion.
+The same fiber geometry determines the adaptive fiberwise budget, exact finite-block law, fiberwise decomposition of recoverable mass, and query-side counting law. The uniform single-block curve $D^\star(L)=\max(0,1-2^L/a)$ is the sharp closed-form specialization. If $\pi$ is injective, identity is free; if non-injective, the missing information must be paid in bits, queries, helper views, or distortion.
 
 The query side ties directly back to the compression side. Any binary distinguishing family of size $d$ can realize at most $2^d$ transcripts on a collision fiber, so $\lceil \log_2 A_\pi \rceil \le d$ on the worst fiber. Complete derivability-aware query families reduce to orthogonal semantically minimal cores, on which exchange holds and matroid basis cardinality becomes the canonical query invariant.
 
 The same ambiguity-fiber geometry governs when a representation is sufficient for exact downstream tasks, when helper views genuinely help, and when modular or factorized latents add exact information rather than architectural redundancy. In the learned-representation reading, injective representations support exact downstream identification with no extra metadata, while non-injective representations impose an irreducible side-information cost and, if that cost is left unpaid, a correspondingly irreducible deterministic distortion floor.
 
 \paragraph{Systems payoff.}
-The central systems-level consequence is a formal account of symbolic mechanisms in semantic systems. The coding laws prove that semantic abstraction imposes an exact identity cost: a non-injective representation requires auxiliary description to resolve its collision fibers, with worst-case cost $\log_2 A_\pi$ bits and fiberwise cost $\lceil \log_2 |\pi^{-1}(u)| \rceil$. Systems that require both semantic generalization and exact identity therefore implement a mechanism to pay this cost.
-
-Symbolic handles, identifiers, pointers, keys, type systems, and index entries are standard computational instantiations of that payment. Consequently, the integration of symbolic identity layers into neurosymbolic, retrieval, type-theoretic, and other semantics-aware systems is implied by the coding laws. In the instantiated formal domain, the pair consisting of a neural encoder and an injective symbolic handle achieves zero-error identity recovery if and only if the handle distinguishes entities within each semantic fiber. \leanmeta{\LHrng{NSL}{1}{6}}
+Semantic abstraction imposes an exact identity cost: non-injective representations require auxiliary description with worst-case cost $\log_2 A_\pi$ bits and fiberwise cost $\lceil \log_2 |\pi^{-1}(u)| \rceil$. Symbolic handles are the standard payment mechanism. A neural encoder plus injective handle achieves zero-error recovery iff the handle distinguishes entities within each semantic fiber. \leanmeta{\LHrng{NSL}{1}{6}}
 
 \paragraph{Secondary robustness consequence.}
-Section~\ref{sec:robustness} records a secondary open-world consequence of the same framework. Present collision-freedom need not persist under extension, and unrestricted future-generating code does not admit a general computable barrier-freedom certificate. These results do not alter the main compression/query/distortion backbone, but they show that persistent zero-error guarantees require either an explicit growth model or explicit identity metadata.
+Present collision-freedom need not persist under extension, and unrestricted future-generating code has no computable barrier-freedom certificate. Persistent zero-error guarantees require explicit growth models or identity metadata.
 
 \paragraph{Mechanization.}
-The main theorem chain is machine-checked in Lean 4. The mechanization certifies that the fiber-geometry framework, the canonical query-core reduction, and the neurosymbolic linking results are exact formal statements in the finite explicit setting used throughout this paper.
+The main theorem chain is machine-checked in Lean 4, certifying the fiber-geometry framework, canonical query-core reduction, and neurosymbolic linking results in the finite explicit setting.
 
 \subsection*{Acknowledgment: AI-use Disclosure}
 

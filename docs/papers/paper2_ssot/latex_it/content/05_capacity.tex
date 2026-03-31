@@ -1,0 +1,53 @@
+\section{Block Composition, Strong Powers, and Asymptotic Capacity}\label{sec:capacity-theory}
+%==============================================================================
+
+
+This section studies how the induced failure topology scales. Once exact recovery is governed by colorability of the one-shot confusability graph, repeated composition does not reset the ambiguity; it composes the same failure structure across blocks. The next results identify the correct strong-power object and the resulting asymptotic zero-error rate.
+
+\subsection{Motivation: Repeated Composition}
+
+Under $n$-fold block composition, the confusability graph becomes its $n$-fold \emph{strong power}: $G_n = G^{\boxtimes n}$. Unlike the clique case where ambiguity explodes, structured graphs yield controlled growth via supermultiplicative independent-set behavior. The theorem below quantifies the resulting asymptotic rate.
+
+\subsection{Block Composition Law}
+
+A genuine supermultiplicative block law holds:
+\[
+\alpha_{m+n}\;\ge\;\alpha_m\alpha_n,
+\]
+where $\alpha_n$ denotes the largest one-shot zero-error code size in the $n$-block composed system. This is the correct discrete precursor to Shannon-capacity analysis: the admissible code-size sequence is already supermultiplicative at the graph level.\leanmeta{\LH{MFT22}}
+
+More sharply, the block-level graph itself factors correctly. Confusability between concatenated $(m+n)$-block states is equivalent to adjacency in the strong product of the $m$-block and $n$-block confusability graphs, packaged formally as an explicit graph isomorphism. Thus the repeated-block system is not only bounded by strong-product arguments at the codebook level; it is literally a strong-product graph-power object for the same induced failure map.\leanmeta{\LHrng{MFT}{29}{30}, \LHrng{MFT}{38}{39}}
+
+\paragraph{Strong-product quantification.}
+Block confusability requires one location tuple working \emph{simultaneously} for both blocks. Iterating yields $\alpha_1^n \le \alpha_n$.\leanmeta{\LH{MFT21}}
+
+For notation, $\Theta(G)$ denotes Shannon capacity of confusability graph $G$ and $\vartheta_\infty(G)$ the asymptotic Lov\'asz-$\vartheta$ upper value. The lower asymptotic capacity envelope
+\[
+C_* \;:=\; \sup_{n\ge 1} \frac{\log \alpha_n}{n},
+\]
+is identified with the maximum independent-set size of the $n$-block confusability graph.\leanmeta{\LHrng{MFT}{31}{32}, \LHrng{MFT}{35}{36}}
+
+Strong-product lower bounds give monotonicity: $\alpha_m^k \le \alpha_{km}$ and $\frac{\log \alpha_m}{m} \le \frac{\log \alpha_{km}}{km}$.\leanmeta{\LH{MFT33}}
+
+\leanmetapending{\LHrng{MFT}{43}{49}, \LH{MFT56}}
+\begin{theorem}[Asymptotic Shannon-capacity theorem]\label{thm:asymptotic-capacity}
+Let $\alpha_n$ denote the largest one-shot zero-error code size in the $n$-block composed system. Then the normalized block rates
+\[
+\frac{\log \alpha_n}{n}
+\]
+converge to a real asymptotic Shannon-capacity value, and that value is equal to the supremum of the finite block-rate sequence.
+\end{theorem}
+
+\begin{proof}
+The $n$-block confusability graph is $G_n = G^{\boxtimes n}$. For any graphs $H,K$, the Cartesian product of independent sets $I_H\times I_K$ is independent in $H\boxtimes K$, giving $\alpha(H\boxtimes K)\ge\alpha(H)\alpha(K)$. Iterating yields supermultiplicativity $\alpha_{m+n}\ge\alpha_m\alpha_n$, equivalent to subadditivity of $\{-\log\alpha_n\}$. Boundedness follows from $\alpha_n\le|V(G)|^n$. Fekete's lemma gives
+\[
+\lim_{n\to\infty}\frac{\log\alpha_n}{n}=\sup_{n\ge1}\frac{\log\alpha_n}{n},
+\]
+the asymptotic Shannon capacity $\Theta(G)$.
+\end{proof}
+
+\paragraph{Running example: Binary square.}
+For the 4-cycle $C_4$ from Section~\ref{sec:binary-square}, $\alpha(C_4) = 2$ and $\alpha(C_4^{\boxtimes n}) = 2^n$, giving normalized rate $\log 2$ and asymptotic Shannon capacity $\Theta(C_4) = \log 2$. This matches the iterated binary-square family: one-shot budget is $2$, $m$-block budget grows as $2^m$.
+
+\paragraph{Relation to graph capacity theory.}
+This places the extended model in the classical zero-error graph-capacity setting. Confusability graphs arise from deterministic view families on latent tuples; the architecture determines the graph, which then determines recoverability. The clique-fiber regime recovers the cluster-graph equality case via transitivity of confusability.

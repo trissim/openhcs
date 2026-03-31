@@ -1,9 +1,10 @@
-% Format switching: default is two-column journal (arXiv/camera-ready).
+% Format switching: default matches IEEE template (two-column journal).
 % Pass \JSAITREVIEW via pdflatex CLI to get single-column double-spaced review format.
+% Pass \JSAITSUBMISSION for IEEE portal submission (two-column single-spaced).
 \ifdefined\JSAITREVIEW
-  \documentclass[12pt, onecolumn, draftclsnofoot]{IEEEtran}
+  \documentclass[12pt, onecolumn]{IEEEtran}
 \else
-  \documentclass[journal]{IEEEtran}
+  \documentclass{IEEEtran}
 \fi
 
 % IEEE JSAIT Format - IEEEtran class
@@ -17,6 +18,7 @@
 \usepackage{url}
 \usepackage{cite}
 \usepackage{listings}
+\usepackage{float}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
 
@@ -24,6 +26,16 @@
 \ifdefined\JSAITREVIEW
   \usepackage{setspace}
   \usepackage[margin=1in, letterpaper]{geometry}
+  % Reduce whitespace at bottom of pages from deferred floats
+  \renewcommand{\topfraction}{0.95}
+  \renewcommand{\bottomfraction}{0.95}
+  \renewcommand{\textfraction}{0.05}
+  \setcounter{topnumber}{4}
+  \setcounter{bottomnumber}{3}
+  \setcounter{totalnumber}{5}
+  % Reduce float penalties to allow more flexible placement
+  \renewcommand{\floatpagefraction}{0.9}
+  \renewcommand{\dblfloatpagefraction}{0.9}
 \fi
 
 % Allow URLs to break at any character

@@ -56,11 +56,9 @@ Thus $A_\pi$ is the size of the largest class-collision block under the represen
 \end{definition}
 
 \leanmetapending{\LHrng{GPH}{44}{45}, \LH{GPH48}, \LH{GPH50}}
-\begin{remark}[Computability under finite precision]
-Every implementable representation operates on finite-precision values. The representation alphabet is therefore finite, and $A_\pi$ is computable by fiber enumeration. If the deployed representation uses $M$ output values, then the pigeonhole principle yields the lower bound $\lceil |\mathcal C|/M \rceil \le A_\pi$. Conversely, to guarantee $A_\pi \le k$ on an entity set of size $n$, at least $\lceil n/k \rceil$ distinct representation values are necessary. The coding theorems identify the operational meaning of $A_\pi$ once the representation is fixed at its deployed precision.
+\begin{remark}[Finite precision]
+For finite-precision representations, $A_\pi$ is computable by fiber enumeration. Pigeonhole: $\lceil |\mathcal C|/M \rceil \le A_\pi$ for $M$ outputs; conversely, $A_\pi \le k$ requires $\lceil n/k \rceil$ distinct values.
 \end{remark}
-
-If one observation channel factors through a richer one, collision multiplicity cannot increase. Thus adding observable structure can only lower the corresponding zero-error tag bound. Under the same representation reading, enriching the embedding cannot worsen zero-error separability. \leanmeta{\LH{GPH28}}
 
 \leanmetapending{\LH{GPH28}, \LH{GPH37}}
 \begin{corollary}[Coarsening a bottleneck cannot reduce residual coding cost]\label{cor:concept-bottleneck-mono}
@@ -147,8 +145,8 @@ L_t^\star = t\,\log_2 A_\pi,
 So per-entity tag rate is exactly stable across block length.
 \end{corollary}
 
-\begin{remark}[Why this block model]
-The block construction repeats the same semantic identification task across $t$ entities while keeping the representation map fixed and applying it coordinatewise. It is therefore the direct block analogue of repeated one-shot classification in this model: the collision structure multiplies across coordinates, and the required zero-error side-information budget scales accordingly.
+\begin{remark}[Block model]
+The construction repeats the same task across $t$ entities with coordinatewise observation, so collision structure and side-information budget multiply accordingly.
 \end{remark}
 
 \subsection{Collision Fibers as Graph Components}

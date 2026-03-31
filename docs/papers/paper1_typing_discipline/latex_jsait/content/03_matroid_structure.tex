@@ -19,7 +19,7 @@ Equivalently, $d$ is the smallest number of primitive queries that suffices for 
 \end{definition}
 
 \begin{remark}[Inclusion-minimal versus minimum-cardinality]
-These notions differ: an inclusion-minimal distinguishing family may be larger than a minimum-cardinality one. The operational lower bound below depends only on the quantity $d$.
+These notions differ; the operational lower bound depends only on $d$.
 \end{remark}
 
 In the running example from Section~\ref{sec:bits}, $\{q_1,q_2,q_3\}$ is distinguishing and no pair of primitive queries is distinguishing, so the minimum distinguishing number is $d=3$. The exact operational law is that any attribute-only zero-error witness procedure must pay at least this many queries in the worst case.
@@ -48,11 +48,7 @@ It says how much interrogation is needed when the representation leaves ambiguit
 
 \subsection{Counting Bridge to Bit Currency}
 
-There is also a direct quantitative bridge back to the compression side. A family of $d$ binary queries induces at most $2^d$ distinct answer transcripts on any fixed collision fiber. Therefore no binary query family can distinguish a fiber of size $m$ unless $m \le 2^d$. In particular, if a worst fiber has size $A_{\pi}$, then any binary distinguishing family satisfies
-\[
-\left\lceil \log_2 A_{\pi} \right\rceil \le d.
-\]
-This is the query-side analogue of the fixed-length converse: binary interrogation cannot beat the same counting barrier that governs auxiliary bits.
+A family of $d$ binary queries induces at most $2^d$ transcripts on any fiber, so $\lceil \log_2 A_{\pi} \rceil \le d$. This is the query-side analogue of the fixed-length converse.
 
 \leanmetapending{\LHrng{GPH}{54}{55}}
 \begin{proposition}[Binary query counting bound]\label{prop:binary-query-counting-bound}
@@ -129,11 +125,7 @@ By Proposition~\ref{prop:query-orthogonal-core}, every complete derivability-awa
 \end{proof}
 
 \begin{remark}[Why the unrestricted counterexample does not undercut the theorem]
-Arbitrary overcomplete families need not be matroidal (GPH31), but after derivable redundancy is stripped, the orthogonal minimal core is matroidal.
-\end{remark}
-
-\begin{remark}[When the counting floor is tight]
-The lower bound $\lceil \log_2 A_{\pi} \rceil \le d$ is exact whenever the canonical query family realizes full binary transcript capacity on the relevant worst fibers, in which case the query side meets the same counting floor as the fixed-length bit side and any strict gap above the floor is an expressivity gap of the observable family, not a redundancy artifact. The corresponding equality and gap statements are mechanized. \leanmeta{\LHrng{GPH}{60}{64}}
+Arbitrary overcomplete families need not be matroidal (GPH31), but after derivable redundancy is stripped, the orthogonal minimal core is matroidal. \leanmeta{\LHrng{GPH}{60}{64}}
 \end{remark}
 
 \subsection{Witness Cost Comparison}
@@ -150,11 +142,11 @@ Attribute-only & Query a distinguishing family of minimum size & $\ge d$ \\
 Canonical axis core & Query any matroid basis of the core & exact basis cardinality \\
 \hline
 \end{tabular}
-\vspace{3pt}
+\medskip
 \caption{Witness cost for class identity by observer class.}
 \label{tab:witness-comparison}
 \end{table}
 
 \begin{remark}[Query cost as alternative currency]
-The bit law measures the residual description cost of restoring identity. The query law measures the residual interrogation cost. In the raw attribute model, that cost is lower-bounded by both the operational quantity $d$ and the counting floor $\lceil \log_2 A_{\pi} \rceil$. In the canonical derivability-aware presentation, the same cost is certified by matroid basis cardinality on the orthogonal core. In both readings, the ambiguity being paid for is the same.
+The bit law measures residual description cost; the query law measures residual interrogation cost. Both lower-bounds equal $\lceil \log_2 A_{\pi} \rceil$ in the canonical derivability-aware presentation.
 \end{remark}

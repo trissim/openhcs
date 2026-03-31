@@ -1,0 +1,81 @@
+\section{The Certification Trilemma}\label{sec:certification-trilemma}
+
+Once exact certification is hard, the direct systems question is not only whether the predicate can be computed, but whether a solver can stay exact, non-abstaining, and polynomial-budgeted on the whole hard regime. The result below is a direct complexity-theoretic corollary: those three goals are incompatible. We refer to this incompatibility as the \emph{trilemma of exact certification}.
+
+\subsection{Definitions}
+
+\begin{definition}[Certifying Solver]
+For exact sufficiency on a declared regime $\Gamma$, a certifying solver is a pair $(Q,V)$ where:
+\begin{itemize}
+\item $Q$ maps each instance to either $\mathsf{ABSTAIN}$ or a candidate verdict with witness,
+\item $V$ verifies witnesses in polynomial time (in the declared encoding length).
+\end{itemize}
+\end{definition}
+
+\begin{definition}[Integrity]
+A certifying solver is \emph{integrity-preserving} if every non-abstaining output is accepted by $V$, and every accepted output is correct for the declared exact relation.
+\end{definition}
+
+\begin{definition}[Competence]
+A certifying solver is \emph{competent} on $\Gamma$ if it is integrity-preserving, non-abstaining on all in-scope instances, and polynomial-budget compliant on all in-scope instances.
+\end{definition}
+
+\begin{definition}[Exact Reliability Claim]
+An \emph{exact reliability claim} on $\Gamma$ is the conjunction of universal non-abstaining coverage, correctness, and polynomial-budget compliance for exact sufficiency.
+\end{definition}
+
+\leanmetapending{\LH{DQ10}, \LH{IC33}}
+\begin{proposition}[Integrity and Competence Separation]
+Integrity and competence are distinct: integrity constrains what can be asserted, while competence adds full coverage under resource bounds.
+\end{proposition}
+
+\begin{proof}
+The always-abstain solver is integrity-preserving (it makes no uncertified assertion) but fails competence whenever the in-scope set is non-empty.
+\end{proof}
+
+\subsection{Main Impossibility Theorem}
+
+\leanmetapending{\LH{IC34}, \LH{DQ31}}
+\begin{theorem}[Integrity-Resource Bound (Conditional)]\label{thm:integrity-resource}
+Fix a regime $\Gamma$ whose exact-sufficiency decision problem is coNP-complete under the declared encoding. Under $\Pclass\neq\coNP$, no solver is simultaneously integrity-preserving and competent on $\Gamma$ for exact sufficiency.
+\end{theorem}
+
+\begin{proof}
+Assume such a solver $(Q,V)$ exists. We build a polynomial-time decider for exact sufficiency on $\Gamma$.
+
+Given an input instance $x\in \Gamma$, run $Q(x)$. Competence implies that $Q$ never abstains on in-scope instances and always halts within polynomial budget. Let $y$ be the returned verdict with witness. Now run the polynomial-time verifier $V(x,y)$.
+
+Integrity implies two things: every non-abstaining output produced by $Q$ is accepted by $V$, and every accepted output is correct for the declared exact-sufficiency relation. Therefore the combined procedure returns the correct exact verdict on every instance in $\Gamma$ and runs in polynomial time.
+
+This yields a polynomial-time algorithm for a coNP-complete problem on $\Gamma$, hence coNP $\subseteq$ P. Under $\Pclass\neq\coNP$, this is impossible. Therefore no solver is simultaneously integrity-preserving and competent on $\Gamma$.
+\end{proof}
+
+\leanmetapending{\LH{DQ28}, \LH{DQ38}}
+\begin{corollary}[Exact Reliability Impossibility in the Hard Regime]
+Under the assumptions of the theorem, exact reliability claims are impossible on the full hard regime.
+\end{corollary}
+
+\leanmetapending{\LH{IC30}, \LH{IC32}}
+\begin{corollary}[Trilemma of Exact Certification]
+In the hard regime, no exact certifier can simultaneously be sound, complete on all in-scope instances, and polynomial-budgeted. Operationally, one of three concessions is unavoidable: abstain on some instances, weaken the guarantee, or risk overclaiming.
+\end{corollary}
+
+\subsection{Regime-Dependent Abstention}
+
+\leanmetapending{\LH{IC32}, \LH{DQ2}}
+\begin{proposition}[Abstention Frontier Expands with Regime Complexity]\label{prop:abstention-frontier}
+For polynomial-time exact certifiers that abstain whenever they cannot certify correctness within budget, the set of instances requiring abstention expands along
+\[
+\text{static} \to \text{stochastic} \to \text{sequential}.
+\]
+\end{proposition}
+
+\begin{proof}
+As the decision predicate moves from coNP to PP to PSPACE hardness, exact worst-case certification requires strictly stronger resources. Fixed polynomial resources therefore force abstention on a larger instance family in higher regimes.
+\end{proof}
+
+\subsection{Connection to Simplicity Tax}
+
+The trilemma directly relates to the \emph{simplicity tax} (Section~\ref{sec:simplicity-tax}). When coordinates relevant for exact decisions are omitted from a central model, the unresolved burden must be handled elsewhere: by local resolution, extra queries, or abstention. In the hard exact regime, Theorem~\ref{thm:integrity-resource} implies this burden cannot be discharged for free by a polynomial-budget exact certifier. The principle of \emph{hardness conservation} names this constraint: irreducible certification cost is conserved across the interface, it cannot be eliminated, only displaced.
+
+The trilemma thus operationalizes the theoretical impossibility for practical certifiers: exact relevance certification imposes a structural choice among soundness, completeness, and efficiency, with the precise boundary determined by the regime-sensitive complexity map.

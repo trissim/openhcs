@@ -1,9 +1,9 @@
-% Format switching: default is two-column journal (print/arXiv).
+% Format switching: default matches TITS template (two-column journal).
 % Pass \ITSUBMISSION via pdflatex CLI to get single-column double-spaced review format.
 \ifdefined\ITSUBMISSION
-  \documentclass[12pt, onecolumn, draftclsnofoot]{IEEEtran}
+  \documentclass[12pt, onecolumn]{IEEEtran}
 \else
-  \documentclass[journal]{IEEEtran}
+  \documentclass[lettersize,journal]{IEEEtran}
 \fi
 
 % IEEE Transactions on Information Theory Format - IEEEtran class
@@ -24,6 +24,13 @@
 \ifdefined\ITSUBMISSION
   \usepackage{setspace}
   \usepackage[margin=1in, letterpaper]{geometry}
+  % Reduce whitespace at bottom of pages from deferred floats
+  \renewcommand{\topfraction}{0.9}
+  \renewcommand{\bottomfraction}{0.8}
+  \renewcommand{\textfraction}{0.1}
+  \setcounter{topnumber}{3}
+  \setcounter{bottomnumber}{2}
+  \setcounter{totalnumber}{4}
 \fi
 
 % Allow URLs to break at any character
@@ -68,19 +75,18 @@ Confusability Graphs, Strong Powers, and Capacity}
 
 % Main content sections (section commands are in the content files)
 \input{content/01_introduction.tex}
-\input{content/06_figures.tex}
 \input{content/02_foundations.tex}
-\input{content/06_converse.tex}
-\input{content/07_graph.tex}
-\input{content/09_capacity.tex}
-\input{content/09_theta.tex}
-\input{content/10_equality.tex}
+\input{content/03_converse.tex}
+\input{content/04_graph.tex}
+\input{content/05_capacity.tex}
+\input{content/06_theta.tex}
+\input{content/07_equality.tex}
 \input{content/08_affine.tex}
-\input{content/03_ssot.tex}
-\input{content/12_rate_corollaries.tex}
-\input{content/04_requirements.tex}
-\input{content/08_related.tex}
-\input{content/09_conclusion.tex}
+\input{content/09_ssot.tex}
+\input{content/10_rate_corollaries.tex}
+\input{content/11_requirements.tex}
+\input{content/12_related.tex}
+\input{content/13_conclusion.tex}
 
 % References
 \bibliographystyle{IEEEtran}
@@ -88,7 +94,6 @@ Confusability Graphs, Strong Powers, and Capacity}
 
 
 % Appendix
-\clearpage
 \appendix
 \input{content/12_appendix_classification.tex}
 
