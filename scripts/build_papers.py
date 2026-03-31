@@ -3414,7 +3414,7 @@ end {module_root}
             r"\urlstyle{tt}",
             r"\makeatletter",
             r"\if@twocolumn",
-            r"\begin{list}{}{\leftmargin=0pt\itemindent=0pt\itemsep=2pt\parsep=0pt\topsep=2pt}",
+            r"\begin{list}{}{\leftmargin=0pt\itemindent=0pt\itemsep=4pt\parsep=0pt\topsep=4pt}",
         ]
 
         if code_to_handle:
@@ -4229,14 +4229,20 @@ end {module_root}
             f"% Generated: {datetime.now().isoformat()}",
             rf"% Paper: {paper_id}",
             r"\begingroup",
-            r"\scriptsizierowcounter",
-            r"\sloppy",
+            r"\scriptsize",
             r"\setlength{\tabcolsep}{3pt}",
-            r"\renewcommand{\tabularxcolumn}[1]{m{#1}}",
-            r"\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}m{0.65\linewidth}>{\raggedleft\arraybackslash}m{0.30\linewidth}@{}}",
+            r"\renewcommand{\arraystretch}{1.2}",
+            r"\setlength{\LTpre}{0pt}",
+            r"\setlength{\LTpost}{0pt}",
+            r"\begin{longtable}{@{}>{\raggedright\arraybackslash}m{0.65\linewidth}>{\raggedleft\arraybackslash}m{0.30\linewidth}@{}}",
             r"\toprule",
             r"\textbf{Paper claim} & \textbf{Lean handle} \\",
             r"\midrule",
+            r"\endhead",
+            r"\midrule",
+            r"\endfoot",
+            r"\bottomrule",
+            r"\endlastfoot",
         ]
 
         for label in claim_labels:
@@ -4263,9 +4269,9 @@ end {module_root}
             else:
                 support = r"\emph{(no derived Lean handle found)}"
             lines.append(rf"{title} & {support} \\")
-            lines.append(r"\rowrule")
+            lines.append(r"\midrule")
 
-        lines.extend([r"\bottomrule", r"\end{tabularx}", r"\endgroup", ""])
+        lines.extend([r"\end{longtable}", r"\endgroup", ""])
         if derived_count > 0 or unmapped_count > 0:
             lines.extend(
                 [

@@ -1,0 +1,79 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\usepackage{hyperref}
+\geometry{margin=1in}
+
+\title{\textbf{JACM Submission Cover Letter}}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\noindent\textbf{Date}: March 31, 2026
+
+\noindent\textbf{To}: Professor Venkatesan Guruswami, Editor-in-Chief \\
+\textbf{Journal of the ACM}
+
+\noindent\textbf{Subject}: Submission of ``The Optimizer Quotient and the Certification Trilemma''
+
+Dear Professor Guruswami,
+
+Please accept our submission of ``The Optimizer Quotient and the Certification Trilemma'' for consideration for publication in the \textit{Journal of the ACM}.
+
+\noindent\textbf{Summary}
+
+This paper introduces the \emph{optimizer quotient}---the coarsest abstraction of a system's state that preserves optimal actions. We prove that certifying this object's coordinate structure is subject to an impossibility trilemma: under P$\neq$coNP, no certifier can be simultaneously sound, complete on all in-scope instances, and polynomial-budgeted. The certification cost varies by computational regime: coNP-complete (static), PP-hard (stochastic decisiveness), and PSPACE-complete (sequential). We identify six structural restrictions that collapse certification to polynomial time.
+
+\noindent\textbf{Contributions}
+
+\begin{itemize}
+  \item \textbf{New complexity measure}: The optimizer quotient formalizes which state coordinates are decision-relevant.
+  \item \textbf{Impossibility trilemma}: Under P$\neq$coNP, exact certification cannot be simultaneously sound, complete, and efficient.
+  \item \textbf{Regime-aware complexity}: Certification hardness varies from coNP to PSPACE across static, stochastic, and sequential regimes.
+  \item \textbf{Mechanized core}: The finite reduction and verification core is formalized in Lean 4.
+\end{itemize}
+
+\noindent\textbf{Significance}
+
+This work contributes to the theory of computation by:
+\begin{itemize}
+  \item Establishing fundamental limits on automated decision certification
+  \item Connecting decision-theoretic sufficiency to computational complexity
+  \item Providing a framework for understanding when decision-relevant information can be efficiently certified
+\end{itemize}
+
+The results are of interest to the JACM audience in theoretical computer science, particularly in complexity theory, formal verification, and decision theory.
+
+\noindent\textbf{Originality}
+
+This work has not been published previously and is not under consideration for publication elsewhere. All authors have approved the submission.
+
+\noindent\textbf{Suggested Reviewers}
+
+We suggest the following reviewers who have expertise in relevant areas:
+
+\begin{itemize}
+  \item \textbf{[Reviewer 1]}: Expertise in computational complexity and proof complexity
+  \item \textbf{[Reviewer 2]}: Expertise in formal verification and interactive proof systems
+  \item \textbf{[Reviewer 3]}: Expertise in decision theory and information-theoretic complexity
+\end{itemize}
+
+\noindent\textbf{Conflict of Interest}
+
+The authors declare no conflicts of interest.
+
+Thank you for your time and consideration. We look forward to your response.
+
+Sincerely,
+
+\\
+\textbf{Tristan Simas} \\
+McGill University \\
+Montreal, Quebec, Canada \\
+\texttt{tristan.simas@mail.mcgill.ca}
+
+\end{document}

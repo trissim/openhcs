@@ -140,6 +140,20 @@ papers:
     claim_mapping_file: "content/claim_mapping_auto.tex"
     supplementary_file: "supplementary.tex"
 
+  paper4_jacm:
+    name: "Decision Quotient (JACM)"
+    full_name: "The Optimizer Quotient and the Certification Trilemma"
+    dir: "paper4_decision_quotient"
+    latex_dir: "latex"
+    latex_file: "decision_quotient_jacm.tex"
+    venue: "JACM"
+    lean_dependencies:
+      - "paper1"
+      - "paper2"
+    assumption_ledger_sources:
+      - "DecisionQuotient/ClaimClosure.lean"
+    claim_mapping_file: "content/claim_mapping_auto.tex"
+
   paper4_toc:
     name: "Decision Quotient (ToC)"
     full_name: "Computational Complexity of Physical Information Sufficiency"
