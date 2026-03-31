@@ -13,6 +13,7 @@
 \usepackage{graphicx}
 \usepackage{xcolor}
 \usepackage{fancyvrb}
+\PassOptionsToPackage{hyperfootnotes=false}{hyperref}
 \usepackage{hyperref}
 \usepackage{url}
 \usepackage{cite}
@@ -43,6 +44,12 @@
 
 % Load preamble
 \input{preamble}
+
+% Suppress hyperref warnings for Lean handles (links to undefined targets are harmless)
+\makeatletter
+\renewcommand{\LH}[1]{\leavevmode\nobreak\mbox{\ttfamily\nolinkurl{#1}}}
+\renewcommand{\LHrng}[3]{\leavevmode\nobreak\mbox{\ttfamily\nolinkurl{#1#2-#3}}}
+\makeatother
 
 % Hyperref setup
 \hypersetup{

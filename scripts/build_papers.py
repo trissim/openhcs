@@ -4232,7 +4232,8 @@ end {module_root}
             r"\scriptsizierowcounter",
             r"\sloppy",
             r"\setlength{\tabcolsep}{3pt}",
-            r"\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.65\linewidth}>{\raggedleft\arraybackslash}p{0.30\linewidth}@{}}",
+            r"\renewcommand{\tabularxcolumn}[1]{m{#1}}",
+            r"\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}m{0.65\linewidth}>{\raggedleft\arraybackslash}m{0.30\linewidth}@{}}",
             r"\toprule",
             r"\textbf{Paper claim} & \textbf{Lean handle} \\",
             r"\midrule",
@@ -4798,6 +4799,27 @@ end {module_root}
         supp_src = latex_dir / supp_file
         if supp_src.exists():
             self._compile_supplementary_latex(paper_id, supp_src, package_dir)
+            # Copy content dir and shared macros so the .tex compiles standalone
+            content_dir = latex_dir / "content"
+            if content_dir.exists():
+                dest_content = package_dir / "content"
+                if dest_content.exists():
+                    shutil.rmtree(dest_content)
+                shutil.copytree(content_dir, dest_content)
+            shared_macros = (
+                self.repo_root / "docs" / "papers" / "shared" / "lean-handle-macros.tex"
+            )
+            if shared_macros.exists():
+                shutil.copy2(shared_macros, package_dir / "lean-handle-macros.tex")
+            # Fix the relative path in supplementary.tex to use local copy
+            supp_dest = package_dir / supp_src.name
+            if supp_dest.exists():
+                supp_text = supp_dest.read_text()
+                supp_text = supp_text.replace(
+                    "../../shared/lean-handle-macros.tex",
+                    "lean-handle-macros.tex",
+                )
+                supp_dest.write_text(supp_text)
         else:
             print(
                 f"[supplementary] Warning: supplementary source not found: {supp_src}"

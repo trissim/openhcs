@@ -37,13 +37,16 @@ The binary square of Section~\ref{sec:binary-square} does \emph{not} have transi
 \small
 \setlength{\tabcolsep}{4pt}
 \renewcommand{\arraystretch}{1.1}
+\renewcommand{\tabularxcolumn}[1]{m{#1}}
 \begin{center}
-\begin{tabularx}{0.98\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.21\linewidth}>{\RaggedRight\arraybackslash}p{0.16\linewidth}>{\RaggedRight\arraybackslash}p{0.31\linewidth}>{\RaggedRight\arraybackslash}p{0.22\linewidth}@{}}
+\begin{tabularx}{0.98\linewidth}{@{}>{\RaggedRight\arraybackslash}m{0.21\linewidth}>{\RaggedRight\arraybackslash}m{0.16\linewidth}>{\RaggedRight\arraybackslash}m{0.31\linewidth}>{\RaggedRight\arraybackslash}m{0.22\linewidth}@{}}
 \toprule
 \textbf{Condition} & \textbf{Logical status} & \textbf{Structural consequence} & \textbf{Capacity value} \\
 \midrule
 Fiber coherence & Stronger sufficient condition & Connected components are realized transcript fibers & $\log |\mathcal T_{\mathrm{real}}|$ \\
+\midrule
 Meet-witness & Sufficient for transitivity and collapse & Base confusability collapses to the component cluster graph & $\log |\Pi_{\mathrm{cc}}|$ \\
+\midrule
 Transitivity & Sufficient collapse condition used here & $G_{\mathrm{conf}}=\mathrm{Cluster}(\Pi_{\mathrm{cc}})$ & $\log |\Pi_{\mathrm{cc}}|$ \\
 \bottomrule
 \end{tabularx}

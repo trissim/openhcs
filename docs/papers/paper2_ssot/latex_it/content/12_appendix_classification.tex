@@ -1,36 +1,42 @@
 \section{System Classification}\label{sec:appendix-classification}
 
-To demonstrate the operational ubiquity of the deterministic partial-view model, we map real-world distributed state-maintenance architectures to our formal channel parameters. This appendix applies the realizability criterion of Corollary~\ref{thm:ssot-iff} to representative channel witnesses drawn from three infrastructure domains. Table~\ref{tab:host-checks-a-appendix} classifies these systems by their structural side-information capabilities and zero-delay state synchronization properties. Each entry instantiates our abstract confusability framework, with the deterministic coupling graph induced by the host's native update mechanism. The classification demonstrates that the graph-capacity limits and $\Omega(n)$ synchronization penalties established above are not theoretical curiosities: they are operationally unavoidable for the majority of widely deployed deterministic partial-view architectures. The pattern labels used in the table are: Pattern A (Blind Update), meaning missing causal propagation; Pattern B (Amnesiac Derivation), meaning missing provenance observability; and Pattern C (Coherent Kernel), meaning both conditions are present and verifiable rate $1$ is realizable.
+This appendix applies the realizability criterion of Corollary~\ref{thm:ssot-iff} to representative channel witnesses. Table~\ref{tab:host-checks-a-appendix} classifies systems by their structural side-information capabilities and zero-delay state synchronization properties. Pattern A: missing causal propagation. Pattern B: missing provenance observability. Pattern C: both conditions present (verifiable rate $1$).
 
 \begingroup
 \centering
 \scriptsize
-\setlength{\tabcolsep}{2pt}
-\renewcommand{\arraystretch}{1.18}
-\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.12\linewidth}>{\RaggedRight\arraybackslash}p{0.11\linewidth}>{\centering\arraybackslash}p{0.06\linewidth}>{\centering\arraybackslash}p{0.055\linewidth}>{\centering\arraybackslash}p{0.055\linewidth}>{\centering\arraybackslash}p{0.08\linewidth}X@{}}
+\setlength{\tabcolsep}{1.5pt}
+\renewcommand{\arraystretch}{1.05}
+\renewcommand{\tabularxcolumn}[1]{m{#1}}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}m{0.10\linewidth}>{\RaggedRight\arraybackslash}m{0.16\linewidth}>{\centering\arraybackslash}m{0.05\linewidth}>{\centering\arraybackslash}m{0.05\linewidth}>{\centering\arraybackslash}m{0.05\linewidth}>{\centering\arraybackslash}m{0.06\linewidth}X@{}}
 \toprule
-\textbf{Channel family} & \textbf{Channel instance / Pattern} & \textbf{Class} & \textbf{Prop.} & \textbf{Prov.} & \textbf{Rate 1} & \textbf{Mechanism} \\
+\textbf{Channel} & \textbf{Instance} & \textbf{Class} & \textbf{Prop.} & \textbf{Prov.} & \textbf{Rate 1} & \textbf{Mechanism} \\
 \midrule
-Prog. languages & Python~\cite{pep487,pythondatamodel2025} & C & yes & yes & yes & For the structural facts considered here, class-definition hooks and runtime hierarchy introspection are host-native.\leanmeta{\LH{PYH1}, \LH{PYI1}} \\
-Databases & Engine-maintained materialized view~\cite{postgresMaterializedViews2025,postgresPgMatviews2025} & C & yes & yes & yes & The engine maintains the derived relation and exposes catalog metadata for it.\leanmeta{\LHrng{DBV}{1}{3}} \\
-Prog. languages & Rust~\cite{rustref2024} & B & partial & no & no & Compile-time macro generation exists, but the compiled runtime artifact does not retain derivation provenance.\leanmeta{\LH{RUH1}, \LH{RUI1}} \\
-Prog. languages & TypeScript / JavaScript~\cite{typescriptDecorators2025,javascriptDecorators2025} & B & partial & no & no & Decorators can attach metadata, but type erasure and missing subclass provenance block exact verification in the host runtime.\leanmeta{\LH{TSE1}, \LH{TSN1}} \\
-Prog. languages & Java~\cite{gosling2021java} & A/B & no & no & no & Under the runtime-only host interpretation used here, annotations and related derivation tooling are external to the JVM runtime.\leanmeta{\LH{JVA1}} \\
-Prog. languages & Go~\cite{gospec2024} & A/B & no & no & no & Reflection exists, but there are no definition-time hooks or host-native implementer registries.\leanmeta{\LH{GOL1}} \\
+Prog.\ languages & Python~\cite{pep487,pythondatamodel2025} & C & yes & yes & yes & Class-definition hooks and runtime hierarchy introspection are host-native.\leanmeta{\LH{PYH1}, \LH{PYI1}} \\
+\midrule
+Databases & Engine-maintained materialized view~\cite{postgresMaterializedViews2025,postgresPgMatviews2025} & C & yes & yes & yes & Engine maintains the derived relation and exposes catalog metadata.\leanmeta{\LHrng{DBV}{1}{3}} \\
+\midrule
+Prog.\ languages & Rust~\cite{rustref2024} & B & partial & no & no & Compile-time macro generation exists, but the compiled runtime artifact does not retain derivation provenance.\leanmeta{\LH{RUH1}, \LH{RUI1}} \\
+\midrule
+Prog.\ languages & TypeScript / JavaScript~\cite{typescriptDecorators2025,javascriptDecorators2025} & B & partial & no & no & Decorators can attach metadata, but type erasure and missing subclass provenance block exact verification.\leanmeta{\LH{TSE1}, \LH{TSN1}} \\
+\midrule
+Prog.\ languages & Java~\cite{gosling2021java} & A/B & no & no & no & Under the runtime-only host interpretation used here, annotations are external to the JVM runtime.\leanmeta{\LH{JVA1}} \\
+\midrule
+Prog.\ languages & Go~\cite{gospec2024} & A/B & no & no & no & Reflection exists, but there are no definition-time hooks or host-native implementer registries.\leanmeta{\LH{GOL1}} \\
+\midrule
 Databases & External ETL copy / duplicate summary table & A/B & no & no & no & Synchronization is externalized, and provenance is no longer intrinsic to the host database.\leanmeta{\LHrng{DBE}{1}{3}} \\
-Deps. & npm~\cite{npmLock2026,npmExplain2026,npmLs2026} & A & no & yes & no & Lockfile (auxiliary tag) and query commands expose provenance, but manifest edits require explicit out-of-band operations before the derived state achieves coherence.\leanmeta{\LHrng{NPM}{1}{3}} \\
-Deps. & Cargo~\cite{cargoLockGuide2026,cargoTree2026,cargoMetadata2026} & A & no & yes & no & Resolved-dependency provenance is exposed, but the auxiliary tag (\texttt{Cargo.lock}) remains a distinct derived artifact requiring explicit out-of-band synchronization.\leanmeta{\LHrng{CRG}{1}{3}} \\
+\midrule
+Deps. & npm~\cite{npmLock2026,npmExplain2026,npmLs2026} & A & no & yes & no & Lockfile (auxiliary tag) and query commands expose provenance, but manifest edits require explicit out-of-band operations.\leanmeta{\LHrng{NPM}{1}{3}} \\
+\midrule
+Deps. & Cargo~\cite{cargoLockGuide2026,cargoTree2026,cargoMetadata2026} & A & no & yes & no & Resolved-dependency provenance is exposed, but the auxiliary tag (\texttt{Cargo.lock}) remains a distinct derived artifact.\leanmeta{\LHrng{CRG}{1}{3}} \\
+\midrule
 Deps. & Poetry~\cite{poetryCli2026} & A & no & yes & no & The resolved graph is queryable, but lock regeneration is an explicit step rather than part of the source edit itself.\leanmeta{\LHrng{POT}{1}{3}} \\
-Deps. & pnpm~\cite{pnpmInstall2026,pnpmWhy2026,pnpmList2026} & A & no & yes & no & Provenance is queryable, but the lockfile remains separately maintained rather than automatically updated with source edits.\leanmeta{\LHrng{PNM}{1}{3}} \\
+\midrule
+Deps. & pnpm~\cite{pnpmInstall2026,pnpmWhy2026,pnpmList2026} & A & no & yes & no & Provenance is queryable, but the lockfile remains separately maintained rather than automatically updated.\leanmeta{\LHrng{PNM}{1}{3}} \\
+\midrule
 \bottomrule
 \end{tabularx}
 \par\smallskip
-\textbf{Table A.1.} Zero-incoherence classification of representative channel witnesses in the deterministic partial-view model. The same theorem-level coordinates apply uniformly across programming-language runtimes, databases, and dependency managers. Each entry is verified against the mechanized sufficiency conditions of Corollary~\ref{thm:ssot-iff}.
+{\nobreak\textbf{Table A.1.} Zero-incoherence classification of representative channel witnesses in the deterministic partial-view model. The same theorem-level coordinates apply uniformly across programming-language runtimes, databases, and dependency managers. Each entry is verified against the mechanized sufficiency conditions of Corollary~\ref{thm:ssot-iff}.}
 \label{tab:host-checks-a-appendix}
-\par\medskip
 \endgroup
-
-
-\section*{Claim Mapping to Lean Handles}\label{sec:appendix-claims}
-
-The full mapping of paper handles (e.g., Theorem identifiers) to the corresponding Lean 4 formalization handles (e.g., \LH{COH2}), along with detailed artifact package descriptions and mechanized verification statistics, is provided in the supplementary material for this manuscript.
