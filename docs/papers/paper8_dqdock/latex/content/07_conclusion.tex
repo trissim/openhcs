@@ -1,0 +1,9 @@
+\section{Conclusion}\label{sec:conclusion}
+
+This paper proposes a different way to think about virtual docking. Instead of beginning with a search heuristic and asking how well it performs, we begin with a decision problem and ask which molecular distinctions must be preserved for the docking decision to remain unchanged. That shift turns approximation, cutoff selection, pruning, and pose filtering into objects of exact analysis rather than into purely empirical engineering choices.
+
+The resulting picture is constructive. Explicit tail bounds, bounded-potential bridges, optimizer-invariance theorems, structural-rank locality, sampled-docking transport, and top-$k$ preservation results together define a theorem-guided architecture for docking. DQDock is presented as the implementation of that architecture and as its empirical validation layer. Its importance is that it makes visible which parts of the pipeline are formally controlled, which are conditionally controlled, which rely on experimental constants, and which remain heuristic.
+
+The strongest message of the paper is that decision-relevant compression is a computational resource. When an engine compresses only information that has already been shown to be irrelevant to the optimizer, it can become both faster and more accurate than a generic baseline that spends effort on the wrong distinctions. The current DQDock benchmark profile suggests that this is both a clean theoretical picture and a real practical regime.
+
+For computational chemistry, the broader message is that tractability and rigor can reinforce one another. A docking engine can be fast because it exploits a low-information regime that is itself mathematically characterized. For formal methods, the message is complementary: a theorem family becomes much more meaningful when it shapes an implemented scientific system and survives contact with real benchmark tasks. DQDock is one step toward that synthesis.

@@ -1,0 +1,40 @@
+\documentclass[11pt]{letter}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+
+\signature{Tristan Simas\\McGill University}
+
+\date{\today}
+
+\begin{document}
+
+\begin{letter}{Guest Editors:\\
+Chao Tian (Texas A\&M University)\\
+Jun Chen (McMaster University)\\
+Deniz Gunduz (Imperial College London)\\
+Pulkit Tandon (Granica.ai)\\
+Lele Wang (University of British Columbia)\\[1em]
+Senior Editor: Elza Erkip (New York University)\\[1em]
+\textit{IEEE JSAIT Special Issue:}\\
+\textit{Data Compression: Classical Theories Meet Modern Advances}\\
+}
+
+\opening{Dear Guest Editors Tian, Chen, Gunduz, Tandon, and Wang,}
+
+Please find enclosed my manuscript, ``Semantic Identity Compression: Zero-Error Laws, Rate-Distortion, and Neurosymbolic Necessity,'' for consideration in the IEEE JSAIT Special Issue on ``Data Compression: Classical Theories Meet Modern Advances.''
+
+Neural embeddings generalize powerfully by compressing away semantic detail, but this creates an unavoidable collision ambiguity: multiple distinct entities can share the same representation value. Recovering which specific entity is meant constitutes an identity disclosure. This directly addresses your CFP topic on ``Data compression and storage under privacy and security constraints'': what is the fundamental price, in both bits and disclosure, of recovering exact identity?
+
+I demonstrate that this residual ambiguity is not a representation-specific artifact but a structural information-theoretic debt. If unpaid, any non-injective semantic representation leaves a strict deterministic distortion floor, which I formalize through an exact fiberwise rate-distortion law. Aligning with your interest in ``Task-, context-, or semantics-aware compression,'' the core contribution proves that zero-error recovery is possible and quantifies exactly what it requires: a tight fixed-length converse $L \ge \log_2 A_\pi$, exact finite-block scaling laws, and pointwise adaptive budgets measuring the auxiliary information needed to separate colliding entities. Because residual ambiguity is structural, symbolic identity mechanisms (database keys, memory pointers, nominal tags) are the mathematically necessary complement to any non-injective semantic representation.
+
+All main theorems, operational laws, and architecture results in the manuscript are fully machine-checked in Lean~4.
+
+I believe this work is strongly aligned with the mission of your Special Issue. Thank you for your time and editorial consideration.
+
+\closing{Sincerely,}
+
+\end{letter}
+\end{document}

@@ -98,9 +98,10 @@ Membership is in PSPACE. By definition, the query asks whether there exists an a
 
 Reuse the TQBF reduction for sequential sufficiency with $I=\emptyset$. At empty information, sequential anchor sufficiency is equivalent to global preservation of the optimal-action set, so the same construction yields
 \[
-\mathrm{TQBF}(q)
-\iff
-\mathrm{SEQUENTIAL\mbox{-}ANCHOR\mbox{-}SUFFICIENCY\mbox{-}CHECK}(\mathrm{reduceTQBF}(q),\emptyset).
+\begin{aligned}
+\mathrm{TQBF}(q) &\iff \\
+&\mathrm{SEQUENTIAL\mbox{-}ANCHOR\mbox{-}SUFFICIENCY\mbox{-}CHECK}(\mathrm{reduceTQBF}(q),\emptyset).
+\end{aligned}
 \]
 Hence TQBF many-one reduces to the sequential anchor query.
 \end{proof}

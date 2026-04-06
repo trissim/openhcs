@@ -21,51 +21,53 @@ Neural embeddings operate differently. They generalize by compressing away seman
 
 This paper asks: given a fixed embedding that has already been deployed, what is the minimum price of recovering precise identity?
 
-Formally, let $C$ be a finite class label, let $\pi$ be the representation map, and let $U = \pi(C)$ be the embedding value observed by the decoder. Exact identity recovery asks how much additional description is needed to recover $C$ from $U$. Once the problem is written this way, the central combinatorial quantity is immediate: $$A_{\pi} := \max_u |\pi^{-1}(u)|,$$ the size of the largest collision fiber. The worst-case fixed-length law is then exactly the minimum number of extra bits needed to separate that worst fiber: $$L \ge \log_2 A_{\pi}.$$
+Formally, let $C$ be a finite class label, let $\pi$ be the representation map, and let $U = \pi(C)$ be the embedding value observed by the decoder. Exact identity recovery asks how much additional description is needed to recover $C$ from $U$. Once the problem is written this way, the central combinatorial quantity is immediate: $$A_{\pi} := \max_u |\pi^{-1}(u)|,$$ the size of the largest collision fiber.
 
-This viewpoint also yields a finer adaptive law: if the auxiliary description length may depend on the realized representation value $u$, then the optimal pointwise budget is $\lceil \log_2 |\pi^{-1}(u)|\rceil$ per fiber. On the distortion side, the general law is the exact fiberwise decomposition of recoverable mass for arbitrary finite sources; the uniform single-block curve is its closed-form specialization. On the query side, binary interrogation faces the same combinatorial floor, because a family of $d$ binary observables induces at most $2^d$ transcripts on any collision fiber. In this sense, worst-case bits, adaptive bits, query cost, and deterministic distortion are all different operational modalities (informally, "currencies") for the same residual ambiguity object.
+::: remark
+A representation $\pi$ is noninjective exactly when at least one fiber $\pi^{-1}(u)$ has size $>1$. The collision multiplicity $A_\pi$ therefore measures the degree of noninjectivity: $A_\pi=1$ iff $\pi$ is injective, and larger $A_\pi$ corresponds to worse collision.
+:::
 
-We study the finite, fixed-representation, zero-error regime: the decoder uses only the declared representation value $U$ and any auxiliary description whose length is charged to the budget. No hidden registry, preprocessing table, or external side channel may contribute uncharged distinguishing information. This is the base case: any higher-level regime (stochastic, continuous, or learning-aware models) must, at deployment time, reduce to a fixed representation and finite realized classes in order to execute. Consequently, those higher-level analyses cannot escape the operational implications derived here; they only change the input quantities (for example, collision statistics) that our exact downstream laws take as given.
+The worst-case fixed-length law is then exactly the minimum number of extra bits needed to separate that worst fiber: $$L \ge \log_2 A_{\pi}.$$
 
-#### Systems consequence.
+This viewpoint yields an adaptive law $\lceil \log_2 |\pi^{-1}(u)|\rceil$ per fiber, the fiberwise decomposition of recoverable mass for arbitrary finite sources, and a query-side counting floor $\lceil \log_2 A_{\pi}\rceil \le d$ (since $d$ binary observables induce at most $2^d$ transcripts). Worst-case bits, adaptive bits, query cost, and distortion are different currencies for the same residual ambiguity.
 
-Symbolic handles, identifiers, keys, pointers, nominal tags, registry entries, and retrieval indices are the standard mechanisms by which real systems pay the identity debt left by non-injective semantic abstraction. This debt is exactly the residual ambiguity quantified by the collision fiber geometry (Theorems [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"} and [\[thm:adaptive-fiber-budget\]](#thm:adaptive-fiber-budget){reference-type="ref" reference="thm:adaptive-fiber-budget"}), which is resolved through auxiliary bits, query effort, or accepted distortion.
+We study the finite, fixed-representation, zero-error regime: the decoder uses only the declared representation $U$ and charged auxiliary description. No hidden registry or external side channel may contribute uncharged distinguishing information. Higher-level regimes must reduce to this base case at deployment time, so they cannot escape the operational implications derived here.
 
-#### Privacy and security perspective.
+#### Systems consequence
 
-The fiber geometry directly governs identity disclosure. When distinct entities share the same representation, recovering which specific entity is meant constitutes an *identity disclosure*, and the auxiliary description required to resolve the collision fiber is exactly the information that is protected if privacy is to be maintained. This connects the problem to the Special Issue theme of "data compression and storage under privacy and security constraints": our results characterize the precise disclosure-recovery tradeoff for semantic representations. The formal development establishes a finite explicit disclosure separation between nominal-tag access and attribute-only identification, aligning with formal exactness requirements in logic-based explanation frameworks [@ignatiev2019abduction; @marquessilva2022trustworthy], complementing broader privacy frameworks such as differential privacy [@dwork2006differential], and proving that provenance is not recoverable from observable profiles when collisions exist.
+Symbolic handles are the standard mechanisms for paying the identity debt left by non-injective semantic abstraction. This debt equals the residual ambiguity quantified by collision fiber geometry (Theorems [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"} and [\[thm:adaptive-fiber-budget\]](#thm:adaptive-fiber-budget){reference-type="ref" reference="thm:adaptive-fiber-budget"}), resolved through auxiliary bits, query effort, or accepted distortion.
 
-#### Relation to classical source coding with side information.
+#### Privacy and security perspective
 
-The problem is closely related to the Wyner--Ziv framework [@slepian1973noiseless; @wyner1976rate; @yamamoto1981source; @oohama1997gaussian; @gastpar2004wyner]: the decoder already possesses side information (the representation value $U=\pi(C)$), and the encoder transmits auxiliary description to resolve whatever ambiguity remains within each collision fiber. This places the paper near both source coding with side information and the zero-error tradition initiated by Shannon and developed through graph-theoretic capacity bounds [@shannon1956zero; @lovasz1979shannon]. Unlike the classical asymptotic setting, we work in the finite zero-error regime, where instead of asymptotic rates we obtain exact bit counts: $\lceil \log_2 |\pi^{-1}(u)|\rceil$ bits per fiber suffice and are necessary. The symbolic handle (key, pointer, or registry entry) is precisely this auxiliary side information, provided in advance to the decoder.
+The fiber geometry directly governs identity disclosure. When distinct entities share the same representation, recovering which specific entity is meant constitutes an *identity disclosure*, and the auxiliary description required to resolve the collision fiber is exactly the information that is protected if privacy is to be maintained. This connects to the Special Issue theme of "data compression and storage under privacy and security constraints": our results characterize the precise disclosure-recovery tradeoff for semantic representations. The formal development establishes a finite explicit disclosure separation between nominal-tag access and attribute-only identification, aligning with formal exactness requirements in logic-based explanation frameworks [@ignatiev2019abduction; @marquessilva2022trustworthy], complementing broader privacy frameworks such as differential privacy [@dwork2006differential].
 
-#### Graph-theoretic interpretation.
+#### Related frameworks
 
-The confusability graph in our setting is a disjoint union of cliques: each collision fiber forms a complete subgraph, and the fiber geometry is the clique-size profile of this graph. This is a highly structured special case of the general graph-entropy problem [@korner1973coding; @simonyi1995graph; @lovasz1979shannon; @alon1996source; @haemers1978upper; @zuiddam2019asymptotic]. The specialization is not a limitation but an opportunity: while general graph entropy lacks closed-form solutions, the clique-union structure yields exact finite formulas. The largest fiber size $A_\pi$ is exactly the chromatic number of the complement graph in this special case, and our results give precise operational meaning to this combinatorial invariant.
+The problem relates to Wyner--Ziv side information [@slepian1973noiseless; @wyner1976rate; @yamamoto1981source; @oohama1997gaussian; @gastpar2004wyner], zero-error graph-capacity theory [@shannon1956zero; @lovasz1979shannon], and semantics-aware communication [@gunduz2023beyond; @uysal2022semantic; @bao2011towards; @kountouris2021semantics]. In the fixed-representation regime, our confusability graphs are disjoint cliques, yielding exact finite formulas. The fiber geometry also connects to information bottleneck [@Tishby2000] and rate-distortion-perception [@blau2019rethinking; @chen2022rdp; @xie2025output].
 
-The closest classical objects are zero-error coding with confusability constraints [@korner1973coding; @witsenhausen1976zero], source coding with side information, and more recent task-oriented or semantics-aware communication models [@gunduz2023beyond; @uysal2022semantic; @bao2011towards; @kountouris2021semantics]. Unlike general zero-error settings where confusability capacities are often intractable, representation-induced confusability graphs here decompose into disjoint cliques, giving exact finite closed-form budgets rather than only asymptotic bounds. This also gives a direct neurosymbolic reading: if $\pi$ is a learned embedding, collision fibers measure irreducible identity ambiguity under semantic compression; injective representations need no auxiliary metadata, while non-injective ones impose an exact-recovery cost no downstream reasoning layer can remove [@koh2020concept; @garcez2020neurosymbolic; @jing2022understanding; @wang2020understanding]. Viewed through the semantics-aware communication lens, this fiber geometry is the governing object in the finite fixed-representation regime. Our setting isolates a different question: given a fixed deterministic representation already available at the decoder, what residual coding burden does it leave behind for exact identity recovery? That question admits exact finite answers.
+#### Graph-theoretic interpretation
+
+The strong product structure of confusability graphs under repeated composition connects this work to the Shannon capacity program [@simonyi1995graph; @alon1996source; @haemers1978upper; @zuiddam2019asymptotic] and zero-error systems theory [@witsenhausen1976zero].
 
 ## Contributions
 
-The collision fiber geometry induced by a fixed representation $\pi$ is the single structural object that governs exact identity-recovery costs. This paper develops three interlocking threads, each controlled by the same fiber geometry.
+The collision fiber geometry governs exact identity-recovery costs. Three interlocking threads:
 
-1.  **Bit currency and exact coding.** A tight fixed-length converse $L \ge \log_2 A_{\pi}$, an exact finite-block scaling law in the finite-regime spirit of [@polyanskiy2010channel], and a pointwise optimal adaptive bit budget $\lceil \log_2 |\pi^{-1}(u)|\rceil$ per fiber.
+1.  **Rate-distortion and exact coding.** Exact fiberwise rate-distortion law for arbitrary finite sources via recoverable-mass decomposition, with closed-form $D^\star(L)=\max(0,1-2^L/a)$ for uniform single-block sources. Supporting: tight converse $L \ge \log_2 A_{\pi}$, exact finite-block scaling in the finite-regime spirit of [@polyanskiy2010channel], and adaptive budget $\lceil \log_2 |\pi^{-1}(u)|\rceil$ per fiber.
 
-2.  **Query currency and canonical structure.** The fiber-geometry framework extends to the query side, where complete derivability-aware families reduce to an orthogonal semantically minimal core. On this canonical core, minimal distinguishing families form the bases of a matroid, and the query cost obeys the same counting floor $\lceil \log_2 A_{\pi}\rceil \le d$, where $d$ is the distinguishing dimension.
+2.  **Query currency and canonical structure.** Complete derivability-aware families reduce to an orthogonal semantically minimal core, where minimal distinguishing families form matroid bases and query cost obeys $\lceil \log_2 A_{\pi}\rceil \le d$.
 
-3.  **Open-world robustness.** The same fiber geometry governs when collision-free representations remain safe under system growth. Present collision-freedom does not persist under extension, and barrier-freedom certification is not computable for arbitrary future-generating code.
+3.  **Open-world robustness.** Collision-freedom does not persist under extension; barrier-freedom certification is uncomputable for arbitrary future-generating code.
 
-From these three threads flow the remaining payoffs: general distortion currency via fiberwise recoverable-mass decomposition (yielding $D^\star(L)=\max(0,1-2^L/a)$ as a closed-form specialization), systems payoff explaining why symbolic handles are necessary in semantics-aware systems, and mechanized integrity through Lean 4 verification.
+Remaining payoffs: symbolic handles are necessary in semantics-aware systems; Lean 4 verification provides mechanized integrity.
 
-#### Machine-checked proofs.
+#### Machine-checked proofs
 
-All principal theorems in this paper have been formalized and verified in Lean 4. The mechanization functions as an integrity gate: informal arguments were admitted into the paper only after the corresponding formal proofs compiled without `sorry`.
+All principal theorems are formalized in Lean 4; informal arguments were admitted only after formal proofs compiled without `sorry`. Superscript Lean codes reference specific theorems.
 
-#### Worked example.
+#### Worked example
 
-We use one small example throughout the paper. Five classes have profiles $$A=000,\quad B=000,\quad C=100,\quad D=110,\quad E=111.$$ Then $A$ and $B$ form a collision fiber of size two, so the exact worst-case fixed-length budget is one bit. The adaptive picture is equally simple: the fiber over profile $000$ needs one auxiliary bit, while the singleton fibers need none. In the learned-representation reading, this is the exact price of one residual collision in the representation.
-
-In this example, classes $A$ and $B$ share representation $000$, forming a collision fiber of size two. One auxiliary bit suffices to separate them, matching the fixed-length budget $L \ge \log_2 A_\pi = 1$. The remaining classes are singleton fibers and need no auxiliary bits. Under the adaptive scheme, the encoder sends one bit only when $U=000$ and sends no extra bit for $U\in\{100,110,111\}$.
+We use one small example throughout the paper. Five classes have profiles $$A=000,\quad B=000,\quad C=100,\quad D=110,\quad E=111.$$ Then $A$ and $B$ form a collision fiber of size two, so the exact worst-case fixed-length budget is one bit. The adaptive picture is equally simple: the fiber over profile $000$ needs one auxiliary bit, while the singleton fibers need none. Under the adaptive scheme, the encoder sends one bit only when $U=000$ and sends no extra bit for $U\in\{100,110,111\}$.
 
 ## Paper Organization
 
@@ -85,18 +87,18 @@ For a representation value $u$, define the corresponding fiber by $$\pi^{-1}(u) 
 :::
 
 ::: remark
-No further structure is assumed. The map $\pi$ may arise from a learned encoder, a database schema projection, a feature-extraction pipeline, or a hand-designed attribute family. The theoremic contribution is generic in the representation map once its fibers are fixed.
+No further structure is assumed. The map $\pi$ may arise from a learned encoder, database projection, feature-extraction pipeline, or hand-designed attribute family.
 :::
 
 ::: remark
-The coding statements are written in terms of a class variable $C$ and representation $U=\pi(C)$. When convenient, we also use an underlying entity variable $V$ together with a class assignment map $C(V)$. Thus $U=\pi(V)$ is the representation of the realized entity, and the induced class label is $C(V)$. The two viewpoints are interchangeable; the coding arc should be read through the pair $(C,U)$.
+The coding statements use a class variable $C$ and representation $U=\pi(C)$. When convenient, we also use an underlying entity variable $V$ with class assignment $C(V)$; thus $U=\pi(V)$. The two viewpoints are interchangeable.
 :::
 
 ::: definition
 []{#def:admissibility-contract label="def:admissibility-contract"} All impossibility and optimality statements quantify over schemes that use only (1) the declared representation value and (2) explicitly charged auxiliary description. In particular, no hidden registry, reflection oracle, whole-universe preprocessing table, or amortized cross-instance cache may supply uncharged distinguishing information.
 :::
 
-This admissibility contract is the formal regime anchor for all impossibility and optimality claims in the paper. The contract that the decoder only has the declared representation and any explicitly charged auxiliary description (no hidden registries or undeclared side channels) is encoded in the mechanized development and thus mechanically enforced in the formal proofs.
+This contract is enforced in the mechanization; all impossibility claims assume no hidden registries or undeclared side channels.
 
 ## Representation-Induced Information Barrier
 
@@ -113,10 +115,6 @@ A property $P:\mathcal C \to Y$ is *representation-computable* if there exists a
 
 ::: proof
 *Proof.* Suppose $P$ is representation-computable via $f$, so $P(c)=f(\pi(c))$ for all $c$. If $\pi(c_1)=\pi(c_2)$, then $$P(c_1)=f(\pi(c_1))=f(\pi(c_2))=P(c_2).$$ ◻
-:::
-
-::: remark
-The barrier is informational rather than computational: once the representation is identical, unlimited time or memory does not help. We state it explicitly because the later converse, adaptive coding, query, and robustness results all reuse the same invariance premise.
 :::
 
 ::: corollary
@@ -139,10 +137,6 @@ The barrier is informational rather than computational: once the representation 
 []{#cor:fixed-axis-incompleteness label="cor:fixed-axis-incompleteness"} If $\alpha(c_1)=\alpha(c_2)$ but $P(c_1)\neq P(c_2)$, then no admissible strategy can compute $P$ with zero error without adding new information beyond the declared observable state.
 :::
 
-::: remark
-The sufficiency and insufficiency statements are the helper-view version of the information barrier: if a task varies inside one declared state fiber, that state is not sufficient and must be refined by additional information.
-:::
-
 
 ## Fixed-Length Zero-Error Recovery
 
@@ -162,14 +156,10 @@ Let $C$ be a random class label, let $U=\pi(C)$ be its representation, and let t
 *Converse*: Suppose two distinct classes $c_1 \neq c_2$ share the same representation value: $\pi(c_1)=\pi(c_2)$. Then any decoder $g(U)$ outputs the same class label on both inputs, so it cannot be correct for both. Hence zero-error recovery without auxiliary description is impossible. ◻
 :::
 
-In the finite explicit setting, the same condition can be read directly from the representation channel: one-symbol zero-error feasibility is equivalent to injectivity. Interpreting $\pi$ as a learned embedding, this is the exact threshold for zero-error class recovery from the representation alone.
+In the finite explicit setting, the same condition can be read directly from the representation channel: one-symbol zero-error feasibility is equivalent to injectivity.
 
 ::: remark
 Under any distribution with positive mass on both colliding classes, $I(C;U) < H(C)$. This is an average-case consequence of the deterministic barrier above.
-:::
-
-::: remark
-In the identification paradigm of [@ahlswede1989identification], the decoder asks "is the message $m$?" rather than "what is the message?" This yields double-exponential codebook sizes. Our setting is different: we require zero-error identification of the *class*, not hypothesis testing. The one-shot zero-error identification feasibility threshold is binary rather than asymptotic.
 :::
 
 ## Fixed-Length Auxiliary Description
@@ -184,27 +174,21 @@ An *auxiliary description* is a value $M(c)$ associated with each class $c \in \
 []{#thm:tag-restored-sufficiency label="thm:tag-restored-sufficiency"} If $|\mathcal C|=k$, then an auxiliary description of length $L \geq \lceil \log_2 k \rceil$ bits suffices for zero-error identification, regardless of whether $\pi$ is class-injective.
 :::
 
-::: proof
-*Proof.* A class-injective auxiliary description assigns a unique identifier to each class. Reading that description together with the representation determines the class exactly. ◻
-:::
-
 This is the ambient worst-case naming bound over the full class set. The representation-sensitive law below is sharper and is the paper's actual governing converse: it depends on collision multiplicity $A_\pi$ rather than on $|\mathcal C|$.
 
 ## Ambiguity Converse
 
-The next theorem is the paper's main zero-error compression statement. It converts representation collision multiplicity directly into a necessary fixed-length side-information budget.
+The next theorem is the paper's main zero-error compression statement, in the same fixed-length form as a classical zero-error side-information budget [@csiszar2011information] but with the governing alphabet size induced by the representation rather than by the ambient class set alone. It converts representation collision multiplicity directly into a necessary fixed-length side-information budget.
 
-In graph terms, the fixed-representation setting is a structured zero-error special case: confusable classes are exactly those lying in the same representation fiber, so the confusability graph is a disjoint union of cliques. This special structure yields exact finite laws for the residual coding burden left by a representation.
+In graph terms, confusable classes are exactly those lying in the same representation fiber, so the confusability graph is a disjoint union of cliques. This structure yields exact finite laws for the residual coding burden left by a representation.
 
 ::: definition
 []{#def:collision-multiplicity label="def:collision-multiplicity"} Let $\mathcal{C}$ be a finite class space and let $\pi : \mathcal{C} \to \mathcal U$ be a representation map. Define $$A_\pi := \max_{u \in \operatorname{Im}(\pi)} \left|\{c \in \mathcal{C} : \pi(c)=u\}\right|.$$ Thus $A_\pi$ is the size of the largest class-collision block under the representation.
 :::
 
 ::: remark
-Every implementable representation operates on finite-precision values. The representation alphabet is therefore finite, and $A_\pi$ is computable by fiber enumeration. If the deployed representation uses $M$ output values, then the pigeonhole principle yields the lower bound $\lceil |\mathcal C|/M \rceil \le A_\pi$. Conversely, to guarantee $A_\pi \le k$ on an entity set of size $n$, at least $\lceil n/k \rceil$ distinct representation values are necessary. The coding theorems identify the operational meaning of $A_\pi$ once the representation is fixed at its deployed precision.
+For finite-precision representations, $A_\pi$ is computable by fiber enumeration. Pigeonhole: $\lceil |\mathcal C|/M \rceil \le A_\pi$ for $M$ outputs; conversely, $A_\pi \le k$ requires $\lceil n/k \rceil$ distinct values.
 :::
-
-If one observation channel factors through a richer one, collision multiplicity cannot increase. Thus adding observable structure can only lower the corresponding zero-error tag bound. Under the same representation reading, enriching the embedding cannot worsen zero-error separability.
 
 ::: corollary
 []{#cor:concept-bottleneck-mono label="cor:concept-bottleneck-mono"} Let $\pi_{\mathrm{fine}}$ and $\pi_{\mathrm{coarse}}$ be two representations on the same class domain, and assume $$\pi_{\mathrm{coarse}} = f \circ \pi_{\mathrm{fine}}$$ for some map $f$. Then $$A_{\pi_{\mathrm{fine}}} \le A_{\pi_{\mathrm{coarse}}},
@@ -232,15 +216,9 @@ L \ge \log_2 A_\pi,$$ where $A_\pi$ is the collision multiplicity.
 *Proof.* Fix a collision block $G \subseteq \mathcal{C}$ with $|G|=A_\pi$ and identical representation profile. For classes in $G$, the decoder's side information is identical, so zero-error decoding must separate those classes using auxiliary description outcomes. With $L$ bits there are at most $2^L$ outcomes, hence $2^L \ge |G| = A_\pi$. ◻
 :::
 
-::: remark
-The converse is a lossless coding law for semantic identity [@csiszar2011information]. The relevant confusable alphabet is the largest representation-collision block, and zero-error separation of that block requires exactly enough auxiliary outcomes to name its members. The theorem therefore has the same fixed-length form as a classical zero-error side-information budget, but the governing alphabet size is induced by the representation rather than by the ambient class set alone.
-:::
-
 ::: corollary
 []{#cor:max-barrier-converse label="cor:max-barrier-converse"} If the domain is maximal-barrier ($A_\pi = k$), any zero-error scheme satisfies $L \ge \log_2 k$.
 :::
-
-In the running example, the collision block $\{A,B\}$ shows that $A_\pi = 2$, so Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"} already forces $L \ge 1$ bit of auxiliary description for zero-error identification.
 
 ## Exact Finite-Block Law
 
@@ -265,43 +243,33 @@ The ambiguity converse extends exactly to blocks: the next theorem family gives 
 :::
 
 ::: remark
-The block construction repeats the same semantic identification task across $t$ entities while keeping the representation map fixed and applying it coordinatewise. It is therefore the direct block analogue of repeated one-shot classification in this model: the collision structure multiplies across coordinates, and the required zero-error side-information budget scales accordingly.
+The construction repeats the same task across $t$ entities with coordinatewise observation, so collision structure and side-information budget multiply accordingly.
 :::
 
-## Why the General Zero-Error Theory Simplifies Here
+## Collision Fibers as Graph Components
 
-The confusability graph induced by a fixed deterministic representation has special structure: two classes are adjacent exactly when they share the same representation value. The next observations explain why several general zero-error graph quantities collapse in this setting.
+The confusability graph induced by a fixed deterministic representation has special structure: two classes are adjacent exactly when they share the same representation value. This section makes that structure explicit.
 
 ::: proposition
-Let $\pi : \mathcal C \to \mathcal U$. Define $c_1 \sim_\pi c_2$ iff $\pi(c_1)=\pi(c_2)$ and $c_1 \ne c_2$. Then $\sim_\pi$ is transitive on distinct classes inside a fiber.
+[]{#prop:cluster-graph label="prop:cluster-graph"} The confusability graph $G_\pi$, with edges between distinct classes sharing the same representation, is a disjoint union of cliques. Each connected component is exactly one representation fiber. Moreover, confusability is transitive on distinct classes inside a fiber.
 :::
 
 ::: proof
-*Proof.* If $\pi(c_1)=\pi(c_2)$ and $\pi(c_2)=\pi(c_3)$, then $\pi(c_1)=\pi(c_3)$ by equality. Thus any two distinct classes linked through one fiber are directly confusable as well. ◻
-:::
-
-::: proposition
-The confusability graph $G_\pi$, with edges between distinct classes sharing the same representation, is a disjoint union of cliques. Each connected component is exactly one representation fiber.
-:::
-
-::: proof
-*Proof.* Each fiber is a clique because all of its classes share the same representation value. No edge connects distinct fibers by construction. Hence each connected component is exactly one fiber, and the graph is a disjoint union of cliques. ◻
+*Proof.* Each fiber is a clique because all of its classes share the same representation value. No edge connects distinct fibers by construction. Transitivity is immediate: if $\pi(c_1)=\pi(c_2)$ and $\pi(c_2)=\pi(c_3)$, then $\pi(c_1)=\pi(c_3)$ by equality. ◻
 :::
 
 ::: corollary
-For a representation-induced cluster graph, the standard one-shot zero-error parameters collapse to fiber counts, so the fixed-length auxiliary-description law is governed exactly by the largest fiber.
+[]{#cor:capacity-collapse label="cor:capacity-collapse"} For a representation-induced cluster graph, the standard one-shot zero-error parameters collapse to fiber counts, so the fixed-length auxiliary-description law is governed exactly by the largest fiber.
 :::
 
 ::: proof
-*Proof.* In a disjoint union of cliques, proper coloring, clique size, and independence counting reduce to choosing or naming one element per component. In this setting, the general graph inequalities collapse to the same fiber-counting law. ◻
+*Proof.* In a disjoint union of cliques, proper coloring, clique size, and independence counting reduce to choosing or naming one element per component. The general graph inequalities collapse to the same fiber-counting law. ◻
 :::
-
-In the running example, $A_\pi = 2$, so the exact block law gives $L_t^\star = t$ bits.
 
 
 ## Representation-Adaptive Side Information
 
-The fixed-length theorem pays for the worst collision fiber through $A_\pi$. A finer coding law allows the auxiliary description length to depend on the observed representation value $u$. Then the relevant budget is not the maximum fiber size but the size of the individual fiber $\pi^{-1}(u)$. The same residual ambiguity object is now resolved fiber by fiber and then averaged under the induced law of $U$.
+When auxiliary description length may depend on the observed representation value $u$, the optimal budget is the fiber size $\pi^{-1}(u)$ rather than the maximum $A_\pi$.
 
 ::: definition
 An *adaptive auxiliary scheme* assigns to each representation value $u$ a binary description budget $\ell(u)$ and a decoder that, given $u$ together with a binary string of length at most $\ell(u)$, recovers the class exactly whenever $\pi(C)=u$.
@@ -359,20 +327,12 @@ If, after observing $U$, the decoder is allowed to ask adaptive binary clarifica
 Let $T$ be any repeated or noisy observation transcript whose realized value factors through the fixed representation, that is, $T = h(U)$ for some map $h$. Then recovering $C$ from $T$ cannot require less worst-case or pointwise adaptive side information than recovering $C$ from $U$ itself.
 :::
 
-::: remark
-The fixed-length law pays for the worst collision fiber; the adaptive law pays for each fiber separately and averages under the source-induced law of $U$. These are two resolutions of the same object: the cost of naming the classes that remain collapsed inside each representation fiber.
-:::
-
-::: remark
-The conditional-entropy lower and upper bounds place the adaptive theorem inside classical source-coding language. Zero-error adaptive side information is sandwiched around $H(C\mid U)$ up to the standard one-bit prefix-coding overhead, but the zero-error law remains fiberwise and combinatorial rather than purely entropic.
-:::
+The zero-error conditional-entropy sandwich places the expected adaptive cost between $H(C\mid U)/\log 2$ and $H(C\mid U)/\log 2 + 1$, but the zero-error law remains fiberwise and combinatorial rather than purely entropic.
 
 
 ## The Query Currency
 
-The fiber geometry that governs fixed-length and adaptive coding costs extends to the query side. Once the collision structure is understood, the canonical form of complete derivability-aware query families follows directly. This section establishes that structural result: every such family reduces to an orthogonal semantically minimal core, and the set of such cores forms a matroid.
-
-Bits are one way to pay the identity debt left by a non-injective representation (the residual ambiguity quantified by $A_\pi$). Another is to interrogate primitive observables until the class is determined. This section studies that query currency. The same residual ambiguity that forces auxiliary bits can also be paid for through interactive disambiguation.
+Bits are one way to pay the identity debt left by a non-injective representation; another is to interrogate primitive observables until the class is determined. This section shows that the same fiber geometry governing coding costs also governs query costs, and that every complete derivability-aware query family reduces to an orthogonal semantically minimal core on which the minimal distinguishing families form a matroid.
 
 ::: definition
 Let $\mathcal Q$ be the family of primitive queries available to an observer. For a classification system with attribute set $\mathcal I$, we write $\mathcal Q = \{q_I : I \in \mathcal I\}$ where $q_I(v)=1$ iff $v$ satisfies attribute $I$.
@@ -387,7 +347,7 @@ A subset $S \subseteq \mathcal Q$ is *distinguishing* if, for all values $v,w$ w
 :::
 
 ::: remark
-These notions differ: an inclusion-minimal distinguishing family may be larger than a minimum-cardinality one. The operational lower bound below depends only on the quantity $d$.
+These notions differ; the operational lower bound depends only on $d$.
 :::
 
 In the running example from Section [\[sec:bits\]](#sec:bits){reference-type="ref" reference="sec:bits"}, $\{q_1,q_2,q_3\}$ is distinguishing and no pair of primitive queries is distinguishing, so the minimum distinguishing number is $d=3$. The exact operational law is that any attribute-only zero-error witness procedure must pay at least this many queries in the worst case.
@@ -410,7 +370,7 @@ It says how much interrogation is needed when the representation leaves ambiguit
 
 ## Counting Bridge to Bit Currency
 
-There is also a direct quantitative bridge back to the compression side. A family of $d$ binary queries induces at most $2^d$ distinct answer transcripts on any fixed collision fiber. Therefore no binary query family can distinguish a fiber of size $m$ unless $m \le 2^d$. In particular, if a worst fiber has size $A_{\pi}$, then any binary distinguishing family satisfies $$\left\lceil \log_2 A_{\pi} \right\rceil \le d.$$ This is the query-side analogue of the fixed-length converse: binary interrogation cannot beat the same counting barrier that governs auxiliary bits.
+A family of $d$ binary queries induces at most $2^d$ transcripts on any fiber, so $\lceil \log_2 A_{\pi} \rceil \le d$. This is the query-side analogue of the fixed-length converse.
 
 ::: proposition
 []{#prop:binary-query-counting-bound label="prop:binary-query-counting-bound"} Let $S$ be a binary query family of size $d$ that distinguishes a finite set $T$ of classes. Then $$|T| \le 2^d.$$ Equivalently, $$\left\lceil \log_2 |T| \right\rceil \le d.$$
@@ -474,10 +434,6 @@ These three propositions identify the canonical regime of the query problem. One
 Arbitrary overcomplete families need not be matroidal (GPH31), but after derivable redundancy is stripped, the orthogonal minimal core is matroidal.
 :::
 
-::: remark
-The lower bound $\lceil \log_2 A_{\pi} \rceil \le d$ is exact whenever the canonical query family realizes full binary transcript capacity on the relevant worst fibers, in which case the query side meets the same counting floor as the fixed-length bit side and any strict gap above the floor is an expressivity gap of the observable family, not a redundancy artifact. The corresponding equality and gap statements are mechanized.
-:::
-
 ## Witness Cost Comparison
 
 ::: {#tab:witness-comparison}
@@ -495,17 +451,13 @@ The lower bound $\lceil \log_2 A_{\pi} \rceil \le d$ is exact whenever the canon
 :::
 
 ::: remark
-The bit law measures the residual description cost of restoring identity. The query law measures the residual interrogation cost. In the raw attribute model, that cost is lower-bounded by both the operational quantity $d$ and the counting floor $\lceil \log_2 A_{\pi} \rceil$. In the canonical derivability-aware presentation, the same cost is certified by matroid basis cardinality on the orthogonal core. In both readings, the ambiguity being paid for is the same.
+The bit law measures residual description cost; the query law measures residual interrogation cost. Both lower-bounds equal $\lceil \log_2 A_{\pi} \rceil$ in the canonical derivability-aware presentation.
 :::
 
 
-## Distortion as a Currency
+## Rate-Distortion Law and Distortion Currency
 
-Throughout this paper, we use the informal term "currency" to denote an operational modality for paying the residual ambiguity debt: auxiliary bits, query effort, or accepted distortion. This terminology is a conceptual shorthand rather than a formal definition; the precise statements are the theorems themselves.
-
-The counting and entropy converses above show that auxiliary bits, queries, and accepted distortion are alternative currencies for the same residual ambiguity. This section makes one exchange explicit: how many bits must be paid to drive distortion to zero on a collision fiber, and what floor remains when those bits are withheld.
-
-The general law is fiberwise. For arbitrary finite sources [@CoverThomas2006; @berger1971rate], the optimal recoverable mass decomposes exactly across representation fibers. The clean closed form arises in the uniform single-block corner, where the collision geometry alone determines the full budget-distortion tradeoff.
+Auxiliary bits, queries, and accepted distortion are alternative currencies for the same residual ambiguity. This section gives the fiberwise rate-distortion law: optimal recoverable mass decomposes exactly across representation fibers for arbitrary finite sources, with closed-form $D^\star(L)=\max(0,1-2^L/a)$ in the uniform single-block corner.
 
 ## Finite Fiberwise Decomposition {#sec:fiberwise-decomposition}
 
@@ -538,11 +490,7 @@ For each representation value $u$, define the *fiberwise top mass* $$M^\star(u, 
 :::
 
 ::: remark
-The uniform single-block formula derived below is the special case where all source mass lies in one uniformly distributed fiber. Neither assumption is required for the decomposition itself: the decomposition is the general zero-error rate-distortion law for the fixed-representation setting, and the closed-form curve is its cleanest instantiation.
-:::
-
-::: remark
-The decomposition is analogous to coding independent sub-sources separately: each fiber acts like an independent sub-problem, and the global optimum is the sum of the sub-problem optima. The sub-sources are induced by the representation partition rather than independent a priori.
+The uniform single-block formula below is the special case where all source mass lies in one uniformly distributed fiber. Neither assumption is required for the decomposition itself, which is the general zero-error rate-distortion law for the fixed-representation setting.
 :::
 
 ## The Uniform Single-Block Corner
@@ -578,11 +526,7 @@ If $2^L \ge a$, assign distinct auxiliary outcomes to the classes in $G$ and dec
 :::
 
 ::: remark
-This corollary quantifies the price of relying only on semantic attributes. If one omits the auxiliary identifier required by the fixed-length law, the saved $\lceil \log_2 A_\pi \rceil$ bits are exchanged for a nonzero error floor. The tradeoff is steep near the exact-recovery threshold: for a collision block of size $100$, zero distortion needs $7$ bits, while using $6$ bits still forces at least $36\%$ distortion. At zero budget, size $2$ already forces at least $50\%$ error, and size $100$ forces at least $99\%$. Identity is paid either in bits or in distortion.
-:::
-
-::: remark
-The exact formula above is stated for the uniform source on a single collision block. That restriction is intentional. It isolates a deterministic corner in which collision geometry alone determines the full tradeoff. For non-uniform sources on the same block, or for mixtures across multiple fibers, the optimal distortion curve depends on the source law as well as the fiber sizes; in those settings one expects a different shape, closer in spirit to entropy-weighted side-information bounds than to the uniform worst-block law treated here. The point of the present theorem is exact isolation of the geometry-only effect.
+The uniform single-block formula isolates geometry-only effects; non-uniform or multi-fiber sources introduce source-law dependence beyond this paper's scope.
 :::
 
 ## Finite Entropy Converses {#sec:entropy-converses}
@@ -616,57 +560,47 @@ The following theorems are mechanized in the RDC series. They apply to any finit
 :::
 
 ::: remark
-The counting converse $2^L \ge a$ is sharp in the zero-error regime but silent about source structure. The entropy converses fill this gap: for high-entropy sources the entropy bound may be tighter, while for low-entropy sources the counting bound dominates. Together they provide complementary views of the same fiber geometry.
+The counting converse $2^L \ge a$ is sharp for zero-error but silent on source structure; entropy converses complement this for high-entropy sources.
 :::
 
 
-The formal and coding results lead to a practical corollary: if a representation $\pi$ is non-injective, then no purely semantic pipeline can guarantee zero-error identity recovery. The identity debt is paid in one of three currencies: an injective encoder, explicit identity metadata of length at least $\log_2 A_\pi$ in the worst case, or a nonzero distortion floor. In deployed systems the usual payment mechanisms are symbolic handles, such as unique identifiers, pointers, retrieval keys, primary keys, and registry entries.
+Lossy compression and semantic abstraction necessarily create collision fibers by discarding distinguishing information. In closed-world systems, the deployed representation already contains collisions; in open-world systems, collisions cannot be certified away. The identity debt is paid in one of three currencies: an injective encoder, explicit identity metadata of length at least $\log_2 A_\pi$ in the worst case, or a nonzero distortion floor. In deployed systems the usual payment mechanisms are symbolic handles, such as unique identifiers, pointers, retrieval keys, primary keys, and registry entries.
 
 Example. In a retrieval system with $100$ documents sharing the same embedding, omitting the $\lceil \log_2 100 \rceil = 7$ identifier bits leaves a distortion floor of $1-1/100 = 99\%$ on that collision fiber. Even one bit below the exact-recovery threshold is costly: with only $6$ bits the distortion is still at least $36\%$.
 
 ## Learned Representations and Formal Instantiations
 
-The abstract coding framework applies to any representation map. In the learned-representation setting, semantic information is what the encoder exposes, while identity information is the exact class label or entity name that may still need to be carried explicitly. Zero-error recovery from semantic information alone is possible exactly when the representation is injective on identity classes. When it is not, the collision fibers quantify the irreducible identity residue that is restored by explicit metadata. This transfers directly to neurosymbolic systems: a neural encoder supplies the semantic side, and any symbolic layer that needs exact identity must be given the missing distinguishing information explicitly.
+The abstract coding framework applies to any representation map. Zero-error recovery from semantic information alone is possible exactly when the representation is injective on identity classes; otherwise, collision fibers quantify the irreducible identity residue restored by explicit metadata.
 
 #### What this means for ML systems.
 
-The coding laws have immediate consequences for learned-representation systems.
+-   **Concept bottleneck models.** Collapsed concepts require extra identity information: disambiguation channels, retrieval keys, or symbolic identifiers.
 
--   **Concept bottleneck models.** If the intermediate concept representation has collisions, then no downstream classifier can distinguish the collapsed concepts without extra identity information. Exact concept-level decisions therefore require an added disambiguation channel, retrieval key, or explicit symbolic concept identifier.
+-   **Retrieval-augmented systems.** The retrieval index pays the identity-bit budget $\lceil \log_2 A_\pi \rceil$; if embeddings collide, distinguishing metadata (document identifiers, lookup keys) must be preserved [@lewis2020retrieval].
 
--   **Retrieval-augmented systems.** The retrieval index pays the identity-bit budget. If two artifacts have the same embedding, the system must preserve distinguishing metadata elsewhere, such as document identifiers, source pointers, or exact lookup keys. Otherwise exact retrieval is impossible on the collided fiber. Retrieval failures in which one real entity is substituted for a distinct entity sharing the same representation are exactly the failure mode of representation non-injectivity. This is the same architectural role played by explicit non-parametric memory in retrieval-augmented generation systems [@lewis2020retrieval]. The minimum metadata budget that prevents such substitutions is $\lceil \log_2 A_\pi \rceil$ bits, which is necessary by Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"} and sufficient by Theorem [\[thm:tag-restored-sufficiency\]](#thm:tag-restored-sufficiency){reference-type="ref" reference="thm:tag-restored-sufficiency"}.
-
--   **Pure representation schemes and open-world deployments.** Systems that attempt to avoid any nominal layer do not escape the theorem. Any system that must identify entities exactly in an open world must either use an injective encoder or carry explicit identity metadata. A third option does not exist.
+-   **Pure representation schemes.** Open-world systems need either an injective encoder or explicit identity metadata.
 
 #### Attribute-only versus tag-augmented design.
 
-Whenever $A_\pi>1$, the coding laws imply a sharp design dichotomy. In an attribute-only strategy, the system stores or transmits only the semantic representation $\pi(v)$. This pays only for semantic description, but it inherits the distortion floor forced by the collision fibers; in the zero-budget case, the worst collided block incurs error at least $1-1/A_\pi$ by Corollary [\[cor:zero-budget-error-floor\]](#cor:zero-budget-error-floor){reference-type="ref" reference="cor:zero-budget-error-floor"}. In a tag-augmented strategy, the system stores $\pi(v)$ together with auxiliary identity information. This increases storage by the exact identity budget, up to $\lceil \log_2 A_\pi \rceil$ bits in the worst case, but restores zero-error identity recovery.
+When $A_\pi>1$, attribute-only strategies inherit the distortion floor (error at least $1-1/A_\pi$), while tag-augmented strategies pay up to $\lceil \log_2 A_\pi \rceil$ bits for zero-error recovery. This is why symbolic identifiers are ubiquitous in high-reliability systems.
 
-This is why symbolic identifiers are ubiquitous in high-reliability systems. Primary keys, memory addresses, retrieval identifiers, and similar handles are the mechanisms by which systems avoid the distortion floor mandated by the coding laws. In settings where such handles are already available, the design lesson is stronger than mere feasibility.
+::: corollary
+[]{#cor:pareto-domination label="cor:pareto-domination"} In any system where nominal identity is provided for free (databases with primary keys, object stores with stable identifiers, programming languages with inheritance hierarchies), the nominal architecture must be chosen for exact identity recovery: attribute-only alternatives cannot achieve zero error, while the nominal system does at no additional cost. By Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}, the required bit budget is $\lceil \log_2 A_\pi \rceil$; when this budget is zero (nominal identity is free), the nominal architecture achieves zero error while attribute-only systems cannot. This follows from the information barrier , the impossibility of shape-based distinction and provenance recovery , the non-embeddability of semantic identity , and the fact that shape-only systems are concessions not alternatives .
+:::
 
-**Corollary (Pareto domination, cf. Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}).** In applied systems where tags are free by default (databases with primary keys, object stores, programming languages with nominal identity), tag-augmented design strictly Pareto dominates attribute-only design for exact identity recovery: it achieves zero-error while attribute-only cannot, at no additional cost. See Table [\[tab:witness-comparison\]](#tab:witness-comparison){reference-type="ref" reference="tab:witness-comparison"} for the operational cost comparison.
-
-The mechanization sharpens this operational claim with an admissibility guarantee for the symbolic layer: in any valid execution trace, every registry read or write names a registry that was declared in the system specification. Thus the formal registry semantics is closed under the declared interface; undeclared registries are semantically inert and cannot appear in certified traces. This does not rule out arbitrary hidden state in real implementations, but it does show that the formal model does not smuggle in extra symbolic storage beyond the declared registry surface.
+The mechanization guarantees that every registry read/write in a valid trace names a declared registry; undeclared registries cannot appear in certified traces.
 
 #### Formal instantiation.
 
-The paper also develops a concrete formal identity domain in Lean. In that model, entities carry an explicit attribute family $\mathcal I$, primitive observables are the associated binary maps $q_I$, and the representation is the induced profile map $\pi(v)=(q_I(v))_{I\in\mathcal I}$. The generic coding laws then specialize to a machine-checked formal instance. In particular, equal observable profiles cannot distinguish identity, provenance is not recoverable from the profile alone when collisions exist, and nominal identity cannot be embedded back into the semantic layer.
+The Lean formalization instantiates the generic coding laws with entities carrying attribute family $\mathcal I$ and profile map $\pi(v)=(q_I(v))_{I\in\mathcal I}$; equal profiles cannot distinguish identity, and provenance is unrecoverable when collisions exist.
 
 #### Instantiated neurosymbolic linking theorems.
 
-Within that formal identity domain, the generic helper-view theorems specialize by setting the task to identity $Y = C$. The mechanization proves the following instantiated claims.
-
--   If the symbolic handle $\sigma$ is injective, the neurosymbolic link $(\pi, \sigma)$ achieves zero-error identity recovery. This is the identity-task instantiation of the injectivity criterion.
-
--   If $\pi$ has collisions, semantic representation alone cannot achieve zero-error identity, and no decoder can recover the collapsed identities without identity-resolving side information.
-
--   The exact characterization is: $(\pi, \sigma)$ recovers identity if and only if $\sigma$ distinguishes all entities within each semantic fiber. An injective handle therefore suffices. This is the identity-task instantiation of the helper-view theorem.
-
--   The pair $(\pi, \sigma)$ is the canonical helper view for open-world identity systems.
+Setting the task to identity $Y=C$, the mechanization proves: injective $\sigma$ gives zero-error recovery via $(\pi,\sigma)$ ; if $\pi$ has collisions, semantic representation alone cannot achieve zero-error identity ; $(\pi,\sigma)$ recovers identity iff $\sigma$ distinguishes entities within each semantic fiber ; and $(\pi,\sigma)$ is the canonical helper view for open-world identity systems .
 
 ## Task Sufficiency, Helper Views, and Factorization
 
-The neurosymbolic reading is one specialization of a broader theorem family. The same fiber geometry characterizes when a representation is sufficient for an arbitrary downstream task, when helper views genuinely help, and when factorized modules contribute real exact information. This connects to classical work on computing and task-sufficient representations [@orlitsky2001coding; @doshi2010functional].
+The fiber geometry characterizes task sufficiency, helper views, and factorized modules [@orlitsky2001coding; @doshi2010functional].
 
 ::: definition
 Let $Y=f(C)$ be a downstream task label induced by the class. For a fixed representation $\pi$, define $$A_{\pi \to Y} := \max_u \left|\{f(c) : \pi(c)=u\}\right|.$$ This is the maximum number of task labels that remain unresolved inside one representation fiber.
@@ -740,12 +674,10 @@ An *open-world extension* is a super-world $W' \supseteq W$ obtained by adding c
 :::
 
 ::: remark
-The theorem formalizes a basic fact about open-world systems: present collision-freedom does not by itself yield a stable future guarantee. Persistent zero-error claims therefore need an explicit growth model rather than a one-time snapshot argument.
+Present collision-freedom does not guarantee stability under extension; persistent zero-error claims need an explicit growth model rather than a one-time snapshot argument.
 :::
 
-The running example offers the same intuition in finite form: the realized world $\{A,C,D,E\}$ is collision-free, but adding class $B$ immediately restores the collision block $\{A,B\}$.
-
-For compression system design, the point is direct: a representation that currently needs no auxiliary identification bits can require a positive residual coding budget after extension if new classes enter existing fibers. Thus open-world growth can change the optimal exact side-information rate even when nothing about the deployed decoder changes.
+For compression system design: a representation needing no auxiliary bits today can require positive budget after extension. Open-world growth changes the optimal rate even when the deployed decoder is unchanged.
 
 ::: definition
 For a partial observer generator $f:\mathbb{N}\rightharpoonup\mathbb{N}$, define $$\mathrm{HasBarrier}(f)\;:\Leftrightarrow\;\exists x\neq y,\exists z,\ z\in f(x)\land z\in f(y).$$ Define $\mathrm{BarrierFree}(f):\Leftrightarrow \neg\mathrm{HasBarrier}(f)$.
@@ -756,23 +688,44 @@ For a partial observer generator $f:\mathbb{N}\rightharpoonup\mathbb{N}$, define
 :::
 
 ::: proof
-*Proof.* Assume there is a computable certifier for $P(c):=\mathrm{HasBarrier}(\mathrm{eval}(c))$. The property is non-trivial (some generators produce collisions and some do not), so membership in the corresponding semantic class cannot be computable from code. The barrier-free statement follows by negation. ◻
+*Proof.* The property is non-trivial (some generators produce collisions, some do not), so by Rice's theorem no computable predicate can decide it from code. ◻
 :::
 
 ::: remark
-The theorem is the algorithmic counterpart to extension instability: there is no general computable procedure that certifies barrier-freedom for arbitrary future-generating code, even when a current deployment appears collision-free. For compression system designers deploying learned representations, this means zero-error recovery guarantees derived from a finite training corpus cannot be automatically relied upon for new classes encountered in production; explicit identity metadata or a restrictive growth model becomes necessary.
+No general computable procedure can certify barrier-freedom for arbitrary future-generating code, even when deployment appears collision-free. Zero-error guarantees from finite training cannot extend to new production classes without explicit identity metadata or restrictive growth models.
 :::
 
 ::: corollary
-For unrestricted open-world generators, one cannot computably certify that attribute-only identification remains barrier-free under all future extensions. Consequently, persistent $D=0$ guarantees cannot rely on "currently collision-free" attribute structure alone.
+For unrestricted open-world generators, one cannot computably certify that attribute-only identification remains barrier-free under all future extensions. Barrier-freedom fails under arbitrary extensions , and both barrier-existence and barrier-freedom certification are uncomputable by Rice's theorem . Consequently, persistent $D=0$ guarantees cannot rely on "currently collision-free" attribute structure alone.
 :::
 
 
-This paper develops a fixed-representation compression theory for zero-error identity recovery, delivering exact finite laws for multiple operational modalities. Its governing object is the collision fiber geometry.
+The main theorem chain identifies structural laws for zero-error identity recovery. This section records generalizations that relax specific model assumptions while preserving the core insight: residual ambiguity must be paid for in some resource currency.
+
+The zero-error identification setting differs from the identification paradigm of [@ahlswede1989identification], where the decoder asks "is the message $m$?" yielding double-exponential codebook sizes; here zero-error class identification has a binary one-shot feasibility threshold rather than an asymptotic one.
+
+## Stochastic and Semantic Generalizations
+
+Noisy representations replace deterministic fibers with probabilistic confusion neighborhoods, moving the problem toward the graph-entropy regime [@korner1973coding]. A lossy extension with semantic distortion measures would distinguish tolerable confusion from unacceptable failure along the same fiber geometry.
+
+## Dynamic Growth and Trigger Conditions
+
+The static theorems also suggest operational limits for evolving systems. In a Poissonized growth model for representation cells with arrival rate $\lambda$, the probability of at least one collision in a cell is $1 - e^{-\lambda}(1+\lambda)$, which isolates the onset of identity pressure. The required exact identity budget becomes positive exactly when occupancy reaches two or more items per cell. These formulas identify the dynamic trigger conditions at which auxiliary symbolic handles become necessary to prevent identity collapse.
+
+## Information-Theoretic Vistas: Privacy and Entropy
+
+The entropy converses (Section [\[sec:entropy-converses\]](#sec:entropy-converses){reference-type="ref" reference="sec:entropy-converses"}) also imply privacy-preserving disclosure limits: nominal access has unit disclosure cost, while tag-free identity resolution can require $n-1$ primitive disclosures in adversarial settings. This three-resource geometry invites comparison with rate-distortion-perception formulations [@blau2019rethinking].
+
+## Empirical Audit: Embedding Collapse
+
+For learned representations, the fixed-length and adaptive fiber laws provide a formal measure of residual ambiguity. Once a quantization rule is fixed, the collision audit can be connected back to the mechanization: the resulting fiber histogram and budget curve are exported as Lean certificates whose consistency checks reduce to the same finite formulas proved in the paper. This does not mechanize the neural encoder itself, but it does make the empirical collision audits machine-checkable.
+
+
+This paper develops a fixed-representation compression theory for zero-error identity recovery, governed by the collision fiber geometry $A_\pi$.
 
 #### Compression contribution.
 
-The same fiber geometry that forces $\log_2 A_\pi$ auxiliary bits also determines the adaptive fiberwise budget, the exact finite-block law, the exact fiberwise decomposition of recoverable mass for arbitrary finite sources, and the query-side counting law. The uniform single-block curve $D^\star(L)=\max(0,1-2^L/a)$ is the sharp closed-form specialization of that general distortion law. These are not separate phenomena but different currencies for the same residual ambiguity (see Section [\[sec:distortion\]](#sec:distortion){reference-type="ref" reference="sec:distortion"} for the informal terminology). If the representation is injective, identity is free. If the representation is non-injective, the missing information must be paid somewhere: in auxiliary bits, in query effort, in helper views, or in distortion.
+The same fiber geometry determines the adaptive fiberwise budget, exact finite-block law, fiberwise decomposition of recoverable mass, and query-side counting law. The uniform single-block curve $D^\star(L)=\max(0,1-2^L/a)$ is the sharp closed-form specialization. If $\pi$ is injective, identity is free; if non-injective, the missing information must be paid in bits, queries, helper views, or distortion.
 
 The query side ties directly back to the compression side. Any binary distinguishing family of size $d$ can realize at most $2^d$ transcripts on a collision fiber, so $\lceil \log_2 A_\pi \rceil \le d$ on the worst fiber. Complete derivability-aware query families reduce to orthogonal semantically minimal cores, on which exchange holds and matroid basis cardinality becomes the canonical query invariant.
 
@@ -780,17 +733,15 @@ The same ambiguity-fiber geometry governs when a representation is sufficient fo
 
 #### Systems payoff.
 
-The central systems-level consequence is a formal account of symbolic mechanisms in semantic systems. The coding laws prove that semantic abstraction imposes an exact identity cost: a non-injective representation requires auxiliary description to resolve its collision fibers, with worst-case cost $\log_2 A_\pi$ bits and fiberwise cost $\lceil \log_2 |\pi^{-1}(u)| \rceil$. Systems that require both semantic generalization and exact identity therefore implement a mechanism to pay this cost.
-
-Symbolic handles, identifiers, pointers, keys, type systems, and index entries are standard computational instantiations of that payment. Consequently, the integration of symbolic identity layers into neurosymbolic, retrieval, type-theoretic, and other semantics-aware systems is implied by the coding laws. In the instantiated formal domain, the pair consisting of a neural encoder and an injective symbolic handle achieves zero-error identity recovery if and only if the handle distinguishes entities within each semantic fiber.
+Semantic abstraction imposes an exact identity cost: non-injective representations require auxiliary description with worst-case cost $\log_2 A_\pi$ bits and fiberwise cost $\lceil \log_2 |\pi^{-1}(u)| \rceil$. Symbolic handles are the standard payment mechanism. A neural encoder plus injective handle achieves zero-error recovery iff the handle distinguishes entities within each semantic fiber.
 
 #### Secondary robustness consequence.
 
-Section [\[sec:robustness\]](#sec:robustness){reference-type="ref" reference="sec:robustness"} records a secondary open-world consequence of the same framework. Present collision-freedom need not persist under extension, and unrestricted future-generating code does not admit a general computable barrier-freedom certificate. These results do not alter the main compression/query/distortion backbone, but they show that persistent zero-error guarantees require either an explicit growth model or explicit identity metadata.
+Present collision-freedom need not persist under extension, and unrestricted future-generating code has no computable barrier-freedom certificate. Persistent zero-error guarantees require explicit growth models or identity metadata.
 
 #### Mechanization.
 
-The main theorem chain is machine-checked in Lean 4. The mechanization certifies that the fiber-geometry framework, the canonical query-core reduction, and the neurosymbolic linking results are exact formal statements in the finite explicit setting used throughout this paper.
+The main theorem chain is machine-checked in Lean 4, certifying the fiber-geometry framework, canonical query-core reduction, and neurosymbolic linking results in the finite explicit setting.
 
 ## Acknowledgment: AI-use Disclosure {#acknowledgment-ai-use-disclosure .unnumbered}
 

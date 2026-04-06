@@ -1,0 +1,170 @@
+% paper-preamble.sty - Shared LaTeX infrastructure 
+% Single Source of Truth for paper formatting
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{paper-preamble}[2026/02/23 Shared paper preamble]
+
+% Core packages
+\RequirePackage[utf8]{inputenc}
+\RequirePackage[T1]{fontenc}
+\RequirePackage{amsmath,amssymb,amsthm}
+\RequirePackage{graphicx}
+\RequirePackage{xcolor}
+\RequirePackage{booktabs}
+\RequirePackage{longtable}
+\RequirePackage{array}
+\RequirePackage{tabularx}
+\RequirePackage{ragged2e}
+\RequirePackage{calc}
+\RequirePackage{fancyvrb}
+\RequirePackage{geometry}
+\RequirePackage{hyperref}
+\RequirePackage{url}
+\RequirePackage[para,flushmargin]{footmisc}
+\RequirePackage{listings}
+\RequirePackage{algorithm}
+\RequirePackage{algpseudocode}
+
+% Page geometry
+\geometry{margin=1in}
+
+% Allow URLs to break at any character
+\makeatletter
+\g@addto@macro{\UrlBreaks}{\UrlOrds}
+\makeatother
+
+% Prevent overfull hboxes
+\sloppy
+
+% Fix for pandoc's \tightlist
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+
+% QED symbol - SSOT for all proof endings
+% \qedsymbol is the symbol itself
+% \qed places it inline (not right-aligned)
+\renewcommand{\qedsymbol}{$\blacksquare$}
+\renewcommand{\qed}{\hspace{0.5em}\qedsymbol}
+
+% Theorem environments
+\providecommand{\leanmetaheadmark}{}
+\makeatletter
+\newtheoremstyle{leanplain}{3pt}{3pt}{\itshape}{}{}{.}{ }{\thmname{#1}\thmnumber{ #2}\leanmetaheadmark\thmnote{ (#3)}}
+\newtheoremstyle{leandef}{3pt}{3pt}{}{}{}{.}{ }{\thmname{#1}\thmnumber{ #2}\leanmetaheadmark\thmnote{ (#3)}}
+\newtheoremstyle{leanremark}{3pt}{3pt}{}{}{}{.}{ }{\thmname{#1}\thmnumber{ #2}\leanmetaheadmark\thmnote{ (#3)}}
+\makeatother
+
+\theoremstyle{leanplain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{axiom}[theorem]{Axiom}
+\theoremstyle{leandef}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+\newtheorem{problem}[theorem]{Problem}
+\newtheorem{decision}[theorem]{Decision}
+\newtheorem{notation}[theorem]{Notation}
+\newtheorem{construction}[theorem]{Construction}
+\newtheorem{claimthm}[theorem]{Claim}
+\theoremstyle{leanremark}
+\newtheorem{remark}[theorem]{Remark}
+\newtheorem{observation}[theorem]{Observation}
+\newtheorem{conjecture}[theorem]{Conjecture}
+
+% Common two-argument claim wrapper used by paper4 variants:
+% \begin{claim}{Title}{label-id} ... \end{claim}
+\newenvironment{claim}[2]{\begin{claimthm}[#1]\label{#2}}{\end{claimthm}}
+
+% Formal/informal display environments (used in five-way equivalence sections)
+% formal: boxed mathematical statement; informal: indented italic intuition
+\newenvironment{formal}{%
+  \begin{quote}\small}{%
+  \end{quote}}
+\newenvironment{informal}{%
+  \begin{quote}\small\itshape}{%
+  \end{quote}}
+
+% Hyperref setup
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue
+}
+
+% Clickable Lean-handle IDs and compact inline proof-artifact markers.
+\InputIfFileExists{lean-handle-macros.tex}{}{}
+
+% Listings setup for code blocks
+\lstset{
+  basicstyle=\ttfamily\small,
+  columns=fullflexible,
+  breaklines=true,
+  literate={ℝ}{{$\mathbb{R}$}}1 {→}{{$\to$}}1 {≤}{{$\le$}}1 {≥}{{$\ge$}}1
+           {∃}{{$\exists$}}1 {∀}{{$\forall$}}1 {∧}{{$\wedge$}}1 {↔}{{$\leftrightarrow$}}1
+           {∉}{{$\notin$}}1 {¬}{{$\neg$}}1 {α}{{$\alpha$}}1 {Γ}{{$\Gamma$}}1
+           {Σ}{{$\Sigma$}}1 {φ}{{$\varphi$}}1 {×}{{$\times$}}1
+}
+\newcommand{\passthrough}[1]{#1}
+
+% Unicode character declarations for verbatim environments
+\DeclareUnicodeCharacter{2248}{\ensuremath{\approx}}
+\DeclareUnicodeCharacter{2192}{\ensuremath{\rightarrow}}
+\DeclareUnicodeCharacter{2265}{\ensuremath{\ge}}
+\DeclareUnicodeCharacter{2264}{\ensuremath{\le}}
+\DeclareUnicodeCharacter{211D}{\ensuremath{\mathbb{R}}}
+\DeclareUnicodeCharacter{2203}{\ensuremath{\exists}}
+\DeclareUnicodeCharacter{2200}{\ensuremath{\forall}}
+\DeclareUnicodeCharacter{2227}{\ensuremath{\wedge}}
+\DeclareUnicodeCharacter{2194}{\ensuremath{\leftrightarrow}}
+\DeclareUnicodeCharacter{2209}{\ensuremath{\notin}}
+\DeclareUnicodeCharacter{03B1}{\ensuremath{\alpha}}
+\DeclareUnicodeCharacter{0393}{\ensuremath{\Gamma}}
+\DeclareUnicodeCharacter{03A3}{\ensuremath{\Sigma}}
+\DeclareUnicodeCharacter{03C6}{\ensuremath{\varphi}}
+\DeclareUnicodeCharacter{00AC}{\ensuremath{\neg}}
+\DeclareUnicodeCharacter{00D7}{\ensuremath{\times}}
+\DeclareUnicodeCharacter{03B2}{\ensuremath{\beta}}
+\DeclareUnicodeCharacter{2115}{\ensuremath{\mathbb{N}}}
+\DeclareUnicodeCharacter{2208}{\ensuremath{\in}}
+\DeclareUnicodeCharacter{2218}{\ensuremath{\circ}}
+\DeclareUnicodeCharacter{2228}{\ensuremath{\vee}}
+\DeclareUnicodeCharacter{2081}{\textsubscript{1}}
+\DeclareUnicodeCharacter{2082}{\textsubscript{2}}
+\DeclareUnicodeCharacter{03C8}{\ensuremath{\psi}}
+
+% Complexity class macros (used in paper4)
+\newcommand{\coNP}{\textsf{coNP}}
+\newcommand{\NP}{\textsf{NP}}
+\newcommand{\PP}{\textsf{PP}}
+\newcommand{\PSPACE}{\textsf{PSPACE}}
+\newcommand{\SigmaP}[1]{\ensuremath{\Sigma_{#1}^{\textsf{P}}}}
+\newcommand{\PiP}[1]{\ensuremath{\Pi_{#1}^{\textsf{P}}}}
+\newcommand{\Pclass}{\textsf{P}}
+\newcommand{\Opt}{\ensuremath{\text{Opt}}}
+
+% Author information - SINGLE SOURCE
+\newcommand{\papertitle}[1]{\title{#1}}
+\newcommand{\paperdate}{\date{\today}}
+
+\newcommand{\paperauthor}{%
+  \author{
+    Tristan Simas\\
+    McGill University\\
+    \texttt{tristan.simas@mail.mcgill.ca}
+  }
+}
+
+% Copyright footer - call after \maketitle
+\newcommand{\paperfooter}{%
+  \renewcommand{\thefootnote}{}%
+  \footnotetext{%
+    \textcopyright\ 2026 Tristan Simas.
+    This work is licensed under CC BY 4.0.
+    License: \url{https://creativecommons.org/licenses/by/4.0/}
+  }%
+  \renewcommand{\thefootnote}{\arabic{footnote}}%
+}
+
+\endinput

@@ -15,14 +15,3 @@ So omitted relevant coordinates must be handled somewhere outside the central in
 
 The simplicity tax operationalizes the certification trilemma (Corollary~7.3) for architectural compression. When exact relevance cannot be certified, systems cannot simply discard coordinates without consequence: the unresolved burden is conserved across the interface and must be paid elsewhere. This principle connects the complexity map to practical deployment constraints: the cost of exact certification is either paid at the center through computational investment, or distributed to the sites as externalized handling.
 
-\leanmetapending{\LH{DQ9}, \LH{HD23}}
-\begin{corollary}[Hardness Conservation]
-Fix a model $M$ and decision problem $\mathcal{D}$. Coordinates in $R(\mathcal{D})\setminus A_M$ are still decision-relevant for exact behavior preservation. Hence any exact deployment must handle them somewhere: by enlarging the central model, by performing local resolution, by demanding extra queries, or by abstaining on some cases. In the hard exact regime, Theorem~\ref{thm:witness-lower-bound-4} and Theorem~\ref{thm:integrity-resource} imply that this burden cannot be discharged for free by a polynomial-budget exact certifier.
-\end{corollary}
-
-
-\begin{proof}
-Take any coordinate $i\in R(\mathcal{D})\setminus A_M$. Because $i$ is relevant, there exist witness states whose optimal-action sets differ in a way that cannot be ignored in any exact representation. If a deployment neither models $i$ centrally nor resolves its effect elsewhere, then its exact behavior would factor through the smaller interface $A_M$, making every coordinate outside $A_M$ irrelevant. That contradicts $i\in R(\mathcal{D})$.
-
-So omitted relevant coordinates must be handled somewhere outside the central interface. In the hard exact regime, the witness lower bound shows that exact certification can require exponentially many witness checks, and the integrity-resource theorem shows that polynomial-budget exact competence is unavailable under $\Pclass\neq\coNP$. Therefore this external burden cannot, in general, be eliminated for free by a polynomial-budget exact certifier.
-\end{proof}

@@ -1,0 +1,17 @@
+\section{Assumptions, Limits, and Open Technical Gaps}\label{sec:limitations}
+
+The formal story behind DQDock is already substantial and clearly structured. This section records the main assumptions and extension points that define the present scope of the paper.
+
+First, many of the current theorem statements are finite-domain theorems. Uniform discrepancy radii are often taken over finite action/state sets, sampled docking relies on explicit finite candidate families, and several ranking guarantees are phrased for discrete top-$k$ sets with strict gap margins. This gives the current paper a sharp exact setting and also marks the natural path toward broader continuous generalizations.
+
+Second, several theorem families are packaging theorems rather than first-principles derivations. The Lennard--Jones, Coulomb, and Ewald families show how physical tail or convergence bounds feed into decision-invariance theorems, and they make transparent how such assumptions propagate into exact decision guarantees once adopted.
+
+Third, the practical engine includes an important heuristic boundary. The multi-stage scoring stack is explicitly empirical, and parts of the charge assignment, hydrophobic modeling, and composite scoring logic are heuristic. The newer formal optimizer and pruning modules are theorem-guided orchestration layered on top of the more directly theorem-tagged physics substrate. This split is already one of the paper's strengths: it gives the reader a precise map of where formal guarantees are strongest and where empirical engineering remains most active.
+
+Relatedly, the benchmark and reporting stack is strongest at the redocking level, where it already exposes paper-facing quantities such as RMSD, runtime, gap-proof status, and native rank. Those outputs are the natural center of the current empirical section, while higher-level summaries can grow alongside future benchmark expansion.
+
+Fourth, locality is stronger on the protein side than on the ligand side in the current formal story. The molecular structural-rank theorems currently localize outside-cutoff protein coordinates, while ligand coordinates are largely retained rather than aggressively pruned by an analogous theorem family. Extending locality theorems to ligand flexibility is therefore a natural next step for both the theory and the practical tractability story.
+
+Finally, benchmark success and theorem support play different roles. Benchmarks show how the engine behaves on realistic cases, while theorems show why particular transformations preserve the decision under stated hypotheses. The contribution of this paper is to make those two forms of evidence reinforce one another.
+
+For that reason, the present draft describes DQDock as a theorem-guided virtual docking engine: a formulation that accurately captures the current achievement while opening a clear path toward additional scoring terms, ligand-locality theory, and broader end-to-end certified workflows.

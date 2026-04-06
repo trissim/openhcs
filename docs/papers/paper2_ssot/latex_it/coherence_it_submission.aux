@@ -2,12 +2,12 @@
 \providecommand\hyper@newdestlabel[2]{}
 \providecommand\HyField@AuxAddToFields[1]{}
 \providecommand\HyField@AuxAddToCoFields[2]{}
-\citation{shannon1956zero,korner1973graphs,lovasz1979shannon,witsenhausen1976zero,slepian1973noiseless,cover2006elements}
+\citation{shannon1956zero,korner1973graphs,lovasz1979shannon,korner2002zero,witsenhausen1976zero,slepian1973noiseless,cover2006elements,alon2002source}
 \@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{2}{section.1}\protected@file@percent }
 \newlabel{introduction}{{I}{2}{Introduction}{section.1}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-A}}Distributed Source Coding Formulation}{3}{subsection.1.1}\protected@file@percent }
 \newlabel{sec:encoding-problem}{{\mbox  {I-A}}{3}{Distributed Source Coding Formulation}{subsection.1.1}{}}
-\citation{demoura2021lean4}
+\citation{demoura2021lean4,mathlib2020}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-B}}Boundary Interpretation}{5}{subsection.1.2}\protected@file@percent }
 \newlabel{sec:realizability}{{\mbox  {I-B}}{5}{Boundary Interpretation}{subsection.1.2}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-C}}Paper Organization}{5}{subsection.1.3}\protected@file@percent }
@@ -16,196 +16,216 @@
 \newlabel{sec:scope}{{\mbox  {I-D}}{6}{Scope}{subsection.1.4}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-E}}Contributions}{6}{subsection.1.5}\protected@file@percent }
 \newlabel{sec:contributions}{{\mbox  {I-E}}{6}{Contributions}{subsection.1.5}{}}
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {I-E}0a}Core graph-capacity contributions.}{6}{paragraph.1.5.0.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {I-E}0b}Boundary and consequence contributions.}{7}{paragraph.1.5.0.2}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Two failure topologies. In (a), the observation provides no discrimination, so the confusability graph is a clique: every state is confusable with every other, and exact recovery requires a tag for each state. In (b), partial observations provide some discrimination: opposite corners are distinguishable even though adjacent states are not. The 4-cycle is 2-colorable, so exact recovery requires only 2 tags. This structural difference is invisible to the unit-rate threshold alone.}}{8}{figure.1}\protected@file@percent }
-\newlabel{fig:failure-topology}{{1}{8}{Two failure topologies. In (a), the observation provides no discrimination, so the confusability graph is a clique: every state is confusable with every other, and exact recovery requires a tag for each state. In (b), partial observations provide some discrimination: opposite corners are distinguishable even though adjacent states are not. The 4-cycle is 2-colorable, so exact recovery requires only 2 tags. This structural difference is invisible to the unit-rate threshold alone}{figure.1}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {II}Figures}{8}{section.2}\protected@file@percent }
-\newlabel{sec:figures}{{II}{8}{Figures}{section.2}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {III}Model and Basic Quantities}{8}{section.3}\protected@file@percent }
-\newlabel{sec:foundations}{{III}{8}{Model and Basic Quantities}{section.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Model assumptions and notation}{8}{subsection.3.1}\protected@file@percent }
-\newlabel{sec:assumptions}{{\mbox  {III-A}}{8}{Model assumptions and notation}{subsection.3.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}Latent states, ambiguity, and independent rate}{8}{subsection.3.2}\protected@file@percent }
-\newlabel{sec:epistemic}{{\mbox  {III-B}}{8}{Latent states, ambiguity, and independent rate}{subsection.3.2}{}}
-\newlabel{def:independent}{{III.1}{9}{Independent Location}{theorem.3.1}{}}
-\newlabel{def:derived}{{III.2}{9}{Derived Location}{theorem.3.2}{}}
-\newlabel{def:dof}{{III.3}{9}{Degrees of Freedom}{theorem.3.3}{}}
-\newlabel{def:structural-integrity}{{III.4}{9}{Structural Integrity}{theorem.3.4}{}}
-\newlabel{def:integrity-violation}{{III.5}{9}{Integrity Violation}{theorem.3.5}{}}
-\newlabel{thm:dof-one-coherence}{{III.6}{9}{Unit Independent Rate Guarantees Coherence}{footnote.11}{}}
-\newlabel{thm:dof-gt-one-incoherence}{{III.7}{10}{Independent Rate Above One Permits Incoherence}{footnote.12}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-C}}Zero-Incoherence Threshold}{10}{subsection.3.3}\protected@file@percent }
-\newlabel{sec:capacity}{{\mbox  {III-C}}{10}{Zero-Incoherence Threshold}{subsection.3.3}{}}
-\newlabel{def:coherence-capacity}{{III.8}{10}{Zero-Incoherence Threshold}{theorem.3.8}{}}
-\newlabel{thm:coherence-capacity}{{III.9}{10}{Threshold Corollary}{footnote.13}{}}
-\newlabel{cor:integrity-threshold}{{III.10}{11}{Exact Structural-Integrity Threshold}{footnote.14}{}}
-\newlabel{thm:side-info}{{III.11}{11}{Side-Information Lower Bound}{footnote.15}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {IV}Unified Finite Converse}{11}{section.4}\protected@file@percent }
-\newlabel{sec:converse}{{IV}{11}{Unified Finite Converse}{section.4}{}}
-\newlabel{thm:pair-injective}{{IV.1}{12}{Pair-injectivity characterization}{footnote.16}{}}
-\newlabel{thm:confusability-converse}{{IV.2}{12}{Confusability formulation}{footnote.17}{}}
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-}0a}Global observation-tag budget.}{12}{paragraph.4.0.0.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-}0b}Fiber-level injectivity and cardinality.}{13}{paragraph.4.0.0.2}\protected@file@percent }
-\newlabel{thm:fano-converse}{{IV.3}{13}{Finite counting converse}{footnote.20}{}}
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-}0c}Conditional-entropy formulation.}{14}{paragraph.4.0.0.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-}0d}Mass-weighted clique entropy bound.}{14}{paragraph.4.0.0.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-}0e}Decoder-output and gap formulations.}{15}{paragraph.4.0.0.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-}0f}Deterministic data processing.}{16}{paragraph.4.0.0.6}\protected@file@percent }
-\citation{fano1961transmission,witsenhausen1975conditional,cover2006elements}
-\newlabel{thm:equivalence-viewpoint}{{IV.4}{17}{Equivalence viewpoint}{footnote.27}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Finite-error extension}{17}{subsection.4.1}\protected@file@percent }
-\newlabel{sec:finite-error-extension}{{\mbox  {IV-A}}{17}{Finite-error extension}{subsection.4.1}{}}
-\newlabel{thm:finite-error-budgeted}{{IV.5}{17}{Budgeted finite-error converse}{footnote.28}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {V}Graph Characterization of Partial Views}{18}{section.5}\protected@file@percent }
-\newlabel{sec:graph-characterization}{{V}{18}{Graph Characterization of Partial Views}{section.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-A}}A Running Example: The Binary Square}{19}{subsection.5.1}\protected@file@percent }
-\newlabel{sec:binary-square}{{\mbox  {V-A}}{19}{A Running Example: The Binary Square}{subsection.5.1}{}}
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {V-A}0a}Confusability structure.}{19}{paragraph.5.1.0.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {V-A}0b}Exact recovery.}{19}{paragraph.5.1.0.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {V-A}0c}What this example shows.}{19}{paragraph.5.1.0.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-B}}General Graph Characterization}{20}{subsection.5.2}\protected@file@percent }
-\newlabel{thm:multifact-colorability}{{V.1}{22}{Exact recovery as graph colorability}{footnote.37}{}}
-\newlabel{thm:multifact-success-set}{{V.2}{23}{Success-set characterization}{footnote.39}{}}
-\newlabel{thm:multifact-max-success}{{V.3}{23}{Exact finite-error success budget}{footnote.40}{}}
-\newlabel{thm:multifact-nonclique}{{V.4}{24}{First non-clique witness}{footnote.43}{}}
-\newlabel{thm:multifact-product}{{V.5}{24}{Block-composition law}{footnote.44}{}}
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {V-B}0a}Example family: iterated binary squares.}{26}{paragraph.5.2.0.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {VI}Block Composition, Strong Powers, and Asymptotic Capacity}{27}{section.6}\protected@file@percent }
-\newlabel{sec:capacity-theory}{{VI}{27}{Block Composition, Strong Powers, and Asymptotic Capacity}{section.6}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-A}}Motivation: Repeated Composition}{27}{subsection.6.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-B}}Block Composition Law}{27}{subsection.6.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {VI-B}0a}Conjunction, not disjunction.}{28}{paragraph.6.2.0.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {VI-B}0b}Concrete example.}{28}{paragraph.6.2.0.2}\protected@file@percent }
-\newlabel{thm:asymptotic-capacity}{{VI.1}{30}{Asymptotic Shannon-capacity theorem}{footnote.54}{}}
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {VI-B}0c}Running example: Binary square.}{31}{paragraph.6.2.0.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {VI-B}0d}Relation to graph capacity theory.}{31}{paragraph.6.2.0.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {VII}Theta Upper Theory}{32}{section.7}\protected@file@percent }
-\newlabel{sec:theta-theory}{{VII}{32}{Theta Upper Theory}{section.7}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {VIII}Equality Characterization}{33}{section.8}\protected@file@percent }
-\newlabel{sec:equality}{{VIII}{33}{Equality Characterization}{section.8}{}}
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {VIII-}0a}Running example: Binary square.}{35}{paragraph.8.0.0.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {IX}Affine Dual: Coordinate Matroid}{35}{section.9}\protected@file@percent }
-\newlabel{sec:affine}{{IX}{35}{Affine Dual: Coordinate Matroid}{section.9}{}}
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IX-}0a}Warm-up example.}{36}{paragraph.9.0.0.1}\protected@file@percent }
-\newlabel{thm:affine-fact-matroid}{{IX.1}{36}{Affine fact-matroid specialization}{theorem.9.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IX-A}}View-fiber dimensions and capacity}{38}{subsection.9.1}\protected@file@percent }
-\newlabel{sec:affine-to-graph}{{\mbox  {IX-A}}{38}{View-fiber dimensions and capacity}{subsection.9.1}{}}
-\citation{oxley2011matroid}
+\@writefile{toc}{\contentsline {section}{\numberline {II}Model and Basic Quantities}{6}{section.2}\protected@file@percent }
+\newlabel{sec:foundations}{{II}{6}{Model and Basic Quantities}{section.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-A}}Model assumptions and notation}{7}{subsection.2.1}\protected@file@percent }
+\newlabel{sec:assumptions}{{\mbox  {II-A}}{7}{Model assumptions and notation}{subsection.2.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-B}}Latent states, ambiguity, and independent rate}{7}{subsection.2.2}\protected@file@percent }
+\newlabel{sec:epistemic}{{\mbox  {II-B}}{7}{Latent states, ambiguity, and independent rate}{subsection.2.2}{}}
+\newlabel{def:independent}{{II.1}{7}{Independent Location}{theorem.2.1}{}}
+\newlabel{def:derived}{{II.2}{7}{Derived Location}{theorem.2.2}{}}
+\newlabel{def:dof}{{II.3}{8}{Degrees of Freedom}{theorem.2.3}{}}
+\newlabel{def:structural-integrity}{{II.4}{8}{Structural Integrity}{theorem.2.4}{}}
+\newlabel{def:integrity-violation}{{II.5}{8}{Integrity Violation}{theorem.2.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-C}}Zero-Incoherence Threshold}{8}{subsection.2.3}\protected@file@percent }
+\newlabel{sec:capacity}{{\mbox  {II-C}}{8}{Zero-Incoherence Threshold}{subsection.2.3}{}}
+\newlabel{def:coherence-capacity}{{II.6}{8}{Zero-Incoherence Threshold}{theorem.2.6}{}}
+\newlabel{thm:coherence-capacity}{{II.7}{8}{Threshold Corollary}{footnote.13}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {III}Unified Finite Converse}{9}{section.3}\protected@file@percent }
+\newlabel{sec:converse}{{III}{9}{Unified Finite Converse}{section.3}{}}
+\newlabel{thm:pair-injective}{{III.1}{10}{Pair-injectivity characterization}{footnote.16}{}}
+\newlabel{thm:confusability-converse}{{III.2}{10}{Confusability formulation}{footnote.17}{}}
+\newlabel{thm:fano-converse}{{III.3}{10}{Counting converse}{footnote.18}{}}
+\citation{fano1961transmission,witsenhausen1975conditional,cover2006elements,kelly2011improved}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Finite-error extension}{11}{subsection.3.1}\protected@file@percent }
+\newlabel{sec:finite-error-extension}{{\mbox  {III-A}}{11}{Finite-error extension}{subsection.3.1}{}}
+\newlabel{thm:finite-error-budgeted}{{III.4}{11}{Budgeted finite-error converse}{footnote.26}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Graph Characterization of Partial Views}{12}{section.4}\protected@file@percent }
+\newlabel{sec:graph-characterization}{{IV}{12}{Graph Characterization of Partial Views}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}A Running Example: The Binary Square}{12}{subsection.4.1}\protected@file@percent }
+\newlabel{sec:binary-square}{{\mbox  {IV-A}}{12}{A Running Example: The Binary Square}{subsection.4.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Two failure topologies. In (a), the observation provides no discrimination, so the confusability graph is a clique: every state is confusable with every other, and exact recovery requires a tag for each state. In (b), partial observations provide some discrimination: opposite corners are distinguishable even though adjacent states are not. The 4-cycle is 2-colorable, so exact recovery requires only 2 tags. This structural difference is invisible to the unit-rate threshold alone.}}{13}{figure.1}\protected@file@percent }
+\newlabel{fig:failure-topology}{{1}{13}{Two failure topologies. In (a), the observation provides no discrimination, so the confusability graph is a clique: every state is confusable with every other, and exact recovery requires a tag for each state. In (b), partial observations provide some discrimination: opposite corners are distinguishable even though adjacent states are not. The 4-cycle is 2-colorable, so exact recovery requires only 2 tags. This structural difference is invisible to the unit-rate threshold alone}{figure.1}{}}
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-A}0a}Confusability structure.}{13}{paragraph.4.1.0.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-A}0b}Exact recovery.}{13}{paragraph.4.1.0.2}\protected@file@percent }
+\citation{west2001introduction,diestel2017graph}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}General Graph Characterization}{14}{subsection.4.2}\protected@file@percent }
+\newlabel{thm:multifact-colorability}{{IV.1}{14}{Exact recovery as graph colorability}{footnote.35}{}}
+\newlabel{thm:multifact-success-set}{{IV.2}{15}{Success-set characterization}{footnote.37}{}}
+\newlabel{thm:multifact-max-success}{{IV.3}{15}{Exact finite-error success budget}{footnote.38}{}}
+\newlabel{thm:multifact-nonclique}{{IV.4}{16}{First non-clique witness}{footnote.41}{}}
+\citation{imrich2008product,west2001introduction}
+\newlabel{thm:multifact-product}{{IV.5}{17}{Block-composition law}{footnote.42}{}}
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-B}0a}Example family: iterated binary squares.}{18}{paragraph.4.2.0.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {V}Block Composition, Strong Powers, and Asymptotic Capacity}{18}{section.5}\protected@file@percent }
+\newlabel{sec:capacity-theory}{{V}{18}{Block Composition, Strong Powers, and Asymptotic Capacity}{section.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-A}}Motivation: Repeated Composition}{18}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-B}}Block Composition Law}{18}{subsection.5.2}\protected@file@percent }
+\citation{fekete1923uber}
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {V-B}0a}Strong-product quantification.}{19}{paragraph.5.2.0.1}\protected@file@percent }
+\newlabel{thm:asymptotic-capacity}{{V.1}{19}{Asymptotic Shannon-capacity theorem}{footnote.51}{}}
+\citation{lovasz1979shannon,grotschel1981ellipsoid,knuth1994remark,boyd2004convex}
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {V-B}0b}Running example: Binary square.}{20}{paragraph.5.2.0.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {V-B}0c}Relation to graph capacity theory.}{20}{paragraph.5.2.0.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {VI}Theta Upper Theory}{20}{section.6}\protected@file@percent }
+\newlabel{sec:theta-theory}{{VI}{20}{Theta Upper Theory}{section.6}{}}
+\citation{fekete1923uber}
+\citation{lovasz1979shannon,haemers1978upper,cubitt2014bounds,zuiddam2019asymptotic}
+\@writefile{toc}{\contentsline {section}{\numberline {VII}Equality Characterization}{21}{section.7}\protected@file@percent }
+\newlabel{sec:equality}{{VII}{21}{Equality Characterization}{section.7}{}}
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {VII-}0a}Running example: Binary square.}{23}{paragraph.7.0.0.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {VIII}Affine Dual: Coordinate Matroid}{24}{section.8}\protected@file@percent }
+\newlabel{sec:affine}{{VIII}{24}{Affine Dual: Coordinate Matroid}{section.8}{}}
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {VIII-}0a}Warm-up example.}{24}{paragraph.8.0.0.1}\protected@file@percent }
+\newlabel{thm:affine-fact-matroid}{{VIII.1}{25}{Affine fact-matroid specialization}{theorem.8.1}{}}
+\citation{pekosz2011complexity,grotschel1981ellipsoid}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-A}}View-fiber dimensions and capacity}{26}{subsection.8.1}\protected@file@percent }
+\newlabel{sec:affine-to-graph}{{\mbox  {VIII-A}}{26}{View-fiber dimensions and capacity}{subsection.8.1}{}}
+\citation{oxley2011matroid,welsh1976matroid,recski1989matroid}
 \citation{cover2006elements}
-\newlabel{cor:matroid-capacity-bounds}{{IX.3}{39}{Matroid ranks give capacity bounds}{footnote.62}{}}
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IX-A}0a}Running example: Binary square.}{39}{paragraph.9.1.0.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {X}Unit-Rate Structural Interpretation}{40}{section.10}\protected@file@percent }
-\newlabel{sec:ssot}{{X}{40}{Unit-Rate Structural Interpretation}{section.10}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {X-A}}Derivation as the Single-Source Structure}{40}{subsection.10.1}\protected@file@percent }
-\newlabel{sec:ssot-def}{{\mbox  {X-A}}{40}{Derivation as the Single-Source Structure}{subsection.10.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {X-B}}Reading the Converse at Unit Rate}{40}{subsection.10.2}\protected@file@percent }
-\newlabel{sec:info-sketches}{{\mbox  {X-B}}{40}{Reading the Converse at Unit Rate}{subsection.10.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {X-C}}Rate and Manual Update Cost}{40}{subsection.10.3}\protected@file@percent }
-\newlabel{sec:ssot-vs-m}{{\mbox  {X-C}}{40}{Rate and Manual Update Cost}{subsection.10.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {X-D}}Derived Views}{41}{subsection.10.4}\protected@file@percent }
-\newlabel{sec:derivation}{{\mbox  {X-D}}{41}{Derived Views}{subsection.10.4}{}}
-\newlabel{def:derivation}{{X.1}{41}{Derivation}{theorem.10.1}{}}
-\newlabel{thm:derivation-excludes}{{X.2}{41}{Derivation Preserves Coherence}{footnote.66}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {XI}Threshold and Rate-Complexity Corollaries}{41}{section.11}\protected@file@percent }
-\newlabel{sec:rate-corollaries}{{XI}{41}{Threshold and Rate-Complexity Corollaries}{section.11}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XI-A}}Cost Model}{41}{subsection.11.1}\protected@file@percent }
-\newlabel{sec:cost-model}{{\mbox  {XI-A}}{41}{Cost Model}{subsection.11.1}{}}
-\newlabel{def:cost-model}{{XI.1}{41}{Modification Cost Model}{theorem.11.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XI-B}}Upper Bound at Unit Independent Rate}{42}{subsection.11.2}\protected@file@percent }
-\newlabel{sec:upper-bound}{{\mbox  {XI-B}}{42}{Upper Bound at Unit Independent Rate}{subsection.11.2}{}}
-\newlabel{thm:upper-bound}{{XI.2}{42}{Rate-1 Upper Bound}{footnote.68}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XI-C}}Lower Bound Above the Threshold}{42}{subsection.11.3}\protected@file@percent }
-\newlabel{sec:lower-bound}{{\mbox  {XI-C}}{42}{Lower Bound Above the Threshold}{subsection.11.3}{}}
-\newlabel{thm:lower-bound}{{XI.3}{42}{Above-Threshold Lower Bound}{footnote.69}{}}
-\newlabel{lem:info-dof}{{XI.4}{42}{Information-Constrained DOF Lower Bound}{footnote.70}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XI-D}}The Unbounded Gap}{43}{subsection.11.4}\protected@file@percent }
-\newlabel{sec:gap}{{\mbox  {XI-D}}{43}{The Unbounded Gap}{subsection.11.4}{}}
-\newlabel{thm:unbounded-gap}{{XI.5}{43}{Unbounded Gap}{footnote.71}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {XII}Structural Consequences}{43}{section.12}\protected@file@percent }
-\newlabel{sec:requirements}{{XII}{43}{Structural Consequences}{section.12}{}}
-\newlabel{def:verifiable-integrity}{{XII.1}{44}{Verifiable Structural Integrity}{theorem.12.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XII-A}}Confusability and Side Information}{44}{subsection.12.1}\protected@file@percent }
-\newlabel{sec:confusability}{{\mbox  {XII-A}}{44}{Confusability and Side Information}{subsection.12.1}{}}
-\newlabel{lem:confusability-clique}{{XII.2}{44}{Confusability Clique Bound}{footnote.72}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XII-B}}The Structural Timing Constraint}{44}{subsection.12.2}\protected@file@percent }
-\newlabel{sec:timing}{{\mbox  {XII-B}}{44}{The Structural Timing Constraint}{subsection.12.2}{}}
-\newlabel{def:structural-fact-req}{{XII.3}{44}{Structural Fact}{theorem.12.3}{}}
-\newlabel{thm:timing-forces}{{XII.4}{45}{Timing Constraint for Structural Derivation}{footnote.73}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XII-C}}Requirement 1: Causal Update Propagation}{45}{subsection.12.3}\protected@file@percent }
-\newlabel{sec:causal-propagation}{{\mbox  {XII-C}}{45}{Requirement 1: Causal Update Propagation}{subsection.12.3}{}}
-\newlabel{def:causal-propagation}{{XII.5}{45}{Causal Update Propagation}{theorem.12.5}{}}
-\newlabel{thm:causal-necessary}{{XII.6}{45}{Causal Propagation is Necessary for Unit Rate}{footnote.74}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XII-D}}Requirement 2: Provenance Observability}{46}{subsection.12.4}\protected@file@percent }
-\newlabel{sec:provenance-observability}{{\mbox  {XII-D}}{46}{Requirement 2: Provenance Observability}{subsection.12.4}{}}
-\newlabel{def:provenance-observability}{{XII.7}{46}{Provenance Observability}{theorem.12.7}{}}
-\newlabel{thm:provenance-necessary}{{XII.8}{46}{Provenance Observability is Necessary for Verifiable Unit Rate}{footnote.75}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XII-E}}Independence of the Two Requirements}{46}{subsection.12.5}\protected@file@percent }
-\newlabel{sec:independence}{{\mbox  {XII-E}}{46}{Independence of the Two Requirements}{subsection.12.5}{}}
-\newlabel{thm:independence}{{XII.9}{46}{Requirements are Independent}{footnote.76}{}}
+\newlabel{cor:matroid-capacity-bounds}{{VIII.3}{27}{Matroid ranks give capacity bounds}{footnote.59}{}}
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {VIII-A}0a}Running example: Binary square.}{28}{paragraph.8.1.0.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {IX}Unit-Rate Boundary Characterization}{28}{section.9}\protected@file@percent }
+\newlabel{sec:ssot}{{IX}{28}{Unit-Rate Boundary Characterization}{section.9}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IX-A}}Derivation as the Single-Source Structure}{28}{subsection.9.1}\protected@file@percent }
+\newlabel{sec:ssot-def}{{\mbox  {IX-A}}{28}{Derivation as the Single-Source Structure}{subsection.9.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IX-B}}Reading the Converse at Unit Rate}{29}{subsection.9.2}\protected@file@percent }
+\newlabel{sec:info-sketches}{{\mbox  {IX-B}}{29}{Reading the Converse at Unit Rate}{subsection.9.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IX-C}}Rate and Manual Update Cost}{29}{subsection.9.3}\protected@file@percent }
+\newlabel{sec:ssot-vs-m}{{\mbox  {IX-C}}{29}{Rate and Manual Update Cost}{subsection.9.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IX-D}}Derived Views}{29}{subsection.9.4}\protected@file@percent }
+\newlabel{sec:derivation}{{\mbox  {IX-D}}{29}{Derived Views}{subsection.9.4}{}}
+\newlabel{def:derivation}{{IX.1}{29}{Derivation}{theorem.9.1}{}}
+\newlabel{thm:derivation-excludes}{{IX.2}{29}{Derivation Preserves Coherence}{footnote.63}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {X}Threshold and Rate-Complexity Corollaries}{30}{section.10}\protected@file@percent }
+\newlabel{sec:rate-corollaries}{{X}{30}{Threshold and Rate-Complexity Corollaries}{section.10}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {X-A}}Cost Model}{30}{subsection.10.1}\protected@file@percent }
+\newlabel{sec:cost-model}{{\mbox  {X-A}}{30}{Cost Model}{subsection.10.1}{}}
+\newlabel{def:cost-model}{{X.1}{30}{Modification Cost Model}{theorem.10.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {X-B}}Upper Bound at Unit Independent Rate}{30}{subsection.10.2}\protected@file@percent }
+\newlabel{sec:upper-bound}{{\mbox  {X-B}}{30}{Upper Bound at Unit Independent Rate}{subsection.10.2}{}}
+\newlabel{thm:upper-bound}{{X.2}{30}{Rate-1 Upper Bound}{footnote.65}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {X-C}}Lower Bound Above the Threshold}{31}{subsection.10.3}\protected@file@percent }
+\newlabel{sec:lower-bound}{{\mbox  {X-C}}{31}{Lower Bound Above the Threshold}{subsection.10.3}{}}
+\newlabel{thm:lower-bound}{{X.3}{31}{Above-Threshold Lower Bound}{footnote.66}{}}
+\newlabel{lem:info-dof}{{X.4}{31}{Information-Constrained DOF Lower Bound}{footnote.67}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {X-D}}The Unbounded Gap}{32}{subsection.10.4}\protected@file@percent }
+\newlabel{sec:gap}{{\mbox  {X-D}}{32}{The Unbounded Gap}{subsection.10.4}{}}
+\newlabel{thm:unbounded-gap}{{X.5}{32}{Unbounded Gap}{footnote.68}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {XI}Zero-Error Realizability}{32}{section.11}\protected@file@percent }
+\newlabel{sec:requirements}{{XI}{32}{Zero-Error Realizability}{section.11}{}}
+\newlabel{def:verifiable-integrity}{{XI.1}{33}{Verifiable Structural Integrity}{theorem.11.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XI-A}}Confusability and Side Information}{33}{subsection.11.1}\protected@file@percent }
+\newlabel{sec:confusability}{{\mbox  {XI-A}}{33}{Confusability and Side Information}{subsection.11.1}{}}
+\newlabel{lem:confusability-clique}{{XI.2}{33}{Confusability Clique Bound}{footnote.69}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XI-B}}The Structural Timing Constraint}{33}{subsection.11.2}\protected@file@percent }
+\newlabel{sec:timing}{{\mbox  {XI-B}}{33}{The Structural Timing Constraint}{subsection.11.2}{}}
+\newlabel{def:structural-fact-req}{{XI.3}{33}{Structural Fact}{theorem.11.3}{}}
+\newlabel{thm:timing-forces}{{XI.4}{34}{Timing Constraint for Structural Derivation}{footnote.70}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XI-C}}Requirement 1: Causal Update Propagation}{34}{subsection.11.3}\protected@file@percent }
+\newlabel{sec:causal-propagation}{{\mbox  {XI-C}}{34}{Requirement 1: Causal Update Propagation}{subsection.11.3}{}}
+\newlabel{def:causal-propagation}{{XI.5}{34}{Zero-Delay State Synchronization}{theorem.11.5}{}}
+\newlabel{thm:causal-necessary}{{XI.6}{34}{Zero-Delay Synchronization is Necessary for Unit Rate}{footnote.71}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XI-D}}Requirement 2: Structural Side-Information}{35}{subsection.11.4}\protected@file@percent }
+\newlabel{sec:provenance-observability}{{\mbox  {XI-D}}{35}{Requirement 2: Structural Side-Information}{subsection.11.4}{}}
+\newlabel{def:provenance-observability}{{XI.7}{35}{Structural Side-Information}{theorem.11.7}{}}
+\newlabel{thm:provenance-necessary}{{XI.8}{35}{Structural Side-Information is Necessary for Verifiable Unit Rate}{footnote.72}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XI-E}}Independence of the Two Requirements}{35}{subsection.11.5}\protected@file@percent }
+\newlabel{sec:independence}{{\mbox  {XI-E}}{35}{Independence of the Two Requirements}{subsection.11.5}{}}
+\newlabel{thm:independence}{{XI.9}{35}{Requirements are Independent}{footnote.73}{}}
 \citation{shannon1956zero,korner1973graphs,lovasz1979shannon}
+\citation{korner2002zero}
 \citation{witsenhausen1976zero}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XII-F}}The Realizability Theorem}{47}{subsection.12.6}\protected@file@percent }
-\newlabel{sec:realizability-theorem}{{\mbox  {XII-F}}{47}{The Realizability Theorem}{subsection.12.6}{}}
-\newlabel{thm:ssot-iff}{{XII.10}{47}{Operational Realizability Criterion}{footnote.77}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {XIII}Related Work}{47}{section.13}\protected@file@percent }
-\newlabel{sec:related}{{XIII}{47}{Related Work}{section.13}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XIII-A}}Zero-Error and Side-Information Lineage}{47}{subsection.13.1}\protected@file@percent }
-\newlabel{sec:related-source-coding}{{\mbox  {XIII-A}}{47}{Zero-Error and Side-Information Lineage}{subsection.13.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XI-F}}The Realizability Theorem}{36}{subsection.11.6}\protected@file@percent }
+\newlabel{sec:realizability-theorem}{{\mbox  {XI-F}}{36}{The Realizability Theorem}{subsection.11.6}{}}
+\newlabel{thm:ssot-iff}{{XI.10}{36}{Operational Realizability Criterion}{footnote.74}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {XII}Related Work}{36}{section.12}\protected@file@percent }
+\newlabel{sec:related}{{XII}{36}{Related Work}{section.12}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XII-A}}Zero-Error and Side-Information Lineage}{36}{subsection.12.1}\protected@file@percent }
+\newlabel{sec:related-source-coding}{{\mbox  {XII-A}}{36}{Zero-Error and Side-Information Lineage}{subsection.12.1}{}}
 \citation{slepian1973noiseless,fano1961transmission,witsenhausen1975conditional,cover2006elements}
-\citation{orlitsky2001coding,doshi2010functional,korner1973graphs}
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {XIII-A}0a}Key distinction from Witsenhausen.}{48}{paragraph.13.1.0.1}\protected@file@percent }
+\citation{orlitsky2001coding,alon2002source,doshi2010functional,korner1973graphs,simonyi2001graph}
+\citation{guang2023zero,liu2021leakage}
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {XII-A}0a}Key distinction from Witsenhausen.}{37}{paragraph.12.1.0.1}\protected@file@percent }
+\citation{haemers1978upper,zuiddam2019asymptotic,deboer2024asymptotic}
 \citation{rashmi2015multiversion}
+\citation{brewer2000cap,gilbert2002cap,gray1978notes}
+\citation{herlihy1990linearizability}
 \citation{kiczales1991art,smith1984reflection}
-\citation{demoura2021lean4,leroy2009compcert}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XIII-B}}Consistency-Constrained Storage and Interaction}{49}{subsection.13.2}\protected@file@percent }
-\newlabel{sec:related-distributed}{{\mbox  {XIII-B}}{49}{Consistency-Constrained Storage and Interaction}{subsection.13.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XIII-C}}Computational Realizations}{49}{subsection.13.3}\protected@file@percent }
-\newlabel{sec:related-meta}{{\mbox  {XIII-C}}{49}{Computational Realizations}{subsection.13.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XIII-D}}Formal Verification}{50}{subsection.13.4}\protected@file@percent }
-\newlabel{sec:related-formal}{{\mbox  {XIII-D}}{50}{Formal Verification}{subsection.13.4}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {XIV}Conclusion}{50}{section.14}\protected@file@percent }
-\newlabel{sec:conclusion}{{XIV}{50}{Conclusion}{section.14}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XIV-A}}Artifacts}{52}{subsection.14.1}\protected@file@percent }
-\newlabel{sec:data-availability}{{\mbox  {XIV-A}}{52}{Artifacts}{subsection.14.1}{}}
+\citation{demoura2021lean4,mathlib2020,leroy2009compcert}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XII-B}}Consistency-Constrained Storage and Interaction}{38}{subsection.12.2}\protected@file@percent }
+\newlabel{sec:related-distributed}{{\mbox  {XII-B}}{38}{Consistency-Constrained Storage and Interaction}{subsection.12.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XII-C}}Computational Realizations}{38}{subsection.12.3}\protected@file@percent }
+\newlabel{sec:related-meta}{{\mbox  {XII-C}}{38}{Computational Realizations}{subsection.12.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XII-D}}Formal Verification}{39}{subsection.12.4}\protected@file@percent }
+\newlabel{sec:related-formal}{{\mbox  {XII-D}}{39}{Formal Verification}{subsection.12.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {XIII}Conclusion}{39}{section.13}\protected@file@percent }
+\newlabel{sec:conclusion}{{XIII}{39}{Conclusion}{section.13}{}}
 \bibstyle{IEEEtran}
 \bibdata{references}
 \bibcite{shannon1956zero}{1}
 \bibcite{korner1973graphs}{2}
 \bibcite{lovasz1979shannon}{3}
-\bibcite{witsenhausen1976zero}{4}
-\bibcite{slepian1973noiseless}{5}
-\bibcite{cover2006elements}{6}
-\bibcite{demoura2021lean4}{7}
-\bibcite{fano1961transmission}{8}
-\bibcite{witsenhausen1975conditional}{9}
-\bibcite{oxley2011matroid}{10}
-\bibcite{orlitsky2001coding}{11}
-\bibcite{doshi2010functional}{12}
-\bibcite{rashmi2015multiversion}{13}
-\@writefile{toc}{\contentsline {section}{References}{53}{section*.2}\protected@file@percent }
-\bibcite{kiczales1991art}{14}
-\bibcite{smith1984reflection}{15}
-\bibcite{leroy2009compcert}{16}
-\bibcite{pep487}{17}
-\bibcite{pythondatamodel2025}{18}
-\bibcite{postgresMaterializedViews2025}{19}
-\bibcite{postgresPgMatviews2025}{20}
-\bibcite{rustref2024}{21}
-\bibcite{typescriptDecorators2025}{22}
-\bibcite{javascriptDecorators2025}{23}
-\bibcite{gosling2021java}{24}
-\bibcite{gospec2024}{25}
-\bibcite{npmLock2026}{26}
-\bibcite{npmExplain2026}{27}
-\bibcite{npmLs2026}{28}
-\bibcite{cargoLockGuide2026}{29}
-\bibcite{cargoTree2026}{30}
-\bibcite{cargoMetadata2026}{31}
-\bibcite{poetryCli2026}{32}
-\bibcite{pnpmInstall2026}{33}
-\bibcite{pnpmWhy2026}{34}
-\bibcite{pnpmList2026}{35}
+\bibcite{korner2002zero}{4}
+\bibcite{witsenhausen1976zero}{5}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {XIII-A}}Artifacts}{42}{subsection.13.1}\protected@file@percent }
+\newlabel{sec:data-availability}{{\mbox  {XIII-A}}{42}{Artifacts}{subsection.13.1}{}}
+\@writefile{toc}{\contentsline {section}{References}{42}{section*.2}\protected@file@percent }
+\bibcite{slepian1973noiseless}{6}
+\bibcite{cover2006elements}{7}
+\bibcite{alon2002source}{8}
+\bibcite{demoura2021lean4}{9}
+\bibcite{mathlib2020}{10}
+\bibcite{fano1961transmission}{11}
+\bibcite{witsenhausen1975conditional}{12}
+\bibcite{kelly2011improved}{13}
+\bibcite{west2001introduction}{14}
+\bibcite{diestel2017graph}{15}
+\bibcite{imrich2008product}{16}
+\bibcite{fekete1923uber}{17}
+\bibcite{grotschel1981ellipsoid}{18}
+\bibcite{knuth1994remark}{19}
+\bibcite{boyd2004convex}{20}
+\bibcite{haemers1978upper}{21}
+\bibcite{cubitt2014bounds}{22}
+\bibcite{zuiddam2019asymptotic}{23}
+\bibcite{pekosz2011complexity}{24}
+\bibcite{oxley2011matroid}{25}
+\bibcite{welsh1976matroid}{26}
+\bibcite{recski1989matroid}{27}
+\bibcite{orlitsky2001coding}{28}
+\bibcite{doshi2010functional}{29}
+\bibcite{simonyi2001graph}{30}
+\bibcite{guang2023zero}{31}
+\bibcite{liu2021leakage}{32}
+\bibcite{deboer2024asymptotic}{33}
+\bibcite{rashmi2015multiversion}{34}
+\bibcite{brewer2000cap}{35}
+\bibcite{gilbert2002cap}{36}
+\bibcite{gray1978notes}{37}
+\bibcite{herlihy1990linearizability}{38}
+\bibcite{kiczales1991art}{39}
+\bibcite{smith1984reflection}{40}
+\bibcite{leroy2009compcert}{41}
+\bibcite{pep487}{42}
+\bibcite{pythondatamodel2025}{43}
+\bibcite{postgresMaterializedViews2025}{44}
+\bibcite{postgresPgMatviews2025}{45}
+\bibcite{rustref2024}{46}
+\bibcite{typescriptDecorators2025}{47}
+\bibcite{javascriptDecorators2025}{48}
+\bibcite{gosling2021java}{49}
+\bibcite{gospec2024}{50}
+\bibcite{npmLock2026}{51}
+\bibcite{npmExplain2026}{52}
+\bibcite{npmLs2026}{53}
+\bibcite{cargoLockGuide2026}{54}
+\bibcite{cargoTree2026}{55}
+\bibcite{cargoMetadata2026}{56}
+\bibcite{poetryCli2026}{57}
+\bibcite{pnpmInstall2026}{58}
+\bibcite{pnpmWhy2026}{59}
+\bibcite{pnpmList2026}{60}
 \citation{pep487,pythondatamodel2025}
 \citation{postgresMaterializedViews2025,postgresPgMatviews2025}
 \citation{rustref2024}
@@ -216,9 +236,7 @@
 \citation{cargoLockGuide2026,cargoTree2026,cargoMetadata2026}
 \citation{poetryCli2026}
 \citation{pnpmInstall2026,pnpmWhy2026,pnpmList2026}
-\@writefile{toc}{\contentsline {section}{Appendix}{55}{section*.3}\protected@file@percent }
-\newlabel{sec:appendix-classification}{{A}{55}{\appendixname }{section*.3}{}}
-\newlabel{tab:host-checks-a-appendix}{{A}{55}{\appendixname }{section*.3}{}}
-\newlabel{sec:appendix-claims}{{A}{56}{Claim Mapping to Lean Handles}{section*.4}{}}
-\newlabel{sec:lean}{{A}{56}{Mechanized Verification (Lean 4)}{section*.5}{}}
-\gdef \@abspage@last{57}
+\@writefile{toc}{\contentsline {section}{Appendix}{45}{section*.3}\protected@file@percent }
+\newlabel{sec:appendix-classification}{{A}{45}{\appendixname }{section*.3}{}}
+\newlabel{tab:host-checks-a-appendix}{{A}{46}{\appendixname }{section*.3}{}}
+\gdef \@abspage@last{46}

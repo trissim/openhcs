@@ -1,0 +1,40 @@
+\begin{thebibliography}{1}
+
+\bibitem{bondi1964}
+A.~Bondi.
+\newblock Van der waals volumes and radii.
+\newblock {\em The Journal of Physical Chemistry}, 68(3):441--451, 1964.
+
+\bibitem{jax2018}
+James Bradbury, Roy Frostig, Peter Hawkins, Matthew~James Johnson, Chris Leary,
+  Dougal Maclaurin, George Necula, Adam Paszke, Jake VanderPlas, Skye
+  Wanderman-Milne, and Qiao Zhang.
+\newblock Jax: composable transformations of python+numpy programs.
+\newblock {\em GitHub repository}, 2018.
+\newblock http://github.com/google/jax.
+
+\bibitem{moura2021lean4}
+Leonardo de~Moura and Sebastian Ullrich.
+\newblock The lean 4 theorem prover and programming language.
+\newblock In {\em Automated Deduction -- CADE 28}, pages 625--635, 2021.
+
+\bibitem{koes2013smina}
+David~Ryan Koes, Matthew~P. Baumgartner, and Carlos~J. Camacho.
+\newblock Lessons learned in empirical scoring with smina from the csar 2011
+  benchmarking exercise.
+\newblock {\em Journal of Chemical Information and Modeling}, 53(8):1893--1904,
+  2013.
+
+\bibitem{mathlib2020}
+The mathlib Community.
+\newblock The lean mathematical library.
+\newblock {\em Proceedings of the 9th ACM SIGPLAN International Conference on
+  Certified Programs and Proofs}, pages 367--381, 2020.
+
+\bibitem{trott2010autodock}
+Oleg Trott and Arthur~J. Olson.
+\newblock Autodock vina: Improving the speed and accuracy of docking with a new
+  scoring function, efficient optimization, and multithreading.
+\newblock {\em Journal of Computational Chemistry}, 31(2):455--461, 2010.
+
+\end{thebibliography}

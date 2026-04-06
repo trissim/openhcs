@@ -60,7 +60,7 @@ Consider a stochastic decision problem with $S=\{s_1,s_2\}$, $A=\{a,b\}$, unifor
 \begin{table}[h]
 \centering
 \renewcommand{\tabularxcolumn}[1]{m{#1}}
-\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash\hyphenpenalty=10000\exhyphenpenalty=10000}m{0.15\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}m{0.22\linewidth}>{\RaggedRight\arraybackslash}m{0.18\linewidth}@{}}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash\hyphenpenalty=10000\exhyphenpenalty=10000}m{0.15\linewidth}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}m{0.22\linewidth}>{\raggedright\arraybackslash}m{0.18\linewidth}@{}}
 \toprule
 \textbf{Predicate/} \textbf{query} & \textbf{What is proved here} & \textbf{Mechanized core} & \textbf{Open / not formalized} \\
 \midrule
@@ -96,15 +96,15 @@ Under the explicit-state encoding, \textsc{Stochastic-Sufficiency-Check} is deci
 For a fixed information set $I$, the verifier scans the finite state space and checks whether the conditional fiber optimizer $\Opt^{\mathrm{stoch}}_I(s_I)$ agrees with the fully conditioned optimizer $\Opt(s)$ at every state $s$. The artifact contains a counted explicit-state search witnessing exactly this predicate together with a linear-in-$|S|$ step bound \leanmeta{\LHrng{DC}{91}{93}.} Hence stochastic sufficiency is polynomial-time decidable in the explicit-state model.
 \end{proof}
 
-\paragraph{Conjecture 4.1 (Support-Sensitive Preservation Complexity).}
+\paragraph{Conjecture 4.1 (Support-Sensitive Preservation Complexity).}\label{con:succinct-soundness}
 Under the succinct encoding of Section~\ref{sec:encoding}, \textsc{Stochastic-Preservation-Check}
 for general distributions (without the full-support assumption) is coNP-hard.
 
 Intuition: preservation remains syntactically universal (statewise optimizer agreement), so its quantifier profile aligns with coNP-style counterexample exclusion rather than PP-style majority comparison. The support-sensitive obstruction lemmas (Proposition~\ref{prop:stochastic-preservation-partial-general}) isolate why full-support transfer fails: zero-probability states can witness violations even when they never appear in conditional averages. The mechanized finite core for this obstruction is available \leanmeta{\LH{OU12}, \LH{DC96}, \LH{DC98}}.
 
-Open Problem 4.2. Determine the exact succinct-encoding complexity of
+Open Problem 4.2.\label{prob:minimum-succinct} Determine the exact succinct-encoding complexity of
 \textsc{Stochastic-Minimum-Preservation} and \textsc{Stochastic-Anchor-Preservation}
-for general distributions. Under Conjecture 4.1, these inherit coNP-completeness and
+for general distributions. Under Conjecture~\ref{con:succinct-soundness}, these inherit coNP-completeness and
 $\Sigma_2^P$-completeness respectively, matching the static regime; resolving the conjecture
 would complete the final open cell in the regime matrix (Table~2).
 
@@ -310,9 +310,10 @@ Under the present encoding, \textsc{Stochastic-Anchor-Sufficiency-Check} and \te
 \begin{proof}
 For anchor sufficiency, the mechanized collapse
 \[
-\mathrm{STOCHASTIC\mbox{-}ANCHOR\mbox{-}SUFFICIENCY\mbox{-}CHECK}(P,I)
-\iff
-\exists s_0\,\exists a\; \bigl(\mathrm{fiberOpt}(P,I,s_0)=\{a\}\bigr)
+\begin{aligned}
+&\mathrm{STOCHASTIC\mbox{-}ANCHOR\mbox{-}SUFFICIENCY\mbox{-}CHECK}(P,I) \\
+&\qquad\iff \exists s_0\,\exists a\; \bigl(\mathrm{fiberOpt}(P,I,s_0)=\{a\}\bigr)
+\end{aligned}
 \]
 is already available in the artifact. \leanmeta{\LH{PA3}} A nondeterministic polynomial-time machine may therefore guess $(s_0,a)$ and use a PP oracle to verify that $a$ is the unique conditional optimum on the anchor fiber. Concretely, uniqueness can be checked by comparing the conditional expected utility of $a$ against every competing action on that fiber, which is exactly the same majority-style conditional comparison used in the decisiveness verification.
 

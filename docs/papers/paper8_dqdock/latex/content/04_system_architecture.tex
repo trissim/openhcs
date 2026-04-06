@@ -1,0 +1,79 @@
+\section{DQDock System Architecture}\label{sec:system}
+
+The implementation in \texttt{dq\_dock\_engine/} is best understood as a layered system rather than as a monolithic docking program. At the bottom is a proof-oriented physics layer containing ArrayDSL-backed primitives, potential kernels, lattice-sum bounds, Ewald machinery, and tractability utilities. On top of that sits the docking layer, which handles protein/ligand parsing, pose generation, scoring, optimization, certification, and reporting. A separate benchmark layer provides redocking and comparison workflows over curated PDB complexes.
+
+One architectural fact matters for the paper. The installed CLI is partly legacy and theory-facing, whereas the strongest end-to-end docking path currently runs through the benchmark/API stack. The execution flow that matters most for the paper is therefore the benchmark/runtime path that explicitly calls the certified docking configuration and the newer refinement modules.
+
+That alignment is a strength of the current system. The highest-value implementation path is already the one most strongly aligned with the theorem stack. The code path that matters for empirical validation is the code path that exploits decision-relevant compression, certified scoring, and certified refinement logic.
+
+\paragraph{Physics substrate.}
+The files under \texttt{dq\_dock\_engine/physics/} and \texttt{dq\_dock\_engine/generated/} are where the strongest theorem connections live. The proof audit associates functions such as lattice-tail bounds, structural-rank calculations, certified Lennard--Jones scoring, and certain thermodynamic lower bounds with specific Lean theorems or theorem families. This layer is the main source of certified and conditionally certified computation.
+
+\paragraph{Docking pipeline.}
+The main orchestration entry point is \texttt{dq\_dock\_engine/docking/pipeline.py}. The runtime flow is: generate poses, score them either directly or through a multi-stage stack, keep the best candidates, refine them, rescore them, and then compute gap or native-pose certification. In certified mode the pipeline intentionally routes to a certified Lennard--Jones path and uses the newer formal refinement path rather than the heuristic gradient optimizer. The code therefore embodies one of the paper's main software claims: theorem-backed modules are not only documented but actually used to change execution flow.
+
+More concretely, the benchmark path constructs a ligand context, builds a docking box around the native pocket, calls \texttt{run\_docking\_pipeline(..., config=CERTIFIED\_DOCKING, include\_native=True)}, and records not only energy and runtime but also gap-proof status and native rank. The certified path is therefore already wired into the empirical layer, not merely sketched as an unused option.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}p{0.16\linewidth}p{0.34\linewidth}p{0.36\linewidth}@{}}
+\toprule
+\textbf{Stage} & \textbf{Current implementation} & \textbf{Formal interpretation} \\
+\midrule
+Pose generation & random or pocket-guided sampling & candidate action restriction to a finite search family \\
+Initial scoring & certified LJ or staged scoring path & exact/coarse surrogate evaluation \\
+Candidate selection & top-pose or top-set retention & survivor-set approximation before refinement \\
+Refinement & formal or heuristic optimizer & local action search over retained candidates \\
+Final certification & gap/native certification & explicit margin check against approximation error \\
+\bottomrule
+\end{tabular}
+\caption{End-to-end execution flow of the current DQDock runtime. The paper's formal story attaches most directly to scoring, survivor selection, refinement logic, and final certification.}
+\end{table}
+
+\paragraph{Formal optimizer and pruning modules.}
+The newer modules \texttt{formal\_actions.py}, \texttt{formal\_belief.py}, \texttt{formal\_pruning.py}, and \texttt{formal\_optimizer.py} deserve special emphasis. They implement a finite local action family, survivor and ambiguity masks, posterior updates over candidate actions, and a certified local refinement loop. These modules are best described as theorem-guided orchestration layered on top of the more directly theorem-tagged physics substrate. They are precisely where the abstract pruning and ranking theorems begin to shape the engine's concrete refinement behavior.
+
+This distinction is useful for exposition. The paper can say plainly that the engine's refinement logic is shaped by formal survivor and ambiguity-set ideas, while the core cutoff and lattice-bound pieces remain the most directly theorem-tagged part of the stack.
+
+\paragraph{Benchmark layer.}
+The benchmark package supplies the empirical side of the paper. It prepares protein-ligand complexes from curated PDB entries, runs DQDock along with competitor/baseline methods, computes RMSD and timing summaries, and renders reports and plots. This makes the benchmark layer the natural empirical-validation counterpart to the theorem stack: the proofs justify why certain approximations and pruning moves should preserve decisions, while the benchmark layer measures whether the resulting engine remains competitive on realistic docking tasks.
+
+The benchmark layer also reveals where the current architecture is strongest. It already reports pose quality, elapsed time, energy-gap certification, native-rank information, and comparative engine statistics. That gives the paper a direct empirical accountability layer alongside the theorem-guided architecture.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Layer} & \textbf{Representative modules} & \textbf{Role} \\
+\midrule
+Physics / proof substrate & \texttt{physics/}, \texttt{generated/}, \texttt{arraydsl.py} & theorem-backed kernels, bounds, tractability \\
+Docking runtime & \texttt{docking/core.py}, \texttt{docking/pipeline.py} & pose generation, scoring, refinement, certification \\
+Formal refinement & \texttt{formal\_actions.py}, \texttt{formal\_pruning.py}, \texttt{formal\_optimizer.py} & theorem-guided local action and survivor logic \\
+Benchmark / reports & \texttt{benchmark/benchmark\_pdb.py}, \texttt{benchmark/redocking\_report.py} & empirical validation and comparison \\
+\bottomrule
+\end{tabular}
+\caption{Practical module decomposition of DQDock. The paper can refer to these layers directly instead of describing the engine as a single undifferentiated codebase.}
+\end{table}
+
+\paragraph{Proof-status table.}
+The most important architectural artifact for the paper is \texttt{PROOF\_AUDIT.md}. It classifies components into certified, conditionally certified, empirical, and heuristic categories. That classification suggests a clean paper table. The certified side includes explicit lattice-tail bounds, molecular structural-rank consequences, the Hamiltonian/integrator core, and parts of the certified Lennard--Jones scoring path. The conditionally certified side includes Ewald-like electrostatics and thermodynamic statements that depend on explicit physical assumptions. The empirical side includes fixed physical constants such as van der Waals radii. The heuristic side includes hydrophobic terms, some internal weights, and parts of the multi-stage scoring and charge-assignment stack. This separation gives the paper a clear architectural vocabulary for discussing rigor, assumptions, and engineering choices.
+
+The empirical-constant category is especially important rhetorically. It avoids conflating experimentally established physical constants, such as standard van der Waals radii compilations, with ad hoc heuristic tuning parameters~\cite{bondi1964}.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Category} & \textbf{Role in DQDock} & \textbf{Representative components} \\
+\midrule
+Certified & theorem-backed kernels and bounds & lattice tails, structural rank, certified LJ path \\
+Conditionally certified & theorem-backed under explicit physics assumptions & Ewald pieces, thermodynamic lower bounds \\
+Empirical & externally fixed physical constants & Bondi radii, Boltzmann constant \\
+Heuristic & engineering choices requiring benchmark validation & hydrophobic terms, multistage filters, charge heuristics \\
+\bottomrule
+\end{tabular}
+\caption{Proof-status split suggested by \texttt{PROOF\_AUDIT.md}. The paper's systems claim is strongest when these categories are kept explicit rather than rhetorically blended.}
+\end{table}

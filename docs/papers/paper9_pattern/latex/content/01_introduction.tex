@@ -1,0 +1,35 @@
+\section{Introduction}
+
+The archive zip for the original Paper 1 draft contains a long practical section of OpenHCS case studies. This paper isolates that material and reframes it as a standalone catalog of general Python design patterns. The theory-heavy claims about fixed axes, SSOT, leverage, and decision relevance are delegated to Papers 1--4; here we keep the pattern-level mechanisms and the engineering meaning they carry.
+
+The exact question is the same kind of question that drives the theory papers: what is the smallest explicit structure a Python system needs so that identity, provenance, history, and routing remain recoverable without hidden state or ad hoc inference? The canonical object in this paper is the authoritative locus of truth: a nominal type, registry entry, sentinel, resolver, state graph, or serialization plan that the system can point to instead of guessing.
+
+That split is deliberate. The theory papers explain why zero-error patterns matter. The case studies show how the patterns appear in a production codebase and which engineering problem each one solved. The patterns are not OpenHCS-specific tricks; OpenHCS is the proving ground for mechanisms that are reusable anywhere a Python system needs explicit identity, explicit provenance, explicit history, or explicit transport boundaries.
+
+The regime contract is therefore simple: only declared state counts, only explicit side information counts, and no hidden registry, reflection oracle, or ambient side channel may introduce uncharged distinguishing power. Once that contract is fixed, the rest of the paper asks which concrete Python mechanisms are strong enough to preserve the relevant truth under that constraint.
+
+The examples are drawn from OpenHCS and from the original Paper 1 draft's case-study chapter, then supplemented by the extracted package papers that expose the same mechanisms in more specialized form. The names below are the original problem labels, but the commentary is trimmed to the reusable mechanism rather than the local implementation details.
+
+\section{Pattern Families}
+
+The 13 examples group into five families:
+
+\begin{itemize}[leftmargin=1.25em]
+\item nominal identity and semantic distinction;
+\item exhaustive dispatch and type enumeration;
+\item configuration resolution, provenance tracking, branching state history, and sentinel-governed inheritance;
+\item runtime type generation, metaclass hooks, and registry discovery;
+\item executable serialization and transport boundaries.
+\end{itemize}
+
+The next section gives a compact contributions-and-evidence map, and the section after that isolates the headline mechanisms that recur across the corpus. Several of the examples are standard patterns; the paper's contribution is to package them as zero-error patterns and to isolate the stronger generalizations that arise when they are composed in the OpenHCS setting. The paper's spine is: exact question, canonical truth object, explicit contract, finite pattern obligations, and engineering consequence.
+
+The strongest recurring generalizations are:
+
+\begin{itemize}[leftmargin=1.25em]
+\item provenance-preserving dual-axis resolution, including `None`-as-inherit and callable-to-state unification;
+\item branching state DAGs with live-vs-saved separation and dirty tracking;
+\item zero-boilerplate registry and discovery through definition-time hooks;
+\item collision-safe executable serialization through a two-pass import and alias resolution;
+\item transport and backend separation, where control and data travel on different channels and backends are explicit.
+\end{itemize}

@@ -34,6 +34,10 @@ J.~K{\"o}rner, ``Coding of an information source having ambiguous alphabet and
 L.~Lov{\'a}sz, ``On the shannon capacity of a graph,'' \emph{IEEE Transactions
   on Information Theory}, vol.~25, no.~1, pp. 1--7, 1979.
 
+\bibitem{korner2002zero}
+J.~K{\"o}rner and A.~Orlitsky, ``Zero-error information theory,'' \emph{IEEE
+  Transactions on Information Theory}, vol.~44, no.~6, pp. 2207--2229, 1998.
+
 \bibitem{witsenhausen1976zero}
 H.~S. Witsenhausen, ``The zero-error side information problem and chromatic
   numbers,'' \emph{IEEE Transactions on Information Theory}, vol.~22, no.~5,
@@ -48,10 +52,19 @@ D.~Slepian and J.~K. Wolf, ``Noiseless coding of correlated information
 T.~M. Cover and J.~A. Thomas, \emph{Elements of Information Theory},
   2nd~ed.\hskip 1em plus 0.5em minus 0.4em\relax Wiley-Interscience, 2006.
 
+\bibitem{alon2002source}
+N.~Alon and A.~Orlitsky, ``Source coding and graph entropies,'' \emph{IEEE
+  Transactions on Information Theory}, vol.~42, no.~5, pp. 1329--1339, 1996.
+
 \bibitem{demoura2021lean4}
 L.~de~Moura and S.~Ullrich, ``The {Lean} 4 theorem prover and programming
   language,'' in \emph{Automated Deduction -- CADE 28}.\hskip 1em plus 0.5em
   minus 0.4em\relax Springer, 2021, pp. 625--635.
+
+\bibitem{mathlib2020}
+{The mathlib Community}, ``The {Lean} mathematical library,'' in
+  \emph{Proceedings of the 9th ACM SIGPLAN International Conference on
+  Certified Programs and Proofs}, 2020, pp. 367--381.
 
 \bibitem{fano1961transmission}
 R.~M. Fano, \emph{Transmission of Information: A Statistical Theory of
@@ -63,9 +76,72 @@ H.~S. Witsenhausen and A.~D. Wyner, ``A conditional entropy bound for a pair of
   discrete random variables,'' \emph{IEEE Transactions on Information Theory},
   vol.~21, no.~5, pp. 493--501, 1975.
 
+\bibitem{kelly2011improved}
+B.~G. Kelly and A.~B. Wagner, ``Improved source coding exponents via
+  witsenhausen's rate,'' \emph{IEEE Transactions on Information Theory},
+  vol.~57, no.~9, pp. 5615--5633, 2011.
+
+\bibitem{west2001introduction}
+D.~B. West, \emph{Introduction to Graph Theory}, 2nd~ed.\hskip 1em plus 0.5em
+  minus 0.4em\relax Prentice Hall, 2001.
+
+\bibitem{diestel2017graph}
+R.~Diestel, \emph{Graph Theory}, 5th~ed.\hskip 1em plus 0.5em minus 0.4em\relax
+  Springer, 2017.
+
+\bibitem{imrich2008product}
+W.~Imrich, S.~Klav{\v{z}}ar, and D.~F. Rall, \emph{Product Graphs: Structure
+  and Recognition}.\hskip 1em plus 0.5em minus 0.4em\relax John Wiley \& Sons,
+  2008.
+
+\bibitem{fekete1923uber}
+M.~Fekete, ``{\"U}ber die verteilung der wurzeln bei gewissen algebraischen
+  gleichungen mit ganzzahligen koeffizienten,'' \emph{Mathematische
+  Zeitschrift}, vol.~17, no.~1, pp. 228--249, 1923.
+
+\bibitem{grotschel1981ellipsoid}
+M.~Gr{\"o}tschel, L.~Lov{\'a}sz, and A.~Schrijver, ``The ellipsoid method and
+  its consequences in combinatorial optimization,'' \emph{Combinatorica},
+  vol.~1, no.~2, pp. 169--197, 1981.
+
+\bibitem{knuth1994remark}
+D.~E. Knuth, ``The sandwich theorem,'' \emph{Electronic Journal of
+  Combinatorics}, vol.~1, no.~1, p.~A1, 1994.
+
+\bibitem{boyd2004convex}
+S.~Boyd and L.~Vandenberghe, \emph{Convex Optimization}.\hskip 1em plus 0.5em
+  minus 0.4em\relax Cambridge University Press, 2004.
+
+\bibitem{haemers1978upper}
+C.~Haemers, ``An upper bound for the shannon capacity of a graph,'' in
+  \emph{Algebraic Methods in Graph Theory, Colloquia Mathematica Societatis
+  J{\'a}nos Bolyai}, vol.~25, 1978, pp. 267--272.
+
+\bibitem{cubitt2014bounds}
+T.~Cubitt, L.~Mancinska, D.~E. Roberson, S.~Severini, D.~Stahlke, and
+  A.~Winter, ``Bounds on entanglement-assisted source-channel coding via the
+  lov\'{a}sz $\vartheta$ number and its variants,'' \emph{IEEE Transactions on
+  Information Theory}, vol.~60, no.~11, pp. 7330--7344, 2014.
+
+\bibitem{zuiddam2019asymptotic}
+J.~Zuiddam, ``The asymptotic spectrum of graphs and the shannon capacity,''
+  \emph{Combinatorica}, vol.~39, no.~5, pp. 1173--1184, 2019.
+
+\bibitem{pekosz2011complexity}
+J.~P{\'e}k{\'o}s, ``Computing the shannon capacity of a graph,''
+  \emph{Optimization Letters}, vol.~5, no.~3, pp. 421--429, 2011.
+
 \bibitem{oxley2011matroid}
 J.~Oxley, \emph{Matroid Theory}, 2nd~ed.\hskip 1em plus 0.5em minus 0.4em\relax
   Oxford University Press, 2011.
+
+\bibitem{welsh1976matroid}
+D.~J.~A. Welsh, \emph{Matroid Theory}.\hskip 1em plus 0.5em minus 0.4em\relax
+  Academic Press, 1976.
+
+\bibitem{recski1989matroid}
+A.~Recski, \emph{Matroid Theory and Its Applications in Electric Network Theory
+  and in Statics}.\hskip 1em plus 0.5em minus 0.4em\relax Springer, 1989.
 
 \bibitem{orlitsky2001coding}
 A.~Orlitsky and J.~R. Roche, ``Coding for computing,'' \emph{IEEE Transactions
@@ -76,11 +152,50 @@ V.~Doshi, D.~Shah, M.~M{\'e}dard, and M.~Effros, ``Functional compression
   through graph coloring,'' \emph{IEEE Transactions on Information Theory},
   vol.~56, no.~8, pp. 3901--3917, 2010.
 
+\bibitem{simonyi2001graph}
+G.~Simonyi, ``Graph entropy: A survey,'' pp. 399--441, 2001.
+
+\bibitem{guang2023zero}
+X.~Guang and R.~Zhang, ``Zero-error distributed compression of binary
+  arithmetic sum,'' \emph{IEEE Transactions on Information Theory}, vol.~70,
+  no.~5, pp. 3100--3117, 2024.
+
+\bibitem{liu2021leakage}
+Y.~Liu, L.~Ong, S.~Johnson, J.~Kliewer, P.~Sadeghi, and P.~L. Yeoh,
+  ``Information leakage in zero-error source coding: A graph-theoretic
+  perspective,'' in \emph{2021 IEEE International Symposium on Information
+  Theory (ISIT)}, 2021, pp. 2590--2595.
+
+\bibitem{deboer2024asymptotic}
+D.~de~Boer, P.~Buys, and J.~Zuiddam, ``The asymptotic spectrum distance, graph
+  limits, and the shannon capacity,'' 2024.
+
 \bibitem{rashmi2015multiversion}
-K.~V. Rashmi, N.~B. Shah, K.~Ramchandran, and D.~Gu, ``Multi-version
-  coding---an information-theoretic perspective of consistent distributed
-  storage,'' \emph{IEEE Transactions on Information Theory}, vol.~63, no.~6,
-  pp. 4111--4128, 2017.
+K.~V. Rashmi, N.~B. Shah, K.~Ramchandran, and D.~Gu, ``Multi-version coding: An
+  information-theoretic perspective of consistent distributed storage,''
+  \emph{IEEE Transactions on Information Theory}, vol.~63, no.~6, pp.
+  4111--4128, 2017.
+
+\bibitem{brewer2000cap}
+E.~A. Brewer, ``Towards robust distributed systems,'' in \emph{Proceedings of
+  the 19th Annual ACM Symposium on Principles of Distributed Computing}.\hskip
+  1em plus 0.5em minus 0.4em\relax ACM, 2000, keynote introducing CAP
+  conjecture: Consistency, Availability, Partition tolerance---pick two.
+
+\bibitem{gilbert2002cap}
+S.~Gilbert and N.~Lynch, ``Brewer's conjecture and the feasibility of
+  consistent, available, partition-tolerant web services,'' \emph{ACM SIGACT
+  News}, vol.~33, no.~2, pp. 51--59, 2002, formal proof of CAP theorem.
+
+\bibitem{gray1978notes}
+J.~Gray, ``Notes on data base operating systems,'' in \emph{Operating Systems:
+  An Advanced Course}.\hskip 1em plus 0.5em minus 0.4em\relax Springer, 1978,
+  pp. 393--481.
+
+\bibitem{herlihy1990linearizability}
+M.~Herlihy and J.~M. Wing, ``Linearizability: A correctness condition for
+  concurrent objects,'' in \emph{Proceedings of the 11th ACM SIGACT-SIGOPS
+  Symposium on Principles of Distributed Computing}, 1990, pp. 139--150.
 
 \bibitem{kiczales1991art}
 G.~Kiczales, J.~des Rivi{\`e}res, and D.~G. Bobrow, \emph{The Art of the

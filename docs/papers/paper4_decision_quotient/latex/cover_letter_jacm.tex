@@ -1,17 +1,13 @@
-\documentclass[11pt]{article}
+\documentclass[10pt]{article}
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{geometry}
 \usepackage{hyperref}
-\geometry{margin=1in}
-
-\title{\textbf{JACM Submission Cover Letter}}
-\author{}
-\date{}
+\usepackage{setspace}
+\geometry{margin=0.8in}
 
 \begin{document}
-
-\maketitle
+\setstretch{1.25}
 
 \noindent\textbf{Date}: March 31, 2026
 
@@ -20,58 +16,33 @@
 
 \noindent\textbf{Subject}: Submission of ``The Optimizer Quotient and the Certification Trilemma''
 
-Dear Professor Guruswami,
+\noindent Dear Professor Guruswami,
 
-Please accept our submission of ``The Optimizer Quotient and the Certification Trilemma'' for consideration for publication in the \textit{Journal of the ACM}.
+Please accept my submission of ``The Optimizer Quotient and the Certification Trilemma'' for consideration for publication in the \textit{Journal of the ACM}.
 
 \noindent\textbf{Summary}
 
-This paper introduces the \emph{optimizer quotient}---the coarsest abstraction of a system's state that preserves optimal actions. We prove that certifying this object's coordinate structure is subject to an impossibility trilemma: under P$\neq$coNP, no certifier can be simultaneously sound, complete on all in-scope instances, and polynomial-budgeted. The certification cost varies by computational regime: coNP-complete (static), PP-hard (stochastic decisiveness), and PSPACE-complete (sequential). We identify six structural restrictions that collapse certification to polynomial time.
+This paper introduces the \emph{optimizer quotient}, the coarsest state abstraction that preserves optimal actions. I prove that certifying this object is subject to an impossibility trilemma: under P$\neq$coNP, no certifier can be simultaneously sound, complete on all in-scope instances, and polynomial-budgeted. Certification complexity varies by regime: coNP-complete (static), PP-hard (stochastic), PSPACE-complete (sequential). I identify six structural restrictions that restore tractability.
 
 \noindent\textbf{Contributions}
 
-\begin{itemize}
-  \item \textbf{New complexity measure}: The optimizer quotient formalizes which state coordinates are decision-relevant.
-  \item \textbf{Impossibility trilemma}: Under P$\neq$coNP, exact certification cannot be simultaneously sound, complete, and efficient.
-  \item \textbf{Regime-aware complexity}: Certification hardness varies from coNP to PSPACE across static, stochastic, and sequential regimes.
-  \item \textbf{Mechanized core}: The finite reduction and verification core is formalized in Lean 4.
-\end{itemize}
+The optimizer quotient provides a canonical abstraction for any decision problem. From this I derive an impossibility trilemma and regime-sensitive complexity classification: coNP-complete (static), PP-hard (stochastic), PSPACE-complete (sequential). I identify six structural restrictions (bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, coordinate symmetry) that restore tractability, and formalize the finite combinatorial core in Lean 4.
 
 \noindent\textbf{Significance}
 
-This work contributes to the theory of computation by:
-\begin{itemize}
-  \item Establishing fundamental limits on automated decision certification
-  \item Connecting decision-theoretic sufficiency to computational complexity
-  \item Providing a framework for understanding when decision-relevant information can be efficiently certified
-\end{itemize}
+This work establishes that exact decision certification has fundamental limits that cannot be circumvented regardless of algorithmic innovation. The optimizer quotient is canonical: every exact decision-preserving abstraction factors through it, unifying decision-theoretic sufficiency, computational complexity, and formal verification, connecting rough-set reducts, MDP abstraction, CSP backdoors, and feature selection under one mathematical object. The regime-sensitive complexity map and certification trilemma provide both theoretical boundaries and practical guidance, with implications ranging from configuration simplification to the theoretical limits of automated decision tools.
 
-The results are of interest to the JACM audience in theoretical computer science, particularly in complexity theory, formal verification, and decision theory.
+The mechanized Lean 4 artifact (22K lines) independently verifies the finite combinatorial core, placing this work at the intersection of complexity theory and certified reduction infrastructure.
 
-\noindent\textbf{Originality}
+This work has not been published previously and is not under consideration for publication elsewhere. I declare no conflicts of interest.
 
-This work has not been published previously and is not under consideration for publication elsewhere. All authors have approved the submission.
+\noindent Thank you for your time and consideration.
 
-\noindent\textbf{Suggested Reviewers}
+\noindent Sincerely,
 
-We suggest the following reviewers who have expertise in relevant areas:
+\vspace{0.3cm}
 
-\begin{itemize}
-  \item \textbf{[Reviewer 1]}: Expertise in computational complexity and proof complexity
-  \item \textbf{[Reviewer 2]}: Expertise in formal verification and interactive proof systems
-  \item \textbf{[Reviewer 3]}: Expertise in decision theory and information-theoretic complexity
-\end{itemize}
-
-\noindent\textbf{Conflict of Interest}
-
-The authors declare no conflicts of interest.
-
-Thank you for your time and consideration. We look forward to your response.
-
-Sincerely,
-
-\\
-\textbf{Tristan Simas} \\
+\noindent\textbf{Tristan Simas} \\
 McGill University \\
 Montreal, Quebec, Canada \\
 \texttt{tristan.simas@mail.mcgill.ca}

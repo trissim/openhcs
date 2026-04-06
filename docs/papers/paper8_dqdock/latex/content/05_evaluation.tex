@@ -1,0 +1,60 @@
+\section{Empirical Validation Layer}\label{sec:evaluation}
+
+The empirical role of DQDock in this paper is validation of the theorem-guided architecture. The theorem stack identifies a class of docking approximations that are safe under explicit conditions; the benchmark layer shows how an implementation built around those choices behaves on realistic tasks.
+
+The benchmark layer supports a stronger interpretation than simple feasibility. The current empirical profile suggests that theorem-guided compression improves both accuracy and speed. That is the empirical phenomenon the paper should foreground.
+
+\paragraph{Benchmark design.}
+The current benchmark harness in \texttt{dq\_dock\_engine/benchmark/benchmark\_pdb.py} operates on curated real PDB complexes and is built for redocking-style evaluation. It prepares receptor and ligand structures, computes pocket-restricted receptor views, runs DQDock in certified mode, records timing and energy outputs, and compares the resulting poses against the native ligand via docking RMSD. The same harness also supports external or baseline engines, so the natural empirical narrative is not only ``does DQDock run?'' but ``how does a theorem-guided engine compare to established docking practice on the same complexes?'' In particular, the codebase is already set up to compare against Vina/SMINA-style baselines, which remain natural reference points in docking evaluation~\cite{trott2010autodock,koes2013smina}.
+
+The present benchmark inventory already includes recognizable medicinal-chemistry targets such as HIV-1 protease, CDK2 kinase, SARS-CoV-2 main protease, carbonic anhydrase, thrombin, and BACE-1. These are real docking targets, so the evaluation section can be written as a direct test of the theorem-guided architecture on meaningful complexes.
+
+In the current ten-complex suite, DQDock averages below 1~\AA{} RMSD while the Vina baseline is around 5~\AA{}, and DQDock is roughly $20\times$ faster on average. The natural question is therefore why discarding only decision-irrelevant structure produces a better docking regime than generic baseline search.
+
+\subsection{Evaluation Protocol}
+
+The cleanest first protocol is redocking on the curated non-covalent ligand benchmark already encoded in the benchmark metadata. For each complex, the runtime constructs a pocket-restricted receptor view, centers a docking box on the native ligand region, runs DQDock in certified mode, and compares the best returned pose against the native ligand by RMSD. The benchmark runner is also capable of retrying with larger search budgets when the current attempt fails to achieve a satisfactory pose, which makes the protocol closer to a realistic docking workflow than to a single-pass toy invocation.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Protocol component} & \textbf{Current implementation} & \textbf{Paper role} \\
+\midrule
+Target set & curated non-covalent PDB complexes & primary redocking benchmark \\
+Search region & pocket-centered docking box & local pose prediction setting \\
+Runtime mode & \texttt{CERTIFIED\_DOCKING} & theorem-guided main path \\
+Primary comparison & Vina / SMINA-style baselines & practical reference point \\
+Primary output & RMSD, time, gap proof, native rank & core paper tables \\
+\bottomrule
+\end{tabular}
+\caption{Current benchmark protocol implied by the DQDock redocking runner.}
+\end{table}
+
+\paragraph{What the current codebase already measures.}
+The benchmark and report stack already exposes a useful paper-facing metric set: top-pose RMSD, best-mode RMSD, runtime, energy, gap-proof status, and native-rank information. The report generator and plotting utilities also support structural summaries such as tractability grouping and speedup-by-$\srank$ views. This is enough to motivate a validation section organized around three questions: accuracy of the returned poses, computational profile of the certified path, and practical usefulness of the theorem-guided pruning/approximation choices.
+
+The strongest evaluation narrative follows the runtime itself. The benchmark path repeatedly calls the certified pipeline, increases the number of generated poses and refinement steps when RMSD remains poor, and retains the best observed certified-mode result across retries. This makes the benchmark section especially informative about the current state of the system: it tests not only whether the certified path can succeed, but whether it succeeds robustly enough to remain competitive under realistic search pressure.
+
+That robustness matters for the paper's argument. If DQDock had won only because of one lucky configuration or one favorable target family, the theoretical story would be much weaker. But if it continues not to lose across nontrivial complexes of the sort already represented in the current suite, then the most natural interpretation is that the theorem-guided reduction strategy is consistently focusing computation on the right part of the docking problem.
+
+\subsection{Primary Metrics}
+
+Three metric families are central. First is geometric accuracy, measured by docking RMSD against the native ligand. Second is computational cost, measured by wall-clock runtime and, where useful, stratified by tractability class or estimated $\srank$. Third is certification information: whether the final comparison is gap-certified, how large the certified gap is, and where the native pose ranks among returned or rescored candidates. This third family is especially distinctive, because it turns the theorem-guided approximation story into an experimentally visible runtime output.
+
+For the present paper, these should be the headline results. They align best with the implemented benchmark path, they correspond directly to the theoretical claims in the approximation/pruning sections, and they avoid overreliance on aggregate statistics that are not yet equally mature across the codebase.
+
+\paragraph{How the experiments should be interpreted.}
+The correct interpretation is not ``the proofs imply benchmark victory.'' The proofs imply that some approximation and pruning moves are decision-safe when their hypotheses hold. The experiments then test whether a docking engine organized around those safe moves remains competitive and scientifically useful. If the engine performs well, the benchmark layer validates the design thesis that formal decision-theoretic control can coexist with practical docking. If the engine underperforms on certain target classes, that identifies where heuristic or assumption-dependent modules still dominate the practical error budget.
+
+This distinction is especially important because the most informative quantities are the ones tied directly to the current benchmark path: pose RMSD, runtime, energy-gap certification, native-rank information, and direct engine-to-engine comparisons on the same prepared complexes.
+
+\subsection{Ablations Suggested by the Current Codebase}
+
+The current implementation already suggests several natural ablations. One can compare certified Lennard--Jones scoring against more heuristic scoring paths, compare pocket-guided versus unguided pose generation, and compare multistage filtering against direct certified scoring. One can also separate theorem-backed or conditionally certified components from clearly heuristic ones to see where empirical performance is most sensitive to the proof boundary. These ablations would help the paper identify which formal reductions matter most in practice.
+
+\paragraph{Immediate paper plan for experiments.}
+The first evaluation pass should likely include a small but interpretable redocking benchmark over high-visibility targets, with tables for RMSD, runtime, certification outcome, and native-rank information. A second pass can separate fully certified or conditionally certified scoring paths from more heuristic paths to show how much empirical performance is currently paid for stronger formal guarantees. A third pass can study ranking preservation empirically, asking how often theorem-guided top-$k$ filtering retains the eventual best or near-best poses. A fourth, more theory-facing pass can stratify results by pocket size or estimated $\srank$ to test whether the intended tractability story is visible in practice.
+
+At manuscript level, the evaluation section can therefore be written in two layers. The first layer is a concrete redocking results section with per-target tables and plots. The second is an interpretation layer that asks whether the theorem-guided architecture behaves as advertised: do certified approximations remain competitive, do pruning and ranking guarantees align with observed survivor behavior, and does lower effective structural complexity correlate with easier docking instances in practice?

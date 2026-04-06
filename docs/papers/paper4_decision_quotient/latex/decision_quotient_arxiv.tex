@@ -1,37 +1,142 @@
-\documentclass[sigconf,review]{acmart}
+\documentclass[12pt, onecolumn]{IEEEtran}
 
-% ACM CCS 2012 Concepts
-\ccsdesc[5000]{Theory of computation~Design and analysis of algorithms}
-\ccsdesc[1000]{Mathematics of computing~Combinatorics}
-\ccsdesc[1000]{Computing methodologies~Knowledge representation and reasoning}
-\ccsdesc[1000]{Theory of computation~Computational complexity}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{cite}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{calc}
+\usepackage[para,flushmargin]{footmisc}
+\usepackage{listings}
+\usepackage{setspace}
+\doublespacing
 
-% Copyright handled by acmart for submission
-\setcopyright{none}
+% Table caption spacing
+\usepackage{caption}
+\captionsetup{skip=6pt}
+\setlength{\textfloatsep}{12pt plus 2pt minus 2pt}
 
-\usepackage{compat-preamble}
+% Force left-aligned text in all tables (use \raggedright not \RaggedRight)
+\renewcommand{\tabularxcolumn}[1]{>{\raggedright}m{#1}}
+
+% Allow URLs to break at any character
+\makeatletter
+\g@addto@macro{\UrlBreaks}{\UrlOrds}
+\makeatother
+
+% Prevent overfull hboxes
+\sloppy
+\emergencystretch=3em
+
+% Lean code listings style
+\lstdefinestyle{lean}{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  breakatwhitespace=true,
+  columns=flexible,
+  keepspaces=true,
+  xleftmargin=0.5em,
+  frame=none,
+}
+
+% Fix for pandoc's \tightlist
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+
+% Theorem environments
+\providecommand{\leanmetaheadmark}{}
+\makeatletter
+\newtheoremstyle{leanplain}{3pt}{3pt}{\itshape}{}{}{.}{ }{\thmname{#1}\thmnumber{ #2}\leanmetaheadmark\thmnote{ (#3)}}
+\newtheoremstyle{leandef}{3pt}{3pt}{}{}{}{.}{ }{\thmname{#1}\thmnumber{ #2}\leanmetaheadmark\thmnote{ (#3)}}
+\newtheoremstyle{leanremark}{3pt}{3pt}{}{}{}{.}{ }{\thmname{#1}\thmnumber{ #2}\leanmetaheadmark\thmnote{ (#3)}}
+\makeatother
+
+\theoremstyle{leanplain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{axiom}[theorem]{Axiom}
+\newtheorem{conjecture}[theorem]{Conjecture}
+\theoremstyle{leandef}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+\newtheorem{problem}[theorem]{Problem}
+\theoremstyle{leanremark}
+\newtheorem{remark}[theorem]{Remark}
+\newtheorem{observation}[theorem]{Observation}
+
+% Use filled black square for QED symbol
+\renewcommand{\qedsymbol}{$\blacksquare$}
+\renewcommand{\qed}{\hspace{0.5em}\qedsymbol}
+
+% Math operators (from paper-preamble.sty)
+\newcommand{\Opt}{\ensuremath{\mathrm{Opt}}}
+\newcommand{\Exp}{\mathbb{E}}
+\newcommand{\Set}{\mathsf{Set}}
+\newcommand{\coNP}{\mathrm{coNP}}
+\newcommand{\NP}{\mathrm{NP}}
+\newcommand{\PP}{\mathrm{PP}}
+\newcommand{\PSPACE}{\mathrm{PSPACE}}
+\newcommand{\SigmaP}[1]{\ensuremath{\Sigma_{#1}^{\mathrm{P}}}}
+\newcommand{\PiP}[1]{\ensuremath{\Pi_{#1}^{\mathrm{P}}}}
+\newcommand{\SigmaTwoP}{\Sigma_2^{\mathrm{P}}}
+\newcommand{\Pclass}{\mathrm{P}}
+
+% Lean meta command (from paper-preamble.sty)
+\newif\ifleanmetaseen
+\leanmetaseenfalse
+\makeatletter
+\providecommand{\leanmetapendinghandles}{}
+\renewcommand{\leanmetapendinghandles}{}
+\providecommand{\leanmetapending}[1]{}
+\renewcommand{\leanmetapending}[1]{\gdef\leanmetapendinghandles{#1}}
+\makeatother
+\providecommand{\leanmetaheadmark}{}
+\renewcommand{\leanmetaheadmark}{\ifx\leanmetapendinghandles\@empty\else\refstepcounter{footnote}\footnotemark[\value{footnote}]\footnotetext[\value{footnote}]{\ifleanmetaseen\else Lean\global\leanmetaseentrue\fi: \leanmetapendinghandles}\global\let\leanmetapendinghandles\@empty\fi}
+\providecommand{\leanmeta}[1]{}
+\renewcommand{\leanmeta}[1]{\ifhmode\unskip\footnote{\ifleanmetaseen\else Lean\global\leanmetaseentrue\fi: #1}\else\refstepcounter{footnote}\footnotemark[\value{footnote}]\footnotetext[\value{footnote}]{\ifleanmetaseen\else Lean\global\leanmetaseentrue\fi: #1}\fi}
+
+% Load Lean macros
+\input{../../shared/lean-handle-macros.tex}
 \IfFileExists{content/lean_stats.tex}{\input{content/lean_stats.tex}}{}
+
+% Lean stats placeholder if file doesn't exist
+\providecommand{\LeanReleaseLines}{22000}
+\providecommand{\LeanReleaseFiles}{45}
+\providecommand{\LeanReleaseSorry}{0}
+
+% Hyperref setup
+\hypersetup{
+  hypertexnames=false,
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue
+}
 
 \title{The Optimizer Quotient and the Certification Trilemma}
 
-\author{Tristan Simas}
-\affiliation{
-  \institution{McGill University}
-  \city{Montreal}
-  \state{Quebec}
-  \country{Canada}
-}
-\email{tristan.simas@mail.mcgill.ca}
+\author{Tristan~Simas%
+\thanks{McGill University, Montreal, QC, Canada (e-mail: tristan.simas@mail.mcgill.ca).}}
 
 \begin{document}
-\maketitle
 
-\bigskip
+\maketitle
 
 \begin{abstract}
 \input{content/abstract.tex}
 \end{abstract}
 
+% Main content - sections are in content files
 \input{content/01_introduction.tex}
 \input{content/02_formal_setup.tex}
 \input{content/03_static_regime_complexity.tex}
@@ -47,10 +152,16 @@
 \input{content/08_artifact_scope.tex}
 \input{content/09_related_work.tex}
 \input{content/10_conclusion.tex}
+
+\section*{Acknowledgments}
+This work was supported by the Natural Sciences and Engineering Research Council of Canada (NSERC).
+
+\appendix
+
 \input{content/11_lean_4_proof_listings.tex}
 \input{content/12_applications_appendix.tex}
 
-\bibliographystyle{ACM-IEEE-Reference-Format}
+\bibliographystyle{IEEEtran}
 \bibliography{references}
 
 \end{document}

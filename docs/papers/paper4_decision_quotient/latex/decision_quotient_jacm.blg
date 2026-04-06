@@ -1,0 +1,87 @@
+This is BibTeX, Version 0.99e (TeX Live 2026/Arch Linux)
+Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
+The top-level auxiliary file: decision_quotient_jacm.aux
+The style file: ACM-Reference-Format.bst
+Reallocated singl_function (elt_size=8) to 100 items from 50.
+Reallocated singl_function (elt_size=8) to 100 items from 50.
+Reallocated wiz_functions (elt_size=8) to 6000 items from 3000.
+Database file #1: references.bib
+Reallocated singl_function (elt_size=8) to 100 items from 50.
+Reallocated wiz_functions (elt_size=8) to 9000 items from 6000.
+Reallocated glb_str_ptr (elt_size=8) to 20 items from 10.
+Reallocated global_strs (elt_size=200001) to 20 items from 10.
+Reallocated glb_str_end (elt_size=8) to 20 items from 10.
+Reallocated singl_function (elt_size=8) to 100 items from 50.
+Warning--empty publisher in bessiere2013detecting
+Warning--empty address in bessiere2013detecting
+Warning--empty publisher in bodlaender1993tourist
+Warning--empty address in bodlaender1993tourist
+Warning--empty publisher in moura2021lean4
+Warning--empty address in moura2021lean4
+Warning--empty publisher in dobzinski2012query
+Warning--empty address in dobzinski2012query
+Warning--no number and no volume in ferns2004metrics
+Warning--empty publisher in forster2019verified
+Warning--empty address in forster2019verified
+Warning--no number and no volume in freuder1990complexity
+Warning--empty address in ganian2017discovering
+Warning--empty publisher in halpern2001explanations
+Warning--empty address in halpern2001explanations
+Warning--empty address in haslbeck2021verified
+Warning--empty address in jensen2008rough
+Warning--empty publisher in kunze2019formal
+Warning--empty address in kunze2019formal
+Warning--empty address in nipkow2002isabelle
+Warning--empty address in pearl2009causality
+Warning--empty address in raiffa1961applied
+Warning--empty publisher in ribeiro2018anchors
+Warning--empty address in ribeiro2018anchors
+Warning--page numbers missing in both pages and numpages fields in ribeiro2018anchors
+Warning--empty address in savage1954foundations
+Warning--empty address in spirtes2000causation
+Warning--no number and no volume in mathlib2020
+Warning--empty address in williams2003backdoors
+Warning--no number and no volume in zhang2021learning
+Warning--page numbers missing in both pages and numpages fields in zhang2021learning
+You've used 39 entries,
+            6273 wiz_defined-function locations,
+            1778 strings with 25172 characters,
+and the built_in function-call counts, 44479 in all, are:
+= -- 6219
+> -- 1109
+< -- 0
++ -- 376
+- -- 421
+* -- 2900
+:= -- 4073
+add.period$ -- 201
+call.type$ -- 39
+change.case$ -- 244
+chr.to.int$ -- 39
+cite$ -- 70
+duplicate$ -- 4014
+empty$ -- 2813
+format.name$ -- 533
+if$ -- 11164
+int.to.chr$ -- 2
+int.to.str$ -- 1
+missing$ -- 150
+newline$ -- 368
+num.names$ -- 273
+pop$ -- 1452
+preamble$ -- 1
+purify$ -- 554
+quote$ -- 0
+skip$ -- 1460
+stack$ -- 0
+substring$ -- 3634
+swap$ -- 423
+text.length$ -- 0
+text.prefix$ -- 0
+top$ -- 0
+type$ -- 801
+warning$ -- 31
+while$ -- 310
+width$ -- 0
+write$ -- 804
+(There were 31 warnings)

@@ -153,6 +153,7 @@ papers:
     assumption_ledger_sources:
       - "DecisionQuotient/ClaimClosure.lean"
     claim_mapping_file: "content/claim_mapping_auto.tex"
+    cover_letter_file: "cover_letter_jacm.tex"
 
   paper4_toc:
     name: "Decision Quotient (ToC)"

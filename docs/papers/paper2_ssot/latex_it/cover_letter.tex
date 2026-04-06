@@ -1,0 +1,35 @@
+\documentclass[11pt]{letter}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{hyperref}
+
+\signature{Tristan Simas\\McGill University}
+
+\date{March 31, 2026}
+
+\begin{document}
+
+\begin{letter}{Editor-in-Chief\\
+IEEE Transactions on Information Theory}
+
+\opening{Dear Editor-in-Chief,}
+
+I submit the manuscript ``Exact Recovery Under Deterministic Partial Views: Confusability Graphs, Strong Powers, and Capacity'' for consideration as a regular paper in the IEEE Transactions on Information Theory.
+
+Unlike the classical zero-error setting where the observation law is given, here a deterministic partial-view architecture produces the confusability graph. A family of admissible coordinate-subset views induces a confusability graph on latent states; exact recovery becomes equivalent to graph colorability; repeated composition lifts the one-shot graph to its strong powers; and the resulting normalized block rates converge to the Shannon capacity of the induced graph. On the full labeled tuple space, the realizable confusability relations are characterized exactly: they are precisely those determined by upward-closed families of coordinate-agreement sets. The capacity bounds inherit the standard Lov\'asz-$\vartheta$ upper theory, applied to the model-induced graph class.
+
+The paper also identifies a structural equality route: when confusability is transitive, the induced graph collapses to a cluster graph, yielding capacity--$\vartheta$ equality, with meet-witnessing and fiber coherence as sufficient conditions.
+
+The later sections show the theory is non-vacuous: nearly all widely deployed deterministic partial-view architectures (spanning language runtimes, database engines, and dependency managers) fall into the non-trivial regime above the zero-incoherence boundary, where non-clique failure topologies and bounded exact-success rates apply.
+
+All principal theorems are machine-checked in Lean 4. A supplementary artifact containing the formalization is available at \url{https://doi.org/10.5281/zenodo.18141365}.
+
+Thank you for your time and consideration.
+
+\closing{Sincerely,}
+
+\end{letter}
+\end{document}

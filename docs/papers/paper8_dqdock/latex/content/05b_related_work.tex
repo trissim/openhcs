@@ -1,0 +1,12 @@
+\section{Related Work}
+
+DQDock sits at the intersection of three literatures that are usually discussed separately: virtual docking, theorem-backed scientific computing, and information-sensitive decision abstraction.
+
+\paragraph{Docking systems and empirical scoring.}
+Mainstream docking engines such as AutoDock Vina and derivatives such as SMINA are optimized around empirical scoring quality, search efficiency, and benchmark performance~\cite{trott2010autodock,koes2013smina}. DQDock is in direct conversation with that literature and should be judged empirically against it. The distinctive move here is to factor some of the approximation and pruning logic into theorem-backed components. The contribution is therefore a new architecture in which part of the usual heuristic stack is replaced by formally interpreted decision-safe reductions.
+
+\paragraph{Scientific computing and differentiable systems.}
+The implementation also belongs to the recent ecosystem of array-programmed and differentiable scientific software, especially JAX-based pipelines for high-performance numerical work~\cite{jax2018}. What distinguishes the present system from a generic JAX docking prototype is the explicit proof-status layer and the attempt to align generated kernels, tractability arguments, and runtime routing with a finite collection of named formal theorems.
+
+\paragraph{Formal methods and Lean artifacts.}
+The proof-facing side of the project belongs to the growing tradition of machine-checked mathematics and formally supported scientific infrastructure in Lean and Mathlib~\cite{moura2021lean4,mathlib2020}. DQDock extends that tradition into computational chemistry by joining a theorem-bearing artifact to an implemented docking system and then using empirical docking evaluation as the validation layer for that theory-guided architecture. In that sense it is best read as a proof-annotated scientific system rather than as only a theorem library or only a docking benchmark paper.

@@ -1,0 +1,43 @@
+\section{OpenHCS Case Studies}
+
+\subsection{Case Study 1: Structurally Identical, Semantically Distinct Types}
+Two configuration classes can look identical at the level of fields and still play different roles in the hierarchy. The OpenHCS example shows that structural sameness is not enough to recover semantic identity, so the system uses nominal position and MRO context to distinguish the cases. This is the local instance of the more general identity-versus-structure pattern that underlies the paper.
+
+\subsection{Case Study 2: Discriminated Unions via \texttt{subclasses()}}
+The parameter UI needs exhaustive handling for optional dataclasses, direct dataclasses, and primitive parameter types. The design uses subclass enumeration so the dispatch logic can remain complete while still being specialized per type family.
+
+\subsection{Case Study 3: \texttt{MemoryTypeConverter} Dispatch}
+Converter classes are generated and stored in a type-keyed registry, which turns memory conversion into an O(1) lookup problem. The case study shows that the practical win is not just convenience; it is that the dispatch surface is explicit and centrally maintained. The same pattern appears in registry-driven plugin systems more generally.
+
+\subsection{Case Study 4: Polymorphic Configuration}
+The streaming subsystem has multiple viewer backends with different ports and protocol details. A common abstract interface and factory-generated concrete configs let the orchestrator select the right backend without fragile attribute probing. This is the same zero-error backend-selection move used by other explicit sink abstractions.
+
+\subsection{Case Study 5: Migration from \{S\}-Only Incoherent to \{B,S\} Typing}
+This case study captures the most direct operational shift in the codebase: scattered `hasattr()` checks were replaced by a single abstract base class contract. The practical effect is centralization of the structural fact that used to be inferred piecemeal at many call sites. In paper terms, it is a clean example of moving from attribute inference to explicit identity. The same move appears in the extracted package papers whenever a runtime object needs a stable nominal handle instead of a best-effort structural probe.
+
+\subsection{Case Study 6: \texttt{AutoRegisterMeta}}
+The metaclass registers each concrete class at definition time and skips abstract classes. This is the classic definition-time hook pattern: the registry stays synchronized because class creation itself performs the update. The broader claim here is not that metaclasses are novel, but that this specific generalized solution removes a whole class of manual registration failure. This is the same zero-boilerplate mechanism that shows up in the registry-oriented packages, where the definition itself is the moment the system learns the new type exists.
+
+\subsection{Case Study 7: Five-Stage Type Transformation}
+One decorator triggers a cascade that builds companion types, injects fields, and maintains forward and reverse registries. The case study is a compact example of how a small nominal entry point can control a larger family of derived types. This is the sort of pattern that extends the Python type system rather than merely using it. The key insight is that the transform chain itself is the mechanism: each stage narrows ambiguity, commits an intermediate representation, and exposes the next stage to the same explicit bookkeeping.
+
+\subsection{Case Study 8: Dual-Axis Resolution Algorithm}
+The resolver walks both the scope hierarchy and the class hierarchy, returning not just a value but a provenance tuple. This is the practical core of the pattern: find the value, but also preserve where it came from. The same dual-axis idea generalizes beyond OpenHCS because it is a resolution rule, not a project-specific hack. In the `ObjectState` papers, the same rule is used to unify dataclasses, callables, and inherited configuration values without losing source information.
+
+\subsection{Case Study 9: Custom \texttt{isinstance()} Implementation}
+The code uses a metaclass override to make virtual inheritance work through a nominal marker. That lets `isinstance()` answer the question the application actually cares about, instead of forcing the caller to reconstruct the answer from instance attributes.
+
+\subsection{Case Study 10: Dynamic Interface Generation}
+The system can generate empty abstract interfaces at runtime and use them as pure identity shells. This gives the codebase a way to create a stable nominal handle even when the interface is not known ahead of time. The same move also supports more precise registry keys and avoids overloading one interface with multiple semantic roles.
+
+\subsection{Case Study 11: Framework Detection via Sentinel Type}
+A singleton sentinel object serves as the registry key for framework detection. The pattern is small but important: a unique nominal object can represent the presence of a whole subsystem without relying on string names or ad hoc module checks.
+
+\subsection{Case Study 12: Dynamic Method Injection}
+Method injection modifies the target type's namespace directly, rather than trying to patch behavior through instances. The case study shows why the target type itself has to be the unit of change when the behavior belongs to the type, not to each object.
+
+\subsection{Case Study 13: Bidirectional Type Lookup}
+The final example keeps forward and reverse maps in lockstep so lazy and base types cannot drift apart. The pattern is a registry invariant: one source of truth, two views, and explicit checks to prevent desynchronization. It is another instance of a general anti-drift design, not a local convenience. This is the same maintenance discipline that shows up in serialization alias maps and backend registries: once there are two views of the same truth, the code must actively keep them synchronized.
+
+\subsection{Related Package Evidence}
+The extracted package papers confirm that the same pattern language is not confined to one subsystem. \texttt{pycodify} shows that executable source generation needs a two-pass import-and-alias discipline; \texttt{ArrayBridge} shows that explicit backend choice and recovery behavior belong in the dispatch layer; \texttt{PolyStore} shows that sinks should be first-class and explicit; and \texttt{zmqruntime} shows that control traffic and data traffic should not share a bottleneck. These are not new names for the same trick; they are separate proof obligations for the same zero-error design style.

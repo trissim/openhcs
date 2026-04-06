@@ -1,0 +1,33 @@
+\section{Core Patterns}
+
+The corpus suggests five headline mechanisms that are useful well beyond any single OpenHCS package. The case studies in the next section instantiate these mechanisms in concrete code.
+
+\subsection{Provenance-Preserving Dual-Axis Resolution}
+This pattern resolves a value through two independent axes: a context hierarchy and a type hierarchy. The claim is stronger than lookup completeness. The resolver must return both the value and its source, and source information is part of the contract rather than an implementation detail. \texttt{ObjectState} makes this explicit with dual-axis inheritance, callable parameter support, and provenance reporting for live UI feedback.
+
+The zero-error property here is that an empty or inherited field is never ambiguous once the provenance chain is available. The user can tell whether a value is local, inherited, or derived, and the system can present that fact consistently across dataclass fields and callable signatures. In \texttt{ObjectState}, \texttt{None} is an explicit inherit marker and callables are resolved through the same state machinery as dataclasses, so the same rule applies across multiple object forms without special-case logic.
+\leanmeta{\LH{ACS9}, \LH{COH3}, \LH{INS4}.}
+
+\subsection{Branching State DAGs}
+This pattern treats state as a versioned graph rather than a linear stack. Live state and saved state are separated, edits mark nodes dirty, and undo/redo branches instead of collapsing history into one line. \texttt{ObjectState} uses this to support exploratory parameter tuning: users can save one configuration, branch back, and compare alternatives without losing provenance. The important generalization is that history is not a list of overwritten snapshots; it is a DAG of reachable configurations with explicit parentage and explicit repair points.
+
+The zero-error property is that every state transition is explicit in the history graph. Nothing important is overwritten silently; the branch structure itself records which configuration was authoritative at each point, and the live/saved split makes it impossible to confuse pending edits with persisted truth. That is the difference between an addressable history and a destructive overwrite log.
+\leanmeta{\LHrng{COH}{1}{2}, \LH{DER2}, \LH{RED1}.}
+
+\subsection{Zero-Boilerplate Registry and Discovery}
+This pattern makes registration occur when the class is defined, not when someone remembers to wire it up later. \texttt{metaclass-registry} turns plugin registration and lazy discovery into a single declarative act, while \texttt{ArrayBridge} and related packages use the same mechanism to generate converter families from configuration. The same style of definition-time hook also supports bidirectional lookup tables, framework sentinels, and generated companion classes.
+
+The zero-error property is that registration is not a side task that can be forgotten. The definition itself is the source of truth, and discovery is a derivation from that truth. That removes an entire class of drift between declared types and runtime lookup surfaces.
+\leanmeta{\LHrng{REQ}{2}{3}, \LH{PYH1}, \LH{PYI1}, \LH{GEN1}.}
+
+\subsection{Collision-Safe Executable Serialization}
+This pattern emits executable Python source instead of an opaque binary payload. \texttt{pycodify} makes the serialization target inspectable, editable, and type-preserving, but only after a collection pass discovers all imports and a resolution pass assigns aliases where names collide. That two-pass structure is the critical part: serialization is not complete until the namespace collisions are resolved into a reproducible import plan.
+
+The zero-error property is that the emitted source is not only runnable but also unambiguous: import collisions are resolved before emission, so the reconstructed program names the intended objects rather than an accidental shadow. This is what makes the output a usable artifact rather than a brittle dump.
+\leanmeta{\LH{QT1}, \LH{QT7}, \LH{DQ42}, \LH{DC94}, \LH{DC96}, \LH{OU12}.}
+
+\subsection{Transport and Backend Separation}
+This pattern keeps control channels separate from data channels, and explicit backend choice separate from implicit fallback. \texttt{zmqruntime} uses dual channels to avoid blocking control messages behind result traffic, while \texttt{PolyStore} keeps sinks explicit so storage, memory, and live viewers are all first-class destinations. \texttt{ArrayBridge} adds the same principle at the conversion layer by making the target backend part of the dispatch decision rather than an implicit assumption.
+
+The zero-error property is that the system does not guess where data should go or which path should carry control. The architecture names both, and that prevents silent routing failures. It also makes recovery behavior and fallback policy inspectable instead of hidden.
+\leanmeta{\LHrng{DN}{1}{2}, \LH{DQ58}, \LH{DQ62}.}

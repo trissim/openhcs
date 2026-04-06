@@ -1,0 +1,506 @@
+%%% -*-BibTeX-*-
+%%% Do NOT edit. File created by BibTeX with style
+%%% ACM-Reference-Format-Journals [18-Jan-2012].
+
+\begin{thebibliography}{39}
+
+%%% ====================================================================
+%%% NOTE TO THE USER: you can override these defaults by providing
+%%% customized versions of any of these macros before the \bibliography
+%%% command.  Each of them MUST provide its own final punctuation,
+%%% except for \shownote{} and \showURL{}.  The latter two
+%%% do not use final punctuation, in order to avoid confusing it with
+%%% the Web address.
+%%%
+%%% To suppress output of a particular field, define its macro to expand
+%%% to an empty string, or better, \unskip, like this:
+%%%
+%%% \newcommand{\showURL}[1]{\unskip}   % LaTeX syntax
+%%%
+%%% \def \showURL #1{\unskip}           % plain TeX syntax
+%%%
+%%% ====================================================================
+
+\ifx \showCODEN    \undefined \def \showCODEN     #1{\unskip}     \fi
+\ifx \showISBNx    \undefined \def \showISBNx     #1{\unskip}     \fi
+\ifx \showISBNxiii \undefined \def \showISBNxiii  #1{\unskip}     \fi
+\ifx \showISSN     \undefined \def \showISSN      #1{\unskip}     \fi
+\ifx \showLCCN     \undefined \def \showLCCN      #1{\unskip}     \fi
+\ifx \shownote     \undefined \def \shownote      #1{#1}          \fi
+\ifx \showarticletitle \undefined \def \showarticletitle #1{#1}   \fi
+\ifx \showURL      \undefined \def \showURL       {\relax}        \fi
+% The following commands are used for tagged output and should be
+% invisible to TeX
+\providecommand\bibfield[2]{#2}
+\providecommand\bibinfo[2]{#2}
+\providecommand\natexlab[1]{#1}
+\providecommand\showeprint[2][]{arXiv:#2}
+
+\bibitem[Amaldi and Kann(1998)]%
+        {amaldi1998complexity}
+\bibfield{author}{\bibinfo{person}{Edoardo Amaldi} {and} \bibinfo{person}{Viggo
+  Kann}.} \bibinfo{year}{1998}\natexlab{}.
+\newblock \showarticletitle{On the Approximability of Minimizing Nonzero
+  Variables or Unsatisfied Relations in Linear Systems}.
+\newblock \bibinfo{journal}{\emph{Theoretical Computer Science}}
+  \bibinfo{volume}{209}, \bibinfo{number}{1-2} (\bibinfo{year}{1998}),
+  \bibinfo{pages}{237--260}.
+\newblock
+\href{https://doi.org/10.1016/S0304-3975(97)00115-1}{doi:\nolinkurl{10.1016/S0304-3975(97)00115-1}}
+
+
+\bibitem[Bessiere et~al\mbox{.}(2013)]%
+        {bessiere2013detecting}
+\bibfield{author}{\bibinfo{person}{Christian Bessiere},
+  \bibinfo{person}{Clement Carbonnel}, \bibinfo{person}{Emmanuel Hebrard},
+  \bibinfo{person}{George Katsirelos}, {and} \bibinfo{person}{Toby Walsh}.}
+  \bibinfo{year}{2013}\natexlab{}.
+\newblock \showarticletitle{Detecting and Exploiting Subproblem Tractability}.
+  In \bibinfo{booktitle}{\emph{Proceedings of the Twenty-Third International
+  Joint Conference on Artificial Intelligence (IJCAI)}}.
+  \bibinfo{pages}{468--474}.
+\newblock
+
+
+\bibitem[Blackwell(1953)]%
+        {blackwell1953equivalent}
+\bibfield{author}{\bibinfo{person}{David Blackwell}.}
+  \bibinfo{year}{1953}\natexlab{}.
+\newblock \showarticletitle{Equivalent Comparisons of Experiments}.
+\newblock \bibinfo{journal}{\emph{The Annals of Mathematical Statistics}}
+  \bibinfo{volume}{24}, \bibinfo{number}{2} (\bibinfo{year}{1953}),
+  \bibinfo{pages}{265--272}.
+\newblock
+\href{https://doi.org/10.1214/aoms/1177729032}{doi:\nolinkurl{10.1214/aoms/1177729032}}
+
+
+\bibitem[Blum and Langley(1997)]%
+        {blum1997selection}
+\bibfield{author}{\bibinfo{person}{Avrim~L. Blum} {and} \bibinfo{person}{Pat
+  Langley}.} \bibinfo{year}{1997}\natexlab{}.
+\newblock \showarticletitle{Selection of Relevant Features and Examples in
+  Machine Learning}.
+\newblock \bibinfo{journal}{\emph{Artificial Intelligence}}
+  \bibinfo{volume}{97}, \bibinfo{number}{1-2} (\bibinfo{year}{1997}),
+  \bibinfo{pages}{245--271}.
+\newblock
+\href{https://doi.org/10.1016/s0004-3702(97)00063-5}{doi:\nolinkurl{10.1016/s0004-3702(97)00063-5}}
+
+
+\bibitem[Bodlaender(1993)]%
+        {bodlaender1993tourist}
+\bibfield{author}{\bibinfo{person}{Hans~L. Bodlaender}.}
+  \bibinfo{year}{1993}\natexlab{}.
+\newblock \showarticletitle{A Tourist Guide through Treewidth}. In
+  \bibinfo{booktitle}{\emph{Acta Cybernetica}}, Vol.~\bibinfo{volume}{11}.
+  \bibinfo{pages}{1--21}.
+\newblock
+
+
+\bibitem[Chockler and Halpern(2004)]%
+        {chockler2004responsibility}
+\bibfield{author}{\bibinfo{person}{Hana Chockler} {and}
+  \bibinfo{person}{Joseph~Y. Halpern}.} \bibinfo{year}{2004}\natexlab{}.
+\newblock \showarticletitle{Responsibility and Blame: A Structural-Model
+  Approach}.
+\newblock \bibinfo{journal}{\emph{Journal of Artificial Intelligence Research}}
+   \bibinfo{volume}{22} (\bibinfo{year}{2004}), \bibinfo{pages}{93--115}.
+\newblock
+\href{https://doi.org/10.1613/JAIR.1391}{doi:\nolinkurl{10.1613/JAIR.1391}}
+
+
+\bibitem[Darwiche and Hirth(2023)]%
+        {darwiche2023reasons}
+\bibfield{author}{\bibinfo{person}{Adnan Darwiche} {and}
+  \bibinfo{person}{Auguste Hirth}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \showarticletitle{On the (Complete) Reasons Behind Decisions}.
+\newblock \bibinfo{journal}{\emph{Journal of Logic, Language and Information}}
+  \bibinfo{volume}{32}, \bibinfo{number}{1} (\bibinfo{year}{2023}),
+  \bibinfo{pages}{63--88}.
+\newblock
+\href{https://doi.org/10.1007/s10849-022-09377-8}{doi:\nolinkurl{10.1007/s10849-022-09377-8}}
+
+
+\bibitem[de~Moura and Ullrich(2021)]%
+        {moura2021lean4}
+\bibfield{author}{\bibinfo{person}{Leonardo de Moura} {and}
+  \bibinfo{person}{Sebastian Ullrich}.} \bibinfo{year}{2021}\natexlab{}.
+\newblock \showarticletitle{The Lean 4 Theorem Prover and Programming
+  Language}. In \bibinfo{booktitle}{\emph{International Conference on Automated
+  Deduction}}. Springer, \bibinfo{pages}{625--635}.
+\newblock
+
+
+\bibitem[Dobzinski and Vondr{\'a}k(2012)]%
+        {dobzinski2012query}
+\bibfield{author}{\bibinfo{person}{Shahar Dobzinski} {and} \bibinfo{person}{Jan
+  Vondr{\'a}k}.} \bibinfo{year}{2012}\natexlab{}.
+\newblock \showarticletitle{From Query Complexity to Computational Complexity}.
+  In \bibinfo{booktitle}{\emph{Proceedings of the 44th ACM Symposium on Theory
+  of Computing}}. \bibinfo{pages}{1107--1116}.
+\newblock
+\href{https://doi.org/10.1145/2213977.2214076}{doi:\nolinkurl{10.1145/2213977.2214076}}
+
+
+\bibitem[Ferns et~al\mbox{.}(2004)]%
+        {ferns2004metrics}
+\bibfield{author}{\bibinfo{person}{Norman Ferns}, \bibinfo{person}{Prakash
+  Panangaden}, {and} \bibinfo{person}{Doina Precup}.}
+  \bibinfo{year}{2004}\natexlab{}.
+\newblock \showarticletitle{Metrics for finite Markov decision processes}.
+\newblock \bibinfo{journal}{\emph{Proceedings of the 20th Conference on
+  Uncertainty in Artificial Intelligence (UAI)}} (\bibinfo{year}{2004}),
+  \bibinfo{pages}{162--169}.
+\newblock
+\href{https://doi.org/10.1609/uai.2004.1735735}{doi:\nolinkurl{10.1609/uai.2004.1735735}}
+
+
+\bibitem[Forster et~al\mbox{.}(2019)]%
+        {forster2019verified}
+\bibfield{author}{\bibinfo{person}{Yannick Forster}, \bibinfo{person}{Edith
+  Heiter}, {and} \bibinfo{person}{Gert Smolka}.}
+  \bibinfo{year}{2019}\natexlab{}.
+\newblock \showarticletitle{Verified Programming of {Turing} Machines in
+  {Coq}}. In \bibinfo{booktitle}{\emph{Proceedings of the 8th ACM SIGPLAN
+  International Conference on Certified Programs and Proofs}}. ACM,
+  \bibinfo{pages}{114--127}.
+\newblock
+\href{https://doi.org/10.1145/3293880.3294092}{doi:\nolinkurl{10.1145/3293880.3294092}}
+
+
+\bibitem[Freuder(1990)]%
+        {freuder1990complexity}
+\bibfield{author}{\bibinfo{person}{Eugene~C. Freuder}.}
+  \bibinfo{year}{1990}\natexlab{}.
+\newblock \showarticletitle{Complexity of K-Tree Structured Constraint
+  Satisfaction Problems}.
+\newblock \bibinfo{journal}{\emph{Proceedings of AAAI}} (\bibinfo{year}{1990}),
+  \bibinfo{pages}{4--9}.
+\newblock
+
+
+\bibitem[Ganian et~al\mbox{.}(2016)]%
+        {ganian2017discovering}
+\bibfield{author}{\bibinfo{person}{Robert Ganian}, \bibinfo{person}{M.~S.
+  Ramanujan}, {and} \bibinfo{person}{Stefan Szeider}.}
+  \bibinfo{year}{2016}\natexlab{}.
+\newblock \showarticletitle{Discovering Archipelagos of Tractability for
+  Constraint Satisfaction and Counting}. In
+  \bibinfo{booktitle}{\emph{Proceedings of the 27th Annual ACM-SIAM Symposium
+  on Discrete Algorithms (SODA)}}. \bibinfo{publisher}{SIAM},
+  \bibinfo{pages}{1670--1681}.
+\newblock
+\href{https://doi.org/10.1137/1.9781611974331.ch114}{doi:\nolinkurl{10.1137/1.9781611974331.ch114}}
+
+
+\bibitem[Givan et~al\mbox{.}(2003)]%
+        {givan2003equivalence}
+\bibfield{author}{\bibinfo{person}{Robert Givan}, \bibinfo{person}{Thomas
+  Dean}, {and} \bibinfo{person}{Matthew Greig}.}
+  \bibinfo{year}{2003}\natexlab{}.
+\newblock \showarticletitle{Equivalence Notions and Model Minimization in
+  Markov Decision Processes}.
+\newblock \bibinfo{journal}{\emph{Artificial Intelligence}}
+  \bibinfo{volume}{147}, \bibinfo{number}{1-2} (\bibinfo{year}{2003}),
+  \bibinfo{pages}{163--223}.
+\newblock
+\href{https://doi.org/10.1016/S0004-3702(02)00376-4}{doi:\nolinkurl{10.1016/S0004-3702(02)00376-4}}
+
+
+\bibitem[Halpern and Pearl(2001)]%
+        {halpern2001explanations}
+\bibfield{author}{\bibinfo{person}{Joseph~Y. Halpern} {and}
+  \bibinfo{person}{Judea Pearl}.} \bibinfo{year}{2001}\natexlab{}.
+\newblock \showarticletitle{Causes and Explanations: A Structural-Model
+  Approach. Part II: Explanations}. In \bibinfo{booktitle}{\emph{Proceedings of
+  the 17th International Joint Conference on Artificial Intelligence}}.
+  \bibinfo{pages}{27--34}.
+\newblock
+
+
+\bibitem[Haslbeck and Nipkow(2021)]%
+        {haslbeck2021verified}
+\bibfield{author}{\bibinfo{person}{Maximilian P.~L. Haslbeck} {and}
+  \bibinfo{person}{Tobias Nipkow}.} \bibinfo{year}{2021}\natexlab{}.
+\newblock \showarticletitle{Verified Analysis of List Update Algorithms}. In
+  \bibinfo{booktitle}{\emph{Journal of Automated Reasoning}},
+  Vol.~\bibinfo{volume}{65}. \bibinfo{publisher}{Springer},
+  \bibinfo{pages}{117--156}.
+\newblock
+\href{https://doi.org/10.1007/s10817-020-09563-2}{doi:\nolinkurl{10.1007/s10817-020-09563-2}}
+
+
+\bibitem[Howard(1966)]%
+        {howard1966information}
+\bibfield{author}{\bibinfo{person}{Ronald~A. Howard}.}
+  \bibinfo{year}{1966}\natexlab{}.
+\newblock \showarticletitle{Information Value Theory}.
+\newblock \bibinfo{journal}{\emph{IEEE Transactions on Systems Science and
+  Cybernetics}} \bibinfo{volume}{2}, \bibinfo{number}{1}
+  (\bibinfo{year}{1966}), \bibinfo{pages}{22--26}.
+\newblock
+
+
+\bibitem[Ignatiev et~al\mbox{.}(2019)]%
+        {ignatiev2019abduction}
+\bibfield{author}{\bibinfo{person}{Alexey Ignatiev}, \bibinfo{person}{Nina
+  Narodytska}, {and} \bibinfo{person}{Joao Marques-Silva}.}
+  \bibinfo{year}{2019}\natexlab{}.
+\newblock \showarticletitle{Abduction-based explanations for machine learning
+  models}.
+\newblock \bibinfo{journal}{\emph{Proceedings of the AAAI Conference on
+  Artificial Intelligence}}  \bibinfo{volume}{33} (\bibinfo{year}{2019}),
+  \bibinfo{pages}{1511--1519}.
+\newblock
+\href{https://doi.org/10.1609/aaai.v33i01.33011511}{doi:\nolinkurl{10.1609/aaai.v33i01.33011511}}
+
+
+\bibitem[Impagliazzo and Paturi(2001)]%
+        {impagliazzo2001complexity}
+\bibfield{author}{\bibinfo{person}{Russell Impagliazzo} {and}
+  \bibinfo{person}{Ramamohan Paturi}.} \bibinfo{year}{2001}\natexlab{}.
+\newblock \showarticletitle{On the Complexity of $k$-SAT}.
+\newblock \bibinfo{journal}{\emph{J. Comput. System Sci.}}
+  \bibinfo{volume}{62}, \bibinfo{number}{2} (\bibinfo{year}{2001}),
+  \bibinfo{pages}{367--375}.
+\newblock
+\href{https://doi.org/10.1109/ccc.1999.766282}{doi:\nolinkurl{10.1109/ccc.1999.766282}}
+
+
+\bibitem[Jensen(2008)]%
+        {jensen2008rough}
+\bibfield{author}{\bibinfo{person}{Richard Jensen}.}
+  \bibinfo{year}{2008}\natexlab{}.
+\newblock \showarticletitle{Rough Set-Based Feature Selection: A Review}.
+\newblock In \bibinfo{booktitle}{\emph{Rough Computing: Theories, Technologies
+  and Applications}}. \bibinfo{publisher}{IGI Global},
+  \bibinfo{pages}{91--129}.
+\newblock
+
+
+\bibitem[Jensen and Shen(2004)]%
+        {jensen2004semantics}
+\bibfield{author}{\bibinfo{person}{Richard Jensen} {and} \bibinfo{person}{Qiang
+  Shen}.} \bibinfo{year}{2004}\natexlab{}.
+\newblock \showarticletitle{Semantics-Preserving Dimensionality Reduction:
+  Rough and Fuzzy-Rough-Based Approaches}.
+\newblock \bibinfo{journal}{\emph{IEEE Transactions on Knowledge and Data
+  Engineering}} \bibinfo{volume}{16}, \bibinfo{number}{12}
+  (\bibinfo{year}{2004}), \bibinfo{pages}{1457--1471}.
+\newblock
+\href{https://doi.org/10.1109/TKDE.2004.50}{doi:\nolinkurl{10.1109/TKDE.2004.50}}
+
+
+\bibitem[Kunze et~al\mbox{.}(2019)]%
+        {kunze2019formal}
+\bibfield{author}{\bibinfo{person}{Fabian Kunze}, \bibinfo{person}{Gert
+  Smolka}, {and} \bibinfo{person}{Yannick Forster}.}
+  \bibinfo{year}{2019}\natexlab{}.
+\newblock \showarticletitle{Formal Small-step Verification of a Call-by-value
+  Lambda Calculus Machine}. In \bibinfo{booktitle}{\emph{Asian Symposium on
+  Programming Languages and Systems}}. Springer, \bibinfo{pages}{264--283}.
+\newblock
+\href{https://doi.org/10.1007/978-3-030-34175-6_14}{doi:\nolinkurl{10.1007/978-3-030-34175-6_14}}
+
+
+\bibitem[Littman et~al\mbox{.}(1998)]%
+        {littman1998probplanning}
+\bibfield{author}{\bibinfo{person}{Michael~L. Littman}, \bibinfo{person}{Judy
+  Goldsmith}, {and} \bibinfo{person}{Martin Mundhenk}.}
+  \bibinfo{year}{1998}\natexlab{}.
+\newblock \showarticletitle{The Computational Complexity of Probabilistic
+  Planning}.
+\newblock \bibinfo{journal}{\emph{Journal of Artificial Intelligence Research}}
+   \bibinfo{volume}{9} (\bibinfo{year}{1998}), \bibinfo{pages}{1--36}.
+\newblock
+\href{https://doi.org/10.1613/jair.505}{doi:\nolinkurl{10.1613/jair.505}}
+
+
+\bibitem[Marques-Silva and Ignatiev(2022)]%
+        {marques2022delivering}
+\bibfield{author}{\bibinfo{person}{Joao Marques-Silva} {and}
+  \bibinfo{person}{Alexey Ignatiev}.} \bibinfo{year}{2022}\natexlab{}.
+\newblock \showarticletitle{Delivering trustworthy AI through formal XAI}.
+\newblock \bibinfo{journal}{\emph{Proceedings of the AAAI Conference on
+  Artificial Intelligence}}  \bibinfo{volume}{36} (\bibinfo{year}{2022}),
+  \bibinfo{pages}{12342--12350}.
+\newblock
+\href{https://doi.org/10.1609/aaai.v36i11.21499}{doi:\nolinkurl{10.1609/aaai.v36i11.21499}}
+
+
+\bibitem[Mundhenk et~al\mbox{.}(2000)]%
+        {mundhenk2000mdp}
+\bibfield{author}{\bibinfo{person}{Martin Mundhenk}, \bibinfo{person}{Judy
+  Goldsmith}, \bibinfo{person}{Christopher Lusena}, {and} \bibinfo{person}{Eric
+  Allender}.} \bibinfo{year}{2000}\natexlab{}.
+\newblock \showarticletitle{The Complexity of Finite-Horizon Markov Decision
+  Process Problems}.
+\newblock \bibinfo{journal}{\emph{J. ACM}} \bibinfo{volume}{47},
+  \bibinfo{number}{4} (\bibinfo{year}{2000}), \bibinfo{pages}{681--720}.
+\newblock
+\href{https://doi.org/10.1145/347476.347480}{doi:\nolinkurl{10.1145/347476.347480}}
+
+
+\bibitem[Nipkow et~al\mbox{.}(2002)]%
+        {nipkow2002isabelle}
+\bibfield{author}{\bibinfo{person}{Tobias Nipkow}, \bibinfo{person}{Lawrence~C.
+  Paulson}, {and} \bibinfo{person}{Markus Wenzel}.}
+  \bibinfo{year}{2002}\natexlab{}.
+\newblock \bibinfo{booktitle}{\emph{{Isabelle/HOL}: A Proof Assistant for
+  Higher-Order Logic}}.
+\newblock \bibinfo{publisher}{Springer}.
+\newblock
+\href{https://doi.org/10.1007/3-540-45949-9}{doi:\nolinkurl{10.1007/3-540-45949-9}}
+
+
+\bibitem[Papadimitriou and Tsitsiklis(1987)]%
+        {papadimitriou1987mdp}
+\bibfield{author}{\bibinfo{person}{Christos~H. Papadimitriou} {and}
+  \bibinfo{person}{John~N. Tsitsiklis}.} \bibinfo{year}{1987}\natexlab{}.
+\newblock \showarticletitle{The Complexity of Markov Decision Processes}.
+\newblock \bibinfo{journal}{\emph{Mathematics of Operations Research}}
+  \bibinfo{volume}{12}, \bibinfo{number}{3} (\bibinfo{year}{1987}),
+  \bibinfo{pages}{441--450}.
+\newblock
+\href{https://doi.org/10.1287/moor.12.3.441}{doi:\nolinkurl{10.1287/moor.12.3.441}}
+
+
+\bibitem[Pawlak(1982)]%
+        {pawlak1982rough}
+\bibfield{author}{\bibinfo{person}{Zdzis{\\l}aw Pawlak}.}
+  \bibinfo{year}{1982}\natexlab{}.
+\newblock \showarticletitle{Rough Sets}.
+\newblock \bibinfo{journal}{\emph{International Journal of Parallel
+  Programming}} \bibinfo{volume}{11}, \bibinfo{number}{5}
+  (\bibinfo{year}{1982}), \bibinfo{pages}{341--356}.
+\newblock
+\href{https://doi.org/10.1007/BF01001956}{doi:\nolinkurl{10.1007/BF01001956}}
+
+
+\bibitem[Pearl(2009)]%
+        {pearl2009causality}
+\bibfield{author}{\bibinfo{person}{Judea Pearl}.}
+  \bibinfo{year}{2009}\natexlab{}.
+\newblock \bibinfo{booktitle}{\emph{Causality: Models, Reasoning, and
+  Inference} (\bibinfo{edition}{2nd} ed.)}.
+\newblock \bibinfo{publisher}{Cambridge University Press}.
+\newblock
+\href{https://doi.org/10.1017/CBO9780511803161}{doi:\nolinkurl{10.1017/CBO9780511803161}}
+
+
+\bibitem[Raiffa and Schlaifer(1961)]%
+        {raiffa1961applied}
+\bibfield{author}{\bibinfo{person}{Howard Raiffa} {and} \bibinfo{person}{Robert
+  Schlaifer}.} \bibinfo{year}{1961}\natexlab{}.
+\newblock \bibinfo{booktitle}{\emph{Applied Statistical Decision Theory}}.
+\newblock \bibinfo{publisher}{Harvard University Press}.
+\newblock
+\href{https://doi.org/10.2307/2282452}{doi:\nolinkurl{10.2307/2282452}}
+
+
+\bibitem[Ravindran(2004)]%
+        {ravindran2004algebraic}
+\bibfield{author}{\bibinfo{person}{Balaraman Ravindran}.}
+  \bibinfo{year}{2004}\natexlab{}.
+\newblock \emph{\bibinfo{title}{An Algebraic Approach to Abstraction in
+  Reinforcement Learning}}.
+\newblock \bibinfo{thesistype}{Ph.\,D. Dissertation}.
+  \bibinfo{school}{University of Massachusetts Amherst}.
+\newblock
+
+
+\bibitem[Ribeiro et~al\mbox{.}(2018)]%
+        {ribeiro2018anchors}
+\bibfield{author}{\bibinfo{person}{Marco~Tulio Ribeiro},
+  \bibinfo{person}{Sameer Singh}, {and} \bibinfo{person}{Carlos Guestrin}.}
+  \bibinfo{year}{2018}\natexlab{}.
+\newblock \showarticletitle{Anchors: High-Precision Model-Agnostic
+  Explanations}. In \bibinfo{booktitle}{\emph{Proceedings of the AAAI
+  Conference on Artificial Intelligence}}, Vol.~\bibinfo{volume}{32}.
+\newblock
+\href{https://doi.org/10.1609/aaai.v32i1.11491}{doi:\nolinkurl{10.1609/aaai.v32i1.11491}}
+
+
+\bibitem[Savage(1954)]%
+        {savage1954foundations}
+\bibfield{author}{\bibinfo{person}{Leonard~J. Savage}.}
+  \bibinfo{year}{1954}\natexlab{}.
+\newblock \bibinfo{booktitle}{\emph{The Foundations of Statistics}}.
+\newblock \bibinfo{publisher}{John Wiley \& Sons}.
+\newblock
+
+
+\bibitem[Slowinski and Vanderpooten(1995)]%
+        {slowinski1995decision}
+\bibfield{author}{\bibinfo{person}{Roman Slowinski} {and}
+  \bibinfo{person}{Daniel Vanderpooten}.} \bibinfo{year}{1995}\natexlab{}.
+\newblock \showarticletitle{Decision Under Uncertainty: A Rough Set Approach}.
+\newblock \bibinfo{journal}{\emph{European Journal of Operational Research}}
+  \bibinfo{volume}{80}, \bibinfo{number}{2} (\bibinfo{year}{1995}),
+  \bibinfo{pages}{277--289}.
+\newblock
+\href{https://doi.org/10.1016/0377-2217(95)00159-X}{doi:\nolinkurl{10.1016/0377-2217(95)00159-X}}
+
+
+\bibitem[Spirtes et~al\mbox{.}(2000)]%
+        {spirtes2000causation}
+\bibfield{author}{\bibinfo{person}{Peter Spirtes}, \bibinfo{person}{Clark
+  Glymour}, {and} \bibinfo{person}{Richard Scheines}.}
+  \bibinfo{year}{2000}\natexlab{}.
+\newblock \bibinfo{booktitle}{\emph{Causation, Prediction, and Search}
+  (\bibinfo{edition}{2nd} ed.)}.
+\newblock \bibinfo{publisher}{MIT Press}.
+\newblock
+\showISBNx{978-0262194402}
+
+
+\bibitem[{The mathlib Community}(2020)]%
+        {mathlib2020}
+\bibfield{author}{\bibinfo{person}{{The mathlib Community}}.}
+  \bibinfo{year}{2020}\natexlab{}.
+\newblock \showarticletitle{The {Lean} Mathematical Library}.
+\newblock \bibinfo{journal}{\emph{Proceedings of the 9th ACM SIGPLAN
+  International Conference on Certified Programs and Proofs}}
+  (\bibinfo{year}{2020}), \bibinfo{pages}{367--381}.
+\newblock
+\href{https://doi.org/10.1145/3372885.3373824}{doi:\nolinkurl{10.1145/3372885.3373824}}
+
+
+\bibitem[Williams et~al\mbox{.}(2003)]%
+        {williams2003backdoors}
+\bibfield{author}{\bibinfo{person}{Ryan Williams}, \bibinfo{person}{Carla~P.
+  Gomes}, {and} \bibinfo{person}{Bart Selman}.}
+  \bibinfo{year}{2003}\natexlab{}.
+\newblock \showarticletitle{Backdoors to Typical Case Complexity}. In
+  \bibinfo{booktitle}{\emph{Proceedings of the Eighteenth International Joint
+  Conference on Artificial Intelligence (IJCAI)}}. \bibinfo{publisher}{Morgan
+  Kaufmann Publishers Inc.}, \bibinfo{pages}{1173--1178}.
+\newblock
+
+
+\bibitem[Zhang et~al\mbox{.}(2021)]%
+        {zhang2021learning}
+\bibfield{author}{\bibinfo{person}{Amy Zhang}, \bibinfo{person}{Rowan
+  McAllister}, \bibinfo{person}{Roberto Calandra}, \bibinfo{person}{Yarin Gal},
+  {and} \bibinfo{person}{Sergey Levine}.} \bibinfo{year}{2021}\natexlab{}.
+\newblock \showarticletitle{Learning Invariant Representations for
+  Reinforcement Learning without Reconstruction}.
+\newblock \bibinfo{journal}{\emph{International Conference on Learning
+  Representations (ICLR)}} (\bibinfo{year}{2021}).
+\newblock
+\href{https://doi.org/10.48550/arXiv.2006.10742}{doi:\nolinkurl{10.48550/arXiv.2006.10742}}
+
+
+\bibitem[Zhang et~al\mbox{.}(2013)]%
+        {multiplier}
+\bibfield{author}{\bibinfo{person}{Xiaofeng Zhang} {et~al\mbox{.}}}
+  \bibinfo{year}{2013}\natexlab{}.
+\newblock \showarticletitle{On the Complexity of Attribute Reduction in
+  Decision Tables}.
+\newblock \bibinfo{journal}{\emph{Fundamenta Informaticae}}
+  \bibinfo{volume}{123}, \bibinfo{number}{4} (\bibinfo{year}{2013}),
+  \bibinfo{pages}{421--434}.
+\newblock
+
+
+\end{thebibliography}

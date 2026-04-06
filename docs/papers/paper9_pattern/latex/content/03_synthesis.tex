@@ -1,0 +1,20 @@
+\section{Synthesis}
+
+Across the 13 examples, the recurring move is to replace implicit inference with a named locus of truth. Sometimes that locus is a nominal type; sometimes it is a metaclass hook, a registry, a sentinel object, a resolver that carries provenance through the lookup path, or a state graph that preserves branching history. That is the core zero-error design principle: make the source of truth explicit enough that the system can recover identity, preserve provenance, and avoid stale derived state.
+
+That is exactly where the theory papers become useful. Paper 1 explains the type and axis discipline behind the nominal and structural distinctions. Paper 2 explains why definition-time hooks, introspection, and provenance matter for SSOT. Paper 3 explains why reducing degrees of freedom changes leverage. Paper 4 explains why decision-relevance can be certified only when the right coordinates are exposed. The pattern paper sits on top of that theory and asks a narrower question: which concrete mechanisms in Python behave like zero-error design patterns in practice?
+
+The case studies are therefore not isolated anecdotes. They are one corpus's repeated answer to the same engineering question: where should truth live so that the system can preserve it, derive it, and verify it without ambiguity? The answer is general, and the OpenHCS-derived packages are simply the clearest evidence set we have.
+
+Read through the same spine as Papers 1, 2, and 4, the paper becomes easy to state: identify the minimal explicit structure that removes ambiguity; show how each pattern pays that identity debt; separate the regime-level contract from the mechanism; and then classify the proof obligations each mechanism satisfies.
+
+The new synthesis from the additional packages is that the same design language appears in four distinct subdomains:
+
+\begin{itemize}[leftmargin=1.25em]
+\item identity and registration: \texttt{metaclass-registry}, \texttt{ArrayBridge}, \texttt{PolyStore};
+\item configuration and provenance: \texttt{ObjectState} and \texttt{pyqt-reactor};
+\item executable reconstruction: \texttt{pycodify};
+\item transport and execution boundaries: \texttt{zmqruntime}.
+\end{itemize}
+
+These subdomains are not separate stories. They are all ways of paying the same zero-error cost: make the authoritative state explicit, and make every derived view traceable back to it. Once that is in place, the code can support branching state, provenance-aware lookup, collision-safe reconstruction, and explicit routing without relying on ad hoc conventions.

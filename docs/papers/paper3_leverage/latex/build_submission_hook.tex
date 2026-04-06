@@ -5,15 +5,6 @@
 % and copied into each paper's LaTeX dir by the pipeline. Avoid redefining
 % them here to prevent conflicting render behaviour between build hooks and
 % the SSOT macros.
+% Lean Handle Index stays in supplementary material (never in submission main text).
 \AtBeginDocument{}
-\AtEndDocument{%
-  \ifdefined\JSAITREVIEW% Only include Lean handle index in review mode
-    \IfFileExists{content/lean_handle_ids_auto.tex}{%
-      \par\smallskip\begingroup
-      \footnotesize\noindent\textbf{Lean Handle Index.}\par\smallskip
-      \input{content/lean_handle_ids_auto.tex}%
-      \endgroup
-    }{}%
-  \fi
-}
 \fi

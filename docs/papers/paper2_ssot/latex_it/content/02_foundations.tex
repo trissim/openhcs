@@ -41,25 +41,10 @@ An encoding system has \emph{structural integrity} for fact $F$ if every reachab
 A reachable \emph{integrity violation} is a reachable incoherent state for fact $F$.
 \end{definition}
 
-\leanmetapending{\LH{COH1}}
-\begin{proposition}[Unit Independent Rate Guarantees Coherence]\label{thm:dof-one-coherence}
-If the independent rate is $1$, then all reachable states are coherent.
-\end{proposition}
-
-\begin{proof}
-At independent rate $1$, exactly one location is independent and all remaining locations are derived from it. Derived locations cannot diverge from their source, so disagreement is unreachable.
-\end{proof}
-
-\leanmetapending{\LH{COH2}}
-\begin{proposition}[Independent Rate Above One Permits Incoherence]\label{thm:dof-gt-one-incoherence}
-If the independent rate exceeds $1$, then incoherent states are reachable.
-\end{proposition}
-
-\begin{proof}
-With at least two independent locations, admissible edits can assign different values to those locations, producing a reachable disagreement state.
-\end{proof}
-
 \subsection{Zero-Incoherence Threshold}\label{sec:capacity}
+
+\medskip
+\noindent\textbf{Remark.} At independent rate $1$, all locations are derived from a single source, so disagreement is unreachable. At independent rate above $1$, admissible edits can assign different values to two independent locations, producing a reachable disagreement state.\leanmeta{\LHrng{COH}{1}{2}}
 
 \begin{definition}[Zero-Incoherence Threshold]\label{def:coherence-capacity}
 The \emph{zero-incoherence threshold} is the largest independent rate for which incoherent states are unreachable.
@@ -78,24 +63,11 @@ For deterministic multi-location encodings, the zero-incoherence threshold equal
 Thus zero-error recovery is possible exactly at independent rate $1$, so the zero-incoherence threshold equals $1$.
 \end{proof}
 
-\leanmetapending{\LHrng{COH}{1}{2}}
-\begin{corollary}[Exact Structural-Integrity Threshold]\label{cor:integrity-threshold}
-A deterministic multi-location encoding has structural integrity if and only if its independent rate equals $1$.
-\end{corollary}
-
-\begin{proof}
-If the independent rate is $1$, Proposition~\ref{thm:dof-one-coherence} shows that all reachable states are coherent, hence Definition~\ref{def:structural-integrity} holds. If the independent rate exceeds $1$, Proposition~\ref{thm:dof-gt-one-incoherence} gives a reachable incoherent state, so structural integrity fails.
-\end{proof}
+\medskip
+\noindent\textbf{Remark.} Equivalently, structural integrity (Definition~\ref{def:structural-integrity}) holds if and only if the independent rate equals $1$.\leanmeta{\LHrng{COH}{1}{2}}
 
 This threshold is an early architectural consequence of the deterministic model. It identifies the unique zero-error corner and, equivalently, the exact structural-integrity regime. Above that boundary, integrity violations are reachable by construction. The deeper theorems of the paper begin once one asks how much finite side information is needed whenever the transcript leaves a nontrivial ambiguity class.
 
-\leanmetapending{\LH{CIA1}}
-\begin{corollary}[Side-Information Lower Bound]\label{thm:side-info}
-If a surviving ambiguity class has size $k$, then exact zero-error resolution requires at least $\log_2 k$ bits of side information.
-\end{corollary}
-
-\begin{proof}
-Exact resolution of $k$ surviving alternatives requires at least $k$ distinguishable tags, hence at least $\log_2 k$ bits.
-\end{proof}
+The surviving ambiguity also forces an information-theoretic lower bound: exact resolution of a $k$-way class requires at least $\log_2 k$ bits of side information (Theorem~\ref{thm:fano-converse} below).\leanmeta{\LH{CIA1}}
 
 The remainder of the paper sharpens this counting statement into a unified finite converse family, asks how that one-shot obstruction acquires non-clique topology under partial views, and then develops the corresponding asymptotic capacity and upper-bound theory.

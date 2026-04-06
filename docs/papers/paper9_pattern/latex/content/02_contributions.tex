@@ -1,0 +1,67 @@
+\section{Contributions and Evidence Map}
+
+The paper's main contribution is not the existence of 13 examples. It is the identification of five reusable zero-error mechanisms that recur across the corpus and the separation of those mechanisms from their supporting instances.
+
+\subsection{Headline Contributions}
+
+\begin{center}
+\begin{tabular}{@{}p{0.28\linewidth}p{0.28\linewidth}p{0.36\linewidth}@{}}
+\toprule
+\textbf{Contribution} & \textbf{What it guarantees} & \textbf{Primary evidence} \\
+\midrule
+Provenance-preserving dual-axis resolution & Every resolved value carries its source, so inherited and local facts remain distinguishable & \texttt{ObjectState}, \texttt{pyqt-reactor} \\
+Branching state DAGs & State history remains a graph of recoverable configurations rather than a flattened overwrite log & \texttt{ObjectState} \\
+Zero-boilerplate registry and discovery & New concrete types become discoverable at definition time, not after manual wiring & \texttt{metaclass-registry}, \texttt{ArrayBridge}, \texttt{PolyStore} \\
+Collision-safe executable serialization & Serialized source remains executable and unambiguous after alias resolution & \texttt{pycodify} \\
+Transport and backend separation & Control and data stay on separate paths, and backends remain explicit & \texttt{zmqruntime}, \texttt{PolyStore}, \texttt{ArrayBridge} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Supporting Instances}
+
+The remaining examples are supporting instances of the same design vocabulary rather than independent headline contributions. They are still important because they show how the mechanisms recur at different abstraction levels.
+
+\begin{center}
+\begin{tabular}{@{}p{0.30\linewidth}p{0.24\linewidth}p{0.38\linewidth}@{}}
+\toprule
+\textbf{Case study} & \textbf{Pattern family} & \textbf{Role in the paper} \\
+\midrule
+Structurally identical, semantically distinct types & Identity and distinction & Shows why nominal position matters when structure is insufficient \\
+Discriminated unions via \texttt{subclasses()} & Exhaustive dispatch & Completeness via explicit family enumeration \\
+\texttt{MemoryTypeConverter} dispatch & Registry lookup & Cached dispatch over explicit type keys \\
+Polymorphic configuration & Backend selection & Factory-mediated choice without attribute probing \\
+Migration from \{S\}-only to \{B,S\} typing & Explicit identity & Demonstrates the shift from inference to a declared contract \\
+\texttt{AutoRegisterMeta} & Registry discovery & Definition-time synchronization of class registration \\
+Five-stage type transformation & Type-system extension & Controlled derivation across multiple named stages \\
+Dual-axis resolution algorithm & Provenance-preserving lookup & Returns both value and source through two hierarchies \\
+Custom \texttt{isinstance()} implementation & Nominal marker dispatch & Makes runtime type checks answer the real question \\
+Dynamic interface generation & Nominal handle creation & Produces stable identity shells at runtime \\
+Framework detection via sentinel type & Sentinel-governed inheritance & Represents subsystem presence with a unique token \\
+Dynamic method injection & Type-level mutation & Modifies the owning type rather than per-instance behavior \\
+Bidirectional type lookup & Anti-drift registry invariant & Keeps forward and reverse views synchronized \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The evidence map is intentionally asymmetric. The headline contributions are the mechanisms the paper wants to generalize. The supporting instances are the places where those mechanisms are visible in more mundane engineering form, which is useful because it shows that the same design rule can survive across different subsystems without collapsing into an ad hoc trick.
+
+\subsection{Lean Anchors}
+
+The most useful proof anchors from Papers 1--4 are the ones that already isolate the same structural moves used by this paper: explicit source information, fixed-definition hooks, derivation versus drift, factorization through a quotient, and exact certification under a regime contract. In practice, the best starting points are the theorem families that directly talk about provenance, hooks, derivation, quotient universality, and leverage-maximizing single-source structure.
+
+\begin{center}
+\begin{tabular}{@{}p{0.28\linewidth}p{0.60\linewidth}@{}}
+\toprule
+\textbf{Pattern family} & \textbf{Strongest handles} \\
+\midrule
+Provenance and explicit identity & \leanmeta{\LHrng{ACS}{8}{9}, \LH{COH3}, \LH{INS4}} \\
+Registry and discovery & \leanmeta{\LHrng{REQ}{2}{3}, \LH{PYH1}, \LH{PYI1}, \LH{GEN1}} \\
+Branching state and anti-drift history & \leanmeta{\LHrng{COH}{1}{2}, \LH{DER2}, \LH{RED1}, \LH{BAS3}} \\
+Quotient, factorization, and exact certification & \leanmeta{\LH{QT1}, \LH{QT7}, \LH{DQ42}, \LH{DQ45}, \LH{DQ57}, \LHrng{DQ}{74}{75}, \LH{DQ79}, \LH{CP1}, \LH{DC94}, \LH{DC96}, \LH{OU12}} \\
+Leverage and zero-error cost & \leanmeta{\LH{L11}, \LH{L13}, \LH{L22}, \LHrng{L}{35}{36}} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+These are the handles I would start from when turning the prose claims in this paper into machine-checked obligations. The first two rows are the clearest fit for the current `paper9` claims; the third row captures the state/history invariants; the fourth row captures quotient-style exactness and certification; and the fifth row is the bridge back to the leverage language from Paper 3.

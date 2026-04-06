@@ -1,6 +1,6 @@
 \subsection{Artifact Scope and the Finite-to-Asymptotic Boundary}\label{sec:artifact-scope}
 
-The Lean 4 artifact verifies the finite combinatorial core used throughout Sections~3--5: reduction correctness with size bounds, explicit-state deciders and step-counted searches, bridge lemmas, and witness/checking schemas used by stochastic upper-bound arguments. The artifact checks the finite mechanisms—reduction constructions, witness structures, explicit-state deciders—that underpin the paper's asymptotic complexity claims. The asymptotic class placements (coNP-completeness, PP-hardness, PSPACE-completeness, NP^PP membership) are argued in the text using standard complexity-theoretic conventions, as is typical for the field.
+The Lean 4 artifact verifies the finite combinatorial core used throughout Sections 3--5: reduction correctness with size bounds, explicit-state deciders and step-counted searches, bridge lemmas, and witness/checking schemas used by stochastic upper-bound arguments. The artifact checks the finite mechanisms—reduction constructions, witness structures, explicit-state deciders—that underpin the paper's asymptotic complexity claims. The asymptotic class placements (coNP-completeness, PP-hardness, PSPACE-completeness, NP\^{}PP membership) are argued in the text using standard complexity-theoretic conventions, as is typical for the field.
 
 The paper-level layer is the asymptotic lift: oracle-machine formulations, class memberships, and ETH-transfer arguments. In particular, the artifact does not formalize oracle Turing machines or polynomial-space machine semantics; those are argued in the manuscript using standard complexity-theoretic conventions.
 
@@ -14,7 +14,7 @@ So the classification is intentionally hybrid: finite gadgets and decision proce
 \small
 \setlength{\tabcolsep}{4pt}
 \renewcommand{\arraystretch}{1.12}
-\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}m{0.25\linewidth}>{\RaggedRight\arraybackslash}m{0.35\linewidth}>{\RaggedRight\arraybackslash}X@{}}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}m{0.25\linewidth}>{\raggedright\arraybackslash}m{0.35\linewidth}>{\raggedright\arraybackslash}X@{}}
 \toprule
 \textbf{Claim} & \textbf{Verified in Lean} & \textbf{Paper-level} \\
 \midrule

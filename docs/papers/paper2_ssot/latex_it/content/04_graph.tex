@@ -137,7 +137,7 @@ The exact coordinate-subset model is not graph-universal. Equality at a view equ
 
 \leanmetapending{\LHrng{MFT}{3}{4}, \LH{MFT20}}
 \begin{theorem}[Exact recovery as graph colorability]\label{thm:multifact-colorability}
-For a finite multi-fact latent tuple observed through a finite family of partial-coordinate views, exact zero-error recovery with a $T$-ary auxiliary tag exists if and only if the induced confusability graph is $T$-colorable.
+For a finite multi-fact latent tuple observed through a finite family of partial-coordinate views, exact zero-error recovery with a $T$-ary auxiliary tag exists if and only if the induced confusability graph is $T$-colorable~\cite{west2001introduction,diestel2017graph}.
 \end{theorem}
 
 \begin{proof}
@@ -190,7 +190,7 @@ The witness is the four-state binary square with one location revealing the firs
 If two partial-observation systems are colorable with tag alphabets of sizes $T_1$ and $T_2$, then their block-composed product system is colorable with a tag alphabet of size $T_1T_2$.
 \end{theorem}
 
-The strong product of graphs $G$ and $H$, denoted $G\boxtimes H$, is defined as follows. The vertex set is $V(G)\times V(H)$. Two vertices $(u,v)$ and $(u',v')$ are adjacent exactly when either $u=u'$ and $v\sim v'$, or $u\sim u'$ and $v=v'$, or $u\sim u'$ and $v\sim v'$. The block-composition theorem is model-specific because the admissible product views generate exactly these three adjacency cases.
+The strong product of graphs $G$ and $H$, denoted $G\boxtimes H$, is defined as follows. The vertex set is $V(G)\times V(H)$. Two vertices $(u,v)$ and $(u',v')$ are adjacent exactly when either $u=u'$ and $v\sim v'$, or $u\sim u'$ and $v=v'$, or $u\sim u'$ and $v\sim v'$. The block-composition theorem is model-specific because the admissible product views generate exactly these three adjacency cases~\cite{imrich2008product,west2001introduction}.
 
 \begin{proof}
 Take proper colorings of the two component confusability graphs and encode the pair of colors as one color in the product alphabet. If two product states are confusable, then some allowed product view fails to separate them. In the product system this means that either the first coordinates agree and the second coordinates are confusable, or the second coordinates agree and the first coordinates are confusable, or both coordinates are confusable. These are exactly the three adjacency cases in the strong product $G_1\boxtimes G_2$. Hence every confusable product pair is separated by at least one component coloring, and therefore by the paired color as well.

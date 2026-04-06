@@ -1,6 +1,6 @@
 # Paper: Leverage, Structural Rank, and Thermodynamic Selection in Information-Processing Systems
 
-**Status**: Draft-ready | **Lean**: 76634 lines, 3296 theorems
+**Status**: Draft-ready | **Lean**: 75488 lines, 3285 theorems
 
 ---
 
@@ -39,10 +39,10 @@ This paper proves thermodynamic bounds on information-processing systems from fi
   Theorems/lemmas (local layer)                       210
   `sorry` placeholders (local layer)                    0
   Proof files (local layer)                            17
-  Total imported Lean lines                         76634
-  Total theorem/lemma statements                     3296
+  Total imported Lean lines                         75488
+  Total theorem/lemma statements                     3285
   Total imported `sorry` placeholders                   0
-  Total proof files in import closure                 302
+  Total proof files in import closure                 280
   **Dependencies (live imports)**       
   `AbstractClassSystem`                   lines, theorems
   `Ssot`                                  lines, theorems
@@ -1355,7 +1355,7 @@ All proofs verified in Lean: `Leverage/WeightedLeverage.lean` (348 lines, 0 sorr
 
 **Role of LLMs in this work.** This paper was developed through human-AI collaboration. The author provided the core insight (that DOF $= 1$ is selected by five independent scientific frameworks) while large language models (Claude, GPT-4) served as implementation partners for formalization, proof drafting, and LaTeX generation.
 
-The Lean 4 proofs (76634 lines, 0 `sorry` placeholders) were iteratively developed: the author specified theorems, the LLM proposed proof strategies, and the Lean compiler verified correctness. Machine-checked proofs are correct regardless of generation method.
+The Lean 4 proofs (75488 lines, 0 `sorry` placeholders) were iteratively developed: the author specified theorems, the LLM proposed proof strategies, and the Lean compiler verified correctness. Machine-checked proofs are correct regardless of generation method.
 
 **What the author contributed:** The five-way convergence insight, the identification of structural rank as the information-geometric coordinate of DOF, the thermodynamic selection theorem, the cross-paper dependency chain, the open conjectures, and the OpenHCS case study selection.
 
@@ -1449,7 +1449,7 @@ This appendix reports machine-check status and proof traceability directly from 
 
 ## Verification Status
 
-**Lean summary:** 76634 lines, 3296 theorems/lemmas, 0 `sorry`, across 302 files.
+**Lean summary:** 75488 lines, 3285 theorems/lemmas, 0 `sorry`, across 280 files.
 
 ::: center
   **File**                                  **Lines**   **Theorems/Lemmas**
@@ -1467,7 +1467,7 @@ This appendix reports machine-check status and proof traceability directly from 
   `Leverage/FiveWayEquivalence.lean`           149               7
   `Leverage/CrossPaperDependencies.lean`       332              22
   `lakefile.lean`                              21                0
-  **Total**                                 **76634**        **3296**
+  **Total**                                 **75488**        **3285**
 :::
 
 Build command: `cd proofs && lake build`
@@ -1479,474 +1479,371 @@ Build command: `cd proofs && lake build`
 ## Proof Hardness Index
 
 
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------
-  **Paper handle**                      **Status**   **Lean support**
-  ------------------------------------- ------------ ----------------------------------------------------------------------------------------------------------
-  `cor:dof-errors`                      Full         `L.architecture_axes_independent`, `L.error_independence_from_orthogonality`
+  ------------------------------------------------------------------------------------------------------
+  **Paper claim**                                                     **Lean handle**
+  ------------------------------------------------------------------- ----------------------------------
+  Corollary 3.2: DOF = Independent Error Sources                      L15, L23
 
-  `cor:dof-monotone`                    Full         `L.lower_dof_lower_errors`
+  Corollary 3.6: DOF-Error Monotonicity                               L33
 
-  `cor:dof-ratio`                       Full         `L.dof_ratio_predicts_error_ratio`
+  Corollary 3.13: DOF Ratio Predicts Error Ratio                      L21, L42
 
-  `cor:leverage-energy`                 Full         `L.Physical.higher_leverage_same_caps_implies_lower_energy`, `nonorthogonal_complete_has_redundant_axis`
+  Corollary 4.4: Leverage-Energy Monotonicity in a Capability Class   L3, L6
 
-  `cor:linear-approx`                   Full         `L.bernoulli_justifies_linear_model`, `L.ordering_equivalence_exact`
+  Corollary 3.5: Linear Approximation                                 L16, L39
 
-  `cor:physical-assumption-necessity`   Full         `exists_orthogonal_semanticallyMinimal_subset`, `exists_semanticallyMinimal_subset`
+  Corollary 4.6: Physical Assumption Necessity Witnesses              L2, L8, L7, L4
 
-  `prop:dof-additive`                   Full         `L.compose_dof`, `L.composition_dof_additive`
+  Definition 2.4: Architecture                                        L17, L19
 
-  `thm:approx-bound`                    Full         `L.linear_model_preserves_ordering`, `L.ordering_equivalence_exact`
+  Theorem 3.10: Ordering Equivalence (Exact)                          L32, L39
 
-  `thm:composition`                     Full         `L.composition_caps_additive`, `L.composition_dof_additive`
+  Theorem 4.9: Leverage Composition                                   L18, L19
 
-  `thm:dof-reliability`                 Full         `L.dof_reliability_isomorphism`, `L.isomorphism_preserves_failure_ordering`
+  Theorem 3.9: DOF-Reliability Isomorphism                            L22, L27
 
-  `thm:england`                         Full         `england_replication_inequality`
+  Theorem 5.1: England Replication Inequality                         L45
 
-  `thm:error-compound`                  Full         `L.correctness_probability`, `L.system_is_correct`
+  Theorem 3.3: Error Compounding                                      L20, L41
 
-  `thm:error-independence`              Full         `L.error_independence_from_orthogonality`
+  Theorem 3.1: Error Independence                                     L23
 
-  `thm:error-prob`                      Full         `L.error_probability_denom_pos`, `L.series_error_probability`
+  Theorem 3.4: Error Probability                                      L24, L40
 
-  `thm:expected-errors`                 Full         `L.expected_errors_from_linearity`, `L.expected_errors_linear`
+  Theorem 3.7: Expected Error Bound                                   L25, L26
 
-  `thm:five-way`                        Unmapped     *(no derived Lean handle found)*
+  Theorem 1.1: Five-Way Equivalence                                   *(no derived Lean handle found)*
 
-  `thm:leverage-error`                  Full         `L.leverage_error_tradeoff`
+  Theorem 4.2: Leverage-Error Tradeoff                                L29
 
-  `thm:leverage-gap`                    Full         `L.leverage_gap`
+  Theorem 3.11: Leverage Gap                                          L30
 
-  `thm:leverage-max`                    Full         `L.leverage_caps_principle`, `L.leverage_maximization_principle`
+  Theorem 4.1: Leverage Maximization Principle                        L28, L31
 
-  `thm:metaprog`                        Full         `L.metaprogramming_dominates`, `L.metaprogramming_unbounded_leverage`
+  Theorem 4.7: Metaprogramming Dominance                              L35, L36
 
-  `thm:mod-bound`                       Full         `L.modification_eq_dof`
+  Definition 2.12: Capability Set                                     L37
 
-  `thm:nominal-leverage`                Full         `L.Typing.capability_gap`, `L.Typing.nominal_dominates_duck`
+  Corollary 6.7: Unbounded Advantage                                  L12, L13
 
-  `thm:optimal`                         Full         `L.max_leverage_is_optimal`, `L.optimal_minimizes_error`
+  Theorem 4.8: Optimal Architecture                                   L34, L38
 
-  `thm:paper1-integration`              Full         `L.Typing.nominal_dominates_duck`, `L.Typing.paper1_is_leverage_instance`
+  Theorem 4.11: `AbstractClassSystem` as Leverage Instance            L13, L14
 
-  `thm:paper2-integration`              Full         `L.SSOT.paper2_is_leverage_instance`, `L.SSOT.ssot_leverage_dominance`
+  Theorem 4.12: `Ssot` as Leverage Instance                           L10, L11, L13, L14
 
-  `thm:physical-budget-boundary`        Full         `L.Physical.feasible_iff_floor_le_budget`, `l4_exchange_wrapper`
+  Theorem 4.5: Budget Feasibility Boundary                            L2, L3, L4, L6
 
-  `thm:physical-energy-floor`           Full         `l5_exchange_wrapper`, `matroid_basis_equicardinality`
+  Theorem 4.3: Physical Edit-Energy Floor                             L5, L1
 
-  `thm:ssot-leverage`                   Full         `L.SSOT.modification_ratio`, `L.SSOT.ssot_leverage_dominance`
+  Definition 6.3: SSOT Architecture                                   L9, L11
 
-  `thm:testable-prediction`             Full         `L.testable_modification_prediction`
-  -------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Theorem 3.12: Testable Prediction                                   L30, L42
+
+                                                                      
+  ------------------------------------------------------------------------------------------------------
 
 *Notes:* *(1) Full rows come from theorem-local inline anchors in this paper.* *(2) Derived rows are filled by dependency/scaffold claim-handle derivation (same paper-handle label across proof dependencies).* *(3) Unmapped means no local anchor and no derivable dependency support were found.*
 
 *Auto summary: mapped 28/29 (full=28, derived=0, unmapped=1).*
 
 
-:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::: list
-::: {#lh:BA7}
-`BA7`
-:::
+::: list
+**`BA7`**[]{#lh:BA7} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
 
-::: {#lh:DQ1}
-`DQ1`
-:::
+**`DQ1`**[]{#lh:DQ1} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
 
-::: {#lh:EP1}
-`EP1`
-:::
+**`EP1`**[]{#lh:EP1}
 
-::: {#lh:EP4}
-`EP4`
-:::
+**`EP4`**[]{#lh:EP4} paper4/DecisionQuotient/Physics/LocalityPhysics.lean
 
-::: {#lh:FXI1}
-`FXI1`
-:::
+**`FXI1`**[]{#lh:FXI1} paper1/axis_framework.lean
 
-::: {#lh:L1}
-`L1`
-:::
+**`L1`**[]{#lh:L1} paper1/axis_framework.lean
 
-::: {#lh:L2}
-`L2`
-:::
+**`L2`**[]{#lh:L2} Leverage/Physical.lean
 
-::: {#lh:L3}
-`L3`
-:::
+**`L3`**[]{#lh:L3} Leverage/Physical.lean
 
-::: {#lh:L4}
-`L4`
-:::
+**`L4`**[]{#lh:L4} paper1/HandleAliases.lean
 
-::: {#lh:L5}
-`L5`
-:::
+**`L5`**[]{#lh:L5} paper1/HandleAliases.lean
 
-::: {#lh:L6}
-`L6`
-:::
+**`L6`**[]{#lh:L6} paper1/axis_framework.lean
 
-::: {#lh:L7}
-`L7`
-:::
+**`L7`**[]{#lh:L7} paper1/axis_framework.lean
 
-::: {#lh:L8}
-`L8`
-:::
+**`L8`**[]{#lh:L8} paper1/axis_framework.lean
 
-::: {#lh:L9}
-`L9`
-:::
+**`L9`**[]{#lh:L9} Leverage/SSOT.lean
 
-::: {#lh:L10}
-`L10`
-:::
+**`L10`**[]{#lh:L10} Leverage/SSOT.lean
 
-::: {#lh:L11}
-`L11`
-:::
+**`L11`**[]{#lh:L11} Leverage/SSOT.lean
 
-::: {#lh:L12}
-`L12`
-:::
+**`L12`**[]{#lh:L12} Leverage/Typing.lean
 
-::: {#lh:L13}
-`L13`
-:::
+**`L13`**[]{#lh:L13} Leverage/Typing.lean
 
-::: {#lh:L14}
-`L14`
-:::
+**`L14`**[]{#lh:L14} Leverage/Typing.lean
 
-::: {#lh:L15}
-`L15`
-:::
+**`L15`**[]{#lh:L15} Leverage/Probability.lean
 
-::: {#lh:L16}
-`L16`
-:::
+**`L16`**[]{#lh:L16} Leverage/Probability.lean
 
-::: {#lh:L17}
-`L17`
-:::
+**`L17`**[]{#lh:L17} Leverage/Foundations.lean
 
-::: {#lh:L18}
-`L18`
-:::
+**`L18`**[]{#lh:L18} Leverage/Theorems.lean
 
-::: {#lh:L19}
-`L19`
-:::
+**`L19`**[]{#lh:L19} Leverage/Theorems.lean
 
-::: {#lh:L20}
-`L20`
-:::
+**`L20`**[]{#lh:L20} Leverage/Probability.lean
 
-::: {#lh:L21}
-`L21`
-:::
+**`L21`**[]{#lh:L21} Leverage/Probability.lean
 
-::: {#lh:L22}
-`L22`
-:::
+**`L22`**[]{#lh:L22} Leverage/Probability.lean
 
-::: {#lh:L23}
-`L23`
-:::
+**`L23`**[]{#lh:L23} Leverage/Probability.lean
 
-::: {#lh:L24}
-`L24`
-:::
+**`L24`**[]{#lh:L24} Leverage/Probability.lean
 
-::: {#lh:L25}
-`L25`
-:::
+**`L25`**[]{#lh:L25} Leverage/Probability.lean
 
-::: {#lh:L26}
-`L26`
-:::
+**`L26`**[]{#lh:L26} Leverage/Probability.lean
 
-::: {#lh:L27}
-`L27`
-:::
+**`L27`**[]{#lh:L27} Leverage/Probability.lean
 
-::: {#lh:L28}
-`L28`
-:::
+**`L28`**[]{#lh:L28} Leverage/Theorems.lean
 
-::: {#lh:L29}
-`L29`
-:::
+**`L29`**[]{#lh:L29} Leverage/Theorems.lean
 
-::: {#lh:L30}
-`L30`
-:::
+**`L30`**[]{#lh:L30} Leverage/Probability.lean
 
-::: {#lh:L31}
-`L31`
-:::
+**`L31`**[]{#lh:L31} Leverage/Theorems.lean
 
-::: {#lh:L32}
-`L32`
-:::
+**`L32`**[]{#lh:L32} Leverage/Probability.lean
 
-::: {#lh:L33}
-`L33`
-:::
+**`L33`**[]{#lh:L33} Leverage/Probability.lean
 
-::: {#lh:L34}
-`L34`
-:::
+**`L34`**[]{#lh:L34} Leverage/Theorems.lean
 
-::: {#lh:L35}
-`L35`
-:::
+**`L35`**[]{#lh:L35} Leverage/Theorems.lean
 
-::: {#lh:L36}
-`L36`
-:::
+**`L36`**[]{#lh:L36} Leverage/Theorems.lean
 
-::: {#lh:L37}
-`L37`
-:::
+**`L37`**[]{#lh:L37} Leverage/Foundations.lean
 
-::: {#lh:L38}
-`L38`
-:::
+**`L38`**[]{#lh:L38} Leverage/Theorems.lean
 
-::: {#lh:L39}
-`L39`
-:::
+**`L39`**[]{#lh:L39} Leverage/Probability.lean
 
-::: {#lh:L40}
-`L40`
-:::
+**`L40`**[]{#lh:L40} Leverage/Probability.lean
 
-::: {#lh:L41}
-`L41`
-:::
+**`L41`**[]{#lh:L41} Leverage/Probability.lean
 
-::: {#lh:L42}
-`L42`
-:::
+**`L42`**[]{#lh:L42} Leverage/Probability.lean
 
-::: {#lh:L43}
-`L43`
-:::
+**`L43`**[]{#lh:L43} Leverage/BridgeToDQ.lean
 
-::: {#lh:L44}
-`L44`
-:::
+**`L44`**[]{#lh:L44} Leverage/Foundations.lean
 
-::: {#lh:L45}
-`L45`
-:::
+**`L45`**[]{#lh:L45} Leverage/BridgeToDQ.lean
 
-::: {#lh:L46}
-`L46`
-:::
+**`L46`**[]{#lh:L46} Leverage/BridgeToDQ.lean
 
-::: {#lh:L47}
-`L47`
-:::
+**`L47`**[]{#lh:L47} Leverage/BridgeToDQ.lean
 
-::: {#lh:L48}
-`L48`
-:::
+**`L48`**[]{#lh:L48} Leverage/Foundations.lean
 
-::: {#lh:L49}
-`L49`
-:::
+**`L49`**[]{#lh:L49} Leverage/BridgeToDQ.lean
 
-::: {#lh:L50}
-`L50`
-:::
+**`L50`**[]{#lh:L50} Leverage/Foundations.lean
 
-::: {#lh:L51}
-`L51`
-:::
+**`L51`**[]{#lh:L51} Leverage/BridgeToDQ.lean
 
-::: {#lh:L52}
-`L52`
-:::
+**`L52`**[]{#lh:L52} Leverage/BridgeToDQ.lean
 
-::: {#lh:L53}
-`L53`
-:::
+**`L53`**[]{#lh:L53}
 
-::: {#lh:L54}
-`L54`
-:::
+**`L54`**[]{#lh:L54} Leverage/BridgeToDQ.lean
 
-::: {#lh:L55}
-`L55`
-:::
+**`L55`**[]{#lh:L55} Leverage/BridgeToDQ.lean
 
-::: {#lh:L56}
-`L56`
-:::
+**`L56`**[]{#lh:L56} paper4/DecisionQuotient/ClaimClosure.lean
 
-::: {#lh:LP38}
-`LP38`
-:::
+**`LP38`**[]{#lh:LP38} paper4/DecisionQuotient/Physics/LocalityPhysics.lean
 
-::: {#lh:LP43}
-`LP43`
-:::
+**`LP43`**[]{#lh:LP43} paper4/DecisionQuotient/Physics/LocalityPhysics.lean
 
-::: {#lh:LP44}
-`LP44`
+**`LP44`**[]{#lh:LP44} paper4/DecisionQuotient/Physics/LocalityPhysics.lean
+
+**`ORA1`**[]{#lh:ORA1} paper2/Ssot/Coherence.lean
 :::
+
+::: longtable
+\@p0.05p0.42p0.05p0.42@ **ID** & **Lean Handle / Source** & **ID** & **Lean Handle / Source**\
+**ID** & **Lean Handle / Source** & **ID** & **Lean Handle / Source**\
+\
+[**`BA7`**]{#lh:BA7} & `Physics.BoundedAcquisition.energy_ge_srank_cost`
+
+& [**`DQ1`**]{#lh:DQ1} & `DecisionQuotient.Physics.BoundedAcquisition.energy_ge_srank_cost`
+
+\
+[**`EP1`**]{#lh:EP1} & `Physics.LocalityPhysics.landauer_principle` & [**`EP4`**]{#lh:EP4} & `Physics.LocalityPhysics.nontrivial_physics`
+
+\
+[**`FXI1`**]{#lh:FXI1} & `fixed_axis_incompleteness`
+
+& [**`L1`**]{#lh:L1} & `matroid_basis_equicardinality`
+
+\
+[**`L2`**]{#lh:L2} & `Leverage.Physical.feasible_iff_floor_le_budget`
+
+& [**`L3`**]{#lh:L3} & `Leverage.Physical.higher_leverage_same_caps_implies_lower_energy`
+
+\
+[**`L4`**]{#lh:L4} & `l4_exchange_wrapper`
+
+& [**`L5`**]{#lh:L5} & `l5_exchange_wrapper`
+
+\
+[**`L6`**]{#lh:L6} & `nonorthogonal_complete_has_redundant_axis`
+
+& [**`L7`**]{#lh:L7} & `exists_semanticallyMinimal_subset`
+
+\
+[**`L8`**]{#lh:L8} & `exists_orthogonal_semanticallyMinimal_subset`
+
+& [**`L9`**]{#lh:L9} & `Leverage.SSOT.modification_ratio`
+
+\
+[**`L10`**]{#lh:L10} & `Leverage.SSOT.paper2_is_leverage_instance`
+
+& [**`L11`**]{#lh:L11} & `Leverage.SSOT.ssot_leverage_dominance`
+
+\
+[**`L12`**]{#lh:L12} & `Leverage.Typing.capability_gap`
+
+& [**`L13`**]{#lh:L13} & `Leverage.Typing.nominal_dominates_duck`
+
+\
+[**`L14`**]{#lh:L14} & `Leverage.Typing.paper1_is_leverage_instance`
+
+& [**`L15`**]{#lh:L15} & `Leverage.architecture_axes_independent`
+
+\
+[**`L16`**]{#lh:L16} & `Leverage.bernoulli_justifies_linear_model`
+
+& [**`L17`**]{#lh:L17} & `Leverage.compose_dof`
+
+\
+[**`L18`**]{#lh:L18} & `Leverage.composition_caps_additive`
+
+& [**`L19`**]{#lh:L19} & `Leverage.composition_dof_additive`
+
+\
+[**`L20`**]{#lh:L20} & `Leverage.correctness_probability`
+
+& [**`L21`**]{#lh:L21} & `Leverage.dof_ratio_predicts_error_ratio`
+
+\
+[**`L22`**]{#lh:L22} & `Leverage.dof_reliability_isomorphism`
+
+& [**`L23`**]{#lh:L23} & `Leverage.error_independence_from_orthogonality`
+
+\
+[**`L24`**]{#lh:L24} & `Leverage.error_probability_denom_pos`
+
+& [**`L25`**]{#lh:L25} & `Leverage.expected_errors_from_linearity`
+
+\
+[**`L26`**]{#lh:L26} & `Leverage.expected_errors_linear`
+
+& [**`L27`**]{#lh:L27} & `Leverage.isomorphism_preserves_failure_ordering`
+
+\
+[**`L28`**]{#lh:L28} & `Leverage.leverage_caps_principle`
+
+& [**`L29`**]{#lh:L29} & `Leverage.leverage_error_tradeoff`
+
+\
+[**`L30`**]{#lh:L30} & `Leverage.leverage_gap`
+
+& [**`L31`**]{#lh:L31} & `Leverage.leverage_maximization_principle`
+
+\
+[**`L32`**]{#lh:L32} & `Leverage.linear_model_preserves_ordering`
+
+& [**`L33`**]{#lh:L33} & `Leverage.lower_dof_lower_errors`
+
+\
+[**`L34`**]{#lh:L34} & `Leverage.max_leverage_is_optimal`
+
+& [**`L35`**]{#lh:L35} & `Leverage.metaprogramming_dominates`
+
+\
+[**`L36`**]{#lh:L36} & `Leverage.metaprogramming_unbounded_leverage`
+
+& [**`L37`**]{#lh:L37} & `Leverage.modification_eq_dof`
+
+\
+[**`L38`**]{#lh:L38} & `Leverage.optimal_minimizes_error`
+
+& [**`L39`**]{#lh:L39} & `Leverage.ordering_equivalence_exact`
+
+\
+[**`L40`**]{#lh:L40} & `Leverage.series_error_probability`
+
+& [**`L41`**]{#lh:L41} & `Leverage.system_is_correct`
+
+\
+[**`L42`**]{#lh:L42} & `Leverage.testable_modification_prediction`
+
+& [**`L43`**]{#lh:L43} & `dof_eq_srank`
+
+\
+[**`L44`**]{#lh:L44} & `dof_one_iff_max_leverage`
+
+& [**`L45`**]{#lh:L45} & `england_replication_inequality`
+
+\
+[**`L46`**]{#lh:L46} & `incoherent_srank_gt_one`
+
+& [**`L47`**]{#lh:L47} & `max_coherence_forces_tractability`
+
+\
+[**`L48`**]{#lh:L48} & `max_leverage_forces_dof_one`
+
+& [**`L49`**]{#lh:L49} & `srank_energy_lower_bound`
+
+\
+[**`L50`**]{#lh:L50} & `ssot_max_leverage`
+
+& [**`L51`**]{#lh:L51} & `ssot_srank_one`
+
+\
+[**`L52`**]{#lh:L52} & `succ_le_two_pow`
+
+& [**`L53`**]{#lh:L53} & `sufficiency_conp_hard`\
+[**`L54`**]{#lh:L54} & `thermodynamic_selection`
+
+& [**`L55`**]{#lh:L55} & `thermodynamic_selection_unconditional`
+
+\
+[**`L56`**]{#lh:L56} & `tractable_bounded_core`
+
+& [**`LP38`**]{#lh:LP38} & `Physics.LocalityPhysics.pne_np_necessary_for_physics`
+
+\
+[**`LP43`**]{#lh:LP43} & `Physics.LocalityPhysics.without_separation_no_independence`
+
+& [**`LP44`**]{#lh:LP44} & `Physics.LocalityPhysics.without_finite_capacity_no_gap`
+
+\
+[**`ORA1`**]{#lh:ORA1} & `oracle_arbitrary`
 
-::: {#lh:ORA1}
-`ORA1`
+& &\
 :::
-::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
-
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ID             | Handle                                                       | ID             | Handle                                                             |
-+:===============+:=============================================================+:===============+:===================================================================+
-| ID             | Handle                                                       | ID             | Handle                                                             |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:BA7}  | `Physics.BoundedAcquisition.energy_ge_srank_cost`            | ::: {#lh:DQ1}  | `DecisionQuotient.Physics.BoundedAcquisition.energy_ge_srank_cost` |
-| `BA7`          |                                                              | `DQ1`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:EP1}  | `Physics.LocalityPhysics.landauer_principle`                 | ::: {#lh:EP4}  | `Physics.LocalityPhysics.nontrivial_physics`                       |
-| `EP1`          |                                                              | `EP4`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:FXI1} | `fixed_axis_incompleteness`                                  | ::: {#lh:L1}   | `matroid_basis_equicardinality`                                    |
-| `FXI1`         |                                                              | `L1`           |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L2}   | `Leverage.Physical.feasible_iff_floor_le_budget`             | ::: {#lh:L3}   | `Leverage.Physical.higher_leverage_same_caps_implies_lower_energy` |
-| `L2`           |                                                              | `L3`           |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L4}   | `l4_exchange_wrapper`                                        | ::: {#lh:L5}   | `l5_exchange_wrapper`                                              |
-| `L4`           |                                                              | `L5`           |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L6}   | `nonorthogonal_complete_has_redundant_axis`                  | ::: {#lh:L7}   | `exists_semanticallyMinimal_subset`                                |
-| `L6`           |                                                              | `L7`           |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L8}   | `exists_orthogonal_semanticallyMinimal_subset`               | ::: {#lh:L9}   | `Leverage.SSOT.modification_ratio`                                 |
-| `L8`           |                                                              | `L9`           |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L10}  | `Leverage.SSOT.paper2_is_leverage_instance`                  | ::: {#lh:L11}  | `Leverage.SSOT.ssot_leverage_dominance`                            |
-| `L10`          |                                                              | `L11`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L12}  | `Leverage.Typing.capability_gap`                             | ::: {#lh:L13}  | `Leverage.Typing.nominal_dominates_duck`                           |
-| `L12`          |                                                              | `L13`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L14}  | `Leverage.Typing.paper1_is_leverage_instance`                | ::: {#lh:L15}  | `Leverage.architecture_axes_independent`                           |
-| `L14`          |                                                              | `L15`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L16}  | `Leverage.bernoulli_justifies_linear_model`                  | ::: {#lh:L17}  | `Leverage.compose_dof`                                             |
-| `L16`          |                                                              | `L17`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L18}  | `Leverage.composition_caps_additive`                         | ::: {#lh:L19}  | `Leverage.composition_dof_additive`                                |
-| `L18`          |                                                              | `L19`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L20}  | `Leverage.correctness_probability`                           | ::: {#lh:L21}  | `Leverage.dof_ratio_predicts_error_ratio`                          |
-| `L20`          |                                                              | `L21`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L22}  | `Leverage.dof_reliability_isomorphism`                       | ::: {#lh:L23}  | `Leverage.error_independence_from_orthogonality`                   |
-| `L22`          |                                                              | `L23`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L24}  | `Leverage.error_probability_denom_pos`                       | ::: {#lh:L25}  | `Leverage.expected_errors_from_linearity`                          |
-| `L24`          |                                                              | `L25`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L26}  | `Leverage.expected_errors_linear`                            | ::: {#lh:L27}  | `Leverage.isomorphism_preserves_failure_ordering`                  |
-| `L26`          |                                                              | `L27`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L28}  | `Leverage.leverage_caps_principle`                           | ::: {#lh:L29}  | `Leverage.leverage_error_tradeoff`                                 |
-| `L28`          |                                                              | `L29`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L30}  | `Leverage.leverage_gap`                                      | ::: {#lh:L31}  | `Leverage.leverage_maximization_principle`                         |
-| `L30`          |                                                              | `L31`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L32}  | `Leverage.linear_model_preserves_ordering`                   | ::: {#lh:L33}  | `Leverage.lower_dof_lower_errors`                                  |
-| `L32`          |                                                              | `L33`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L34}  | `Leverage.max_leverage_is_optimal`                           | ::: {#lh:L35}  | `Leverage.metaprogramming_dominates`                               |
-| `L34`          |                                                              | `L35`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L36}  | `Leverage.metaprogramming_unbounded_leverage`                | ::: {#lh:L37}  | `Leverage.modification_eq_dof`                                     |
-| `L36`          |                                                              | `L37`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L38}  | `Leverage.optimal_minimizes_error`                           | ::: {#lh:L39}  | `Leverage.ordering_equivalence_exact`                              |
-| `L38`          |                                                              | `L39`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L40}  | `Leverage.series_error_probability`                          | ::: {#lh:L41}  | `Leverage.system_is_correct`                                       |
-| `L40`          |                                                              | `L41`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L42}  | `Leverage.testable_modification_prediction`                  | ::: {#lh:L43}  | `dof_eq_srank`                                                     |
-| `L42`          |                                                              | `L43`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L44}  | `dof_one_iff_max_leverage`                                   | ::: {#lh:L45}  | `england_replication_inequality`                                   |
-| `L44`          |                                                              | `L45`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L46}  | `incoherent_srank_gt_one`                                    | ::: {#lh:L47}  | `max_coherence_forces_tractability`                                |
-| `L46`          |                                                              | `L47`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L48}  | `max_leverage_forces_dof_one`                                | ::: {#lh:L49}  | `srank_energy_lower_bound`                                         |
-| `L48`          |                                                              | `L49`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L50}  | `ssot_max_leverage`                                          | ::: {#lh:L51}  | `ssot_srank_one`                                                   |
-| `L50`          |                                                              | `L51`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L52}  | `succ_le_two_pow`                                            | ::: {#lh:L53}  | `sufficiency_conp_hard`                                            |
-| `L52`          |                                                              | `L53`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L54}  | `thermodynamic_selection`                                    | ::: {#lh:L55}  | `thermodynamic_selection_unconditional`                            |
-| `L54`          |                                                              | `L55`          |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:L56}  | `tractable_bounded_core`                                     | ::: {#lh:LP38} | `Physics.LocalityPhysics.pne_np_necessary_for_physics`             |
-| `L56`          |                                                              | `LP38`         |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:LP43} | `Physics.LocalityPhysics.without_separation_no_independence` | ::: {#lh:LP44} | `Physics.LocalityPhysics.without_finite_capacity_no_gap`           |
-| `LP43`         |                                                              | `LP44`         |                                                                    |
-| :::            |                                                              | :::            |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-| ::: {#lh:ORA1} | `oracle_arbitrary`                                           |                |                                                                    |
-| `ORA1`         |                                                              |                |                                                                    |
-| :::            |                                                              |                |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
-|                |                                                              |                |                                                                    |
-+----------------+--------------------------------------------------------------+----------------+--------------------------------------------------------------------+
 
 
   ----------------------------------------------------------------------------------------------------------------------------
@@ -1956,13 +1853,13 @@ Build command: `cd proofs && lake build`
 
   `cor:dof-monotone`                    `unspecified`          \-                        L33
 
-  `cor:dof-ratio`                       `unspecified`          \-                        L21
+  `cor:dof-ratio`                       `unspecified`          \-                        L21, L42
 
   `cor:leverage-energy`                 `unspecified`          \-                        L3, L6
 
   `cor:linear-approx`                   `unspecified`          \-                        L16, L39
 
-  `cor:physical-assumption-necessity`   `unspecified`          \-                        L8, L7
+  `cor:physical-assumption-necessity`   `unspecified`          \-                        L2, L8, L7, L4
 
   `prop:dof-additive`                   `unspecified`          \-                        L17, L19
 
@@ -2000,15 +1897,15 @@ Build command: `cd proofs && lake build`
 
   `thm:paper1-integration`              `unspecified`          \-                        L13, L14
 
-  `thm:paper2-integration`              `unspecified`          \-                        L10, L11
+  `thm:paper2-integration`              `unspecified`          \-                        L10, L11, L13, L14
 
-  `thm:physical-budget-boundary`        `unspecified`          \-                        L2, L4
+  `thm:physical-budget-boundary`        `unspecified`          \-                        L2, L3, L4, L6
 
   `thm:physical-energy-floor`           `unspecified`          \-                        L5, L1
 
   `thm:ssot-leverage`                   `unspecified`          \-                        L9, L11
 
-  `thm:testable-prediction`             `unspecified`          \-                        L42
+  `thm:testable-prediction`             `unspecified`          \-                        L30, L42
   ----------------------------------------------------------------------------------------------------------------------------
 
 *Auto summary: indexed 29 claims by hardness profile (unspecified=29).*
@@ -2095,7 +1992,7 @@ Paper-level labeled claims in this manuscript:
 
 -   Theorem [\[thm:nominal-leverage\]](#thm:nominal-leverage){reference-type="ref" reference="thm:nominal-leverage"}
 
-**Mechanization status:** 76634 lines, 3296 theorems/lemmas, 0 `sorry`, 302 files.
+**Mechanization status:** 75488 lines, 3285 theorems/lemmas, 0 `sorry`, 280 files.
 
 **Primary Lean sources:**
 
@@ -2128,6 +2025,6 @@ Paper-level labeled claims in this manuscript:
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper3_leverage/proofs/`
-- Lines: 76634
-- Theorems: 3296
+- Lines: 75488
+- Theorems: 3285
 - `sorry` placeholders: 0

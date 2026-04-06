@@ -1,0 +1,44 @@
+\section{Theorem Map for DQDock}\label{sec:theorem-map}
+
+For writing purposes, the most useful way to view the formal material is as a map from theorem families to engine responsibilities. Table~\ref{tab:theorem-map} gives the compact version. The point of the table is not merely bookkeeping. It shows where the article's main claims live and how the proof families support the runtime architecture.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}p{0.12\linewidth}p{0.38\linewidth}p{0.40\linewidth}@{}}
+\toprule
+\textbf{Handles} & \textbf{Formal role} & \textbf{DQDock consequence} \\
+\midrule
+\texttt{LS1--4} & explicit lattice-tail control for LJ-type interactions & justifies the error model behind cutoff reasoning \\
+\texttt{LJ1--6} & exact-vs-cutoff or softened LJ approximation statements & supports certified or conditionally certified LJ scoring paths \\
+\texttt{CB1--4} & Coulomb / real-space Ewald approximation packaging & supports assumption-dependent electrostatics claims \\
+\texttt{BP1--3} & gap-plus-tail bridge to bounded-potential locality & turns physical decay control into decision-safe cutoffs \\
+\texttt{MD1--7} & outside-cutoff irrelevance and molecular structural-rank bounds & explains pocket-local tractability and thermodynamic interpretation \\
+\texttt{APX1--3} & abstract uniform approximation and optimizer invariance & explains when coarse screening preserves exact winners \\
+\texttt{SD1--9} & sampled-docking transport of exact/coarse and locality guarantees & supports finite candidate-set docking and restricted support claims \\
+\texttt{TK1--6} & pairwise order, ambiguity-band, and top-k preservation & supports ranking-safe filtering and survivor-set reasoning \\
+\texttt{CP1} & sound pruning certificate & formal basis for certified elimination of hopeless poses \\
+\texttt{GD1--3} & grid/discretization transport from continuous control to finite approximation & supports grid-based or discretized variants of the engine \\
+\bottomrule
+\end{tabular}
+\caption{Handle families added for the docking/computational-chemistry layer of Paper~4 and their intended role in DQDock.}
+\label{tab:theorem-map}
+\end{table}
+
+Three interpretive lessons follow from this map. First, the formal core is strongest on approximation, locality, and ranking preservation. Second, the map already supports a substantial theorem-backed docking story across the key reductions used by the engine. Third, the code and proof layers line up best when the paper speaks in terms of certified reductions: exact scorer to coarse scorer, ambient coordinates to pocket-local coordinates, large candidate set to certified survivor set.
+
+These reductions suggest a concise paper-facing theorem narrative:
+\begin{enumerate}
+\item exact physical interaction tails admit explicit approximation control;
+\item approximation control plus positive decision gap yields exact winner preservation;
+\item winner preservation plus cutoff locality yields pocket-local structural rank;
+\item pocket-local structural rank and sampled-docking transport justify restricted candidate families;
+\item ranking-preservation and pruning theorems turn those restrictions into certified screening logic.
+\end{enumerate}
+This five-step progression is, in effect, the formal skeleton of DQDock.
+
+\paragraph{What can be claimed directly.}
+The paper can directly claim that DQDock is organized around theorem-backed sufficient conditions for safe cutoff locality, winner preservation under bounded approximation, and certified top-k / pruning behavior. These are concrete support statements for the implemented system. In particular, the structural-rank theorems \leanmeta{\LHrng{MD}{1}{7}.} and the ranking/pruning theorems \leanmeta{\LHrng{TK}{1}{6}, \LH{CP1}.} support a clear formal statement of why the engine is allowed to ignore, coarsen, or discard certain information.
+
+\paragraph{Assumption-dependent layers.}
+The theorem map contains packaging theorems as well as direct invariance theorems. The Coulomb and Ewald layer, for example, is theorem-backed once the relevant physical assumptions are supplied. Likewise, the sampled-docking transport results require support and compatibility hypotheses. The article can therefore state the formal architecture positively: the most important approximation and pruning moves in DQDock are controlled by explicit theorem families, while the remaining physics and engineering assumptions are surfaced clearly alongside them.

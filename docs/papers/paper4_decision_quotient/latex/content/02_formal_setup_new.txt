@@ -1,0 +1,1 @@
+MINIMUM-SUFFICIENT-SET & apparent $\exists I\,\forall (s,s')$ check & smallest sufficient support & collapses to relevance containment in static regime \\

@@ -5,7 +5,7 @@ The preceding sections characterize the zero-error capacity, strong-power scalin
 
 \subsection{Derivation as the Single-Source Structure}\label{sec:ssot-def}
 
-An encoding system has \emph{unit independent rate} when $\text{DOF}(C,F)=1$. By Proposition~\ref{thm:dof-one-coherence}, this is exactly the regime in which every reachable state remains coherent. By Proposition~\ref{thm:dof-gt-one-incoherence}, any rate above $1$ admits reachable disagreement states. Thus unit rate is the unique exact-consistency boundary, and the later rate-complexity statements are its operational cost interpretation.\leanmeta{\LHrng{COH}{1}{2}, \LH{BND1}, \LH{RAT1}, \LH{RED1}}
+An encoding system has \emph{unit independent rate} when $\text{DOF}(C,F)=1$. By Corollary~\ref{thm:coherence-capacity}, this is exactly the regime in which every reachable state remains coherent, and any rate above $1$ admits reachable disagreement states. Thus unit rate is the unique exact-consistency boundary, and the later rate-complexity statements are its operational cost interpretation.\leanmeta{\LHrng{COH}{1}{2}, \LH{BND1}, \LH{RAT1}, \LH{RED1}}
 
 \subsection{Reading the Converse at Unit Rate}\label{sec:info-sketches}
 
@@ -32,7 +32,7 @@ If $L_{\text{derived}}$ is derived from $L_{\text{source}}$, then $L_{\text{deri
 By Definition~\ref{def:derivation}, the value at $L_{\text{derived}}$ is determined by the value at $L_{\text{source}}$ under admissible updates. There is therefore no reachable state in which the two locations carry incompatible values for the same fact. Since the derived location has no independently writable contribution, it does not increase DOF.
 \end{proof}
 
-If all encodings of $F$ except one are derived from that one, then Proposition~\ref{thm:derivation-excludes} leaves exactly one independent source, hence $\text{DOF}(C,F)=1$ and exact consistency follows from Proposition~\ref{thm:dof-one-coherence}.\leanmeta{\LH{DER2}, \LH{COH1}}
+If all encodings of $F$ except one are derived from that one, then Proposition~\ref{thm:derivation-excludes} leaves exactly one independent source, hence $\text{DOF}(C,F)=1$ and exact consistency follows from Corollary~\ref{thm:coherence-capacity}.\leanmeta{\LH{DER2}, \LH{COH1}}
 
 The same dependence structure can be realized in many host systems. Its role here is only to prepare the realizability criterion.
 

@@ -1,0 +1,32 @@
+\section{Decision-Relevant Docking Framework}\label{sec:framework}
+
+We model docking as a decision problem in which actions are candidate ligand poses and states encode the molecular context relevant to scoring. Write $A$ for a finite candidate pose family, $S$ for the molecular state space, and $U(a,s)$ for the score or utility assigned to pose $a$ in state $s$. The decision-theoretic object is not a single energy evaluation, but the optimizer map
+\[
+\Opt(s) := \arg\min_{a \in A} U(a,s),
+\]
+or, when one prefers maximization language, the equivalent optimal-action correspondence after sign reversal. A coordinate is relevant when changing it can change that optimizer. A representation or approximation is acceptable only when it preserves the optimizer exactly, or preserves the top-$k$ / survivor structure under an explicit certified relaxation.
+
+This paper imports that language from the decision-quotient program because it cleanly separates three questions that are often blurred in docking practice. First, what is the exact scorer? Second, what coarse scorer or reduced coordinate set is actually evaluated by the engine? Third, under what conditions does the reduced computation preserve the same docking decision? In ordinary docking pipelines, these questions are often answered heuristically. In the DQDock setting, the aim is to attach theorem-level statements to as many of them as possible.
+
+The key invariant has the familiar margin form. If $U$ is the exact scorer and $\widetilde U$ is a coarse scorer with uniform error
+\[
+\sup_{a \in A} |U(a,s) - \widetilde U(a,s)| \leq \delta,
+\]
+then any strict winner with gap greater than $2\delta$ is preserved by the coarse scorer. The paper's approximation and ranking claims are all variations on this template. Some are stated directly for exact winner preservation; others are stated for top-$k$ containment, ambiguity bands near a decision boundary, or safe pruning certificates.
+
+This is the paper's formal expression of leverage. A docking engine becomes both faster and more accurate only if the information it discards is genuinely irrelevant to the decision. The margin inequality is the local certificate of that irrelevance. Whenever it holds, the engine is free to replace a larger exact computation by a smaller coarse one without changing the winner.
+
+\paragraph{Proof-status vocabulary.}
+The codebase makes this separation explicit by labeling components as \emph{certified}, \emph{conditionally certified}, \emph{empirical}, or \emph{heuristic}. Certified components are backed by Lean theorems without additional domain assumptions beyond their formal hypotheses. Conditionally certified components are theorem-backed subject to stated physical assumptions, such as cutoff decay bounds, positivity of strict utility gaps, or Ewald convergence hypotheses. Empirical components are experimentally fixed constants such as van der Waals radii or the Boltzmann constant. Heuristic components are engineering choices whose validity must be established experimentally rather than deductively. This vocabulary is not cosmetic: it is part of the mathematical semantics of the system architecture.
+
+\paragraph{Why structural rank matters.}
+The key theorem-side summary is that if a docking problem has only a small set of decision-relevant coordinates, then the engine need only preserve distinctions along that low-dimensional core. In Paper~4 language, this is captured by structural rank. For docking, the important question is therefore not whether the full molecular state is large, but whether the optimizer depends only on a pocket-local subset of it. The handle families \leanmeta{\LHrng{MD}{1}{7}, \LHrng{BP}{1}{3}.} formalize exactly this point: if outside-cutoff perturbations are too small to overturn the strict decision gap, then the corresponding coordinates are irrelevant, and the effective decision dimension collapses to a pocket-local quantity.
+
+This perspective also clarifies the intended meaning of tractability in the paper. The claim is not that docking becomes easy in the worst-case complexity-theoretic sense for arbitrary chemistry instances. The claim is that there is a mathematically identifiable low-information regime in which relevant variation is concentrated in a small pocket-local set of coordinates. In that regime, the engine can route computation through certified or conditionally certified approximations without changing the docking decision, because the omitted information has already been shown to be decision-irrelevant.
+
+So the operative contrast is not exact versus approximate computation in the abstract. It is generic approximation versus \emph{decision-relevant} approximation. Generic approximation may remove signal together with cost. Decision-relevant approximation removes only structure that the theorem says cannot change the answer. That distinction is what lets the present paper treat compression as a scientific advantage rather than as a necessary evil.
+
+\paragraph{The engine-level interpretation.}
+Viewed this way, DQDock is not merely a search routine over a continuous pose space. It is a sequence of certified or semi-certified reductions from a larger exact docking problem to a smaller practical one: exact potentials are approximated by cutoff or softened surrogates, ambient molecular coordinates are reduced to pocket-local coordinates, sampled candidate sets stand in for larger action families, and coarse filters stand in for exact re-ranking only when explicit margin conditions justify them. The formal work of the paper is to articulate these reductions and the conditions under which they are decision-safe.
+
+That interpretation is also what distinguishes the paper from a standard software description. The software architecture matters because it realizes a sequence of exact-preservation claims. The theory matters because it says what the software is allowed to forget, approximate, or prune without changing the docking decision it is meant to compute.

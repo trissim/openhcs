@@ -280,6 +280,7 @@ class PaperMeta:
     experiment_paths: Tuple[str, ...] = ()
     experiment_commands: Tuple[str, ...] = ()
     supplementary_file: str = ""
+    cover_letter_file: str = ""
 
     @classmethod
     def from_dict(cls, paper_id: str, d: dict) -> "PaperMeta":
@@ -303,6 +304,7 @@ class PaperMeta:
             experiment_paths=tuple(d.get("experiment_paths", [])),
             experiment_commands=tuple(d.get("experiment_commands", [])),
             supplementary_file=d.get("supplementary_file", ""),
+            cover_letter_file=d.get("cover_letter_file", ""),
         )
 
 
@@ -4547,6 +4549,35 @@ end {module_root}
                 supp_dest = releases_dir / f"{paper_id}_supplementary.pdf"
                 shutil.copy2(supp_pdf, supp_dest)
                 print(f"[build] ✓ {paper_id}_supplementary.pdf → releases/")
+                # Package supplementary materials (Lean proofs, experiments)
+                self.package_supplementary(paper_id)
+
+        # Build cover letter if specified
+        cover_file_name = meta.cover_letter_file
+        if cover_file_name:
+            cover_file = latex_dir / cover_file_name
+            if cover_file.exists():
+                print(f"[build] Building cover letter...")
+                cover_build_steps = [
+                    (["pdflatex", "-interaction=nonstopmode", cover_file_name], "pdflatex (1/3)"),
+                    (["bibtex", Path(cover_file_name).stem], "bibtex"),
+                    (["pdflatex", "-interaction=nonstopmode", cover_file_name], "pdflatex (2/3)"),
+                    (["pdflatex", "-interaction=nonstopmode", cover_file_name], "pdflatex (3/3)"),
+                ]
+                for cmd, step_name in cover_build_steps:
+                    subprocess.run(
+                        cmd,
+                        cwd=latex_dir,
+                        capture_output=True,
+                        text=True,
+                        encoding="latin-1",
+                        errors="replace",
+                    )
+                cover_pdf = latex_dir / (Path(cover_file_name).stem + ".pdf")
+                if cover_pdf.exists():
+                    cover_dest = releases_dir / f"{paper_id}_cover_letter.pdf"
+                    shutil.copy2(cover_pdf, cover_dest)
+                    print(f"[build] ✓ {paper_id}_cover_letter.pdf → releases/")
 
     def build_submission(self, paper_id: str, verbose: bool = False):
         """Build review-submission PDF with venue-specific formatting.

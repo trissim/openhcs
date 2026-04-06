@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
+  <title id="title">Distortion curve for a collision block of size 100</title>
+  <desc id="desc">Plot of D star of L equals max of 0 and 1 minus 2 to the L over 100. The curve stays high for small L and drops sharply near the threshold log2(100) about 6.64. Points at L equals 0, 5, 6, and 7 are annotated.</desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.10" />
+    </filter>
+    <style>
+      .bg { fill: #fcfaf6; }
+      .card { fill: #ffffff; stroke: #d9d2c3; stroke-width: 1.5; filter: url(#shadow); }
+      .title { font: 700 28px Georgia, 'Times New Roman', serif; fill: #22313f; }
+      .subtitle { font: 600 19px Georgia, 'Times New Roman', serif; fill: #405865; }
+      .axis { stroke: #334750; stroke-width: 2.2; }
+      .grid { stroke: #d9e2e4; stroke-width: 1.2; }
+      .gridMinor { stroke: #edf1f2; stroke-width: 1; }
+      .tick { font: 14px 'Helvetica Neue', Helvetica, Arial, sans-serif; fill: #55636b; }
+      .label { font: 17px 'Helvetica Neue', Helvetica, Arial, sans-serif; fill: #31424d; }
+      .note { font: 15px 'Helvetica Neue', Helvetica, Arial, sans-serif; fill: #31424d; }
+      .callout { font: 14px 'Helvetica Neue', Helvetica, Arial, sans-serif; fill: #31424d; }
+      .curveFill { fill: #f4a261; fill-opacity: 0.22; }
+      .curve { fill: none; stroke: #d97732; stroke-width: 4.5; stroke-linejoin: round; stroke-linecap: round; }
+      .threshold { stroke: #2c6e73; stroke-width: 2.5; stroke-dasharray: 9 8; }
+      .pointA { fill: #b5522c; }
+      .pointB { fill: #d97732; }
+      .pointC { fill: #2c6e73; }
+      .pointD { fill: #3b7d3c; }
+      .leader { stroke: #66757e; stroke-width: 1.8; fill: none; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1200" height="680" />
+  <rect class="card" x="42" y="40" width="1116" height="598" rx="24" />
+
+  <text class="title" x="80" y="88">Uniform single-block distortion curve</text>
+  <text class="subtitle" x="80" y="118">D*(L) = max(0, 1 - 2^L / a) with a = 100</text>
+
+  <g>
+    <line class="grid" x1="110" y1="160" x2="1020" y2="160" />
+    <line class="gridMinor" x1="110" y1="226" x2="1020" y2="226" />
+    <line class="grid" x1="110" y1="292" x2="1020" y2="292" />
+    <line class="gridMinor" x1="110" y1="358" x2="1020" y2="358" />
+    <line class="grid" x1="110" y1="424" x2="1020" y2="424" />
+    <line class="gridMinor" x1="110" y1="490" x2="1020" y2="490" />
+    <line class="grid" x1="110" y1="556" x2="1020" y2="556" />
+
+    <line class="gridMinor" x1="110" y1="160" x2="110" y2="556" />
+    <line class="gridMinor" x1="240" y1="160" x2="240" y2="556" />
+    <line class="gridMinor" x1="370" y1="160" x2="370" y2="556" />
+    <line class="gridMinor" x1="500" y1="160" x2="500" y2="556" />
+    <line class="gridMinor" x1="630" y1="160" x2="630" y2="556" />
+    <line class="gridMinor" x1="760" y1="160" x2="760" y2="556" />
+    <line class="gridMinor" x1="890" y1="160" x2="890" y2="556" />
+    <line class="gridMinor" x1="1020" y1="160" x2="1020" y2="556" />
+
+    <line class="axis" x1="110" y1="556" x2="1020" y2="556" />
+    <line class="axis" x1="110" y1="556" x2="110" y2="160" />
+
+    <text class="tick" x="96" y="561" text-anchor="end">0.0</text>
+    <text class="tick" x="96" y="495" text-anchor="end">0.2</text>
+    <text class="tick" x="96" y="429" text-anchor="end">0.4</text>
+    <text class="tick" x="96" y="363" text-anchor="end">0.6</text>
+    <text class="tick" x="96" y="297" text-anchor="end">0.8</text>
+    <text class="tick" x="96" y="165" text-anchor="end">1.0</text>
+
+    <text class="tick" x="110" y="582" text-anchor="middle">0</text>
+    <text class="tick" x="240" y="582" text-anchor="middle">1</text>
+    <text class="tick" x="370" y="582" text-anchor="middle">2</text>
+    <text class="tick" x="500" y="582" text-anchor="middle">3</text>
+    <text class="tick" x="630" y="582" text-anchor="middle">4</text>
+    <text class="tick" x="760" y="582" text-anchor="middle">5</text>
+    <text class="tick" x="890" y="582" text-anchor="middle">6</text>
+    <text class="tick" x="1020" y="582" text-anchor="middle">7</text>
+
+    <text class="label" x="565" y="620" text-anchor="middle">L (auxiliary bits)</text>
+    <text class="label" x="38" y="366" transform="rotate(-90 38 366)" text-anchor="middle">D*(L)</text>
+  </g>
+
+  <path class="curveFill" d="M 110 164 L 175 166 L 240 168 L 305 173 L 370 184 L 435 203 L 500 236 L 565 289 L 630 371 L 695 480 L 738 556 L 1020 556 L 110 556 Z" />
+  <path class="curve" d="M 110 164 L 175 166 L 240 168 L 305 173 L 370 184 L 435 203 L 500 236 L 565 289 L 630 371 L 695 480 L 738 556 L 1020 556" />
+
+  <line class="threshold" x1="738" y1="160" x2="738" y2="556" />
+  <text class="note" x="752" y="185">threshold: log2(100) ~= 6.64</text>
+
+  <circle class="pointA" cx="110" cy="164" r="6.5" />
+  <circle class="pointB" cx="760" cy="289" r="6.5" />
+  <circle class="pointC" cx="890" cy="413" r="6.5" />
+  <circle class="pointD" cx="1020" cy="556" r="6.5" />
+
+  <path class="leader" d="M 118 164 C 180 132, 205 132, 255 140" />
+  <text class="callout" x="264" y="135">L = 0  =>  D = 99%</text>
+
+  <path class="leader" d="M 760 289 C 815 255, 845 255, 890 260" />
+  <text class="callout" x="900" y="255">L = 5  =>  D = 68%</text>
+
+  <path class="leader" d="M 890 413 C 950 390, 970 390, 1015 396" />
+  <text class="callout" x="1025" y="392">L = 6  =>  D = 36%</text>
+  <text class="callout" x="1025" y="410">one bit short is still costly</text>
+
+  <path class="leader" d="M 1013 549 C 960 520, 930 518, 892 522" />
+  <text class="callout" x="744" y="520">L = 7  =>  D = 0%</text>
+  <text class="callout" x="744" y="538">zero error becomes feasible</text>
+
+  <rect x="780" y="88" width="316" height="40" rx="20" fill="#eef4f5" stroke="#c8d7da" stroke-width="1.2" />
+  <text class="note" x="938" y="114" text-anchor="middle">The drop is steep near the exact-recovery threshold.</text>
+</svg>

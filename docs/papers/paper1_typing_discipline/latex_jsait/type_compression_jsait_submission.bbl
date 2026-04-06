@@ -111,10 +111,49 @@ C.~E. Shannon, ``The zero error capacity of a noisy channel,'' \emph{IRE
 L.~Lov{\'a}sz, ``On the shannon capacity of a graph,'' \emph{IEEE Transactions
   on Information Theory}, vol.~25, no.~1, pp. 1--7, 1979.
 
-\bibitem{korner1973coding}
-J.~K{\"o}rner, ``Coding of an information source having ambiguous alphabet and
-  the entropy of graphs,'' \emph{6th Prague Conference on Information Theory},
-  pp. 411--425, 1973.
+\bibitem{gunduz2023beyond}
+D.~Gund{"u}z, Z.~Qin, I.~Estella~Aguerri, H.~S. Dhillon, Z.~Yang, A.~Yener,
+  K.-K. Wong, and C.-B. Chae, ``Beyond transmitting bits: Context, semantics,
+  and task-oriented communications,'' \emph{IEEE Journal on Selected Areas in
+  Communications}, vol.~41, no.~1, pp. 5--41, 2023.
+
+\bibitem{uysal2022semantic}
+E.~Uysal, O.~Kaya, A.~Ephremides \emph{et~al.}, ``Semantic communications in
+  networked systems: A data significance perspective,'' \emph{IEEE Network},
+  vol.~36, no.~4, pp. 233--240, 2022.
+
+\bibitem{bao2011towards}
+J.~Bao, P.~Basu, M.~Dean, C.~Partridge, A.~Swami, and W.~Leland, ``Towards a
+  theory of semantic communication,'' in \emph{2011 IEEE Network Science
+  Workshop}.\hskip 1em plus 0.5em minus 0.4em\relax IEEE, 2011, pp. 110--117.
+
+\bibitem{kountouris2021semantics}
+M.~Kountouris and N.~Pappas, ``Semantics-empowered communication for networked
+  intelligent systems,'' \emph{IEEE Communications Magazine}, vol.~59, no.~6,
+  pp. 96--102, 2021.
+
+\bibitem{Tishby2000}
+N.~Tishby, F.~C. Pereira, and W.~Bialek, ``The information bottleneck method,''
+  \emph{arXiv preprint physics/0004057}, 2000.
+
+\bibitem{blau2019rethinking}
+\BIBentryALTinterwordspacing
+Y.~Blau and T.~Michaeli, ``Rethinking lossy compression: The
+  rate-distortion-perception tradeoff,'' in \emph{Proceedings of the 36th
+  International Conference on Machine Learning}, ser. Proceedings of Machine
+  Learning Research, vol.~97, 2019, pp. 675--685. [Online]. Available:
+  \url{https://proceedings.mlr.press/v97/blau19a.html}
+\BIBentrySTDinterwordspacing
+
+\bibitem{chen2022rdp}
+J.~Chen, L.~Yu, J.~Wang, W.~Shi, Y.~Ge, and W.~Tong, ``On the
+  rate-distortion-perception function,'' \emph{IEEE Journal on Selected Areas
+  in Information Theory}, vol.~3, no.~4, pp. 664--673, 2022.
+
+\bibitem{xie2025output}
+L.~Xie, L.~Li, J.~Chen, and Z.~Zhang, ``Output-constrained lossy source coding
+  with application to rate-distortion-perception theory,'' \emph{IEEE
+  Transactions on Communications}, vol.~73, no.~3, pp. 1801--1815, 2025.
 
 \bibitem{simonyi1995graph}
 G.~Simonyi, ``Perfect graphs and graph entropy,'' \emph{Combinatorica},
@@ -138,45 +177,10 @@ H.~S. Witsenhausen, ``The zero-error side information problem and chromatic
   numbers,'' \emph{IEEE Transactions on Information Theory}, vol.~22, no.~5,
   pp. 592--593, 1976.
 
-\bibitem{gunduz2023beyond}
-D.~Gund{"u}z, Z.~Qin, I.~Estella~Aguerri, H.~S. Dhillon, Z.~Yang, A.~Yener,
-  K.-K. Wong, and C.-B. Chae, ``Beyond transmitting bits: Context, semantics,
-  and task-oriented communications,'' \emph{IEEE Journal on Selected Areas in
-  Communications}, vol.~41, no.~1, pp. 5--41, 2023.
-
-\bibitem{uysal2022semantic}
-E.~Uysal, O.~Kaya, A.~Ephremides \emph{et~al.}, ``Semantic communications in
-  networked systems: A data significance perspective,'' \emph{IEEE Network},
-  vol.~36, no.~4, pp. 233--240, 2022.
-
-\bibitem{bao2011towards}
-J.~Bao, P.~Basu, M.~Dean, C.~Partridge, A.~Swami, and W.~Leland, ``Towards a
-  theory of semantic communication,'' in \emph{2011 IEEE Network Science
-  Workshop}.\hskip 1em plus 0.5em minus 0.4em\relax IEEE, 2011, pp. 110--117.
-
-\bibitem{kountouris2021semantics}
-M.~Kountouris and N.~Pappas, ``Semantics-empowered communication for networked
-  intelligent systems,'' \emph{IEEE Communications Magazine}, vol.~59, no.~6,
-  pp. 96--102, 2021.
-
-\bibitem{koh2020concept}
-P.~W. Koh, T.~Nguyen, Y.~S. Tang, S.~Mussmann, E.~Pierson, B.~Kim, and
-  P.~Liang, ``Concept bottleneck models,'' in \emph{Proceedings of the 37th
-  International Conference on Machine Learning}, ser. Proceedings of Machine
-  Learning Research, vol. 119, 2020, pp. 5338--5348.
-
-\bibitem{garcez2020neurosymbolic}
-A.~d'Avila Garcez and L.~C. Lamb, ``Neurosymbolic {AI}: The 3rd wave,''
-  \emph{CoRR}, vol. abs/2012.05876, 2020.
-
 \bibitem{polyanskiy2010channel}
 Y.~Polyanskiy, H.~V. Poor, and S.~Verd{\'u}, ``Channel coding rate in the
   finite blocklength regime,'' \emph{IEEE Transactions on Information Theory},
   vol.~56, no.~5, pp. 2307--2359, 2010.
-
-\bibitem{ahlswede1989identification}
-R.~Ahlswede and G.~Dueck, ``Identification via channels,'' \emph{IEEE
-  Transactions on Information Theory}, vol.~35, no.~1, pp. 15--29, 1989.
 
 \bibitem{csiszar2011information}
 I.~Csisz{\'a}r and J.~K{\"o}rner, \emph{Information Theory: Coding Theorems for
@@ -190,10 +194,6 @@ D.~J.~A. Welsh, \emph{Matroid Theory}.\hskip 1em plus 0.5em minus 0.4em\relax
 \bibitem{CoverThomas2006}
 T.~M. Cover and J.~A. Thomas, \emph{Elements of Information Theory},
   2nd~ed.\hskip 1em plus 0.5em minus 0.4em\relax Wiley-Interscience, 2006.
-
-\bibitem{berger1971rate}
-T.~Berger, \emph{Rate Distortion Theory: A Mathematical Basis for Data
-  Compression}.\hskip 1em plus 0.5em minus 0.4em\relax Prentice-Hall, 1971.
 
 \bibitem{barron1998information}
 A.~Barron, M.~J. Schervish, and L.~Wasserman, ``The information-theoretic
@@ -219,5 +219,14 @@ A.~Orlitsky and J.~R. Roche, ``Coding for computing,'' \emph{IEEE Transactions
 V.~Doshi, D.~Shah, M.~M{\'e}dard, and M.~Effros, ``Functional compression
   through graph coloring,'' \emph{IEEE Transactions on Information Theory},
   vol.~56, no.~8, pp. 3901--3917, 2010.
+
+\bibitem{ahlswede1989identification}
+R.~Ahlswede and G.~Dueck, ``Identification via channels,'' \emph{IEEE
+  Transactions on Information Theory}, vol.~35, no.~1, pp. 15--29, 1989.
+
+\bibitem{korner1973coding}
+J.~K{\"o}rner, ``Coding of an information source having ambiguous alphabet and
+  the entropy of graphs,'' \emph{6th Prague Conference on Information Theory},
+  pp. 411--425, 1973.
 
 \end{thebibliography}

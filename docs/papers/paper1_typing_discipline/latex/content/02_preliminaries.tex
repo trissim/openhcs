@@ -754,6 +754,8 @@ C\#    & \texttt{GetType()} \texttt{.Name} & \texttt{BaseType}, \texttt{GetInter
 \end{tabular}
 \end{table}
 
+\bigskip
+
 All four languages provide \textbf{runtime access to both axes}.
 
 \textbf{Clarification (Syntactic Names vs.\ Semantic Identity).} In our model, the semantic identity of a type is determined by $(B, S)$. The syntactic name (\texttt{\_\_name\_\_} in Python, \texttt{getName()} in Java) is \emph{not} computable from $(B, S)$---it is metadata assigned at definition time. When we say ``N is not an axis,'' we mean: the semantic content that determines type compatibility and capabilities is fully captured by $(B, S)$. Two types with identical $(B, S)$ are semantically equivalent for all typing purposes, even if they have different \texttt{\_\_name\_\_} strings. The syntactic name is useful for debugging and serialization but contributes no typing capability beyond what $(B, S)$ provides.
