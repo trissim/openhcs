@@ -3,22 +3,37 @@
 The following table instantiates Corollary~\ref{thm:ssot-iff} on eleven representative deterministic partial-view channel families. Each row is a witness construction verifying or falsifying the two structural requirements against the mechanized sufficiency conditions. The classification demonstrates that the realizability criterion is non-vacuous and discriminating across representative host instantiations.
 
 \begingroup
-\centering
-\scriptsize
-\setlength{\tabcolsep}{1.5pt}
-\renewcommand{\arraystretch}{1.05}
-\renewcommand{\tabularxcolumn}[1]{m{#1}}
-\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}m{0.10\linewidth}>{\RaggedRight\arraybackslash}m{0.16\linewidth}>{\centering\arraybackslash}m{0.05\linewidth}>{\centering\arraybackslash}m{0.05\linewidth}>{\centering\arraybackslash}m{0.05\linewidth}>{\centering\arraybackslash}m{0.06\linewidth}X@{}}
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\renewcommand{\arraystretch}{1.08}
+\setlength{\LTleft}{0pt}
+\setlength{\LTright}{0pt}
+\begin{longtable}{@{}>{\RaggedRight\arraybackslash}p{0.12\linewidth}>{\RaggedRight\arraybackslash}p{0.17\linewidth}>{\centering\arraybackslash}p{0.07\linewidth}>{\centering\arraybackslash}p{0.07\linewidth}>{\centering\arraybackslash}p{0.07\linewidth}>{\centering\arraybackslash}p{0.08\linewidth}>{\RaggedRight\arraybackslash}p{0.34\linewidth}@{}}
+\caption{Zero-incoherence classification of representative channel witnesses in the deterministic partial-view model. The same theorem-level coordinates apply uniformly across programming-language runtimes, databases, and dependency managers. Each entry is verified against the mechanized sufficiency conditions of Corollary~\ref{thm:ssot-iff}.}\label{tab:host-checks-a-appendix}\\
 \toprule
-\textbf{Channel} & \textbf{Instance} & \textbf{Class} & \textbf{Prop.} & \textbf{Prov.} & \textbf{Rate 1} & \textbf{Mechanism} \\
+\textbf{Channel} & \textbf{Instance} & \textbf{Class} & \textbf{Prop} & \textbf{Prov} & \textbf{Rate-1} & \textbf{Mechanism} \\
 \midrule
+\endfirsthead
+
+\toprule
+\textbf{Channel} & \textbf{Instance} & \textbf{Class} & \textbf{Prop} & \textbf{Prov} & \textbf{Rate-1} & \textbf{Mechanism} \\
+\midrule
+\endhead
+
+\midrule
+\multicolumn{7}{r}{\emph{Continued on next page}} \\
+\endfoot
+
+\bottomrule
+\endlastfoot
+
 Prog.\ languages & Python~\cite{pep487,pythondatamodel2025} & C & yes & yes & yes & Class-definition hooks and runtime hierarchy introspection are host-native.\leanmeta{\LH{PYH1}, \LH{PYI1}} \\
 \midrule
 Databases & Engine-maintained materialized view~\cite{postgresMaterializedViews2025,postgresPgMatviews2025} & C & yes & yes & yes & Engine maintains the derived relation and exposes catalog metadata.\leanmeta{\LHrng{DBV}{1}{3}} \\
 \midrule
-Prog.\ languages & Rust~\cite{rustref2024} & B & partial & no & no & Compile-time macro generation exists, but the compiled runtime artifact does not retain derivation provenance.\leanmeta{\LH{RUH1}, \LH{RUI1}} \\
+Prog.\ languages & Rust~\cite{rustref2024} & B & part. & no & no & Compile-time macro generation exists, but the compiled runtime artifact does not retain derivation provenance.\leanmeta{\LH{RUH1}, \LH{RUI1}} \\
 \midrule
-Prog.\ languages & TypeScript / JavaScript~\cite{typescriptDecorators2025,javascriptDecorators2025} & B & partial & no & no & Decorators can attach metadata, but type erasure and missing subclass provenance block exact verification.\leanmeta{\LH{TSE1}, \LH{TSN1}} \\
+Prog.\ languages & TypeScript / JavaScript~\cite{typescriptDecorators2025,javascriptDecorators2025} & B & part. & no & no & Decorators can attach metadata, but type erasure and missing subclass provenance block exact verification.\leanmeta{\LH{TSE1}, \LH{TSN1}} \\
 \midrule
 Prog.\ languages & Java~\cite{gosling2021java} & A/B & no & no & no & Under the runtime-only host interpretation used here, annotations are external to the JVM runtime.\leanmeta{\LH{JVA1}} \\
 \midrule
@@ -33,9 +48,5 @@ Deps. & Cargo~\cite{cargoLockGuide2026,cargoTree2026,cargoMetadata2026} & A & no
 Deps. & Poetry~\cite{poetryCli2026} & A & no & yes & no & The resolved graph is queryable, but lock regeneration is an explicit step rather than part of the source edit itself.\leanmeta{\LHrng{POT}{1}{3}} \\
 \midrule
 Deps. & pnpm~\cite{pnpmInstall2026,pnpmWhy2026,pnpmList2026} & A & no & yes & no & Provenance is queryable, but the lockfile remains separately maintained rather than automatically updated.\leanmeta{\LHrng{PNM}{1}{3}} \\
-\bottomrule
-\end{tabularx}
-\par\smallskip
-{\nobreak\textbf{Table A.1.} Zero-incoherence classification of representative channel witnesses in the deterministic partial-view model. The same theorem-level coordinates apply uniformly across programming-language runtimes, databases, and dependency managers. Each entry is verified against the mechanized sufficiency conditions of Corollary~\ref{thm:ssot-iff}.}
-\label{tab:host-checks-a-appendix}
+\end{longtable}
 \endgroup

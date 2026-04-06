@@ -1,5 +1,5 @@
-The Lean 4 formalization, supplementary proofs, manuscript PDF, and source bundle
-supporting the cited theorem handles are archived at Zenodo:
+The Lean 4 formalization, supplementary proofs, manuscript PDF, and submission
+source bundle supporting the cited theorem handles are archived in the Zenodo record:
 https://doi.org/10.5281/zenodo.19354075
 
 No separate experimental dataset is associated with this theoretical study.
