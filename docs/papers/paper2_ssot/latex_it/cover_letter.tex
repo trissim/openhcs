@@ -8,24 +8,24 @@
 
 \signature{Tristan Simas\\McGill University}
 
-\date{March 31, 2026}
+\date{April 6, 2026}
 
 \begin{document}
 
-\begin{letter}{Editor-in-Chief\\
-IEEE Transactions on Information Theory}
+\begin{letter}{Editors\\
+Journal of Computer and System Sciences}
 
-\opening{Dear Editor-in-Chief,}
+\opening{Dear Editors,}
 
-I submit the manuscript ``Exact Recovery Under Deterministic Partial Views: Confusability Graphs, Strong Powers, and Capacity'' for consideration as a regular paper in the IEEE Transactions on Information Theory.
+I submit the manuscript ``Exact Recovery from Deterministic Partial Views'' for consideration in the Journal of Computer and System Sciences.
 
-Unlike the classical zero-error setting where the observation law is given, here a deterministic partial-view architecture produces the confusability graph. A family of admissible coordinate-subset views induces a confusability graph on latent states; exact recovery becomes equivalent to graph colorability; repeated composition lifts the one-shot graph to its strong powers; and the resulting normalized block rates converge to the Shannon capacity of the induced graph. On the full labeled tuple space, the realizable confusability relations are characterized exactly: they are precisely those determined by upward-closed families of coordinate-agreement sets. The capacity bounds inherit the standard Lov\'asz-$\vartheta$ upper theory, applied to the model-induced graph class.
+The paper studies exact recovery from deterministic partial views of finite latent tuples. Its core contribution is a model-generated graph theory: admissible coordinate-subset views induce a confusability graph on latent states, exact recovery becomes equivalent to graph colorability, repeated composition lifts the one-shot graph to strong powers, and the normalized block rates converge to the Shannon capacity of the induced graph. On the full labeled tuple space, the realizable confusability relations are characterized exactly as those determined by upward-closed families of coordinate-agreement sets.
 
-The paper also identifies a structural equality route: when confusability is transitive, the induced graph collapses to a cluster graph, yielding capacity--$\vartheta$ equality, with meet-witnessing and fiber coherence as sufficient conditions.
+The manuscript also identifies a structural equality route for the induced graph class: when confusability is transitive, the graph collapses to a cluster graph, yielding capacity--$\vartheta$ equality, with meet-witnessing and fiber coherence as sufficient conditions. Under an affine restriction on the realized state family, the coordinate side carries a representable matroid whose rank gives tractable upper bounds on confusability and capacity.
 
-The later sections show the theory is non-vacuous: nearly all widely deployed deterministic partial-view architectures (spanning language runtimes, database engines, and dependency managers) fall into the non-trivial regime above the zero-incoherence boundary, where non-clique failure topologies and bounded exact-success rates apply.
+The main text now keeps the graph-capacity and realizability results foregrounded, while detailed boundary proofs and representative host instantiations are placed in appendices. This framing is intended to match JCSS's emphasis on computer science with relevant mathematical theory.
 
-All principal theorems are machine-checked in Lean 4. A supplementary artifact containing the formalization is available at \url{https://doi.org/10.5281/zenodo.18141365}.
+All principal theorems cited in the manuscript are machine-checked in Lean 4. A supplementary Zenodo artifact containing the formalization, manuscript PDF, and source bundle is available at \url{https://doi.org/10.5281/zenodo.19354075}.
 
 Thank you for your time and consideration.
 

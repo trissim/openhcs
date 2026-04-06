@@ -89,47 +89,19 @@ D.~B. West, \emph{Introduction to Graph Theory}, 2nd~ed.\hskip 1em plus 0.5em
 R.~Diestel, \emph{Graph Theory}, 5th~ed.\hskip 1em plus 0.5em minus 0.4em\relax
   Springer, 2017.
 
-\bibitem{imrich2008product}
-W.~Imrich, S.~Klav{\v{z}}ar, and D.~F. Rall, \emph{Product Graphs: Structure
-  and Recognition}.\hskip 1em plus 0.5em minus 0.4em\relax John Wiley \& Sons,
-  2008.
-
 \bibitem{fekete1923uber}
 M.~Fekete, ``{\"U}ber die verteilung der wurzeln bei gewissen algebraischen
   gleichungen mit ganzzahligen koeffizienten,'' \emph{Mathematische
   Zeitschrift}, vol.~17, no.~1, pp. 228--249, 1923.
 
+\bibitem{pekosz2011complexity}
+J.~P{\'e}k{\'o}s, ``Computing the shannon capacity of a graph,''
+  \emph{Optimization Letters}, vol.~5, no.~3, pp. 421--429, 2011.
+
 \bibitem{grotschel1981ellipsoid}
 M.~Gr{\"o}tschel, L.~Lov{\'a}sz, and A.~Schrijver, ``The ellipsoid method and
   its consequences in combinatorial optimization,'' \emph{Combinatorica},
   vol.~1, no.~2, pp. 169--197, 1981.
-
-\bibitem{knuth1994remark}
-D.~E. Knuth, ``The sandwich theorem,'' \emph{Electronic Journal of
-  Combinatorics}, vol.~1, no.~1, p.~A1, 1994.
-
-\bibitem{boyd2004convex}
-S.~Boyd and L.~Vandenberghe, \emph{Convex Optimization}.\hskip 1em plus 0.5em
-  minus 0.4em\relax Cambridge University Press, 2004.
-
-\bibitem{haemers1978upper}
-C.~Haemers, ``An upper bound for the shannon capacity of a graph,'' in
-  \emph{Algebraic Methods in Graph Theory, Colloquia Mathematica Societatis
-  J{\'a}nos Bolyai}, vol.~25, 1978, pp. 267--272.
-
-\bibitem{cubitt2014bounds}
-T.~Cubitt, L.~Mancinska, D.~E. Roberson, S.~Severini, D.~Stahlke, and
-  A.~Winter, ``Bounds on entanglement-assisted source-channel coding via the
-  lov\'{a}sz $\vartheta$ number and its variants,'' \emph{IEEE Transactions on
-  Information Theory}, vol.~60, no.~11, pp. 7330--7344, 2014.
-
-\bibitem{zuiddam2019asymptotic}
-J.~Zuiddam, ``The asymptotic spectrum of graphs and the shannon capacity,''
-  \emph{Combinatorica}, vol.~39, no.~5, pp. 1173--1184, 2019.
-
-\bibitem{pekosz2011complexity}
-J.~P{\'e}k{\'o}s, ``Computing the shannon capacity of a graph,''
-  \emph{Optimization Letters}, vol.~5, no.~3, pp. 421--429, 2011.
 
 \bibitem{oxley2011matroid}
 J.~Oxley, \emph{Matroid Theory}, 2nd~ed.\hskip 1em plus 0.5em minus 0.4em\relax
@@ -165,6 +137,15 @@ Y.~Liu, L.~Ong, S.~Johnson, J.~Kliewer, P.~Sadeghi, and P.~L. Yeoh,
   ``Information leakage in zero-error source coding: A graph-theoretic
   perspective,'' in \emph{2021 IEEE International Symposium on Information
   Theory (ISIT)}, 2021, pp. 2590--2595.
+
+\bibitem{haemers1978upper}
+C.~Haemers, ``An upper bound for the shannon capacity of a graph,'' in
+  \emph{Algebraic Methods in Graph Theory, Colloquia Mathematica Societatis
+  J{\'a}nos Bolyai}, vol.~25, 1978, pp. 267--272.
+
+\bibitem{zuiddam2019asymptotic}
+J.~Zuiddam, ``The asymptotic spectrum of graphs and the shannon capacity,''
+  \emph{Combinatorica}, vol.~39, no.~5, pp. 1173--1184, 2019.
 
 \bibitem{deboer2024asymptotic}
 D.~de~Boer, P.~Buys, and J.~Zuiddam, ``The asymptotic spectrum distance, graph
@@ -209,6 +190,14 @@ B.~C. Smith, ``Reflection and semantics in lisp,'' in \emph{Proceedings of the
 \bibitem{leroy2009compcert}
 X.~Leroy, ``Formal verification of a realistic compiler,'' \emph{Communications
   of the ACM}, vol.~52, no.~7, pp. 107--115, 2009.
+
+\bibitem{paper2_partial_views_artifact}
+\BIBentryALTinterwordspacing
+T.~Simas, ``Exact recovery under deterministic partial views: Confusability
+  graphs, strong powers, and capacity,'' Zenodo, 2026, supplementary Lean 4
+  formalization, manuscript PDF, and source bundle. [Online]. Available:
+  \url{https://doi.org/10.5281/zenodo.19354075}
+\BIBentrySTDinterwordspacing
 
 \bibitem{pep487}
 M.~Teich, R.~Hettinger, and Y.~Selivanov, ``{PEP 487} -- simpler customisation

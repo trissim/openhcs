@@ -14,45 +14,45 @@ Database file #1: references.bib
 Warning--empty journal in simonyi2001graph
 
 Done.
-You've used 60 entries,
+You've used 57 entries,
             4087 wiz_defined-function locations,
-            1152 strings with 15598 characters,
-and the built_in function-call counts, 38500 in all, are:
-= -- 3215
-> -- 681
-< -- 313
-+ -- 383
-- -- 104
-* -- 1664
-:= -- 5995
-add.period$ -- 123
-call.type$ -- 60
+            1135 strings with 15264 characters,
+and the built_in function-call counts, 36486 in all, are:
+= -- 3061
+> -- 624
+< -- 297
++ -- 353
+- -- 93
+* -- 1572
+:= -- 5705
+add.period$ -- 117
+call.type$ -- 57
 change.case$ -- 74
-chr.to.int$ -- 729
-cite$ -- 61
-duplicate$ -- 2833
-empty$ -- 3251
-format.name$ -- 126
-if$ -- 8986
+chr.to.int$ -- 699
+cite$ -- 58
+duplicate$ -- 2684
+empty$ -- 3075
+format.name$ -- 112
+if$ -- 8505
 int.to.chr$ -- 0
-int.to.str$ -- 60
-missing$ -- 490
-newline$ -- 203
-num.names$ -- 60
-pop$ -- 1126
+int.to.str$ -- 57
+missing$ -- 464
+newline$ -- 196
+num.names$ -- 57
+pop$ -- 1064
 preamble$ -- 1
 purify$ -- 0
 quote$ -- 2
-skip$ -- 3072
+skip$ -- 2908
 stack$ -- 0
-substring$ -- 1744
-swap$ -- 2189
-text.length$ -- 70
+substring$ -- 1671
+swap$ -- 2069
+text.length$ -- 64
 text.prefix$ -- 0
 top$ -- 5
-type$ -- 60
+type$ -- 57
 warning$ -- 1
-while$ -- 177
-width$ -- 62
-write$ -- 580
+while$ -- 169
+width$ -- 59
+write$ -- 556
 (There was 1 warning)

@@ -1,0 +1,5 @@
+- Partial views induce a confusability graph governing exact recovery.
+- Upward-closed agreement families exactly characterize realizable graphs.
+- Strong powers yield the block law and the Shannon-capacity limit.
+- Transitivity gives a cluster-graph equality route for capacity and theta.
+- Affine state families induce a matroid with tractable rank bounds.
