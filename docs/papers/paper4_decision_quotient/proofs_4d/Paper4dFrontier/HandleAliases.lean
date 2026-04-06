@@ -1,12 +1,33 @@
 import Paper4dFrontier.Classification
+import Paper4dFrontier.Block2Progress
+import Paper4dFrontier.CycleRankWitness
 import Paper4dFrontier.CoreWitnesses
+import Paper4dFrontier.FirstTwoIndicator
+import Paper4dFrontier.DimensionalNoiseExtension
 import Paper4dFrontier.EnumerationBounds
+import Paper4dFrontier.LegacyTreeGap
+import Paper4dFrontier.ListPolynomialEnumeration
 import Paper4dFrontier.LiftReductions
+import Paper4dFrontier.ParentTreewidth
+import Paper4dFrontier.RealTreewidth
+import Paper4dFrontier.BoundedActionsOnlyWitness2
+import Paper4dFrontier.BoundedTreewidthOnlyWitness
+import Paper4dFrontier.SeparableOnlyWitness
+import Paper4dFrontier.SymmetryOnlyWitness
+import Paper4dFrontier.TreeStructureHardnessBridge
 import Paper4dFrontier.StructuralWitnesses
 import Paper4dFrontier.SymmetryRankWitness
+import Paper4dFrontier.LowRankOnlyWitness
+import Paper4dFrontier.TreeDeletion
+import Paper4dFrontier.TreeHellyEquivFinset
+import Paper4dFrontier.TreeHellyFinset
+import Paper4dFrontier.TreeHellyHelpers
+import Paper4dFrontier.TreeHellyTheorem
+import Paper4dFrontier.TreewidthClique
 import Paper4dFrontier.Realizability
 import Paper4dFrontier.FamilyAxioms
 import Paper4dFrontier.ClosureLaws
+import Paper4dFrontier.RealTreewidthWitnesses
 
 open Paper4dFrontier
 
@@ -87,12 +108,17 @@ abbrev FR68 := @decisionEquiv_addDuplicateState_iff
 abbrev FR69 := @isSufficient_addDuplicateState_iff
 abbrev FR70 := @isRelevant_addDuplicateState_iff
 abbrev FR71 := @addDuplicateStateQuotientEquivOriginal_apply_quotientMap
+abbrev FR83 := @isSufficient_noiseExtended_iff
+abbrev FR84 := @isRelevant_noiseExtended_iff
+abbrev FR85 := @lastCoord_irrelevant_noiseExtended
 
 abbrev FR61 := @bounded_actions_not_imply_separable_witness
 abbrev FR62 := @separable_not_imply_bounded_actions_witness
 abbrev FR63 := @low_rank_not_imply_coordinate_symmetry_witness
+abbrev FR88 := @low_rank_not_imply_tree_structure_witness
 abbrev FR66 := @booleanCube_card
 abbrev FR67 := @exists_booleanCube_larger_than_monomial
+abbrev FR81 := @exists_list_polynomial_lt_booleanCube
 abbrev FR74 := @product_distribution_reduction_tractable
 abbrev FR75 := @bounded_support_reduction_tractable
 abbrev FR76 := @bounded_horizon_reduction_tractable
@@ -100,4 +126,32 @@ abbrev FR77 := @fully_observable_reduction_tractable
 abbrev FR78 := @bounded_treewidth_not_imply_bounded_actions_witness
 abbrev FR79 := @bounded_treewidth_not_imply_coordinate_symmetry_witness
 abbrev FR80 := @tree_structure_strictly_inside_bounded_treewidth_witness
+abbrev FR87 := @treewidth_le_zero_trivial
 abbrev FR86 := @coordinate_symmetry_not_imply_low_rank_witness
+abbrev FR109 := @firstTwoEq_not_symmetric
+abbrev FR114 := @legacy_treeStructured_not_width_one
+abbrev FR89 := @realTreewidth_le_card_pred
+abbrev FR90 := @connected_induce_inter_of_isTree
+abbrev FR99 := @parentBagGraph_isTree
+abbrev FR100 := @parentTree_realTreewidth_one
+abbrev FR101 := @low_rank_only_witness
+abbrev FR106 := @bounded_actions_only_witness
+abbrev FR105 := @separable_only_witness
+abbrev FR113 := @symmetry_only_witness
+abbrev FR108 := @five_core_mechanisms_nondegenerate
+abbrev FR112 := @bounded_treewidth_only_witness
+abbrev FR115 := @tree_structure_hardness_bridge
+abbrev FR116 := @bounded_actions_hardness_bridge
+abbrev FR117 := @nonseparable_hardness_bridge
+abbrev FR110 := @parentTreeStructured_implies_treeStructured
+abbrev FR111 := @treeStructured_and_unique_parent_iff_parentTreeStructured
+abbrev FR102 := @completeGraph_not_realTreewidth_le_of_large
+abbrev FR103 := @treeHelly_none_leaf_finset
+abbrev FR91 := @treeHellyFinset_all
+abbrev FR92 := @clique_has_common_bag
+abbrev FR93 := @completeGraph_not_realTreewidth_le
+abbrev FR94 := @bounded_actions_not_imply_real_treewidth_witness
+abbrev FR95 := @coordinate_symmetry_not_imply_real_treewidth_witness
+abbrev FR96 := @tree_structure_strictly_inside_real_treewidth_witness
+abbrev FR97 := @real_treewidth_not_imply_bounded_actions_witness
+abbrev FR98 := @real_treewidth_not_imply_coordinate_symmetry_witness

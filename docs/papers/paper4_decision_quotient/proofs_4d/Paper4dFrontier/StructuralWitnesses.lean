@@ -15,6 +15,12 @@ theorem noInteracts_symm {n : ℕ} : ∀ (i j : Fin n), noInteracts i j → noIn
   intro i j h
   cases h
 
+theorem treewidth_le_zero_trivial {n : ℕ} (G : SimpleGraph (Fin n)) :
+    treewidth_le G 0 := by
+  refine ⟨fun i => {i}, ?_⟩
+  intro i
+  simp
+
 /-- A bounded-treewidth witness family with arbitrarily many actions. -/
 def manyActionTreewidthUtility (m : ℕ) : Fin m → (Fin 1 → Fin 2) → ℤ :=
   fun a s => a.1 + finBitVal (s 0)

@@ -70,6 +70,46 @@ The three blocks from Theorem~\ref{thm:current-landscape-partition} have sizes
 
 The current formalized landscape therefore contains fifteen tractable families accounted for by eight primitive mechanisms.
 
+\leanmetapending{\LH{FR101}, \LH{FR105}, \LH{FR106}, \LH{FR108}, \LH{FR112}, \LH{FR113}}
+\begin{proposition}[Five Core Mechanisms Are Already Nondegenerate]\label{prop:four-core-nondegenerate}
+The current formal development already contains witness families showing that five core mechanisms are individually indispensable in the sense of basis coverage:
+\begin{enumerate}
+\item a low-rank-only witness family,
+\item a separable-only witness family,
+\item a bounded-actions-only witness family, and
+\item a bounded-treewidth-only witness family, and
+\item a symmetry-only witness family.
+\end{enumerate}
+Each of these families remains tractable by its designated mechanism while failing the currently formalized versions of the other independent core mechanisms.
+\end{proposition}
+
+Proposition~\ref{prop:four-core-nondegenerate} now settles the independent part of the basis question on the stable formal surface. Every core mechanism that is not merely contained in another is formally known to be genuinely needed.
+
+More concretely, the current stable formal surface already contains five distinct kinds of ``only-by'' witness:
+\begin{enumerate}
+\item low-rank only,
+\item separable only,
+\item bounded-actions only, and
+\item bounded-treewidth only, and
+\item symmetry only.
+\end{enumerate}
+\leanmetapending{\LH{FR114}}
+\begin{proposition}[The Legacy \texttt{TreeStructured} Predicate Is Too Weak]\label{prop:legacy-tree-gap}
+There exists a dependency presentation satisfying the older \texttt{TreeStructured} predicate whose dependency graph has real treewidth greater than one. In particular, width-one containment requires the stricter parent-tree condition from Proposition~\ref{prop:parent-tree-width-one}, not merely the legacy monotone-order predicate.
+\end{proposition}
+
+\leanmetapending{\LH{FR115}}
+\begin{proposition}[Cyclic Dependencies Recover Hardness]\label{prop:tree-hardness-bridge}
+The reduction family from the optimizer-quotient article already yields coNP-hard instances with cyclic dependency structure. Thus the tree-structured regime is not only sufficient for tractability; leaving it also reaches the hard side.
+\end{proposition}
+
+\leanmetapending{\LH{FR100}, \LH{FR110}, \LH{FR111}}
+\begin{proposition}[Parent-Tree Structure Gives Width-One Decompositions]\label{prop:parent-tree-width-one}
+Suppose a dependency presentation is tree-structured in the strict parent sense: every dependency points to a smaller coordinate and every coordinate has at most one parent. Then the induced dependency graph admits a genuine tree decomposition of width at most one.
+\end{proposition}
+
+Proposition~\ref{prop:parent-tree-width-one} is the mathematically honest containment theorem behind the intended ``tree structure is the treewidth-one special case'' slogan. The formal development distinguishes this parent-tree notion from the weaker monotone-order predicate currently named \texttt{TreeStructured} in the older tractability file.
+
 \leanmetapending{\LH{FR4}}
 \begin{proposition}[Current Positive Interfaces Factor Through Role Classification]\label{prop:interfaces-factor-through-role}
 The current positive theorem surface factors through the role classifier of Theorem~\ref{thm:current-landscape-partition}. Concretely, the family-indexed interfaces for

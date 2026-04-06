@@ -85,4 +85,32 @@ theorem coordinate_symmetry_not_imply_low_rank_witness (R : ℕ) :
     rw [diagIndicatorMatrix_rank]
   exact Nat.not_succ_le_self R (le_trans hLower hUpper)
 
+theorem diagIndicator_no_rank (R : ℕ) :
+    ¬ Nonempty (TensorRankDecomposition (diagIndicatorUtility (R + 1)) R) := by
+  intro h
+  rcases h with ⟨decomp⟩
+  let A := diagLeftMatrix decomp
+  let B := diagRightMatrix decomp
+  have hfac : diagIndicatorMatrix (R + 1) = A * B := diagIndicatorMatrix_factorization decomp
+  have hUpper : (diagIndicatorMatrix (R + 1)).rank ≤ R := by
+    rw [hfac]
+    exact le_trans (Matrix.rank_mul_le_right A B) (Matrix.rank_le_height B)
+  have hLower : R + 1 ≤ (diagIndicatorMatrix (R + 1)).rank := by
+    rw [diagIndicatorMatrix_rank]
+  exact Nat.not_succ_le_self R (le_trans hLower hUpper)
+
+theorem diagIndicator_no_rank_of_lt (k R : ℕ) (hR : R < k) :
+    ¬ Nonempty (TensorRankDecomposition (diagIndicatorUtility k) R) := by
+  intro h
+  rcases h with ⟨decomp⟩
+  let A := diagLeftMatrix decomp
+  let B := diagRightMatrix decomp
+  have hfac : diagIndicatorMatrix k = A * B := diagIndicatorMatrix_factorization decomp
+  have hUpper : (diagIndicatorMatrix k).rank ≤ R := by
+    rw [hfac]
+    exact le_trans (Matrix.rank_mul_le_right A B) (Matrix.rank_le_height B)
+  have hLower : k ≤ (diagIndicatorMatrix k).rank := by
+    rw [diagIndicatorMatrix_rank]
+  exact Nat.not_lt_of_ge (le_trans hLower hUpper) hR
+
 end Paper4dFrontier
