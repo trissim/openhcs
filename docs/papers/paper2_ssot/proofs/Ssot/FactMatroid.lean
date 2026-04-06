@@ -1,8 +1,11 @@
 import Mathlib.Combinatorics.Matroid.IndepAxioms
+import Mathlib.Data.Finset.Sum
 import Mathlib.LinearAlgebra.Dual.Lemmas
 import Mathlib.LinearAlgebra.Dimension.Constructions
 import Mathlib.LinearAlgebra.Dimension.OrzechProperty
 import Mathlib.LinearAlgebra.LinearIndependent.Lemmas
+import Mathlib.LinearAlgebra.Pi
+import Mathlib.LinearAlgebra.Prod
 
 open Set Submodule LinearMap
 
@@ -514,6 +517,407 @@ lemma minimalDetermining_basis {K ι} [Field K] [Fintype ι] [DecidableEq ι]
             = Submodule.span K (t : Set (Module.Dual K A.directions)) := hfull_t.symm
         _ ≤ factSpanFinset A.directions T := hspan_t_le
   exact (hS.2 hTss) hfull_T
+
+section Product
+
+variable {ι₁ ι₂ : Type*} [Fintype ι₁] [DecidableEq ι₁] [Fintype ι₂] [DecidableEq ι₂]
+
+/-- The ambient sum-coordinate space is linearly equivalent to the product of the two ambient spaces. -/
+noncomputable abbrev ambientSumEquivProd : Ambient K (ι₁ ⊕ ι₂) ≃ₗ[K] Ambient K ι₁ × Ambient K ι₂ :=
+  LinearEquiv.sumArrowLequivProdArrow ι₁ ι₂ K K
+
+/-- The product direction space, represented on the disjoint sum of coordinate indices. -/
+noncomputable def productDirections (V₁ : DirectionSpace K ι₁) (V₂ : DirectionSpace K ι₂) :
+    DirectionSpace K (ι₁ ⊕ ι₂) :=
+  (Submodule.prod V₁ V₂).comap (ambientSumEquivProd (K := K) (ι₁ := ι₁) (ι₂ := ι₂) :
+    Ambient K (ι₁ ⊕ ι₂) →ₗ[K] Ambient K ι₁ × Ambient K ι₂)
+
+@[simp] theorem mem_productDirections {V₁ : DirectionSpace K ι₁} {V₂ : DirectionSpace K ι₂}
+    {x : Ambient K (ι₁ ⊕ ι₂)} :
+    x ∈ productDirections (K := K) V₁ V₂ ↔
+      (fun i => x (Sum.inl i)) ∈ V₁ ∧ (fun j => x (Sum.inr j)) ∈ V₂ := by
+  change
+    ((ambientSumEquivProd (K := K) (ι₁ := ι₁) (ι₂ := ι₂) x).1 ∈ V₁ ∧
+      (ambientSumEquivProd (K := K) (ι₁ := ι₁) (ι₂ := ι₂) x).2 ∈ V₂) ↔
+      (fun i => x (Sum.inl i)) ∈ V₁ ∧ (fun j => x (Sum.inr j)) ∈ V₂
+  constructor
+  · rintro ⟨h₁, h₂⟩
+    exact ⟨by simpa [ambientSumEquivProd] using h₁, by simpa [ambientSumEquivProd] using h₂⟩
+  · rintro ⟨h₁, h₂⟩
+    exact ⟨by simpa [ambientSumEquivProd] using h₁, by simpa [ambientSumEquivProd] using h₂⟩
+
+/-- The affine product family on the disjoint sum of coordinate indices. -/
+noncomputable def productFamily (A₁ : AffineFamily K ι₁) (A₂ : AffineFamily K ι₂) :
+    AffineFamily K (ι₁ ⊕ ι₂) where
+  origin := (ambientSumEquivProd (K := K) (ι₁ := ι₁) (ι₂ := ι₂)).symm (A₁.origin, A₂.origin)
+  directions := productDirections (K := K) A₁.directions A₂.directions
+
+theorem map_productDirections_ambientSumEquivProd (V₁ : DirectionSpace K ι₁) (V₂ : DirectionSpace K ι₂) :
+    (productDirections (K := K) V₁ V₂).map
+        (ambientSumEquivProd (K := K) (ι₁ := ι₁) (ι₂ := ι₂) :
+          Ambient K (ι₁ ⊕ ι₂) →ₗ[K] Ambient K ι₁ × Ambient K ι₂) =
+      Submodule.prod V₁ V₂ := by
+  ext x
+  constructor
+  · rintro ⟨y, hy, rfl⟩
+    exact hy
+  · intro hx
+    refine ⟨(ambientSumEquivProd (K := K) (ι₁ := ι₁) (ι₂ := ι₂)).symm x, ?_, by simp⟩
+    simpa [productDirections] using hx
+
+/-- The product direction space is linearly equivalent to the direct product of the two component
+direction spaces. -/
+noncomputable def productDirectionsEquiv (V₁ : DirectionSpace K ι₁) (V₂ : DirectionSpace K ι₂) :
+    productDirections (K := K) V₁ V₂ ≃ₗ[K] V₁ × V₂ where
+  toFun := fun x =>
+    let hx : (ambientSumEquivProd (K := K) (ι₁ := ι₁) (ι₂ := ι₂) x.1) ∈ Submodule.prod V₁ V₂ := x.2
+    (⟨fun i => x.1 (Sum.inl i), by simpa [ambientSumEquivProd] using hx.1⟩,
+      ⟨fun j => x.1 (Sum.inr j), by simpa [ambientSumEquivProd] using hx.2⟩)
+  invFun := fun x =>
+    ⟨(ambientSumEquivProd (K := K) (ι₁ := ι₁) (ι₂ := ι₂)).symm (x.1.1, x.2.1), by
+      change
+        (ambientSumEquivProd (K := K) (ι₁ := ι₁) (ι₂ := ι₂))
+            ((ambientSumEquivProd (K := K) (ι₁ := ι₁) (ι₂ := ι₂)).symm (x.1.1, x.2.1)) ∈
+          Submodule.prod V₁ V₂
+      simpa using ⟨x.1.2, x.2.2⟩⟩
+  map_add' := by
+    intro x y
+    ext <;> rfl
+  map_smul' := by
+    intro a x
+    ext <;> rfl
+  left_inv := by
+    intro x
+    ext i <;> cases i <;> simp [ambientSumEquivProd]
+  right_inv := by
+    rintro ⟨x, y⟩
+    ext i <;> rfl
+
+@[simp] theorem productDirectionsEquiv_apply_inl
+    (V₁ : DirectionSpace K ι₁) (V₂ : DirectionSpace K ι₂)
+    (x : productDirections (K := K) V₁ V₂) (i : ι₁) :
+    ((productDirectionsEquiv (K := K) V₁ V₂ x).1 : Ambient K ι₁) i = x.1 (Sum.inl i) := rfl
+
+@[simp] theorem productDirectionsEquiv_apply_inr
+    (V₁ : DirectionSpace K ι₁) (V₂ : DirectionSpace K ι₂)
+    (x : productDirections (K := K) V₁ V₂) (j : ι₂) :
+    ((productDirectionsEquiv (K := K) V₁ V₂ x).2 : Ambient K ι₂) j = x.1 (Sum.inr j) := rfl
+
+@[simp] theorem productDirectionsEquiv_symm_apply_inl
+    (V₁ : DirectionSpace K ι₁) (V₂ : DirectionSpace K ι₂)
+    (x₁ : V₁) (x₂ : V₂) (i : ι₁) :
+    ((productDirectionsEquiv (K := K) V₁ V₂).symm (x₁, x₂)).1 (Sum.inl i) = x₁.1 i := by
+  simp [productDirectionsEquiv, ambientSumEquivProd]
+
+@[simp] theorem productDirectionsEquiv_symm_apply_inr
+    (V₁ : DirectionSpace K ι₁) (V₂ : DirectionSpace K ι₂)
+    (x₁ : V₁) (x₂ : V₂) (j : ι₂) :
+    ((productDirectionsEquiv (K := K) V₁ V₂).symm (x₁, x₂)).1 (Sum.inr j) = x₂.1 j := by
+  simp [productDirectionsEquiv, ambientSumEquivProd]
+
+/-- The product direction space has additive finite dimension. -/
+theorem finrank_productDirections (V₁ : DirectionSpace K ι₁) (V₂ : DirectionSpace K ι₂) :
+    Module.finrank K (productDirections (K := K) V₁ V₂) =
+      Module.finrank K V₁ + Module.finrank K V₂ := by
+  rw [(productDirectionsEquiv (K := K) V₁ V₂).finrank_eq, Module.finrank_prod]
+
+/-- The direction space of the affine product family has the expected additive dimension. -/
+theorem finrank_productFamily_directions (A₁ : AffineFamily K ι₁) (A₂ : AffineFamily K ι₂) :
+    Module.finrank K (productFamily (K := K) A₁ A₂).directions =
+      Module.finrank K A₁.directions + Module.finrank K A₂.directions := by
+  simpa [productFamily] using finrank_productDirections (K := K) A₁.directions A₂.directions
+
+/-- The subtype of a `disjSum` finset is equivalent to the sum of the subtypes. -/
+noncomputable def disjSumSubtypeEquiv (S₁ : Finset ι₁) (S₂ : Finset ι₂) :
+    ↥(S₁.disjSum S₂) ≃ (↥S₁ ⊕ ↥S₂) where
+  toFun x := by
+    rcases x with ⟨x, hx⟩
+    cases x with
+    | inl i => exact Sum.inl ⟨i, by simpa using hx⟩
+    | inr j => exact Sum.inr ⟨j, by simpa using hx⟩
+  invFun x := by
+    cases x with
+    | inl i => exact ⟨Sum.inl i.1, by simpa using i.2⟩
+    | inr j => exact ⟨Sum.inr j.1, by simpa using j.2⟩
+  left_inv := by
+    rintro ⟨x, hx⟩
+    cases x <;> rfl
+  right_inv := by
+    intro x
+    cases x <;> rfl
+
+/-- Reindexing the projection codomain on a disjoint block split yields the product codomain. -/
+noncomputable def disjSumCoordEquiv (S₁ : Finset ι₁) (S₂ : Finset ι₂) :
+    (↑(S₁.disjSum S₂) → K) ≃ₗ[K] (↑S₁ → K) × (↑S₂ → K) where
+  toFun f :=
+    (fun i => f ⟨Sum.inl i.1, by simpa using i.2⟩,
+      fun j => f ⟨Sum.inr j.1, by simpa using j.2⟩)
+  invFun g := fun x =>
+    match x with
+    | ⟨Sum.inl i, hx⟩ => g.1 ⟨i, by simpa using hx⟩
+    | ⟨Sum.inr j, hx⟩ => g.2 ⟨j, by simpa using hx⟩
+  map_add' := by
+    intro f g
+    ext <;> rfl
+  map_smul' := by
+    intro a f
+    ext <;> rfl
+  left_inv := by
+    intro f
+    funext x
+    rcases x with ⟨x, hx⟩
+    cases x <;> rfl
+  right_inv := by
+    intro g
+    ext <;> rfl
+
+@[simp] theorem disjSumCoordEquiv_apply_fst (S₁ : Finset ι₁) (S₂ : Finset ι₂)
+    (f : ↑(S₁.disjSum S₂) → K) (i : ↑S₁) :
+    (disjSumCoordEquiv (K := K) S₁ S₂ f).1 i = f ⟨Sum.inl i.1, by simpa using i.2⟩ := by
+  simp [disjSumCoordEquiv, disjSumSubtypeEquiv]
+
+@[simp] theorem disjSumCoordEquiv_apply_snd (S₁ : Finset ι₁) (S₂ : Finset ι₂)
+    (f : ↑(S₁.disjSum S₂) → K) (j : ↑S₂) :
+    (disjSumCoordEquiv (K := K) S₁ S₂ f).2 j = f ⟨Sum.inr j.1, by simpa using j.2⟩ := by
+  simp [disjSumCoordEquiv, disjSumSubtypeEquiv]
+
+lemma range_comp_linearEquiv {M N P : Type*} [AddCommGroup M] [AddCommGroup N] [AddCommGroup P]
+    [Module K M] [Module K N] [Module K P] (e : N ≃ₗ[K] P) (f : M →ₗ[K] N) :
+    LinearMap.range ((e : N →ₗ[K] P).comp f) = (LinearMap.range f).map (e : N →ₗ[K] P) := by
+  ext y
+  constructor
+  · rintro ⟨x, rfl⟩
+    exact ⟨f x, ⟨x, rfl⟩, rfl⟩
+  · rintro ⟨z, hz, rfl⟩
+    rcases hz with ⟨x, rfl⟩
+    exact ⟨x, rfl⟩
+
+lemma range_comp_of_surjective {M N P : Type*} [AddCommGroup M] [AddCommGroup N] [AddCommGroup P]
+    [Module K M] [Module K N] [Module K P] (f : M →ₗ[K] N) (g : N →ₗ[K] P)
+    (hf : Function.Surjective f) :
+    LinearMap.range (g.comp f) = LinearMap.range g := by
+  ext y
+  constructor
+  · rintro ⟨x, rfl⟩
+    exact ⟨f x, rfl⟩
+  · rintro ⟨z, rfl⟩
+    rcases hf z with ⟨x, rfl⟩
+    exact ⟨x, rfl⟩
+
+lemma range_prodMap {M₁ M₂ N₁ N₂ : Type*} [AddCommGroup M₁] [AddCommGroup M₂]
+    [AddCommGroup N₁] [AddCommGroup N₂] [Module K M₁] [Module K M₂] [Module K N₁] [Module K N₂]
+    (f : M₁ →ₗ[K] N₁) (g : M₂ →ₗ[K] N₂) :
+    LinearMap.range (f.prodMap g) = (LinearMap.range f).prod (LinearMap.range g) := by
+  ext y
+  constructor
+  · rintro ⟨x, rfl⟩
+    exact ⟨⟨x.1, rfl⟩, ⟨x.2, rfl⟩⟩
+  · rintro ⟨hy₁, hy₂⟩
+    rcases hy₁ with ⟨x₁, hx₁⟩
+    rcases hy₂ with ⟨x₂, hx₂⟩
+    refine ⟨(x₁, x₂), ?_⟩
+    ext <;> simp [LinearMap.prodMap_apply, hx₁, hx₂]
+
+lemma finrank_range_comp_linearEquiv {M N P : Type*} [AddCommGroup M] [AddCommGroup N] [AddCommGroup P]
+    [Module K M] [Module K N] [Module K P] (e : N ≃ₗ[K] P) (f : M →ₗ[K] N) :
+    Module.finrank K (LinearMap.range ((e : N →ₗ[K] P).comp f)) =
+      Module.finrank K (LinearMap.range f) := by
+  calc
+    Module.finrank K (LinearMap.range ((e : N →ₗ[K] P).comp f))
+      = Module.finrank K ((LinearMap.range f).map (e : N →ₗ[K] P)) := by
+          rw [range_comp_linearEquiv (K := K) e]
+    _ = Module.finrank K (LinearMap.range f) := LinearEquiv.finrank_map_eq e _
+
+noncomputable def submoduleProdEquiv {M N : Type*} [AddCommGroup M] [AddCommGroup N]
+    [Module K M] [Module K N] (p : Submodule K M) (q : Submodule K N) :
+    p.prod q ≃ₗ[K] p × q where
+  toFun x := (⟨x.1.1, x.2.1⟩, ⟨x.1.2, x.2.2⟩)
+  invFun x := ⟨(x.1.1, x.2.1), ⟨x.1.2, x.2.2⟩⟩
+  map_add' := by
+    intro x y
+    ext <;> rfl
+  map_smul' := by
+    intro a x
+    ext <;> rfl
+  left_inv := by
+    intro x
+    rfl
+  right_inv := by
+    intro x
+    rfl
+
+lemma finrank_submoduleProd {M N : Type*} [AddCommGroup M] [AddCommGroup N]
+    [Module K M] [Module K N] [Module.Finite K M] [Module.Finite K N]
+    (p : Submodule K M) (q : Submodule K N) :
+    Module.finrank K (p.prod q) = Module.finrank K p + Module.finrank K q := by
+  rw [(submoduleProdEquiv (K := K) p q).finrank_eq, Module.finrank_prod]
+
+theorem coordProjection_productDirections_disjSum
+    (V₁ : DirectionSpace K ι₁) (V₂ : DirectionSpace K ι₂)
+    (S₁ : Finset ι₁) (S₂ : Finset ι₂) :
+    ((disjSumCoordEquiv (K := K) S₁ S₂ : (↑(S₁.disjSum S₂) → K) →ₗ[K] (↑S₁ → K) × (↑S₂ → K)).comp
+        (coordProjection (productDirections (K := K) V₁ V₂) (S₁.disjSum S₂)))
+      =
+    (((coordProjection V₁ S₁).prodMap (coordProjection V₂ S₂)).comp
+      (productDirectionsEquiv (K := K) V₁ V₂ :
+        productDirections (K := K) V₁ V₂ →ₗ[K] V₁ × V₂)) := by
+  ext x i <;> cases i <;>
+    simp [disjSumCoordEquiv, disjSumSubtypeEquiv, ambientSumEquivProd, productDirectionsEquiv]
+
+/-- Matroid rank is additive on disjoint coordinate blocks of the product family. -/
+theorem range_coordProjection_productDirections_disjSum
+    (V₁ : DirectionSpace K ι₁) (V₂ : DirectionSpace K ι₂)
+    (S₁ : Finset ι₁) (S₂ : Finset ι₂) :
+    LinearMap.range
+      (((disjSumCoordEquiv (K := K) S₁ S₂ : (↑(S₁.disjSum S₂) → K) →ₗ[K] (↑S₁ → K) × (↑S₂ → K)).comp
+        (coordProjection (productDirections (K := K) V₁ V₂) (S₁.disjSum S₂))))
+      = (LinearMap.range (coordProjection V₁ S₁)).prod (LinearMap.range (coordProjection V₂ S₂)) := by
+  let eDom := productDirectionsEquiv (K := K) V₁ V₂
+  let eCod := disjSumCoordEquiv (K := K) S₁ S₂
+  let f : productDirections (K := K) V₁ V₂ →ₗ[K] (↑(S₁.disjSum S₂) → K) :=
+    coordProjection (productDirections (K := K) V₁ V₂) (S₁.disjSum S₂)
+  let g : V₁ × V₂ →ₗ[K] (↑S₁ → K) × (↑S₂ → K) :=
+    (coordProjection V₁ S₁).prodMap (coordProjection V₂ S₂)
+  have hfg : (eCod : (↑(S₁.disjSum S₂) → K) →ₗ[K] (↑S₁ → K) × (↑S₂ → K)).comp f =
+      g.comp (eDom : productDirections (K := K) V₁ V₂ →ₗ[K] V₁ × V₂) := by
+    simpa [f, g] using coordProjection_productDirections_disjSum (K := K) V₁ V₂ S₁ S₂
+  calc
+    LinearMap.range ((eCod : (↑(S₁.disjSum S₂) → K) →ₗ[K] (↑S₁ → K) × (↑S₂ → K)).comp f)
+      = LinearMap.range (g.comp (eDom : productDirections (K := K) V₁ V₂ →ₗ[K] V₁ × V₂)) := by rw [hfg]
+    _ = LinearMap.range g := by
+      rw [range_comp_of_surjective (K := K)
+        (f := (eDom : productDirections (K := K) V₁ V₂ →ₗ[K] V₁ × V₂))
+        (g := g) eDom.surjective]
+    _ = (LinearMap.range (coordProjection V₁ S₁)).prod (LinearMap.range (coordProjection V₂ S₂)) := by
+      rw [show g = (coordProjection V₁ S₁).prodMap (coordProjection V₂ S₂) by rfl]
+      rw [range_prodMap (K := K) (coordProjection V₁ S₁) (coordProjection V₂ S₂)]
+
+theorem finrank_range_coordProjection_productDirections_disjSum
+    (V₁ : DirectionSpace K ι₁) (V₂ : DirectionSpace K ι₂)
+    (S₁ : Finset ι₁) (S₂ : Finset ι₂) :
+    Module.finrank K
+        (LinearMap.range
+          (((disjSumCoordEquiv (K := K) S₁ S₂ :
+                (↑(S₁.disjSum S₂) → K) →ₗ[K] (↑S₁ → K) × (↑S₂ → K)).comp
+            (coordProjection (productDirections (K := K) V₁ V₂) (S₁.disjSum S₂)))))
+      = Module.finrank K (LinearMap.range (coordProjection V₁ S₁))
+        + Module.finrank K (LinearMap.range (coordProjection V₂ S₂)) := by
+  rw [range_coordProjection_productDirections_disjSum (K := K) V₁ V₂ S₁ S₂]
+  rw [finrank_submoduleProd (K := K)]
+
+-- Matroid rank is additive on disjoint coordinate blocks of the product family.
+set_option maxHeartbeats 20000000 in
+theorem factRankFinset_product_disjSum (V₁ : DirectionSpace K ι₁) (V₂ : DirectionSpace K ι₂)
+    (S₁ : Finset ι₁) (S₂ : Finset ι₂) :
+    factRankFinset (productDirections (K := K) V₁ V₂) (S₁.disjSum S₂) =
+      factRankFinset V₁ S₁ + factRankFinset V₂ S₂ := by
+  let eCod := disjSumCoordEquiv (K := K) S₁ S₂
+  let f : productDirections (K := K) V₁ V₂ →ₗ[K] (↑(S₁.disjSum S₂) → K) :=
+    coordProjection (productDirections (K := K) V₁ V₂) (S₁.disjSum S₂)
+  rw [factRankFinset_eq_finrank_range_coordProjection]
+  calc
+    Module.finrank K (LinearMap.range f)
+      = Module.finrank K (LinearMap.range ((eCod : (↑(S₁.disjSum S₂) → K) →ₗ[K] _).comp f)) := by
+          simpa [f] using (finrank_range_comp_linearEquiv (K := K) eCod f).symm
+    _ = Module.finrank K (LinearMap.range (coordProjection V₁ S₁)) +
+          Module.finrank K (LinearMap.range (coordProjection V₂ S₂)) := by
+          simpa using finrank_range_coordProjection_productDirections_disjSum (K := K) V₁ V₂ S₁ S₂
+    _ = factRankFinset V₁ S₁ + factRankFinset V₂ S₂ := by
+          rw [← factRankFinset_eq_finrank_range_coordProjection,
+            ← factRankFinset_eq_finrank_range_coordProjection]
+
+lemma indepFacts_iff_factRankFinset_eq_card {A : AffineFamily K ι} {S : Finset ι} :
+    IndepFacts A S ↔ factRankFinset A.directions S = S.card := by
+  constructor
+  · exact factRankFinset_eq_card_of_indepFacts A
+  · intro hRank
+    classical
+    let simg : Finset (Module.Dual K A.directions) := S.image (coordFun A.directions)
+    have hsimg_eq :
+        (simg : Set (Module.Dual K A.directions)) = (coordFun A.directions) '' (S : Set ι) := by
+      ext φ
+      simp [simg]
+    have hfinrank_eq' :
+        Module.finrank K (Submodule.span K ((coordFun A.directions) '' (S : Set ι))) = S.card := by
+      simpa [factRankFinset, factSpanFinset, factSpan] using hRank
+    have hfinrank_eq : Module.finrank K (Submodule.span K (simg : Set (Module.Dual K A.directions))) = S.card := by
+      rw [hsimg_eq]
+      exact hfinrank_eq'
+    have hsimg_card : simg.card = S.card := by
+      refine le_antisymm Finset.card_image_le ?_
+      calc
+        S.card = Module.finrank K (Submodule.span K (simg : Set (Module.Dual K A.directions))) := hfinrank_eq.symm
+        _ ≤ simg.card := by simpa using (finrank_span_finset_le_card (R := K) simg)
+    have hInj : Set.InjOn (coordFun A.directions) (S : Set ι) := by
+      simpa [simg] using (Finset.injOn_of_card_image_eq (s := S) (f := coordFun A.directions) hsimg_card)
+    have hsimg_lin : LinearIndependent K (fun φ : (simg : Set (Module.Dual K A.directions)) =>
+        (φ : Module.Dual K A.directions)) := by
+      apply (linearIndependent_iff_card_eq_finrank_span (R := K)
+        (b := fun φ : (simg : Set (Module.Dual K A.directions)) => (φ : Module.Dual K A.directions))).2
+      have hrange :
+          Set.range (fun φ : (simg : Set (Module.Dual K A.directions)) =>
+            (φ : Module.Dual K A.directions)) = (simg : Set (Module.Dual K A.directions)) := by
+        ext φ
+        simp
+      calc
+        Fintype.card (simg : Set (Module.Dual K A.directions)) = simg.card := by simp
+        _ = Module.finrank K (Submodule.span K (simg : Set (Module.Dual K A.directions))) := by
+              rw [hsimg_card]
+              exact hfinrank_eq.symm
+        _ = (Set.range (fun φ : (simg : Set (Module.Dual K A.directions)) =>
+              (φ : Module.Dual K A.directions))).finrank K := by
+              rw [hrange]
+              rfl
+    change LinearIndepOn K (coordFun A.directions) (S : Set ι)
+    rw [LinearIndepOn_iff_linearIndepOn_image_injOn]
+    rw [← hsimg_eq]
+    refine ⟨?_, hInj⟩
+    simpa [LinearIndepOn] using hsimg_lin
+
+private lemma add_eq_add_iff_of_le_le {a b c d : Nat} (ha : a ≤ c) (hb : b ≤ d) :
+    a + b = c + d ↔ a = c ∧ b = d := by
+  constructor
+  · intro h
+    have hca : c ≤ a := by
+      apply Nat.le_of_add_le_add_right
+      calc
+        c + b ≤ c + d := Nat.add_le_add_left hb c
+        _ = a + b := by simpa [h]
+    have hac : a ≤ c := ha
+    have hEqA : a = c := Nat.le_antisymm hac hca
+    have hEqB : b = d := by
+      have h' : c + b = c + d := by simpa [hEqA] using h
+      exact Nat.add_left_cancel h'
+    exact ⟨hEqA, hEqB⟩
+  · rintro ⟨rfl, rfl⟩
+    rfl
+
+/-- Independence in the product affine family splits across the two coordinate blocks. -/
+theorem indepFacts_productFamily_iff (A₁ : AffineFamily K ι₁) (A₂ : AffineFamily K ι₂)
+    (I : Finset (ι₁ ⊕ ι₂)) :
+    IndepFacts (productFamily (K := K) A₁ A₂) I ↔
+      IndepFacts A₁ I.toLeft ∧ IndepFacts A₂ I.toRight := by
+  rw [indepFacts_iff_factRankFinset_eq_card,
+    indepFacts_iff_factRankFinset_eq_card,
+    indepFacts_iff_factRankFinset_eq_card]
+  rw [show (productFamily (K := K) A₁ A₂).directions =
+      productDirections (K := K) A₁.directions A₂.directions by rfl]
+  rw [← Finset.toLeft_disjSum_toRight (u := I),
+    factRankFinset_product_disjSum (K := K) A₁.directions A₂.directions I.toLeft I.toRight,
+    Finset.toLeft_disjSum, Finset.toRight_disjSum,
+    Finset.card_disjSum]
+  exact add_eq_add_iff_of_le_le
+    (factRankFinset_le_card A₁.directions I.toLeft)
+    (factRankFinset_le_card A₂.directions I.toRight)
+
+/-- The representable matroid of the product family is the direct sum of the component matroids. -/
+theorem factMatroid_product_indep_iff (A₁ : AffineFamily K ι₁) (A₂ : AffineFamily K ι₂)
+    {I : Finset (ι₁ ⊕ ι₂)} :
+    (factMatroid (productFamily (K := K) A₁ A₂)).Indep I ↔
+      (factMatroid A₁).Indep I.toLeft ∧ (factMatroid A₂).Indep I.toRight := by
+  simp [factMatroid_indep_iff, indepFacts_productFamily_iff]
+
+end Product
 
 end FactMatroid
 end Ssot
