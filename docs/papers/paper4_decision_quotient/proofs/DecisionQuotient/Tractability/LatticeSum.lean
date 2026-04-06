@@ -29,6 +29,14 @@ noncomputable def latticeTailSum (s : ℝ) (R : ℝ) : ℝ :=
     let norm : ℝ := ((n.1 : ℝ)^2 + (n.2.1 : ℝ)^2 + (n.2.2 : ℝ)^2).sqrt
     if R < norm then 1 / (norm ^ s) else 0
 
+/--
+  Compatibility axiom carried over from `srank-implementation`.
+  The current branch proves the concrete Lennard-Jones tail bounds below,
+  but the source branch exposes this abstract convergence premise directly.
+-/
+axiom lattice_sum_converges (s : ℝ) (hs : 3 < s) :
+    ∃ (M : ℝ), ∀ (R : ℝ), 0 < R → latticeTailSum s R ≤ M / R^(s - 3)
+
 /-!
   Dyadic shell decomposition for the integer lattice in 3D. We restrict to
   finite shells of points whose Euclidean norm lies in (2^k * R, 2^(k+1) * R].
