@@ -1,0 +1,37 @@
+\section{Toward the Frontier Theorem}
+
+Three conjectures frame the frontier program.
+
+\begin{conjecture}[Finite Optimizer-Compatible Criterion]\label{conj:finite-criterion}
+There exists a finite list of optimizer-compatible structural criteria such that every representation-level tractable class of exact relevance-certification instances satisfying the necessary conditions of Section~\ref{sec:natural-families} satisfies at least one criterion on that list.
+\end{conjecture}
+
+\begin{conjecture}[Finite Primitive Basis Beyond the Current Artifact]\label{conj:finite-basis-beyond-current}
+Every polynomial-time family for exact relevance certification arises either
+\begin{enumerate}
+\item from a primitive optimizer-compatible structural mechanism,
+\item as a lift/reduction to such a mechanism, or
+\item from a degenerate collapse analogous to constant-optimizer collapse or finite explicit enumeration,
+\end{enumerate}
+and only finitely many primitive mechanisms are needed.
+\end{conjecture}
+
+\begin{conjecture}[Optimizer-Compatible Dichotomy]\label{conj:frontier}
+For representation-level structural classes of coordinate-structured decision problems satisfying the necessary conditions of Section~\ref{sec:natural-families}, exact relevance certification is either polynomial-time by membership in one of the finitely many optimizer-compatible primitive mechanisms of Conjecture~\ref{conj:finite-basis-beyond-current}, or coNP-hard.
+\end{conjecture}
+
+The three conjectures form a ladder. Conjecture~\ref{conj:finite-criterion} asks only for a finite conceptual description. Conjecture~\ref{conj:finite-basis-beyond-current} adds the stronger claim that all tractable positive results factor into primitive, lifted, or degenerate forms. Conjecture~\ref{conj:frontier} is the full boundary statement.
+
+Three technical questions sit between the present paper and a true metatheorem.
+
+\subsection*{First: Realizability}
+
+Theorem~\ref{thm:labeling-realizable} shows that naive realizability is not the bottleneck. In the unconstrained setting, arbitrary labeling kernels already arise as optimizer quotients. The frontier theorem therefore cannot come from quotient realizability alone. It has to characterize optimizer-compatible structure at the level of representation-level structural classes, not merely at the level of abstract set partitions. Section~\ref{sec:natural-families} isolates the first necessary conditions any such statement must satisfy.
+
+\subsection*{Second: Primitive Versus Derived Tractability}
+
+A genuine frontier theorem must distinguish primitive mechanisms from lifts and degenerate cases, and show that this distinction is not an accident of the current examples.
+
+\subsection*{Third: Algebraic Description}
+
+The natural long-term analogy is the CSP dichotomy program, where tractability is controlled by an algebraic boundary condition rather than by an ad hoc list of examples. For exact relevance certification, the unresolved question is whether optimizer-induced quotients admit a comparably finite algebraic description or whether the tractable side remains genuinely open-ended.

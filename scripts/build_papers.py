@@ -1329,7 +1329,7 @@ end {module_root}
             )
 
     def _sync_graph_infra_lean(self, paper_id: str) -> None:
-        """Copy DependencyGraph.lean from graph_infra into the paper's proofs dir."""
+        """Materialize DependencyGraph.lean with exact namespace roots for a paper."""
         src = (
             self.repo_root / "docs" / "papers" / "graph_infra" / "DependencyGraph.lean"
         )
@@ -1339,8 +1339,24 @@ end {module_root}
         if not proofs_dir.exists():
             return
         dst = proofs_dir / "DependencyGraph.lean"
-        if not dst.exists() or dst.read_bytes() != src.read_bytes():
-            shutil.copy2(src, dst)
+        template = src.read_text(encoding="utf-8", errors="replace")
+        roots: List[str] = []
+        seen: Set[str] = set()
+        for pid, _ in self._iter_lean_roots_for_paper(paper_id):
+            if pid not in self.papers:
+                continue
+            for root in self._derive_module_roots(pid):
+                if not root or root in seen:
+                    continue
+                seen.add(root)
+                roots.append(root)
+        root_lines = [f'  "{root}"' for root in roots]
+        configured = template.replace("  -- __PROJECT_ROOTS__", ",\n".join(root_lines))
+        if (
+            not dst.exists()
+            or dst.read_text(encoding="utf-8", errors="replace") != configured
+        ):
+            dst.write_text(configured, encoding="utf-8")
 
     def _write_graph_export_lean(self, paper_id: str) -> None:
         """Generate graph and declaration-info export drivers from compiled modules."""
@@ -1348,25 +1364,33 @@ end {module_root}
         if not proofs_dir.exists():
             return
 
-        # ── Collect submodule dirs from lakefile globs ──────────────────────────
-        submodule_dirs = self._derive_module_roots_from_lakefile(proofs_dir)
-        if not submodule_dirs:
-            return
-
-        # ── Enumerate submodule .lean files → individual module names ───────────
-        skip_stems = {"DependencyGraph", "GraphExport"}
+        release_closure = self._get_release_module_closure(paper_id)
         module_names: list[str] = []
-        for subdir_name in submodule_dirs:
-            subdir = proofs_dir / subdir_name
-            if not subdir.is_dir():
-                continue
-            for lean_file in sorted(subdir.rglob("*.lean")):
-                rel = lean_file.relative_to(proofs_dir)
-                parts = list(rel.parts)
-                parts[-1] = parts[-1][:-5]  # strip .lean
-                mod = ".".join(parts)
-                if parts[-1] not in skip_stems and mod not in module_names:
-                    module_names.append(mod)
+        if release_closure:
+            for source_paper_id in sorted(release_closure.keys()):
+                for module_name in sorted(release_closure[source_paper_id]):
+                    normalized = module_name.replace("/", ".")
+                    if normalized not in module_names:
+                        module_names.append(normalized)
+        else:
+            # ── Collect module roots with source directories from lakefile globs ─────
+            module_sources = self._derive_module_sources_from_lakefile(proofs_dir)
+            if not module_sources:
+                return
+
+            # ── Enumerate source .lean files → individual module names ───────────────
+            skip_stems = {"DependencyGraph", "GraphExport"}
+            for subdir_name, src_dir in module_sources:
+                subdir = src_dir / subdir_name
+                if not subdir.is_dir():
+                    continue
+                for lean_file in sorted(subdir.rglob("*.lean")):
+                    rel = lean_file.relative_to(src_dir)
+                    parts = list(rel.parts)
+                    parts[-1] = parts[-1][:-5]  # strip .lean
+                    mod = ".".join(parts)
+                    if parts[-1] not in skip_stems and mod not in module_names:
+                        module_names.append(mod)
 
         if not module_names:
             return
@@ -1447,6 +1471,96 @@ end {module_root}
             print(f"[graph] Warning: DependencyGraph compile failed for {paper_id}")
             print(dep_result.stderr[-2000:] if dep_result.stderr else "")
             return
+
+        # Ensure imported graph-export modules are built, even when the full local
+        # project has unrelated failing files. This supports cited-module graph
+        # extraction for frontier/variant papers that intentionally scope the graph
+        # to a smaller release closure.
+        try:
+            graph_text = graph_export.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            graph_text = ""
+        import_targets: List[str] = []
+        for raw_line in graph_text.splitlines():
+            stripped = raw_line.strip()
+            if not stripped.startswith("import "):
+                continue
+            mod = stripped[len("import ") :].strip()
+            if not mod or mod == "DependencyGraph":
+                continue
+            target = mod.replace("/", ".")
+            root = target.split(".", 1)[0]
+            if root not in import_targets:
+                import_targets.append(root)
+            if target not in import_targets:
+                import_targets.append(target)
+        module_source_map = {
+            root: src_dir
+            for root, src_dir in self._derive_module_sources_from_lakefile(proofs_dir)
+        }
+        for target in import_targets:
+            if "." in target:
+                continue
+            root = target
+            root_olean = (
+                proofs_dir / ".lake" / "build" / "lib" / "lean" / f"{root}.olean"
+            )
+            root_ilean = (
+                proofs_dir / ".lake" / "build" / "lib" / "lean" / f"{root}.ilean"
+            )
+            if root_olean.exists():
+                continue
+            src_dir = module_source_map.get(root)
+            if src_dir is None:
+                continue
+            root_file = src_dir / f"{root}.lean"
+            if not root_file.exists():
+                continue
+            compile_file = root_file
+            try:
+                root_file.relative_to(proofs_dir)
+            except ValueError:
+                local_root = proofs_dir / f"{root}.lean"
+                if local_root.is_symlink():
+                    local_root.unlink()
+                if (
+                    not local_root.exists()
+                ) or local_root.read_bytes() != root_file.read_bytes():
+                    shutil.copy2(root_file, local_root)
+                compile_file = local_root
+            root_olean.parent.mkdir(parents=True, exist_ok=True)
+            root_build = subprocess.run(
+                [
+                    "lake",
+                    "env",
+                    "lean",
+                    str(compile_file),
+                    "-o",
+                    str(root_olean),
+                    "-i",
+                    str(root_ilean),
+                ],
+                cwd=proofs_dir,
+                capture_output=True,
+                text=True,
+            )
+            if root_build.returncode != 0:
+                print(
+                    f"[graph] Warning: root module compile failed for {paper_id}:{root}"
+                )
+                print(root_build.stderr[-2000:] if root_build.stderr else "")
+                return
+        if import_targets:
+            prebuild = subprocess.run(
+                ["lake", "build", *import_targets],
+                cwd=proofs_dir,
+                capture_output=True,
+                text=True,
+            )
+            if prebuild.returncode != 0:
+                print(f"[graph] Warning: targeted import build failed for {paper_id}")
+                print(prebuild.stderr[-2000:] if prebuild.stderr else "")
+                return
 
         result = subprocess.run(
             ["lake", "env", "lean", "GraphExport.lean"],
@@ -1575,43 +1689,55 @@ end {module_root}
             # No handles to mark
             return
 
-        # Load the graph JSON
         import json
 
-        try:
-            data = json.loads(graph_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, FileNotFoundError) as e:
-            print(f"[graph]   Warning: Could not load graph JSON: {e}")
+        def mark_data(data: Dict[str, Any]) -> int:
+            marked = 0
+            unqualified_handles: Set[str] = set()
+            for h in cited_handles:
+                if "." in h:
+                    parts = h.rsplit(".", 1)
+                    unqualified_handles.add(parts[1])
+                else:
+                    unqualified_handles.add(h)
+
+            for node in data.get("nodes", []):
+                node_id = node.get("id", "")
+                if node_id in cited_handles:
+                    node["paper"] = -1
+                    marked += 1
+                elif "." in node_id:
+                    suffix = node_id.rsplit(".", 1)[1]
+                    if suffix in unqualified_handles:
+                        node["paper"] = -1
+                        marked += 1
+            return marked
+
+        def load_graph() -> Optional[Dict[str, Any]]:
+            try:
+                return json.loads(graph_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, FileNotFoundError) as e:
+                print(f"[graph]   Warning: Could not load graph JSON: {e}")
+                return None
+
+        data = load_graph()
+        if data is None:
             return
 
-        # Mark nodes that correspond to cited claims with paper: -1
-        # Also check for namespace-qualified versions: a handle "foo" should match
-        # "Ssot.foo", "ClaimClosure.foo", etc. in the graph
-        marked_count = 0
+        marked_count = mark_data(data)
 
-        # Build a mapping from unqualified names to their possible qualified forms
-        # For each handle "bar", we should match both "bar" and "Namespace.bar"
-        unqualified_handles: Set[str] = set()
-        for h in cited_handles:
-            # If it's already qualified (contains "."), use as-is and also extract suffix
-            if "." in h:
-                parts = h.rsplit(".", 1)
-                unqualified_handles.add(parts[1])  # Add unqualified suffix
-            else:
-                unqualified_handles.add(h)
-
-        for node in data.get("nodes", []):
-            node_id = node.get("id", "")
-            # Direct match
-            if node_id in cited_handles:
-                node["paper"] = -1
-                marked_count += 1
-            # Check if node is a qualified version of an unqualified handle
-            elif "." in node_id:
-                suffix = node_id.rsplit(".", 1)[1]
-                if suffix in unqualified_handles:
-                    node["paper"] = -1
-                    marked_count += 1
+        if marked_count == 0:
+            dep_ids = self._collect_lean_dependency_closure(paper_id)
+            self._sync_local_lean_dependency_dirs(paper_id)
+            for dep_id in dep_ids:
+                self._sync_graph_infra_lean(dep_id)
+            self._sync_graph_infra_lean(paper_id)
+            self._write_graph_export_lean(paper_id)
+            self._collect_graph_json(paper_id)
+            data = load_graph()
+            if data is None:
+                return
+            marked_count = mark_data(data)
 
         # Write back the modified graph
         graph_path.write_text(
@@ -1853,6 +1979,59 @@ end {module_root}
                     roots.append(root)
 
         return roots
+
+    def _derive_module_sources_from_lakefile(
+        self, proofs_dir: Path
+    ) -> List[Tuple[str, Path]]:
+        """Derive `(module_root, src_dir)` pairs from `lean_lib` declarations.
+
+        This preserves `srcDir` so generated helper drivers can import modules
+        declared in external source trees (for example local frontier layers that
+        also expose a dependency library via `srcDir := "../proofs"`).
+        """
+        lakefile = proofs_dir / "lakefile.lean"
+        if not lakefile.exists():
+            return []
+
+        text = lakefile.read_text(encoding="utf-8", errors="replace")
+        entries: List[Tuple[str, Path]] = []
+        seen: Set[Tuple[str, Path]] = set()
+        skip_roots = {"PrintAxioms", "check_axioms"}
+
+        block_pattern = re.compile(
+            r"lean_lib\s+«([A-Za-z0-9_'.]+)»\s+where(.*?)(?=^\s*(?:lean_lib\s+«|lean_exe\s+|@\[default_target\]|package\s+«)|\Z)",
+            re.DOTALL | re.MULTILINE,
+        )
+        glob_pattern = re.compile(
+            r"globs\s*:=\s*#\[\s*\.submodules\s+`([A-Za-z0-9_'.]+)\s*\]"
+        )
+        src_pattern = re.compile(r"srcDir\s*:=\s*\"([^\"]+)\"")
+
+        for lib_name, body in block_pattern.findall(text):
+            root = lib_name.strip()
+            glob_match = glob_pattern.search(body)
+            if glob_match:
+                root = glob_match.group(1).strip()
+            if not root or root in skip_roots:
+                continue
+            src_raw = "."
+            src_match = src_pattern.search(body)
+            if src_match:
+                src_raw = src_match.group(1).strip() or "."
+            entry = (root, (proofs_dir / src_raw).resolve())
+            if entry not in seen:
+                seen.add(entry)
+                entries.append(entry)
+
+        if entries:
+            return entries
+
+        for root in self._derive_module_roots_from_lakefile(proofs_dir):
+            entry = (root, proofs_dir.resolve())
+            if entry not in seen:
+                seen.add(entry)
+                entries.append(entry)
+        return entries
 
     def _derive_module_roots(self, paper_id: str) -> List[str]:
         """Derive importable top-level Lean module roots for a paper."""
@@ -2187,8 +2366,8 @@ end {module_root}
         seed_modules: Set[Tuple[str, str]] = set()
         for handle in handles:
             target = handle_map.get(handle)
-            if target is None and "." in handle:
-                suffix = handle.rsplit(".", 1)[1]
+            if target is None:
+                suffix = handle.rsplit(".", 1)[-1]
                 suffix_matches = [
                     item
                     for h, item in handle_map.items()
@@ -4559,10 +4738,19 @@ end {module_root}
             if cover_file.exists():
                 print(f"[build] Building cover letter...")
                 cover_build_steps = [
-                    (["pdflatex", "-interaction=nonstopmode", cover_file_name], "pdflatex (1/3)"),
+                    (
+                        ["pdflatex", "-interaction=nonstopmode", cover_file_name],
+                        "pdflatex (1/3)",
+                    ),
                     (["bibtex", Path(cover_file_name).stem], "bibtex"),
-                    (["pdflatex", "-interaction=nonstopmode", cover_file_name], "pdflatex (2/3)"),
-                    (["pdflatex", "-interaction=nonstopmode", cover_file_name], "pdflatex (3/3)"),
+                    (
+                        ["pdflatex", "-interaction=nonstopmode", cover_file_name],
+                        "pdflatex (2/3)",
+                    ),
+                    (
+                        ["pdflatex", "-interaction=nonstopmode", cover_file_name],
+                        "pdflatex (3/3)",
+                    ),
                 ]
                 for cmd, step_name in cover_build_steps:
                     subprocess.run(

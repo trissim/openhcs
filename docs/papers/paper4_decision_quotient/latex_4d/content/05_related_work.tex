@@ -1,0 +1,15 @@
+\section{Related Work}\label{sec:related}
+
+\subsection*{Rough Sets and Reducts}
+
+At the static level, the closest classical neighbor remains rough-set reduct theory~\cite{pawlak1982rough,slowinski1995decision}. That literature asks which attributes can be removed while preserving decision distinctions. The optimizer-quotient manuscript~\cite{simas2025optimizerquotient} showed that exact static sufficiency can be recast as reduct preservation for the induced decision table. The finite-basis theorem here instead classifies the currently formalized positive cases once the optimizer-quotient perspective is fixed.
+
+\subsection*{Backdoors and Tractable Islands in CSPs}
+
+The nearest complexity-theoretic analogue is backdoor tractability in constraint satisfaction~\cite{williams2003backdoors,bessiere2013detecting,ganian2017discovering}. In that setting, a small structural set can expose membership in a tractable class even when the ambient problem is intractable. The parallel to the optimizer-quotient manuscript~\cite{simas2025optimizerquotient} is direct: exact relevance certification asks which coordinates matter, and structured tractability appears when the hidden source of hardness is restricted.
+
+What this paper contributes relative to that literature is not a new backdoor algorithm. It is a classification layer over the currently formalized positive results. The finite-basis theorem and partition theorem show that the present formalized landscape already separates three phenomena that are easy to blur together: primitive tractable islands, regime-specific lifts into old islands, and degenerate cases where the optimizer collapses or the instance space is externally bounded.
+
+\subsection*{Dichotomy Theorems}
+
+The long-term analogy is the dichotomy tradition for satisfiability and constraint satisfaction, from Schaefer's Boolean dichotomy theorem~\cite{schaefer1978complexity} to the finite-domain CSP dichotomy theorems of Bulatov and Zhuk~\cite{bulatov2017dichotomy,zhuk2017proof}. Those results do not merely enumerate examples; they characterize an entire tractability boundary. For exact relevance certification, Sections~\ref{sec:frontier} and~\ref{sec:natural-families} isolate two constraints any analogous theorem would have to respect: the currently available positive cases already form a controlled family, while quotient realizability alone is too permissive to explain the frontier. Any optimizer-compatible analogue must therefore be representation-sensitive rather than quotient-existence-sensitive.

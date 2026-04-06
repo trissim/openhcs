@@ -1,0 +1,103 @@
+import Paper4dFrontier.Classification
+import Paper4dFrontier.CoreWitnesses
+import Paper4dFrontier.EnumerationBounds
+import Paper4dFrontier.LiftReductions
+import Paper4dFrontier.StructuralWitnesses
+import Paper4dFrontier.SymmetryRankWitness
+import Paper4dFrontier.Realizability
+import Paper4dFrontier.FamilyAxioms
+import Paper4dFrontier.ClosureLaws
+
+open Paper4dFrontier
+
+/-- Stable Lean-handle IDs for paper4d (frontier sequel).
+
+The build system parses `abbrev CODE := target` and uses these IDs in
+`lean_handle_ids_auto.tex`, which then powers `\LH{CODE}` links in the PDF. -/
+
+abbrev FR1 := @currentFamilies_partition_by_role
+abbrev FR2 := @currentFamilies_partition_counts
+abbrev FR3 := @current_families_have_finite_basis
+abbrev FR4 := @current_positive_interfaces_factor_through_role
+abbrev FR5 := @lifted_families_reduce_to_core
+abbrev FR6 := @degenerateFamilies_complete
+abbrev FR25 := @currentFamilies_explicit
+abbrev FR26 := @coreFamilies_explicit
+abbrev FR27 := @liftedFamilies_explicit
+abbrev FR28 := @degenerateFamilies_explicit
+abbrev FR29 := @primitiveMechanisms_explicit
+
+abbrev FR7 := @exists_decisionProblem_realizing_labeling
+abbrev FR8 := @realizingProblem_decisionEquiv_iff
+abbrev FR39 := @realizingProblemQuotientEquivLabelRange_apply_quotientMap
+abbrev FR40 := @realizingProblem_quotientCard_eq_labelRangeCard
+abbrev FR45 := @setoidRealizingProblem_decisionEquiv_iff
+abbrev FR46 := @setoidRealizingProblemQuotientEquivSetoidQuotient_apply_quotientMap
+abbrev FR47 := @exists_decisionProblem_realizing_setoid
+
+abbrev FR9 := @decisionEquiv_iff_of_opt_eq
+abbrev FR10 := @isSufficient_iff_of_opt_eq
+abbrev FR11 := @isRelevant_iff_of_opt_eq
+abbrev FR12 := @isIrrelevant_iff_of_opt_eq
+abbrev FR30 := @isSufficient_iff_of_decisionEquiv_iff
+abbrev FR31 := @isRelevant_iff_of_decisionEquiv_iff
+abbrev FR32 := @isIrrelevant_iff_of_decisionEquiv_iff
+abbrev FR33 := @isMinimalSufficient_iff_of_decisionEquiv_iff
+abbrev FR34 := @sufficientSets_eq_of_decisionEquiv_iff
+abbrev FR35 := @relevantSet_eq_of_decisionEquiv_iff
+noncomputable abbrev FR36 := @quotientEquiv_of_decisionEquiv_iff
+abbrev FR51 := @quotientEquiv_of_decisionEquiv_iff_apply_quotientMap
+abbrev FR37 := @quotientCard_eq_of_decisionEquiv_iff
+abbrev FR41 := @certificationStatistic_eq_of_decisionEquiv_iff
+abbrev FR42 := @sufficientSetCount_eq_of_decisionEquiv_iff
+abbrev FR43 := @minimalSufficientSetCount_eq_of_decisionEquiv_iff
+abbrev FR44 := @relevantCoordCount_eq_of_decisionEquiv_iff
+abbrev FR48 := @isSufficient_iff_agreementRel_le_decisionEquiv
+abbrev FR49 := @isIrrelevant_iff_sufficient_erase
+abbrev FR50 := @isRelevant_iff_not_sufficient_erase
+
+abbrev FR13 := @isOptimal_positiveAffineTransform_iff
+abbrev FR14 := @opt_eq_positiveAffineTransform
+abbrev FR15 := @isSufficient_positiveAffineTransform_iff
+abbrev FR16 := @isRelevant_positiveAffineTransform_iff
+
+abbrev FR17 := @decisionEquiv_relabelActions_iff
+abbrev FR18 := @decisionEquiv_relabelStates_iff
+abbrev FR19 := @isSufficient_relabelActions_iff
+abbrev FR20 := @isSufficient_relabelStates_iff
+
+abbrev FR21 := @allProblems_relabelInvariant
+abbrev FR22 := @allProblems_kernelUniversal
+abbrev FR23 := @relabelInvariant_not_enough
+abbrev FR24 := @optRangeCard_realizingIdentity
+abbrev FR38 := @quotientCard_realizingIdentity
+
+abbrev FR52 := @empty_sufficient_of_constant_opt
+abbrev FR53 := @irrelevant_of_constant_opt
+abbrev FR54 := @decisionEquiv_duplicateAction_iff
+abbrev FR55 := @isSufficient_duplicateAction_iff
+abbrev FR56 := @isRelevant_duplicateAction_iff
+abbrev FR72 := @some_mem_opt_addDuplicateAction_iff
+abbrev FR73 := @none_mem_opt_addDuplicateAction_iff
+abbrev FR57 := @decisionEquiv_duplicateState_iff
+abbrev FR58 := @isSufficient_duplicateState_iff
+abbrev FR59 := @isRelevant_duplicateState_iff
+abbrev FR60 := @duplicateStateQuotientEquivOriginal_apply_quotientMap
+abbrev FR68 := @decisionEquiv_addDuplicateState_iff
+abbrev FR69 := @isSufficient_addDuplicateState_iff
+abbrev FR70 := @isRelevant_addDuplicateState_iff
+abbrev FR71 := @addDuplicateStateQuotientEquivOriginal_apply_quotientMap
+
+abbrev FR61 := @bounded_actions_not_imply_separable_witness
+abbrev FR62 := @separable_not_imply_bounded_actions_witness
+abbrev FR63 := @low_rank_not_imply_coordinate_symmetry_witness
+abbrev FR66 := @booleanCube_card
+abbrev FR67 := @exists_booleanCube_larger_than_monomial
+abbrev FR74 := @product_distribution_reduction_tractable
+abbrev FR75 := @bounded_support_reduction_tractable
+abbrev FR76 := @bounded_horizon_reduction_tractable
+abbrev FR77 := @fully_observable_reduction_tractable
+abbrev FR78 := @bounded_treewidth_not_imply_bounded_actions_witness
+abbrev FR79 := @bounded_treewidth_not_imply_coordinate_symmetry_witness
+abbrev FR80 := @tree_structure_strictly_inside_bounded_treewidth_witness
+abbrev FR86 := @coordinate_symmetry_not_imply_low_rank_witness

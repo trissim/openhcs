@@ -1,0 +1,20 @@
+\section{Introduction}
+
+The decision-quotient program now has a clean negative side and a clean positive side. The negative side was established in the optimizer-quotient manuscript archived at Zenodo~\cite{simas2025optimizerquotient}: exact relevance certification is regime-sensitive, hard in the general succinct setting, and constrained by the certification trilemma. The positive side began with six structurally meaningful polynomial-time subcases: bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, and coordinate symmetry.
+
+Since then, the Lean development has grown beyond those six headline cases. It now contains regime-specific tractable lifts such as product distributions and bounded horizons, and also several edge cases such as single-action systems, bounded state spaces, strict dominance, constant optimal sets, and multiplicative-separable constant-sign models. This creates an immediate classification question. When we say the artifact contains ``more tractable subcases,'' do we mean that the positive side is already proliferating without control, or do these extra cases reduce to a smaller conceptual basis?
+
+We give an explicit finite decomposition of the currently formalized tractable families.
+
+\subsection*{Contribution}
+
+The contribution is a finite-basis theorem for the current positive landscape:
+\begin{enumerate}
+\item an explicit partition theorem: the fifteen currently formalized families split into six core families, four regime lifts, and five degenerate edge cases;
+\item the currently mechanized stochastic/sequential tractable lifts reduce to the old six and do not create new primitive families;
+\item the degenerate cases collapse into two buckets, constant-optimizer collapse and finite explicit enumeration;
+\item projecting the partition to primitive mechanisms yields a finite basis of size eight;
+\item the resulting formalized positive landscape is explicit and finite.
+\end{enumerate}
+
+The current formalized inventory consists of fifteen families. Whether only finitely many optimizer-compatible tractability mechanisms exist in general remains open. The main open question is whether newly formalized families represent genuinely new mechanisms or lifted or degenerate presentations of an already finite basis.

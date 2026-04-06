@@ -25,15 +25,14 @@ def collectDeps (info : ConstantInfo) : Array Name :=
   | ConstantInfo.opaqueInfo v => v.value.foldConsts deps fun n acc => acc.push n
   | _ => deps
 
-/-- Auto-generated per paper by `build_papers.py`. -/
-def configuredProjectRoots : List String := [
-  -- __PROJECT_ROOTS__
-]
-
-/-- Filter: keep only declarations from the active paper/dependency namespaces. -/
+/-- Filter: keep only declarations from the project namespaces proper. -/
 def isProjectName (n : Name) : Bool :=
   let s := n.toString
-  configuredProjectRoots.any fun root => s.startsWith root
+  s.startsWith "Leverage" ||
+  s.startsWith "Ssot" ||
+  s.startsWith "DecisionQuotient" ||
+  s.startsWith "AbstractClassSystem" ||
+  s.startsWith "Paper"
 
 /-- Collapse external dependencies into a small set of foundation witnesses. -/
 def foundationBucket (n : Name) : Option String :=

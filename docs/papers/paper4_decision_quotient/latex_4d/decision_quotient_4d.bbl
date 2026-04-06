@@ -1,0 +1,59 @@
+\begin{thebibliography}{1}
+
+\bibitem{bessiere2013detecting}
+Christian Bessiere, Clement Carbonnel, Emmanuel Hebrard, George Katsirelos, and
+  Toby Walsh.
+\newblock Detecting and exploiting subproblem tractability.
+\newblock In {\em Proceedings of the Twenty-Third International Joint
+  Conference on Artificial Intelligence (IJCAI)}, pages 468--474, 2013.
+
+\bibitem{bulatov2017dichotomy}
+Andrei~A. Bulatov.
+\newblock A dichotomy theorem for nonuniform csps.
+\newblock In {\em 2017 IEEE 58th Annual Symposium on Foundations of Computer
+  Science (FOCS)}, pages 319--330. IEEE, 2017.
+
+\bibitem{ganian2017discovering}
+Robert Ganian, M.~S. Ramanujan, and Stefan Szeider.
+\newblock Discovering archipelagos of tractability for constraint satisfaction
+  and counting.
+\newblock In {\em Proceedings of the 27th Annual ACM-SIAM Symposium on Discrete
+  Algorithms (SODA)}, pages 1670--1681. SIAM, 2016.
+
+\bibitem{pawlak1982rough}
+Zdzis{\l}aw Pawlak.
+\newblock Rough sets.
+\newblock {\em International Journal of Parallel Programming}, 11(5):341--356,
+  1982.
+
+\bibitem{schaefer1978complexity}
+Thomas~J. Schaefer.
+\newblock The complexity of satisfiability problems.
+\newblock In {\em Proceedings of the Tenth Annual ACM Symposium on Theory of
+  Computing}, pages 216--226. ACM, 1978.
+
+\bibitem{simas2025optimizerquotient}
+Tristan Simas.
+\newblock The optimizer quotient and the certification trilemma.
+\newblock Zenodo, 2025.
+\newblock Archived manuscript and Lean artifact.
+
+\bibitem{slowinski1995decision}
+Roman Slowinski and Daniel Vanderpooten.
+\newblock Decision under uncertainty: A rough set approach.
+\newblock {\em European Journal of Operational Research}, 80(2):277--289, 1995.
+
+\bibitem{williams2003backdoors}
+Ryan Williams, Carla~P. Gomes, and Bart Selman.
+\newblock Backdoors to typical case complexity.
+\newblock In {\em Proceedings of the Eighteenth International Joint Conference
+  on Artificial Intelligence (IJCAI)}, pages 1173--1178. Morgan Kaufmann
+  Publishers Inc., 2003.
+
+\bibitem{zhuk2017proof}
+Dmitriy Zhuk.
+\newblock A proof of csp dichotomy conjecture.
+\newblock In {\em 2017 IEEE 58th Annual Symposium on Foundations of Computer
+  Science (FOCS)}, pages 331--342. IEEE, 2017.
+
+\end{thebibliography}

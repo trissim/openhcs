@@ -1,0 +1,38 @@
+\documentclass[11pt]{article}
+\usepackage{paper-preamble}
+
+% Auto-generated scaffold. Replace with venue-specific preamble as needed.
+\IfFileExists{content/lean_stats.tex}{\input{content/lean_stats.tex}}{}
+\providecommand{\claimstamp}[2]{\allowbreak{\scriptsize\textit{[C:#1;R:#2]}}}
+\providecommand{\LHrng}[3]{\hyperlink{lh:#1#2}{\nolinkurl{#1#2-#3}}}
+\providecommand{\leanmeta}[1]{\allowbreak{\scriptsize\textit{(L: #1)}}}
+
+\title{Toward a Tractability Frontier for Exact Relevance Certification}
+\author{
+  Tristan Simas\\
+  McGill University\\
+  \texttt{tristan.simas@mail.mcgill.ca}
+}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\input{content/abstract.tex}
+\end{abstract}
+
+\input{content/01_introduction.tex}
+\input{content/02_finite_basis.tex}
+\input{content/03_lifts_and_degeneracies.tex}
+\input{content/04_frontier_program.tex}
+\input{content/04b_realizability_barrier.tex}
+\input{content/04c_natural_families.tex}
+\input{content/05_related_work.tex}
+\input{content/05_conclusion.tex}
+\input{content/06_lean_4_proof_listings.tex}
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

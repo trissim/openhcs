@@ -205,6 +205,19 @@ papers:
       - "DecisionQuotient/Physics/WolpertConstraints.lean"
     claim_mapping_file: "content/claim_mapping_auto.tex"
 
+  paper4d:
+    name: "Decision Quotient Frontier"
+    full_name: "Toward a Tractability Frontier for Exact Relevance Certification"
+    dir: "paper4_decision_quotient"
+    proofs_dir: "proofs_4d"
+    module_root: "Paper4dFrontier"
+    latex_dir: "latex_4d"
+    latex_file: "decision_quotient_4d.tex"
+    venue: "Draft"
+    lean_stats_scope: "content_cited"
+    lean_dependencies:
+      - "paper4"
+
   paper5:
     name: "Credibility"
     full_name: "A Formal Theory of Credibility: Why Assertions of Trustworthiness Decrease Trust"
