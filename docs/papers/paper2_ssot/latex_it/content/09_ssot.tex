@@ -1,37 +1,8 @@
 \section{Unit-Rate Boundary Characterization}\label{sec:ssot}
 %==============================================================================
 
-\subsection{Derivation as the Single-Source Structure}\label{sec:ssot-def}
+An encoding system has \emph{unit independent rate} when $\mathrm{DOF}(C,F)=1$. By Corollary~\ref{thm:coherence-capacity}, this is exactly the regime in which every reachable state remains coherent. Derived views preserve visible multiplicity without increasing independent rate, so the single-source regime is the unique exact-consistency boundary.\leanmeta{\LHrng{COH}{1}{2}, \LH{DER2}, \LH{RAT1}}
 
-An encoding system has \emph{unit independent rate} when $\text{DOF}(C,F)=1$. By Corollary~\ref{thm:coherence-capacity}, this is exactly the regime in which every reachable state remains coherent, and any rate above $1$ admits reachable disagreement states. Thus unit rate is the unique exact-consistency boundary, and the later rate-complexity statements are its operational cost interpretation.\leanmeta{\LHrng{COH}{1}{2}, \LH{BND1}, \LH{RAT1}, \LH{RED1}}
-
-\subsection{Reading the Converse at Unit Rate}\label{sec:info-sketches}
-
-When ambiguity classes are trivial, no auxiliary information is needed and unit rate suffices. When a nontrivial ambiguity class survives the observation transcript, Theorem~\ref{thm:fano-converse} shows that exact recovery requires a sufficiently large side-information alphabet. If that side information is unavailable but exact correctness is still demanded, additional independently accessible support is required. That is exactly what moves the system above unit rate and leads to the update-cost lower bound of Section~\ref{sec:rate-corollaries}. Derivation is therefore the dependence structure that preserves visible views while removing independent rate.\leanmeta{\LH{CIA3}, \LH{BND2}, \LH{DER2}}
-
-\subsection{Rate and Manual Update Cost}\label{sec:ssot-vs-m}
-
-An encoding may expose many visible copies of a fact, but only the independent copies govern manual synchronization cost. At unit rate, one manual update changes the authoritative source and derived views follow automatically; above unit rate, each independent location must be synchronized manually. This is the cost interpretation of the threshold.\leanmeta{\LHrng{BND}{1}{2}}
-
-\subsection{Derived Views}\label{sec:derivation}
-
-\begin{definition}[Derivation]\label{def:derivation}
-Location $L_{\text{derived}}$ is \emph{derived from} $L_{\text{source}}$ for fact $F$ iff an update to $L_{\text{source}}$ determines the value of $L_{\text{derived}}$ without an additional manual edit.
-\end{definition}
-
-Derivation may occur at creation time, build time, commit time, or query time depending on the host system. The abstract point is unchanged: a derived location does not contribute an additional independently writable value for the same fact.
-
-\leanmetapending{\LH{DER2}}
-\begin{proposition}[Derivation Preserves Coherence]\label{thm:derivation-excludes}
-If $L_{\text{derived}}$ is derived from $L_{\text{source}}$, then $L_{\text{derived}}$ cannot diverge from $L_{\text{source}}$ and does not contribute to DOF.
-\end{proposition}
-
-\begin{proof}
-By Definition~\ref{def:derivation}, the value at $L_{\text{derived}}$ is determined by the value at $L_{\text{source}}$ under admissible updates. There is therefore no reachable state in which the two locations carry incompatible values for the same fact. Since the derived location has no independently writable contribution, it does not increase DOF.
-\end{proof}
-
-If all encodings of $F$ except one are derived from that one, then Proposition~\ref{thm:derivation-excludes} leaves exactly one independent source, hence $\text{DOF}(C,F)=1$ and exact consistency follows from Corollary~\ref{thm:coherence-capacity}.\leanmeta{\LH{DER2}, \LH{COH1}}
-
-The same dependence structure can be realized in many host systems. Its role here is only to prepare the realizability criterion.
+When a nontrivial ambiguity class survives the observation transcript, Theorem~\ref{thm:fano-converse} forces additional side information for exact recovery. If exact correctness is still demanded without that side information, the architecture must rely on additional independently accessible support, thereby leaving the rate-$1$ regime. Appendix~\ref{sec:appendix-boundary} contains the detailed derivation lemma and the full boundary proof package.\leanmeta{\LH{CIA3}, \LH{BND2}, \LH{RED1}}
 
 %==============================================================================

@@ -1,0 +1,147 @@
+\subsection{Boundary and Realizability Proof Package}\label{sec:appendix-boundary}
+
+\subsection{Derived Views and the Unit-Rate Boundary}
+
+An encoding system has \emph{unit independent rate} when $\text{DOF}(C,F)=1$. By Corollary~\ref{thm:coherence-capacity}, this is exactly the regime in which every reachable state remains coherent, and any rate above $1$ admits reachable disagreement states. Thus unit rate is the unique exact-consistency boundary, and the later rate-complexity statements are its cost interpretation.\leanmeta{\LHrng{COH}{1}{2}, \LH{BND1}, \LH{RAT1}, \LH{RED1}}
+
+When ambiguity classes are trivial, no auxiliary information is needed and unit rate suffices. When a nontrivial ambiguity class survives the observation transcript, Theorem~\ref{thm:fano-converse} shows that exact recovery requires a sufficiently large side-information alphabet. If that side information is unavailable but exact correctness is still demanded, additional independently accessible support is required. That is exactly what moves the system above unit rate and leads to the update-cost lower bounds below.\leanmeta{\LH{CIA3}, \LH{BND2}, \LH{DER2}}
+
+\begin{definition}[Derivation]\label{def:derivation}
+Location $L_{\text{derived}}$ is \emph{derived from} $L_{\text{source}}$ for fact $F$ iff an update to $L_{\text{source}}$ determines the value of $L_{\text{derived}}$ without an additional manual edit.
+\end{definition}
+
+\leanmetapending{\LH{DER2}}
+\begin{proposition}[Derivation Preserves Coherence]\label{thm:derivation-excludes}
+If $L_{\text{derived}}$ is derived from $L_{\text{source}}$, then $L_{\text{derived}}$ cannot diverge from $L_{\text{source}}$ and does not contribute to DOF.
+\end{proposition}
+
+\begin{proof}
+By Definition~\ref{def:derivation}, the value at $L_{\text{derived}}$ is determined by the value at $L_{\text{source}}$ under admissible updates. There is therefore no reachable state in which the two locations carry incompatible values for the same fact. Since the derived location has no independently writable contribution, it does not increase DOF.
+\end{proof}
+
+If all encodings of $F$ except one are derived from that one, then Proposition~\ref{thm:derivation-excludes} leaves exactly one independent source, hence $\text{DOF}(C,F)=1$ and exact consistency follows from Corollary~\ref{thm:coherence-capacity}.\leanmeta{\LH{DER2}, \LH{COH1}}
+
+\subsection{Rate-Complexity Corollaries}
+
+\begin{definition}[Modification Cost Model]\label{def:cost-model}
+Let $\delta_F$ be a modification to fact $F$ in encoding system $C$. The \emph{synchronization cost} $S(C,\delta_F)$ is the minimum number of independent state interventions required to restore a zero-error joint state after applying $\delta_F$. Deterministic dependent nodes contribute zero cost, as their state is compelled by the source update.
+\end{definition}
+
+\leanmetapending{\LH{BND1}}
+\begin{theorem}[Rate-1 Upper Bound]\label{thm:upper-bound}
+If $\text{DOF}(C,F)=1$, then
+\[
+S(C,\delta_F)=O(1).
+\]
+\end{theorem}
+
+\begin{proof}
+When $\text{DOF}(C,F)=1$, there is exactly one independently writable source location for $F$. Updating that location is one manual edit; every other representation of $F$ is derived and is updated automatically. The number of manual edits therefore stays bounded by a constant independent of the number of visible encodings.
+\end{proof}
+
+\leanmetapending{\LH{BND2}}
+\begin{theorem}[Above-Threshold Lower Bound]\label{thm:lower-bound}
+If fact $F$ is encoded at $n$ independent locations without zero-delay state synchronization, then
+\[
+S(C,\delta_F)=\Omega(n).
+\]
+\end{theorem}
+
+\begin{proof}
+Each independent location can retain stale state unless acted upon directly. After a source update, every one of the $n$ independent encodings can witness a distinct stale copy. Any protocol restoring zero-error consistency must therefore address each channel separately. No single intervention can synchronize two independently writable nodes, so the cost grows at least linearly in $n$.
+\end{proof}
+
+\leanmetapending{\LH{CIA4}}
+\begin{lemma}[Information-Constrained DOF Lower Bound]\label{lem:info-dof}
+If the available side-information mechanism exposes at most $2^L$ distinguishable tags while the latent ambiguity class has size $K>2^L$, then no zero-error resolver can identify the true state from those tags alone. Any architecture that still guarantees exact correctness must therefore rely on additional independently accessible discriminating support, moving the system above unit rate.
+\end{lemma}
+
+\begin{proof}
+Theorem~\ref{thm:fano-converse} rules out exact recovery from the available tag budget. If exact correctness is nevertheless required, the architecture must supplement the insufficient side-information channel with additional independently accessible information. In the present model, that means leaving the rate-$1$ regime and paying the synchronization cost of Theorem~\ref{thm:lower-bound}.
+\end{proof}
+
+\leanmetapending{\LH{BND3}}
+\begin{theorem}[Unbounded Gap]\label{thm:unbounded-gap}
+The ratio between the synchronization cost of an architecture with $n$ independent encodings and the synchronization cost of a rate-$1$ architecture diverges:
+\[
+\lim_{n\to\infty}\frac{S_{\mathrm{DOF}>1}(n)}{S_{\mathrm{DOF}=1}}=\infty.
+\]
+\end{theorem}
+
+\begin{proof}
+By Theorem~\ref{thm:upper-bound}, a rate-$1$ architecture has constant synchronization cost. By Theorem~\ref{thm:lower-bound}, an architecture with $n$ independent encodings incurs linear cost in $n$. The ratio therefore grows without bound.
+\end{proof}
+
+\subsection{Realizability Details}
+
+A host system realizes the rate-$1$ regime when one location is authoritative and every secondary representation is maintained as a deterministic view. Verifiable decoding requires two capabilities:
+\begin{enumerate}
+\item \textbf{Zero-delay state synchronization}: updates to the authoritative source propagate to derived locations as part of the same atomic update event, with no reachable intermediate disagreement.
+\item \textbf{Structural side-information}: the decoder has access to topology metadata distinguishing authoritative sources from dependent nodes.
+\end{enumerate}
+
+To connect realizability to information available at verification time, fix a fact $F$ and consider the alternatives that remain compatible with the available observations. These alternatives form the same zero-error obstruction analyzed in Sections~\ref{sec:converse}--\ref{sec:equality}: if the host cannot separate the surviving ambiguity class, exact verification requires additional structural side information.
+
+\leanmetapending{\LH{OBS5}}
+\begin{lemma}[Confusability Clique Bound]\label{lem:confusability-clique}
+If the confusability graph for $F$ contains a clique of size $k$, then any zero-error side-information scheme distinguishing those $k$ alternatives requires at least $k$ distinct tags, equivalently at least $\log_2 k$ bits of side information.
+\end{lemma}
+
+\begin{proof}
+Within a $k$-clique, every pair of alternatives is confusable under the base observation. A zero-error tag assignment must therefore separate all $k$ states. Distinct states cannot share a tag, so at least $k$ tags are required.
+\end{proof}
+
+\begin{definition}[Structural Fact]\label{def:structural-fact-req}
+A fact $F$ is \emph{structural} if every location encoding $F$ is fixed when the underlying object, declaration, or artifact is created. After that moment, the encoding can be read and compared, but not retroactively re-created without a new edit event.
+\end{definition}
+
+\leanmetapending{\LH{REQ1}, \LH{TRI1}}
+\begin{theorem}[Timing Constraint for Structural Derivation]\label{thm:timing-forces}
+For structural facts, derivation must occur no later than the moment at which the relevant encoding locations become fixed.
+\end{theorem}
+
+\begin{proof}
+Let $t_{\mathrm{fix}}$ denote the time at which the structural encoding becomes fixed. A derivation performed strictly before $t_{\mathrm{fix}}$ cannot depend on the completed source value; a derivation performed strictly after $t_{\mathrm{fix}}$ cannot alter the already fixed structural representation. Therefore structural derivation must occur at $t_{\mathrm{fix}}$ or as part of the same creation/update event.
+\end{proof}
+
+\begin{definition}[Zero-Delay State Synchronization]\label{def:causal-propagation}
+An encoding system has \emph{zero-delay state synchronization} if every update to a source location is followed by updates to all locations derived from that source with no reachable intermediate state in which source and derived locations disagree. Equivalently, propagation is part of the same admissible update event for the purposes of reachable-state analysis.
+\end{definition}
+
+\leanmetapending{\LH{REQ2}}
+\begin{theorem}[Zero-Delay Synchronization is Necessary for Unit Rate]\label{thm:causal-necessary}
+Achieving independent rate $1$ for structural facts requires zero-delay state synchronization.
+\end{theorem}
+
+\begin{proof}
+By Theorem~\ref{thm:timing-forces}, structural derivation must occur at the moment the source-side structural encoding is fixed. If zero-delay synchronization is absent, then some derived location remains stale until a later manual action. During that interval the source and derived locations disagree, so the architecture does not realize exact consistency. Hence a verifiable rate-$1$ realization for structural facts requires zero-delay synchronization.
+\end{proof}
+
+\begin{definition}[Structural Side-Information]\label{def:provenance-observability}
+An encoding system has \emph{structural side-information} if it supports queries that reveal which locations encode a fact, which of those locations are authoritative, and which are derived.
+\end{definition}
+
+\leanmetapending{\LH{REQ3}}
+\begin{theorem}[Structural Side-Information is Necessary for Verifiable Unit Rate]\label{thm:provenance-necessary}
+Verifying that independent rate $1$ holds requires structural side-information.
+\end{theorem}
+
+\begin{proof}
+To verify independent rate $1$, one must enumerate the locations encoding the fact, identify the authoritative source, and confirm that every remaining location is derived from it. Without structural side-information, these checks cannot be completed from inside the host system. The architecture may be coherent on observed states, but the single-source claim is not verifiable.
+\end{proof}
+
+\leanmetapending{\LHrng{IND}{1}{2}}
+\begin{theorem}[Requirements are Independent]\label{thm:independence}
+\begin{enumerate}
+\tightlist
+\item An encoding system can have zero-delay state synchronization without structural side-information.
+\item An encoding system can have structural side-information without zero-delay state synchronization.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+For (1), consider a system that automatically refreshes all derived views after each source update but exposes no query interface for its derivation graph. Coherence may hold in reachable states, but the single-source claim is not inspectable. For (2), consider a system that records complete provenance metadata yet requires users to trigger propagation manually after each change. The derivation structure is visible, but stale views remain reachable. Hence neither property implies the other.
+\end{proof}
+
+\noindent\textbf{Proof of Corollary~\ref{thm:ssot-iff}.}
+Necessity follows from Theorems~\ref{thm:causal-necessary} and~\ref{thm:provenance-necessary}. For sufficiency, assume both properties hold. Zero-delay synchronization ensures that every derived location is updated as part of the same structural event as the source; structural side-information then certifies that all secondary encodings are in fact derived from that source. The architecture therefore realizes a verifiable single-source encoding, i.e., independent rate $1$, which is exactly verifiable structural integrity in the sense of Definition~\ref{def:verifiable-integrity-main}.
