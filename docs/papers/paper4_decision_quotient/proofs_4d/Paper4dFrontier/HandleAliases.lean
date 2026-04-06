@@ -1,5 +1,8 @@
 import Paper4dFrontier.Classification
 import Paper4dFrontier.Block2Progress
+import Paper4dFrontier.BinaryPairwiseDichotomy
+import Paper4dFrontier.DecisionRelevantPairwiseDichotomy
+import Paper4dFrontier.Block6Obstruction
 import Paper4dFrontier.CycleRankWitness
 import Paper4dFrontier.CoreWitnesses
 import Paper4dFrontier.FirstTwoIndicator
@@ -143,6 +146,13 @@ abbrev FR112 := @bounded_treewidth_only_witness
 abbrev FR115 := @tree_structure_hardness_bridge
 abbrev FR116 := @bounded_actions_hardness_bridge
 abbrev FR117 := @nonseparable_hardness_bridge
+abbrev FR118 := @pairCrossDifference_eq_binaryCrossDifference_of_lt
+abbrev FR119 := @pairwise_zero_crossDifference_unaryDecomposition
+abbrev FR120 := @binary_pairwise_symmetry_dichotomy
+abbrev FR121 := @actionGapCrossDifference_eq_binaryCrossDifference_of_lt
+abbrev FR122 := @decisionRelevant_zero_actionGap_implies_unaryReduction
+abbrev FR123 := @binary_pairwise_symmetry_decision_relevant_dichotomy
+abbrev FR124 := @block6_genuine_interaction_dichotomy_obstruction
 abbrev FR110 := @parentTreeStructured_implies_treeStructured
 abbrev FR111 := @treeStructured_and_unique_parent_iff_parentTreeStructured
 abbrev FR102 := @completeGraph_not_realTreewidth_le_of_large

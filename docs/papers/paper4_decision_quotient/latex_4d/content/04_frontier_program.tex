@@ -35,3 +35,28 @@ A genuine frontier theorem must distinguish primitive mechanisms from lifts and 
 \subsection*{Third: Algebraic Description}
 
 The natural long-term analogy is the CSP dichotomy program, where tractability is controlled by an algebraic boundary condition rather than by an ad hoc list of examples. For exact relevance certification, the unresolved question is whether optimizer-induced quotients admit a comparably finite algebraic description or whether the tractable side remains genuinely open-ended.
+
+\subsection*{A Stabilized Binary Pairwise Subregime}
+
+One piece of the frontier program already admits a clean canonical theorem. On binary coordinate domains, define the mixed difference along coordinates $i,j$ for action $a$ by evaluating the utility on the four assignments $(0,0),(1,1),(0,1),(1,0)$ while holding all other coordinates fixed at $0$. For pairwise utilities, this mixed difference is the canonical witness of genuine pair interaction.
+
+\leanmetapending{\LH{FR118}, \LH{FR119}, \LH{FR120}}
+\begin{proposition}[Binary Pairwise Symmetry Dichotomy]\label{prop:binary-pairwise-dichotomy}
+Let the coordinate alphabet be binary. If a utility admits a pairwise decomposition and is invariant under coordinate permutations, then either:
+\begin{enumerate}
+\item it admits a unary-coordinate decomposition, so every pairwise term collapses into single-coordinate contributions, or
+\item every distinct coordinate pair carries a genuine pair interaction, witnessed by a nonzero mixed difference for some action.
+\end{enumerate}
+\end{proposition}
+
+The point is structural rather than cosmetic. Within the binary pairwise-symmetric regime, there is no intermediate sparse interaction pattern hiding between unary collapse and the complete-pair case. Once a single nonzero pair witness exists, symmetry propagates it to every coordinate pair. This removes one plausible source of additional primitive mechanisms from the frontier search.
+
+The optimizer-relevant version needs one extra layer. Raw pair interaction is still too coarse, because action-independent pairwise terms can be structurally dense without changing the optimizer. The correct invariant is the mixed difference of action gaps $U(a,
+\cdot)-U(b,\cdot)$.
+
+\leanmetapending{\LH{FR121}, \LH{FR122}, \LH{FR123}, \LH{FR124}}
+\begin{proposition}[Decision-Relevant Binary Pairwise Dichotomy]\label{prop:decision-relevant-binary-pairwise-dichotomy}
+In the same binary pairwise-symmetric regime, either all action-dependent pair effects collapse into a unary-coordinate reduction after removing an action-independent base state term, or every distinct coordinate pair is decision-relevantly interacting for some action gap.
+\end{proposition}
+
+This is the right replacement for the naive hardness conjecture. The obstruction theorem \LH{FR124} shows that even complete genuine pair interaction and failure of coordinate symmetry do not force hardness by themselves: one can still have a constant optimizer. Any eventual frontier theorem must therefore quotient out optimizer-degenerate phenomena, not just declared or utility-level interaction density.
