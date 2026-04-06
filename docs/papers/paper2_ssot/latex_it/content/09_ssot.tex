@@ -1,8 +1,6 @@
 \section{Unit-Rate Boundary Characterization}\label{sec:ssot}
 %==============================================================================
 
-The preceding sections characterize the zero-error capacity, strong-power scaling laws, and upper bounds for partial views when ambiguity survives. This section turns to the operational boundary: what structural properties are necessary to remain at the zero-incoherence threshold, and what is the information-theoretic penalty for leaving it? The resulting criterion is not merely a structural curiosity. When a deterministic partial-view architecture operates above unit rate, it does not merely experience operational friction; it deterministically inherits the non-clique failure topologies and bounded exact-success rates established in Sections~\ref{sec:graph-characterization}--\ref{sec:equality}. Section~\ref{sec:rate-corollaries} proves that this boundary violation strictly forces an $\Omega(n)$ manual-update lower bound, and Section~\ref{sec:requirements} establishes the exact realizability criteria for the zero-error regime.
-
 \subsection{Derivation as the Single-Source Structure}\label{sec:ssot-def}
 
 An encoding system has \emph{unit independent rate} when $\text{DOF}(C,F)=1$. By Corollary~\ref{thm:coherence-capacity}, this is exactly the regime in which every reachable state remains coherent, and any rate above $1$ admits reachable disagreement states. Thus unit rate is the unique exact-consistency boundary, and the later rate-complexity statements are its operational cost interpretation.\leanmeta{\LHrng{COH}{1}{2}, \LH{BND1}, \LH{RAT1}, \LH{RED1}}

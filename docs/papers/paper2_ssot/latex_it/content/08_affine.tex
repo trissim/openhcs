@@ -1,9 +1,6 @@
 \section{Affine Dual: Coordinate Matroid}\label{sec:affine}
 %==============================================================================
 
-
-The preceding sections developed the main graph-capacity and equality arc for partial views. Computing the resulting graph quantities is hard in general. This section isolates a regime in which the coordinate side of the model becomes tractable: when the realized state family is affine, semantic determination reduces to standard linear algebra, and the resulting upper bounds can be computed by matrix rank rather than by solving a general graph-capacity problem.
-
 The resulting object is a representable matroid on fact indices. It is the coordinate-side dual of the same realized-state structure that generates the confusability graph, and it provides computationally tractable upper bounds on confusability and capacity. The tractability claim is representation-sensitive: throughout this section, the affine family $A=a_0+V$ is assumed to be given by an explicit linear presentation of $V$, for example a basis or generator matrix over $\mathbb F_q$, together with the explicit coordinate-subset view family. Under that input model, the relevant quantity is just the rank of a restricted coordinate map and is computable by Gaussian elimination.
 
 \paragraph{Warm-up example.}

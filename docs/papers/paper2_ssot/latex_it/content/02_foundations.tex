@@ -1,8 +1,6 @@
 \section{Model and Basic Quantities}\label{sec:foundations}
 %==============================================================================
 
-This section introduces only the minimum structure needed to state the deterministic converse foundation and its boundary threshold corollary: latent states, deterministic observations, auxiliary tags, ambiguity classes, and independent rate.
-
 \subsection{Model assumptions and notation}\label{sec:assumptions}
 
 We use the following standing assumptions.
@@ -29,8 +27,8 @@ Let $E(C)$ denote the admissible edit set of encoding system $C$. Two locations 
 A location is \emph{derived} from a source location if updating the source determines the derived value without an additional manual edit.
 \end{definition}
 
-\begin{definition}[Degrees of Freedom]\label{def:dof}
-The \emph{degrees of freedom} (DOF) is used as shorthand for the independent rate, defined as the number of pairwise independent source locations encoding $F$ under the specified admissible edit set $E(C)$. In the single-fact model, the remaining encoding locations are treated as derived views of those independent sources.
+\begin{definition}[Independent Rate (Degrees of Freedom)]\label{def:dof}
+The \emph{independent rate} of encoding system $C$ for fact $F$ is the number of pairwise independent source locations encoding $F$ under the admissible edit set $E(C)$. We write $\mathrm{DOF}(C,F)$ for this quantity. In the single-fact model, the remaining encoding locations are treated as derived views of those independent sources.
 \end{definition}
 
 \begin{definition}[Structural Integrity]\label{def:structural-integrity}
@@ -58,16 +56,9 @@ For deterministic multi-location encodings, the zero-incoherence threshold equal
 \begin{proof}
 \emph{Achievability.} Suppose $\mathrm{DOF}(C,F)=1$, and let $L_s$ be the unique independent location. By Definition~\ref{def:dof}, every other encoding location is non-independent and is therefore treated in this model as a derived view of $L_s$. By Definition~\ref{def:derived}, updating $L_s$ determines the value of each such derived location without an additional manual edit. Hence all encoding locations agree in every reachable state, so zero incoherence is achieved.
 
-\emph{Converse.} Suppose $\mathrm{DOF}(C,F)=k>1$. By Definition~\ref{def:independent}, there exist at least two independent locations $L_1,L_2$ and an admissible edit sequence that can make them disagree. Equivalently, choose values $v_1\neq v_2$ and apply edits setting $L_1\leftarrow v_1$ and then $L_2\leftarrow v_2$. By independence, the second edit does not force $L_1$ to change. The resulting reachable state satisfies $\mathrm{value}(L_1)\neq \mathrm{value}(L_2)$ and is therefore incoherent.
+\emph{Converse.} Suppose $\mathrm{DOF}(C,F)=k>1$. By Definition~\ref{def:independent}, there exist at least two independent locations $L_1,L_2$ and an admissible edit sequence that can make them disagree. Choose values $v_1\neq v_2$ and apply edits setting $L_1\leftarrow v_1$ and then $L_2\leftarrow v_2$. By independence, the second edit does not force $L_1$ to change. The resulting reachable state satisfies $\mathrm{value}(L_1)\neq \mathrm{value}(L_2)$ and is therefore incoherent.
 
 Thus zero-error recovery is possible exactly at independent rate $1$, so the zero-incoherence threshold equals $1$.
 \end{proof}
 
-\medskip
-\noindent\textbf{Remark.} Equivalently, structural integrity (Definition~\ref{def:structural-integrity}) holds if and only if the independent rate equals $1$.\leanmeta{\LHrng{COH}{1}{2}}
-
-This threshold is an early architectural consequence of the deterministic model. It identifies the unique zero-error corner and, equivalently, the exact structural-integrity regime. Above that boundary, integrity violations are reachable by construction. The deeper theorems of the paper begin once one asks how much finite side information is needed whenever the transcript leaves a nontrivial ambiguity class.
-
-The surviving ambiguity also forces an information-theoretic lower bound: exact resolution of a $k$-way class requires at least $\log_2 k$ bits of side information (Theorem~\ref{thm:fano-converse} below).\leanmeta{\LH{CIA1}}
-
-The remainder of the paper sharpens this counting statement into a unified finite converse family, asks how that one-shot obstruction acquires non-clique topology under partial views, and then develops the corresponding asymptotic capacity and upper-bound theory.
+This threshold identifies the unique zero-error corner of the deterministic model. Above that boundary, integrity violations are reachable by construction. The next section develops the finite converse family for the surviving ambiguity classes.

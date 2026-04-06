@@ -1,9 +1,6 @@
 \section{Block Composition, Strong Powers, and Asymptotic Capacity}\label{sec:capacity-theory}
 %==============================================================================
 
-
-This section studies how the induced failure topology scales. Once exact recovery is governed by colorability of the one-shot confusability graph, repeated composition does not reset the ambiguity; it composes the same failure structure across blocks. The next results identify the correct strong-power object and the resulting asymptotic zero-error rate.
-
 \subsection{Motivation: Repeated Composition}
 
 Under $n$-fold block composition, the confusability graph becomes its $n$-fold \emph{strong power}: $G_n = G^{\boxtimes n}$. Unlike the clique case where ambiguity explodes, structured graphs yield controlled growth via supermultiplicative independent-set behavior. The theorem below quantifies the resulting asymptotic rate.
@@ -21,11 +18,19 @@ More sharply, the block-level graph itself factors correctly. Confusability betw
 \paragraph{Strong-product quantification.}
 Block confusability requires one location tuple working \emph{simultaneously} for both blocks. Iterating yields $\alpha_1^n \le \alpha_n$.\leanmeta{\LH{MFT21}}
 
-For notation, $\Theta(G)$ denotes Shannon capacity of confusability graph $G$ and $\vartheta_\infty(G)$ the asymptotic Lov\'asz-$\vartheta$ upper value. The lower asymptotic capacity envelope
+\begin{definition}[Shannon Capacity]\label{def:shannon-capacity}
+For a finite graph $G$, its \emph{Shannon capacity} is
+\[
+\Theta(G) := \sup_{n\ge 1} \frac{1}{n}\log \alpha\bigl(G^{\boxtimes n}\bigr),
+\]
+where $\alpha$ denotes independence number and $G^{\boxtimes n}$ is the $n$-fold strong power.
+\end{definition}
+
+For the induced confusability graph, this is the lower asymptotic capacity envelope
 \[
 C_* \;:=\; \sup_{n\ge 1} \frac{\log \alpha_n}{n},
 \]
-is identified with the maximum independent-set size of the $n$-block confusability graph.\leanmeta{\LHrng{MFT}{31}{32}, \LHrng{MFT}{35}{36}}
+identified with the maximum independent-set size of the $n$-block confusability graph.\leanmeta{\LHrng{MFT}{31}{32}, \LHrng{MFT}{35}{36}}
 
 Strong-product lower bounds give monotonicity: $\alpha_m^k \le \alpha_{km}$ and $\frac{\log \alpha_m}{m} \le \frac{\log \alpha_{km}}{km}$.\leanmeta{\LH{MFT33}}
 

@@ -129,11 +129,56 @@ Figure~\ref{fig:failure-topology} contrasts this structured failure with clique-
 
 \subsection{General Graph Characterization}
 
-This section turns the one-shot obstruction into the paper's main structural object: the confusability graph induced by admissible partial views, where two tuples are confusable when allowed observations fail to separate them. For $d$ facts over alphabet size $q$, explicit graph materialization is exponentially large ($q^d$ vertices), so the formalization uses an implicit oracle interface.\leanmeta{\LH{MFT113}} A naive explicit construction ranges over at most $q^{2d}$ ordered state pairs.\leanmeta{\LHrng{MFT}{116}{117}} The formalization packages adjacency as a Boolean confusability oracle and an equivalent agreement-set oracle, computable in $O(d + \sum_{\ell}|V_\ell|)$ time by computing the agreement set and scanning views.\leanmeta{\LHrng{MFT}{114}{115}, \LHrng{MFT}{132}{135}}
+\begin{definition}[Coordinate-Subset View]\label{def:coordinate-view}
+For a $d$-fact latent tuple $x=(x_1,\dots,x_d)$ and a coordinate set $S\subseteq[d]$, the \emph{coordinate-subset view} indexed by $S$ is the projection
+\[
+\pi_S(x) := x|_S.
+\]
+\end{definition}
 
-The deterministic restriction is also not fundamental at the graph-construction level. The Lean development formalizes a support-overlap extension in which each location may emit any observation from a finite support set, and two states are confusable when some admissible location has overlapping observation support on those states.\leanmeta{\LHrng{MFT}{110}{112}}
+\begin{definition}[Admissible View Family]\label{def:admissible-view-family}
+An \emph{admissible view family} is a finite family $\mathcal V=\{V_1,\dots,V_m\}$ of coordinate subsets of $[d]$, where view $V_\ell$ reveals exactly the coordinates indexed by $V_\ell$.
+\end{definition}
 
-The exact coordinate-subset model is not graph-universal. Equality at a view equals containment of that view in the coordinate-agreement set, so confusability depends only on which coordinates agree.\leanmeta{\LHrng{MFT}{118}{119}, \LH{MFT122}} From any view family we obtain an upward-closed family $\mathcal U := \{S \subseteq [F] : \exists \ell, V_\ell \subseteq S\}$ such that two tuples are adjacent iff their agreement set lies in $\mathcal U$. Conversely, every upward-closed family arises from some coordinate-view architecture.\leanmeta{\LHrng{MFT}{125}{128}} When the alphabet has at least two symbols, every proper coordinate subset occurs as the agreement set of some distinct pair of tuples.\leanmeta{\LHrng{MFT}{129}{131}} Coordinatewise alphabet permutations preserve the confusability relation and induce graph automorphisms.\leanmeta{\LHrng{MFT}{120}{124}} The model realizes vertex-transitive graphs on the full tuple space; non-vertex-transitive graphs such as a three-vertex path cannot arise as full confusability graphs. Classification up to unlabeled graph isomorphism remains open.
+\begin{definition}[Agreement Set]\label{def:agreement-set}
+For latent tuples $x,y\in\mathcal X$, their \emph{agreement set} is
+\[
+\operatorname{Agr}(x,y) := \{i\in[d] : x_i = y_i\}.
+\]
+\end{definition}
+
+\begin{definition}[Upward-Closed Family]\label{def:upward-closed-family}
+A family $\mathcal U\subseteq 2^{[d]}$ is \emph{upward-closed} if whenever $S\in\mathcal U$ and $S\subseteq T\subseteq[d]$, one also has $T\in\mathcal U$.
+\end{definition}
+
+\begin{definition}[Confusability Graph]\label{def:confusability-graph}
+Given latent state space $\mathcal X$ and admissible view family $\mathcal V$, the \emph{confusability graph} is the graph
+\[
+G_{\mathrm{conf}}=(\mathcal X,E_{\mathrm{conf}})
+\]
+whose vertices are the latent states and whose edges are the unordered pairs $\{x,y\}$ with $x\neq y$ for which there exists an admissible view $V_\ell\in\mathcal V$ such that $\pi_{V_\ell}(x)=\pi_{V_\ell}(y)$. Equivalently, $\{x,y\}\in E_{\mathrm{conf}}$ iff some admissible view is contained in $\operatorname{Agr}(x,y)$.
+\end{definition}
+
+\begin{definition}[Confusability Oracle]\label{def:confusability-oracle}
+The \emph{confusability oracle} is the Boolean adjacency test
+\[
+\mathsf{Conf}(x,y)=\mathbf 1\big[\{x,y\}\in E_{\mathrm{conf}}\big].
+\]
+\end{definition}
+
+\begin{definition}[Agreement-Set Oracle]\label{def:agreement-set-oracle}
+The \emph{agreement-set oracle} returns $\operatorname{Agr}(x,y)$. In the coordinate-view model, one may decide confusability by computing $\operatorname{Agr}(x,y)$ and testing whether some admissible view is contained in it.
+\end{definition}
+
+For $d$ facts over alphabet size $q$, explicit graph materialization has $q^d$ vertices and at most $q^{2d}$ ordered state pairs, but adjacency is available through the confusability oracle or the equivalent agreement-set oracle. The oracle computation takes $O(d + \sum_{\ell}|V_\ell|)$ time by computing the agreement set and scanning the admissible views.\leanmeta{\LH{MFT113}, \LHrng{MFT}{114}{117}, \LHrng{MFT}{132}{135}}
+
+The Lean development also formalizes a support-overlap extension in which each location may emit any observation from a finite support set, and two states are confusable when some admissible location has overlapping support on those states.\leanmeta{\LHrng{MFT}{110}{112}}
+
+In the exact coordinate-view model, confusability depends only on agreement sets. From any admissible view family we obtain the upward-closed family
+\[
+\mathcal U := \{S \subseteq [d] : \exists \ell,\; V_\ell \subseteq S\},
+\]
+and two distinct tuples are adjacent if and only if their agreement set lies in $\mathcal U$. Conversely, every upward-closed family arises from some coordinate-view architecture. When the alphabet has at least two symbols, every proper coordinate subset occurs as the agreement set of some distinct pair of tuples, and coordinatewise alphabet permutations preserve confusability and induce graph automorphisms.\leanmeta{\LHrng{MFT}{118}{131}}
 
 \leanmetapending{\LHrng{MFT}{3}{4}, \LH{MFT20}}
 \begin{theorem}[Exact recovery as graph colorability]\label{thm:multifact-colorability}
@@ -148,7 +193,7 @@ Let $G_{\mathrm{conf}}$ be the confusability graph.
 \emph{Sufficiency.} Suppose $c$ is a proper $T$-coloring of $G_{\mathrm{conf}}$. Define the auxiliary tag of a latent tuple to be its color. If two latent tuples produce the same observation and the same color, then they are confusable and adjacent, contradicting proper colorability. Therefore the joint observation-color map is injective, and Theorem~\ref{thm:pair-injective} yields an exact decoder.
 \end{proof}
 
-This statement is packaged through an explicit confusability graph object, and for $n$ repeated copies the full block confusability graph is identified with the $n$-fold strong power of the one-shot confusability graph.\leanmeta{\LHrng{MFT}{34}{35}}
+For repeated copies, the full block confusability graph is identified with the $n$-fold strong power of the one-shot confusability graph.\leanmeta{\LHrng{MFT}{34}{35}}
 
 \leanmetapending{\LH{MFT9}}
 \begin{theorem}[Success-set characterization]\label{thm:multifact-success-set}
@@ -172,9 +217,7 @@ An exact decoder with $T$ tags exists on a success set $S$ if and only if $|S|\l
 Theorem~\ref{thm:multifact-success-set} identifies exact success sets with induced $T$-colorable subgraphs. Since the latent alphabet is finite, a maximum-cardinality such set exists. The mechanized characterization exposes this optimum directly. In the binary four-cycle witness, the optimum at $T=1$ is exactly two states, so the best uniform exact success probability is $2/4=1/2$.
 \end{proof}
 
-The same characterization is also available in weighted form. For any finite source weight $w$ on the latent alphabet, the maximum mass of a $T$-colorable induced subgraph is the exact finite success value under budget $T$. This is the weighted version of the same structural claim: under limited budget, the best exact decoder is the largest colorable safe subworld allowed by the induced failure graph.\leanmeta{\LHrng{MFT}{18}{19}}
-
-Equivalently, this optimum can be packaged as an explicit exact finite rate-distortion value for the extended model at tag budget $T$: every exact success set has weighted mass at most this value, and some exact decoder attains it. Thus the extended model no longer has only a converse inequality; at the one-shot level it has an exact weighted success law rather than merely an upper bound.\leanmeta{\LHrng{MFT}{23}{24}}
+The same characterization is also available in weighted form. For any finite source weight $w$ on the latent alphabet, the maximum mass of a $T$-colorable induced subgraph is the exact finite success value under budget $T$.\leanmeta{\LHrng{MFT}{18}{19}, \LHrng{MFT}{23}{24}}
 
 \leanmetapending{\LHrng{MFT}{5}{8}, \LH{MFT10}}
 \begin{theorem}[First non-clique witness]\label{thm:multifact-nonclique}
@@ -186,11 +229,13 @@ The witness is the four-state binary square with one location revealing the firs
 \end{proof}
 
 \leanmetapending{\LHrng{MFT}{11}{13}, \LH{MFT16}}
+\begin{definition}[Strong Product]\label{def:strong-product}
+For graphs $G$ and $H$, the \emph{strong product} $G\boxtimes H$ has vertex set $V(G)\times V(H)$. Two distinct vertices $(u,v)$ and $(u',v')$ are adjacent exactly when either $u=u'$ and $v\sim v'$, or $u\sim u'$ and $v=v'$, or $u\sim u'$ and $v\sim v'$.
+\end{definition}
+
 \begin{theorem}[Block-composition law]\label{thm:multifact-product}
 If two partial-observation systems are colorable with tag alphabets of sizes $T_1$ and $T_2$, then their block-composed product system is colorable with a tag alphabet of size $T_1T_2$.
 \end{theorem}
-
-The strong product of graphs $G$ and $H$, denoted $G\boxtimes H$, is defined as follows. The vertex set is $V(G)\times V(H)$. Two vertices $(u,v)$ and $(u',v')$ are adjacent exactly when either $u=u'$ and $v\sim v'$, or $u\sim u'$ and $v=v'$, or $u\sim u'$ and $v\sim v'$. The block-composition theorem is model-specific because the admissible product views generate exactly these three adjacency cases~\cite{imrich2008product,west2001introduction}.
 
 \begin{proof}
 Take proper colorings of the two component confusability graphs and encode the pair of colors as one color in the product alphabet. If two product states are confusable, then some allowed product view fails to separate them. In the product system this means that either the first coordinates agree and the second coordinates are confusable, or the second coordinates agree and the first coordinates are confusable, or both coordinates are confusable. These are exactly the three adjacency cases in the strong product $G_1\boxtimes G_2$. Hence every confusable product pair is separated by at least one component coloring, and therefore by the paired color as well.
@@ -198,9 +243,7 @@ Take proper colorings of the two component confusability graphs and encode the p
 
 The product confusability graph is exactly the strong product of the two component graphs.\leanmeta{\LHrng{MFT}{25}{26}} Clique-based lower bounds propagate to products: if the first component contains a confusability clique of size $c_1$ and the second contains one of size $c_2$, then the product contains a clique of size $c_1c_2$.\leanmeta{\LH{MFT17}}
 
-The induced graph class has four structural features: it contains non-clique graphs (binary square witness), the cluster-collapse subclass on which the equality theorem is exact, closure under block-composition (strong product), and is exactly a monotone agreement-set class.
-
 \paragraph{Example family: iterated binary squares.}
 Let $W$ be the binary square from Theorem~\ref{thm:multifact-nonclique}. The $m$-fold product has confusability graph $C_4^{\boxtimes m}$ and exact tag budget $T_{\mathrm{exact}}(W^{\otimes m}) = 2^m$. This gives an infinite family of non-clique examples on which the graph object, exact budget, and strong-product law interact nontrivially.\leanmeta{\LHrng{MFT}{11}{13}, \LHrng{MFT}{16}{17}, \LHrng{MFT}{29}{30}}
 
-Once exact one-shot recovery is governed by graph colorability, repeated composition lifts the theory to strong graph powers and asymptotic zero-error rates. The next subsection makes that lift explicit.
+The next section studies asymptotic zero-error rates for these strong powers.

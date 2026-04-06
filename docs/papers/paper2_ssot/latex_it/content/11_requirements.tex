@@ -1,8 +1,6 @@
 \section{Zero-Error Realizability}\label{sec:requirements}
 %==============================================================================
 
-The graph-capacity arc establishes the failure topology that partial views induce. This section answers the complementary question: which channel architectures realize the verifiable zero-error regime, and which do not? The resulting realizability criterion is architectural: it identifies two necessary and sufficient structural properties. It is grounded in the same finite-obstruction and confusability theory developed above. Applied to representative deterministic partial-view channels, including programming-language runtimes, database engines, and dependency managers, the criterion yields a zero-incoherence classification that demonstrates the majority of widely deployed infrastructure operates outside the verifiable zero-error regime (Appendix~\ref{sec:appendix-classification}).
-
 A host system realizes the rate-$1$ regime when one location is authoritative and every secondary representation is maintained as a deterministic view. Verifiable decoding requires two capabilities:
 \begin{enumerate}
 \item \textbf{Zero-delay state synchronization}: updates to the authoritative source propagate to derived locations as part of the same atomic update event, with no reachable intermediate disagreement.
@@ -93,7 +91,7 @@ The two requirements are logically separate.
 \end{theorem}
 
 \begin{proof}
-For (1), consider a system that automatically refreshes all derived views after each source update but exposes no query interface for its derivation graph. Coherence may hold operationally, but the single-source claim is not inspectable. For (2), consider a system that records complete provenance metadata yet requires users to trigger propagation manually after each change. The derivation structure is visible, but stale views remain reachable. Hence neither property implies the other.
+For (1), consider a system that automatically refreshes all derived views after each source update but exposes no query interface for its derivation graph. Coherence may hold in reachable states, but the single-source claim is not inspectable. For (2), consider a system that records complete provenance metadata yet requires users to trigger propagation manually after each change. The derivation structure is visible, but stale views remain reachable. Hence neither property implies the other.
 \end{proof}
 
 \subsection{The Realizability Theorem}\label{sec:realizability-theorem}
@@ -107,8 +105,6 @@ An observer can verifiably decode the single-source zero-error regime if and onl
 Necessity follows from Theorems~\ref{thm:causal-necessary} and~\ref{thm:provenance-necessary}. For sufficiency, assume both properties hold. Zero-delay synchronization ensures that every derived location is updated as part of the same structural event as the source; structural side-information then certifies that all secondary encodings are in fact derived from that source. The architecture therefore realizes a verifiable single-source encoding, i.e., independent rate $1$, which is exactly verifiable structural integrity in the sense of Definition~\ref{def:verifiable-integrity}.
 \end{proof}
 
-Applied to representative hosts, this criterion separates systems in which propagation and provenance are both host-native from systems missing one or both capabilities.
-
-Table~\ref{tab:host-checks-a-appendix} reports the zero-incoherence classification for twelve representative channel families spanning three infrastructure domains: programming-language runtimes, database engines, and dependency managers. Of these, only two achieve verifiable rate~$1$ under the criterion above. The remaining ten fail at least one of the two necessary conditions. Every entry is verified against the mechanized sufficiency conditions of Corollary~\ref{thm:ssot-iff}. The classification demonstrates that the majority of deterministic partial-view channels underlying widely deployed infrastructure operate above the zero-incoherence threshold, where the $\Omega(n)$ synchronization cost of Theorem~\ref{thm:lower-bound} applies and the nontrivial confusability structure of Section~\ref{sec:graph-characterization} governs exact recovery.
+Applied to representative hosts, this criterion separates systems in which propagation and provenance are both host-native from systems missing one or both capabilities. Table~\ref{tab:host-checks-a-appendix} records eleven representative channel families spanning programming-language runtimes, database engines, and dependency managers. Of these, two satisfy the criterion and nine fail at least one necessary condition. Every entry is checked against the mechanized sufficiency conditions of Corollary~\ref{thm:ssot-iff}.
 
 %==============================================================================
