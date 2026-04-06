@@ -1,12 +1,5 @@
-% Format switching: default matches TITS template (two-column journal).
-% Pass \ITSUBMISSION via pdflatex CLI to get single-column double-spaced review format.
-\ifdefined\ITSUBMISSION
-  \documentclass[12pt, onecolumn]{IEEEtran}
-\else
-  \documentclass[lettersize,journal]{IEEEtran}
-\fi
+\documentclass[preprint,12pt]{elsarticle}
 
-% IEEE Transactions on Information Theory Format - IEEEtran class
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{amsmath,amssymb,amsthm}
@@ -16,23 +9,10 @@
 \PassOptionsToPackage{hyperfootnotes=false}{hyperref}
 \usepackage{hyperref}
 \usepackage{url}
-\usepackage{cite}
 \usepackage{listings}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
-
-% IEEE IT review format: single column, double spaced, 1in margins
-\ifdefined\ITSUBMISSION
-  \usepackage{setspace}
-  \usepackage[margin=1in, letterpaper]{geometry}
-  % Reduce whitespace at bottom of pages from deferred floats
-  \renewcommand{\topfraction}{0.9}
-  \renewcommand{\bottomfraction}{0.8}
-  \renewcommand{\textfraction}{0.1}
-  \setcounter{topnumber}{3}
-  \setcounter{bottomnumber}{2}
-  \setcounter{totalnumber}{4}
-\fi
+\biboptions{sort&compress}
 
 % Allow URLs to break at any character
 \makeatletter
@@ -60,24 +40,28 @@
 }
 \IfFileExists{build_submission_hook.tex}{\input{build_submission_hook.tex}}{}
 
-% Title
-\title{Exact Recovery from Deterministic Partial Views}
-
-% Author block
-\author{Tristan~Simas%
-\thanks{T. Simas is with McGill University, 845 Sherbrooke Street West, Montreal, QC H3A 0G4, Canada. Correspondence to tristan.simas@mail.mcgill.ca.}}
+\journal{Journal of Computer and System Sciences}
 
 \begin{document}
-\ifdefined\ITSUBMISSION\doublespacing\fi
 
-\maketitle
+\begin{frontmatter}
 
-% Include abstract
+\title{Zero-Error Recovery from Deterministic Partial Views}
+
+\author[mcgill]{Tristan Simas}
+\cortext[cor1]{Corresponding author}
+\ead{tristan.simas@mail.mcgill.ca}
+\address[mcgill]{McGill University, 845 Sherbrooke Street West, Montreal, QC H3A 0G4, Canada}
+
+\begin{abstract}
 \input{content/abstract.tex}
-\ifdefined\ITSUBMISSION
-\noindent\textit{Supplementary artifact (Lean 4 formalization):} \url{https://doi.org/10.5281/zenodo.19354075}
-\par\medskip
-\fi
+\end{abstract}
+
+\begin{keyword}
+zero-error recovery \sep confusability graphs \sep strong graph powers \sep Shannon capacity \sep side information \sep matroids \sep formal verification
+\end{keyword}
+
+\end{frontmatter}
 
 % Main content sections (section commands are in the content files)
 \input{content/01_introduction.tex}
@@ -95,7 +79,7 @@
 \input{content/13_conclusion.tex}
 
 % References
-\bibliographystyle{IEEEtran}
+\bibliographystyle{elsarticle-num}
 \bibliography{references}
 
 

@@ -1,5 +1,4 @@
 % Shared preamble for Paper 2: SSOT Principle
-% IEEEtran-compatible definitions
 
 % Common packages
 \usepackage{booktabs}
@@ -33,8 +32,7 @@
 \providecommand{\tightlist}{%
   \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
 
-% IEEEtran-compatible theorem environments
-% IEEEtran doesn't load amsthm by default, so we use it
+% Theorem environments
 \providecommand{\leanmetaheadmark}{}
 \makeatletter
 \newtheoremstyle{leanplain}{3pt}{3pt}{\itshape}{}{}{.}{ }{\thmname{#1}\thmnumber{ #2}\leanmetaheadmark\thmnote{ (#3)}}
@@ -62,10 +60,7 @@
 \renewcommand{\qedsymbol}{$\blacksquare$}
 \renewcommand{\qed}{\hspace{0.5em}\qedsymbol}
 
-% IEEE-specific: ensure proper float placement
-\usepackage{stfloats}
-
-% Code listings style - wrap lines for IEEE two-column format
+% Code listings style
 \lstset{
   basicstyle=\ttfamily\footnotesize,
   breaklines=true,
