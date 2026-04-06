@@ -11,7 +11,7 @@ namespace Paper4dFrontier
 
 open DecisionQuotient
 
-theorem five_core_mechanisms_nondegenerate (aBound R w : ℕ) :
+theorem all_independent_core_mechanisms_nondegenerate (aBound R w : ℕ) :
     (∃ u : Fin (aBound + 2) → (Fin (2 + w) → Fin 2) → ℤ,
       Nonempty (TensorRankDecomposition u 1) ∧
       Nonempty (PairwiseUtility u) ∧
