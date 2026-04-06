@@ -63,6 +63,30 @@ Thus the matroid rank function $t(\cdot)$ on coordinate sets supplies explicit u
 An independent set for $G$ must be independent in each single-view graph $G_S$, hence its size is at most $\alpha(G_S)=q^{t(S)}$ for every $S\in\mathcal S$. The inequalities follow from taking the minimum over $\mathcal S$ and applying the block-power argument from the proposition.
 \end{proof}
 
+\begin{proposition}[Matroid direct sum under block composition]\label{prop:matroid-direct-sum-block}
+For affine families $A_1=a_1+V_1$ over $\mathbb F_q^{d_1}$ and $A_2=a_2+V_2$ over $\mathbb F_q^{d_2}$, the representable matroid on $[d_1+d_2]$ induced by the product family $A_1\times A_2$ is the direct sum of the component matroids. A coordinate set $I\subseteq [d_1+d_2]$ is independent in the product matroid if and only if $I\cap [d_1]$ is independent in matroid~1 and its restriction to the right coordinate block $\{d_1+1,\dots,d_1+d_2\}$ is independent in matroid~2.\leanmeta{\LHrng{AFM}{18}{19}}
+\end{proposition}
+
+\begin{proof}
+The direction space of the product family is $V_1\times V_2$. The restricted coordinate projection $\pi_{S_1\cup S_2}|_{V_1\times V_2}$ decomposes as $\pi_{S_1}|_{V_1}\times \pi_{S_2}|_{V_2}$ because $V_1$ and $V_2$ occupy disjoint coordinate blocks. Linear independence of coordinate functionals on $V_1\times V_2$ therefore decomposes into independent conditions on each block.
+\end{proof}
+
+\begin{corollary}[Rank additivity]\label{cor:rank-additivity-block}
+For coordinate sets $S_1\subseteq [d_1]$ and $S_2\subseteq [d_2]$,
+\[
+t_{\mathrm{product}}(S_1\cup S_2) = t_1(S_1) + t_2(S_2).
+\]
+Consequently the matroid capacity bound decomposes additively under block composition:
+\[
+\Theta(G_{\mathrm{product}}) \le \min_{S_1,S_2} \bigl(t_1(S_1) + t_2(S_2)\bigr) \log q.
+\]
+\leanmeta{\LH{AFM17}}
+\end{corollary}
+
+\begin{proof}
+The rank of a direct sum of linear maps is the sum of the ranks. Apply Corollary~\ref{cor:matroid-capacity-bounds} to the product family.
+\end{proof}
+
 \noindent\textbf{Remark.} The matroid rank $t(S)$ is the ``informational dimension'' captured by coordinates in $S$, directly analogous to the rank function in representable matroids studied in combinatorial optimization~\cite{oxley2011matroid,welsh1976matroid,recski1989matroid} and coding theory~\cite{cover2006elements}. Here $t(S)=r$ iff $S$ determines the entire state, and any admissible view containing a basis removes confusability entirely (the induced graph is edgeless). These finite-affine, coordinate-view statements show the matroid is directly applicable to the graph/capacity arc; extensions beyond this specialization are directions for future work.
 
 \paragraph{Running example: Binary square.}

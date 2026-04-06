@@ -373,6 +373,11 @@ abbrev AFM11 := @FactMatroid.factRankFinset_eq_finrank_range_coordProjection
 abbrev AFM12 := @FactMatroid.factRankFinset_le_finrank_directionSpace
 abbrev AFM13 := @FactMatroid.coordProjection_range_eq_card_of_indepFacts
 abbrev AFM14 := @FactMatroid.coordProjection_range_eq_total_of_determinesAllFinset
+abbrev AFM15 := @FactMatroid.finrank_productFamily_directions
+abbrev AFM16 := @FactMatroid.range_coordProjection_productDirections_disjSum
+abbrev AFM17 := @FactMatroid.factRankFinset_product_disjSum
+abbrev AFM18 := @FactMatroid.indepFacts_productFamily_iff
+abbrev AFM19 := @FactMatroid.factMatroid_product_indep_iff
 
 /-! ## FIRST PRINCIPLES FORCING CHAIN
     These theorems establish that SSOT is FORCED by first principles.
