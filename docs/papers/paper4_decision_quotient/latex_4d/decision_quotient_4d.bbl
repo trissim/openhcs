@@ -18,6 +18,11 @@ Christian Bessiere, Clement Carbonnel, Emmanuel Hebrard, George Katsirelos, and
 \newblock In {\em Proceedings of the Twenty-Third International Joint
   Conference on Artificial Intelligence (IJCAI)}, pages 468--474, 2013.
 
+\bibitem{blackwell1953equivalent}
+David Blackwell.
+\newblock Equivalent comparisons of experiments.
+\newblock {\em The Annals of Mathematical Statistics}, 24(2):265--272, 1953.
+
 \bibitem{bulatov2017dichotomy}
 Andrei~A. Bulatov.
 \newblock A dichotomy theorem for nonuniform csps.
@@ -53,6 +58,12 @@ Allan Gibbard.
 \newblock Manipulation of voting schemes: A general result.
 \newblock {\em Econometrica}, 41(4):587--601, 1973.
 
+\bibitem{givan2003equivalence}
+Robert Givan, Thomas Dean, and Matthew Greig.
+\newblock Equivalence notions and model minimization in markov decision
+  processes.
+\newblock {\em Artificial Intelligence}, 147(1-2):163--223, 2003.
+
 \bibitem{goedel1931formal}
 Kurt G{"o}del.
 \newblock {"U}ber formal unentscheidbare s{"a}tze der {P}rincipia {M}athematica
@@ -63,6 +74,12 @@ Kurt G{"o}del.
 Isabelle Guyon and Andr{\'e} Elisseeff.
 \newblock An introduction to variable and feature selection.
 \newblock {\em Journal of Machine Learning Research}, 3:1157--1182, 2003.
+
+\bibitem{howard1966information}
+Ronald~A. Howard.
+\newblock Information value theory.
+\newblock {\em IEEE Transactions on Systems Science and Cybernetics},
+  2(1):22--26, 1966.
 
 \bibitem{kohavi1997wrappers}
 Ron Kohavi and George~H. John.
@@ -81,11 +98,21 @@ John Myhill and John~C. Shepherdson.
 \newblock {\em Zeitschrift f{"u}r mathematische Logik und Grundlagen der
   Mathematik}, 1(5):310--317, 1955.
 
+\bibitem{papadimitriou1987mdp}
+Christos~H. Papadimitriou and John~N. Tsitsiklis.
+\newblock The complexity of markov decision processes.
+\newblock {\em Mathematics of Operations Research}, 12(3):441--450, 1987.
+
 \bibitem{pawlak1982rough}
 Zdzis{\l}aw Pawlak.
 \newblock Rough sets.
 \newblock {\em International Journal of Parallel Programming}, 11(5):341--356,
   1982.
+
+\bibitem{ravindran2004algebraic}
+Balaraman Ravindran.
+\newblock {\em An Algebraic Approach to Abstraction in Reinforcement Learning}.
+\newblock PhD thesis, University of Massachusetts Amherst, 2004.
 
 \bibitem{rice1953classes}
 Henry~Gordon Rice.
@@ -98,6 +125,11 @@ Mark~Allen Satterthwaite.
 \newblock Strategy-proofness and {A}rrow's conditions: Existence and
   correspondence theorems for voting procedures and social welfare functions.
 \newblock {\em Journal of Economic Theory}, 10(2):187--217, 1975.
+
+\bibitem{savage1954foundations}
+Leonard~J. Savage.
+\newblock {\em The Foundations of Statistics}.
+\newblock John Wiley \& Sons, 1954.
 
 \bibitem{schaefer1978complexity}
 Thomas~J. Schaefer.
@@ -127,11 +159,10 @@ Norman Shapiro.
 \newblock {\em Transactions of the American Mathematical Society},
   82(2):281--299, 1956.
 
-\bibitem{simas2025optimizerquotient}
+\bibitem{simas2026optimizerquotient}
 Tristan Simas.
 \newblock The optimizer quotient and the certification trilemma.
-\newblock Zenodo, 2025.
-\newblock Archived manuscript and Lean artifact.
+\newblock {\em arXiv preprint arXiv:2603.14689}, 2026.
 
 \bibitem{slowinski1995decision}
 Roman Slowinski and Daniel Vanderpooten.
