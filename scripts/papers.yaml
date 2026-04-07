@@ -213,7 +213,7 @@ papers:
     module_root: "Paper4dFrontier"
     latex_dir: "latex_4d"
     latex_file: "decision_quotient_4d.tex"
-    venue: "Draft"
+    venue: "TheoretiCS"
     lean_stats_scope: "content_cited"
     lean_dependencies:
       - "paper4"
