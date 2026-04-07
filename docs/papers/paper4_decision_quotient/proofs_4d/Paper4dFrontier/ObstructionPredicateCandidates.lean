@@ -788,6 +788,313 @@ theorem admissibleCollapseLandscapeInfinityOnMarginBounded_holds :
     admissibleCollapseLandscapeInfinityOnMarginBounded := by
   exact no_admissibleNormalizationPredicate_decides_marginBounded
 
+def zeroActionFin (n : ℕ) (h : 1 ≤ n) : Fin n := ⟨0, by omega⟩
+
+def twoActionFin (n : ℕ) (h : 3 ≤ n) : Fin n := ⟨2, by omega⟩
+
+def GhostActionTwoPairCrossOneSlice (U : Slice) : Prop :=
+  ∃ hAr : 2 ≤ U.arity, ∃ a : U.Action,
+    U.pairwise.unary (firstFin U.arity hAr) a 0 = -1 ∧
+      U.pairwise.unary (firstFin U.arity hAr) a 1 = -1 ∧
+      pairCrossMagnitude U (firstFin U.arity hAr) (secondFin U.arity hAr) a = 1
+
+def OffsetActionZeroPairCrossOneSlice (U : Slice) : Prop :=
+  ∃ hAr : 2 ≤ U.arity, ∃ a b : U.Action,
+    a ≠ b ∧
+      pairCrossMagnitude U (firstFin U.arity hAr) (secondFin U.arity hAr) a = 1 ∧
+      pairCrossMagnitude U (firstFin U.arity hAr) (secondFin U.arity hAr) b = 0
+
+def ghostPairBoostBinary (x y : Fin 2) : ℤ :=
+  2 * signedEqualityIndicator x y
+
+noncomputable def ghostPairBoostStateTerm (s : Fin 2 → Fin 2) : ℤ :=
+  ∑ i : Fin 2,
+    ∑ j : Fin 2,
+      if completeInteracts i j ∧ i < j then
+        if i = fin2_0 ∧ j = fin2_1 then ghostPairBoostBinary (s i) (s j) else 0
+      else 0
+
+noncomputable def translatedNeverOptimalGhostUtility : Fin 3 → (Fin 2 → Fin 2) → ℤ :=
+  fun a s => neverOptimalGhostUtility 0 a s + ghostPairBoostStateTerm s
+
+noncomputable def translatedNeverOptimalGhostPairwise :
+    PairwiseUtility translatedNeverOptimalGhostUtility where
+  unary i a x := (neverOptimalGhostPairwise 0).unary i a x
+  binary i j a x y :=
+    (neverOptimalGhostPairwise 0).binary i j a x y +
+      if i = fin2_0 ∧ j = fin2_1 then ghostPairBoostBinary x y else 0
+  interacts := @completeInteracts 2
+  interacts_symm := @completeInteracts_symm 2
+  decomp := by
+    intro a s
+    simp [translatedNeverOptimalGhostUtility, ghostPairBoostStateTerm,
+      neverOptimalGhostPairwise, neverOptimalGhostUtility, completeInteracts]
+    ring
+
+noncomputable def translatedNeverOptimalGhostSlice : Slice where
+  Action := Fin 3
+  instFintypeAction := inferInstance
+  instDecidableEqAction := inferInstance
+  arity := 2
+  utility := translatedNeverOptimalGhostUtility
+  pairwise := translatedNeverOptimalGhostPairwise
+
+noncomputable def translatedNeverOptimalGhostPositiveAffineWitness :
+    PositiveAffineWitness (neverOptimalGhostSlice 0) translatedNeverOptimalGhostSlice where
+  hArity := rfl
+  relabel := Equiv.refl (Fin 3)
+  alpha := ghostPairBoostStateTerm
+  beta := fun _ => 1
+  beta_pos := by intro _; decide
+  utility_eq := by
+    intro a s
+    simp [translatedNeverOptimalGhostSlice, translatedNeverOptimalGhostUtility,
+      neverOptimalGhostSlice, castState]
+    ring
+
+theorem translatedNeverOptimalGhostSlice_in_orbit :
+    ClosureEquivalent (neverOptimalGhostSlice 0) translatedNeverOptimalGhostSlice := by
+  exact closureEquivalent_of_positiveAffineWitness translatedNeverOptimalGhostPositiveAffineWitness
+
+theorem neverOptimalGhostSlice0_hasGhostActionTwoPairCrossOne :
+    GhostActionTwoPairCrossOneSlice (neverOptimalGhostSlice 0) := by
+  refine ⟨by decide, (2 : Fin 3), ?_, ?_, ?_⟩
+  · simp [neverOptimalGhostSlice, neverOptimalGhostPairwise, firstFin]
+  · simp [neverOptimalGhostSlice, neverOptimalGhostPairwise, firstFin]
+  simp [GhostActionTwoPairCrossOneSlice, pairCrossMagnitude,
+    neverOptimalGhostSlice, neverOptimalGhostPairwise, firstFin, secondFin,
+    twoActionFin, binaryCrossDifference, completePairIndicator, fin2_0, fin2_1]
+
+theorem translatedNeverOptimalGhost_not_hasGhostActionTwoPairCrossOne :
+    ¬ GhostActionTwoPairCrossOneSlice translatedNeverOptimalGhostSlice := by
+  intro h
+  rcases h with ⟨hAr, a, hu0, hu1, hCross⟩
+  have hFirst : firstFin translatedNeverOptimalGhostSlice.arity hAr = fin2_0 := by
+    apply Fin.ext
+    simp [firstFin, translatedNeverOptimalGhostSlice, fin2_0]
+  have hSecond : secondFin translatedNeverOptimalGhostSlice.arity hAr = fin2_1 := by
+    apply Fin.ext
+    simp [secondFin, translatedNeverOptimalGhostSlice, fin2_1]
+  have hu0' : translatedNeverOptimalGhostSlice.pairwise.unary fin2_0 a 0 = -1 := by
+    simpa [hFirst] using hu0
+  have hu1' : translatedNeverOptimalGhostSlice.pairwise.unary fin2_0 a 1 = -1 := by
+    simpa [hFirst] using hu1
+  have hCross' :
+      pairCrossMagnitude translatedNeverOptimalGhostSlice fin2_0 fin2_1 a = 1 := by
+    simpa [hFirst, hSecond] using hCross
+  fin_cases a <;>
+    simp [translatedNeverOptimalGhostSlice, translatedNeverOptimalGhostPairwise,
+      neverOptimalGhostPairwise, pairCrossMagnitude, ghostPairBoostBinary,
+      binaryCrossDifference, signedEqualityIndicator, completePairIndicator,
+      fin2_0, fin2_1] at hu0' hu1' hCross'
+
+def ghostActionClosureOrbitGap : Prop :=
+  ClosureEquivalent (neverOptimalGhostSlice 0) translatedNeverOptimalGhostSlice ∧
+    GhostActionTwoPairCrossOneSlice (neverOptimalGhostSlice 0) ∧
+    ¬ GhostActionTwoPairCrossOneSlice translatedNeverOptimalGhostSlice
+
+theorem ghostActionClosureOrbitGap_exists : ghostActionClosureOrbitGap := by
+  exact ⟨translatedNeverOptimalGhostSlice_in_orbit,
+    neverOptimalGhostSlice0_hasGhostActionTwoPairCrossOne,
+    translatedNeverOptimalGhost_not_hasGhostActionTwoPairCrossOne⟩
+
+def offsetPairBoostBinary (x y : Fin 2) : ℤ :=
+  2 * signedEqualityIndicator x y
+
+noncomputable def offsetPairBoostStateTerm (s : Fin 2 → Fin 2) : ℤ :=
+  ∑ i : Fin 2,
+    ∑ j : Fin 2,
+      if completeInteracts i j ∧ i < j then
+        if i = fin2_0 ∧ j = fin2_1 then offsetPairBoostBinary (s i) (s j) else 0
+      else 0
+
+noncomputable def translatedOffsetPairBoostUtility : Bool → (Fin 2 → Fin 2) → ℤ :=
+  fun a s => offsetCollapsedAsymmetricPairUtility 0 a s + offsetPairBoostStateTerm s
+
+noncomputable def translatedOffsetPairBoostPairwise : PairwiseUtility translatedOffsetPairBoostUtility where
+  unary i a x := (offsetCollapsedAsymmetricPairPairwise 0).unary i a x
+  binary i j a x y :=
+    (offsetCollapsedAsymmetricPairPairwise 0).binary i j a x y +
+      if i = fin2_0 ∧ j = fin2_1 then offsetPairBoostBinary x y else 0
+  interacts := @completeInteracts 2
+  interacts_symm := @completeInteracts_symm 2
+  decomp := by
+    intro a s
+    cases a <;>
+      simp [translatedOffsetPairBoostUtility, offsetPairBoostStateTerm,
+        offsetCollapsedAsymmetricPairPairwise, offsetCollapsedAsymmetricPairUtility,
+        addActionOffset, offsetBaseAsymmetricPairUtility, completeInteracts] <;>
+      ring
+
+noncomputable def translatedOffsetPairBoostSlice : Slice where
+  Action := Bool
+  instFintypeAction := inferInstance
+  instDecidableEqAction := inferInstance
+  arity := 2
+  utility := translatedOffsetPairBoostUtility
+  pairwise := translatedOffsetPairBoostPairwise
+
+noncomputable def translatedOffsetPairBoostPositiveAffineWitness :
+    PositiveAffineWitness (offsetCollapsedSlice 0) translatedOffsetPairBoostSlice where
+  hArity := rfl
+  relabel := Equiv.refl Bool
+  alpha := offsetPairBoostStateTerm
+  beta := fun _ => 1
+  beta_pos := by intro _; decide
+  utility_eq := by
+    intro a s
+    simp [translatedOffsetPairBoostSlice, translatedOffsetPairBoostUtility,
+      offsetCollapsedSlice, castState]
+    ring
+
+theorem translatedOffsetPairBoostSlice_in_orbit :
+    ClosureEquivalent (offsetCollapsedSlice 0) translatedOffsetPairBoostSlice := by
+  exact closureEquivalent_of_positiveAffineWitness translatedOffsetPairBoostPositiveAffineWitness
+
+theorem offsetCollapsedSlice0_hasOffsetActionZeroPairCrossOne :
+    OffsetActionZeroPairCrossOneSlice (offsetCollapsedSlice 0) := by
+  refine ⟨by decide, false, true, by simp, ?_, ?_⟩
+  · simp [OffsetActionZeroPairCrossOneSlice, pairCrossMagnitude,
+      offsetCollapsedSlice, offsetCollapsedAsymmetricPairPairwise,
+      firstFin, secondFin, binaryCrossDifference, completePairIndicator,
+      fin2_0, fin2_1]
+  · simp [OffsetActionZeroPairCrossOneSlice, pairCrossMagnitude,
+      offsetCollapsedSlice, offsetCollapsedAsymmetricPairPairwise,
+      firstFin, secondFin, binaryCrossDifference, completePairIndicator,
+      fin2_0, fin2_1]
+
+theorem translatedOffsetPairBoost_not_hasOffsetActionZeroPairCrossOne :
+    ¬ OffsetActionZeroPairCrossOneSlice translatedOffsetPairBoostSlice := by
+  intro h
+  rcases h with ⟨hAr, a, b, hab, hCrossA, hCrossB⟩
+  have hFirst : firstFin translatedOffsetPairBoostSlice.arity hAr = fin2_0 := by
+    apply Fin.ext
+    simp [firstFin, translatedOffsetPairBoostSlice, fin2_0]
+  have hSecond : secondFin translatedOffsetPairBoostSlice.arity hAr = fin2_1 := by
+    apply Fin.ext
+    simp [secondFin, translatedOffsetPairBoostSlice, fin2_1]
+  have hCrossA' : pairCrossMagnitude translatedOffsetPairBoostSlice fin2_0 fin2_1 a = 1 := by
+    simpa [hFirst, hSecond] using hCrossA
+  have hCrossB' : pairCrossMagnitude translatedOffsetPairBoostSlice fin2_0 fin2_1 b = 0 := by
+    simpa [hFirst, hSecond] using hCrossB
+  cases a <;> cases b <;> simp at hab
+  · simp [pairCrossMagnitude, translatedOffsetPairBoostSlice,
+      translatedOffsetPairBoostPairwise, offsetCollapsedAsymmetricPairPairwise,
+      offsetPairBoostBinary, binaryCrossDifference, signedEqualityIndicator,
+      completePairIndicator, fin2_0, fin2_1] at hCrossA'
+  · simp [pairCrossMagnitude, translatedOffsetPairBoostSlice,
+      translatedOffsetPairBoostPairwise, offsetCollapsedAsymmetricPairPairwise,
+      offsetPairBoostBinary, binaryCrossDifference, signedEqualityIndicator,
+      completePairIndicator, fin2_0, fin2_1] at hCrossA'
+
+def offsetActionClosureOrbitGap : Prop :=
+  ClosureEquivalent (offsetCollapsedSlice 0) translatedOffsetPairBoostSlice ∧
+    OffsetActionZeroPairCrossOneSlice (offsetCollapsedSlice 0) ∧
+    ¬ OffsetActionZeroPairCrossOneSlice translatedOffsetPairBoostSlice
+
+theorem offsetActionClosureOrbitGap_exists : offsetActionClosureOrbitGap := by
+  exact ⟨translatedOffsetPairBoostSlice_in_orbit,
+    offsetCollapsedSlice0_hasOffsetActionZeroPairCrossOne,
+    translatedOffsetPairBoost_not_hasOffsetActionZeroPairCrossOne⟩
+
+theorem no_closureInvariant_predicate_decides_ghostActionTwoPairCrossOne :
+    ∀ (P : Slice → Prop), ClosureLawInvariant P →
+      ¬ (∀ S, P S ↔ GhostActionTwoPairCrossOneSlice S) := by
+  intro P hInv hDecides
+  rcases ghostActionClosureOrbitGap_exists with ⟨hOrbit, hBase, hTransNot⟩
+  have hPOrbit : P (neverOptimalGhostSlice 0) ↔ P translatedNeverOptimalGhostSlice :=
+    closureLawInvariant_iff_of_closureEquivalent hInv hOrbit
+  have hPBase : P (neverOptimalGhostSlice 0) :=
+    (hDecides (neverOptimalGhostSlice 0)).2 hBase
+  have hPTrans : P translatedNeverOptimalGhostSlice := hPOrbit.mp hPBase
+  have hTarget : GhostActionTwoPairCrossOneSlice translatedNeverOptimalGhostSlice :=
+    (hDecides translatedNeverOptimalGhostSlice).1 hPTrans
+  exact hTransNot hTarget
+
+theorem no_closureInvariant_predicate_decides_offsetActionZeroPairCrossOne :
+    ∀ (P : Slice → Prop), ClosureLawInvariant P →
+      ¬ (∀ S, P S ↔ OffsetActionZeroPairCrossOneSlice S) := by
+  intro P hInv hDecides
+  rcases offsetActionClosureOrbitGap_exists with ⟨hOrbit, hBase, hTransNot⟩
+  have hPOrbit : P (offsetCollapsedSlice 0) ↔ P translatedOffsetPairBoostSlice :=
+    closureLawInvariant_iff_of_closureEquivalent hInv hOrbit
+  have hPBase : P (offsetCollapsedSlice 0) :=
+    (hDecides (offsetCollapsedSlice 0)).2 hBase
+  have hPTrans : P translatedOffsetPairBoostSlice := hPOrbit.mp hPBase
+  have hTarget : OffsetActionZeroPairCrossOneSlice translatedOffsetPairBoostSlice :=
+    (hDecides translatedOffsetPairBoostSlice).1 hPTrans
+  exact hTransNot hTarget
+
+theorem no_admissibleNormalizationPredicate_decides_ghostActionTwoPairCrossOne :
+    ∀ P : AdmissibleNormalizationPredicate,
+      ¬ (∀ S : Slice, P.holdsOnSlice S ↔ GhostActionTwoPairCrossOneSlice S) := by
+  intro P
+  exact no_closureInvariant_predicate_decides_ghostActionTwoPairCrossOne
+    P.holdsOnSlice P.closureLawInvariant
+
+theorem no_admissibleNormalizationPredicate_decides_offsetActionZeroPairCrossOne :
+    ∀ P : AdmissibleNormalizationPredicate,
+      ¬ (∀ S : Slice, P.holdsOnSlice S ↔ OffsetActionZeroPairCrossOneSlice S) := by
+  intro P
+  exact no_closureInvariant_predicate_decides_offsetActionZeroPairCrossOne
+    P.holdsOnSlice P.closureLawInvariant
+
+def admissibleCollapseLandscapeInfinityOnGhostActionPairCrossOne : Prop :=
+  ∀ P : AdmissibleNormalizationPredicate,
+    ¬ (∀ S : Slice, P.holdsOnSlice S ↔ GhostActionTwoPairCrossOneSlice S)
+
+def admissibleCollapseLandscapeInfinityOnOffsetActionPairCrossOne : Prop :=
+  ∀ P : AdmissibleNormalizationPredicate,
+    ¬ (∀ S : Slice, P.holdsOnSlice S ↔ OffsetActionZeroPairCrossOneSlice S)
+
+theorem admissibleCollapseLandscapeInfinityOnGhostActionPairCrossOne_holds :
+    admissibleCollapseLandscapeInfinityOnGhostActionPairCrossOne := by
+  exact no_admissibleNormalizationPredicate_decides_ghostActionTwoPairCrossOne
+
+theorem admissibleCollapseLandscapeInfinityOnOffsetActionPairCrossOne_holds :
+    admissibleCollapseLandscapeInfinityOnOffsetActionPairCrossOne := by
+  exact no_admissibleNormalizationPredicate_decides_offsetActionZeroPairCrossOne
+
+theorem admissibleCollapseLandscapeInfinity_full :
+    ∀ P : AdmissibleNormalizationPredicate,
+      ¬ ((∀ S : Slice, P.holdsOnSlice S ↔ HasUniqueDominantPair S) ∧
+        (∀ S : Slice, P.holdsOnSlice S ↔ MarginBoundedSlice S) ∧
+        (∀ S : Slice, P.holdsOnSlice S ↔ GhostActionTwoPairCrossOneSlice S) ∧
+        (∀ S : Slice, P.holdsOnSlice S ↔ OffsetActionZeroPairCrossOneSlice S)) := by
+  intro P hAll
+  have hDom : False :=
+    (no_admissibleNormalizationPredicate_decides_dominantPair P) hAll.1
+  have hMargin : False :=
+    (no_admissibleNormalizationPredicate_decides_marginBounded P) hAll.2.1
+  have hGhost : False :=
+    (no_admissibleNormalizationPredicate_decides_ghostActionTwoPairCrossOne P) hAll.2.2.1
+  have hOffset : False :=
+    (no_admissibleNormalizationPredicate_decides_offsetActionZeroPairCrossOne P) hAll.2.2.2
+  exact hDom
+
+def AdmissibleNormalizationPredicateBridge (P : NormalizationPredicate) : Prop :=
+  ∃ A : AdmissibleNormalizationPredicate,
+    A.toNormalizationPredicate = P
+
+def TractabilityCharacterizationBridge (P : NormalizationPredicate) : Prop :=
+  ∃ A : AdmissibleNormalizationPredicate,
+    A.toNormalizationPredicate = P ∧
+      ((∀ S : Slice, A.holdsOnSlice S ↔ HasUniqueDominantPair S) ∧
+        (∀ S : Slice, A.holdsOnSlice S ↔ MarginBoundedSlice S) ∧
+        (∀ S : Slice, A.holdsOnSlice S ↔ GhostActionTwoPairCrossOneSlice S) ∧
+        (∀ S : Slice, A.holdsOnSlice S ↔ OffsetActionZeroPairCrossOneSlice S))
+
+local notation "AdmissibleNormalizationPredicate" => AdmissibleNormalizationPredicateBridge
+local notation "TractabilityCharacterization" => TractabilityCharacterizationBridge
+
+theorem admissibleCollapseLandscapeInfinity_full_paper :
+    ∀ (P : NormalizationPredicate), AdmissibleNormalizationPredicate P →
+      ¬ TractabilityCharacterization P := by
+  intro P hAdm hTract
+  rcases hAdm with ⟨_, _⟩
+  rcases hTract with ⟨A, _hAeq, hAll⟩
+  exact (admissibleCollapseLandscapeInfinity_full A) hAll
+
 theorem denseDecisionRelevantPredicate_polynomialTimeCheckable :
     PolynomialTimeCheckable DenseDecisionRelevantSlice := by
   classical
