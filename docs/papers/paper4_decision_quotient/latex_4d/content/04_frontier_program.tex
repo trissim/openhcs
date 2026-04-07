@@ -22,7 +22,7 @@ The natural long-term analogy is the CSP dichotomy program, where tractability i
 
 One piece of the frontier program already admits a clean canonical theorem. On binary coordinate domains, define the mixed difference along coordinates $i,j$ for action $a$ by evaluating the utility on the four assignments $(0,0),(1,1),(0,1),(1,0)$ while holding all other coordinates fixed at $0$. For pairwise utilities, this mixed difference is the canonical witness of genuine pair interaction.
 
-\leanmetapending{\LH{FR118}, \LH{FR119}, \LH{FR120}}
+\leanmetapending{\LHrng{FR}{118}{120}}
 \begin{proposition}[Binary Pairwise Symmetry Dichotomy]\label{prop:binary-pairwise-dichotomy}
 Let the coordinate alphabet be binary. If a utility admits a pairwise decomposition and is invariant under coordinate permutations, then either:
 \begin{enumerate}
@@ -36,20 +36,20 @@ The point is structural rather than cosmetic. Within the binary pairwise-symmetr
 The optimizer-relevant version needs one extra layer. Raw pair interaction is still too coarse, because action-independent pairwise terms can be structurally dense without changing the optimizer. The correct invariant is the mixed difference of action gaps $U(a,
 \cdot)-U(b,\cdot)$.
 
-\leanmetapending{\LH{FR121}, \LH{FR122}, \LH{FR123}, \LH{FR124}}
+\leanmetapending{\LHrng{FR}{121}{124}}
 \begin{proposition}[Decision-Relevant Binary Pairwise Dichotomy]\label{prop:decision-relevant-binary-pairwise-dichotomy}
 In the same binary pairwise-symmetric regime, either all action-dependent pair effects collapse into a unary-coordinate reduction after removing an action-independent base state term, or every distinct coordinate pair is decision-relevantly interacting for some action gap.
 \end{proposition}
 
-This is the correct replacement for the naive hardness conjecture. The obstruction theorem \LH{FR124} shows that even complete genuine pair interaction and failure of coordinate symmetry do not force hardness by themselves: one can still have a constant optimizer. Any eventual frontier theorem must therefore quotient out optimizer-degenerate phenomena, not just declared or utility-level interaction density.
+This is the correct replacement for the naive hardness conjecture. The obstruction theorem shows that even complete genuine pair interaction and failure of coordinate symmetry do not force hardness by themselves: one can still have a constant optimizer. Any eventual frontier theorem must therefore quotient out optimizer-degenerate phenomena, not just declared or utility-level interaction density.\leanmeta{\LH{FR124}}
 
-The obstruction is stronger than that first formulation suggests. Action-specific utility offsets leave the decision-relevant interaction graph unchanged \LH{FR125}, yet they can turn a family with nonconstant optimizer behavior into one with a constant optimizer while preserving dense decision-relevant structure \LH{FR126}, \LH{FR127}. Any true hardness theorem in this regime must therefore normalize away action offsets explicitly, not merely require dense decision-relevant interaction.
+The obstruction is stronger than that first formulation suggests. Action-specific utility offsets leave the decision-relevant interaction graph unchanged, yet they can turn a family with nonconstant optimizer behavior into one with a constant optimizer while preserving dense decision-relevant structure. Any true hardness theorem in this regime must therefore normalize away action offsets explicitly, not merely require dense decision-relevant interaction.\leanmeta{\LHrng{FR}{125}{127}}
 
-This normalization can be stated cleanly: utilities are identified up to action-dependent, state-independent offsets, and the offset-normalized decision-relevant graph is well-defined on those equivalence classes \LH{FR128}. But the resulting dichotomy attempt still fails. The offset-normalized obstruction theorem \LH{FR129} shows that even after passing to offset classes, one can retain complete decision-relevant interaction and unbounded treewidth while exact certification remains trivial.
+This normalization can be stated cleanly: utilities are identified up to action-dependent, state-independent offsets, and the offset-normalized decision-relevant graph is well-defined on those equivalence classes. But the resulting dichotomy attempt still fails. The offset-normalized obstruction theorem shows that even after passing to offset classes, one can retain complete decision-relevant interaction and unbounded treewidth while exact certification remains trivial.\leanmeta{\LHrng{FR}{128}{129}}
 
-The next refinement is to restrict the interaction graph to optimizer-supported actions. This removes both previously formalized collapse mechanisms: it removes the offset-collapse family and also a ghost-action family whose all-action decision-relevant graph is complete even though a single coordinate remains sufficient \LH{FR130}, \LH{FR131}, \LH{FR132}, \LH{FR133}. But even that support-filtered graph is not enough. The optimizer-supported obstruction theorem \LH{FR134}, \LH{FR135}, \LH{FR136} exhibits a margin-masking family with complete optimizer-supported decision-relevant interaction and unbounded treewidth, yet the optimizer still depends only on coordinate $0$. The third collapse mechanism is therefore not ghost support or offset collapse, but large unary margins that mask dense supported pairwise interactions.
+The next refinement is to restrict the interaction graph to optimizer-supported actions. This removes two earlier collapse mechanisms: the offset-collapse family and a ghost-action family whose all-action decision-relevant graph is complete even though a single coordinate remains sufficient. But even that support-filtered graph is not enough. The optimizer-supported obstruction theorem exhibits a margin-masking family with complete optimizer-supported decision-relevant interaction and unbounded treewidth, yet the optimizer still depends only on coordinate $0$. The third collapse mechanism is therefore not ghost support or offset collapse, but large unary margins that mask dense supported pairwise interactions.\leanmeta{\LHrng{FR}{130}{136}}
 
-One might hope that a strict unary-to-pair margin bound rescues the dichotomy. Define \emph{margin-bounded} pairwise utilities by requiring every unary term to be at most twice the largest binary mixed-difference magnitude \LH{FR137}. This still fails. The dominant-pair family is margin-bounded because its unary terms vanish \LH{FR138}, while its optimizer-supported decision-relevant graph remains complete \LH{FR139}. Yet the obstruction theorem \LH{FR140} shows that exact certification is still controlled by the two-coordinate set $\{0,1\}$. The fourth collapse mechanism is therefore pair-weight concentration rather than unary masking: one supported pair dominates the optimizer while the remaining dense interactions are too weak to matter.
+One might hope that a strict unary-to-pair margin bound rescues the dichotomy. Define \emph{margin-bounded} pairwise utilities by requiring every unary term to be at most twice the largest binary mixed-difference magnitude. This still fails. The dominant-pair family is margin-bounded because its unary terms vanish, while its optimizer-supported decision-relevant graph remains complete. Yet the obstruction theorem shows that exact certification is still controlled by the two-coordinate set $\{0,1\}$. The fourth collapse mechanism is therefore pair-weight concentration rather than unary masking: one supported pair dominates the optimizer while the remaining dense interactions are too weak to matter.\leanmeta{\LHrng{FR}{137}{140}}
 
 \subsection*{Admissible Closure-Orbit No-Go Program}
 
@@ -92,7 +92,7 @@ No admissible normalization predicate can decide the ghost-action concentration 
 \end{theorem}
 
 \begin{proof}[Proof sketch]
-For ghost actions, the mechanization uses a cast-free signature: there is an action whose unary contribution on the first coordinate is $-1$ on both binary values and whose anchor-pair interaction has unit mixed-difference magnitude. This family is local in appearance but unstable under the same pair-targeted affine move. A pair-supported affine term preserves the closure orbit while destroying the signature, so Proposition~\ref{prop:orbit-gap-template} applies.
+For ghost actions, the target predicate says that there is an action whose unary contribution on the first coordinate is $-1$ on both binary values and whose anchor-pair interaction has unit mixed-difference magnitude. This family is local in appearance but unstable under the same pair-targeted affine move. A pair-supported affine term preserves the closure orbit while destroying the signature, so Proposition~\ref{prop:orbit-gap-template} applies.
 \end{proof}
 
 \begin{theorem}[Offset Admissible No-Go]\label{thm:offset-admissible-no-go}
@@ -100,7 +100,7 @@ No admissible normalization predicate can decide the additive/statewise offset s
 \end{theorem}
 
 \begin{proof}[Proof sketch]
-For additive/statewise offset concentration, the cast-free target predicate requires two actions with distinct anchor-pair interaction magnitudes, namely $1$ and $0$. This family isolates the action-specific mismatch that survives after earlier offset normalizations. A pair-supported affine term changes the anchor-pair statistics while remaining in the same closure orbit. Again, Proposition~\ref{prop:orbit-gap-template} yields the contradiction.
+For additive/statewise offset concentration, the target predicate requires two actions with distinct anchor-pair interaction magnitudes, namely $1$ and $0$. This family isolates the action-specific mismatch that survives after earlier offset normalizations. A pair-supported affine term changes the anchor-pair statistics while remaining in the same closure orbit. Again, Proposition~\ref{prop:orbit-gap-template} yields the contradiction.
 \end{proof}
 
 \begin{theorem}[Admissible Collapse Across the Four Obstruction Families]\label{thm:admissible-collapse-four-families}
@@ -110,13 +110,3 @@ Let $P$ be a normalization predicate satisfying the admissibility axioms. Then $
 \begin{proof}[Proof idea]
 If $P$ were an admissible tractability characterization, it would have to decide each of the four obstruction predicates above. Theorem~\ref{thm:dominant-pair-admissible-no-go}, Theorem~\ref{thm:margin-masking-admissible-no-go}, Theorem~\ref{thm:ghost-action-admissible-no-go}, and Theorem~\ref{thm:offset-admissible-no-go} show that this is impossible. Hence no admissible normalization predicate yields the desired frontier theorem.
 \end{proof}
-
-The mechanization exposes Theorem~\ref{thm:admissible-collapse-four-families} with the formal signature
-\begin{quote}
-\small\ttfamily
-admissibleCollapseLandscapeInfinity\_full\_paper :\\
-\quad forall (P : NormalizationPredicate),\\
-\quad AdmissibleNormalizationPredicate P ->\\
-\quad not (TractabilityCharacterization P).
-\end{quote}
-Internally, this theorem is obtained via a thin bridge from the working admissibility theorem over the four explicit obstruction predicates.

@@ -3707,11 +3707,12 @@ end {module_root}
                 tex_file.write_text(rewritten, encoding="utf-8")
 
     def _normalize_leanmeta_handle_lists(self, text: str) -> str:
-        """Normalize `\\leanmeta{...}` handle lists.
+        """Normalize `\\leanmeta{...}` and `\\leanmetapending{...}` handle lists.
 
         Rules:
-        - only touches `\\leanmeta{...}` blocks that contain exclusively `\\LH{...}`
-          and `\\LHrng{...}{...}{...}` items separated by commas
+        - only touches `\\leanmeta{...}` / `\\leanmetapending{...}` blocks that
+          contain exclusively `\\LH{...}` and `\\LHrng{...}{...}{...}` items
+          separated by commas
         - preserves prefix order by first appearance
         - sorts numerically within each prefix
         - compresses contiguous runs into `\\LHrng{PREFIX}{a}{b}`
@@ -3777,15 +3778,22 @@ end {module_root}
 
         pieces: List[str] = []
         cursor = 0
-        needle = r"\leanmeta{"
-        needle_len = len(needle)
+        needles = [r"\leanmeta{", r"\leanmetapending{"]
 
         while True:
-            start = text.find(needle, cursor)
+            start = -1
+            needle = ""
+            for candidate in needles:
+                found = text.find(candidate, cursor)
+                if found != -1 and (start == -1 or found < start):
+                    start = found
+                    needle = candidate
+
             if start == -1:
                 pieces.append(text[cursor:])
                 break
 
+            needle_len = len(needle)
             pieces.append(text[cursor:start])
             body_start = start + needle_len
             depth = 1
@@ -3807,7 +3815,7 @@ end {module_root}
             if normalized_inner is None:
                 pieces.append(text[start:idx])
             else:
-                pieces.append(rf"\leanmeta{{{normalized_inner}}}")
+                pieces.append(needle + normalized_inner + "}")
             cursor = idx
 
         return "".join(pieces)

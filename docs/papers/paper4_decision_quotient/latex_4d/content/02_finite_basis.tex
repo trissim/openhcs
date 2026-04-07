@@ -1,8 +1,8 @@
-\section{Finite Basis for the Current Artifact}
+\section{Finite Basis for the Current Positive Landscape}
 
-We distinguish between \emph{formalized tractable families} and \emph{primitive tractability mechanisms}. A formalized family is any tractable condition with its own theorem statement or formal module in the current development. A primitive mechanism is a smaller conceptual source of tractability that may explain several families at once.
+We distinguish between \emph{tractable families treated here} and \emph{primitive tractability mechanisms}. A tractable family is any named positive condition included in the present analysis. A primitive mechanism is a smaller conceptual source of tractability that may explain several families at once.
 
-For the present artifact, the primitive list is explicit:
+For the present analysis, the primitive list is explicit:
 \begin{enumerate}
 \item the six core structural subcases,
 \item constant-optimizer collapse, and
@@ -11,20 +11,20 @@ For the present artifact, the primitive list is explicit:
 
 Thus the current primitive basis has size eight.
 
-\leanmetapending{\LH{FR1}, \LH{FR2}}
-\begin{theorem}[Explicit Partition of the Current Formalized Landscape]\label{thm:current-landscape-partition}
-The fifteen currently formalized tractable families admit an explicit disjoint partition into three blocks:
+\leanmetapending{\LHrng{FR}{1}{2}}
+\begin{theorem}[Explicit Partition of the Current Positive Landscape]\label{thm:current-landscape-partition}
+The fifteen tractable families considered here admit an explicit disjoint partition into three blocks:
 \begin{enumerate}
 \item six \emph{core} structural families,
 \item four \emph{lifted} families that reduce to existing core subcases, and
 \item five \emph{degenerate} families that become tractable by optimizer collapse or finite explicit enumeration.
 \end{enumerate}
-Moreover, every currently formalized family is classified into exactly one of these three blocks by an explicit formal classification map.
+Moreover, each family is classified into exactly one of these three blocks by an explicit classification map.
 \end{theorem}
 
-\leanmetapending{\LH{FR25}, \LHrng{FR}{26}{28}}
+\leanmetapending{\LHrng{FR}{25}{28}}
 \begin{proposition}[Explicit Inventory]\label{prop:explicit-inventory}
-The fifteen currently formalized families are exactly the following:
+The fifteen tractable families considered here are exactly the following:
 \begin{enumerate}
 \item core: bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, coordinate symmetry;
 \item lifts: product distribution, bounded support, bounded horizon, full observability;
@@ -33,7 +33,7 @@ The fifteen currently formalized families are exactly the following:
 \end{proposition}
 
 \leanmetapending{\LH{FR3}}
-\begin{corollary}[Finite Basis for the Current Mechanized Landscape]\label{cor:finite-basis-current}
+\begin{corollary}[Finite Basis for the Current Positive Landscape]\label{cor:finite-basis-current}
 Projecting the partition of Theorem~\ref{thm:current-landscape-partition} to primitive mechanisms yields an explicit finite list of eight primitive tractability mechanisms. The list consists of the six core structural subcases
 \[
 \text{bounded actions},\ 
@@ -68,11 +68,11 @@ The three blocks from Theorem~\ref{thm:current-landscape-partition} have sizes
 \]
 \end{proposition}
 
-The current formalized landscape therefore contains fifteen tractable families accounted for by eight primitive mechanisms.
+The current positive landscape therefore contains fifteen tractable families accounted for by eight primitive mechanisms.
 
-\leanmetapending{\LH{FR101}, \LH{FR105}, \LH{FR106}, \LH{FR108}, \LH{FR112}, \LH{FR113}}
+\leanmetapending{\LH{FR101}, \LHrng{FR}{105}{106}, \LH{FR108}, \LHrng{FR}{112}{113}}
 \begin{proposition}[All Independent Core Mechanisms Are Nondegenerate]\label{prop:four-core-nondegenerate}
-The current formal development already contains witness families showing that five core mechanisms are individually indispensable in the sense of basis coverage:
+The analysis already contains witness families showing that five core mechanisms are individually indispensable in the sense of basis coverage:
 \begin{enumerate}
 \item a low-rank-only witness family,
 \item a separable-only witness family,
@@ -80,12 +80,12 @@ The current formal development already contains witness families showing that fi
 \item a bounded-treewidth-only witness family, and
 \item a symmetry-only witness family.
 \end{enumerate}
-Each of these families remains tractable by its designated mechanism while failing the currently formalized versions of the other independent core mechanisms.
+Each of these families remains tractable by its designated mechanism while failing the corresponding versions of the other independent core mechanisms.
 \end{proposition}
 
-Proposition~\ref{prop:four-core-nondegenerate} now settles the independent part of the basis question on the stable formal surface. Every core mechanism that is not merely contained in another is formally known to be genuinely needed.
+Proposition~\ref{prop:four-core-nondegenerate} settles the independent part of the basis question on the present surface. Every core mechanism that is not merely contained in another is shown to be genuinely needed.
 
-More concretely, the current stable formal surface already contains five distinct kinds of ``only-by'' witness:
+More concretely, the present theory contains five distinct kinds of ``only-by'' witness:
 \begin{enumerate}
 \item low-rank only,
 \item separable only,
@@ -104,12 +104,12 @@ There exists a dependency presentation satisfying the older monotone tree-order 
 The reduction family for exact relevance certification yields \coNP-hard instances with cyclic dependency structure. Thus the tree-structured regime is not only sufficient for tractability; leaving it also reaches the hard side.
 \end{proposition}
 
-\leanmetapending{\LH{FR100}, \LH{FR110}, \LH{FR111}}
+\leanmetapending{\LH{FR100}, \LHrng{FR}{110}{111}}
 \begin{proposition}[Parent-Tree Structure Gives Width-One Decompositions]\label{prop:parent-tree-width-one}
 Suppose a dependency presentation is tree-structured in the strict parent sense: every dependency points to a smaller coordinate and every coordinate has at most one parent. Then the induced dependency graph admits a genuine tree decomposition of width at most one.
 \end{proposition}
 
-Proposition~\ref{prop:parent-tree-width-one} is the mathematically honest containment theorem behind the intended ``tree structure is the treewidth-one special case'' slogan. The formal development distinguishes this parent-tree notion from the weaker monotone-order predicate currently named \texttt{TreeStructured}.
+Proposition~\ref{prop:parent-tree-width-one} is the mathematically honest containment theorem behind the intended ``tree structure is the treewidth-one special case'' slogan. It distinguishes this parent-tree notion from the weaker monotone-order predicate currently named \texttt{TreeStructured}.
 
 \leanmetapending{\LH{FR4}}
 \begin{proposition}[Current Positive Interfaces Factor Through Role Classification]\label{prop:interfaces-factor-through-role}

@@ -1,7 +1,5 @@
-\section{Artifact Index and Supplementary Tables}\label{app:lean}
+\section*{Artifact Note}\label{app:lean}
 
-This paper uses the same theorem-local proof-handle convention as the rest of the series: inline markers of the form \verb|\LH{...}| and \verb|\LHrng{...}| attach formal support directly to the corresponding paper claims.
+The manuscript is intended to be fully readable on its own. Mechanized support appears only as local footnotes attached to specific claims, and no consultation of the artifact is needed to follow the statements or arguments.
 
-The cited-handle closure comprises \LeanReleaseLines{} lines and \LeanReleaseTheorems{} theorem-level declarations across \LeanReleaseFiles{} files; this is the code needed for the handles cited in the paper. The local development contains \LeanLocalLines{} lines and \LeanLocalTheorems{} theorem-level declarations across \LeanLocalFiles{} files, while the cumulative transitive dependency closure contains \LeanTotalLines{} lines and \LeanTotalTheorems{} theorem-level declarations across \LeanTotalFiles{} files. Thus the local development contributes \number\numexpr 100*\LeanLocalLines/\LeanTotalLines\relax\% of cumulative lines and \number\numexpr 100*\LeanLocalTheorems/\LeanTotalTheorems\relax\% of cumulative theorem count. The supplementary handle ledger records source-file provenance for every cited handle: entries under \texttt{Frontier/*} are newly introduced here, whereas entries under \texttt{DecisionQuotient/*} are inherited from an earlier decision-quotient development.
-
-The full handle ledger and claim-to-handle mapping are provided in the supplementary PDF and archived artifact. We omit those longer tables from the manuscript body.
+The archived Lean development, full handle ledger, and claim-to-handle mapping are provided only as supplementary support for claim verification and provenance. The archive also contains the formal theorem corresponding to the main collapse statement in the paper. Detailed development statistics and file-level tables are therefore omitted from the main text.

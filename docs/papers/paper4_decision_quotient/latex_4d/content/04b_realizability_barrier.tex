@@ -2,7 +2,7 @@
 
 A natural hope for a finite tractability taxonomy would be this: perhaps optimizer-induced quotients realize only a narrow subclass of equivalence relations, so the finite frontier would emerge from realizability alone. In the unconstrained setting, that hope is false.
 
-\leanmetapending{\LH{FR7}, \LH{FR8}}
+\leanmetapending{\LHrng{FR}{7}{8}}
 \begin{theorem}[Every Labeling Kernel Is Optimizer-Realizable]\label{thm:labeling-realizable}
 Let $\phi : S \to T$ be any function. There exists a decision problem with action space $T$ and state space $S$ such that for every state $s \in S$,
 \[
@@ -29,21 +29,21 @@ Then the unique maximizer at state $s$ is the designated action $\phi(s)$, so th
 
 Theorem~\ref{thm:labeling-realizable} is the key negative fact for the frontier program. It shows that optimizer realizability by itself is extremely permissive. If arbitrary label kernels are already optimizer-induced, then no finite taxonomy can come merely from asking which abstract quotients are realizable.
 
-\leanmetapending{\LH{FR45}, \LH{FR46}, \LH{FR47}}
+\leanmetapending{\LHrng{FR}{45}{47}}
 \begin{proposition}[Every Equivalence Relation Is Optimizer-Realizable]\label{prop:setoid-realizable}
 For every equivalence relation on the state space, there exists a decision problem whose decision quotient relation is exactly that equivalence relation. Moreover, the quotient object of the realizing problem is canonically equivalent to the corresponding setoid quotient.
 \end{proposition}
 
 Proposition~\ref{prop:setoid-realizable} is the maximal realizability statement available in the present framework. The labeling-kernel theorem is a special case. Thus the realizability barrier is not merely broad; at the level of abstract quotient relations, it is maximal.
 
-\leanmetapending{\LH{FR39}, \LH{FR40}}
+\leanmetapending{\LHrng{FR}{39}{40}}
 \begin{proposition}[The Realized Quotient Is Exactly the Label Range]\label{prop:realized-quotient-range}
 For every labeling map $\phi : S \to T$, the decision quotient of the realizing problem is canonically equivalent to the range of $\phi$. In finite settings, the quotient cardinality is therefore exactly $|\operatorname{range}(\phi)|$.
 \end{proposition}
 
 Proposition~\ref{prop:realized-quotient-range} strengthens Theorem~\ref{thm:labeling-realizable}. The realizing construction does not merely realize the induced equivalence relation abstractly; it realizes the quotient object itself with exactly the expected image size.
 
-\leanmetapending{\LH{FR7}, \LH{FR8}}
+\leanmetapending{\LHrng{FR}{7}{8}}
 \begin{corollary}[Realizability Alone Cannot Be the Frontier]\label{cor:realizability-alone-not-enough}
 Any future optimizer-compatible tractability metatheorem must use more than quotient realizability alone. Additional restrictions have to enter through representation, coordinate structure, utility structure, closure properties of the family under study, or comparable algebraic invariants.
 \end{corollary}

@@ -6,7 +6,7 @@ At minimum, the tractability frontier should not classify arbitrary sets of deci
 
 The right eventual condition list will almost certainly be stronger than this minimal principle. For example, a mature frontier theorem may also require closure under adding explicitly irrelevant coordinates, adjoining dummy actions, or other representation-preserving refinements. But action/state relabel invariance is the irreducible starting point.
 
-\leanmetapending{\LH{FR30}, \LH{FR31}, \LH{FR32}, \LH{FR33}, \LH{FR34}, \LH{FR35}, \LH{FR37}, \LH{FR51}}
+\leanmetapending{\LHrng{FR}{30}{35}, \LH{FR37}, \LH{FR51}}
 \begin{proposition}[Exact Certification Depends Only on the Decision Quotient Relation]\label{prop:depends-only-on-opt}
 If two decision problems on the same state space induce the same decision-equivalence relation, then they induce the same exact-certification structure. In particular, they have the same sufficient coordinate sets, the same minimal sufficient coordinate sets, and the same relevant and irrelevant coordinates. Moreover, their quotient objects are canonically equivalent; in finite settings, those quotient objects therefore have the same cardinality.
 \end{proposition}
@@ -20,28 +20,28 @@ A coordinate set $I$ is sufficient if and only if the coordinate-agreement relat
 
 Corollary~\ref{cor:sufficiency-refinement} is the cleanest relational form of exact certification. It removes utility language entirely: sufficiency asks whether one state relation is contained in another.
 
-\leanmetapending{\LH{FR49}, \LH{FR50}}
+\leanmetapending{\LHrng{FR}{49}{50}}
 \begin{corollary}[Relevance Is Failure of Erased Sufficiency]\label{cor:relevance-erasure}
 A coordinate $i$ is irrelevant if and only if deleting it leaves a sufficient coordinate set, namely $\mathrm{univ}\setminus\{i\}$. Equivalently, $i$ is relevant if and only if that erased set is not sufficient.
 \end{corollary}
 
 Corollary~\ref{cor:relevance-erasure} makes the role of individual coordinates canonical: relevance is exactly the obstruction to retaining sufficiency after coordinate erasure.
 
-\leanmetapending{\LH{FR41}, \LH{FR42}, \LH{FR43}, \LH{FR44}}
+\leanmetapending{\LHrng{FR}{41}{44}}
 \begin{corollary}[Certification Statistics Factor Through the Quotient Relation]\label{cor:statistics-factor}
 Any statistic that is a function of the sufficient-set family and relevant-coordinate set is invariant under equality of the decision quotient relation. In particular, the number of sufficient coordinate sets, the number of minimal sufficient coordinate sets, and the number of relevant coordinates are quotient invariants.
 \end{corollary}
 
 Corollary~\ref{cor:statistics-factor} records the next logical consequence of Proposition~\ref{prop:depends-only-on-opt}. Once exact certification is identified with quotient data, every certification statistic built from sufficient sets or relevant coordinates factors automatically through that quotient data as well.
 
-\leanmetapending{\LH{FR52}, \LH{FR53}}
+\leanmetapending{\LHrng{FR}{52}{53}}
 \begin{corollary}[Constant-Optimizer Collapse Forces Trivial Certification]\label{cor:constant-opt-collapse}
 If the optimizer set is constant across all states, then the empty coordinate set is sufficient and every coordinate is irrelevant.
 \end{corollary}
 
 Corollary~\ref{cor:constant-opt-collapse} isolates the first genuinely degenerate mechanism in the tractable basis. The certification problem disappears because there is no state dependence left to certify.
 
-\leanmetapending{\LH{FR66}, \LH{FR67}}
+\leanmetapending{\LHrng{FR}{66}{67}}
 \begin{proposition}[Explicit Enumeration Is Parameter-Dependent, Not Structural]\label{prop:enumeration-not-structural}
 For every fixed exponent $k$, there exists a Boolean-cube family with state space size $2^n > n^k$. Thus explicit-state enumeration can outrun any fixed monomial bound in the ambient dimension parameter.
 \end{proposition}
@@ -61,7 +61,7 @@ with $\beta(s)>0$ for every state $s$ does not change sufficient coordinate sets
 
 Proposition~\ref{prop:affine-invisible} is another direct consequence of Proposition~\ref{prop:depends-only-on-opt}. It records a standard utility-theoretic invariance in the exact-certification language: only the induced decision quotient matters, not the particular positive affine scale used to encode utility.
 
-\leanmetapending{\LH{FR54}, \LH{FR55}, \LH{FR56}, \LH{FR68}, \LH{FR69}, \LH{FR70}, \LH{FR71}, \LH{FR72}, \LH{FR73}}
+\leanmetapending{\LHrng{FR}{54}{56}, \LHrng{FR}{68}{73}}
 \begin{proposition}[Duplicate Actions and Duplicate States Preserve Certification]\label{prop:duplicate-invariance}
 Duplicating a single action without changing its utility profile preserves the decision quotient relation and hence preserves sufficiency and relevance. At the optimizer-set level, the only possible change is the addition of the duplicate action itself: original optimal actions remain optimal, and the duplicate is optimal exactly when the original action was. Duplicating a single state without changing its utility profile preserves the decision quotient up to the obvious quotient equivalence and also preserves sufficiency and relevance.
 \end{proposition}
@@ -90,7 +90,7 @@ Take $m=k+1$ and realize the identity labeling on $\mathrm{Fin}(k+1)$. Propositi
 
 The point is simple: a meaningful frontier statement cannot range over classes that are simultaneously relabel-invariant and kernel-universal, because quotient shape alone then becomes too expressive to isolate the boundary.
 
-\leanmetapending{\LH{FR21}, \LH{FR22}, \LH{FR23}}
+\leanmetapending{\LHrng{FR}{21}{23}}
 \begin{proposition}[Invariance Alone Is Too Weak]\label{prop:invariance-too-weak}
 The universal class of all decision problems satisfies action relabeling invariance and state relabeling invariance, but it is kernel-universal. Consequently, relabeling invariance by itself is far too weak to isolate a tractability frontier.
 \end{proposition}
@@ -112,7 +112,7 @@ The closure properties above are theorem-forced by exact-certification semantics
 Without admissibility restrictions, there exist normalization predicates whose membership condition directly encodes the intended polynomial-time side of the landscape, so unrestricted collapse-impossibility claims fail.
 \end{proposition}
 
-Proposition~\ref{prop:oracle-loophole} is not an artifact of the proof method. It is the expected behavior of unrestricted semantic predicates. Therefore any meaningful frontier theorem must be parameterized by an admissibility class that simultaneously (i) respects theorem-forced invariances and (ii) blocks direct semantic encoding.
+Proposition~\ref{prop:oracle-loophole} is not a by-product of the proof method. It is the expected behavior of unrestricted semantic predicates. Therefore any meaningful frontier theorem must be parameterized by an admissibility class that simultaneously (i) respects theorem-forced invariances and (ii) blocks direct semantic encoding.
 
 \begin{definition}[Admissible Normalization Predicate]\label{def:admissible-normalization}
 A normalization predicate is \emph{admissible} when it satisfies all of the following:
