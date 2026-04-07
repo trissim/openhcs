@@ -77,7 +77,7 @@ Proposition~\ref{prop:relabeling-forced} is now best read as a corollary of Prop
 
 The second necessary ingredient is a genuine expressivity restriction. Call a class \emph{kernel-universal} if, for every labeling map $\phi : S \to T$, it contains some decision problem whose optimizer quotient realizes exactly the kernel partition of $\phi$. By Theorem~\ref{thm:labeling-realizable}, kernel universality is an extremely strong property.
 
-The canonical finite invariant here is the size of the optimizer quotient, equivalently the number of distinct optimal-action sets. The optimizer-quotient manuscript~\cite{simas2025optimizerquotient} identifies the quotient with the range of the optimizer map, so quotient size is not auxiliary bookkeeping; it is intrinsic.
+The canonical finite invariant here is the size of the optimizer quotient, equivalently the number of distinct optimal-action sets. The quotient is identified with the range of the optimizer map, so quotient size is not auxiliary bookkeeping; it is intrinsic.
 
 \leanmetapending{\LH{FR24}, \LH{FR38}}
 \begin{proposition}[Quotient Size Is Unbounded Under Realizability]\label{prop:quotient-size-unbounded}
@@ -103,3 +103,35 @@ Proposition~\ref{prop:invariance-too-weak} separates two kinds of conditions tha
 \end{enumerate}
 
 Any genuine optimizer-compatible frontier theorem will need both. Without decision-quotient invariance and its immediate corollaries such as relabel invariance and positive affine invariance, the statement is not structural. Without an expressivity restriction excluding kernel universality or something comparably strong, the realizability theorem and Proposition~\ref{prop:quotient-size-unbounded} make the class too large for quotient shape alone to carry the boundary.
+
+\subsection*{From Necessary Conditions to an Admissibility Class}
+
+The closure properties above are theorem-forced by exact-certification semantics, but they are not enough on their own to support a meaningful impossibility theorem. If one allows unrestricted predicates, a semantic predicate can simply encode the target complexity class and trivialize the statement.
+
+\begin{proposition}[Unrestricted Predicates Trivialize Exact Characterization]\label{prop:oracle-loophole}
+Without admissibility restrictions, there exist normalization predicates whose membership condition directly encodes the intended polynomial-time side of the landscape, so unrestricted collapse-impossibility claims fail.
+\end{proposition}
+
+Proposition~\ref{prop:oracle-loophole} is not an artifact of the proof method. It is the expected behavior of unrestricted semantic predicates. Therefore any meaningful frontier theorem must be parameterized by an admissibility class that simultaneously (i) respects theorem-forced invariances and (ii) blocks direct semantic encoding.
+
+\begin{definition}[Admissible Normalization Predicate]\label{def:admissible-normalization}
+A normalization predicate is \emph{admissible} when it satisfies all of the following:
+\begin{enumerate}
+\item polynomial-time checkability at the slice level;
+\item invariance under the closure laws forced by exact certification (relabelings, positive affine reparameterizations, duplication operations, and irrelevant-coordinate extension);
+\item structural extractability of the associated dependency graph;
+\item bounded-pattern definability.
+\end{enumerate}
+\end{definition}
+
+Each clause in Definition~\ref{def:admissible-normalization} has an independent methodological role.
+
+Polynomial-time checkability is the minimal algorithmic requirement. A tractability characterization that cannot itself be recognized efficiently has little explanatory value: it would only relocate the computational difficulty from exact certification to the membership test for the classifier.
+
+Closure-law invariance is the decisive semantic requirement. It is not stipulated for convenience. It is forced by the Block~6 invariance theorems, because exact certification itself is unchanged by relabelings, positive affine utility reparameterizations, duplication operations, and irrelevant-coordinate extensions. The orbit-witness arguments of Section~4 use precisely this clause and no stronger semantic assumption.
+
+Structural extractability distinguishes structural characterizations from purely semantic ones. Without such a condition, one can define predicates directly on optimizer behavior or on the solved certification instance itself, bypassing the stated aim of classifying tractability by representation-level structure.
+
+Bounded-pattern definability is the locality guardrail. Its role is to exclude predicates whose membership test secretly performs an unbounded global computation under a structural name. In particular, it prevents one from reintroducing oracle power through an arbitrarily large finite schema.
+
+Definition~\ref{def:admissible-normalization} is therefore not a list assembled solely to support the impossibility theorem. Closure-law invariance supplies the semantic content of the no-go theorem; the remaining clauses exclude vacuous or non-structural counterexamples and keep the classification problem within the intended algorithmic setting.
