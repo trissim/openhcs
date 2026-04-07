@@ -10,7 +10,21 @@ On the positive side, we prove that the tractable families treated here split in
 
 The natural next move is to classify by optimizer-induced quotient structure. We show this is impossible in the unconstrained sense: optimizer realizability is maximal, and arbitrary labeling kernels are realizable. Thus quotient shape is too expressive to carry the boundary by itself.
 
+This exactness requirement is not arbitrary. At zero distortion, any summary that preserves optimal actions must still separate distinct optimizer classes: if two different optimizer classes were assigned the same summary value, the summary would merge states with different optimal-action sets and would cease to be lossless. Exact relevance therefore marks the theoretical floor for lossless abstraction. One may study approximate summaries for other purposes, but once the goal is exact decision preservation, the optimizer quotient is already the unavoidable reference object.
+
 This realizability barrier motivates the organizing principle of the paper: tractability predicates must be evaluated on representation-level structural classes, but modulo theorem-forced equivalences of presentation. In particular, closure under relabelings, positive affine utility reparameterizations, duplication, and irrelevant-coordinate extension is not a modeling preference; it is inherited from the fact that exact certification depends only on the induced decision quotient relation.
+
+\subsection*{Standing Semantics}
+
+For a decision problem with state space $S$, action space $A$, and utility $U$, write
+\[
+\Opt(s)=\{a\in A : U(a,s) \text{ is maximal among all actions at } s\}.
+\]
+This induces the decision-equivalence relation
+\[
+s \sim_{\Opt} s' \quad\Longleftrightarrow\quad \Opt(s)=\Opt(s').
+\]
+The associated optimizer quotient is the quotient set $S/{\sim_{\Opt}}$. A coordinate set $I$ is \emph{sufficient} when agreement on $I$ forces equality of optimizer classes, and a coordinate is \emph{relevant} when deleting it destroys sufficiency. These are the semantic objects studied throughout the paper; later closure laws and obstruction families are all phrased relative to this quotient viewpoint.
 
 At the same time, unrestricted predicates trivialize any impossibility theorem via oracle encoding. We therefore isolate a principled admissibility layer: polynomial-time checkability, structural extractability, closure-law invariance, and bounded-pattern definability. This class excludes direct semantic encoding while still covering the structural results established here.
 
@@ -20,4 +34,6 @@ The dominant-pair family is the canonical instance, and the same mechanism now a
 
 Conceptually, the result belongs to the same meta-impossibility lineage as Rice-style and Arrow-style theorems: once one accepts a natural invariance package and a nontrivial expressivity domain, the desired classifier cannot exist in the naive finite form. What remains open is not whether arbitrary finite classifiers fail, but what stronger structural principle (if any) yields a correct frontier theorem.
 
-Roadmap. Section~2 gives the finite-basis consolidation for the current positive landscape; Section~3 separates lifts from degeneracies; Sections~4--4c develop the realizability barrier, admissibility motivation, and obstruction-family no-go program; Section~5 positions the result in related meta-impossibility and tractability traditions; Section~6 concludes.
+Roadmap. Section~2 gives the finite-basis consolidation for the current positive landscape; Section~3 separates lifts from degeneracies; Section~4 explains why the naive frontier hope fails; Section~5 proves the realizability barrier; Section~6 develops the necessary conditions and the admissible-collapse theorem; Section~7 positions the result in related meta-impossibility and tractability traditions; Section~8 concludes.
+
+An accompanying Lean development mechanically verifies the realizability constructions, the orbit-gap template, and the family-level admissible no-go theorems used in the collapse argument. The mathematical exposition below is intended to be fully self-contained and does not rely on consulting the mechanization.

@@ -688,6 +688,18 @@ theorem closureLawInvariant_iff_of_closureEquivalent
   | symm _ _ _ ih => exact ih.symm
   | trans _ _ _ _ _ ih12 ih23 => exact Iff.trans ih12 ih23
 
+theorem no_closureInvariant_predicate_of_orbit_gap
+    {P Q : Slice → Prop} (hInv : ClosureLawInvariant P)
+    {S1 S2 : Slice} (hEqv : ClosureEquivalent S1 S2)
+    (hQ1 : Q S1) (hQ2 : ¬ Q S2) :
+    ¬ (∀ S, P S ↔ Q S) := by
+  intro hDecides
+  have hPOrbit : P S1 ↔ P S2 :=
+    closureLawInvariant_iff_of_closureEquivalent hInv hEqv
+  have hP1 : P S1 := (hDecides S1).2 hQ1
+  have hP2 : P S2 := hPOrbit.mp hP1
+  exact hQ2 ((hDecides S2).1 hP2)
+
 theorem dominantPairSlice0_hasUniqueDominantPair :
     HasUniqueDominantPair (dominantPairSlice 0) := by
   refine ⟨by decide, false, ?_⟩

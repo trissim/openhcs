@@ -34,6 +34,12 @@ import Paper4dFrontier.Realizability
 import Paper4dFrontier.FamilyAxioms
 import Paper4dFrontier.ClosureLaws
 import Paper4dFrontier.RealTreewidthWitnesses
+import DecisionQuotient.Quotient
+import DecisionQuotient.Tractability.StructuralRank
+import DecisionQuotient.Information
+import DecisionQuotient.Information.RDSrank
+import DecisionQuotient.Statistics.FisherInformation
+import DecisionQuotient.Physics.WassersteinIntegrity
 
 open Paper4dFrontier
 
@@ -207,6 +213,21 @@ abbrev FR172 := @scaledOffsetChecker_handles_uniform_scaling
 abbrev FR173 := @LocalPattern.occursUpToPositiveScaleInSlice_globalScaleInvariant
 abbrev FR174 := @scaledOffsetChecker_globalPositiveScaleInvariant
 abbrev FR175 := @translatedOffsetCollapsed_additive_mismatch
+abbrev FR176 := @DecisionQuotient.DecisionProblem.quotient_is_coarsest
+abbrev FR177 := @DecisionQuotient.DecisionProblem.quotient_has_unique_factorization
+abbrev FR178 := @DecisionQuotient.DecisionProblem.srank_eq_relevant_card
+abbrev FR179 := @DecisionQuotient.quotientEntropy_le_srank_binary
+abbrev FR180 := @DecisionQuotient.Statistics.fisherMatrix_rank_eq_srank
+abbrev FR181 := @DecisionQuotient.Information.compression_below_srank_fails
+abbrev FR182 := @DecisionQuotient.Information.srank_bits_sufficient
+abbrev FR183 := @DecisionQuotient.Physics.single_future_zero_cost
+abbrev FR184 := @DecisionQuotient.Physics.transportCost_pos_of_offDiag
+abbrev FR185 := @no_closureInvariant_predicate_of_orbit_gap
+abbrev FR186 := @no_admissibleNormalizationPredicate_decides_dominantPair
+abbrev FR187 := @no_admissibleNormalizationPredicate_decides_marginBounded
+abbrev FR188 := @no_admissibleNormalizationPredicate_decides_ghostActionTwoPairCrossOne
+abbrev FR189 := @no_admissibleNormalizationPredicate_decides_offsetActionZeroPairCrossOne
+abbrev FR190 := @admissibleCollapseLandscapeInfinity_full_paper
 abbrev FR110 := @parentTreeStructured_implies_treeStructured
 abbrev FR111 := @treeStructured_and_unique_parent_iff_parentTreeStructured
 abbrev FR102 := @completeGraph_not_realTreewidth_le_of_large

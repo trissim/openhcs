@@ -34,6 +34,22 @@ Any statistic that is a function of the sufficient-set family and relevant-coord
 
 Corollary~\ref{cor:statistics-factor} records the next logical consequence of Proposition~\ref{prop:depends-only-on-opt}. Once exact certification is identified with quotient data, every certification statistic built from sufficient sets or relevant coordinates factors automatically through that quotient data as well.
 
+\leanmetapending{\LHrng{FR}{176}{177}}
+\begin{proposition}[Zero-Distortion Summaries Refine the Optimizer Quotient]\label{prop:zero-distortion-refines-quotient}
+Let $\sigma : S \to C$ be a summary map. Suppose that
+\[
+\sigma(s)=\sigma(s') \implies \Opt(s)=\Opt(s')
+\qquad\text{for all } s,s' \in S.
+\]
+Then each summary fiber is contained in a single optimizer-quotient class. Equivalently, $\sigma$ factors through the optimizer quotient relation, and distinct optimizer classes require distinct summary symbols.
+\end{proposition}
+
+\begin{proof}
+If $\sigma(s)=\sigma(s')$, the hypothesis gives $\Opt(s)=\Opt(s')$. So every $\sigma$-fiber is contained in one decision-equivalence class. This is exactly the statement that $\sigma$ refines the optimizer quotient. Conversely, if two distinct optimizer classes shared a summary symbol, choosing representatives from those classes would violate the zero-distortion premise.
+\end{proof}
+
+Proposition~\ref{prop:zero-distortion-refines-quotient} explains why exact relevance is not merely one point on an approximation spectrum. Once distortion is required to be zero, lossless decision-preserving abstraction is already constrained by the optimizer quotient itself. Approximate summaries may still be useful for other goals, but they no longer certify exact preservation of the decision boundary.
+
 \leanmetapending{\LHrng{FR}{52}{53}}
 \begin{corollary}[Constant-Optimizer Collapse Forces Trivial Certification]\label{cor:constant-opt-collapse}
 If the optimizer set is constant across all states, then the empty coordinate set is sufficient and every coordinate is irrelevant.
@@ -104,10 +120,32 @@ Proposition~\ref{prop:invariance-too-weak} separates two kinds of conditions tha
 
 Any genuine optimizer-compatible frontier theorem will need both. Without decision-quotient invariance and its immediate corollaries such as relabel invariance and positive affine invariance, the statement is not structural. Without an expressivity restriction excluding kernel universality or something comparably strong, the realizability theorem and Proposition~\ref{prop:quotient-size-unbounded} make the class too large for quotient shape alone to carry the boundary.
 
+\leanmetapending{\LHrng{FR}{178}{182}}
+\begin{proposition}[Independent Summary Frameworks Converge on the Same Structural Core]\label{prop:structural-convergence}
+Write $r=\mathrm{srank}(\mathcal{D})$ for the number of relevant coordinates of a Boolean decision problem, and let $m$ be the number of optimizer-quotient classes. Then:
+\begin{enumerate}
+\item $m \le 2^r$, so the counting entropy $\log_2 m$ is at most $r$;
+\item the diagonal $0/1$ relevance-support matrix has rank exactly $r$;
+\item every zero-distortion decision-preserving summary requires at least $m$ distinct summary symbols.
+\end{enumerate}
+Hence quotient entropy, Fisher-style support counting, and zero-distortion summary size are all controlled by the same support/quotient core.
+\end{proposition}
+
+\begin{proof}
+If two states agree on all relevant coordinates, then they differ only on irrelevant ones. Changing those irrelevant coordinates one at a time cannot change the optimizer, so the relevant coordinates already determine the optimizer class. Therefore there are at most $2^r$ optimizer classes, one for each Boolean assignment on the relevant support, and $\log_2 m \le r$ follows.
+
+For the second clause, the diagonal relevance-support matrix has a $1$ exactly on relevant coordinates and a $0$ elsewhere. Its rank is therefore the number of relevant coordinates, namely $r$.
+
+The third clause is exactly Proposition~\ref{prop:zero-distortion-refines-quotient}: a zero-distortion summary must assign distinct symbols to distinct optimizer classes.
+\end{proof}
+
+The point of Proposition~\ref{prop:structural-convergence} is not that entropy, support counting, and lossless summaries become identical notions. The point is that they already converge on the same structural content before any admissibility axiom is imposed. This is why closure-law invariance is the decisive semantic clause in the admissibility class below: once several independent frameworks ignore surface presentation in favor of the support/quotient core, a structural tractability classifier should do the same. The remaining admissibility clauses serve as algorithmic and semantic guardrails.
+
 \subsection*{From Necessary Conditions to an Admissibility Class}
 
 The closure properties above are theorem-forced by exact-certification semantics, but they are not enough on their own to support a meaningful impossibility theorem. If one allows unrestricted predicates, a semantic predicate can simply encode the target complexity class and trivialize the statement.
 
+\leanmetapending{\LH{FR145}}
 \begin{proposition}[Unrestricted Predicates Trivialize Exact Characterization]\label{prop:oracle-loophole}
 Without admissibility restrictions, there exist normalization predicates whose membership condition directly encodes the intended polynomial-time side of the landscape, so unrestricted collapse-impossibility claims fail.
 \end{proposition}
@@ -123,6 +161,20 @@ A normalization predicate is \emph{admissible} when it satisfies all of the foll
 \item bounded-pattern definability.
 \end{enumerate}
 \end{definition}
+
+More explicitly, let $|U|$ denote the encoding size of a binary pairwise slice $U$, and let $X(U)$ be its canonical finite pairwise syntax. Polynomial-time checkability means that there exist constants $c,k \in \mathbb{N}$ and a decision procedure $A$ such that
+\[
+A(U)=1 \iff Q(U),
+\qquad
+\mathrm{time}_A(U) \le c(|U|+1)^k + c.
+\]
+Structural extractability means that whenever $Q(U)$ holds, the associated coordinate graph is obtained from syntax alone: there exists a uniform extractor
+\[
+E : X \mapsto G_E(X)
+\]
+on finite pairwise syntactic presentations such that the graph attached to $U$ is exactly $G_E(X(U))$.
+
+Bounded-pattern definability is likewise finite and explicit. There must exist uniform bounds on radius, neighborhood size, action alphabet size, and coefficient magnitude, together with finite lists of permitted and forbidden rooted local patterns, such that membership in $Q$ is determined by the presence of one witness pattern or the absence of all forbidden patterns in the rooted interaction neighborhoods of $X(U)$. No unbounded global computation is hidden inside the definition.
 
 Each clause in Definition~\ref{def:admissible-normalization} has an independent methodological role.
 

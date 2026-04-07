@@ -24,11 +24,22 @@ Andrei~A. Bulatov.
 \newblock In {\em 2017 IEEE 58th Annual Symposium on Foundations of Computer
   Science (FOCS)}, pages 319--330. IEEE, 2017.
 
+\bibitem{cover2006elements}
+Thomas~M. Cover and Joy~A. Thomas.
+\newblock {\em Elements of Information Theory}.
+\newblock Wiley-Interscience, 2nd edition, 2006.
+
 \bibitem{feder1998computational}
 Tom{\'a}s Feder and Moshe~Y. Vardi.
 \newblock The computational structure of monotone monadic snp and constraint
   satisfaction: A study through datalog and group theory.
 \newblock {\em SIAM Journal on Computing}, 28(1):57--104, 1998.
+
+\bibitem{fisher1922mathematical}
+Ronald~A. Fisher.
+\newblock On the mathematical foundations of theoretical statistics.
+\newblock {\em Philosophical Transactions of the Royal Society of London.
+  Series A}, 222:309--368, 1922.
 
 \bibitem{ganian2017discovering}
 Robert Ganian, M.~S. Ramanujan, and Stefan Szeider.
@@ -93,6 +104,22 @@ Thomas~J. Schaefer.
 \newblock The complexity of satisfiability problems.
 \newblock In {\em Proceedings of the Tenth Annual ACM Symposium on Theory of
   Computing}, pages 216--226. ACM, 1978.
+
+\bibitem{shannon1948mathematical}
+Claude~E. Shannon.
+\newblock A mathematical theory of communication.
+\newblock {\em Bell System Technical Journal}, 27(3):379--423, 1948.
+
+\bibitem{shannon1956zero}
+Claude~E. Shannon.
+\newblock Zero-error capacity of a noisy channel.
+\newblock {\em IRE Transactions on Information Theory}, 2(3):8--19, 1956.
+
+\bibitem{shannon1959coding}
+Claude~E. Shannon.
+\newblock Coding theorems for a discrete source with a fidelity criterion.
+\newblock {\em IRE National Convention Record}, 7:142--163, 1959.
+\newblock Part 4.
 
 \bibitem{shapiro1956degrees}
 Norman Shapiro.
