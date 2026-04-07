@@ -31,7 +31,12 @@ def configuredProjectRoots : List String := [
   "DeclInfoExport",
   "DependencyGraph",
   "GraphExport",
-  "TestFoo"
+  "TestFoo",
+  "Paper1IT",
+  "AbstractClassSystem",
+  "CrossPaperDependencies",
+  "HandleAliases",
+  "Paper1"
 ]
 
 /-- Filter: keep only declarations from the active paper/dependency namespaces. -/
