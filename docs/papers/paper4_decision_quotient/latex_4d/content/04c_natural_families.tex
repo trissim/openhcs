@@ -104,7 +104,7 @@ For every $m \in \mathbb{N}$, there exists a finite decision problem whose optim
 Take $m=k+1$ and realize the identity labeling on $\mathrm{Fin}(k+1)$. Proposition~\ref{prop:realized-quotient-range} identifies the quotient object with the range of that identity labeling, which has cardinality $k+1$. Equivalently, Proposition~\ref{prop:setoid-realizable} realizes the discrete equivalence relation on $\mathrm{Fin}(k+1)$.
 \end{proof}
 
-The point is simple: a meaningful frontier statement cannot range over classes that are simultaneously relabel-invariant and kernel-universal, because quotient shape alone then becomes too expressive to isolate the boundary.
+A meaningful frontier statement cannot range over classes that are simultaneously relabel-invariant and kernel-universal, because quotient shape alone then becomes too expressive to isolate the boundary.
 
 \leanmetapending{\LHrng{FR}{21}{23}}
 \begin{proposition}[Invariance Alone Is Too Weak]\label{prop:invariance-too-weak}
@@ -139,7 +139,7 @@ For the second clause, the diagonal relevance-support matrix has a $1$ exactly o
 The third clause is exactly Proposition~\ref{prop:zero-distortion-refines-quotient}: a zero-distortion summary must assign distinct symbols to distinct optimizer classes.
 \end{proof}
 
-The point of Proposition~\ref{prop:structural-convergence} is not that entropy, support counting, and lossless summaries become identical notions. The point is that they already converge on the same structural content before any admissibility axiom is imposed. This is why closure-law invariance is the decisive semantic clause in the admissibility class below: once several independent frameworks ignore surface presentation in favor of the support/quotient core, a structural tractability classifier should do the same. The remaining admissibility clauses serve as algorithmic and semantic guardrails.
+Proposition~\ref{prop:structural-convergence} does not identify entropy, support counting, and lossless summaries as identical notions. It shows that they already converge on the same structural content before any admissibility axiom is imposed. Closure-law invariance follows from this convergence: once several independent frameworks ignore surface presentation in favor of the support/quotient core, a structural tractability classifier should do the same. The remaining admissibility clauses serve as algorithmic and semantic guardrails.
 
 \subsection*{From Necessary Conditions to an Admissibility Class}
 
@@ -176,14 +176,12 @@ on finite pairwise syntactic presentations such that the graph attached to $U$ i
 
 Bounded-pattern definability is likewise finite and explicit. There must exist uniform bounds on radius, neighborhood size, action alphabet size, and coefficient magnitude, together with finite lists of permitted and forbidden rooted local patterns, such that membership in $Q$ is determined by the presence of one witness pattern or the absence of all forbidden patterns in the rooted interaction neighborhoods of $X(U)$. No unbounded global computation is hidden inside the definition.
 
-Each clause in Definition~\ref{def:admissible-normalization} has an independent methodological role.
-
 Polynomial-time checkability is the minimal algorithmic requirement. A tractability characterization that cannot itself be recognized efficiently has little explanatory value: it would only relocate the computational difficulty from exact certification to the membership test for the classifier.
 
-Closure-law invariance is the decisive semantic requirement. It is not stipulated for convenience. It is forced by the Block~6 invariance theorems, because exact certification itself is unchanged by relabelings, positive affine utility reparameterizations, duplication operations, and irrelevant-coordinate extensions. The orbit-witness arguments of Section~4 use precisely this clause and no stronger semantic assumption.
+Closure-law invariance is the semantic requirement used in the orbit-witness arguments of Section~4. It is forced by the Block~6 invariance theorems, because exact certification itself is unchanged by relabelings, positive affine utility reparameterizations, duplication operations, and irrelevant-coordinate extensions.
 
 Structural extractability distinguishes structural characterizations from purely semantic ones. Without such a condition, one can define predicates directly on optimizer behavior or on the solved certification instance itself, bypassing the stated aim of classifying tractability by representation-level structure.
 
 Bounded-pattern definability is the locality guardrail. Its role is to exclude predicates whose membership test secretly performs an unbounded global computation under a structural name. In particular, it prevents one from reintroducing oracle power through an arbitrarily large finite schema.
 
-Definition~\ref{def:admissible-normalization} is therefore not a list assembled solely to support the impossibility theorem. Closure-law invariance supplies the semantic content of the no-go theorem; the remaining clauses exclude vacuous or non-structural counterexamples and keep the classification problem within the intended algorithmic setting.
+Closure-law invariance supplies the semantic content of the no-go theorem; the remaining clauses exclude vacuous or non-structural counterexamples and keep the classification problem within the intended algorithmic setting.

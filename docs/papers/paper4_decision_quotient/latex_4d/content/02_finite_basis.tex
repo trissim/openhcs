@@ -1,15 +1,6 @@
 \section{Finite Basis for the Current Positive Landscape}
 
-We distinguish between \emph{tractable families treated here} and \emph{primitive tractability mechanisms}. A tractable family is any named positive condition included in the present analysis. A primitive mechanism is a smaller conceptual source of tractability that may explain several families at once.
-
-For the present analysis, the primitive list is explicit:
-\begin{enumerate}
-\item the six core structural subcases,
-\item constant-optimizer collapse, and
-\item finite explicit enumeration.
-\end{enumerate}
-
-Thus the current primitive basis has size eight.
+We distinguish between \emph{tractable families treated here} and \emph{primitive tractability mechanisms}. A tractable family is any named positive condition included in the present analysis. A primitive mechanism is a smaller conceptual source of tractability that may explain several families at once. The positive theory organizes into three roles: six core structural families, four regime lifts, and five degenerate collapses. Projecting those families to primitive mechanisms leaves eight sources of tractability: the six core subcases together with constant-optimizer collapse and finite explicit enumeration.
 
 \leanmetapending{\LHrng{FR}{1}{2}}
 \begin{theorem}[Explicit Partition of the Current Positive Landscape]\label{thm:current-landscape-partition}
@@ -56,18 +47,6 @@ together with two degenerate mechanisms:
 The current primitive basis consists exactly of bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, coordinate symmetry, constant-optimizer collapse, and finite explicit enumeration.
 \end{proposition}
 
-\leanmetapending{\LH{FR2}}
-\begin{proposition}[Partition Counts]\label{prop:partition-counts}
-The three blocks from Theorem~\ref{thm:current-landscape-partition} have sizes
-\[
-6 \quad\text{(core)},
-\qquad
-4 \quad\text{(lifted)},
-\qquad
-5 \quad\text{(degenerate)}.
-\]
-\end{proposition}
-
 The current positive landscape therefore contains fifteen tractable families accounted for by eight primitive mechanisms.
 
 \leanmetapending{\LH{FR101}, \LHrng{FR}{105}{106}, \LH{FR108}, \LHrng{FR}{112}{113}}
@@ -109,7 +88,7 @@ The reduction family for exact relevance certification yields \coNP-hard instanc
 Suppose a dependency presentation is tree-structured in the strict parent sense: every dependency points to a smaller coordinate and every coordinate has at most one parent. Then the induced dependency graph admits a genuine tree decomposition of width at most one.
 \end{proposition}
 
-Proposition~\ref{prop:parent-tree-width-one} is the mathematically honest containment theorem behind the intended ``tree structure is the treewidth-one special case'' slogan. It distinguishes this parent-tree notion from the weaker monotone-order predicate currently named \texttt{TreeStructured}.
+Proposition~\ref{prop:parent-tree-width-one} is the containment theorem behind the intended ``tree structure is the treewidth-one special case'' slogan. It distinguishes this parent-tree notion from the weaker monotone-order predicate currently named \texttt{TreeStructured}.
 
 \leanmetapending{\LH{FR4}}
 \begin{proposition}[Current Positive Interfaces Factor Through Role Classification]\label{prop:interfaces-factor-through-role}
