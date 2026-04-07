@@ -218,6 +218,7 @@ papers:
     lean_dependencies:
       - "paper4"
     supplementary_file: "supplementary.tex"
+    cover_letter_file: "cover_letter.tex"
 
   paper5:
     name: "Credibility"
