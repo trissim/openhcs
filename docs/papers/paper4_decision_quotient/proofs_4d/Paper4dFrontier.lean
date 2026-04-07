@@ -9,6 +9,9 @@ import Paper4dFrontier.Block2Progress
 import Paper4dFrontier.BinaryPairwiseDichotomy
 import Paper4dFrontier.DecisionRelevantPairwiseDichotomy
 import Paper4dFrontier.Block6Obstruction
+import Paper4dFrontier.MetaCharacterization
+import Paper4dFrontier.AdmissibleCharacterization
+import Paper4dFrontier.ObstructionPredicateCandidates
 import Paper4dFrontier.DimensionalNoiseExtension
 import Paper4dFrontier.EnumerationBounds
 import Paper4dFrontier.ListPolynomialEnumeration
