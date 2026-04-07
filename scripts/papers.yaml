@@ -217,6 +217,7 @@ papers:
     lean_stats_scope: "content_cited"
     lean_dependencies:
       - "paper4"
+    supplementary_file: "supplementary.tex"
 
   paper5:
     name: "Credibility"
