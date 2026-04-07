@@ -25,14 +25,29 @@ def collectDeps (info : ConstantInfo) : Array Name :=
   | ConstantInfo.opaqueInfo v => v.value.foldConsts deps fun n acc => acc.push n
   | _ => deps
 
-/-- Filter: keep only declarations from the project namespaces proper. -/
+/-- Auto-generated per paper by `build_papers.py`. -/
+def configuredProjectRoots : List String := [
+  "Paper4dFrontier",
+  "DecisionQuotient",
+  "DeclInfoExport",
+  "DependencyGraph",
+  "GraphExport",
+  "Paper1IT",
+  "AbstractClassSystem",
+  "CrossPaperDependencies",
+  "HandleAliases",
+  "Paper1",
+  "Ssot",
+  "TestFoo",
+  "ArrayDSLExport",
+  "ArrayDSLExportMain",
+  "InflationEntropyDryRun"
+]
+
+/-- Filter: keep only declarations from the active paper/dependency namespaces. -/
 def isProjectName (n : Name) : Bool :=
   let s := n.toString
-  s.startsWith "Leverage" ||
-  s.startsWith "Ssot" ||
-  s.startsWith "DecisionQuotient" ||
-  s.startsWith "AbstractClassSystem" ||
-  s.startsWith "Paper"
+  configuredProjectRoots.any fun root => s.startsWith root
 
 /-- Collapse external dependencies into a small set of foundation witnesses. -/
 def foundationBucket (n : Name) : Option String :=

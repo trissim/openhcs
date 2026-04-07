@@ -100,10 +100,10 @@ papers:
     dir: "paper2_ssot"
     latex_dir: "latex_it"
     latex_file: "coherence_it.tex"
-    venue: "IEEE Transactions on Information Theory"
+    venue: "JCSS"
     submission_format:
       latex_flag: "\\ITSUBMISSION"
-      description: "IT submission: single column, double spaced (per TIT author guidelines)"
+      description: "IT submission: single column, double spaced (per JCSS author guidelines)"
     lean_dependencies:
       - "paper1"
     assumption_ledger_sources:

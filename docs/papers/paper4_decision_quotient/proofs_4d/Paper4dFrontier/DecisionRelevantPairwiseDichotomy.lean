@@ -12,6 +12,16 @@ def actionGapCrossDifference {A : Type*} {n : ℕ}
     (u : A → (Fin n → Fin 2) → ℤ) (a b : A) (i j : Fin n) : ℤ :=
   pairCrossDifference (fun _ s => u a s - u b s) () i j
 
+def addActionOffset {A : Type*} {n : ℕ}
+    (u : A → (Fin n → Fin 2) → ℤ) (c : A → ℤ) : A → (Fin n → Fin 2) → ℤ :=
+  fun a s => u a s + c a
+
+/-- Utilities are offset-equivalent when they differ only by action-dependent,
+state-independent constants. -/
+def ActionOffsetEquivalent {A : Type*} {n : ℕ}
+    (u v : A → (Fin n → Fin 2) → ℤ) : Prop :=
+  ∃ c : A → ℤ, v = addActionOffset u c
+
 /-- A pair carries decision-relevant binary interaction if some action gap has
 nonzero mixed difference on that pair. -/
 def HasDecisionRelevantBinaryPairInteraction {A : Type*} {n : ℕ}
@@ -32,6 +42,47 @@ theorem actionGapCrossDifference_comm {A : Type*} {n : ℕ}
   unfold actionGapCrossDifference
   simpa using pairCrossDifference_comm (u := fun _ s => u a s - u b s) () i j
 
+theorem actionGapCrossDifference_self_action {A : Type*} {n : ℕ}
+    (u : A → (Fin n → Fin 2) → ℤ) (a : A) (i j : Fin n) :
+    actionGapCrossDifference u a a i j = 0 := by
+  unfold actionGapCrossDifference pairCrossDifference
+  ring
+
+theorem actionGapCrossDifference_swap_actions {A : Type*} {n : ℕ}
+    (u : A → (Fin n → Fin 2) → ℤ) (a b : A) (i j : Fin n) :
+    actionGapCrossDifference u a b i j = - actionGapCrossDifference u b a i j := by
+  unfold actionGapCrossDifference pairCrossDifference
+  ring
+
+theorem actionGapCrossDifference_addActionOffset {A : Type*} {n : ℕ}
+    (u : A → (Fin n → Fin 2) → ℤ) (c : A → ℤ) (a b : A) (i j : Fin n) :
+    actionGapCrossDifference (addActionOffset u c) a b i j = actionGapCrossDifference u a b i j := by
+  unfold actionGapCrossDifference addActionOffset pairCrossDifference
+  ring
+
+theorem actionOffsetEquivalent_refl {A : Type*} {n : ℕ}
+    (u : A → (Fin n → Fin 2) → ℤ) : ActionOffsetEquivalent u u := by
+  refine ⟨fun _ => 0, ?_⟩
+  funext a s
+  simp [addActionOffset]
+
+theorem actionOffsetEquivalent_symm {A : Type*} {n : ℕ}
+    {u v : A → (Fin n → Fin 2) → ℤ} :
+    ActionOffsetEquivalent u v → ActionOffsetEquivalent v u := by
+  rintro ⟨c, rfl⟩
+  refine ⟨fun a => -c a, ?_⟩
+  funext a s
+  simp [addActionOffset]
+
+theorem actionOffsetEquivalent_trans {A : Type*} {n : ℕ}
+    {u v w : A → (Fin n → Fin 2) → ℤ} :
+    ActionOffsetEquivalent u v → ActionOffsetEquivalent v w → ActionOffsetEquivalent u w := by
+  rintro ⟨c, rfl⟩ ⟨d, rfl⟩
+  refine ⟨fun a => c a + d a, ?_⟩
+  funext a s
+  simp [addActionOffset]
+  ring
+
 theorem HasDecisionRelevantBinaryPairInteraction_symm {A : Type*} {n : ℕ}
     {u : A → (Fin n → Fin 2) → ℤ} :
     ∀ i j, HasDecisionRelevantBinaryPairInteraction u i j →
@@ -46,6 +97,75 @@ def decisionRelevantInteractionGraph {A : Type*} {n : ℕ}
     (u : A → (Fin n → Fin 2) → ℤ) : SimpleGraph (Fin n) :=
   InteractionGraph (HasDecisionRelevantBinaryPairInteraction u)
     (HasDecisionRelevantBinaryPairInteraction_symm (u := u))
+
+/-- The decision-relevant interaction graph is already well-defined on action-offset
+equivalence classes, so the normalized graph is represented by the same object. -/
+def offsetNormalizedDecisionRelevantInteractionGraph {A : Type*} {n : ℕ}
+    (u : A → (Fin n → Fin 2) → ℤ) : SimpleGraph (Fin n) :=
+  decisionRelevantInteractionGraph u
+
+theorem decisionRelevantInteractionGraph_addActionOffset {A : Type*} {n : ℕ}
+    (u : A → (Fin n → Fin 2) → ℤ) (c : A → ℤ) :
+    decisionRelevantInteractionGraph (addActionOffset u c) = decisionRelevantInteractionGraph u := by
+  ext i j
+  by_cases h : i = j
+  · subst h
+    simp [decisionRelevantInteractionGraph, InteractionGraph]
+  · simp [decisionRelevantInteractionGraph, InteractionGraph, h,
+      HasDecisionRelevantBinaryPairInteraction, actionGapCrossDifference_addActionOffset]
+
+theorem offsetNormalizedDecisionRelevantInteractionGraph_wellDefined {A : Type*} {n : ℕ}
+    {u v : A → (Fin n → Fin 2) → ℤ} :
+    ActionOffsetEquivalent u v →
+      offsetNormalizedDecisionRelevantInteractionGraph u =
+        offsetNormalizedDecisionRelevantInteractionGraph v := by
+  rintro ⟨c, rfl⟩
+  simp [offsetNormalizedDecisionRelevantInteractionGraph,
+    decisionRelevantInteractionGraph_addActionOffset]
+
+/-- Decision-relevant interaction restricted to a designated support of actions.
+This is the natural next normalization after the ghost-action obstruction. -/
+def SupportedDecisionRelevantBinaryPairInteraction {A : Type*} {n : ℕ}
+    (support : A → Prop) (u : A → (Fin n → Fin 2) → ℤ) (i j : Fin n) : Prop :=
+  ∃ a b : A, support a ∧ support b ∧ actionGapCrossDifference u a b i j ≠ 0
+
+theorem SupportedDecisionRelevantBinaryPairInteraction_symm {A : Type*} {n : ℕ}
+    (support : A → Prop) {u : A → (Fin n → Fin 2) → ℤ} :
+    ∀ i j, SupportedDecisionRelevantBinaryPairInteraction support u i j →
+      SupportedDecisionRelevantBinaryPairInteraction support u j i := by
+  intro i j h
+  rcases h with ⟨a, b, ha, hb, hab⟩
+  exact ⟨a, b, ha, hb, by rw [actionGapCrossDifference_comm u a b j i]; exact hab⟩
+
+def supportedDecisionRelevantInteractionGraph {A : Type*} {n : ℕ}
+    (support : A → Prop) (u : A → (Fin n → Fin 2) → ℤ) : SimpleGraph (Fin n) :=
+  InteractionGraph (SupportedDecisionRelevantBinaryPairInteraction support u)
+    (SupportedDecisionRelevantBinaryPairInteraction_symm support (u := u))
+
+def OptimizerSupported {A S : Type*} (dp : DecisionProblem A S) (a : A) : Prop :=
+  ∃ s : S, a ∈ dp.Opt s
+
+noncomputable def maxPairInteractionMagnitude {A : Type*} [Fintype A] {n : ℕ}
+    {u : A → (Fin n → Fin 2) → ℤ} (pw : PairwiseUtility u) : Nat :=
+  Finset.univ.sup fun i : Fin n =>
+    Finset.univ.sup fun j : Fin n =>
+      Finset.univ.sup fun a : A =>
+        Int.natAbs (binaryCrossDifference (pw.binary i j a))
+
+/-- A binary pairwise utility is margin-bounded when every unary term is at most
+twice the largest pairwise mixed-difference magnitude. -/
+def MarginBounded {A : Type*} [Fintype A] {n : ℕ}
+    {u : A → (Fin n → Fin 2) → ℤ} (pw : PairwiseUtility u) : Prop :=
+  ∀ i : Fin n, ∀ a : A, ∀ x : Fin 2,
+    Int.natAbs (pw.unary i a x) ≤ 2 * maxPairInteractionMagnitude pw
+
+theorem marginBounded_of_unary_zero {A : Type*} [Fintype A] {n : ℕ}
+    {u : A → (Fin n → Fin 2) → ℤ} (pw : PairwiseUtility u)
+    (hzero : ∀ i : Fin n, ∀ a : A, ∀ x : Fin 2, pw.unary i a x = 0) :
+    MarginBounded pw := by
+  intro i a x
+  rw [hzero i a x]
+  simpa using (Nat.zero_le (2 * maxPairInteractionMagnitude pw))
 
 /-- Pairwise decomposition of an action gap. -/
 noncomputable def actionGapPairwise {A : Type*} {n : ℕ}

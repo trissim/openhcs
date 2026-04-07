@@ -3,6 +3,9 @@ import Paper4dFrontier.Block2Progress
 import Paper4dFrontier.BinaryPairwiseDichotomy
 import Paper4dFrontier.DecisionRelevantPairwiseDichotomy
 import Paper4dFrontier.Block6Obstruction
+import Paper4dFrontier.MetaCharacterization
+import Paper4dFrontier.AdmissibleCharacterization
+import Paper4dFrontier.ObstructionPredicateCandidates
 import Paper4dFrontier.CycleRankWitness
 import Paper4dFrontier.CoreWitnesses
 import Paper4dFrontier.FirstTwoIndicator
@@ -153,6 +156,57 @@ abbrev FR121 := @actionGapCrossDifference_eq_binaryCrossDifference_of_lt
 abbrev FR122 := @decisionRelevant_zero_actionGap_implies_unaryReduction
 abbrev FR123 := @binary_pairwise_symmetry_decision_relevant_dichotomy
 abbrev FR124 := @block6_genuine_interaction_dichotomy_obstruction
+abbrev FR125 := @decisionRelevantInteractionGraph_addActionOffset
+abbrev FR126 := @action_offset_can_force_constant_optimizer
+abbrev FR127 := @block6_action_offset_obstruction
+abbrev FR128 := @offsetNormalizedDecisionRelevantInteractionGraph_wellDefined
+abbrev FR129 := @block6_offset_normalized_obstruction
+abbrev FR130 := @neverOptimalGhost_decisionRelevantGraph_eq_top
+abbrev FR131 := @neverOptimalGhost_supportedGraph_eq_bot
+abbrev FR132 := @support_filtering_removes_known_block6_obstructions
+abbrev FR133 := @block6_ghost_action_obstruction
+abbrev FR134 := @marginMasking_supportedGraph_eq_top
+abbrev FR135 := @marginMasking_zero_sufficient
+abbrev FR136 := @block6_optimizer_supported_obstruction
+abbrev FR137 := @MarginBounded
+abbrev FR138 := @dominantPair_marginBounded
+abbrev FR139 := @dominantPair_supportedGraph_eq_top
+abbrev FR140 := @block6_margin_bounded_obstruction
+abbrev FR141 := @NormalizationPredicate
+abbrev FR142 := @TractabilityCharacterization
+abbrev FR143 := @Defeats
+abbrev FR144 := @collapseLandscapeInfinity
+abbrev FR145 := @not_collapseLandscapeInfinity_of_oracle_predicate
+abbrev FR146 := @AdmissibleNormalizationPredicate
+abbrev FR147 := @ClosureLawInvariant
+abbrev FR148 := @StructuralExtractorOn
+abbrev FR149 := @LocallyDefinable
+abbrev FR150 := @admissibleCollapseLandscapeInfinity
+abbrev FR151 := @DenseDecisionRelevantPredicate
+abbrev FR152 := @MarginBoundedDenseDecisionRelevantPredicate
+abbrev FR153 := @offsetCollapsedSlice_denseDecisionRelevant
+abbrev FR154 := @neverOptimalGhostSlice_denseDecisionRelevant
+abbrev FR155 := @marginMaskingSlice_denseDecisionRelevant
+abbrev FR156 := @dominantPairSlice_marginBounded_denseDecisionRelevant
+abbrev FR157 := @LocalPattern
+abbrev FR158 := @BoundedPatternScheme
+abbrev FR159 := @BoundedPatternDefinable
+abbrev FR160 := @ClosureStep
+abbrev FR161 := @ClosureHull
+abbrev FR162 := @ClosureGeneratedByBoundedPatterns
+abbrev FR163 := @OffsetCollapsedClosureSlice
+abbrev FR164 := @offsetCollapsedClosureSlice_generatedByBoundedPatterns
+abbrev FR165 := @offsetCollapsedClosureSlice_closureLawInvariant
+abbrev FR166 := @hasOffsetCollapsedWitnessPattern_not_closureLawInvariant
+abbrev FR167 := @rawOffsetWitness_boundedPattern_not_closureInvariant
+abbrev FR168 := @offsetClosure_generated_and_invariant
+abbrev FR169 := @offset_admissibility_refinement_gap
+abbrev FR170 := @HasOffsetCollapsedScaledWitnessPattern
+abbrev FR171 := @scaledOffsetChecker_polynomialTimeCheckable
+abbrev FR172 := @scaledOffsetChecker_handles_uniform_scaling
+abbrev FR173 := @LocalPattern.occursUpToPositiveScaleInSlice_globalScaleInvariant
+abbrev FR174 := @scaledOffsetChecker_globalPositiveScaleInvariant
+abbrev FR175 := @translatedOffsetCollapsed_additive_mismatch
 abbrev FR110 := @parentTreeStructured_implies_treeStructured
 abbrev FR111 := @treeStructured_and_unique_parent_iff_parentTreeStructured
 abbrev FR102 := @completeGraph_not_realTreewidth_le_of_large

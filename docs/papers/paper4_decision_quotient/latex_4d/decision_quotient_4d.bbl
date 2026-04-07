@@ -1,4 +1,15 @@
-\begin{thebibliography}{1}
+\begin{thebibliography}{10}
+
+\bibitem{arrow1950difficulty}
+Kenneth~J. Arrow.
+\newblock A difficulty in the concept of social welfare.
+\newblock {\em Journal of Political Economy}, 58(4):328--346, 1950.
+
+\bibitem{barto2014constraint}
+Libor Barto and Marcin Kozik.
+\newblock Constraint satisfaction problems solvable by local consistency
+  methods.
+\newblock {\em Journal of the ACM}, 61(1):3:1--3:19, 2014.
 
 \bibitem{bessiere2013detecting}
 Christian Bessiere, Clement Carbonnel, Emmanuel Hebrard, George Katsirelos, and
@@ -13,6 +24,12 @@ Andrei~A. Bulatov.
 \newblock In {\em 2017 IEEE 58th Annual Symposium on Foundations of Computer
   Science (FOCS)}, pages 319--330. IEEE, 2017.
 
+\bibitem{feder1998computational}
+Tom{\'a}s Feder and Moshe~Y. Vardi.
+\newblock The computational structure of monotone monadic snp and constraint
+  satisfaction: A study through datalog and group theory.
+\newblock {\em SIAM Journal on Computing}, 28(1):57--104, 1998.
+
 \bibitem{ganian2017discovering}
 Robert Ganian, M.~S. Ramanujan, and Stefan Szeider.
 \newblock Discovering archipelagos of tractability for constraint satisfaction
@@ -20,17 +37,68 @@ Robert Ganian, M.~S. Ramanujan, and Stefan Szeider.
 \newblock In {\em Proceedings of the 27th Annual ACM-SIAM Symposium on Discrete
   Algorithms (SODA)}, pages 1670--1681. SIAM, 2016.
 
+\bibitem{gibbard1973manipulation}
+Allan Gibbard.
+\newblock Manipulation of voting schemes: A general result.
+\newblock {\em Econometrica}, 41(4):587--601, 1973.
+
+\bibitem{goedel1931formal}
+Kurt G{"o}del.
+\newblock {"U}ber formal unentscheidbare s{"a}tze der {P}rincipia {M}athematica
+  und verwandter systeme {I}.
+\newblock {\em Monatshefte f{"u}r Mathematik und Physik}, 38(1):173--198, 1931.
+
+\bibitem{guyon2003introduction}
+Isabelle Guyon and Andr{\'e} Elisseeff.
+\newblock An introduction to variable and feature selection.
+\newblock {\em Journal of Machine Learning Research}, 3:1157--1182, 2003.
+
+\bibitem{kohavi1997wrappers}
+Ron Kohavi and George~H. John.
+\newblock Wrappers for feature subset selection.
+\newblock {\em Artificial Intelligence}, 97(1-2):273--324, 1997.
+
+\bibitem{lundberg2017unified}
+Scott~M. Lundberg and Su-In Lee.
+\newblock A unified approach to interpreting model predictions.
+\newblock In {\em Advances in Neural Information Processing Systems 30
+  (NeurIPS)}, pages 4765--4774, 2017.
+
+\bibitem{myhill1955effective}
+John Myhill and John~C. Shepherdson.
+\newblock Effective operations on partial recursive functions.
+\newblock {\em Zeitschrift f{"u}r mathematische Logik und Grundlagen der
+  Mathematik}, 1(5):310--317, 1955.
+
 \bibitem{pawlak1982rough}
 Zdzis{\l}aw Pawlak.
 \newblock Rough sets.
 \newblock {\em International Journal of Parallel Programming}, 11(5):341--356,
   1982.
 
+\bibitem{rice1953classes}
+Henry~Gordon Rice.
+\newblock Classes of recursively enumerable sets and their decision problems.
+\newblock {\em Transactions of the American Mathematical Society},
+  74(2):358--366, 1953.
+
+\bibitem{satterthwaite1975strategy}
+Mark~Allen Satterthwaite.
+\newblock Strategy-proofness and {A}rrow's conditions: Existence and
+  correspondence theorems for voting procedures and social welfare functions.
+\newblock {\em Journal of Economic Theory}, 10(2):187--217, 1975.
+
 \bibitem{schaefer1978complexity}
 Thomas~J. Schaefer.
 \newblock The complexity of satisfiability problems.
 \newblock In {\em Proceedings of the Tenth Annual ACM Symposium on Theory of
   Computing}, pages 216--226. ACM, 1978.
+
+\bibitem{shapiro1956degrees}
+Norman Shapiro.
+\newblock Degrees of computability.
+\newblock {\em Transactions of the American Mathematical Society},
+  82(2):281--299, 1956.
 
 \bibitem{simas2025optimizerquotient}
 Tristan Simas.
@@ -49,6 +117,17 @@ Ryan Williams, Carla~P. Gomes, and Bart Selman.
 \newblock In {\em Proceedings of the Eighteenth International Joint Conference
   on Artificial Intelligence (IJCAI)}, pages 1173--1178. Morgan Kaufmann
   Publishers Inc., 2003.
+
+\bibitem{wolpert1996lack}
+David~H. Wolpert.
+\newblock The lack of a priori distinctions between learning algorithms.
+\newblock {\em Neural Computation}, 8(7):1341--1390, 1996.
+
+\bibitem{wolpert1997nfl}
+David~H. Wolpert and William~G. Macready.
+\newblock No free lunch theorems for optimization.
+\newblock {\em IEEE Transactions on Evolutionary Computation}, 1(1):67--82,
+  1997.
 
 \bibitem{zhuk2017proof}
 Dmitriy Zhuk.

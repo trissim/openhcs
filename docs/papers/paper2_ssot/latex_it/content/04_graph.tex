@@ -170,7 +170,7 @@ The \emph{confusability oracle} is the Boolean adjacency test
 The \emph{agreement-set oracle} returns $\operatorname{Agr}(x,y)$. In the coordinate-view model, one may decide confusability by computing $\operatorname{Agr}(x,y)$ and testing whether some admissible view is contained in it.
 \end{definition}
 
-For $d$ facts over alphabet size $q$, explicit graph materialization has $q^d$ vertices and at most $q^{2d}$ ordered state pairs, but adjacency is available through the confusability oracle or the equivalent agreement-set oracle. The oracle computation takes $O(d + \sum_{\ell}|V_\ell|)$ time by computing the agreement set and scanning the admissible views.\leanmeta{\LH{MFT113}, \LHrng{MFT}{114}{117}, \LHrng{MFT}{132}{135}}
+For $d$ facts over alphabet size $q$, explicit graph materialization has $q^d$ vertices and at most $q^{2d}$ ordered state pairs, but adjacency is available through the confusability oracle or the equivalent agreement-set oracle. The oracle computation takes $O(d + \sum_{\ell}|V_\ell|)$ time by computing the agreement set and scanning the admissible views.\leanmeta{\LHrng{MFT}{113}{117}, \LHrng{MFT}{132}{135}}
 
 The Lean development also formalizes a support-overlap extension in which each location may emit any observation from a finite support set, and two states are confusable when some admissible location has overlapping support on those states.\leanmeta{\LHrng{MFT}{110}{112}}
 
