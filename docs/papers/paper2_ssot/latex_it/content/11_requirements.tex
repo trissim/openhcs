@@ -6,6 +6,7 @@ A host system realizes the rate-$1$ regime when one location is authoritative an
 \item \textbf{Zero-delay state synchronization}: updates to the authoritative source propagate to derived locations as part of the same atomic update event, with no reachable intermediate disagreement.
 \item \textbf{Structural side-information}: the decoder has access to topology metadata distinguishing authoritative sources from dependent nodes.
 \end{enumerate}
+These two requirements are the entire realizability content of the main criterion; the appendix supplies the timing arguments and independence witnesses establishing their necessity.
 
 \begin{definition}[Verifiable Structural Integrity]\label{def:verifiable-integrity-main}
 An encoding system has \emph{verifiable structural integrity} for structural facts if it both realizes structural integrity in reachable states and exposes enough host-native information to certify that this integrity-preserving dependence structure holds.
@@ -20,6 +21,6 @@ An observer can verifiably decode the single-source zero-error regime if and onl
 The detailed timing argument, the two necessity theorems, and the independence witnesses are deferred to Appendix~\ref{sec:appendix-boundary}. Combining those results gives the criterion.
 \end{proof}
 
-Applied to representative host instantiations, this criterion separates systems in which propagation and provenance are both host-native from systems missing one or both capabilities. Table~\ref{tab:host-checks-a-appendix} records eleven representative channel families spanning programming-language runtimes, database engines, and dependency managers. Two satisfy the criterion and nine fail at least one necessary condition. Every entry is checked against the mechanized sufficiency conditions of Corollary~\ref{thm:ssot-iff}.
+Applied to representative host instantiations, this criterion separates systems in which propagation and provenance are both host-native from systems missing one or both capabilities. We instantiate the criterion across the programming-language, database, and dependency-management contexts summarized in Table~\ref{tab:host-checks-a-appendix}. Two of the eleven representative channel families satisfy the criterion, and nine fail at least one necessary condition. Every entry is checked against the mechanized sufficiency conditions of Corollary~\ref{thm:ssot-iff}.
 
 %==============================================================================
