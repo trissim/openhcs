@@ -127,7 +127,7 @@ This threshold identifies the unique zero-error corner of the deterministic mode
 
 -   *Data processing:* $H(\kappa(Y,T)) \le H(Y,T)$ for any deterministic coarsening $\kappa$.
 
-*Proof sketch.* Each formulation follows from Theorem [\[thm:pair-injective\]](#thm:pair-injective){reference-type="ref" reference="thm:pair-injective"} by restricting the injectivity condition to the relevant domain (fiber, clique, full source) and applying standard entropy identities. The confusability, counting, conditional-entropy, decoder-output, and finite-gap statements are therefore different normal forms of the same obstruction: a surviving $K$-way ambiguity class requires a budget of at least $\log_2 K$ bits to be resolved exactly.
+Each formulation follows from Theorem [\[thm:pair-injective\]](#thm:pair-injective){reference-type="ref" reference="thm:pair-injective"} by restricting the injectivity condition to the relevant domain (fiber, clique, full source) and applying standard entropy identities. The confusability, counting, conditional-entropy, decoder-output, and finite-gap statements are therefore different normal forms of the same obstruction: a surviving $K$-way ambiguity class requires a budget of at least $\log_2 K$ bits to be resolved exactly.
 
 ## Finite-error extension {#sec:finite-error-extension}
 
