@@ -671,23 +671,6 @@ def HasUniqueDominantPair (S : Slice) : Prop :=
   ∃ hArity : 2 ≤ S.arity, ∃ a : S.Action,
     UniqueDominantPairAt S (firstFin S.arity hArity) (secondFin S.arity hArity) a
 
-theorem closureLawInvariant_iff_of_closureEquivalent
-    {P : Slice → Prop} (hInv : ClosureLawInvariant P)
-    {S1 S2 : Slice} (hEqv : ClosureEquivalent S1 S2) :
-    P S1 ↔ P S2 := by
-  induction hEqv with
-  | rel _ _ hStep =>
-      cases hStep with
-      | actionRelabel h => exact hInv.action_relabel h
-      | coordinateRelabel h => exact hInv.coordinate_relabel h
-      | positiveAffine h => exact hInv.positive_affine h
-      | duplicateAction h => exact hInv.duplicate_action h
-      | duplicateState h => exact hInv.duplicate_state h
-      | irrelevantCoordinate h => exact hInv.irrelevant_coordinate h
-  | refl _ => rfl
-  | symm _ _ _ ih => exact ih.symm
-  | trans _ _ _ _ _ ih12 ih23 => exact Iff.trans ih12 ih23
-
 theorem no_closureInvariant_predicate_of_orbit_gap
     {P Q : Slice → Prop} (hInv : ClosureLawInvariant P)
     {S1 S2 : Slice} (hEqv : ClosureEquivalent S1 S2)
@@ -1066,6 +1049,50 @@ theorem admissibleCollapseLandscapeInfinityOnGhostActionPairCrossOne_holds :
 theorem admissibleCollapseLandscapeInfinityOnOffsetActionPairCrossOne_holds :
     admissibleCollapseLandscapeInfinityOnOffsetActionPairCrossOne := by
   exact no_admissibleNormalizationPredicate_decides_offsetActionZeroPairCrossOne
+
+def ClosureSoundPackage (Γ : (Slice → Prop) → Prop) : Prop :=
+  ∀ ⦃P : Slice → Prop⦄, Γ P → ClosureLawInvariant P
+
+structure ReasonableGuardrailPackage (Γ : (Slice → Prop) → Prop) : Prop where
+  closure_sound : ClosureSoundPackage Γ
+  polynomial_time_guardrail :
+    ∀ ⦃P : Slice → Prop⦄, Γ P → PolynomialTimeCheckable P
+  structural_guardrail :
+    ∀ ⦃P : Slice → Prop⦄, Γ P →
+      ∃ graphOnSlice : ∀ U : Slice, P U → SimpleGraph (Fin U.arity),
+        StructuralExtractorOn P graphOnSlice
+  bounded_pattern_guardrail :
+    ∀ ⦃P : Slice → Prop⦄, Γ P → BoundedPatternDefinable P
+
+theorem no_closureSoundPackage_predicate_decides_four_obstruction_families
+    {Γ : (Slice → Prop) → Prop} (hΓ : ClosureSoundPackage Γ) :
+    ∀ P : Slice → Prop,
+      Γ P →
+        ¬ ((∀ S : Slice, P S ↔ HasUniqueDominantPair S) ∧
+          (∀ S : Slice, P S ↔ MarginBoundedSlice S) ∧
+          (∀ S : Slice, P S ↔ GhostActionTwoPairCrossOneSlice S) ∧
+          (∀ S : Slice, P S ↔ OffsetActionZeroPairCrossOneSlice S)) := by
+  intro P hP hAll
+  have hInv : ClosureLawInvariant P := hΓ hP
+  have hDom : False :=
+    (no_closureInvariant_predicate_decides_dominantPair P hInv) hAll.1
+  have hMargin : False :=
+    (no_closureInvariant_predicate_decides_marginBounded P hInv) hAll.2.1
+  have hGhost : False :=
+    (no_closureInvariant_predicate_decides_ghostActionTwoPairCrossOne P hInv) hAll.2.2.1
+  have hOffset : False :=
+    (no_closureInvariant_predicate_decides_offsetActionZeroPairCrossOne P hInv) hAll.2.2.2
+  exact hDom
+
+theorem no_reasonableGuardrailPackage_predicate_decides_four_obstruction_families
+    {Γ : (Slice → Prop) → Prop} (hΓ : ReasonableGuardrailPackage Γ) :
+    ∀ P : Slice → Prop,
+      Γ P →
+        ¬ ((∀ S : Slice, P S ↔ HasUniqueDominantPair S) ∧
+          (∀ S : Slice, P S ↔ MarginBoundedSlice S) ∧
+          (∀ S : Slice, P S ↔ GhostActionTwoPairCrossOneSlice S) ∧
+          (∀ S : Slice, P S ↔ OffsetActionZeroPairCrossOneSlice S)) := by
+  exact no_closureSoundPackage_predicate_decides_four_obstruction_families hΓ.closure_sound
 
 theorem admissibleCollapseLandscapeInfinity_full :
     ∀ P : AdmissibleNormalizationPredicate,

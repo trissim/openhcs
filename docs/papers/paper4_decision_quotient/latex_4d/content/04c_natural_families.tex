@@ -152,11 +152,38 @@ Without admissibility restrictions, there exist normalization predicates whose m
 
 Proposition~\ref{prop:oracle-loophole} is not a by-product of the proof method. It is the expected behavior of unrestricted semantic predicates. Therefore any meaningful frontier theorem must be parameterized by an admissibility class that simultaneously (i) respects theorem-forced invariances and (ii) blocks direct semantic encoding.
 
+\begin{proposition}[Closure Operations Preserve Exact Certification]\label{prop:closure-operations-preserve-certification}
+The theorem-forced closure operations preserve the exact-certification problem itself. More precisely:
+\begin{enumerate}
+\item action relabeling, coordinate relabeling, and statewise positive affine reparameterization preserve sufficient coordinate sets and relevant coordinates under the evident transport;
+\item action duplication and state duplication preserve sufficient coordinate sets and relevant coordinates exactly;
+\item binary irrelevant-coordinate extension preserves sufficiency after lifting coordinate sets, preserves relevance on the original coordinates, and makes the new coordinate irrelevant.
+\end{enumerate}
+In particular, each closure step induces the same exact-certification decision problem up to an explicit coordinate-set transport. For the irrelevant-coordinate case in the present binary-pairwise formalization, the encoding blowup is only constant-factor because the added coordinate is binary.
+\end{proposition}
+\leanmeta{\LHrng{FR}{15}{20}}
+\leanmeta{\LHrng{FR}{55}{60}}
+\leanmeta{\LHrng{FR}{83}{85}}
+
+\begin{proof}[Proof sketch]
+Each clause is verified directly in the artifact at the level of exact-certification semantics. The relabeling and positive-affine cases preserve the decision-equivalence relation, hence preserve sufficiency and relevance. The duplication cases preserve decision-equivalence through the explicit quotient projections back to the original problem. The irrelevant-coordinate case is formalized as binary noise extension: $I \subseteq [d]$ is sufficient for the base slice if and only if its lift is sufficient after extension, the original coordinates remain exactly the relevant ones, and the new coordinate is irrelevant. The size remarks in the right-hand column are direct from the concrete binary-pairwise encoding and are not separate Lean claims.
+
+\begin{center}
+\begin{tabular}{p{0.31\linewidth}p{0.43\linewidth}p{0.18\linewidth}}
+Operation & Exact-certification transport & Encoding effect \\
+Action/state relabeling & same sufficient sets and relevant coordinates after transport & relabeling only \\
+Positive affine reparameterization & same sufficient sets and relevant coordinates & same arity, same action set; utility magnitudes rescaled \\
+Action/state duplication & same sufficient sets and relevant coordinates & carrier duplication only \\
+Binary irrelevant-coordinate extension & $I \leftrightarrow \mathrm{lift}(I)$, old relevance preserved, new coordinate irrelevant & arity increases by one binary coordinate
+\end{tabular}
+\end{center}
+\end{proof}
+
 \begin{definition}[Admissible Normalization Predicate]\label{def:admissible-normalization}
 A normalization predicate is \emph{admissible} when it satisfies all of the following:
 \begin{enumerate}
 \item polynomial-time checkability at the slice level;
-\item invariance under the closure laws forced by exact certification (relabelings, positive affine reparameterizations, duplication operations, and irrelevant-coordinate extension);
+\item invariance under the closure laws forced by exact certification (relabelings, positive affine reparameterizations, duplication operations, and binary irrelevant-coordinate extension);
 \item structural extractability of the associated dependency graph;
 \item bounded-pattern definability.
 \end{enumerate}
@@ -178,10 +205,54 @@ Bounded-pattern definability is likewise finite and explicit. There must exist u
 
 Polynomial-time checkability is the minimal algorithmic requirement. A tractability characterization that cannot itself be recognized efficiently has little explanatory value: it would only relocate the computational difficulty from exact certification to the membership test for the classifier.
 
-Closure-law invariance is the semantic requirement used in the orbit-witness arguments of Section~4. It is forced by the Block~6 invariance theorems, because exact certification itself is unchanged by relabelings, positive affine utility reparameterizations, duplication operations, and irrelevant-coordinate extensions.
+Closure-law invariance is the semantic requirement used in the orbit-witness arguments of Section~4. It is forced by the Block~6 invariance theorems, because exact certification itself is unchanged by relabelings, positive affine utility reparameterizations, duplication operations, and binary irrelevant-coordinate extensions.
 
 Structural extractability distinguishes structural characterizations from purely semantic ones. Without such a condition, one can define predicates directly on optimizer behavior or on the solved certification instance itself, bypassing the stated aim of classifying tractability by representation-level structure.
 
 Bounded-pattern definability is the locality guardrail. Its role is to exclude predicates whose membership test secretly performs an unbounded global computation under a structural name. In particular, it prevents one from reintroducing oracle power through an arbitrarily large finite schema.
 
-Closure-law invariance supplies the semantic content of the no-go theorem; the remaining clauses exclude vacuous or non-structural counterexamples and keep the classification problem within the intended algorithmic setting.
+\begin{theorem}[Tractability Classifiers Are Forced to Be Closure-Invariant]\label{thm:correct-classifier-forces-invariance}
+Let $C$ be any procedure assigning to each representation in a closure-closed domain $\Gamma$ a verdict in $\{\mathrm{tractable},\mathrm{intractable}\}$, and suppose that $C$ correctly predicts whether exact certification is polynomial-time decidable on the underlying problem. Then $C$ must agree on representations within the same closure orbit. Equivalently, every correct tractability classifier on a closure-closed domain is closure-invariant on that domain, regardless of whether its internal features are themselves invariant.
+\end{theorem}
+\leanmeta{\LHrng{FR}{197}{199}}
+
+\begin{proof}[Proof sketch]
+This is the tractability instance of the abstract correctness-on-domain theorem formalized in Lean. If $U,V \in \Gamma$ lie in the same closure orbit, Proposition~\ref{prop:closure-operations-preserve-certification} shows that they induce the same exact-certification problem up to the explicit coordinate-set transport attached to the relevant closure step. The theorem uses the semantic notion of correctness stated above: tractability is attached to that underlying exact-certification problem, not to arbitrary relabelings or duplicate-label presentations of the same problem. Correctness of $C$ therefore forces the same verdict on both.
+\end{proof}
+
+This answers the natural objection that Section~\ref{sec:frontier-program} excludes only classifiers that advertise closure invariance as an explicit axiom. Exact correctness already forces the same orbit agreement. The closure laws therefore supply the representation-level congruence needed for the orbit-gap program: once two slices are related by these theorem-forced presentation equivalences, any exact tractability classifier must identify them. Theorem~\ref{thm:closure-sound-package-no-go} therefore applies to any exact classifier on a closure-closed domain once the target notion is tractability itself: if the classifier separates same-orbit witnesses, it is simply wrong on at least one of them.
+
+\begin{proposition}[The Admissibility Layer Is Nonempty]\label{prop:admissibility-inhabited}
+Definition~\ref{def:admissible-normalization} is not vacuous. There exist admissible normalization predicates; in fact both the constant-true and constant-false slice predicates are admissible.
+\end{proposition}
+\leanmeta{\LH{FR200}}
+
+\begin{proof}[Proof sketch]
+Both predicates are decidable in constant time and are automatically invariant under all closure laws. Their graph extractors are fixed graphs independent of the input slice. For bounded-pattern definability, use a single impossible local pattern: a radius-zero pattern with two distinct vertices cannot occur in any slice. Taking that pattern as forbidden yields the constant-true predicate, and taking it as a required witness yields the constant-false predicate.
+\end{proof}
+
+Thus the impossibility theorem is not an emptiness statement about Definition~\ref{def:admissible-normalization}. The admissibility layer already contains explicit predicates; the point of the no-go theorem is that correctness across the obstruction families forces a contradiction once closure-orbit agreement is respected.
+
+\begin{proposition}[Bounded Distinct Action Profiles Compress to Bounded Actions]\label{prop:distinct-profile-compression}
+For a binary pairwise slice $U$, let $d(U)$ be the number of distinct action utility profiles. Then there exists a compressed slice $U^{\mathrm{prof}}$ with exactly $d(U)$ actions such that a coordinate set is sufficient for $U$ if and only if it is sufficient for $U^{\mathrm{prof}}$, and a coordinate is relevant for $U$ if and only if it is relevant for $U^{\mathrm{prof}}$. Consequently, if $d(U) \le k$, the bounded-actions tractability theorem applies to $U^{\mathrm{prof}}$, so the bounded-distinct-profile subcase is polynomial on the exact-certification side.
+\end{proposition}
+\leanmeta{\LHrng{FR}{205}{209}}
+
+\begin{proof}[Proof sketch]
+Replace each action by its full utility profile over states and quotient the action set by profile equality. Duplicated actions collapse to a single profile action, but exact certification is unchanged because optimizer equality depends only on which profiles are optimal, not on how many labels realize a given profile. The compressed slice has exactly $d(U)$ actions by construction, and the artifact proves equality of the sufficient-coordinate and relevant-coordinate predicates between $U$ and $U^{\mathrm{prof}}$. The existing bounded-actions polynomial-time theorem then applies to the compressed slice.
+\end{proof}
+
+Proposition~\ref{prop:distinct-profile-compression} is the strongest positive-side formalization the current artifact supports on the bounded-actions axis. It gives a genuine structural classifier on a tractable subcase by compression to bounded actions, but it does not package that classifier as admissible in Definition~\ref{def:admissible-normalization}, because the bounded-pattern clause there is stronger than the bounded-actions infrastructure currently formalized in Lean. The proposition still shows that nontrivial positive classification work is available through closure-law-respecting reduction inside the present framework.
+
+\begin{proposition}[Bounded-Pattern Predicates Stabilize Above a Finite Action Bound]\label{prop:bounded-pattern-action-stability}
+For every bounded-pattern definable predicate $Q$, there exists a finite bound $B$ such that $Q$ is constant on all slices with more than $B$ actions. Equivalently, once the action alphabet exceeds the action bound built into the defining pattern scheme, the scheme can no longer distinguish between such slices.
+\end{proposition}
+\leanmeta{\LHrng{FR}{214}{216}}
+
+\begin{proof}[Proof sketch]
+In a bounded-pattern scheme every witness and forbidden pattern has action alphabet size at most a fixed bound $B$. If a slice has more than $B$ actions, then no listed local pattern can occur in it, because occurrence requires an action-set equivalence between the pattern and the slice. The witness branch of the scheme is therefore impossible, while the forbidden branch is determined only by whether the forbidden list is empty. Hence the predicate is constant above the fixed action bound.
+\end{proof}
+
+This is why Proposition~\ref{prop:distinct-profile-compression} is stated as a compression theorem rather than as direct admissibility membership for the distinct-profile predicate. Unbounded profile counting does not naturally fit a definition whose bounded-pattern clause fixes a finite action alphabet in advance.
+
+Closure-law invariance (clause 2) is not an arbitrary stylistic restriction. Theorem~\ref{thm:correct-classifier-forces-invariance} shows that exact correctness already forces closure-orbit agreement, and Theorem~\ref{thm:closure-sound-package-no-go} shows that this theorem-forced congruence is the only load-bearing hypothesis in the no-go theorem. The remaining clauses are the minimal guardrails against the failure modes identified in Proposition~\ref{prop:oracle-loophole}; the specific guardrail formulation of clauses 1, 3, and 4 is one natural choice but is not load-bearing.

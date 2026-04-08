@@ -468,6 +468,65 @@ theorem singletonWitnessScheme_holds_iff
     show P ∈ [P]
     simp
 
+theorem localPattern_actionCount_eq_of_occursInSlice
+    {P : LocalPattern} {U : BinaryPairwiseSlice} (hOcc : P.OccursInSlice U) :
+    P.signature.actionCount = U.actionCount := by
+  rcases hOcc with ⟨f, hf, σ, hreach, hunary, hinter, hbinary⟩
+  simpa [BinaryPairwiseSlice.syntax, BinaryPairwiseSlice.actionCount] using Fintype.card_congr σ
+
+theorem localPattern_not_occursInSlice_of_actionCount_ne
+    {P : LocalPattern} {U : BinaryPairwiseSlice}
+    (hNe : P.signature.actionCount ≠ U.actionCount) :
+    ¬ P.OccursInSlice U := by
+  intro hOcc
+  exact hNe (localPattern_actionCount_eq_of_occursInSlice hOcc)
+
+theorem boundedPatternScheme_holds_largeActionCount_iff
+    (S : BoundedPatternScheme) (U : BinaryPairwiseSlice)
+    (hLarge : S.actionBound < U.actionCount) :
+    S.Holds U ↔ S.forbidden ≠ [] := by
+  constructor
+  · intro hHolds
+    rcases hHolds with ⟨hWitNe, p, hp, hpOcc⟩ | ⟨hForbNe, _hNoOcc⟩
+    · have hpBound := (S.witness_bounded p hp).2.2.1
+      have hNe : p.signature.actionCount ≠ U.actionCount := by
+        intro hEq
+        have hle : U.actionCount ≤ S.actionBound := by
+          simpa [hEq] using hpBound
+        exact Nat.not_lt_of_ge hle hLarge
+      exact False.elim (localPattern_not_occursInSlice_of_actionCount_ne hNe hpOcc)
+    · exact hForbNe
+  · intro hForbNe
+    right
+    refine ⟨hForbNe, ?_⟩
+    intro p hp hOcc
+    have hpBound := (S.forbidden_bounded p hp).2.2.1
+    have hNe : p.signature.actionCount ≠ U.actionCount := by
+      intro hEq
+      have hle : U.actionCount ≤ S.actionBound := by
+        simpa [hEq] using hpBound
+      exact Nat.not_lt_of_ge hle hLarge
+    exact localPattern_not_occursInSlice_of_actionCount_ne hNe hOcc
+
+theorem boundedPatternDefinable_eventually_constant_in_actionCount
+    {Q : BinaryPairwiseSlice → Prop} (hQ : BoundedPatternDefinable Q) :
+    ∃ B : ℕ, ∃ stable : Prop,
+      ∀ U : BinaryPairwiseSlice, B < U.actionCount → (Q U ↔ stable) := by
+  rcases hQ with ⟨S, hS⟩
+  refine ⟨S.actionBound, S.forbidden ≠ [], ?_⟩
+  intro U hLarge
+  rw [hS U, boundedPatternScheme_holds_largeActionCount_iff S U hLarge]
+
+theorem boundedPatternDefinable_largeActionCount_agrees
+    {Q : BinaryPairwiseSlice → Prop} (hQ : BoundedPatternDefinable Q) :
+    ∃ B : ℕ,
+      ∀ U V : BinaryPairwiseSlice,
+        B < U.actionCount → B < V.actionCount → (Q U ↔ Q V) := by
+  rcases boundedPatternDefinable_eventually_constant_in_actionCount hQ with ⟨B, stable, hB⟩
+  refine ⟨B, ?_⟩
+  intro U V hU hV
+  exact (hB U hU).trans (hB V hV).symm
+
 theorem boundedPatternDefinable_of_singleton_witness
     (P : LocalPattern) (radiusBound vertexBound actionBound magnitudeBound : ℕ)
     (hP : P.WithinBounds radiusBound vertexBound actionBound magnitudeBound) :
@@ -475,6 +534,147 @@ theorem boundedPatternDefinable_of_singleton_witness
   refine ⟨singletonWitnessScheme P radiusBound vertexBound actionBound magnitudeBound hP, ?_⟩
   intro U
   exact (singletonWitnessScheme_holds_iff P radiusBound vertexBound actionBound magnitudeBound hP U).symm
+
+noncomputable def impossibleRadiusZeroPattern : LocalPattern where
+  radius := 0
+  signature :=
+    { actionCount := 1
+      vertexCount := 2
+      root := 0
+      unary := fun _ _ _ => 0
+      binary := fun _ _ _ _ _ => 0
+      interacts := fun _ _ => False
+      interacts_symm := by
+        intro i j h
+        cases h }
+
+theorem impossibleRadiusZeroPattern_bounded :
+    impossibleRadiusZeroPattern.WithinBounds
+      impossibleRadiusZeroPattern.radius
+      impossibleRadiusZeroPattern.signature.vertexCount
+      impossibleRadiusZeroPattern.signature.actionCount
+      impossibleRadiusZeroPattern.selfMagnitudeBound :=
+  LocalPattern.withinSelfBounds _
+
+theorem walk_end_eq_of_length_zero {V : Type*} (G : SimpleGraph V) {u v : V}
+    (p : G.Walk u v) (h : p.length = 0) : u = v := by
+  cases p with
+  | nil => rfl
+  | cons _ _ => simp at h
+
+theorem impossibleRadiusZeroPattern_not_occursInSyntax (X : BinaryPairwiseSyntax) :
+    ¬ impossibleRadiusZeroPattern.OccursInSyntax X := by
+  intro hOcc
+  rcases hOcc with ⟨f, hf, _σ, hreach, _hunary, _hinter, _hbinary⟩
+  let v1 : Fin impossibleRadiusZeroPattern.signature.vertexCount := ⟨1, by decide⟩
+  rcases hreach v1 with ⟨p, hp⟩
+  have hrootneq : impossibleRadiusZeroPattern.signature.root ≠ v1 := by
+    decide
+  have hneq : f impossibleRadiusZeroPattern.signature.root ≠ f v1 := by
+    intro hEq
+    exact hrootneq (hf hEq)
+  have hEq : f impossibleRadiusZeroPattern.signature.root = f v1 :=
+    walk_end_eq_of_length_zero X.interactionGraph p (Nat.eq_zero_of_le_zero hp)
+  exact hneq hEq
+
+theorem impossibleRadiusZeroPattern_not_occursInSlice (U : BinaryPairwiseSlice) :
+    ¬ impossibleRadiusZeroPattern.OccursInSlice U :=
+  impossibleRadiusZeroPattern_not_occursInSyntax U.syntax
+
+noncomputable def impossibleForbiddenScheme : BoundedPatternScheme where
+  radiusBound := impossibleRadiusZeroPattern.radius
+  vertexBound := impossibleRadiusZeroPattern.signature.vertexCount
+  actionBound := impossibleRadiusZeroPattern.signature.actionCount
+  magnitudeBound := impossibleRadiusZeroPattern.selfMagnitudeBound
+  witnesses := []
+  forbidden := [impossibleRadiusZeroPattern]
+  witness_bounded := by
+    intro p hp
+    cases hp
+  forbidden_bounded := by
+    intro p hp
+    simpa using (List.mem_singleton.mp hp ▸ impossibleRadiusZeroPattern_bounded)
+
+theorem impossibleForbiddenScheme_holds (U : BinaryPairwiseSlice) :
+    impossibleForbiddenScheme.Holds U := by
+  right
+  refine ⟨by simp [impossibleForbiddenScheme], ?_⟩
+  intro p hp
+  rcases List.mem_singleton.mp hp with rfl
+  exact impossibleRadiusZeroPattern_not_occursInSlice U
+
+theorem boundedPatternDefinable_truePredicate :
+    BoundedPatternDefinable (fun _ : BinaryPairwiseSlice => True) := by
+  refine ⟨impossibleForbiddenScheme, ?_⟩
+  intro U
+  constructor
+  · intro _
+    exact impossibleForbiddenScheme_holds U
+  · intro _
+    trivial
+
+theorem boundedPatternDefinable_falsePredicate :
+    BoundedPatternDefinable (fun _ : BinaryPairwiseSlice => False) := by
+  refine ⟨singletonWitnessScheme impossibleRadiusZeroPattern
+      impossibleRadiusZeroPattern.radius
+      impossibleRadiusZeroPattern.signature.vertexCount
+      impossibleRadiusZeroPattern.signature.actionCount
+      impossibleRadiusZeroPattern.selfMagnitudeBound
+      impossibleRadiusZeroPattern_bounded, ?_⟩
+  intro U
+  rw [singletonWitnessScheme_holds_iff impossibleRadiusZeroPattern
+    impossibleRadiusZeroPattern.radius
+    impossibleRadiusZeroPattern.signature.vertexCount
+    impossibleRadiusZeroPattern.signature.actionCount
+    impossibleRadiusZeroPattern.selfMagnitudeBound
+    impossibleRadiusZeroPattern_bounded]
+  constructor
+  · intro hFalse
+    cases hFalse
+  · intro hOcc
+    exact impossibleRadiusZeroPattern_not_occursInSlice U hOcc
+
+theorem closureLawInvariant_truePredicate :
+    ClosureLawInvariant (fun _ : BinaryPairwiseSlice => True) := by
+  refine
+    { action_relabel := ?_
+      coordinate_relabel := ?_
+      positive_affine := ?_
+      duplicate_action := ?_
+      duplicate_state := ?_
+      irrelevant_coordinate := ?_ }
+  all_goals
+    intro U V h
+    simp
+
+theorem closureLawInvariant_falsePredicate :
+    ClosureLawInvariant (fun _ : BinaryPairwiseSlice => False) := by
+  refine
+    { action_relabel := ?_
+      coordinate_relabel := ?_
+      positive_affine := ?_
+      duplicate_action := ?_
+      duplicate_state := ?_
+      irrelevant_coordinate := ?_ }
+  all_goals
+    intro U V h
+    simp
+
+theorem structuralExtractor_truePredicate :
+    StructuralExtractorOn
+      (fun _ : BinaryPairwiseSlice => True)
+      (fun U _ => (⊤ : SimpleGraph (Fin U.arity))) := by
+  refine ⟨fun X => (⊤ : SimpleGraph (Fin X.arity)), ?_⟩
+  intro U hU
+  rfl
+
+theorem structuralExtractor_falsePredicate :
+    StructuralExtractorOn
+      (fun _ : BinaryPairwiseSlice => False)
+      (fun U hU => False.elim hU) := by
+  refine ⟨fun X => (⊥ : SimpleGraph (Fin X.arity)), ?_⟩
+  intro U hU
+  cases hU
 
 inductive ClosureStep : BinaryPairwiseSlice → BinaryPairwiseSlice → Prop where
   | actionRelabel {U V : BinaryPairwiseSlice} : ActionRelabelWitness U V → ClosureStep U V
@@ -486,6 +686,161 @@ inductive ClosureStep : BinaryPairwiseSlice → BinaryPairwiseSlice → Prop whe
 
 abbrev ClosureEquivalent : BinaryPairwiseSlice → BinaryPairwiseSlice → Prop :=
   Relation.EqvGen ClosureStep
+
+theorem closureLawInvariant_iff_of_closureEquivalent
+    {P : BinaryPairwiseSlice → Prop} (hInv : ClosureLawInvariant P)
+    {U V : BinaryPairwiseSlice} (hEqv : ClosureEquivalent U V) :
+    P U ↔ P V := by
+  induction hEqv with
+  | rel _ _ hStep =>
+      cases hStep with
+      | actionRelabel h => exact hInv.action_relabel h
+      | coordinateRelabel h => exact hInv.coordinate_relabel h
+      | positiveAffine h => exact hInv.positive_affine h
+      | duplicateAction h => exact hInv.duplicate_action h
+      | duplicateState h => exact hInv.duplicate_state h
+      | irrelevantCoordinate h => exact hInv.irrelevant_coordinate h
+  | refl _ => rfl
+  | symm _ _ _ ih => exact ih.symm
+  | trans _ _ _ _ _ ihUV ihVW => exact Iff.trans ihUV ihVW
+
+def ClosureClosedDomain (D : BinaryPairwiseSlice → Prop) : Prop :=
+  ∀ ⦃U V : BinaryPairwiseSlice⦄, D U → ClosureEquivalent U V → D V
+
+def CorrectOnDomain (D T C : BinaryPairwiseSlice → Prop) : Prop :=
+  ∀ ⦃U : BinaryPairwiseSlice⦄, D U → (C U ↔ T U)
+
+theorem classifier_agrees_on_closureEquivalent_of_correctOnDomain
+    {D T C : BinaryPairwiseSlice → Prop}
+    (hClosed : ClosureClosedDomain D)
+    (hT : ClosureLawInvariant T)
+    (hCorrect : CorrectOnDomain D T C)
+    {U V : BinaryPairwiseSlice} (hDU : D U) (hEqv : ClosureEquivalent U V) :
+    C U ↔ C V := by
+  have hDV : D V := hClosed hDU hEqv
+  have hCU : C U ↔ T U := hCorrect hDU
+  have hCV : C V ↔ T V := hCorrect hDV
+  exact hCU.trans ((closureLawInvariant_iff_of_closureEquivalent hT hEqv).trans hCV.symm)
+
+theorem no_correctOnDomain_classifier_of_orbit_gap
+    {D T C Q : BinaryPairwiseSlice → Prop}
+    (hClosed : ClosureClosedDomain D)
+    (hT : ClosureLawInvariant T)
+    (hCorrect : CorrectOnDomain D T C)
+    {U V : BinaryPairwiseSlice} (hDU : D U) (hEqv : ClosureEquivalent U V)
+    (hQU : Q U) (hQV : ¬ Q V) :
+    ¬ (∀ S, D S → (C S ↔ Q S)) := by
+  intro hDecides
+  have hDV : D V := hClosed hDU hEqv
+  have hOrbit : C U ↔ C V :=
+    classifier_agrees_on_closureEquivalent_of_correctOnDomain hClosed hT hCorrect hDU hEqv
+  have hCU : C U := (hDecides U hDU).2 hQU
+  have hCV : C V := hOrbit.mp hCU
+  exact hQV ((hDecides V hDV).1 hCV)
+
+theorem correct_classifier_inherits_closureLawInvariant
+    {T C : BinaryPairwiseSlice → Prop}
+    (hT : ClosureLawInvariant T)
+    (hCorrect : ∀ U : BinaryPairwiseSlice, C U ↔ T U) :
+    ClosureLawInvariant C := by
+  refine
+    { action_relabel := ?_
+      coordinate_relabel := ?_
+      positive_affine := ?_
+      duplicate_action := ?_
+      duplicate_state := ?_
+      irrelevant_coordinate := ?_ }
+  · intro U V h
+    exact (hCorrect U).trans ((hT.action_relabel h).trans (hCorrect V).symm)
+  · intro U V h
+    exact (hCorrect U).trans ((hT.coordinate_relabel h).trans (hCorrect V).symm)
+  · intro U V h
+    exact (hCorrect U).trans ((hT.positive_affine h).trans (hCorrect V).symm)
+  · intro U V h
+    exact (hCorrect U).trans ((hT.duplicate_action h).trans (hCorrect V).symm)
+  · intro U V h
+    exact (hCorrect U).trans ((hT.duplicate_state h).trans (hCorrect V).symm)
+  · intro U V h
+    exact (hCorrect U).trans ((hT.irrelevant_coordinate h).trans (hCorrect V).symm)
+
+theorem closureLawInvariant_of_iff_of_closureEquivalent
+    {Q : BinaryPairwiseSlice → Prop}
+    (hQ : ∀ ⦃U V : BinaryPairwiseSlice⦄, ClosureEquivalent U V → (Q U ↔ Q V)) :
+    ClosureLawInvariant Q := by
+  refine
+    { action_relabel := ?_
+      coordinate_relabel := ?_
+      positive_affine := ?_
+      duplicate_action := ?_
+      duplicate_state := ?_
+      irrelevant_coordinate := ?_ }
+  · intro U V h
+    exact hQ (Relation.EqvGen.rel _ _ (ClosureStep.actionRelabel h))
+  · intro U V h
+    exact hQ (Relation.EqvGen.rel _ _ (ClosureStep.coordinateRelabel h))
+  · intro U V h
+    exact hQ (Relation.EqvGen.rel _ _ (ClosureStep.positiveAffine h))
+  · intro U V h
+    exact hQ (Relation.EqvGen.rel _ _ (ClosureStep.duplicateAction h))
+  · intro U V h
+    exact hQ (Relation.EqvGen.rel _ _ (ClosureStep.duplicateState h))
+  · intro U V h
+    exact hQ (Relation.EqvGen.rel _ _ (ClosureStep.irrelevantCoordinate h))
+
+theorem exists_orbit_gap_of_not_closureLawInvariant
+    {Q : BinaryPairwiseSlice → Prop} (hNot : ¬ ClosureLawInvariant Q) :
+    ∃ U V : BinaryPairwiseSlice, ClosureEquivalent U V ∧ Q U ∧ ¬ Q V := by
+  by_contra hNo
+  apply hNot
+  apply closureLawInvariant_of_iff_of_closureEquivalent
+  intro U V hEqv
+  constructor
+  · intro hQU
+    by_cases hQV : Q V
+    · exact hQV
+    · exact False.elim (hNo ⟨U, V, hEqv, hQU, hQV⟩)
+  · intro hQV
+    by_cases hQU : Q U
+    · exact hQU
+    · exact False.elim (hNo ⟨V, U, Relation.EqvGen.symm _ _ hEqv, hQV, hQU⟩)
+
+theorem closureLawInvariant_iff_no_orbit_gap
+    (Q : BinaryPairwiseSlice → Prop) :
+    ClosureLawInvariant Q ↔
+      ¬ ∃ U V : BinaryPairwiseSlice, ClosureEquivalent U V ∧ Q U ∧ ¬ Q V := by
+  constructor
+  · intro hInv hGap
+    rcases hGap with ⟨U, V, hEqv, hQU, hQV⟩
+    exact hQV ((closureLawInvariant_iff_of_closureEquivalent hInv hEqv).mp hQU)
+  · intro hNo
+    by_contra hNot
+    exact hNo (exists_orbit_gap_of_not_closureLawInvariant hNot)
+
+theorem exact_classifiable_by_closureLawInvariant_iff
+    (Q : BinaryPairwiseSlice → Prop) :
+    (∃ P : BinaryPairwiseSlice → Prop,
+        ClosureLawInvariant P ∧ ∀ U : BinaryPairwiseSlice, P U ↔ Q U) ↔
+      ClosureLawInvariant Q := by
+  constructor
+  · rintro ⟨P, hP, hPQ⟩
+    exact correct_classifier_inherits_closureLawInvariant hP (fun U => (hPQ U).symm)
+  · intro hQ
+    exact ⟨Q, hQ, fun _ => Iff.rfl⟩
+
+theorem no_exact_closureLawInvariant_classifier_iff_exists_orbit_gap
+    (Q : BinaryPairwiseSlice → Prop) :
+    (¬ ∃ P : BinaryPairwiseSlice → Prop,
+        ClosureLawInvariant P ∧ ∀ U : BinaryPairwiseSlice, P U ↔ Q U) ↔
+      ∃ U V : BinaryPairwiseSlice, ClosureEquivalent U V ∧ Q U ∧ ¬ Q V := by
+  rw [exact_classifiable_by_closureLawInvariant_iff Q]
+  constructor
+  · intro hNot
+    exact exists_orbit_gap_of_not_closureLawInvariant hNot
+  · intro hGap hInv
+    exact (closureLawInvariant_iff_no_orbit_gap Q).1 hInv hGap
+
+def OrbitGapOn (D Q : BinaryPairwiseSlice → Prop) : Prop :=
+  ∃ U V : BinaryPairwiseSlice, D U ∧ ClosureEquivalent U V ∧ Q U ∧ ¬ Q V
 
 theorem closureStep_of_positiveAffineWitness {U V : BinaryPairwiseSlice}
     (h : PositiveAffineWitness U V) : ClosureStep U V :=
@@ -532,6 +887,55 @@ theorem closureHull_closureLawInvariant (Q : BinaryPairwiseSlice → Prop) :
     exact closureHull_iff_of_closureEquivalent (Relation.EqvGen.rel _ _ (ClosureStep.duplicateState h))
   · intro U V h
     exact closureHull_iff_of_closureEquivalent (Relation.EqvGen.rel _ _ (ClosureStep.irrelevantCoordinate h))
+
+theorem no_orbitGapOn_of_exact_classifiable_by_closureLawInvariant_onDomain
+    {D Q P : BinaryPairwiseSlice → Prop} (hClosed : ClosureClosedDomain D)
+    (hP : ClosureLawInvariant P) (hCorrect : CorrectOnDomain D Q P) :
+    ¬ OrbitGapOn D Q := by
+  intro hGap
+  rcases hGap with ⟨U, V, hDU, hEqv, hQU, hNotQV⟩
+  have hDV : D V := hClosed hDU hEqv
+  have hPU : P U := (hCorrect hDU).2 hQU
+  have hPV : P V := (closureLawInvariant_iff_of_closureEquivalent hP hEqv).mp hPU
+  exact hNotQV ((hCorrect hDV).1 hPV)
+
+theorem closureHull_correctOnDomain_of_no_orbitGapOn
+    {D Q : BinaryPairwiseSlice → Prop} (hClosed : ClosureClosedDomain D)
+    (hNoGap : ¬ OrbitGapOn D Q) :
+    CorrectOnDomain D Q (ClosureHull (fun U => D U ∧ Q U)) := by
+  intro U hDU
+  constructor
+  · intro hHull
+    rcases hHull with ⟨V, hEqv, hDV, hQV⟩
+    by_contra hNotQU
+    exact hNoGap ⟨V, U, hDV, hEqv, hQV, hNotQU⟩
+  · intro hQU
+    exact ⟨U, Relation.EqvGen.refl U, hDU, hQU⟩
+
+theorem exact_classifiable_by_closureLawInvariant_onDomain_iff_no_orbitGapOn
+    {D Q : BinaryPairwiseSlice → Prop} (hClosed : ClosureClosedDomain D) :
+    (∃ P : BinaryPairwiseSlice → Prop,
+        ClosureLawInvariant P ∧ CorrectOnDomain D Q P) ↔
+      ¬ OrbitGapOn D Q := by
+  constructor
+  · rintro ⟨P, hP, hCorrect⟩
+    exact no_orbitGapOn_of_exact_classifiable_by_closureLawInvariant_onDomain hClosed hP hCorrect
+  · intro hNoGap
+    exact ⟨ClosureHull (fun U => D U ∧ Q U), closureHull_closureLawInvariant _,
+      closureHull_correctOnDomain_of_no_orbitGapOn hClosed hNoGap⟩
+
+theorem no_exact_closureLawInvariant_classifier_onDomain_iff_orbitGapOn
+    {D Q : BinaryPairwiseSlice → Prop} (hClosed : ClosureClosedDomain D) :
+    (¬ ∃ P : BinaryPairwiseSlice → Prop,
+        ClosureLawInvariant P ∧ CorrectOnDomain D Q P) ↔
+      OrbitGapOn D Q := by
+  rw [exact_classifiable_by_closureLawInvariant_onDomain_iff_no_orbitGapOn hClosed]
+  constructor
+  · intro hNo
+    by_contra hNoGap
+    exact hNo hNoGap
+  · intro hGap hExists
+    exact hExists hGap
 
 def ClosureGeneratedByBoundedPatterns (P : BinaryPairwiseSlice → Prop) : Prop :=
   ∃ Q : BinaryPairwiseSlice → Prop,
@@ -591,5 +995,38 @@ def admissibleCollapseLandscapeInfinity (M : ExactRelevanceComplexityModel) : Pr
   ∀ C : AdmissibleTractabilityCharacterization,
     ∃ U : BinaryPairwiseLandscape,
       Defeats M U C.toTractabilityCharacterization
+
+noncomputable def alwaysTrueAdmissibleNormalizationPredicate :
+    AdmissibleNormalizationPredicate where
+  holdsOnSlice := fun _ => True
+  graphOnSlice := fun U _ => ⊤
+  polynomialTimeCheckable := by
+    classical
+    exact polynomialTimeCheckable_of_decidable (fun _ : BinaryPairwiseSlice => True)
+  closureLawInvariant := closureLawInvariant_truePredicate
+  structuralExtractor := structuralExtractor_truePredicate
+  boundedPatternDefinable := boundedPatternDefinable_truePredicate
+
+noncomputable def alwaysFalseAdmissibleNormalizationPredicate :
+    AdmissibleNormalizationPredicate where
+  holdsOnSlice := fun _ => False
+  graphOnSlice := fun U hU => False.elim hU
+  polynomialTimeCheckable := by
+    classical
+    exact polynomialTimeCheckable_of_decidable (fun _ : BinaryPairwiseSlice => False)
+  closureLawInvariant := closureLawInvariant_falsePredicate
+  structuralExtractor := structuralExtractor_falsePredicate
+  boundedPatternDefinable := boundedPatternDefinable_falsePredicate
+
+theorem admissibleNormalizationPredicate_has_explicit_inhabitants :
+    ∃ Ptrue Pfalse : AdmissibleNormalizationPredicate,
+      (∀ U : BinaryPairwiseSlice, Ptrue.holdsOnSlice U) ∧
+      (∀ U : BinaryPairwiseSlice, ¬ Pfalse.holdsOnSlice U) := by
+  refine ⟨alwaysTrueAdmissibleNormalizationPredicate,
+    alwaysFalseAdmissibleNormalizationPredicate, ?_, ?_⟩
+  · intro U
+    trivial
+  · intro U
+    simp [alwaysFalseAdmissibleNormalizationPredicate]
 
 end Paper4dFrontier

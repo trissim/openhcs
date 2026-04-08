@@ -1,4 +1,4 @@
-\section{Toward the Frontier Theorem}
+\section{Toward the Frontier Theorem}\label{sec:frontier-program}
 
 Sections~2 and~3 motivate a frontier question. Do the tractable families already suggest a finite optimizer-compatible criterion? In the strongest form, could exact relevance certification admit a representation-sensitive dichotomy theorem analogous to the classical dichotomy programs for satisfiability and constraint satisfaction?
 
@@ -106,3 +106,65 @@ Let $P$ be a normalization predicate satisfying the admissibility axioms. Then $
 \begin{proof}[Proof idea]
 If $P$ were an admissible tractability characterization, it would have to decide each of the four obstruction predicates above. Theorem~\ref{thm:dominant-pair-admissible-no-go}, Theorem~\ref{thm:margin-masking-admissible-no-go}, Theorem~\ref{thm:ghost-action-admissible-no-go}, and Theorem~\ref{thm:offset-admissible-no-go} show that this is impossible. Hence no admissible normalization predicate yields the desired frontier theorem.
 \end{proof}
+
+The four obstruction families are witnesses for the orbit-gap template (Proposition~\ref{prop:orbit-gap-template}), not the scope of Theorem~\ref{thm:admissible-collapse-four-families}. The theorem ranges over the entire admissibility class. Four structurally distinct families are included because the same pair-targeted affine transport defeats classifiers across families that share no surface structure, evidence that the obstruction is intrinsic to the admissibility class.
+
+Abstractly, let $\Gamma$ be a class of slice predicates, and call a predicate $\Gamma$-admissible when it belongs to $\Gamma$. Call $\Gamma$ \emph{closure-sound} if every $\Gamma$-admissible predicate is closure-law invariant. Call $\Gamma$ a \emph{reasonable guardrail package} if it is closure-sound and also imposes auxiliary restrictions such as efficient checkability, structural extractability, and bounded-pattern definability. The proof below uses only closure-soundness; the remaining clauses explain which non-oracular search spaces the no-go is meant to cover.\leanmeta{\LHrng{FR}{191}{192}}
+
+\leanmetapending{\LH{FR193}}
+\begin{theorem}[Closure-Sound Package No-Go]\label{thm:closure-sound-package-no-go}
+Let $\Gamma$ be any class of slice predicates such that every $\Gamma$-admissible predicate is closure-law invariant. Then no $\Gamma$-admissible predicate can simultaneously characterize the four obstruction families. In particular, the no-go theorem depends only on closure-law invariance; the remaining clauses of Definition~\ref{def:admissible-normalization} justify the admissibility package as a meaningful notion but do not enter the contradiction.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Closure-law invariance suffices to invoke Proposition~\ref{prop:orbit-gap-template} against each of the four obstruction families. The same orbit-gap proofs underlying Theorem~\ref{thm:dominant-pair-admissible-no-go}, Theorem~\ref{thm:margin-masking-admissible-no-go}, Theorem~\ref{thm:ghost-action-admissible-no-go}, and Theorem~\ref{thm:offset-admissible-no-go} then yield the contradiction directly. Any one of the four families independently witnesses the collapse; we state all four to make explicit that the obstruction is robust across structurally distinct witnesses.
+\end{proof}
+
+Theorem~\ref{thm:closure-sound-package-no-go} is the load-bearing form of Theorem~\ref{thm:admissible-collapse-four-families}. Any reasonable formalization of admissibility, whether the specific package of Definition~\ref{def:admissible-normalization} or any alternative whose admissible predicates are closure-law invariant, inherits the impossibility conclusion. Proposition~\ref{prop:depends-only-on-opt} identifies closure-law invariance as the semantic core, and Theorem~\ref{thm:correct-classifier-forces-invariance} shows that exact correctness forces the same invariance on any tractability classifier. The admissibility package is one natural instantiation; the theorem is robust to its replacement.
+
+\leanmetapending{\LH{FR194}}
+\begin{corollary}[Reasonable Guardrail Packages]\label{cor:reasonable-guardrail-packages}
+The same conclusion holds for every reasonable guardrail package. In particular, efficient checkability, structural extractability, bounded-pattern definability, and the informal exclusion of oracle encodings are guardrails rather than proof-load-bearing hypotheses.
+\end{corollary}
+
+\begin{proof}
+Immediate from Theorem~\ref{thm:closure-sound-package-no-go}, since only the closure-soundness clause is used.
+\end{proof}
+
+\begin{corollary}[No Correct Tractability Classifier]\label{cor:no-correct-tractability-classifier}
+Let $C$ be any correct tractability classifier on a domain that is closed under the closure laws and contains the four obstruction families. Then $C$ cannot yield an exact tractability characterization across those families. In particular, no procedure assigning verdicts to representations can correctly predict tractability across the four obstruction families, regardless of whether the procedure tracks closure-invariant features internally.
+\end{corollary}
+
+\begin{proof}
+By Theorem~\ref{thm:correct-classifier-forces-invariance}, any such classifier must agree on closure orbits and is therefore closure-law invariant on its domain. Theorem~\ref{thm:closure-sound-package-no-go} then rules out exact characterization across the four obstruction families.
+\end{proof}
+
+Corollary~\ref{cor:no-correct-tractability-classifier} is the universal-scope form of the no-go. Theorem~\ref{thm:closure-sound-package-no-go} isolates closure-law invariance as the load-bearing hypothesis, and Theorem~\ref{thm:correct-classifier-forces-invariance} removes even that as an explicit assumption by forcing the same invariance from correctness itself.
+
+\begin{proposition}[Orbit-Gap Completeness for Exact Classification]\label{prop:orbit-gap-completeness}
+For any slice predicate $Q$, the following are equivalent:
+\begin{enumerate}
+\item there exists a closure-law-invariant predicate $P$ such that $P(S) \iff Q(S)$ for every slice $S$;
+\item $Q$ is itself closure-law invariant;
+\item $Q$ is constant on closure orbits.
+\end{enumerate}
+Equivalently, exact classification of $Q$ by closure-law-invariant predicates fails if and only if $Q$ admits an orbit-gap witness: two closure-equivalent slices with different $Q$-status.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+The implication $(1)\Rightarrow(2)$ transfers closure-law invariance across exact equivalence. The implication $(2)\Rightarrow(3)$ says exactly that a closure-law-invariant predicate cannot change value inside a closure orbit. For $(3)\Rightarrow(2)$, every primitive closure-law step is already a closure equivalence, so orbit constancy supplies the six invariance clauses. The final equivalence is the contrapositive of orbit constancy.
+\end{proof}
+\leanmeta{\LHrng{FR}{201}{204}}
+
+This is the precise true version of mechanism completeness used in the paper. The four obstruction families are not claimed to exhaust all hard-side phenomena. Rather, orbit gaps are the complete obstruction criterion for exact classification of any fixed target predicate by closure-law-invariant classifiers, and the four families provide structurally distinct witnesses of that criterion.
+
+\begin{corollary}[Orbit-Gap Completeness on Closure-Closed Domains]\label{cor:orbit-gap-completeness-domain}
+Let $D$ be a closure-closed domain of slices, and let $T$ be a target predicate on $D$. Then $T$ admits an exact characterization on $D$ by a closure-law-invariant predicate if and only if $T$ has no orbit-gap witness inside $D$. Equivalently, exact characterization on $D$ by closure-law-invariant predicates fails if and only if there exist $U,V \in D$ in the same closure orbit with different $T$-status.
+\end{corollary}
+\leanmeta{\LHrng{FR}{210}{213}}
+
+\begin{proof}[Proof sketch]
+This is the domain-restricted version formalized in Lean. The forward implication is immediate from closure-law invariance. For the reverse implication, take the closure hull of $D \cap T$; if $T$ has no orbit-gap witness inside $D$, that closure hull agrees with $T$ on $D$.
+\end{proof}
+
+Applied to exact tractability, Theorem~\ref{thm:correct-classifier-forces-invariance} places every correct tractability classifier on a closure-closed domain inside this regime. Orbit gaps are therefore the complete obstruction criterion for the universal-scope no-go once correctness is imposed.

@@ -5,6 +5,7 @@ import Paper4dFrontier.DecisionRelevantPairwiseDichotomy
 import Paper4dFrontier.Block6Obstruction
 import Paper4dFrontier.MetaCharacterization
 import Paper4dFrontier.AdmissibleCharacterization
+import Paper4dFrontier.DistinctActionProfiles
 import Paper4dFrontier.ObstructionPredicateCandidates
 import Paper4dFrontier.CycleRankWitness
 import Paper4dFrontier.CoreWitnesses
@@ -228,6 +229,32 @@ abbrev FR187 := @no_admissibleNormalizationPredicate_decides_marginBounded
 abbrev FR188 := @no_admissibleNormalizationPredicate_decides_ghostActionTwoPairCrossOne
 abbrev FR189 := @no_admissibleNormalizationPredicate_decides_offsetActionZeroPairCrossOne
 abbrev FR190 := @admissibleCollapseLandscapeInfinity_full_paper
+abbrev FR191 := @ClosureSoundPackage
+abbrev FR192 := @ReasonableGuardrailPackage
+abbrev FR193 := @no_closureSoundPackage_predicate_decides_four_obstruction_families
+abbrev FR194 := @no_reasonableGuardrailPackage_predicate_decides_four_obstruction_families
+abbrev FR195 := @ClosureClosedDomain
+abbrev FR196 := @CorrectOnDomain
+abbrev FR197 := @classifier_agrees_on_closureEquivalent_of_correctOnDomain
+abbrev FR198 := @no_correctOnDomain_classifier_of_orbit_gap
+abbrev FR199 := @correct_classifier_inherits_closureLawInvariant
+abbrev FR200 := @admissibleNormalizationPredicate_has_explicit_inhabitants
+abbrev FR201 := @closureLawInvariant_of_iff_of_closureEquivalent
+abbrev FR202 := @exists_orbit_gap_of_not_closureLawInvariant
+abbrev FR203 := @closureLawInvariant_iff_no_orbit_gap
+abbrev FR204 := @no_exact_closureLawInvariant_classifier_iff_exists_orbit_gap
+noncomputable abbrev FR205 := @distinctActionCount
+abbrev FR206 := @actionCount_profileCompressedSlice
+abbrev FR207 := @decisionEquiv_profileCompressedSlice_iff
+abbrev FR208 := @profileCompressedSlice_preserves_exactCertification
+abbrev FR209 := @profileCompressedSlice_bounded_actions
+abbrev FR210 := @OrbitGapOn
+abbrev FR211 := @no_orbitGapOn_of_exact_classifiable_by_closureLawInvariant_onDomain
+abbrev FR212 := @exact_classifiable_by_closureLawInvariant_onDomain_iff_no_orbitGapOn
+abbrev FR213 := @no_exact_closureLawInvariant_classifier_onDomain_iff_orbitGapOn
+abbrev FR214 := @boundedPatternScheme_holds_largeActionCount_iff
+abbrev FR215 := @boundedPatternDefinable_eventually_constant_in_actionCount
+abbrev FR216 := @boundedPatternDefinable_largeActionCount_agrees
 abbrev FR110 := @parentTreeStructured_implies_treeStructured
 abbrev FR111 := @treeStructured_and_unique_parent_iff_parentTreeStructured
 abbrev FR102 := @completeGraph_not_realTreewidth_le_of_large
