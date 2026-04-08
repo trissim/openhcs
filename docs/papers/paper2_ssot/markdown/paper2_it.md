@@ -497,11 +497,18 @@ Several questions remain open. The paper does not classify which upward-closed a
 The Lean 4 formalization, supplementary proofs, manuscript PDF, and submission source bundle supporting the cited theorem handles are archived in the Zenodo record cited in [@paper2_partial_views_artifact]. No separate experimental dataset is associated with this theoretical study.
 
 
+# Declaration of competing interest {#declaration-of-competing-interest .unnumbered}
+
+The author declares that there are no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper.
+
+
 # Declaration of Generative AI and AI-assisted technologies in the writing process {#declaration-of-generative-ai-and-ai-assisted-technologies-in-the-writing-process .unnumbered}
 
-Generative AI tools (including Codex, Claude Code, Augment, Kilo, and OpenCode) were used throughout this manuscript, across all sections (Abstract, Introduction, theoretical development, proof sketches, applications, conclusion, and appendix) and across all stages from initial drafting to final revision. The tools were used for boilerplate generation, prose and notation refinement, LaTeX/structure cleanup, translation of informal proof ideas into candidate formal artifacts (Lean/LaTeX), and repeated adversarial reviewer-style critique passes to identify blind spots and clarity gaps.
+During the preparation of this work the author used Codex, Claude Code, Augment, Kilo, and OpenCode in order to refine prose, clean up notation, edit the LaTeX source, and test alternative phrasings and structural arrangements. After using these tools, the author reviewed and edited the content as needed and takes full responsibility for the content of the published article.
 
-The author retained full intellectual and editorial control, including problem selection, theorem statements, assumptions, novelty framing, acceptance criteria, and final inclusion/exclusion decisions. No technical claim was accepted solely from AI output. Formal claims reported as machine-verified were admitted only after Lean verification (no `sorry` in cited modules) and direct author review; Lean was used as an integrity gate for responsible AI-assisted research. The author is solely responsible for all statements, citations, and conclusions.
+Generative AI tools were used throughout the manuscript, across all sections and across all stages from initial drafting to final revision. The tools were used for boilerplate generation, prose and notation refinement, LaTeX/structure cleanup, translation of informal proof ideas into candidate formal artifacts (Lean/LaTeX), and repeated adversarial reviewer-style critique passes to identify blind spots and clarity gaps.
+
+The author retained full intellectual and editorial control, including problem selection, theorem statements, assumptions, novelty framing, acceptance criteria, and final inclusion/exclusion decisions. No technical claim was accepted solely from AI output. Formal claims reported as machine-verified were admitted only after Lean verification (no `sorry` in cited modules) and direct author review. The author is solely responsible for all statements, citations, and conclusions.
 
 
 # Boundary and Realizability Proof Package {#sec:appendix-boundary}
