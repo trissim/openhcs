@@ -1,4 +1,6 @@
 import DecisionQuotient.Quotient
+import DecisionQuotient.Sufficiency
+import DecisionQuotient.UniverseObjective
 import Mathlib.Tactic
 
 namespace Paper4dFrontier
@@ -47,6 +49,349 @@ theorem realizingProblem_decisionEquiv_iff (φ : S → T) (s s' : S) :
     simpa using hs'
   · intro h
     rw [DecisionProblem.DecisionEquiv, realizingProblem_opt_eq_singleton, realizingProblem_opt_eq_singleton, h]
+
+section PayloadTransfer
+
+variable {S : Type*} {T : Type*} [DecidableEq T] {n : ℕ} [CoordinateSpace S n]
+
+/-- Coordinate sufficiency for an arbitrary deterministic payload map. -/
+def payloadSufficient (φ : S → T) (I : Finset (Fin n)) : Prop :=
+  ∀ s s' : S, agreeOn s s' I → φ s = φ s'
+
+/-- Coordinate relevance for an arbitrary deterministic payload map. -/
+def payloadRelevant (φ : S → T) (i : Fin n) : Prop :=
+  ∃ s s' : S,
+    (∀ j : Fin n, j ≠ i → CoordinateSpace.proj s j = CoordinateSpace.proj s' j) ∧
+      φ s ≠ φ s'
+
+/-- Coordinate irrelevance for an arbitrary deterministic payload map. -/
+def payloadIrrelevant (φ : S → T) (i : Fin n) : Prop :=
+  ∀ s s' : S,
+    (∀ j : Fin n, j ≠ i → CoordinateSpace.proj s j = CoordinateSpace.proj s' j) →
+      φ s = φ s'
+
+/-- Minimal coordinate sufficiency for an arbitrary deterministic payload map. -/
+def payloadMinimalSufficient (φ : S → T) (I : Finset (Fin n)) : Prop :=
+  payloadSufficient φ I ∧ ∀ J : Finset (Fin n), J ⊂ I → ¬ payloadSufficient φ J
+
+/-- The family of sufficient coordinate sets for a payload map. -/
+def payloadSufficientSets (φ : S → T) : Set (Finset (Fin n)) :=
+  { I | payloadSufficient φ I }
+
+/-- The set of relevant coordinates for a payload map. -/
+def payloadRelevantSet (φ : S → T) : Set (Fin n) :=
+  { i | payloadRelevant φ i }
+
+theorem payloadSufficient_iff_realizingProblem_isSufficient
+    (φ : S → T) (I : Finset (Fin n)) :
+    payloadSufficient φ I ↔ (realizingProblem φ).isSufficient I := by
+  unfold payloadSufficient DecisionProblem.isSufficient
+  constructor
+  · intro h s s' hagree
+    simpa [DecisionProblem.DecisionEquiv] using
+      (realizingProblem_decisionEquiv_iff φ s s').2 (h s s' hagree)
+  · intro h s s' hagree
+    exact (realizingProblem_decisionEquiv_iff φ s s').1 (by
+      simpa [DecisionProblem.DecisionEquiv] using h s s' hagree)
+
+theorem payloadRelevant_iff_realizingProblem_isRelevant
+    (φ : S → T) (i : Fin n) :
+    payloadRelevant φ i ↔ (realizingProblem φ).isRelevant i := by
+  unfold payloadRelevant DecisionProblem.isRelevant
+  constructor
+  · rintro ⟨s, s', hcoords, hneq⟩
+    refine ⟨s, s', hcoords, ?_⟩
+    intro hEq
+    exact hneq ((realizingProblem_decisionEquiv_iff φ s s').1 (by
+      simpa [DecisionProblem.DecisionEquiv] using hEq))
+  · rintro ⟨s, s', hcoords, hneq⟩
+    refine ⟨s, s', hcoords, ?_⟩
+    intro hEq
+    exact hneq (by
+      simpa [DecisionProblem.DecisionEquiv] using
+        (realizingProblem_decisionEquiv_iff φ s s').2 hEq)
+
+theorem payloadIrrelevant_iff_realizingProblem_isIrrelevant
+    (φ : S → T) (i : Fin n) :
+    payloadIrrelevant φ i ↔ (realizingProblem φ).isIrrelevant i := by
+  unfold payloadIrrelevant DecisionProblem.isIrrelevant
+  constructor
+  · intro h s s' hcoords
+    simpa [DecisionProblem.DecisionEquiv] using
+      (realizingProblem_decisionEquiv_iff φ s s').2 (h s s' hcoords)
+  · intro h s s' hcoords
+    exact (realizingProblem_decisionEquiv_iff φ s s').1 (by
+      simpa [DecisionProblem.DecisionEquiv] using h s s' hcoords)
+
+theorem payloadMinimalSufficient_iff_realizingProblem_isMinimalSufficient
+    (φ : S → T) (I : Finset (Fin n)) :
+    payloadMinimalSufficient φ I ↔ (realizingProblem φ).isMinimalSufficient I := by
+  constructor
+  · intro h
+    refine ⟨(payloadSufficient_iff_realizingProblem_isSufficient φ I).1 h.1, ?_⟩
+    intro J hJI hSuff
+    exact h.2 J hJI ((payloadSufficient_iff_realizingProblem_isSufficient φ J).2 hSuff)
+  · intro h
+    refine ⟨(payloadSufficient_iff_realizingProblem_isSufficient φ I).2 h.1, ?_⟩
+    intro J hJI hSuff
+    exact h.2 J hJI ((payloadSufficient_iff_realizingProblem_isSufficient φ J).1 hSuff)
+
+theorem payloadSufficientSets_eq_realizingProblem_sufficientSets
+    (φ : S → T) :
+    payloadSufficientSets φ = (realizingProblem φ).sufficientSets := by
+  ext I
+  exact payloadSufficient_iff_realizingProblem_isSufficient φ I
+
+theorem payloadRelevantSet_eq_realizingProblem_relevantSet
+    (φ : S → T) :
+    payloadRelevantSet φ = (realizingProblem φ).relevantSet := by
+  ext i
+  exact payloadRelevant_iff_realizingProblem_isRelevant φ i
+
+end PayloadTransfer
+
+section SetValuedPayloadTransfer
+
+variable {S : Type*} {A : Type*} {n : ℕ} [CoordinateSpace S n]
+
+/-- Coordinate sufficiency for a nonempty set-valued payload. -/
+def feasiblePayloadSufficient (D : UniverseDynamics S A) (I : Finset (Fin n)) : Prop :=
+  ∀ s s' : S, agreeOn s s' I → feasibleActions D s = feasibleActions D s'
+
+/-- Coordinate relevance for a nonempty set-valued payload. -/
+def feasiblePayloadRelevant (D : UniverseDynamics S A) (i : Fin n) : Prop :=
+  ∃ s s' : S,
+    (∀ j : Fin n, j ≠ i → CoordinateSpace.proj s j = CoordinateSpace.proj s' j) ∧
+      feasibleActions D s ≠ feasibleActions D s'
+
+/-- Coordinate irrelevance for a nonempty set-valued payload. -/
+def feasiblePayloadIrrelevant (D : UniverseDynamics S A) (i : Fin n) : Prop :=
+  ∀ s s' : S,
+    (∀ j : Fin n, j ≠ i → CoordinateSpace.proj s j = CoordinateSpace.proj s' j) →
+      feasibleActions D s = feasibleActions D s'
+
+theorem feasiblePayloadSufficient_iff_lawDecisionProblem_isSufficient
+    (D : UniverseDynamics S A) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (hExists : ∀ s : S, ∃ a : A, D.allowed s a) (I : Finset (Fin n)) :
+    feasiblePayloadSufficient D I ↔ (lawDecisionProblem D uAllowed uBlocked).isSufficient I := by
+  unfold feasiblePayloadSufficient DecisionProblem.isSufficient
+  constructor
+  · intro h s s' hagree
+    calc
+      (lawDecisionProblem D uAllowed uBlocked).Opt s = feasibleActions D s :=
+        opt_eq_feasible_of_gap D hGap (hExists s)
+      _ = feasibleActions D s' := h s s' hagree
+      _ = (lawDecisionProblem D uAllowed uBlocked).Opt s' := by
+        symm
+        exact opt_eq_feasible_of_gap D hGap (hExists s')
+  · intro h s s' hagree
+    calc
+      feasibleActions D s = (lawDecisionProblem D uAllowed uBlocked).Opt s := by
+        symm
+        exact opt_eq_feasible_of_gap D hGap (hExists s)
+      _ = (lawDecisionProblem D uAllowed uBlocked).Opt s' := h s s' hagree
+      _ = feasibleActions D s' :=
+        opt_eq_feasible_of_gap D hGap (hExists s')
+
+theorem feasiblePayloadRelevant_iff_lawDecisionProblem_isRelevant
+    (D : UniverseDynamics S A) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (hExists : ∀ s : S, ∃ a : A, D.allowed s a) (i : Fin n) :
+    feasiblePayloadRelevant D i ↔ (lawDecisionProblem D uAllowed uBlocked).isRelevant i := by
+  unfold feasiblePayloadRelevant DecisionProblem.isRelevant
+  constructor
+  · rintro ⟨s, s', hcoords, hneq⟩
+    refine ⟨s, s', hcoords, ?_⟩
+    intro hEq
+    exact hneq (by
+      calc
+        feasibleActions D s = (lawDecisionProblem D uAllowed uBlocked).Opt s := by
+          symm
+          exact opt_eq_feasible_of_gap D hGap (hExists s)
+        _ = (lawDecisionProblem D uAllowed uBlocked).Opt s' := hEq
+        _ = feasibleActions D s' := opt_eq_feasible_of_gap D hGap (hExists s'))
+  · rintro ⟨s, s', hcoords, hneq⟩
+    refine ⟨s, s', hcoords, ?_⟩
+    intro hEq
+    exact hneq (by
+      calc
+        (lawDecisionProblem D uAllowed uBlocked).Opt s = feasibleActions D s :=
+          opt_eq_feasible_of_gap D hGap (hExists s)
+        _ = feasibleActions D s' := hEq
+        _ = (lawDecisionProblem D uAllowed uBlocked).Opt s' := by
+          symm
+          exact opt_eq_feasible_of_gap D hGap (hExists s'))
+
+theorem feasiblePayloadIrrelevant_iff_lawDecisionProblem_isIrrelevant
+    (D : UniverseDynamics S A) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (hExists : ∀ s : S, ∃ a : A, D.allowed s a) (i : Fin n) :
+    feasiblePayloadIrrelevant D i ↔ (lawDecisionProblem D uAllowed uBlocked).isIrrelevant i := by
+  unfold feasiblePayloadIrrelevant DecisionProblem.isIrrelevant
+  constructor
+  · intro h s s' hcoords
+    calc
+      (lawDecisionProblem D uAllowed uBlocked).Opt s = feasibleActions D s :=
+        opt_eq_feasible_of_gap D hGap (hExists s)
+      _ = feasibleActions D s' := h s s' hcoords
+      _ = (lawDecisionProblem D uAllowed uBlocked).Opt s' := by
+        symm
+        exact opt_eq_feasible_of_gap D hGap (hExists s')
+  · intro h s s' hcoords
+    calc
+      feasibleActions D s = (lawDecisionProblem D uAllowed uBlocked).Opt s := by
+        symm
+        exact opt_eq_feasible_of_gap D hGap (hExists s)
+      _ = (lawDecisionProblem D uAllowed uBlocked).Opt s' := h s s' hcoords
+      _ = feasibleActions D s' := opt_eq_feasible_of_gap D hGap (hExists s')
+
+end SetValuedPayloadTransfer
+
+section TotalizedSetValuedPayloadTransfer
+
+variable {S : Type*} {A : Type*} {n : ℕ} [CoordinateSpace S n]
+
+/-- Coordinate sufficiency for an arbitrary set-valued payload. -/
+def setValuedPayloadSufficient (F : S → Set A) (I : Finset (Fin n)) : Prop :=
+  ∀ s s' : S, agreeOn s s' I → F s = F s'
+
+/-- Coordinate relevance for an arbitrary set-valued payload. -/
+def setValuedPayloadRelevant (F : S → Set A) (i : Fin n) : Prop :=
+  ∃ s s' : S,
+    (∀ j : Fin n, j ≠ i → CoordinateSpace.proj s j = CoordinateSpace.proj s' j) ∧
+      F s ≠ F s'
+
+/-- Coordinate irrelevance for an arbitrary set-valued payload. -/
+def setValuedPayloadIrrelevant (F : S → Set A) (i : Fin n) : Prop :=
+  ∀ s s' : S,
+    (∀ j : Fin n, j ≠ i → CoordinateSpace.proj s j = CoordinateSpace.proj s' j) →
+      F s = F s'
+
+/-- Totalize a possibly empty set-valued payload by adjoining a distinguished
+failure token `none`. -/
+def totalizedPayload (F : S → Set A) (s : S) : Set (Option A) :=
+  {oa : Option A | match oa with
+    | some a => a ∈ F s
+    | none => F s = ∅}
+
+def totalizedPayloadDynamics (F : S → Set A) : UniverseDynamics S (Option A) where
+  allowed s oa := oa ∈ totalizedPayload F s
+
+theorem totalizedPayload_eq_iff {F : S → Set A} {s s' : S} :
+    totalizedPayload F s = totalizedPayload F s' ↔ F s = F s' := by
+  constructor
+  · intro h
+    ext a
+    have hs : some a ∈ totalizedPayload F s ↔ some a ∈ totalizedPayload F s' := by
+      simpa [h]
+    simpa [totalizedPayload] using hs
+  · intro h
+    ext oa
+    cases oa with
+    | none => simp [totalizedPayload, h]
+    | some a => simp [totalizedPayload, h]
+
+theorem totalizedPayload_nonempty (F : S → Set A) (s : S) :
+    ∃ oa : Option A, (totalizedPayloadDynamics F).allowed s oa := by
+  classical
+  by_cases hEmpty : F s = ∅
+  · exact ⟨none, hEmpty⟩
+  · obtain ⟨a, ha⟩ : ∃ a : A, a ∈ F s := by
+      by_contra hNo
+      apply hEmpty
+      ext a
+      constructor
+      · intro ha
+        exact False.elim (hNo ⟨a, ha⟩)
+      · intro hFalse
+        cases hFalse
+    exact ⟨some a, ha⟩
+
+theorem setValuedPayloadSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (F : S → Set A) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (I : Finset (Fin n)) :
+    setValuedPayloadSufficient F I ↔
+      (lawDecisionProblem (totalizedPayloadDynamics F) uAllowed uBlocked).isSufficient I := by
+  have hExists : ∀ s : S, ∃ oa : Option A, (totalizedPayloadDynamics F).allowed s oa :=
+    totalizedPayload_nonempty F
+  rw [← feasiblePayloadSufficient_iff_lawDecisionProblem_isSufficient
+      (D := totalizedPayloadDynamics F) hGap hExists I]
+  unfold setValuedPayloadSufficient feasiblePayloadSufficient
+  constructor
+  · intro h s s' hagree
+    exact (totalizedPayload_eq_iff).2 (h s s' hagree)
+  · intro h s s' hagree
+    exact (totalizedPayload_eq_iff).1 (h s s' hagree)
+
+theorem setValuedPayloadRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (F : S → Set A) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadRelevant F i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics F) uAllowed uBlocked).isRelevant i := by
+  have hExists : ∀ s : S, ∃ oa : Option A, (totalizedPayloadDynamics F).allowed s oa :=
+    totalizedPayload_nonempty F
+  rw [← feasiblePayloadRelevant_iff_lawDecisionProblem_isRelevant
+      (D := totalizedPayloadDynamics F) hGap hExists i]
+  unfold setValuedPayloadRelevant feasiblePayloadRelevant
+  constructor
+  · rintro ⟨s, s', hcoords, hneq⟩
+    exact ⟨s, s', hcoords, fun hEq => hneq ((totalizedPayload_eq_iff).1 hEq)⟩
+  · rintro ⟨s, s', hcoords, hneq⟩
+    exact ⟨s, s', hcoords, fun hEq => hneq ((totalizedPayload_eq_iff).2 hEq)⟩
+
+theorem setValuedPayloadIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (F : S → Set A) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadIrrelevant F i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics F) uAllowed uBlocked).isIrrelevant i := by
+  have hExists : ∀ s : S, ∃ oa : Option A, (totalizedPayloadDynamics F).allowed s oa :=
+    totalizedPayload_nonempty F
+  rw [← feasiblePayloadIrrelevant_iff_lawDecisionProblem_isIrrelevant
+      (D := totalizedPayloadDynamics F) hGap hExists i]
+  unfold setValuedPayloadIrrelevant feasiblePayloadIrrelevant
+  constructor
+  · intro h s s' hcoords
+    exact (totalizedPayload_eq_iff).2 (h s s' hcoords)
+  · intro h s s' hcoords
+    exact (totalizedPayload_eq_iff).1 (h s s' hcoords)
+
+end TotalizedSetValuedPayloadTransfer
+
+section RelationalSemanticsTransfer
+
+variable {S : Type*} {A : Type*} {n : ℕ} [CoordinateSpace S n]
+
+/-- Arbitrary exact output semantics presented as a state-indexed admissible-output
+relation. -/
+def outputSemantics (R : S → A → Prop) : S → Set A :=
+  fun s => { a : A | R s a }
+
+theorem outputSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (I : Finset (Fin n)) :
+    setValuedPayloadSufficient (outputSemantics R) I ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (outputSemantics R))
+        uAllowed uBlocked).isSufficient I :=
+  setValuedPayloadSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (F := outputSemantics R) hGap I
+
+theorem outputSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadRelevant (outputSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (outputSemantics R))
+        uAllowed uBlocked).isRelevant i :=
+  setValuedPayloadRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (F := outputSemantics R) hGap i
+
+theorem outputSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadIrrelevant (outputSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (outputSemantics R))
+        uAllowed uBlocked).isIrrelevant i :=
+  setValuedPayloadIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (F := outputSemantics R) hGap i
+
+end RelationalSemanticsTransfer
 
 theorem realizingProblem_quotientMap_eq_iff (φ : S → T) (s s' : S) :
     (realizingProblem φ).quotientMap s = (realizingProblem φ).quotientMap s' ↔ φ s = φ s' := by

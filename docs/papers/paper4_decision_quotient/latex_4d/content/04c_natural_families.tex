@@ -255,4 +255,57 @@ In a bounded-pattern scheme every witness and forbidden pattern has action alpha
 
 This is why Proposition~\ref{prop:distinct-profile-compression} is stated as a compression theorem rather than as direct admissibility membership for the distinct-profile predicate. Unbounded profile counting does not naturally fit a definition whose bounded-pattern clause fixes a finite action alphabet in advance.
 
+\begin{proposition}[Deterministic Payload Transfer]\label{prop:payload-transfer}
+Let $S$ be a coordinate space, let $\phi : S \to T$ be any deterministic payload map into a finite label type, and let $D_{\phi}$ be the induced decision problem with action space $T$ and utility
+\[
+U(a,s)=\begin{cases}
+1,& a=\phi(s),\\
+0,& a\neq \phi(s).
+\end{cases}
+\]
+Then every coordinate set is sufficient for $\phi$ if and only if it is sufficient for $D_{\phi}$, and every coordinate is relevant for $\phi$ if and only if it is relevant for $D_{\phi}$. Equivalently, exact feature sufficiency and relevance for any deterministic payload reduce definitionally to exact relevance certification for an induced decision problem.
+\end{proposition}
+\leanmeta{\LHrng{FR}{217}{222}}
+
+\begin{proof}[Proof sketch]
+For the induced decision problem, the optimizer at state $s$ is the singleton $\{\phi(s)\}$. Hence two states have the same optimizer if and only if they carry the same payload value. The sufficiency and relevance predicates are therefore literally the same coordinate conditions on $S$ in both formulations.
+\end{proof}
+
+This transfer theorem is exact rather than asymptotic. It does not assert that every external computational class falls automatically inside the optimizer-quotient framework. It states that whenever the semantic target is a deterministic payload map on the state space, exact feature sufficiency and relevance are already the same problem as exact relevance certification for the induced decision problem.
+
+\begin{corollary}[Nonempty Set-Valued Payload Transfer]\label{cor:set-valued-payload-transfer}
+Let $F(s) \subseteq A$ be a nonempty feasible-action set at each state of a coordinate space, and equip allowed actions with utility $u_{\mathrm{allowed}}$ and blocked actions with utility $u_{\mathrm{blocked}}$ where $u_{\mathrm{blocked}} < u_{\mathrm{allowed}}$. Then exact feature sufficiency and relevance for the set-valued payload $F$ are equivalent to exact relevance certification for the induced decision problem whose optimal set at state $s$ is exactly $F(s)$.
+\end{corollary}
+\leanmeta{\LHrng{FR}{223}{225}}
+
+\begin{proof}[Proof sketch]
+This is the set-valued analogue of Proposition~\ref{prop:payload-transfer}. The strict utility gap makes the optimizer set coincide with the feasible-action set at every state, so the same coordinate conditions define sufficiency and relevance on both sides.
+\end{proof}
+
+In particular, the transfer theorem already covers total search semantics stated as nonempty feasible-witness sets. Deterministic payloads are the singleton special case.
+
+Partial search semantics with possible failure are likewise covered by Proposition~\ref{prop:payload-transfer} once the payload is encoded as a deterministic map $S \to \mathrm{Option}(W)$, with \texttt{none} representing failure and \texttt{some}$(w)$ representing a selected witness. Approximation semantics fit the same framework whenever the exact target to be preserved is either a deterministic approximate output or a nonempty set of admissible $\varepsilon$-solutions. What is transferred in these cases is the chosen exact approximation semantics, not an abstract approximation guarantee stated independently of a payload.
+
+\begin{corollary}[Arbitrary Set-Valued Payload Transfer via Failure Tokens]\label{cor:totalized-set-valued-payload-transfer}
+Let $F(s) \subseteq A$ be any set-valued payload, possibly empty. Form the totalized payload on $\mathrm{Option}(A)$ by adjoining a distinguished failure token whenever $F(s)=\varnothing$. Then exact feature sufficiency and relevance for $F$ are equivalent to exact relevance certification for the induced decision problem on the totalized payload.
+\end{corollary}
+\leanmeta{\LHrng{FR}{226}{228}}
+
+\begin{proof}[Proof sketch]
+Map each admissible output $a \in F(s)$ to \texttt{some}$(a)$, and use \texttt{none} exactly when $F(s)$ is empty. Equality of the original set-valued payloads is then equivalent to equality of the totalized nonempty payloads, so Corollary~\ref{cor:set-valued-payload-transfer} applies after this totalization step.
+\end{proof}
+
+This removes the remaining empty-fiber caveat for search-style semantics. Set-valued payloads with failure states can be transferred without first choosing a deterministic witness selector.
+
+\begin{corollary}[Arbitrary Exact Output Semantics Transfer]\label{cor:relational-output-transfer}
+Let $R(s,a)$ be any state-indexed admissible-output relation. Then exact feature sufficiency and relevance for the induced output semantics reduce to exact relevance certification for a decision problem obtained by totalizing the admissible-output sets with a failure token and assigning a strict allowed-versus-blocked utility gap.
+\end{corollary}
+\leanmeta{\LHrng{FR}{229}{231}}
+
+\begin{proof}[Proof sketch]
+Write $F(s)=\{a : R(s,a)\}$. This is exactly the arbitrary set-valued case of Corollary~\ref{cor:totalized-set-valued-payload-transfer}. The relation form is only a notational repackaging of the same theorem.
+\end{proof}
+
+Deterministic decision and counting outputs, total and partial search semantics, and exact approximation specifications are all special cases of this transfer principle once written as admissible-output relations.
+
 Closure-law invariance (clause 2) is not an arbitrary stylistic restriction. Theorem~\ref{thm:correct-classifier-forces-invariance} shows that exact correctness already forces closure-orbit agreement, and Theorem~\ref{thm:closure-sound-package-no-go} shows that this theorem-forced congruence is the only load-bearing hypothesis in the no-go theorem. The remaining clauses are the minimal guardrails against the failure modes identified in Proposition~\ref{prop:oracle-loophole}; the specific guardrail formulation of clauses 1, 3, and 4 is one natural choice but is not load-bearing.
