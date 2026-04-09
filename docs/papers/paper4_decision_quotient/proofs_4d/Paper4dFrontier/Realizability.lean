@@ -393,6 +393,44 @@ theorem outputSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
 
 end RelationalSemanticsTransfer
 
+section ApproximationSemanticsTransfer
+
+variable {S : Type*} {A : Type*} {n : ℕ} [CoordinateSpace S n]
+
+/-- Exact approximation semantics presented by a state-indexed admissible-output
+relation. -/
+def approximationSemantics (R : S → A → Prop) : S → Set A :=
+  outputSemantics R
+
+theorem approximationSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (I : Finset (Fin n)) :
+    setValuedPayloadSufficient (approximationSemantics R) I ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (approximationSemantics R))
+        uAllowed uBlocked).isSufficient I :=
+  outputSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (R := R) hGap I
+
+theorem approximationSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadRelevant (approximationSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (approximationSemantics R))
+        uAllowed uBlocked).isRelevant i :=
+  outputSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (R := R) hGap i
+
+theorem approximationSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadIrrelevant (approximationSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (approximationSemantics R))
+        uAllowed uBlocked).isIrrelevant i :=
+  outputSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (R := R) hGap i
+
+end ApproximationSemanticsTransfer
+
 theorem realizingProblem_quotientMap_eq_iff (φ : S → T) (s s' : S) :
     (realizingProblem φ).quotientMap s = (realizingProblem φ).quotientMap s' ↔ φ s = φ s' := by
   rw [(realizingProblem φ).quotient_represents_opt_equiv]
