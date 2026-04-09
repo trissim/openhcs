@@ -396,6 +396,57 @@ relation on admissible-output sets. -/
 def outputSemanticsEquivalent (R : S → A → Prop) (R' : S → A → Prop) : Prop :=
   ∀ s s' : S, outputSemantics R s = outputSemantics R s' ↔ outputSemantics R' s = outputSemantics R' s'
 
+theorem outputSemanticsEquivalent_refl (R : S → A → Prop) :
+    outputSemanticsEquivalent R R := by
+  intro s s'
+  rfl
+
+theorem outputSemanticsEquivalent_symm {R R' : S → A → Prop}
+    (h : outputSemanticsEquivalent R R') :
+    outputSemanticsEquivalent R' R := by
+  intro s s'
+  exact (h s s').symm
+
+theorem outputSemanticsEquivalent_trans {R R' R'' : S → A → Prop}
+    (h₁ : outputSemanticsEquivalent R R')
+    (h₂ : outputSemanticsEquivalent R' R'') :
+    outputSemanticsEquivalent R R'' := by
+  intro s s'
+  exact (h₁ s s').trans (h₂ s s')
+
+def outputSemanticsSetoid : Setoid (S → A → Prop) where
+  r := outputSemanticsEquivalent
+  iseqv :=
+    ⟨outputSemanticsEquivalent_refl,
+      outputSemanticsEquivalent_symm,
+      outputSemanticsEquivalent_trans⟩
+
+def SemanticallyExtensionalMap {X : Type*} (F : (S → A → Prop) → X) : Prop :=
+  ∀ {R R' : S → A → Prop}, outputSemanticsEquivalent R R' → F R = F R'
+
+def SemanticallyExtensionalClaim (C : (S → A → Prop) → Prop) : Prop :=
+  SemanticallyExtensionalMap C
+
+theorem semanticallyExtensionalMap_factors_through_outputSemanticsQuotient
+    {X : Type*} {F : (S → A → Prop) → X}
+    (hF : SemanticallyExtensionalMap (S := S) (A := A) F) :
+    ∃ G : Quotient (outputSemanticsSetoid (S := S) (A := A)) → X,
+      ∀ R : S → A → Prop, G (Quotient.mk _ R) = F R := by
+  refine ⟨Quotient.lift F (fun R R' h => hF h), ?_⟩
+  intro R
+  rfl
+
+theorem semanticallyExtensionalClaim_factors_through_outputSemanticsQuotient
+    {C : (S → A → Prop) → Prop}
+    (hC : SemanticallyExtensionalClaim (S := S) (A := A) C) :
+    ∃ D : Quotient (outputSemanticsSetoid (S := S) (A := A)) → Prop,
+      ∀ R : S → A → Prop, D (Quotient.mk _ R) ↔ C R := by
+  rcases semanticallyExtensionalMap_factors_through_outputSemanticsQuotient
+      (S := S) (A := A) (X := Prop) hC with ⟨D, hD⟩
+  refine ⟨D, ?_⟩
+  intro R
+  rw [hD R]
+
 theorem setValuedPayloadSufficient_congr_outputSemanticsEquivalent
     {R R' : S → A → Prop} (hEqv : outputSemanticsEquivalent R R')
     (I : Finset (Fin n)) :
