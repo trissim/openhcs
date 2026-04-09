@@ -2592,8 +2592,14 @@ end {module_root}
             r"\renewcommand{\leanmetapendinghandles}{}",
             r"\providecommand{\leanmetapending}[1]{}",
             r"\renewcommand{\leanmetapending}[1]{\gdef\leanmetapendinghandles{#1}}",
+            r"\providecommand{\leanmetaproofpendinghandles}{}",
+            r"\renewcommand{\leanmetaproofpendinghandles}{}",
+            r"\providecommand{\leanmetaproofpending}[1]{}",
+            r"\renewcommand{\leanmetaproofpending}[1]{\gdef\leanmetaproofpendinghandles{#1}}",
             r"\providecommand{\leanmetaheadmark}{}",
             r"\renewcommand{\leanmetaheadmark}{\ifx\leanmetapendinghandles\@empty\else\refstepcounter{footnote}\footnotemark[\value{footnote}]\footnotetext[\value{footnote}]{\ifleanmetaseen\else Lean\global\leanmetaseentrue\fi: \leanmetapendinghandles}\global\let\leanmetapendinghandles\@empty\fi}",
+            r"\providecommand{\leanmetaproofmark}{}",
+            r"\renewcommand{\leanmetaproofmark}{\ifx\leanmetaproofpendinghandles\@empty\else\ifhmode\unskip\footnote{\ifleanmetaseen\else Lean\global\leanmetaseentrue\fi: \leanmetaproofpendinghandles}\else\refstepcounter{footnote}\footnotemark[\value{footnote}]\footnotetext[\value{footnote}]{\ifleanmetaseen\else Lean\global\leanmetaseentrue\fi: \leanmetaproofpendinghandles}\fi\global\let\leanmetaproofpendinghandles\@empty\fi}",
             r"\makeatother",
             r"\providecommand{\leanmeta}[1]{}",
             r"\renewcommand{\leanmeta}[1]{\ifhmode\unskip\footnote{\ifleanmetaseen\else Lean\global\leanmetaseentrue\fi: #1}\else\refstepcounter{footnote}\footnotemark[\value{footnote}]\footnotetext[\value{footnote}]{\ifleanmetaseen\else Lean\global\leanmetaseentrue\fi: #1}\fi}",
@@ -2629,8 +2635,14 @@ end {module_root}
             r"\renewcommand{\leanmetapendinghandles}{}",
             r"\providecommand{\leanmetapending}[1]{}",
             r"\renewcommand{\leanmetapending}[1]{\gdef\leanmetapendinghandles{#1}}",
+            r"\providecommand{\leanmetaproofpendinghandles}{}",
+            r"\renewcommand{\leanmetaproofpendinghandles}{}",
+            r"\providecommand{\leanmetaproofpending}[1]{}",
+            r"\renewcommand{\leanmetaproofpending}[1]{\gdef\leanmetaproofpendinghandles{#1}}",
             r"\providecommand{\leanmetaheadmark}{}",
             r"\renewcommand{\leanmetaheadmark}{\ifx\leanmetapendinghandles\@empty\else\refstepcounter{footnote}\footnotemark[\value{footnote}]\footnotetext[\value{footnote}]{\ifleanmetaseen\else Lean\global\leanmetaseentrue\fi: \leanmetapendinghandles}\global\let\leanmetapendinghandles\@empty\fi}",
+            r"\providecommand{\leanmetaproofmark}{}",
+            r"\renewcommand{\leanmetaproofmark}{\ifx\leanmetaproofpendinghandles\@empty\else\ifhmode\unskip\footnote{\ifleanmetaseen\else Lean\global\leanmetaseentrue\fi: \leanmetaproofpendinghandles}\else\refstepcounter{footnote}\footnotemark[\value{footnote}]\footnotetext[\value{footnote}]{\ifleanmetaseen\else Lean\global\leanmetaseentrue\fi: \leanmetaproofpendinghandles}\fi\global\let\leanmetaproofpendinghandles\@empty\fi}",
             r"\makeatother",
             r"\providecommand{\leanmeta}[1]{}",
             r"\renewcommand{\leanmeta}[1]{\ifhmode\unskip\footnote{\ifleanmetaseen\else Lean\global\leanmetaseentrue\fi: #1}\else\refstepcounter{footnote}\footnotemark[\value{footnote}]\footnotetext[\value{footnote}]{\ifleanmetaseen\else Lean\global\leanmetaseentrue\fi: #1}\fi}",
@@ -3707,7 +3719,8 @@ end {module_root}
                 tex_file.write_text(rewritten, encoding="utf-8")
 
     def _normalize_leanmeta_handle_lists(self, text: str) -> str:
-        """Normalize `\\leanmeta{...}` and `\\leanmetapending{...}` handle lists.
+        """Normalize `\\leanmeta{...}`, `\\leanmetapending{...}`, and
+        `\\leanmetaproofpending{...}` handle lists.
 
         Rules:
         - only touches `\\leanmeta{...}` / `\\leanmetapending{...}` blocks that
@@ -3778,7 +3791,7 @@ end {module_root}
 
         pieces: List[str] = []
         cursor = 0
-        needles = [r"\leanmeta{", r"\leanmetapending{"]
+        needles = [r"\leanmeta{", r"\leanmetapending{", r"\leanmetaproofpending{"]
 
         while True:
             start = -1
@@ -6066,11 +6079,13 @@ end {module_root}
         return "\n".join(trailing_lines)
 
     def _extract_immediate_leading_leanmeta_block(self, text: str, start: int) -> str:
-        """Return consecutive ``\leanmeta{...}``/``\leanmetapending{...}`` lines
+        """Return consecutive ``\leanmeta{...}``, ``\leanmetapending{...}``, and
+        ``\leanmetaproofpending{...}`` lines
         immediately before an environment.
 
         This supports statement-header placement where handles are staged via
-        ``\leanmetapending{...}`` on the line before ``\begin{theorem}``.
+        ``\leanmetapending{...}`` or proof-end placement via
+        ``\leanmetaproofpending{...}`` on the line before ``\begin{theorem}``.
         """
         before_lines = text[:start].splitlines()
         leading_rev: List[str] = []
@@ -6080,8 +6095,10 @@ end {module_root}
                 if leading_rev:
                     break
                 continue
-            if stripped.startswith(r"\leanmeta{") or stripped.startswith(
-                r"\leanmetapending{"
+            if (
+                stripped.startswith(r"\leanmeta{")
+                or stripped.startswith(r"\leanmetapending{")
+                or stripped.startswith(r"\leanmetaproofpending{")
             ):
                 leading_rev.append(raw_line)
                 continue

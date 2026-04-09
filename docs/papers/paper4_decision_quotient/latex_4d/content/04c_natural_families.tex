@@ -152,6 +152,7 @@ Without admissibility restrictions, there exist normalization predicates whose m
 
 Proposition~\ref{prop:oracle-loophole} is not a by-product of the proof method. It is the expected behavior of unrestricted semantic predicates. Therefore any meaningful frontier theorem must be parameterized by an admissibility class that simultaneously (i) respects theorem-forced invariances and (ii) blocks direct semantic encoding.
 
+\leanmetapending{\LHrng{FR}{15}{20}, \LHrng{FR}{55}{60}, \LHrng{FR}{83}{85}}
 \begin{proposition}[Closure Operations Preserve Exact Certification]\label{prop:closure-operations-preserve-certification}
 The theorem-forced closure operations preserve the exact-certification problem itself. More precisely:
 \begin{enumerate}
@@ -161,23 +162,33 @@ The theorem-forced closure operations preserve the exact-certification problem i
 \end{enumerate}
 In particular, each closure step induces the same exact-certification decision problem up to an explicit coordinate-set transport. For the irrelevant-coordinate case in the present binary-pairwise formalization, the encoding blowup is only constant-factor because the added coordinate is binary.
 \end{proposition}
-\leanmeta{\LHrng{FR}{15}{20}}
-\leanmeta{\LHrng{FR}{55}{60}}
-\leanmeta{\LHrng{FR}{83}{85}}
 
 \begin{proof}[Proof sketch]
-Each clause is verified directly in the artifact at the level of exact-certification semantics. The relabeling and positive-affine cases preserve the decision-equivalence relation, hence preserve sufficiency and relevance. The duplication cases preserve decision-equivalence through the explicit quotient projections back to the original problem. The irrelevant-coordinate case is formalized as binary noise extension: $I \subseteq [d]$ is sufficient for the base slice if and only if its lift is sufficient after extension, the original coordinates remain exactly the relevant ones, and the new coordinate is irrelevant. The size remarks in the right-hand column are direct from the concrete binary-pairwise encoding and are not separate Lean claims.
-
-\begin{center}
-\begin{tabular}{p{0.31\linewidth}p{0.43\linewidth}p{0.18\linewidth}}
-Operation & Exact-certification transport & Encoding effect \\
-Action/state relabeling & same sufficient sets and relevant coordinates after transport & relabeling only \\
-Positive affine reparameterization & same sufficient sets and relevant coordinates & same arity, same action set; utility magnitudes rescaled \\
-Action/state duplication & same sufficient sets and relevant coordinates & carrier duplication only \\
-Binary irrelevant-coordinate extension & $I \leftrightarrow \mathrm{lift}(I)$, old relevance preserved, new coordinate irrelevant & arity increases by one binary coordinate
-\end{tabular}
-\end{center}
+Each clause is verified directly in the artifact at the level of exact-certification semantics. The relabeling and positive-affine cases preserve the decision-equivalence relation, hence preserve sufficiency and relevance. The duplication cases preserve decision-equivalence through the explicit quotient projections back to the original problem. The irrelevant-coordinate case is formalized as binary noise extension: $I \subseteq [d]$ is sufficient for the base slice if and only if its lift is sufficient after extension, the original coordinates remain exactly the relevant ones, and the new coordinate is irrelevant. Table~\ref{tab:closure-operation-transport} summarizes the theorem-backed transport statement. The encoding remarks in the right-hand column are direct from the concrete binary-pairwise representation and are not separate Lean claims.
 \end{proof}
+
+\begin{table}[h]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.12}
+\renewcommand{\tabularxcolumn}[1]{m{#1}}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}m{0.26\linewidth}>{\raggedright\arraybackslash}m{0.49\linewidth}>{\raggedright\arraybackslash}m{0.21\linewidth}@{}}
+\toprule
+\textbf{Operation} & \textbf{Exact-certification transport} & \textbf{Encoding effect} \\
+\midrule
+Action/state relabeling & same sufficient sets and relevant coordinates after transport & relabeling only \\
+\midrule
+Positive affine reparameterization & same sufficient sets and relevant coordinates & same arity, same action set; utility magnitudes rescaled \\
+\midrule
+Action/state duplication & same sufficient sets and relevant coordinates & carrier duplication only \\
+\midrule
+Binary irrelevant-coordinate extension & $I \leftrightarrow \mathrm{lift}(I)$, old relevance preserved, new coordinate irrelevant & arity increases by one binary coordinate \\
+\bottomrule
+\end{tabularx}
+\caption{Closure-operation transport for exact certification. The transport column is theorem-backed in Lean; the encoding-effect column records the direct representation-level effect of each operation in the binary-pairwise formalization.}
+\label{tab:closure-operation-transport}
+\end{table}
 
 \begin{definition}[Admissible Normalization Predicate]\label{def:admissible-normalization}
 A normalization predicate is \emph{admissible} when it satisfies all of the following:
@@ -211,10 +222,10 @@ Structural extractability distinguishes structural characterizations from purely
 
 Bounded-pattern definability is the locality guardrail. Its role is to exclude predicates whose membership test secretly performs an unbounded global computation under a structural name. In particular, it prevents one from reintroducing oracle power through an arbitrarily large finite schema.
 
+\leanmetapending{\LHrng{FR}{197}{199}}
 \begin{theorem}[Tractability Classifiers Are Forced to Be Closure-Invariant]\label{thm:correct-classifier-forces-invariance}
 Let $C$ be any procedure assigning to each representation in a closure-closed domain $\Gamma$ a verdict in $\{\mathrm{tractable},\mathrm{intractable}\}$, and suppose that $C$ correctly predicts whether exact certification is polynomial-time decidable on the underlying problem. Then $C$ must agree on representations within the same closure orbit. Equivalently, every correct tractability classifier on a closure-closed domain is closure-invariant on that domain, regardless of whether its internal features are themselves invariant.
 \end{theorem}
-\leanmeta{\LHrng{FR}{197}{199}}
 
 \begin{proof}[Proof sketch]
 This is the tractability instance of the abstract correctness-on-domain theorem formalized in Lean. If $U,V \in \Gamma$ lie in the same closure orbit, Proposition~\ref{prop:closure-operations-preserve-certification} shows that they induce the same exact-certification problem up to the explicit coordinate-set transport attached to the relevant closure step. The theorem uses the semantic notion of correctness stated above: tractability is attached to that underlying exact-certification problem, not to arbitrary relabelings or duplicate-label presentations of the same problem. Correctness of $C$ therefore forces the same verdict on both.
@@ -222,10 +233,10 @@ This is the tractability instance of the abstract correctness-on-domain theorem 
 
 This answers the natural objection that Section~\ref{sec:frontier-program} excludes only classifiers that advertise closure invariance as an explicit axiom. Exact correctness already forces the same orbit agreement. The closure laws therefore supply the representation-level congruence needed for the orbit-gap program: once two slices are related by these theorem-forced presentation equivalences, any exact tractability classifier must identify them. Theorem~\ref{thm:closure-sound-package-no-go} therefore applies to any exact classifier on a closure-closed domain once the target notion is tractability itself: if the classifier separates same-orbit witnesses, it is simply wrong on at least one of them.
 
+\leanmetapending{\LH{FR200}}
 \begin{proposition}[The Admissibility Layer Is Nonempty]\label{prop:admissibility-inhabited}
 Definition~\ref{def:admissible-normalization} is not vacuous. There exist admissible normalization predicates; in fact both the constant-true and constant-false slice predicates are admissible.
 \end{proposition}
-\leanmeta{\LH{FR200}}
 
 \begin{proof}[Proof sketch]
 Both predicates are decidable in constant time and are automatically invariant under all closure laws. Their graph extractors are fixed graphs independent of the input slice. For bounded-pattern definability, use a single impossible local pattern: a radius-zero pattern with two distinct vertices cannot occur in any slice. Taking that pattern as forbidden yields the constant-true predicate, and taking it as a required witness yields the constant-false predicate.
@@ -233,10 +244,10 @@ Both predicates are decidable in constant time and are automatically invariant u
 
 Thus the impossibility theorem is not an emptiness statement about Definition~\ref{def:admissible-normalization}. The admissibility layer already contains explicit predicates; the point of the no-go theorem is that correctness across the obstruction families forces a contradiction once closure-orbit agreement is respected.
 
+\leanmetapending{\LHrng{FR}{205}{209}}
 \begin{proposition}[Bounded Distinct Action Profiles Compress to Bounded Actions]\label{prop:distinct-profile-compression}
 For a binary pairwise slice $U$, let $d(U)$ be the number of distinct action utility profiles. Then there exists a compressed slice $U^{\mathrm{prof}}$ with exactly $d(U)$ actions such that a coordinate set is sufficient for $U$ if and only if it is sufficient for $U^{\mathrm{prof}}$, and a coordinate is relevant for $U$ if and only if it is relevant for $U^{\mathrm{prof}}$. Consequently, if $d(U) \le k$, the bounded-actions tractability theorem applies to $U^{\mathrm{prof}}$, so the bounded-distinct-profile subcase is polynomial on the exact-certification side.
 \end{proposition}
-\leanmeta{\LHrng{FR}{205}{209}}
 
 \begin{proof}[Proof sketch]
 Replace each action by its full utility profile over states and quotient the action set by profile equality. Duplicated actions collapse to a single profile action, but exact certification is unchanged because optimizer equality depends only on which profiles are optimal, not on how many labels realize a given profile. The compressed slice has exactly $d(U)$ actions by construction, and the artifact proves equality of the sufficient-coordinate and relevant-coordinate predicates between $U$ and $U^{\mathrm{prof}}$. The existing bounded-actions polynomial-time theorem then applies to the compressed slice.
@@ -244,10 +255,10 @@ Replace each action by its full utility profile over states and quotient the act
 
 Proposition~\ref{prop:distinct-profile-compression} isolates a genuine positive tractable subcase by compression to bounded actions. It is stated as a compression theorem rather than direct admissibility membership because Definition~\ref{def:admissible-normalization} fixes a bounded-pattern action alphabet in advance. The proposition still shows that nontrivial positive classification work is available through closure-law-respecting reduction inside the present framework.
 
+\leanmetapending{\LHrng{FR}{214}{216}}
 \begin{proposition}[Bounded-Pattern Predicates Stabilize Above a Finite Action Bound]\label{prop:bounded-pattern-action-stability}
 For every bounded-pattern definable predicate $Q$, there exists a finite bound $B$ such that $Q$ is constant on all slices with more than $B$ actions. Equivalently, once the action alphabet exceeds the action bound built into the defining pattern scheme, the scheme can no longer distinguish between such slices.
 \end{proposition}
-\leanmeta{\LHrng{FR}{214}{216}}
 
 \begin{proof}[Proof sketch]
 In a bounded-pattern scheme every witness and forbidden pattern has action alphabet size at most a fixed bound $B$. If a slice has more than $B$ actions, then no listed local pattern can occur in it, because occurrence requires an action-set equivalence between the pattern and the slice. The witness branch of the scheme is therefore impossible, while the forbidden branch is determined only by whether the forbidden list is empty. Hence the predicate is constant above the fixed action bound.
@@ -255,6 +266,7 @@ In a bounded-pattern scheme every witness and forbidden pattern has action alpha
 
 This is why Proposition~\ref{prop:distinct-profile-compression} is stated as a compression theorem rather than as direct admissibility membership for the distinct-profile predicate. Unbounded profile counting does not naturally fit a definition whose bounded-pattern clause fixes a finite action alphabet in advance.
 
+\leanmetapending{\LHrng{FR}{217}{222}}
 \begin{proposition}[Deterministic Payload Transfer]\label{prop:payload-transfer}
 Let $S$ be a coordinate space, let $\phi : S \to T$ be any deterministic payload map into a finite label type, and let $D_{\phi}$ be the induced decision problem with action space $T$ and utility
 \[
@@ -265,7 +277,6 @@ U(a,s)=\begin{cases}
 \]
 Then every coordinate set is sufficient for $\phi$ if and only if it is sufficient for $D_{\phi}$, and every coordinate is relevant for $\phi$ if and only if it is relevant for $D_{\phi}$. Equivalently, exact feature sufficiency and relevance for any deterministic payload reduce definitionally to exact relevance certification for an induced decision problem.
 \end{proposition}
-\leanmeta{\LHrng{FR}{217}{222}}
 
 \begin{proof}[Proof sketch]
 For the induced decision problem, the optimizer at state $s$ is the singleton $\{\phi(s)\}$. Hence two states have the same optimizer if and only if they carry the same payload value. The sufficiency and relevance predicates are therefore literally the same coordinate conditions on $S$ in both formulations.
@@ -273,10 +284,10 @@ For the induced decision problem, the optimizer at state $s$ is the singleton $\
 
 This transfer theorem is exact rather than asymptotic. It does not assert that every external computational class falls automatically inside the optimizer-quotient framework. It states that whenever the semantic target is a deterministic payload map on the state space, exact feature sufficiency and relevance are already the same problem as exact relevance certification for the induced decision problem.
 
+\leanmetapending{\LHrng{FR}{223}{225}}
 \begin{corollary}[Nonempty Set-Valued Payload Transfer]\label{cor:set-valued-payload-transfer}
 Let $F(s) \subseteq A$ be a nonempty feasible-action set at each state of a coordinate space, and equip allowed actions with utility $u_{\mathrm{allowed}}$ and blocked actions with utility $u_{\mathrm{blocked}}$ where $u_{\mathrm{blocked}} < u_{\mathrm{allowed}}$. Then exact feature sufficiency and relevance for the set-valued payload $F$ are equivalent to exact relevance certification for the induced decision problem whose optimal set at state $s$ is exactly $F(s)$.
 \end{corollary}
-\leanmeta{\LHrng{FR}{223}{225}}
 
 \begin{proof}[Proof sketch]
 This is the set-valued analogue of Proposition~\ref{prop:payload-transfer}. The strict utility gap makes the optimizer set coincide with the feasible-action set at every state, so the same coordinate conditions define sufficiency and relevance on both sides.
@@ -286,10 +297,10 @@ In particular, the transfer theorem already covers total search semantics stated
 
 Partial search semantics with possible failure are likewise covered by Proposition~\ref{prop:payload-transfer} once the payload is encoded as a deterministic map $S \to \mathrm{Option}(W)$, with \texttt{none} representing failure and \texttt{some}$(w)$ representing a selected witness. Approximation semantics fit the same framework whenever the exact target to be preserved is either a deterministic approximate output or a nonempty set of admissible $\varepsilon$-solutions. What is transferred in these cases is the chosen exact approximation semantics, not an abstract approximation guarantee stated independently of a payload.
 
+\leanmetapending{\LHrng{FR}{226}{228}}
 \begin{corollary}[Arbitrary Set-Valued Payload Transfer via Failure Tokens]\label{cor:totalized-set-valued-payload-transfer}
 Let $F(s) \subseteq A$ be any set-valued payload, possibly empty. Form the totalized payload on $\mathrm{Option}(A)$ by adjoining a distinguished failure token whenever $F(s)=\varnothing$. Then exact feature sufficiency and relevance for $F$ are equivalent to exact relevance certification for the induced decision problem on the totalized payload.
 \end{corollary}
-\leanmeta{\LHrng{FR}{226}{228}}
 
 \begin{proof}[Proof sketch]
 Map each admissible output $a \in F(s)$ to \texttt{some}$(a)$, and use \texttt{none} exactly when $F(s)$ is empty. Equality of the original set-valued payloads is then equivalent to equality of the totalized nonempty payloads, so Corollary~\ref{cor:set-valued-payload-transfer} applies after this totalization step.
@@ -297,10 +308,10 @@ Map each admissible output $a \in F(s)$ to \texttt{some}$(a)$, and use \texttt{n
 
 This removes the remaining empty-fiber caveat for search-style semantics. Set-valued payloads with failure states can be transferred without first choosing a deterministic witness selector.
 
+\leanmetapending{\LHrng{FR}{229}{231}}
 \begin{corollary}[Arbitrary Exact Output Semantics Transfer]\label{cor:relational-output-transfer}
 Let $R(s,a)$ be any state-indexed admissible-output relation. Then exact feature sufficiency and relevance for the induced output semantics reduce to exact relevance certification for a decision problem obtained by totalizing the admissible-output sets with a failure token and assigning a strict allowed-versus-blocked utility gap.
 \end{corollary}
-\leanmeta{\LHrng{FR}{229}{231}}
 
 \begin{proof}[Proof sketch]
 Write $F(s)=\{a : R(s,a)\}$. This is exactly the arbitrary set-valued case of Corollary~\ref{cor:totalized-set-valued-payload-transfer}. The relation form is only a notational repackaging of the same theorem.
