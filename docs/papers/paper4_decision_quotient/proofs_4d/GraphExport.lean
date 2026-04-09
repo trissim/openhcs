@@ -29,6 +29,7 @@ import DecisionQuotient.Tractability.StructuralRank
 import DecisionQuotient.Tractability.Tightness
 import DecisionQuotient.Tractability.TreeStructure
 import DecisionQuotient.Tractable
+import DecisionQuotient.UniverseObjective
 import Paper4dFrontier.AdmissibleCharacterization
 import Paper4dFrontier.Basic
 import Paper4dFrontier.BinaryPairwiseDichotomy
@@ -39,6 +40,8 @@ import Paper4dFrontier.BoundedTreewidthOnlyWitness
 import Paper4dFrontier.Classification
 import Paper4dFrontier.ClosureLaws
 import Paper4dFrontier.DecisionRelevantPairwiseDichotomy
+import Paper4dFrontier.DimensionalNoiseExtension
+import Paper4dFrontier.DistinctActionProfiles
 import Paper4dFrontier.EnumerationBounds
 import Paper4dFrontier.FamilyAxioms
 import Paper4dFrontier.FirstTwoIndicator
