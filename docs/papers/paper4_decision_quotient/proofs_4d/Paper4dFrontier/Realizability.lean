@@ -391,6 +391,165 @@ theorem outputSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
   setValuedPayloadIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
     (F := outputSemantics R) hGap i
 
+/-- Two exact output semantics are equivalent when they induce the same equality
+relation on admissible-output sets. -/
+def outputSemanticsEquivalent (R : S → A → Prop) (R' : S → A → Prop) : Prop :=
+  ∀ s s' : S, outputSemantics R s = outputSemantics R s' ↔ outputSemantics R' s = outputSemantics R' s'
+
+theorem setValuedPayloadSufficient_congr_outputSemanticsEquivalent
+    {R R' : S → A → Prop} (hEqv : outputSemanticsEquivalent R R')
+    (I : Finset (Fin n)) :
+    setValuedPayloadSufficient (outputSemantics R) I ↔
+      setValuedPayloadSufficient (outputSemantics R') I := by
+  unfold setValuedPayloadSufficient outputSemanticsEquivalent at *
+  constructor
+  · intro h s s' hagree
+    exact (hEqv s s').1 (h s s' hagree)
+  · intro h s s' hagree
+    exact (hEqv s s').2 (h s s' hagree)
+
+theorem setValuedPayloadRelevant_congr_outputSemanticsEquivalent
+    {R R' : S → A → Prop} (hEqv : outputSemanticsEquivalent R R')
+    (i : Fin n) :
+    setValuedPayloadRelevant (outputSemantics R) i ↔
+      setValuedPayloadRelevant (outputSemantics R') i := by
+  unfold setValuedPayloadRelevant outputSemanticsEquivalent at *
+  constructor
+  · rintro ⟨s, s', hcoords, hneq⟩
+    refine ⟨s, s', hcoords, ?_⟩
+    intro hEq
+    exact hneq ((hEqv s s').2 hEq)
+  · rintro ⟨s, s', hcoords, hneq⟩
+    refine ⟨s, s', hcoords, ?_⟩
+    intro hEq
+    exact hneq ((hEqv s s').1 hEq)
+
+theorem setValuedPayloadIrrelevant_congr_outputSemanticsEquivalent
+    {R R' : S → A → Prop} (hEqv : outputSemanticsEquivalent R R')
+    (i : Fin n) :
+    setValuedPayloadIrrelevant (outputSemantics R) i ↔
+      setValuedPayloadIrrelevant (outputSemantics R') i := by
+  unfold setValuedPayloadIrrelevant outputSemanticsEquivalent at *
+  constructor
+  · intro h s s' hcoords
+    exact (hEqv s s').1 (h s s' hcoords)
+  · intro h s s' hcoords
+    exact (hEqv s s').2 (h s s' hcoords)
+
+def outputSemanticsSufficientSets (R : S → A → Prop) : Set (Finset (Fin n)) :=
+  { I | setValuedPayloadSufficient (outputSemantics R) I }
+
+def outputSemanticsRelevantSet (R : S → A → Prop) : Set (Fin n) :=
+  { i | setValuedPayloadRelevant (outputSemantics R) i }
+
+theorem outputSemanticsSufficientSets_eq_of_outputSemanticsEquivalent
+    {R R' : S → A → Prop} (hEqv : outputSemanticsEquivalent R R') :
+    outputSemanticsSufficientSets R = outputSemanticsSufficientSets R' := by
+  ext I
+  exact setValuedPayloadSufficient_congr_outputSemanticsEquivalent hEqv I
+
+theorem outputSemanticsRelevantSet_eq_of_outputSemanticsEquivalent
+    {R R' : S → A → Prop} (hEqv : outputSemanticsEquivalent R R') :
+    outputSemanticsRelevantSet R = outputSemanticsRelevantSet R' := by
+  ext i
+  exact setValuedPayloadRelevant_congr_outputSemanticsEquivalent hEqv i
+
+section DeterministicRelationRealizability
+
+variable {T : Type*}
+
+def singletonOutputRelation (φ : S → T) : S → T → Prop :=
+  fun s a => a = φ s
+
+theorem singletonOutputSemantics_eq_iff (φ : S → T) (s s' : S) :
+    outputSemantics (singletonOutputRelation φ) s =
+      outputSemantics (singletonOutputRelation φ) s' ↔
+        φ s = φ s' := by
+  constructor
+  · intro h
+    have hs : φ s ∈ outputSemantics (singletonOutputRelation φ) s := by
+      simp [outputSemantics, singletonOutputRelation]
+    have hs' : φ s ∈ outputSemantics (singletonOutputRelation φ) s' := by
+      simpa [h] using hs
+    simpa [outputSemantics, singletonOutputRelation] using hs'
+  · intro h
+    ext a
+    simp [outputSemantics, singletonOutputRelation, h]
+
+theorem quotientMap_realizes_setoid_asOutputSemantics
+    (r : Setoid S) (s s' : S) :
+    outputSemantics (singletonOutputRelation (fun x : S => Quotient.mk r x)) s =
+      outputSemantics (singletonOutputRelation (fun x : S => Quotient.mk r x)) s' ↔
+        r.r s s' := by
+  rw [singletonOutputSemantics_eq_iff]
+  constructor
+  · intro h
+    exact Quotient.exact h
+  · intro h
+    exact Quotient.sound h
+
+def relationSufficient (r : Setoid S) (I : Finset (Fin n)) : Prop :=
+  ∀ s s' : S, agreeOn s s' I → r.r s s'
+
+def relationRelevant (r : Setoid S) (i : Fin n) : Prop :=
+  ∃ s s' : S,
+    (∀ j : Fin n, j ≠ i → CoordinateSpace.proj s j = CoordinateSpace.proj s' j) ∧
+      ¬ r.r s s'
+
+def relationIrrelevant (r : Setoid S) (i : Fin n) : Prop :=
+  ∀ s s' : S,
+    (∀ j : Fin n, j ≠ i → CoordinateSpace.proj s j = CoordinateSpace.proj s' j) →
+      r.r s s'
+
+theorem quotientOutputSemanticsSufficient_iff_relationSufficient
+    (r : Setoid S) (I : Finset (Fin n)) :
+    setValuedPayloadSufficient
+        (outputSemantics (singletonOutputRelation (fun x : S => Quotient.mk r x))) I ↔
+      relationSufficient r I := by
+  unfold setValuedPayloadSufficient relationSufficient
+  constructor
+  · intro h s s' hagree
+    exact (quotientMap_realizes_setoid_asOutputSemantics r s s').1 (h s s' hagree)
+  · intro h s s' hagree
+    exact (quotientMap_realizes_setoid_asOutputSemantics r s s').2 (h s s' hagree)
+
+theorem quotientOutputSemanticsRelevant_iff_relationRelevant
+    (r : Setoid S) (i : Fin n) :
+    setValuedPayloadRelevant
+        (outputSemantics (singletonOutputRelation (fun x : S => Quotient.mk r x))) i ↔
+      relationRelevant r i := by
+  unfold setValuedPayloadRelevant relationRelevant
+  constructor
+  · rintro ⟨s, s', hcoords, hneq⟩
+    refine ⟨s, s', hcoords, ?_⟩
+    intro hrel
+    exact hneq ((quotientMap_realizes_setoid_asOutputSemantics r s s').2 hrel)
+  · rintro ⟨s, s', hcoords, hrel⟩
+    refine ⟨s, s', hcoords, ?_⟩
+    intro hEq
+    exact hrel ((quotientMap_realizes_setoid_asOutputSemantics r s s').1 hEq)
+
+theorem quotientOutputSemanticsIrrelevant_iff_relationIrrelevant
+    (r : Setoid S) (i : Fin n) :
+    setValuedPayloadIrrelevant
+        (outputSemantics (singletonOutputRelation (fun x : S => Quotient.mk r x))) i ↔
+      relationIrrelevant r i := by
+  unfold setValuedPayloadIrrelevant relationIrrelevant
+  constructor
+  · intro h s s' hcoords
+    exact (quotientMap_realizes_setoid_asOutputSemantics r s s').1 (h s s' hcoords)
+  · intro h s s' hcoords
+    exact (quotientMap_realizes_setoid_asOutputSemantics r s s').2 (h s s' hcoords)
+
+theorem exists_outputSemantics_realizing_setoid (r : Setoid S) :
+    ∃ R : S → Quotient r → Prop,
+      ∀ s s' : S, outputSemantics R s = outputSemantics R s' ↔ r.r s s' := by
+  refine ⟨singletonOutputRelation (fun x : S => Quotient.mk r x), ?_⟩
+  intro s s'
+  exact quotientMap_realizes_setoid_asOutputSemantics r s s'
+
+end DeterministicRelationRealizability
+
 end RelationalSemanticsTransfer
 
 section ApproximationSemanticsTransfer

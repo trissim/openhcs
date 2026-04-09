@@ -326,4 +326,22 @@ Let $R(s,a)$ specify the admissible outputs for an exact approximation specifica
 This is the approximation-specialized form of Corollary~\ref{cor:relational-output-transfer}. An exact approximation specification is already a state-indexed admissible-output relation.
 \end{proof}
 
+\leanmetapending{\LHrng{FR}{235}{236}}
+\begin{proposition}[Exact Semantic Claims Depend Only on Admissible-Output Equivalence]\label{prop:semantic-claims-depend-only-on-output-equivalence}
+Let $R$ and $R'$ be two exact output semantics on the same state space. If they induce the same equality relation on admissible-output sets, then they induce the same sufficient coordinate sets and the same relevant coordinates. Exact semantic claims about sufficiency and relevance therefore depend only on the induced admissible-output equivalence relation.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+The transfer theorems reduce both semantics to exact relevance certification for induced decision problems. If the admissible-output equality relation is the same, the induced sufficiency and relevance structures are the same as well. The artifact proves equality of the sufficient-set family and of the relevant-coordinate set under this hypothesis.
+\end{proof}
+
+\leanmetapending{\LH{FR237}, \LH{FR240}}
+\begin{corollary}[Every State Equivalence Relation Is Realizable as Exact Output Semantics]\label{cor:every-state-equivalence-relation-is-realizable-as-exact-output-semantics}
+For every equivalence relation on the state space, there exists an exact output semantics whose admissible-output equality relation is exactly that equivalence relation.
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+Take the output space to be the quotient by the given equivalence relation and assign to each state its own quotient class as a singleton admissible-output set. Equality of those singleton output sets is then exactly the original equivalence relation.
+\end{proof}
+
 Closure-law invariance (clause 2) is not an arbitrary stylistic restriction. Theorem~\ref{thm:correct-classifier-forces-invariance} shows that exact correctness already forces closure-orbit agreement, and Theorem~\ref{thm:closure-sound-package-no-go} shows that this theorem-forced congruence is the only load-bearing hypothesis in the no-go theorem. The remaining clauses are the minimal guardrails against the failure modes identified in Proposition~\ref{prop:oracle-loophole}; the specific guardrail formulation of clauses 1, 3, and 4 is one natural choice but is not load-bearing.
