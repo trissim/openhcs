@@ -207,7 +207,7 @@ papers:
 
   paper4d:
     name: "Decision Quotient Frontier"
-    full_name: "Toward a Tractability Frontier for Exact Relevance Certification"
+    full_name: "Exact Structural Abstraction and Tractability Limits"
     dir: "paper4_decision_quotient"
     proofs_dir: "proofs_4d"
     module_root: "Paper4dFrontier"
