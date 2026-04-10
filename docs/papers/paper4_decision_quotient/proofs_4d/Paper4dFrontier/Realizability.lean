@@ -807,6 +807,22 @@ theorem finiteHorizonGuaranteeSemanticsIrrelevant_iff_totalizedLawDecisionProble
 
 end StatisticalGuaranteeSemanticsTransfer
 
+section StatisticalGuaranteeSemanticsQuotientConsequences
+
+variable {S : Type*} {A : Type*} {n : ℕ} [CoordinateSpace S n]
+
+theorem statisticalGuaranteeSemanticsSufficientSets_eq_of_outputSemanticsEquivalent
+    {R R' : S → A → Prop} (hEqv : outputSemanticsEquivalent R R') :
+    outputSemanticsSufficientSets R = outputSemanticsSufficientSets R' :=
+  outputSemanticsSufficientSets_eq_of_outputSemanticsEquivalent hEqv
+
+theorem statisticalGuaranteeSemanticsRelevantSet_eq_of_outputSemanticsEquivalent
+    {R R' : S → A → Prop} (hEqv : outputSemanticsEquivalent R R') :
+    outputSemanticsRelevantSet R = outputSemanticsRelevantSet R' :=
+  outputSemanticsRelevantSet_eq_of_outputSemanticsEquivalent hEqv
+
+end StatisticalGuaranteeSemanticsQuotientConsequences
+
 theorem realizingProblem_quotientMap_eq_iff (φ : S → T) (s s' : S) :
     (realizingProblem φ).quotientMap s = (realizingProblem φ).quotientMap s' ↔ φ s = φ s' := by
   rw [(realizingProblem φ).quotient_represents_opt_equiv]

@@ -346,6 +346,15 @@ Let $R(s,a)$ specify the admissible outputs for a PAC guarantee, regret guarante
 Each case is a named specialization of Corollary~\ref{cor:relational-output-transfer}. The output object may be a hypothesis, learner, estimator, or policy; correctness still means exact agreement with the admissible-output relation specifying the guarantee.
 \end{proof}
 
+\begin{corollary}[Statistical Guarantee Semantics Inherit the Closure-Orbit Consequences]\label{cor:statistical-guarantee-closure-consequences}
+Once a PAC, regret, statistical-risk, anytime, or finite-horizon guarantee is written as a state-indexed admissible-output relation, the same closure-orbit agreement and no-go theorems apply to classifiers for that semantics. In particular, Theorem~\ref{thm:correct-classifier-forces-invariance}, Corollary~\ref{cor:no-correct-tractability-classifier}, and Corollary~\ref{cor:domain-restriction-only-removes-orbit-gaps} apply unchanged after the transfer of Corollary~\ref{cor:statistical-guarantee-transfer}.
+\end{corollary}
+\leanmetapending{\LHrng{FR}{197}{199}, \LHrng{FR}{252}{256}, \LHrng{FR}{268}{284}}
+
+\begin{proof}[Proof sketch]
+Corollary~\ref{cor:statistical-guarantee-transfer} reduces each named statistical guarantee semantics to exact relevance certification for the induced decision problem. The closure-orbit agreement and no-go theorems are already proved for exact relevance certification itself. Statistical guarantee semantics also inherit the same exact-semantics quotient invariance, because their sufficient-coordinate family and relevant-coordinate set depend only on admissible-output equivalence.
+\end{proof}
+
 \leanmetapending{\LHrng{FR}{232}{234}}
 \begin{corollary}[Exact Approximation Semantics Transfer]\label{cor:approximation-transfer}
 Let $R(s,a)$ specify the admissible outputs for an exact approximation specification at state $s$, for example the set of all outputs meeting a fixed approximation guarantee. Then exact feature sufficiency and relevance for that approximation semantics reduce to exact relevance certification for the induced decision problem.
