@@ -240,7 +240,16 @@ Let $C$ be any procedure assigning to each representation in a closure-closed do
 This is the optimizer-computation instance of the same correctness-on-domain theorem. The compute-cost transport layer in the artifact shows that each closure step preserves polynomial-time solvability of optimizer computation under its explicit state and output transports. Correctness of $C$ therefore forces the same verdict on closure-equivalent representations.
 \end{proof}
 
-The artifact also contains the remaining canonical compute-cost instantiations. The same closure-law-invariance statement is formalized for deterministic optimizer-set payload output and admissible-output search on optimizer-set semantics. Thus the forced-invariance argument applies not only to exact-certification predicates, but also to these canonical output-production tasks.\leanmeta{\LHrng{FR}{245}{249}}
+\begin{corollary}[Compute-Cost Version: Canonical Payload and Search Tasks]\label{cor:payload-search-compute-classifier-forces-invariance}
+The same closure-orbit agreement conclusion holds when $C$ correctly predicts polynomial-time solvability of deterministic optimizer-set payload output. It also holds when $C$ correctly predicts polynomial-time solvability of admissible-output search on optimizer-set semantics.
+\end{corollary}
+\leanmetapending{\LHrng{FR}{259}{262}}
+
+\begin{proof}[Proof sketch]
+Apply the same correctness-on-domain theorem to the two canonical compute-cost families built from optimizer-set payload output and optimizer-set admissible-output search.
+\end{proof}
+
+Thus the forced-invariance argument applies not only to exact-certification predicates, but also to all three canonical output-production tasks treated in the compute-cost layer.\leanmeta{\LHrng{FR}{245}{249}, \LHrng{FR}{259}{262}}
 
 This answers the natural objection that Section~\ref{sec:frontier-program} excludes only classifiers that advertise closure invariance as an explicit axiom. Correctness already forces the same orbit agreement. The closure laws therefore supply the representation-level congruence needed for the orbit-gap program: once two slices are related by these theorem-forced presentation equivalences, any correct tractability classifier must identify them. Theorem~\ref{thm:closure-sound-package-no-go} therefore applies to any correct classifier on a closure-closed domain once the target notion is tractability itself: if the classifier separates same-orbit witnesses, it is simply wrong on at least one of them.
 

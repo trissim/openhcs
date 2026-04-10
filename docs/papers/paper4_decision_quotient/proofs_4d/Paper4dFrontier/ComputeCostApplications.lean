@@ -8,18 +8,62 @@ open DecisionQuotient
 def optimizerComputationPolytime (U : BinaryPairwiseSlice) : Prop :=
   optimizerClosureTransportFamily.family.PolytimePredicate U
 
+def optimizerSetPayloadPolytime (U : BinaryPairwiseSlice) : Prop :=
+  optimizerSetPayloadClosureTransportFamily.family.PolytimePredicate U
+
+def optimizerSetSearchPolytime (U : BinaryPairwiseSlice) : Prop :=
+  optimizerSetSearchClosureTransportFamily.family.PolytimePredicate U
+
 theorem optimizerComputation_polytime_closureLawInvariant :
     ClosureLawInvariant optimizerComputationPolytime := by
   simpa [optimizerComputationPolytime] using
     optimizerClosureTransportFamily.polytimePredicate_closureLawInvariant
 
 theorem optimizerSetPayload_polytime_closureLawInvariant :
-    ClosureLawInvariant optimizerSetPayloadClosureTransportFamily.family.PolytimePredicate := by
-  exact optimizerSetPayloadClosureTransportFamily.polytimePredicate_closureLawInvariant
+    ClosureLawInvariant optimizerSetPayloadPolytime := by
+  simpa [optimizerSetPayloadPolytime] using
+    optimizerSetPayloadClosureTransportFamily.polytimePredicate_closureLawInvariant
 
 theorem optimizerSetSearch_polytime_closureLawInvariant :
-    ClosureLawInvariant optimizerSetSearchClosureTransportFamily.family.PolytimePredicate := by
-  exact optimizerSetSearchClosureTransportFamily.polytimePredicate_closureLawInvariant
+    ClosureLawInvariant optimizerSetSearchPolytime := by
+  simpa [optimizerSetSearchPolytime] using
+    optimizerSetSearchClosureTransportFamily.polytimePredicate_closureLawInvariant
+
+theorem optimizerSetPayload_polytime_classifier_agrees_on_closureEquivalent_of_correctOnDomain
+    {D C : BinaryPairwiseSlice → Prop}
+    (hClosed : ClosureClosedDomain D)
+    (hCorrect : CorrectOnDomain D optimizerSetPayloadPolytime C)
+    {U V : BinaryPairwiseSlice} (hDU : D U) (hEqv : ClosureEquivalent U V) :
+    C U ↔ C V := by
+  exact ClosureTransportFamily.compute_classifier_agrees_on_closureEquivalent_of_correctOnDomain
+    optimizerSetPayloadClosureTransportFamily hClosed hCorrect hDU hEqv
+
+theorem optimizerSetPayload_polytime_classifier_agrees_on_closureEquivalent
+    {C : BinaryPairwiseSlice → Prop}
+    (hCorrect : ∀ U : BinaryPairwiseSlice, C U ↔ optimizerSetPayloadPolytime U)
+    {U V : BinaryPairwiseSlice} (hEqv : ClosureEquivalent U V) :
+    C U ↔ C V := by
+  exact optimizerSetPayload_polytime_classifier_agrees_on_closureEquivalent_of_correctOnDomain
+    (D := fun _ => True) (C := C)
+    (by intro U V _ _; trivial) (fun _ _ => hCorrect _) trivial hEqv
+
+theorem optimizerSetSearch_polytime_classifier_agrees_on_closureEquivalent_of_correctOnDomain
+    {D C : BinaryPairwiseSlice → Prop}
+    (hClosed : ClosureClosedDomain D)
+    (hCorrect : CorrectOnDomain D optimizerSetSearchPolytime C)
+    {U V : BinaryPairwiseSlice} (hDU : D U) (hEqv : ClosureEquivalent U V) :
+    C U ↔ C V := by
+  exact ClosureTransportFamily.compute_classifier_agrees_on_closureEquivalent_of_correctOnDomain
+    optimizerSetSearchClosureTransportFamily hClosed hCorrect hDU hEqv
+
+theorem optimizerSetSearch_polytime_classifier_agrees_on_closureEquivalent
+    {C : BinaryPairwiseSlice → Prop}
+    (hCorrect : ∀ U : BinaryPairwiseSlice, C U ↔ optimizerSetSearchPolytime U)
+    {U V : BinaryPairwiseSlice} (hEqv : ClosureEquivalent U V) :
+    C U ↔ C V := by
+  exact optimizerSetSearch_polytime_classifier_agrees_on_closureEquivalent_of_correctOnDomain
+    (D := fun _ => True) (C := C)
+    (by intro U V _ _; trivial) (fun _ _ => hCorrect _) trivial hEqv
 
 theorem optimizerComputation_polytime_classifier_agrees_on_closureEquivalent_of_correctOnDomain
     {D C : BinaryPairwiseSlice → Prop}
