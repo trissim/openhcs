@@ -48,7 +48,7 @@ Then each summary fiber is contained in a single optimizer-quotient class. Equiv
 If $\sigma(s)=\sigma(s')$, the hypothesis gives $\Opt(s)=\Opt(s')$. So every $\sigma$-fiber is contained in one decision-equivalence class. This is exactly the statement that $\sigma$ refines the optimizer quotient. Conversely, if two distinct optimizer classes shared a summary symbol, choosing representatives from those classes would violate the zero-distortion premise.
 \end{proof}
 
-Proposition~\ref{prop:zero-distortion-refines-quotient} explains why exact relevance is not merely one point on an approximation spectrum. Once distortion is required to be zero, lossless decision-preserving abstraction is already constrained by the optimizer quotient itself. Approximate summaries may still be useful for other goals, but they no longer certify exact preservation of the decision boundary.
+Proposition~\ref{prop:zero-distortion-refines-quotient} explains why exact relevance is not merely one point on an approximation spectrum. Once distortion is required to be zero, lossless decision-preserving abstraction is already constrained by the optimizer quotient itself. Later propositions in this section sharpen the approximation boundary: approximate surrogate claims about relevance need explicit stability control relative to the exact optimizer sets, because uniform closeness alone does not preserve the exact decision boundary.
 
 \leanmetapending{\LHrng{FR}{52}{53}}
 \begin{corollary}[Constant-Optimizer Collapse Forces Trivial Certification]\label{cor:constant-opt-collapse}
@@ -345,6 +345,26 @@ Let $R(s,a)$ specify the admissible outputs for an exact approximation specifica
 \begin{proof}[Proof sketch]
 This is the approximation-specialized form of Corollary~\ref{cor:relational-output-transfer}. Approximation enters only through the specification: once the admissible-output relation says which outputs meet the guarantee, correctness with respect to that approximation specification is exact agreement with that relation.
 \end{proof}
+
+\leanmetapending{\LH{FR263}}
+\begin{proposition}[Approximate Relevance Claims Need Explicit Stability Control]\label{prop:approximate-relevance-needs-stability-control}
+Let $D$ and $D'$ be decision problems on the same coordinate space, and suppose their utilities are uniformly $\delta$-close. If coordinate $i$ has a relevance witness in $D$ given by states $s,s'$ with distinct strict optimal actions at the two witness states, and if the strict utility gap at each witness state exceeds $2\delta$, then $i$ is also relevant in $D'$.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+The existing uniform-approximation theorem preserves the optimizer set at any state whose strict utility gap dominates the approximation error. Applying that theorem to both witness states keeps the two singleton optimizer sets distinct, so the same state pair still witnesses relevance in the approximating problem.
+\end{proof}
+
+\leanmetapending{\LH{FR264}}
+\begin{corollary}[Arbitrarily Small Uniform Perturbations Can Flip Relevance]\label{cor:small-uniform-perturbations-can-flip-relevance}
+For every $\varepsilon>0$, there exist two decision problems on the same one-coordinate Boolean state space that are uniformly $\varepsilon$-close, yet the unique coordinate is relevant in one problem and irrelevant in the other.
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+The artifact contains an explicit two-action, one-coordinate construction. In the first problem the optimizer tracks the Boolean state, so the unique coordinate is relevant. In the second problem all actions are tied at every state, so the coordinate is irrelevant. The two utility functions differ uniformly by at most $\varepsilon$.
+\end{proof}
+
+Thus closeness alone does not justify an approximate relevance claim. Any $\varepsilon$-based relevance claim needs an explicit reduction to the exact optimizer sets, for example by a witness-gap bound as in Proposition~\ref{prop:approximate-relevance-needs-stability-control}, because otherwise arbitrarily small perturbations can change the exact relevance judgment.
 
 \leanmetapending{\LHrng{FR}{235}{236}}
 \begin{proposition}[Exact Semantic Claims Depend Only on Admissible-Output Equivalence]\label{prop:semantic-claims-depend-only-on-output-equivalence}

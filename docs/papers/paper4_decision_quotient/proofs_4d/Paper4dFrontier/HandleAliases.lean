@@ -34,6 +34,7 @@ import Paper4dFrontier.TreewidthClique
 import Paper4dFrontier.Realizability
 import Paper4dFrontier.FamilyAxioms
 import Paper4dFrontier.ClosureLaws
+import Paper4dFrontier.ApproximateAdmissibility
 import Paper4dFrontier.ComputeCostInvariance
 import Paper4dFrontier.ComputeCostPayloads
 import Paper4dFrontier.ComputeCostApplications
@@ -304,6 +305,8 @@ abbrev FR259 := @optimizerSetPayload_polytime_classifier_agrees_on_closureEquiva
 abbrev FR260 := @optimizerSetPayload_polytime_classifier_agrees_on_closureEquivalent
 abbrev FR261 := @optimizerSetSearch_polytime_classifier_agrees_on_closureEquivalent_of_correctOnDomain
 abbrev FR262 := @optimizerSetSearch_polytime_classifier_agrees_on_closureEquivalent
+abbrev FR263 := @relevant_of_uniformApprox_of_strict_gap_witness
+abbrev FR264 := @relevance_can_flip_under_arbitrarily_small_uniform_perturbation
 abbrev FR110 := @parentTreeStructured_implies_treeStructured
 abbrev FR111 := @treeStructured_and_unique_parent_iff_parentTreeStructured
 abbrev FR102 := @completeGraph_not_realTreewidth_le_of_large
