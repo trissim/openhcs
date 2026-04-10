@@ -71,6 +71,7 @@ import Paper4dFrontier.RealTreewidth
 import Paper4dFrontier.RealTreewidthWitnesses
 import Paper4dFrontier.Realizability
 import Paper4dFrontier.SeparableOnlyWitness
+import Paper4dFrontier.StatisticalSemanticsApplications
 import Paper4dFrontier.StructuralWitnesses
 import Paper4dFrontier.SymmetryOnlyWitness
 import Paper4dFrontier.SymmetryRankWitness
