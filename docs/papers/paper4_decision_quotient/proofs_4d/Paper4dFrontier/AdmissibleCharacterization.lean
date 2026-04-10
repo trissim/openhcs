@@ -710,6 +710,11 @@ def ClosureClosedDomain (D : BinaryPairwiseSlice → Prop) : Prop :=
 def CorrectOnDomain (D T C : BinaryPairwiseSlice → Prop) : Prop :=
   ∀ ⦃U : BinaryPairwiseSlice⦄, D U → (C U ↔ T U)
 
+def CorrectnessForcesOrbitAgreementOnDomain
+    (D Q : BinaryPairwiseSlice → Prop) : Prop :=
+  ∀ ⦃C : BinaryPairwiseSlice → Prop⦄, CorrectOnDomain D Q C →
+    ∀ ⦃U V : BinaryPairwiseSlice⦄, D U → ClosureEquivalent U V → (C U ↔ C V)
+
 theorem classifier_agrees_on_closureEquivalent_of_correctOnDomain
     {D T C : BinaryPairwiseSlice → Prop}
     (hClosed : ClosureClosedDomain D)
@@ -930,6 +935,46 @@ theorem no_exact_closureLawInvariant_classifier_onDomain_iff_orbitGapOn
         ClosureLawInvariant P ∧ CorrectOnDomain D Q P) ↔
       OrbitGapOn D Q := by
   rw [exact_classifiable_by_closureLawInvariant_onDomain_iff_no_orbitGapOn hClosed]
+  constructor
+  · intro hNo
+    by_contra hNoGap
+    exact hNo hNoGap
+  · intro hGap hExists
+    exact hExists hGap
+
+theorem no_orbitGapOn_of_correct_classifier_onDomain_of_forcedOrbitAgreement
+    {D Q : BinaryPairwiseSlice → Prop} (hClosed : ClosureClosedDomain D)
+    (hForce : CorrectnessForcesOrbitAgreementOnDomain D Q)
+    (hExists : ∃ C : BinaryPairwiseSlice → Prop, CorrectOnDomain D Q C) :
+    ¬ OrbitGapOn D Q := by
+  intro hGap
+  rcases hExists with ⟨C, hCorrect⟩
+  rcases hGap with ⟨U, V, hDU, hEqv, hQU, hNotQV⟩
+  have hDV : D V := hClosed hDU hEqv
+  have hOrbit : C U ↔ C V := hForce hCorrect hDU hEqv
+  have hCU : C U := (hCorrect hDU).2 hQU
+  have hCV : C V := hOrbit.mp hCU
+  exact hNotQV ((hCorrect hDV).1 hCV)
+
+theorem correct_classifier_onDomain_iff_no_orbitGapOn_of_forcedOrbitAgreement
+    {D Q : BinaryPairwiseSlice → Prop} (hClosed : ClosureClosedDomain D)
+    (hForce : CorrectnessForcesOrbitAgreementOnDomain D Q) :
+    (∃ C : BinaryPairwiseSlice → Prop, CorrectOnDomain D Q C) ↔
+      ¬ OrbitGapOn D Q := by
+  constructor
+  · intro hExists
+    exact no_orbitGapOn_of_correct_classifier_onDomain_of_forcedOrbitAgreement
+      hClosed hForce hExists
+  · intro hNoGap
+    exact ⟨ClosureHull (fun U => D U ∧ Q U),
+      closureHull_correctOnDomain_of_no_orbitGapOn hClosed hNoGap⟩
+
+theorem no_correct_classifier_onDomain_iff_orbitGapOn_of_forcedOrbitAgreement
+    {D Q : BinaryPairwiseSlice → Prop} (hClosed : ClosureClosedDomain D)
+    (hForce : CorrectnessForcesOrbitAgreementOnDomain D Q) :
+    (¬ ∃ C : BinaryPairwiseSlice → Prop, CorrectOnDomain D Q C) ↔
+      OrbitGapOn D Q := by
+  rw [correct_classifier_onDomain_iff_no_orbitGapOn_of_forcedOrbitAgreement hClosed hForce]
   constructor
   · intro hNo
     by_contra hNoGap

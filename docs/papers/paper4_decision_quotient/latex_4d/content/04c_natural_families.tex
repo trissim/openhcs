@@ -222,16 +222,27 @@ Structural extractability distinguishes structural characterizations from purely
 
 Bounded-pattern definability is the locality guardrail. Its role is to exclude predicates whose membership test secretly performs an unbounded global computation under a structural name. In particular, it prevents one from reintroducing oracle power through an arbitrarily large finite schema.
 
-\leanmetapending{\LHrng{FR}{197}{199}}
 \begin{theorem}[Tractability Classifiers Are Forced to Be Closure-Invariant]\label{thm:correct-classifier-forces-invariance}
 Let $C$ be any procedure assigning to each representation in a closure-closed domain $\Gamma$ a verdict in $\{\mathrm{tractable},\mathrm{intractable}\}$, and suppose that $C$ correctly predicts whether exact certification is polynomial-time decidable on the underlying problem. Then $C$ must agree on representations within the same closure orbit. Equivalently, every correct tractability classifier on a closure-closed domain is closure-invariant on that domain, regardless of whether its internal features are themselves invariant.
 \end{theorem}
+\leanmetapending{\LHrng{FR}{197}{199}, \LHrng{FR}{245}{249}}
 
 \begin{proof}[Proof sketch]
 This is the tractability instance of the abstract correctness-on-domain theorem formalized in Lean. If $U,V \in \Gamma$ lie in the same closure orbit, Proposition~\ref{prop:closure-operations-preserve-certification} shows that they induce the same exact-certification problem up to the explicit coordinate-set transport attached to the relevant closure step. The theorem uses the semantic notion of correctness stated above: tractability is attached to that underlying exact-certification problem, not to arbitrary relabelings or duplicate-label presentations of the same problem. Correctness of $C$ therefore forces the same verdict on both.
 \end{proof}
 
-This answers the natural objection that Section~\ref{sec:frontier-program} excludes only classifiers that advertise closure invariance as an explicit axiom. Exact correctness already forces the same orbit agreement. The closure laws therefore supply the representation-level congruence needed for the orbit-gap program: once two slices are related by these theorem-forced presentation equivalences, any exact tractability classifier must identify them. Theorem~\ref{thm:closure-sound-package-no-go} therefore applies to any exact classifier on a closure-closed domain once the target notion is tractability itself: if the classifier separates same-orbit witnesses, it is simply wrong on at least one of them.
+\begin{theorem}[Compute-Cost Version: Optimizer Computation]\label{thm:optimizer-computation-classifier-forces-invariance}
+Let $C$ be any procedure assigning to each representation in a closure-closed domain $\Gamma$ a verdict in $\{\mathrm{tractable},\mathrm{intractable}\}$, and suppose that $C$ correctly predicts whether optimizer computation is polynomial-time solvable on the underlying problem. Then $C$ must agree on representations within the same closure orbit.
+\end{theorem}
+\leanmetapending{\LH{FR248}}
+
+\begin{proof}[Proof sketch]
+This is the optimizer-computation instance of the same correctness-on-domain theorem. The compute-cost transport layer in the artifact shows that each closure step preserves polynomial-time solvability of optimizer computation under its explicit state and output transports. Correctness of $C$ therefore forces the same verdict on closure-equivalent representations.
+\end{proof}
+
+The artifact also contains the remaining canonical compute-cost instantiations. The same closure-law-invariance statement is formalized for deterministic optimizer-set payload output and admissible-output search on optimizer-set semantics. Thus the forced-invariance argument applies not only to exact-certification predicates, but also to these canonical output-production tasks.\leanmeta{\LHrng{FR}{245}{249}}
+
+This answers the natural objection that Section~\ref{sec:frontier-program} excludes only classifiers that advertise closure invariance as an explicit axiom. Correctness already forces the same orbit agreement. The closure laws therefore supply the representation-level congruence needed for the orbit-gap program: once two slices are related by these theorem-forced presentation equivalences, any correct tractability classifier must identify them. Theorem~\ref{thm:closure-sound-package-no-go} therefore applies to any correct classifier on a closure-closed domain once the target notion is tractability itself: if the classifier separates same-orbit witnesses, it is simply wrong on at least one of them.
 
 \leanmetapending{\LH{FR200}}
 \begin{proposition}[The Admissibility Layer Is Nonempty]\label{prop:admissibility-inhabited}
@@ -315,7 +326,7 @@ Let $R(s,a)$ be any state-indexed admissible-output relation. Then exact feature
 Write $F(s)=\{a : R(s,a)\}$. This is exactly the arbitrary set-valued case of Corollary~\ref{cor:totalized-set-valued-payload-transfer}. The relation form is only a notational repackaging of the same theorem.
 \end{proof}
 
-Standard exact TCS semantics are theorem instances of this transfer principle. This includes decision, counting, search, and exact approximation specifications.
+Any output specification is in scope once written as a state-indexed admissible-output relation. This includes decision, counting, search, approximation guarantees, distributional specifications, and any other specification stated by the outputs that count as correct at each state.
 
 \leanmetapending{\LHrng{FR}{232}{234}}
 \begin{corollary}[Exact Approximation Semantics Transfer]\label{cor:approximation-transfer}
@@ -323,7 +334,7 @@ Let $R(s,a)$ specify the admissible outputs for an exact approximation specifica
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-This is the approximation-specialized form of Corollary~\ref{cor:relational-output-transfer}. An exact approximation specification is already a state-indexed admissible-output relation.
+This is the approximation-specialized form of Corollary~\ref{cor:relational-output-transfer}. Approximation enters only through the specification: once the admissible-output relation says which outputs meet the guarantee, correctness with respect to that approximation specification is exact agreement with that relation.
 \end{proof}
 
 \leanmetapending{\LHrng{FR}{235}{236}}
@@ -353,4 +364,4 @@ Let $C$ be any claim about exact output semantics that depends only on admissibl
 This is the quotient-factorization theorem for semantically extensional maps, specialized to \texttt{Prop}-valued claims. If $C$ takes the same truth value on any two semantics with the same admissible-output equivalence, then $C$ descends to the quotient by that equivalence relation.
 \end{proof}
 
-Closure-law invariance (clause 2) is not an arbitrary stylistic restriction. Theorem~\ref{thm:correct-classifier-forces-invariance} shows that exact correctness already forces closure-orbit agreement, and Theorem~\ref{thm:closure-sound-package-no-go} shows that this theorem-forced congruence is the only load-bearing hypothesis in the no-go theorem. The remaining clauses are the minimal guardrails against the failure modes identified in Proposition~\ref{prop:oracle-loophole}; the specific guardrail formulation of clauses 1, 3, and 4 is one natural choice but is not load-bearing.
+Closure-law invariance (clause 2) is not an arbitrary stylistic restriction. Theorem~\ref{thm:correct-classifier-forces-invariance} shows that correctness already forces closure-orbit agreement, and Theorem~\ref{thm:closure-sound-package-no-go} shows that this theorem-forced congruence is the only load-bearing hypothesis in the no-go theorem. The remaining clauses are the minimal guardrails against the failure modes identified in Proposition~\ref{prop:oracle-loophole}; the specific guardrail formulation of clauses 1, 3, and 4 is one natural choice but is not load-bearing.

@@ -34,6 +34,9 @@ import Paper4dFrontier.TreewidthClique
 import Paper4dFrontier.Realizability
 import Paper4dFrontier.FamilyAxioms
 import Paper4dFrontier.ClosureLaws
+import Paper4dFrontier.ComputeCostInvariance
+import Paper4dFrontier.ComputeCostPayloads
+import Paper4dFrontier.ComputeCostApplications
 import Paper4dFrontier.RealTreewidthWitnesses
 import DecisionQuotient.Quotient
 import DecisionQuotient.Tractability.StructuralRank
@@ -283,6 +286,18 @@ abbrev FR241 := @outputSemanticsSetoid
 abbrev FR242 := @SemanticallyExtensionalMap
 abbrev FR243 := @semanticallyExtensionalMap_factors_through_outputSemanticsQuotient
 abbrev FR244 := @semanticallyExtensionalClaim_factors_through_outputSemanticsQuotient
+abbrev FR245 := @optimizerComputation_polytime_closureLawInvariant
+abbrev FR246 := @optimizerSetPayload_polytime_closureLawInvariant
+abbrev FR247 := @optimizerSetSearch_polytime_closureLawInvariant
+abbrev FR248 := @optimizerComputation_polytime_classifier_agrees_on_closureEquivalent_of_correctOnDomain
+abbrev FR249 := @optimizerComputation_polytime_classifier_agrees_on_closureEquivalent
+abbrev FR250 := @no_correct_optimizerComputation_polytime_classifier_decides_dominantPair
+abbrev FR251 := @no_admissibleNormalizationPredicate_optimizerComputation_polytime_and_dominantPair
+abbrev FR252 := @CorrectnessForcesOrbitAgreementOnDomain
+abbrev FR253 := @no_orbitGapOn_of_correct_classifier_onDomain_of_forcedOrbitAgreement
+abbrev FR254 := @correct_classifier_onDomain_iff_no_orbitGapOn_of_forcedOrbitAgreement
+abbrev FR255 := @no_correct_classifier_onDomain_iff_orbitGapOn_of_forcedOrbitAgreement
+abbrev FR256 := @optimizerComputation_polytime_correct_classifier_onDomain_iff_no_orbitGapOn
 abbrev FR110 := @parentTreeStructured_implies_treeStructured
 abbrev FR111 := @treeStructured_and_unique_parent_iff_parentTreeStructured
 abbrev FR102 := @completeGraph_not_realTreewidth_le_of_large

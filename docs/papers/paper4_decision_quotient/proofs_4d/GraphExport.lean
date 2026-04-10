@@ -39,6 +39,9 @@ import Paper4dFrontier.BoundedActionsOnlyWitness2
 import Paper4dFrontier.BoundedTreewidthOnlyWitness
 import Paper4dFrontier.Classification
 import Paper4dFrontier.ClosureLaws
+import Paper4dFrontier.ComputeCostApplications
+import Paper4dFrontier.ComputeCostInvariance
+import Paper4dFrontier.ComputeCostPayloads
 import Paper4dFrontier.DecisionRelevantPairwiseDichotomy
 import Paper4dFrontier.DimensionalNoiseExtension
 import Paper4dFrontier.DistinctActionProfiles

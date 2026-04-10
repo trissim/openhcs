@@ -71,6 +71,8 @@ The target predicate is unique dominant-pair status: one pair/action realizes th
 
 Theorem~\ref{thm:dominant-pair-admissible-no-go} gives the first instance. The remaining three families use the same orbit-gap scheme, but each isolates a different structural obstruction.
 
+At the compute-cost layer, the same dominant-pair orbit witness yields a machine-checked no-go for optimizer computation: no correct classifier for polynomial-time solvability of optimizer computation can decide dominant-pair status exactly. In particular, no admissible predicate can simultaneously track optimizer-computation polynomiality and exact dominant-pair status.\leanmeta{\LHrng{FR}{250}{251}}
+
 \leanmetapending{\LH{FR187}}
 \begin{theorem}[Margin-Masking Admissible No-Go]\label{thm:margin-masking-admissible-no-go}
 No admissible normalization predicate can decide margin-boundedness exactly.
@@ -120,7 +122,7 @@ Let $\Gamma$ be any class of slice predicates such that every $\Gamma$-admissibl
 Closure-law invariance suffices to invoke Proposition~\ref{prop:orbit-gap-template} against each of the four obstruction families. The same orbit-gap proofs underlying Theorem~\ref{thm:dominant-pair-admissible-no-go}, Theorem~\ref{thm:margin-masking-admissible-no-go}, Theorem~\ref{thm:ghost-action-admissible-no-go}, and Theorem~\ref{thm:offset-admissible-no-go} then yield the contradiction directly. Any one of the four families independently witnesses the collapse; we state all four to make explicit that the obstruction is robust across structurally distinct witnesses.
 \end{proof}
 
-Theorem~\ref{thm:closure-sound-package-no-go} is the load-bearing form of Theorem~\ref{thm:admissible-collapse-four-families}. Any reasonable formalization of admissibility, whether the specific package of Definition~\ref{def:admissible-normalization} or any alternative whose admissible predicates are closure-law invariant, inherits the impossibility conclusion. Proposition~\ref{prop:depends-only-on-opt} identifies closure-law invariance as the semantic core, and Theorem~\ref{thm:correct-classifier-forces-invariance} shows that exact correctness forces the same invariance on any tractability classifier. The admissibility package is one natural instantiation; the theorem is robust to its replacement.
+Theorem~\ref{thm:closure-sound-package-no-go} is the load-bearing form of Theorem~\ref{thm:admissible-collapse-four-families}. Any reasonable formalization of admissibility, whether the specific package of Definition~\ref{def:admissible-normalization} or any alternative whose admissible predicates are closure-law invariant, inherits the impossibility conclusion. Proposition~\ref{prop:depends-only-on-opt} identifies closure-law invariance as the semantic core, and Theorem~\ref{thm:correct-classifier-forces-invariance} shows that correctness forces the same invariance on any tractability classifier. The admissibility package is one natural instantiation; the theorem is robust to its replacement.
 
 \leanmetapending{\LH{FR194}}
 \begin{corollary}[Reasonable Guardrail Packages]\label{cor:reasonable-guardrail-packages}
@@ -140,7 +142,7 @@ Let $C$ be any correct tractability classifier on a domain that is closed under 
 By Theorem~\ref{thm:correct-classifier-forces-invariance}, any such classifier must agree on closure orbits and is therefore closure-law invariant on its domain. Theorem~\ref{thm:closure-sound-package-no-go} then rules out exact characterization across the four obstruction families.
 \end{proof}
 
-Corollary~\ref{cor:no-correct-tractability-classifier} is the universal-scope form of the no-go. Theorem~\ref{thm:closure-sound-package-no-go} isolates closure-law invariance as the load-bearing hypothesis, and Theorem~\ref{thm:correct-classifier-forces-invariance} removes even that as an explicit assumption by forcing the same invariance from correctness itself.
+Corollary~\ref{cor:no-correct-tractability-classifier} is the witness-level universal form of the no-go. Theorem~\ref{thm:closure-sound-package-no-go} isolates closure-law invariance as the load-bearing hypothesis, and Theorem~\ref{thm:correct-classifier-forces-invariance} removes even that as an explicit assumption by forcing the same invariance from correctness itself. Corollary~\ref{cor:domain-restriction-only-removes-orbit-gaps} then states the general domain-relative form: restricting the domain helps only if it removes all orbit gaps for the target notion.
 
 \leanmetapending{\LHrng{FR}{201}{204}}
 \begin{proposition}[Orbit-Gap Completeness for Exact Classification]\label{prop:orbit-gap-completeness}
@@ -169,3 +171,14 @@ This is the domain-restricted version formalized in Lean. The forward implicatio
 \end{proof}
 
 Applied to exact tractability, Theorem~\ref{thm:correct-classifier-forces-invariance} places every correct tractability classifier on a closure-closed domain inside this regime. Orbit gaps are therefore the complete obstruction criterion for the universal-scope no-go once correctness is imposed.
+
+\leanmetapending{\LHrng{FR}{252}{256}}
+\begin{corollary}[Domain Restriction Helps Only by Removing Orbit Gaps]\label{cor:domain-restriction-only-removes-orbit-gaps}
+Let $D$ be a closure-closed domain, and let $Q$ be a target predicate on $D$ such that correctness of a classifier for $Q$ forces closure-orbit agreement on $D$. Then $D$ admits a correct classifier for $Q$ if and only if $Q$ has no orbit-gap witness inside $D$. Equivalently, restricting the domain avoids the no-go only by eliminating all orbit gaps of $Q$ on that restricted domain.
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+The reverse implication is Corollary~\ref{cor:orbit-gap-completeness-domain}. For the forward implication, correctness-forced orbit agreement rules out any same-orbit disagreement inside $D$. The artifact proves this abstract principle directly, and also formalizes the optimizer-computation instance as a concrete compute-cost theorem.
+\end{proof}
+
+This is the precise answer to the domain-restriction objection. Excluding the four named witness families is not enough by itself. Those families witness orbit gaps, but the logical boundary is orbit-gap freedom on the restricted closure-closed domain. If another orbit gap remains, the same impossibility theorem applies; if no orbit gap remains, the closure-hull construction yields a correct classifier on that domain.
