@@ -335,7 +335,16 @@ Let $R(s,a)$ be any state-indexed admissible-output relation. Then exact feature
 Write $F(s)=\{a : R(s,a)\}$. This is exactly the arbitrary set-valued case of Corollary~\ref{cor:totalized-set-valued-payload-transfer}. The relation form is only a notational repackaging of the same theorem.
 \end{proof}
 
-Any output specification is in scope once written as a state-indexed admissible-output relation. This includes decision, counting, search, approximation guarantees, distributional specifications, and any other specification stated by the outputs that count as correct at each state.
+Any output specification is in scope once written as a state-indexed admissible-output relation. This includes decision, counting, search, approximation guarantees, PAC/regret/risk guarantees, anytime or finite-horizon guarantees, distributional specifications, and any other specification stated by the outputs that count as correct at each state.
+
+\leanmetapending{\LHrng{FR}{268}{282}}
+\begin{corollary}[Statistical Guarantee Semantics Transfer]\label{cor:statistical-guarantee-transfer}
+Let $R(s,a)$ specify the admissible outputs for a PAC guarantee, regret guarantee, statistical risk guarantee, anytime guarantee, or finite-horizon guarantee at state $s$. Then exact feature sufficiency and relevance for that guarantee semantics reduce to exact relevance certification for the induced decision problem.
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+Each case is a named specialization of Corollary~\ref{cor:relational-output-transfer}. The output object may be a hypothesis, learner, estimator, or policy; correctness still means exact agreement with the admissible-output relation specifying the guarantee.
+\end{proof}
 
 \leanmetapending{\LHrng{FR}{232}{234}}
 \begin{corollary}[Exact Approximation Semantics Transfer]\label{cor:approximation-transfer}

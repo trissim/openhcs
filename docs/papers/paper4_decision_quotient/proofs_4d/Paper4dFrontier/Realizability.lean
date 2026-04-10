@@ -641,6 +641,172 @@ theorem approximationSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrel
 
 end ApproximationSemanticsTransfer
 
+section StatisticalGuaranteeSemanticsTransfer
+
+variable {S : Type*} {A : Type*} {n : ℕ} [CoordinateSpace S n]
+
+/-- PAC-style guarantee semantics presented by a state-indexed admissible-output
+relation on hypotheses, learners, estimators, or policies. -/
+def pacGuaranteeSemantics (R : S → A → Prop) : S → Set A :=
+  outputSemantics R
+
+theorem pacGuaranteeSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (I : Finset (Fin n)) :
+    setValuedPayloadSufficient (pacGuaranteeSemantics R) I ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (pacGuaranteeSemantics R))
+        uAllowed uBlocked).isSufficient I :=
+  outputSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (R := R) hGap I
+
+theorem pacGuaranteeSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadRelevant (pacGuaranteeSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (pacGuaranteeSemantics R))
+        uAllowed uBlocked).isRelevant i :=
+  outputSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (R := R) hGap i
+
+theorem pacGuaranteeSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadIrrelevant (pacGuaranteeSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (pacGuaranteeSemantics R))
+        uAllowed uBlocked).isIrrelevant i :=
+  outputSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (R := R) hGap i
+
+/-- Regret-guarantee semantics presented by a state-indexed admissible-output
+relation on hypotheses, learners, estimators, or policies. -/
+def regretGuaranteeSemantics (R : S → A → Prop) : S → Set A :=
+  outputSemantics R
+
+theorem regretGuaranteeSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (I : Finset (Fin n)) :
+    setValuedPayloadSufficient (regretGuaranteeSemantics R) I ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (regretGuaranteeSemantics R))
+        uAllowed uBlocked).isSufficient I :=
+  outputSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (R := R) hGap I
+
+theorem regretGuaranteeSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadRelevant (regretGuaranteeSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (regretGuaranteeSemantics R))
+        uAllowed uBlocked).isRelevant i :=
+  outputSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (R := R) hGap i
+
+theorem regretGuaranteeSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadIrrelevant (regretGuaranteeSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (regretGuaranteeSemantics R))
+        uAllowed uBlocked).isIrrelevant i :=
+  outputSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (R := R) hGap i
+
+/-- Statistical-risk semantics presented by a state-indexed admissible-output
+relation on hypotheses, learners, estimators, or policies. -/
+def statisticalRiskSemantics (R : S → A → Prop) : S → Set A :=
+  outputSemantics R
+
+theorem statisticalRiskSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (I : Finset (Fin n)) :
+    setValuedPayloadSufficient (statisticalRiskSemantics R) I ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (statisticalRiskSemantics R))
+        uAllowed uBlocked).isSufficient I :=
+  outputSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (R := R) hGap I
+
+theorem statisticalRiskSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadRelevant (statisticalRiskSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (statisticalRiskSemantics R))
+        uAllowed uBlocked).isRelevant i :=
+  outputSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (R := R) hGap i
+
+theorem statisticalRiskSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadIrrelevant (statisticalRiskSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (statisticalRiskSemantics R))
+        uAllowed uBlocked).isIrrelevant i :=
+  outputSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (R := R) hGap i
+
+/-- Anytime-guarantee semantics presented by a state-indexed admissible-output
+relation on hypotheses, learners, estimators, or policies. -/
+def anytimeGuaranteeSemantics (R : S → A → Prop) : S → Set A :=
+  outputSemantics R
+
+theorem anytimeGuaranteeSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (I : Finset (Fin n)) :
+    setValuedPayloadSufficient (anytimeGuaranteeSemantics R) I ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (anytimeGuaranteeSemantics R))
+        uAllowed uBlocked).isSufficient I :=
+  outputSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (R := R) hGap I
+
+theorem anytimeGuaranteeSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadRelevant (anytimeGuaranteeSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (anytimeGuaranteeSemantics R))
+        uAllowed uBlocked).isRelevant i :=
+  outputSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (R := R) hGap i
+
+theorem anytimeGuaranteeSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadIrrelevant (anytimeGuaranteeSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (anytimeGuaranteeSemantics R))
+        uAllowed uBlocked).isIrrelevant i :=
+  outputSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (R := R) hGap i
+
+/-- Finite-horizon guarantee semantics presented by a state-indexed admissible-output
+relation on hypotheses, learners, estimators, or policies. -/
+def finiteHorizonGuaranteeSemantics (R : S → A → Prop) : S → Set A :=
+  outputSemantics R
+
+theorem finiteHorizonGuaranteeSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (I : Finset (Fin n)) :
+    setValuedPayloadSufficient (finiteHorizonGuaranteeSemantics R) I ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (finiteHorizonGuaranteeSemantics R))
+        uAllowed uBlocked).isSufficient I :=
+  outputSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (R := R) hGap I
+
+theorem finiteHorizonGuaranteeSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadRelevant (finiteHorizonGuaranteeSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (finiteHorizonGuaranteeSemantics R))
+        uAllowed uBlocked).isRelevant i :=
+  outputSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (R := R) hGap i
+
+theorem finiteHorizonGuaranteeSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadIrrelevant (finiteHorizonGuaranteeSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (finiteHorizonGuaranteeSemantics R))
+        uAllowed uBlocked).isIrrelevant i :=
+  outputSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (R := R) hGap i
+
+end StatisticalGuaranteeSemanticsTransfer
+
 theorem realizingProblem_quotientMap_eq_iff (φ : S → T) (s s' : S) :
     (realizingProblem φ).quotientMap s = (realizingProblem φ).quotientMap s' ↔ φ s = φ s' := by
   rw [(realizingProblem φ).quotient_represents_opt_equiv]
