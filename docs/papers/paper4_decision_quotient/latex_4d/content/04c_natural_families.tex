@@ -346,13 +346,13 @@ Let $R(s,a)$ specify the admissible outputs for an exact approximation specifica
 This is the approximation-specialized form of Corollary~\ref{cor:relational-output-transfer}. Approximation enters only through the specification: once the admissible-output relation says which outputs meet the guarantee, correctness with respect to that approximation specification is exact agreement with that relation.
 \end{proof}
 
-\leanmetapending{\LH{FR263}}
-\begin{proposition}[Approximate Relevance Claims Need Explicit Stability Control]\label{prop:approximate-relevance-needs-stability-control}
-Let $D$ and $D'$ be decision problems on the same coordinate space, and suppose their utilities are uniformly $\delta$-close. If coordinate $i$ has a relevance witness in $D$ given by states $s,s'$ with distinct strict optimal actions at the two witness states, and if the strict utility gap at each witness state exceeds $2\delta$, then $i$ is also relevant in $D'$.
+\leanmetapending{\LH{FR263}, \LH{FR266}}
+\begin{proposition}[Approximate Relevance and Sufficiency Claims Need Explicit Stability Control]\label{prop:approximate-relevance-needs-stability-control}
+Let $D$ and $D'$ be decision problems on the same coordinate space, and suppose their utilities are uniformly $\delta$-close. If coordinate $i$ has a relevance witness in $D$ given by states $s,s'$ with distinct strict optimal actions at the two witness states, and if the strict utility gap at each witness state exceeds $2\delta$, then $i$ is also relevant in $D'$. Likewise, if a coordinate set $I$ has a non-sufficiency witness in $D$ given by states $s,s'$ that agree on $I$ but have distinct strict optimal actions, and if the strict utility gap at each witness state exceeds $2\delta$, then $I$ is still not sufficient in $D'$.
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-The existing uniform-approximation theorem preserves the optimizer set at any state whose strict utility gap dominates the approximation error. Applying that theorem to both witness states keeps the two singleton optimizer sets distinct, so the same state pair still witnesses relevance in the approximating problem.
+The existing uniform-approximation theorem preserves the optimizer set at any state whose strict utility gap dominates the approximation error. Applying that theorem to both witness states keeps the two singleton optimizer sets distinct. In the relevance case this preserves the same relevance witness. In the sufficiency case the same state pair still agrees on $I$ but still has different optimizer sets, so it remains a non-sufficiency witness.
 \end{proof}
 
 \leanmetapending{\LH{FR264}}
@@ -364,7 +364,16 @@ For every $\varepsilon>0$, there exist two decision problems on the same one-coo
 The artifact contains an explicit two-action, one-coordinate construction. In the first problem the optimizer tracks the Boolean state, so the unique coordinate is relevant. In the second problem all actions are tied at every state, so the coordinate is irrelevant. The two utility functions differ uniformly by at most $\varepsilon$.
 \end{proof}
 
-Thus closeness alone does not justify an approximate relevance claim. Any $\varepsilon$-based relevance claim needs an explicit reduction to the exact optimizer sets, for example by a witness-gap bound as in Proposition~\ref{prop:approximate-relevance-needs-stability-control}, because otherwise arbitrarily small perturbations can change the exact relevance judgment.
+\leanmetapending{\LH{FR267}}
+\begin{corollary}[Arbitrarily Small Uniform Perturbations Can Flip Sufficiency]\label{cor:small-uniform-perturbations-can-flip-sufficiency}
+For every $\varepsilon>0$, there exist two decision problems on the same one-coordinate Boolean state space that are uniformly $\varepsilon$-close, yet the empty coordinate set is sufficient in one problem and not sufficient in the other.
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+The same one-coordinate construction separates the constant-optimizer case from the state-tracking case. In the flat problem the empty set is sufficient because the optimizer set is constant, while in the state-tracking problem the empty set is not sufficient because the two Boolean states induce different optimizer sets. The two utility functions are still uniformly $\varepsilon$-close.
+\end{proof}
+
+Thus closeness alone does not justify an approximate relevance or sufficiency claim. Any $\varepsilon$-based surrogate claim needs an explicit reduction to the exact optimizer sets, for example by a witness-gap bound as in Proposition~\ref{prop:approximate-relevance-needs-stability-control}, because otherwise arbitrarily small perturbations can change the exact judgment.
 
 \leanmetapending{\LHrng{FR}{235}{236}}
 \begin{proposition}[Exact Semantic Claims Depend Only on Admissible-Output Equivalence]\label{prop:semantic-claims-depend-only-on-output-equivalence}

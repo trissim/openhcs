@@ -76,6 +76,58 @@ theorem stateMatchingDecisionProblem_uniformApprox_flat {ε : ℝ} (hε : 0 ≤ 
     simpa [stateMatchingDecisionProblem, flatDecisionProblem, h] using hself
   · simpa [stateMatchingDecisionProblem, flatDecisionProblem, h] using hε
 
+theorem flatDecisionProblem_empty_sufficient :
+    flatDecisionProblem.isSufficient (∅ : Finset (Fin 1)) := by
+  rw [DecisionProblem.emptySet_sufficient_iff_constant]
+  intro s s'
+  rw [flatDecisionProblem_opt, flatDecisionProblem_opt]
+
+theorem stateMatchingDecisionProblem_empty_not_sufficient (hε : 0 < ε) :
+    ¬ (stateMatchingDecisionProblem ε).isSufficient (∅ : Finset (Fin 1)) := by
+  rw [DecisionProblem.emptySet_not_sufficient_iff_exists_opt_difference]
+  refine ⟨allFalseBoolState, allTrueBoolState, ?_⟩
+  rw [stateMatchingDecisionProblem_opt_false hε, stateMatchingDecisionProblem_opt_true hε]
+  intro hEq
+  have hmem : false ∈ ({true} : Set Bool) := by
+    have : false ∈ ({false} : Set Bool) := by simp
+    rwa [hEq] at this
+  simp at hmem
+
+/-- A strict-gap witness also certifies that the approximating problem keeps the
+two witness states in distinct optimizer classes. -/
+theorem not_decisionEquiv_of_uniformApprox_of_strict_gap_witness
+    {A S : Type*} [Fintype A]
+    {exactDP approxDP : DecisionProblem A S} {δ : ℝ}
+    (hApprox : UniformUtilityApprox exactDP approxDP δ)
+    (hδ : 0 ≤ δ)
+    {s s' : S} {a a' : A}
+    (hStrict : StrictOpt exactDP a s)
+    (hStrict' : StrictOpt exactDP a' s')
+    (hNe : a ≠ a')
+    (hBound : δ < StrictUtilityGap exactDP a s / 2)
+    (hBound' : δ < StrictUtilityGap exactDP a' s' / 2) :
+    ¬ approxDP.DecisionEquiv s s' := by
+  have hs : exactDP.Opt s = approxDP.Opt s :=
+    uniform_approx_implies_opt_invariance exactDP approxDP δ hApprox s a hδ hStrict hBound
+  have hs' : exactDP.Opt s' = approxDP.Opt s' :=
+    uniform_approx_implies_opt_invariance exactDP approxDP δ hApprox s' a' hδ hStrict' hBound'
+  have hsing : exactDP.Opt s = {a} := opt_eq_singleton_of_strict _ _ _ hStrict
+  have hsing' : exactDP.Opt s' = {a'} := opt_eq_singleton_of_strict _ _ _ hStrict'
+  intro hEqv
+  rw [DecisionProblem.DecisionEquiv] at hEqv
+  have hEq : ({a} : Set A) = ({a'} : Set A) := by
+    calc
+      ({a} : Set A) = exactDP.Opt s := by symm; exact hsing
+      _ = approxDP.Opt s := hs
+      _ = approxDP.Opt s' := hEqv
+      _ = exactDP.Opt s' := hs'.symm
+      _ = ({a'} : Set A) := hsing'
+  have hmem : a ∈ ({a'} : Set A) := by
+    have : a ∈ ({a} : Set A) := by simp
+    rwa [hEq] at this
+  have hEq' : a = a' := by simpa using hmem
+  exact hNe hEq'
+
 /-- A relevance witness survives a uniform approximation when the approximation
 error stays below half the strict utility gap at both witness states. -/
 theorem relevant_of_uniformApprox_of_strict_gap_witness
@@ -92,19 +144,29 @@ theorem relevant_of_uniformApprox_of_strict_gap_witness
     (hBound' : δ < StrictUtilityGap exactDP a' s' / 2) :
     approxDP.isRelevant i := by
   refine ⟨s, s', hAgree, ?_⟩
-  have hs : exactDP.Opt s = approxDP.Opt s :=
-    uniform_approx_implies_opt_invariance exactDP approxDP δ hApprox s a hδ hStrict hBound
-  have hs' : exactDP.Opt s' = approxDP.Opt s' :=
-    uniform_approx_implies_opt_invariance exactDP approxDP δ hApprox s' a' hδ hStrict' hBound'
-  have hsing : exactDP.Opt s = {a} := opt_eq_singleton_of_strict _ _ _ hStrict
-  have hsing' : exactDP.Opt s' = {a'} := opt_eq_singleton_of_strict _ _ _ hStrict'
-  rw [← hs, ← hs', hsing, hsing']
-  intro hEq
-  have hmem : a ∈ ({a'} : Set A) := by
-    have : a ∈ ({a} : Set A) := by simp
-    rwa [hEq] at this
-  have hEq' : a = a' := by simpa using hmem
-  exact hNe hEq'
+  exact not_decisionEquiv_of_uniformApprox_of_strict_gap_witness
+    hApprox hδ hStrict hStrict' hNe hBound hBound'
+
+/-- A non-sufficiency witness survives a uniform approximation when the witness
+states retain distinct strict optimal actions separated by gaps. -/
+theorem not_sufficient_of_uniformApprox_of_strict_gap_witness
+    {A S : Type*} [Fintype A] {n : ℕ} [CoordinateSpace S n]
+    {exactDP approxDP : DecisionProblem A S} {δ : ℝ}
+    (hApprox : UniformUtilityApprox exactDP approxDP δ)
+    (hδ : 0 ≤ δ)
+    (I : Finset (Fin n))
+    {s s' : S} {a a' : A}
+    (hAgree : agreeOn s s' I)
+    (hStrict : StrictOpt exactDP a s)
+    (hStrict' : StrictOpt exactDP a' s')
+    (hNe : a ≠ a')
+    (hBound : δ < StrictUtilityGap exactDP a s / 2)
+    (hBound' : δ < StrictUtilityGap exactDP a' s' / 2) :
+    ¬ approxDP.isSufficient I := by
+  intro hSuff
+  have hEqv : approxDP.DecisionEquiv s s' := hSuff s s' hAgree
+  exact not_decisionEquiv_of_uniformApprox_of_strict_gap_witness
+    hApprox hδ hStrict hStrict' hNe hBound hBound' hEqv
 
 /-- Uniform closeness alone does not control relevance: for every positive error
 budget there are uniformly-close decision problems whose relevance judgment differs.
@@ -119,5 +181,19 @@ theorem relevance_can_flip_under_arbitrarily_small_uniform_perturbation
   · exact stateMatchingDecisionProblem_uniformApprox_flat hε.le
   · exact stateMatchingDecisionProblem_relevant hε
   · exact flatDecisionProblem_irrelevant
+
+/-- Uniform closeness alone does not control sufficiency: for every positive error
+budget there are uniformly-close decision problems whose empty-set sufficiency
+judgment differs. -/
+theorem sufficiency_can_flip_under_arbitrarily_small_uniform_perturbation
+    {ε : ℝ} (hε : 0 < ε) :
+    ∃ exactDP approxDP : DecisionProblem Bool (Fin 1 → Bool),
+      UniformUtilityApprox exactDP approxDP ε ∧
+      ¬ exactDP.isSufficient (∅ : Finset (Fin 1)) ∧
+      approxDP.isSufficient (∅ : Finset (Fin 1)) := by
+  refine ⟨stateMatchingDecisionProblem ε, flatDecisionProblem, ?_, ?_, ?_⟩
+  · exact stateMatchingDecisionProblem_uniformApprox_flat hε.le
+  · exact stateMatchingDecisionProblem_empty_not_sufficient hε
+  · exact flatDecisionProblem_empty_sufficient
 
 end Paper4dFrontier
