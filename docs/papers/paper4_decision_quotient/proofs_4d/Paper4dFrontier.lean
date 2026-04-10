@@ -41,4 +41,5 @@ import Paper4dFrontier.TreewidthClique
 import Paper4dFrontier.ComputeCostInvariance
 import Paper4dFrontier.ComputeCostPayloads
 import Paper4dFrontier.ComputeCostApplications
+import Paper4dFrontier.StatisticalSemanticsApplications
 import Paper4dFrontier.HandleAliases

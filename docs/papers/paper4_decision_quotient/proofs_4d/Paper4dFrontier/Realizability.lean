@@ -807,6 +807,44 @@ theorem finiteHorizonGuaranteeSemanticsIrrelevant_iff_totalizedLawDecisionProble
 
 end StatisticalGuaranteeSemanticsTransfer
 
+section RandomizedGuaranteeSemanticsTransfer
+
+variable {S : Type*} {A : Type*} {n : ℕ} [CoordinateSpace S n]
+
+/-- Randomized-output guarantee semantics presented by a state-indexed admissible-output
+relation on distributions, kernels, randomized estimators, or randomized policies. -/
+def randomizedGuaranteeSemantics (R : S → A → Prop) : S → Set A :=
+  outputSemantics R
+
+theorem randomizedGuaranteeSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (I : Finset (Fin n)) :
+    setValuedPayloadSufficient (randomizedGuaranteeSemantics R) I ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (randomizedGuaranteeSemantics R))
+        uAllowed uBlocked).isSufficient I :=
+  outputSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+    (R := R) hGap I
+
+theorem randomizedGuaranteeSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadRelevant (randomizedGuaranteeSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (randomizedGuaranteeSemantics R))
+        uAllowed uBlocked).isRelevant i :=
+  outputSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+    (R := R) hGap i
+
+theorem randomizedGuaranteeSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
+    (i : Fin n) :
+    setValuedPayloadIrrelevant (randomizedGuaranteeSemantics R) i ↔
+      (lawDecisionProblem (totalizedPayloadDynamics (randomizedGuaranteeSemantics R))
+        uAllowed uBlocked).isIrrelevant i :=
+  outputSemanticsIrrelevant_iff_totalizedLawDecisionProblem_isIrrelevant
+    (R := R) hGap i
+
+end RandomizedGuaranteeSemanticsTransfer
+
 section StatisticalGuaranteeSemanticsQuotientConsequences
 
 variable {S : Type*} {A : Type*} {n : ℕ} [CoordinateSpace S n]

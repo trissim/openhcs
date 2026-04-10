@@ -335,7 +335,7 @@ Let $R(s,a)$ be any state-indexed admissible-output relation. Then exact feature
 Write $F(s)=\{a : R(s,a)\}$. This is exactly the arbitrary set-valued case of Corollary~\ref{cor:totalized-set-valued-payload-transfer}. The relation form is only a notational repackaging of the same theorem.
 \end{proof}
 
-Any output specification is in scope once written as a state-indexed admissible-output relation. This includes decision, counting, search, approximation guarantees, PAC/regret/risk guarantees, anytime or finite-horizon guarantees, distributional specifications, and any other specification stated by the outputs that count as correct at each state.
+Any output specification is in scope once written as a state-indexed admissible-output relation. This includes decision, counting, search, approximation guarantees, PAC/regret/risk guarantees, anytime or finite-horizon guarantees, randomized-output guarantees, distributional specifications, and any other specification stated by the outputs that count as correct at each state.
 
 \leanmetapending{\LHrng{FR}{268}{282}}
 \begin{corollary}[Statistical Guarantee Semantics Transfer]\label{cor:statistical-guarantee-transfer}
@@ -346,13 +346,31 @@ Let $R(s,a)$ specify the admissible outputs for a PAC guarantee, regret guarante
 Each case is a named specialization of Corollary~\ref{cor:relational-output-transfer}. The output object may be a hypothesis, learner, estimator, or policy; correctness still means exact agreement with the admissible-output relation specifying the guarantee.
 \end{proof}
 
+\leanmetapending{\LHrng{FR}{291}{293}}
+\begin{corollary}[Randomized-Output Guarantee Semantics Transfer]\label{cor:randomized-guarantee-transfer}
+Let $R(s,a)$ specify the admissible randomized outputs for a state $s$, where $a$ may itself be a distribution, kernel, randomized estimator, or randomized policy. Then exact feature sufficiency and relevance for that randomized-output semantics reduce to exact relevance certification for the induced decision problem.
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+This is again a named specialization of Corollary~\ref{cor:relational-output-transfer}. Randomization changes the output object, not the meaning of correctness: correctness still means exact agreement with the admissible-output relation on those randomized outputs.
+\end{proof}
+
+\begin{corollary}[Randomized-Output Guarantee Semantics Inherit the Closure-Orbit Consequences]\label{cor:randomized-guarantee-closure-consequences}
+Once a randomized-output guarantee is written as a state-indexed admissible-output relation, the same closure-orbit agreement and no-go theorems apply to classifiers for that semantics. In particular, Theorem~\ref{thm:correct-classifier-forces-invariance}, Corollary~\ref{cor:no-correct-tractability-classifier}, and Corollary~\ref{cor:domain-restriction-only-removes-orbit-gaps} apply unchanged after the transfer of Corollary~\ref{cor:randomized-guarantee-transfer}.
+\end{corollary}
+\leanmetapending{\LHrng{FR}{291}{296}}
+
+\begin{proof}[Proof sketch]
+This is the randomized-output instance of the same transfer-plus-application pattern used above. Corollary~\ref{cor:randomized-guarantee-transfer} reduces the semantics to exact relevance certification for the induced decision problem, and the dedicated randomized application theorems then import the same closure-orbit agreement and orbit-gap consequences.
+\end{proof}
+
 \begin{corollary}[Statistical Guarantee Semantics Inherit the Closure-Orbit Consequences]\label{cor:statistical-guarantee-closure-consequences}
 Once a PAC, regret, statistical-risk, anytime, or finite-horizon guarantee is written as a state-indexed admissible-output relation, the same closure-orbit agreement and no-go theorems apply to classifiers for that semantics. In particular, Theorem~\ref{thm:correct-classifier-forces-invariance}, Corollary~\ref{cor:no-correct-tractability-classifier}, and Corollary~\ref{cor:domain-restriction-only-removes-orbit-gaps} apply unchanged after the transfer of Corollary~\ref{cor:statistical-guarantee-transfer}.
 \end{corollary}
-\leanmetapending{\LHrng{FR}{197}{199}, \LHrng{FR}{252}{256}, \LHrng{FR}{268}{284}}
+\leanmetapending{\LHrng{FR}{268}{299}}
 
 \begin{proof}[Proof sketch]
-Corollary~\ref{cor:statistical-guarantee-transfer} reduces each named statistical guarantee semantics to exact relevance certification for the induced decision problem. The closure-orbit agreement and no-go theorems are already proved for exact relevance certification itself. Statistical guarantee semantics also inherit the same exact-semantics quotient invariance, because their sufficient-coordinate family and relevant-coordinate set depend only on admissible-output equivalence.
+Corollary~\ref{cor:statistical-guarantee-transfer} reduces each named statistical guarantee semantics to exact relevance certification for the induced decision problem. The artifact packages the next step as a generic transferred-semantics application principle: any semantics whose tractability predicate is definitionally equivalent to a closure-law-invariant target inherits the same closure-orbit agreement and orbit-gap consequences. Statistical guarantee semantics are named instances of that principle. They also inherit the same exact-semantics quotient invariance, because their sufficient-coordinate family and relevant-coordinate set depend only on admissible-output equivalence.
 \end{proof}
 
 \leanmetapending{\LHrng{FR}{232}{234}}
@@ -389,6 +407,15 @@ For every $\varepsilon>0$, there exist two decision problems on the same one-coo
 
 \begin{proof}[Proof sketch]
 The same one-coordinate construction separates the constant-optimizer case from the state-tracking case. In the flat problem the empty set is sufficient because the optimizer set is constant, while in the state-tracking problem the empty set is not sufficient because the two Boolean states induce different optimizer sets. The two utility functions are still uniformly $\varepsilon$-close.
+\end{proof}
+
+\leanmetapending{\LHrng{FR}{288}{301}}
+\begin{proposition}[Global Approximation Stability Under Uniform Strict Gaps]\label{prop:global-approximation-stability}
+Let $D$ and $D'$ be decision problems on the same coordinate space, and suppose their utilities are uniformly $\delta$-close. If every state of $D$ has a strict optimal action whose utility gap exceeds $2\delta$, then $D$ and $D'$ have the same optimizer quotient, the same sufficient-coordinate family, the same relevant-coordinate set, and the same minimal sufficient sets.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+The uniform-approximation theorem preserves the optimizer set at each state once the local strict utility gap dominates the approximation error. Applying this statewise yields equality of optimizer sets for all states. The optimizer quotient, sufficient-coordinate family, relevant-coordinate set, and minimal sufficient sets therefore coincide.
 \end{proof}
 
 Thus closeness alone does not justify an approximate relevance or sufficiency claim. Any $\varepsilon$-based surrogate claim needs an explicit reduction to the exact optimizer sets, for example by a witness-gap bound as in Proposition~\ref{prop:approximate-relevance-needs-stability-control}, because otherwise arbitrarily small perturbations can change the exact judgment.

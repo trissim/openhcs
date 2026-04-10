@@ -76,6 +76,148 @@ theorem stateMatchingDecisionProblem_uniformApprox_flat {ε : ℝ} (hε : 0 ≤ 
     simpa [stateMatchingDecisionProblem, flatDecisionProblem, h] using hself
   · simpa [stateMatchingDecisionProblem, flatDecisionProblem, h] using hε
 
+def UniformStrictGapCover {A S : Type*} [Fintype A]
+    (dp : DecisionProblem A S) (δ : ℝ) : Prop :=
+  ∀ s : S, ∃ a : A, StrictOpt dp a s ∧ δ < StrictUtilityGap dp a s / 2
+
+theorem opt_eq_of_uniformApprox_of_uniformStrictGapCover
+    {A S : Type*} [Fintype A]
+    {exactDP approxDP : DecisionProblem A S} {δ : ℝ}
+    (hApprox : UniformUtilityApprox exactDP approxDP δ)
+    (hδ : 0 ≤ δ)
+    (hGap : UniformStrictGapCover exactDP δ) :
+    ∀ s : S, exactDP.Opt s = approxDP.Opt s := by
+  intro s
+  rcases hGap s with ⟨a, hStrict, hBound⟩
+  exact uniform_approx_implies_opt_invariance exactDP approxDP δ hApprox s a hδ hStrict hBound
+
+theorem isSufficient_iff_of_opt_eq
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    {dp dp' : DecisionProblem A S}
+    (hOpt : ∀ s : S, dp.Opt s = dp'.Opt s)
+    (I : Finset (Fin n)) :
+    dp.isSufficient I ↔ dp'.isSufficient I := by
+  constructor
+  · intro hI s s' hAgree
+    calc
+      dp'.Opt s = dp.Opt s := (hOpt s).symm
+      _ = dp.Opt s' := hI s s' hAgree
+      _ = dp'.Opt s' := hOpt s'
+  · intro hI s s' hAgree
+    calc
+      dp.Opt s = dp'.Opt s := hOpt s
+      _ = dp'.Opt s' := hI s s' hAgree
+      _ = dp.Opt s' := (hOpt s').symm
+
+theorem decisionEquiv_iff_of_opt_eq
+    {A S : Type*} {dp dp' : DecisionProblem A S}
+    (hOpt : ∀ s : S, dp.Opt s = dp'.Opt s)
+    (s s' : S) :
+    dp.DecisionEquiv s s' ↔ dp'.DecisionEquiv s s' := by
+  unfold DecisionProblem.DecisionEquiv
+  constructor
+  · intro hEq
+    calc
+      dp'.Opt s = dp.Opt s := (hOpt s).symm
+      _ = dp.Opt s' := hEq
+      _ = dp'.Opt s' := hOpt s'
+  · intro hEq
+    calc
+      dp.Opt s = dp'.Opt s := hOpt s
+      _ = dp'.Opt s' := hEq
+      _ = dp.Opt s' := (hOpt s').symm
+
+theorem isRelevant_iff_of_opt_eq
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    {dp dp' : DecisionProblem A S}
+    (hOpt : ∀ s : S, dp.Opt s = dp'.Opt s)
+    (i : Fin n) :
+    dp.isRelevant i ↔ dp'.isRelevant i := by
+  constructor
+  · rintro ⟨s, s', hAgree, hNe⟩
+    refine ⟨s, s', hAgree, ?_⟩
+    intro hEq
+    exact hNe ((hOpt s).trans (hEq.trans (hOpt s').symm))
+  · rintro ⟨s, s', hAgree, hNe⟩
+    refine ⟨s, s', hAgree, ?_⟩
+    intro hEq
+    exact hNe ((hOpt s).symm.trans (hEq.trans (hOpt s')))
+
+theorem sufficientSets_eq_of_opt_eq
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    {dp dp' : DecisionProblem A S}
+    (hOpt : ∀ s : S, dp.Opt s = dp'.Opt s) :
+    dp.sufficientSets = dp'.sufficientSets := by
+  ext I
+  exact isSufficient_iff_of_opt_eq hOpt I
+
+theorem isMinimalSufficient_iff_of_opt_eq
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    {dp dp' : DecisionProblem A S}
+    (hOpt : ∀ s : S, dp.Opt s = dp'.Opt s)
+    (I : Finset (Fin n)) :
+    dp.isMinimalSufficient I ↔ dp'.isMinimalSufficient I := by
+  unfold DecisionProblem.isMinimalSufficient
+  constructor
+  · rintro ⟨hSuff, hMin⟩
+    refine ⟨(isSufficient_iff_of_opt_eq hOpt I).1 hSuff, ?_⟩
+    intro J hJI hSuff'
+    exact hMin J hJI ((isSufficient_iff_of_opt_eq hOpt J).2 hSuff')
+  · rintro ⟨hSuff, hMin⟩
+    refine ⟨(isSufficient_iff_of_opt_eq hOpt I).2 hSuff, ?_⟩
+    intro J hJI hSuff'
+    exact hMin J hJI ((isSufficient_iff_of_opt_eq hOpt J).1 hSuff')
+
+theorem relevantSet_eq_of_opt_eq
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    {dp dp' : DecisionProblem A S}
+    (hOpt : ∀ s : S, dp.Opt s = dp'.Opt s) :
+    dp.relevantSet = dp'.relevantSet := by
+  ext i
+  exact isRelevant_iff_of_opt_eq hOpt i
+
+theorem decisionEquiv_iff_of_uniformApprox_of_uniformStrictGapCover
+    {A S : Type*} [Fintype A]
+    {exactDP approxDP : DecisionProblem A S} {δ : ℝ}
+    (hApprox : UniformUtilityApprox exactDP approxDP δ)
+    (hδ : 0 ≤ δ)
+    (hGap : UniformStrictGapCover exactDP δ)
+    (s s' : S) :
+    exactDP.DecisionEquiv s s' ↔ approxDP.DecisionEquiv s s' := by
+  exact decisionEquiv_iff_of_opt_eq
+    (opt_eq_of_uniformApprox_of_uniformStrictGapCover hApprox hδ hGap) s s'
+
+theorem isMinimalSufficient_iff_of_uniformApprox_of_uniformStrictGapCover
+    {A S : Type*} [Fintype A] {n : ℕ} [CoordinateSpace S n]
+    {exactDP approxDP : DecisionProblem A S} {δ : ℝ}
+    (hApprox : UniformUtilityApprox exactDP approxDP δ)
+    (hδ : 0 ≤ δ)
+    (hGap : UniformStrictGapCover exactDP δ)
+    (I : Finset (Fin n)) :
+    exactDP.isMinimalSufficient I ↔ approxDP.isMinimalSufficient I := by
+  exact isMinimalSufficient_iff_of_opt_eq
+    (opt_eq_of_uniformApprox_of_uniformStrictGapCover hApprox hδ hGap) I
+
+theorem sufficientSets_eq_of_uniformApprox_of_uniformStrictGapCover
+    {A S : Type*} [Fintype A] {n : ℕ} [CoordinateSpace S n]
+    {exactDP approxDP : DecisionProblem A S} {δ : ℝ}
+    (hApprox : UniformUtilityApprox exactDP approxDP δ)
+    (hδ : 0 ≤ δ)
+    (hGap : UniformStrictGapCover exactDP δ) :
+    exactDP.sufficientSets = approxDP.sufficientSets := by
+  exact sufficientSets_eq_of_opt_eq
+    (opt_eq_of_uniformApprox_of_uniformStrictGapCover hApprox hδ hGap)
+
+theorem relevantSet_eq_of_uniformApprox_of_uniformStrictGapCover
+    {A S : Type*} [Fintype A] {n : ℕ} [CoordinateSpace S n]
+    {exactDP approxDP : DecisionProblem A S} {δ : ℝ}
+    (hApprox : UniformUtilityApprox exactDP approxDP δ)
+    (hδ : 0 ≤ δ)
+    (hGap : UniformStrictGapCover exactDP δ) :
+    exactDP.relevantSet = approxDP.relevantSet := by
+  exact relevantSet_eq_of_opt_eq
+    (opt_eq_of_uniformApprox_of_uniformStrictGapCover hApprox hδ hGap)
+
 theorem flatDecisionProblem_empty_sufficient :
     flatDecisionProblem.isSufficient (∅ : Finset (Fin 1)) := by
   rw [DecisionProblem.emptySet_sufficient_iff_constant]
