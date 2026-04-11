@@ -369,6 +369,17 @@ Let $R(s,a)$ be any state-indexed admissible-output relation. Then exact feature
 Write $F(s)=\{a : R(s,a)\}$. This is exactly the arbitrary set-valued case of Corollary~\ref{cor:totalized-set-valued-payload-transfer}. The relation form is only a notational repackaging of the same theorem.
 \end{proof}
 
+\leanmetapending{\LH{FR346}}
+\begin{proposition}[Exactness Means Exact Agreement With Validity]\label{prop:exactness-means-exact-agreement-with-validity}
+Let $V(s,a)$ be any state-indexed validity relation. Then the exact relevance profile induced by $V$ is realized by exact relevance certification for the induced decision problem. In particular, exactness refers to exact agreement with $V$ itself, not to zero-error determinism or the absence of approximation, randomization, statistical thresholds, or failure states in the specification.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Corollary~\ref{cor:relational-output-transfer} identifies the sufficient-coordinate family and relevant-coordinate set of the validity semantics with those of the induced decision problem. The artifact packages the resulting profile equality directly.
+\end{proof}
+
+This is the sense in which approximation, statistical, and randomized semantics remain exact: the specification written into $V$ may be approximate or randomized, but agreement with $V$ is exact.
+
 \leanmetapending{\LH{FR342}}
 \begin{proposition}[Sufficiency Is Relation Refinement]\label{prop:sufficiency-is-relation-refinement}
 Let $R(s,a)$ be any exact correctness relation, write $\mathrm{Adm}_R(s)=\{a : R(s,a)\}$, and define
@@ -457,7 +468,7 @@ Let $R(s,a)$ specify the admissible outputs for a PAC guarantee, regret guarante
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-Each case is a named specialization of Corollary~\ref{cor:relational-output-transfer}. The output object may be a hypothesis, learner, estimator, or policy; correctness still means exact agreement with the admissible-output relation specifying the guarantee.
+Each case is a named specialization of Corollary~\ref{cor:relational-output-transfer}. The output object may be a hypothesis, learner, estimator, or policy; correctness still means exact agreement with the admissible-output relation specifying the guarantee, not absence of statistical error thresholds in that guarantee.
 \end{proof}
 
 \leanmetapending{\LHrng{FR}{291}{293}}
@@ -466,7 +477,7 @@ Let $R(s,a)$ specify the admissible randomized outputs for a state $s$, where $a
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-This is again a named specialization of Corollary~\ref{cor:relational-output-transfer}. Randomization changes the output object, not the meaning of correctness: correctness still means exact agreement with the admissible-output relation on those randomized outputs.
+This is again a named specialization of Corollary~\ref{cor:relational-output-transfer}. Randomization changes the output object, not the meaning of correctness: correctness still means exact agreement with the admissible-output relation on those randomized outputs, not deterministic singleton output semantics.
 \end{proof}
 
 \begin{corollary}[Randomized-Output Guarantee Semantics Inherit the Closure-Orbit Consequences]\label{cor:randomized-guarantee-closure-consequences}
@@ -493,7 +504,7 @@ Let $R(s,a)$ specify the admissible outputs for an exact approximation specifica
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-This is the approximation-specialized form of Corollary~\ref{cor:relational-output-transfer}. Approximation enters only through the specification: once the admissible-output relation says which outputs meet the guarantee, correctness with respect to that approximation specification is exact agreement with that relation.
+This is the approximation-specialized form of Corollary~\ref{cor:relational-output-transfer}. Approximation enters only through the specification: once the admissible-output relation says which outputs meet the guarantee, correctness with respect to that approximation specification is exact agreement with that relation, not zero approximation error.
 \end{proof}
 
 \leanmetapending{\LH{FR263}, \LH{FR266}}

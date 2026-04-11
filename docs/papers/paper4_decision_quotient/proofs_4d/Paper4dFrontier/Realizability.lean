@@ -1013,6 +1013,17 @@ theorem exactSemanticsQuotient_universal_characterization
     · intro i
       exact relevance_is_erased_failure_of_refinement (S := S) (A := A) (n := n) R i
 
+/-- Here `exact` means exact agreement with the validity relation itself. The
+relation may encode approximation thresholds, randomized outputs, statistical
+guarantees, or failure states. -/
+theorem exactnessMeansExactAgreementWithValidity
+    (Valid : S → A → Prop) :
+    outputSemanticsExactRelevanceProfile (S := S) (A := A) (n := n) Valid =
+      decisionProblemExactRelevanceProfile (n := n)
+        (exactSemanticsDecisionProblem (S := S) (A := A) Valid) := by
+  exact outputSemanticsExactRelevanceProfile_eq_exactSemanticsDecisionProblem
+    (S := S) (A := A) (n := n) Valid
+
 end DeterministicRelationRealizability
 
 end RelationalSemanticsTransfer

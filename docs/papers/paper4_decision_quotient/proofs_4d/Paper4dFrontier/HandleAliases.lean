@@ -390,6 +390,7 @@ abbrev FR342 := @sufficiency_is_relation_refinement
 abbrev FR343 := @relevance_is_erased_failure_of_refinement
 abbrev FR344 := @outputSemanticsExactRelevanceProfile_eq_exactSemanticsDecisionProblem
 abbrev FR345 := @exactSemanticsQuotient_universal_characterization
+abbrev FR346 := @exactnessMeansExactAgreementWithValidity
 abbrev FR110 := @parentTreeStructured_implies_treeStructured
 abbrev FR111 := @treeStructured_and_unique_parent_iff_parentTreeStructured
 abbrev FR102 := @completeGraph_not_realTreewidth_le_of_large
