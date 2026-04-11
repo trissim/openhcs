@@ -252,7 +252,7 @@ Apply the same correctness-on-domain theorem to the two canonical compute-cost f
 Thus the forced-invariance argument applies not only to exact-certification predicates, but also to all three canonical output-production tasks treated in the compute-cost layer.\leanmeta{\LHrng{FR}{245}{249}, \LHrng{FR}{259}{262}}
 
 \begin{corollary}[Compute-Cost Version: External Output Objects]\label{cor:external-output-compute-classifier-forces-invariance}
-Let $X$ be an external output class whose admissibility relation is preserved under the closure laws by pullback on states and identity on outputs. Then any correct classifier for polynomial-time search over admissible $X$-outputs on a closure-closed domain must agree on closure orbits, and the same orbit-gap no-go applies.\leanmeta{\LHrng{FR}{309}{321}}
+Let $X$ be an external output class whose admissibility relation is preserved under the closure laws by pullback on states and identity on outputs. Then any correct classifier for polynomial-time search over admissible $X$-outputs on a closure-closed domain must agree on closure orbits, and the same orbit-gap no-go applies.\leanmeta{\LHrng{FR}{316}{328}}
 \end{corollary}
 
 \begin{proof}[Proof sketch]
@@ -260,7 +260,7 @@ The generic external-output compute-cost layer transports only the input state; 
 \end{proof}
 
 \begin{corollary}[Compute-Cost Version: Representation-Relative Output Objects]\label{cor:transported-output-compute-classifier-forces-invariance}
-Let $X_U$ be a representation-relative output object whose type and admissibility relation may vary with the representation $U$, and suppose each closure witness carries an explicit output transport preserving admissibility. Then any correct classifier for polynomial-time search over admissible $X_U$-outputs on a closure-closed domain must agree on closure orbits, and the same orbit-gap no-go applies. The artifact includes named instances for representation-relative hypotheses, estimators, policies, and randomized procedures.\leanmeta{\LHrng{FR}{319}{329}}
+Let $X_U$ be a representation-relative output object whose type and admissibility relation may vary with the representation $U$, and suppose each closure witness carries an explicit output transport preserving admissibility. Then any correct classifier for polynomial-time search over admissible $X_U$-outputs on a closure-closed domain must agree on closure orbits, and the same orbit-gap no-go applies. The artifact includes named instances for representation-relative hypotheses, estimators, policies, and randomized procedures.\leanmeta{\LHrng{FR}{326}{336}}
 \end{corollary}
 
 \begin{proof}[Proof sketch]
@@ -376,6 +376,24 @@ Every finite-state exact output specification admits a coordinate presentation. 
 
 \begin{proof}[Proof sketch]
 For a finite state space, assign one Boolean coordinate to each state and record whether the current state is that state. Agreement on all coordinates is then equality of states, so the presentation is exact. The artifact formalizes this indicator-coordinate presentation and shows that the resulting exact relevance profile is exactly the one carried by the induced decision problem.
+\end{proof}
+
+\leanmetapending{\LHrng{FR}{311}{313}}
+\begin{proposition}[Countable Exact Specifications Admit Countable Boolean Presentations]\label{prop:countable-specifications-admit-countable-boolean-presentations}
+Every exact output specification on an encodable state space admits a countable Boolean presentation. If the state space is countable and carries the discrete measurable or discrete topological structure, this presentation can be chosen measurable or continuous, respectively.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Encode each state by a natural number and use its binary digits as Boolean coordinates indexed by $\mathbb{N}$. Equality of all bits is equality of encodings, hence equality of states. In the discrete measurable and discrete topological settings, each coordinate map is measurable or continuous automatically.
+\end{proof}
+
+\leanmetapending{\LHrng{FR}{314}{315}}
+\begin{proposition}[Finite Exact Specifications Admit Low-Dimensional Boolean Presentations]\label{prop:finite-specifications-admit-low-dimensional-boolean-presentations}
+Every finite-state exact output specification admits a Boolean coordinate presentation using only $\mathrm{size}(|S|)$ coordinates, where $\mathrm{size}(|S|)$ is the bit-length of the state-space cardinality. Under this presentation, the exact relevance profile is again realized by exact relevance certification for the induced decision problem.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Index states by $0,\dots,|S|-1$ and use the binary digits of the index as Boolean coordinates. Since every index is less than $2^{\mathrm{size}(|S|)}$, equality of those finitely many bits determines the state. The artifact formalizes this low-dimensional Boolean presentation and identifies the induced exact relevance profile with exact relevance certification.
 \end{proof}
 
 Every exact output specification admits a coordinate presentation, and under that presentation it is in scope as a state-indexed admissible-output relation. This includes decision, counting, search, approximation guarantees, PAC/regret/risk guarantees, anytime or finite-horizon guarantees, randomized-output guarantees, distributional specifications, and any other specification stated by the outputs that count as correct at each state.

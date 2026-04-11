@@ -1,6 +1,10 @@
 import DecisionQuotient.Quotient
 import DecisionQuotient.Sufficiency
 import DecisionQuotient.UniverseObjective
+import Mathlib.MeasureTheory.MeasurableSpace.Basic
+import Mathlib.Topology.Basic
+import Mathlib.Data.Nat.Bitwise
+import Mathlib.Data.Nat.Size
 import Mathlib.Tactic
 
 namespace Paper4dFrontier
@@ -633,7 +637,178 @@ theorem outputSemantics_admits_coordinatePresentation
   exact outputSemanticsExactRelevanceProfile_eq_totalizedLawDecisionProblem
     (S := S) (A := A) (n := 1) R hGap
 
+structure MeasurableCoordinatePresentation (S : Type*) [MeasurableSpace S] where
+  Coord : Type*
+  measurableCoord : MeasurableSpace Coord
+  proj : S → Coord
+  measurable_proj : Measurable proj
+
+attribute [instance] MeasurableCoordinatePresentation.measurableCoord
+
+structure ContinuousCoordinatePresentation (S : Type*) [TopologicalSpace S] where
+  Coord : Type*
+  topologicalCoord : TopologicalSpace Coord
+  proj : S → Coord
+  continuous_proj : Continuous proj
+
+attribute [instance] ContinuousCoordinatePresentation.topologicalCoord
+
+def singletonMeasurableCoordinatePresentation (S : Type*) [MeasurableSpace S] :
+    MeasurableCoordinatePresentation S where
+  Coord := S
+  measurableCoord := inferInstance
+  proj := id
+  measurable_proj := measurable_id
+
+def singletonContinuousCoordinatePresentation (S : Type*) [TopologicalSpace S] :
+    ContinuousCoordinatePresentation S where
+  Coord := S
+  topologicalCoord := inferInstance
+  proj := id
+  continuous_proj := continuous_id
+
+theorem outputSemantics_realized_by_singletonMeasurableCoordinatePresentation
+    {S : Type*} [MeasurableSpace S] {A : Type*} (R : S → A → Prop)
+    {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed) :
+    let P := singletonMeasurableCoordinatePresentation S
+    letI : CoordinateSpace S 1 := singletonIdentityCoordinateSpace S
+    outputSemanticsExactRelevanceProfile (S := S) (A := A) (n := 1) R =
+      decisionProblemExactRelevanceProfile (n := 1)
+        (lawDecisionProblem (totalizedPayloadDynamics (outputSemantics R))
+          uAllowed uBlocked) := by
+  letI : CoordinateSpace S 1 := singletonIdentityCoordinateSpace S
+  exact outputSemantics_admits_coordinatePresentation (S := S) (A := A) R hGap
+
+theorem outputSemantics_realized_by_singletonContinuousCoordinatePresentation
+    {S : Type*} [TopologicalSpace S] {A : Type*} (R : S → A → Prop)
+    {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed) :
+    let P := singletonContinuousCoordinatePresentation S
+    letI : CoordinateSpace S 1 := singletonIdentityCoordinateSpace S
+    outputSemanticsExactRelevanceProfile (S := S) (A := A) (n := 1) R =
+      decisionProblemExactRelevanceProfile (n := 1)
+        (lawDecisionProblem (totalizedPayloadDynamics (outputSemantics R))
+          uAllowed uBlocked) := by
+  letI : CoordinateSpace S 1 := singletonIdentityCoordinateSpace S
+  exact outputSemantics_admits_coordinatePresentation (S := S) (A := A) R hGap
+
 end SingletonCoordinatePresentation
+
+section BooleanPresentation
+
+structure CountableBooleanPresentation (S : Type*) where
+  bit : S → ℕ → Bool
+  separates : ∀ s s' : S, (∀ i : ℕ, bit s i = bit s' i) ↔ s = s'
+
+structure MeasurableCountableBooleanPresentation (S : Type*) [MeasurableSpace S]
+    extends CountableBooleanPresentation S where
+  measurable_bit : ∀ i : ℕ, Measurable (fun s => bit s i)
+
+structure ContinuousCountableBooleanPresentation (S : Type*) [TopologicalSpace S]
+    extends CountableBooleanPresentation S where
+  continuous_bit : ∀ i : ℕ, Continuous (fun s => bit s i)
+
+def encodableBooleanPresentation (S : Type*) [Encodable S] : CountableBooleanPresentation S where
+  bit := fun s i => Nat.testBit (Encodable.encode s) i
+  separates := by
+    intro s s'
+    constructor
+    · intro h
+      apply Encodable.encode_injective
+      exact Nat.eq_of_testBit_eq (fun i => h i)
+    · intro h i
+      simpa [h]
+
+theorem encodable_stateSpace_admits_countableBooleanPresentation
+    (S : Type*) [Encodable S] :
+    ∃ P : CountableBooleanPresentation S, True :=
+  ⟨encodableBooleanPresentation S, trivial⟩
+
+def encodableDiscreteMeasurableBooleanPresentation
+    (S : Type*) [Encodable S] [MeasurableSpace S] [DiscreteMeasurableSpace S] :
+    MeasurableCountableBooleanPresentation S where
+  toCountableBooleanPresentation := encodableBooleanPresentation S
+  measurable_bit := by
+    intro i
+    exact Measurable.of_discrete
+
+theorem encodable_discreteMeasurable_stateSpace_admits_measurable_countableBooleanPresentation
+    (S : Type*) [Encodable S] [MeasurableSpace S] [DiscreteMeasurableSpace S] :
+    ∃ P : MeasurableCountableBooleanPresentation S, True :=
+  ⟨encodableDiscreteMeasurableBooleanPresentation S, trivial⟩
+
+def encodableDiscreteContinuousBooleanPresentation
+    (S : Type*) [Encodable S] [TopologicalSpace S] [DiscreteTopology S] :
+    ContinuousCountableBooleanPresentation S where
+  toCountableBooleanPresentation := encodableBooleanPresentation S
+  continuous_bit := by
+    intro i
+    exact continuous_of_discreteTopology
+
+theorem encodable_discreteTopological_stateSpace_admits_continuous_countableBooleanPresentation
+    (S : Type*) [Encodable S] [TopologicalSpace S] [DiscreteTopology S] :
+    ∃ P : ContinuousCountableBooleanPresentation S, True :=
+  ⟨encodableDiscreteContinuousBooleanPresentation S, trivial⟩
+
+noncomputable def finiteBinaryCoordinateSpace (S : Type*) [Fintype S] [DecidableEq S] :
+    CoordinateSpace S (Nat.size (Fintype.card S)) where
+  Coord := fun _ => Bool
+  proj := fun s i => Nat.testBit (Fintype.equivFin S s) i
+
+theorem agreeOn_univ_iff_eq_of_finiteBinaryCoordinateSpace
+    (S : Type*) [Fintype S] [DecidableEq S] {s s' : S} :
+    letI : CoordinateSpace S (Nat.size (Fintype.card S)) := finiteBinaryCoordinateSpace S
+    agreeOn s s' (Finset.univ : Finset (Fin (Nat.size (Fintype.card S)))) ↔ s = s' := by
+  classical
+  letI : CoordinateSpace S (Nat.size (Fintype.card S)) := finiteBinaryCoordinateSpace S
+  constructor
+  · intro h
+    apply (Fintype.equivFin S).injective
+    apply Fin.ext
+    exact Nat.eq_of_testBit_eq (fun i => by
+      by_cases hi : i < Nat.size (Fintype.card S)
+      · let j : Fin (Nat.size (Fintype.card S)) := ⟨i, hi⟩
+        have hj : j ∈ (Finset.univ : Finset (Fin (Nat.size (Fintype.card S)))) := by simp
+        simpa [finiteBinaryCoordinateSpace, j] using h j hj
+      · have hslt : (Fintype.equivFin S s : ℕ) < 2 ^ Nat.size (Fintype.card S) := by
+          exact lt_of_lt_of_le (show (Fintype.equivFin S s : ℕ) < Fintype.card S from
+            (Fintype.equivFin S s).is_lt) (Nat.lt_size_self _).le
+        have hs'lt : (Fintype.equivFin S s' : ℕ) < 2 ^ Nat.size (Fintype.card S) := by
+          exact lt_of_lt_of_le (show (Fintype.equivFin S s' : ℕ) < Fintype.card S from
+            (Fintype.equivFin S s').is_lt) (Nat.lt_size_self _).le
+        have hsizele : Nat.size (Fintype.card S) ≤ i := Nat.le_of_not_gt hi
+        have hfalse : Nat.testBit (Fintype.equivFin S s) i = false :=
+          Nat.testBit_eq_false_of_lt <|
+            lt_of_lt_of_le hslt (Nat.pow_le_pow_right (by decide) hsizele)
+        have hfalse' : Nat.testBit (Fintype.equivFin S s') i = false :=
+          Nat.testBit_eq_false_of_lt <|
+            lt_of_lt_of_le hs'lt (Nat.pow_le_pow_right (by decide) hsizele)
+        rw [hfalse, hfalse'])
+  · intro h i hi
+    simpa [h]
+
+theorem finite_outputSemantics_realized_by_lowDimExactCertification
+    (S : Type*) [Fintype S] [DecidableEq S] {A : Type*} (R : S → A → Prop)
+    {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed) :
+    letI : CoordinateSpace S (Nat.size (Fintype.card S)) := finiteBinaryCoordinateSpace S
+    outputSemanticsExactRelevanceProfile (S := S) (A := A) (n := Nat.size (Fintype.card S)) R =
+      decisionProblemExactRelevanceProfile (n := Nat.size (Fintype.card S))
+        (lawDecisionProblem (totalizedPayloadDynamics (outputSemantics R))
+          uAllowed uBlocked) := by
+  letI : CoordinateSpace S (Nat.size (Fintype.card S)) := finiteBinaryCoordinateSpace S
+  exact outputSemanticsExactRelevanceProfile_eq_totalizedLawDecisionProblem
+    (S := S) (A := A) (n := Nat.size (Fintype.card S)) R hGap
+
+theorem finite_exactSpecification_admits_lowDimBooleanPresentation
+    (S : Type*) [Fintype S] [DecidableEq S] {A : Type*} (R : S → A → Prop)
+    {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed) :
+    letI : CoordinateSpace S (Nat.size (Fintype.card S)) := finiteBinaryCoordinateSpace S
+    outputSemanticsExactRelevanceProfile (S := S) (A := A) (n := Nat.size (Fintype.card S)) R =
+      decisionProblemExactRelevanceProfile (n := Nat.size (Fintype.card S))
+        (lawDecisionProblem (totalizedPayloadDynamics (outputSemantics R))
+          uAllowed uBlocked) :=
+  finite_outputSemantics_realized_by_lowDimExactCertification (S := S) (A := A) R hGap
+
+end BooleanPresentation
 
 section DeterministicRelationRealizability
 
