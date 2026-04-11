@@ -602,6 +602,39 @@ theorem finite_outputSemantics_realized_by_exactCertification
 
 end FiniteCoordinatePresentation
 
+section SingletonCoordinatePresentation
+
+noncomputable def singletonIdentityCoordinateSpace (S : Type*) : CoordinateSpace S 1 where
+  Coord := fun _ => S
+  proj := fun s _ => s
+
+theorem agreeOn_univ_iff_eq_of_singletonIdentityCoordinateSpace
+    (S : Type*) {s s' : S} :
+    letI : CoordinateSpace S 1 := singletonIdentityCoordinateSpace S
+    agreeOn s s' (Finset.univ : Finset (Fin 1)) ↔ s = s' := by
+  letI : CoordinateSpace S 1 := singletonIdentityCoordinateSpace S
+  constructor
+  · intro h
+    have h0 := h 0 (by simp)
+    simpa [singletonIdentityCoordinateSpace] using h0
+  · intro h i hi
+    fin_cases i
+    simpa [singletonIdentityCoordinateSpace, h]
+
+theorem outputSemantics_admits_coordinatePresentation
+    {S : Type*} {A : Type*} (R : S → A → Prop)
+    {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed) :
+    letI : CoordinateSpace S 1 := singletonIdentityCoordinateSpace S
+    outputSemanticsExactRelevanceProfile (S := S) (A := A) (n := 1) R =
+      decisionProblemExactRelevanceProfile (n := 1)
+        (lawDecisionProblem (totalizedPayloadDynamics (outputSemantics R))
+          uAllowed uBlocked) := by
+  letI : CoordinateSpace S 1 := singletonIdentityCoordinateSpace S
+  exact outputSemanticsExactRelevanceProfile_eq_totalizedLawDecisionProblem
+    (S := S) (A := A) (n := 1) R hGap
+
+end SingletonCoordinatePresentation
+
 section DeterministicRelationRealizability
 
 variable {T : Type*}

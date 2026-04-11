@@ -251,6 +251,14 @@ Apply the same correctness-on-domain theorem to the two canonical compute-cost f
 
 Thus the forced-invariance argument applies not only to exact-certification predicates, but also to all three canonical output-production tasks treated in the compute-cost layer.\leanmeta{\LHrng{FR}{245}{249}, \LHrng{FR}{259}{262}}
 
+\begin{corollary}[Compute-Cost Version: External Output Objects]\label{cor:external-output-compute-classifier-forces-invariance}
+Let $X$ be an external output class whose admissibility relation is preserved under the closure laws by pullback on states and identity on outputs. Then any correct classifier for polynomial-time search over admissible $X$-outputs on a closure-closed domain must agree on closure orbits, and the same orbit-gap no-go applies. The artifact includes named instances for hypotheses, estimators, policies, and randomized procedures.\leanmeta{\LHrng{FR}{309}{318}}
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+The generic external-output compute-cost layer transports only the input state; the output object itself is unchanged. Once the admissibility relation respects those state pullbacks, the same correctness-on-domain theorem applies. The named hypothesis, estimator, policy, and randomized-procedure corollaries are direct instances of this generic layer.
+\end{proof}
+
 This answers the natural objection that Section~\ref{sec:frontier-program} excludes only classifiers that advertise closure invariance as an explicit axiom. Correctness already forces the same orbit agreement. The closure laws therefore supply the representation-level congruence needed for the orbit-gap program: once two slices are related by these theorem-forced presentation equivalences, any correct tractability classifier must identify them. Theorem~\ref{thm:closure-sound-package-no-go} therefore applies to any correct classifier on a closure-closed domain once the target notion is tractability itself: if the classifier separates same-orbit witnesses, it is simply wrong on at least one of them.
 
 \leanmetapending{\LH{FR200}}
@@ -344,9 +352,18 @@ Every state-indexed admissible-output relation induces a canonical exact relevan
 Corollary~\ref{cor:relational-output-transfer} identifies the sufficient-coordinate family and relevant-coordinate set of the semantics with those of the induced exact-certification decision problem. The quotient-level theorems then show that these two objects depend only on admissible-output equivalence.
 \end{proof}
 
+\leanmetapending{\LHrng{FR}{307}{308}}
+\begin{proposition}[Every Exact Specification Admits a Coordinate Presentation]\label{prop:every-exact-specification-admits-coordinate-presentation}
+Every exact output specification admits a coordinate presentation. In the weakest form, one may take the entire state as a single coordinate. Under this presentation, the exact relevance profile of the specification is realized by exact relevance certification for the induced decision problem.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Use a one-coordinate presentation whose unique coordinate is the state itself. Agreement on that coordinate is equality of states, so the coordinate presentation is exact. The artifact then identifies the resulting exact relevance profile with the one carried by the induced exact-certification decision problem.
+\end{proof}
+
 \leanmetapending{\LHrng{FR}{304}{306}}
 \begin{proposition}[Finite Exact Specifications Admit Coordinate Presentations]\label{prop:finite-specifications-admit-coordinate-presentations}
-Every finite-state exact output specification admits a coordinate presentation. Concretely, if the state space is finite, one may index coordinates by states and use state-indicator bits as the coordinate map. Under this presentation, the exact relevance profile of the specification is realized by exact relevance certification for the induced decision problem.
+Every finite-state exact output specification admits a coordinate presentation. Concretely, if the state space is finite, one may index coordinates by states and use state-indicator bits as the coordinate map. Under this presentation, the exact relevance profile of the specification is realized by exact relevance certification for the induced decision problem. This strengthens Proposition~\ref{prop:every-exact-specification-admits-coordinate-presentation} by replacing the trivial one-coordinate presentation with a finite Boolean one.
 \end{proposition}
 
 \begin{proof}[Proof sketch]

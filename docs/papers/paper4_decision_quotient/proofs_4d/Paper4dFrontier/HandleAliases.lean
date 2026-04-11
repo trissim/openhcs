@@ -36,6 +36,7 @@ import Paper4dFrontier.FamilyAxioms
 import Paper4dFrontier.ClosureLaws
 import Paper4dFrontier.ApproximateAdmissibility
 import Paper4dFrontier.ComputeCostInvariance
+import Paper4dFrontier.ComputeCostExternalOutputs
 import Paper4dFrontier.ComputeCostPayloads
 import Paper4dFrontier.ComputeCostApplications
 import Paper4dFrontier.StatisticalSemanticsApplications
@@ -350,6 +351,18 @@ abbrev FR303 := @outputSemanticsExactRelevanceProfile_eq_totalizedLawDecisionPro
 abbrev FR304 := @agreeOn_univ_iff_eq_of_finiteIndicatorCoordinateSpace
 abbrev FR305 := @finite_outputSemantics_allCoordinatesSufficient
 abbrev FR306 := @finite_outputSemantics_realized_by_exactCertification
+abbrev FR307 := @agreeOn_univ_iff_eq_of_singletonIdentityCoordinateSpace
+abbrev FR308 := @outputSemantics_admits_coordinatePresentation
+abbrev FR309 := @IdentityOutputClosureSpec.classifier_agrees_on_closureEquivalent_of_correctOnDomain
+abbrev FR310 := @IdentityOutputClosureSpec.no_correctOnDomain_classifier_of_orbit_gap
+abbrev FR311 := @hypothesisOutput_classifier_agrees_on_closureEquivalent_of_correctOnDomain
+abbrev FR312 := @estimatorOutput_classifier_agrees_on_closureEquivalent_of_correctOnDomain
+abbrev FR313 := @policyOutput_classifier_agrees_on_closureEquivalent_of_correctOnDomain
+abbrev FR314 := @randomizedProcedure_classifier_agrees_on_closureEquivalent_of_correctOnDomain
+abbrev FR315 := @no_correctOnDomain_hypothesisOutput_classifier_of_orbit_gap
+abbrev FR316 := @no_correctOnDomain_estimatorOutput_classifier_of_orbit_gap
+abbrev FR317 := @no_correctOnDomain_policyOutput_classifier_of_orbit_gap
+abbrev FR318 := @no_correctOnDomain_randomizedProcedure_classifier_of_orbit_gap
 abbrev FR110 := @parentTreeStructured_implies_treeStructured
 abbrev FR111 := @treeStructured_and_unique_parent_iff_parentTreeStructured
 abbrev FR102 := @completeGraph_not_realTreewidth_le_of_large
