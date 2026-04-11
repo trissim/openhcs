@@ -54,6 +54,7 @@ import Paper4dFrontier.BoundedTreewidthOnlyWitness
 import Paper4dFrontier.Classification
 import Paper4dFrontier.ClosureLaws
 import Paper4dFrontier.ComputeCostApplications
+import Paper4dFrontier.ComputeCostExternalOutputs
 import Paper4dFrontier.ComputeCostInvariance
 import Paper4dFrontier.ComputeCostPayloads
 import Paper4dFrontier.DecisionRelevantPairwiseDichotomy

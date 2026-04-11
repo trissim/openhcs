@@ -8,7 +8,7 @@ open DecisionQuotient
 
 /-- A compute problem over the state space of a fixed slice. -/
 structure SliceComputeProblem (U : BinaryPairwiseSlice) where
-  Output : Type
+  Output : Type _
   admissible : SliceState U → Output → Prop
 
 /-- A counted solver for a fixed slice-level compute problem. -/
@@ -196,13 +196,13 @@ theorem ClosureTransportFamily.no_correctOnDomain_compute_classifier_of_orbit_ga
 
 /-- Deterministic payload computation. -/
 def deterministicPayloadProblem {U : BinaryPairwiseSlice}
-    (T : Type) (φ : SliceState U → T) : SliceComputeProblem U where
+    (T : Type _) (φ : SliceState U → T) : SliceComputeProblem U where
   Output := T
   admissible s t := t = φ s
 
 /-- Admissible-output search for an arbitrary admissible-output relation. -/
 def admissibleOutputSearchProblem {U : BinaryPairwiseSlice}
-    (T : Type) (R : SliceState U → T → Prop) : SliceComputeProblem U where
+    (T : Type _) (R : SliceState U → T → Prop) : SliceComputeProblem U where
   Output := T
   admissible := R
 

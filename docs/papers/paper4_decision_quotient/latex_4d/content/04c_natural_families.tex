@@ -252,11 +252,19 @@ Apply the same correctness-on-domain theorem to the two canonical compute-cost f
 Thus the forced-invariance argument applies not only to exact-certification predicates, but also to all three canonical output-production tasks treated in the compute-cost layer.\leanmeta{\LHrng{FR}{245}{249}, \LHrng{FR}{259}{262}}
 
 \begin{corollary}[Compute-Cost Version: External Output Objects]\label{cor:external-output-compute-classifier-forces-invariance}
-Let $X$ be an external output class whose admissibility relation is preserved under the closure laws by pullback on states and identity on outputs. Then any correct classifier for polynomial-time search over admissible $X$-outputs on a closure-closed domain must agree on closure orbits, and the same orbit-gap no-go applies. The artifact includes named instances for hypotheses, estimators, policies, and randomized procedures.\leanmeta{\LHrng{FR}{309}{318}}
+Let $X$ be an external output class whose admissibility relation is preserved under the closure laws by pullback on states and identity on outputs. Then any correct classifier for polynomial-time search over admissible $X$-outputs on a closure-closed domain must agree on closure orbits, and the same orbit-gap no-go applies.\leanmeta{\LHrng{FR}{309}{321}}
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-The generic external-output compute-cost layer transports only the input state; the output object itself is unchanged. Once the admissibility relation respects those state pullbacks, the same correctness-on-domain theorem applies. The named hypothesis, estimator, policy, and randomized-procedure corollaries are direct instances of this generic layer.
+The generic external-output compute-cost layer transports only the input state; the output object itself is unchanged. Once the admissibility relation respects those state pullbacks, the same correctness-on-domain theorem applies.
+\end{proof}
+
+\begin{corollary}[Compute-Cost Version: Representation-Relative Output Objects]\label{cor:transported-output-compute-classifier-forces-invariance}
+Let $X_U$ be a representation-relative output object whose type and admissibility relation may vary with the representation $U$, and suppose each closure witness carries an explicit output transport preserving admissibility. Then any correct classifier for polynomial-time search over admissible $X_U$-outputs on a closure-closed domain must agree on closure orbits, and the same orbit-gap no-go applies. The artifact includes named instances for representation-relative hypotheses, estimators, policies, and randomized procedures.\leanmeta{\LHrng{FR}{319}{329}}
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+This is the transported-output generalization of Corollary~\ref{cor:external-output-compute-classifier-forces-invariance}. The generic transported-output compute-cost layer packages the witness-by-witness output maps together with the corresponding admissibility preservation laws, and the same correctness-on-domain theorem then applies. The named representation-relative hypothesis, estimator, policy, and randomized-procedure corollaries are direct instances.
 \end{proof}
 
 This answers the natural objection that Section~\ref{sec:frontier-program} excludes only classifiers that advertise closure invariance as an explicit axiom. Correctness already forces the same orbit agreement. The closure laws therefore supply the representation-level congruence needed for the orbit-gap program: once two slices are related by these theorem-forced presentation equivalences, any correct tractability classifier must identify them. Theorem~\ref{thm:closure-sound-package-no-go} therefore applies to any correct classifier on a closure-closed domain once the target notion is tractability itself: if the classifier separates same-orbit witnesses, it is simply wrong on at least one of them.
@@ -370,7 +378,7 @@ Every finite-state exact output specification admits a coordinate presentation. 
 For a finite state space, assign one Boolean coordinate to each state and record whether the current state is that state. Agreement on all coordinates is then equality of states, so the presentation is exact. The artifact formalizes this indicator-coordinate presentation and shows that the resulting exact relevance profile is exactly the one carried by the induced decision problem.
 \end{proof}
 
-Any output specification is in scope once written as a state-indexed admissible-output relation. This includes decision, counting, search, approximation guarantees, PAC/regret/risk guarantees, anytime or finite-horizon guarantees, randomized-output guarantees, distributional specifications, and any other specification stated by the outputs that count as correct at each state.
+Every exact output specification admits a coordinate presentation, and under that presentation it is in scope as a state-indexed admissible-output relation. This includes decision, counting, search, approximation guarantees, PAC/regret/risk guarantees, anytime or finite-horizon guarantees, randomized-output guarantees, distributional specifications, and any other specification stated by the outputs that count as correct at each state.
 
 \leanmetapending{\LHrng{FR}{268}{282}}
 \begin{corollary}[Statistical Guarantee Semantics Transfer]\label{cor:statistical-guarantee-transfer}
