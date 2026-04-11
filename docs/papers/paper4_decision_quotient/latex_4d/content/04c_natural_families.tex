@@ -335,6 +335,24 @@ Let $R(s,a)$ be any state-indexed admissible-output relation. Then exact feature
 Write $F(s)=\{a : R(s,a)\}$. This is exactly the arbitrary set-valued case of Corollary~\ref{cor:totalized-set-valued-payload-transfer}. The relation form is only a notational repackaging of the same theorem.
 \end{proof}
 
+\leanmetapending{\LHrng{FR}{302}{303}}
+\begin{proposition}[Canonical Exact Relevance Profile]\label{prop:canonical-exact-relevance-profile}
+Every state-indexed admissible-output relation induces a canonical exact relevance profile, consisting of its sufficient-coordinate family and relevant-coordinate set. This profile is realized by exact relevance certification for the induced decision problem, and it depends only on admissible-output equivalence.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Corollary~\ref{cor:relational-output-transfer} identifies the sufficient-coordinate family and relevant-coordinate set of the semantics with those of the induced exact-certification decision problem. The quotient-level theorems then show that these two objects depend only on admissible-output equivalence.
+\end{proof}
+
+\leanmetapending{\LHrng{FR}{304}{306}}
+\begin{proposition}[Finite Exact Specifications Admit Coordinate Presentations]\label{prop:finite-specifications-admit-coordinate-presentations}
+Every finite-state exact output specification admits a coordinate presentation. Concretely, if the state space is finite, one may index coordinates by states and use state-indicator bits as the coordinate map. Under this presentation, the exact relevance profile of the specification is realized by exact relevance certification for the induced decision problem.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+For a finite state space, assign one Boolean coordinate to each state and record whether the current state is that state. Agreement on all coordinates is then equality of states, so the presentation is exact. The artifact formalizes this indicator-coordinate presentation and shows that the resulting exact relevance profile is exactly the one carried by the induced decision problem.
+\end{proof}
+
 Any output specification is in scope once written as a state-indexed admissible-output relation. This includes decision, counting, search, approximation guarantees, PAC/regret/risk guarantees, anytime or finite-horizon guarantees, randomized-output guarantees, distributional specifications, and any other specification stated by the outputs that count as correct at each state.
 
 \leanmetapending{\LHrng{FR}{268}{282}}

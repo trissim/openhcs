@@ -493,6 +493,19 @@ def outputSemanticsSufficientSets (R : S → A → Prop) : Set (Finset (Fin n)) 
 def outputSemanticsRelevantSet (R : S → A → Prop) : Set (Fin n) :=
   { i | setValuedPayloadRelevant (outputSemantics R) i }
 
+structure ExactRelevanceProfile (n : ℕ) where
+  sufficientSets : Set (Finset (Fin n))
+  relevantSet : Set (Fin n)
+
+def outputSemanticsExactRelevanceProfile (R : S → A → Prop) : ExactRelevanceProfile n where
+  sufficientSets := outputSemanticsSufficientSets R
+  relevantSet := outputSemanticsRelevantSet R
+
+def decisionProblemExactRelevanceProfile {B : Type*}
+    (D : DecisionProblem B S) : ExactRelevanceProfile n where
+  sufficientSets := D.sufficientSets
+  relevantSet := D.relevantSet
+
 theorem outputSemanticsSufficientSets_eq_of_outputSemanticsEquivalent
     {R R' : S → A → Prop} (hEqv : outputSemanticsEquivalent R R') :
     outputSemanticsSufficientSets R = outputSemanticsSufficientSets R' := by
@@ -504,6 +517,90 @@ theorem outputSemanticsRelevantSet_eq_of_outputSemanticsEquivalent
     outputSemanticsRelevantSet R = outputSemanticsRelevantSet R' := by
   ext i
   exact setValuedPayloadRelevant_congr_outputSemanticsEquivalent hEqv i
+
+theorem outputSemanticsExactRelevanceProfile_eq_of_outputSemanticsEquivalent
+    {R R' : S → A → Prop} (hEqv : outputSemanticsEquivalent R R') :
+    outputSemanticsExactRelevanceProfile (S := S) (A := A) (n := n) R =
+      outputSemanticsExactRelevanceProfile (S := S) (A := A) (n := n) R' := by
+  unfold outputSemanticsExactRelevanceProfile
+  rw [outputSemanticsSufficientSets_eq_of_outputSemanticsEquivalent hEqv,
+    outputSemanticsRelevantSet_eq_of_outputSemanticsEquivalent hEqv]
+
+theorem outputSemanticsExactRelevanceProfile_eq_totalizedLawDecisionProblem
+    (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed) :
+    outputSemanticsExactRelevanceProfile (S := S) (A := A) (n := n) R =
+      decisionProblemExactRelevanceProfile (n := n)
+        (lawDecisionProblem (totalizedPayloadDynamics (outputSemantics R)) uAllowed uBlocked) := by
+  unfold outputSemanticsExactRelevanceProfile decisionProblemExactRelevanceProfile
+  have hSuff : outputSemanticsSufficientSets (S := S) (A := A) (n := n) R =
+      (lawDecisionProblem (totalizedPayloadDynamics (outputSemantics R)) uAllowed uBlocked).sufficientSets := by
+    ext I
+    exact outputSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
+      (R := R) hGap I
+  have hRel : outputSemanticsRelevantSet (S := S) (A := A) (n := n) R =
+      (lawDecisionProblem (totalizedPayloadDynamics (outputSemantics R)) uAllowed uBlocked).relevantSet := by
+    ext i
+    exact outputSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
+      (R := R) hGap i
+  rw [hSuff, hRel]
+
+section FiniteCoordinatePresentation
+
+open Classical
+
+noncomputable def finiteIndicatorCoordinateSpace (S : Type*) [Fintype S] :
+    CoordinateSpace S (Fintype.card S) where
+  Coord := fun _ => Bool
+  proj := fun s i => (Fintype.equivFin S s = i)
+
+theorem agreeOn_univ_iff_eq_of_finiteIndicatorCoordinateSpace
+    (S : Type*) [Fintype S] [DecidableEq S] {s s' : S} :
+    letI : CoordinateSpace S (Fintype.card S) := finiteIndicatorCoordinateSpace S
+    agreeOn s s' (Finset.univ : Finset (Fin (Fintype.card S))) ↔ s = s' := by
+  classical
+  letI : CoordinateSpace S (Fintype.card S) := finiteIndicatorCoordinateSpace S
+  constructor
+  · intro h
+    let i : Fin (Fintype.card S) := Fintype.equivFin S s
+    have hi : i ∈ (Finset.univ : Finset (Fin (Fintype.card S))) := by simp
+    have hproj := h i hi
+    have hbool : (Fintype.equivFin S s = i) = (Fintype.equivFin S s' = i) := by
+      simpa [finiteIndicatorCoordinateSpace] using hproj
+    have hs : Fintype.equivFin S s = i := by simp [i]
+    have hs' : Fintype.equivFin S s' = i := by simpa [← hbool] using hs
+    have hEqv : Fintype.equivFin S s' = Fintype.equivFin S s := hs'.trans hs.symm
+    exact ((Fintype.equivFin S).injective hEqv).symm
+  · intro h i hi
+    simpa [h]
+
+theorem finite_outputSemantics_allCoordinatesSufficient
+    (S : Type*) [Fintype S] [DecidableEq S]
+    {A : Type*} (R : S → A → Prop) :
+    letI : CoordinateSpace S (Fintype.card S) := finiteIndicatorCoordinateSpace S
+    setValuedPayloadSufficient (outputSemantics (S := S) (A := A) R)
+      (Finset.univ : Finset (Fin (Fintype.card S))) := by
+  classical
+  letI : CoordinateSpace S (Fintype.card S) := finiteIndicatorCoordinateSpace S
+  intro s s' hAgree
+  have hEq : s = s' :=
+    (agreeOn_univ_iff_eq_of_finiteIndicatorCoordinateSpace S).1 hAgree
+  simpa [hEq]
+
+theorem finite_outputSemantics_realized_by_exactCertification
+    (S : Type*) [Fintype S] [DecidableEq S]
+    {A : Type*} (R : S → A → Prop)
+    {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed) :
+    letI : CoordinateSpace S (Fintype.card S) := finiteIndicatorCoordinateSpace S
+    outputSemanticsExactRelevanceProfile (S := S) (A := A) (n := Fintype.card S) R =
+      decisionProblemExactRelevanceProfile (n := Fintype.card S)
+        (lawDecisionProblem (totalizedPayloadDynamics (outputSemantics R))
+          uAllowed uBlocked) := by
+  classical
+  letI : CoordinateSpace S (Fintype.card S) := finiteIndicatorCoordinateSpace S
+  exact outputSemanticsExactRelevanceProfile_eq_totalizedLawDecisionProblem
+    (S := S) (A := A) (n := Fintype.card S) R hGap
+
+end FiniteCoordinatePresentation
 
 section DeterministicRelationRealizability
 
