@@ -152,6 +152,35 @@ theorem payloadRelevantSet_eq_realizingProblem_relevantSet
   ext i
   exact payloadRelevant_iff_realizingProblem_isRelevant φ i
 
+/-- Boolean payloads are the two-label special case of deterministic payloads. -/
+theorem booleanPayloadTransfer
+    (φ : S → Bool) :
+    (∀ I : Finset (Fin n),
+      payloadSufficient φ I ↔ (realizingProblem φ).isSufficient I) ∧
+    (∀ i : Fin n,
+      payloadRelevant φ i ↔ (realizingProblem φ).isRelevant i) := by
+  refine ⟨?_, ?_⟩
+  · intro I
+    exact payloadSufficient_iff_realizingProblem_isSufficient φ I
+  · intro i
+    exact payloadRelevant_iff_realizingProblem_isRelevant φ i
+
+/-- Reify a yes/no correctness predicate as a Boolean payload. -/
+def predicatePayload (P : S → Prop) [DecidablePred P] : S → Bool :=
+  fun s => decide (P s)
+
+/-- Exact yes/no predicates reduce definitionally to exact relevance certification
+for their induced Boolean decision problem. -/
+theorem predicateTransfer (P : S → Prop) [DecidablePred P] :
+    (∀ I : Finset (Fin n),
+      payloadSufficient (predicatePayload P) I ↔
+        (realizingProblem (predicatePayload P)).isSufficient I) ∧
+    (∀ i : Fin n,
+      payloadRelevant (predicatePayload P) i ↔
+        (realizingProblem (predicatePayload P)).isRelevant i) := by
+  simpa [predicatePayload] using
+    (booleanPayloadTransfer (S := S) (n := n) (φ := fun s => decide (P s)))
+
 end PayloadTransfer
 
 section SetValuedPayloadTransfer
@@ -368,6 +397,30 @@ relation. -/
 def outputSemantics (R : S → A → Prop) : S → Set A :=
   fun s => { a : A | R s a }
 
+/-- The canonical state equivalence induced by an exact admissible-output semantics. -/
+def exactSemanticsSetoid (R : S → A → Prop) : Setoid S where
+  r s s' := outputSemantics R s = outputSemantics R s'
+  iseqv := by
+    refine ⟨?_, ?_, ?_⟩
+    · intro s
+      rfl
+    · intro s s' h
+      exact h.symm
+    · intro s s' s'' h₁ h₂
+      exact h₁.trans h₂
+
+abbrev ExactSemanticsSetoid (R : S → A → Prop) : Setoid S :=
+  exactSemanticsSetoid (S := S) (A := A) R
+
+/-- The quotient of states by equality of admissible-output classes. -/
+abbrev ExactSemanticsQuotient (R : S → A → Prop) : Type _ :=
+  Quotient (ExactSemanticsSetoid R)
+
+/-- A canonical exact-certification decision problem realizing an exact output
+semantics via a strict allowed-versus-blocked utility gap. -/
+noncomputable def exactSemanticsDecisionProblem (R : S → A → Prop) : DecisionProblem (Option A) S :=
+  lawDecisionProblem (totalizedPayloadDynamics (outputSemantics R)) 1 0
+
 theorem outputSemanticsSufficient_iff_totalizedLawDecisionProblem_isSufficient
     (R : S → A → Prop) {uAllowed uBlocked : ℝ} (hGap : uBlocked < uAllowed)
     (I : Finset (Fin n)) :
@@ -547,6 +600,15 @@ theorem outputSemanticsExactRelevanceProfile_eq_totalizedLawDecisionProblem
     exact outputSemanticsRelevant_iff_totalizedLawDecisionProblem_isRelevant
       (R := R) hGap i
   rw [hSuff, hRel]
+
+theorem outputSemanticsExactRelevanceProfile_eq_exactSemanticsDecisionProblem
+    (R : S → A → Prop) :
+    outputSemanticsExactRelevanceProfile (S := S) (A := A) (n := n) R =
+      decisionProblemExactRelevanceProfile (n := n)
+        (exactSemanticsDecisionProblem (S := S) (A := A) R) := by
+  simpa [exactSemanticsDecisionProblem] using
+    (outputSemanticsExactRelevanceProfile_eq_totalizedLawDecisionProblem
+      (S := S) (A := A) (n := n) R (show (0 : ℝ) < 1 by norm_num))
 
 section FiniteCoordinatePresentation
 
@@ -903,6 +965,53 @@ theorem exists_outputSemantics_realizing_setoid (r : Setoid S) :
   refine ⟨singletonOutputRelation (fun x : S => Quotient.mk r x), ?_⟩
   intro s s'
   exact quotientMap_realizes_setoid_asOutputSemantics r s s'
+
+theorem sufficiency_is_relation_refinement
+    (R : S → A → Prop) (I : Finset (Fin n)) :
+    setValuedPayloadSufficient (outputSemantics R) I ↔
+      relationSufficient (ExactSemanticsSetoid R) I := by
+  rfl
+
+theorem relevance_is_erased_failure_of_refinement
+    (R : S → A → Prop) (i : Fin n) :
+    setValuedPayloadRelevant (outputSemantics R) i ↔
+      ¬ relationSufficient (ExactSemanticsSetoid R)
+        (Finset.univ.erase i) := by
+  constructor
+  · rintro ⟨s, s', hcoords, hneq⟩ hRefine
+    exact hneq (hRefine s s' (by
+      intro j hj
+      exact hcoords j (Finset.mem_erase.mp hj).1))
+  · intro hNotSuff
+    by_contra hNotRel
+    apply hNotSuff
+    intro s s' hagree
+    by_contra hneq
+    apply hNotRel
+    refine ⟨s, s', ?_, hneq⟩
+    intro j hj
+    exact hagree j (by simp [hj])
+
+theorem exactSemanticsQuotient_universal_characterization
+    (R : S → A → Prop) :
+    outputSemanticsExactRelevanceProfile (S := S) (A := A) (n := n) R =
+        decisionProblemExactRelevanceProfile (n := n)
+          (exactSemanticsDecisionProblem (S := S) (A := A) R) ∧
+      (∀ I : Finset (Fin n),
+        setValuedPayloadSufficient (outputSemantics R) I ↔
+          relationSufficient (ExactSemanticsSetoid R) I) ∧
+      (∀ i : Fin n,
+        setValuedPayloadRelevant (outputSemantics R) i ↔
+          ¬ relationSufficient (ExactSemanticsSetoid R)
+            (Finset.univ.erase i)) := by
+  refine ⟨?_, ?_⟩
+  · exact outputSemanticsExactRelevanceProfile_eq_exactSemanticsDecisionProblem
+      (S := S) (A := A) (n := n) R
+  · refine ⟨?_, ?_⟩
+    · intro I
+      exact sufficiency_is_relation_refinement (S := S) (A := A) (n := n) R I
+    · intro i
+      exact relevance_is_erased_failure_of_refinement (S := S) (A := A) (n := n) R i
 
 end DeterministicRelationRealizability
 

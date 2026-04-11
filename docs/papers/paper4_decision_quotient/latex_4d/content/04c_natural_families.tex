@@ -320,6 +320,24 @@ For the induced decision problem, the optimizer at state $s$ is the singleton $\
 
 This is a theorem of exact semantic equivalence. Deterministic payload sufficiency and relevance are already exact relevance certification for the induced decision problem.
 
+\leanmetapending{\LH{FR340}}
+\begin{corollary}[Boolean Payload Transfer]\label{cor:boolean-payload-transfer}
+Let $\phi : S \to \{0,1\}$ be any Boolean payload. Then exact feature sufficiency and relevance for $\phi$ reduce definitionally to exact relevance certification for the induced decision problem.
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+This is Proposition~\ref{prop:payload-transfer} specialized to the two-label codomain $\{0,1\}$.
+\end{proof}
+
+\leanmetapending{\LH{FR341}}
+\begin{corollary}[Predicate Transfer]\label{cor:predicate-transfer}
+Let $P(s)$ be any exact yes/no correctness predicate on the state space. Writing its truth value as a Boolean payload, exact feature sufficiency and relevance for $P$ reduce definitionally to exact relevance certification for the induced decision problem.
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+Encode $P$ by its Boolean truth-value map and apply Corollary~\ref{cor:boolean-payload-transfer}.
+\end{proof}
+
 \leanmetapending{\LHrng{FR}{223}{225}}
 \begin{corollary}[Nonempty Set-Valued Payload Transfer]\label{cor:set-valued-payload-transfer}
 Let $F(s) \subseteq A$ be a nonempty feasible-action set at each state of a coordinate space, and equip allowed actions with utility $u_{\mathrm{allowed}}$ and blocked actions with utility $u_{\mathrm{blocked}}$ where $u_{\mathrm{blocked}} < u_{\mathrm{allowed}}$. Then exact feature sufficiency and relevance for the set-valued payload $F$ are equivalent to exact relevance certification for the induced decision problem whose optimal set at state $s$ is exactly $F(s)$.
@@ -349,6 +367,41 @@ Let $R(s,a)$ be any state-indexed admissible-output relation. Then exact feature
 
 \begin{proof}[Proof sketch]
 Write $F(s)=\{a : R(s,a)\}$. This is exactly the arbitrary set-valued case of Corollary~\ref{cor:totalized-set-valued-payload-transfer}. The relation form is only a notational repackaging of the same theorem.
+\end{proof}
+
+\leanmetapending{\LH{FR342}}
+\begin{proposition}[Sufficiency Is Relation Refinement]\label{prop:sufficiency-is-relation-refinement}
+Let $R(s,a)$ be any exact correctness relation, write $\mathrm{Adm}_R(s)=\{a : R(s,a)\}$, and define
+\[
+s \sim_R s' \quad\Longleftrightarrow\quad \mathrm{Adm}_R(s)=\mathrm{Adm}_R(s').
+\]
+Then a coordinate set $I$ is sufficient if and only if agreement on $I$ forces $s \sim_R s'$.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+This is the exact-semantics specialization of sufficiency as relation refinement. The relation being refined is now the admissible-output equivalence relation itself.
+\end{proof}
+
+\leanmetapending{\LH{FR343}}
+\begin{corollary}[Relevance Is Erased Failure of Refinement]\label{cor:relevance-is-erased-failure-of-refinement}
+Let $R(s,a)$ be any exact correctness relation. A coordinate $i$ is relevant if and only if agreement on all coordinates except $i$ does not force equality of admissible-output classes. Equivalently, the full coordinate set with $i$ erased is not sufficient.
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+Erase coordinate $i$ and apply Proposition~\ref{prop:sufficiency-is-relation-refinement} to the remaining agreement relation.
+\end{proof}
+
+\leanmetapending{\LH{FR345}}
+\begin{theorem}[Exact Semantics Quotient Universality]\label{thm:exact-semantics-quotient-universality}
+Let $R(s,a)$ be any exact correctness condition, write $\mathrm{Adm}_R(s)=\{a : R(s,a)\}$, and define
+\[
+s \sim_R s' \quad\Longleftrightarrow\quad \mathrm{Adm}_R(s)=\mathrm{Adm}_R(s').
+\]
+Then $\sim_R$ is the canonical semantic object of the problem. Exact relevance certification for the induced decision problem realizes exactly the same sufficient-coordinate family and relevant-coordinate set; a coordinate set is sufficient exactly when it recovers the $\sim_R$-classes; and a coordinate is relevant exactly when erasing it destroys that recovery.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Corollary~\ref{cor:relational-output-transfer} reduces the exact semantics to exact relevance certification for the induced decision problem. Proposition~\ref{prop:sufficiency-is-relation-refinement} identifies sufficiency with recovery of the admissible-output classes, and Corollary~\ref{cor:relevance-is-erased-failure-of-refinement} identifies relevance with failure of that recovery after erasure.
 \end{proof}
 
 \leanmetapending{\LHrng{FR}{302}{303}}
@@ -396,7 +449,7 @@ Every finite-state exact output specification admits a Boolean coordinate presen
 Index states by $0,\dots,|S|-1$ and use the binary digits of the index as Boolean coordinates. Since every index is less than $2^{\mathrm{size}(|S|)}$, equality of those finitely many bits determines the state. The artifact formalizes this low-dimensional Boolean presentation and identifies the induced exact relevance profile with exact relevance certification.
 \end{proof}
 
-Every exact output specification admits a coordinate presentation, and under that presentation it is in scope as a state-indexed admissible-output relation. This includes decision, counting, search, approximation guarantees, PAC/regret/risk guarantees, anytime or finite-horizon guarantees, randomized-output guarantees, distributional specifications, and any other specification stated by the outputs that count as correct at each state.
+Every exact correctness claim admits a coordinate presentation, so the question of which coordinates matter is always a quotient-recovery problem for admissible-output classes. This includes decision, counting, search, approximation guarantees, PAC/regret/risk guarantees, anytime or finite-horizon guarantees, randomized-output guarantees, distributional specifications, and any other specification stated by the outputs that count as correct at each state.
 
 \leanmetapending{\LHrng{FR}{268}{282}}
 \begin{corollary}[Statistical Guarantee Semantics Transfer]\label{cor:statistical-guarantee-transfer}
