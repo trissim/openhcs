@@ -1,10 +1,5 @@
 \begin{thebibliography}{10}
 
-\bibitem{arrow1950difficulty}
-Kenneth~J. Arrow.
-\newblock A difficulty in the concept of social welfare.
-\newblock {\em Journal of Political Economy}, 58(4):328--346, 1950.
-
 \bibitem{barto2014constraint}
 Libor Barto and Marcin Kozik.
 \newblock Constraint satisfaction problems solvable by local consistency
@@ -53,22 +48,11 @@ Robert Ganian, M.~S. Ramanujan, and Stefan Szeider.
 \newblock In {\em Proceedings of the 27th Annual ACM-SIAM Symposium on Discrete
   Algorithms (SODA)}, pages 1670--1681. SIAM, 2016.
 
-\bibitem{gibbard1973manipulation}
-Allan Gibbard.
-\newblock Manipulation of voting schemes: A general result.
-\newblock {\em Econometrica}, 41(4):587--601, 1973.
-
 \bibitem{givan2003equivalence}
 Robert Givan, Thomas Dean, and Matthew Greig.
 \newblock Equivalence notions and model minimization in markov decision
   processes.
 \newblock {\em Artificial Intelligence}, 147(1-2):163--223, 2003.
-
-\bibitem{goedel1931formal}
-Kurt G{"o}del.
-\newblock {"U}ber formal unentscheidbare s{"a}tze der {P}rincipia {M}athematica
-  und verwandter systeme {I}.
-\newblock {\em Monatshefte f{"u}r Mathematik und Physik}, 38(1):173--198, 1931.
 
 \bibitem{guyon2003introduction}
 Isabelle Guyon and Andr{\'e} Elisseeff.
@@ -120,12 +104,6 @@ Henry~Gordon Rice.
 \newblock {\em Transactions of the American Mathematical Society},
   74(2):358--366, 1953.
 
-\bibitem{satterthwaite1975strategy}
-Mark~Allen Satterthwaite.
-\newblock Strategy-proofness and {A}rrow's conditions: Existence and
-  correspondence theorems for voting procedures and social welfare functions.
-\newblock {\em Journal of Economic Theory}, 10(2):187--217, 1975.
-
 \bibitem{savage1954foundations}
 Leonard~J. Savage.
 \newblock {\em The Foundations of Statistics}.
@@ -176,17 +154,6 @@ Ryan Williams, Carla~P. Gomes, and Bart Selman.
 \newblock In {\em Proceedings of the Eighteenth International Joint Conference
   on Artificial Intelligence (IJCAI)}, pages 1173--1178. Morgan Kaufmann
   Publishers Inc., 2003.
-
-\bibitem{wolpert1996lack}
-David~H. Wolpert.
-\newblock The lack of a priori distinctions between learning algorithms.
-\newblock {\em Neural Computation}, 8(7):1341--1390, 1996.
-
-\bibitem{wolpert1997nfl}
-David~H. Wolpert and William~G. Macready.
-\newblock No free lunch theorems for optimization.
-\newblock {\em IEEE Transactions on Evolutionary Computation}, 1(1):67--82,
-  1997.
 
 \bibitem{zhuk2017proof}
 Dmitriy Zhuk.
