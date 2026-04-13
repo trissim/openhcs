@@ -380,6 +380,8 @@ Corollary~\ref{cor:relational-output-transfer} identifies the sufficient-coordin
 
 This is the sense in which approximation, statistical, and randomized semantics remain exact: the specification written into $V$ may be approximate or randomized, but agreement with $V$ is exact.
 
+This is a semantic theorem, not a claim that every presentation is equally informative. The validity relation is the correctness condition itself, not an optional encoding trick. Different coordinate presentations may make quotient recovery trivial or rich, but they do not change the canonical quotient carried by the specification. The accompanying Lean artifact packages this semantic floor directly as an \texttt{ExactCorrectnessSpecification}.
+
 \leanmetapending{\LH{FR342}}
 \begin{proposition}[Sufficiency Is Relation Refinement]\label{prop:sufficiency-is-relation-refinement}
 Let $R(s,a)$ be any exact correctness relation, write $\mathrm{Adm}_R(s)=\{a : R(s,a)\}$, and define
@@ -461,6 +463,8 @@ Index states by $0,\dots,|S|-1$ and use the binary digits of the index as Boolea
 \end{proof}
 
 Every exact correctness claim admits a coordinate presentation, so the question of which coordinates matter is always a quotient-recovery problem for admissible-output classes. This includes decision, counting, search, approximation guarantees, PAC/regret/risk guarantees, anytime or finite-horizon guarantees, randomized-output guarantees, distributional specifications, and any other specification stated by the outputs that count as correct at each state.
+
+The point of these presentation theorems is not merely existential. Proposition~\ref{prop:every-exact-specification-admits-coordinate-presentation} gives the universal one-coordinate realization, while Propositions~\ref{prop:finite-specifications-admit-coordinate-presentations}--\ref{prop:finite-specifications-admit-low-dimensional-boolean-presentations} show that the same semantics can also admit finite or countable Boolean realizations. Vacuous and informative encodings are therefore different presentations of one semantic object, not different semantics. For example, SAT appears through its exact yes/no validity predicate, sorting through the set of correctly sorted outputs for each input, and fixed approximation or PAC guarantees through the outputs meeting the stated threshold.
 
 \leanmetapending{\LHrng{FR}{268}{282}}
 \begin{corollary}[Statistical Guarantee Semantics Transfer]\label{cor:statistical-guarantee-transfer}

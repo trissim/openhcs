@@ -11,6 +11,14 @@ namespace Paper4dFrontier
 
 open DecisionQuotient
 
+universe u v
+
+/-- An exact correctness specification consists of an output type together with
+the validity relation that declares which outputs are correct at each state. -/
+structure ExactCorrectnessSpecification (S : Type u) where
+  Output : Type v
+  valid : S → Output → Prop
+
 section Realizability
 
 variable {S T : Type*} [DecidableEq T]
@@ -1023,6 +1031,41 @@ theorem exactnessMeansExactAgreementWithValidity
         (exactSemanticsDecisionProblem (S := S) (A := A) Valid) := by
   exact outputSemanticsExactRelevanceProfile_eq_exactSemanticsDecisionProblem
     (S := S) (A := A) (n := n) Valid
+
+namespace ExactCorrectnessSpecification
+
+abbrev semanticsSetoid (spec : ExactCorrectnessSpecification S) : Setoid S :=
+  ExactSemanticsSetoid (S := S) (A := spec.Output) spec.valid
+
+abbrev semanticsQuotient (spec : ExactCorrectnessSpecification S) : Type _ :=
+  ExactSemanticsQuotient (S := S) (A := spec.Output) spec.valid
+
+noncomputable def decisionProblem
+    (spec : ExactCorrectnessSpecification S) : DecisionProblem (Option spec.Output) S :=
+  exactSemanticsDecisionProblem (S := S) (A := spec.Output) spec.valid
+
+theorem exactness_means_exact_agreement
+    (spec : ExactCorrectnessSpecification S) :
+    outputSemanticsExactRelevanceProfile (S := S) (A := spec.Output) (n := n) spec.valid =
+      decisionProblemExactRelevanceProfile (n := n) (decisionProblem (S := S) spec) := by
+  exact exactnessMeansExactAgreementWithValidity
+    (S := S) (A := spec.Output) (n := n) spec.valid
+
+theorem universal_characterization
+    (spec : ExactCorrectnessSpecification S) :
+    outputSemanticsExactRelevanceProfile (S := S) (A := spec.Output) (n := n) spec.valid =
+        decisionProblemExactRelevanceProfile (n := n) (decisionProblem (S := S) spec) ∧
+      (∀ I : Finset (Fin n),
+        setValuedPayloadSufficient (outputSemantics spec.valid) I ↔
+          relationSufficient (semanticsSetoid (S := S) spec) I) ∧
+      (∀ i : Fin n,
+        setValuedPayloadRelevant (outputSemantics spec.valid) i ↔
+          ¬ relationSufficient (semanticsSetoid (S := S) spec)
+            (Finset.univ.erase i)) := by
+  exact exactSemanticsQuotient_universal_characterization
+    (S := S) (A := spec.Output) (n := n) spec.valid
+
+end ExactCorrectnessSpecification
 
 end DeterministicRelationRealizability
 
