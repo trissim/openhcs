@@ -228,7 +228,7 @@ Let $C$ be any procedure assigning to each representation in a closure-closed do
 \leanmetapending{\LHrng{FR}{197}{199}, \LHrng{FR}{245}{249}}
 
 \begin{proof}[Proof sketch]
-This is the tractability instance of the abstract correctness-on-domain theorem formalized in Lean. If $U,V \in \Gamma$ lie in the same closure orbit, Proposition~\ref{prop:closure-operations-preserve-certification} shows that they induce the same exact-certification problem up to the explicit coordinate-set transport attached to the relevant closure step. The theorem uses the semantic notion of correctness stated above: tractability is attached to that underlying exact-certification problem, not to arbitrary relabelings or duplicate-label presentations of the same problem. Correctness of $C$ therefore forces the same verdict on both.
+This paper theorem is formalized in \texttt{AdmissibleCharacterization.lean} as the composition of the generic correctness-on-domain orbit-agreement theorem with the closure-invariance inheritance theorem. If $U,V \in \Gamma$ lie in the same closure orbit, Proposition~\ref{prop:closure-operations-preserve-certification} shows that they induce the same exact-certification problem up to the explicit coordinate-set transport attached to the relevant closure step. The theorem uses the semantic notion of correctness stated above: tractability is attached to that underlying exact-certification problem, not to arbitrary relabelings or duplicate-label presentations of the same problem. Correctness of $C$ therefore forces the same verdict on both.
 \end{proof}
 
 \begin{theorem}[Compute-Cost Version: Optimizer Computation]\label{thm:optimizer-computation-classifier-forces-invariance}
@@ -256,7 +256,7 @@ Let $X$ be an external output class whose admissibility relation is preserved un
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-The generic external-output compute-cost layer transports only the input state; the output object itself is unchanged. Once the admissibility relation respects those state pullbacks, the same correctness-on-domain theorem applies.
+This paper-level corollary aggregates the generic identity-output closure theorem, the bridge to transported outputs, and the named external-output instances formalized in Lean. The generic external-output compute-cost layer transports only the input state; the output object itself is unchanged. Once the admissibility relation respects those state pullbacks, the same correctness-on-domain theorem applies.
 \end{proof}
 
 \begin{corollary}[Compute-Cost Version: Representation-Relative Output Objects]\label{cor:transported-output-compute-classifier-forces-invariance}
@@ -264,7 +264,7 @@ Let $X_U$ be a representation-relative output object whose type and admissibilit
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-This is the transported-output generalization of Corollary~\ref{cor:external-output-compute-classifier-forces-invariance}. The generic transported-output compute-cost layer packages the witness-by-witness output maps together with the corresponding admissibility preservation laws, and the same correctness-on-domain theorem then applies. The named representation-relative hypothesis, estimator, policy, and randomized-procedure corollaries are direct instances.
+This paper-level corollary aggregates the generic transported-output closure theorem with the named representation-relative hypothesis, estimator, policy, and randomized-procedure instances. The generic transported-output compute-cost layer packages the witness-by-witness output maps together with the corresponding admissibility preservation laws, and the same correctness-on-domain theorem then applies.
 \end{proof}
 
 This answers the natural objection that Section~\ref{sec:frontier-program} excludes only classifiers that advertise closure invariance as an explicit axiom. Correctness already forces the same orbit agreement. The closure laws therefore supply the representation-level congruence needed for the orbit-gap program: once two slices are related by these theorem-forced presentation equivalences, any correct tractability classifier must identify them. Theorem~\ref{thm:closure-sound-package-no-go} therefore applies to any correct classifier on a closure-closed domain once the target notion is tractability itself: if the classifier separates same-orbit witnesses, it is simply wrong on at least one of them.
@@ -331,7 +331,7 @@ This is Proposition~\ref{prop:payload-transfer} specialized to the two-label cod
 
 \leanmetapending{\LH{FR341}}
 \begin{corollary}[Predicate Transfer]\label{cor:predicate-transfer}
-Let $P(s)$ be any exact yes/no correctness predicate on the state space. Writing its truth value as a Boolean payload, exact feature sufficiency and relevance for $P$ reduce definitionally to exact relevance certification for the induced decision problem.
+Let $P(s)$ be any exact yes/no correctness predicate on the state space with decidable truth value. Writing its truth value as a Boolean payload, exact feature sufficiency and relevance for $P$ reduce definitionally to exact relevance certification for the induced decision problem.
 \end{corollary}
 
 \begin{proof}[Proof sketch]
@@ -414,7 +414,7 @@ Then $\sim_R$ is the canonical semantic object of the problem. Exact relevance c
 \end{theorem}
 
 \begin{proof}[Proof sketch]
-Corollary~\ref{cor:relational-output-transfer} reduces the exact semantics to exact relevance certification for the induced decision problem. Proposition~\ref{prop:sufficiency-is-relation-refinement} identifies sufficiency with recovery of the admissible-output classes, and Corollary~\ref{cor:relevance-is-erased-failure-of-refinement} identifies relevance with failure of that recovery after erasure.
+The Lean artifact packages this paper theorem as \texttt{exactSemanticsQuotient\_universal\_characterization}, built from the exact-profile realization theorem together with the sufficiency-as-refinement and relevance-as-erased-failure lemmas. Corollary~\ref{cor:relational-output-transfer} reduces the exact semantics to exact relevance certification for the induced decision problem. Proposition~\ref{prop:sufficiency-is-relation-refinement} identifies sufficiency with recovery of the admissible-output classes, and Corollary~\ref{cor:relevance-is-erased-failure-of-refinement} identifies relevance with failure of that recovery after erasure.
 \end{proof}
 
 \leanmetapending{\LHrng{FR}{302}{303}}
