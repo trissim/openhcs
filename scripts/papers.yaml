@@ -101,6 +101,7 @@ papers:
     latex_dir: "latex_it"
     latex_file: "coherence_it.tex"
     venue: "JCSS"
+    cover_letter_file: "cover_letter.tex"
     submission_format:
       latex_flag: "\\ITSUBMISSION"
       description: "IT submission: single column, double spaced (per JCSS author guidelines)"
