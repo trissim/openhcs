@@ -1,6 +1,13 @@
 import Lake
 open Lake DSL
 
+def weakLeanArgs : Array String :=
+  #[
+    "-Dlinter.unusedSimpArgs=false",
+    "-Dlinter.unnecessarySimpa=false",
+    "-Dlinter.unusedSectionVars=false"
+  ]
+
 package «ssot» where
   -- Use shared packages directory
   packagesDir := "/home/ts/code/projects/papers-archive/docs/papers/.lake-shared/packages"
@@ -18,5 +25,6 @@ require Paper1IT from "./dep_paper1"
 
 @[default_target]
 lean_lib «Ssot» where
+  weakLeanArgs := weakLeanArgs
   globs := #[.submodules `Ssot]
   srcDir := "."

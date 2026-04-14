@@ -79,9 +79,9 @@ theorem python_can_achieve_ssot :
     Python.python_has_hooks
     Python.python_has_introspection
 
--- The proofs that ground this classification:
-#check @init_subclass_in_class_definition  -- Definition-time hooks
-#check @subclasses_updated_at_definition   -- Introspection
+-- Grounding theorems for this classification:
+-- init_subclass_in_class_definition
+-- subclasses_updated_at_definition
 
 /-!
 ## Rust Evaluation
@@ -98,9 +98,9 @@ theorem rust_cannot_achieve_ssot :
   intro h
   exact Rust.rust_lacks_introspection (ssot_requires_introspection h)
 
--- The proofs that ground this classification:
-#check @erasure_destroys_source  -- Source information is erased
-#check @runtime_item_eq_iff      -- No source field in RuntimeItem
+-- Grounding theorems for this classification:
+-- erasure_destroys_source
+-- runtime_item_eq_iff
 
 /-!
 ## Static Languages Evaluation (Java, C#, TypeScript, Go)
@@ -132,9 +132,9 @@ theorem go_cannot_achieve_ssot :
   intro h
   exact StaticLang.static_lacks_definition_hooks (ssot_requires_hooks h)
 
--- The proofs that ground these classifications:
-#check @StaticLang.java_lacks_definition_hooks
-#check @StaticLang.ts_types_erased
+-- Grounding theorems for these classifications:
+-- StaticLang.java_lacks_definition_hooks
+-- StaticLang.ts_types_erased
 
 /-!
 ## Summary: Language Capability Matrix

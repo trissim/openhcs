@@ -106,10 +106,10 @@ theorem nominal_capabilities :
     axisSetCapabilities nominalAxes =
       [UnifiedCapability.identity, .provenance, .enumeration, .conflictResolution, .interfaceCheck] := rfl
 
--- Compute the actual capability lists for verification
-#eval axisSetCapabilities emptyAxes    -- []
-#eval axisSetCapabilities shapeAxes    -- [interfaceCheck]
-#eval axisSetCapabilities nominalAxes  -- [interfaceCheck, identity, provenance, enumeration, conflictResolution]
+-- Verification values (kept as comments to avoid noisy build replay output):
+-- axisSetCapabilities emptyAxes    = []
+-- axisSetCapabilities shapeAxes    = [interfaceCheck]
+-- axisSetCapabilities nominalAxes  = [interfaceCheck, identity, provenance, enumeration, conflictResolution]
 
 /-!
   THE RECURSIVE LATTICE: ∅ < S < (B,S)
