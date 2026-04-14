@@ -8,7 +8,7 @@
 
 \signature{Tristan Simas\\McGill University}
 
-\date{April 6, 2026}
+\date{April 14, 2026}
 
 \begin{document}
 
@@ -19,9 +19,9 @@ Journal of Computer and System Sciences}
 
 Please consider the enclosed manuscript, ``Zero-Error Recovery from Deterministic Partial Views,'' for publication in the Journal of Computer and System Sciences.
 
-The manuscript develops a graph-theoretic theory of zero-error recovery from deterministic partial views of finite latent tuples. Admissible coordinate-subset views induce a confusability graph on latent states, so exact recovery becomes a coloring problem. On the full labeled tuple space, the realizable confusability relations are characterized exactly as those determined by upward-closed families of coordinate-agreement sets. Under block composition, the one-shot confusability graph passes to strong powers and the normalized rates converge to Shannon capacity.
+The manuscript develops a structural theory of exact recovery under deterministic partial information. Admissible coordinate-subset views induce a confusability graph on latent states, so zero-error recovery becomes a coloring problem. The paper gives an exact characterization of the confusability relations realizable on the full labeled tuple space, identifies block composition with strong graph powers and the resulting Shannon-capacity limit, and develops the corresponding one-shot and asymptotic graph-theoretic framework.
 
-The paper also isolates a structural equality route for the induced graph class: transitive confusability yields a collapse to the cluster-graph case, with meet-witnessing and fiber coherence as sufficient conditions. Under an affine restriction on the realized state family, the coordinate side carries a representable matroid whose rank gives tractable upper bounds on confusability and capacity. The submission combines graph theory, information theory, and structural complexity in a single exact recovery problem, which is why I believe it is well suited to JCSS.
+The paper also isolates a structural equality route for the induced graph class: transitive confusability yields a collapse to the cluster-graph case, with meet-witnessing and fiber coherence as sufficient conditions. An affine specialization yields a representable matroid whose rank gives tractable upper bounds on confusability and capacity. The appendix then instantiates the realizability criterion across representative programming-language runtimes, databases, and dependency-management systems, showing that the same exact-recovery coordinates discriminate nontrivially across concrete host models. The submission therefore connects zero-error information theory, graph structure, structural classification, and computationally tractable upper bounds in a single exact-recovery framework, which is why I believe it is well suited to JCSS.
 
 All theorem-level claims cited in the manuscript are machine-checked in Lean 4. An archived Zenodo record containing the formalization, manuscript PDF, and submission source bundle is available at \url{https://doi.org/10.5281/zenodo.19354075}. The manuscript is original, has not been published previously, and is not under consideration elsewhere. The author declares no competing interests.
 
