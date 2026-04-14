@@ -226,11 +226,12 @@ There exists a binary two-fact system with single-coordinate observation views w
 The witness is the four-state binary square with one location revealing the first coordinate and the other revealing the second. States that agree on one coordinate are confusable through the corresponding location, but opposite corners are not confusable, so the graph is a $4$-cycle rather than a clique. An explicit exact two-tag decoder is obtained by the parity coloring $c(x_1,x_2)=x_1\oplus x_2$. With one tag, any exact success set must be an independent set of the cycle, hence has size at most two, yielding success probability at most $1/2$ under the uniform source.
 \end{proof}
 
-\leanmetapending{\LHrng{MFT}{11}{13}, \LH{MFT16}}
+\leanmeta{\LHrng{MFT}{25}{26}, \LHrng{MFT}{29}{30}, \LHrng{MFT}{38}{39}}
 \begin{definition}[Strong Product]\label{def:strong-product}
 For graphs $G$ and $H$, the \emph{strong product} $G\boxtimes H$ has vertex set $V(G)\times V(H)$. Two distinct vertices $(u,v)$ and $(u',v')$ are adjacent exactly when either $u=u'$ and $v\sim v'$, or $u\sim u'$ and $v=v'$, or $u\sim u'$ and $v\sim v'$.
 \end{definition}
 
+\leanmetapending{\LHrng{MFT}{11}{13}, \LH{MFT16}}
 \begin{theorem}[Block-composition law]\label{thm:multifact-product}
 If two partial-observation systems are colorable with tag alphabets of sizes $T_1$ and $T_2$, then their block-composed product system is colorable with a tag alphabet of size $T_1T_2$.
 \end{theorem}
