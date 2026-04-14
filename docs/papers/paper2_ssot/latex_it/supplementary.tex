@@ -14,10 +14,13 @@
 
 % Lean-handle helpers
 \InputIfFileExists{../../shared/lean-handle-macros.tex}{}{}
+\InputIfFileExists{paper_title_auto.tex}{}{% 
+  \providecommand{\PaperTitleAuto}{Supplementary Manuscript}
+}
 
 \begin{document}
 
-\title{Supplementary Material: Zero-Incoherence Capacity of Interactive Encoding Systems}
+\title{Supplementary Material: \PaperTitleAuto}
 \author{Tristan Simas}
 \date{\today}
 \maketitle

@@ -488,6 +488,7 @@ class PaperBuilder:
         # same build-generated definitions.
         self._write_shared_lean_handle_macros_auto()
         self._sync_shared_preambles(paper_id)
+        self._write_paper_title_auto(paper_id)
         self._run_experiment_commands(paper_id)
         self._write_latex_lean_stats(paper_id)
         self._write_assumption_ledger_auto(paper_id)
@@ -928,6 +929,7 @@ end {module_root}
         # Initialize generated artifacts so scaffolded papers compile with the
         # same metadata infrastructure as regular build targets.
         self._sync_shared_preambles(paper_id)
+        self._write_paper_title_auto(paper_id)
         self._write_latex_lean_stats(paper_id)
         self._write_assumption_ledger_auto(paper_id)
         self._write_lean_handle_ids_auto(paper_id)
@@ -4821,6 +4823,7 @@ end {module_root}
             paper_id, defined_flags={latex_flag}
         )
         self._sync_shared_preambles(paper_id)
+        self._write_paper_title_auto(paper_id)
         self._write_latex_lean_stats(paper_id)
         self._write_assumption_ledger_auto(paper_id)
         self._write_lean_handle_ids_auto(paper_id, files=submission_files)
@@ -4928,6 +4931,8 @@ end {module_root}
         sub_fmt = raw_meta.get("submission_format")
         if not sub_fmt:
             return None
+        flat_source = bool(sub_fmt.get("flat_source", False))
+        minimal_source = bool(sub_fmt.get("minimal_source", False))
 
         meta = self._get_paper_meta(paper_id)
         releases_dir = self._get_releases_dir(paper_id)
@@ -4942,23 +4947,169 @@ end {module_root}
         )
         self._refresh_derived_content(paper_id)
         self._write_lean_handle_ids_auto(paper_id, files=submission_files)
-        self._copy_latex_sources(paper_id, package_dir)
+        self._copy_latex_sources(paper_id, package_dir, flat_content=flat_source)
         hook_name = self._write_submission_build_hook(package_dir)
         wrapper_name = self._write_submission_wrapper_tex(
             paper_id, package_dir, sub_fmt["latex_flag"], hook_name
         )
+        if minimal_source:
+            self._prune_submission_source_package(
+                paper_id,
+                package_dir,
+                wrapper_name,
+                hook_name,
+                defined_flags={sub_fmt["latex_flag"]},
+                flat_content=flat_source,
+            )
         self._write_submission_source_readme(paper_id, package_dir, wrapper_name)
 
         tar_path, zip_path = self._create_named_archive(
             releases_dir=releases_dir,
             package_dir=package_dir,
             archive_stem=f"{archive_prefix}_submission_source",
-            root_dir_name=archive_prefix,
+            root_dir_name=None if flat_source else archive_prefix,
         )
+
+        if flat_source and minimal_source:
+            em_zip = self._create_flat_submission_zip(
+                releases_dir=releases_dir,
+                package_dir=package_dir,
+                archive_stem=f"{archive_prefix}_submission_source_em_minimal",
+            )
+            print(
+                f"[submission] ✓ {em_zip.name} → {releases_dir.relative_to(self.repo_root)}/"
+            )
         print(
             f"[submission] ✓ {zip_path.name} → {releases_dir.relative_to(self.repo_root)}/"
         )
         return zip_path
+
+    def _create_flat_submission_zip(
+        self, releases_dir: Path, package_dir: Path, archive_stem: str
+    ) -> Path:
+        """Create a flat zip directly from the current package directory contents."""
+        import zipfile
+
+        zip_path = releases_dir / f"{archive_stem}.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for file_path in sorted(package_dir.iterdir()):
+                if file_path.is_file():
+                    zf.write(file_path, file_path.name)
+        return zip_path
+
+    def _prune_submission_source_package(
+        self,
+        paper_id: str,
+        package_dir: Path,
+        wrapper_name: str,
+        hook_name: str,
+        *,
+        defined_flags: Optional[Set[str]] = None,
+        flat_content: bool = False,
+    ) -> None:
+        """Prune a submission package to the minimal manuscript compile set.
+
+        Keeps only the TeX files reachable from the main manuscript include graph,
+        the generated wrapper/hook, and top-level bibliography/style support files.
+        This is useful for manuscript portals such as Editorial Manager that reject
+        bulky source bundles or mis-handle extra files.
+        """
+        meta = self._get_paper_meta(paper_id)
+        latex_dir = self._get_latex_dir(paper_id)
+        main_tex = latex_dir / meta.latex_file
+
+        reachable = self._collect_included_tex_files(
+            main_tex,
+            include_document_body_only=False,
+            include_self=True,
+            defined_flags=defined_flags,
+        )
+
+        keep_names: Set[str] = {wrapper_name, hook_name, "README_SUBMISSION.txt"}
+        keep_names.update(path.name for path in reachable)
+        keep_names.add("lean-handle-macros.tex")
+        keep_names.update(
+            self._discover_local_latex_support_files(latex_dir, reachable)
+        )
+
+        # Keep pre-generated bibliography outputs if they exist so a single LaTeX
+        # pass still has resolved citations even when the portal does not run BibTeX.
+        for stem in {"main", Path(meta.latex_file).stem}:
+            keep_names.add(f"{stem}.bbl")
+
+        removed = 0
+        for file_path in package_dir.glob("*"):
+            if not file_path.is_file():
+                continue
+            if file_path.name not in keep_names:
+                file_path.unlink()
+                removed += 1
+
+        # No subdirectories should survive flat-content minimal packaging.
+        if flat_content:
+            for child in package_dir.iterdir():
+                if child.is_dir():
+                    shutil.rmtree(child)
+                    removed += 1
+
+        print(
+            f"[submission]   Pruned submission source to minimal set ({removed} removals)"
+        )
+
+    def _discover_local_latex_support_files(
+        self, latex_dir: Path, tex_files: List[Path]
+    ) -> Set[str]:
+        """Return local support files actually referenced by the manuscript."""
+        keep: Set[str] = set()
+
+        for tex_file in tex_files:
+            try:
+                content = tex_file.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            content = self._strip_latex_comments(content)
+
+            class_matches = re.findall(
+                r"\\documentclass(?:\[[^\]]*\])?\{([^}]+)\}", content
+            )
+            for class_group in class_matches:
+                for class_name in [
+                    part.strip() for part in class_group.split(",") if part.strip()
+                ]:
+                    candidate = latex_dir / f"{class_name}.cls"
+                    if candidate.exists():
+                        keep.add(candidate.name)
+
+            package_matches = re.findall(
+                r"\\usepackage(?:\[[^\]]*\])?\{([^}]+)\}", content
+            )
+            for package_group in package_matches:
+                for package_name in [
+                    part.strip() for part in package_group.split(",") if part.strip()
+                ]:
+                    candidate = latex_dir / f"{package_name}.sty"
+                    if candidate.exists():
+                        keep.add(candidate.name)
+
+            bst_matches = re.findall(r"\\bibliographystyle\{([^}]+)\}", content)
+            for bst_group in bst_matches:
+                for bst_name in [
+                    part.strip() for part in bst_group.split(",") if part.strip()
+                ]:
+                    candidate = latex_dir / f"{bst_name}.bst"
+                    if candidate.exists():
+                        keep.add(candidate.name)
+
+            bib_matches = re.findall(r"\\bibliography\{([^}]+)\}", content)
+            for bib_group in bib_matches:
+                for bib_name in [
+                    part.strip() for part in bib_group.split(",") if part.strip()
+                ]:
+                    candidate = latex_dir / f"{bib_name}.bib"
+                    if candidate.exists():
+                        keep.add(candidate.name)
+
+        return keep
 
     def _write_submission_wrapper_tex(
         self, paper_id: str, package_dir: Path, latex_flag: str, hook_name: str
@@ -5039,6 +5190,7 @@ end {module_root}
         package_dir.mkdir(parents=True)
 
         print(f"[supplementary] Packaging for {paper_id}...")
+        self._write_paper_title_auto(paper_id)
 
         # Phase 1: Compile supplementary PDF from LaTeX
         latex_dir = self._get_latex_dir(paper_id)
@@ -5057,6 +5209,9 @@ end {module_root}
             )
             if shared_macros.exists():
                 shutil.copy2(shared_macros, package_dir / "lean-handle-macros.tex")
+            paper_title_auto = latex_dir / "paper_title_auto.tex"
+            if paper_title_auto.exists():
+                shutil.copy2(paper_title_auto, package_dir / "paper_title_auto.tex")
             # Fix the relative path in supplementary.tex to use local copy
             supp_dest = package_dir / supp_src.name
             if supp_dest.exists():
@@ -5249,6 +5404,30 @@ end {module_root}
         if not raw_title:
             return None
         return self._latex_inline_to_plain(raw_title)
+
+    def _extract_main_latex_title_raw(self, paper_id: str) -> str | None:
+        """Extract the raw LaTeX title argument from the main manuscript."""
+        meta = self._get_paper_meta(paper_id)
+        main_tex = self._get_paper_dir(paper_id) / meta.latex_dir / meta.latex_file
+        if not main_tex.exists():
+            return None
+
+        content = main_tex.read_text(encoding="utf-8", errors="replace")
+        content = self._strip_latex_comments(content)
+        return self._extract_braced_command_argument(content, "title")
+
+    def _write_paper_title_auto(self, paper_id: str) -> None:
+        """Write a build-generated LaTeX macro for the canonical paper title."""
+        latex_dir = self._get_latex_dir(paper_id)
+        raw_title = self._extract_main_latex_title_raw(paper_id)
+        if not raw_title:
+            return
+        path = latex_dir / "paper_title_auto.tex"
+        path.write_text(
+            "% Auto-generated by scripts/build_papers.py. Canonical manuscript title.\n"
+            f"\\providecommand{{\\PaperTitleAuto}}{{{raw_title}}}\n",
+            encoding="utf-8",
+        )
 
     def _release_title_from_latex(self, paper_id: str) -> str:
         """Canonical release title source: main LaTeX `\\title{...}`."""
@@ -6502,11 +6681,14 @@ end {module_root}
         shutil.copy2(metadata_file, metadata_dest)
         print(f"[arxiv]   Metadata: {metadata_file.name}")
 
-    def _copy_latex_sources(self, paper_id: str, package_dir: Path) -> None:
+    def _copy_latex_sources(
+        self, paper_id: str, package_dir: Path, *, flat_content: bool = False
+    ) -> None:
         """Copy LaTeX source files for arXiv submission.
 
         Copies all .tex, .bib, .bbl, .cls, .sty files from the latex directory.
-        Also copies content/ subdirectory if present.
+        Also copies content/ subdirectory if present, unless ``flat_content`` is
+        requested for manuscript-upload systems that reject subfolders.
         """
         meta = self._get_paper_meta(paper_id)
         latex_dir = self._get_latex_dir(paper_id)
@@ -6534,7 +6716,7 @@ end {module_root}
         # Copy content/ subdirectory if present
         content_dir = latex_dir / "content"
         if content_dir.exists():
-            content_dest = package_dir / "content"
+            content_dest = package_dir if flat_content else package_dir / "content"
             content_dest.mkdir(parents=True, exist_ok=True)
             for src_file in content_dir.glob("*.tex"):
                 shutil.copy2(src_file, content_dest / src_file.name)
@@ -6565,6 +6747,15 @@ end {module_root}
             updated_content = content
             for old_pat, new_pat in zip(old_patterns, new_patterns):
                 updated_content = updated_content.replace(old_pat, new_pat)
+            if flat_content:
+                updated_content = updated_content.replace(
+                    r"\input{content/", r"\input{"
+                )
+                updated_content = updated_content.replace(
+                    r"\include{content/", r"\include{"
+                )
+                updated_content = updated_content.replace("{content/", "{")
+                updated_content = updated_content.replace("content/", "")
             if updated_content != content:
                 tex_file.write_text(updated_content, encoding="utf-8")
                 print(
@@ -6573,7 +6764,7 @@ end {module_root}
 
         # Fix all .tex files in content/ subdirectory
         content_dest = package_dir / "content"
-        if content_dest.exists():
+        if content_dest.exists() and not flat_content:
             for tex_file in content_dest.glob("*.tex"):
                 content = tex_file.read_text(encoding="utf-8")
                 updated_content = content
@@ -7971,7 +8162,7 @@ Repository: https://github.com/trissim/openhcs
         releases_dir: Path,
         package_dir: Path,
         archive_stem: str,
-        root_dir_name: str,
+        root_dir_name: str | None,
     ) -> tuple[Path, Path]:
         """Create compressed tar.gz and zip archives with explicit names."""
         import tarfile
@@ -7980,16 +8171,26 @@ Repository: https://github.com/trissim/openhcs
         tar_name = f"{archive_stem}.tar.gz"
         tar_path = releases_dir / tar_name
         with tarfile.open(tar_path, "w:gz") as tar:
-            tar.add(package_dir, arcname=root_dir_name)
+            if root_dir_name:
+                tar.add(package_dir, arcname=root_dir_name)
+            else:
+                for file_path in package_dir.rglob("*"):
+                    if file_path.is_file():
+                        tar.add(
+                            file_path, arcname=str(file_path.relative_to(package_dir))
+                        )
 
         zip_name = f"{archive_stem}.zip"
         zip_path = releases_dir / zip_name
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for file_path in package_dir.rglob("*"):
                 if file_path.is_file():
-                    arcname = str(
-                        Path(root_dir_name) / file_path.relative_to(package_dir)
-                    )
+                    if root_dir_name:
+                        arcname = str(
+                            Path(root_dir_name) / file_path.relative_to(package_dir)
+                        )
+                    else:
+                        arcname = str(file_path.relative_to(package_dir))
                     zf.write(file_path, arcname)
 
         return tar_path, zip_path

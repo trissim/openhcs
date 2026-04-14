@@ -105,6 +105,8 @@ papers:
     submission_format:
       latex_flag: "\\ITSUBMISSION"
       description: "IT submission: single column, double spaced (per JCSS author guidelines)"
+      flat_source: true
+      minimal_source: true
     lean_dependencies:
       - "paper1"
     assumption_ledger_sources:

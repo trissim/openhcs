@@ -12,10 +12,13 @@
 
 % Lean-handle helpers
 \InputIfFileExists{lean-handle-macros.tex}{}{}
+\InputIfFileExists{paper_title_auto.tex}{}{% 
+  \providecommand{\PaperTitleAuto}{Supplementary Manuscript}
+}
 
 \begin{document}
 
-\title{Supplementary Material for ``Exact Structural Abstraction and Tractability Limits''}
+\title{Supplementary Material: \PaperTitleAuto}
 \author{Tristan Simas}
 \date{\today}
 \maketitle
