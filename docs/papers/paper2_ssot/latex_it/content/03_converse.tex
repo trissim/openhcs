@@ -28,8 +28,8 @@ Apply Theorem~\ref{thm:pair-injective} on an ambiguity class on which the observ
 Theorem~\ref{thm:confusability-converse} specialized to a single $K$-way ambiguity class gives $K \le 2^L$, i.e., at least $\log_2 K$ bits of side information.
 \end{corollary}
 
-\medskip
-\noindent\textbf{Proposition III.4 (Equivalent formulations).} The pair-injectivity obstruction of Theorem~\ref{thm:pair-injective} admits the following equivalent formulations on a finite source observed through a deterministic transcript with a finite auxiliary tag:
+\begin{proposition}[Equivalent formulations]\label{prop:equivalent-formulations}
+The pair-injectivity obstruction of Theorem~\ref{thm:pair-injective} admits the following equivalent formulations on a finite source observed through a deterministic transcript with a finite auxiliary tag:
 \begin{itemize}
 \tightlist
 \item \emph{Global budget:} $K \le O\,T$ for latent size $K$, observation alphabet size $O$, and tag alphabet size $T$.\leanmeta{\LH{OBS4}}
@@ -41,6 +41,7 @@ Theorem~\ref{thm:confusability-converse} specialized to a single $K$-way ambigui
 \end{itemize}
 
 Each formulation follows from Theorem~\ref{thm:pair-injective} by restricting the injectivity condition to the relevant domain (fiber, clique, full source) and applying standard entropy identities. The confusability, counting, conditional-entropy, decoder-output, and finite-gap statements are therefore different normal forms of the same obstruction: a surviving $K$-way ambiguity class requires a budget of at least $\log_2 K$ bits to be resolved exactly.\leanmeta{\LH{OBS1}, \LH{OBS5}, \LH{CIA3}}
+\end{proposition}
 
 \subsection{Finite-error extension}\label{sec:finite-error-extension}
 

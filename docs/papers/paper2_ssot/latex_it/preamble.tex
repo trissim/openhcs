@@ -56,6 +56,12 @@
 % Lean-handle helpers for terse, reviewer-facing proof navigation.
 \InputIfFileExists{../../shared/lean-handle-macros.tex}{}{}
 
+% Keep float hyperlinks unique across main text and appendices.
+\AtBeginDocument{%
+  \renewcommand*{\theHfigure}{paper2.figure.\thesection.\arabic{figure}}%
+  \renewcommand*{\theHtable}{paper2.table.\thesection.\arabic{table}}%
+}
+
 % Use filled black square for QED symbol, inline (left-aligned) instead of right-aligned
 \renewcommand{\qedsymbol}{$\blacksquare$}
 \renewcommand{\qed}{\hspace{0.5em}\qedsymbol}
