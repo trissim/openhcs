@@ -1,0 +1,62 @@
+\documentclass[11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\InputIfFileExists{lean-handle-macros.tex}{}{}
+\InputIfFileExists{paper_title_auto.tex}{}{%
+  \providecommand{\PaperTitleAuto}{Supplementary Manuscript}
+}
+
+\begin{document}
+
+\title{Supplementary Material: \PaperTitleAuto}
+\author{Tristan Simas}
+\date{\today}
+\maketitle
+
+\section{Full Lean Handle Ledger}
+
+This supplement provides the complete Lean handle ledger cited by the manuscript.
+It includes every handle identifier, declaration name, and source module path.
+
+\IfFileExists{content/lean_handle_ids_auto.tex}{%
+  \input{content/lean_handle_ids_auto.tex}
+}{%
+  \textbf{Error:} \texttt{content/lean\_handle\_ids\_auto.tex} not found.
+}
+
+\section{Claim-to-Lean Handle Mapping}
+
+This section maps each paper claim to its corresponding Lean formalization.
+
+\IfFileExists{content/claim_mapping_auto.tex}{%
+  \input{content/claim_mapping_auto.tex}
+}{%
+  \textbf{Error:} \texttt{content/claim\_mapping\_auto.tex} not found.
+}
+
+\section{Proof Hardness Index}
+
+\IfFileExists{content/proof_hardness_index_auto.tex}{%
+  \input{content/proof_hardness_index_auto.tex}
+}{%
+  \textbf{Error:} \texttt{content/proof\_hardness\_index\_auto.tex} not found.
+}
+
+\section{Assumption Ledger}
+
+\IfFileExists{content/assumption_ledger_auto.tex}{%
+  \input{content/assumption_ledger_auto.tex}
+}{%
+  \textbf{Error:} \texttt{content/assumption\_ledger\_auto.tex} not found.
+}
+
+\end{document}

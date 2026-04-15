@@ -1,4 +1,4 @@
-We study leverage as a structural invariant of information-processing systems. For any system $A$ with capabilities $\mathrm{Cap}(A) > 0$, we prove a Five-Way Equivalence:
+We study leverage as a structural invariant of finite information-processing systems. For any system $A$ with capabilities $\mathrm{Cap}(A) > 0$, we prove a Five-Way Equivalence:
 \[
 \begin{aligned}
 \mathrm{DOF}(A) = 1
@@ -16,7 +16,7 @@ We also prove that the England replication inequality,
 \]
 reduces to counting: a $k$-variable system has $2^k$ states, and the finite inequality $k \leq 2^{k-1}$ yields the entropy gap under Landauer calibration. The thermodynamic bound $E_{\mathrm{decision}} \geq \mathrm{srank} \cdot k_B T \ln 2$ then follows from the same calibration (\LH{BA7}).
 
-Within the explicit thermodynamic model used in the paper (Landauer calibration, finite energy, finite signal speed, and nontrivial state space), we derive a physical no-go theorem for polynomial collapse (\LH{LP38}). Engineering corollaries follow directly: $\mathrm{DOF} = n$ is isomorphic to a series reliability system with $n$ failure points; expected modification cost is proportional to $\mathrm{DOF}$; and minimum edit-energy equals $k_B T \ln 2 \cdot \mathrm{DOF}(A)$.
+Within the explicit thermodynamic model used in the paper (Landauer calibration, finite energy, finite signal speed, and nontrivial state space), we derive a physical no-go theorem for polynomial collapse (\LH{LP38}). The same framework yields unconditional Landauer-linear lower bounds for decision cost and identifies the single-source regime as the unique minimum-cost point. Reliability-style and edit-complexity corollaries are retained only as structural consequences of the same rank parameter.
 
 All theorems are machine-checked in Lean~4 with no \texttt{sorry} placeholders. The only explicit physics premises are Landauer calibration, the Second Law (non-negative entropy production), and the Thermodynamic Uncertainty Relation (Barato-Seifert 2015). An assumption ledger records the dependency structure of each physically grounded result.
 

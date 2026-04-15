@@ -1,108 +1,4 @@
-\begin{thebibliography}{10}
-
-\bibitem{allen1997formal}
-Robert Allen and David Garlan.
-\newblock A formal basis for architectural connection.
-\newblock {\em ACM Transactions on Software Engineering and Methodology
-  (TOSEM)}, 6(3):213--249, 1997.
-
-\bibitem{bachmann2000cbam}
-Felix Bachmann, Len Bass, and Constance Heitmeyer.
-\newblock Characterizing, planning, and managing technical debt.
-\newblock Technical report, Software Engineering Institute, 2000.
-
-\bibitem{basili1996comparing}
-Victor~R. Basili, Lionel~C. Briand, and Walc{\'e}lio~L. Melo.
-\newblock A validation of object-oriented design metrics as quality indicators.
-\newblock {\em IEEE Transactions on Software Engineering}, 22(10):751--761,
-  1996.
-
-\bibitem{bass2012software}
-Len Bass, Paul Clements, and Rick Kazman.
-\newblock {\em Software Architecture in Practice}.
-\newblock Addison-Wesley Professional, 2012.
-
-\bibitem{bobrow1986commonloops}
-Daniel~G. Bobrow, Kenneth Kahn, Gregor Kiczales, Larry Masinter, Mark Stefik,
-  and Frank Zdybel.
-\newblock Commonloops: Merging lisp and object-oriented programming.
-\newblock {\em ACM SIGPLAN Notices}, 21(11):17--29, 1986.
-
-\bibitem{chidamber1994metrics}
-Shyam~R. Chidamber and Chris~F. Kemerer.
-\newblock A metrics suite for object oriented design.
-\newblock {\em IEEE Transactions on Software Engineering}, 20(6):476--493,
-  1994.
-
-\bibitem{codd1970relational}
-Edgar~F. Codd.
-\newblock A relational model of data for large shared data banks.
-\newblock {\em Communications of the ACM}, 13(6):377--387, 1970.
-
-\bibitem{cunningham1992wycash}
-Ward Cunningham.
-\newblock The wycash portfolio management system.
-\newblock In {\em OOPSLA '92 Addendum to the Proceedings}, pages 29--30. ACM,
-  1992.
-
-\bibitem{date2003introduction}
-Christopher~J. Date.
-\newblock {\em An Introduction to Database Systems}.
-\newblock Pearson Education, 2003.
-
-\bibitem{fowler2014microservices}
-Martin Fowler and James Lewis.
-\newblock Microservices: a definition of this new architectural term.
-\newblock \url{https://martinfowler.com/articles/microservices.html}, 2014.
-
-\bibitem{gamma1994design}
-Erich Gamma, Richard Helm, Ralph Johnson, and John Vlissides.
-\newblock {\em Design Patterns: Elements of Reusable Object-Oriented Software}.
-\newblock Addison-Wesley Professional, 1994.
-
-\bibitem{garlan1994exploiting}
-David Garlan, Robert Allen, and John Ockerbloom.
-\newblock Exploiting style in architectural design environments.
-\newblock In {\em Proceedings of the 2nd ACM SIGSOFT Symposium on Foundations
-  of Software Engineering}, pages 175--188, 1994.
-
-\bibitem{garlan1997acme}
-David Garlan, Robert~T. Monroe, and David Wile.
-\newblock Acme: An architecture description interchange language.
-\newblock In {\em Proceedings of CASCON '97}, pages 169--183, 1997.
-
-\bibitem{hansson2005rails}
-David~Heinemeier Hansson.
-\newblock The rails doctrine.
-\newblock \url{https://rubyonrails.org/doctrine}, 2005.
-
-\bibitem{kazman2000atam}
-Rick Kazman, Mark Klein, and Paul Clements.
-\newblock Atam: Method for architecture evaluation.
-\newblock Technical Report CMU/SEI-2000-TR-004, Carnegie Mellon University,
-  Software Engineering Institute, 2000.
-
-\bibitem{kiczales1991amop}
-Gregor Kiczales, Jim des Rivi{\`e}res, and Daniel~G. Bobrow.
-\newblock {\em The Art of the Metaobject Protocol}.
-\newblock MIT Press, 1991.
-
-\bibitem{mackay2022necessity}
-Julian Mackay, Sophia Drossopoulou, James Noble, and Susan Eisenbach.
-\newblock Necessity specifications for robustness.
-\newblock Zenodo, 2022.
-\newblock Coq mechanization of necessity specifications for module robustness.
-
-\bibitem{maes1987concepts}
-Pattie Maes.
-\newblock Concepts and experiments in computational reflection.
-\newblock {\em ACM SIGPLAN Notices}, 22(12):147--155, 1987.
-
-\bibitem{mccabe1976complexity}
-Thomas~J. McCabe.
-\newblock A complexity measure.
-\newblock {\em IEEE Transactions on Software Engineering}, SE-2(4):308--320,
-  1976.
+\begin{thebibliography}{1}
 
 \bibitem{patterson2013computer}
 David~A. Patterson and John~L. Hennessy.
@@ -110,17 +6,6 @@ David~A. Patterson and John~L. Hennessy.
   Interface}.
 \newblock Morgan Kaufmann, 2013.
 \newblock Discusses RAID and reliability formulas.
-
-\bibitem{pike1984program}
-Rob Pike and Brian~W. Kernighan.
-\newblock Program design in the unix environment.
-\newblock {\em AT\&T Bell Laboratories Technical Journal}, 63(8):1595--1605,
-  1984.
-
-\bibitem{shaw1996software}
-Mary Shaw and David Garlan.
-\newblock {\em Software Architecture: Perspectives on an Emerging Discipline}.
-\newblock Prentice Hall, 1996.
 
 \bibitem{paper4_decision_quotient}
 Tristan Simas.
@@ -145,10 +30,5 @@ Tristan Simas.
 \newblock Zenodo, 2025.
 \newblock Paper 2 of this series. Proves coherence impossibility theorems for
   programming languages.
-
-\bibitem{stevens1974structured}
-Wayne~P. Stevens, Glenford~J. Myers, and Larry~L. Constantine.
-\newblock Structured design.
-\newblock {\em IBM Systems Journal}, 13(2):115--139, 1974.
 
 \end{thebibliography}

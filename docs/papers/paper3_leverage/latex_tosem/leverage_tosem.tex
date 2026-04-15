@@ -1,0 +1,32 @@
+\documentclass[11pt]{article}
+\usepackage{paper-preamble}
+
+% Initial TOSEM split scaffold for paper3b.
+\IfFileExists{content/lean_stats.tex}{\input{content/lean_stats.tex}}{}
+
+\title{Leverage-Driven Software Architecture: A Probabilistic Framework for Architectural Decision-Making}
+\author{Anonymous Author\\Anonymous Institution\\\texttt{anonymous@example.com}}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\input{content/abstract.tex}
+\end{abstract}
+
+\input{content/01_introduction.tex}
+\input{content/02_foundations.tex}
+\input{content/03_probability_model.tex}
+\input{content/04_main_theorems.tex}
+\input{content/05_instances.tex}
+\input{content/06_practical_demonstration.tex}
+\input{content/07_related_work.tex}
+\input{content/08_extension_weighted_leverage.tex}
+\input{content/09_conclusion.tex}
+\input{content/10_lean_proof_listings.tex}
+
+\bibliographystyle{plain}
+\bibliography{../latex/references}
+
+\end{document}

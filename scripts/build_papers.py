@@ -1491,9 +1491,6 @@ end {module_root}
             if not mod or mod == "DependencyGraph":
                 continue
             target = mod.replace("/", ".")
-            root = target.split(".", 1)[0]
-            if root not in import_targets:
-                import_targets.append(root)
             if target not in import_targets:
                 import_targets.append(target)
         module_source_map = {

@@ -1,17 +1,5 @@
 \section{Conclusion}\label{conclusion}
 
-\subsection{Methodology and Disclosure}
-
-\textbf{Role of LLMs in this work.} This paper was developed through human-AI collaboration. The author provided the core insight (that DOF $= 1$ is selected by five independent scientific frameworks) while large language models (Claude, GPT-4) served as implementation partners for formalization, proof drafting, and \LaTeX{} generation.
-
-The Lean~4 proofs (\LeanTotalLines{} lines, \LeanTotalSorry{} \texttt{sorry} placeholders) were iteratively developed: the author specified theorems, the LLM proposed proof strategies, and the Lean compiler verified correctness. Machine-checked proofs are correct regardless of generation method.
-
-\textbf{What the author contributed:} The five-way convergence insight, the identification of structural rank as the information-geometric coordinate of DOF, the thermodynamic selection theorem, the cross-paper dependency chain, the open conjectures, and the OpenHCS case study selection.
-
-\textbf{What LLMs contributed:} \LaTeX{} drafting, Lean tactic suggestions, prose refinement, and exploration of proof strategies.
-
-\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
-
 \subsection{Summary}
 
 The central result is the Five-Way Equivalence (Theorem~5.8): five independent scientific frameworks all characterize the single-source condition (DOF~$= 1$).
@@ -30,7 +18,7 @@ Statistical physics & Minimum thermodynamic cost per cycle & \nolinkurl{Leverage
 \end{tabular}
 \end{center}
 
-The engineering consequences (Theorems 1 to 6 from the prior conclusion) are corollaries: DOF-Reliability Isomorphism, Leverage-Error Tradeoff, Modification Complexity Gap, Physical Edit-Energy Floor, Budget Feasibility Boundary, and the Optimal Architecture decision procedure. All are machine-checked in Lean~4 with live cross-module imports (\nolinkurl{Leverage} $\to$ \nolinkurl{DecisionQuotient} $\to$ \nolinkurl{Ssot} $\to$ Mathlib).
+Reliability-style and edit-complexity statements are corollaries of the same underlying parameter, but they are not the main point of this version. The main point is that structural rank, tractability, and calibrated thermodynamic cost converge on the same discrete regime. All of these statements are machine-checked in Lean~4 with live cross-module imports (\nolinkurl{Leverage} $\to$ \nolinkurl{DecisionQuotient} $\to$ \nolinkurl{Ssot} $\to$ Mathlib).
 
 \textbf{What is new in \nolinkurl{Leverage} relative to \nolinkurl{AbstractClassSystem} and \nolinkurl{Ssot}:}
 \begin{itemize}
@@ -49,20 +37,6 @@ All conjectures from the original submission are now proved in \nolinkurl{Levera
 \item \LH{L45}: $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$ (Theorem~\ref{thm:england}).
 \end{itemize}
 
-\subsection{Decision Procedure}
-
-For practitioners, the five-way equivalence implies a principled architectural decision procedure.
-
-Given requirements $R$, choose optimal architecture via:
-\begin{enumerate}
-\item \textbf{Enumerate:} List candidate architectures $\{A_1, \ldots, A_n\}$
-\item \textbf{Filter:} Keep only $A_i$ with $\mathrm{Cap}(A_i) \supseteq R$
-\item \textbf{Compute:} Calculate $L(A_i) = |\mathrm{Cap}(A_i)|/\mathrm{DOF}(A_i)$ for each
-\item \textbf{Optimize:} Choose $A^* = \arg\max_i L(A_i)$
-\end{enumerate}
-
-\textbf{Justification:} By the Five-Way Equivalence, $A^*$ simultaneously (a) maximizes leverage, (b) satisfies SSOT, (c) has minimum structural rank, (d) admits tractable sufficiency checking, and (e) minimizes thermodynamic cost. These are five independent validations of the same choice.
-
 \subsection{Limitations}
 
 \textbf{1. Independence Assumption:} The probability model treats DOF-level errors as independent under the orthogonality assumptions from \nolinkurl{AbstractClassSystem}~\cite{paper1_typing_discipline}. Real systems may have correlated failure modes not captured by the isomorphism.
@@ -71,21 +45,21 @@ Given requirements $R$, choose optimal architecture via:
 
 \textbf{3. P~$\neq$~coNP Hypothesis (resolved):} The thermodynamic energy bound in Theorem~5.7, point~3 is now proved unconditionally (\LH{L55}). Point~2 (complexity hardness) holds under P~$\neq$~coNP, which follows from the physical axioms of \cite{paper4_decision_quotient} (\LH{LP38}).
 
-\textbf{4. Capability Quantification:} We count capabilities qualitatively. Some capabilities are more valuable; a weighted leverage extension $L = \sum w_i c_i / \mathrm{DOF}$ is natural but unformalized.
+\textbf{4. Capability Quantification:} The leverage side still uses qualitative capability counting. That is adequate for the equivalence theorem but not yet the final word for weighted physical or engineering valuations.
 
 \subsection{Impact}
 
-\textbf{For Physicists:} The England Replication Inequality (Theorem~\ref{thm:england}) is proved from counting: $|{\mathrm{Fin}\;k \to \mathrm{Bool}}| = 2^k$, combined with $k \leq 2^{k-1}$ (induction), yields $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$. The only physics input is Landauer's constant $k_B$. This provides a mechanized derivation of a non-equilibrium thermodynamic bound. Additionally, P~$\neq$~NP is proved from physical law (\LH{LP38}: Landauer, finite energy, finite signal speed, nontrivial state space) in 1250+ lines of Lean~4.
+\textbf{For mathematical physics:} the England Replication Inequality (Theorem~\ref{thm:england}) is reduced to finite counting plus Landauer calibration. The result gives a mechanized, non-asymptotic entropy gap for replication without appealing to an informal thermodynamic analogy.
 
-\textbf{For Information Theorists:} The structural rank (srank) equals the DOF, and srank $= 1$ is equivalent to tractable sufficiency checking. The Five-Way Equivalence connects information geometry to computational complexity and thermodynamics.
+\textbf{For information theory and complexity:} the paper identifies structural rank as the information coordinate of DOF and shows that the minimum-cost thermodynamic regime coincides with the tractable sufficiency regime.
 
-\textbf{For Software Practitioners:} Five independent reasons to prefer DOF~$= 1$ architectures. When choosing between alternatives, compute leverage and select maximum. Doing so simultaneously satisfies epistemic coherence, minimizes structural rank, enables tractable decision-making, and minimizes thermodynamic cost.
+\textbf{For formalized theory building:} the argument is an example of cross-paper theorem transport in Lean: a structural parameter introduced in one theorem family is lifted into complexity and physics in another, and the full equivalence remains auditable at the proof-artifact level.
 
 \subsection{Final Remarks}
 
-This paper proves thermodynamic bounds on information-processing systems from first principles. The single-source condition (DOF~$= 1$) is characterized as optimal by five independent frameworks: engineering, epistemics, information theory, computational complexity, and statistical physics.
+This paper proves finite thermodynamic and structural consequences of the single-source condition from first principles. The regime DOF~$=1$ is not merely a software heuristic; it is the unique point at which leverage, coherence, structural rank, tractable sufficiency, and minimum calibrated decision cost coincide.
 
-All theorems are machine-checked. The thermodynamic bound is unconditional; the England Replication Inequality gives the SSOT entropy advantage as $k_B \ln k$ per update cycle. The only explicit physics axioms are the Second Law (non-negative entropy production) and the Thermodynamic Uncertainty Relation (Barato-Seifert 2015).
+All theorems are machine-checked. The thermodynamic lower bound is unconditional, and the replication inequality gives the entropy premium for multiplicity as $k_B \ln k$ per cycle. The companion software-engineering split develops the architectural and case-study implications separately; the present manuscript isolates the mathematical-physics core.
 
 
 \appendix

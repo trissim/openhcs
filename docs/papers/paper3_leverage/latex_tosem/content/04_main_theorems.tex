@@ -1,0 +1,96 @@
+\section{Main Theorems}\label{main-theorems}
+
+We prove the core software-engineering results connecting leverage to error probability and architectural optimality. The theoretical structure is:
+
+\begin{enumerate}
+\item \textbf{DOF-Reliability Isomorphism}: maps architecture to reliability theory
+\item \textbf{Leverage-Error Tradeoff}: connects leverage to error probability
+\item \textbf{Optimality Criterion}: identifies the best architecture in a fixed capability class
+\item \textbf{Composition Stability}: composition preserves leverage lower bounds
+\end{enumerate}
+
+\subsection{Recap: DOF-Reliability Isomorphism}
+
+The core theoretical contribution is that DOF maps formally to series-system components. This enables the later software-engineering results by connecting architectural change structure to a mature mathematical framework for failure composition.
+
+\textbf{Key properties of the isomorphism:}
+\begin{itemize}
+\item \textbf{Preserves ordering:} if $\mathrm{DOF}(A_1) < \mathrm{DOF}(A_2)$, then $P_{\mathrm{error}}(A_1) < P_{\mathrm{error}}(A_2)$
+\item \textbf{Invertible:} an architecture can be reconstructed from its series-system representation
+\item \textbf{Compositional:} $\mathrm{DOF}(A_1 \oplus A_2) = \mathrm{DOF}(A_1) + \mathrm{DOF}(A_2)$
+\end{itemize}
+
+\subsection{The Leverage Maximization Principle}
+
+Given the DOF-Reliability Isomorphism, the following is an actionable corollary:
+
+\begin{theorem}[Leverage Maximization Principle]\label{thm:leverage-max}
+For any architectural decision with alternatives $A_1, \ldots, A_n$ meeting capability requirements, the optimal choice maximizes leverage:
+\[
+A^* = \arg\max_{A_i} L(A_i) = \arg\max_{A_i} \frac{|\mathrm{Capabilities}(A_i)|}{\mathrm{DOF}(A_i)}
+\]
+\end{theorem}
+\leanmeta{\LH{L28}, \LH{L31}}
+
+\textbf{Note.} This is not the deepest theorem in the formal stack; it is the software-engineering decision rule extracted from the reliability interpretation of DOF.
+
+\subsection{Leverage-Error Tradeoff}
+
+\begin{theorem}[Leverage-Error Tradeoff]\label{thm:leverage-error}
+For architectures $A_1, A_2$ with equal capabilities:
+\[
+\mathrm{Cap}(A_1) = \mathrm{Cap}(A_2) \wedge L(A_1) > L(A_2) \implies P_{\mathrm{error}}(A_1) < P_{\mathrm{error}}(A_2)
+\]
+\end{theorem}
+\leanmeta{\LH{L29}}
+
+\begin{proof}
+Given equal capabilities, the inequality $L(A_1) > L(A_2)$ reduces to $\mathrm{DOF}(A_1) < \mathrm{DOF}(A_2)$. The monotonicity result from the probability section then gives the conclusion.
+\end{proof}
+
+\textbf{Corollary.} Maximizing leverage minimizes error probability for fixed capabilities.
+
+\subsection{Architectural Decision Criterion}
+
+\begin{theorem}[Optimal Architecture]\label{thm:optimal}
+Given requirements $R$, architecture $A^*$ is optimal in its capability class if and only if:
+\begin{enumerate}
+\item $\mathrm{Cap}(A^*) \supseteq R$ (feasibility)
+\item for every $A'$ with $\mathrm{Cap}(A') = \mathrm{Cap}(A^*)$ and $\mathrm{Cap}(A') \supseteq R$, one has $L(A^*) \geq L(A')$ (maximality in the fixed capability class)
+\end{enumerate}
+\end{theorem}
+\leanmeta{\LH{L34}, \LH{L38}}
+
+\begin{proof}
+If both conditions hold, then $A^*$ is feasible and has maximal leverage in its capability class, so Theorem~\ref{thm:leverage-error} gives minimal error probability in that class. Conversely, if either condition fails, then $A^*$ is either infeasible or dominated by another architecture in the same capability class.
+\end{proof}
+
+\textbf{Decision Procedure:}
+\begin{enumerate}
+\item Enumerate candidate architectures $\{A_1, \ldots, A_n\}$
+\item Filter to those with $\mathrm{Cap}(A_i) \supseteq R$
+\item Choose $A^* = \arg\max_i L(A_i)$
+\end{enumerate}
+
+\subsection{Leverage Composition}
+
+\begin{theorem}[Leverage Composition]\label{thm:composition}
+For modular architecture $A = A_1 \oplus A_2$ with disjoint components:
+\begin{enumerate}
+\item $\mathrm{DOF}(A) = \mathrm{DOF}(A_1) + \mathrm{DOF}(A_2)$
+\item if $L(A_1) \ge 1$ and $L(A_2) \ge 1$, then $L(A) \ge 1$
+\end{enumerate}
+\end{theorem}
+\leanmeta{\LHrng{L}{18}{19}}
+
+\begin{proof}
+Part (1) is the DOF additivity result from the foundations section. Part (2) follows by summing the inequalities $|\mathrm{Cap}(A_i)| \ge \mathrm{DOF}(A_i)$ for $i=1,2$.
+\end{proof}
+
+\begin{remark}[Composition Tax]\label{rem:composition-breaks-ssot}
+Composition preserves baseline leverage floors, but it does not preserve single-source structure automatically: composing two subsystems with one independent change locus each produces a system with two such loci. For software architecture, this is the consolidation tax behind modular and distributed designs.
+\end{remark}
+
+\subsection{Formalization}
+
+These results are formalized in \texttt{Leverage/Theorems.lean} and \texttt{Leverage/Probability.lean}. The TOSEM split foregrounds the software interpretation of those results rather than the thermodynamic layer developed in the companion split.

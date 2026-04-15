@@ -19,3 +19,7 @@ require decision_quotient from "dep_paper4"
 lean_lib «Leverage» where
   globs := #[.submodules `Leverage]
   srcDir := "."
+
+lean_lib «LambdaDR» where
+  globs := #[.one `LambdaDR]
+  srcDir := "."

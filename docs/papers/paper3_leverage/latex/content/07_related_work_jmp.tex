@@ -1,0 +1,21 @@
+\section{Related Work}\label{related-work}
+
+\subsection{Landauer and Thermodynamic Information Processing}
+
+Landauer's principle provides the calibration from logical discrimination to minimum entropy production and energy cost. Our use of Landauer is deliberately finite and structural: the relevant parameter is not a Shannon rate or an asymptotic code family, but the number of independent coordinates that must be resolved in a sufficiency check. In that sense the paper is closer to a mechanized finite-cost selection theorem than to a phenomenological thermodynamic analogy.
+
+The England-style replication inequality proved here sits in the same non-equilibrium neighborhood, but its derivation is intentionally discrete. The entropy gap is reduced to counting over a finite state family and the elementary inequality $k \le 2^{k-1}$; the physics enters through Landauer calibration rather than through a separate stochastic-process ansatz.
+
+\subsection{Zero-Error and Structural Information Theory}
+
+The structural-rank side of the paper depends directly on the companion decision-quotient theory, where sufficiency checking, rank collapse, and hardness boundaries are developed in full. The present paper does not reprove that theory; instead it identifies the coordinate along which the thermodynamic lift should be read. This places the argument in the orbit of finite zero-error and decision-relevant information theory rather than classical average-case coding.
+
+The rank-$1$ regime is special because it is simultaneously the single surviving decision coordinate, the tractable sufficiency regime, and the minimum calibrated decision-cost regime. That convergence is the conceptual novelty of the present paper relative to the companion structural-rank manuscript.
+
+\subsection{Reliability and Discrete Failure Composition}
+
+The reliability interpretation of DOF is used here as a discrete bridge: an $n$-degree-of-freedom system behaves like a series system with $n$ independent failure points. We use that bridge not as the main application domain but as a mathematically transparent representation of why multiplicative error composition and additive decision cost are both controlled by the same structural parameter.
+
+\subsection{Formal Verification and Mechanized Cross-Paper Theory}
+
+All main statements are machine-checked in Lean~4, and the cross-paper dependency chain is live rather than informal. The mechanization matters here because the paper depends on results transported across distinct theorem families: orthogonality from \texttt{AbstractClassSystem}, coherence from \texttt{Ssot}, and rank/tractability/thermodynamic lift from \texttt{DecisionQuotient}. The present manuscript packages those results into a single equivalence theorem with an auditable proof trail.

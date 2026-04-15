@@ -1,0 +1,29 @@
+\section{Introduction}\label{introduction}
+
+Software architecture decisions often trade flexibility, implementation effort, and error surface against one another, but the comparison is usually qualitative. This paper develops a quantitative framework for that comparison. The central idea is to treat an architecture's independently drifting definition loci as its \emph{degrees of freedom} (DOF), and to measure architectural leverage by the number of capabilities obtained per independent change point.
+
+The software-engineering thesis is simple: for architectures with comparable capabilities, lower DOF yields lower modification burden and lower error surface. The framework turns that thesis into formal statements. We derive an exact error model from axis orthogonality, show that architectures with $n$ DOF behave like series reliability systems with $n$ failure points, and prove that maximizing leverage minimizes error probability in fixed capability classes. The same framework gives quantitative predictions for modification cost and explains why familiar consolidation patterns recur across software design.
+
+This TOSEM-oriented split isolates the software-architecture contribution from the mathematical-physics material in the companion paper-3 split. The present paper keeps the architectural definitions, probability model, leverage theorems, software instances, and OpenHCS demonstration. It removes the thermodynamic-selection framing as the main narrative and treats cross-paper physical results, where mentioned at all, only as background motivation.
+
+\subsection{Contributions}
+
+\begin{enumerate}
+\item \textbf{Architectural leverage model.} We formalize architecture, DOF, capabilities, leverage, dominance, and modification complexity in a uniform framework for comparing software designs.
+
+\item \textbf{Reliability-style error semantics for DOF.} We derive an exact error model from axis orthogonality and show that an architecture with $n$ DOF is isomorphic to a series reliability system with $n$ independent failure points.
+
+\item \textbf{Leverage-based decision rule.} We prove that, at fixed capabilities, higher leverage implies lower error probability and lower expected modification burden.
+
+\item \textbf{Cross-pattern explanatory power.} We show that SSOT, nominal contracts, generic endpoints, convention over configuration, and normalization instantiate the same consolidation mechanism.
+
+\item \textbf{Mechanized core and case-oriented framing.} The leverage core is machine-checked in Lean~4, and the paper includes an OpenHCS example illustrating how DOF collapse appears in a real refactoring.
+\end{enumerate}
+
+\subsection{Scope}
+
+The paper is about software architecture and architectural decision-making. Performance, security, and other quality attributes are not reduced to leverage; rather, leverage quantifies one structural dimension of error exposure and maintenance cost. Likewise, the OpenHCS material is used as a mechanism-level demonstration, not as a broad empirical claim about all codebases.
+
+\subsection{Organization}
+
+The paper proceeds as follows. The next section defines the architectural model. The following section derives the error and reliability results. We then present the main leverage theorems, analyze recurring software patterns as leverage instances, give the OpenHCS demonstration, situate the work in software architecture and software engineering, and conclude.

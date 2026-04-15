@@ -116,16 +116,41 @@ papers:
     supplementary_file: "supplementary.tex"
 
   paper3:
-    name: "Leverage Framework"
-    full_name: "Leverage-Driven Software Architecture: A Probabilistic Framework for Architectural Decision-Making"
+    name: "Leverage and Thermodynamic Selection"
+    full_name: "Leverage, Structural Rank, and Thermodynamic Selection in Information-Processing Systems"
     dir: "paper3_leverage"
     latex_dir: "latex"
     latex_file: "leverage_arxiv.tex"
     venue: "Draft"
+    assumption_ledger_sources:
+      - "Leverage/Physical.lean"
+      - "Leverage/BridgeToDQ.lean"
+      - "Leverage/FiveWayEquivalence.lean"
+    claim_mapping_file: "content/claim_mapping_auto.tex"
     lean_dependencies:
       - "paper1"
       - "paper2"
       - "paper4"
+    supplementary_file: "supplementary.tex"
+
+  paper3b:
+    name: "Leverage Framework (TOSEM)"
+    full_name: "Leverage-Driven Software Architecture: A Probabilistic Framework for Architectural Decision-Making"
+    dir: "paper3_leverage"
+    latex_dir: "latex_tosem"
+    latex_file: "leverage_tosem.tex"
+    venue: "TOSEM"
+    assumption_ledger_sources:
+      - "Leverage/Foundations.lean"
+      - "Leverage/Probability.lean"
+      - "Leverage/Theorems.lean"
+      - "Leverage/Examples.lean"
+      - "Leverage/WeightedLeverage.lean"
+    claim_mapping_file: "content/claim_mapping_auto.tex"
+    lean_dependencies:
+      - "paper1"
+      - "paper2"
+    supplementary_file: "supplementary.tex"
 
   paper4:
     name: "Decision Quotient"
