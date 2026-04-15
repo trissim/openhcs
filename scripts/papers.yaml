@@ -116,8 +116,8 @@ papers:
     supplementary_file: "supplementary.tex"
 
   paper3:
-    name: "Leverage and Thermodynamic Selection"
-    full_name: "Leverage, Structural Rank, and Thermodynamic Selection in Information-Processing Systems"
+    name: "Structural Rank and Thermodynamic Selection"
+    full_name: "Structural Rank, Decision Entropy, and Thermodynamic Selection in Finite Information-Processing Systems"
     dir: "paper3_leverage"
     latex_dir: "latex"
     latex_file: "leverage_arxiv.tex"

@@ -1,86 +1,57 @@
 \section{Introduction}\label{introduction}
 
-This paper studies finite information-processing systems through a single structural parameter: degrees of freedom. The central result is the Five-Way Equivalence (Theorem~\ref{thm:five-way}): engineering leverage, epistemic coherence, structural rank, tractable sufficiency, and minimum thermodynamic cost all select the same regime, $\mathrm{DOF}=1$. The main contribution of this version is the mathematical-physics side of that equivalence: it turns a structural counting parameter into a calibrated entropy and energy law. All claims are verified in Lean~4 with zero \texttt{sorry} placeholders.
-
-\subsection{Formalization Statistics}
-
-\begin{center}
-\begin{tabular}{lr}
-\hline
-\textbf{Metric} & \textbf{Value} \\
-\hline
-Lines of Lean 4 (local layer) & \LeanLocalLines{} \\
-Theorems/lemmas (local layer) & \LeanLocalTheorems{} \\
-\texttt{sorry} placeholders (local layer) & \LeanLocalSorry{} \\
-Proof files (local layer) & \LeanLocalFiles{} \\
-\hline
-Total imported Lean lines & \LeanTotalLines{} \\
-Total theorem/lemma statements & \LeanTotalTheorems{} \\
-Total imported \texttt{sorry} placeholders & \LeanTotalSorry{} \\
-Total proof files in import closure & \LeanTotalFiles{} \\
-\hline
-\textbf{Dependencies (live imports)} & \\
-\texttt{AbstractClassSystem} & \LeanDepLinesAbstractClassSystem{} lines, \LeanDepTheoremsAbstractClassSystem{} theorems \\
-\texttt{Ssot} & \LeanDepLinesSsot{} lines, \LeanDepTheoremsSsot{} theorems \\
-\texttt{DecisionQuotient} & \LeanDepLinesDecisionQuotient{} lines, \LeanDepTheoremsDecisionQuotient{} theorems \\
-\hline
-\end{tabular}
-\end{center}
-
-All proofs build with \texttt{lake build}. Axiom dependencies verified via \texttt{\#print axioms}: \texttt{propext}, \texttt{Quot.sound}, \texttt{Classical.choice}.
+Finite bounded physical systems resolve decisions through finitely many discrete acquisition events on bounded horizons. Under Landauer calibration \cite{landauer1961irreversibility,bennett1982thermodynamics}, exact resolution therefore carries irreducible thermodynamic cost. The formal object is a bounded decision system, represented in Lean by \texttt{Architecture}, carrying a positive degree-of-freedom count together with a canonical binary decision encoding \texttt{canonicalDP}. This counting parameter is exactly the structural rank of the encoded decision problem, it bounds the entropy of the decision quotient, and it determines the minimum per-cycle resolution cost. The quotient object is closer to zero-error and confusability-based information than to average-case coding \cite{shannon1956zero,korner1973graphs,lovasz1979shannon}. All claims are verified in Lean~4 \cite{moura2021lean4} with Mathlib support \cite{mathlib2020} and zero \texttt{sorry} placeholders.
 
 \subsection{Central Result}
 
-\begin{theorem}[Five-Way Equivalence]\label{thm:five-way}
-For any architecture $A$ with $\mathrm{Cap}(A) > 0$, the following are equivalent:
+The convergence theorem proved in Section~\ref{five-way-equivalence} is:
+
 \[
 \begin{aligned}
-&\underbrace{\mathrm{DOF}(A) = 1}_{\text{single source}}
+&\underbrace{\mathrm{DOF}(A) = 1}_{\text{one-coordinate regime}}
 \;\iff\;
-\underbrace{L(A) \text{ maximal}}_{\text{engineering}}
-\;\iff\;
-\underbrace{\mathrm{SSOT}(A)}_{\text{epistemics}} \\
+\underbrace{\mathrm{srank}(\mathrm{canonicalDP}(A)) = 1}_{\text{structural rank}} \\
 &\iff\;
-\underbrace{\mathrm{srank}(A) = 1}_{\text{information}}
+\underbrace{\text{tractable sufficiency for } \mathrm{canonicalDP}(A)}_{\text{complexity}}
 \;\iff\;
-\underbrace{\text{tractable sufficiency}}_{\text{complexity}}
-\;\iff\;
-\underbrace{\text{min thermo cost}}_{\text{physics}}
+\underbrace{\text{minimum per-cycle thermodynamic cost}}_{\text{physics}}
 \end{aligned}
 \]
-\end{theorem}
 
-Proved in Section~\ref{five-way-equivalence}. Machine-checked via \texttt{Leverage} $\to$ \texttt{DecisionQuotient} $\to$ \texttt{Ssot} $\to$ Mathlib.
+An imported coherence theorem gives a separate single-source reading of the same rank-$1$ point:
+\[
+\mathrm{SSOT}(A) \iff \mathrm{DOF}(A)=1,
+\]
+where $\mathrm{SSOT}(A)$ denotes the coherent single-source condition that one locus is authoritative, every remaining encoding is a derived view, and all reachable states remain coherent.
+
+The structural-rank and thermodynamic clauses are central. The imported coherence statement is a companion interpretation of the same rank-$1$ regime, not a premise of the mathematical-physics chain.
 
 \subsection{Contributions}
 
 \begin{enumerate}
-\item \textbf{DOF-Structural-Rank Identification (Theorem~5.3):} the canonical decision problem associated with an $n$-degree-of-freedom system has structural rank $n$.
+\item \textbf{Finite Physical Acquisition:} bounded regions admit finitely many acquisition events, those events are discrete state transitions, and exact resolution requires a sufficient coordinate set.
 
-\item \textbf{Tractability Boundary (Theorem~5.5):} rank-$1$ sufficiency checking is polynomial-time, while rank greater than one enters the coNP-hard regime in the companion structural-rank theory.
+\item \textbf{DOF-Structural-Rank Identification:} the canonical decision problem attached to an $n$-degree-of-freedom system has structural rank $n$.
 
-\item \textbf{Thermodynamic Selection Theorem (Theorem~5.7):} under Landauer calibration, degree of freedom above one forces strictly higher per-cycle decision cost, and the positive energy floor is unconditional.
+\item \textbf{Entropy-Rank Control:} the number of decision classes is at most $2^{\mathrm{DOF}(A)}$, so the decision entropy is bounded by the degree-of-freedom count.
+
+\item \textbf{Landauer-Linear Resolution Cost:} under Landauer calibration, exact-resolution cost is bounded below by $\mathrm{DOF}(A)\,k_B T \ln 2$.
+
+\item \textbf{Energy-Information Duality:} the same system satisfies $E \geq k_B T\,H_{\mathrm{nats}}(D)$, linking thermodynamic cost directly to the entropy of the decision quotient.
+
+\item \textbf{Finite-Budget No-Collapse:} bounded budget, positive per-bit cost, and exponential lower-bound growth jointly preclude physical collapse of the higher-rank regime.
 
 \item \textbf{England Replication Inequality (Theorem~\ref{thm:england}):} $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$. The proof reduces the entropy gap to counting via $k \leq 2^{k-1}$. \leanmeta{\LH{L45}}
 
-\item \textbf{Five-Way Convergence (Theorem~\ref{thm:five-way}):} five independently motivated frameworks select the same structural regime, making the single-source point simultaneously optimal for leverage, coherence, rank, tractability, and thermodynamic cost.
+\item \textbf{Rank-1 Convergence (Theorem~\ref{thm:five-way}):} the rank-$1$ regime is simultaneously the one-coordinate regime, the tractable sufficiency regime, and the thermodynamic ground state.
 \end{enumerate}
 
-\paragraph{What is new.} \texttt{AbstractClassSystem} and \texttt{Ssot} establish two of the five equivalences. This paper closes the physics-facing half of the chain: it identifies structural rank as the information coordinate of DOF, proves thermodynamic selection under Landauer calibration, and derives the England-style replication inequality from finite counting.
-
-\subsection{Dependency Chain}
-
-\begin{enumerate}
-\item \texttt{AbstractClassSystem}: axis orthogonality $\to$ error independence (Theorem~\ref{thm:error-independence})
-\item \texttt{Ssot}: DOF~$= 1$ $\iff$ coherence $\to$ second equivalence
-\item \texttt{DecisionQuotient}: tractability boundary and thermodynamic lift $\to$ fourth and fifth equivalences
-\item \texttt{Leverage} (this paper): convergence of leverage, rank, tractability, and thermodynamic cost
-\end{enumerate}
+\paragraph{Physical significance.} Once finite acquisition is fixed as the physical interface, the degree-of-freedom count becomes simultaneously an interaction dimension, an entropy bound, and a Landauer-calibrated cost coordinate. The result concerns exact resolution structure in matter.
 
 \subsection{Scope}
 
-The focus of this manuscript is not software methodology per se, but the mathematical structure linking leverage, structural rank, complexity, and thermodynamic cost. Reliability-style and edit-cost consequences are kept because they expose the same parameter in a more familiar discrete language. A separate software-engineering split develops the architectural decision framework and case-study material in its own venue-facing form.
+The mathematical structure links structural rank, quotient entropy, complexity, and thermodynamic cost. Theorems are stated for bounded decision systems represented by the Lean object \texttt{Architecture} and their canonical decision encoding, not for arbitrary physical systems without mediation. Architectural and programming interpretations are downstream readings of the same formal core.
 
 \subsection{Organization}
 
-Section~\ref{foundations} defines the structural model. Section~\ref{probability-model} derives the reliability-style semantics of DOF. Section~\ref{main-theorems} records the main leverage consequences needed later. Section~\ref{five-way-equivalence} proves the convergence theorem and the England inequality. Section~\ref{related-work} situates the paper relative to thermodynamics, information theory, and formalized complexity. Section~\ref{appendix-lean} describes the Lean mechanization.
+Section~\ref{foundations} defines the structural model, the finite-acquisition interface, and the canonical decision encoding. Section~\ref{probability-model} derives the structural-rank and entropy consequences of that encoding. Section~\ref{main-theorems} derives the thermodynamic consequences. Section~\ref{five-way-equivalence} proves the convergence theorem and the England inequality. Section~\ref{related-work} situates the paper relative to thermodynamics, information theory, and formalized complexity. Section~\ref{appendix-lean} describes the Lean mechanization.

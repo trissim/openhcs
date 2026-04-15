@@ -91,6 +91,10 @@ def wassersteinCost {S : Type*} [Fintype S]
 /-- The integrity state space: {Intact, Compromised} = Fin 2 -/
 abbrev IntegrityState := Fin 2
 
+/-- Unit point mass concentrated at a single integrity state. -/
+def pointMass (s : IntegrityState) : IntegrityState → ℕ :=
+  fun t => if t = s then 1 else 0
+
 /-- Distance on integrity states: d(0,1) = d(1,0) = 1, d(x,x) = 0 -/
 def integrityMetric : FiniteMetric IntegrityState where
   dist := fun x y => if x = y then 0 else 1
@@ -152,30 +156,49 @@ theorem transportCost_pos_of_offDiag
 
   exact lt_of_lt_of_le htermpos hle_total
 
+/-- Transport from the intact point mass to a future distribution equals the
+    compromised mass in that distribution. -/
+theorem wassersteinCost_pointMass_zero (ν : IntegrityState → ℕ) :
+    wassersteinCost (pointMass 0) ν integrityMetric = ν 1 := by
+  unfold wassersteinCost pointMass
+  simp [integrityMetric, Finset.sum_fin_eq_sum_range, Finset.sum_range_succ]
+
+/-- Transport from the compromised point mass to a future distribution equals
+    the intact mass in that distribution. -/
+theorem wassersteinCost_pointMass_one (ν : IntegrityState → ℕ) :
+    wassersteinCost (pointMass 1) ν integrityMetric = ν 0 := by
+  unfold wassersteinCost pointMass
+  simp [integrityMetric, Finset.sum_fin_eq_sum_range, Finset.sum_range_succ]
+
 /-- W3: Integrity is the centroid.
-    The intact state minimizes total transport to all futures. -/
-theorem integrity_is_centroid :
-    ∀ (futures : List IntegrityState) (weights : List ℕ),
-      futures.length = weights.length →
-      futures.length ≥ 2 →
-      -- Intact state (0) minimizes weighted transport
-      True := by  -- Placeholder for centroid theorem
-  intro _ _ _ _
-  trivial
+    If the intact future mass dominates the compromised future mass, the intact
+    state minimizes transport to the future distribution. -/
+theorem integrity_is_centroid
+    (ν : IntegrityState → ℕ)
+    (hMajority : ν 1 ≤ ν 0) :
+    wassersteinCost (pointMass 0) ν integrityMetric ≤
+      wassersteinCost (pointMass 1) ν integrityMetric := by
+  rw [wassersteinCost_pointMass_zero, wassersteinCost_pointMass_one]
+  exact hMajority
 
 /-! ## The Optimal Transport Bridge -/
 
 /-- The Wasserstein Bridge Statement.
 
     Transitioning between integrity states has transport cost.
-    DOF > 1 → multiple futures → positive Wasserstein cost.
+    Multiple distinguishable futures force positive transport cost.
 
     BRIDGE STATUS: Independent of Landauer bound, TUR, Rate-Distortion.
     Rejecting "state change has cost" requires rejecting measure theory. -/
-theorem wasserstein_bridge :
-    ∃ (n : ℕ), n ≥ 2 ∧ True := by
-  -- From IntegrityEquilibrium: there exist transitions with multiple futures
-  exact ⟨2, le_refl 2, trivial⟩
+theorem wasserstein_bridge
+    (ν : IntegrityState → ℕ)
+    (hNontrivial : 0 < ν 0 ∧ 0 < ν 1) :
+    0 < wassersteinCost (pointMass 0) ν integrityMetric ∧
+      0 < wassersteinCost (pointMass 1) ν integrityMetric := by
+  constructor
+  · rw [wassersteinCost_pointMass_zero]
+    exact hNontrivial.2
+  · rw [wassersteinCost_pointMass_one]
+    exact hNontrivial.1
 
 end DecisionQuotient.Physics
-

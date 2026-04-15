@@ -1,1 +1,315 @@
-\input{../latex/content/05_instances.tex}
+\section{Instances}\label{instances}
+
+We demonstrate that the leverage framework unifies prior results and applies to diverse architectural decisions.
+
+\subsection{Instance 1: Single Source of Truth (SSOT)}
+
+We previously formalized the DRY principle, proving that Python uniquely provides SSOT for structural facts via definition-time hooks and introspection. Here we show SSOT is an instance of leverage maximization.
+
+\subsubsection{Prior Result}
+
+\textbf{Published Theorem:} A language enables SSOT for structural facts if and only if it provides (1) definition-time hooks AND (2) introspectable derivation results. Python is the only mainstream language satisfying both requirements.
+
+\textbf{Modification Complexity:} For structural fact $F$ with $n$ use sites:
+\begin{itemize}
+\item SSOT: $M(\text{change } F) = 1$ (modify source, derivations update automatically)
+\item Non-SSOT: $M(\text{change } F) = n$ (modify each use site independently)
+\end{itemize}
+
+\subsubsection{Leverage Perspective}
+
+\begin{definition}[SSOT Architecture]
+Architecture $A_{\text{SSOT}}$ for structural fact $F$ has:
+\begin{itemize}
+\item Single source $S$ defining $F$
+\item Derived use sites updated automatically from $S$
+\item DOF $= 1$ (only $S$ is independently modifiable)
+\end{itemize}
+\end{definition}
+
+\begin{definition}[Non-SSOT Architecture]
+Architecture $A_{\text{non-SSOT}}$ for structural fact $F$ with $n$ use sites has:
+\begin{itemize}
+\item $n$ independent definitions (copied or manually synchronized)
+\item DOF $= n$ (each definition independently modifiable)
+\end{itemize}
+\end{definition}
+
+\begin{theorem}[SSOT Leverage Dominance]\label{thm:ssot-leverage}
+For structural fact with $n$ use sites:
+\[
+\frac{L(A_{\text{SSOT}})}{L(A_{\text{non-SSOT}})} = n
+\]
+\end{theorem}
+\leanmeta{\LH{L9}, \LH{L11}}
+
+\begin{proof}
+Both architectures provide same capabilities: $|\text{Cap}(A_{\text{SSOT}})| = |\text{Cap}(A_{\text{non-SSOT}})| = c$.
+
+DOF:
+\begin{align*}
+\text{DOF}(A_{\text{SSOT}}) &= 1 \\
+\text{DOF}(A_{\text{non-SSOT}}) &= n
+\end{align*}
+
+Leverage:
+\begin{align*}
+L(A_{\text{SSOT}}) &= c/1 = c \\
+L(A_{\text{non-SSOT}}) &= c/n
+\end{align*}
+
+Ratio:
+\[
+\frac{L(A_{\text{SSOT}})}{L(A_{\text{non-SSOT}})} = \frac{c}{c/n} = n
+\]
+\end{proof}
+
+\begin{corollary}[Unbounded Advantage]
+As use sites grow ($n \to \infty$), leverage advantage grows unbounded.
+\end{corollary}
+
+\begin{corollary}[Error Probability]
+For small $p$:
+\[
+\frac{P_{\text{error}}(A_{\text{non-SSOT}})}{P_{\text{error}}(A_{\text{SSOT}})} \approx n
+\]
+\end{corollary}
+
+\textbf{Connection to Prior Work:} Our published Theorem 6.3 (Unbounded Complexity Gap) showed $M(\text{SSOT}) = O(1)$ vs $M(\text{non-SSOT}) = \Omega(n)$. Theorem \ref{thm:ssot-leverage} provides the leverage perspective: SSOT achieves $n$-times better leverage.
+
+\subsection{Instance 2: Nominal Typing Dominance}
+
+We previously proved nominal typing strictly dominates structural and duck typing for OO systems with inheritance. Here we show this is an instance of leverage maximization.
+
+\subsubsection{Prior Result}
+
+\textbf{Published Theorems:}
+\begin{enumerate}
+\item Theorem 3.13 (Provenance Impossibility): No shape discipline can compute provenance
+\item Theorem 3.19 (Capability Gap): Gap = B-dependent queries = \{provenance, identity, enumeration, conflict resolution\}
+\item Theorem 3.5 (Strict Dominance): Nominal strictly dominates duck typing
+\end{enumerate}
+
+\subsubsection{Leverage Perspective}
+
+\begin{definition}[Typing Discipline as Architecture]
+A typing discipline $D$ is an architecture where:
+\begin{itemize}
+\item Components = type checker, runtime dispatch, introspection APIs
+\item Capabilities = queries answerable by the discipline
+\end{itemize}
+\end{definition}
+
+\textbf{Duck Typing:} Uses only Shape axis ($S$: methods, attributes)
+\begin{itemize}
+\item Capabilities: Shape checking (``Does object have method $m$?'')
+\item Cannot answer: provenance, identity, enumeration, conflict resolution
+\end{itemize}
+
+\textbf{Nominal Typing:} Uses Name + Bases + Shape axes ($N + B + S$)
+\begin{itemize}
+\item Capabilities: All duck capabilities PLUS 4 B-dependent capabilities
+\item Can answer: ``Which type provided method $m$?'' (provenance), ``Is this exactly type $T$?'' (identity), ``List all subtypes of $T$'' (enumeration), ``Which method wins in diamond?'' (conflict)
+\end{itemize}
+
+\begin{theorem}[Nominal Leverage Dominance]\label{thm:nominal-leverage}
+Assuming $\mathrm{DOF}(\mathrm{Nominal}) = \mathrm{DOF}(\mathrm{Duck}) = d$ (equal implementation cost hypothesis):
+\[
+L(\text{Nominal}) > L(\text{Duck})
+\]
+\end{theorem}
+\leanmeta{\LHrng{L}{12}{13}}
+
+\begin{proof}
+Let $c_{\text{duck}} = |\text{Cap}(\text{Duck})|$ and $c_{\text{nominal}} = |\text{Cap}(\text{Nominal})|$.
+
+By Theorem 3.19 (published): $c_{\text{nominal}} = c_{\text{duck}} + 4$.
+
+By hypothesis: $\text{DOF}(\text{Nominal}) = \text{DOF}(\text{Duck}) = d$.
+
+Therefore:
+\[
+L(\text{Nominal}) = \frac{c_{\text{duck}} + 4}{d} > \frac{c_{\text{duck}}}{d} = L(\text{Duck})
+\]
+
+\textbf{Status of hypothesis.} The equal-DOF assumption is formalized as an explicit premise in the Lean mechanization (\LH{L13}). Whether it holds in practice depends on the implementation. Abstractly: the typing discipline is one component; DOF is the number of independent change points in that component. The hypothesis says adding name-based dispatch (N + B axes) does not introduce more independent change points than shape-based dispatch (S axis alone).
+\end{proof}
+
+\textbf{Connection to Prior Work:} Our published Theorem 3.5 (Strict Dominance) showed nominal typing provides strictly more capabilities for same DOF cost. Theorem \ref{thm:nominal-leverage} provides the leverage formulation.
+
+\subsection{Instance 3: Microservices Architecture}
+
+Should a system use microservices or a monolith? How many services are optimal? The leverage framework provides answers. This architectural style, popularized by Fowler and Lewis \cite{fowler2014microservices}, traces its roots to the Unix philosophy of ``doing one thing well'' \cite{pike1984program}.
+
+\subsubsection{Architecture Comparison}
+
+\textbf{Monolith:}
+\begin{itemize}
+\item Components: Single deployment unit
+\item DOF $= 1$
+\item Capabilities: Basic functionality, simple deployment
+\end{itemize}
+
+\textbf{$n$ Microservices:}
+\begin{itemize}
+\item Components: $n$ independent services
+\item DOF $= n$ (each service independently deployable/modifiable)
+\item Additional Capabilities: Independent scaling, independent deployment, fault isolation, team autonomy, polyglot persistence \cite{fowler2014microservices}
+\end{itemize}
+
+\subsubsection{Leverage Analysis}
+
+Let $c_0$ = capabilities provided by monolith.
+
+Let $\Delta c = 5$ denote the additional capabilities from microservices:
+independent scaling, independent deployment, fault isolation, team autonomy,
+and polyglot persistence.
+
+\textbf{Leverage:}
+\begin{align*}
+L(\text{Monolith}) &= c_0 / 1 = c_0 \\
+L(n \text{ Microservices}) &= (c_0 + \Delta c) / n = (c_0 + 5) / n
+\end{align*}
+
+\textbf{Break-even Point:}
+\[
+L(\text{Microservices}) \geq L(\text{Monolith}) \iff \frac{c_0 + 5}{n} \geq c_0 \iff n \leq 1 + \frac{5}{c_0}
+\]
+
+\textbf{Interpretation:} If base capabilities $c_0 = 5$, then $n \leq 2$ services is optimal. For $c_0 = 20$, up to $n = 1.25$ (i.e., monolith still better). Microservices justified only when additional capabilities significantly outweigh DOF cost.
+
+\subsection{Instance 4: REST API Design}
+
+Generic endpoints vs specific endpoints: a leverage tradeoff.
+
+\subsubsection{Architecture Comparison}
+
+\textbf{Specific Endpoints:} One endpoint per use case
+\begin{itemize}
+\item Example: \texttt{GET /users}, \texttt{GET /posts}, \texttt{GET /comments}, ...
+\item For $n$ use cases: DOF $= n$
+\item Capabilities: Serve $n$ use cases
+\end{itemize}
+
+\textbf{Generic Endpoint:} Single parameterized endpoint
+\begin{itemize}
+\item Example: \texttt{GET /resources/:type/:id}
+\item DOF $= 1$
+\item Capabilities: Serve $n$ use cases (same as specific)
+\end{itemize}
+
+\subsubsection{Leverage Analysis}
+
+\begin{align*}
+L(\text{Generic}) &= n / 1 = n \\
+L(\text{Specific}) &= n / n = 1
+\end{align*}
+
+\textbf{Advantage:} $L(\text{Generic}) / L(\text{Specific}) = n$
+
+\textbf{Tradeoff:} Generic endpoint has higher leverage but may sacrifice:
+\begin{itemize}
+\item Type safety (dynamic routing)
+\item Specific validation per resource
+\item Tailored response formats
+\end{itemize}
+
+\textbf{Decision Rule:} Use generic if $n > k$ where $k$ is complexity threshold (typically $k \approx 3$--$5$).
+
+\subsection{Instance 5: Configuration Systems}
+
+Convention over configuration (CoC) reduces developer decisions and preserves
+flexibility \cite{hansson2005rails}. In this framework it is leverage
+maximization via defaults.
+
+\subsubsection{Architecture Comparison}
+
+\textbf{Explicit Configuration:} Must set all $m$ parameters
+\begin{itemize}
+\item DOF $= m$ (each parameter independently set)
+\item Capabilities: Configure $m$ aspects
+\end{itemize}
+
+\textbf{Convention over Configuration:} Provide defaults, override only $k$ parameters
+\begin{itemize}
+\item DOF $= k$ where $k \ll m$
+\item Capabilities: Configure same $m$ aspects (defaults handle rest)
+\end{itemize}
+
+\textbf{Example (Rails vs Java EE):}
+\begin{itemize}
+\item Rails: 5 config parameters (convention for rest)
+\item Java EE: 50 config parameters (explicit for all)
+\end{itemize}
+
+\subsubsection{Leverage Analysis}
+
+\begin{align*}
+L(\text{Convention}) &= m / k \\
+L(\text{Explicit}) &= m / m = 1
+\end{align*}
+
+\textbf{Advantage:} $L(\text{Convention}) / L(\text{Explicit}) = m/k$
+
+For Rails example: $m/k = 50/5 = 10$ (10$\times$ leverage improvement).
+
+\subsection{Instance 6: Database Schema Normalization}
+
+Normalization eliminates redundancy, maximizing leverage. This concept, introduced by Codd \cite{codd1970relational}, is the foundation of relational database design \cite{date2003introduction}.
+
+\subsubsection{Architecture Comparison}
+
+Consider customer address stored in database:
+
+\textbf{Denormalized (Address in 3 tables):}
+\begin{itemize}
+\item \texttt{Users} table: address columns
+\item \texttt{Orders} table: shipping address columns
+\item \texttt{Invoices} table: billing address columns
+\item DOF $= 3$ (address stored 3 times)
+\end{itemize}
+
+\textbf{Normalized (Address in 1 table):}
+\begin{itemize}
+\item \texttt{Addresses} table: single source
+\item Foreign keys from \texttt{Users}, \texttt{Orders}, \texttt{Invoices}
+\item DOF $= 1$ (address stored once)
+\end{itemize}
+
+\subsubsection{Leverage Analysis}
+
+Both provide same capability: store/retrieve addresses.
+
+\begin{align*}
+L(\text{Normalized}) &= c / 1 = c \\
+L(\text{Denormalized}) &= c / 3
+\end{align*}
+
+\textbf{Advantage:} $L(\text{Normalized}) / L(\text{Denormalized}) = 3$
+
+\textbf{Modification Complexity:}
+\begin{itemize}
+\item Change address format: Normalized $M = 1$, Denormalized $M = 3$
+\item Error probability: $P_{\text{denorm}} = 3p$ vs $P_{\text{norm}} = p$
+\end{itemize}
+
+\textbf{Tradeoff:} Normalization increases leverage but may sacrifice query performance (joins required).
+
+\subsection{Summary of Instances}
+
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Instance} & \textbf{High Leverage} & \textbf{Low Leverage} & \textbf{Ratio} \\
+\midrule
+SSOT & DOF = 1 & DOF = $n$ & $n$ \\
+Nominal Typing & $c+4$ caps, DOF $d$ & $c$ caps, DOF $d$ & $(c+4)/c$ \\
+Microservices & Monolith (DOF = 1) & $n$ services (DOF = $n$) & $n/(c_0+5)$ \\
+REST API & Generic (DOF = 1) & Specific (DOF = $n$) & $n$ \\
+Configuration & Convention (DOF = $k$) & Explicit (DOF = $m$) & $m/k$ \\
+Database & Normalized (DOF = 1) & Denormalized (DOF = $n$) & $n$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Pattern:} High leverage architectures achieve $n$-fold improvement where $n$ is the consolidation factor (use sites, services, endpoints, parameters, or redundant storage).

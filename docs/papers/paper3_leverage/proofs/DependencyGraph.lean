@@ -38,7 +38,11 @@ def configuredProjectRoots : List String := [
   "HandleAliases",
   "Paper1",
   "Ssot",
-  "TestFoo"
+  "TestFoo",
+  "DecisionQuotient",
+  "ArrayDSLExport",
+  "ArrayDSLExportMain",
+  "InflationEntropyDryRun"
 ]
 
 /-- Filter: keep only declarations from the active paper/dependency namespaces. -/

@@ -1,1476 +1,530 @@
-# Paper: Leverage, Structural Rank, and Thermodynamic Selection in Information-Processing Systems
+# Paper: Structural Rank, Decision Entropy, and Thermodynamic Selection in Finite Information-Processing Systems
 
-**Status**: Draft-ready | **Lean**: 75488 lines, 3285 theorems
+**Status**: Draft-ready | **Lean**: 75987 lines, 3303 theorems
 
 ---
 
 ## Abstract
 
-We study leverage as a structural invariant of information-processing systems. For any system $A$ with capabilities $\mathrm{Cap}(A) > 0$, we prove a Five-Way Equivalence: $$\begin{aligned}
-\mathrm{DOF}(A) = 1
-&\;\iff\; \text{max leverage } L = |\mathrm{Cap}|/\mathrm{DOF}
-\;\iff\; \text{single source of truth} \\
-&\;\iff\; \mathrm{srank} = 1
-\;\iff\; \text{tractable sufficiency} \\
-&\;\iff\; \text{minimum thermodynamic cost}.
-\end{aligned}$$
+Exact resolution in finite bounded physical systems carries irreducible thermodynamic cost. Under Landauer calibration, any exact-resolution cycle satisfies $$E \geq k_B T\, H_{\mathrm{nats}}(D),$$ where $H_{\mathrm{nats}}(D)$ is the natural-log entropy of the decision quotient. In the canonical binary encoding studied here, this bound sharpens to $$E \geq \mathrm{DOF}(A)\, k_B T \ln 2,$$ and the rank-$1$ regime is the unique thermodynamic ground state: every system with more than one degree of freedom lies strictly above the minimum per-cycle resolution cost.
 
-We also prove that the England replication inequality, $$\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k,$$ reduces to counting: a $k$-variable system has $2^k$ states, and the finite inequality $k \leq 2^{k-1}$ yields the entropy gap under Landauer calibration. The thermodynamic bound $E_{\mathrm{decision}} \geq \mathrm{srank} \cdot k_B T \ln 2$ then follows from the same calibration (BA7).
+The England replication inequality, $$\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k,$$ is also obtained in the same framework. The proof reduces the entropy premium of replication to finite counting: a $k$-coordinate system has $2^k$ states, and the elementary inequality $k \leq 2^{k-1}$ yields the gap.
 
-Within the explicit thermodynamic model used in the paper (Landauer calibration, finite energy, finite signal speed, and nontrivial state space), we derive a physical no-go theorem for polynomial collapse (LP38). Engineering corollaries follow directly: $\mathrm{DOF} = n$ is isomorphic to a series reliability system with $n$ failure points; expected modification cost is proportional to $\mathrm{DOF}$; and minimum edit-energy equals $k_B T \ln 2 \cdot \mathrm{DOF}(A)$.
+These thermodynamic statements are derived from a finite structural theorem. Exact resolution in a bounded system occurs through finitely many discrete acquisition events. The associated canonical decision problem records those events as Boolean coordinate reads, and the number of independent coordinates is identified exactly with the structural rank of the encoded decision problem: $$\mathrm{DOF}(A) = \mathrm{srank}(\mathrm{canonicalDP}(A)).$$ The decision quotient therefore has at most $2^{\mathrm{DOF}(A)}$ optimal-action classes, so its entropy is controlled by the same coordinate count that governs exact physical resolution.
 
-All theorems are machine-checked in Lean 4 with no `sorry` placeholders. The only explicit physics premises are Landauer calibration, the Second Law (non-negative entropy production), and the Thermodynamic Uncertainty Relation (Barato-Seifert 2015). An assumption ledger records the dependency structure of each physically grounded result.
+All theorems are machine-checked in Lean 4 with no `sorry` placeholders. The mechanized artifact records the proof provenance in full.
 
-Keywords: thermodynamics, Landauer principle, entropy production, information theory, structural rank, formal verification, degrees of freedom
+Keywords: thermodynamics, Landauer principle, decision entropy, structural rank, bounded physical systems, formal verification
 
 
 _Failed to convert lean_stats.tex_
 
 # Introduction
 
-This paper proves thermodynamic bounds on information-processing systems from first principles. The central result is the Five-Way Equivalence (Theorem [\[thm:five-way\]](#thm:five-way){reference-type="ref" reference="thm:five-way"}): five independent scientific frameworks (engineering, epistemics, information theory, computational complexity, and statistical physics) all characterize the same structural property, $\mathrm{DOF} = 1$. Software architecture serves as the application domain; the underlying physics is general. All claims are verified in Lean 4 with zero `sorry` placeholders.
-
-## Formalization Statistics
-
-::: center
-  **Metric**                                    **Value**
-  ------------------------------------- -----------------
-  Lines of Lean 4 (local layer)                      4122
-  Theorems/lemmas (local layer)                       210
-  `sorry` placeholders (local layer)                    0
-  Proof files (local layer)                            17
-  Total imported Lean lines                         75488
-  Total theorem/lemma statements                     3285
-  Total imported `sorry` placeholders                   0
-  Total proof files in import closure                 280
-  **Dependencies (live imports)**       
-  `AbstractClassSystem`                   lines, theorems
-  `Ssot`                                  lines, theorems
-  `DecisionQuotient`                      lines, theorems
-:::
-
-All proofs build with `lake build`. Axiom dependencies verified via `#print axioms`: `propext`, `Quot.sound`, `Classical.choice`.
+Finite bounded physical systems resolve decisions through finitely many discrete acquisition events on bounded horizons. Under Landauer calibration [@landauer1961irreversibility; @bennett1982thermodynamics], exact resolution therefore carries irreducible thermodynamic cost. The formal object is a bounded decision system, represented in Lean by `Architecture`, carrying a positive degree-of-freedom count together with a canonical binary decision encoding `canonicalDP`. This counting parameter is exactly the structural rank of the encoded decision problem, it bounds the entropy of the decision quotient, and it determines the minimum per-cycle resolution cost. The quotient object is closer to zero-error and confusability-based information than to average-case coding [@shannon1956zero; @korner1973graphs; @lovasz1979shannon]. All claims are verified in Lean 4 [@moura2021lean4] with Mathlib support [@mathlib2020] and zero `sorry` placeholders.
 
 ## Central Result
 
-::: theorem
-[]{#thm:five-way label="thm:five-way"} For any architecture $A$ with $\mathrm{Cap}(A) > 0$, the following are equivalent: $$\begin{aligned}
-&\underbrace{\mathrm{DOF}(A) = 1}_{\text{single source}}
-\;\iff\;
-\underbrace{L(A) \text{ maximal}}_{\text{engineering}}
-\;\iff\;
-\underbrace{\mathrm{SSOT}(A)}_{\text{epistemics}} \\
-&\iff\;
-\underbrace{\mathrm{srank}(A) = 1}_{\text{information}}
-\;\iff\;
-\underbrace{\text{tractable sufficiency}}_{\text{complexity}}
-\;\iff\;
-\underbrace{\text{min thermo cost}}_{\text{physics}}
-\end{aligned}$$
-:::
+The convergence theorem proved in Section [\[five-way-equivalence\]](#five-way-equivalence){reference-type="ref" reference="five-way-equivalence"} is:
 
-Proved in Section [\[five-way-equivalence\]](#five-way-equivalence){reference-type="ref" reference="five-way-equivalence"}. Machine-checked via `Leverage` $\to$ `DecisionQuotient` $\to$ `Ssot` $\to$ Mathlib.
+$$\begin{aligned}
+&\underbrace{\mathrm{DOF}(A) = 1}_{\text{one-coordinate regime}}
+\;\iff\;
+\underbrace{\mathrm{srank}(\mathrm{canonicalDP}(A)) = 1}_{\text{structural rank}} \\
+&\iff\;
+\underbrace{\text{tractable sufficiency for } \mathrm{canonicalDP}(A)}_{\text{complexity}}
+\;\iff\;
+\underbrace{\text{minimum per-cycle thermodynamic cost}}_{\text{physics}}
+\end{aligned}$$
+
+An imported coherence theorem gives a separate single-source reading of the same rank-$1$ point: $$\mathrm{SSOT}(A) \iff \mathrm{DOF}(A)=1,$$ where $\mathrm{SSOT}(A)$ denotes the coherent single-source condition that one locus is authoritative, every remaining encoding is a derived view, and all reachable states remain coherent.
+
+The structural-rank and thermodynamic clauses are central. The imported coherence statement is a companion interpretation of the same rank-$1$ regime, not a premise of the mathematical-physics chain.
 
 ## Contributions
 
-1.  **DOF-Reliability Isomorphism (Theorem [\[thm:dof-reliability\]](#thm:dof-reliability){reference-type="ref" reference="thm:dof-reliability"}):** Architecture with $n$ DOF is isomorphic to a series reliability system with $n$ components.
+1.  **Finite Physical Acquisition:** bounded regions admit finitely many acquisition events, those events are discrete state transitions, and exact resolution requires a sufficient coordinate set.
 
-2.  **Leverage-Error Tradeoff (Theorem [\[thm:leverage-error\]](#thm:leverage-error){reference-type="ref" reference="thm:leverage-error"}):** $L(A_1) > L(A_2) \implies P_{\mathrm{error}}(A_1) < P_{\mathrm{error}}(A_2)$ at equal capabilities.
+2.  **DOF-Structural-Rank Identification:** the canonical decision problem attached to an $n$-degree-of-freedom system has structural rank $n$.
 
-3.  **Modification Complexity Gap (Theorem [\[thm:leverage-gap\]](#thm:leverage-gap){reference-type="ref" reference="thm:leverage-gap"}):** Expected modification cost is proportional to DOF at fixed capabilities.
+3.  **Entropy-Rank Control:** the number of decision classes is at most $2^{\mathrm{DOF}(A)}$, so the decision entropy is bounded by the degree-of-freedom count.
 
-4.  **Physical Edit-Energy Floor (Theorem [\[thm:physical-energy-floor\]](#thm:physical-energy-floor){reference-type="ref" reference="thm:physical-energy-floor"}):** Minimum edit-energy $= j_\mathcal{M} \cdot \mathrm{DOF}(A)$ under Landauer calibration. No P $\neq$ coNP assumption.
+4.  **Landauer-Linear Resolution Cost:** under Landauer calibration, exact-resolution cost is bounded below by $\mathrm{DOF}(A)\,k_B T \ln 2$.
 
-5.  **England Replication Inequality (Theorem [\[thm:england\]](#thm:england){reference-type="ref" reference="thm:england"}):** $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$. Proof: a $k$-variable system has $2^k$ states (counting); entropy gap follows from $k \leq 2^{k-1}$ (induction).
+5.  **Energy-Information Duality:** the same system satisfies $E \geq k_B T\,H_{\mathrm{nats}}(D)$, linking thermodynamic cost directly to the entropy of the decision quotient.
 
-6.  **Optimal Architecture (Theorem [\[thm:optimal\]](#thm:optimal){reference-type="ref" reference="thm:optimal"}):** $f(R) = \arg\max_{A:\,\mathrm{Cap}(A) \supseteq R} L(A)$ minimizes expected error and is computable.
+6.  **Finite-Budget No-Collapse:** bounded budget, positive per-bit cost, and exponential lower-bound growth jointly preclude physical collapse of the higher-rank regime.
 
-#### What is new.
+7.  **England Replication Inequality (Theorem [\[thm:england\]](#thm:england){reference-type="ref" reference="thm:england"}):** $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$. The proof reduces the entropy gap to counting via $k \leq 2^{k-1}$.
 
-`AbstractClassSystem` and `Ssot` establish two of the five equivalences. This paper adds leverage maximization and proves it equivalent to the remaining three. The England inequality is new: the only physics input is the Landauer constant $k_B$; the bound reduces to $k \leq 2^{k-1}$.
+8.  **Rank-1 Convergence (Theorem [\[thm:five-way\]](#thm:five-way){reference-type="ref" reference="thm:five-way"}):** the rank-$1$ regime is simultaneously the one-coordinate regime, the tractable sufficiency regime, and the thermodynamic ground state.
 
-## Dependency Chain
+#### Physical significance.
 
-1.  `AbstractClassSystem`: axis orthogonality $\to$ error independence (Theorem [\[thm:error-independence\]](#thm:error-independence){reference-type="ref" reference="thm:error-independence"})
-
-2.  `Ssot`: DOF $= 1$ $\iff$ coherence $\to$ second equivalence
-
-3.  `DecisionQuotient`: tractability boundary and thermodynamic lift $\to$ fourth and fifth equivalences
-
-4.  `Leverage` (this paper): leverage maximization $\iff$ all of the above
+Once finite acquisition is fixed as the physical interface, the degree-of-freedom count becomes simultaneously an interaction dimension, an entropy bound, and a Landauer-calibrated cost coordinate. The result concerns exact resolution structure in matter.
 
 ## Scope
 
-Leverage measures capability-to-DOF ratio. Performance, security, and other dimensions are orthogonal. Error independence is derived from axis orthogonality in `AbstractClassSystem`, not assumed. Physical claims use one explicit constant ($j_\mathcal{M} > 0$) and no additional axioms beyond the Landauer calibration.
+The mathematical structure links structural rank, quotient entropy, complexity, and thermodynamic cost. Theorems are stated for bounded decision systems represented by the Lean object `Architecture` and their canonical decision encoding, not for arbitrary physical systems without mediation. Architectural and programming interpretations are downstream readings of the same formal core.
 
 ## Organization
 
-Section [\[foundations\]](#foundations){reference-type="ref" reference="foundations"} defines Architecture, DOF, Capabilities, and Leverage. Section [\[probability-model\]](#probability-model){reference-type="ref" reference="probability-model"} derives the error model. Section [\[main-theorems\]](#main-theorems){reference-type="ref" reference="main-theorems"} proves decidability and optimality. Section [\[instances\]](#instances){reference-type="ref" reference="instances"} gives leverage instances. Section [\[five-way-equivalence\]](#five-way-equivalence){reference-type="ref" reference="five-way-equivalence"} proves the five-way equivalence and the England inequality. Section [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="appendix-lean"} describes the Lean mechanization.
+Section [\[foundations\]](#foundations){reference-type="ref" reference="foundations"} defines the structural model, the finite-acquisition interface, and the canonical decision encoding. Section [\[probability-model\]](#probability-model){reference-type="ref" reference="probability-model"} derives the structural-rank and entropy consequences of that encoding. Section [\[main-theorems\]](#main-theorems){reference-type="ref" reference="main-theorems"} derives the thermodynamic consequences. Section [\[five-way-equivalence\]](#five-way-equivalence){reference-type="ref" reference="five-way-equivalence"} proves the convergence theorem and the England inequality. Section [\[related-work\]](#related-work){reference-type="ref" reference="related-work"} situates the paper relative to thermodynamics, information theory, and formalized complexity. Section [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="appendix-lean"} describes the Lean mechanization.
 
 
 # Foundations
 
-We formalize the core concepts: architecture state spaces, degrees of freedom, capabilities, and leverage.
+The formal objects that carry the mathematical-physics content are a positive degree-of-freedom count, a canonical binary decision encoding, structural rank, and decision entropy.
 
-## Architecture State Space
+## Formal Object
 
 ::: definition
-[]{#def:architecture label="def:architecture"} An *architecture* is a tuple $A = (C, S, T, R)$ where:
-
--   $C$ is a finite set of *components* (modules, services, endpoints, etc.)
-
--   $S = \prod_{c \in C} S_c$ is the *state space* (product of component state spaces)
-
--   $T : S \to \mathcal{P}(S)$ defines valid *transitions* (state changes)
-
--   $R$ is a set of *requirements* the architecture must satisfy
+[]{#def:architecture label="def:architecture"} A *bounded decision system* is a finite bounded physical system equipped with a positive integer $\mathrm{DOF}(A)$. In the mechanized artifact the corresponding Lean object is named `Architecture`, but the results used below depend only on the degree-of-freedom count and on the canonical decision encoding.
 :::
 
-**Intuition:** An architecture consists of components, each with a state space. The total state space is the product of component spaces. Transitions define how the system can evolve.
-
-::: example
--   $C = \{U, O, P\}$ where $U=\text{UserService}$, $O=\text{OrderService}$, $P=\text{PaymentService}$
-
--   $S_{\text{UserService}} = \text{UserDB} \times \text{Endpoints} \times \text{Config}$
-
--   Similar for other services
-
--   $S = S_{\text{UserService}} \times S_{\text{OrderService}} \times S_{\text{PaymentService}}$
-:::
+**Interpretation.** $\mathrm{DOF}(A)$ counts independent coordinates that can vary separately. The rest of the paper studies what that count forces once one asks for exact resolution.
 
 ## Degrees of Freedom
 
 ::: definition
-[]{#def:dof label="def:dof"} The *degrees of freedom* of architecture $A = (C, S, T, R)$ is a natural number $\text{DOF}(A) \in \mathbb{N}$ counting the independent axes of variation in the state space. Formally, it is the cardinality of a minimal complete orthogonal axis set for $S$ (as established in `AbstractClassSystem`). In the Lean formalization, `Architecture.dof` is a field of type $\mathbb{N}$.
+[]{#def:dof label="def:dof"} The quantity $\mathrm{DOF}(A) \in \mathbb{N}$ counts independent coordinates of variation in a bounded decision system $A$. In the mechanized development it is the local structural parameter attached to `Architecture`; later sections identify it exactly with the structural rank of a canonical decision problem.
 :::
 
-**Operational meaning:** DOF counts independent modification points. If $\text{DOF}(A) = n$, then $n$ independent changes can be made to the architecture.
+**Operational meaning.** If $\mathrm{DOF}(A)=n$, the system has $n$ independent coordinates that must be resolved in the worst case by any exact resolver.
 
 ::: proposition
-[]{#prop:dof-additive label="prop:dof-additive"} For disjoint architectures $A_1 = (C_1, S_1, T_1, R_1)$ and $A_2 = (C_2, S_2, T_2, R_2)$ with $C_1 \cap C_2 = \emptyset$: $$\text{DOF}(A_1 \oplus A_2) = \text{DOF}(A_1) + \text{DOF}(A_2)$$ where $A_1 \oplus A_2 = (C_1 \cup C_2, S_1 \times S_2, T_1 \times T_2, R_1 \cup R_2)$.
+[]{#prop:dof-additive label="prop:dof-additive"} For disjoint bounded decision systems $A_1$ and $A_2$: $$\mathrm{DOF}(A_1 \oplus A_2) = \mathrm{DOF}(A_1) + \mathrm{DOF}(A_2)$$
 :::
 
 ::: proof
-*Proof.* Components are disjoint ($C_1 \cap C_2 = \emptyset$), so the axis sets of $A_1$ and $A_2$ are disjoint. The axis set of $A_1 \oplus A_2$ is their disjoint union, giving $\text{DOF}(A_1 \oplus A_2) = |\text{axes}(A_1)| + |\text{axes}(A_2)| = \text{DOF}(A_1) + \text{DOF}(A_2)$. ◻
+*Proof.* Independent coordinate sets combine by disjoint union, so the coordinate count is additive under composition. ◻
 :::
 
-::: example
-1.  **Monolith:** Single deployment unit $\to$ DOF $= 1$
+## Finite Physical Acquisition
 
-2.  **$n$ Microservices:** $n$ independent services $\to$ DOF $= n$
-
-3.  **Copied Code:** Code duplicated to $n$ locations $\to$ DOF $= n$ (each copy independent)
-
-4.  **SSOT:** Single source, $n$ derived uses $\to$ DOF $= 1$ (only source is independent)
-
-5.  **$k$ API Endpoints:** $k$ independent definitions $\to$ DOF $= k$
-
-6.  **$m$ Config Parameters:** $m$ independent settings $\to$ DOF $= m$
+::: theorem
+[]{#thm:counting-gap label="thm:counting-gap"} Let $\varepsilon, C \in \mathbb{N}$ with $\varepsilon>0$ and $C>0$. If each information-acquisition event consumes $\varepsilon$ discrete cost units, then $$\varepsilon \cdot N \le C \implies N \le C.$$ Equivalently, any bounded system with positive per-event cost admits only finitely many acquisition events.
 :::
 
-## Capabilities
-
-::: definition
-[]{#def:capabilities label="def:capabilities"} The *capability set* of architecture $A$ is: $$\text{Cap}(A) = \{r \in R \mid A \text{ satisfies } r\}$$
+::: proof
+*Proof.* In $\mathbb{N}$ every positive integer is at least one, so $N = 1\cdot N \le \varepsilon N \le C$. ◻
 :::
 
-**Examples of capabilities:**
+Bounded capacity plus positive per-event cost already forbids infinite checking. Physics enters when the abstract cost unit is calibrated. Under Landauer-type calibration, exact irreversible acquisition carries positive cost, so bounded material systems inherit the counting gap directly.
 
--   "Support horizontal scaling"
-
--   "Provide type provenance"
-
--   "Enable independent deployment"
-
--   "Satisfy single source of truth for class definitions"
-
--   "Allow polyglot persistence"
-
-::: definition
-[]{#def:satisfies label="def:satisfies"} Architecture $A$ *satisfies* requirement $r$ (written $A \vDash r$) if there exists an execution trace in $(S, T)$ that meets $r$'s specification.
-:::
-
-## Leverage
-
-::: definition
-[]{#def:leverage label="def:leverage"} The *leverage* of architecture $A$ is: $$L(A) = \frac{|\text{Cap}(A)|}{\text{DOF}(A)}$$
-:::
-
-**Special cases:**
-
-1.  **Unbounded Leverage:** As $|\text{Cap}(A)|$ grows for fixed $\text{DOF}(A) = 1$, leverage grows without bound. This is the metaprogramming regime: a single source with an unbounded number of derived capabilities. In any fixed finite model, $L$ is a positive rational; "$L = \infty$" is a shorthand for this limit.
-
-2.  **Unit Leverage ($L = 1$):** Linear relationship (n capabilities from n DOF)
-
-3.  **Sublinear Leverage ($L < 1$):** Antipattern (more DOF than capabilities)
-
-::: example
--   **SSOT:** DOF $= 1$, Cap $= \{F, \text{uses of } F\}$ where each new use adds a capability\
-    $\Rightarrow L$ grows without bound as derivations accumulate
-
--   **Scattered Code (n copies):** DOF $= n$, Cap $= \{F\}$\
-    $\Rightarrow L = 1/n$ (antipattern!)
-
--   **Generic REST Endpoint:** DOF $= 1$, Cap $= \{\text{serve } n \text{ use cases}\}$\
-    $\Rightarrow L = n$
-
--   **Specific Endpoints:** DOF $= n$, Cap $= \{\text{serve } n \text{ use cases}\}$\
-    $\Rightarrow L = 1$
-:::
-
-::: definition
-[]{#def:dominance label="def:dominance"} Architecture $A_1$ *dominates* $A_2$ (written $A_1 \succeq A_2$) if:
-
-1.  $\text{Cap}(A_1) \supseteq \text{Cap}(A_2)$ (at least same capabilities)
-
-2.  $L(A_1) \geq L(A_2)$ (at least same leverage)
-
-$A_1$ *strictly dominates* $A_2$ (written $A_1 \succ A_2$) if $A_1 \succeq A_2$ with at least one inequality strict.
-:::
-
-## Modification Complexity
-
-::: definition
-[]{#def:mod-complexity label="def:mod-complexity"} For requirement change $\delta R$, the *modification complexity* is: $$M(A, \delta R) = \text{expected number of independent changes to implement } \delta R$$
+::: proposition
+[]{#prop:bounded-region label="prop:bounded-region"} A bounded physical region is characterized by diameter $d>0$ and signal speed $c>0$. Its maximum information-acquisition rate is $c/d$ events per unit time.
 :::
 
 ::: theorem
-[]{#thm:mod-bound label="thm:mod-bound"} For all architectures $A$ and requirement changes $\delta R$: $$M(A, \delta R) \leq \text{DOF}(A)$$ with equality when $\delta R$ affects all components.
+[]{#thm:bounded-acquisition label="thm:bounded-acquisition"} For a bounded region with diameter $d$, signal speed $c$, and operating time $T$, $$\mathrm{acquisitions}(T) \le \frac{cT}{d}.$$ In particular, acquisition count is finite on finite horizons.
 :::
 
 ::: proof
-*Proof.* By Definition [\[def:dof\]](#def:dof){reference-type="ref" reference="def:dof"}, DOF counts independent axes. A requirement change $\delta R$ decomposes into sub-changes along individual axes; sub-changes along distinct axes are independent. Therefore the number of independent changes is at most the number of axes, which is $\text{DOF}(A)$. Equality holds when $\delta R$ has a non-trivial projection onto every axis. ◻
+*Proof.* Signals require at least $d/c$ time to traverse the region, so no more than $c/d$ acquisition events can occur per unit time. ◻
 :::
 
-::: example
-Consider changing a structural fact $F$ with $n$ use sites:
-
--   **SSOT:** $M = 1$ (change at source, derivations update automatically)
-
--   **Scattered:** $M = n$ (must change each copy independently)
+::: theorem
+[]{#thm:discrete-acquisition label="thm:discrete-acquisition"} Information acquisition is realized by discrete state transitions. A bounded physical decision process is therefore a finite transition system whose acquisition events are countable transition points.
 :::
+
+::: theorem
+[]{#thm:one-transition-one-bit label="thm:one-transition-one-bit"} Each elementary acquisition transition carries one boolean bit. Boolean coordinates are therefore the primitive units of exact physical information exchange in the canonical model.
+:::
+
+Together, Theorems [\[thm:bounded-acquisition\]](#thm:bounded-acquisition){reference-type="ref" reference="thm:bounded-acquisition"}, [\[thm:discrete-acquisition\]](#thm:discrete-acquisition){reference-type="ref" reference="thm:discrete-acquisition"}, and [\[thm:one-transition-one-bit\]](#thm:one-transition-one-bit){reference-type="ref" reference="thm:one-transition-one-bit"} identify the later binary decision encoding as the natural finite acquisition model. A bounded resolver acquires information through finitely many discrete events, and each such event contributes one elementary boolean distinction.
+
+::: theorem
+[]{#thm:resolution-sufficient label="thm:resolution-sufficient"} Any exact physical resolver for a decision problem must read a sufficient coordinate set. If fewer coordinates are read, there exist states indistinguishable to the resolver but requiring different optimal actions.
+:::
+
+::: proof
+*Proof.* If the accessed coordinates are not sufficient, two states agree on every read coordinate while disagreeing on the optimal action. Any resolver limited to those coordinates must therefore err on at least one of the two states. ◻
+:::
+
+## Canonical Decision Encoding
+
+::: definition
+[]{#def:canonical-dp label="def:canonical-dp"} For a bounded decision system $A$ with $\mathrm{DOF}(A)=n$, the canonical decision problem $$\mathrm{canonicalDP}(A)$$ has state space $\mathrm{Fin}\;n \to \mathrm{Bool}$ and action space $\mathrm{Fin}\;n \oplus \mathrm{Unit}$. Action $\mathrm{inl}(i)$ queries coordinate $i$; the fallback action $\mathrm{inr}(\star)$ receives constant utility $1$. Query action $i$ receives utility $2$ exactly when coordinate $i$ is true and $0$ otherwise.
+:::
+
+The encoding is the exact Lean object `canonicalDP` in `Leverage/BridgeToDQ.lean`. Every coordinate is relevant by construction, so the encoding exposes the full interaction dimension of the source system.
+
+The encoding records, in the smallest exact-resolution object, the coordinate structure that any bounded physical resolver must already confront. The Boolean coordinates represent primitive acquisition events.
+
+## Structural Rank
+
+::: definition
+[]{#def:srank label="def:srank"} The *structural rank* of a finite decision problem is the cardinality of its relevant coordinate set, equivalently the size of any minimal sufficient set. It is the minimum interaction dimension that must be read to determine the optimal action exactly.
+:::
+
+For the canonical decision problem attached to $A$, the relevant coordinate set is all of $\mathrm{Fin}\;\mathrm{DOF}(A)$, so the structural-rank problem is exactly matched to the local degree-of-freedom count.
+
+## Decision Quotient and Entropy
+
+::: definition
+[]{#def:decision-quotient label="def:decision-quotient"} For a decision problem $D$, states are identified when they induce the same optimal-action set. The quotient space of these equivalence classes is the *decision quotient* of $D$.
+:::
+
+::: proposition
+[]{#prop:optimizer-quotient label="prop:optimizer-quotient"} Let $\operatorname{Opt}: S \to \mathcal P(A)$ be the optimizer map of a finite decision problem. In **Set**, the decision quotient is the coimage of $\operatorname{Opt}$, canonically equivalent to $\operatorname{im}(\operatorname{Opt})$ [@maclane1998categories]. Any surjective decision-preserving summary factors through this quotient.
+:::
+
+The quotient is the coarsest exact abstraction of the decision problem: it forgets only decision-irrelevant distinctions and preserves every distinction needed for exact action selection. The entropy and thermodynamic bounds below are stated for this canonical exact abstraction.
+
+::: definition
+[]{#def:decision-entropy label="def:decision-entropy"} Let $\mathrm{numOptClasses}(D)$ be the number of equivalence classes in the decision quotient. Two entropy normalizations are used: $$H_{\mathrm{bits}}(D) = \log_2 \mathrm{numOptClasses}(D),
+\qquad
+H_{\mathrm{nats}}(D) = \log \mathrm{numOptClasses}(D).$$
+:::
+
+The physics results are naturally stated in nats because Landauer calibration contributes the factor $k_B T$ per nat of resolved decision information [@landauer1961irreversibility; @bennett1982thermodynamics].
 
 ## Formalization in Lean
 
-All definitions in this section are formalized in `Leverage/Foundations.lean`:
-
--   `Architecture`: Structure with components, state, transitions, requirements
-
--   `Architecture.leverage`: Leverage metric
-
--   `Architecture.dominates`: Dominance relation
-
--   `compose_dof`: Proposition [\[prop:dof-additive\]](#prop:dof-additive){reference-type="ref" reference="prop:dof-additive"}
-
--   `modification_eq_dof`: Theorem [\[thm:mod-bound\]](#thm:mod-bound){reference-type="ref" reference="thm:mod-bound"}
+The local degree-of-freedom object lives in `Leverage/Foundations.lean`, while the canonical decision encoding and its rank-identification theorems live in `Leverage/BridgeToDQ.lean`. Structural rank and decision entropy are formalized in the decision-quotient development.
 
 
-# Probability Model
+# Structural Rank and Decision Entropy {#probability-model}
 
-We derive the relationship between DOF and error probability from `AbstractClassSystem`'s axis independence theorem.
+The canonical decision encoding has two immediate consequences. The degree-of-freedom count is exactly the interaction dimension of the encoded decision problem, and exact physical resolution must pay for that interaction dimension in discrete bit events. Structural rank is the physical count of irreducible coordinate reads required by exact resolution.
 
-## Error Independence from Axis Orthogonality
-
-The independence of errors is not an axiom; it is a consequence of axis orthogonality proved in `AbstractClassSystem` [@paper1_typing_discipline].
+## Degree of Freedom Equals Structural Rank
 
 ::: theorem
-[]{#thm:error-independence label="thm:error-independence"} If axes $\{A_1, \ldots, A_n\}$ are orthogonal (`AbstractClassSystem`, Theorem `minimal_complete_unique_orthogonal`), then errors along each axis are statistically independent.
+[]{#thm:dof-srank label="thm:dof-srank"} For every bounded decision system $A$, $$\mathrm{srank}(\mathrm{canonicalDP}(A)) = \mathrm{DOF}(A).$$
 :::
 
 ::: proof
-*Proof.* By Definition [\[def:architecture\]](#def:architecture){reference-type="ref" reference="def:architecture"}, the state space is the product $S = \prod_{c \in C} S_c$. `AbstractClassSystem`'s orthogonality theorem (`minimal_complete_unique_orthogonal`) establishes that a minimal complete axis set partitions the state space into independent dimensions: axis $A_i$ is a projection onto a factor of the product, and $A_i \perp A_j$ means the projection onto factor $i$ carries no information about factor $j$.
-
-An *error along axis $A_i$* is the event $E_i$ that the value on factor $i$ deviates from specification. Since the factors are independent dimensions of the product space, the probability measure factorizes: $$P(E_i \mid \text{state of factors } \neq i) = P(E_i).$$ This is the standard characterization of independence for product probability spaces: the marginal on factor $i$ is independent of the marginal on any other factor. Therefore $P(E_i \cap E_j) = P(E_i) \cdot P(E_j)$ for all $i \neq j$, and by induction the $n$ events $E_1, \ldots, E_n$ are mutually independent. ◻
+*Proof.* In the canonical decision problem on $n$ coordinates, every coordinate is relevant by construction. The structural rank is therefore exactly $n$. Substituting $n = \mathrm{DOF}(A)$ gives the claim. ◻
 :::
 
 ::: corollary
-[]{#cor:dof-errors label="cor:dof-errors"} DOF$(A) = n$ implies $n$ independent sources of error, each with probability $p$.
-:::
-
-::: proof
-*Proof.* DOF counts independent axes (Section [\[foundations\]](#foundations){reference-type="ref" reference="foundations"}, Definition [\[def:dof\]](#def:dof){reference-type="ref" reference="def:dof"}). By Theorem [\[thm:error-independence\]](#thm:error-independence){reference-type="ref" reference="thm:error-independence"}, independent axes have independent errors. ◻
-:::
-
-::: theorem
-[]{#thm:error-compound label="thm:error-compound"} For a system to be correct, all $n$ independent axes must be error-free. Errors compound multiplicatively.
-:::
-
-::: proof
-*Proof.* By `Ssot`'s coherence theorem (`oracle_arbitrary`), incoherence in any axis violates system correctness. An error in axis $A_i$ introduces incoherence along $A_i$. Therefore, correctness requires $\bigwedge_{i=1}^{n} \neg\text{error}(A_i)$. By Theorem [\[thm:error-independence\]](#thm:error-independence){reference-type="ref" reference="thm:error-independence"}, this probability is $(1-p)^n$. ◻
-:::
-
-## Error Probability Formula
-
-::: theorem
-[]{#thm:error-prob label="thm:error-prob"} For architecture with $n$ DOF and per-component error rate $p$: $$P_{\text{error}}(n) = 1 - (1-p)^n$$
-:::
-
-::: proof
-*Proof.* By Theorem [\[thm:error-independence\]](#thm:error-independence){reference-type="ref" reference="thm:error-independence"} (derived from `AbstractClassSystem`'s orthogonality), each DOF has independent error probability $p$, so each is correct with probability $(1-p)$. By Theorem [\[thm:error-compound\]](#thm:error-compound){reference-type="ref" reference="thm:error-compound"}, all $n$ DOF must be correct: $$P_{\text{correct}}(n) = (1-p)^n$$ Therefore: $$P_{\text{error}}(n) = 1 - P_{\text{correct}}(n) = 1 - (1-p)^n$$ ◻
+[]{#cor:rank-one label="cor:rank-one"} For every bounded decision system $A$, $$\mathrm{DOF}(A)=1 \iff \mathrm{srank}(\mathrm{canonicalDP}(A))=1.$$
 :::
 
 ::: corollary
-[]{#cor:linear-approx label="cor:linear-approx"} For fixed $p>0$, the linear expected-error model and the exact series model induce the same ordering on architectures by DOF.
+[]{#cor:rank-above-one label="cor:rank-above-one"} For every bounded decision system $A$, $$\mathrm{DOF}(A)>1 \implies \mathrm{srank}(\mathrm{canonicalDP}(A))>1.$$
+:::
+
+::: theorem
+[]{#thm:min-bit-operations label="thm:min-bit-operations"} Any exact resolver for $\mathrm{canonicalDP}(A)$ requires at least $\mathrm{DOF}(A)$ elementary bit-acquisition events.
 :::
 
 ::: proof
-*Proof.* By Theorem [\[thm:approx-bound\]](#thm:approx-bound){reference-type="ref" reference="thm:approx-bound"}, ordering equivalence is exact under the discrete model used in the mechanization. ◻
+*Proof.* By Theorem [\[thm:resolution-sufficient\]](#thm:resolution-sufficient){reference-type="ref" reference="thm:resolution-sufficient"}, exact resolution requires reading a sufficient coordinate set. The structural-rank theorem implies every sufficient set has cardinality at least $\mathrm{srank}(\mathrm{canonicalDP}(A))$. Theorem [\[thm:dof-srank\]](#thm:dof-srank){reference-type="ref" reference="thm:dof-srank"} identifies that rank with $\mathrm{DOF}(A)$, so at least $\mathrm{DOF}(A)$ coordinate reads are required. By Theorem [\[thm:one-transition-one-bit\]](#thm:one-transition-one-bit){reference-type="ref" reference="thm:one-transition-one-bit"}, each read contributes one elementary bit-acquisition event. ◻
 :::
 
-::: corollary
-[]{#cor:dof-monotone label="cor:dof-monotone"} For architectures $A_1, A_2$: $$\text{DOF}(A_1) < \text{DOF}(A_2) \implies P_{\text{error}}(A_1) < P_{\text{error}}(A_2)$$
+## Decision-Quotient Size
+
+::: theorem
+[]{#thm:numopt-bound label="thm:numopt-bound"} For the canonical binary decision problem attached to a bounded decision system $A$, $$\mathrm{numOptClasses}(\mathrm{canonicalDP}(A)) \le 2^{\mathrm{DOF}(A)}.$$
 :::
 
 ::: proof
-*Proof.* $P_{\text{error}}(n) = 1 - (1-p)^n$ is strictly increasing in $n$ for $p \in (0,1)$. ◻
+*Proof.* For binary coordinate spaces, the number of distinct optimal-action classes is at most $2^{\mathrm{srank}}$. Apply that theorem to the canonical encoding and substitute [\[thm:dof-srank\]](#thm:dof-srank){reference-type="ref" reference="thm:dof-srank"}. ◻
 :::
 
-## Expected Errors
-
 ::: theorem
-[]{#thm:expected-errors label="thm:expected-errors"} Expected number of errors in architecture $A$: $$\mathbb{E}[\text{\# errors}] = p \cdot \text{DOF}(A)$$
+[]{#thm:entropy-bound label="thm:entropy-bound"} For the canonical binary decision problem attached to a bounded decision system $A$, $$H_{\mathrm{bits}}(\mathrm{canonicalDP}(A)) \le \mathrm{DOF}(A),
+\qquad
+H_{\mathrm{nats}}(\mathrm{canonicalDP}(A)) \le \mathrm{DOF}(A)\,\ln 2.$$
 :::
 
 ::: proof
-*Proof.* By linearity of expectation: $$\mathbb{E}[\text{\# errors}] = \sum_{i=1}^{\text{DOF}(A)} P(\text{error in DOF}_i) = \sum_{i=1}^{\text{DOF}(A)} p = p \cdot \text{DOF}(A)$$ ◻
+*Proof.* The bit-entropy statement is the entropy-rank inequality for binary coordinate spaces, again composed with Theorem [\[thm:dof-srank\]](#thm:dof-srank){reference-type="ref" reference="thm:dof-srank"}. The nat-entropy statement is obtained by multiplying by $\ln 2$. ◻
 :::
-
-::: example
-Assume $p = 0.01$ (1% per-component error rate):
-
--   DOF $= 1$: $P_{\text{error}} = 1 - 0.99 = 0.01$ (1%)
-
--   DOF $= 10$: $P_{\text{error}} = 1 - 0.99^{10} \approx 0.096$ (9.6%)
-
--   DOF $= 100$: $P_{\text{error}} = 1 - 0.99^{100} \approx 0.634$ (63.4%)
-:::
-
-## Connection to Reliability Theory
-
-The error model has a direct interpretation in classical reliability theory [@patterson2013computer], connecting software architecture to a mature mathematical framework with 60+ years of theoretical development.
-
-::: theorem
-[]{#thm:dof-reliability label="thm:dof-reliability"} An architecture with DOF $= n$ is *isomorphic* to a series reliability system with $n$ components. The isomorphism:
-
-1.  **Preserves ordering:** If $\text{DOF}(A_1) < \text{DOF}(A_2)$, then $P_{\text{error}}(A_1) < P_{\text{error}}(A_2)$
-
-2.  **Is invertible:** Round-trip mapping preserves DOF exactly
-
-3.  **Connects domains:** $P_{\text{error}}(n) = 1 - R_{\text{series}}(n)$ where $R_{\text{series}}(n) = (1-p)^n$
-:::
-
-**Interpretation:** Each DOF is a "component" that must work correctly. This is the reliability analog of Theorem [\[thm:error-independence\]](#thm:error-independence){reference-type="ref" reference="thm:error-independence"}, which derives error independence from axis orthogonality.
-
-::: theorem
-[]{#thm:approx-bound label="thm:approx-bound"} For architectures $A_1,A_2$ with equal capabilities and error rate $p>0$, the linear model and the exact series model induce the same DOF ordering: $$\text{DOF}(A_1)\le \text{DOF}(A_2)
-\iff
-(\mathbb{E}[\text{errors}(A_1)]\cdot d)\le(\mathbb{E}[\text{errors}(A_2)]\cdot d),$$ where $d$ is the denominator of the discrete error-rate representation.
-:::
-
-::: proof
-*Proof.* This is theorem `ordering_equivalence_exact` in `Leverage/Probability.lean`. ◻
-:::
-
-**Linear Approximation Justification:** For small $p$ (the software engineering regime where $p \approx 0.01$), the linear model $P_{\text{error}} \approx n \cdot p$ is:
-
-1.  Order-equivalent to the exact series model in the mechanized discrete representation
-
-2.  Monotone in DOF for fixed positive error rate
-
-3.  Cleanly formalized in natural-number arithmetic
-
-## Epistemic Grounding
-
-The probability model is not axiomatic; it is derived from the epistemic foundations in `AbstractClassSystem` and `Ssot`:
-
-1.  `AbstractClassSystem` proves axis orthogonality (`minimal_complete_unique_orthogonal`)
-
-2.  **Theorem [\[thm:error-independence\]](#thm:error-independence){reference-type="ref" reference="thm:error-independence"}** derives error independence from orthogonality
-
-3.  `Ssot` establishes that DOF = 1 guarantees coherence (`oracle_arbitrary`)
-
-4.  **Theorem [\[thm:error-compound\]](#thm:error-compound){reference-type="ref" reference="thm:error-compound"}** connects errors to incoherence
-
-This derivation chain ensures the probability model rests on proved foundations, not assumed axioms.
-
-## Leverage Gap: Quantitative Predictions
-
-The leverage framework provides *quantitative*, empirically testable predictions about modification costs.
-
-::: theorem
-[]{#thm:leverage-gap label="thm:leverage-gap"} For architectures with equal capabilities, the modification cost ratio equals the inverse leverage ratio: $$\frac{\text{ModCost}(A_2)}{\text{ModCost}(A_1)} = \frac{\text{DOF}(A_2)}{\text{DOF}(A_1)} = \frac{L(A_1)}{L(A_2)}$$
-:::
-
-::: theorem
-[]{#thm:testable-prediction label="thm:testable-prediction"} If architecture $A_1$ has $n\times$ lower DOF than $A_2$ (for equal capabilities), then $A_1$ requires $n\times$ fewer expected modifications. This is empirically testable against PR/commit data.
-:::
-
-::: corollary
-[]{#cor:dof-ratio label="cor:dof-ratio"} The ratio of expected errors between two architectures equals the ratio of their DOF: $$\frac{\mathbb{E}[\text{errors}(A_2)]}{\mathbb{E}[\text{errors}(A_1)]} = \frac{\text{DOF}(A_2)}{\text{DOF}(A_1)}$$
-:::
-
-These theorems transform architectural intuitions into testable hypotheses. A claim that "Pattern X is 3× better than Pattern Y" can be verified by comparing DOF and measuring modification frequency in real codebases.
 
 ## Formalization
 
-Formalized in `Leverage/Probability.lean`:
-
--   `dof_reliability_isomorphism`: Theorem [\[thm:dof-reliability\]](#thm:dof-reliability){reference-type="ref" reference="thm:dof-reliability"} (the central isomorphism)
-
--   `isomorphism_preserves_failure_ordering`: Ordering preservation
-
--   `isomorphism_roundtrip`: Invertibility proof
-
--   `ordering_equivalence_exact`: Theorem [\[thm:approx-bound\]](#thm:approx-bound){reference-type="ref" reference="thm:approx-bound"} (exact ordering equivalence)
-
--   `linear_model_preserves_ordering`: Linear ordering support
-
--   `leverage_gap`: Theorem [\[thm:leverage-gap\]](#thm:leverage-gap){reference-type="ref" reference="thm:leverage-gap"}
-
--   `testable_modification_prediction`: Theorem [\[thm:testable-prediction\]](#thm:testable-prediction){reference-type="ref" reference="thm:testable-prediction"}
-
--   `dof_ratio_predicts_error_ratio`: Corollary [\[cor:dof-ratio\]](#cor:dof-ratio){reference-type="ref" reference="cor:dof-ratio"}
-
--   `lower_dof_lower_errors`: Corollary [\[cor:dof-monotone\]](#cor:dof-monotone){reference-type="ref" reference="cor:dof-monotone"}
-
--   `expected_errors_from_linearity`: Theorem [\[thm:expected-errors\]](#thm:expected-errors){reference-type="ref" reference="thm:expected-errors"}
-
--   `ssot_minimal_errors`: SSOT minimality
+The structural-rank bridge is formalized in `Leverage/BridgeToDQ.lean`; the minimum-bit and entropy bounds are formalized in the decision-quotient physics and information development. These are the objects used directly by the thermodynamic theorems of the next section.
 
 
-# Main Theorems
+# Thermodynamic Consequences {#main-theorems}
 
-We prove the core results connecting leverage to error probability and architectural optimality. The theoretical structure is:
+The previous section identified degree of freedom with structural rank and bounded the entropy of the decision quotient. Exact resolution requires irreducible bit events. Matter pays for them.
 
-1.  **DOF-Reliability Isomorphism** (Theorem [\[thm:dof-reliability\]](#thm:dof-reliability){reference-type="ref" reference="thm:dof-reliability"}): Maps architecture to reliability theory
-
-2.  **Leverage-Error Tradeoff** (Theorem [\[thm:leverage-error\]](#thm:leverage-error){reference-type="ref" reference="thm:leverage-error"}): Connects leverage to error probability
-
-3.  **Physical Edit-Energy Floor** (Theorem [\[thm:physical-energy-floor\]](#thm:physical-energy-floor){reference-type="ref" reference="thm:physical-energy-floor"}): DOF controls minimum edit-energy
-
-4.  **Optimality Criterion** (Theorem [\[thm:optimal\]](#thm:optimal){reference-type="ref" reference="thm:optimal"}): Correctness in a fixed capability class
-
-5.  **Composition Stability** (Theorem [\[thm:composition\]](#thm:composition){reference-type="ref" reference="thm:composition"}): Composition preserves leverage lower bounds
-
-## Recap: DOF-Reliability Isomorphism
-
-The core theoretical contribution (stated in Section 1.3) is that DOF maps formally to series system components. This enables all subsequent results by connecting software architecture to the mature mathematical framework of reliability theory.
-
-**Key properties of the isomorphism:**
-
--   **Preserves ordering:** If $\text{DOF}(A_1) < \text{DOF}(A_2)$, then $P_{\text{error}}(A_1) < P_{\text{error}}(A_2)$
-
--   **Invertible:** An architecture can be reconstructed from its series system representation
-
--   **Compositional:** $\text{DOF}(A_1 \oplus A_2) = \text{DOF}(A_1) + \text{DOF}(A_2)$ (series systems combine)
-
-## The Leverage Maximization Principle
-
-Given the DOF-Reliability Isomorphism, the following is a *corollary*:
+## Landauer-Linear Resolution Cost
 
 ::: theorem
-[]{#thm:leverage-max label="thm:leverage-max"} For any architectural decision with alternatives $A_1, \ldots, A_n$ meeting capability requirements, the optimal choice maximizes leverage: $$A^* = \arg\max_{A_i} L(A_i) = \arg\max_{A_i} \frac{|\text{Capabilities}(A_i)|}{\text{DOF}(A_i)}$$
-:::
-
-**Note:** This is *not* the central theorem; it is a consequence of the DOF-Reliability Isomorphism. The isomorphism is the deep result; "maximize leverage" is the actionable heuristic derived from it.
-
-## Leverage-Error Tradeoff
-
-::: theorem
-[]{#thm:leverage-error label="thm:leverage-error"} For architectures $A_1, A_2$ with equal capabilities: $$\text{Cap}(A_1) = \text{Cap}(A_2) \wedge L(A_1) > L(A_2) \implies P_{\text{error}}(A_1) < P_{\text{error}}(A_2)$$
+[]{#thm:energy-rank label="thm:energy-rank"} Let $A$ be a bounded decision system and let $M$ be a thermodynamic model with positive per-bit conversion constant. Then $$M.\mathrm{joulesPerBit} \cdot \mathrm{DOF}(A)
+\le
+\mathrm{energyLowerBound}(M, \mathrm{DOF}(A)).$$ In particular, exact-resolution cost is at least linear in the degree-of-freedom count.
 :::
 
 ::: proof
-*Proof.* Given: $\text{Cap}(A_1) = \text{Cap}(A_2)$ and $L(A_1) > L(A_2)$.
-
-Since $L(A) = |\text{Cap}(A)|/\text{DOF}(A)$ and capabilities are equal: $$\frac{|\text{Cap}(A_1)|}{\text{DOF}(A_1)} > \frac{|\text{Cap}(A_2)|}{\text{DOF}(A_2)}$$
-
-With $|\text{Cap}(A_1)| = |\text{Cap}(A_2)|$: $$\frac{1}{\text{DOF}(A_1)} > \frac{1}{\text{DOF}(A_2)} \implies \text{DOF}(A_1) < \text{DOF}(A_2)$$
-
-By Corollary [\[cor:dof-monotone\]](#cor:dof-monotone){reference-type="ref" reference="cor:dof-monotone"}: $$\text{DOF}(A_1) < \text{DOF}(A_2) \implies P_{\text{error}}(A_1) < P_{\text{error}}(A_2)$$ ◻
+*Proof.* Theorem [\[thm:min-bit-operations\]](#thm:min-bit-operations){reference-type="ref" reference="thm:min-bit-operations"} gives a lower bound of $\mathrm{DOF}(A)$ elementary bit-acquisition events for exact resolution. The bounded-acquisition energy theorem then converts that bit lower bound into the displayed energy lower bound. ◻
 :::
 
-**Corollary:** Maximizing leverage minimizes error probability (for fixed capabilities).
-
-## Physical Edit-Energy Floor
-
 ::: theorem
-[]{#thm:physical-energy-floor label="thm:physical-energy-floor"} Fix a physical edit model $\mathcal{M}$ with per-edit conversion constant $j_{\mathcal{M}}>0$. For any architecture $A$: $$E_{\min}(A;\mathcal{M}) = j_{\mathcal{M}}\cdot \mathrm{DOF}(A).$$ Hence $\mathrm{DOF}(A_1) < \mathrm{DOF}(A_2)$ implies $E_{\min}(A_1;\mathcal{M}) < E_{\min}(A_2;\mathcal{M})$.
+[]{#thm:rank-one-ground label="thm:rank-one-ground"} If $\mathrm{DOF}(A)=1$, then every exact-resolution cycle for the canonical problem has energy at least one Landauer unit. If $\mathrm{DOF}(A)>1$, then the system lies strictly above that ground state.
 :::
 
 ::: proof
-*Proof.* In the mechanized model, modification complexity is definitionally $\mathrm{DOF}$. Multiplying by a positive per-edit conversion constant gives the lower bound and strict monotonicity in DOF. ◻
+*Proof.* The rank-one statement is exactly the imported ground-state theorem for structural rank $1$ (BA8). For the higher-rank regime, Corollary [\[cor:rank-above-one\]](#cor:rank-above-one){reference-type="ref" reference="cor:rank-above-one"} gives $\mathrm{srank}>1$, and Theorem [\[thm:energy-rank\]](#thm:energy-rank){reference-type="ref" reference="thm:energy-rank"} then places the resulting exact-resolution cycle strictly above the one-Landauer-unit floor. ◻
+:::
+
+## Energy--Information Duality
+
+::: theorem
+[]{#thm:energy-entropy label="thm:energy-entropy"} Let $D = \mathrm{canonicalDP}(A)$, and let $E$ be the realized energy for one exact-resolution cycle. If Landauer calibration holds at positive Boltzmann constant and temperature, then $$E \ge k_B T\, H_{\mathrm{nats}}(D).$$ Equivalently, the minimum exact-resolution cost is at least $k_B T$ times the natural-log entropy of the decision quotient.
+:::
+
+::: proof
+*Proof.* The entropy-rank inequality gives $$H_{\mathrm{nats}}(D) \le \mathrm{DOF}(A)\ln 2$$ by Theorem [\[thm:entropy-bound\]](#thm:entropy-bound){reference-type="ref" reference="thm:entropy-bound"}. Theorem [\[thm:energy-rank\]](#thm:energy-rank){reference-type="ref" reference="thm:energy-rank"} gives the complementary lower bound $$E \ge \mathrm{DOF}(A) k_B T \ln 2.$$ Comparing the two right-hand sides yields the announced inequality. In the mechanized artifact this is the energy-information theorem (EI1). ◻
 :::
 
 ::: corollary
-[]{#cor:leverage-energy label="cor:leverage-energy"} For architectures $A_1,A_2$ with equal capabilities, if $L(A_1)>L(A_2)$ then $$E_{\min}(A_1;\mathcal{M}) < E_{\min}(A_2;\mathcal{M}),$$ and the induced energy gap is strictly positive.
-:::
-
-::: theorem
-[]{#thm:physical-budget-boundary label="thm:physical-budget-boundary"} For physical model $\mathcal{M}$ and budget $B$, implementation feasibility is equivalent to clearing the floor: $$E_{\min}(A;\mathcal{M}) \le B \iff \text{feasible}(A,B,\mathcal{M}).$$ Hence $B < E_{\min}(A;\mathcal{M})$ implies infeasibility. Also, for fixed $B$ and equal capabilities, if $L(A_1)>L(A_2)$ and $A_2$ is feasible under $B$, then $A_1$ is feasible under $B$.
-:::
-
-::: corollary
-[]{#cor:physical-assumption-necessity label="cor:physical-assumption-necessity"} The physical layer uses two explicit premises for no-go style infeasibility claims: positive per-edit conversion and an external budget bound. Dropping positivity admits a zero-floor countermodel. Dropping the external budget-bound premise blocks infeasibility conclusions because a feasible budget witness always exists.
-:::
-
-## Metaprogramming Dominance
-
-::: theorem
-[]{#thm:metaprog label="thm:metaprog"} For any $N \in \mathbb{N}$, there exists a metaprogramming architecture $M$ with $\text{DOF}(M) = 1$ and $L(M) \geq N$.
+[]{#cor:minimum-cost-regime label="cor:minimum-cost-regime"} Among bounded decision systems in the canonical binary encoding, the unique minimum-cost regime is $\mathrm{DOF}(A)=1$.
 :::
 
 ::: proof
-*Proof.* Let $M$ be a metaprogramming architecture with a single source definition ($\text{DOF}(M) = 1$) and at least $N$ derived capabilities. Then $L(M) = |\text{Cap}(M)|/1 \geq N$.
-
-**Modeling note.** In any fixed finite model, $L(M)$ is a positive rational. The colloquial claim "leverage $= \infty$" means: for any bound $N$, the architecture can be extended to achieve $L \geq N$ while keeping $\text{DOF} = 1$. The Lean formalization proves the for-all-$N$ version (L36). ◻
+*Proof.* Theorem [\[thm:rank-one-ground\]](#thm:rank-one-ground){reference-type="ref" reference="thm:rank-one-ground"} identifies $\mathrm{DOF}(A)=1$ as the one-Landauer-unit ground state, while every bounded decision system with more than one degree of freedom lies strictly above it. ◻
 :::
 
-## Architectural Decision Criterion
+## Worked Examples
 
-::: theorem
-[]{#thm:optimal label="thm:optimal"} Given requirements $R$, architecture $A^*$ is optimal in its capability class if and only if:
+Two toy canonical systems fix the scale of the bound.
 
-1.  $\text{Cap}(A^*) \supseteq R$ (feasibility)
+#### One relevant coordinate.
 
-2.  $\forall A'$ with $\text{Cap}(A') = \text{Cap}(A^*)$ and $\text{Cap}(A') \supseteq R$: $L(A^*) \geq L(A')$ (maximality in fixed capability class)
-:::
+Take states $\{0,1\}$ and actions $\{a_0,a_1\}$, with $\operatorname{Opt}(0)=\{a_0\}$ and $\operatorname{Opt}(1)=\{a_1\}$. Then $\mathrm{DOF}(A)=1$, the decision quotient has two classes, $H_{\mathrm{nats}}(D)=\ln 2$, and Theorem [\[thm:energy-entropy\]](#thm:energy-entropy){reference-type="ref" reference="thm:energy-entropy"} gives $$E \ge k_B T \ln 2.$$ This is the rank-$1$ ground regime.
 
-::: proof
-*Proof.* ($\Leftarrow$) Suppose $A^*$ satisfies (1) and (2). Then $A^*$ is feasible and has maximum leverage among feasible architectures in the same capability class. By Theorem [\[thm:leverage-error\]](#thm:leverage-error){reference-type="ref" reference="thm:leverage-error"}, this minimizes error probability in that class.
+#### Two independent coordinates.
 
-($\Rightarrow$) If (1) fails, $A^*$ is infeasible. If (2) fails, there exists $A'$ in the same capability class with $L(A') > L(A^*)$, so $P_{\text{error}}(A') < P_{\text{error}}(A^*)$ by Theorem [\[thm:leverage-error\]](#thm:leverage-error){reference-type="ref" reference="thm:leverage-error"}, contradicting optimality. ◻
-:::
+Take states $\{00,01,10,11\}$ and actions $\{a_{00},a_{01},a_{10},a_{11}\}$, with each state having its matching optimal action. Then $\mathrm{DOF}(A)=2$, the decision quotient has four classes, $H_{\mathrm{nats}}(D)=\ln 4 = 2\ln 2$, and Theorem [\[thm:energy-entropy\]](#thm:energy-entropy){reference-type="ref" reference="thm:energy-entropy"} gives $$E \ge 2 k_B T \ln 2.$$ Relative to the one-coordinate case, the minimum exact-resolution cost doubles.
 
-**Decision Procedure:**
+## Optimal-Transport Witness
 
-1.  Enumerate candidate architectures $\{A_1, \ldots, A_n\}$
-
-2.  Filter: Keep only $A_i$ with $\text{Cap}(A_i) \supseteq R$
-
-3.  Optimize: Choose $A^* = \arg\max_i L(A_i)$
-
-## Leverage Composition
-
-::: theorem
-[]{#thm:composition label="thm:composition"} For modular architecture $A = A_1 \oplus A_2$ with disjoint components:
-
-1.  $\text{DOF}(A) = \text{DOF}(A_1) + \text{DOF}(A_2)$
-
-2.  if $L(A_1)\ge 1$ and $L(A_2)\ge 1$, then $L(A)\ge 1$
-:::
-
-::: proof
-*Proof.* (1) By Proposition [\[prop:dof-additive\]](#prop:dof-additive){reference-type="ref" reference="prop:dof-additive"}.
-
-\(2\) If $L(A_i)\ge 1$, then $|\text{Cap}(A_i)|\ge \text{DOF}(A_i)$ for $i=1,2$. Summing both inequalities gives $$|\text{Cap}(A_1)|+|\text{Cap}(A_2)|\ge \text{DOF}(A_1)+\text{DOF}(A_2),$$ which is exactly $L(A)\ge 1$ under additive composition. ◻
-:::
-
-**Interpretation:** Composition preserves a baseline leverage floor under the stated assumptions.
+The Landauer route lower-bounds exact resolution through irreversible bit acquisition. A complementary witness measures separation between future distributions on the integrity space $\{\mathrm{intact},\mathrm{compromised}\}$. It does not replace the main proof chain, but it supplies an independent transport-theoretic signal that multiple distinguishable futures have nonzero cost.
 
 ::: remark
-[]{#rem:composition-breaks-ssot label="rem:composition-breaks-ssot"} Theorem [\[thm:composition\]](#thm:composition){reference-type="ref" reference="thm:composition"} preserves leverage *floors*, but composing two SSOT architectures breaks SSOT: if $\mathrm{DOF}(A_1) = \mathrm{DOF}(A_2) = 1$, then $\mathrm{DOF}(A_1 \oplus A_2) = 2$. This is formalized as `compose_breaks_ssot` in `Leverage/BridgeToDQ.lean`. The composition tax is unavoidable: distributed systems consisting of $k$ independent SSOT components have $\mathrm{DOF} = k$, placing them in the coNP-hard regime (srank $= k > 1$) with mandatory thermodynamic cost per decision cycle.
+[]{#rem:wasserstein-bridge label="rem:wasserstein-bridge"} The same separation admits an independent transport-cost witness on the two-state integrity space $\{\mathrm{intact},\mathrm{compromised}\}$. The diagonal coupling has zero transport cost in the single-future regime (W1). Any coupling with off-diagonal mass has positive transport cost (W2). If the intact future mass dominates the compromised future mass, the intact state minimizes total transport to the future distribution (W3). If both future states carry positive mass, then transport from either pure state is strictly positive (W4). Multiple distinguishable futures therefore force positive transport cost independently of the Landauer route.
 :::
+
+A transport witness and the Landauer witness emphasize different structures: one counts irreducible coordinate reads, while the other measures geometric separation of future mass. In the two-state integrity model they point in the same direction, since a single future has zero transport cost whereas genuinely split futures force strictly positive transport cost.
+
+## Interpretation
+
+If degree of freedom is read as the number of independent physical coordinates that can vary separately, then lower DOF means lower exact-resolution cost because fewer independent coordinates must be resolved.
 
 ## Formalization
 
-Main optimization theorems are formalized in `Leverage/Theorems.lean`; physical edit-energy theorems are formalized in `Leverage/Physical.lean`:
+The local bridge from degree of freedom to structural rank is formalized in `Leverage/BridgeToDQ.lean`. The physical acquisition and Landauer theorems are imported from the decision-quotient physics stack, in particular `Physics/BoundedAcquisition.lean` and `ThermodynamicLift.lean`. The role of the local `Architecture` object in this section is to provide the coordinate count transported into those theorems.
 
--   L29: Theorem [\[thm:leverage-error\]](#thm:leverage-error){reference-type="ref" reference="thm:leverage-error"}
 
--   L1 and L5: Theorem [\[thm:physical-energy-floor\]](#thm:physical-energy-floor){reference-type="ref" reference="thm:physical-energy-floor"}
+# Convergence of Rank, Tractability, and Cost {#five-way-equivalence}
 
--   L3 and L6: Corollary [\[cor:leverage-energy\]](#cor:leverage-energy){reference-type="ref" reference="cor:leverage-energy"}
+Degree of freedom equals structural rank, and structural rank bounds decision entropy. The same rank-$1$ regime also appears as tractable sufficiency and minimum thermodynamic cost. An imported coherence theorem gives a separate single-source interpretation of that same point.
 
--   L2 and L4: Theorem [\[thm:physical-budget-boundary\]](#thm:physical-budget-boundary){reference-type="ref" reference="thm:physical-budget-boundary"}
-
--   L7 and L8: Corollary [\[cor:physical-assumption-necessity\]](#cor:physical-assumption-necessity){reference-type="ref" reference="cor:physical-assumption-necessity"}
-
--   L35 and L36: Theorem [\[thm:metaprog\]](#thm:metaprog){reference-type="ref" reference="thm:metaprog"}
-
--   L34 and L38: Theorem [\[thm:optimal\]](#thm:optimal){reference-type="ref" reference="thm:optimal"}
-
--   L18 and L19: Theorem [\[thm:composition\]](#thm:composition){reference-type="ref" reference="thm:composition"}
-
--   `Leverage/Physical.lean`: physical edit-energy floor theorems
-
-## Integration with Dependencies
-
-The leverage framework provides the unifying theory for results proved in `AbstractClassSystem` and `Ssot`:
+## Imported Coherence Reading
 
 ::: theorem
-[]{#thm:paper1-integration label="thm:paper1-integration"} Nominal typing dominance from `AbstractClassSystem` [@paper1_typing_discipline] is an instance of leverage maximization:
-
--   Nominal typing adds 4 B-dependent capabilities over duck typing
-
--   DOF remains fixed in the mechanized typing instance
-
--   Therefore nominal typing has strictly higher leverage
-:::
-
-::: theorem
-[]{#thm:paper2-integration label="thm:paper2-integration"} SSOT dominance from `Ssot` [@paper2_ssot] is an instance of leverage maximization:
-
--   SSOT fixes DOF at 1 for a structural fact
-
--   Non-SSOT replication yields DOF $= n$ for the same fact
-
--   Therefore leverage improves by factor $n$
-:::
-
-These integration theorems are formalized in:
-
--   `Leverage/Typing.lean`
-
--   `Leverage/SSOT.lean`
-
-
-# Five-Way Equivalence
-
-This section establishes the central result: five independent characterizations of the same architectural property (DOF = 1 / SSOT) derived from five distinct first-principles frameworks. All proofs are machine-checked in Lean 4.
-
-## Framework 1: Engineering Optimization (Leverage)
-
-::: formal
-**Theorem 5.1 (Maximum Leverage).** For any architecture $A$ with $\text{Cap}(A) > 0$, $A$ achieves maximum leverage among architectures with equal capabilities if and only if $\text{DOF}(A) = 1$.
-
-Formally: $L(A) = \max_{A': \text{Cap}(A')=\text{Cap}(A)} L(A') \iff \text{DOF}(A) = 1$.
+[]{#thm:coherent-single-source label="thm:coherent-single-source"} A bounded decision system lies in the coherent unit-independent-rate regime if and only if $\mathrm{DOF}(A)=1$.
 :::
 
 ::: informal
-An architecture has the highest possible capability-to-DOF ratio exactly when it has a single degree of freedom.
+In the imported coherence development, rank $1$ means exactly one locus is authoritative, every remaining encoding is a derived view, and all reachable states remain coherent.
+:::
+
+## Structural Rank
+
+::: theorem
+[]{#thm:rank-identification label="thm:rank-identification"} For every bounded decision system $A$, $$\mathrm{srank}(\mathrm{canonicalDP}(A)) = \mathrm{DOF}(A).$$
+:::
+
+::: informal
+The degree-of-freedom count is not separate from the decision-theoretic object; it is exactly the interaction dimension of the canonical decision problem.
+:::
+
+## Tractability Boundary
+
+::: theorem
+[]{#thm:tractable-rank-one label="thm:tractable-rank-one"} In the canonical decision problem family, structural rank $1$ is the tractable sufficiency regime, while higher structural rank enters the hard regime.
+:::
+
+::: informal
+When exactly one relevant coordinate survives, exact sufficiency certification is tractable. Once more than one relevant coordinate survives, the canonical family crosses into the imported hardness regime.
+:::
+
+## Thermodynamic Selection
+
+::: theorem
+[]{#thm:thermodynamic-selection label="thm:thermodynamic-selection"} In the canonical decision encoding, every bounded decision system with $\mathrm{DOF}(A)>1$ lies strictly above the rank-$1$ Landauer ground state in per-cycle resolution cost.
+:::
+
+::: informal
+The theorem uses only the rank identity together with Landauer calibration. Stronger hardness consequences require additional imported hypotheses.
+:::
+
+## Convergence Theorem
+
+::: theorem
+[]{#thm:five-way label="thm:five-way"} For every bounded decision system $A$, the following conditions are equivalent: $$\mathrm{DOF}(A)=1
+\iff \mathrm{srank}(\mathrm{canonicalDP}(A))=1
+\iff \text{tractable sufficiency for } \mathrm{canonicalDP}(A)
+\iff \text{minimum per-cycle thermodynamic cost}.$$
+:::
+
+::: informal
+The same rank-$1$ regime is simultaneously the exact one-coordinate regime, the tractable exact-certification regime, and the thermodynamic ground state. The imported coherence theorem gives an additional single-source interpretation of the same point.
 :::
 
 **Proof.**
 
--   (Forward) If $\text{DOF}(A) = 1$, then $L(A) = |\text{Cap}(A)|/1 = |\text{Cap}(A)|$. Any $A'$ with same capabilities has $\text{DOF}(A') \geq 1$, so $L(A') \leq |\text{Cap}(A)| = L(A)$.
+1.  Theorem [\[thm:rank-identification\]](#thm:rank-identification){reference-type="ref" reference="thm:rank-identification"} identifies $\mathrm{DOF}(A)=1$ with structural rank $1$.
 
--   (Backward) If $A$ has maximum leverage but $\text{DOF}(A) > 1$, construct $A'$ with $\text{DOF}(A') = 1$ and same capabilities. Then $L(A') = |\text{Cap}(A)| > |\text{Cap}(A)|/\text{DOF}(A) = L(A)$, contradiction.
+2.  Theorem [\[thm:tractable-rank-one\]](#thm:tractable-rank-one){reference-type="ref" reference="thm:tractable-rank-one"} identifies structural rank $1$ with the tractable sufficiency regime for the canonical family.
 
-## Framework 2: Architectural Epistemic Coherence (Ssot)
+3.  Theorem [\[thm:thermodynamic-selection\]](#thm:thermodynamic-selection){reference-type="ref" reference="thm:thermodynamic-selection"} identifies rank $1$ as the unique minimum-cost thermodynamic regime.
 
-::: formal
-**Theorem 5.2 (Coherence).** An architecture satisfies the Single Source of Truth property if and only if $\text{DOF}(A) = 1$.
+Transitivity of logical equivalence completes the proof.
 
-Formally: $\text{SSOT}(A) \iff \text{DOF}(A) = 1$.
-:::
-
-::: informal
-Epistemic coherence (one source of truth per structural fact) is equivalent to having a single degree of freedom.
-:::
-
-This is the DOF = 1 characterization from the Ssot coherence theorem.
-
-## Framework 3: Information-Theoretic Structural Rank (DecisionQuotient)
-
-::: formal
-**Theorem 5.3 (DOF-Structural Rank Isomorphism).** For any architecture $A$, let $\text{canonicalDP}(n)$ be the canonical decision problem with $n$ boolean coordinates. Then: $$\text{srank}(\text{canonicalDP}(\text{DOF}(A))) = \text{DOF}(A)$$
-:::
-
-::: informal
-The structural rank (number of relevant decision coordinates) equals the degrees of freedom. The canonical encoding uses: states as $n$ boolean coordinates, actions as either querying a coordinate or falling back, and utilities that reward correct coordinate identification.
-:::
-
-The canonical encoding is:
-
--   States: $\text{Fin } n \to \text{Bool}$ ($n$ binary coordinates)
-
--   Actions: $\text{Fin } n \oplus \text{Unit}$ (query coordinate $i$, or fallback)
-
--   Utility: $u(\text{inl } i, s) = 2$ if $s(i) = \text{true}$, else $0$; $u(\text{inr}\ (), s) = 1$
-
-::: formal
-**Corollary 5.4.** DOF $= 1$ if and only if srank $= 1$.
-
-Formally: $\text{DOF}(A) = 1 \iff \text{srank}(\text{canonicalDP}(\text{DOF}(A))) = 1$.
-:::
-
-::: informal
-An architecture has a single degree of freedom exactly when its canonical decision problem has minimal structural rank.
-:::
-
-## Framework 4: Computational Complexity (Tractability)
-
-::: formal
-**Theorem 5.5 (Tractability Boundary).** For the canonical decision problem with $n$ coordinates:
-
-1.  If $n = 1$ (srank $= 1$), sufficiency checking is in P (polynomial time).
-
-2.  If $n > 1$ (srank $> 1$), sufficiency checking is coNP-hard.
-:::
-
-::: informal
-When the structural rank is 1, determining whether current information suffices for an optimal decision is computationally tractable. When the structural rank exceeds 1, the same problem is computationally intractable (coNP-hard).
-:::
-
-This connects the architectural property (DOF = 1) to computational feasibility of decision-making.
-
-::: formal
-**Corollary 5.6.** DOF $= 1$ (SSOT) is the unique architecture class for which sufficiency checking is tractable.
-:::
-
-::: informal
-Among architectures, only those with a single degree of freedom admit tractable sufficiency checking.
-:::
-
-## Framework 5: Thermodynamic Selection (Statistical Physics)
-
-::: formal
-**Theorem 5.7 (Thermodynamic Selection).** Let $M$ be a thermodynamic model with Landauer calibration. For any architecture $A$ with DOF $> 1$:
-
-1.  There exist decision instances where sufficiency checking requires $\Omega(2^{\text{DOF}})$ logical operations.
-
-2.  Under the physical axioms of [@paper4_decision_quotient] (LP38): Landauer (EP1), nontrivial state space (EP4), finite signal speed (LP43), finite universe energy (LP44) --- P $\neq$ NP is proved, hence P $\neq$ coNP; no polynomial-time sufficiency certification exists.
-
-3.  **(Unconditional)** Each sufficiency-check cycle incurs mandatory positive energy cost $\geq j_{\mathcal{M}} \cdot \mathrm{srank}(A) > j_{\mathcal{M}}$, proved from Landauer calibration and the DOF $=$ srank identity alone, with no complexity hypothesis.
-
-For DOF $= 1$, the energy lower bound is $j_{\mathcal{M}}$ (the Landauer minimum).
-:::
-
-::: informal
-Architectures with more than one degree of freedom necessarily incur thermodynamic costs per decision cycle. Point 3 holds unconditionally: the energy bound follows from Landauer and the DOF $=$ srank identity (L43). Point 2 holds under the physical axioms of [@paper4_decision_quotient] (LP38), which prove P $\neq$ NP, hence P $\neq$ coNP.
-:::
-
-Physical assumptions (point 3 only):
-
--   Positive Landauer constant ($j_{\mathcal{M}} > 0$) --- cf. Theorem [\[cor:leverage-energy\]](#cor:leverage-energy){reference-type="ref" reference="cor:leverage-energy"} (L3, L6)
-
--   Landauer calibration ($k_B T \ln 2$ joules per bit)
-
-Physical edit-energy floor from Section 4.3 is a special case: DOF controls minimum edit-energy, and higher leverage implies lower energy in a fixed capability class (Theorem [\[thm:physical-energy-floor\]](#thm:physical-energy-floor){reference-type="ref" reference="thm:physical-energy-floor"}, L1, L5).
-
-## The Five-Way Equivalence
-
-::: formal
-**Theorem 5.8 (Five-Way Equivalence).** For any architecture $A$ with $\text{Cap}(A) > 0$, the following are equivalent: $$\text{DOF}(A) = 1 \iff \text{max leverage} \iff \text{SSOT}(A) \iff \text{srank}(A) = 1 \iff \text{tractable sufficiency} \iff \text{minimum thermodynamic cost}$$
-:::
-
-::: informal
-Five independent scientific frameworks---engineering optimization, epistemic coherence, information geometry, computational complexity, and statistical physics---all select the same architectural property: having exactly one degree of freedom.
-:::
-
-::: center
-  **Domain**                 **Characterization of DOF $= 1$**
-  -------------------------- --------------------------------------
-  Engineering Optimization   Maximum leverage
-  Architectural Epistemic    Single Source of Truth
-  Information Geometry       Structural rank $= 1$
-  Computational Complexity   Tractable sufficiency checking
-  Statistical Physics        Minimum thermodynamic cost per cycle
-:::
-
-**Proof.** The equivalence follows from Theorems 5.1-5.7:
-
-1.  $\text{DOF} = 1 \iff \text{max leverage}$: Theorem 5.1 (L31, L28)
-
-2.  $\text{DOF} = 1 \iff \text{SSOT}$: Theorem 5.2 [@paper2_ssot]
-
-3.  $\text{DOF} = \text{srank}$: Theorem 5.3, so $\text{DOF} = 1 \iff \text{srank} = 1$
-
-4.  $\text{srank} = 1 \iff \text{tractable sufficiency}$: Theorem 5.5 [@paper4_decision_quotient]. Forward direction (srank $=1 \to$ polynomial) is unconditional. Backward direction (tractable $\to$ srank $=1$) holds under P $\neq$ coNP, which follows from the physical axioms of [@paper4_decision_quotient] (LP38).
-
-5.  $\text{DOF} > 1 \iff \text{above-minimum thermodynamic cost}$: Theorem 5.7, so $\text{DOF} = 1 \iff \text{minimum thermodynamic cost}$
-
-The transitivity of logical equivalence gives the five-way equivalence.
-
-::: formal
-**Corollary 5.9 (Convergence).** Within the `DecisionQuotient` canonical decision problem framework, the boolean-coordinate encoding (states as $n$ boolean coordinates, actions as coordinate queries or fallback, utilities rewarding correct identification) is the unique decision structure with $n = 1$ that simultaneously satisfies all five characterizations.
-:::
-
-::: informal
-In the canonical decision problem representation, there is exactly one $n=1$ structure, and all five characterizations select it. This is a consequence of the equivalences, not an additional theorem. Note: there are many architectures with DOF $=1$ (monolith, single DB table, single endpoint); the uniqueness claim is scoped to the canonical decision problem encoding.
-:::
-
-**Proof.** Each characterization is equivalent to DOF $= 1$ (Theorems 5.1--5.7). Within the canonical encoding, DOF $= 1$ fixes $n = 1$, and $\mathrm{Fin}\ 1 \to \mathrm{Bool}$ has a unique element. All five requirements therefore select the same structure.
+Theorem [\[thm:coherent-single-source\]](#thm:coherent-single-source){reference-type="ref" reference="thm:coherent-single-source"} supplies an imported single-source interpretation of the same rank-$1$ regime.
 
 ## Formalization
 
-The following Lean 4 proofs establish the connections:
+The proof chain is explicit in the mechanized artifact. The local bridge theorems live in `Leverage/BridgeToDQ.lean`; the coherence theorem is imported from `Ssot`; and the tractability and Landauer-cost theorems are imported from the decision-quotient development. The proof provenance remains fully auditable.
 
--   `Leverage/Foundations.lean`:
+## England Replication Inequality
 
-    -   L31, L28 (L50): DOF $= 1 \to$ max leverage
-
-    -   L48: max leverage $\to$ DOF $= 1$
-
-    -   L44: biconditional
-
--   `Leverage/BridgeToDQ.lean`:
-
-    -   L43: DOF $=$ srank
-
-    -   L51: DOF $= 1 \to$ srank $= 1$
-
-    -   L46: DOF $> 1 \to$ srank $> 1$
-
-    -   L54: DOF $> 1 \to$ mandatory energy
-
-    -   L47: max leverage $\to$ tractable
-
--   `DecisionQuotient/Tractability/StructuralRank.lean`: srank $= 1 \to$ P (L56), srank $> 1 \to$ coNP-hard (L53)
-
--   `DecisionQuotient/ThermodynamicLift.lean`: energy lower bounds under Landauer calibration (L49)
-
-The cross-module dependency chain is live: `Leverage` $\to$ `DecisionQuotient` $\to$ Mathlib.
-
-## Relation to Prior Sections
-
-This section subsumes and extends Section 4's results:
-
--   Theorem 4.1 (Leverage-Error Tradeoff, L29) is a consequence of the equivalence between leverage and DOF
-
--   Theorem 4.2 (Modification Complexity Gap, L30) follows from DOF $= 1$ minimizing modification cost
-
--   Theorem 4.3 (Optimal Architecture, L38, L34) is strengthened: the optimal architecture is now characterized by five independent properties
-
--   Theorem 4.4 (Metaprogramming Dominance, L36, L35) is a special case: unbounded derivations from a single source achieve DOF $= 1$
-
-## England Replication Inequality (Proved)
-
-All previously open conjectures are now proved. The England Replication Inequality is mechanized in `Leverage/BridgeToDQ.lean` (L45).
+The England Replication Inequality is mechanized in `Leverage/BridgeToDQ.lean` (L45).
 
 ::: theorem
-[]{#thm:england label="thm:england"} Let $\Delta S_{\min}(\text{srank}) = \text{srank} \cdot k_B \ln 2$ be the minimal entropy production under Landauer calibration. For a single-source architecture ($\text{srank} = 1$) and a $k$-copy replication architecture ($\text{srank} = k$): $$\Delta S_{\min}(1) + k_B \ln k \leq \Delta S_{\min}(k)$$ equivalently, $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$.
+[]{#thm:england label="thm:england"} Let $\Delta S_{\min}(r) = r \cdot k_B \ln 2$ be the rank-indexed minimal entropy production under Landauer calibration. For the rank-$1$ ground regime and any replicated rank-$k$ regime: $$\Delta S_{\min}(1) + k_B \ln k \leq \Delta S_{\min}(k)$$ equivalently, $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$.
 :::
 
 ::: proof
 *Proof.* The gap is $(k-1) \cdot k_B \ln 2$. Since $k \leq 2^{k-1}$ (L52), taking logs gives $\ln k \leq (k-1) \ln 2$, so the gap is $\geq k_B \ln k$. ◻
 :::
 
-**Modeling note.** $\Delta S_{\min}$ is a definition within the model: the exact Landauer entropy cost per cycle, not a lower bound on arbitrary implementations. The "min" refers to physical optimality outside the formalism.
+**Modeling note.** $\Delta S_{\min}$ is a definition within the model: the exact Landauer entropy cost of the canonical exact-resolution cycle. The "min" refers to physical optimality inside the calibrated decision model. In England's 2013 stochastic-thermodynamic framework [@england2013statistical], the comparison point is the entropy premium associated with replication above a single-copy baseline. The present reformulation does not reproduce England's full path-space dynamics or detailed-balance setting. It isolates the same $k_B \ln k$ multiplicity penalty as a finite-counting consequence of rank-indexed Landauer cost together with $k \le 2^{k-1}$, making the selection penalty explicit in a finite exact-resolution model.
 
-
-# Instances
-
-We demonstrate that the leverage framework unifies prior results and applies to diverse architectural decisions.
-
-## Instance 1: Single Source of Truth (SSOT)
-
-We previously formalized the DRY principle, proving that Python uniquely provides SSOT for structural facts via definition-time hooks and introspection. Here we show SSOT is an instance of leverage maximization.
-
-### Prior Result
-
-**Published Theorem:** A language enables SSOT for structural facts if and only if it provides (1) definition-time hooks AND (2) introspectable derivation results. Python is the only mainstream language satisfying both requirements.
-
-**Modification Complexity:** For structural fact $F$ with $n$ use sites:
-
--   SSOT: $M(\text{change } F) = 1$ (modify source, derivations update automatically)
-
--   Non-SSOT: $M(\text{change } F) = n$ (modify each use site independently)
-
-### Leverage Perspective
-
-::: definition
-Architecture $A_{\text{SSOT}}$ for structural fact $F$ has:
-
--   Single source $S$ defining $F$
-
--   Derived use sites updated automatically from $S$
-
--   DOF $= 1$ (only $S$ is independently modifiable)
-:::
-
-::: definition
-Architecture $A_{\text{non-SSOT}}$ for structural fact $F$ with $n$ use sites has:
-
--   $n$ independent definitions (copied or manually synchronized)
-
--   DOF $= n$ (each definition independently modifiable)
-:::
+## Finite-Budget No-Collapse
 
 ::: theorem
-[]{#thm:ssot-leverage label="thm:ssot-leverage"} For structural fact with $n$ use sites: $$\frac{L(A_{\text{SSOT}})}{L(A_{\text{non-SSOT}})} = n$$
+[]{#thm:finite-budget-no-collapse label="thm:finite-budget-no-collapse"} Let $B : \mathbb{N} \to \mathbb{N}$ be a budget profile, let $\mathrm{ops} : \mathbb{N} \to \mathbb{N}$ be a required-operation profile, and let $\mathrm{bitCost} > 0$ be the per-bit physical cost. If
+
+1.  $B$ is globally bounded,
+
+2.  $\mathrm{ops}$ has an exponential lower bound, and
+
+3.  collapse means: for every input size $n$, some feasible bit budget realizes at least $\mathrm{ops}(n)$ operations within budget $B(n)$,
+
+then no such physical collapse profile exists.
 :::
 
 ::: proof
-*Proof.* Both architectures provide same capabilities: $|\text{Cap}(A_{\text{SSOT}})| = |\text{Cap}(A_{\text{non-SSOT}})| = c$.
+*Proof.* This is exactly the bounded-budget physical no-collapse theorem in the physical-hardness layer. Exponential growth eventually exceeds every fixed finite budget, and positive per-bit cost lifts that growth into an energy contradiction. ◻
+:::
 
-DOF: $$\begin{aligned}
-\text{DOF}(A_{\text{SSOT}}) &= 1 \\
-\text{DOF}(A_{\text{non-SSOT}}) &= n
-\end{aligned}$$
-
-Leverage: $$\begin{aligned}
-L(A_{\text{SSOT}}) &= c/1 = c \\
-L(A_{\text{non-SSOT}}) &= c/n
-\end{aligned}$$
-
-Ratio: $$\frac{L(A_{\text{SSOT}})}{L(A_{\text{non-SSOT}})} = \frac{c}{c/n} = n$$ ◻
+::: remark
+Finite budget, positive event cost, and exponential exact-certification demand are jointly incompatible with a physical collapse model. Any stronger complexity-collapse conclusion requires an additional bridge from the chosen complexity claim to such a collapse profile.
 :::
 
 ::: corollary
-As use sites grow ($n \to \infty$), leverage advantage grows unbounded.
-:::
-
-::: corollary
-For small $p$: $$\frac{P_{\text{error}}(A_{\text{non-SSOT}})}{P_{\text{error}}(A_{\text{SSOT}})} \approx n$$
-:::
-
-**Connection to Prior Work:** Our published Theorem 6.3 (Unbounded Complexity Gap) showed $M(\text{SSOT}) = O(1)$ vs $M(\text{non-SSOT}) = \Omega(n)$. Theorem [\[thm:ssot-leverage\]](#thm:ssot-leverage){reference-type="ref" reference="thm:ssot-leverage"} provides the leverage perspective: SSOT achieves $n$-times better leverage.
-
-## Instance 2: Nominal Typing Dominance
-
-We previously proved nominal typing strictly dominates structural and duck typing for OO systems with inheritance. Here we show this is an instance of leverage maximization.
-
-### Prior Result
-
-**Published Theorems:**
-
-1.  Theorem 3.13 (Provenance Impossibility): No shape discipline can compute provenance
-
-2.  Theorem 3.19 (Capability Gap): Gap = B-dependent queries = {provenance, identity, enumeration, conflict resolution}
-
-3.  Theorem 3.5 (Strict Dominance): Nominal strictly dominates duck typing
-
-### Leverage Perspective
-
-::: definition
-A typing discipline $D$ is an architecture where:
-
--   Components = type checker, runtime dispatch, introspection APIs
-
--   Capabilities = queries answerable by the discipline
-:::
-
-**Duck Typing:** Uses only Shape axis ($S$: methods, attributes)
-
--   Capabilities: Shape checking ("Does object have method $m$?")
-
--   Cannot answer: provenance, identity, enumeration, conflict resolution
-
-**Nominal Typing:** Uses Name + Bases + Shape axes ($N + B + S$)
-
--   Capabilities: All duck capabilities PLUS 4 B-dependent capabilities
-
--   Can answer: "Which type provided method $m$?" (provenance), "Is this exactly type $T$?" (identity), "List all subtypes of $T$" (enumeration), "Which method wins in diamond?" (conflict)
-
-::: theorem
-[]{#thm:nominal-leverage label="thm:nominal-leverage"} Assuming $\mathrm{DOF}(\mathrm{Nominal}) = \mathrm{DOF}(\mathrm{Duck}) = d$ (equal implementation cost hypothesis): $$L(\text{Nominal}) > L(\text{Duck})$$
+[]{#cor:pnp-nogo label="cor:pnp-nogo"} Assume a polynomial-collapse claim supplies a bridge to the finite-budget collapse profile of Theorem [\[thm:finite-budget-no-collapse\]](#thm:finite-budget-no-collapse){reference-type="ref" reference="thm:finite-budget-no-collapse"}. Then that claim is physically impossible in the same model. In particular, any bridge from a $P = NP$ collapse claim to such a feasible physical-collapse profile yields a contradiction.
 :::
 
 ::: proof
-*Proof.* Let $c_{\text{duck}} = |\text{Cap}(\text{Duck})|$ and $c_{\text{nominal}} = |\text{Cap}(\text{Nominal})|$.
-
-By Theorem 3.19 (published): $c_{\text{nominal}} = c_{\text{duck}} + 4$.
-
-By hypothesis: $\text{DOF}(\text{Nominal}) = \text{DOF}(\text{Duck}) = d$.
-
-Therefore: $$L(\text{Nominal}) = \frac{c_{\text{duck}} + 4}{d} > \frac{c_{\text{duck}}}{d} = L(\text{Duck})$$
-
-**Status of hypothesis.** The equal-DOF assumption is formalized as an explicit premise in the Lean mechanization (L13). Whether it holds in practice depends on the implementation. Abstractly: the typing discipline is one component; DOF is the number of independent change points in that component. The hypothesis says adding name-based dispatch (N + B axes) does not introduce more independent change points than shape-based dispatch (S axis alone). ◻
+*Proof.* Theorem [\[thm:finite-budget-no-collapse\]](#thm:finite-budget-no-collapse){reference-type="ref" reference="thm:finite-budget-no-collapse"} rules out the collapse profile itself. The transfer theorem states that if a $P = NP$ claim implies that profile, then the claim is false in the model. ◻
 :::
-
-**Connection to Prior Work:** Our published Theorem 3.5 (Strict Dominance) showed nominal typing provides strictly more capabilities for same DOF cost. Theorem [\[thm:nominal-leverage\]](#thm:nominal-leverage){reference-type="ref" reference="thm:nominal-leverage"} provides the leverage formulation.
-
-## Instance 3: Microservices Architecture
-
-Should a system use microservices or a monolith? How many services are optimal? The leverage framework provides answers. This architectural style, popularized by Fowler and Lewis [@fowler2014microservices], traces its roots to the Unix philosophy of "doing one thing well" [@pike1984program].
-
-### Architecture Comparison
-
-**Monolith:**
-
--   Components: Single deployment unit
-
--   DOF $= 1$
-
--   Capabilities: Basic functionality, simple deployment
-
-**$n$ Microservices:**
-
--   Components: $n$ independent services
-
--   DOF $= n$ (each service independently deployable/modifiable)
-
--   Additional Capabilities: Independent scaling, independent deployment, fault isolation, team autonomy, polyglot persistence [@fowler2014microservices]
-
-### Leverage Analysis
-
-Let $c_0$ = capabilities provided by monolith.
-
-Let $\Delta c = 5$ denote the additional capabilities from microservices: independent scaling, independent deployment, fault isolation, team autonomy, and polyglot persistence.
-
-**Leverage:** $$\begin{aligned}
-L(\text{Monolith}) &= c_0 / 1 = c_0 \\
-L(n \text{ Microservices}) &= (c_0 + \Delta c) / n = (c_0 + 5) / n
-\end{aligned}$$
-
-**Break-even Point:** $$L(\text{Microservices}) \geq L(\text{Monolith}) \iff \frac{c_0 + 5}{n} \geq c_0 \iff n \leq 1 + \frac{5}{c_0}$$
-
-**Interpretation:** If base capabilities $c_0 = 5$, then $n \leq 2$ services is optimal. For $c_0 = 20$, up to $n = 1.25$ (i.e., monolith still better). Microservices justified only when additional capabilities significantly outweigh DOF cost.
-
-## Instance 4: REST API Design
-
-Generic endpoints vs specific endpoints: a leverage tradeoff.
-
-### Architecture Comparison
-
-**Specific Endpoints:** One endpoint per use case
-
--   Example: `GET /users`, `GET /posts`, `GET /comments`, \...
-
--   For $n$ use cases: DOF $= n$
-
--   Capabilities: Serve $n$ use cases
-
-**Generic Endpoint:** Single parameterized endpoint
-
--   Example: `GET /resources/:type/:id`
-
--   DOF $= 1$
-
--   Capabilities: Serve $n$ use cases (same as specific)
-
-### Leverage Analysis
-
-$$\begin{aligned}
-L(\text{Generic}) &= n / 1 = n \\
-L(\text{Specific}) &= n / n = 1
-\end{aligned}$$
-
-**Advantage:** $L(\text{Generic}) / L(\text{Specific}) = n$
-
-**Tradeoff:** Generic endpoint has higher leverage but may sacrifice:
-
--   Type safety (dynamic routing)
-
--   Specific validation per resource
-
--   Tailored response formats
-
-**Decision Rule:** Use generic if $n > k$ where $k$ is complexity threshold (typically $k \approx 3$--$5$).
-
-## Instance 5: Configuration Systems
-
-Convention over configuration (CoC) reduces developer decisions and preserves flexibility [@hansson2005rails]. In this framework it is leverage maximization via defaults.
-
-### Architecture Comparison
-
-**Explicit Configuration:** Must set all $m$ parameters
-
--   DOF $= m$ (each parameter independently set)
-
--   Capabilities: Configure $m$ aspects
-
-**Convention over Configuration:** Provide defaults, override only $k$ parameters
-
--   DOF $= k$ where $k \ll m$
-
--   Capabilities: Configure same $m$ aspects (defaults handle rest)
-
-**Example (Rails vs Java EE):**
-
--   Rails: 5 config parameters (convention for rest)
-
--   Java EE: 50 config parameters (explicit for all)
-
-### Leverage Analysis
-
-$$\begin{aligned}
-L(\text{Convention}) &= m / k \\
-L(\text{Explicit}) &= m / m = 1
-\end{aligned}$$
-
-**Advantage:** $L(\text{Convention}) / L(\text{Explicit}) = m/k$
-
-For Rails example: $m/k = 50/5 = 10$ (10$\times$ leverage improvement).
-
-## Instance 6: Database Schema Normalization
-
-Normalization eliminates redundancy, maximizing leverage. This concept, introduced by Codd [@codd1970relational], is the foundation of relational database design [@date2003introduction].
-
-### Architecture Comparison
-
-Consider customer address stored in database:
-
-**Denormalized (Address in 3 tables):**
-
--   `Users` table: address columns
-
--   `Orders` table: shipping address columns
-
--   `Invoices` table: billing address columns
-
--   DOF $= 3$ (address stored 3 times)
-
-**Normalized (Address in 1 table):**
-
--   `Addresses` table: single source
-
--   Foreign keys from `Users`, `Orders`, `Invoices`
-
--   DOF $= 1$ (address stored once)
-
-### Leverage Analysis
-
-Both provide same capability: store/retrieve addresses.
-
-$$\begin{aligned}
-L(\text{Normalized}) &= c / 1 = c \\
-L(\text{Denormalized}) &= c / 3
-\end{aligned}$$
-
-**Advantage:** $L(\text{Normalized}) / L(\text{Denormalized}) = 3$
-
-**Modification Complexity:**
-
--   Change address format: Normalized $M = 1$, Denormalized $M = 3$
-
--   Error probability: $P_{\text{denorm}} = 3p$ vs $P_{\text{norm}} = p$
-
-**Tradeoff:** Normalization increases leverage but may sacrifice query performance (joins required).
-
-## Summary of Instances
-
-::: center
-  **Instance**        **High Leverage**          **Low Leverage**        **Ratio**
-  ---------------- ------------------------ -------------------------- -------------
-  SSOT                     DOF = 1                  DOF = $n$               $n$
-  Nominal Typing     $c+4$ caps, DOF $d$        $c$ caps, DOF $d$        $(c+4)/c$
-  Microservices       Monolith (DOF = 1)     $n$ services (DOF = $n$)   $n/(c_0+5)$
-  REST API            Generic (DOF = 1)        Specific (DOF = $n$)         $n$
-  Configuration     Convention (DOF = $k$)     Explicit (DOF = $m$)        $m/k$
-  Database           Normalized (DOF = 1)    Denormalized (DOF = $n$)       $n$
-:::
-
-**Pattern:** High leverage architectures achieve $n$-fold improvement where $n$ is the consolidation factor (use sites, services, endpoints, parameters, or redundant storage).
-
-
-# Practical Demonstration
-
-We demonstrate the leverage framework by showing how DOF collapse patterns manifest in OpenHCS, a production 45K LoC Python bioimage analysis platform. This section presents qualitative before/after examples illustrating the leverage archetypes, with PR #44 providing a publicly verifiable anchor.
-
-## The Leverage Mechanism
-
-For a before/after pair $A_{\text{pre}}, A_{\text{post}}$, the **structural leverage factor** is: $$\rho := \frac{\mathrm{DOF}(A_{\text{pre}})}{\mathrm{DOF}(A_{\text{post}})}.$$ If capabilities are preserved, leverage scales exactly by $\rho$. The key insight: when $\mathrm{DOF}(A_{\text{post}}) = 1$, we achieve $\rho = n$ where $n$ is the original DOF count.
-
-#### What counts as a DOF?
-
-Independent *definition loci*: manual registration sites, independent override parameters, separately defined endpoints/handlers/rules, duplicated schema/format definitions. The unit is "how many places can drift apart," not lines of code.
-
-## Verifiable Example: PR #44 (Contract Enforcement)
-
-PR #44 ("UI Anti-Duck-Typing Refactor") in the OpenHCS repository provides a publicly verifiable demonstration of DOF collapse:
-
-**Before (duck typing):** The `ParameterFormManager` class used scattered `hasattr()` checks throughout the codebase. Each dispatch point was an independent DOF: a location that could drift, contain typos, or miss updates when widget interfaces changed.
-
-**After (nominal ABC):** A single `AbstractFormWidget` ABC defines the contract. All dispatch points collapsed to one definition site. The ABC provides fail-loud validation at class definition time rather than fail-silent behavior at runtime.
-
-**Leverage interpretation:** DOF collapsed from $n$ scattered dispatch points to 1 centralized ABC. By Theorem 3.1, this achieves $\rho = n$ leverage improvement. The specific value of $n$ is verifiable by inspecting the PR diff.
-
-## Leverage Archetypes
-
-The framework identifies recurring patterns where DOF collapse occurs:
-
-### Archetype 1: SSOT (Single Source of Truth)
-
-**Pattern:** Scattered definitions $\to$ single authoritative source.
-
-**Mechanism:** Metaclass auto-registration, decorator-based derivation, or introspection-driven generation eliminates manual synchronization.
-
-**Before:** Define class + register in dispatch table (2 loci per type). **After:** Define class; metaclass auto-registers (1 locus per type).
-
-**Leverage:** $\rho = 2$ per type; compounds across $n$ types.
-
-### Archetype 2: Convention over Configuration
-
-**Pattern:** Explicit parameters $\to$ sensible defaults with override.
-
-**Mechanism:** Framework provides defaults; users override only non-standard values.
-
-**Before:** Specify all $m$ configuration parameters explicitly. **After:** Override only $k \ll m$ parameters; defaults handle rest.
-
-**Leverage:** $\rho = m/k$.
-
-### Archetype 3: Generic Abstraction
-
-**Pattern:** Specific implementations $\to$ parameterized generic.
-
-**Mechanism:** Factor common structure into generic endpoint/handler with parameters for variation.
-
-**Before:** $n$ specific endpoints with duplicated logic. **After:** 1 generic endpoint with $n$ parameter instantiations.
-
-**Leverage:** $\rho = n$.
-
-### Archetype 4: Centralization
-
-**Pattern:** Scattered cross-cutting concerns $\to$ centralized handler.
-
-**Mechanism:** Middleware, decorators, or aspect-oriented patterns consolidate error handling, logging, authentication, etc.
-
-**Before:** Each call site handles concern independently. **After:** Central handler; call sites delegate.
-
-**Leverage:** $\rho = n$ where $n$ is number of call sites.
-
-## Summary
-
-The leverage framework identifies a common mechanism across diverse refactoring patterns: DOF collapse yields proportional leverage improvement. Whether the pattern is SSOT, convention-over-configuration, generic abstraction, or centralization, the mathematical structure is identical: reduce DOF while preserving capabilities.
-
-PR #44 provides a verifiable anchor demonstrating this mechanism in practice. The qualitative value lies not in aggregate statistics but in the *mechanism*: once understood, the pattern applies wherever scattered definitions can be consolidated.
 
 
 # Related Work
 
-## Software Architecture Metrics
+## Landauer, Non-Equilibrium Thermodynamics, and Selection
 
-**Coupling and Cohesion [@stevens1974structured]:** Introduced coupling (inter-module dependencies) and cohesion (intra-module relatedness). Recommend high cohesion, low coupling.
+Landauer's principle gives the standard calibration from logically irreversible discrimination to minimum heat production and energy cost [@landauer1961irreversibility; @bennett1982thermodynamics]. Stochastic thermodynamics extends that floor to trajectory-level entropy production, work identities, and fluctuation relations [@seifert2012stochastic; @vandenbroeck2015ensemble; @wolpert2019stochastic; @jarzynski1997nonequilibrium; @crooks1999entropy]. Finite-time erasure and mismatch corrections sharpen the same theme for controlled nonequilibrium protocols [@diana2013finite; @proesmans2020finite; @manzano2024absolute]. The theorem chain above isolates a different object: a finite exact-resolution lower bound indexed by the number of independent coordinates that must be resolved to preserve the optimizer.
 
-**Difference:** Our framework is capability-aware. High cohesion correlates with high leverage (focused capabilities per module), but we formalize the connection to error probability.
+Relative to the Seifert and Van den Broeck--Esposito framework, the present model does not attempt a full trajectory description of a driven Markov process, housekeeping heat, or protocol-dependent dissipation. It gives instead a mechanized non-asymptotic lower bound in terms of structural rank and decision-quotient entropy. Conversely, stochastic-thermodynamic frameworks resolve time-dependent nonequilibrium refinements that are outside the current finite exact-resolution model.
 
-**Cyclomatic Complexity [@mccabe1976complexity]:** Counts decision points in code. Higher values are commonly used as a risk indicator, though empirical studies on defect correlation show mixed results.
+Non-equilibrium selection and replication arguments lie in the same neighborhood [@england2013statistical]. The entropy premium used above is deliberately discrete: multiplicity is reduced to counting over a finite quotient family and the elementary inequality $k \le 2^{k-1}$, rather than to a separate stochastic-process ansatz.
 
-**Difference:** Complexity measures local control flow; leverage measures global architectural DOF. Orthogonal concerns.
+## Zero-Error, Functional, and Quotient Information
 
-## Design Patterns
+The information object is closer to zero-error and confusability-based information theory than to average-case source coding [@shannon1956zero; @korner1973graphs; @lovasz1979shannon; @csiszar2011information]. The central quantity is not full state entropy but the entropy of the decision quotient: how many distinct optimal-action classes survive after irrelevant coordinates are erased.
 
-**Gang of Four [@gamma1994design]:** Catalogued 23 design patterns (Singleton, Factory, Observer, etc.). Patterns codify best practices but lack formal justification.
+Function-relative information in physics and origins-of-life work also conditions information on successful function or selection [@szostak2003functional; @wong2023roles]. The object studied here is narrower and exact: coordinate erasure is admissible precisely when optimal-action correspondence is preserved. The rank-$1$ regime is therefore the one-coordinate exact-decision regime, the tractable sufficiency regime, and the minimum calibrated-cost regime.
 
-**Connection:** Many patterns maximize leverage:
+## Categorical Quotients and Exact Abstraction
 
--   **Factory Pattern:** Centralizes object creation (DOF $= 1$ for creation logic)
+Quotienting states by equality of $\operatorname{Opt}$ is the standard coimage construction for the decision quotient of the optimizer map $\operatorname{Opt}: S \to \mathcal{P}(A)$ in **Set**, canonically equivalent to its image [@maclane1998categories]. The novelty is not the existence of that quotient, but the theorem chain tying it to coordinate sufficiency, structural rank, decision entropy, and thermodynamic cost in one proof object.
 
--   **Strategy Pattern:** Encapsulates algorithms (DOF $= 1$ per strategy family)
+## Formal Verification and Machine-Checked Theory
 
--   **Template Method:** Defines algorithm skeleton (DOF $= 1$ for structure)
-
-Our framework explains *why* these patterns work: they maximize leverage.
-
-## Technical Debt
-
-**Cunningham [@cunningham1992wycash]:** Introduced technical debt metaphor. Poor design creates "debt" that must be "repaid" later.
-
-**Connection:** Low leverage = high technical debt. Scattered DOF (non-SSOT, denormalized schemas, specific endpoints) create debt. High leverage architectures minimize debt.
-
-## Formal Methods in Software Architecture
-
-**Architecture Description Languages (ADLs):** Wright [@allen1997formal], ACME [@garlan1997acme], Aesop [@garlan1994exploiting]. Formalize architecture structure but not decision-making. See also Shaw and Garlan [@shaw1996software].
-
-**Difference:** ADLs describe architectures; our framework prescribes optimal architectures via leverage maximization.
-
-**ATAM and CBAM:** Architecture Tradeoff Analysis Method [@kazman2000atam] and Cost Benefit Analysis Method [@bachmann2000cbam]. Evaluate architectures against quality attributes (performance, modifiability, security). See also Bass et al. [@bass2012software].
-
-**Difference:** ATAM is qualitative; our framework provides quantitative optimization criterion (maximize $L$).
-
-**Necessity Specifications:** Mackay et al. [@mackay2022necessity] formalize *necessity specifications*: robustness guarantees that modules do only what their specification requires, even under adversarial clients. Soundness is mechanized in Coq.
-
-**Connection:** Necessity specifications address *behavioral minimality*: modules commit to no more behavior than required. Our framework addresses *structural minimality*: architectures commit to no more DOF than required. Both derive minimal commitments from requirements and prove sufficiency.
-
-## Software Metrics Research
-
-**Chidamber-Kemerer Metrics [@chidamber1994metrics]:** Object-oriented metrics (WMC, DIT, NOC, CBO, RFC, LCOM). Empirical validation studies [@basili1996comparing] found these metrics correlate with external quality attributes.
-
-**Connection:** Metrics like CBO (Coupling Between Objects) and LCOM (Lack of Cohesion) correlate with DOF. High CBO $\implies$ high DOF. Our framework provides theoretical foundation.
-
-## Metaprogramming and Reflection
-
-**Reflection [@maes1987concepts]:** Languages with reflection enable introspection and intercession. Essential for metaprogramming.
-
-**Connection:** Reflection enables high leverage (SSOT). Our prior work showed Python's definition-time hooks + introspection uniquely enable SSOT for structural facts.
-
-**Metaclasses [@bobrow1986commonloops; @kiczales1991amop]:** Early metaobject and metaclass machinery formalized in CommonLoops; the Metaobject Protocol codified in Kiczales et al.'s AMOP. Enable metaprogramming patterns.
-
-**Application:** Metaclasses are high-leverage mechanism (DOF $= 1$ for class structure, unlimited derivations).
-
-
-# Extension: Weighted Leverage {#weighted-leverage}
-
-The basic leverage framework treats all errors equally. In practice, different decisions carry different consequences. This section extends our framework with *weighted leverage* to capture heterogeneous error severity.
-
-## Weighted Decision Framework
-
-::: definition
-A **weighted decision** extends an architecture with:
-
--   **Importance weight** $w \in \mathbb{N}^+$: the relative severity of errors in this decision
-
--   **Risk-adjusted DOF**: $\text{DOF}_w = \text{DOF} \times w$
-:::
-
-The key insight is that a decision with importance weight $w$ carries $w$ times the error consequence of a unit-weight decision. This leads to:
-
-::: definition
-$$L_w = \frac{\text{Capabilities} \times w}{\text{DOF}_w} = \frac{\text{Capabilities}}{\text{DOF}}$$
-:::
-
-The cancellation is intentional: weighted leverage preserves comparison properties while enabling risk-adjusted optimization.
-
-## Key Theorems
-
-::: theorem
-For any weighted decision $d$ with $\text{DOF} = 1$: $d$ is Pareto-optimal (not dominated by any alternative with higher weighted leverage).
-:::
-
-::: proof
-*Proof.* Suppose $d$ has $\text{DOF} = 1$. For any $d'$ to dominate $d$, we would need $d'.\text{DOF} < 1$. But $\text{DOF} \geq 1$ by definition, so no such $d'$ exists. ◻
-:::
-
-::: theorem
-$\forall a, b, c$: if $a$ has higher weighted leverage than $b$, and $b$ has higher weighted leverage than $c$, then $a$ has higher weighted leverage than $c$.
-:::
-
-::: proof
-*Proof.* By algebraic manipulation of cross-multiplication inequalities. Formally verified in Lean (38-line proof). ◻
-:::
-
-## Practical Application: Feature Flags
-
-Consider two approaches to feature toggle implementation:
-
-**Low Leverage (Scattered Conditionals):**
-
--   DOF: One per feature $\times$ one per use site ($n \times m$)
-
--   Risk: Inconsistent behavior if any site is missed
-
--   Weight: High (user-facing inconsistency)
-
-**High Leverage (Centralized Configuration):**
-
--   DOF: One per feature
-
--   Risk: Single source of truth eliminates inconsistency
-
--   Weight: Same importance, but $m\times$ fewer DOF
-
-Weighted leverage ratio: $L_{\text{centralized}} / L_{\text{scattered}} = m$, the number of use sites.
-
-## Connection to Main Theorems
-
-The weighted framework preserves all results from Sections 3--5:
-
--   **Theorem 3.1 (Leverage-Error Tradeoff)**: Holds with weighted errors
-
--   **Theorem 3.2 (Metaprogramming Dominance)**: Weight amplifies the advantage
-
--   **Theorem 3.4 (Optimality)**: Weighted optimization finds risk-adjusted optima
-
--   **SSOT Dominance**: Weight $w$ makes $n \times w$ leverage advantage
-
-All proofs verified in Lean: `Leverage/WeightedLeverage.lean` (348 lines, 0 sorry placeholders).
+The proofs are machine-checked in Lean 4 [@moura2021lean4] against the Mathlib library [@mathlib2020]. Related mechanized precedents include verified computability and semantics developments in Coq and Isabelle [@forster2019verified; @nipkow2002isabelle; @nipkow2014concrete] and certificate-carrying proof artifacts [@necula1997proof]. Mechanization matters because the main identifications are exact rather than rhetorical: degree of freedom, structural rank, quotient entropy, tractable sufficiency, and calibrated thermodynamic cost are kept distinct and then linked by explicit theorems.
 
 
 # Conclusion
 
-## Methodology and Disclosure
-
-**Role of LLMs in this work.** This paper was developed through human-AI collaboration. The author provided the core insight (that DOF $= 1$ is selected by five independent scientific frameworks) while large language models (Claude, GPT-4) served as implementation partners for formalization, proof drafting, and LaTeX generation.
-
-The Lean 4 proofs (75488 lines, 0 `sorry` placeholders) were iteratively developed: the author specified theorems, the LLM proposed proof strategies, and the Lean compiler verified correctness. Machine-checked proofs are correct regardless of generation method.
-
-**What the author contributed:** The five-way convergence insight, the identification of structural rank as the information-geometric coordinate of DOF, the thermodynamic selection theorem, the cross-paper dependency chain, the open conjectures, and the OpenHCS case study selection.
-
-**What LLMs contributed:** LaTeX drafting, Lean tactic suggestions, prose refinement, and exploration of proof strategies.
-
-::: center
-
-----------------------------------------------------------------------------------------------------
-:::
-
 ## Summary
 
-The central result is the Five-Way Equivalence (Theorem 5.8): five independent scientific frameworks all characterize the single-source condition (DOF $= 1$).
+The central result is the convergence theorem (Theorem [\[thm:five-way\]](#thm:five-way){reference-type="ref" reference="thm:five-way"}): the rank-$1$ regime of the canonical decision encoding is simultaneously the one-coordinate regime, the tractable sufficiency regime, and the thermodynamic ground state. An imported coherence theorem gives a separate single-source reading of the same point.
 
 ::: center
-  **Framework**              **DOF $= 1$ means**                                  **Source**
-  -------------------------- ---------------------------------------------------- --------------------------------
-  Engineering optimization   Maximum leverage $L = |\mathrm{Cap}|/\mathrm{DOF}$   `Leverage`
-  Epistemic coherence        Single Source of Truth                               `Ssot`
-  Information geometry       Structural rank $= 1$                                `DecisionQuotient`
-  Computational complexity   Tractable sufficiency checking                       `DecisionQuotient`
-  Statistical physics        Minimum thermodynamic cost per cycle                 `Leverage`, `DecisionQuotient`
+  **Framework**              **Rank-$1$ means**                     **Formal source**
+  -------------------------- -------------------------------------- -------------------------------------------
+  Local system parameter     $\mathrm{DOF}(A)=1$                    `Leverage/Foundations`
+  Structural information     Structural rank $= 1$                  `Leverage/BridgeToDQ`
+  Computational complexity   Tractable sufficiency checking         `DecisionQuotient`
+  Statistical physics        Minimum thermodynamic cost per cycle   `BoundedAcquisition`, `ThermodynamicLift`
 :::
 
-The engineering consequences (Theorems 1 to 6 from the prior conclusion) are corollaries: DOF-Reliability Isomorphism, Leverage-Error Tradeoff, Modification Complexity Gap, Physical Edit-Energy Floor, Budget Feasibility Boundary, and the Optimal Architecture decision procedure. All are machine-checked in Lean 4 with live cross-module imports (`Leverage` $\to$ `DecisionQuotient` $\to$ `Ssot` $\to$ Mathlib).
+The theorem package is a mathematical-physics statement: DOF is identified with structural rank, structural rank bounds decision entropy, and Landauer calibration turns that rank bound into an energy bound. All of these statements are machine-checked in Lean 4 with an auditable proof trail.
 
-**What is new in `Leverage` relative to `AbstractClassSystem` and `Ssot`:**
+**Main consequences:**
 
--   The convergence theorem itself: `AbstractClassSystem` and `Ssot` contain two of the five equivalences; this paper closes the chain.
+-   The exact identification of degree of freedom with structural rank in the canonical decision encoding.
 
--   The thermodynamic selection theorem (L55 in `BridgeToDQ.lean`): mandatory energy under Landauer calibration for DOF $> 1$, proved unconditionally.
+-   The energy--information theorem $E \ge k_B T H_{\mathrm{nats}}(D)$ for exact-resolution cost.
 
--   The identification of structural rank as the information coordinate for DOF.
+-   The unconditional thermodynamic selection statement that every higher-rank regime lies above the rank-$1$ Landauer ground state.
 
--   The England Replication Inequality (L45): $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$, giving the thermodynamic advantage of SSOT a quantitative non-equilibrium interpretation. No open conjectures remain.
+-   The finite-budget no-collapse theorem: bounded budget, positive per-bit cost, and exponential lower-bound growth cannot coexist with physical collapse.
 
-## No Open Conjectures
+-   The England replication inequality (L45): $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$, proved by finite counting rather than by an informal thermodynamic analogy.
 
-All conjectures from the original submission are now proved in `Leverage/BridgeToDQ.lean`:
+## Mechanized Status
 
--   L55: unconditional energy bound, no P $\neq$ coNP hypothesis.
+The central thermodynamic and convergence statements are all theorem-level results in the mechanized artifact:
+
+-   L55: unconditional energy separation above the rank-$1$ ground state.
 
 -   L49: quantitative Landauer-linear energy bound.
 
+-   PH26: bounded budget plus positive bit-cost plus exponential lower bound implies no physical collapse.
+
 -   L45: $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$ (Theorem [\[thm:england\]](#thm:england){reference-type="ref" reference="thm:england"}).
-
-## Decision Procedure
-
-For practitioners, the five-way equivalence implies a principled architectural decision procedure.
-
-Given requirements $R$, choose optimal architecture via:
-
-1.  **Enumerate:** List candidate architectures $\{A_1, \ldots, A_n\}$
-
-2.  **Filter:** Keep only $A_i$ with $\mathrm{Cap}(A_i) \supseteq R$
-
-3.  **Compute:** Calculate $L(A_i) = |\mathrm{Cap}(A_i)|/\mathrm{DOF}(A_i)$ for each
-
-4.  **Optimize:** Choose $A^* = \arg\max_i L(A_i)$
-
-**Justification:** By the Five-Way Equivalence, $A^*$ simultaneously (a) maximizes leverage, (b) satisfies SSOT, (c) has minimum structural rank, (d) admits tractable sufficiency checking, and (e) minimizes thermodynamic cost. These are five independent validations of the same choice.
 
 ## Limitations
 
-**1. Independence Assumption:** The probability model treats DOF-level errors as independent under the orthogonality assumptions from `AbstractClassSystem` [@paper1_typing_discipline]. Real systems may have correlated failure modes not captured by the isomorphism.
+**1. Canonical-encoding scope:** the main theorems are exact for the canonical binary decision encoding attached to the bounded decision system. Extending the same conclusions to more general physical encodings requires an explicit transport argument.
 
-**2. Constant Error Rate:** Assumes $p$ is uniform across components. Some components are more error-prone than others; a weighted version is future work.
+**2. Imported hardness regime:** the thermodynamic cost theorems are unconditional, but the stronger no-polynomial-certification claims rely on imported hardness results for the canonical family.
 
-**3. P $\neq$ coNP Hypothesis (resolved):** The thermodynamic energy bound in Theorem 5.7, point 3 is now proved unconditionally (L55). Point 2 (complexity hardness) holds under P $\neq$ coNP, which follows from the physical axioms of [@paper4_decision_quotient] (LP38).
+**3. Calibration choice:** Landauer calibration supplies the physical conversion constant. Stronger substrate-dependent lower bounds are possible, but they belong to a different modeling layer than the one studied here.
 
-**4. Capability Quantification:** We count capabilities qualitatively. Some capabilities are more valuable; a weighted leverage extension $L = \sum w_i c_i / \mathrm{DOF}$ is natural but unformalized.
+**4. Finite-budget model class:** the no-collapse theorem is a statement about globally bounded budget profiles with positive per-bit cost and exponential lower-bound growth. Different collapse claims require explicit bridges into that profile language.
 
 ## Impact
 
-**For Physicists:** The England Replication Inequality (Theorem [\[thm:england\]](#thm:england){reference-type="ref" reference="thm:england"}) is proved from counting: $|{\mathrm{Fin}\;k \to \mathrm{Bool}}| = 2^k$, combined with $k \leq 2^{k-1}$ (induction), yields $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$. The only physics input is Landauer's constant $k_B$. This provides a mechanized derivation of a non-equilibrium thermodynamic bound. Additionally, P $\neq$ NP is proved from physical law (LP38: Landauer, finite energy, finite signal speed, nontrivial state space) in 1250+ lines of Lean 4.
+**For mathematical physics:** the England Replication Inequality (Theorem [\[thm:england\]](#thm:england){reference-type="ref" reference="thm:england"}) is reduced to finite counting plus Landauer calibration. The result gives a mechanized, non-asymptotic entropy gap for replication without appealing to an informal thermodynamic analogy.
 
-**For Information Theorists:** The structural rank (srank) equals the DOF, and srank $= 1$ is equivalent to tractable sufficiency checking. The Five-Way Equivalence connects information geometry to computational complexity and thermodynamics.
+**For information theory and complexity:** structural rank appears as the information coordinate of DOF, and the minimum-cost thermodynamic regime coincides with the tractable sufficiency regime.
 
-**For Software Practitioners:** Five independent reasons to prefer DOF $= 1$ architectures. When choosing between alternatives, compute leverage and select maximum. Doing so simultaneously satisfies epistemic coherence, minimizes structural rank, enables tractable decision-making, and minimizes thermodynamic cost.
+**For formalized theory building:** the argument shows that physically meaningful theorem packages can be built from exact finite objects and kept fully auditable at the proof-artifact level.
 
 ## Final Remarks
 
-This paper proves thermodynamic bounds on information-processing systems from first principles. The single-source condition (DOF $= 1$) is characterized as optimal by five independent frameworks: engineering, epistemics, information theory, computational complexity, and statistical physics.
+Finite thermodynamic and structural consequences of exact resolution follow from first principles. In the formal bounded-system-to-`canonicalDP` map, the regime DOF $=1$ is the unique point at which structural rank, tractable sufficiency, and minimum calibrated thermodynamic cost coincide. The imported coherence theorem supplies a separate single-source interpretation of that same point.
 
-All theorems are machine-checked. The thermodynamic bound is unconditional; the England Replication Inequality gives the SSOT entropy advantage as $k_B \ln k$ per update cycle. The only explicit physics axioms are the Second Law (non-negative entropy production) and the Thermodynamic Uncertainty Relation (Barato-Seifert 2015).
+All theorems are machine-checked. The thermodynamic lower bound is unconditional, and the replication inequality gives the entropy premium for multiplicity as $k_B \ln k$ per cycle. A companion manuscript develops the software-engineering and case-study implications. The mathematical-physics core is isolated here.
 
 
 # Lean Proof Artifacts {#appendix-lean}
 
-This appendix reports machine-check status and proof traceability directly from source and generated mapping artifacts.
-
-## Verification Status
-
-**Lean summary:** 75488 lines, 3285 theorems/lemmas, 0 `sorry`, across 280 files.
-
-::: center
-  **File**                                  **Lines**   **Theorems/Lemmas**
-  ---------------------------------------- ----------- ---------------------
-  `LambdaDR.lean`                              343              24
-  `Leverage.lean`                              115               0
-  `Leverage/Foundations.lean`                  234              13
-  `Leverage/Probability.lean`                  841              39
-  `Leverage/Theorems.lean`                     303              20
-  `Leverage/SSOT.lean`                         192              13
-  `Leverage/Typing.lean`                       210              15
-  `Leverage/Examples.lean`                     184               4
-  `Leverage/WeightedLeverage.lean`             348              13
-  `Leverage/BridgeToDQ.lean`                   433              26
-  `Leverage/FiveWayEquivalence.lean`           149               7
-  `Leverage/CrossPaperDependencies.lean`       332              22
-  `lakefile.lean`                              21                0
-  **Total**                                 **75488**        **3285**
-:::
-
-Build command: `cd proofs && lake build`
+This appendix reports proof traceability directly from source and generated mapping artifacts.
 
 ## Claim Coverage Matrix
 
@@ -1479,169 +533,93 @@ Build command: `cd proofs && lake build`
 ## Proof Hardness Index
 
 
-  ------------------------------------------------------------------------------------------------------
-  **Paper claim**                                                     **Lean handle**
-  ------------------------------------------------------------------- ----------------------------------
-  Corollary 3.2: DOF = Independent Error Sources                      L15, L23
+  ----------------------------------------------------------------------------------------------
+  **Paper claim**                                                  **Lean handle**
+  ---------------------------------------------------------------- -----------------------------
+  Corollary 4.4: Unique Minimum-Cost Regime                        BA8, L54, L55
 
-  Corollary 3.6: DOF-Error Monotonicity                               L33
+  Corollary 5.9: $P = NP$ No-Go Transfer                           PH26, PH15, PH14
 
-  Corollary 3.13: DOF Ratio Predicts Error Ratio                      L21, L42
+  Corollary 3.3: Higher-Rank Regime                                L46, L51
 
-  Corollary 4.4: Leverage-Energy Monotonicity in a Capability Class   L3, L6
+  Corollary 3.2: Rank-One Regime                                   L51
 
-  Corollary 3.5: Linear Approximation                                 L16, L39
+  Proposition 2.5: Bounded Region                                  BA1
 
-  Corollary 4.6: Physical Assumption Necessity Witnesses              L2, L8, L7, L4
+  Definition 2.3: Bounded Decision System                          L17, L19
 
-  Definition 2.4: Architecture                                        L17, L19
+  Definition 2.13: Canonical Decision Problem                      QT2, QT7, QT1, QT3
 
-  Theorem 3.10: Ordering Equivalence (Exact)                          L32, L39
+  Theorem 2.6: Bounded Acquisition Rate                            BA1, BA2
 
-  Theorem 4.9: Leverage Composition                                   L18, L19
+  Theorem 5.1: Coherent Single-Source Regime                       ORA1
 
-  Theorem 3.9: DOF-Reliability Isomorphism                            L22, L27
+  Theorem 2.4: Counting Gap                                        BA10
 
-  Theorem 5.1: England Replication Inequality                         L45
+  Theorem 2.7: Discrete Acquisition                                BA3
 
-  Theorem 3.3: Error Compounding                                      L20, L41
+  Theorem 3.1: DOF--Structural-Rank Identity                       L43
 
-  Theorem 3.1: Error Independence                                     L23
+  Theorem 4.3: Energy--Information Duality                         IT3, EI1, L43
 
-  Theorem 3.4: Error Probability                                      L24, L40
+  Theorem 4.1: Rank Controls Exact-Resolution Cost                 BA7, BA6, L43
 
-  Theorem 3.7: Expected Error Bound                                   L25, L26
+  Theorem 5.6: England Replication Inequality                      L45
 
-  Theorem 1.1: Five-Way Equivalence                                   *(no derived Lean handle found)*
+  Theorem 3.6: Decision-Entropy Bound                              IT3, L43
 
-  Theorem 4.2: Leverage-Error Tradeoff                                L29
+  Theorem 5.7: Finite-Budget No-Collapse                           PH26
 
-  Theorem 3.11: Leverage Gap                                          L30
+  Theorem 5.5: Convergence                                         L43, L44, L47, L55
 
-  Theorem 4.1: Leverage Maximization Principle                        L28, L31
+  Theorem 3.4: Minimum Physical Bit Operations                     BA5, BA6, L43, L46
 
-  Theorem 4.7: Metaprogramming Dominance                              L35, L36
+  Theorem 3.5: Decision-Class Bound                                IT4, L43
 
-  Definition 2.12: Capability Set                                     L37
+  Theorem 2.8: One Transition, One Bit                             BA3, BA4
 
-  Corollary 6.7: Unbounded Advantage                                  L12, L13
+  Theorem 5.2: Rank Identification                                 L43, L46, L51
 
-  Theorem 4.8: Optimal Architecture                                   L34, L38
+  Theorem 4.2: Rank-One Ground State                               BA8, L54, L55
 
-  Theorem 4.11: `AbstractClassSystem` as Leverage Instance            L13, L14
+  Theorem 2.9: Resolution Requires a Sufficient Coordinate Set     BA5
 
-  Theorem 4.12: `Ssot` as Leverage Instance                           L10, L11, L13, L14
+  Theorem 5.4: Thermodynamic Selection                             BA8, L49, L54, L55
 
-  Theorem 4.5: Budget Feasibility Boundary                            L2, L3, L4, L6
+  Theorem 5.3: Tractable Sufficiency at Rank One                   L47, L53, L56
+  ----------------------------------------------------------------------------------------------
 
-  Theorem 4.3: Physical Edit-Energy Floor                             L5, L1
-
-  Definition 6.3: SSOT Architecture                                   L9, L11
-
-  Theorem 3.12: Testable Prediction                                   L30, L42
-
-                                                                      
-  ------------------------------------------------------------------------------------------------------
-
-*Notes:* *(1) Full rows come from theorem-local inline anchors in this paper.* *(2) Derived rows are filled by dependency/scaffold claim-handle derivation (same paper-handle label across proof dependencies).* *(3) Unmapped means no local anchor and no derivable dependency support were found.*
-
-*Auto summary: mapped 28/29 (full=28, derived=0, unmapped=1).*
+*Auto summary: mapped 26/26 (full=26, derived=0, unmapped=0).*
 
 
 ::: list
+**`BA1`**[]{#lh:BA1} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
+
+**`BA2`**[]{#lh:BA2} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
+
+**`BA3`**[]{#lh:BA3} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
+
+**`BA4`**[]{#lh:BA4} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
+
+**`BA5`**[]{#lh:BA5} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
+
+**`BA6`**[]{#lh:BA6} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
+
 **`BA7`**[]{#lh:BA7} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
 
-**`DQ1`**[]{#lh:DQ1} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
+**`BA8`**[]{#lh:BA8} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
 
-**`EP1`**[]{#lh:EP1}
+**`BA10`**[]{#lh:BA10} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
 
-**`EP4`**[]{#lh:EP4} paper4/DecisionQuotient/Physics/LocalityPhysics.lean
+**`EI1`**[]{#lh:EI1} paper4/DecisionQuotient/ThermodynamicLift.lean
 
-**`FXI1`**[]{#lh:FXI1} paper1/axis_framework.lean
+**`IT3`**[]{#lh:IT3} paper4/DecisionQuotient/Information.lean
 
-**`L1`**[]{#lh:L1} paper1/axis_framework.lean
-
-**`L2`**[]{#lh:L2} Leverage/Physical.lean
-
-**`L3`**[]{#lh:L3} Leverage/Physical.lean
-
-**`L4`**[]{#lh:L4} paper1/HandleAliases.lean
-
-**`L5`**[]{#lh:L5} paper1/HandleAliases.lean
-
-**`L6`**[]{#lh:L6} paper1/axis_framework.lean
-
-**`L7`**[]{#lh:L7} paper1/axis_framework.lean
-
-**`L8`**[]{#lh:L8} paper1/axis_framework.lean
-
-**`L9`**[]{#lh:L9} Leverage/SSOT.lean
-
-**`L10`**[]{#lh:L10} Leverage/SSOT.lean
-
-**`L11`**[]{#lh:L11} Leverage/SSOT.lean
-
-**`L12`**[]{#lh:L12} Leverage/Typing.lean
-
-**`L13`**[]{#lh:L13} Leverage/Typing.lean
-
-**`L14`**[]{#lh:L14} Leverage/Typing.lean
-
-**`L15`**[]{#lh:L15} Leverage/Probability.lean
-
-**`L16`**[]{#lh:L16} Leverage/Probability.lean
+**`IT4`**[]{#lh:IT4} paper4/DecisionQuotient/Information.lean
 
 **`L17`**[]{#lh:L17} Leverage/Foundations.lean
 
-**`L18`**[]{#lh:L18} Leverage/Theorems.lean
-
 **`L19`**[]{#lh:L19} Leverage/Theorems.lean
-
-**`L20`**[]{#lh:L20} Leverage/Probability.lean
-
-**`L21`**[]{#lh:L21} Leverage/Probability.lean
-
-**`L22`**[]{#lh:L22} Leverage/Probability.lean
-
-**`L23`**[]{#lh:L23} Leverage/Probability.lean
-
-**`L24`**[]{#lh:L24} Leverage/Probability.lean
-
-**`L25`**[]{#lh:L25} Leverage/Probability.lean
-
-**`L26`**[]{#lh:L26} Leverage/Probability.lean
-
-**`L27`**[]{#lh:L27} Leverage/Probability.lean
-
-**`L28`**[]{#lh:L28} Leverage/Theorems.lean
-
-**`L29`**[]{#lh:L29} Leverage/Theorems.lean
-
-**`L30`**[]{#lh:L30} Leverage/Probability.lean
-
-**`L31`**[]{#lh:L31} Leverage/Theorems.lean
-
-**`L32`**[]{#lh:L32} Leverage/Probability.lean
-
-**`L33`**[]{#lh:L33} Leverage/Probability.lean
-
-**`L34`**[]{#lh:L34} Leverage/Theorems.lean
-
-**`L35`**[]{#lh:L35} Leverage/Theorems.lean
-
-**`L36`**[]{#lh:L36} Leverage/Theorems.lean
-
-**`L37`**[]{#lh:L37} Leverage/Foundations.lean
-
-**`L38`**[]{#lh:L38} Leverage/Theorems.lean
-
-**`L39`**[]{#lh:L39} Leverage/Probability.lean
-
-**`L40`**[]{#lh:L40} Leverage/Probability.lean
-
-**`L41`**[]{#lh:L41} Leverage/Probability.lean
-
-**`L42`**[]{#lh:L42} Leverage/Probability.lean
 
 **`L43`**[]{#lh:L43} Leverage/BridgeToDQ.lean
 
@@ -1653,11 +631,7 @@ Build command: `cd proofs && lake build`
 
 **`L47`**[]{#lh:L47} Leverage/BridgeToDQ.lean
 
-**`L48`**[]{#lh:L48} Leverage/Foundations.lean
-
 **`L49`**[]{#lh:L49} Leverage/BridgeToDQ.lean
-
-**`L50`**[]{#lh:L50} Leverage/Foundations.lean
 
 **`L51`**[]{#lh:L51} Leverage/BridgeToDQ.lean
 
@@ -1671,346 +645,264 @@ Build command: `cd proofs && lake build`
 
 **`L56`**[]{#lh:L56} paper4/DecisionQuotient/ClaimClosure.lean
 
-**`LP38`**[]{#lh:LP38} paper4/DecisionQuotient/Physics/LocalityPhysics.lean
-
-**`LP43`**[]{#lh:LP43} paper4/DecisionQuotient/Physics/LocalityPhysics.lean
-
-**`LP44`**[]{#lh:LP44} paper4/DecisionQuotient/Physics/LocalityPhysics.lean
-
 **`ORA1`**[]{#lh:ORA1} paper2/Ssot/Coherence.lean
+
+**`PH14`**[]{#lh:PH14} paper4/DecisionQuotient/Physics/PhysicalHardness.lean
+
+**`PH15`**[]{#lh:PH15} paper4/DecisionQuotient/Physics/PhysicalHardness.lean
+
+**`PH26`**[]{#lh:PH26} paper4/DecisionQuotient/Physics/PhysicalHardness.lean
+
+**`QT1`**[]{#lh:QT1} paper4/DecisionQuotient/Quotient.lean
+
+**`QT2`**[]{#lh:QT2} paper4/DecisionQuotient/Quotient.lean
+
+**`QT3`**[]{#lh:QT3} paper4/DecisionQuotient/Quotient.lean
+
+**`QT7`**[]{#lh:QT7} paper4/DecisionQuotient/Quotient.lean
+
+**`W1`**[]{#lh:W1} paper4/DecisionQuotient/Physics/WassersteinIntegrity.lean
+
+**`W2`**[]{#lh:W2} paper4/DecisionQuotient/Physics/WassersteinIntegrity.lean
+
+**`W3`**[]{#lh:W3} paper4/DecisionQuotient/Physics/WassersteinIntegrity.lean
+
+**`W4`**[]{#lh:W4} paper4/DecisionQuotient/Physics/WassersteinIntegrity.lean
 :::
 
 ::: longtable
 \@p0.05p0.42p0.05p0.42@ **ID** & **Lean Handle / Source** & **ID** & **Lean Handle / Source**\
 **ID** & **Lean Handle / Source** & **ID** & **Lean Handle / Source**\
 \
+[**`BA1`**]{#lh:BA1} & `Physics.BoundedAcquisition.BoundedRegion`
+
+& [**`BA2`**]{#lh:BA2} & `Physics.BoundedAcquisition.acquisition_rate_bound`
+
+\
+[**`BA3`**]{#lh:BA3} & `Physics.BoundedAcquisition.acquisitions_are_transitions`
+
+& [**`BA4`**]{#lh:BA4} & `Physics.BoundedAcquisition.one_bit_per_transition`
+
+\
+[**`BA5`**]{#lh:BA5} & `Physics.BoundedAcquisition.resolution_reads_sufficient`
+
+& [**`BA6`**]{#lh:BA6} & `Physics.BoundedAcquisition.srank_le_resolution_bits`
+
+\
 [**`BA7`**]{#lh:BA7} & `Physics.BoundedAcquisition.energy_ge_srank_cost`
 
-& [**`DQ1`**]{#lh:DQ1} & `DecisionQuotient.Physics.BoundedAcquisition.energy_ge_srank_cost`
+& [**`BA8`**]{#lh:BA8} & `Physics.BoundedAcquisition.srank_one_energy_minimum`
 
 \
-[**`EP1`**]{#lh:EP1} & `Physics.LocalityPhysics.landauer_principle` & [**`EP4`**]{#lh:EP4} & `Physics.LocalityPhysics.nontrivial_physics`
+[**`BA10`**]{#lh:BA10} & `Physics.BoundedAcquisition.counting_gap_theorem`
+
+& [**`EI1`**]{#lh:EI1} & `ThermodynamicLift.energy_ge_kbt_nat_entropy`
 
 \
-[**`FXI1`**]{#lh:FXI1} & `fixed_axis_incompleteness`
+[**`IT3`**]{#lh:IT3} & `DecisionQuotient.quotientEntropy_le_srank_binary`
 
-& [**`L1`**]{#lh:L1} & `matroid_basis_equicardinality`
-
-\
-[**`L2`**]{#lh:L2} & `Leverage.Physical.feasible_iff_floor_le_budget`
-
-& [**`L3`**]{#lh:L3} & `Leverage.Physical.higher_leverage_same_caps_implies_lower_energy`
+& [**`IT4`**]{#lh:IT4} & `DecisionQuotient.numOptClasses_le_pow_srank_binary`
 
 \
-[**`L4`**]{#lh:L4} & `l4_exchange_wrapper`
-
-& [**`L5`**]{#lh:L5} & `l5_exchange_wrapper`
-
-\
-[**`L6`**]{#lh:L6} & `nonorthogonal_complete_has_redundant_axis`
-
-& [**`L7`**]{#lh:L7} & `exists_semanticallyMinimal_subset`
-
-\
-[**`L8`**]{#lh:L8} & `exists_orthogonal_semanticallyMinimal_subset`
-
-& [**`L9`**]{#lh:L9} & `Leverage.SSOT.modification_ratio`
-
-\
-[**`L10`**]{#lh:L10} & `Leverage.SSOT.paper2_is_leverage_instance`
-
-& [**`L11`**]{#lh:L11} & `Leverage.SSOT.ssot_leverage_dominance`
-
-\
-[**`L12`**]{#lh:L12} & `Leverage.Typing.capability_gap`
-
-& [**`L13`**]{#lh:L13} & `Leverage.Typing.nominal_dominates_duck`
-
-\
-[**`L14`**]{#lh:L14} & `Leverage.Typing.paper1_is_leverage_instance`
-
-& [**`L15`**]{#lh:L15} & `Leverage.architecture_axes_independent`
-
-\
-[**`L16`**]{#lh:L16} & `Leverage.bernoulli_justifies_linear_model`
-
-& [**`L17`**]{#lh:L17} & `Leverage.compose_dof`
-
-\
-[**`L18`**]{#lh:L18} & `Leverage.composition_caps_additive`
+[**`L17`**]{#lh:L17} & `Leverage.compose_dof`
 
 & [**`L19`**]{#lh:L19} & `Leverage.composition_dof_additive`
 
 \
-[**`L20`**]{#lh:L20} & `Leverage.correctness_probability`
+[**`L43`**]{#lh:L43} & `dof_eq_srank`
 
-& [**`L21`**]{#lh:L21} & `Leverage.dof_ratio_predicts_error_ratio`
-
-\
-[**`L22`**]{#lh:L22} & `Leverage.dof_reliability_isomorphism`
-
-& [**`L23`**]{#lh:L23} & `Leverage.error_independence_from_orthogonality`
+& [**`L44`**]{#lh:L44} & `dof_one_iff_max_leverage`
 
 \
-[**`L24`**]{#lh:L24} & `Leverage.error_probability_denom_pos`
+[**`L45`**]{#lh:L45} & `england_replication_inequality`
 
-& [**`L25`**]{#lh:L25} & `Leverage.expected_errors_from_linearity`
-
-\
-[**`L26`**]{#lh:L26} & `Leverage.expected_errors_linear`
-
-& [**`L27`**]{#lh:L27} & `Leverage.isomorphism_preserves_failure_ordering`
+& [**`L46`**]{#lh:L46} & `incoherent_srank_gt_one`
 
 \
-[**`L28`**]{#lh:L28} & `Leverage.leverage_caps_principle`
-
-& [**`L29`**]{#lh:L29} & `Leverage.leverage_error_tradeoff`
-
-\
-[**`L30`**]{#lh:L30} & `Leverage.leverage_gap`
-
-& [**`L31`**]{#lh:L31} & `Leverage.leverage_maximization_principle`
-
-\
-[**`L32`**]{#lh:L32} & `Leverage.linear_model_preserves_ordering`
-
-& [**`L33`**]{#lh:L33} & `Leverage.lower_dof_lower_errors`
-
-\
-[**`L34`**]{#lh:L34} & `Leverage.max_leverage_is_optimal`
-
-& [**`L35`**]{#lh:L35} & `Leverage.metaprogramming_dominates`
-
-\
-[**`L36`**]{#lh:L36} & `Leverage.metaprogramming_unbounded_leverage`
-
-& [**`L37`**]{#lh:L37} & `Leverage.modification_eq_dof`
-
-\
-[**`L38`**]{#lh:L38} & `Leverage.optimal_minimizes_error`
-
-& [**`L39`**]{#lh:L39} & `Leverage.ordering_equivalence_exact`
-
-\
-[**`L40`**]{#lh:L40} & `Leverage.series_error_probability`
-
-& [**`L41`**]{#lh:L41} & `Leverage.system_is_correct`
-
-\
-[**`L42`**]{#lh:L42} & `Leverage.testable_modification_prediction`
-
-& [**`L43`**]{#lh:L43} & `dof_eq_srank`
-
-\
-[**`L44`**]{#lh:L44} & `dof_one_iff_max_leverage`
-
-& [**`L45`**]{#lh:L45} & `england_replication_inequality`
-
-\
-[**`L46`**]{#lh:L46} & `incoherent_srank_gt_one`
-
-& [**`L47`**]{#lh:L47} & `max_coherence_forces_tractability`
-
-\
-[**`L48`**]{#lh:L48} & `max_leverage_forces_dof_one`
+[**`L47`**]{#lh:L47} & `max_coherence_forces_tractability`
 
 & [**`L49`**]{#lh:L49} & `srank_energy_lower_bound`
 
 \
-[**`L50`**]{#lh:L50} & `ssot_max_leverage`
+[**`L51`**]{#lh:L51} & `ssot_srank_one`
 
-& [**`L51`**]{#lh:L51} & `ssot_srank_one`
-
-\
-[**`L52`**]{#lh:L52} & `succ_le_two_pow`
-
-& [**`L53`**]{#lh:L53} & `sufficiency_conp_hard`\
-[**`L54`**]{#lh:L54} & `thermodynamic_selection`
-
-& [**`L55`**]{#lh:L55} & `thermodynamic_selection_unconditional`
+& [**`L52`**]{#lh:L52} & `succ_le_two_pow`
 
 \
-[**`L56`**]{#lh:L56} & `tractable_bounded_core`
-
-& [**`LP38`**]{#lh:LP38} & `Physics.LocalityPhysics.pne_np_necessary_for_physics`
+[**`L53`**]{#lh:L53} & `sufficiency_conp_hard` & [**`L54`**]{#lh:L54} & `thermodynamic_selection`
 
 \
-[**`LP43`**]{#lh:LP43} & `Physics.LocalityPhysics.without_separation_no_independence`
+[**`L55`**]{#lh:L55} & `thermodynamic_selection_unconditional`
 
-& [**`LP44`**]{#lh:LP44} & `Physics.LocalityPhysics.without_finite_capacity_no_gap`
+& [**`L56`**]{#lh:L56} & `tractable_bounded_core`
 
 \
 [**`ORA1`**]{#lh:ORA1} & `oracle_arbitrary`
 
-& &\
+& [**`PH14`**]{#lh:PH14} & `PhysicalComplexity.p_eq_np_physically_impossible_of_collapse_map`
+
+\
+[**`PH15`**]{#lh:PH15} & `PhysicalComplexity.p_eq_np_physically_impossible_canonical`
+
+& [**`PH26`**]{#lh:PH26} & `PhysicalComplexity.no_collapse_of_bounded_budget_pos_cost_exp_lb`
+
+\
+[**`QT1`**]{#lh:QT1} & `DecisionProblem.quotient_is_coarsest`
+
+& [**`QT2`**]{#lh:QT2} & `DecisionProblem.quotientMap_preservesOpt`
+
+\
+[**`QT3`**]{#lh:QT3} & `DecisionProblem.quotient_represents_opt_equiv`
+
+& [**`QT7`**]{#lh:QT7} & `DecisionProblem.quotient_has_unique_factorization`
+
+\
+[**`W1`**]{#lh:W1} & `Physics.single_future_zero_cost`
+
+& [**`W2`**]{#lh:W2} & `Physics.transportCost_pos_of_offDiag`
+
+\
+[**`W3`**]{#lh:W3} & `Physics.integrity_is_centroid`
+
+& [**`W4`**]{#lh:W4} & `Physics.wasserstein_bridge`
+
+\
 :::
 
 
-  ----------------------------------------------------------------------------------------------------------------------------
-  **Paper handle**                      **Hardness profile**   **Regime tags**           **Lean support**
-  ------------------------------------- ---------------------- ------------------------- -------------------------------------
-  `cor:dof-errors`                      `unspecified`          \-                        L15, L23
+  ------------------------------------------------------------------------------------------------------------------------
+  **Paper handle**                  **Hardness profile**   **Regime tags**           **Lean support**
+  --------------------------------- ---------------------- ------------------------- -------------------------------------
+  `cor:minimum-cost-regime`         `unspecified`          \-                        BA8, L54, L55
 
-  `cor:dof-monotone`                    `unspecified`          \-                        L33
+  `cor:pnp-nogo`                    `unspecified`          \-                        PH26, PH15, PH14
 
-  `cor:dof-ratio`                       `unspecified`          \-                        L21, L42
+  `cor:rank-above-one`              `unspecified`          \-                        L46, L51
 
-  `cor:leverage-energy`                 `unspecified`          \-                        L3, L6
+  `cor:rank-one`                    `unspecified`          \-                        L51
 
-  `cor:linear-approx`                   `unspecified`          \-                        L16, L39
+  `prop:bounded-region`             `unspecified`          \-                        BA1
 
-  `cor:physical-assumption-necessity`   `unspecified`          \-                        L2, L8, L7, L4
+  `prop:dof-additive`               `unspecified`          \-                        L17, L19
 
-  `prop:dof-additive`                   `unspecified`          \-                        L17, L19
+  `prop:optimizer-quotient`         `unspecified`          \-                        QT2, QT7, QT1, QT3
 
-  `thm:approx-bound`                    `unspecified`          \-                        L32, L39
+  `thm:bounded-acquisition`         `unspecified`          \-                        BA1, BA2
 
-  `thm:composition`                     `unspecified`          \-                        L18, L19
+  `thm:coherent-single-source`      `unspecified`          \-                        ORA1
 
-  `thm:dof-reliability`                 `unspecified`          \-                        L22, L27
+  `thm:counting-gap`                `unspecified`          \-                        BA10
 
-  `thm:england`                         `unspecified`          \-                        L45
+  `thm:discrete-acquisition`        `unspecified`          \-                        BA3
 
-  `thm:error-compound`                  `unspecified`          \-                        L20, L41
+  `thm:dof-srank`                   `unspecified`          \-                        L43
 
-  `thm:error-independence`              `unspecified`          \-                        L23
+  `thm:energy-entropy`              `unspecified`          \-                        IT3, EI1, L43
 
-  `thm:error-prob`                      `unspecified`          \-                        L24, L40
+  `thm:energy-rank`                 `unspecified`          \-                        BA7, BA6, L43
 
-  `thm:expected-errors`                 `unspecified`          \-                        L25, L26
+  `thm:england`                     `unspecified`          \-                        L45
 
-  `thm:five-way`                        `unspecified`          \-                        *(no derived Lean handle found)*
+  `thm:entropy-bound`               `unspecified`          \-                        IT3, L43
 
-  `thm:leverage-error`                  `unspecified`          \-                        L29
+  `thm:finite-budget-no-collapse`   `unspecified`          \-                        PH26
 
-  `thm:leverage-gap`                    `unspecified`          \-                        L30
+  `thm:five-way`                    `unspecified`          \-                        L43, L44, L47, L55
 
-  `thm:leverage-max`                    `unspecified`          \-                        L28, L31
+  `thm:min-bit-operations`          `unspecified`          \-                        BA5, BA6, L43, L46
 
-  `thm:metaprog`                        `unspecified`          \-                        L35, L36
+  `thm:numopt-bound`                `unspecified`          \-                        IT4, L43
 
-  `thm:mod-bound`                       `unspecified`          \-                        L37
+  `thm:one-transition-one-bit`      `unspecified`          \-                        BA3, BA4
 
-  `thm:nominal-leverage`                `unspecified`          \-                        L12, L13
+  `thm:rank-identification`         `unspecified`          \-                        L43, L46, L51
 
-  `thm:optimal`                         `unspecified`          \-                        L34, L38
+  `thm:rank-one-ground`             `unspecified`          \-                        BA8, L54, L55
 
-  `thm:paper1-integration`              `unspecified`          \-                        L13, L14
+  `thm:resolution-sufficient`       `unspecified`          \-                        BA5
 
-  `thm:paper2-integration`              `unspecified`          \-                        L10, L11, L13, L14
+  `thm:thermodynamic-selection`     `unspecified`          \-                        BA8, L49, L54, L55
 
-  `thm:physical-budget-boundary`        `unspecified`          \-                        L2, L3, L4, L6
+  `thm:tractable-rank-one`          `unspecified`          \-                        L47, L53, L56
+  ------------------------------------------------------------------------------------------------------------------------
 
-  `thm:physical-energy-floor`           `unspecified`          \-                        L5, L1
-
-  `thm:ssot-leverage`                   `unspecified`          \-                        L9, L11
-
-  `thm:testable-prediction`             `unspecified`          \-                        L30, L42
-  ----------------------------------------------------------------------------------------------------------------------------
-
-*Auto summary: indexed 29 claims by hardness profile (unspecified=29).*
+*Auto summary: indexed 26 claims by hardness profile (unspecified=26).*
 
 
 # Notes on assumptions and extensions {#appendix-assumptions}
 
-This appendix lists the principal modeling assumptions and common extensions relevant when applying the leverage framework:
+This appendix lists the principal modeling assumptions and common extensions relevant for the finite decision-thermodynamic framework of the paper:
 
--   **Independence and orthogonality:** Error-independence at the DOF level is derived from axis orthogonality assumptions; when dependencies are present, leverage remains a useful comparative metric but probabilistic models should be adjusted to account for correlation.
+-   **Canonical encoding:** The main theorems are exact for the canonical binary decision problem attached to the bounded decision system. Other physical encodings require an explicit transport theorem.
 
--   **Capability counting:** The core theorems require only relative ordering of capabilities; cardinality serves as a practical proxy for capability breadth in examples and case studies.
+-   **Landauer calibration:** Thermodynamic cost is calibrated by a per-bit Landauer floor. Stronger substrate-dependent lower bounds may exist, but they are additional assumptions, not part of the theorem package under discussion.
 
--   **Multi-objective concerns:** Leverage addresses error probability specifically. Performance, security, and other attributes require multi-objective analysis (e.g., Pareto frontiers) before operational decisions.
+-   **Exact decision setting:** The results concern exact sufficiency and exact-resolution cost. Approximate, stochastic, or bounded-confidence regimes require separate analysis.
 
--   **Implementations:** SSOT and other instantiations depend on language and platform features; the theoretical principle is implementation-agnostic.
+-   **Finite state family:** The entropy and replication theorems are finite counting results. Continuum models must first be reduced to a finite decision quotient before these arguments apply.
 
--   **Future work:** Extensions include explicit correlated-error models, weighted capability measures, and integration into multi-criteria architectural decision frameworks.
+-   **Future work:** Natural extensions include richer transport theorems from physical encodings to canonical decision problems, continuous-information analogues, and stronger substrate-specific dissipation bounds.
 
 
 # Complete Theorem Index {#appendix-theorems}
 
-Paper-level labeled claims in this manuscript:
+Paper-level labeled claims:
 
 **Foundations (Section 2):**
 
 -   Proposition [\[prop:dof-additive\]](#prop:dof-additive){reference-type="ref" reference="prop:dof-additive"} (DOF Additivity)
 
--   Theorem [\[thm:mod-bound\]](#thm:mod-bound){reference-type="ref" reference="thm:mod-bound"} (Modification Bounded by DOF)
+-   Theorem [\[thm:counting-gap\]](#thm:counting-gap){reference-type="ref" reference="thm:counting-gap"}
 
-**Probability Model (Section 3):**
+-   Proposition [\[prop:bounded-region\]](#prop:bounded-region){reference-type="ref" reference="prop:bounded-region"}
 
--   Theorem [\[thm:error-independence\]](#thm:error-independence){reference-type="ref" reference="thm:error-independence"}
+-   Theorem [\[thm:bounded-acquisition\]](#thm:bounded-acquisition){reference-type="ref" reference="thm:bounded-acquisition"}
 
--   Corollary [\[cor:dof-errors\]](#cor:dof-errors){reference-type="ref" reference="cor:dof-errors"}
+-   Theorem [\[thm:discrete-acquisition\]](#thm:discrete-acquisition){reference-type="ref" reference="thm:discrete-acquisition"}
 
--   Theorem [\[thm:error-compound\]](#thm:error-compound){reference-type="ref" reference="thm:error-compound"}
+-   Theorem [\[thm:one-transition-one-bit\]](#thm:one-transition-one-bit){reference-type="ref" reference="thm:one-transition-one-bit"}
 
--   Theorem [\[thm:error-prob\]](#thm:error-prob){reference-type="ref" reference="thm:error-prob"}
+-   Theorem [\[thm:resolution-sufficient\]](#thm:resolution-sufficient){reference-type="ref" reference="thm:resolution-sufficient"}
 
--   Corollary [\[cor:linear-approx\]](#cor:linear-approx){reference-type="ref" reference="cor:linear-approx"}
+**Structural Rank and Decision Entropy (Section 3):**
 
--   Corollary [\[cor:dof-monotone\]](#cor:dof-monotone){reference-type="ref" reference="cor:dof-monotone"}
+-   Theorem [\[thm:dof-srank\]](#thm:dof-srank){reference-type="ref" reference="thm:dof-srank"}
 
--   Theorem [\[thm:expected-errors\]](#thm:expected-errors){reference-type="ref" reference="thm:expected-errors"}
+-   Corollary [\[cor:rank-one\]](#cor:rank-one){reference-type="ref" reference="cor:rank-one"}
 
--   Theorem [\[thm:dof-reliability\]](#thm:dof-reliability){reference-type="ref" reference="thm:dof-reliability"}
+-   Corollary [\[cor:rank-above-one\]](#cor:rank-above-one){reference-type="ref" reference="cor:rank-above-one"}
 
--   Theorem [\[thm:approx-bound\]](#thm:approx-bound){reference-type="ref" reference="thm:approx-bound"}
+-   Theorem [\[thm:min-bit-operations\]](#thm:min-bit-operations){reference-type="ref" reference="thm:min-bit-operations"}
 
--   Theorem [\[thm:leverage-gap\]](#thm:leverage-gap){reference-type="ref" reference="thm:leverage-gap"}
+-   Theorem [\[thm:numopt-bound\]](#thm:numopt-bound){reference-type="ref" reference="thm:numopt-bound"}
 
--   Theorem [\[thm:testable-prediction\]](#thm:testable-prediction){reference-type="ref" reference="thm:testable-prediction"}
+-   Theorem [\[thm:entropy-bound\]](#thm:entropy-bound){reference-type="ref" reference="thm:entropy-bound"}
 
--   Corollary [\[cor:dof-ratio\]](#cor:dof-ratio){reference-type="ref" reference="cor:dof-ratio"}
+**Thermodynamic Consequences (Section 4):**
 
-**Main Results (Section 4):**
+-   Theorem [\[thm:energy-rank\]](#thm:energy-rank){reference-type="ref" reference="thm:energy-rank"}
 
--   Theorem [\[thm:leverage-max\]](#thm:leverage-max){reference-type="ref" reference="thm:leverage-max"}
+-   Theorem [\[thm:rank-one-ground\]](#thm:rank-one-ground){reference-type="ref" reference="thm:rank-one-ground"}
 
--   Theorem [\[thm:leverage-error\]](#thm:leverage-error){reference-type="ref" reference="thm:leverage-error"}
+-   Theorem [\[thm:energy-entropy\]](#thm:energy-entropy){reference-type="ref" reference="thm:energy-entropy"}
 
--   Theorem [\[thm:physical-energy-floor\]](#thm:physical-energy-floor){reference-type="ref" reference="thm:physical-energy-floor"}
+-   Corollary [\[cor:minimum-cost-regime\]](#cor:minimum-cost-regime){reference-type="ref" reference="cor:minimum-cost-regime"}
 
--   Corollary [\[cor:leverage-energy\]](#cor:leverage-energy){reference-type="ref" reference="cor:leverage-energy"}
+**Convergence (Section 5):**
 
--   Theorem [\[thm:physical-budget-boundary\]](#thm:physical-budget-boundary){reference-type="ref" reference="thm:physical-budget-boundary"}
+-   Theorem [\[thm:five-way\]](#thm:five-way){reference-type="ref" reference="thm:five-way"}
 
--   Corollary [\[cor:physical-assumption-necessity\]](#cor:physical-assumption-necessity){reference-type="ref" reference="cor:physical-assumption-necessity"}
+-   Theorem [\[thm:england\]](#thm:england){reference-type="ref" reference="thm:england"}
 
--   Theorem [\[thm:metaprog\]](#thm:metaprog){reference-type="ref" reference="thm:metaprog"}
+-   Theorem [\[thm:finite-budget-no-collapse\]](#thm:finite-budget-no-collapse){reference-type="ref" reference="thm:finite-budget-no-collapse"}
 
--   Theorem [\[thm:optimal\]](#thm:optimal){reference-type="ref" reference="thm:optimal"}
-
--   Theorem [\[thm:composition\]](#thm:composition){reference-type="ref" reference="thm:composition"}
-
--   Theorem [\[thm:paper1-integration\]](#thm:paper1-integration){reference-type="ref" reference="thm:paper1-integration"}
-
--   Theorem [\[thm:paper2-integration\]](#thm:paper2-integration){reference-type="ref" reference="thm:paper2-integration"}
-
-**Instances (Section 5):**
-
--   Theorem [\[thm:ssot-leverage\]](#thm:ssot-leverage){reference-type="ref" reference="thm:ssot-leverage"}
-
--   Theorem [\[thm:nominal-leverage\]](#thm:nominal-leverage){reference-type="ref" reference="thm:nominal-leverage"}
-
-**Mechanization status:** 75488 lines, 3285 theorems/lemmas, 0 `sorry`, 280 files.
+-   Corollary [\[cor:pnp-nogo\]](#cor:pnp-nogo){reference-type="ref" reference="cor:pnp-nogo"}
 
 **Primary Lean sources:**
 
 -   `Leverage/Foundations.lean`
 
--   `Leverage/Probability.lean`
-
--   `Leverage/Theorems.lean`
-
--   `Leverage/Physical.lean`
-
--   `Leverage/SSOT.lean`
-
--   `Leverage/Typing.lean`
-
--   `Leverage/Examples.lean`
-
--   `Leverage/WeightedLeverage.lean`
+-   `Leverage/BridgeToDQ.lean`
 
 -   `LambdaDR.lean`
 
@@ -2025,6 +917,6 @@ Paper-level labeled claims in this manuscript:
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper3_leverage/proofs/`
-- Lines: 75488
-- Theorems: 3285
+- Lines: 75987
+- Theorems: 3303
 - `sorry` placeholders: 0

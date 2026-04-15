@@ -1,34 +1,143 @@
-\begin{thebibliography}{1}
+\begin{thebibliography}{10}
 
-\bibitem{patterson2013computer}
-David~A. Patterson and John~L. Hennessy.
-\newblock {\em Computer Organization and Design: The Hardware/Software
-  Interface}.
-\newblock Morgan Kaufmann, 2013.
-\newblock Discusses RAID and reliability formulas.
+\bibitem{bennett1982thermodynamics}
+Charles~H. Bennett.
+\newblock The thermodynamics of computation---a review.
+\newblock {\em International Journal of Theoretical Physics}, 21(12):905--940,
+  1982.
 
-\bibitem{paper4_decision_quotient}
-Tristan Simas.
-\newblock Computational complexity of physical counting.
-\newblock Zenodo, 2025.
-\newblock Companion paper. Proves coNP-hardness of sufficiency checking,
-  tractable subcases, and P~$\neq$~NP from physical axioms (Landauer, finite
-  energy, finite signal speed, nontrivial state space). All results
-  machine-checked in Lean~4.
+\bibitem{crooks1999entropy}
+Gavin~E. Crooks.
+\newblock Entropy production fluctuation theorem and the nonequilibrium work
+  relation for free energy differences.
+\newblock {\em Physical Review E}, 60(3):2721--2726, 1999.
 
-\bibitem{paper1_typing_discipline}
-Tristan Simas.
-\newblock Identification capacity and rate-query tradeoffs in classification
-  systems.
-\newblock Zenodo, 2025.
-\newblock Paper 1 of this series. Proves axis orthogonality theorem.
+\bibitem{csiszar2011information}
+Imre Csisz{\'a}r and J{\'a}nos K{\"o}rner.
+\newblock {\em Information Theory: Coding Theorems for Discrete Memoryless
+  Systems}.
+\newblock Cambridge University Press, 2nd edition, 2011.
 
-\bibitem{paper2_ssot}
-Tristan Simas.
-\newblock Zero-incoherence capacity of interactive encoding systems:
-  Achievability, converse, and side information bounds.
-\newblock Zenodo, 2025.
-\newblock Paper 2 of this series. Proves coherence impossibility theorems for
-  programming languages.
+\bibitem{moura2021lean4}
+Leonardo de~Moura and Sebastian Ullrich.
+\newblock The lean 4 theorem prover and programming language.
+\newblock In {\em International Conference on Automated Deduction}, pages
+  625--635. Springer, 2021.
+
+\bibitem{diana2013finite}
+Giovanni Diana, G.~Baris Bagci, and Massimiliano Esposito.
+\newblock Finite-time erasing of information stored in fermionic bits.
+\newblock {\em Physical Review E}, 87(1):012111, 2013.
+
+\bibitem{england2013statistical}
+Jeremy~L. England.
+\newblock Statistical physics of self-replication.
+\newblock {\em The Journal of Chemical Physics}, 139(12):121923, 2013.
+
+\bibitem{forster2019verified}
+Yannick Forster, Fabian Kunze, and Maxi Wuttke.
+\newblock Verified programming of {Turing} machines in {Coq}.
+\newblock In {\em Proceedings of the 9th ACM SIGPLAN International Conference
+  on Certified Programs and Proofs (CPP 2020)}, pages 114--128. ACM, 2020.
+
+\bibitem{jarzynski1997nonequilibrium}
+C.~Jarzynski.
+\newblock Nonequilibrium equality for free energy differences.
+\newblock {\em Physical Review Letters}, 78(14):2690--2693, 1997.
+
+\bibitem{korner1973graphs}
+J{\'a}nos K{\"o}rner.
+\newblock Coding of an information source having ambiguous alphabet and the
+  entropy of graphs.
+\newblock In {\em Transactions of the 6th Prague Conference on Information
+  Theory, Statistical Decision Functions, Random Processes}, pages 411--425,
+  1973.
+
+\bibitem{landauer1961irreversibility}
+Rolf Landauer.
+\newblock Irreversibility and heat generation in the computing process.
+\newblock {\em IBM Journal of Research and Development}, 5(3):183--191, 1961.
+
+\bibitem{lovasz1979shannon}
+L{\'a}szl{\'o} Lov{\'a}sz.
+\newblock On the shannon capacity of a graph.
+\newblock {\em IEEE Transactions on Information Theory}, 25(1):1--7, 1979.
+
+\bibitem{maclane1998categories}
+Saunders Mac~Lane.
+\newblock {\em Categories for the Working Mathematician}, volume~5 of {\em
+  Graduate Texts in Mathematics}.
+\newblock Springer, 2 edition, 1998.
+
+\bibitem{manzano2024absolute}
+Pau Manzano, U{\u{g}}ur Karde{\c{s}}, {\'E}dgar Rold{\'a}n, and David~H.
+  Wolpert.
+\newblock Absolute bounds on the intrinsic dissipation of classical and quantum
+  processes due to irreversibility and mismatch.
+\newblock {\em Physical Review X}, 14(2):021026, 2024.
+
+\bibitem{necula1997proof}
+George~C. Necula.
+\newblock Proof-carrying code.
+\newblock In {\em Proceedings of the 24th ACM SIGPLAN-SIGACT Symposium on
+  Principles of Programming Languages}, pages 106--119. ACM, 1997.
+
+\bibitem{nipkow2014concrete}
+Tobias Nipkow and Gerwin Klein.
+\newblock {\em Concrete Semantics with {Isabelle/HOL}}.
+\newblock Springer, 2014.
+
+\bibitem{nipkow2002isabelle}
+Tobias Nipkow, Lawrence~C. Paulson, and Markus Wenzel.
+\newblock {\em {Isabelle/HOL}: A Proof Assistant for Higher-Order Logic}.
+\newblock Springer, 2002.
+
+\bibitem{proesmans2020finite}
+Karel Proesmans, Jannik Ehrich, and John Bechhoefer.
+\newblock Finite-time landauer principle.
+\newblock {\em Physical Review Letters}, 125:100602, 2020.
+
+\bibitem{seifert2012stochastic}
+Udo Seifert.
+\newblock Stochastic thermodynamics, fluctuation theorems and molecular
+  machines.
+\newblock {\em Reports on Progress in Physics}, 75(12):126001, 2012.
+
+\bibitem{shannon1956zero}
+Claude~E. Shannon.
+\newblock Zero-error capacity of a noisy channel.
+\newblock {\em IRE Transactions on Information Theory}, 2(3):8--19, 1956.
+
+\bibitem{szostak2003functional}
+Jack~W. Szostak.
+\newblock Functional information: Molecular messages.
+\newblock {\em Nature}, 423(6941):689, 2003.
+
+\bibitem{mathlib2020}
+{The mathlib Community}.
+\newblock The {Lean} mathematical library.
+\newblock In {\em Proceedings of the 9th ACM SIGPLAN International Conference
+  on Certified Programs and Proofs (CPP 2020)}, pages 367--381. Association for
+  Computing Machinery, 2020.
+
+\bibitem{vandenbroeck2015ensemble}
+Christian Van~den Broeck and Massimiliano Esposito.
+\newblock Ensemble and trajectory thermodynamics: A brief introduction.
+\newblock {\em Physica A: Statistical Mechanics and its Applications},
+  418:6--16, 2015.
+
+\bibitem{wolpert2019stochastic}
+David~H. Wolpert.
+\newblock The stochastic thermodynamics of computation.
+\newblock {\em Journal of Physics A: Mathematical and Theoretical},
+  52(19):193001, 2019.
+
+\bibitem{wong2023roles}
+Michael Wong, Carol Cleland, Daniel~R. Arend, Stuart Bartlett, H.~James
+  Cleaves, Heather Demarest, Aditi Prabhu, Jonathan~I. Lunine, and Robert~M.
+  Hazen.
+\newblock On the roles of function and selection in evolving systems.
+\newblock {\em Proceedings of the National Academy of Sciences},
+  120(44):e2310223120, 2023.
 
 \end{thebibliography}

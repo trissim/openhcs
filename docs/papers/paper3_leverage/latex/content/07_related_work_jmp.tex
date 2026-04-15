@@ -1,21 +1,23 @@
 \section{Related Work}\label{related-work}
 
-\subsection{Landauer and Thermodynamic Information Processing}
+\subsection{Landauer, Non-Equilibrium Thermodynamics, and Selection}
 
-Landauer's principle provides the calibration from logical discrimination to minimum entropy production and energy cost. Our use of Landauer is deliberately finite and structural: the relevant parameter is not a Shannon rate or an asymptotic code family, but the number of independent coordinates that must be resolved in a sufficiency check. In that sense the paper is closer to a mechanized finite-cost selection theorem than to a phenomenological thermodynamic analogy.
+Landauer's principle gives the standard calibration from logically irreversible discrimination to minimum heat production and energy cost \cite{landauer1961irreversibility,bennett1982thermodynamics}. Stochastic thermodynamics extends that floor to trajectory-level entropy production, work identities, and fluctuation relations \cite{seifert2012stochastic,vandenbroeck2015ensemble,wolpert2019stochastic,jarzynski1997nonequilibrium,crooks1999entropy}. Finite-time erasure and mismatch corrections sharpen the same theme for controlled nonequilibrium protocols \cite{diana2013finite,proesmans2020finite,manzano2024absolute}. The theorem chain above isolates a different object: a finite exact-resolution lower bound indexed by the number of independent coordinates that must be resolved to preserve the optimizer.
 
-The England-style replication inequality proved here sits in the same non-equilibrium neighborhood, but its derivation is intentionally discrete. The entropy gap is reduced to counting over a finite state family and the elementary inequality $k \le 2^{k-1}$; the physics enters through Landauer calibration rather than through a separate stochastic-process ansatz.
+Relative to the Seifert and Van den Broeck--Esposito framework, the present model does not attempt a full trajectory description of a driven Markov process, housekeeping heat, or protocol-dependent dissipation. It gives instead a mechanized non-asymptotic lower bound in terms of structural rank and decision-quotient entropy. Conversely, stochastic-thermodynamic frameworks resolve time-dependent nonequilibrium refinements that are outside the current finite exact-resolution model.
 
-\subsection{Zero-Error and Structural Information Theory}
+Non-equilibrium selection and replication arguments lie in the same neighborhood \cite{england2013statistical}. The entropy premium used above is deliberately discrete: multiplicity is reduced to counting over a finite quotient family and the elementary inequality $k \le 2^{k-1}$, rather than to a separate stochastic-process ansatz.
 
-The structural-rank side of the paper depends directly on the companion decision-quotient theory, where sufficiency checking, rank collapse, and hardness boundaries are developed in full. The present paper does not reprove that theory; instead it identifies the coordinate along which the thermodynamic lift should be read. This places the argument in the orbit of finite zero-error and decision-relevant information theory rather than classical average-case coding.
+\subsection{Zero-Error, Functional, and Quotient Information}
 
-The rank-$1$ regime is special because it is simultaneously the single surviving decision coordinate, the tractable sufficiency regime, and the minimum calibrated decision-cost regime. That convergence is the conceptual novelty of the present paper relative to the companion structural-rank manuscript.
+The information object is closer to zero-error and confusability-based information theory than to average-case source coding \cite{shannon1956zero,korner1973graphs,lovasz1979shannon,csiszar2011information}. The central quantity is not full state entropy but the entropy of the decision quotient: how many distinct optimal-action classes survive after irrelevant coordinates are erased.
 
-\subsection{Reliability and Discrete Failure Composition}
+Function-relative information in physics and origins-of-life work also conditions information on successful function or selection \cite{szostak2003functional,wong2023roles}. The object studied here is narrower and exact: coordinate erasure is admissible precisely when optimal-action correspondence is preserved. The rank-$1$ regime is therefore the one-coordinate exact-decision regime, the tractable sufficiency regime, and the minimum calibrated-cost regime.
 
-The reliability interpretation of DOF is used here as a discrete bridge: an $n$-degree-of-freedom system behaves like a series system with $n$ independent failure points. We use that bridge not as the main application domain but as a mathematically transparent representation of why multiplicative error composition and additive decision cost are both controlled by the same structural parameter.
+\subsection{Categorical Quotients and Exact Abstraction}
 
-\subsection{Formal Verification and Mechanized Cross-Paper Theory}
+Quotienting states by equality of $\Opt$ is the standard coimage construction for the decision quotient of the optimizer map $\Opt : S \to \mathcal{P}(A)$ in \textbf{Set}, canonically equivalent to its image \cite{maclane1998categories}. The novelty is not the existence of that quotient, but the theorem chain tying it to coordinate sufficiency, structural rank, decision entropy, and thermodynamic cost in one proof object.
 
-All main statements are machine-checked in Lean~4, and the cross-paper dependency chain is live rather than informal. The mechanization matters here because the paper depends on results transported across distinct theorem families: orthogonality from \texttt{AbstractClassSystem}, coherence from \texttt{Ssot}, and rank/tractability/thermodynamic lift from \texttt{DecisionQuotient}. The present manuscript packages those results into a single equivalence theorem with an auditable proof trail.
+\subsection{Formal Verification and Machine-Checked Theory}
+
+The proofs are machine-checked in Lean~4 \cite{moura2021lean4} against the Mathlib library \cite{mathlib2020}. Related mechanized precedents include verified computability and semantics developments in Coq and Isabelle \cite{forster2019verified,nipkow2002isabelle,nipkow2014concrete} and certificate-carrying proof artifacts \cite{necula1997proof}. Mechanization matters because the main identifications are exact rather than rhetorical: degree of freedom, structural rank, quotient entropy, tractable sufficiency, and calibrated thermodynamic cost are kept distinct and then linked by explicit theorems.

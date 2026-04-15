@@ -1,62 +1,48 @@
 \section{Complete Theorem Index}\label{appendix-theorems}
 
-Paper-level labeled claims in this manuscript:
+Paper-level labeled claims:
 
 \textbf{Foundations (Section 2):}
 \begin{itemize}
 \item Proposition~\ref{prop:dof-additive} (DOF Additivity)
-\item Theorem~\ref{thm:mod-bound} (Modification Bounded by DOF)
+\item Theorem~\ref{thm:counting-gap}
+\item Proposition~\ref{prop:bounded-region}
+\item Theorem~\ref{thm:bounded-acquisition}
+\item Theorem~\ref{thm:discrete-acquisition}
+\item Theorem~\ref{thm:one-transition-one-bit}
+\item Theorem~\ref{thm:resolution-sufficient}
 \end{itemize}
 
-\textbf{Probability Model (Section 3):}
+\textbf{Structural Rank and Decision Entropy (Section 3):}
 \begin{itemize}
-\item Theorem~\ref{thm:error-independence}
-\item Corollary~\ref{cor:dof-errors}
-\item Theorem~\ref{thm:error-compound}
-\item Theorem~\ref{thm:error-prob}
-\item Corollary~\ref{cor:linear-approx}
-\item Corollary~\ref{cor:dof-monotone}
-\item Theorem~\ref{thm:expected-errors}
-\item Theorem~\ref{thm:dof-reliability}
-\item Theorem~\ref{thm:approx-bound}
-\item Theorem~\ref{thm:leverage-gap}
-\item Theorem~\ref{thm:testable-prediction}
-\item Corollary~\ref{cor:dof-ratio}
+\item Theorem~\ref{thm:dof-srank}
+\item Corollary~\ref{cor:rank-one}
+\item Corollary~\ref{cor:rank-above-one}
+\item Theorem~\ref{thm:min-bit-operations}
+\item Theorem~\ref{thm:numopt-bound}
+\item Theorem~\ref{thm:entropy-bound}
 \end{itemize}
 
-\textbf{Main Results (Section 4):}
+\textbf{Thermodynamic Consequences (Section 4):}
 \begin{itemize}
-\item Theorem~\ref{thm:leverage-max}
-\item Theorem~\ref{thm:leverage-error}
-\item Theorem~\ref{thm:physical-energy-floor}
-\item Corollary~\ref{cor:leverage-energy}
-\item Theorem~\ref{thm:physical-budget-boundary}
-\item Corollary~\ref{cor:physical-assumption-necessity}
-\item Theorem~\ref{thm:metaprog}
-\item Theorem~\ref{thm:optimal}
-\item Theorem~\ref{thm:composition}
-\item Theorem~\ref{thm:paper1-integration}
-\item Theorem~\ref{thm:paper2-integration}
+\item Theorem~\ref{thm:energy-rank}
+\item Theorem~\ref{thm:rank-one-ground}
+\item Theorem~\ref{thm:energy-entropy}
+\item Corollary~\ref{cor:minimum-cost-regime}
 \end{itemize}
 
-\textbf{Instances (Section 5):}
+\textbf{Convergence (Section 5):}
 \begin{itemize}
-\item Theorem~\ref{thm:ssot-leverage}
-\item Theorem~\ref{thm:nominal-leverage}
+\item Theorem~\ref{thm:five-way}
+\item Theorem~\ref{thm:england}
+\item Theorem~\ref{thm:finite-budget-no-collapse}
+\item Corollary~\ref{cor:pnp-nogo}
 \end{itemize}
-
-\textbf{Mechanization status:} \LeanTotalLines{} lines, \LeanTotalTheorems{} theorems/lemmas, \LeanTotalSorry{} \texttt{sorry}, \LeanTotalFiles{} files.
 
 \textbf{Primary Lean sources:}
 \begin{itemize}
 \item \texttt{Leverage/Foundations.lean}
-\item \texttt{Leverage/Probability.lean}
-\item \texttt{Leverage/Theorems.lean}
-\item \texttt{Leverage/Physical.lean}
-\item \texttt{Leverage/SSOT.lean}
-\item \texttt{Leverage/Typing.lean}
-\item \texttt{Leverage/Examples.lean}
-\item \texttt{Leverage/WeightedLeverage.lean}
+\item \texttt{Leverage/BridgeToDQ.lean}
 \item \texttt{LambdaDR.lean}
 \item \texttt{Leverage.lean}
 \end{itemize}

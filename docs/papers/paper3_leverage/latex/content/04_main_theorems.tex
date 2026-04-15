@@ -1,215 +1,98 @@
-\section{Main Theorems}\label{main-theorems}
+\section{Thermodynamic Consequences}\label{main-theorems}
 
-We prove the core results connecting leverage to error probability and architectural optimality. The theoretical structure is:
+The previous section identified degree of freedom with structural rank and bounded the entropy of the decision quotient. Exact resolution requires irreducible bit events. Matter pays for them.
 
-\begin{enumerate}
-\item \textbf{DOF-Reliability Isomorphism} (Theorem \ref{thm:dof-reliability}): Maps architecture to reliability theory
-\item \textbf{Leverage-Error Tradeoff} (Theorem \ref{thm:leverage-error}): Connects leverage to error probability
-\item \textbf{Physical Edit-Energy Floor} (Theorem \ref{thm:physical-energy-floor}): DOF controls minimum edit-energy
-\item \textbf{Optimality Criterion} (Theorem \ref{thm:optimal}): Correctness in a fixed capability class
-\item \textbf{Composition Stability} (Theorem \ref{thm:composition}): Composition preserves leverage lower bounds
-\end{enumerate}
+\subsection{Landauer-Linear Resolution Cost}
 
-\subsection{Recap: DOF-Reliability Isomorphism}
-
-The core theoretical contribution (stated in Section 1.3) is that DOF maps formally to series system components. This enables all subsequent results by connecting software architecture to the mature mathematical framework of reliability theory.
-
-\textbf{Key properties of the isomorphism:}
-\begin{itemize}
-\item \textbf{Preserves ordering:} If $\text{DOF}(A_1) < \text{DOF}(A_2)$, then $P_{\text{error}}(A_1) < P_{\text{error}}(A_2)$
-\item \textbf{Invertible:} An architecture can be reconstructed from its series system representation
-\item \textbf{Compositional:} $\text{DOF}(A_1 \oplus A_2) = \text{DOF}(A_1) + \text{DOF}(A_2)$ (series systems combine)
-\end{itemize}
-
-\subsection{The Leverage Maximization Principle}
-
-Given the DOF-Reliability Isomorphism, the following is a \emph{corollary}:
-
-\begin{theorem}[Leverage Maximization Principle]\label{thm:leverage-max}
-For any architectural decision with alternatives $A_1, \ldots, A_n$ meeting capability requirements, the optimal choice maximizes leverage:
+\begin{theorem}[Rank Controls Exact-Resolution Cost]\label{thm:energy-rank}
+Let $A$ be a bounded decision system and let $M$ be a thermodynamic model with positive per-bit conversion constant. Then
 \[
-A^* = \arg\max_{A_i} L(A_i) = \arg\max_{A_i} \frac{|\text{Capabilities}(A_i)|}{\text{DOF}(A_i)}
+M.\mathrm{joulesPerBit} \cdot \mathrm{DOF}(A)
+\le
+\mathrm{energyLowerBound}(M, \mathrm{DOF}(A)).
 \]
+In particular, exact-resolution cost is at least linear in the degree-of-freedom count.
 \end{theorem}
-\leanmeta{\LH{L28}, \LH{L31}}
-
-\textbf{Note:} This is \emph{not} the central theorem; it is a consequence of the DOF-Reliability Isomorphism. The isomorphism is the deep result; ``maximize leverage'' is the actionable heuristic derived from it.
-
-\subsection{Leverage-Error Tradeoff}
-
-\begin{theorem}[Leverage-Error Tradeoff]\label{thm:leverage-error}
-For architectures $A_1, A_2$ with equal capabilities:
-\[
-\text{Cap}(A_1) = \text{Cap}(A_2) \wedge L(A_1) > L(A_2) \implies P_{\text{error}}(A_1) < P_{\text{error}}(A_2)
-\]
-\end{theorem}
-\leanmeta{\LH{L29}}
+\leanmeta{\LHrng{BA}{6}{7}, \LH{L43}}
 
 \begin{proof}
-Given: $\text{Cap}(A_1) = \text{Cap}(A_2)$ and $L(A_1) > L(A_2)$.
-
-Since $L(A) = |\text{Cap}(A)|/\text{DOF}(A)$ and capabilities are equal:
-\[
-\frac{|\text{Cap}(A_1)|}{\text{DOF}(A_1)} > \frac{|\text{Cap}(A_2)|}{\text{DOF}(A_2)}
-\]
-
-With $|\text{Cap}(A_1)| = |\text{Cap}(A_2)|$:
-\[
-\frac{1}{\text{DOF}(A_1)} > \frac{1}{\text{DOF}(A_2)} \implies \text{DOF}(A_1) < \text{DOF}(A_2)
-\]
-
-By Corollary \ref{cor:dof-monotone}:
-\[
-\text{DOF}(A_1) < \text{DOF}(A_2) \implies P_{\text{error}}(A_1) < P_{\text{error}}(A_2)
-\]
+Theorem~\ref{thm:min-bit-operations} gives a lower bound of $\mathrm{DOF}(A)$ elementary bit-acquisition events for exact resolution. The bounded-acquisition energy theorem then converts that bit lower bound into the displayed energy lower bound.
 \end{proof}
 
-\textbf{Corollary:} Maximizing leverage minimizes error probability (for fixed capabilities).
-
-\subsection{Physical Edit-Energy Floor}
-
-\begin{theorem}[Physical Edit-Energy Floor]\label{thm:physical-energy-floor}
-Fix a physical edit model $\mathcal{M}$ with per-edit conversion constant $j_{\mathcal{M}}>0$. For any architecture $A$:
-\[
-E_{\min}(A;\mathcal{M}) = j_{\mathcal{M}}\cdot \mathrm{DOF}(A).
-\]
-Hence $\mathrm{DOF}(A_1) < \mathrm{DOF}(A_2)$ implies
-$E_{\min}(A_1;\mathcal{M}) < E_{\min}(A_2;\mathcal{M})$.
+\begin{theorem}[Rank-One Ground State]\label{thm:rank-one-ground}
+If $\mathrm{DOF}(A)=1$, then every exact-resolution cycle for the canonical problem has energy at least one Landauer unit. If $\mathrm{DOF}(A)>1$, then the system lies strictly above that ground state.
 \end{theorem}
-\leanmeta{\LH{L1}, \LH{L5}}
+\leanmeta{\LH{BA8}, \LHrng{L}{54}{55}}
 
 \begin{proof}
-In the mechanized model, modification complexity is definitionally $\mathrm{DOF}$. Multiplying by a positive per-edit conversion constant gives the lower bound and strict monotonicity in DOF.
+The rank-one statement is exactly the imported ground-state theorem for structural rank~$1$ (\LH{BA8}). For the higher-rank regime, Corollary~\ref{cor:rank-above-one} gives $\mathrm{srank}>1$, and Theorem~\ref{thm:energy-rank} then places the resulting exact-resolution cycle strictly above the one-Landauer-unit floor.
 \end{proof}
 
-\begin{corollary}[Leverage-Energy Monotonicity in a Capability Class]\label{cor:leverage-energy}
-For architectures $A_1,A_2$ with equal capabilities, if $L(A_1)>L(A_2)$ then
+\subsection{Energy--Information Duality}
+
+\begin{theorem}[Energy--Information Duality]\label{thm:energy-entropy}
+Let $D = \mathrm{canonicalDP}(A)$, and let $E$ be the realized energy for one exact-resolution cycle. If Landauer calibration holds at positive Boltzmann constant and temperature, then
 \[
-E_{\min}(A_1;\mathcal{M}) < E_{\min}(A_2;\mathcal{M}),
+E \ge k_B T\, H_{\mathrm{nats}}(D).
 \]
-and the induced energy gap is strictly positive.
+Equivalently, the minimum exact-resolution cost is at least $k_B T$ times the natural-log entropy of the decision quotient.
+\end{theorem}
+\leanmeta{\LH{EI1}, \LH{IT3}, \LH{L43}}
+
+\begin{proof}
+The entropy-rank inequality gives
+\[
+H_{\mathrm{nats}}(D) \le \mathrm{DOF}(A)\ln 2
+\]
+by Theorem~\ref{thm:entropy-bound}. Theorem~\ref{thm:energy-rank} gives the complementary lower bound
+\[
+E \ge \mathrm{DOF}(A) k_B T \ln 2.
+\]
+Comparing the two right-hand sides yields the announced inequality. In the mechanized artifact this is the energy-information theorem (\LH{EI1}).
+\end{proof}
+
+\begin{corollary}[Unique Minimum-Cost Regime]\label{cor:minimum-cost-regime}
+Among bounded decision systems in the canonical binary encoding, the unique minimum-cost regime is $\mathrm{DOF}(A)=1$.
 \end{corollary}
-\leanmeta{\LH{L3}, \LH{L6}}
+\leanmeta{\LH{BA8}, \LHrng{L}{54}{55}}
 
-\begin{theorem}[Budget Feasibility Boundary]\label{thm:physical-budget-boundary}
-For physical model $\mathcal{M}$ and budget $B$, implementation feasibility is equivalent to clearing the floor:
+\begin{proof}
+Theorem~\ref{thm:rank-one-ground} identifies $\mathrm{DOF}(A)=1$ as the one-Landauer-unit ground state, while every bounded decision system with more than one degree of freedom lies strictly above it.
+\end{proof}
+
+\subsection{Worked Examples}
+
+Two toy canonical systems fix the scale of the bound.
+
+\paragraph{One relevant coordinate.}
+Take states $\{0,1\}$ and actions $\{a_0,a_1\}$, with $\Opt(0)=\{a_0\}$ and $\Opt(1)=\{a_1\}$. Then $\mathrm{DOF}(A)=1$, the decision quotient has two classes, $H_{\mathrm{nats}}(D)=\ln 2$, and Theorem~\ref{thm:energy-entropy} gives
 \[
-E_{\min}(A;\mathcal{M}) \le B \iff \text{feasible}(A,B,\mathcal{M}).
+E \ge k_B T \ln 2.
 \]
-Hence $B < E_{\min}(A;\mathcal{M})$ implies infeasibility. Also, for fixed $B$ and equal capabilities, if $L(A_1)>L(A_2)$ and $A_2$ is feasible under $B$, then $A_1$ is feasible under $B$.
-\end{theorem}
-\leanmeta{\LH{L2}, \LH{L4}}
+This is the rank-$1$ ground regime.
 
-\begin{corollary}[Physical Assumption Necessity Witnesses]\label{cor:physical-assumption-necessity}
-The physical layer uses two explicit premises for no-go style infeasibility claims: positive per-edit conversion and an external budget bound. Dropping positivity admits a zero-floor countermodel. Dropping the external budget-bound premise blocks infeasibility conclusions because a feasible budget witness always exists.
-\end{corollary}
-\leanmeta{\LHrng{L}{7}{8}}
-
-\subsection{Metaprogramming Dominance}
-
-\begin{theorem}[Metaprogramming Dominance]\label{thm:metaprog}
-For any $N \in \mathbb{N}$, there exists a metaprogramming architecture $M$ with $\text{DOF}(M) = 1$ and $L(M) \geq N$.
-\end{theorem}
-\leanmeta{\LHrng{L}{35}{36}}
-
-\begin{proof}
-Let $M$ be a metaprogramming architecture with a single source definition ($\text{DOF}(M) = 1$) and at least $N$ derived capabilities. Then $L(M) = |\text{Cap}(M)|/1 \geq N$.
-
-\textbf{Modeling note.} In any fixed finite model, $L(M)$ is a positive rational. The colloquial claim ``leverage $= \infty$'' means: for any bound $N$, the architecture can be extended to achieve $L \geq N$ while keeping $\text{DOF} = 1$. The Lean formalization proves the for-all-$N$ version (\LH{L36}).
-\end{proof}
-
-\subsection{Architectural Decision Criterion}
-
-\begin{theorem}[Optimal Architecture]\label{thm:optimal}
-Given requirements $R$, architecture $A^*$ is optimal in its capability class if and only if:
-\begin{enumerate}
-\item $\text{Cap}(A^*) \supseteq R$ (feasibility)
-\item $\forall A'$ with $\text{Cap}(A') = \text{Cap}(A^*)$ and $\text{Cap}(A') \supseteq R$: $L(A^*) \geq L(A')$ (maximality in fixed capability class)
-\end{enumerate}
-\end{theorem}
-\leanmeta{\LH{L34}, \LH{L38}}
-
-\begin{proof}
-($\Leftarrow$) Suppose $A^*$ satisfies (1) and (2). Then $A^*$ is feasible and has maximum leverage among feasible architectures in the same capability class. By Theorem \ref{thm:leverage-error}, this minimizes error probability in that class.
-
-($\Rightarrow$) If (1) fails, $A^*$ is infeasible. If (2) fails, there exists $A'$ in the same capability class with $L(A') > L(A^*)$, so $P_{\text{error}}(A') < P_{\text{error}}(A^*)$ by Theorem \ref{thm:leverage-error}, contradicting optimality.
-\end{proof}
-
-\textbf{Decision Procedure:}
-\begin{enumerate}
-\item Enumerate candidate architectures $\{A_1, \ldots, A_n\}$
-\item Filter: Keep only $A_i$ with $\text{Cap}(A_i) \supseteq R$
-\item Optimize: Choose $A^* = \arg\max_i L(A_i)$
-\end{enumerate}
-
-\subsection{Leverage Composition}
-
-\begin{theorem}[Leverage Composition]\label{thm:composition}
-For modular architecture $A = A_1 \oplus A_2$ with disjoint components:
-\begin{enumerate}
-\item $\text{DOF}(A) = \text{DOF}(A_1) + \text{DOF}(A_2)$
-\item if $L(A_1)\ge 1$ and $L(A_2)\ge 1$, then $L(A)\ge 1$
-\end{enumerate}
-\end{theorem}
-\leanmeta{\LHrng{L}{18}{19}}
-
-\begin{proof}
-(1) By Proposition \ref{prop:dof-additive}.
-
-(2) If $L(A_i)\ge 1$, then $|\text{Cap}(A_i)|\ge \text{DOF}(A_i)$ for $i=1,2$. Summing both inequalities gives
+\paragraph{Two independent coordinates.}
+Take states $\{00,01,10,11\}$ and actions $\{a_{00},a_{01},a_{10},a_{11}\}$, with each state having its matching optimal action. Then $\mathrm{DOF}(A)=2$, the decision quotient has four classes, $H_{\mathrm{nats}}(D)=\ln 4 = 2\ln 2$, and Theorem~\ref{thm:energy-entropy} gives
 \[
-|\text{Cap}(A_1)|+|\text{Cap}(A_2)|\ge \text{DOF}(A_1)+\text{DOF}(A_2),
+E \ge 2 k_B T \ln 2.
 \]
-which is exactly $L(A)\ge 1$ under additive composition.
-\end{proof}
+Relative to the one-coordinate case, the minimum exact-resolution cost doubles.
 
-\textbf{Interpretation:} Composition preserves a baseline leverage floor under the stated assumptions.
+\subsection{Optimal-Transport Witness}
 
-\begin{remark}[Composition Breaks SSOT]\label{rem:composition-breaks-ssot}
-Theorem~\ref{thm:composition} preserves leverage \emph{floors}, but composing two SSOT architectures breaks SSOT: if $\mathrm{DOF}(A_1) = \mathrm{DOF}(A_2) = 1$, then $\mathrm{DOF}(A_1 \oplus A_2) = 2$. This is formalized as \texttt{compose\_breaks\_ssot} in \texttt{Leverage/BridgeToDQ.lean}. The composition tax is unavoidable: distributed systems consisting of $k$ independent SSOT components have $\mathrm{DOF} = k$, placing them in the coNP-hard regime (srank $= k > 1$) with mandatory thermodynamic cost per decision cycle.
+The Landauer route lower-bounds exact resolution through irreversible bit acquisition. A complementary witness measures separation between future distributions on the integrity space $\{\mathrm{intact},\mathrm{compromised}\}$. It does not replace the main proof chain, but it supplies an independent transport-theoretic signal that multiple distinguishable futures have nonzero cost.
+
+\begin{remark}[Optimal-Transport Bridge]\label{rem:wasserstein-bridge}
+The same separation admits an independent transport-cost witness on the two-state integrity space $\{\mathrm{intact},\mathrm{compromised}\}$. The diagonal coupling has zero transport cost in the single-future regime (\LH{W1}). Any coupling with off-diagonal mass has positive transport cost (\LH{W2}). If the intact future mass dominates the compromised future mass, the intact state minimizes total transport to the future distribution (\LH{W3}). If both future states carry positive mass, then transport from either pure state is strictly positive (\LH{W4}). Multiple distinguishable futures therefore force positive transport cost independently of the Landauer route.
 \end{remark}
+\leanmeta{\LHrng{W}{1}{4}}
+
+A transport witness and the Landauer witness emphasize different structures: one counts irreducible coordinate reads, while the other measures geometric separation of future mass. In the two-state integrity model they point in the same direction, since a single future has zero transport cost whereas genuinely split futures force strictly positive transport cost.
+
+\subsection{Interpretation}
+
+If degree of freedom is read as the number of independent physical coordinates that can vary separately, then lower DOF means lower exact-resolution cost because fewer independent coordinates must be resolved.
 
 \subsection{Formalization}
 
-Main optimization theorems are formalized in \texttt{Leverage/Theorems.lean}; physical edit-energy theorems are formalized in \texttt{Leverage/Physical.lean}:
-\begin{itemize}
-\item \LH{L29}: Theorem \ref{thm:leverage-error}
-\item \LH{L1} and \LH{L5}: Theorem \ref{thm:physical-energy-floor}
-\item \LH{L3} and \LH{L6}: Corollary \ref{cor:leverage-energy}
-\item \LH{L2} and \LH{L4}: Theorem \ref{thm:physical-budget-boundary}
-\item \LH{L7} and \LH{L8}: Corollary \ref{cor:physical-assumption-necessity}
-\item \LH{L35} and \LH{L36}: Theorem \ref{thm:metaprog}
-\item \LH{L34} and \LH{L38}: Theorem \ref{thm:optimal}
-\item \LH{L18} and \LH{L19}: Theorem \ref{thm:composition}
-\item \texttt{Leverage/Physical.lean}: physical edit-energy floor theorems
-\end{itemize}
-
-\subsection{Integration with Dependencies}
-
-The leverage framework provides the unifying theory for results proved in \texttt{AbstractClassSystem} and \texttt{Ssot}:
-
-\begin{theorem}[\texttt{AbstractClassSystem} as Leverage Instance]\label{thm:paper1-integration}
-Nominal typing dominance from \texttt{AbstractClassSystem}~\cite{paper1_typing_discipline} is an instance of leverage maximization:
-\begin{itemize}
-\item Nominal typing adds 4 B-dependent capabilities over duck typing
-\item DOF remains fixed in the mechanized typing instance
-\item Therefore nominal typing has strictly higher leverage
-\end{itemize}
-\end{theorem}
-\leanmeta{\LHrng{L}{13}{14}}
-
-\begin{theorem}[\texttt{Ssot} as Leverage Instance]\label{thm:paper2-integration}
-SSOT dominance from \texttt{Ssot}~\cite{paper2_ssot} is an instance of leverage maximization:
-\begin{itemize}
-\item SSOT fixes DOF at 1 for a structural fact
-\item Non-SSOT replication yields DOF $= n$ for the same fact
-\item Therefore leverage improves by factor $n$
-\end{itemize}
-\end{theorem}
-\leanmeta{\LHrng{L}{10}{11}}
-
-These integration theorems are formalized in:
-\begin{itemize}
-\item \nolinkurl{Leverage/Typing.lean}
-\item \nolinkurl{Leverage/SSOT.lean}
-\end{itemize}
+The local bridge from degree of freedom to structural rank is formalized in \texttt{Leverage/BridgeToDQ.lean}. The physical acquisition and Landauer theorems are imported from the decision-quotient physics stack, in particular \texttt{Physics/BoundedAcquisition.lean} and \texttt{ThermodynamicLift.lean}. The role of the local \texttt{Architecture} object in this section is to provide the coordinate count transported into those theorems.

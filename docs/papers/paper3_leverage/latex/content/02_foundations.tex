@@ -1,169 +1,137 @@
 \section{Foundations}\label{foundations}
 
-We formalize the core concepts: architecture state spaces, degrees of freedom, capabilities, and leverage.
+The formal objects that carry the mathematical-physics content are a positive degree-of-freedom count, a canonical binary decision encoding, structural rank, and decision entropy.
 
-\subsection{Architecture State Space}
+\subsection{Formal Object}
 
-\begin{definition}[Architecture]\label{def:architecture}
-An \emph{architecture} is a tuple $A = (C, S, T, R)$ where:
-\begin{itemize}
-\item $C$ is a finite set of \emph{components} (modules, services, endpoints, etc.)
-\item $S = \prod_{c \in C} S_c$ is the \emph{state space} (product of component state spaces)
-\item $T : S \to \mathcal{P}(S)$ defines valid \emph{transitions} (state changes)
-\item $R$ is a set of \emph{requirements} the architecture must satisfy
-\end{itemize}
+\begin{definition}[Bounded Decision System]\label{def:architecture}
+A \emph{bounded decision system} is a finite bounded physical system equipped with a positive integer $\mathrm{DOF}(A)$. In the mechanized artifact the corresponding Lean object is named \texttt{Architecture}, but the results used below depend only on the degree-of-freedom count and on the canonical decision encoding.
 \end{definition}
 
-\textbf{Intuition:} An architecture consists of components, each with a state space. The total state space is the product of component spaces. Transitions define how the system can evolve.
-
-\begin{example}[Microservices Architecture]
-\begin{itemize}
-\item $C = \{U, O, P\}$ where
-  $U=\text{UserService}$,
-  $O=\text{OrderService}$,
-  $P=\text{PaymentService}$
-\item $S_{\text{UserService}} = \text{UserDB} \times \text{Endpoints} \times \text{Config}$
-\item Similar for other services
-\item $S = S_{\text{UserService}} \times S_{\text{OrderService}} \times S_{\text{PaymentService}}$
-\end{itemize}
-\end{example}
+\textbf{Interpretation.} $\mathrm{DOF}(A)$ counts independent coordinates that can vary separately. The rest of the paper studies what that count forces once one asks for exact resolution.
 
 \subsection{Degrees of Freedom}
 
 \begin{definition}[Degrees of Freedom]\label{def:dof}
-The \emph{degrees of freedom} of architecture $A = (C, S, T, R)$ is a natural number $\text{DOF}(A) \in \mathbb{N}$ counting the independent axes of variation in the state space. Formally, it is the cardinality of a minimal complete orthogonal axis set for $S$ (as established in \texttt{AbstractClassSystem}). In the Lean formalization, \texttt{Architecture.dof} is a field of type $\mathbb{N}$.
+The quantity $\mathrm{DOF}(A) \in \mathbb{N}$ counts independent coordinates of variation in a bounded decision system $A$. In the mechanized development it is the local structural parameter attached to \texttt{Architecture}; later sections identify it exactly with the structural rank of a canonical decision problem.
 \end{definition}
 
-\textbf{Operational meaning:} DOF counts independent modification points. If $\text{DOF}(A) = n$, then $n$ independent changes can be made to the architecture.
+\textbf{Operational meaning.} If $\mathrm{DOF}(A)=n$, the system has $n$ independent coordinates that must be resolved in the worst case by any exact resolver.
 
 \begin{proposition}[DOF Additivity]\label{prop:dof-additive}
-For disjoint architectures
-$A_1 = (C_1, S_1, T_1, R_1)$ and
-$A_2 = (C_2, S_2, T_2, R_2)$
-with $C_1 \cap C_2 = \emptyset$:
+For disjoint bounded decision systems $A_1$ and $A_2$:
 \[
-\text{DOF}(A_1 \oplus A_2) = \text{DOF}(A_1) + \text{DOF}(A_2)
+\mathrm{DOF}(A_1 \oplus A_2) = \mathrm{DOF}(A_1) + \mathrm{DOF}(A_2)
 \]
-where $A_1 \oplus A_2 = (C_1 \cup C_2, S_1 \times S_2, T_1 \times T_2, R_1 \cup R_2)$.
 \end{proposition}
 \leanmeta{\LH{L17}, \LH{L19}}
 
 \begin{proof}
-Components are disjoint ($C_1 \cap C_2 = \emptyset$), so the axis sets of $A_1$ and $A_2$ are disjoint. The axis set of $A_1 \oplus A_2$ is their disjoint union, giving $\text{DOF}(A_1 \oplus A_2) = |\text{axes}(A_1)| + |\text{axes}(A_2)| = \text{DOF}(A_1) + \text{DOF}(A_2)$.
+Independent coordinate sets combine by disjoint union, so the coordinate count is additive under composition.
 \end{proof}
 
-\begin{example}[DOF Calculations]
-\begin{enumerate}
-\item \textbf{Monolith:} Single deployment unit $\to$ DOF $= 1$
-\item \textbf{$n$ Microservices:} $n$ independent services $\to$ DOF $= n$
-\item \textbf{Copied Code:} Code duplicated to $n$ locations $\to$ DOF $= n$ (each copy independent)
-\item \textbf{SSOT:} Single source, $n$ derived uses $\to$ DOF $= 1$ (only source is independent)
-\item \textbf{$k$ API Endpoints:} $k$ independent definitions $\to$ DOF $= k$
-\item \textbf{$m$ Config Parameters:} $m$ independent settings $\to$ DOF $= m$
-\end{enumerate}
-\end{example}
+\subsection{Finite Physical Acquisition}
 
-\subsection{Capabilities}
-
-\begin{definition}[Capability Set]\label{def:capabilities}
-The \emph{capability set} of architecture $A$ is:
+\begin{theorem}[Counting Gap]\label{thm:counting-gap}
+Let $\varepsilon, C \in \mathbb{N}$ with $\varepsilon>0$ and $C>0$. If each information-acquisition event consumes $\varepsilon$ discrete cost units, then
 \[
-\text{Cap}(A) = \{r \in R \mid A \text{ satisfies } r\}
+\varepsilon \cdot N \le C \implies N \le C.
 \]
-\end{definition}
-
-\textbf{Examples of capabilities:}
-\begin{itemize}
-\item ``Support horizontal scaling''
-\item ``Provide type provenance''
-\item ``Enable independent deployment''
-\item ``Satisfy single source of truth for class definitions''
-\item ``Allow polyglot persistence''
-\end{itemize}
-
-\begin{definition}[Capability Satisfaction]\label{def:satisfies}
-Architecture $A$ \emph{satisfies} requirement $r$ (written $A \vDash r$) if there exists an execution trace in $(S, T)$ that meets $r$'s specification.
-\end{definition}
-
-\subsection{Leverage}
-
-\begin{definition}[Leverage]\label{def:leverage}
-The \emph{leverage} of architecture $A$ is:
-\[
-L(A) = \frac{|\text{Cap}(A)|}{\text{DOF}(A)}
-\]
-\end{definition}
-
-\textbf{Special cases:}
-\begin{enumerate}
-\item \textbf{Unbounded Leverage:} As $|\text{Cap}(A)|$ grows for fixed $\text{DOF}(A) = 1$, leverage grows without bound. This is the metaprogramming regime: a single source with an unbounded number of derived capabilities. In any fixed finite model, $L$ is a positive rational; ``$L = \infty$'' is a shorthand for this limit.
-\item \textbf{Unit Leverage ($L = 1$):} Linear relationship (n capabilities from n DOF)
-\item \textbf{Sublinear Leverage ($L < 1$):} Antipattern (more DOF than capabilities)
-\end{enumerate}
-
-\begin{example}[Leverage Calculations]
-\begin{itemize}
-\item \textbf{SSOT:} DOF $= 1$, Cap $= \{F, \text{uses of } F\}$ where each new use adds a capability \\
-  $\Rightarrow L$ grows without bound as derivations accumulate
-
-\item \textbf{Scattered Code (n copies):} DOF $= n$, Cap $= \{F\}$ \\
-  $\Rightarrow L = 1/n$ (antipattern!)
-
-\item \textbf{Generic REST Endpoint:} DOF $= 1$, Cap $= \{\text{serve } n \text{ use cases}\}$ \\
-  $\Rightarrow L = n$
-
-\item \textbf{Specific Endpoints:} DOF $= n$, Cap $= \{\text{serve } n \text{ use cases}\}$ \\
-  $\Rightarrow L = 1$
-\end{itemize}
-\end{example}
-
-\begin{definition}[Architectural Dominance]\label{def:dominance}
-Architecture $A_1$ \emph{dominates} $A_2$ (written $A_1 \succeq A_2$) if:
-\begin{enumerate}
-\item $\text{Cap}(A_1) \supseteq \text{Cap}(A_2)$ (at least same capabilities)
-\item $L(A_1) \geq L(A_2)$ (at least same leverage)
-\end{enumerate}
-
-$A_1$ \emph{strictly dominates} $A_2$ (written $A_1 \succ A_2$) if $A_1 \succeq A_2$ with at least one inequality strict.
-\end{definition}
-
-\subsection{Modification Complexity}
-
-\begin{definition}[Modification Complexity]\label{def:mod-complexity}
-For requirement change $\delta R$, the \emph{modification complexity} is:
-\[
-M(A, \delta R) = \text{expected number of independent changes to implement } \delta R
-\]
-\end{definition}
-
-\begin{theorem}[Modification Bounded by DOF]\label{thm:mod-bound}
-For all architectures $A$ and requirement changes $\delta R$:
-\[
-M(A, \delta R) \leq \text{DOF}(A)
-\]
-with equality when $\delta R$ affects all components.
+Equivalently, any bounded system with positive per-event cost admits only finitely many acquisition events.
 \end{theorem}
-\leanmeta{\LH{L37}}
+\leanmeta{\LH{BA10}}
 
 \begin{proof}
-By Definition~\ref{def:dof}, DOF counts independent axes. A requirement change $\delta R$ decomposes into sub-changes along individual axes; sub-changes along distinct axes are independent. Therefore the number of independent changes is at most the number of axes, which is $\text{DOF}(A)$. Equality holds when $\delta R$ has a non-trivial projection onto every axis.
+In $\mathbb{N}$ every positive integer is at least one, so $N = 1\cdot N \le \varepsilon N \le C$.
 \end{proof}
 
-\begin{example}[SSOT vs Scattered]
-Consider changing a structural fact $F$ with $n$ use sites:
-\begin{itemize}
-\item \textbf{SSOT:} $M = 1$ (change at source, derivations update automatically)
-\item \textbf{Scattered:} $M = n$ (must change each copy independently)
-\end{itemize}
-\end{example}
+Bounded capacity plus positive per-event cost already forbids infinite checking. Physics enters when the abstract cost unit is calibrated. Under Landauer-type calibration, exact irreversible acquisition carries positive cost, so bounded material systems inherit the counting gap directly.
+
+\begin{proposition}[Bounded Region]\label{prop:bounded-region}
+A bounded physical region is characterized by diameter $d>0$ and signal speed $c>0$. Its maximum information-acquisition rate is $c/d$ events per unit time.
+\end{proposition}
+\leanmeta{\LH{BA1}}
+
+\begin{theorem}[Bounded Acquisition Rate]\label{thm:bounded-acquisition}
+For a bounded region with diameter $d$, signal speed $c$, and operating time $T$,
+\[
+\mathrm{acquisitions}(T) \le \frac{cT}{d}.
+\]
+In particular, acquisition count is finite on finite horizons.
+\end{theorem}
+\leanmeta{\LH{BA2}}
+
+\begin{proof}
+Signals require at least $d/c$ time to traverse the region, so no more than $c/d$ acquisition events can occur per unit time.
+\end{proof}
+
+\begin{theorem}[Discrete Acquisition]\label{thm:discrete-acquisition}
+Information acquisition is realized by discrete state transitions. A bounded physical decision process is therefore a finite transition system whose acquisition events are countable transition points.
+\end{theorem}
+\leanmeta{\LH{BA3}}
+
+\begin{theorem}[One Transition, One Bit]\label{thm:one-transition-one-bit}
+Each elementary acquisition transition carries one boolean bit. Boolean coordinates are therefore the primitive units of exact physical information exchange in the canonical model.
+\end{theorem}
+\leanmeta{\LH{BA4}}
+
+Together, Theorems~\ref{thm:bounded-acquisition}, \ref{thm:discrete-acquisition}, and \ref{thm:one-transition-one-bit} identify the later binary decision encoding as the natural finite acquisition model. A bounded resolver acquires information through finitely many discrete events, and each such event contributes one elementary boolean distinction.
+
+\begin{theorem}[Resolution Requires a Sufficient Coordinate Set]\label{thm:resolution-sufficient}
+Any exact physical resolver for a decision problem must read a sufficient coordinate set. If fewer coordinates are read, there exist states indistinguishable to the resolver but requiring different optimal actions.
+\end{theorem}
+\leanmeta{\LH{BA5}}
+
+\begin{proof}
+If the accessed coordinates are not sufficient, two states agree on every read coordinate while disagreeing on the optimal action. Any resolver limited to those coordinates must therefore err on at least one of the two states.
+\end{proof}
+
+\subsection{Canonical Decision Encoding}
+
+\begin{definition}[Canonical Decision Problem]\label{def:canonical-dp}
+For a bounded decision system $A$ with $\mathrm{DOF}(A)=n$, the canonical decision problem
+\[
+\mathrm{canonicalDP}(A)
+\]
+has state space $\mathrm{Fin}\;n \to \mathrm{Bool}$ and action space $\mathrm{Fin}\;n \oplus \mathrm{Unit}$. Action $\mathrm{inl}(i)$ queries coordinate $i$; the fallback action $\mathrm{inr}(\star)$ receives constant utility $1$. Query action $i$ receives utility $2$ exactly when coordinate $i$ is true and $0$ otherwise.
+\end{definition}
+
+The encoding is the exact Lean object \texttt{canonicalDP} in \texttt{Leverage/BridgeToDQ.lean}. Every coordinate is relevant by construction, so the encoding exposes the full interaction dimension of the source system.
+
+The encoding records, in the smallest exact-resolution object, the coordinate structure that any bounded physical resolver must already confront. The Boolean coordinates represent primitive acquisition events.
+
+\subsection{Structural Rank}
+
+\begin{definition}[Structural Rank]\label{def:srank}
+The \emph{structural rank} of a finite decision problem is the cardinality of its relevant coordinate set, equivalently the size of any minimal sufficient set. It is the minimum interaction dimension that must be read to determine the optimal action exactly.
+\end{definition}
+
+For the canonical decision problem attached to $A$, the relevant coordinate set is all of $\mathrm{Fin}\;\mathrm{DOF}(A)$, so the structural-rank problem is exactly matched to the local degree-of-freedom count.
+
+\subsection{Decision Quotient and Entropy}
+
+\begin{definition}[Decision Quotient]\label{def:decision-quotient}
+For a decision problem $D$, states are identified when they induce the same optimal-action set. The quotient space of these equivalence classes is the \emph{decision quotient} of $D$.
+\end{definition}
+
+\begin{proposition}[Optimizer Quotient as Canonical Exact Abstraction]\label{prop:optimizer-quotient}
+Let $\Opt : S \to \mathcal P(A)$ be the optimizer map of a finite decision problem. In \textbf{Set}, the decision quotient is the coimage of $\Opt$, canonically equivalent to $\operatorname{im}(\Opt)$ \cite{maclane1998categories}. Any surjective decision-preserving summary factors through this quotient.
+\end{proposition}
+\leanmeta{\LHrng{QT}{1}{3}, \LH{QT5}, \LH{QT7}}
+
+The quotient is the coarsest exact abstraction of the decision problem: it forgets only decision-irrelevant distinctions and preserves every distinction needed for exact action selection. The entropy and thermodynamic bounds below are stated for this canonical exact abstraction.
+
+\begin{definition}[Decision Entropy]\label{def:decision-entropy}
+Let $\mathrm{numOptClasses}(D)$ be the number of equivalence classes in the decision quotient. Two entropy normalizations are used:
+\[
+H_{\mathrm{bits}}(D) = \log_2 \mathrm{numOptClasses}(D),
+\qquad
+H_{\mathrm{nats}}(D) = \log \mathrm{numOptClasses}(D).
+\]
+\end{definition}
+
+The physics results are naturally stated in nats because Landauer calibration contributes the factor $k_B T$ per nat of resolved decision information \cite{landauer1961irreversibility,bennett1982thermodynamics}.
 
 \subsection{Formalization in Lean}
 
-All definitions in this section are formalized in \texttt{Leverage/Foundations.lean}:
-\begin{itemize}
-\item \texttt{Architecture}: Structure with components, state, transitions, requirements
-\item \texttt{Architecture.leverage}: Leverage metric
-\item \texttt{Architecture.dominates}: Dominance relation
-\item \texttt{compose\_dof}: Proposition \ref{prop:dof-additive}
-\item \texttt{modification\_eq\_dof}: Theorem \ref{thm:mod-bound}
-\end{itemize}
+The local degree-of-freedom object lives in \texttt{Leverage/Foundations.lean}, while the canonical decision encoding and its rank-identification theorems live in \texttt{Leverage/BridgeToDQ.lean}. Structural rank and decision entropy are formalized in the decision-quotient development.

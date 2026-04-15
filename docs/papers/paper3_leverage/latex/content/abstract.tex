@@ -1,23 +1,25 @@
-We study leverage as a structural invariant of finite information-processing systems. For any system $A$ with capabilities $\mathrm{Cap}(A) > 0$, we prove a Five-Way Equivalence:
+Exact resolution in finite bounded physical systems carries irreducible thermodynamic cost. Under Landauer calibration, any exact-resolution cycle satisfies
 \[
-\begin{aligned}
-\mathrm{DOF}(A) = 1
-&\;\iff\; \text{max leverage } L = |\mathrm{Cap}|/\mathrm{DOF}
-\;\iff\; \text{single source of truth} \\
-&\;\iff\; \mathrm{srank} = 1
-\;\iff\; \text{tractable sufficiency} \\
-&\;\iff\; \text{minimum thermodynamic cost}.
-\end{aligned}
+E \geq k_B T\, H_{\mathrm{nats}}(D),
 \]
+where $H_{\mathrm{nats}}(D)$ is the natural-log entropy of the decision quotient. In the canonical binary encoding studied here, this bound sharpens to
+\[
+E \geq \mathrm{DOF}(A)\, k_B T \ln 2,
+\]
+and the rank-$1$ regime is the unique thermodynamic ground state: every system with more than one degree of freedom lies strictly above the minimum per-cycle resolution cost.
 
-We also prove that the England replication inequality,
+The England replication inequality,
 \[
 \Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k,
 \]
-reduces to counting: a $k$-variable system has $2^k$ states, and the finite inequality $k \leq 2^{k-1}$ yields the entropy gap under Landauer calibration. The thermodynamic bound $E_{\mathrm{decision}} \geq \mathrm{srank} \cdot k_B T \ln 2$ then follows from the same calibration (\LH{BA7}).
+is also obtained in the same framework. The proof reduces the entropy premium of replication to finite counting: a $k$-coordinate system has $2^k$ states, and the elementary inequality $k \leq 2^{k-1}$ yields the gap.
 
-Within the explicit thermodynamic model used in the paper (Landauer calibration, finite energy, finite signal speed, and nontrivial state space), we derive a physical no-go theorem for polynomial collapse (\LH{LP38}). The same framework yields unconditional Landauer-linear lower bounds for decision cost and identifies the single-source regime as the unique minimum-cost point. Reliability-style and edit-complexity corollaries are retained only as structural consequences of the same rank parameter.
+These thermodynamic statements are derived from a finite structural theorem. Exact resolution in a bounded system occurs through finitely many discrete acquisition events. The associated canonical decision problem records those events as Boolean coordinate reads, and the number of independent coordinates is identified exactly with the structural rank of the encoded decision problem:
+\[
+\mathrm{DOF}(A) = \mathrm{srank}(\mathrm{canonicalDP}(A)).
+\]
+The decision quotient therefore has at most $2^{\mathrm{DOF}(A)}$ optimal-action classes, so its entropy is controlled by the same coordinate count that governs exact physical resolution.
 
-All theorems are machine-checked in Lean~4 with no \texttt{sorry} placeholders. The only explicit physics premises are Landauer calibration, the Second Law (non-negative entropy production), and the Thermodynamic Uncertainty Relation (Barato-Seifert 2015). An assumption ledger records the dependency structure of each physically grounded result.
+All theorems are machine-checked in Lean~4 with no \texttt{sorry} placeholders. The mechanized artifact records the proof provenance in full.
 
-Keywords: thermodynamics, Landauer principle, entropy production, information theory, structural rank, formal verification, degrees of freedom
+Keywords: thermodynamics, Landauer principle, decision entropy, structural rank, bounded physical systems, formal verification
