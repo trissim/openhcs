@@ -196,7 +196,7 @@ The canonical decision encoding has two immediate consequences. The degree-of-fr
 :::
 
 ::: proof
-*Proof.* In the canonical decision problem on $n$ coordinates, every coordinate is relevant by construction. The structural rank is therefore exactly $n$. Substituting $n = \mathrm{DOF}(A)$ gives the claim. ◻
+*Proof.* Write $n = \mathrm{DOF}(A)$. By Definition [\[def:canonical-dp\]](#def:canonical-dp){reference-type="ref" reference="def:canonical-dp"}, the state space is $\mathrm{Fin}\;n \to \mathrm{Bool}$, query action $\mathrm{inl}(i)$ has utility $2$ exactly when coordinate $i$ is true and utility $0$ otherwise, and the fallback action has utility $1$. Fix any coordinate $i$ and choose two states that agree everywhere except at $i$, with one state setting $i$ to true and the other setting $i$ to false; then $\mathrm{inl}(i)$ is optimal in the first state and not optimal in the second, so erasing coordinate $i$ changes the optimizer. Thus every coordinate in $\mathrm{Fin}\;n$ is relevant, the relevant-coordinate set has cardinality $n$, and the structural rank is $n$. Substituting $n = \mathrm{DOF}(A)$ gives the claim. ◻
 :::
 
 ::: corollary
