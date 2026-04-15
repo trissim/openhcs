@@ -1,6 +1,6 @@
 \section{Necessary Conditions on Any Frontier Statement}\label{sec:natural-families}
 
-The realizability barrier leaves a more precise frontier question. If quotient shape alone is too expressive, what should replace it as the organizing unit of the metatheorem?
+Realizability of arbitrary quotients leaves a more precise frontier question. If quotient shape alone is too expressive, what should replace it as the organizing unit of the metatheorem?
 
 At minimum, the tractability frontier should not classify arbitrary sets of decision problems. It should range over representation-level structural classes and it should ignore benign changes of presentation.
 
@@ -141,7 +141,7 @@ The third clause is exactly Proposition~\ref{prop:zero-distortion-refines-quotie
 
 Proposition~\ref{prop:structural-convergence} does not identify entropy, support counting, and lossless summaries as identical notions. It shows that they already converge on the same structural content before any admissibility axiom is imposed. Closure-law invariance follows from this convergence: once several independent frameworks ignore surface presentation in favor of the support/quotient core, a structural tractability classifier should do the same. The remaining admissibility clauses serve as algorithmic and semantic guardrails.
 
-\subsection*{From Necessary Conditions to an Admissibility Class}
+\subsection*{From Necessary Conditions to a Finite Structural Class}
 
 The closure properties above are theorem-forced by exact-certification semantics, but they are not enough on their own to support a meaningful impossibility theorem. If one allows unrestricted predicates, a semantic predicate can simply encode the target complexity class and trivialize the statement.
 
@@ -150,7 +150,7 @@ The closure properties above are theorem-forced by exact-certification semantics
 Without admissibility restrictions, there exist normalization predicates whose membership condition directly encodes the intended polynomial-time side of the landscape, so unrestricted collapse-impossibility claims fail.
 \end{proposition}
 
-Proposition~\ref{prop:oracle-loophole} is not a by-product of the proof method. It is the expected behavior of unrestricted semantic predicates. Therefore any meaningful frontier theorem must be parameterized by an admissibility class that simultaneously (i) respects theorem-forced invariances and (ii) blocks direct semantic encoding.
+Proposition~\ref{prop:oracle-loophole} is not a by-product of the proof method. It is the expected behavior of unrestricted semantic predicates. Any meaningful frontier theorem must therefore be parameterized by a structural class that simultaneously (i) respects theorem-forced invariances and (ii) blocks direct semantic encoding.
 
 \leanmetapending{\LHrng{FR}{15}{20}, \LHrng{FR}{55}{60}, \LHrng{FR}{83}{85}}
 \begin{proposition}[Closure Operations Preserve Exact Certification]\label{prop:closure-operations-preserve-certification}
@@ -164,7 +164,7 @@ In particular, each closure step induces the same exact-certification decision p
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-Each clause is verified directly in the artifact at the level of exact-certification semantics. The relabeling and positive-affine cases preserve the decision-equivalence relation, hence preserve sufficiency and relevance. The duplication cases preserve decision-equivalence through the explicit quotient projections back to the original problem. The irrelevant-coordinate case is formalized as binary noise extension: $I \subseteq [d]$ is sufficient for the base slice if and only if its lift is sufficient after extension, the original coordinates remain exactly the relevant ones, and the new coordinate is irrelevant. Table~\ref{tab:closure-operation-transport} summarizes the theorem-backed transport statement. The encoding remarks in the right-hand column are direct from the concrete binary-pairwise representation and are not separate Lean claims.
+Each clause is verified directly at the level of exact-certification semantics. The relabeling and positive-affine cases preserve the decision-equivalence relation, hence preserve sufficiency and relevance. The duplication cases preserve decision-equivalence through the explicit quotient projections back to the original problem. The irrelevant-coordinate case is binary noise extension: $I \subseteq [d]$ is sufficient for the base slice if and only if its lift is sufficient after extension, the original coordinates remain exactly the relevant ones, and the new coordinate is irrelevant. Table~\ref{tab:closure-operation-transport} summarizes the theorem-backed transport statement. The encoding remarks in the right-hand column are direct from the concrete binary-pairwise representation and are not separate theorem claims.
 \end{proof}
 
 \begin{table}[h]
@@ -190,8 +190,8 @@ Binary irrelevant-coordinate extension & $I \leftrightarrow \mathrm{lift}(I)$, o
 \label{tab:closure-operation-transport}
 \end{table}
 
-\begin{definition}[Admissible Normalization Predicate]\label{def:admissible-normalization}
-A normalization predicate is \emph{admissible} when it satisfies all of the following:
+\begin{definition}[Finite Structural Predicate]\label{def:admissible-normalization}
+A normalization predicate belongs to the finite structural class when it satisfies all of the following:
 \begin{enumerate}
 \item polynomial-time checkability at the slice level;
 \item invariance under the closure laws forced by exact certification (relabelings, positive affine reparameterizations, duplication operations, and binary irrelevant-coordinate extension);
@@ -212,38 +212,48 @@ E : X \mapsto G_E(X)
 \]
 on finite pairwise syntactic presentations such that the graph attached to $U$ is exactly $G_E(X(U))$.
 
-Bounded-pattern definability is likewise finite and explicit. There must exist uniform bounds on radius, neighborhood size, action alphabet size, and coefficient magnitude, together with finite lists of permitted and forbidden rooted local patterns, such that membership in $Q$ is determined by the presence of one witness pattern or the absence of all forbidden patterns in the rooted interaction neighborhoods of $X(U)$. No unbounded global computation is hidden inside the definition.
+Bounded-pattern definability is likewise finite and explicit. Concretely, there must exist integers
+\[
+r_{\max},\; n_{\max},\; a_{\max},\; c_{\max} \in \mathbb{N}
+\]
+and finite sets $\mathcal W,\mathcal F$ of rooted local patterns such that every pattern in $\mathcal W \cup \mathcal F$ has radius at most $r_{\max}$, uses at most $n_{\max}$ vertices, involves at most $a_{\max}$ action labels, and all listed coefficient magnitudes are at most $c_{\max}$. Writing $\mathcal N_r(X(U),v)$ for the rooted radius-$r$ neighborhood of a vertex $v$ in the extracted finite syntax $X(U)$, membership in $Q$ is determined by these finite patterns alone:
+\[
+Q(U) \iff \Bigl(\exists v\ \exists W\in\mathcal W:\; W \text{ occurs in } \mathcal N_{r_{\max}}(X(U),v)\Bigr)
+\ \land\
+\Bigl(\forall v\ \forall F\in\mathcal F:\; F \text{ does not occur in } \mathcal N_{r_{\max}}(X(U),v)\Bigr).
+\]
+Thus the definition ranges over a fixed finite vocabulary of local rooted configurations; it does not call an unbounded global computation under a structural name.
 
-Polynomial-time checkability is the minimal algorithmic requirement. A tractability characterization that cannot itself be recognized efficiently has little explanatory value: it would only relocate the computational difficulty from exact certification to the membership test for the classifier.
+Polynomial-time checkability is the minimal algorithmic requirement. A tractability characterization that cannot itself be recognized efficiently only relocates the computational difficulty from exact certification to the membership test for the classifier.
 
 Closure-law invariance is the semantic requirement used in the orbit-witness arguments of Section~4. It is forced by the Block~6 invariance theorems, because exact certification itself is unchanged by relabelings, positive affine utility reparameterizations, duplication operations, and binary irrelevant-coordinate extensions.
 
 Structural extractability distinguishes structural characterizations from purely semantic ones. Without such a condition, one can define predicates directly on optimizer behavior or on the solved certification instance itself, bypassing the stated aim of classifying tractability by representation-level structure.
 
-Bounded-pattern definability is the locality guardrail. Its role is to exclude predicates whose membership test secretly performs an unbounded global computation under a structural name. In particular, it prevents one from reintroducing oracle power through an arbitrarily large finite schema.
+Bounded-pattern definability is the locality restriction. Its role is to exclude predicates whose membership test is implemented by an arbitrarily large finite schema or other hidden global computation. The contradiction does not use this clause. The clause restricts attention to the direct finite local regime.
 
+\leanmetapending{\LHrng{FR}{197}{199}, \LHrng{FR}{245}{249}}
 \begin{theorem}[Tractability Classifiers Are Forced to Be Closure-Invariant]\label{thm:correct-classifier-forces-invariance}
 Let $C$ be any procedure assigning to each representation in a closure-closed domain $\Gamma$ a verdict in $\{\mathrm{tractable},\mathrm{intractable}\}$, and suppose that $C$ correctly predicts whether exact certification is polynomial-time decidable on the underlying problem. Then $C$ must agree on representations within the same closure orbit. Equivalently, every correct tractability classifier on a closure-closed domain is closure-invariant on that domain, regardless of whether its internal features are themselves invariant.
 \end{theorem}
-\leanmetapending{\LHrng{FR}{197}{199}, \LHrng{FR}{245}{249}}
 
 \begin{proof}[Proof sketch]
-This paper theorem is formalized in \texttt{AdmissibleCharacterization.lean} as the composition of the generic correctness-on-domain orbit-agreement theorem with the closure-invariance inheritance theorem. If $U,V \in \Gamma$ lie in the same closure orbit, Proposition~\ref{prop:closure-operations-preserve-certification} shows that they induce the same exact-certification problem up to the explicit coordinate-set transport attached to the relevant closure step. The theorem uses the semantic notion of correctness stated above: tractability is attached to that underlying exact-certification problem, not to arbitrary relabelings or duplicate-label presentations of the same problem. Correctness of $C$ therefore forces the same verdict on both.
+If $U,V \in \Gamma$ lie in the same closure orbit, Proposition~\ref{prop:closure-operations-preserve-certification} shows that they induce the same exact-certification problem up to the explicit coordinate-set transport attached to the relevant closure step. The theorem uses the semantic notion of correctness stated above: tractability is attached to that underlying exact-certification problem, not to arbitrary relabelings or duplicate-label presentations of the same problem. Correctness of $C$ therefore forces the same verdict on both.
 \end{proof}
 
+\leanmetapending{\LH{FR248}}
 \begin{theorem}[Compute-Cost Version: Optimizer Computation]\label{thm:optimizer-computation-classifier-forces-invariance}
 Let $C$ be any procedure assigning to each representation in a closure-closed domain $\Gamma$ a verdict in $\{\mathrm{tractable},\mathrm{intractable}\}$, and suppose that $C$ correctly predicts whether optimizer computation is polynomial-time solvable on the underlying problem. Then $C$ must agree on representations within the same closure orbit.
 \end{theorem}
-\leanmetapending{\LH{FR248}}
 
 \begin{proof}[Proof sketch]
-This is the optimizer-computation instance of the same correctness-on-domain theorem. The compute-cost transport layer in the artifact shows that each closure step preserves polynomial-time solvability of optimizer computation under its explicit state and output transports. Correctness of $C$ therefore forces the same verdict on closure-equivalent representations.
+The optimizer-computation case is another instance of the same correctness-on-domain theorem. Each closure step preserves polynomial-time solvability of optimizer computation under its explicit state and output transports. Correctness of $C$ therefore forces the same verdict on closure-equivalent representations.
 \end{proof}
 
+\leanmetapending{\LHrng{FR}{259}{262}}
 \begin{corollary}[Compute-Cost Version: Canonical Payload and Search Tasks]\label{cor:payload-search-compute-classifier-forces-invariance}
 The same closure-orbit agreement conclusion holds when $C$ correctly predicts polynomial-time solvability of deterministic optimizer-set payload output. It also holds when $C$ correctly predicts polynomial-time solvability of admissible-output search on optimizer-set semantics.
 \end{corollary}
-\leanmetapending{\LHrng{FR}{259}{262}}
 
 \begin{proof}[Proof sketch]
 Apply the same correctness-on-domain theorem to the two canonical compute-cost families built from optimizer-set payload output and optimizer-set admissible-output search.
@@ -251,34 +261,36 @@ Apply the same correctness-on-domain theorem to the two canonical compute-cost f
 
 Thus the forced-invariance argument applies not only to exact-certification predicates, but also to all three canonical output-production tasks treated in the compute-cost layer.\leanmeta{\LHrng{FR}{245}{249}, \LHrng{FR}{259}{262}}
 
+\leanmetapending{\LHrng{FR}{316}{328}}
 \begin{corollary}[Compute-Cost Version: External Output Objects]\label{cor:external-output-compute-classifier-forces-invariance}
-Let $X$ be an external output class whose admissibility relation is preserved under the closure laws by pullback on states and identity on outputs. Then any correct classifier for polynomial-time search over admissible $X$-outputs on a closure-closed domain must agree on closure orbits, and the same orbit-gap no-go applies.\leanmeta{\LHrng{FR}{316}{328}}
+Let $X$ be an external output class whose admissibility relation is preserved under the closure laws by pullback on states and identity on outputs. Then any correct classifier for polynomial-time search over admissible $X$-outputs on a closure-closed domain must agree on closure orbits, and the same orbit-gap no-go applies.
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-This paper-level corollary aggregates the generic identity-output closure theorem, the bridge to transported outputs, and the named external-output instances formalized in Lean. The generic external-output compute-cost layer transports only the input state; the output object itself is unchanged. Once the admissibility relation respects those state pullbacks, the same correctness-on-domain theorem applies.
+This corollary aggregates the generic identity-output closure theorem, the bridge to transported outputs, and the named external-output instances. The generic external-output compute-cost layer transports only the input state; the output object itself is unchanged. Once the admissibility relation respects those state pullbacks, the same correctness-on-domain theorem applies.
 \end{proof}
 
+\leanmetapending{\LHrng{FR}{326}{336}}
 \begin{corollary}[Compute-Cost Version: Representation-Relative Output Objects]\label{cor:transported-output-compute-classifier-forces-invariance}
-Let $X_U$ be a representation-relative output object whose type and admissibility relation may vary with the representation $U$, and suppose each closure witness carries an explicit output transport preserving admissibility. Then any correct classifier for polynomial-time search over admissible $X_U$-outputs on a closure-closed domain must agree on closure orbits, and the same orbit-gap no-go applies. The artifact includes named instances for representation-relative hypotheses, estimators, policies, and randomized procedures.\leanmeta{\LHrng{FR}{326}{336}}
+Let $X_U$ be a representation-relative output object whose type and admissibility relation may vary with the representation $U$, and suppose each closure witness carries an explicit output transport preserving admissibility. Then any correct classifier for polynomial-time search over admissible $X_U$-outputs on a closure-closed domain must agree on closure orbits, and the same orbit-gap no-go applies. Named instances include representation-relative hypotheses, estimators, policies, and randomized procedures.
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-This paper-level corollary aggregates the generic transported-output closure theorem with the named representation-relative hypothesis, estimator, policy, and randomized-procedure instances. The generic transported-output compute-cost layer packages the witness-by-witness output maps together with the corresponding admissibility preservation laws, and the same correctness-on-domain theorem then applies.
+This corollary aggregates the generic transported-output closure theorem with the named representation-relative hypothesis, estimator, policy, and randomized-procedure instances. The generic transported-output compute-cost layer packages the witness-by-witness output maps together with the corresponding admissibility preservation laws, and the same correctness-on-domain theorem then applies.
 \end{proof}
 
-This answers the natural objection that Section~\ref{sec:frontier-program} excludes only classifiers that advertise closure invariance as an explicit axiom. Correctness already forces the same orbit agreement. The closure laws therefore supply the representation-level congruence needed for the orbit-gap program: once two slices are related by these theorem-forced presentation equivalences, any correct tractability classifier must identify them. Theorem~\ref{thm:closure-sound-package-no-go} therefore applies to any correct classifier on a closure-closed domain once the target notion is tractability itself: if the classifier separates same-orbit witnesses, it is simply wrong on at least one of them.
+Correctness already forces the same orbit agreement. The closure laws therefore supply the representation-level congruence needed for the orbit-gap program: once two slices are related by these theorem-forced presentation equivalences, any correct tractability classifier must identify them. Theorem~\ref{thm:closure-sound-package-no-go} therefore applies to any correct classifier on a closure-closed domain once the target notion is tractability itself.
 
 \leanmetapending{\LH{FR200}}
-\begin{proposition}[The Admissibility Layer Is Nonempty]\label{prop:admissibility-inhabited}
-Definition~\ref{def:admissible-normalization} is not vacuous. There exist admissible normalization predicates; in fact both the constant-true and constant-false slice predicates are admissible.
+\begin{proposition}[The Finite Structural Class Is Nonempty]\label{prop:admissibility-inhabited}
+Definition~\ref{def:admissible-normalization} is nonempty. There exist predicates in the finite structural class; in fact both the constant-true and constant-false slice predicates belong to it.
 \end{proposition}
 
 \begin{proof}[Proof sketch]
 Both predicates are decidable in constant time and are automatically invariant under all closure laws. Their graph extractors are fixed graphs independent of the input slice. For bounded-pattern definability, use a single impossible local pattern: a radius-zero pattern with two distinct vertices cannot occur in any slice. Taking that pattern as forbidden yields the constant-true predicate, and taking it as a required witness yields the constant-false predicate.
 \end{proof}
 
-Thus the impossibility theorem is not an emptiness statement about Definition~\ref{def:admissible-normalization}. The admissibility layer already contains explicit predicates; the point of the no-go theorem is that correctness across the obstruction families forces a contradiction once closure-orbit agreement is respected.
+The finite structural class already contains explicit predicates. The no-go theorem says that exact correctness across the obstruction families is incompatible with closure-orbit agreement inside this class.
 
 \leanmetapending{\LHrng{FR}{205}{209}}
 \begin{proposition}[Bounded Distinct Action Profiles Compress to Bounded Actions]\label{prop:distinct-profile-compression}
@@ -286,10 +298,10 @@ For a binary pairwise slice $U$, let $d(U)$ be the number of distinct action uti
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-Replace each action by its full utility profile over states and quotient the action set by profile equality. Duplicated actions collapse to a single profile action, but exact certification is unchanged because optimizer equality depends only on which profiles are optimal, not on how many labels realize a given profile. The compressed slice has exactly $d(U)$ actions by construction, and the artifact proves equality of the sufficient-coordinate and relevant-coordinate predicates between $U$ and $U^{\mathrm{prof}}$. The existing bounded-actions polynomial-time theorem then applies to the compressed slice.
+Replace each action by its full utility profile over states and quotient the action set by profile equality. Duplicated actions collapse to a single profile action, but exact certification is unchanged because optimizer equality depends only on which profiles are optimal, not on how many labels realize a given profile. The compressed slice has exactly $d(U)$ actions by construction, and the sufficient-coordinate and relevant-coordinate predicates agree between $U$ and $U^{\mathrm{prof}}$. The existing bounded-actions polynomial-time theorem then applies to the compressed slice.
 \end{proof}
 
-Proposition~\ref{prop:distinct-profile-compression} isolates a genuine positive tractable subcase by compression to bounded actions. It is stated as a compression theorem rather than direct admissibility membership because Definition~\ref{def:admissible-normalization} fixes a bounded-pattern action alphabet in advance. The proposition still shows that nontrivial positive classification work is available through closure-law-respecting reduction inside the present framework.
+Proposition~\ref{prop:distinct-profile-compression} isolates a genuine positive tractable subcase by compression to bounded actions. It is stated as a compression theorem rather than direct membership in the finite structural class because Definition~\ref{def:admissible-normalization} fixes a bounded-pattern action alphabet in advance. The proposition shows that nontrivial positive classification work is available through closure-law-respecting reduction inside the framework.
 
 \leanmetapending{\LHrng{FR}{214}{216}}
 \begin{proposition}[Bounded-Pattern Predicates Stabilize Above a Finite Action Bound]\label{prop:bounded-pattern-action-stability}
@@ -300,7 +312,7 @@ For every bounded-pattern definable predicate $Q$, there exists a finite bound $
 In a bounded-pattern scheme every witness and forbidden pattern has action alphabet size at most a fixed bound $B$. If a slice has more than $B$ actions, then no listed local pattern can occur in it, because occurrence requires an action-set equivalence between the pattern and the slice. The witness branch of the scheme is therefore impossible, while the forbidden branch is determined only by whether the forbidden list is empty. Hence the predicate is constant above the fixed action bound.
 \end{proof}
 
-This is why Proposition~\ref{prop:distinct-profile-compression} is stated as a compression theorem rather than as direct admissibility membership for the distinct-profile predicate. Unbounded profile counting does not naturally fit a definition whose bounded-pattern clause fixes a finite action alphabet in advance.
+Proposition~\ref{prop:distinct-profile-compression} is stated as a compression theorem rather than as direct admissibility membership for the distinct-profile predicate. Unbounded profile counting is a global algebraic quantity and does not naturally fit a definition whose bounded-pattern clause fixes a finite action alphabet in advance.
 
 \leanmetapending{\LHrng{FR}{217}{222}}
 \begin{proposition}[Deterministic Payload Transfer]\label{prop:payload-transfer}
@@ -344,7 +356,7 @@ Let $F(s) \subseteq A$ be a nonempty feasible-action set at each state of a coor
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-This is the set-valued analogue of Proposition~\ref{prop:payload-transfer}. The strict utility gap makes the optimizer set coincide with the feasible-action set at every state, so the same coordinate conditions define sufficiency and relevance on both sides.
+This corollary is the set-valued analogue of Proposition~\ref{prop:payload-transfer}. The strict utility gap makes the optimizer set coincide with the feasible-action set at every state, so the same coordinate conditions define sufficiency and relevance on both sides.
 \end{proof}
 
 Corollary~\ref{cor:set-valued-payload-transfer} covers total search semantics stated as nonempty feasible-witness sets. Deterministic payloads are the singleton special case.
@@ -375,12 +387,12 @@ Let $V(s,a)$ be any state-indexed validity relation. Then the exact relevance pr
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-Corollary~\ref{cor:relational-output-transfer} identifies the sufficient-coordinate family and relevant-coordinate set of the validity semantics with those of the induced decision problem. The artifact packages the resulting profile equality directly.
+Corollary~\ref{cor:relational-output-transfer} identifies the sufficient-coordinate family and relevant-coordinate set of the validity semantics with those of the induced decision problem.
 \end{proof}
 
-This is the sense in which approximation, statistical, and randomized semantics remain exact: the specification written into $V$ may be approximate or randomized, but agreement with $V$ is exact.
+Approximation, statistical, and randomized semantics remain exact in the following sense: the specification written into $V$ may be approximate or randomized, but agreement with $V$ is exact.
 
-Rigorous specification, in the exact sense relevant here, is the determination of such a validity relation. If a purported specification does not determine which outputs are valid at each state, objective correctness is not yet fixed, so the exact semantic questions studied here are not well-posed for it. Formal methods do not add this structure from outside; they make explicit the structure that rigor already requires. The accompanying Lean artifact packages this semantic floor directly as an \texttt{ExactCorrectnessSpecification}. Different coordinate presentations may make quotient recovery trivial or rich, but they do not change the canonical quotient carried by the specification.
+Rigorous specification, in the exact sense relevant here, is the determination of such a validity relation. If a purported specification does not determine which outputs are valid at each state, objective correctness is not yet fixed, so the exact semantic questions studied here are not well-posed for it. Formal methods do not add this structure from outside; they make explicit the structure that rigor already requires. Different coordinate presentations may make quotient recovery trivial or rich, but they do not change the canonical quotient carried by the specification.
 
 \leanmetapending{\LH{FR342}}
 \begin{proposition}[Sufficiency Is Relation Refinement]\label{prop:sufficiency-is-relation-refinement}
@@ -392,7 +404,7 @@ Then a coordinate set $I$ is sufficient if and only if agreement on $I$ forces $
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-This is the exact-semantics specialization of sufficiency as relation refinement. The relation being refined is now the admissible-output equivalence relation itself.
+This proposition is the exact-semantics specialization of sufficiency as relation refinement. The relation being refined is now the admissible-output equivalence relation itself.
 \end{proof}
 
 \leanmetapending{\LH{FR343}}
@@ -414,7 +426,16 @@ Then $\sim_R$ is the canonical semantic object of the problem. Exact relevance c
 \end{theorem}
 
 \begin{proof}[Proof sketch]
-The Lean artifact packages this paper theorem as \texttt{exactSemanticsQuotient\_universal\_characterization}, built from the exact-profile realization theorem together with the sufficiency-as-refinement and relevance-as-erased-failure lemmas. Corollary~\ref{cor:relational-output-transfer} reduces the exact semantics to exact relevance certification for the induced decision problem. Proposition~\ref{prop:sufficiency-is-relation-refinement} identifies sufficiency with recovery of the admissible-output classes, and Corollary~\ref{cor:relevance-is-erased-failure-of-refinement} identifies relevance with failure of that recovery after erasure.
+Corollary~\ref{cor:relational-output-transfer} reduces the exact semantics to exact relevance certification for the induced decision problem. Proposition~\ref{prop:sufficiency-is-relation-refinement} identifies sufficiency with recovery of the admissible-output classes, and Corollary~\ref{cor:relevance-is-erased-failure-of-refinement} identifies relevance with failure of that recovery after erasure.
+\end{proof}
+
+\leanmetapending{\LH{FR351}}
+\begin{corollary}[Universal Scope Over Rigorously Specified Problems]\label{cor:universal-scope-rigorously-specified-problems}
+Every rigorously specified computational problem determines an exact admissible-output semantics, admits a coordinate presentation, and has its exact relevance profile realized by exact relevance certification for the induced decision problem. Sufficiency recovers the admissible-output equivalence classes, and relevance is erased failure of that recovery.
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+Combine Theorem~\ref{thm:exact-semantics-quotient-universality} with Proposition~\ref{prop:every-exact-specification-admits-coordinate-presentation}.
 \end{proof}
 
 \leanmetapending{\LHrng{FR}{302}{303}}
@@ -432,7 +453,7 @@ Every exact output specification admits a coordinate presentation. In the weakes
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-Use a one-coordinate presentation whose unique coordinate is the state itself. Agreement on that coordinate is equality of states, so the coordinate presentation is exact. The artifact then identifies the resulting exact relevance profile with the one carried by the induced exact-certification decision problem.
+Use a one-coordinate presentation whose unique coordinate is the state itself. Agreement on that coordinate is equality of states, so the coordinate presentation is exact. The resulting exact relevance profile agrees with the one carried by the induced exact-certification decision problem.
 \end{proof}
 
 \leanmetapending{\LHrng{FR}{304}{306}}
@@ -441,7 +462,7 @@ Every finite-state exact output specification admits a coordinate presentation. 
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-For a finite state space, assign one Boolean coordinate to each state and record whether the current state is that state. Agreement on all coordinates is then equality of states, so the presentation is exact. The artifact formalizes this indicator-coordinate presentation and shows that the resulting exact relevance profile is exactly the one carried by the induced decision problem.
+For a finite state space, assign one Boolean coordinate to each state and record whether the current state is that state. Agreement on all coordinates is then equality of states, so the presentation is exact. This indicator-coordinate presentation yields exactly the exact relevance profile carried by the induced decision problem.
 \end{proof}
 
 \leanmetapending{\LHrng{FR}{311}{313}}
@@ -459,7 +480,7 @@ Every finite-state exact output specification admits a Boolean coordinate presen
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-Index states by $0,\dots,|S|-1$ and use the binary digits of the index as Boolean coordinates. Since every index is less than $2^{\mathrm{size}(|S|)}$, equality of those finitely many bits determines the state. The artifact formalizes this low-dimensional Boolean presentation and identifies the induced exact relevance profile with exact relevance certification.
+Index states by $0,\dots,|S|-1$ and use the binary digits of the index as Boolean coordinates. Since every index is less than $2^{\mathrm{size}(|S|)}$, equality of those finitely many bits determines the state. This low-dimensional Boolean presentation identifies the induced exact relevance profile with exact relevance certification.
 \end{proof}
 
 Every exact correctness claim admits a coordinate presentation, so the question of which coordinates matter is always a quotient-recovery problem for admissible-output classes. This includes decision, counting, search, approximation guarantees, PAC/regret/risk guarantees, anytime or finite-horizon guarantees, randomized-output guarantees, distributional specifications, and any other specification stated by the outputs that count as correct at each state.
@@ -481,7 +502,7 @@ Let $R(s,a)$ specify the admissible randomized outputs for a state $s$, where $a
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-This is again a named specialization of Corollary~\ref{cor:relational-output-transfer}. Randomization changes the output object, not the meaning of correctness: correctness still means exact agreement with the admissible-output relation on those randomized outputs, not deterministic singleton output semantics.
+This corollary is a named specialization of Corollary~\ref{cor:relational-output-transfer}. Randomization changes the output object, not the meaning of correctness: correctness still means exact agreement with the admissible-output relation on those randomized outputs, not deterministic singleton output semantics.
 \end{proof}
 
 \begin{corollary}[Randomized-Output Guarantee Semantics Inherit the Closure-Orbit Consequences]\label{cor:randomized-guarantee-closure-consequences}
@@ -490,7 +511,7 @@ Once a randomized-output guarantee is written as a state-indexed admissible-outp
 \leanmetapending{\LHrng{FR}{291}{296}}
 
 \begin{proof}[Proof sketch]
-This is the randomized-output instance of the same transfer-plus-application pattern used above. Corollary~\ref{cor:randomized-guarantee-transfer} reduces the semantics to exact relevance certification for the induced decision problem, and the dedicated randomized application theorems then import the same closure-orbit agreement and orbit-gap consequences.
+The randomized-output instance follows the same transfer-plus-application pattern used above. Corollary~\ref{cor:randomized-guarantee-transfer} reduces the semantics to exact relevance certification for the induced decision problem, and the dedicated randomized application theorems then import the same closure-orbit agreement and orbit-gap consequences.
 \end{proof}
 
 \begin{corollary}[Statistical Guarantee Semantics Inherit the Closure-Orbit Consequences]\label{cor:statistical-guarantee-closure-consequences}
@@ -499,7 +520,7 @@ Once a PAC, regret, statistical-risk, anytime, or finite-horizon guarantee is wr
 \leanmetapending{\LHrng{FR}{268}{299}}
 
 \begin{proof}[Proof sketch]
-Corollary~\ref{cor:statistical-guarantee-transfer} reduces each named statistical guarantee semantics to exact relevance certification for the induced decision problem. The artifact packages the next step as a generic transferred-semantics application principle: any semantics whose tractability predicate is definitionally equivalent to a closure-law-invariant target inherits the same closure-orbit agreement and orbit-gap consequences. Statistical guarantee semantics are named instances of that principle. They also inherit the same exact-semantics quotient invariance, because their sufficient-coordinate family and relevant-coordinate set depend only on admissible-output equivalence.
+Corollary~\ref{cor:statistical-guarantee-transfer} reduces each named statistical guarantee semantics to exact relevance certification for the induced decision problem. Any semantics whose tractability predicate is definitionally equivalent to a closure-law-invariant target inherits the same closure-orbit agreement and orbit-gap consequences. Statistical guarantee semantics are named instances of that principle. They also inherit the same exact-semantics quotient invariance, because their sufficient-coordinate family and relevant-coordinate set depend only on admissible-output equivalence.
 \end{proof}
 
 \leanmetapending{\LHrng{FR}{232}{234}}
@@ -508,7 +529,7 @@ Let $R(s,a)$ specify the admissible outputs for an exact approximation specifica
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-This is the approximation-specialized form of Corollary~\ref{cor:relational-output-transfer}. Approximation enters only through the specification: once the admissible-output relation says which outputs meet the guarantee, correctness with respect to that approximation specification is exact agreement with that relation, not zero approximation error.
+This corollary is the approximation-specialized form of Corollary~\ref{cor:relational-output-transfer}. Approximation enters only through the specification: once the admissible-output relation says which outputs meet the guarantee, correctness with respect to that approximation specification is exact agreement with that relation, not zero approximation error.
 \end{proof}
 
 \leanmetapending{\LH{FR263}, \LH{FR266}}
@@ -526,7 +547,7 @@ For every $\varepsilon>0$, there exist two decision problems on the same one-coo
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-The artifact contains an explicit two-action, one-coordinate construction. In the first problem the optimizer tracks the Boolean state, so the unique coordinate is relevant. In the second problem all actions are tied at every state, so the coordinate is irrelevant. The two utility functions differ uniformly by at most $\varepsilon$.
+An explicit two-action, one-coordinate construction gives the result. In the first problem the optimizer tracks the Boolean state, so the unique coordinate is relevant. In the second problem all actions are tied at every state, so the coordinate is irrelevant. The two utility functions differ uniformly by at most $\varepsilon$.
 \end{proof}
 
 \leanmetapending{\LH{FR267}}
@@ -555,7 +576,7 @@ Let $R$ and $R'$ be two exact output semantics on the same state space. If they 
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-The transfer theorems reduce both semantics to exact relevance certification for induced decision problems. If the admissible-output equality relation is the same, the induced sufficiency and relevance structures are the same as well. The artifact proves equality of the sufficient-set family and of the relevant-coordinate set under this hypothesis.
+The transfer theorems reduce both semantics to exact relevance certification for induced decision problems. If the admissible-output equality relation is the same, the induced sufficiency and relevance structures are the same as well.
 \end{proof}
 
 \leanmetapending{\LH{FR237}, \LH{FR240}}
@@ -573,7 +594,7 @@ Let $C$ be any claim about exact output semantics that depends only on admissibl
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-This is the quotient-factorization theorem for semantically extensional maps, specialized to \texttt{Prop}-valued claims. If $C$ takes the same truth value on any two semantics with the same admissible-output equivalence, then $C$ descends to the quotient by that equivalence relation.
+This proposition is the quotient-factorization theorem for semantically extensional maps, specialized to \texttt{Prop}-valued claims. If $C$ takes the same truth value on any two semantics with the same admissible-output equivalence, then $C$ descends to the quotient by that equivalence relation.
 \end{proof}
 
-Closure-law invariance (clause 2) is not an arbitrary stylistic restriction. Theorem~\ref{thm:correct-classifier-forces-invariance} shows that correctness already forces closure-orbit agreement, and Theorem~\ref{thm:closure-sound-package-no-go} shows that this theorem-forced congruence is the only load-bearing hypothesis in the no-go theorem. The remaining clauses are the minimal guardrails against the failure modes identified in Proposition~\ref{prop:oracle-loophole}; the specific guardrail formulation of clauses 1, 3, and 4 is one natural choice but is not load-bearing.
+Closure-law invariance is theorem-forced. Theorem~\ref{thm:correct-classifier-forces-invariance} shows that correctness already forces closure-orbit agreement, and Theorem~\ref{thm:closure-sound-package-no-go} together with Proposition~\ref{prop:logical-dependency-no-go} shows that this theorem-forced congruence is the only load-bearing hypothesis in the no-go theorem. Clauses 1, 3, and 4 are guardrails against the failure modes identified in Proposition~\ref{prop:oracle-loophole}.

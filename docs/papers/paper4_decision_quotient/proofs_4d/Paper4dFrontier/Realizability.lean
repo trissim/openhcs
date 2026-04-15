@@ -1065,6 +1065,14 @@ theorem universal_characterization
   exact exactSemanticsQuotient_universal_characterization
     (S := S) (A := spec.Output) (n := n) spec.valid
 
+theorem universal_scope_over_rigorously_specified_problems
+    (spec : ExactCorrectnessSpecification S) :
+    ∃ (m : ℕ) (_inst : CoordinateSpace S m),
+      outputSemanticsExactRelevanceProfile (S := S) (A := spec.Output) (n := m) spec.valid =
+        decisionProblemExactRelevanceProfile (n := m) (decisionProblem (S := S) spec) := by
+  refine ⟨1, singletonIdentityCoordinateSpace S, ?_⟩
+  exact universal_characterization (S := S) (n := 1) spec |>.1
+
 end ExactCorrectnessSpecification
 
 end DeterministicRelationRealizability

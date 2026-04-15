@@ -2,11 +2,13 @@
 
 Sections~2 and~3 motivate a frontier question. Do the tractable families already suggest a finite optimizer-compatible criterion? In the strongest form, could exact relevance certification admit a representation-sensitive dichotomy theorem analogous to the classical dichotomy programs for satisfiability and constraint satisfaction?
 
-The most direct version of that program fails. Quotient shape is too expressive, and later in the section even structurally restricted finite classifiers fail on a theorem-forced surface. Any future frontier theorem must therefore avoid both sources of failure.
+The most direct version of that program fails. Quotient shape is too expressive, and later in the section even structurally restricted finite classifiers fail on a theorem-forced surface. The negative theorem proved here is correspondingly scoped: it rules out exact classifiers in the direct closure-invariant structural regime, not every possible representation-sensitive invariant.
 
 Three obstacles remain. Realizability is not the bottleneck: Theorem~\ref{thm:labeling-realizable} shows that arbitrary labeling kernels already arise as optimizer quotients, so no frontier theorem can be driven by quotient realizability alone. Even on the positive side one must separate primitive mechanisms from lifts and degeneracies; otherwise a finite inventory confuses genuine sources of tractability with derived or collapsed cases. And although the long-term target remains an algebraic description analogous to the CSP dichotomy program, the negative results below show that no direct optimizer-compatible classifier can play that role.
 
 \subsection*{A Stabilized Binary Pairwise Subregime}
+
+Binary pairwise slices are the smallest representation class in which unary collapse, dense interaction, optimizer degeneracy, and the orbit-gap obstruction all already appear in full.
 
 One piece of the frontier program already admits a clean canonical theorem. On binary coordinate domains, define the mixed difference along coordinates $i,j$ for action $a$ by evaluating the utility on the four assignments $(0,0),(1,1),(0,1),(1,0)$ while holding all other coordinates fixed at $0$. For pairwise utilities, this mixed difference is the canonical witness of genuine pair interaction.
 
@@ -43,6 +45,8 @@ One might hope that a strict unary-to-pair margin bound rescues the dichotomy. D
 
 The obstruction families above lead to a uniform negative statement because they admit explicit disagreements inside a single closure orbit.
 
+The theorem hierarchy is generic before it is family-specific. Proposition~\ref{prop:orbit-gap-completeness} identifies orbit gaps as the complete obstruction criterion for closure-law-invariant classifiers. Theorem~\ref{thm:closure-sound-package-no-go} applies that criterion to any closure-sound predicate class. Corollary~\ref{cor:no-correct-tractability-classifier} removes even explicit closure-soundness by deriving closure-orbit agreement from correctness itself. Definition~\ref{def:admissible-normalization} specifies the finite structural class used inside that generic framework.
+
 \leanmetapending{\LH{FR185}}
 \begin{proposition}[Orbit-Gap Template]\label{prop:orbit-gap-template}
 Let $Q$ be a slice predicate. Suppose there exist slices $U,V$ such that $U$ and $V$ lie in the same closure orbit, $Q(U)$ holds, and $Q(V)$ fails. Then no closure-law-invariant predicate $P$ can satisfy
@@ -56,26 +60,28 @@ P(W) \iff Q(W)
 Closure-law invariance gives $P(U) \iff P(V)$. Exact agreement with $Q$ would then imply $Q(U) \iff Q(V)$, contradicting the assumed orbit gap.
 \end{proof}
 
-For each obstruction family, the argument constructs two same-orbit slices with different obstruction status. In all four cases the witness is a positive-affine step whose $\alpha$-component is an action-independent state term supported on a single coordinate pair. Pure relabeling cannot change the relevant obstruction statistics, and a global scale factor preserves all pairwise magnitudes up to common rescaling. The statewise additive term is what allows one to move mass onto a chosen pair while remaining inside the theorem-forced closure laws. The same mechanism works for four structurally different obstruction families, and Proposition~\ref{prop:orbit-gap-completeness} together with Corollary~\ref{cor:orbit-gap-completeness-domain} shows that orbit gaps are the complete obstruction criterion in the closure-invariant and correctness-forced regimes.
+For each obstruction family, the argument constructs two same-orbit slices with different obstruction status. In all four cases the witness is a positive-affine step whose $\alpha$-component is an action-independent state term supported on a single coordinate pair. Pure relabeling cannot change the relevant obstruction statistics, and a global scale factor preserves all pairwise magnitudes up to common rescaling. The statewise additive term moves mass onto a chosen pair while remaining inside the theorem-forced closure laws. One theorem-forced transport therefore destabilizes several natural candidate predicates. Proposition~\ref{prop:orbit-gap-completeness} together with Corollary~\ref{cor:orbit-gap-completeness-domain} shows that orbit gaps are the complete obstruction criterion in the closure-invariant and correctness-forced regimes.
 
-There is also a transport interpretation of these witnesses. Once transport is computed on optimizer-quotient classes, a singleton quotient admits zero-cost diagonal transport, whereas genuine branching forces positive off-diagonal transport when distinct classes carry mass. The pair-targeted affine witnesses exploit exactly this sensitivity. They do not introduce arbitrary perturbations unrelated to the decision geometry; rather, they move mass across a selected branch of the quotient while staying inside the same closure orbit. The affine witnesses therefore track the intrinsic transport geometry of the quotient instead of functioning as purely syntactic tricks.\leanmeta{\LHrng{FR}{183}{184}}
+\begin{remark}[Transport Interpretation of the Affine Witnesses]\label{rem:transport-interpretation-affine-witnesses}
+Once transport is computed on optimizer-quotient classes, a singleton quotient admits zero-cost diagonal transport, whereas genuine branching forces positive off-diagonal transport when distinct classes carry mass. The pair-targeted affine witnesses exploit exactly this sensitivity: they move mass across a selected branch of the quotient while staying inside the same closure orbit. The witnesses therefore follow the quotient transport geometry rather than functioning as arbitrary syntactic perturbations. In the named families used below, these witnesses are bounded perturbations on constant-size support, so the representation size remains polynomially equivalent under standard sparse encodings.\leanmeta{\LHrng{FR}{183}{184}}
+\end{remark}
 
 \leanmetapending{\LH{FR186}}
-\begin{theorem}[Dominant-Pair Admissible No-Go]\label{thm:dominant-pair-admissible-no-go}
-No admissible normalization predicate can decide the dominant-pair obstruction family exactly.
+\begin{theorem}[Dominant-Pair Finite-Structural No-Go]\label{thm:dominant-pair-admissible-no-go}
+No predicate in the finite structural class can decide the dominant-pair obstruction family exactly.
 \end{theorem}
 
 \begin{proof}[Proof sketch]
 The target predicate is unique dominant-pair status: one pair/action realizes the maximal interaction magnitude and that maximizer is unique. Start from a slice whose unique dominant pair is $\{0,1\}$. Add an action-independent affine state term supported on a different pair, say $\{1,2\}$. This produces a slice in the same closure orbit but with a different unique dominant pair. Proposition~\ref{prop:orbit-gap-template} then rules out every closure-law-invariant classifier, hence every admissible one.
 \end{proof}
 
-Theorem~\ref{thm:dominant-pair-admissible-no-go} gives the first instance. The remaining three families use the same orbit-gap scheme, but each isolates a different structural obstruction.
+Theorem~\ref{thm:dominant-pair-admissible-no-go} gives the first instance. The remaining three families use the same orbit-gap scheme, each with a different target predicate and therefore a different failure mode inside the same closure orbit.
 
 At the compute-cost layer, the same dominant-pair orbit witness yields a machine-checked no-go for optimizer computation: no correct classifier for polynomial-time solvability of optimizer computation can decide dominant-pair status exactly. In particular, no admissible predicate can simultaneously track optimizer-computation polynomiality and exact dominant-pair status.\leanmeta{\LHrng{FR}{250}{251}}
 
 \leanmetapending{\LH{FR187}}
-\begin{theorem}[Margin-Masking Admissible No-Go]\label{thm:margin-masking-admissible-no-go}
-No admissible normalization predicate can decide margin-boundedness exactly.
+\begin{theorem}[Margin-Masking Finite-Structural No-Go]\label{thm:margin-masking-admissible-no-go}
+No predicate in the finite structural class can decide margin-boundedness exactly.
 \end{theorem}
 
 \begin{proof}[Proof sketch]
@@ -83,8 +89,8 @@ For margin masking, the target predicate is margin-boundedness itself. This fami
 \end{proof}
 
 \leanmetapending{\LH{FR188}}
-\begin{theorem}[Ghost-Action Admissible No-Go]\label{thm:ghost-action-admissible-no-go}
-No admissible normalization predicate can decide the ghost-action concentration signature exactly.
+\begin{theorem}[Ghost-Action Finite-Structural No-Go]\label{thm:ghost-action-admissible-no-go}
+No predicate in the finite structural class can decide the ghost-action concentration signature exactly.
 \end{theorem}
 
 \begin{proof}[Proof sketch]
@@ -92,8 +98,8 @@ For ghost actions, the target predicate says that there is an action whose unary
 \end{proof}
 
 \leanmetapending{\LH{FR189}}
-\begin{theorem}[Offset Admissible No-Go]\label{thm:offset-admissible-no-go}
-No admissible normalization predicate can decide the additive/statewise offset signature exactly.
+\begin{theorem}[Offset Finite-Structural No-Go]\label{thm:offset-admissible-no-go}
+No predicate in the finite structural class can decide the additive/statewise offset signature exactly.
 \end{theorem}
 
 \begin{proof}[Proof sketch]
@@ -101,34 +107,43 @@ For additive/statewise offset concentration, the target predicate requires two a
 \end{proof}
 
 \leanmetapending{\LH{FR190}}
-\begin{theorem}[Admissible Collapse Across the Four Obstruction Families]\label{thm:admissible-collapse-four-families}
-Let $P$ be a normalization predicate satisfying the admissibility axioms. Then $P$ is not a tractability characterization.
+\begin{theorem}[Finite-Structural Collapse Across the Four Obstruction Families]\label{thm:admissible-collapse-four-families}
+Let $P$ be a normalization predicate in the finite structural class. Then $P$ is not a tractability characterization.
 \end{theorem}
 
 \begin{proof}[Proof idea]
-If $P$ were an admissible tractability characterization, it would have to decide each of the four obstruction predicates above. Theorem~\ref{thm:dominant-pair-admissible-no-go}, Theorem~\ref{thm:margin-masking-admissible-no-go}, Theorem~\ref{thm:ghost-action-admissible-no-go}, and Theorem~\ref{thm:offset-admissible-no-go} show that this is impossible. Hence no admissible normalization predicate yields the desired frontier theorem.
+If $P$ belonged to the finite structural class and were an exact tractability characterization, it would have to decide each of the four obstruction predicates above. Theorem~\ref{thm:dominant-pair-admissible-no-go}, Theorem~\ref{thm:margin-masking-admissible-no-go}, Theorem~\ref{thm:ghost-action-admissible-no-go}, and Theorem~\ref{thm:offset-admissible-no-go} show that this is impossible. Hence no predicate in the finite structural class yields the desired frontier theorem.
 \end{proof}
 
-The four obstruction families are witnesses for the orbit-gap template (Proposition~\ref{prop:orbit-gap-template}), not the scope of Theorem~\ref{thm:admissible-collapse-four-families}. The theorem ranges over the entire admissibility class. Four structurally distinct families are included because the same pair-targeted affine transport defeats classifiers across families that share no surface structure, and Proposition~\ref{prop:orbit-gap-completeness} shows that orbit gaps are the complete obstruction criterion for exact classification by closure-law-invariant predicates. The four families are therefore theorem-backed witnesses of a complete mechanism rather than an ad hoc list.
+The four obstruction families are witnesses for the orbit-gap template (Proposition~\ref{prop:orbit-gap-template}), not the scope of Theorem~\ref{thm:admissible-collapse-four-families}. The theorem ranges over the entire finite structural class. The role of the four families is to show that the same closure-orbit mechanism already destabilizes several natural representation-level predicates, while Proposition~\ref{prop:orbit-gap-completeness} identifies orbit gaps as the complete obstruction criterion for exact classification by closure-law-invariant predicates.
 
-Abstractly, let $\Gamma$ be a class of slice predicates, and call a predicate $\Gamma$-admissible when it belongs to $\Gamma$. Call $\Gamma$ \emph{closure-sound} if every $\Gamma$-admissible predicate is closure-law invariant. Call $\Gamma$ a \emph{reasonable guardrail package} if it is closure-sound and also imposes auxiliary restrictions such as efficient checkability, structural extractability, and bounded-pattern definability. The proof below uses only closure-soundness; the remaining clauses explain which non-oracular search spaces the no-go is meant to cover.\leanmeta{\LHrng{FR}{191}{192}}
+Abstractly, let $\Gamma$ be a class of slice predicates, and call a predicate $\Gamma$-admissible when it belongs to $\Gamma$. Call $\Gamma$ \emph{closure-sound} if every $\Gamma$-admissible predicate is closure-law invariant. Call $\Gamma$ a \emph{finite structural admissibility package} if it is closure-sound and also imposes auxiliary restrictions such as efficient checkability, structural extractability, and bounded-pattern definability. The proof below uses only closure-soundness; the remaining clauses specify which finite structural search spaces the no-go is meant to cover.\leanmeta{\LHrng{FR}{191}{192}}
 
 \leanmetapending{\LH{FR193}}
 \begin{theorem}[Closure-Sound Package No-Go]\label{thm:closure-sound-package-no-go}
-Let $\Gamma$ be any class of slice predicates such that every $\Gamma$-admissible predicate is closure-law invariant. Then no $\Gamma$-admissible predicate can simultaneously characterize the four obstruction families. In particular, the no-go theorem depends only on closure-law invariance; the remaining clauses of Definition~\ref{def:admissible-normalization} justify the admissibility package as a meaningful notion but do not enter the contradiction.
+Let $\Gamma$ be any class of slice predicates such that every $\Gamma$-admissible predicate is closure-law invariant. Then no $\Gamma$-admissible predicate can simultaneously characterize the four obstruction families. The no-go theorem depends only on closure-law invariance; the remaining clauses of Definition~\ref{def:admissible-normalization} delimit the finite structural class and do not enter the contradiction.
 \end{theorem}
 
 \begin{proof}[Proof sketch]
 Closure-law invariance suffices to invoke Proposition~\ref{prop:orbit-gap-template} against each of the four obstruction families. The same orbit-gap proofs underlying Theorem~\ref{thm:dominant-pair-admissible-no-go}, Theorem~\ref{thm:margin-masking-admissible-no-go}, Theorem~\ref{thm:ghost-action-admissible-no-go}, and Theorem~\ref{thm:offset-admissible-no-go} then yield the contradiction directly. Any one of the four families independently witnesses the collapse; we state all four to make explicit that the obstruction is robust across structurally distinct witnesses.
 \end{proof}
 
-At the $\Gamma$-generic level, the formal contradiction is simultaneous: one $\Gamma$-admissible predicate cannot characterize all four families at once. The individual-family contradictions above are formalized separately for the specific admissibility package of Definition~\ref{def:admissible-normalization}.
+At the $\Gamma$-generic level, the contradiction is simultaneous: one $\Gamma$-admissible predicate cannot characterize all four families at once. The individual-family contradictions above are stated separately for the finite structural class of Definition~\ref{def:admissible-normalization}.
 
-Theorem~\ref{thm:closure-sound-package-no-go} is the load-bearing form of Theorem~\ref{thm:admissible-collapse-four-families}. Any reasonable formalization of admissibility, whether the specific package of Definition~\ref{def:admissible-normalization} or any alternative whose admissible predicates are closure-law invariant, inherits the impossibility conclusion. Proposition~\ref{prop:depends-only-on-opt} identifies closure-law invariance as the semantic core, and Theorem~\ref{thm:correct-classifier-forces-invariance} shows that correctness forces the same invariance on any tractability classifier. The admissibility package is one natural instantiation; the theorem is robust to its replacement.
+\leanmetapending{\LH{FR347}}
+\begin{proposition}[Logical Dependency of the No-Go]\label{prop:logical-dependency-no-go}
+The contradiction in Theorem~\ref{thm:closure-sound-package-no-go} depends only on closure-law invariance. The derivation of closure-law invariance in Theorem~\ref{thm:correct-classifier-forces-invariance} depends only on correctness over a closure-closed domain together with Proposition~\ref{prop:closure-operations-preserve-certification}. Polynomial-time checkability, structural extractability, and bounded-pattern definability do not enter either proof.
+\end{proposition}
+
+\begin{proof}
+Immediate from the displayed proofs of Theorem~\ref{thm:closure-sound-package-no-go} and Theorem~\ref{thm:correct-classifier-forces-invariance}.
+\end{proof}
+
+Theorem~\ref{thm:closure-sound-package-no-go} is the generic form of Theorem~\ref{thm:admissible-collapse-four-families}. Any admissibility notion whose predicates are closure-law invariant inherits the impossibility conclusion. Proposition~\ref{prop:depends-only-on-opt} identifies closure-law invariance as the semantic core, and Theorem~\ref{thm:correct-classifier-forces-invariance} shows that correctness forces the same invariance on any tractability classifier. Definition~\ref{def:admissible-normalization} specifies the finite structural class used in the named family theorems.
 
 \leanmetapending{\LH{FR194}}
-\begin{corollary}[Reasonable Guardrail Packages]\label{cor:reasonable-guardrail-packages}
-The same conclusion holds for every reasonable guardrail package. In particular, efficient checkability, structural extractability, bounded-pattern definability, and the informal exclusion of oracle encodings are guardrails rather than proof-load-bearing hypotheses.
+\begin{corollary}[Finite Structural Admissibility Packages]\label{cor:reasonable-guardrail-packages}
+The same conclusion holds for every finite structural admissibility package. In particular, efficient checkability, structural extractability, bounded-pattern definability, and the exclusion of direct semantic encoding restrict the search space but do not enter the contradiction itself.
 \end{corollary}
 
 \begin{proof}
@@ -144,7 +159,25 @@ Let $C$ be any correct tractability classifier on a domain that is closed under 
 By Theorem~\ref{thm:correct-classifier-forces-invariance}, any such classifier must agree on closure orbits and is therefore closure-law invariant on its domain. Theorem~\ref{thm:closure-sound-package-no-go} then rules out exact characterization across the four obstruction families.
 \end{proof}
 
-Corollary~\ref{cor:no-correct-tractability-classifier} is the witness-level universal form of the no-go. Theorem~\ref{thm:closure-sound-package-no-go} isolates closure-law invariance as the load-bearing hypothesis, and Theorem~\ref{thm:correct-classifier-forces-invariance} removes even that as an explicit assumption by forcing the same invariance from correctness itself. Corollary~\ref{cor:domain-restriction-only-removes-orbit-gaps} then states the general domain-relative form: restricting the domain helps only if it removes all orbit gaps for the target notion.
+Corollary~\ref{cor:no-correct-tractability-classifier} is the universal witness-family form of the no-go. Theorem~\ref{thm:closure-sound-package-no-go} isolates closure-law invariance as the load-bearing hypothesis, Proposition~\ref{prop:logical-dependency-no-go} records the exact logical dependency, and Theorem~\ref{thm:correct-classifier-forces-invariance} removes even closure-law invariance as an explicit assumption by forcing the same orbit agreement from correctness itself. Corollary~\ref{cor:domain-restriction-only-removes-orbit-gaps} states the domain-relative form: restricting the domain helps only if it removes all orbit gaps for the target notion.
+
+\leanmetapending{\LHrng{FR}{348}{349}}
+\begin{proposition}[Full Binary Pairwise Domain Is Closure-Closed]\label{prop:full-binary-pairwise-domain-closure}
+Let $\mathcal U$ be the class of all binary pairwise slices. Then $\mathcal U$ is closed under action relabeling, coordinate relabeling, positive affine reparameterization, action duplication, state duplication, and binary irrelevant-coordinate extension. The dominant-pair, margin-masking, ghost-action, and additive/statewise offset obstruction families are contained in $\mathcal U$. Therefore $\mathcal U$ is a closure-closed domain containing the four obstruction families.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Each theorem-forced presentation move maps binary pairwise slices to binary pairwise slices. The four obstruction families are binary pairwise slices by construction.
+\end{proof}
+
+\leanmetapending{\LH{FR350}}
+\begin{corollary}[No Exact Classifier on the Full Binary Pairwise Domain]\label{cor:full-binary-pairwise-no-go}
+No correct tractability classifier yields an exact characterization across the four obstruction families on the full binary pairwise slice domain $\mathcal U$.
+\end{corollary}
+
+\begin{proof}
+Apply Corollary~\ref{cor:no-correct-tractability-classifier} together with Proposition~\ref{prop:full-binary-pairwise-domain-closure}.
+\end{proof}
 
 \leanmetapending{\LHrng{FR}{201}{204}}
 \begin{proposition}[Orbit-Gap Completeness for Exact Classification]\label{prop:orbit-gap-completeness}
@@ -169,7 +202,7 @@ Let $D$ be a closure-closed domain of slices, and let $T$ be a target predicate 
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-This is the domain-restricted version formalized in Lean. The forward implication is immediate from closure-law invariance. For the reverse implication, take the closure hull of $D \cap T$; if $T$ has no orbit-gap witness inside $D$, that closure hull agrees with $T$ on $D$.
+The forward implication is immediate from closure-law invariance. For the reverse implication, take the closure hull of $D \cap T$; if $T$ has no orbit-gap witness inside $D$, that closure hull agrees with $T$ on $D$.
 \end{proof}
 
 Applied to exact tractability, Theorem~\ref{thm:correct-classifier-forces-invariance} places every correct tractability classifier on a closure-closed domain inside this regime. Orbit gaps are therefore the complete obstruction criterion for the universal-scope no-go once correctness is imposed.
@@ -183,4 +216,4 @@ Let $D$ be a closure-closed domain, and let $Q$ be a target predicate on $D$ suc
 The reverse implication is Corollary~\ref{cor:orbit-gap-completeness-domain}. For the forward implication, correctness-forced orbit agreement rules out any same-orbit disagreement inside $D$. The artifact proves this abstract principle directly, and also formalizes the optimizer-computation instance as a concrete compute-cost theorem.
 \end{proof}
 
-This is the precise answer to the domain-restriction objection. Excluding the four named witness families is not enough by itself. Those families witness orbit gaps, but the logical boundary is orbit-gap freedom on the restricted closure-closed domain. If another orbit gap remains, the same impossibility theorem applies; if no orbit gap remains, the closure-hull construction yields a correct classifier on that domain.
+Domain restriction is governed by orbit-gap freedom on the restricted closure-closed domain. Excluding the four named witness families is not enough by itself. Those families witness orbit gaps, but any remaining orbit gap triggers the same impossibility theorem. If no orbit gap remains, the closure-hull construction yields a correct classifier on that domain.
