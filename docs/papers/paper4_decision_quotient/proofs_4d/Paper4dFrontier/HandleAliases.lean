@@ -5,6 +5,7 @@ import Paper4dFrontier.DecisionRelevantPairwiseDichotomy
 import Paper4dFrontier.Block6Obstruction
 import Paper4dFrontier.MetaCharacterization
 import Paper4dFrontier.AdmissibleCharacterization
+import Paper4dFrontier.FullBinaryPairwiseDomain
 import Paper4dFrontier.DistinctActionProfiles
 import Paper4dFrontier.ObstructionPredicateCandidates
 import Paper4dFrontier.CycleRankWitness

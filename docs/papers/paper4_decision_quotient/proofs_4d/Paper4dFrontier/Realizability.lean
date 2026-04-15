@@ -1067,11 +1067,11 @@ theorem universal_characterization
 
 theorem universal_scope_over_rigorously_specified_problems
     (spec : ExactCorrectnessSpecification S) :
-    ∃ (m : ℕ) (_inst : CoordinateSpace S m),
-      outputSemanticsExactRelevanceProfile (S := S) (A := spec.Output) (n := m) spec.valid =
-        decisionProblemExactRelevanceProfile (n := m) (decisionProblem (S := S) spec) := by
-  refine ⟨1, singletonIdentityCoordinateSpace S, ?_⟩
-  exact universal_characterization (S := S) (n := 1) spec |>.1
+    letI : CoordinateSpace S 1 := singletonIdentityCoordinateSpace S
+    outputSemanticsExactRelevanceProfile (S := S) (A := spec.Output) (n := 1) spec.valid =
+      decisionProblemExactRelevanceProfile (n := 1) (decisionProblem (S := S) spec) := by
+  letI : CoordinateSpace S 1 := singletonIdentityCoordinateSpace S
+  simpa using (universal_characterization (S := S) (n := 1) spec).1
 
 end ExactCorrectnessSpecification
 

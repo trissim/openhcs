@@ -63,6 +63,7 @@ import Paper4dFrontier.DistinctActionProfiles
 import Paper4dFrontier.EnumerationBounds
 import Paper4dFrontier.FamilyAxioms
 import Paper4dFrontier.FirstTwoIndicator
+import Paper4dFrontier.FullBinaryPairwiseDomain
 import Paper4dFrontier.LegacyTreeGap
 import Paper4dFrontier.LowRankOnlyWitness
 import Paper4dFrontier.MetaCharacterization
