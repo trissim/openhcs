@@ -288,6 +288,125 @@ theorem decisionRelevant_zero_actionGap_implies_unaryReduction
   have h := hunary a () s
   linarith
 
+theorem decisionRelevantUnaryReduction_actionGapCrossDifference_zero
+    {A : Type*} {n : ℕ} {u : A → (Fin n → Fin 2) → ℤ}
+    (hred : DecisionRelevantUnaryReduction u)
+    (a b : A) (i j : Fin n) :
+    actionGapCrossDifference u a b i j = 0 := by
+  rcases hred with ⟨base, unary, hred⟩
+  have hgap :
+      ∀ s, u a s - u b s = ∑ k : Fin n, (unary k a (s k) - unary k b (s k)) := by
+    intro s
+    calc
+      u a s - u b s
+          = (base s + ∑ k : Fin n, unary k a (s k)) -
+              (base s + ∑ k : Fin n, unary k b (s k)) := by
+              rw [hred a s, hred b s]
+      _ = (∑ k : Fin n, unary k a (s k)) - (∑ k : Fin n, unary k b (s k)) := by
+            ring
+      _ = ∑ k : Fin n, (unary k a (s k) - unary k b (s k)) := by
+            simpa using
+              (Finset.sum_sub_distrib (s := Finset.univ)
+                (f := fun k : Fin n => unary k a (s k))
+                (g := fun k : Fin n => unary k b (s k))).symm
+  unfold actionGapCrossDifference pairCrossDifference
+  simp [hgap]
+  let f : Fin n → Fin 2 → ℤ := fun k x => unary k a x - unary k b x
+  let f00 : Fin n → ℤ := fun k => f k ((pairState i j 0 0) k)
+  let f11 : Fin n → ℤ := fun k => f k ((pairState i j 1 1) k)
+  let f01 : Fin n → ℤ := fun k => f k ((pairState i j 0 1) k)
+  let f10 : Fin n → ℤ := fun k => f k ((pairState i j 1 0) k)
+  have hsplit00 :
+      (∑ x : Fin n, unary x a (pairState i j 0 0 x)) -
+          (∑ x : Fin n, unary x b (pairState i j 0 0 x)) =
+        ∑ k : Fin n, f00 k := by
+    simpa [f00, f] using
+      (Finset.sum_sub_distrib (s := Finset.univ)
+        (f := fun x : Fin n => unary x a (pairState i j 0 0 x))
+        (g := fun x : Fin n => unary x b (pairState i j 0 0 x))).symm
+  have hsplit11 :
+      (∑ x : Fin n, unary x a (pairState i j 1 1 x)) -
+          (∑ x : Fin n, unary x b (pairState i j 1 1 x)) =
+        ∑ k : Fin n, f11 k := by
+    simpa [f11, f] using
+      (Finset.sum_sub_distrib (s := Finset.univ)
+        (f := fun x : Fin n => unary x a (pairState i j 1 1 x))
+        (g := fun x : Fin n => unary x b (pairState i j 1 1 x))).symm
+  have hsplit01 :
+      (∑ x : Fin n, unary x a (pairState i j 0 1 x)) -
+          (∑ x : Fin n, unary x b (pairState i j 0 1 x)) =
+        ∑ k : Fin n, f01 k := by
+    simpa [f01, f] using
+      (Finset.sum_sub_distrib (s := Finset.univ)
+        (f := fun x : Fin n => unary x a (pairState i j 0 1 x))
+        (g := fun x : Fin n => unary x b (pairState i j 0 1 x))).symm
+  have hsplit10 :
+      (∑ x : Fin n, unary x a (pairState i j 1 0 x)) -
+          (∑ x : Fin n, unary x b (pairState i j 1 0 x)) =
+        ∑ k : Fin n, f10 k := by
+    simpa [f10, f] using
+      (Finset.sum_sub_distrib (s := Finset.univ)
+        (f := fun x : Fin n => unary x a (pairState i j 1 0 x))
+        (g := fun x : Fin n => unary x b (pairState i j 1 0 x))).symm
+  have hterm : ∀ k : Fin n, f00 k + f11 k - f01 k - f10 k = 0 := by
+    intro k
+    simpa [f, f00, f11, f01, f10] using
+      pairState_cross_unary_zero i j k (fun x => unary k a x - unary k b x)
+  calc
+    ((∑ x : Fin n, unary x a (pairState i j 0 0 x)) -
+        (∑ x : Fin n, unary x b (pairState i j 0 0 x))) +
+        ((∑ x : Fin n, unary x a (pairState i j 1 1 x)) -
+          (∑ x : Fin n, unary x b (pairState i j 1 1 x))) -
+        ((∑ x : Fin n, unary x a (pairState i j 0 1 x)) -
+          (∑ x : Fin n, unary x b (pairState i j 0 1 x))) -
+      ((∑ x : Fin n, unary x a (pairState i j 1 0 x)) -
+        (∑ x : Fin n, unary x b (pairState i j 1 0 x)))
+        = (∑ k : Fin n, f00 k) + ∑ k : Fin n, f11 k - ∑ k : Fin n, f01 k - ∑ k : Fin n, f10 k := by
+          rw [hsplit00, hsplit11, hsplit01, hsplit10]
+    _
+        = ((∑ k : Fin n, f00 k) + ∑ k : Fin n, f11 k) -
+            ((∑ k : Fin n, f01 k) + ∑ k : Fin n, f10 k) := by
+              ring
+    _ = (∑ k : Fin n, (f00 k + f11 k)) - (∑ k : Fin n, (f01 k + f10 k)) := by
+          rw [← Finset.sum_add_distrib, ← Finset.sum_add_distrib]
+    _ = ∑ k : Fin n, ((f00 k + f11 k) - (f01 k + f10 k)) := by
+          simpa using
+            (Finset.sum_sub_distrib (s := Finset.univ)
+              (f := fun k : Fin n => f00 k + f11 k)
+              (g := fun k : Fin n => f01 k + f10 k)).symm
+    _ = ∑ k : Fin n, (f00 k + f11 k - f01 k - f10 k) := by
+          apply Finset.sum_congr rfl
+          intro k hk
+          ring
+    _ = 0 := by
+          apply Finset.sum_eq_zero
+          intro k hk
+          exact hterm k
+
+theorem decisionRelevantInteractionGraph_eq_bot_of_unaryReduction
+    {A : Type*} {n : ℕ} {u : A → (Fin n → Fin 2) → ℤ}
+    (hred : DecisionRelevantUnaryReduction u) :
+    decisionRelevantInteractionGraph u = (⊥ : SimpleGraph (Fin n)) := by
+  ext i j
+  by_cases h : i = j
+  · subst h
+    simp [decisionRelevantInteractionGraph, InteractionGraph]
+  · have hnone : ¬ HasDecisionRelevantBinaryPairInteraction u i j := by
+      rintro ⟨a, b, hab⟩
+      exact hab (decisionRelevantUnaryReduction_actionGapCrossDifference_zero hred a b i j)
+    simp [decisionRelevantInteractionGraph, InteractionGraph, h, hnone]
+
+theorem decisionRelevantInteractionGraph_eq_top_of_complete
+    {A : Type*} {n : ℕ} {u : A → (Fin n → Fin 2) → ℤ}
+    (hfull : ∀ i j : Fin n, i ≠ j → HasDecisionRelevantBinaryPairInteraction u i j) :
+    decisionRelevantInteractionGraph u = (⊤ : SimpleGraph (Fin n)) := by
+  ext i j
+  by_cases h : i = j
+  · subst h
+    simp [decisionRelevantInteractionGraph, InteractionGraph]
+  · have hrel : HasDecisionRelevantBinaryPairInteraction u i j := hfull i j h
+    simp [decisionRelevantInteractionGraph, InteractionGraph, h, hrel]
+
 theorem binary_pairwise_symmetry_decision_relevant_dichotomy
     {A : Type*} {n : ℕ} {u : A → (Fin n → Fin 2) → ℤ}
     (pw : PairwiseUtility u)
@@ -306,5 +425,16 @@ theorem binary_pairwise_symmetry_decision_relevant_dichotomy
     have heq := actionGapCrossDifference_eq_of_symmetry (u := u) hsym a a0 i j p q hij.ne hpq
     rw [heq]
     exact hneq
+
+theorem binary_pairwise_symmetry_decisionRelevantGraph_dichotomy
+    {A : Type*} {n : ℕ} {u : A → (Fin n → Fin 2) → ℤ}
+    (pw : PairwiseUtility u)
+    (hsym : SymmetricUtility (fun a s => u a s.state))
+    (a0 : A) :
+    decisionRelevantInteractionGraph u = (⊥ : SimpleGraph (Fin n)) ∨
+      decisionRelevantInteractionGraph u = (⊤ : SimpleGraph (Fin n)) := by
+  rcases binary_pairwise_symmetry_decision_relevant_dichotomy pw hsym a0 with hred | hfull
+  · exact Or.inl (decisionRelevantInteractionGraph_eq_bot_of_unaryReduction hred)
+  · exact Or.inr (decisionRelevantInteractionGraph_eq_top_of_complete hfull)
 
 end Paper4dFrontier

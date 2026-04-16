@@ -271,7 +271,7 @@ Thus the definition ranges over a fixed finite vocabulary of local rooted config
 
 Polynomial-time checkability is the minimal algorithmic requirement. A tractability characterization that cannot itself be recognized efficiently only relocates the computational difficulty from exact certification to the membership test for the classifier.
 
-Closure-law invariance is the semantic requirement used in the orbit-witness arguments of Section~\ref{sec:frontier-program}. It is forced by the Block~6 invariance theorems, because exact certification itself is unchanged by relabelings, positive affine utility reparameterizations, duplication operations, and binary irrelevant-coordinate extensions.
+Closure-law invariance is the semantic requirement used in the orbit-witness arguments of Section~\ref{sec:frontier-program}. It is forced by the Block~6 invariance theorems, because exact certification itself is unchanged by relabelings, positive affine utility reparameterizations, duplication operations, and binary irrelevant-coordinate extensions. These operations are an explicit theorem-verified generating family of quotient-preserving presentation moves. They are not claimed maximal.
 
 Structural extractability distinguishes structural characterizations from purely semantic ones. Without such a condition, one can define predicates directly on optimizer behavior or on the solved certification instance itself, bypassing the stated aim of classifying tractability by representation-level structure.
 
@@ -331,7 +331,7 @@ Let $X_U$ be a representation-relative output object whose type and admissibilit
 The transported-output case packages the witness-by-witness output maps together with the corresponding admissibility preservation laws. The same correctness-on-domain theorem then applies to representation-relative hypotheses, estimators, policies, and randomized procedures.
 \end{proof}
 
-Correctness already forces the same orbit agreement. The closure laws therefore supply the representation-level congruence needed for the orbit-gap program: once two slices are related by these theorem-forced presentation equivalences, any correct tractability classifier must identify them. Theorem~\ref{thm:closure-sound-package-no-go} therefore applies to any correct classifier on a closure-closed domain once the target notion is tractability itself.
+Correctness already forces the same orbit agreement. The closure laws therefore supply the representation-level congruence needed for the orbit-gap program: once two slices are related by these theorem-forced presentation equivalences, any correct tractability classifier must identify them. The remaining question is whether the resulting closure-hull classifier can be recognized inside the finite structural regime.
 
 \leanmetapending{\LH{FR200}}
 \begin{proposition}[The Finite Structural Class Is Nonempty]\label{prop:admissibility-inhabited}
@@ -555,6 +555,10 @@ Every exact correctness claim admits a coordinate presentation, so the question 
 
 Proposition~\ref{prop:every-exact-specification-admits-coordinate-presentation} gives the universal one-coordinate realization, while Propositions~\ref{prop:finite-specifications-admit-coordinate-presentations}--\ref{prop:finite-specifications-admit-low-dimensional-boolean-presentations} show that the same semantics can also admit finite or countable Boolean realizations. Vacuous and informative encodings are therefore different presentations of one semantic object, not different semantics. For example, SAT appears through its exact yes/no validity predicate, sorting through the set of correctly sorted outputs for each input, and fixed approximation or PAC guarantees through the outputs meeting the stated threshold.
 
+This universality does not dilute the frontier theorem. It sharpens it. The canonical optimizer-set exact specifications of binary pairwise slices are rigorously specified problems inside the same semantic universe, so any universal exact-certification characterization must already handle that witness class and inherits the same no-go on restriction; see Corollary~\ref{cor:universal-exact-specification-no-go} below.
+
+Low-dimensional Boolean presentation and binary pairwise presentation are different notions. The universal reduction above proves the former, not the latter. No universal pairwise normal-form theorem is used anywhere in the frontier argument. The universal no-go works by witness restriction: the binary pairwise obstruction class is already internal to the universal semantic framework, so a treatment claiming universal scope must already survive restriction to that class.
+
 \leanmetapending{\LHrng{FR}{268}{282}}
 \begin{corollary}[Statistical Guarantee Semantics Transfer]\label{cor:statistical-guarantee-transfer}
 Let $R(s,a)$ specify the admissible outputs for a PAC guarantee, regret guarantee, statistical risk guarantee, anytime guarantee, or finite-horizon guarantee at state $s$. Then exact feature sufficiency and relevance for that guarantee semantics reduce to exact relevance certification for the induced decision problem.
@@ -699,4 +703,4 @@ Let $C$ be any claim about exact output semantics that depends only on admissibl
 Semantically extensional exact claims descend to the quotient by admissible-output equivalence. If $C$ takes the same truth value on any two semantics with the same admissible-output equivalence, then $C$ factors through that quotient.
 \end{proof}
 
-Closure-law invariance is theorem-forced. Theorem~\ref{thm:correct-classifier-forces-invariance} shows that correctness already forces closure-orbit agreement, and Theorem~\ref{thm:closure-sound-package-no-go} together with Proposition~\ref{prop:logical-dependency-no-go} shows that this theorem-forced congruence is the only load-bearing hypothesis in the no-go theorem. Clauses 1, 3, and 4 are guardrails against the failure modes identified in Proposition~\ref{prop:oracle-loophole}.
+Closure-law invariance is theorem-forced. Theorem~\ref{thm:correct-classifier-forces-invariance} shows that correctness already forces closure-orbit agreement, and Theorem~\ref{thm:closure-sound-package-no-go} together with Proposition~\ref{prop:logical-dependency-no-go} shows that this theorem-forced congruence is the only hypothesis used in the no-go theorem. Clauses 1, 3, and 4 are guardrails against the failure modes identified in Proposition~\ref{prop:oracle-loophole}.

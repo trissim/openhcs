@@ -61,6 +61,7 @@ import Paper4dFrontier.DecisionRelevantPairwiseDichotomy
 import Paper4dFrontier.DimensionalNoiseExtension
 import Paper4dFrontier.DistinctActionProfiles
 import Paper4dFrontier.EnumerationBounds
+import Paper4dFrontier.ExactSpecificationNoGo
 import Paper4dFrontier.FamilyAxioms
 import Paper4dFrontier.FirstTwoIndicator
 import Paper4dFrontier.FullBinaryPairwiseDomain
@@ -78,6 +79,7 @@ import Paper4dFrontier.StructuralWitnesses
 import Paper4dFrontier.SymmetryOnlyWitness
 import Paper4dFrontier.SymmetryRankWitness
 import Paper4dFrontier.TensorRestriction
+import Paper4dFrontier.TransferredFullDomainNoGo
 import Paper4dFrontier.TreeDeletion
 import Paper4dFrontier.TreeHellyEquivFinset
 import Paper4dFrontier.TreeHellyFinset

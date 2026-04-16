@@ -31,6 +31,13 @@ The optimizer-relevant version needs one extra layer. Raw pair interaction is st
 In the same binary pairwise-symmetric regime, either all action-dependent pair effects collapse into a unary-coordinate reduction after removing an action-independent base state term, or every distinct coordinate pair is decision-relevantly interacting for some action gap.
 \end{proposition}
 
+\leanmetapending{\LH{FR359}}
+\begin{proposition}[Symmetric Binary Pairwise Decision-Relevant Graphs Are Either Empty or Complete]\label{prop:symmetric-binary-pairwise-graph-dichotomy}
+In the same binary pairwise-symmetric regime, the decision-relevant interaction graph is either edgeless or complete.
+\end{proposition}
+
+Within this regime the decision-relevant graph therefore collapses to a two-point algebra. Later in the subsection, action-dependent, state-independent utility offsets are shown to preserve this graph, so the offset-normalized decision-relevant graph is a concrete successor-class candidate with existing algebraic control.
+
 A coarse hardness heuristic therefore fails. Even complete genuine pair interaction and failure of coordinate symmetry do not force hardness by themselves: one can still have a constant optimizer. Any eventual frontier theorem must therefore quotient out optimizer-degenerate phenomena, not just declared or utility-level interaction density.\leanmeta{\LH{FR124}}
 
 Action-specific utility offsets leave the decision-relevant interaction graph unchanged, yet they can turn a family with nonconstant optimizer behavior into one with a constant optimizer while preserving dense decision-relevant structure. Any true hardness theorem in this regime must therefore normalize away action offsets explicitly, not merely require dense decision-relevant interaction.\leanmeta{\LHrng{FR}{125}{127}}
@@ -44,6 +51,8 @@ One might hope that a strict unary-to-pair margin bound rescues the dichotomy. D
 \subsection*{Admissible Closure-Orbit No-Go Program}
 
 The obstruction families above lead to a uniform negative statement because they admit explicit disagreements inside a single closure orbit.
+
+Theorems~\ref{thm:dominant-pair-admissible-no-go}--\ref{thm:offset-admissible-no-go} concern four representation-level predicates. Corollary~\ref{cor:no-correct-tractability-classifier} and Corollary~\ref{cor:full-binary-pairwise-no-go} concern finite structural access to tractability on the same domain.
 
 The generic statement comes before the family-specific one. Proposition~\ref{prop:orbit-gap-completeness} identifies orbit gaps as the complete obstruction criterion for exact classification by closure-law-invariant predicates. Theorem~\ref{thm:closure-sound-package-no-go} applies that criterion to any closure-sound predicate class. Corollary~\ref{cor:no-correct-tractability-classifier} removes even explicit closure-soundness by deriving closure-orbit agreement from correctness itself. Definition~\ref{def:admissible-normalization} specifies the finite structural class used inside that generic framework.
 
@@ -142,7 +151,7 @@ Let $P$ be a normalization predicate in the finite structural class. Then $P$ is
 If $P$ belonged to the finite structural class and were an exact tractability characterization, it would have to decide each of the four obstruction predicates above. Theorem~\ref{thm:dominant-pair-admissible-no-go}, Theorem~\ref{thm:margin-masking-admissible-no-go}, Theorem~\ref{thm:ghost-action-admissible-no-go}, and Theorem~\ref{thm:offset-admissible-no-go} show that this is impossible. Hence no predicate in the finite structural class yields the desired frontier theorem.
 \end{proof}
 
-The four obstruction families are witnesses for the orbit-gap template (Proposition~\ref{prop:orbit-gap-template}), not the scope of Theorem~\ref{thm:admissible-collapse-four-families}. Nor are they four different proof mechanisms: the witness move is uniform, while the target predicates differ. The theorem ranges over the entire finite structural class. The role of the four families is to show that the same closure-orbit mechanism already destabilizes several natural representation-level predicates, while Proposition~\ref{prop:orbit-gap-completeness} identifies orbit gaps as the complete obstruction criterion for exact classification by closure-law-invariant predicates.
+The four obstruction families are witnesses for the orbit-gap template (Proposition~\ref{prop:orbit-gap-template}), not the scope of Theorem~\ref{thm:admissible-collapse-four-families}. Nor are they four different proof mechanisms: the witness move is uniform, while the target predicates differ. The theorem ranges over the entire finite structural class. The role of the four families is to show that the same closure-orbit mechanism destabilizes several natural representation-level predicates, while Proposition~\ref{prop:orbit-gap-completeness} identifies orbit gaps as the complete obstruction criterion for exact classification by closure-law-invariant predicates.
 
 Table~\ref{tab:obstruction-families-summary} summarizes the target predicates and the corresponding collapse modes.
 
@@ -203,15 +212,15 @@ Immediate from Theorem~\ref{thm:closure-sound-package-no-go}, since only the clo
 \end{proof}
 
 \leanmetapending{\LH{FR193}, \LHrng{FR}{197}{199}}
-\begin{corollary}[No Correct Tractability Classifier]\label{cor:no-correct-tractability-classifier}
-Let $C$ be any correct tractability classifier on a domain that is closed under the closure laws and contains the four obstruction families. Then $C$ cannot yield an exact tractability characterization across those families. In particular, no procedure assigning verdicts to representations can correctly predict tractability across the four obstruction families, regardless of whether the procedure tracks closure-invariant features internally.
+\begin{corollary}[No Finite Structural Tractability Classifier]\label{cor:no-correct-tractability-classifier}
+Let $C$ be a tractability classifier on a domain that is closed under the closure laws and contains the four obstruction families. If the predicate computed by $C$ belongs to the finite structural class, then $C$ cannot yield an exact tractability characterization across those families.
 \end{corollary}
 
 \begin{proof}
-By Theorem~\ref{thm:correct-classifier-forces-invariance}, any such classifier must agree on closure orbits and is therefore closure-law invariant on its domain. Theorem~\ref{thm:closure-sound-package-no-go} then rules out exact characterization across the four obstruction families.
+If $C$ were correct, Theorem~\ref{thm:correct-classifier-forces-invariance} would force closure-orbit agreement on its domain. If its predicate also belonged to the finite structural class, Theorem~\ref{thm:closure-sound-package-no-go} would rule out exact characterization across the four obstruction families.
 \end{proof}
 
-Correctness alone yields the same four-family no-go on any closure-closed domain containing the obstruction families. Theorem~\ref{thm:closure-sound-package-no-go} isolates closure-law invariance as the load-bearing hypothesis, Proposition~\ref{prop:logical-dependency-no-go} identifies the exact dependency of the contradiction, and Theorem~\ref{thm:correct-classifier-forces-invariance} derives the same orbit agreement directly from correctness. Corollary~\ref{cor:domain-restriction-only-removes-orbit-gaps} gives the domain-relative form: restricting the domain helps only if it removes all orbit gaps for the target notion.
+Correctness alone still forces closure-orbit agreement on any closure-closed domain containing the obstruction families. Theorem~\ref{thm:closure-sound-package-no-go} isolates closure-law invariance as the only hypothesis used in the contradiction, Proposition~\ref{prop:logical-dependency-no-go} identifies the exact dependency of the contradiction, and Theorem~\ref{thm:correct-classifier-forces-invariance} derives the same orbit agreement directly from correctness. The abstract closure-hull classifier therefore exists whenever tractability is orbit-constant on the domain, but Corollary~\ref{cor:no-correct-tractability-classifier} says that this classifier is not available inside the finite structural regime. Corollary~\ref{cor:domain-restriction-only-removes-orbit-gaps} gives the domain-relative form: restricting the domain helps only if it removes all orbit gaps for the target notion.
 
 \leanmetapending{\LHrng{FR}{348}{349}}
 \begin{proposition}[Full Binary Pairwise Domain Is Closure-Closed]\label{prop:full-binary-pairwise-domain-closure}
@@ -222,13 +231,26 @@ Let $\mathcal U$ be the class of all binary pairwise slices. Then $\mathcal U$ i
 Each theorem-forced presentation move maps binary pairwise slices to binary pairwise slices. The four obstruction families are binary pairwise slices by construction.
 \end{proof}
 
+The binary pairwise domain is already sufficient for the obstruction. Any larger closure-closed representation class containing $\mathcal U$ inherits the same impossibility conclusion by restriction.
+
 \leanmetapending{\LH{FR350}}
-\begin{corollary}[No Exact Classifier on the Full Binary Pairwise Domain]\label{cor:full-binary-pairwise-no-go}
-No correct tractability classifier yields an exact characterization across the four obstruction families on the full binary pairwise slice domain $\mathcal U$.
+\begin{corollary}[No Finite Structural Tractability Classifier on the Full Binary Pairwise Domain]\label{cor:full-binary-pairwise-no-go}
+No tractability classifier in the finite structural class yields an exact characterization across the four obstruction families on the full binary pairwise slice domain $\mathcal U$.
 \end{corollary}
 
 \begin{proof}
 Apply Corollary~\ref{cor:no-correct-tractability-classifier} together with Proposition~\ref{prop:full-binary-pairwise-domain-closure}.
+\end{proof}
+
+On this domain, tractability is constant on closure orbits, so Corollary~\ref{cor:orbit-gap-completeness-domain} yields an abstract exact closure-invariant classifier for tractability on $\mathcal U$. Corollary~\ref{cor:full-binary-pairwise-no-go} says that no such classifier belongs to the finite structural class. The four obstruction families witness this structural inaccessibility by showing that natural representation-level proxies have orbit gaps and therefore cannot serve as correct finite structural classifiers.
+
+\leanmetapending{\LH{FR351}, \LH{FR361}}
+\begin{corollary}[No Universal Exact-Certification Characterization Escapes the Binary Pairwise Obstruction]\label{cor:universal-exact-specification-no-go}
+Let $G$ be a tractability predicate defined on all rigorously specified exact-correctness problems. Suppose that, for every binary pairwise slice $U$, the verdict of $G$ on the canonical optimizer-set exact specification induced by $U$ agrees with polynomial-time exact optimizer-set search on $U$. Then no exact characterization extracted from $G$ decides the four obstruction families on the full binary pairwise domain. Equivalently, no universal exact-certification characterization over rigorously specified problems escapes the obstruction by passing to the semantic layer.
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+Corollary~\ref{cor:universal-scope-rigorously-specified-problems} places the canonical optimizer-set exact specifications of binary pairwise slices inside the universal exact-semantics framework. Restrict $G$ to that witness class and apply the exact-specification no-go for optimizer-set search semantics. The contradiction is therefore inherited by any treatment claiming universal exact-certification scope.
 \end{proof}
 
 \leanmetapending{\LHrng{FR}{201}{204}}
@@ -308,7 +330,7 @@ Let $D$ be a closure-closed domain and let $Q$ have no orbit gaps on $D$. Then $
 Correctness on $D$ follows from the no-orbit-gap assumption. Minimality follows because every exact closure-law-invariant classifier must contain the orbit saturation of the positive part $D \cap Q$.
 \end{proof}
 
-Applied to exact tractability, Theorem~\ref{thm:correct-classifier-forces-invariance} places every correct tractability classifier on a closure-closed domain inside this regime. Orbit gaps are therefore the complete obstruction criterion for the universal-scope no-go once correctness is imposed.
+Applied to exact tractability, Theorem~\ref{thm:correct-classifier-forces-invariance} places every correct tractability classifier on a closure-closed domain inside this regime. Orbit gaps are therefore the complete obstruction criterion for exact closure-invariant classification, while the finite structural no-go concerns which of those classifiers remain accessible inside the local structural regime.
 
 \leanmetapending{\LHrng{FR}{252}{256}}
 \begin{corollary}[Domain Restriction Helps Only by Removing Orbit Gaps]\label{cor:domain-restriction-only-removes-orbit-gaps}

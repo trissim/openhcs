@@ -44,4 +44,6 @@ import Paper4dFrontier.ComputeCostExternalOutputs
 import Paper4dFrontier.ComputeCostPayloads
 import Paper4dFrontier.ComputeCostApplications
 import Paper4dFrontier.StatisticalSemanticsApplications
+import Paper4dFrontier.TransferredFullDomainNoGo
+import Paper4dFrontier.ExactSpecificationNoGo
 import Paper4dFrontier.HandleAliases

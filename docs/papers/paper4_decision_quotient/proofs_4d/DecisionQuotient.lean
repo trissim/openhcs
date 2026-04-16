@@ -27,6 +27,7 @@ import DecisionQuotient.Tractability.Dominance
 import DecisionQuotient.Tractability.TreeStructure
 import DecisionQuotient.Tractability.FPT
 import DecisionQuotient.Tractability.Dimensional
+import DecisionQuotient.UniversalBinaryPairwiseReduction
 import DecisionQuotient.QueryComplexity
 import DecisionQuotient.Reduction
 import DecisionQuotient.Dichotomy

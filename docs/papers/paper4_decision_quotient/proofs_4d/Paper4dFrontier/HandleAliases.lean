@@ -41,6 +41,8 @@ import Paper4dFrontier.ComputeCostExternalOutputs
 import Paper4dFrontier.ComputeCostPayloads
 import Paper4dFrontier.ComputeCostApplications
 import Paper4dFrontier.StatisticalSemanticsApplications
+import Paper4dFrontier.TransferredFullDomainNoGo
+import Paper4dFrontier.ExactSpecificationNoGo
 import Paper4dFrontier.RealTreewidthWitnesses
 import DecisionQuotient.Sufficiency
 import DecisionQuotient.Quotient
@@ -367,6 +369,9 @@ abbrev FR355 := @closureLawInvariant_iff_closureHull_eq_self
 abbrev FR356 := @no_orbitGapOn_iff_closureHull_disjoint
 abbrev FR357 := @exact_classifiable_by_closureLawInvariant_onDomain_iff_closureHull_disjoint
 abbrev FR358 := @closureHull_least_exact_classifier_onDomain_of_no_orbitGapOn
+abbrev FR359 := @binary_pairwise_symmetry_decisionRelevantGraph_dichotomy
+abbrev FR360 := @no_correct_optimizerSetSearch_exactSpecification_classifier_on_fullBinaryPairwiseDomain
+abbrev FR361 := @no_optimizerSetSearch_exactSpecification_characterization_on_fullBinaryPairwiseDomain
 abbrev FR309 := @outputSemantics_realized_by_singletonMeasurableCoordinatePresentation
 abbrev FR310 := @outputSemantics_realized_by_singletonContinuousCoordinatePresentation
 abbrev FR311 := @encodable_stateSpace_admits_countableBooleanPresentation
