@@ -36,6 +36,43 @@ Any statistic that is a function of the sufficient-set family and relevant-coord
 
 Every certification statistic built from sufficient sets or relevant coordinates factors through the decision quotient relation. Counts of sufficient sets, minimal sufficient sets, and relevant coordinates are therefore quotient invariants.
 
+\leanmetapending{\LH{FR352}}
+\begin{proposition}[Minimal Sufficient Sets Are Canonical on Product Spaces]\label{prop:minimal-sufficient-canonical}
+Assume the coordinate space is a product space with decidable coordinate equality, and let $I$ be a minimal sufficient set. Then for every coordinate $i$,
+\[
+i \in I \quad\Longleftrightarrow\quad i \text{ is relevant}.
+\]
+Consequently, whenever a minimal sufficient set exists, it is unique.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Minimality forces every coordinate in $I$ to matter, because otherwise erasing it would preserve sufficiency and contradict minimality. Conversely, every relevant coordinate must lie in every sufficient set, hence in $I$. The displayed equivalence therefore identifies $I$ with the relevant-coordinate set, and uniqueness follows immediately.
+\end{proof}
+
+\leanmetapending{\LH{FR353}}
+\begin{corollary}[Sufficient Sets Form a Principal Filter]\label{cor:sufficient-principal-filter}
+Under the same product-space assumptions, if $I$ is a minimal sufficient set, then a coordinate set $J$ is sufficient if and only if $I \subseteq J$.
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+By Proposition~\ref{prop:minimal-sufficient-canonical}, the minimal sufficient set is exactly the relevant-coordinate set. Every sufficient set must contain all relevant coordinates, and upward closure of sufficiency gives the converse.
+\end{proof}
+
+These two statements give a genuinely positive global structure theorem: once a minimal sufficient set exists, the sufficient-set family is not arbitrary. It is completely organized by one canonical generating set.
+
+\leanmetapending{\LH{FR354}}
+\begin{corollary}[Structural Rank Lower-Bounds Any Sufficient Description]\label{cor:srank-lower-bounds-sufficient}
+Let $\mathcal{D}$ be a decision problem with structural rank $\mathrm{srank}(\mathcal{D})$, and let $I$ be any sufficient coordinate set. Then
+\[
+\mathrm{srank}(\mathcal{D}) \le |I|.
+\]
+In particular, no sufficient description can use fewer coordinates than the number of relevant coordinates.
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+Every sufficient set contains all relevant coordinates, and structural rank is exactly the cardinality of the relevant-coordinate support. The inequality follows immediately.
+\end{proof}
+
 \leanmetapending{\LHrng{FR}{176}{177}}
 \begin{proposition}[Zero-Distortion Summaries Refine the Optimizer Quotient]\label{prop:zero-distortion-refines-quotient}
 Let $\sigma : S \to C$ be a summary map. Suppose that

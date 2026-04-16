@@ -42,6 +42,7 @@ import Paper4dFrontier.ComputeCostPayloads
 import Paper4dFrontier.ComputeCostApplications
 import Paper4dFrontier.StatisticalSemanticsApplications
 import Paper4dFrontier.RealTreewidthWitnesses
+import DecisionQuotient.Sufficiency
 import DecisionQuotient.Quotient
 import DecisionQuotient.Tractability.StructuralRank
 import DecisionQuotient.Information
@@ -359,6 +360,9 @@ abbrev FR306 := @finite_outputSemantics_realized_by_exactCertification
 abbrev FR307 := @agreeOn_univ_iff_eq_of_singletonIdentityCoordinateSpace
 abbrev FR308 := @outputSemantics_admits_coordinatePresentation
 abbrev FR351 := @ExactCorrectnessSpecification.universal_scope_over_rigorously_specified_problems
+abbrev FR352 := @DecisionQuotient.DecisionProblem.minimalSufficient_eq_relevant'
+abbrev FR353 := @DecisionQuotient.DecisionProblem.sufficientSets_principal'
+abbrev FR354 := @DecisionQuotient.srank_le_sufficient_card
 abbrev FR309 := @outputSemantics_realized_by_singletonMeasurableCoordinatePresentation
 abbrev FR310 := @outputSemantics_realized_by_singletonContinuousCoordinatePresentation
 abbrev FR311 := @encodable_stateSpace_admits_countableBooleanPresentation
