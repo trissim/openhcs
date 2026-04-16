@@ -262,6 +262,52 @@ Let $D$ be a closure-closed domain of slices, and let $T$ be a target predicate 
 The forward implication is immediate from closure-law invariance. For the reverse implication, take the closure hull of $D \cap T$; if $T$ has no orbit-gap witness inside $D$, that closure hull agrees with $T$ on $D$.
 \end{proof}
 
+\subsection*{Orbit Algebra of Exact Classification}
+
+The positive side of orbit-gap completeness is as important as the obstruction. Exact classification does exist when the target predicate is already constant on closure orbits, and the canonical classifier is obtained by orbit saturation.
+
+Write
+\[
+\operatorname{Hull}(Q)(U) \;:\!\iff\; \exists V\,\bigl(V \sim_{\mathrm{cl}} U \land Q(V)\bigr)
+\]
+for the closure hull of a slice predicate $Q$, where $\sim_{\mathrm{cl}}$ denotes closure equivalence.
+
+\leanmetapending{\LH{FR355}}
+\begin{proposition}[Closure-Invariant Predicates Are Exactly the Fixed Points of Orbit Saturation]\label{prop:closurehull-fixed-points}
+For any slice predicate $Q$, the following are equivalent:
+\begin{enumerate}
+\item $Q$ is closure-law invariant;
+\item for every slice $U$, $\operatorname{Hull}(Q)(U) \iff Q(U)$.
+\end{enumerate}
+Equivalently, closure-law-invariant predicates are exactly the fixed points of the orbit-saturation operator $\operatorname{Hull}$.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+If $Q$ is closure-law invariant, it is constant on closure orbits, so adding all closure-equivalent slices does not enlarge it. Conversely, if $Q$ agrees with its orbit saturation, then any closure-equivalent pair lies simultaneously inside or outside $Q$, which is exactly closure-law invariance.
+\end{proof}
+
+\leanmetapending{\LHrng{FR}{356}{357}}
+\begin{theorem}[Exact Classification Equals Hull Separation]\label{thm:exact-classification-hull-separation}
+Let $D$ be a closure-closed domain and let $Q$ be a target predicate on $D$. Then $Q$ admits an exact characterization on $D$ by a closure-law-invariant predicate if and only if the positive and negative orbit saturations are disjoint:
+\[
+\operatorname{Hull}(D \cap Q) \cap \operatorname{Hull}(D \cap \neg Q) = \varnothing.
+\]
+Equivalently, exact classification fails exactly when one closure orbit meets both the positive and negative parts of the domain.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+The orbit-gap criterion says exact classification fails exactly when some closure orbit contains both a positive and a negative point of $D$. That is precisely the statement that the positive and negative orbit saturations overlap. Disjointness is therefore equivalent to exact classifiability.
+\end{proof}
+
+\leanmetapending{\LH{FR358}}
+\begin{corollary}[Least Exact Closure-Invariant Classifier]\label{cor:least-exact-classifier}
+Let $D$ be a closure-closed domain and let $Q$ have no orbit gaps on $D$. Then $\operatorname{Hull}(D \cap Q)$ is the least closure-law-invariant predicate that classifies $Q$ exactly on $D$: it is correct on $D$, and every other exact closure-law-invariant classifier on $D$ contains it.
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+Correctness on $D$ follows from the no-orbit-gap assumption. Minimality follows because every exact closure-law-invariant classifier must contain the orbit saturation of the positive part $D \cap Q$.
+\end{proof}
+
 Applied to exact tractability, Theorem~\ref{thm:correct-classifier-forces-invariance} places every correct tractability classifier on a closure-closed domain inside this regime. Orbit gaps are therefore the complete obstruction criterion for the universal-scope no-go once correctness is imposed.
 
 \leanmetapending{\LHrng{FR}{252}{256}}

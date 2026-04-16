@@ -893,6 +893,130 @@ theorem closureHull_closureLawInvariant (Q : BinaryPairwiseSlice → Prop) :
   · intro U V h
     exact closureHull_iff_of_closureEquivalent (Relation.EqvGen.rel _ _ (ClosureStep.irrelevantCoordinate h))
 
+theorem closureHull_mono {Q R : BinaryPairwiseSlice → Prop}
+    (hQR : ∀ U : BinaryPairwiseSlice, Q U → R U) :
+    ∀ U : BinaryPairwiseSlice, ClosureHull Q U → ClosureHull R U := by
+  intro U hU
+  rcases hU with ⟨V, hVU, hQV⟩
+  exact ⟨V, hVU, hQR V hQV⟩
+
+theorem closureHull_idempotent {Q : BinaryPairwiseSlice → Prop}
+    {U : BinaryPairwiseSlice} :
+    ClosureHull (ClosureHull Q) U ↔ ClosureHull Q U := by
+  constructor
+  · intro h
+    rcases h with ⟨V, hVU, hV⟩
+    exact (closureHull_iff_of_closureEquivalent hVU).mp hV
+  · intro h
+    exact closureHull_intro h
+
+theorem closureHull_eq_self_of_closureLawInvariant
+    {Q : BinaryPairwiseSlice → Prop} (hInv : ClosureLawInvariant Q)
+    {U : BinaryPairwiseSlice} :
+    ClosureHull Q U ↔ Q U := by
+  constructor
+  · intro h
+    rcases h with ⟨V, hVU, hQV⟩
+    exact (closureLawInvariant_iff_of_closureEquivalent hInv hVU).mp hQV
+  · intro h
+    exact closureHull_intro h
+
+theorem closureLawInvariant_iff_closureHull_eq_self
+    {Q : BinaryPairwiseSlice → Prop} :
+    ClosureLawInvariant Q ↔ ∀ U : BinaryPairwiseSlice, ClosureHull Q U ↔ Q U := by
+  constructor
+  · intro hInv U
+    exact closureHull_eq_self_of_closureLawInvariant hInv
+  · intro hFix
+    apply closureLawInvariant_of_iff_of_closureEquivalent
+    intro U V hEqv
+    exact (hFix U).symm.trans ((closureHull_iff_of_closureEquivalent hEqv).trans (hFix V))
+
+theorem closureHull_least_closureLawInvariant
+    {Q P : BinaryPairwiseSlice → Prop} (hP : ClosureLawInvariant P)
+    (hQP : ∀ U : BinaryPairwiseSlice, Q U → P U)
+    {U : BinaryPairwiseSlice} :
+    ClosureHull Q U → P U := by
+  intro hU
+  rcases hU with ⟨V, hVU, hQV⟩
+  have hPV : P V := hQP V hQV
+  exact (closureLawInvariant_iff_of_closureEquivalent hP hVU).mp hPV
+
+theorem closureHull_le_of_correctOnDomain
+    {D Q P : BinaryPairwiseSlice → Prop} (hP : ClosureLawInvariant P)
+    (hCorrect : CorrectOnDomain D Q P) {U : BinaryPairwiseSlice} :
+    ClosureHull (fun V => D V ∧ Q V) U → P U := by
+  intro hU
+  rcases hU with ⟨V, hVU, hDV, hQV⟩
+  have hPV : P V := (hCorrect hDV).2 hQV
+  exact (closureLawInvariant_iff_of_closureEquivalent hP hVU).mp hPV
+
+theorem closureHull_compl_le_of_correctOnDomain
+    {D Q P : BinaryPairwiseSlice → Prop} (hP : ClosureLawInvariant P)
+    (hCorrect : CorrectOnDomain D Q P) {U : BinaryPairwiseSlice} :
+    ClosureHull (fun V => D V ∧ ¬ Q V) U → ¬ P U := by
+  intro hU hPU
+  rcases hU with ⟨V, hVU, hDV, hNotQV⟩
+  have hPV : P V := (closureLawInvariant_iff_of_closureEquivalent hP hVU).mpr hPU
+  exact hNotQV ((hCorrect hDV).1 hPV)
+
+theorem correctOnDomain_of_closureHull_separation
+    {D Q P : BinaryPairwiseSlice → Prop}
+    (hPos : ∀ ⦃U : BinaryPairwiseSlice⦄,
+      ClosureHull (fun V => D V ∧ Q V) U → P U)
+    (hNeg : ∀ ⦃U : BinaryPairwiseSlice⦄,
+      ClosureHull (fun V => D V ∧ ¬ Q V) U → ¬ P U) :
+    CorrectOnDomain D Q P := by
+  intro U hDU
+  constructor
+  · intro hPU
+    by_contra hNotQU
+    exact hNeg (closureHull_intro ⟨hDU, hNotQU⟩) hPU
+  · intro hQU
+    exact hPos (closureHull_intro ⟨hDU, hQU⟩)
+
+theorem correctOnDomain_iff_closureHull_separation
+    {D Q P : BinaryPairwiseSlice → Prop} (hP : ClosureLawInvariant P) :
+    CorrectOnDomain D Q P ↔
+      ( (∀ ⦃U : BinaryPairwiseSlice⦄,
+            ClosureHull (fun V => D V ∧ Q V) U → P U) ∧
+        (∀ ⦃U : BinaryPairwiseSlice⦄,
+            ClosureHull (fun V => D V ∧ ¬ Q V) U → ¬ P U) ) := by
+  constructor
+  · intro hCorrect
+    refine ⟨?_, ?_⟩
+    · intro U hU
+      exact closureHull_le_of_correctOnDomain hP hCorrect hU
+    · intro U hU
+      exact closureHull_compl_le_of_correctOnDomain hP hCorrect hU
+  · rintro ⟨hPos, hNeg⟩
+    exact correctOnDomain_of_closureHull_separation hPos hNeg
+
+theorem orbitGapOn_iff_closureHull_overlap
+    {D Q : BinaryPairwiseSlice → Prop} (hClosed : ClosureClosedDomain D) :
+    OrbitGapOn D Q ↔
+      ∃ U : BinaryPairwiseSlice,
+        ClosureHull (fun V => D V ∧ Q V) U ∧
+        ClosureHull (fun V => D V ∧ ¬ Q V) U := by
+  constructor
+  · rintro ⟨U, V, hDU, hEqv, hQU, hNotQV⟩
+    have hDV : D V := hClosed hDU hEqv
+    refine ⟨U, ?_, ?_⟩
+    · exact closureHull_intro ⟨hDU, hQU⟩
+    · exact ⟨V, Relation.EqvGen.symm _ _ hEqv, hDV, hNotQV⟩
+  · rintro ⟨U, hPos, hNeg⟩
+    rcases hPos with ⟨V, hVU, hDV, hQV⟩
+    rcases hNeg with ⟨W, hWU, hDW, hNotQW⟩
+    refine ⟨V, W, hDV, Relation.EqvGen.trans _ _ _ hVU (Relation.EqvGen.symm _ _ hWU), hQV, hNotQW⟩
+
+theorem no_orbitGapOn_iff_closureHull_disjoint
+    {D Q : BinaryPairwiseSlice → Prop} (hClosed : ClosureClosedDomain D) :
+    ¬ OrbitGapOn D Q ↔
+      ¬ ∃ U : BinaryPairwiseSlice,
+        ClosureHull (fun V => D V ∧ Q V) U ∧
+        ClosureHull (fun V => D V ∧ ¬ Q V) U := by
+  rw [orbitGapOn_iff_closureHull_overlap hClosed]
+
 theorem no_orbitGapOn_of_exact_classifiable_by_closureLawInvariant_onDomain
     {D Q P : BinaryPairwiseSlice → Prop} (hClosed : ClosureClosedDomain D)
     (hP : ClosureLawInvariant P) (hCorrect : CorrectOnDomain D Q P) :
@@ -916,6 +1040,20 @@ theorem closureHull_correctOnDomain_of_no_orbitGapOn
     exact hNoGap ⟨V, U, hDV, hEqv, hQV, hNotQU⟩
   · intro hQU
     exact ⟨U, Relation.EqvGen.refl U, hDU, hQU⟩
+
+theorem closureHull_least_exact_classifier_onDomain_of_no_orbitGapOn
+    {D Q : BinaryPairwiseSlice → Prop} (hClosed : ClosureClosedDomain D)
+    (hNoGap : ¬ OrbitGapOn D Q) :
+    ∃ P : BinaryPairwiseSlice → Prop,
+      ClosureLawInvariant P ∧
+      CorrectOnDomain D Q P ∧
+      ∀ ⦃C : BinaryPairwiseSlice → Prop⦄,
+        ClosureLawInvariant C → CorrectOnDomain D Q C →
+          ∀ ⦃U : BinaryPairwiseSlice⦄, P U → C U := by
+  refine ⟨ClosureHull (fun U => D U ∧ Q U), closureHull_closureLawInvariant _,
+    closureHull_correctOnDomain_of_no_orbitGapOn hClosed hNoGap, ?_⟩
+  intro C hC hCorrect U hU
+  exact closureHull_le_of_correctOnDomain hC hCorrect hU
 
 theorem exact_classifiable_by_closureLawInvariant_onDomain_iff_no_orbitGapOn
     {D Q : BinaryPairwiseSlice → Prop} (hClosed : ClosureClosedDomain D) :
@@ -941,6 +1079,16 @@ theorem no_exact_closureLawInvariant_classifier_onDomain_iff_orbitGapOn
     exact hNo hNoGap
   · intro hGap hExists
     exact hExists hGap
+
+theorem exact_classifiable_by_closureLawInvariant_onDomain_iff_closureHull_disjoint
+    {D Q : BinaryPairwiseSlice → Prop} (hClosed : ClosureClosedDomain D) :
+    (∃ P : BinaryPairwiseSlice → Prop,
+        ClosureLawInvariant P ∧ CorrectOnDomain D Q P) ↔
+      ¬ ∃ U : BinaryPairwiseSlice,
+        ClosureHull (fun V => D V ∧ Q V) U ∧
+        ClosureHull (fun V => D V ∧ ¬ Q V) U := by
+  rw [exact_classifiable_by_closureLawInvariant_onDomain_iff_no_orbitGapOn hClosed,
+    no_orbitGapOn_iff_closureHull_disjoint hClosed]
 
 theorem no_orbitGapOn_of_correct_classifier_onDomain_of_forcedOrbitAgreement
     {D Q : BinaryPairwiseSlice → Prop} (hClosed : ClosureClosedDomain D)
