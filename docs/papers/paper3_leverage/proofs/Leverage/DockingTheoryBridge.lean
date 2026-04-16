@@ -2,6 +2,7 @@ import Leverage.BridgeToDQ
 import DecisionQuotient.Summary
 import DecisionQuotient.Reduction_AllCoords
 import DecisionQuotient.Tractability.MolecularSrank
+import DecisionQuotient.Tractability.DiscretizedState
 import DecisionQuotient.Tractability.SampledDockingGap
 import DecisionQuotient.Tractability.SampledDockingCutoff
 
@@ -9,6 +10,7 @@ namespace Leverage
 
 open Classical DecisionQuotient
 open DecisionQuotient.Tractability
+open DecisionQuotient.Tractability.DiscretizedState
 open DecisionQuotient.Tractability.MolecularSrank
 open DecisionQuotient.Tractability.SampledDocking
 
@@ -45,5 +47,46 @@ theorem molecularDocking_boundedPocket_srank_bound
     @DecisionProblem.srank MDAction MDState (numMDCoordinates prob)
       (mdCoordinateSpaceStruct prob) prob.toDecisionProblem ≤ 3 * K + 3 * L :=
   docking_small_pocket_bound prob K L hStrictAll hBounded hPocket hLigand
+
+/-- Local paper3 exposure of sampled exact/coarse winner preservation. -/
+theorem sampledDocking_exactCoarse_opt_agree_of_gap
+    {NP NL N : Nat} (prob : SampledDockingProblem NP NL N)
+    (s : GridMDState NP NL N)
+    (aStar : SupportedAction prob.samples)
+    (delta : ℝ)
+    (hDelta : 0 ≤ delta)
+    (hStrict : StrictOpt prob.exactDecisionProblem aStar s)
+    (hPerturb : ∀ a,
+      |prob.exactDecisionProblem.utility a s - prob.coarseDecisionProblem.utility a s| ≤ delta)
+    (hBound : delta < StrictUtilityGap prob.exactDecisionProblem aStar s / 2) :
+    prob.exactDecisionProblem.Opt s = prob.coarseDecisionProblem.Opt s :=
+  DecisionQuotient.Tractability.SampledDockingGap.SampledDockingProblem.exact_coarse_opt_agree_of_gap
+    prob s aStar delta hDelta hStrict hPerturb hBound
+
+/-- Local paper3 exposure of inside-cutoff sufficiency for sampled docking. -/
+theorem sampledDocking_insideCutoff_sufficient
+    (prob : MDBindingProblem)
+    (samples : SampledActionFamily MDAction)
+    [Fintype MDAction]
+    [hProd : ProductSpace MDState (numMDCoordinates prob)]
+    (aStar : MDAction)
+    (hStrictAll : ∀ s, StrictOpt prob.toDecisionProblem aStar s ∨ ∃ a, StrictOpt prob.toDecisionProblem a s)
+    (hBounded : OutsideCutoffApproximationBounded prob)
+    (hCapture : ∀ s, ∃ a : SupportedAction samples, a.1 ∈ prob.toDecisionProblem.Opt s)
+    (hCompat : ∀ s s' i,
+      @CoordinateSpace.proj MDState (numMDCoordinates prob) hProd.toCoordinateSpace s i =
+        @CoordinateSpace.proj MDState (numMDCoordinates prob) hProd.toCoordinateSpace s' i ↔
+      mdProj prob s i = mdProj prob s' i)
+    (hinj : ∀ s s' : MDState,
+      (∀ i : Fin (numMDCoordinates prob),
+        @CoordinateSpace.proj MDState (numMDCoordinates prob) hProd.toCoordinateSpace s i =
+          @CoordinateSpace.proj MDState (numMDCoordinates prob) hProd.toCoordinateSpace s' i) →
+      s = s') :
+    @DecisionProblem.isSufficient (SupportedAction samples) MDState (numMDCoordinates prob)
+      hProd.toCoordinateSpace
+      (restrictedDecisionProblem prob.toDecisionProblem samples)
+      (potentialRelevantCoords prob) :=
+    DecisionQuotient.Tractability.SampledDockingCutoff.sampled_insideCutoff_sufficient
+      prob samples aStar hStrictAll hBounded hCapture hCompat hinj
 
 end Leverage

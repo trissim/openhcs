@@ -1,6 +1,6 @@
 # Paper: Exact Molecular Docking: A Machine-Checked Theory of Configuration Resolution, Complexity, and Thermodynamic Cost
 
-**Status**: Draft-ready | **Lean**: 77231 lines, 3378 theorems
+**Status**: Draft-ready | **Lean**: 77274 lines, 3380 theorems
 
 ---
 
@@ -112,7 +112,7 @@ The formal objects that carry the mathematical-physics content are a positive de
 
 **Operational meaning.** If $\mathrm{DOF}(A)=n$, the system has $n$ independent coordinates that must be resolved in the worst case by any exact resolver.
 
-**Molecular instantiation.** For a constrained molecular system with $N$ atoms and $k$ independent holonomic constraints, the transported degree-of-freedom count is $3N-k$. Later sections combine this finite topological count with cutoff-local docking structure.
+**Molecular instantiation.** For a constrained molecular system with $N$ atoms and $k$ independent holonomic constraints, the transported degree-of-freedom count is $3N-k$. Later sections combine this finite topological count with cutoff-local docking structure, yielding structural-rank bounds derived entirely from molecular topology and interaction geometry.
 
 ::: proposition
 []{#prop:dof-additive label="prop:dof-additive"} For disjoint bounded decision systems $A_1$ and $A_2$: $$\mathrm{DOF}(A_1 \oplus A_2) = \mathrm{DOF}(A_1) + \mathrm{DOF}(A_2)$$
@@ -178,7 +178,7 @@ Together, Theorems [\[thm:bounded-acquisition\]](#thm:bounded-acquisition){refe
 []{#def:canonical-dp label="def:canonical-dp"} For a bounded decision system $A$ with $\mathrm{DOF}(A)=n$, the canonical decision problem $$\mathrm{canonicalDP}(A)$$ has state space $\mathrm{Fin}\;n \to \mathrm{Bool}$ and action space $\mathrm{Fin}\;n \oplus \mathrm{Unit}$. Action $\mathrm{inl}(i)$ queries coordinate $i$; the fallback action $\mathrm{inr}(\star)$ receives constant utility $1$. Query action $i$ receives utility $2$ exactly when coordinate $i$ is true and $0$ otherwise.
 :::
 
-The encoding is the exact Lean object `canonicalDP` in `Leverage/BridgeToDQ.lean`. The development uses this encoding as the exact finite-resolution object attached to the declared degree-of-freedom count. It assigns one binary acquisition channel to each degree of freedom and one query action to each channel. The next section identifies the structural rank of this object with that coordinate count.
+The encoding is the exact Lean object `canonicalDP` in `Leverage/BridgeToDQ.lean`. It serves as the exact finite-resolution object attached to the declared degree-of-freedom count. It assigns one binary acquisition channel to each degree of freedom and one query action to each channel. The next section identifies the structural rank of this object with that coordinate count.
 
 **Docking reading.** The canonical exact-resolution problem records the distinctions that any exact docking resolver must preserve. The quotient of this problem is therefore the exact abstraction of docking correctness, not an auxiliary coding artifact.
 
@@ -600,7 +600,7 @@ m\,\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).$$ The required cumu
 *Proof.* The RATTLE holonomic status register is a $k$-bit binary interface by the finite cardinality theorem. The transported architecture has degree of freedom exactly $3N-k$ by construction. The local bridge theorem identifies the structural rank of the canonical exact-resolution problem with that same count, and the local energy lower bound then gives the displayed Landauer-linear floor. ◻
 :::
 
-Informally: every independent coordinate raises the floor.
+Informally: matter pays for what its topology requires it to know.
 
 ## Optimal-Transport Witness
 
@@ -738,6 +738,8 @@ England's 2013 result is a stochastic-thermodynamic path-space theorem with deta
 The information object is closer to zero-error and confusability-based information theory than to average-case source coding [@shannon1956zero; @korner1973graphs; @lovasz1979shannon; @csiszar2011information]. The central quantity is not full state entropy but the entropy of the decision quotient: how many distinct optimal-action classes survive after irrelevant coordinates are erased.
 
 Function-relative information in physics and origins-of-life work also conditions information on successful function or selection [@szostak2003functional; @wong2023roles]. The exact-resolution object is narrower: coordinate erasure is admissible precisely when optimal-action correspondence is preserved. The rank-$1$ regime is therefore the one-coordinate exact-resolution regime, the tractable sufficiency regime, and the minimum calibrated-cost regime.
+
+The molecular docking specialization adds a different layer from score benchmarking or heuristic search comparison: the claims are theorem-level statements about exact sufficiency, structural rank, and thermodynamic floor prior to algorithm choice.
 
 ## Categorical Quotients and Exact Abstraction
 
@@ -909,9 +911,9 @@ This appendix reports claim traceability directly from source and generated mapp
 
   Theorem 2.9: Resolution Requires a Sufficient Coordinate Set                        BA5
 
-  Theorem 4.5: Sampled Exact-Coarse Winner Preservation                               DQ2
+  Theorem 4.5: Sampled Exact-Coarse Winner Preservation                               L67
 
-  Theorem 4.6: Inside-Cutoff Sufficiency for Sampled Docking                          DQ1
+  Theorem 4.6: Inside-Cutoff Sufficiency for Sampled Docking                          L68
 
   Theorem 6.5: Thermodynamic Selection                                                BA8, L49, L54, L55
 
@@ -953,14 +955,6 @@ This appendix reports claim traceability directly from source and generated mapp
 **`CV8`**[]{#lh:CV8} paper4/DecisionQuotient/Physics/Conversation.lean
 
 **`CV9`**[]{#lh:CV9} paper4/DecisionQuotient/Physics/Conversation.lean
-
-**`DQ1`**[]{#lh:DQ1} paper4/DecisionQuotient/ClaimClosure.lean
-
-**`DQ2`**[]{#lh:DQ2} paper4/DecisionQuotient/ClaimClosure.lean
-
-**`DQ3`**[]{#lh:DQ3} paper4/DecisionQuotient/Tractability/SampledDockingCutoff.lean
-
-**`DQ4`**[]{#lh:DQ4}
 
 **`DT22`**[]{#lh:DT22} paper4/DecisionQuotient/Physics/DecisionTime.lean
 
@@ -1006,8 +1000,6 @@ This appendix reports claim traceability directly from source and generated mapp
 
 **`L58`**[]{#lh:L58}
 
-**`L59`**[]{#lh:L59} Leverage/BridgeToDQ.lean
-
 **`L60`**[]{#lh:L60} Leverage/BridgeToDQ.lean
 
 **`L61`**[]{#lh:L61} Leverage/BridgeToDQ.lean
@@ -1021,6 +1013,10 @@ This appendix reports claim traceability directly from source and generated mapp
 **`L65`**[]{#lh:L65} Leverage/DockingTheoryBridge.lean
 
 **`L66`**[]{#lh:L66} Leverage/DockingTheoryBridge.lean
+
+**`L67`**[]{#lh:L67} Leverage/DockingTheoryBridge.lean
+
+**`L68`**[]{#lh:L68} Leverage/DockingTheoryBridge.lean
 
 **`ORA1`**[]{#lh:ORA1} paper2/Ssot/Coherence.lean
 
@@ -1120,16 +1116,6 @@ This appendix reports claim traceability directly from source and generated mapp
 \
 [**`CV9`**]{#lh:CV9} & `Physics.Conversation.clamp_event_implies_positive_energy`
 
-& [**`DQ1`**]{#lh:DQ1} & `ClaimClosure.DQ1`
-
-\
-[**`DQ2`**]{#lh:DQ2} & `ClaimClosure.DQ2`
-
-& [**`DQ3`**]{#lh:DQ3} & `DecisionQuotient.Tractability.SampledDockingCutoff.sampled_insideCutoff_sufficient`
-
-\
-[**`DQ4`**]{#lh:DQ4} & `DecisionQuotient.Tractability.SampledDockingGap.SampledDockingProblem.exact_coarse_opt_agree_of_gap`
-
 & [**`DT22`**]{#lh:DT22} & `Physics.DecisionTime.substrate_step_realizes_decision_event`
 
 \
@@ -1183,97 +1169,99 @@ This appendix reports claim traceability directly from source and generated mapp
 \
 [**`L58`**]{#lh:L58} & `Leverage.ColumnComplexityBridge.zeroIdentityDebt_tieBrokenArgmin_of_uniform_argmin_relation_bound`
 
-& [**`L59`**]{#lh:L59} & `Leverage.constrainedMolecular_energy_lower_bound`
+& [**`L60`**]{#lh:L60} & `Leverage.rattle_constraintObservations_card`
 
 \
-[**`L60`**]{#lh:L60} & `Leverage.rattle_constraintObservations_card`
+[**`L61`**]{#lh:L61} & `Leverage.rattle_energy_lower_bound`
 
-& [**`L61`**]{#lh:L61} & `Leverage.rattle_energy_lower_bound`
-
-\
-[**`L62`**]{#lh:L62} & `Leverage.rattle_srank_eq_effectiveDOF`
-
-& [**`L63`**]{#lh:L63} & `Leverage.exactSufficiency_conp_core`
+& [**`L62`**]{#lh:L62} & `Leverage.rattle_srank_eq_effectiveDOF`
 
 \
-[**`L64`**]{#lh:L64} & `Leverage.exactSufficiency_hardFamily_srank_eq_n`
+[**`L63`**]{#lh:L63} & `Leverage.exactSufficiency_conp_core`
 
-& [**`L65`**]{#lh:L65} & `Leverage.molecularDocking_boundedPocket_srank_bound`
-
-\
-[**`L66`**]{#lh:L66} & `Leverage.molecularDocking_srank_bound`
-
-& [**`ORA1`**]{#lh:ORA1} & `oracle_arbitrary`
+& [**`L64`**]{#lh:L64} & `Leverage.exactSufficiency_hardFamily_srank_eq_n`
 
 \
-[**`PH26`**]{#lh:PH26} & `PhysicalComplexity.no_collapse_of_bounded_budget_pos_cost_exp_lb`
+[**`L65`**]{#lh:L65} & `Leverage.molecularDocking_boundedPocket_srank_bound`
 
-& [**`QT1`**]{#lh:QT1} & `DecisionProblem.quotient_is_coarsest`
-
-\
-[**`QT2`**]{#lh:QT2} & `DecisionProblem.quotientMap_preservesOpt`
-
-& [**`QT3`**]{#lh:QT3} & `DecisionProblem.quotient_represents_opt_equiv`
+& [**`L66`**]{#lh:L66} & `Leverage.molecularDocking_srank_bound`
 
 \
-[**`QT7`**]{#lh:QT7} & `DecisionProblem.quotient_has_unique_factorization`
+[**`L67`**]{#lh:L67} & `Leverage.sampledDocking_exactCoarse_opt_agree_of_gap`
 
-& [**`SE1`**]{#lh:SE1} & `ClaimClosure.SE1`
-
-\
-[**`SE2`**]{#lh:SE2} & `ClaimClosure.SE2`
-
-& [**`SE3`**]{#lh:SE3} & `ClaimClosure.SE3`
+& [**`L68`**]{#lh:L68} & `Leverage.sampledDocking_insideCutoff_sufficient`
 
 \
-[**`SE4`**]{#lh:SE4} & `ClaimClosure.SE4`
+[**`ORA1`**]{#lh:ORA1} & `oracle_arbitrary`
 
-& [**`SE5`**]{#lh:SE5} & `ClaimClosure.SE5`
-
-\
-[**`SE6`**]{#lh:SE6} & `ClaimClosure.SE6`
-
-& [**`W1`**]{#lh:W1} & `Physics.single_future_zero_cost`
+& [**`PH26`**]{#lh:PH26} & `PhysicalComplexity.no_collapse_of_bounded_budget_pos_cost_exp_lb`
 
 \
-[**`W2`**]{#lh:W2} & `Physics.transportCost_pos_of_offDiag`
+[**`QT1`**]{#lh:QT1} & `DecisionProblem.quotient_is_coarsest`
 
-& [**`W3`**]{#lh:W3} & `Physics.integrity_is_centroid`
-
-\
-[**`W4`**]{#lh:W4} & `Physics.wasserstein_bridge`
-
-& [**`WM4`**]{#lh:WM4} & `Physics.WolpertMismatch.mismatchNatLowerBound_pos_of_exists_ne`
+& [**`QT2`**]{#lh:QT2} & `DecisionProblem.quotientMap_preservesOpt`
 
 \
-[**`WM6`**]{#lh:WM6} & `Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_distribution_mismatch`
+[**`QT3`**]{#lh:QT3} & `DecisionProblem.quotient_represents_opt_equiv`
 
-& [**`WP2`**]{#lh:WP2} & `Physics.WolpertDecomposition.landauer_floor_plus_decomposition_lower_bound`
-
-\
-[**`WP6`**]{#lh:WP6} & `Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_either_cited_component`
-
-& [**`WP7`**]{#lh:WP7} & `Physics.WolpertDecomposition.landauer_floor_plus_structural_resource_lower_bound`
+& [**`QT7`**]{#lh:QT7} & `DecisionProblem.quotient_has_unique_factorization`
 
 \
-[**`WP8`**]{#lh:WP8} & `Physics.WolpertDecomposition.energy_lower_bound_increases_by_structural_resource`
+[**`SE1`**]{#lh:SE1} & `ClaimClosure.SE1`
 
-& [**`WP9`**]{#lh:WP9} & `Physics.WolpertDecomposition.physical_grounding_bundle_with_wolpert_decomposition`
-
-\
-[**`WR6`**]{#lh:WR6} & `Physics.WolpertResidual.discreteResidualNatLowerBound_pos_of_asymmetry_or_oneway`
-
-& [**`WR7`**]{#lh:WR7} & `Physics.WolpertDecomposition.stopping_time_residual_of_discrete_edge_split`
+& [**`SE2`**]{#lh:SE2} & `ClaimClosure.SE2`
 
 \
-[**`WR10`**]{#lh:WR10} & `Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_finite_discrete_witness`
+[**`SE3`**]{#lh:SE3} & `ClaimClosure.SE3`
 
-& [**`WR11`**]{#lh:WR11} & `Physics.WolpertResidual.binaryEncodedResidualNatLowerBound_eq_one`
+& [**`SE4`**]{#lh:SE4} & `ClaimClosure.SE4`
 
 \
-[**`WR12`**]{#lh:WR12} & `Physics.WolpertDecomposition.effective_model_ge_landauer_plus_one_of_binary_encoded_residual_example`
+[**`SE5`**]{#lh:SE5} & `ClaimClosure.SE5`
 
-& &\
+& [**`SE6`**]{#lh:SE6} & `ClaimClosure.SE6`
+
+\
+[**`W1`**]{#lh:W1} & `Physics.single_future_zero_cost`
+
+& [**`W2`**]{#lh:W2} & `Physics.transportCost_pos_of_offDiag`
+
+\
+[**`W3`**]{#lh:W3} & `Physics.integrity_is_centroid`
+
+& [**`W4`**]{#lh:W4} & `Physics.wasserstein_bridge`
+
+\
+[**`WM4`**]{#lh:WM4} & `Physics.WolpertMismatch.mismatchNatLowerBound_pos_of_exists_ne`
+
+& [**`WM6`**]{#lh:WM6} & `Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_distribution_mismatch`
+
+\
+[**`WP2`**]{#lh:WP2} & `Physics.WolpertDecomposition.landauer_floor_plus_decomposition_lower_bound`
+
+& [**`WP6`**]{#lh:WP6} & `Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_either_cited_component`
+
+\
+[**`WP7`**]{#lh:WP7} & `Physics.WolpertDecomposition.landauer_floor_plus_structural_resource_lower_bound`
+
+& [**`WP8`**]{#lh:WP8} & `Physics.WolpertDecomposition.energy_lower_bound_increases_by_structural_resource`
+
+\
+[**`WP9`**]{#lh:WP9} & `Physics.WolpertDecomposition.physical_grounding_bundle_with_wolpert_decomposition`
+
+& [**`WR6`**]{#lh:WR6} & `Physics.WolpertResidual.discreteResidualNatLowerBound_pos_of_asymmetry_or_oneway`
+
+\
+[**`WR7`**]{#lh:WR7} & `Physics.WolpertDecomposition.stopping_time_residual_of_discrete_edge_split`
+
+& [**`WR10`**]{#lh:WR10} & `Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_finite_discrete_witness`
+
+\
+[**`WR11`**]{#lh:WR11} & `Physics.WolpertResidual.binaryEncodedResidualNatLowerBound_eq_one`
+
+& [**`WR12`**]{#lh:WR12} & `Physics.WolpertDecomposition.effective_model_ge_landauer_plus_one_of_binary_encoded_residual_example`
+
+\
 :::
 
 
@@ -1378,9 +1366,9 @@ This appendix reports claim traceability directly from source and generated mapp
 
   `thm:resolution-sufficient`                 `unspecified`          \-                        BA5
 
-  `thm:sampled-docking-gap`                   `unspecified`          \-                        DQ2
+  `thm:sampled-docking-gap`                   `unspecified`          \-                        L67
 
-  `thm:sampled-inside-cutoff-sufficient`      `unspecified`          \-                        DQ1
+  `thm:sampled-inside-cutoff-sufficient`      `unspecified`          \-                        L68
 
   `thm:thermodynamic-selection`               `unspecified`          \-                        BA8, L49, L54, L55
 
@@ -1550,6 +1538,6 @@ Paper-level labeled claims:
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper3_leverage/proofs/`
-- Lines: 77231
-- Theorems: 3378
+- Lines: 77274
+- Theorems: 3380
 - `sorry` placeholders: 0

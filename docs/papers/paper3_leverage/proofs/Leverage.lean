@@ -114,7 +114,7 @@ import LambdaDR
 ### Docking Theory Bridge (Leverage/DockingTheoryBridge.lean)
 - local paper3 exposure of exact-sufficiency hardness core
 - local cutoff-local structural-rank bounds for molecular docking
-- docking-language bridge from general hardness to molecular low-rank regimes
+- local sampled exact/coarse winner-preservation and inside-cutoff sufficiency theorems
 
 ### λ_DR Calculus (LambdaDR.lean)
 - Core PL theory contribution: biconditional characterization of SSOT-capable languages
