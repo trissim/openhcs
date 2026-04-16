@@ -1,16 +1,16 @@
-# Paper: Exact Molecular Docking: A Machine-Checked Theory of Configuration Resolution, Complexity, and Thermodynamic Cost
+# Paper: Molecular Docking: A Machine-Checked Theory of Exact Resolution, Complexity, and Thermodynamic Cost
 
-**Status**: Draft-ready | **Lean**: 77274 lines, 3380 theorems
+**Status**: Draft-ready | **Lean**: 77434 lines, 3392 theorems
 
 ---
 
 ## Abstract
 
-Exact molecular docking is treated as exact configuration resolution under constraints. The abstract theory is stated for bounded decision systems through sufficient coordinate sets, structural rank, and decision-quotient entropy. Constrained molecular systems instantiate the same framework through holonomic constraints, cutoff-local interaction structure, and sampled action families.
+Molecular docking lacks a rigorous theory of the exact object its methods target. Exact configuration resolution under constraints supplies that object. The abstract layer is a bounded decision system equipped with sufficient coordinate sets, a decision quotient, structural rank, and decision-quotient entropy. The molecular layer instantiates the same framework through holonomic constraints, cutoff-local interaction structure, sampled action families, and concrete scorer families.
 
-General exact sufficiency certification contains a hardness core, while cutoff locality bounds docking structural rank by active-site and ligand coordinates and therefore isolates a theorem-backed low-rank regime. For sampled docking, exact and coarse winner sets agree under an explicit half-gap hypothesis, and the retained inside-cutoff coordinates are sufficient under the stated compatibility assumptions.
+The theorem package identifies one exact-resolution spine. Surjective abstractions either factor through the decision quotient or erase a decision-relevant distinction, and any physically feasible surjective collapse must therefore factor through the quotient. Structural rank is simultaneously the irreducible coordinate count, the quotient-entropy controller, and the exact Fisher-information dimension. General exact sufficiency certification contains a hardness core, and any sound checker for that core requires witness budget at least $2^{n-1}$. Cutoff locality bounds docking structural rank by active-site and ligand coordinates and therefore isolates a theorem-backed low-rank regime. For sampled docking, exact and coarse winner sets agree under an explicit half-gap hypothesis, inside-cutoff coordinates are sufficient under the stated compatibility assumptions, exact top-$k$ survivors are preserved under a certified boundary gap, and near-tie regimes admit a certified ambiguity band. Finite sampled Lennard-Jones and Coulomb scorer families satisfy theorem-backed exact/coarse invariance criteria under explicit cutoff error and half-gap conditions.
 
-The same exact-resolution structure carries irreducible thermodynamic cost once a positive per-bit lower bound is fixed. Under Landauer calibration, any exact-resolution cycle satisfies $$E \geq k_B T\, H_{\mathrm{nats}}(D),$$ where $H_{\mathrm{nats}}(D)$ is the natural-log entropy of the decision quotient. In the canonical binary encoding, this bound sharpens to $$E \geq \mathrm{DOF}(A)\, k_B T \ln 2,$$ and the rank-$1$ regime is the unique thermodynamic ground state: every system with more than one degree of freedom lies strictly above the minimum per-cycle resolution cost.
+The same exact-resolution spine carries irreducible thermodynamic cost once a positive per-bit lower bound is fixed. Under Landauer calibration, any exact-resolution cycle satisfies $$E \geq k_B T\, H_{\mathrm{nats}}(D),$$ where $H_{\mathrm{nats}}(D)$ is the natural-log entropy of the decision quotient. In the canonical binary encoding, this bound sharpens to $$E \geq \mathrm{DOF}(A)\, k_B T \ln 2,$$ and the rank-$1$ regime is the unique thermodynamic ground state: every system with more than one degree of freedom lies strictly above the minimum per-cycle resolution cost.
 
 The structural part of the argument is finite. Bounded systems admit only finitely many acquisition events. Exact resolution requires a sufficient coordinate set. The associated canonical decision problem records one binary acquisition channel for each degree of freedom, and the number of independent coordinates is identified exactly with the structural rank of the encoded decision problem: $$\mathrm{DOF}(A) = \mathrm{srank}(\mathrm{canonicalDP}(A)).$$ The decision quotient therefore has at most $2^{\mathrm{DOF}(A)}$ optimal-action classes, so its entropy is controlled by the same coordinate count that governs exact physical resolution.
 
@@ -20,7 +20,7 @@ For bounded regions this yields the bounded-acquisition inequality $$\mathrm{DOF
 
 Theorem-level mismatch and residual witnesses place nonideal implementations strictly above the Landauer floor. An explicit binary mismatch witness and an explicit two-state residual witness each yield at least one additional per-bit lower-bound unit above the Landauer floor and raise the energy--information coefficient above $k_B T$. Finite-capacity substrates therefore have bounded lifetime and bounded cumulative entropy throughput.
 
-The empirical input is the per-bit conversion constant. Landauer furnishes the universal floor. The same calibrated model yields the finite replication entropy gap $$\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k.$$
+The empirical input is the per-bit conversion constant. Landauer furnishes the universal floor. The same calibrated model yields theorem-level mismatch and residual overhead above Landauer, bounded substrate lifetime and cumulative entropy throughput, the finite replication entropy gap, $$\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k.$$ and the finite-budget no-collapse theorem.
 
 Keywords: molecular docking, exact resolution, structural rank, decision entropy, Landauer principle
 
@@ -29,13 +29,15 @@ _Failed to convert lean_stats.tex_
 
 # Introduction
 
-Exact molecular docking is treated as exact configuration resolution under constraints. The structural statements are finite counting, coordinate sufficiency, structural rank, decision-quotient entropy, and thermodynamic lower bounds. The abstract layer is a bounded decision system, represented in Lean by `Architecture` together with the canonical binary encoding `canonicalDP`. The molecular layer instantiates the same framework through holonomic constraint topology, cutoff-local interaction structure, and sampled docking families. The quotient object is closer to zero-error and confusability-based information than to average-case coding [@shannon1956zero; @korner1973graphs; @lovasz1979shannon].
+Molecular docking lacks a rigorous theory of the exact object its methods target. Exact configuration resolution under constraints supplies that object. The structural statements are finite counting, coordinate sufficiency, structural rank, decision-quotient entropy, certification hardness, and thermodynamic lower bounds. The abstract layer is a bounded decision system, represented in Lean by `Architecture` together with the canonical binary encoding `canonicalDP`. The molecular layer instantiates the same framework through holonomic constraint topology, cutoff-local interaction structure, sampled docking families, and concrete scorer families. The quotient object is closer to zero-error and confusability-based information than to average-case coding [@shannon1956zero; @korner1973graphs; @lovasz1979shannon].
 
-Landauer calibration supplies the universal floor [@landauer1961irreversibility; @bennett1982thermodynamics]. The central claim is that correctness, complexity, and thermodynamic cost are controlled by the same exact-resolution object: the decision quotient and its structural rank. For constrained molecular systems with $N$ atoms and $k$ independent holonomic constraints, the transported degree-of-freedom count is $3N-k$, and the exact-resolution floor scales with that remaining unconstrained dimension.
+One exact-resolution spine controls the manuscript. The decision quotient fixes the coarsest exact abstraction. Structural rank fixes the irreducible dimension of that quotient. The same rank controls quotient entropy, Fisher-information dimension, certification burden, and Landauer cost. For constrained molecular systems with $N$ atoms and $k$ independent holonomic constraints, the transported degree-of-freedom count is $3N-k$, and the exact-resolution floor scales with that remaining unconstrained dimension. Every docking pipeline therefore either solves this object, approximates it, or replaces it with a surrogate objective.
 
-## Central Result
+The theorem package extends the rank-entropy-cost chain. Surjective abstractions either factor through the decision quotient or erase a decision-relevant distinction, and any physically feasible surjective collapse must therefore factor through the quotient. Any sound checker for the empty-set hardness core requires witness budget at least $2^{n-1}$. The same structural rank is also the exact Fisher-information dimension of the decision problem. Cutoff locality, sampled exact/coarse invariance, top-$k$ survivor control, ambiguity-band containment, and concrete Lennard-Jones and Coulomb cutoff theorems then transport the abstract object into a molecular docking theory with explicit scorer families and approximation regimes.
 
-The convergence theorem proved in Section [\[five-way-equivalence\]](#five-way-equivalence){reference-type="ref" reference="five-way-equivalence"} is:
+## Theorem Package
+
+The endpoint of the theory is the convergence theorem in Section [\[five-way-equivalence\]](#five-way-equivalence){reference-type="ref" reference="five-way-equivalence"}:
 
 $$\begin{aligned}
 &\underbrace{\mathrm{DOF}(A) = 1}_{\text{one-coordinate regime}}
@@ -49,9 +51,9 @@ $$\begin{aligned}
 
 An imported coherence theorem gives a separate single-source reading of the same rank-$1$ point: $$\mathrm{SSOT}(A) \iff \mathrm{DOF}(A)=1,$$ where $\mathrm{SSOT}(A)$ denotes the coherent single-source condition that one locus is authoritative, every remaining encoding is a derived view, and all reachable states remain coherent.
 
-The structural-rank and thermodynamic clauses are central. The imported coherence statement is a companion interpretation of the same rank-$1$ regime.
+The convergence theorem is the endpoint of the manuscript. Earlier sections establish four ingredients that make the equivalence nontrivial: the quotient boundary for exact abstractions, the identification of structural rank with both irreducible coordinate count and Fisher-information dimension, the qualitative and quantitative certification lower bounds, and the molecular locality and stability theorems that make the docking specialization concrete.
 
-The same chain has a direct molecular reading. Exact molecular resolution requires a sufficient coordinate set. Cutoff locality bounds the number of decision-relevant protein coordinates by the active site together with the ligand coordinates, and sampled docking preserves exact winners under explicit half-gap control. The resulting structural-rank bounds and thermodynamic floors are therefore not detached corollaries but the concrete molecular instantiation of the abstract theory.
+Exact molecular resolution requires a sufficient coordinate set. Cutoff locality bounds the number of decision-relevant protein coordinates by the active site together with the ligand coordinates. Sampled docking preserves exact winners under explicit half-gap control, retains exact top-$k$ survivors under a certified boundary gap, and admits a near-tie ambiguity band when strict separation fails. The resulting structural-rank bounds and thermodynamic floors constitute the concrete molecular instantiation of the abstract theory.
 
 ## Structural and Empirical Inputs
 
@@ -59,13 +61,13 @@ Theorem [\[thm:counting-gap\]](#thm:counting-gap){reference-type="ref" referenc
 
 ## Contributions
 
-1.  **Exact Docking Semantics:** exact molecular docking is exact configuration resolution under constraints through sufficient coordinate sets, the decision quotient, and the canonical exact-resolution encoding.
+1.  **Reference Semantics for Molecular Docking:** exact molecular docking is exact configuration resolution under constraints through sufficient coordinate sets, the decision quotient, and the canonical exact-resolution encoding. Surjective exact summaries factor through the quotient, while any extra collapse erases a decision-relevant distinction. Approximate and heuristic docking methods are thereby located relative to a single exact target object.
 
-2.  **Complexity Boundary:** general exact sufficiency certification contains a hardness core, while cutoff locality bounds docking structural rank by active-site and ligand coordinates, and sampled docking admits theorem-backed exact/coarse winner preservation and inside-cutoff sufficiency under explicit gap and compatibility hypotheses.
+2.  **Complexity Boundary:** general exact sufficiency certification contains a hardness core, any sound checker for that core requires witness budget at least $2^{n-1}$, cutoff locality bounds docking structural rank by active-site and ligand coordinates, sampled docking admits theorem-backed exact/coarse winner preservation and inside-cutoff sufficiency under explicit gap and compatibility hypotheses, and top-$k$ as well as near-tie regimes remain under certified control.
 
-3.  **Thermodynamic Floor:** the canonical exact-resolution problem assigns one binary acquisition channel to each degree of freedom, the resulting structural rank equals that channel count, the decision entropy is bounded by the same count, and under Landauer calibration exact-resolution cost is bounded below by both $\mathrm{DOF}(A)\,k_B T \ln 2$ and $k_B T H_{\mathrm{nats}}(D)$.
+3.  **Thermodynamic and Statistical Dimension:** the canonical exact-resolution problem assigns one binary acquisition channel to each degree of freedom, the resulting structural rank equals that channel count, the decision entropy is bounded by the same count, the Fisher-information dimension is the same structural rank, and under Landauer calibration exact-resolution cost is bounded below by both $\mathrm{DOF}(A)\,k_B T \ln 2$ and $k_B T H_{\mathrm{nats}}(D)$.
 
-4.  **Molecular Constraint Transport:** constrained molecular systems with $N$ atoms and $k$ independent holonomic constraints transport directly into the framework with effective dimension $3N-k$, binary constraint-status interface, and a Landauer-linear floor scaling with the remaining unconstrained coordinates.
+4.  **Molecular Transport and Concrete Scorer Families:** constrained molecular systems with $N$ atoms and $k$ independent holonomic constraints transport directly into the framework with effective dimension $3N-k$, binary constraint-status interface, and a Landauer-linear floor scaling with the remaining unconstrained coordinates. Finite sampled Lennard-Jones and Coulomb scorer families satisfy theorem-backed exact/coarse invariance criteria under explicit cutoff error and half-gap conditions.
 
 5.  **Nonideal Exact Resolution:** theorem-level mismatch and residual witnesses force effective per-bit floors strictly above Landauer, explicit binary mismatch and two-state residual witnesses each yield an additive one-unit overhead above the Landauer floor, and finite-capacity substrates therefore have bounded lifetime and bounded entropy throughput.
 
@@ -83,14 +85,14 @@ Informally: exact resolution must be paid for.
 
 ## Scope
 
-The mathematical structure links structural rank, quotient entropy, complexity, and thermodynamic cost. Theorems are stated abstractly for bounded decision systems represented by the Lean object `Architecture` and are instantiated concretely for constrained molecular systems, cutoff-local docking problems, and sampled docking families.
+The mathematical structure links structural rank, quotient entropy, Fisher-information dimension, certification hardness, and thermodynamic cost. Theorems are stated abstractly for bounded decision systems represented by the Lean object `Architecture` and are instantiated concretely for constrained molecular systems, cutoff-local docking problems, sampled docking families, and finite scorer approximations.
 
 ## Organization
 
-Section [\[foundations\]](#foundations){reference-type="ref" reference="foundations"} defines the structural model, the finite-acquisition interface, and the exact docking semantics. Section [\[probability-model\]](#probability-model){reference-type="ref" reference="probability-model"} derives the quotient, structural-rank, and compression consequences of exact resolution. Section [\[complexity-boundary\]](#complexity-boundary){reference-type="ref" reference="complexity-boundary"} states the hardness core, the cutoff-local low-rank regime, and the sampled docking preservation theorems. Section [\[main-theorems\]](#main-theorems){reference-type="ref" reference="main-theorems"} derives the thermodynamic cost consequences. Section [\[five-way-equivalence\]](#five-way-equivalence){reference-type="ref" reference="five-way-equivalence"} states the convergence theorem and the remaining universal consequences. Section [\[related-work\]](#related-work){reference-type="ref" reference="related-work"} situates the results relative to thermodynamics, information theory, and molecular computation. Appendix [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="appendix-lean"} records proof provenance.
+Section [\[foundations\]](#foundations){reference-type="ref" reference="foundations"} defines the structural model, the finite-acquisition interface, and the exact docking semantics. Section [\[probability-model\]](#probability-model){reference-type="ref" reference="probability-model"} derives the quotient boundary, structural-rank identities, Fisher-dimension theorems, and the finite compression bridge. Section [\[complexity-boundary\]](#complexity-boundary){reference-type="ref" reference="complexity-boundary"} states the hardness core, checker lower bounds, cutoff-local low-rank regime, sampled docking preservation theorems, top-$k$ and near-tie control, and concrete scorer-family invariance results. Section [\[main-theorems\]](#main-theorems){reference-type="ref" reference="main-theorems"} derives the thermodynamic cost consequences. Section [\[five-way-equivalence\]](#five-way-equivalence){reference-type="ref" reference="five-way-equivalence"} states the convergence theorem and the remaining universal consequences. Section [\[related-work\]](#related-work){reference-type="ref" reference="related-work"} situates the results relative to thermodynamics, information theory, and molecular computation. Appendix [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="appendix-lean"} records proof provenance.
 
 
-# Foundations of Exact Molecular Docking {#foundations}
+# Exact-Resolution Model {#foundations}
 
 The formal objects that carry the mathematical-physics content are a positive degree-of-freedom count, a canonical binary decision encoding, structural rank, and decision entropy.
 
@@ -217,7 +219,7 @@ The local degree-of-freedom object lives in `Leverage/Foundations.lean`, while t
 
 # Exact Resolution, Quotient Structure, and Compression {#probability-model}
 
-The theorems of this section are statements about the canonical exact-resolution encoding defined in Section [\[foundations\]](#foundations){reference-type="ref" reference="foundations"}. The degree-of-freedom count is exactly the interaction dimension of that encoded decision problem, and exact physical resolution must pay for that interaction dimension in discrete bit events. Structural rank is the count of irreducible coordinate reads required by exact resolution in that encoding.
+The theorems of this section identify the exact object before any complexity or thermodynamic lower bound is applied. The canonical exact-resolution encoding turns the declared degree-of-freedom count into a decision problem whose structural rank is the irreducible interaction dimension of exact resolution. The quotient theorems identify the coarsest exact abstraction of that object, the Fisher theorems identify the same rank as its statistical dimension, and the compression bridge identifies the same distinction structure in finite combinatorial language.
 
 ## Degree of Freedom Equals Structural Rank
 
@@ -267,6 +269,48 @@ H_{\mathrm{nats}}(\mathrm{canonicalDP}(A)) \le \mathrm{DOF}(A)\,\ln 2.$$
 *Proof.* The bit-entropy statement is the entropy-rank inequality for binary coordinate spaces, again composed with Theorem [\[thm:dof-srank\]](#thm:dof-srank){reference-type="ref" reference="thm:dof-srank"}. The nat-entropy statement is obtained by multiplying by $\ln 2$. ◻
 :::
 
+## Abstraction Boundary
+
+::: theorem
+[]{#thm:abstraction-factors-or-erases label="thm:abstraction-factors-or-erases"} Let $\phi : S \to T$ be a surjective abstraction of states for a decision problem $D$. Then exactly one of the following structural possibilities occurs: $$\text{$\phi$ factors through the decision quotient of $D$}
+\qquad\text{or}\qquad
+\text{$\phi$ erases a decision-relevant distinction.}$$
+:::
+
+::: proof
+*Proof.* If $\phi$ preserves the optimal-action correspondence, the quotient is the coarsest such abstraction and $\phi$ factors through it. If $\phi$ fails to preserve the optimal-action correspondence, then by definition it identifies two states with different optimal-action sets and therefore erases a decision-relevant distinction. ◻
+:::
+
+::: theorem
+[]{#thm:feasible-collapse-factors label="thm:feasible-collapse-factors"} Let $\phi : S \to T$ be a surjective abstraction of states for a decision problem $D$. If every decision-relevant distinction erased by $\phi$ were mapped to a physically feasible collapse at the canonical requirement profile, then $\phi$ must factor through the decision quotient of $D$.
+:::
+
+::: proof
+*Proof.* The physical no-collapse layer rules out any physically feasible realization of an abstraction that erases a decision-relevant distinction at the canonical requirement profile. The only remaining possibility is that the abstraction preserves the optimal-action correspondence and therefore factors through the decision quotient. ◻
+:::
+
+The quotient is the coarsest surjective exact abstraction that remains available once decision-relevant erasure is excluded.
+
+## Fisher Dimension
+
+::: theorem
+[]{#thm:fisher-sum-srank label="thm:fisher-sum-srank"} For every finite decision problem $D$, $$\sum_i \mathrm{FisherScore}_D(i) = \mathrm{srank}(D).$$
+:::
+
+::: proof
+*Proof.* Each coordinate contributes Fisher score $1$ exactly when it is structurally relevant and score $0$ otherwise. Summing those indicator values therefore counts the relevant coordinates, which is exactly the structural rank. ◻
+:::
+
+::: theorem
+[]{#thm:fisher-rank-srank label="thm:fisher-rank-srank"} For every finite decision problem $D$, $$\operatorname{rank}(I_D) = \mathrm{srank}(D),$$ where $I_D$ is the diagonal Fisher information matrix induced by the relevance profile of $D$.
+:::
+
+::: proof
+*Proof.* The Fisher matrix is diagonal with a $1$ on each structurally relevant coordinate and a $0$ on each irrelevant coordinate. Its rank is therefore the number of nonzero diagonal entries, which is exactly the structural rank. ◻
+:::
+
+Structural rank therefore has three exact readings in the present development: combinatorial irreducible-coordinate count, quotient entropy controller, and Fisher-information dimension.
+
 ## Finite Compression Bridge
 
 The next proposition packages the finite bridge in direct compression language: a finite Hamiltonian induces a deterministic tie-broken compression relation, and the paper1 fiber moment becomes the exact collision moment of that relation.
@@ -292,12 +336,12 @@ Informally: to avoid collisions is to pay for distinctions.
 
 ## Formalization
 
-The structural-rank bridge is formalized in `Leverage/BridgeToDQ.lean`; the finite compression bridge is formalized in `Leverage/ColumnComplexityBridge.lean`; and the minimum-bit and entropy bounds are formalized in the decision-quotient physics and information development. These are the objects used directly by the thermodynamic theorems of the next section.
+The structural-rank bridge is formalized in `Leverage/BridgeToDQ.lean`; the abstraction-collapse, Fisher-rank, and exact-sufficiency bridge theorems are exposed locally in `Leverage/DockingTheoryBridge.lean`; the finite compression bridge is formalized in `Leverage/ColumnComplexityBridge.lean`; and the minimum-bit and entropy bounds are formalized in the decision-quotient physics and information development. These are the objects used directly by the complexity and thermodynamic theorems of the next sections.
 
 
 # Complexity Boundary of Exact Molecular Docking {#complexity-boundary}
 
-Exact molecular docking has a genuine tractability boundary. General exact sufficiency certification already contains a hardness core, while molecular locality supplies a low-rank regime in which exact resolution is structurally controlled. The claims in this section isolate that boundary before the thermodynamic lower bounds are applied.
+Exact molecular docking has a genuine tractability boundary because the exact object already carries both qualitative and quantitative certification lower bounds. General exact sufficiency certification contains a hardness core. Sound checking requires witness budget. Molecular locality, sampling hypotheses, and concrete scorer approximations then carve out theorem-backed low-rank and stability regimes inside that harder ambient problem class. The claims in this section isolate that boundary before the thermodynamic lower bounds are applied.
 
 ## General Hardness Core
 
@@ -318,6 +362,34 @@ Exact molecular docking has a genuine tractability boundary. General exact suffi
 :::
 
 The hard family therefore witnesses full interaction dimensionality: exact sufficiency can force the decision boundary to depend on every available coordinate.
+
+## Quantitative Certification Lower Bounds
+
+::: theorem
+[]{#thm:checker-budget-lower-bound label="thm:checker-budget-lower-bound"} For the empty-set sufficiency core on $n \ge 1$ coordinates, any sound finite checker must inspect at least $$2^{n-1}$$ pair witnesses.
+:::
+
+::: proof
+*Proof.* The witness budget for the empty-set core is $2^{n-1}$. Any sound checker must inspect enough witness pairs to refute every false empty-set sufficiency claim, so the checking budget is bounded below by that witness budget. ◻
+:::
+
+::: corollary
+[]{#cor:no-sound-checker-below-budget label="cor:no-sound-checker-below-budget"} For the same empty-set core, any checker operating strictly below the witness budget fails to be sound.
+:::
+
+::: proof
+*Proof.* This is the contrapositive form of Theorem [\[thm:checker-budget-lower-bound\]](#thm:checker-budget-lower-bound){reference-type="ref" reference="thm:checker-budget-lower-bound"}. ◻
+:::
+
+::: corollary
+[]{#cor:checking-time-lower-bound label="cor:checking-time-lower-bound"} If runtime is bounded below by the number of checked witness pairs, then any sound checker for the empty-set core requires runtime at least $$2^{n-1}.$$
+:::
+
+::: proof
+*Proof.* The checking budget lower bound transfers directly to runtime once runtime dominates the number of checked pairs. ◻
+:::
+
+The hardness core is therefore quantitative as well as qualitative: exact certification is expensive not only by reduction, but by unavoidable witness budget.
 
 ## Cutoff-Local Docking Regime
 
@@ -357,14 +429,60 @@ Informally: bounded pockets bound exact difficulty.
 *Proof.* Cutoff locality forces every relevant sampled coordinate into the retained set. The compatibility and injectivity hypotheses then lift the retained-set relevance bound into a sufficiency theorem for the sampled restricted problem. ◻
 :::
 
+## Top-k and Near-Tie Control
+
+::: theorem
+[]{#thm:topk-boundary-gap label="thm:topk-boundary-gap"} Let $u_{\mathrm{exact}}$ and $u_{\mathrm{coarse}}$ be finite score functions on a docking action family. If the coarse score differs from the exact score by at most $\delta$ on every action, and if $\delta$ is no larger than the boundary gap at threshold $\tau$, then every exact top-$k$ action survives the coarse threshold filter at $\tau$.
+:::
+
+::: proof
+*Proof.* The boundary-gap condition places every exact top-$k$ action at least $\delta$ above the threshold. Uniform score error bounded by $\delta$ therefore keeps every exact top-$k$ action above the coarse threshold as well. ◻
+:::
+
+::: theorem
+[]{#thm:topk-ambiguity-band label="thm:topk-ambiguity-band"} For every nonnegative slack parameter $\varepsilon$, every exact top-$k$ action lies inside the certified ambiguity band of width $\varepsilon$ around the exact $k$th boundary.
+:::
+
+::: proof
+*Proof.* The ambiguity band is defined by lowering the exact $k$th threshold by $\varepsilon$. Every exact top-$k$ action remains above that relaxed threshold and is therefore retained. ◻
+:::
+
+These top-$k$ theorems give a conservative exact-screening regime even when strict single-winner separation is unavailable.
+
+## Concrete Scorer Families
+
+::: theorem
+[]{#thm:lj-cutoff-invariance label="thm:lj-cutoff-invariance"} For a finite sampled Lennard-Jones docking family, let $a_\ast$ be a strict exact winner at state $s$. If the finite cutoff error radius is smaller than half the strict exact utility gap at $s$, then the exact and cutoff Lennard-Jones optimal-action sets agree at $s$.
+:::
+
+::: proof
+*Proof.* The finite cutoff radius gives a uniform approximation theorem for exact and cutoff Lennard-Jones scores on the sampled domain. A strict half-gap bound then forces winner preservation. ◻
+:::
+
+::: theorem
+[]{#thm:coulomb-cutoff-uniform-approx label="thm:coulomb-cutoff-uniform-approx"} For a finite sampled Coulomb docking family, the exact and cutoff Coulomb score families differ by at most the finite cutoff error radius uniformly over the sampled action-state domain.
+:::
+
+::: proof
+*Proof.* The cutoff error radius is defined as the maximum exact-versus-cutoff discrepancy over the finite sampled domain. Uniform approximation follows immediately from that extremal definition. ◻
+:::
+
+::: theorem
+[]{#thm:coulomb-cutoff-invariance label="thm:coulomb-cutoff-invariance"} For a finite sampled Coulomb docking family, let $a_\ast$ be a strict exact winner at state $s$. If the finite cutoff error radius is smaller than half the strict exact utility gap at $s$, then the exact and cutoff Coulomb optimal-action sets agree at $s$.
+:::
+
+::: proof
+*Proof.* The uniform cutoff-error bound from Theorem [\[thm:coulomb-cutoff-uniform-approx\]](#thm:coulomb-cutoff-uniform-approx){reference-type="ref" reference="thm:coulomb-cutoff-uniform-approx"} combines with the strict half-gap criterion to force winner preservation. ◻
+:::
+
 ## Formalization
 
-The local paper3 docking bridge theorems live in `Leverage/DockingTheoryBridge.lean`. They expose the general exact-sufficiency hardness core, the maximal-rank hard family, the cutoff-local structural-rank bounds for molecular docking, and the sampled exact/coarse preservation and sufficiency theorems used in the molecular development.
+The local paper3 docking bridge theorems live in `Leverage/DockingTheoryBridge.lean`. They expose the abstraction-collapse boundary, the Fisher-rank identities, the general exact-sufficiency hardness core, the quantitative witness/checking lower bounds, the cutoff-local structural-rank bounds for molecular docking, the sampled exact/coarse preservation and sufficiency theorems, the top-$k$ and ambiguity-band control theorems, and the concrete Lennard-Jones and Coulomb cutoff invariance statements used in the molecular development.
 
 
 # Thermodynamic Cost of Exact Molecular Docking {#main-theorems}
 
-The preceding sections identified the quotient and structural-rank boundary underlying exact molecular docking. The thermodynamic theorems of this section compose three inputs: minimum bit operations, the entropy-rank bound, and a positive per-bit lower bound. The abstract statements hold for bounded decision systems, and the constrained-molecular corollaries transport them to holonomic topologies and binding-resolution problems. Landauer furnishes the universal floor for the conversion constant.
+The preceding sections fixed the exact object, its unavoidable quotient boundary, its structural and Fisher dimensions, and its certification burden. The thermodynamic theorems of this section convert that same exact-resolution spine into cost. The abstract statements hold for bounded decision systems, and the constrained-molecular corollaries transport them to holonomic topologies and binding-resolution problems. Landauer furnishes the universal floor for the conversion constant.
 
 ## Landauer-Linear Resolution Cost
 
@@ -604,7 +722,7 @@ Informally: matter pays for what its topology requires it to know.
 
 ## Optimal-Transport Witness
 
-The Landauer route lower-bounds exact resolution through irreversible bit acquisition. A complementary witness measures separation between future distributions on the integrity space $\{\mathrm{intact},\mathrm{compromised}\}$. It does not replace the main proof chain, but it supplies an independent transport-theoretic signal that multiple distinguishable futures have nonzero cost.
+The Landauer route lower-bounds exact resolution through irreversible bit acquisition. A complementary witness measures separation between future distributions on the integrity space $\{\mathrm{intact},\mathrm{compromised}\}$. It supplies an independent transport-theoretic signal that multiple distinguishable futures have nonzero cost.
 
 ::: remark
 []{#rem:wasserstein-bridge label="rem:wasserstein-bridge"} The same separation admits an independent transport-cost witness on the two-state integrity space $\{\mathrm{intact},\mathrm{compromised}\}$. The diagonal coupling has zero transport cost in the single-future regime (W1). Any coupling with off-diagonal mass has positive transport cost (W2). If the intact future mass dominates the compromised future mass, the intact state minimizes total transport to the future distribution (W3). If both future states carry positive mass, then transport from either pure state is strictly positive (W4). Multiple distinguishable futures therefore force positive transport cost independently of the Landauer route.
@@ -623,7 +741,7 @@ The local bridge from degree of freedom to structural rank is formalized in `Lev
 
 # Convergence and Universal Consequences {#five-way-equivalence}
 
-Degree of freedom equals structural rank, and structural rank bounds decision entropy. The same rank-$1$ regime also appears as tractable sufficiency and minimum thermodynamic cost. The molecular instantiations above make the same point concrete for constrained molecular systems, while the remaining theorems in this section record the universal consequences that survive beyond the docking specialization.
+Degree of freedom equals structural rank, structural rank fixes quotient entropy and Fisher dimension, and the same rank controls exact-certification burden and thermodynamic cost. The molecular instantiations above make that chain concrete for constrained molecular systems. The remaining theorems in this section record the universal consequences of that chain once the docking specialization has already been made explicit.
 
 ## Imported Coherence Reading
 
@@ -735,7 +853,7 @@ England's 2013 result is a stochastic-thermodynamic path-space theorem with deta
 
 ## Zero-Error, Functional, and Quotient Information
 
-The information object is closer to zero-error and confusability-based information theory than to average-case source coding [@shannon1956zero; @korner1973graphs; @lovasz1979shannon; @csiszar2011information]. The central quantity is not full state entropy but the entropy of the decision quotient: how many distinct optimal-action classes survive after irrelevant coordinates are erased.
+The information object is closer to zero-error and confusability-based information theory than to average-case source coding [@shannon1956zero; @korner1973graphs; @lovasz1979shannon; @csiszar2011information]. The central quantity is the entropy of the decision quotient: the number of distinct optimal-action classes that survive after irrelevant coordinates are erased.
 
 Function-relative information in physics and origins-of-life work also conditions information on successful function or selection [@szostak2003functional; @wong2023roles]. The exact-resolution object is narrower: coordinate erasure is admissible precisely when optimal-action correspondence is preserved. The rank-$1$ regime is therefore the one-coordinate exact-resolution regime, the tractable sufficiency regime, and the minimum calibrated-cost regime.
 
@@ -743,7 +861,7 @@ The molecular docking specialization adds a different layer from score benchmark
 
 ## Categorical Quotients and Exact Abstraction
 
-Quotienting states by equality of $\operatorname{Opt}$ is the standard coimage construction for the decision quotient of the optimizer map $\operatorname{Opt}: S \to \mathcal{P}(A)$ in **Set**, canonically equivalent to its image [@maclane1998categories]. The novelty is not the existence of that quotient, but the theorem chain tying it to coordinate sufficiency, structural rank, decision entropy, and thermodynamic cost in one proof object.
+Quotienting states by equality of $\operatorname{Opt}$ is the standard coimage construction for the decision quotient of the optimizer map $\operatorname{Opt}: S \to \mathcal{P}(A)$ in **Set**, canonically equivalent to its image [@maclane1998categories]. The theorem chain ties that quotient to coordinate sufficiency, structural rank, decision entropy, and thermodynamic cost in one proof object.
 
 ## Formal Source Provenance
 
@@ -754,17 +872,21 @@ Appendix [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="ap
 
 ## Summary
 
-The central result is a complete abstract-plus-molecular theory of exact resolution. Theorem [\[thm:five-way\]](#thm:five-way){reference-type="ref" reference="thm:five-way"} identifies the rank-$1$ regime of the canonical decision encoding as simultaneously the one-coordinate regime, the tractable sufficiency regime, and the thermodynamic ground state. The molecular sections instantiate the same framework for constrained molecular systems, cutoff-local docking structure, and sampled docking.
+The central result is a complete abstract-plus-molecular theory of exact resolution. The quotient theorems identify the coarsest exact abstraction. The rank theorems identify the irreducible coordinate count and Fisher-information dimension of that object. The complexity theorems identify both the hardness core and the witness budget required for sound checking. The thermodynamic theorems identify the corresponding cost floor. Theorem [\[thm:five-way\]](#thm:five-way){reference-type="ref" reference="thm:five-way"} then identifies the rank-$1$ regime of the canonical decision encoding as simultaneously the one-coordinate regime, the tractable sufficiency regime, and the thermodynamic ground state. The molecular sections instantiate the same framework for constrained molecular systems, cutoff-local docking structure, sampled docking, top-$k$ screening, and concrete scorer families.
 
-The theorem package separates a structural part from an empirical calibration. The structural part is the finite acquisition chain, the canonical exact-resolution encoding, the exact-sufficiency hardness core, the identity $\mathrm{DOF}(A)=\mathrm{srank}(\mathrm{canonicalDP}(A))$, the cutoff-local docking rank bounds, and the decision-entropy bound. The empirical inputs are bounded signal speed, the discrete transition interface used for acquisition, cutoff-local approximation control, and a positive per-bit lower bound. Landauer furnishes the universal floor.
+The theorem package separates a structural part from an empirical calibration. The structural part is the finite acquisition chain, the canonical exact-resolution encoding, the quotient-factorization boundary, the exact-sufficiency hardness core together with its witness/checking lower bounds, the identity $\mathrm{DOF}(A)=\mathrm{srank}(\mathrm{canonicalDP}(A))$, the Fisher-rank identities, the cutoff-local docking rank bounds, the top-$k$ and ambiguity-band control theorems, the concrete Lennard-Jones and Coulomb cutoff invariance theorems, and the decision-entropy bound. The empirical inputs are bounded signal speed, the discrete transition interface used for acquisition, cutoff-local approximation control, and a positive per-bit lower bound. Landauer furnishes the universal floor.
 
 **Main consequences:**
 
--   The exact identification of degree of freedom with structural rank in the canonical decision encoding.
+-   The quotient-factorization boundary for exact abstractions and the physical exclusion of extra surjective collapse beyond the decision quotient.
 
--   The general hardness core for exact sufficiency certification and the maximal-rank hard family.
+-   The exact identification of degree of freedom with structural rank in the canonical decision encoding and the exact identification of structural rank with Fisher-information dimension.
 
--   The cutoff-local structural-rank bound for molecular docking, the bounded-pocket low-rank regime, sampled exact/coarse winner preservation under a half-gap hypothesis, and inside-cutoff sufficiency for sampled docking under the stated compatibility assumptions.
+-   The general hardness core for exact sufficiency certification, the maximal-rank hard family, and the quantitative witness/checking lower bounds for sound exact certification.
+
+-   The cutoff-local structural-rank bound for molecular docking, the bounded-pocket low-rank regime, sampled exact/coarse winner preservation under a half-gap hypothesis, inside-cutoff sufficiency for sampled docking under the stated compatibility assumptions, top-$k$ survivor preservation under a certified boundary gap, and ambiguity-band containment in near-tie regimes.
+
+-   The exact/coarse Lennard-Jones and Coulomb invariance theorems for finite sampled scorer families under explicit cutoff error and half-gap conditions.
 
 -   The energy--information theorem $E \ge k_B T H_{\mathrm{nats}}(D)$ for exact-resolution cost.
 
@@ -792,9 +914,9 @@ The theorem package separates a structural part from an empirical calibration. T
 
 ## Final Remarks
 
-Exact molecular docking is therefore governed by one formal chain rather than by separate semantic, complexity, and thermodynamic stories. Abstractly, exact resolution is governed by sufficient coordinate sets, structural rank, decision quotient, and calibrated thermodynamic floor. Concretely, constrained molecular systems instantiate the same framework through holonomic constraint topology, cutoff-local interaction structure, sampled exact/coarse stability, and direct Landauer-linear cost bounds.
+Molecular docking is governed by one formal chain linking semantic, statistical, complexity, and thermodynamic statements. Abstractly, exact resolution is governed by sufficient coordinate sets, the decision quotient, structural rank, Fisher dimension, certification burden, and calibrated thermodynamic floor. Concretely, constrained molecular systems instantiate the same framework through holonomic constraint topology, cutoff-local interaction structure, sampled exact/coarse stability, top-$k$ survivor control, concrete scorer-family invariance, and direct Landauer-linear cost bounds.
 
-The abstract layer is not decorative generality, and the molecular layer is not an afterthought. The abstract theorems state what exact resolution costs for any bounded decision system. The molecular instantiation shows that the same theorems govern exact docking, constrained molecular computation, and repeated exact molecular resolution in matter. Corollary [\[cor:holonomic-landauer-floor\]](#cor:holonomic-landauer-floor){reference-type="ref" reference="cor:holonomic-landauer-floor"} gives the direct RATTLE finite derivation: the constraint-status interface is a $k$-bit binary register, the effective coordinate count is $3N-k$, and the canonical Landauer floor scales linearly with that remaining unconstrained dimension. Remark [\[rem:molecular-independence-scope\]](#rem:molecular-independence-scope){reference-type="ref" reference="rem:molecular-independence-scope"} isolates the remaining scope boundary precisely: the finite transport is proved once independence is specified, while derivation of that independence hypothesis from a concrete geometric constraint family remains additional work.
+The abstract theorems state what exact resolution costs for any bounded decision system. The molecular instantiation shows that the same theorems govern exact docking, constrained molecular computation, and repeated exact molecular resolution in matter. Approximate and heuristic docking procedures lie in the same scope through approximation, sampling, or surrogate replacement. Corollary [\[cor:holonomic-landauer-floor\]](#cor:holonomic-landauer-floor){reference-type="ref" reference="cor:holonomic-landauer-floor"} gives the direct RATTLE finite derivation: the constraint-status interface is a $k$-bit binary register, the effective coordinate count is $3N-k$, and the canonical Landauer floor scales linearly with that remaining unconstrained dimension. Remark [\[rem:molecular-independence-scope\]](#rem:molecular-independence-scope){reference-type="ref" reference="rem:molecular-independence-scope"} states the remaining scope condition precisely: the finite transport is proved once independence is specified, while derivation of that independence hypothesis from a concrete geometric constraint family remains additional work.
 
 Appendix [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="appendix-lean"} records proof provenance.
 
@@ -813,15 +935,19 @@ This appendix reports claim traceability directly from source and generated mapp
   ------------------------------------------------------------------------------------------------------------------------------
   **Paper claim**                                                                     **Lean handle**
   ----------------------------------------------------------------------------------- ------------------------------------------
-  Corollary 4.4: Bounded-Pocket Low-Rank Regime                                       L65
+  Corollary 4.7: Bounded-Pocket Low-Rank Regime                                       L65
 
   Corollary 5.7: Decision-Entropy Bound from Spacetime and Energy Budget              IT3, BA1, BA2, BA5, BA6, EI1, L43
+
+  Corollary 4.5: Checking Time Lower Bound                                            L70
 
   Corollary 5.8: Independent Composition Budget Law                                   L17, L19, BA1, BA2, BA7, BA5, BA6, L43
 
   Corollary 5.26: RATTLE Holonomic-Constraint Landauer Floor                          L60, L61, L62
 
   Corollary 5.4: Unique Minimum-Cost Regime                                           BA8, L54, L55
+
+  Corollary 4.4: No Sound Checker Below Witness Budget                                L71
 
   Corollary 3.3: Higher-Rank Regime                                                   L46, L51
 
@@ -847,7 +973,7 @@ This appendix reports claim traceability directly from source and generated mapp
 
   Proposition 5.16: Unified Energy--Information Hierarchy                             IT3, BA5, BA6, WR12, WP2, WM4, WR11, L43
 
-  Proposition 3.7: Finite Compression-Relation Bridge                                 L57, L58
+  Proposition 3.11: Finite Compression-Relation Bridge                                L57, L58
 
   Proposition 5.13: Finite Discrete Residual Witness                                  WR10, WR7, WR6
 
@@ -869,11 +995,19 @@ This appendix reports claim traceability directly from source and generated mapp
 
   Proposition 5.9: Threshold Channel Realization                                      CV8, CV9, CV7
 
+  Theorem 3.7: Surjective Abstractions Either Factor or Erase                         L77
+
   Theorem 2.6: Bounded Acquisition Rate                                               BA1, BA2
 
   Theorem 5.6: Decision-Class Bound from Spacetime and Energy Budget                  IT4, IT3, BA1, BA2, BA5, BA6, EI1, L43
 
+  Theorem 4.3: Checker Budget Lower Bound                                             L69
+
   Theorem 6.1: Coherent Single-Source Regime                                          ORA1
+
+  Theorem 4.14: Cutoff Coulomb Winner Preservation                                    L73
+
+  Theorem 4.13: Cutoff Coulomb Uniform Approximation                                  L74
 
   Theorem 2.4: Counting Gap                                                           BA10
 
@@ -891,15 +1025,23 @@ This appendix reports claim traceability directly from source and generated mapp
 
   Theorem 4.1: General Hardness Core for Exact Sufficiency                            L63
 
+  Theorem 3.8: Feasible Collapse Maps Force Quotient Factorization                    L78
+
   Theorem 6.9: Finite-Budget No-Collapse                                              PH26
+
+  Theorem 3.10: Fisher-Matrix Rank Equals Structural Rank                             L76
+
+  Theorem 3.9: Total Fisher Information Equals Structural Rank                        L80
 
   Theorem 6.7: Convergence                                                            L43, L44, L47, L55
 
   Theorem 4.2: Maximal Structural Rank in the Hard Family                             L64
 
+  Theorem 4.12: Cutoff Lennard-Jones Winner Preservation                              L75
+
   Theorem 3.4: Minimum Physical Bit Operations                                        BA5, BA6, L43, L46
 
-  Theorem 4.3: Cutoff-Local Structural-Rank Bound for Exact Docking                   L66
+  Theorem 4.6: Cutoff-Local Structural-Rank Bound for Exact Docking                   L66
 
   Theorem 3.5: Decision-Class Bound                                                   IT4, L43
 
@@ -911,18 +1053,22 @@ This appendix reports claim traceability directly from source and generated mapp
 
   Theorem 2.9: Resolution Requires a Sufficient Coordinate Set                        BA5
 
-  Theorem 4.5: Sampled Exact-Coarse Winner Preservation                               L67
+  Theorem 4.8: Sampled Exact-Coarse Winner Preservation                               L67
 
-  Theorem 4.6: Inside-Cutoff Sufficiency for Sampled Docking                          L68
+  Theorem 4.9: Inside-Cutoff Sufficiency for Sampled Docking                          L68
 
   Theorem 6.5: Thermodynamic Selection                                                BA8, L49, L54, L55
 
   Theorem 5.5: Exact-Resolution Time Lower Bound                                      BA1, BA2, BA5, BA6, L43
 
+  Theorem 4.11: Exact Top-k Ambiguity-Band Containment                                L72
+
+  Theorem 4.10: Top-k Preservation Under Boundary Gap                                 L79
+
   Theorem 6.4: Tractable Sufficiency at Rank One                                      L47, L53, L56
   ------------------------------------------------------------------------------------------------------------------------------
 
-*Auto summary: mapped 54/54 (full=54, derived=0, unmapped=0).*
+*Auto summary: mapped 66/66 (full=66, derived=0, unmapped=0).*
 
 
 ::: list
@@ -1017,6 +1163,30 @@ This appendix reports claim traceability directly from source and generated mapp
 **`L67`**[]{#lh:L67} Leverage/DockingTheoryBridge.lean
 
 **`L68`**[]{#lh:L68} Leverage/DockingTheoryBridge.lean
+
+**`L69`**[]{#lh:L69} Leverage/DockingTheoryBridge.lean
+
+**`L70`**[]{#lh:L70} Leverage/DockingTheoryBridge.lean
+
+**`L71`**[]{#lh:L71} Leverage/DockingTheoryBridge.lean
+
+**`L72`**[]{#lh:L72} Leverage/DockingTheoryBridge.lean
+
+**`L73`**[]{#lh:L73} Leverage/DockingTheoryBridge.lean
+
+**`L74`**[]{#lh:L74} Leverage/DockingTheoryBridge.lean
+
+**`L75`**[]{#lh:L75} Leverage/DockingTheoryBridge.lean
+
+**`L76`**[]{#lh:L76} Leverage/DockingTheoryBridge.lean
+
+**`L77`**[]{#lh:L77} Leverage/DockingTheoryBridge.lean
+
+**`L78`**[]{#lh:L78} Leverage/DockingTheoryBridge.lean
+
+**`L79`**[]{#lh:L79} Leverage/DockingTheoryBridge.lean
+
+**`L80`**[]{#lh:L80} Leverage/DockingTheoryBridge.lean
 
 **`ORA1`**[]{#lh:ORA1} paper2/Ssot/Coherence.lean
 
@@ -1192,6 +1362,36 @@ This appendix reports claim traceability directly from source and generated mapp
 & [**`L68`**]{#lh:L68} & `Leverage.sampledDocking_insideCutoff_sufficient`
 
 \
+[**`L69`**]{#lh:L69} & `Leverage.exactSufficiency_checkerBudget_ge_witnessBudget`
+
+& [**`L70`**]{#lh:L70} & `Leverage.exactSufficiency_checkingTime_ge_witnessBudget`
+
+\
+[**`L71`**]{#lh:L71} & `Leverage.exactSufficiency_noSoundChecker_below_witnessBudget`
+
+& [**`L72`**]{#lh:L72} & `Leverage.exactTopK_subset_ambiguityBand`
+
+\
+[**`L73`**]{#lh:L73} & `Leverage.exactVsCutoffCoulomb_opt_invariance`
+
+& [**`L74`**]{#lh:L74} & `Leverage.exactVsCutoffCoulomb_uniformApprox`
+
+\
+[**`L75`**]{#lh:L75} & `Leverage.exactVsCutoffLJ_opt_invariance`
+
+& [**`L76`**]{#lh:L76} & `Leverage.fisherMatrix_rank_eq_srank`
+
+\
+[**`L77`**]{#lh:L77} & `Leverage.surjectiveAbstraction_factors_or_erases`
+
+& [**`L78`**]{#lh:L78} & `Leverage.surjectiveAbstraction_withFeasibleCollapseMap_factors`
+
+\
+[**`L79`**]{#lh:L79} & `Leverage.topKPreserved_of_boundaryGap`
+
+& [**`L80`**]{#lh:L80} & `Leverage.totalFisher_eq_srank`
+
+\
 [**`ORA1`**]{#lh:ORA1} & `oracle_arbitrary`
 
 & [**`PH26`**]{#lh:PH26} & `PhysicalComplexity.no_collapse_of_bounded_budget_pos_cost_exp_lb`
@@ -1272,11 +1472,15 @@ This appendix reports claim traceability directly from source and generated mapp
 
   `cor:budget-entropy-bound`                  `unspecified`          \-                        IT3, BA1, BA2, BA5, BA6, EI1, L43
 
+  `cor:checking-time-lower-bound`             `unspecified`          \-                        L70
+
   `cor:composition-budget-law`                `unspecified`          \-                        L17, L19, BA1, BA2, BA7, BA5, BA6, L43
 
   `cor:holonomic-landauer-floor`              `unspecified`          \-                        L60, L61, L62
 
   `cor:minimum-cost-regime`                   `unspecified`          \-                        BA8, L54, L55
+
+  `cor:no-sound-checker-below-budget`         `unspecified`          \-                        L71
 
   `cor:rank-above-one`                        `unspecified`          \-                        L46, L51
 
@@ -1324,11 +1528,19 @@ This appendix reports claim traceability directly from source and generated mapp
 
   `prop:threshold-channel`                    `unspecified`          \-                        CV8, CV9, CV7
 
+  `thm:abstraction-factors-or-erases`         `unspecified`          \-                        L77
+
   `thm:bounded-acquisition`                   `unspecified`          \-                        BA1, BA2
 
   `thm:budget-class-bound`                    `unspecified`          \-                        IT4, IT3, BA1, BA2, BA5, BA6, EI1, L43
 
+  `thm:checker-budget-lower-bound`            `unspecified`          \-                        L69
+
   `thm:coherent-single-source`                `unspecified`          \-                        ORA1
+
+  `thm:coulomb-cutoff-invariance`             `unspecified`          \-                        L73
+
+  `thm:coulomb-cutoff-uniform-approx`         `unspecified`          \-                        L74
 
   `thm:counting-gap`                          `unspecified`          \-                        BA10
 
@@ -1346,11 +1558,19 @@ This appendix reports claim traceability directly from source and generated mapp
 
   `thm:exact-sufficiency-hardness-core`       `unspecified`          \-                        L63
 
+  `thm:feasible-collapse-factors`             `unspecified`          \-                        L78
+
   `thm:finite-budget-no-collapse`             `unspecified`          \-                        PH26
+
+  `thm:fisher-rank-srank`                     `unspecified`          \-                        L76
+
+  `thm:fisher-sum-srank`                      `unspecified`          \-                        L80
 
   `thm:five-way`                              `unspecified`          \-                        L43, L44, L47, L55
 
   `thm:hard-family-srank`                     `unspecified`          \-                        L64
+
+  `thm:lj-cutoff-invariance`                  `unspecified`          \-                        L75
 
   `thm:min-bit-operations`                    `unspecified`          \-                        BA5, BA6, L43, L46
 
@@ -1374,10 +1594,14 @@ This appendix reports claim traceability directly from source and generated mapp
 
   `thm:time-lower-bound`                      `unspecified`          \-                        BA1, BA2, BA5, BA6, L43
 
+  `thm:topk-ambiguity-band`                   `unspecified`          \-                        L72
+
+  `thm:topk-boundary-gap`                     `unspecified`          \-                        L79
+
   `thm:tractable-rank-one`                    `unspecified`          \-                        L47, L53, L56
   ---------------------------------------------------------------------------------------------------------------------------------------
 
-*Auto summary: indexed 54 claims by hardness profile (unspecified=54).*
+*Auto summary: indexed 66 claims by hardness profile (unspecified=66).*
 
 
 # Scope Statements {#appendix-assumptions}
@@ -1407,7 +1631,7 @@ This appendix lists the principal scope statements for the finite decision-therm
 
 Paper-level labeled claims:
 
-**Foundations (Section 2):**
+**Exact-Resolution Model (Section 2):**
 
 -   Proposition [\[prop:dof-additive\]](#prop:dof-additive){reference-type="ref" reference="prop:dof-additive"} (DOF Additivity)
 
@@ -1423,7 +1647,7 @@ Paper-level labeled claims:
 
 -   Theorem [\[thm:resolution-sufficient\]](#thm:resolution-sufficient){reference-type="ref" reference="thm:resolution-sufficient"}
 
-**Structural Rank and Decision Entropy (Section 3):**
+**Exact Resolution, Quotient Structure, and Compression (Section 3):**
 
 -   Theorem [\[thm:dof-srank\]](#thm:dof-srank){reference-type="ref" reference="thm:dof-srank"}
 
@@ -1437,6 +1661,14 @@ Paper-level labeled claims:
 
 -   Theorem [\[thm:entropy-bound\]](#thm:entropy-bound){reference-type="ref" reference="thm:entropy-bound"}
 
+-   Theorem [\[thm:abstraction-factors-or-erases\]](#thm:abstraction-factors-or-erases){reference-type="ref" reference="thm:abstraction-factors-or-erases"}
+
+-   Theorem [\[thm:feasible-collapse-factors\]](#thm:feasible-collapse-factors){reference-type="ref" reference="thm:feasible-collapse-factors"}
+
+-   Theorem [\[thm:fisher-sum-srank\]](#thm:fisher-sum-srank){reference-type="ref" reference="thm:fisher-sum-srank"}
+
+-   Theorem [\[thm:fisher-rank-srank\]](#thm:fisher-rank-srank){reference-type="ref" reference="thm:fisher-rank-srank"}
+
 -   Proposition [\[prop:finite-compression-bridge\]](#prop:finite-compression-bridge){reference-type="ref" reference="prop:finite-compression-bridge"}
 
 **Complexity Boundary (Section 4):**
@@ -1445,6 +1677,12 @@ Paper-level labeled claims:
 
 -   Theorem [\[thm:hard-family-srank\]](#thm:hard-family-srank){reference-type="ref" reference="thm:hard-family-srank"}
 
+-   Theorem [\[thm:checker-budget-lower-bound\]](#thm:checker-budget-lower-bound){reference-type="ref" reference="thm:checker-budget-lower-bound"}
+
+-   Corollary [\[cor:no-sound-checker-below-budget\]](#cor:no-sound-checker-below-budget){reference-type="ref" reference="cor:no-sound-checker-below-budget"}
+
+-   Corollary [\[cor:checking-time-lower-bound\]](#cor:checking-time-lower-bound){reference-type="ref" reference="cor:checking-time-lower-bound"}
+
 -   Theorem [\[thm:molecular-docking-srank-bound\]](#thm:molecular-docking-srank-bound){reference-type="ref" reference="thm:molecular-docking-srank-bound"}
 
 -   Corollary [\[cor:bounded-pocket-regime\]](#cor:bounded-pocket-regime){reference-type="ref" reference="cor:bounded-pocket-regime"}
@@ -1452,6 +1690,16 @@ Paper-level labeled claims:
 -   Theorem [\[thm:sampled-docking-gap\]](#thm:sampled-docking-gap){reference-type="ref" reference="thm:sampled-docking-gap"}
 
 -   Theorem [\[thm:sampled-inside-cutoff-sufficient\]](#thm:sampled-inside-cutoff-sufficient){reference-type="ref" reference="thm:sampled-inside-cutoff-sufficient"}
+
+-   Theorem [\[thm:topk-boundary-gap\]](#thm:topk-boundary-gap){reference-type="ref" reference="thm:topk-boundary-gap"}
+
+-   Theorem [\[thm:topk-ambiguity-band\]](#thm:topk-ambiguity-band){reference-type="ref" reference="thm:topk-ambiguity-band"}
+
+-   Theorem [\[thm:lj-cutoff-invariance\]](#thm:lj-cutoff-invariance){reference-type="ref" reference="thm:lj-cutoff-invariance"}
+
+-   Theorem [\[thm:coulomb-cutoff-uniform-approx\]](#thm:coulomb-cutoff-uniform-approx){reference-type="ref" reference="thm:coulomb-cutoff-uniform-approx"}
+
+-   Theorem [\[thm:coulomb-cutoff-invariance\]](#thm:coulomb-cutoff-invariance){reference-type="ref" reference="thm:coulomb-cutoff-invariance"}
 
 **Thermodynamic Cost (Section 5):**
 
@@ -1538,6 +1786,6 @@ Paper-level labeled claims:
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper3_leverage/proofs/`
-- Lines: 77274
-- Theorems: 3380
+- Lines: 77434
+- Theorems: 3392
 - `sorry` placeholders: 0

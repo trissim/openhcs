@@ -1,8 +1,8 @@
-Exact molecular docking is treated as exact configuration resolution under constraints. The abstract theory is stated for bounded decision systems through sufficient coordinate sets, structural rank, and decision-quotient entropy. Constrained molecular systems instantiate the same framework through holonomic constraints, cutoff-local interaction structure, and sampled action families.
+Molecular docking lacks a rigorous theory of the exact object its methods target. Exact configuration resolution under constraints supplies that object. The abstract layer is a bounded decision system equipped with sufficient coordinate sets, a decision quotient, structural rank, and decision-quotient entropy. The molecular layer instantiates the same framework through holonomic constraints, cutoff-local interaction structure, sampled action families, and concrete scorer families.
 
-General exact sufficiency certification contains a hardness core, while cutoff locality bounds docking structural rank by active-site and ligand coordinates and therefore isolates a theorem-backed low-rank regime. For sampled docking, exact and coarse winner sets agree under an explicit half-gap hypothesis, and the retained inside-cutoff coordinates are sufficient under the stated compatibility assumptions.
+The theorem package identifies one exact-resolution spine. Surjective abstractions either factor through the decision quotient or erase a decision-relevant distinction, and any physically feasible surjective collapse must therefore factor through the quotient. Structural rank is simultaneously the irreducible coordinate count, the quotient-entropy controller, and the exact Fisher-information dimension. General exact sufficiency certification contains a hardness core, and any sound checker for that core requires witness budget at least $2^{n-1}$. Cutoff locality bounds docking structural rank by active-site and ligand coordinates and therefore isolates a theorem-backed low-rank regime. For sampled docking, exact and coarse winner sets agree under an explicit half-gap hypothesis, inside-cutoff coordinates are sufficient under the stated compatibility assumptions, exact top-$k$ survivors are preserved under a certified boundary gap, and near-tie regimes admit a certified ambiguity band. Finite sampled Lennard-Jones and Coulomb scorer families satisfy theorem-backed exact/coarse invariance criteria under explicit cutoff error and half-gap conditions.
 
-The same exact-resolution structure carries irreducible thermodynamic cost once a positive per-bit lower bound is fixed. Under Landauer calibration, any exact-resolution cycle satisfies
+The same exact-resolution spine carries irreducible thermodynamic cost once a positive per-bit lower bound is fixed. Under Landauer calibration, any exact-resolution cycle satisfies
 \[
 E \geq k_B T\, H_{\mathrm{nats}}(D),
 \]
@@ -28,9 +28,10 @@ and corresponding bounds on decision-class count from spacetime and energy budge
 
 Theorem-level mismatch and residual witnesses place nonideal implementations strictly above the Landauer floor. An explicit binary mismatch witness and an explicit two-state residual witness each yield at least one additional per-bit lower-bound unit above the Landauer floor and raise the energy--information coefficient above $k_B T$. Finite-capacity substrates therefore have bounded lifetime and bounded cumulative entropy throughput.
 
-The empirical input is the per-bit conversion constant. Landauer furnishes the universal floor. The same calibrated model yields the finite replication entropy gap
+The empirical input is the per-bit conversion constant. Landauer furnishes the universal floor. The same calibrated model yields theorem-level mismatch and residual overhead above Landauer, bounded substrate lifetime and cumulative entropy throughput, the finite replication entropy gap,
 \[
 \Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k.
 \]
+and the finite-budget no-collapse theorem.
 
 Keywords: molecular docking, exact resolution, structural rank, decision entropy, Landauer principle

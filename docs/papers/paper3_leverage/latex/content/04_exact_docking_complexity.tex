@@ -1,6 +1,6 @@
 \section{Complexity Boundary of Exact Molecular Docking}\label{complexity-boundary}
 
-Exact molecular docking has a genuine tractability boundary. General exact sufficiency certification already contains a hardness core, while molecular locality supplies a low-rank regime in which exact resolution is structurally controlled. The claims in this section isolate that boundary before the thermodynamic lower bounds are applied.
+Exact molecular docking has a genuine tractability boundary because the exact object already carries both qualitative and quantitative certification lower bounds. General exact sufficiency certification contains a hardness core. Sound checking requires witness budget. Molecular locality, sampling hypotheses, and concrete scorer approximations then carve out theorem-backed low-rank and stability regimes inside that harder ambient problem class. The claims in this section isolate that boundary before the thermodynamic lower bounds are applied.
 
 \subsection{General Hardness Core}
 
@@ -23,6 +23,44 @@ Every coordinate is relevant in the non-tautology branch of the strengthened red
 \end{proof}
 
 The hard family therefore witnesses full interaction dimensionality: exact sufficiency can force the decision boundary to depend on every available coordinate.
+
+\subsection{Quantitative Certification Lower Bounds}
+
+\begin{theorem}[Checker Budget Lower Bound]\label{thm:checker-budget-lower-bound}
+\leanmeta{\LH{L69}}
+For the empty-set sufficiency core on $n \ge 1$ coordinates, any sound finite checker must inspect at least
+\[
+2^{n-1}
+\]
+pair witnesses.
+\end{theorem}
+
+\begin{proof}
+The witness budget for the empty-set core is $2^{n-1}$. Any sound checker must inspect enough witness pairs to refute every false empty-set sufficiency claim, so the checking budget is bounded below by that witness budget.
+\end{proof}
+
+\begin{corollary}[No Sound Checker Below Witness Budget]\label{cor:no-sound-checker-below-budget}
+\leanmeta{\LH{L71}}
+For the same empty-set core, any checker operating strictly below the witness budget fails to be sound.
+\end{corollary}
+
+\begin{proof}
+This is the contrapositive form of Theorem~\ref{thm:checker-budget-lower-bound}.
+\end{proof}
+
+\begin{corollary}[Checking Time Lower Bound]\label{cor:checking-time-lower-bound}
+\leanmeta{\LH{L70}}
+If runtime is bounded below by the number of checked witness pairs, then any sound checker for the empty-set core requires runtime at least
+\[
+2^{n-1}.
+\]
+\end{corollary}
+
+\begin{proof}
+The checking budget lower bound transfers directly to runtime once runtime dominates the number of checked pairs.
+\end{proof}
+
+The hardness core is therefore quantitative as well as qualitative: exact certification is expensive not only by reduction, but by unavoidable witness budget.
 
 \subsection{Cutoff-Local Docking Regime}
 
@@ -76,6 +114,57 @@ Under the cutoff boundedness, sampled-optimum capture, coordinate-compatibility,
 Cutoff locality forces every relevant sampled coordinate into the retained set. The compatibility and injectivity hypotheses then lift the retained-set relevance bound into a sufficiency theorem for the sampled restricted problem.
 \end{proof}
 
+\subsection{Top-k and Near-Tie Control}
+
+\begin{theorem}[Top-k Preservation Under Boundary Gap]\label{thm:topk-boundary-gap}
+\leanmeta{\LH{L79}}
+Let $u_{\mathrm{exact}}$ and $u_{\mathrm{coarse}}$ be finite score functions on a docking action family. If the coarse score differs from the exact score by at most $\delta$ on every action, and if $\delta$ is no larger than the boundary gap at threshold $\tau$, then every exact top-$k$ action survives the coarse threshold filter at $\tau$.
+\end{theorem}
+
+\begin{proof}
+The boundary-gap condition places every exact top-$k$ action at least $\delta$ above the threshold. Uniform score error bounded by $\delta$ therefore keeps every exact top-$k$ action above the coarse threshold as well.
+\end{proof}
+
+\begin{theorem}[Exact Top-k Ambiguity-Band Containment]\label{thm:topk-ambiguity-band}
+\leanmeta{\LH{L72}}
+For every nonnegative slack parameter $\varepsilon$, every exact top-$k$ action lies inside the certified ambiguity band of width $\varepsilon$ around the exact $k$th boundary.
+\end{theorem}
+
+\begin{proof}
+The ambiguity band is defined by lowering the exact $k$th threshold by $\varepsilon$. Every exact top-$k$ action remains above that relaxed threshold and is therefore retained.
+\end{proof}
+
+These top-$k$ theorems give a conservative exact-screening regime even when strict single-winner separation is unavailable.
+
+\subsection{Concrete Scorer Families}
+
+\begin{theorem}[Cutoff Lennard-Jones Winner Preservation]\label{thm:lj-cutoff-invariance}
+\leanmeta{\LH{L75}}
+For a finite sampled Lennard-Jones docking family, let $a_\ast$ be a strict exact winner at state $s$. If the finite cutoff error radius is smaller than half the strict exact utility gap at $s$, then the exact and cutoff Lennard-Jones optimal-action sets agree at $s$.
+\end{theorem}
+
+\begin{proof}
+The finite cutoff radius gives a uniform approximation theorem for exact and cutoff Lennard-Jones scores on the sampled domain. A strict half-gap bound then forces winner preservation.
+\end{proof}
+
+\begin{theorem}[Cutoff Coulomb Uniform Approximation]\label{thm:coulomb-cutoff-uniform-approx}
+\leanmeta{\LH{L74}}
+For a finite sampled Coulomb docking family, the exact and cutoff Coulomb score families differ by at most the finite cutoff error radius uniformly over the sampled action-state domain.
+\end{theorem}
+
+\begin{proof}
+The cutoff error radius is defined as the maximum exact-versus-cutoff discrepancy over the finite sampled domain. Uniform approximation follows immediately from that extremal definition.
+\end{proof}
+
+\begin{theorem}[Cutoff Coulomb Winner Preservation]\label{thm:coulomb-cutoff-invariance}
+\leanmeta{\LH{L73}}
+For a finite sampled Coulomb docking family, let $a_\ast$ be a strict exact winner at state $s$. If the finite cutoff error radius is smaller than half the strict exact utility gap at $s$, then the exact and cutoff Coulomb optimal-action sets agree at $s$.
+\end{theorem}
+
+\begin{proof}
+The uniform cutoff-error bound from Theorem~\ref{thm:coulomb-cutoff-uniform-approx} combines with the strict half-gap criterion to force winner preservation.
+\end{proof}
+
 \subsection{Formalization}
 
-The local paper3 docking bridge theorems live in \texttt{Leverage/DockingTheoryBridge.lean}. They expose the general exact-sufficiency hardness core, the maximal-rank hard family, the cutoff-local structural-rank bounds for molecular docking, and the sampled exact/coarse preservation and sufficiency theorems used in the molecular development.
+The local paper3 docking bridge theorems live in \texttt{Leverage/DockingTheoryBridge.lean}. They expose the abstraction-collapse boundary, the Fisher-rank identities, the general exact-sufficiency hardness core, the quantitative witness/checking lower bounds, the cutoff-local structural-rank bounds for molecular docking, the sampled exact/coarse preservation and sufficiency theorems, the top-$k$ and ambiguity-band control theorems, and the concrete Lennard-Jones and Coulomb cutoff invariance statements used in the molecular development.

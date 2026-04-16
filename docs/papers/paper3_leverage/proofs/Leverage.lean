@@ -112,9 +112,9 @@ import LambdaDR
 - finite zero-identity-debt transfer from raw argmin fibers to the tie-broken encoder
 
 ### Docking Theory Bridge (Leverage/DockingTheoryBridge.lean)
-- local paper3 exposure of exact-sufficiency hardness core
-- local cutoff-local structural-rank bounds for molecular docking
-- local sampled exact/coarse winner-preservation and inside-cutoff sufficiency theorems
+- local paper3 exposure of abstraction-collapse, Fisher-rank, and exact-sufficiency hardness theorems
+- quantitative checker lower bounds and docking-locality structural-rank bounds
+- sampled, top-k, and concrete scorer-family exact/coarse invariance theorems
 
 ### λ_DR Calculus (LambdaDR.lean)
 - Core PL theory contribution: biconditional characterization of SSOT-capable languages

@@ -1,12 +1,14 @@
 \section{Introduction}\label{introduction}
 
-Exact molecular docking is treated as exact configuration resolution under constraints. The structural statements are finite counting, coordinate sufficiency, structural rank, decision-quotient entropy, and thermodynamic lower bounds. The abstract layer is a bounded decision system, represented in Lean by \texttt{Architecture} together with the canonical binary encoding \texttt{canonicalDP}. The molecular layer instantiates the same framework through holonomic constraint topology, cutoff-local interaction structure, and sampled docking families. The quotient object is closer to zero-error and confusability-based information than to average-case coding \cite{shannon1956zero,korner1973graphs,lovasz1979shannon}.
+Molecular docking lacks a rigorous theory of the exact object its methods target. Exact configuration resolution under constraints supplies that object. The structural statements are finite counting, coordinate sufficiency, structural rank, decision-quotient entropy, certification hardness, and thermodynamic lower bounds. The abstract layer is a bounded decision system, represented in Lean by \texttt{Architecture} together with the canonical binary encoding \texttt{canonicalDP}. The molecular layer instantiates the same framework through holonomic constraint topology, cutoff-local interaction structure, sampled docking families, and concrete scorer families. The quotient object is closer to zero-error and confusability-based information than to average-case coding \cite{shannon1956zero,korner1973graphs,lovasz1979shannon}.
 
-Landauer calibration supplies the universal floor \cite{landauer1961irreversibility,bennett1982thermodynamics}. The central claim is that correctness, complexity, and thermodynamic cost are controlled by the same exact-resolution object: the decision quotient and its structural rank. For constrained molecular systems with $N$ atoms and $k$ independent holonomic constraints, the transported degree-of-freedom count is $3N-k$, and the exact-resolution floor scales with that remaining unconstrained dimension.
+One exact-resolution spine controls the manuscript. The decision quotient fixes the coarsest exact abstraction. Structural rank fixes the irreducible dimension of that quotient. The same rank controls quotient entropy, Fisher-information dimension, certification burden, and Landauer cost. For constrained molecular systems with $N$ atoms and $k$ independent holonomic constraints, the transported degree-of-freedom count is $3N-k$, and the exact-resolution floor scales with that remaining unconstrained dimension. Every docking pipeline therefore either solves this object, approximates it, or replaces it with a surrogate objective.
 
-\subsection{Central Result}
+The theorem package extends the rank-entropy-cost chain. Surjective abstractions either factor through the decision quotient or erase a decision-relevant distinction, and any physically feasible surjective collapse must therefore factor through the quotient. Any sound checker for the empty-set hardness core requires witness budget at least $2^{n-1}$. The same structural rank is also the exact Fisher-information dimension of the decision problem. Cutoff locality, sampled exact/coarse invariance, top-$k$ survivor control, ambiguity-band containment, and concrete Lennard-Jones and Coulomb cutoff theorems then transport the abstract object into a molecular docking theory with explicit scorer families and approximation regimes.
 
-The convergence theorem proved in Section~\ref{five-way-equivalence} is:
+\subsection{Theorem Package}
+
+The endpoint of the theory is the convergence theorem in Section~\ref{five-way-equivalence}:
 
 \[
 \begin{aligned}
@@ -26,9 +28,9 @@ An imported coherence theorem gives a separate single-source reading of the same
 \]
 where $\mathrm{SSOT}(A)$ denotes the coherent single-source condition that one locus is authoritative, every remaining encoding is a derived view, and all reachable states remain coherent.
 
-The structural-rank and thermodynamic clauses are central. The imported coherence statement is a companion interpretation of the same rank-$1$ regime.
+The convergence theorem is the endpoint of the manuscript. Earlier sections establish four ingredients that make the equivalence nontrivial: the quotient boundary for exact abstractions, the identification of structural rank with both irreducible coordinate count and Fisher-information dimension, the qualitative and quantitative certification lower bounds, and the molecular locality and stability theorems that make the docking specialization concrete.
 
-The same chain has a direct molecular reading. Exact molecular resolution requires a sufficient coordinate set. Cutoff locality bounds the number of decision-relevant protein coordinates by the active site together with the ligand coordinates, and sampled docking preserves exact winners under explicit half-gap control. The resulting structural-rank bounds and thermodynamic floors are therefore not detached corollaries but the concrete molecular instantiation of the abstract theory.
+Exact molecular resolution requires a sufficient coordinate set. Cutoff locality bounds the number of decision-relevant protein coordinates by the active site together with the ligand coordinates. Sampled docking preserves exact winners under explicit half-gap control, retains exact top-$k$ survivors under a certified boundary gap, and admits a near-tie ambiguity band when strict separation fails. The resulting structural-rank bounds and thermodynamic floors constitute the concrete molecular instantiation of the abstract theory.
 
 \subsection{Structural and Empirical Inputs}
 
@@ -40,13 +42,13 @@ Landauer calibration enters only in Section~\ref{main-theorems}, where the per-b
 \subsection{Contributions}
 
 \begin{enumerate}
-\item \textbf{Exact Docking Semantics:} exact molecular docking is exact configuration resolution under constraints through sufficient coordinate sets, the decision quotient, and the canonical exact-resolution encoding.
+\item \textbf{Reference Semantics for Molecular Docking:} exact molecular docking is exact configuration resolution under constraints through sufficient coordinate sets, the decision quotient, and the canonical exact-resolution encoding. Surjective exact summaries factor through the quotient, while any extra collapse erases a decision-relevant distinction. Approximate and heuristic docking methods are thereby located relative to a single exact target object.
 
-\item \textbf{Complexity Boundary:} general exact sufficiency certification contains a hardness core, while cutoff locality bounds docking structural rank by active-site and ligand coordinates, and sampled docking admits theorem-backed exact/coarse winner preservation and inside-cutoff sufficiency under explicit gap and compatibility hypotheses.
+\item \textbf{Complexity Boundary:} general exact sufficiency certification contains a hardness core, any sound checker for that core requires witness budget at least $2^{n-1}$, cutoff locality bounds docking structural rank by active-site and ligand coordinates, sampled docking admits theorem-backed exact/coarse winner preservation and inside-cutoff sufficiency under explicit gap and compatibility hypotheses, and top-$k$ as well as near-tie regimes remain under certified control.
 
-\item \textbf{Thermodynamic Floor:} the canonical exact-resolution problem assigns one binary acquisition channel to each degree of freedom, the resulting structural rank equals that channel count, the decision entropy is bounded by the same count, and under Landauer calibration exact-resolution cost is bounded below by both $\mathrm{DOF}(A)\,k_B T \ln 2$ and $k_B T H_{\mathrm{nats}}(D)$.
+\item \textbf{Thermodynamic and Statistical Dimension:} the canonical exact-resolution problem assigns one binary acquisition channel to each degree of freedom, the resulting structural rank equals that channel count, the decision entropy is bounded by the same count, the Fisher-information dimension is the same structural rank, and under Landauer calibration exact-resolution cost is bounded below by both $\mathrm{DOF}(A)\,k_B T \ln 2$ and $k_B T H_{\mathrm{nats}}(D)$.
 
-\item \textbf{Molecular Constraint Transport:} constrained molecular systems with $N$ atoms and $k$ independent holonomic constraints transport directly into the framework with effective dimension $3N-k$, binary constraint-status interface, and a Landauer-linear floor scaling with the remaining unconstrained coordinates.
+\item \textbf{Molecular Transport and Concrete Scorer Families:} constrained molecular systems with $N$ atoms and $k$ independent holonomic constraints transport directly into the framework with effective dimension $3N-k$, binary constraint-status interface, and a Landauer-linear floor scaling with the remaining unconstrained coordinates. Finite sampled Lennard-Jones and Coulomb scorer families satisfy theorem-backed exact/coarse invariance criteria under explicit cutoff error and half-gap conditions.
 
 \item \textbf{Nonideal Exact Resolution:} theorem-level mismatch and residual witnesses force effective per-bit floors strictly above Landauer, explicit binary mismatch and two-state residual witnesses each yield an additive one-unit overhead above the Landauer floor, and finite-capacity substrates therefore have bounded lifetime and bounded entropy throughput.
 
@@ -63,8 +65,8 @@ Informally: exact resolution must be paid for.
 
 \subsection{Scope}
 
-The mathematical structure links structural rank, quotient entropy, complexity, and thermodynamic cost. Theorems are stated abstractly for bounded decision systems represented by the Lean object \texttt{Architecture} and are instantiated concretely for constrained molecular systems, cutoff-local docking problems, and sampled docking families.
+The mathematical structure links structural rank, quotient entropy, Fisher-information dimension, certification hardness, and thermodynamic cost. Theorems are stated abstractly for bounded decision systems represented by the Lean object \texttt{Architecture} and are instantiated concretely for constrained molecular systems, cutoff-local docking problems, sampled docking families, and finite scorer approximations.
 
 \subsection{Organization}
 
-Section~\ref{foundations} defines the structural model, the finite-acquisition interface, and the exact docking semantics. Section~\ref{probability-model} derives the quotient, structural-rank, and compression consequences of exact resolution. Section~\ref{complexity-boundary} states the hardness core, the cutoff-local low-rank regime, and the sampled docking preservation theorems. Section~\ref{main-theorems} derives the thermodynamic cost consequences. Section~\ref{five-way-equivalence} states the convergence theorem and the remaining universal consequences. Section~\ref{related-work} situates the results relative to thermodynamics, information theory, and molecular computation. Appendix~\ref{appendix-lean} records proof provenance.
+Section~\ref{foundations} defines the structural model, the finite-acquisition interface, and the exact docking semantics. Section~\ref{probability-model} derives the quotient boundary, structural-rank identities, Fisher-dimension theorems, and the finite compression bridge. Section~\ref{complexity-boundary} states the hardness core, checker lower bounds, cutoff-local low-rank regime, sampled docking preservation theorems, top-$k$ and near-tie control, and concrete scorer-family invariance results. Section~\ref{main-theorems} derives the thermodynamic cost consequences. Section~\ref{five-way-equivalence} states the convergence theorem and the remaining universal consequences. Section~\ref{related-work} situates the results relative to thermodynamics, information theory, and molecular computation. Appendix~\ref{appendix-lean} records proof provenance.

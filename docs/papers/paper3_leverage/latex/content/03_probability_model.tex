@@ -1,6 +1,6 @@
 \section{Exact Resolution, Quotient Structure, and Compression}\label{probability-model}
 
-The theorems of this section are statements about the canonical exact-resolution encoding defined in Section~\ref{foundations}. The degree-of-freedom count is exactly the interaction dimension of that encoded decision problem, and exact physical resolution must pay for that interaction dimension in discrete bit events. Structural rank is the count of irreducible coordinate reads required by exact resolution in that encoding.
+The theorems of this section identify the exact object before any complexity or thermodynamic lower bound is applied. The canonical exact-resolution encoding turns the declared degree-of-freedom count into a decision problem whose structural rank is the irreducible interaction dimension of exact resolution. The quotient theorems identify the coarsest exact abstraction of that object, the Fisher theorems identify the same rank as its statistical dimension, and the compression bridge identifies the same distinction structure in finite combinatorial language.
 
 \subsection{Degree of Freedom Equals Structural Rank}
 
@@ -71,6 +71,62 @@ H_{\mathrm{nats}}(\mathrm{canonicalDP}(A)) \le \mathrm{DOF}(A)\,\ln 2.
 The bit-entropy statement is the entropy-rank inequality for binary coordinate spaces, again composed with Theorem~\ref{thm:dof-srank}. The nat-entropy statement is obtained by multiplying by $\ln 2$.
 \end{proof}
 
+\subsection{Abstraction Boundary}
+
+\begin{theorem}[Surjective Abstractions Either Factor or Erase]\label{thm:abstraction-factors-or-erases}
+\leanmeta{\LH{L77}}
+Let $\phi : S \to T$ be a surjective abstraction of states for a decision problem $D$. Then exactly one of the following structural possibilities occurs:
+\[
+\text{$\phi$ factors through the decision quotient of $D$}
+\qquad\text{or}\qquad
+\text{$\phi$ erases a decision-relevant distinction.}
+\]
+\end{theorem}
+
+\begin{proof}
+If $\phi$ preserves the optimal-action correspondence, the quotient is the coarsest such abstraction and $\phi$ factors through it. If $\phi$ fails to preserve the optimal-action correspondence, then by definition it identifies two states with different optimal-action sets and therefore erases a decision-relevant distinction.
+\end{proof}
+
+\begin{theorem}[Feasible Collapse Maps Force Quotient Factorization]\label{thm:feasible-collapse-factors}
+\leanmeta{\LH{L78}}
+Let $\phi : S \to T$ be a surjective abstraction of states for a decision problem $D$. If every decision-relevant distinction erased by $\phi$ were mapped to a physically feasible collapse at the canonical requirement profile, then $\phi$ must factor through the decision quotient of $D$.
+\end{theorem}
+
+\begin{proof}
+The physical no-collapse layer rules out any physically feasible realization of an abstraction that erases a decision-relevant distinction at the canonical requirement profile. The only remaining possibility is that the abstraction preserves the optimal-action correspondence and therefore factors through the decision quotient.
+\end{proof}
+
+The quotient is the coarsest surjective exact abstraction that remains available once decision-relevant erasure is excluded.
+
+\subsection{Fisher Dimension}
+
+\begin{theorem}[Total Fisher Information Equals Structural Rank]\label{thm:fisher-sum-srank}
+\leanmeta{\LH{L80}}
+For every finite decision problem $D$,
+\[
+\sum_i \mathrm{FisherScore}_D(i) = \mathrm{srank}(D).
+\]
+\end{theorem}
+
+\begin{proof}
+Each coordinate contributes Fisher score $1$ exactly when it is structurally relevant and score $0$ otherwise. Summing those indicator values therefore counts the relevant coordinates, which is exactly the structural rank.
+\end{proof}
+
+\begin{theorem}[Fisher-Matrix Rank Equals Structural Rank]\label{thm:fisher-rank-srank}
+\leanmeta{\LH{L76}}
+For every finite decision problem $D$,
+\[
+\operatorname{rank}(I_D) = \mathrm{srank}(D),
+\]
+where $I_D$ is the diagonal Fisher information matrix induced by the relevance profile of $D$.
+\end{theorem}
+
+\begin{proof}
+The Fisher matrix is diagonal with a $1$ on each structurally relevant coordinate and a $0$ on each irrelevant coordinate. Its rank is therefore the number of nonzero diagonal entries, which is exactly the structural rank.
+\end{proof}
+
+Structural rank therefore has three exact readings in the present development: combinatorial irreducible-coordinate count, quotient entropy controller, and Fisher-information dimension.
+
 \subsection{Finite Compression Bridge}
 
 The next proposition packages the finite bridge in direct compression language: a finite Hamiltonian induces a deterministic tie-broken compression relation, and the paper1 fiber moment becomes the exact collision moment of that relation.
@@ -113,4 +169,4 @@ Informally: to avoid collisions is to pay for distinctions.
 
 \subsection{Formalization}
 
-The structural-rank bridge is formalized in \texttt{Leverage/BridgeToDQ.lean}; the finite compression bridge is formalized in \texttt{Leverage/ColumnComplexityBridge.lean}; and the minimum-bit and entropy bounds are formalized in the decision-quotient physics and information development. These are the objects used directly by the thermodynamic theorems of the next section.
+The structural-rank bridge is formalized in \texttt{Leverage/BridgeToDQ.lean}; the abstraction-collapse, Fisher-rank, and exact-sufficiency bridge theorems are exposed locally in \texttt{Leverage/DockingTheoryBridge.lean}; the finite compression bridge is formalized in \texttt{Leverage/ColumnComplexityBridge.lean}; and the minimum-bit and entropy bounds are formalized in the decision-quotient physics and information development. These are the objects used directly by the complexity and thermodynamic theorems of the next sections.
