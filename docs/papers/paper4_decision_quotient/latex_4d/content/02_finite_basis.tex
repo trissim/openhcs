@@ -49,6 +49,53 @@ The current primitive basis consists exactly of bounded actions, separable utili
 
 The current positive landscape therefore contains fifteen tractable families accounted for by eight primitive mechanisms.
 
+Table~\ref{tab:positive-landscape-partition} summarizes the role partition and the induced primitive basis in one place.
+
+\begin{table}[h]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.12}
+\renewcommand{\tabularxcolumn}[1]{m{#1}}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}m{0.19\linewidth}>{\raggedright\arraybackslash}m{0.37\linewidth}>{\raggedright\arraybackslash}m{0.38\linewidth}@{}}
+\toprule
+\textbf{Role} & \textbf{Family} & \textbf{Primitive Mechanism} \\
+\midrule
+Core structural & bounded actions & bounded actions \\
+\midrule
+Core structural & separable utility & separable utility \\
+\midrule
+Core structural & low tensor rank & low tensor rank \\
+\midrule
+Core structural & tree structure & tree structure \\
+\midrule
+Core structural & bounded treewidth & bounded treewidth \\
+\midrule
+Core structural & coordinate symmetry & coordinate symmetry \\
+\midrule
+Regime lift & product distribution & separable utility \\
+\midrule
+Regime lift & bounded support & bounded actions \\
+\midrule
+Regime lift & bounded horizon & bounded treewidth \\
+\midrule
+Regime lift & full observability & tree structure \\
+\midrule
+Degenerate & single action & constant-optimizer collapse \\
+\midrule
+Degenerate & strict global dominance & constant-optimizer collapse \\
+\midrule
+Degenerate & constant optimal set & constant-optimizer collapse \\
+\midrule
+Degenerate & multiplicative-separable constant-sign & constant-optimizer collapse \\
+\midrule
+Degenerate & bounded state space & finite explicit enumeration \\
+\bottomrule
+\end{tabularx}
+\caption{Partition of the tractable families treated here. The primitive-mechanism column is the projection used in Corollary~\ref{cor:finite-basis-current}.}
+\label{tab:positive-landscape-partition}
+\end{table}
+
 \leanmetapending{\LH{FR101}, \LHrng{FR}{105}{106}, \LH{FR108}, \LHrng{FR}{112}{113}}
 \begin{proposition}[All Independent Core Mechanisms Are Nondegenerate]\label{prop:four-core-nondegenerate}
 The analysis already contains witness families showing that five core mechanisms are individually indispensable in the sense of basis coverage:

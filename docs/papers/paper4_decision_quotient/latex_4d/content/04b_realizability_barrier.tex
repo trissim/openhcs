@@ -1,6 +1,6 @@
 \section{Realizability of Arbitrary Quotients}
 
-One possible route to a finite tractability taxonomy would be to show that optimizer-induced quotients realize only a narrow subclass of equivalence relations, so that the frontier would emerge from realizability alone. In the unconstrained setting, this route fails.
+One possible route to a finite tractability taxonomy would be to show that optimizer-induced quotients realize only a narrow subclass of equivalence relations, so that the frontier would emerge from realizability alone. In the unconstrained setting, this route fails for a simple reason: realizability is already maximal.
 
 \leanmetapending{\LHrng{FR}{7}{8}}
 \begin{theorem}[Every Labeling Kernel Is Optimizer-Realizable]\label{thm:labeling-realizable}
@@ -27,7 +27,9 @@ U(a,s)=
 Then the unique maximizer at state $s$ is the designated action $\phi(s)$, so the optimizer set is exactly $\{\phi(s)\}$. Two states therefore have the same optimizer set if and only if they receive the same label under $\phi$.
 \end{proof}
 
-Theorem~\ref{thm:labeling-realizable} eliminates quotient shape as the organizing principle for a frontier theorem. Optimizer realizability by itself is extremely permissive. If arbitrary label kernels are already optimizer-induced, then no finite taxonomy can come merely from asking which abstract quotients are realizable.
+Theorem~\ref{thm:labeling-realizable} eliminates quotient shape as the organizing principle for a frontier theorem. The construction is elementary, and optimizer realizability by itself is extremely permissive. If arbitrary label kernels are already optimizer-induced, then no finite taxonomy can come merely from asking which abstract quotients are realizable.
+
+Informally: quotient shape alone does not determine what matters for tractability.
 
 \leanmetapending{\LHrng{FR}{45}{47}}
 \begin{proposition}[Every Equivalence Relation Is Optimizer-Realizable]\label{prop:setoid-realizable}
@@ -60,4 +62,4 @@ Proposition~\ref{prop:realized-quotient-range} strengthens Theorem~\ref{thm:labe
 Any future optimizer-compatible tractability metatheorem must use more than quotient realizability alone. Additional restrictions have to enter through representation, coordinate structure, utility structure, closure properties of the family under study, or comparable algebraic invariants.
 \end{corollary}
 
-This shifts the burden of the metatheorem. Quotient shape does not constrain the frontier. The remaining question is which \emph{natural structural families of decision problems} force tractability or preserve hardness once coordinate structure and utility representation are taken seriously.
+This shifts the burden of the metatheorem. Quotient shape does not constrain the frontier. The remaining question is which \emph{natural structural families of decision problems} force tractability or preserve hardness once coordinate structure and utility representation are taken seriously, and which natural restrictions on decision problems constrain the quotient geometries that can occur.

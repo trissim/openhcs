@@ -11,14 +11,14 @@ The right eventual condition list will almost certainly be stronger than this mi
 If two decision problems on the same state space induce the same decision-equivalence relation, then they induce the same exact-certification structure. In particular, they have the same sufficient coordinate sets, the same minimal sufficient coordinate sets, and the same relevant and irrelevant coordinates. Moreover, their quotient objects are canonically equivalent; in finite settings, those quotient objects therefore have the same cardinality.
 \end{proposition}
 
-Proposition~\ref{prop:depends-only-on-opt} is the canonical statement behind the frontier program. Exact certification is determined by the decision quotient relation itself. Equality of optimizer maps is only a sufficient route to this conclusion, because equal optimizer maps induce the same decision-equivalence relation.
+The decision quotient relation determines exact certification. Equality of optimizer maps is only one sufficient route to that quotient data, because equal optimizer maps induce the same decision-equivalence relation.
 
 \leanmetapending{\LH{FR48}}
 \begin{corollary}[Sufficiency Is Relation Refinement]\label{cor:sufficiency-refinement}
 A coordinate set $I$ is sufficient if and only if the coordinate-agreement relation induced by $I$ refines the decision quotient relation.
 \end{corollary}
 
-Corollary~\ref{cor:sufficiency-refinement} is the cleanest relational form of exact certification. It removes utility language entirely: sufficiency asks whether one state relation is contained in another.
+Sufficiency is purely relational: the coordinate-agreement relation induced by $I$ must refine the decision quotient relation. Utility language drops out entirely.
 
 \leanmetapending{\LHrng{FR}{49}{50}}
 \begin{corollary}[Relevance Is Failure of Erased Sufficiency]\label{cor:relevance-erasure}
@@ -32,7 +32,7 @@ Corollary~\ref{cor:relevance-erasure} makes the role of individual coordinates c
 Any statistic that is a function of the sufficient-set family and relevant-coordinate set is invariant under equality of the decision quotient relation. In particular, the number of sufficient coordinate sets, the number of minimal sufficient coordinate sets, and the number of relevant coordinates are quotient invariants.
 \end{corollary}
 
-Corollary~\ref{cor:statistics-factor} records the next logical consequence of Proposition~\ref{prop:depends-only-on-opt}. Once exact certification is identified with quotient data, every certification statistic built from sufficient sets or relevant coordinates factors automatically through that quotient data as well.
+Every certification statistic built from sufficient sets or relevant coordinates factors through the decision quotient relation. Counts of sufficient sets, minimal sufficient sets, and relevant coordinates are therefore quotient invariants.
 
 \leanmetapending{\LHrng{FR}{176}{177}}
 \begin{proposition}[Zero-Distortion Summaries Refine the Optimizer Quotient]\label{prop:zero-distortion-refines-quotient}
@@ -62,7 +62,7 @@ Corollary~\ref{cor:constant-opt-collapse} isolates the first genuinely degenerat
 For every fixed exponent $k$, there exists a Boolean-cube family with state space size $2^n > n^k$. Thus explicit-state enumeration can outrun any fixed monomial bound in the ambient dimension parameter.
 \end{proposition}
 
-Proposition~\ref{prop:enumeration-not-structural} is weaker than a full polynomial lower-bound metatheorem, but it already captures the structural point needed here: tractability by brute-force state enumeration depends on a separate size parameter and does not arise from an optimizer-compatible mechanism like symmetry, low rank, or tree structure.
+Brute-force state enumeration depends on a separate size parameter and does not arise from an optimizer-compatible mechanism like symmetry, low rank, or tree structure.
 
 \leanmetapending{\LHrng{FR}{13}{16}}
 \begin{proposition}[Positive Affine Utility Reparameterizations Are Invisible]\label{prop:affine-invisible}
@@ -75,7 +75,7 @@ U(a,s)
 with $\beta(s)>0$ for every state $s$ does not change sufficient coordinate sets or relevance judgments.
 \end{proposition}
 
-Proposition~\ref{prop:affine-invisible} is another direct consequence of Proposition~\ref{prop:depends-only-on-opt}. It records a standard utility-theoretic invariance in the exact-certification language: only the induced decision quotient matters, not the particular positive affine scale used to encode utility.
+Statewise positive affine utility reparameterization is invisible to exact certification: only the induced decision quotient matters, not the particular positive affine scale used to encode utility.
 
 \leanmetapending{\LHrng{FR}{54}{56}, \LHrng{FR}{68}{73}}
 \begin{proposition}[Duplicate Actions and Duplicate States Preserve Certification]\label{prop:duplicate-invariance}
@@ -89,7 +89,7 @@ Proposition~\ref{prop:duplicate-invariance} gives two more theorem-forced closur
 Action relabeling preserves optimizer equivalence and exact sufficiency. State relabeling does so as well once the coordinate structure is transported along the state bijection. Consequently, any structural tractability frontier for exact relevance certification must be closed under these relabelings.
 \end{proposition}
 
-Proposition~\ref{prop:relabeling-forced} is now best read as a corollary of Proposition~\ref{prop:depends-only-on-opt}. Bijective relabelings do not change the optimizer map up to the obvious identification, so they cannot change exact certification.
+Bijective relabelings do not change the optimizer map up to the obvious identification, so they cannot change exact certification.
 
 The second necessary ingredient is a genuine expressivity restriction. Call a class \emph{kernel-universal} if, for every labeling map $\phi : S \to T$, it contains some decision problem whose optimizer quotient realizes exactly the kernel partition of $\phi$. By Theorem~\ref{thm:labeling-realizable}, kernel universality is an extremely strong property.
 
@@ -111,7 +111,7 @@ A meaningful frontier statement cannot range over classes that are simultaneousl
 The universal class of all decision problems satisfies action relabeling invariance and state relabeling invariance, but it is kernel-universal. Consequently, relabeling invariance by itself is far too weak to isolate a tractability frontier.
 \end{proposition}
 
-Proposition~\ref{prop:invariance-too-weak} separates two kinds of conditions that can otherwise be conflated.
+Benign invariance axioms and expressivity-limiting axioms play different roles in a frontier theorem.
 
 \begin{enumerate}
 \item \textbf{Benign invariance axioms} say the family should ignore arbitrary naming choices.
@@ -232,10 +232,14 @@ Structural extractability distinguishes structural characterizations from purely
 
 Bounded-pattern definability is the locality restriction. Its role is to exclude predicates whose membership test is implemented by an arbitrarily large finite schema or other hidden global computation. The contradiction does not use this clause. The clause restricts attention to the direct finite local regime.
 
+The compute-cost layer adds no new orbit mechanism. Once correctness forces closure-orbit agreement for one exact task, each output-production variant inherits the same conclusion through its theorem-backed transport. The next results record representative instantiations.
+
 \leanmetapending{\LHrng{FR}{197}{199}, \LHrng{FR}{245}{249}}
 \begin{theorem}[Tractability Classifiers Are Forced to Be Closure-Invariant]\label{thm:correct-classifier-forces-invariance}
 Let $C$ be any procedure assigning to each representation in a closure-closed domain $\Gamma$ a verdict in $\{\mathrm{tractable},\mathrm{intractable}\}$, and suppose that $C$ correctly predicts whether exact certification is polynomial-time decidable on the underlying problem. Then $C$ must agree on representations within the same closure orbit. Equivalently, every correct tractability classifier on a closure-closed domain is closure-invariant on that domain, regardless of whether its internal features are themselves invariant.
 \end{theorem}
+
+Informally: a correct classifier gets one answer for one problem.
 
 \begin{proof}[Proof sketch]
 If $U,V \in \Gamma$ lie in the same closure orbit, Proposition~\ref{prop:closure-operations-preserve-certification} shows that they induce the same exact-certification problem up to the explicit coordinate-set transport attached to each closure step. The theorem uses the semantic notion of correctness stated above: $C$ is correct exactly when its verdict matches whether the underlying exact-certification problem is polynomial-time decidable. For a single closure step, the transported coordinate-set instance has the same yes/no answer as the original one, so a polynomial-time decision procedure for one representation yields a polynomial-time decision procedure for the other with only the polynomial overhead of the transport. Hence tractability is unchanged by each closure step. A closure orbit is generated by composing such steps, so tractability is constant on the orbit, and any correct classifier must return the same verdict on $U$ and $V$.
@@ -259,7 +263,7 @@ The same closure-orbit agreement conclusion holds when $C$ correctly predicts po
 Apply the same correctness-on-domain theorem to the two canonical compute-cost families built from optimizer-set payload output and optimizer-set admissible-output search.
 \end{proof}
 
-Thus the forced-invariance argument applies not only to exact-certification predicates, but also to all three canonical output-production tasks treated in the compute-cost layer.\leanmeta{\LHrng{FR}{245}{249}, \LHrng{FR}{259}{262}}
+These are representative instances of one pattern rather than new obstruction mechanisms. The same correctness-forces-invariance theorem therefore covers the compute-cost layer as well.\leanmeta{\LHrng{FR}{245}{249}, \LHrng{FR}{259}{262}}
 
 \leanmetapending{\LHrng{FR}{316}{328}}
 \begin{corollary}[Compute-Cost Version: External Output Objects]\label{cor:external-output-compute-classifier-forces-invariance}
@@ -267,7 +271,7 @@ Let $X$ be an external output class whose admissibility relation is preserved un
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-This corollary aggregates the generic identity-output closure theorem, the bridge to transported outputs, and the named external-output instances. The generic external-output compute-cost layer transports only the input state; the output object itself is unchanged. Once the admissibility relation respects those state pullbacks, the same correctness-on-domain theorem applies.
+The external-output case transports only the input state; the output object itself is unchanged. Once the admissibility relation respects those state pullbacks, the same correctness-on-domain theorem applies.
 \end{proof}
 
 \leanmetapending{\LHrng{FR}{326}{336}}
@@ -276,7 +280,7 @@ Let $X_U$ be a representation-relative output object whose type and admissibilit
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-This corollary aggregates the generic transported-output closure theorem with the named representation-relative hypothesis, estimator, policy, and randomized-procedure instances. The generic transported-output compute-cost layer packages the witness-by-witness output maps together with the corresponding admissibility preservation laws, and the same correctness-on-domain theorem then applies.
+The transported-output case packages the witness-by-witness output maps together with the corresponding admissibility preservation laws. The same correctness-on-domain theorem then applies to representation-relative hypotheses, estimators, policies, and randomized procedures.
 \end{proof}
 
 Correctness already forces the same orbit agreement. The closure laws therefore supply the representation-level congruence needed for the orbit-gap program: once two slices are related by these theorem-forced presentation equivalences, any correct tractability classifier must identify them. Theorem~\ref{thm:closure-sound-package-no-go} therefore applies to any correct classifier on a closure-closed domain once the target notion is tractability itself.
@@ -330,7 +334,7 @@ Then every coordinate set is sufficient for $\phi$ if and only if it is sufficie
 For the induced decision problem, the optimizer at state $s$ is the singleton $\{\phi(s)\}$. Hence two states have the same optimizer if and only if they carry the same payload value. The sufficiency and relevance predicates are therefore literally the same coordinate conditions on $S$ in both formulations.
 \end{proof}
 
-This is a theorem of exact semantic equivalence. Deterministic payload sufficiency and relevance are already exact relevance certification for the induced decision problem.
+Deterministic payload sufficiency and relevance are exactly exact relevance certification for the induced decision problem.
 
 \leanmetapending{\LH{FR340}}
 \begin{corollary}[Boolean Payload Transfer]\label{cor:boolean-payload-transfer}
@@ -356,7 +360,7 @@ Let $F(s) \subseteq A$ be a nonempty feasible-action set at each state of a coor
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-This corollary is the set-valued analogue of Proposition~\ref{prop:payload-transfer}. The strict utility gap makes the optimizer set coincide with the feasible-action set at every state, so the same coordinate conditions define sufficiency and relevance on both sides.
+The strict utility gap makes the optimizer set coincide with the feasible-action set at every state, so the same coordinate conditions define sufficiency and relevance on both sides.
 \end{proof}
 
 Corollary~\ref{cor:set-valued-payload-transfer} covers total search semantics stated as nonempty feasible-witness sets. Deterministic payloads are the singleton special case.
@@ -404,7 +408,7 @@ Then a coordinate set $I$ is sufficient if and only if agreement on $I$ forces $
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-This proposition is the exact-semantics specialization of sufficiency as relation refinement. The relation being refined is now the admissible-output equivalence relation itself.
+The relation being refined is the admissible-output equivalence relation itself.
 \end{proof}
 
 \leanmetapending{\LH{FR343}}
@@ -433,6 +437,8 @@ Corollary~\ref{cor:relational-output-transfer} reduces the exact semantics to ex
 \begin{corollary}[Universal Scope Over Rigorously Specified Problems]\label{cor:universal-scope-rigorously-specified-problems}
 Every rigorously specified computational problem determines an exact admissible-output semantics, admits a coordinate presentation, and has its exact relevance profile realized by exact relevance certification for the induced decision problem. Sufficiency recovers the admissible-output equivalence classes, and relevance is erased failure of that recovery.
 \end{corollary}
+
+Informally: once correctness is fixed, relevance asks which coordinates recover what matters.
 
 \begin{proof}[Proof sketch]
 Combine Theorem~\ref{thm:exact-semantics-quotient-universality} with Proposition~\ref{prop:every-exact-specification-admits-coordinate-presentation}.
@@ -502,7 +508,7 @@ Let $R(s,a)$ specify the admissible randomized outputs for a state $s$, where $a
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-This corollary is a named specialization of Corollary~\ref{cor:relational-output-transfer}. Randomization changes the output object, not the meaning of correctness: correctness still means exact agreement with the admissible-output relation on those randomized outputs, not deterministic singleton output semantics.
+Randomization changes the output object, not the meaning of correctness: correctness still means exact agreement with the admissible-output relation on those randomized outputs, not deterministic singleton output semantics.
 \end{proof}
 
 \begin{corollary}[Randomized-Output Guarantee Semantics Inherit the Closure-Orbit Consequences]\label{cor:randomized-guarantee-closure-consequences}
@@ -529,8 +535,37 @@ Let $R(s,a)$ specify the admissible outputs for an exact approximation specifica
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-This corollary is the approximation-specialized form of Corollary~\ref{cor:relational-output-transfer}. Approximation enters only through the specification: once the admissible-output relation says which outputs meet the guarantee, correctness with respect to that approximation specification is exact agreement with that relation, not zero approximation error.
+Approximation enters only through the specification: once the admissible-output relation says which outputs meet the guarantee, correctness with respect to that approximation specification is exact agreement with that relation, not zero approximation error.
 \end{proof}
+
+Table~\ref{tab:exact-semantics-reduction-summary} summarizes the named exact-semantics reductions established in this section.
+
+\begin{table}[h]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.12}
+\renewcommand{\tabularxcolumn}[1]{m{#1}}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}m{0.22\linewidth}>{\raggedright\arraybackslash}m{0.30\linewidth}>{\raggedright\arraybackslash}m{0.42\linewidth}@{}}
+\toprule
+\textbf{Specification Type} & \textbf{Exact Semantics} & \textbf{Exact-Certification Equivalent} \\
+\midrule
+Deterministic payload $\phi(s)$ & singleton payload $\{\phi(s)\}$ & induced decision problem with $\Opt(s)=\{\phi(s)\}$ \\
+\midrule
+Boolean predicate $P(s)$ & truth-value payload in $\{0,1\}$ & Boolean-payload instance of the induced decision problem \\
+\midrule
+Set-valued search $F(s)$ & feasible-output set $F(s) \subseteq A$ & induced decision problem with optimizer set exactly $F(s)$ \\
+\midrule
+Relational output $R(s,a)$ & admissible-output set $\{a : R(s,a)\}$ & totalized decision problem with failure token and strict allowed/blocked gap \\
+\midrule
+Approximation or PAC/regret/risk guarantee & outputs satisfying the stated guarantee & named instance of the same relational-output reduction \\
+\midrule
+Randomized output & admissible distributions, kernels, estimators, or policies & randomized-output instance of the same relational-output reduction \\
+\bottomrule
+\end{tabularx}
+\caption{Exact semantic reductions to quotient recovery. The named transfer corollaries differ only in how the admissible-output relation is packaged.}
+\label{tab:exact-semantics-reduction-summary}
+\end{table}
 
 \leanmetapending{\LH{FR263}, \LH{FR266}}
 \begin{proposition}[Approximate Relevance and Sufficiency Claims Need Explicit Stability Control]\label{prop:approximate-relevance-needs-stability-control}
@@ -570,6 +605,8 @@ The uniform-approximation theorem preserves the optimizer set at each state once
 
 Thus closeness alone does not justify an approximate relevance or sufficiency claim. Any $\varepsilon$-based surrogate claim needs an explicit reduction to the exact optimizer sets, for example by a witness-gap bound as in Proposition~\ref{prop:approximate-relevance-needs-stability-control}, because otherwise arbitrarily small perturbations can change the exact judgment.
 
+Informally: without a margin, approximation does not preserve what matters.
+
 \leanmetapending{\LHrng{FR}{235}{236}}
 \begin{proposition}[Exact Semantic Claims Depend Only on Admissible-Output Equivalence]\label{prop:semantic-claims-depend-only-on-output-equivalence}
 Let $R$ and $R'$ be two exact output semantics on the same state space. If they induce the same equality relation on admissible-output sets, then they induce the same sufficient coordinate sets and the same relevant coordinates. Exact semantic claims about sufficiency and relevance therefore depend only on the induced admissible-output equivalence relation.
@@ -594,7 +631,7 @@ Let $C$ be any claim about exact output semantics that depends only on admissibl
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-This proposition is the quotient-factorization theorem for semantically extensional maps, specialized to \texttt{Prop}-valued claims. If $C$ takes the same truth value on any two semantics with the same admissible-output equivalence, then $C$ descends to the quotient by that equivalence relation.
+Semantically extensional exact claims descend to the quotient by admissible-output equivalence. If $C$ takes the same truth value on any two semantics with the same admissible-output equivalence, then $C$ factors through that quotient.
 \end{proof}
 
 Closure-law invariance is theorem-forced. Theorem~\ref{thm:correct-classifier-forces-invariance} shows that correctness already forces closure-orbit agreement, and Theorem~\ref{thm:closure-sound-package-no-go} together with Proposition~\ref{prop:logical-dependency-no-go} shows that this theorem-forced congruence is the only load-bearing hypothesis in the no-go theorem. Clauses 1, 3, and 4 are guardrails against the failure modes identified in Proposition~\ref{prop:oracle-loophole}.

@@ -1,20 +1,31 @@
 \section{Introduction}
 
-Any rigorously specified computational problem already determines a state-indexed admissible-output relation $R$, and the only state distinctions that matter are the admissible-output equivalence classes $s \sim_R s' \iff \mathrm{Adm}_R(s)=\mathrm{Adm}_R(s')$. Informally, knowing what matters is the only thing that matters. Every exact correctness claim reduces to the same quotient-recovery problem. Here exact means exact agreement with the admissible-output relation itself, not zero-error determinism or the absence of approximation, randomization, statistical thresholds, or failure states inside the specification. Section~6 proves this directly: Boolean payloads and exact predicates transfer definitionally to exact relevance certification, sufficiency is relation refinement of the admissible-output quotient, relevance is erased failure of that refinement, exact relevance certification for the induced decision problem realizes exactly the same quotient structure, every state equivalence relation is realizable at this semantic level, and every correctness claim admits a coordinate presentation (Corollaries~\ref{cor:boolean-payload-transfer} and~\ref{cor:predicate-transfer}, Proposition~\ref{prop:sufficiency-is-relation-refinement}, Corollary~\ref{cor:relevance-is-erased-failure-of-refinement}, Proposition~\ref{prop:exactness-means-exact-agreement-with-validity}, Theorem~\ref{thm:exact-semantics-quotient-universality}, Proposition~\ref{prop:every-exact-specification-admits-coordinate-presentation}, and Corollary~\ref{cor:every-state-equivalence-relation-is-realizable-as-exact-output-semantics}). Decision, counting, search, approximation, PAC/regret/risk, randomized-output, finite-horizon or anytime, and distributional guarantees therefore all reduce to the same quotient-recovery problem. The optimizer-quotient framework of~\cite{simas2026optimizerquotient} isolates this canonical semantic layer, and the earlier optimizer-quotient factorization results are recovered as verification of the same spine.
+Any rigorously specified computational problem already determines a state-indexed admissible-output relation $R$, and the only state distinctions that matter are the admissible-output equivalence classes $s \sim_R s' \iff \mathrm{Adm}_R(s)=\mathrm{Adm}_R(s')$. Informally, knowing what matters is the only thing that matters. Every exact correctness claim reduces to the same quotient-recovery problem. Here exact means exact agreement with the admissible-output relation itself, not zero-error determinism or the absence of approximation, randomization, statistical thresholds, or failure states inside the specification. Section~6 proves this universality explicitly: Boolean payloads, exact predicates, search, approximation, PAC/regret/risk, randomized-output, finite-horizon or anytime, and distributional guarantees all reduce to the same quotient-recovery problem. Every exact claim admits a coordinate presentation, and every state equivalence relation is realizable at this semantic level. The optimizer-quotient framework of~\cite{simas2026optimizerquotient} isolates this canonical semantic layer, and the earlier optimizer-quotient factorization results are recovered as exact-semantics special cases of the more general admissible-output quotient theorem.
 
 The validity relation is the correctness condition itself, not an optional encoding trick. Different coordinate presentations may make quotient recovery trivial or rich, but they do not change the canonical quotient itself. Proposition~\ref{prop:every-exact-specification-admits-coordinate-presentation} gives the universal one-coordinate realization, while Propositions~\ref{prop:finite-specifications-admit-coordinate-presentations}--\ref{prop:finite-specifications-admit-low-dimensional-boolean-presentations} give structurally informative realizations of the same semantics. SAT fits through its exact yes/no validity predicate, sorting through the set of correctly sorted outputs for each input, and fixed approximation or PAC guarantees through the outputs meeting the stated threshold. The frontier theorems therefore concern tractable recovery of a canonical quotient across presentations, not existence of semantics.
 
-The orbit-gap contradiction depends only on closure-law invariance (Theorem~\ref{thm:closure-sound-package-no-go}), and orbit gaps are the complete obstruction criterion for exact classification by closure-law-invariant predicates (Proposition~\ref{prop:orbit-gap-completeness}). Closure-law invariance is itself forced by correctness (Theorem~\ref{thm:correct-classifier-forces-invariance}). Closure-equivalent representations encode the same certification problem, so a correct tractability classifier must assign them the same verdict. The verdict concerns tractability of the underlying problem, not tractability of a specification format. The same forced-agreement statement extends to polynomial-time solvability of optimizer computation, canonical payload and search tasks, external output objects, and representation-relative transported outputs such as policies and randomized procedures, so the same orbit-gap mechanism applies to the compute-cost layer as well as to feature sufficiency. Corollary~\ref{cor:domain-restriction-only-removes-orbit-gaps} gives the exact domain-relative statement: restricting the domain helps precisely when the restricted closure-closed domain contains no orbit gaps for the target notion. Definition~\ref{def:admissible-normalization} specifies the finite structural class used below; the contradiction itself uses only closure-law invariance.
+The paper has two threads. Section~6 establishes the universal semantic reduction from exact admissible-output specifications to quotient recovery. Sections~2--4 ask whether that universal object admits a finite structural frontier theorem. The two threads meet at theorem-forced closure invariance: once exact semantics are fixed, tractability classification must respect the presentation equivalences that leave the underlying exact-certification problem unchanged.
+
+The orbit-gap contradiction depends only on closure-law invariance (Theorem~\ref{thm:closure-sound-package-no-go}), and orbit gaps are the complete obstruction criterion for exact classification by closure-law-invariant predicates (Proposition~\ref{prop:orbit-gap-completeness}). Closure-law invariance is itself forced by correctness (Theorem~\ref{thm:correct-classifier-forces-invariance}). Closure-equivalent representations encode the same certification problem, so a correct tractability classifier must assign them the same verdict. The verdict concerns tractability of the underlying problem, not tractability of a specification format. Representative compute-cost instantiations include optimizer computation, canonical payload and search tasks, and theorem-backed external or transported outputs, so the same orbit-gap mechanism applies there as well as to feature sufficiency. Corollary~\ref{cor:domain-restriction-only-removes-orbit-gaps} gives the exact domain-relative statement: restricting the domain helps precisely when the restricted closure-closed domain contains no orbit gaps for the target notion. Definition~\ref{def:admissible-normalization} specifies the finite structural class used below; the contradiction itself uses only closure-law invariance.
 
 Once correctness forces closure-orbit agreement, no finite structural classifier can separate the obstruction families.
 
 Definition~\ref{def:admissible-normalization} isolates the direct structural-classification regime: efficiently checkable, presentation-independent, structurally extractable verdicts whose definitions are built from bounded local patterns rather than unbounded global computation. Closure-invariance is forced by correctness (Theorem~\ref{thm:correct-classifier-forces-invariance}); polynomial-time checkability, structural extractability, and bounded-pattern definability act only as guardrails restricting attention to direct representation-level structure.
 
-On the positive side, we first show that all known tractable cases collapse to eight primitive mechanisms, together with regime lifts and degenerate collapses. Bounded distinct action profiles then compress to bounded-action slices without changing exact certification, extending the bounded-actions theorem by an explicit reduction. The eight-mechanism basis is the inventory of the positive landscape developed in the paper, not a complete classification of all tractability mechanisms for exact relevance certification. Optimizer realizability is maximal, so quotient shape alone is too expressive to classify tractability.
+On the positive side, we first show that all known tractable cases collapse to eight primitive mechanisms, together with regime lifts and degenerate collapses. Bounded distinct action profiles then compress to bounded-action slices without changing exact certification, extending the bounded-actions theorem by an explicit reduction. The eight-mechanism basis is the inventory of the positive landscape developed in the paper, not a complete classification of all tractability mechanisms for exact relevance certification. Optimizer realizability is maximal, so quotient shape alone is too expressive to classify tractability; the point is not that the realizing construction is deep, but that no quotient-level obstruction remains in the unrestricted regime.
 
 Exactness is not arbitrary. At zero distortion, any summary that preserves optimal actions must still separate distinct optimizer classes: if two different optimizer classes were assigned the same summary value, the summary would merge states with different optimal-action sets and would cease to be lossless. Exact relevance therefore marks the theoretical floor for lossless abstraction. Section~6 now also fixes the approximation boundary: approximate surrogate claims about relevance or sufficiency are admissible only with an explicit stability reduction to the exact optimizer sets, because witness-gap control preserves the corresponding witness, a uniform strict-gap hypothesis preserves the entire optimizer quotient together with the sufficient, relevant, and minimal-sufficient structure, and arbitrarily small uniform perturbations can otherwise flip the exact judgment.
 
 Realizability of arbitrary quotients fixes the organizing principle: tractability predicates must be evaluated on representation-level structural classes, but modulo theorem-forced equivalences of presentation. In particular, closure under relabelings, positive affine utility reparameterizations, duplication, and binary irrelevant-coordinate extension is not a modeling preference; it is inherited from the fact that exact certification depends only on the induced decision quotient relation.
+
+The closure laws used below are the theorem-forced presentation moves:
+\begin{itemize}
+\item action and coordinate relabeling,
+\item statewise positive affine utility reparameterization,
+\item action duplication and state duplication,
+\item binary irrelevant-coordinate extension.
+\end{itemize}
+Each preserves the underlying exact-certification problem up to explicit transport.
 
 A closure-closed domain is a family of representations closed under those theorem-forced presentation moves. Quotient-respecting representation classes are naturally closure-closed. Families defined by a fixed syntactic normal form or by presentation-sensitive side conditions often are not.
 
@@ -30,33 +41,59 @@ s \sim_{\Opt} s' \quad\Longleftrightarrow\quad \Opt(s)=\Opt(s').
 \]
 The associated optimizer quotient is the quotient set $S/{\sim_{\Opt}}$. A coordinate set $I$ is \emph{sufficient} when agreement on $I$ forces equality of optimizer classes, and a coordinate is \emph{relevant} when deleting it destroys sufficiency. Later closure laws and obstruction families are all phrased relative to this quotient viewpoint.
 
+For a concrete two-action, two-coordinate example, let the state space be $\{0,1\}^2$ with coordinates $(x_0,x_1)$, let the actions be $a,b$, and define
+\[
+U(a,x)=x_0,
+\qquad
+U(b,x)=0.
+\]
+Then
+\[
+\Opt(00)=\Opt(01)=\{a,b\},
+\qquad
+\Opt(10)=\Opt(11)=\{a\}.
+\]
+The optimizer quotient therefore has exactly two classes, namely $\{00,01\}$ and $\{10,11\}$. The coordinate set $\{0\}$ is sufficient, coordinate $1$ is irrelevant, and coordinate $0$ is relevant. Only the first coordinate changes what matters.
+
 Unrestricted predicates trivialize any impossibility theorem via direct semantic encoding. A finite structural class is therefore needed: polynomial-time checkability, structural extractability, closure-law invariance, and bounded-pattern definability. This class excludes direct semantic encoding while still covering the structural results established here. Closure-law invariance is the clause used in the contradiction (Theorem~\ref{thm:closure-sound-package-no-go}); the remaining clauses restrict the search space to finite, explicitly structural predicates.
 
-The theorem is a no-go for classifiers inside the finite structural class, not a no-go for tractable classes themselves. This is a deliberately scoped direct finite local structural regime: it is strong enough to exclude direct semantic encoding, yet narrow enough that membership is still an explicit representation-level condition. Stronger representation-sensitive structure lies outside Definition~\ref{def:admissible-normalization}; the algebraic invariants used in CSP dichotomy theorems are not bounded-pattern definable under this locality restriction. The result is therefore compatible with CSP-style positive frontier theorems. The open problem is to identify the successor structural class using stronger structure of that kind.
+The theorem is a no-go for classifiers inside the finite structural class, not a no-go for tractable classes themselves. The regime is deliberately scoped: it is strong enough to exclude direct semantic encoding, yet narrow enough that membership is still an explicit representation-level condition. Stronger representation-sensitive structure lies outside Definition~\ref{def:admissible-normalization}; the algebraic invariants used in CSP dichotomy theorems are not bounded-pattern definable under this locality restriction. The result is therefore compatible with CSP-style positive frontier theorems. The open problem is to identify the successor structural class using stronger structure of that kind.
 
 Within this finite structural class, the no-go template is witnessed by same-orbit pairs with different obstruction status. The key mechanism is an action-independent, pair-targeted additive affine term (the statewise ``$\alpha$-component'' of positive affine transport), which changes the target predicate while preserving closure equivalence. Closure-law invariance then transports any candidate predicate across the orbit and forces contradiction.
 
-The dominant-pair family is the canonical instance, and the same mechanism applies to margin masking, ghost-action concentration, and additive/statewise offset concentration. The force of using all four families is robustness across multiple natural candidate tractability predicates, not four unrelated proof devices. Theorem~\ref{thm:closure-sound-package-no-go} identifies closure-law invariance as the hypothesis used in the contradiction, and Theorem~\ref{thm:correct-classifier-forces-invariance} upgrades the scope from invariant classifiers to correct classifiers on closure-closed domains. The remaining clauses delimit the direct finite structural regime. The open problem is to identify the stronger structural principle that yields a correct frontier theorem.
+The dominant-pair family is the canonical instance, and the same mechanism applies to margin masking, ghost-action concentration, and additive/statewise offset concentration. Remark~\ref{rem:worked-dominant-pair-orbit-example} gives a concrete three-coordinate example of the dominant-pair orbit witness. The force of using all four families is robustness across multiple natural candidate tractability predicates, not four unrelated proof devices. Theorem~\ref{thm:closure-sound-package-no-go} identifies closure-law invariance as the hypothesis used in the contradiction, and Theorem~\ref{thm:correct-classifier-forces-invariance} upgrades the scope from invariant classifiers to correct classifiers on closure-closed domains. The remaining clauses delimit the direct finite structural regime. The open problem is to identify the stronger structural principle that yields a correct frontier theorem.
 
 \subsection*{Notation Summary}
 
-\begin{center}
+\begin{table}[h]
+\centering
 \small
-\begin{tabularx}{0.95\linewidth}{@{}>{\raggedright\arraybackslash}m{0.21\linewidth}>{\raggedright\arraybackslash}X@{}}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.12}
+\renewcommand{\tabularxcolumn}[1]{m{#1}}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}m{0.21\linewidth}>{\raggedright\arraybackslash}X@{}}
 \toprule
 \textbf{Notation} & \textbf{Meaning} \\
 \midrule
 $\mathrm{Adm}_R(s)$ & admissible outputs at state $s$ under exact specification $R$ \\
+\midrule
 $s \sim_R s'$ & admissible-output equivalence: $\mathrm{Adm}_R(s)=\mathrm{Adm}_R(s')$ \\
+\midrule
 $S/{\sim_R}$ & quotient of states by admissible-output equivalence \\
+\midrule
 $\Opt(s)$ & optimizer set of a decision problem at state $s$ \\
+\midrule
 $s \sim_{\Opt} s'$ & optimizer-quotient equivalence: $\Opt(s)=\Opt(s')$ \\
+\midrule
 $I$ sufficient & agreement on coordinates $I$ forces equality of quotient classes \\
+\midrule
 $i$ relevant & erasing coordinate $i$ destroys sufficiency \\
+\midrule
 closure orbit & all representations connected by theorem-forced closure operations \\
+\midrule
 slice & a concrete binary pairwise utility presentation used by the frontier program \\
 \bottomrule
 \end{tabularx}
-\end{center}
+\end{table}
 
 An accompanying Lean development mechanically verifies the realizability constructions, the generic orbit-gap argument, and the family-level admissible no-go theorems used in the collapse argument; the archived artifact is available at \url{https://doi.org/10.5281/zenodo.19457896}.
