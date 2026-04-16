@@ -164,7 +164,7 @@ In particular, each closure step induces the same exact-certification decision p
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-Each clause is verified directly at the level of exact-certification semantics. The relabeling and positive-affine cases preserve the decision-equivalence relation, hence preserve sufficiency and relevance. The duplication cases preserve decision-equivalence through the explicit quotient projections back to the original problem. The irrelevant-coordinate case is binary noise extension: $I \subseteq [d]$ is sufficient for the base slice if and only if its lift is sufficient after extension, the original coordinates remain exactly the relevant ones, and the new coordinate is irrelevant. Table~\ref{tab:closure-operation-transport} summarizes the theorem-backed transport statement. The encoding remarks in the right-hand column are direct from the concrete binary-pairwise representation and are not separate theorem claims.
+Each clause is verified directly at the level of exact-certification semantics. The relabeling and positive-affine cases preserve the decision-equivalence relation, hence preserve sufficiency and relevance. The duplication cases preserve decision-equivalence through the explicit quotient projections back to the original problem. The irrelevant-coordinate case is binary noise extension: $I \subseteq [d]$ is sufficient for the base slice if and only if its lift is sufficient after extension, the original coordinates remain exactly the relevant ones, and the new coordinate is irrelevant. Table~\ref{tab:closure-operation-transport} summarizes the resulting transport statement. The encoding remarks in the right-hand column are direct from the concrete binary-pairwise representation and are not separate theorem claims.
 \end{proof}
 
 \begin{table}[h]
@@ -186,7 +186,7 @@ Action/state duplication & same sufficient sets and relevant coordinates & carri
 Binary irrelevant-coordinate extension & $I \leftrightarrow \mathrm{lift}(I)$, old relevance preserved, new coordinate irrelevant & arity increases by one binary coordinate \\
 \bottomrule
 \end{tabularx}
-\caption{Closure-operation transport for exact certification. The transport column is theorem-backed in Lean; the encoding-effect column records the direct representation-level effect of each operation in the binary-pairwise formalization.}
+\caption{Closure-operation transport for exact certification. The transport column records the exact-certification invariance stated in the closure theorems; the encoding-effect column records the direct representation-level effect of each operation in the binary-pairwise formalization.}
 \label{tab:closure-operation-transport}
 \end{table}
 
@@ -216,11 +216,15 @@ Bounded-pattern definability is likewise finite and explicit. Concretely, there 
 \[
 r_{\max},\; n_{\max},\; a_{\max},\; c_{\max} \in \mathbb{N}
 \]
-and finite sets $\mathcal W,\mathcal F$ of rooted local patterns such that every pattern in $\mathcal W \cup \mathcal F$ has radius at most $r_{\max}$, uses at most $n_{\max}$ vertices, involves at most $a_{\max}$ action labels, and all listed coefficient magnitudes are at most $c_{\max}$. Writing $\mathcal N_r(X(U),v)$ for the rooted radius-$r$ neighborhood of a vertex $v$ in the extracted finite syntax $X(U)$, membership in $Q$ is determined by these finite patterns alone:
+and finite sets $\mathcal W,\mathcal F$ of rooted local patterns such that every pattern in $\mathcal W \cup \mathcal F$ has radius at most $r_{\max}$, uses at most $n_{\max}$ vertices, involves at most $a_{\max}$ action labels, and all listed coefficient magnitudes are at most $c_{\max}$. Write
 \[
-Q(U) \iff \Bigl(\exists v\ \exists W\in\mathcal W:\; W \text{ occurs in } \mathcal N_{r_{\max}}(X(U),v)\Bigr)
+\mathcal N_U(v) := \mathcal N_{r_{\max}}(X(U),v)
+\]
+for the rooted radius-$r_{\max}$ neighborhood of a vertex $v$ in the extracted finite syntax $X(U)$, and write $P \sqsubseteq \mathcal N_U(v)$ when the rooted pattern $P$ occurs in that neighborhood. Then membership in $Q$ is determined by these finite patterns alone:
+\[
+Q(U) \iff \Bigl(\exists v\ \exists W\in\mathcal W:\; W \sqsubseteq \mathcal N_U(v)\Bigr)
 \ \land\
-\Bigl(\forall v\ \forall F\in\mathcal F:\; F \text{ does not occur in } \mathcal N_{r_{\max}}(X(U),v)\Bigr).
+\Bigl(\forall v\ \forall F\in\mathcal F:\; F \not\sqsubseteq \mathcal N_U(v)\Bigr).
 \]
 Thus the definition ranges over a fixed finite vocabulary of local rooted configurations; it does not call an unbounded global computation under a structural name.
 
@@ -232,7 +236,7 @@ Structural extractability distinguishes structural characterizations from purely
 
 Bounded-pattern definability is the locality restriction. Its role is to exclude predicates whose membership test is implemented by an arbitrarily large finite schema or other hidden global computation. The contradiction does not use this clause. The clause restricts attention to the direct finite local regime.
 
-The compute-cost layer adds no new orbit mechanism. Once correctness forces closure-orbit agreement for one exact task, each output-production variant inherits the same conclusion through its theorem-backed transport. The next results record representative instantiations.
+The compute-cost layer adds no new orbit mechanism. Once correctness forces closure-orbit agreement for one exact task, each output-production variant inherits the same conclusion through its explicit transport law. The next results record representative instantiations.
 
 \leanmetapending{\LHrng{FR}{197}{199}, \LHrng{FR}{245}{249}}
 \begin{theorem}[Tractability Classifiers Are Forced to Be Closure-Invariant]\label{thm:correct-classifier-forces-invariance}
