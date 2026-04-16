@@ -5,9 +5,9 @@ Degree of freedom equals structural rank, and structural rank bounds decision en
 \subsection{Imported Coherence Reading}
 
 \begin{theorem}[Coherent Single-Source Regime]\label{thm:coherent-single-source}
+\leanmeta{Imported coherence theorem (\LH{ORA1})}
 A bounded decision system lies in the coherent unit-independent-rate regime if and only if $\mathrm{DOF}(A)=1$.
 \end{theorem}
-\leanmeta{Imported coherence theorem (\LH{ORA1})}
 
 \begin{informal}
 In the imported coherence development, rank~$1$ means exactly one locus is authoritative, every remaining encoding is a derived view, and all reachable states remain coherent.
@@ -16,12 +16,12 @@ In the imported coherence development, rank~$1$ means exactly one locus is autho
 \subsection{Structural Rank}
 
 \begin{theorem}[Rank Identification]\label{thm:rank-identification}
+\leanmeta{\LH{L43}, \LH{L46}, \LH{L51}}
 For every bounded decision system $A$,
 \[
 \mathrm{srank}(\mathrm{canonicalDP}(A)) = \mathrm{DOF}(A).
 \]
 \end{theorem}
-\leanmeta{\LH{L43}, \LH{L46}, \LH{L51}}
 
 \begin{informal}
 The degree-of-freedom count is not separate from the decision-theoretic object; it is exactly the interaction dimension of the canonical decision problem.
@@ -30,9 +30,9 @@ The degree-of-freedom count is not separate from the decision-theoretic object; 
 \subsection{Tractability Boundary}
 
 \begin{theorem}[Tractable Sufficiency at Rank One]\label{thm:tractable-rank-one}
+\leanmeta{Imported tractability theorem (\LH{L56}, \LH{L53}, \LH{L47})}
 In the canonical decision problem family, structural rank~$1$ is the tractable sufficiency regime, while higher structural rank enters the hard regime.
 \end{theorem}
-\leanmeta{Imported tractability theorem (\LH{L56}, \LH{L53}, \LH{L47})}
 
 \begin{informal}
 When exactly one relevant coordinate survives, exact sufficiency certification is tractable. Once more than one relevant coordinate survives, the canonical family crosses into the imported hardness regime.
@@ -41,9 +41,9 @@ When exactly one relevant coordinate survives, exact sufficiency certification i
 \subsection{Thermodynamic Selection}
 
 \begin{theorem}[Thermodynamic Selection]\label{thm:thermodynamic-selection}
+\leanmeta{\LH{L49}, \LHrng{L}{54}{55}, \LH{BA8}}
 In the canonical decision encoding, every bounded decision system with $\mathrm{DOF}(A)>1$ lies strictly above the rank-$1$ Landauer ground state in per-cycle resolution cost.
 \end{theorem}
-\leanmeta{\LH{L49}, \LHrng{L}{54}{55}, \LH{BA8}}
 
 \begin{informal}
 The theorem uses only the rank identity together with Landauer calibration. Stronger hardness consequences require additional imported hypotheses.
@@ -52,6 +52,7 @@ The theorem uses only the rank identity together with Landauer calibration. Stro
 \subsection{Convergence Theorem}
 
 \begin{theorem}[Convergence]\label{thm:five-way}
+\leanmeta{\LHrng{L}{43}{44}, \LH{L47}, \LH{L55}}
 For every bounded decision system $A$, the following conditions are equivalent:
 \[
 \mathrm{DOF}(A)=1
@@ -60,7 +61,6 @@ For every bounded decision system $A$, the following conditions are equivalent:
 \iff \text{minimum per-cycle thermodynamic cost}.
 \]
 \end{theorem}
-\leanmeta{\LHrng{L}{43}{44}, \LH{L47}, \LH{L55}}
 
 \begin{informal}
 The same rank-$1$ regime is simultaneously the exact one-coordinate regime, the tractable exact-certification regime, and the thermodynamic ground state. The imported coherence theorem gives an additional single-source interpretation of the same point.
@@ -78,13 +78,14 @@ Theorem~\ref{thm:coherent-single-source} supplies an imported single-source inte
 
 \subsection{Formalization}
 
-The proof chain is explicit in the mechanized artifact. The local bridge theorems live in \nolinkurl{Leverage/BridgeToDQ.lean}; the coherence theorem is imported from \nolinkurl{Ssot}; and the tractability and Landauer-cost theorems are imported from the decision-quotient development. The proof provenance remains fully auditable.
+The local bridge theorems live in \nolinkurl{Leverage/BridgeToDQ.lean}; the coherence theorem is imported from \nolinkurl{Ssot}; and the tractability and Landauer-cost theorems are imported from the decision-quotient development. Appendix~\ref{appendix-lean} records source provenance.
 
-\subsection{England Replication Inequality}
+\subsection{Finite Replication Entropy Gap}
 
-The England Replication Inequality is mechanized in \nolinkurl{Leverage/BridgeToDQ.lean} (\LH{L45}).
+The theorem below uses the rank-indexed entropy cost $\Delta S_{\min}(r)=r k_B \ln 2$ from the calibrated exact-resolution model.
 
-\begin{theorem}[England Replication Inequality]\label{thm:england}
+\begin{theorem}[Finite Replication Entropy Gap]\label{thm:england}
+\leanmeta{\LH{L45}}
 Let $\Delta S_{\min}(r) = r \cdot k_B \ln 2$ be the rank-indexed minimal entropy production under Landauer calibration. For the rank-$1$ ground regime and any replicated rank-$k$ regime:
 \[
 \Delta S_{\min}(1) + k_B \ln k \leq \Delta S_{\min}(k)
@@ -92,17 +93,16 @@ Let $\Delta S_{\min}(r) = r \cdot k_B \ln 2$ be the rank-indexed minimal entropy
 equivalently, $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$.
 \end{theorem}
 
-\leanmeta{\LH{L45}}
-
 \begin{proof}
 The gap is $(k-1) \cdot k_B \ln 2$. Since $k \leq 2^{k-1}$ (\LH{L52}), taking logs gives $\ln k \leq (k-1) \ln 2$, so the gap is $\geq k_B \ln k$.
 \end{proof}
 
-\textbf{Modeling note.} $\Delta S_{\min}$ is a definition within the model: the exact Landauer entropy cost of the canonical exact-resolution cycle. The ``min'' refers to physical optimality inside the calibrated decision model. In England's 2013 stochastic-thermodynamic framework \cite{england2013statistical}, the comparison point is the entropy premium associated with replication above a single-copy baseline. The present reformulation does not reproduce England's full path-space dynamics or detailed-balance setting. It isolates the same $k_B \ln k$ multiplicity penalty as a finite-counting consequence of rank-indexed Landauer cost together with $k \le 2^{k-1}$, making the selection penalty explicit in a finite exact-resolution model.
+\textbf{Model class.} $\Delta S_{\min}$ is the rank-indexed Landauer entropy cost in the calibrated exact-resolution model. The theorem uses the finite inequality $k \le 2^{k-1}$. England's 2013 result \cite{england2013statistical} is a stochastic-thermodynamic path-space theorem with detailed balance and far-from-equilibrium dynamics. The common term is the multiplicity penalty $k_B \ln k$.
 
 \subsection{Finite-Budget No-Collapse}
 
 \begin{theorem}[Finite-Budget No-Collapse]\label{thm:finite-budget-no-collapse}
+\leanmeta{\LH{PH26}}
 Let $B : \mathbb{N} \to \mathbb{N}$ be a budget profile, let $\mathrm{ops} : \mathbb{N} \to \mathbb{N}$ be a required-operation profile, and let $\mathrm{bitCost} > 0$ be the per-bit physical cost. If
 \begin{enumerate}
 \item $B$ is globally bounded,
@@ -111,7 +111,6 @@ Let $B : \mathbb{N} \to \mathbb{N}$ be a budget profile, let $\mathrm{ops} : \ma
 \end{enumerate}
 then no such physical collapse profile exists.
 \end{theorem}
-\leanmeta{\LH{PH26}}
 
 \begin{proof}
 This is exactly the bounded-budget physical no-collapse theorem in the physical-hardness layer. Exponential growth eventually exceeds every fixed finite budget, and positive per-bit cost lifts that growth into an energy contradiction.
@@ -120,12 +119,3 @@ This is exactly the bounded-budget physical no-collapse theorem in the physical-
 \begin{remark}[Interpretation]
 Finite budget, positive event cost, and exponential exact-certification demand are jointly incompatible with a physical collapse model. Any stronger complexity-collapse conclusion requires an additional bridge from the chosen complexity claim to such a collapse profile.
 \end{remark}
-
-\begin{corollary}[$P = NP$ No-Go Transfer]\label{cor:pnp-nogo}
-Assume a polynomial-collapse claim supplies a bridge to the finite-budget collapse profile of Theorem~\ref{thm:finite-budget-no-collapse}. Then that claim is physically impossible in the same model. In particular, any bridge from a $P = NP$ collapse claim to such a feasible physical-collapse profile yields a contradiction.
-\end{corollary}
-\leanmeta{\LHrng{PH}{14}{15}, \LH{PH26}}
-
-\begin{proof}
-Theorem~\ref{thm:finite-budget-no-collapse} rules out the collapse profile itself. The transfer theorem states that if a $P = NP$ claim implies that profile, then the claim is false in the model.
-\end{proof}

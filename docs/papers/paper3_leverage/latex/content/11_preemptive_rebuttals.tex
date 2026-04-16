@@ -1,11 +1,13 @@
-\section{Notes on assumptions and extensions}\label{appendix-assumptions}
+\section{Scope Statements}\label{appendix-assumptions}
 
-This appendix lists the principal modeling assumptions and common extensions relevant for the finite decision-thermodynamic framework of the paper:
+This appendix lists the principal scope statements for the finite decision-thermodynamic framework:
 
 \begin{itemize}
 	\item \textbf{Canonical encoding:} The main theorems are exact for the canonical binary decision problem attached to the bounded decision system. Other physical encodings require an explicit transport theorem.
+	\item \textbf{Structural chain:} Counting Gap fixes the finite-event statement. Bounded Acquisition fixes the traversal-rate statement. Discrete Acquisition and One Transition, One Bit fix the acquisition-event interface.
 	\item \textbf{Landauer calibration:} Thermodynamic cost is calibrated by a per-bit Landauer floor. Stronger substrate-dependent lower bounds may exist, but they are additional assumptions, not part of the theorem package under discussion.
-	\item \textbf{Exact decision setting:} The results concern exact sufficiency and exact-resolution cost. Approximate, stochastic, or bounded-confidence regimes require separate analysis.
+	\item \textbf{Exact-resolution setting:} The results concern exact sufficiency and exact-resolution cost. Approximate, stochastic, or bounded-confidence regimes require separate analysis.
 	\item \textbf{Finite state family:} The entropy and replication theorems are finite counting results. Continuum models must first be reduced to a finite decision quotient before these arguments apply.
-	\item \textbf{Future work:} Natural extensions include richer transport theorems from physical encodings to canonical decision problems, continuous-information analogues, and stronger substrate-specific dissipation bounds.
+	\item \textbf{Replication theorem:} The finite replication entropy gap is a theorem of the calibrated exact-resolution model. England's 2013 theorem belongs to a stochastic-thermodynamic path-space model.
+	\item \textbf{Finite-budget theorem:} Finite-Budget No-Collapse is a theorem about bounded budgets, positive per-bit cost, and exponential lower-bound growth.
 \end{itemize}

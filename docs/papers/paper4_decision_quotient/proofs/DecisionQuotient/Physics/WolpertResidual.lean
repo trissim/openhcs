@@ -211,6 +211,32 @@ theorem irreversibleTransitionNatLowerBound_pos
     exact div_pos hCostPos hkT
   exact (Nat.ceil_pos).2 hQuotPos
 
+/-- Fintiteness is not needed for positivity of the irreversible transition
+lower bound. -/
+theorem irreversibleTransitionNatLowerBound_pos_of_ne
+    {kT_ln2 : ℝ} (hkT : 0 < kT_ln2)
+    (s s' : ComputationalState) (hNe : s ≠ s') :
+    0 < irreversibleTransitionNatLowerBound kT_ln2 s s' := by
+  unfold irreversibleTransitionNatLowerBound
+  have hCostPos : 0 < transitionCost kT_ln2 s s' :=
+    cycle_cost_lower_bound kT_ln2 hkT s s' hNe
+  have hQuotPos : 0 < transitionCost kT_ln2 s s' / kT_ln2 := by
+    exact div_pos hCostPos hkT
+  exact (Nat.ceil_pos).2 hQuotPos
+
+/-- Positive forward flow and zero reverse flow force distinct states for any
+finite state space. -/
+theorem ne_of_forward_pos_reverse_zero_generic
+    {S : Type*} [Fintype S]
+    {mc : DiscreteMarkovChain S}
+    (π : StationaryDist mc) (s s' : S)
+    (hForward : 0 < edgeFlow mc π s s')
+    (hReverseZero : edgeFlow mc π s' s = 0) :
+    s ≠ s' := by
+  intro hEq
+  subst hEq
+  linarith
+
 /-- If a forward stationary edge flow is positive while the reverse edge flow
 vanishes, the corresponding computational states must be distinct. -/
 theorem ne_of_forward_pos_reverse_zero
@@ -220,9 +246,46 @@ theorem ne_of_forward_pos_reverse_zero
     (hForward : 0 < edgeFlow mc π s s')
     (hReverseZero : edgeFlow mc π s' s = 0) :
     s ≠ s' := by
-  intro hEq
-  subst hEq
-  linarith
+  exact ne_of_forward_pos_reverse_zero_generic π s s' hForward hReverseZero
+
+/-- Encoded finite residual lower-bound term for a finite abstract state space
+whose states are represented by computational states. -/
+noncomputable def encodedDiscreteResidualNatLowerBound
+    {S : Type*} [Fintype S]
+    (kT_ln2 : ℝ) (encode : S → ComputationalState)
+    {mc : DiscreteMarkovChain S}
+    (π : StationaryDist mc) (s s' : S)
+    (hForward : 0 < edgeFlow mc π s s') : ℕ :=
+  if hReverse : 0 < edgeFlow mc π s' s then
+    residualNatLowerBound mc π s s' hForward hReverse
+  else
+    irreversibleTransitionNatLowerBound kT_ln2 (encode s) (encode s')
+
+/-- The encoded finite residual lower-bound term is positive under the same
+local asymmetry/one-way witness, provided the encoding is injective. -/
+theorem encodedDiscreteResidualNatLowerBound_pos_of_asymmetry_or_oneway
+    {S : Type*} [Fintype S]
+    {kT_ln2 : ℝ} (hkT : 0 < kT_ln2)
+    (encode : S → ComputationalState) (hEncode : Function.Injective encode)
+    {mc : DiscreteMarkovChain S}
+    (π : StationaryDist mc) (s s' : S)
+    (hForward : 0 < edgeFlow mc π s s')
+    (hAsym : edgeFlow mc π s s' ≠ edgeFlow mc π s' s) :
+    0 < encodedDiscreteResidualNatLowerBound kT_ln2 encode π s s' hForward := by
+  unfold encodedDiscreteResidualNatLowerBound
+  by_cases hReverse : 0 < edgeFlow mc π s' s
+  · simpa [hReverse] using
+      residualNatLowerBound_pos_of_asymmetry mc π s s' hForward hReverse hAsym
+  · have hReverseNonneg : 0 ≤ edgeFlow mc π s' s :=
+      edgeFlow_nonneg mc π s' s
+    have hReverseZero : edgeFlow mc π s' s = 0 := by
+      linarith
+    have hNe : s ≠ s' :=
+      ne_of_forward_pos_reverse_zero_generic π s s' hForward hReverseZero
+    have hNeEnc : encode s ≠ encode s' := by
+      exact fun hEq => hNe (hEncode hEq)
+    simpa [hReverse, hReverseZero] using
+      irreversibleTransitionNatLowerBound_pos_of_ne hkT (encode s) (encode s') hNeEnc
 
 /-- Unified finite residual lower-bound term for discrete computational-state
 processes. The definition performs the exhaustive local case split:
@@ -293,6 +356,76 @@ theorem discreteResidualNatLowerBound_pos_of_witness
     0 < discreteResidualNatLowerBound kT_ln2 π h.s h.s' h.hForward := by
   exact discreteResidualNatLowerBound_pos_of_asymmetry_or_oneway
     hkT π h.s h.s' h.hForward h.hAsym
+
+/-! ## Explicit Two-State Irreversible Example -/
+
+noncomputable def binaryResidualEncode : Bool → ComputationalState
+  | false => { id := 0, bits := 1 }
+  | true  => { id := 1, bits := 1 }
+
+theorem binaryResidualEncode_injective : Function.Injective binaryResidualEncode := by
+  intro b₁ b₂ h
+  cases b₁ <;> cases b₂
+  · rfl
+  · cases h
+  · cases h
+  · rfl
+
+def binaryResidualChain : DiscreteMarkovChain Bool where
+  weight := fun s s' =>
+    match s, s' with
+    | false, true => 1
+    | false, false => 0
+    | true, true => 1
+    | true, false => 0
+  totalWeight := fun _ => 1
+  weights_sum := by
+    intro s
+    cases s <;> decide
+  total_pos := by
+    intro s
+    cases s <;> decide
+
+def binaryResidualStationary : StationaryDist binaryResidualChain where
+  weight := fun _ => 1
+  totalWeight := 2
+  total_pos := by decide
+  weights_sum := by
+    rw [Fintype.sum_bool]
+
+theorem binaryResidual_forward_pos :
+    0 < edgeFlow binaryResidualChain binaryResidualStationary false true := by
+  norm_num [edgeFlow, stationaryProb, transitionProb, binaryResidualChain, binaryResidualStationary]
+
+theorem binaryResidual_reverse_zero :
+    edgeFlow binaryResidualChain binaryResidualStationary true false = 0 := by
+  norm_num [edgeFlow, stationaryProb, transitionProb, binaryResidualChain, binaryResidualStationary]
+
+theorem binaryResidual_asym :
+    edgeFlow binaryResidualChain binaryResidualStationary false true ≠
+      edgeFlow binaryResidualChain binaryResidualStationary true false := by
+  rw [binaryResidual_reverse_zero]
+  exact ne_of_gt binaryResidual_forward_pos
+
+noncomputable def binaryEncodedResidualNatLowerBound (kT_ln2 : ℝ) : ℕ :=
+  encodedDiscreteResidualNatLowerBound kT_ln2 binaryResidualEncode
+    binaryResidualStationary false true binaryResidual_forward_pos
+
+theorem binaryEncodedResidualNatLowerBound_eq_one
+    {kT_ln2 : ℝ} (hkT : 0 < kT_ln2) :
+    binaryEncodedResidualNatLowerBound kT_ln2 = 1 := by
+  unfold binaryEncodedResidualNatLowerBound encodedDiscreteResidualNatLowerBound
+  have hNotReverse : ¬ 0 < edgeFlow binaryResidualChain binaryResidualStationary true false := by
+    rw [binaryResidual_reverse_zero]
+    norm_num
+  simp [hNotReverse, binaryResidualEncode, irreversibleTransitionNatLowerBound,
+    DecisionCircuit.transitionCost, hkT.ne']
+
+theorem binaryEncodedResidualNatLowerBound_pos
+    {kT_ln2 : ℝ} (hkT : 0 < kT_ln2) :
+    0 < binaryEncodedResidualNatLowerBound kT_ln2 := by
+  rw [binaryEncodedResidualNatLowerBound_eq_one hkT]
+  decide
 
 end WolpertResidual
 end Physics

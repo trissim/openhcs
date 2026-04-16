@@ -4,63 +4,32 @@
 
 The central result is the convergence theorem (Theorem~\ref{thm:five-way}): the rank-$1$ regime of the canonical decision encoding is simultaneously the one-coordinate regime, the tractable sufficiency regime, and the thermodynamic ground state. An imported coherence theorem gives a separate single-source reading of the same point.
 
-\begin{center}
-\begin{tabular}{lll}
-\hline
-\textbf{Framework} & \textbf{Rank-$1$ means} & \textbf{Formal source} \\
-\hline
-Local system parameter & $\mathrm{DOF}(A)=1$ & \nolinkurl{Leverage/Foundations} \\
-Structural information & Structural rank $= 1$ & \nolinkurl{Leverage/BridgeToDQ} \\
-Computational complexity & Tractable sufficiency checking & \nolinkurl{DecisionQuotient} \\
-Statistical physics & Minimum thermodynamic cost per cycle & \nolinkurl{BoundedAcquisition}, \nolinkurl{ThermodynamicLift} \\
-\hline
-\end{tabular}
-\end{center}
-
-The theorem package is a mathematical-physics statement: DOF is identified with structural rank, structural rank bounds decision entropy, and Landauer calibration turns that rank bound into an energy bound. All of these statements are machine-checked in Lean~4 with an auditable proof trail.
+The theorem package separates a structural part from an empirical calibration. The structural part is the finite acquisition chain, the canonical exact-resolution encoding, the identity $\mathrm{DOF}(A)=\mathrm{srank}(\mathrm{canonicalDP}(A))$, and the decision-entropy bound. The empirical inputs are bounded signal speed, the discrete transition interface used for acquisition, and a positive per-bit lower bound. Landauer furnishes the universal floor.
 
 \textbf{Main consequences:}
 \begin{itemize}
 \item The exact identification of degree of freedom with structural rank in the canonical decision encoding.
 \item The energy--information theorem $E \ge k_B T H_{\mathrm{nats}}(D)$ for exact-resolution cost.
+\item The bounded-acquisition inequalities $\mathrm{DOF}(A) \le c\tau/d$, the induced decision-class and decision-entropy bounds from spacetime and energy budget, and the linear budget law for independent composition.
+\item The theorem-level strict-overhead branches above the Landauer floor, the finite discrete residual witness, the canonical Wolpert grounding bundle, the unified ideal/mismatch/residual energy--information hierarchy, the induced strict canonical energy separation above the Landauer-linear floor, explicit binary mismatch and two-state residual examples with additive one-unit overhead, strengthened energy--information coefficients, and cumulative work laws, the substrate step time law, the bounded-lifetime consequences of positive cyclewise heat in finite-capacity substrates, and the resulting finite entropy-throughput ceiling.
 \item The unconditional thermodynamic selection statement that every higher-rank regime lies above the rank-$1$ Landauer ground state.
 \item The finite-budget no-collapse theorem: bounded budget, positive per-bit cost, and exponential lower-bound growth cannot coexist with physical collapse.
-\item The England replication inequality (\LH{L45}): $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$, proved by finite counting rather than by an informal thermodynamic analogy.
+\item The finite replication entropy gap: $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$ in the calibrated exact-resolution model.
 \end{itemize}
 
-\subsection{Mechanized Status}
-
-The central thermodynamic and convergence statements are all theorem-level results in the mechanized artifact:
-\begin{itemize}
-\item \LH{L55}: unconditional energy separation above the rank-$1$ ground state.
-\item \LH{L49}: quantitative Landauer-linear energy bound.
-\item \LH{PH26}: bounded budget plus positive bit-cost plus exponential lower bound implies no physical collapse.
-\item \LH{L45}: $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$ (Theorem~\ref{thm:england}).
-\end{itemize}
-
-\subsection{Limitations}
+\subsection{Scope}
 
 \textbf{1. Canonical-encoding scope:} the main theorems are exact for the canonical binary decision encoding attached to the bounded decision system. Extending the same conclusions to more general physical encodings requires an explicit transport argument.
 
-\textbf{2. Imported hardness regime:} the thermodynamic cost theorems are unconditional, but the stronger no-polynomial-certification claims rely on imported hardness results for the canonical family.
+\textbf{2. Calibration choice:} Landauer calibration supplies the physical conversion constant. Stronger substrate-dependent lower bounds belong to a different modeling layer.
 
-\textbf{3. Calibration choice:} Landauer calibration supplies the physical conversion constant. Stronger substrate-dependent lower bounds are possible, but they belong to a different modeling layer than the one studied here.
+\textbf{3. Replication theorem:} the finite replication entropy gap is a theorem of the calibrated exact-resolution model. England's 2013 theorem belongs to a stochastic-thermodynamic path-space model.
 
 \textbf{4. Finite-budget model class:} the no-collapse theorem is a statement about globally bounded budget profiles with positive per-bit cost and exponential lower-bound growth. Different collapse claims require explicit bridges into that profile language.
 
-\subsection{Impact}
-
-\textbf{For mathematical physics:} the England Replication Inequality (Theorem~\ref{thm:england}) is reduced to finite counting plus Landauer calibration. The result gives a mechanized, non-asymptotic entropy gap for replication without appealing to an informal thermodynamic analogy.
-
-\textbf{For information theory and complexity:} structural rank appears as the information coordinate of DOF, and the minimum-cost thermodynamic regime coincides with the tractable sufficiency regime.
-
-\textbf{For formalized theory building:} the argument shows that physically meaningful theorem packages can be built from exact finite objects and kept fully auditable at the proof-artifact level.
-
 \subsection{Final Remarks}
 
-Finite thermodynamic and structural consequences of exact resolution follow from first principles. In the formal bounded-system-to-\texttt{canonicalDP} map, the regime DOF~$=1$ is the unique point at which structural rank, tractable sufficiency, and minimum calibrated thermodynamic cost coincide. The imported coherence theorem supplies a separate single-source interpretation of that same point.
-
-All theorems are machine-checked. The thermodynamic lower bound is unconditional, and the replication inequality gives the entropy premium for multiplicity as $k_B \ln k$ per cycle. A companion manuscript develops the software-engineering and case-study implications. The mathematical-physics core is isolated here.
+The paper studies exact resolution in a finite canonical model. In that model, degree of freedom, structural rank, decision entropy, and minimum calibrated thermodynamic cost are linked by explicit theorems. The finite replication entropy gap and the finite-budget no-collapse theorem belong to the same model class. A companion manuscript develops the software-engineering and case-study implications. Appendix~\ref{appendix-lean} records proof provenance.
 
 
 \appendix

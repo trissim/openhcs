@@ -31,8 +31,11 @@
 import Leverage.Foundations
 import Ssot.Coherence
 import DecisionQuotient.Tractability.StructuralRank
+import DecisionQuotient.Information
 import DecisionQuotient.ThermodynamicLift
 import DecisionQuotient.Physics.BoundedAcquisition
+import DecisionQuotient.Physics.WolpertMismatch
+import DecisionQuotient.Physics.WolpertDecomposition
 
 namespace Leverage
 
@@ -429,5 +432,700 @@ theorem england_grounded_in_counting (k : ℕ) (hk : 1 ≤ k) (kB : ℝ) (hkB : 
       _ = (k - 1 : ℕ) * Real.log 2 := by rw [Real.log_pow]
       _ = ((k : ℝ) - 1) * Real.log 2 := by rw [hcast]
   nlinarith [hkB.le]
+
+/-! ## Finite-Time and Budget Consequences -/
+
+/-- Exact resolution within a bounded region and finite horizon means that some
+    sufficient coordinate set fits within the acquisition budget of that region
+    and horizon. -/
+def exactResolutionWithin (a : Architecture)
+    (R : Physics.BoundedAcquisition.BoundedRegion) (T : ℕ) : Prop :=
+  ∃ I : Finset (Fin a.dof),
+    (canonicalDP a.dof).isSufficient I ∧
+    I.card ≤ Physics.BoundedAcquisition.maxAcquisitions R T
+
+/-- Exact resolution within the bounded acquisition budget forces the degree of
+    freedom count below the total number of available acquisition events. -/
+theorem dof_le_bounded_acquisitions_of_exact_resolution
+    (a : Architecture)
+    (R : Physics.BoundedAcquisition.BoundedRegion) (T : ℕ)
+    (hRes : exactResolutionWithin a R T) :
+    a.dof ≤ Physics.BoundedAcquisition.maxAcquisitions R T := by
+  rcases hRes with ⟨I, hI, hBudget⟩
+  have hSrank : (canonicalDP a.dof).srank ≤ I.card :=
+    Physics.BoundedAcquisition.srank_le_resolution_bits (canonicalDP a.dof) I hI
+  have hDof : a.dof ≤ I.card := by
+    simpa [dof_eq_srank a] using hSrank
+  exact le_trans hDof hBudget
+
+/-- Nat-valued bounded-region rate form of the exact-resolution budget law. -/
+theorem dof_le_rate_bound_of_exact_resolution
+    (a : Architecture)
+    (R : Physics.BoundedAcquisition.BoundedRegion) (T : ℕ)
+    (hRes : exactResolutionWithin a R T) :
+    a.dof ≤ R.signalSpeed * T / R.diameter := by
+  simpa [Physics.BoundedAcquisition.maxAcquisitions] using
+    dof_le_bounded_acquisitions_of_exact_resolution a R T hRes
+
+/-- The number of optimizer classes of the canonical encoding is bounded by the
+    bounded-region acquisition budget whenever exact resolution fits in that
+    budget. -/
+theorem numOptClasses_le_pow_bounded_acquisitions_of_exact_resolution
+    (a : Architecture)
+    (R : Physics.BoundedAcquisition.BoundedRegion) (T : ℕ)
+    (hRes : exactResolutionWithin a R T) :
+    (canonicalDP a.dof).numOptClasses ≤
+      2 ^ Physics.BoundedAcquisition.maxAcquisitions R T := by
+  classical
+  have hClasses :
+      (canonicalDP a.dof).numOptClasses ≤ 2 ^ (canonicalDP a.dof).srank :=
+    DecisionQuotient.numOptClasses_le_pow_srank_binary (canonicalDP a.dof)
+  have hBudget : a.dof ≤ Physics.BoundedAcquisition.maxAcquisitions R T :=
+    dof_le_bounded_acquisitions_of_exact_resolution a R T hRes
+  have hPow :
+      2 ^ (canonicalDP a.dof).srank ≤ 2 ^ Physics.BoundedAcquisition.maxAcquisitions R T := by
+    simpa [dof_eq_srank a] using Nat.pow_le_pow_right (by decide : 0 < 2) hBudget
+  exact le_trans hClasses hPow
+
+/-- Bit-entropy is bounded by the bounded acquisition budget whenever exact
+    resolution fits in that budget. -/
+theorem quotientEntropy_le_bounded_acquisitions_of_exact_resolution
+    (a : Architecture)
+    (R : Physics.BoundedAcquisition.BoundedRegion) (T : ℕ)
+    (hRes : exactResolutionWithin a R T) :
+    (canonicalDP a.dof).quotientEntropy ≤
+      (Physics.BoundedAcquisition.maxAcquisitions R T : ℝ) := by
+  classical
+  have hEntropy :
+      (canonicalDP a.dof).quotientEntropy ≤ ((canonicalDP a.dof).srank : ℝ) :=
+    DecisionQuotient.quotientEntropy_le_srank_binary (canonicalDP a.dof)
+  have hBudget : a.dof ≤ Physics.BoundedAcquisition.maxAcquisitions R T :=
+    dof_le_bounded_acquisitions_of_exact_resolution a R T hRes
+  have hCast : ((canonicalDP a.dof).srank : ℝ) ≤
+      (Physics.BoundedAcquisition.maxAcquisitions R T : ℝ) := by
+    have hBudget' : (canonicalDP a.dof).srank ≤ Physics.BoundedAcquisition.maxAcquisitions R T := by
+      simpa [dof_eq_srank a] using hBudget
+    exact_mod_cast hBudget'
+  simpa [dof_eq_srank a] using le_trans hEntropy hCast
+
+/-- Nat-valued decision entropy is bounded by the bounded acquisition budget
+    whenever exact resolution fits in that budget. -/
+theorem natEntropy_le_bounded_acquisitions_of_exact_resolution
+    (a : Architecture)
+    (R : Physics.BoundedAcquisition.BoundedRegion) (T : ℕ)
+    (hRes : exactResolutionWithin a R T) :
+    Real.log ((canonicalDP a.dof).numOptClasses : ℝ) ≤
+      (Physics.BoundedAcquisition.maxAcquisitions R T : ℝ) * Real.log 2 := by
+  have hBits := quotientEntropy_le_bounded_acquisitions_of_exact_resolution a R T hRes
+  have hlog2 : 0 < Real.log 2 := Real.log_pos (by norm_num)
+  simpa [DecisionProblem.quotientEntropy, mul_comm, mul_left_comm, mul_assoc] using
+    (div_le_iff₀ hlog2).1 hBits
+
+/-- Energy budget bounds nat-valued decision entropy in the canonical model. -/
+theorem natEntropy_le_energy_ratio
+    (a : Architecture) (kB T E : ℝ)
+    (hkB : 0 < kB) (hT : 0 < T)
+    (hE : E ≥ ((canonicalDP a.dof).srank : ℝ) * (kB * T * Real.log 2)) :
+    Real.log ((canonicalDP a.dof).numOptClasses : ℝ) ≤ E / (kB * T) := by
+  classical
+  have hEntropy :
+      (canonicalDP a.dof).quotientEntropy ≤ ((canonicalDP a.dof).srank : ℝ) :=
+    DecisionQuotient.quotientEntropy_le_srank_binary (canonicalDP a.dof)
+  have hEI :
+      E ≥ kB * T * Real.log ((canonicalDP a.dof).numOptClasses : ℝ) := by
+    simpa [mul_assoc, mul_left_comm, mul_comm] using
+      (DecisionQuotient.ThermodynamicLift.energy_ge_kbt_nat_entropy
+        (dp := canonicalDP a.dof) kB T hkB hT E hE hEntropy)
+  have hKT : 0 < kB * T := mul_pos hkB hT
+  have hMul : Real.log ((canonicalDP a.dof).numOptClasses : ℝ) * (kB * T) ≤ E := by
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hEI
+  exact (le_div_iff₀ hKT).2 hMul
+
+/-- Energy budget also bounds the number of decision classes in real form. -/
+theorem numOptClasses_le_exp_energy_ratio
+    (a : Architecture) (kB T E : ℝ)
+    (hkB : 0 < kB) (hT : 0 < T)
+    (hE : E ≥ ((canonicalDP a.dof).srank : ℝ) * (kB * T * Real.log 2)) :
+    ((canonicalDP a.dof).numOptClasses : ℝ) ≤ Real.exp (E / (kB * T)) := by
+  classical
+  have hLog := natEntropy_le_energy_ratio a kB T E hkB hT hE
+  have hExp := Real.exp_le_exp.mpr hLog
+  have hPos : 0 < ((canonicalDP a.dof).numOptClasses : ℝ) := by
+    exact_mod_cast (DecisionProblem.numOptClasses_pos (dp := canonicalDP a.dof))
+  simpa [Real.exp_log hPos] using hExp
+
+/-- Combined decision-class bounds from bounded acquisition budget and energy budget. -/
+theorem decision_class_bounds_of_exact_resolution_and_energy
+    (a : Architecture)
+    (R : Physics.BoundedAcquisition.BoundedRegion) (Tsteps : ℕ)
+    (hRes : exactResolutionWithin a R Tsteps)
+    (kB Θ E : ℝ) (hkB : 0 < kB) (hΘ : 0 < Θ)
+    (hE : E ≥ ((canonicalDP a.dof).srank : ℝ) * (kB * Θ * Real.log 2)) :
+    (canonicalDP a.dof).numOptClasses ≤
+      2 ^ Physics.BoundedAcquisition.maxAcquisitions R Tsteps ∧
+    ((canonicalDP a.dof).numOptClasses : ℝ) ≤ Real.exp (E / (kB * Θ)) := by
+  exact ⟨
+    numOptClasses_le_pow_bounded_acquisitions_of_exact_resolution a R Tsteps hRes,
+    numOptClasses_le_exp_energy_ratio a kB Θ E hkB hΘ hE
+  ⟩
+
+/-- Combined decision-entropy bounds from bounded acquisition budget and energy budget. -/
+theorem decision_entropy_bounds_of_exact_resolution_and_energy
+    (a : Architecture)
+    (R : Physics.BoundedAcquisition.BoundedRegion) (Tsteps : ℕ)
+    (hRes : exactResolutionWithin a R Tsteps)
+    (kB Θ E : ℝ) (hkB : 0 < kB) (hΘ : 0 < Θ)
+    (hE : E ≥ ((canonicalDP a.dof).srank : ℝ) * (kB * Θ * Real.log 2)) :
+    (canonicalDP a.dof).quotientEntropy ≤
+      (Physics.BoundedAcquisition.maxAcquisitions R Tsteps : ℝ) ∧
+    Real.log ((canonicalDP a.dof).numOptClasses : ℝ) ≤ E / (kB * Θ) := by
+  exact ⟨
+    quotientEntropy_le_bounded_acquisitions_of_exact_resolution a R Tsteps hRes,
+    natEntropy_le_energy_ratio a kB Θ E hkB hΘ hE
+  ⟩
+
+/-- Independent composition adds both the required acquisition budget and the
+    minimum thermodynamic floor in the canonical model. -/
+theorem independent_composition_budget_law
+    (a₁ a₂ : Architecture)
+    (R : Physics.BoundedAcquisition.BoundedRegion) (T : ℕ)
+    (hRes : exactResolutionWithin (a₁.compose a₂) R T)
+    (M : ThermoModel) (hJ : 0 < M.joulesPerBit) :
+    a₁.dof + a₂.dof ≤ Physics.BoundedAcquisition.maxAcquisitions R T ∧
+    M.joulesPerBit * (a₁.dof + a₂.dof) ≤
+      energyLowerBound M (Physics.BoundedAcquisition.maxAcquisitions R T) := by
+  rcases hRes with ⟨I, hI, hBudget⟩
+  have hTime : (a₁.compose a₂).dof ≤ Physics.BoundedAcquisition.maxAcquisitions R T :=
+    dof_le_bounded_acquisitions_of_exact_resolution
+      (a₁.compose a₂) R T ⟨I, hI, hBudget⟩
+  have hEnergyI :
+      M.joulesPerBit * (a₁.compose a₂).dof ≤ energyLowerBound M I.card :=
+    srank_energy_lower_bound (a := a₁.compose a₂) I hI M hJ
+  have hEnergyBudget : energyLowerBound M I.card ≤
+      energyLowerBound M (Physics.BoundedAcquisition.maxAcquisitions R T) := by
+    simpa [energyLowerBound] using Nat.mul_le_mul_left M.joulesPerBit hBudget
+  constructor
+  · simpa [compose_dof] using hTime
+  · simpa [compose_dof] using le_trans hEnergyI hEnergyBudget
+
+/-- If a declared structural resource is absorbed by the mismatch term, then the
+    effective canonical exact-resolution energy lower bound exceeds the base
+    lower bound by at least that resource times `DOF(A)`. -/
+theorem canonical_energy_gap_of_structural_resource
+    (a : Architecture)
+    (I : Finset (Fin a.dof))
+    (hI : (canonicalDP a.dof).isSufficient I)
+    (W : Physics.WolpertDecomposition.DecomposedProcessModel)
+    (structuralResource : ℕ)
+    (hScale : Physics.WolpertDecomposition.CircuitStructuralScalingHypothesis W structuralResource) :
+    energyLowerBound W.base I.card + structuralResource * a.dof ≤
+      energyLowerBound (W.effectiveModel) I.card := by
+  have hBits : a.dof ≤ I.card := by
+    have hSrank : (canonicalDP a.dof).srank ≤ I.card :=
+      Physics.BoundedAcquisition.srank_le_resolution_bits (canonicalDP a.dof) I hI
+    simpa [dof_eq_srank a] using hSrank
+  have hMul : structuralResource * a.dof ≤ structuralResource * I.card :=
+    Nat.mul_le_mul_left _ hBits
+  calc
+    energyLowerBound W.base I.card + structuralResource * a.dof
+      ≤ energyLowerBound W.base I.card + structuralResource * I.card :=
+        Nat.add_le_add_left hMul _
+    _ ≤ energyLowerBound (W.effectiveModel) I.card :=
+        Physics.WolpertDecomposition.energy_lower_bound_increases_by_structural_resource
+          W I.card structuralResource hScale
+
+/-- If the implementing process has a per-bit lower bound strictly above the
+    Landauer floor, then the canonical exact-resolution energy lower bound is
+    strictly above the Landauer-linear floor `DOF(A) * k_B T ln 2`. -/
+theorem canonical_energy_strictly_exceeds_landauer_of_strict_per_bit_floor
+    (a : Architecture)
+    (I : Finset (Fin a.dof))
+    (hI : (canonicalDP a.dof).isSufficient I)
+    (W : Physics.WolpertDecomposition.DecomposedProcessModel)
+    {kB T : ℝ} (hkB : 0 < kB) (hT : 0 < T)
+    (hStrict : landauerJoulesPerBit kB T < ((W.effectiveModel).joulesPerBit : ℝ)) :
+    (a.dof : ℝ) * landauerJoulesPerBit kB T <
+      (energyLowerBound (W.effectiveModel) I.card : ℝ) := by
+  have hLandPos : 0 < landauerJoulesPerBit kB T :=
+    landauerJoulesPerBit_pos hkB hT
+  have hEffPosReal : 0 < ((W.effectiveModel).joulesPerBit : ℝ) :=
+    lt_trans hLandPos hStrict
+  have hEffPos : 0 < (W.effectiveModel).joulesPerBit := by
+    exact_mod_cast hEffPosReal
+  have hMulStrict :
+      (a.dof : ℝ) * landauerJoulesPerBit kB T <
+        (a.dof : ℝ) * ((W.effectiveModel).joulesPerBit : ℝ) := by
+    exact mul_lt_mul_of_pos_left hStrict (show 0 < (a.dof : ℝ) by exact_mod_cast a.dof_pos)
+  have hEnergyNat :
+      (W.effectiveModel).joulesPerBit * a.dof ≤
+        energyLowerBound (W.effectiveModel) I.card :=
+    srank_energy_lower_bound (a := a) I hI (W.effectiveModel) hEffPos
+  have hEnergyReal :
+      ((W.effectiveModel).joulesPerBit : ℝ) * a.dof ≤
+        (energyLowerBound (W.effectiveModel) I.card : ℝ) := by
+    exact_mod_cast hEnergyNat
+  have hEnergyReal' :
+      (a.dof : ℝ) * ((W.effectiveModel).joulesPerBit : ℝ) ≤
+        (energyLowerBound (W.effectiveModel) I.card : ℝ) := by
+    simpa [mul_comm] using hEnergyReal
+  exact lt_of_lt_of_le hMulStrict hEnergyReal'
+
+/-- The fully decomposed Wolpert grounding bundle lifts directly to the canonical
+    exact-resolution model. -/
+theorem canonical_physical_grounding_bundle_with_wolpert_decomposition
+    (a : Architecture)
+    (I : Finset (Fin a.dof))
+    (hI : (canonicalDP a.dof).isSufficient I)
+    (hI_pos : 0 < I.card)
+    (W : Physics.WolpertDecomposition.DecomposedProcessModel)
+    {kB T : ℝ} (hkB : 0 < kB) (hT : 0 < T)
+    (hFloor : landauerJoulesPerBit kB T ≤ (W.base.joulesPerBit : ℝ)) :
+    a.dof ≤ I.card ∧
+    (W.effectiveModel).joulesPerBit * a.dof ≤ energyLowerBound (W.effectiveModel) I.card ∧
+    0 < energyLowerBound (W.effectiveModel) I.card := by
+  have hBundle :=
+    Physics.WolpertDecomposition.physical_grounding_bundle_with_wolpert_decomposition
+      (dp := canonicalDP a.dof) I hI hI_pos W hkB hT hFloor
+  rcases hBundle with ⟨hRank, hEnergy, hPos⟩
+  refine ⟨?_, ?_, hPos⟩
+  · simpa [dof_eq_srank a] using hRank
+  · simpa [dof_eq_srank a] using hEnergy
+
+/-- Either theorem-level Wolpert branch lifts to a strict canonical
+    exact-resolution energy lower bound above the Landauer-linear floor. -/
+theorem canonical_energy_strictly_exceeds_landauer_of_either_cited_component
+    (a : Architecture)
+    (I : Finset (Fin a.dof))
+    (hI : (canonicalDP a.dof).isSufficient I)
+    (W : Physics.WolpertDecomposition.DecomposedProcessModel)
+    {kB T : ℝ} (hkB : 0 < kB) (hT : 0 < T)
+    (hFloor : landauerJoulesPerBit kB T ≤ (W.base.joulesPerBit : ℝ))
+    (h : Physics.WolpertDecomposition.PeriodicModularMismatchHypothesis W ∨
+         Physics.WolpertDecomposition.StoppingTimeResidualHypothesis W) :
+    (a.dof : ℝ) * landauerJoulesPerBit kB T <
+      (energyLowerBound (W.effectiveModel) I.card : ℝ) := by
+  have hStrict : landauerJoulesPerBit kB T < ((W.effectiveModel).joulesPerBit : ℝ) :=
+    Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_either_cited_component
+      W hFloor h
+  exact canonical_energy_strictly_exceeds_landauer_of_strict_per_bit_floor
+    a I hI W hkB hT hStrict
+
+/-! ## Explicit Binary Mismatch Witness -/
+
+noncomputable def actualBinaryMismatchDistribution :
+    Physics.WolpertMismatch.StrictFiniteDistribution Bool where
+  pmf := fun b => if b then (3 : ℝ) / 4 else (1 : ℝ) / 4
+  sum_eq_one := by
+    rw [Fintype.sum_bool]
+    norm_num
+  pos := by
+    intro b
+    by_cases hb : b <;> simp [hb]
+
+noncomputable def designedBinaryMismatchDistribution :
+    Physics.WolpertMismatch.StrictFiniteDistribution Bool where
+  pmf := fun b => if b then (1 : ℝ) / 4 else (3 : ℝ) / 4
+  sum_eq_one := by
+    rw [Fintype.sum_bool]
+    norm_num
+  pos := by
+    intro b
+    by_cases hb : b <;> simp [hb]
+
+theorem binary_mismatch_witness_exists_ne :
+    ∃ b : Bool,
+      actualBinaryMismatchDistribution.pmf b ≠ designedBinaryMismatchDistribution.pmf b := by
+  refine ⟨true, ?_⟩
+  norm_num [actualBinaryMismatchDistribution, designedBinaryMismatchDistribution]
+
+theorem binary_mismatch_nat_lower_bound_pos :
+    0 < Physics.WolpertMismatch.mismatchNatLowerBound
+      actualBinaryMismatchDistribution designedBinaryMismatchDistribution := by
+  exact Physics.WolpertMismatch.mismatchNatLowerBound_pos_of_exists_ne
+    actualBinaryMismatchDistribution designedBinaryMismatchDistribution
+    binary_mismatch_witness_exists_ne
+
+theorem binary_mismatch_nat_lower_bound_ge_one :
+    1 ≤ Physics.WolpertMismatch.mismatchNatLowerBound
+      actualBinaryMismatchDistribution designedBinaryMismatchDistribution := by
+  exact Nat.succ_le_of_lt binary_mismatch_nat_lower_bound_pos
+
+theorem effective_model_strictly_exceeds_landauer_of_binary_mismatch
+    (W : Physics.WolpertDecomposition.DecomposedProcessModel)
+    {kB T : ℝ}
+    (hFloor : landauerJoulesPerBit kB T ≤ (W.base.joulesPerBit : ℝ))
+    (hUnits : W.mismatchCostPerBit =
+      Physics.WolpertMismatch.mismatchNatLowerBound
+        actualBinaryMismatchDistribution designedBinaryMismatchDistribution) :
+    landauerJoulesPerBit kB T < ((W.effectiveModel).joulesPerBit : ℝ) := by
+  exact Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_distribution_mismatch
+    W hFloor actualBinaryMismatchDistribution designedBinaryMismatchDistribution hUnits
+    binary_mismatch_witness_exists_ne
+
+theorem effective_model_ge_landauer_plus_one_of_binary_mismatch
+    (W : Physics.WolpertDecomposition.DecomposedProcessModel)
+    {kB T : ℝ}
+    (hFloor : landauerJoulesPerBit kB T ≤ (W.base.joulesPerBit : ℝ))
+    (hUnits : W.mismatchCostPerBit =
+      Physics.WolpertMismatch.mismatchNatLowerBound
+        actualBinaryMismatchDistribution designedBinaryMismatchDistribution) :
+    landauerJoulesPerBit kB T + 1 ≤ ((W.effectiveModel).joulesPerBit : ℝ) := by
+  have hDecomp :=
+    Physics.WolpertDecomposition.landauer_floor_plus_decomposition_lower_bound W hFloor
+  have hOne : (1 : ℝ) ≤ (W.mismatchCostPerBit : ℝ) := by
+    rw [hUnits]
+    exact_mod_cast binary_mismatch_nat_lower_bound_ge_one
+  have hResidualNonneg : 0 ≤ (W.residualDissipationPerBit : ℝ) := by
+    exact_mod_cast Nat.zero_le _
+  linarith
+
+theorem canonical_energy_strictly_exceeds_landauer_of_binary_mismatch
+    (a : Architecture)
+    (I : Finset (Fin a.dof))
+    (hI : (canonicalDP a.dof).isSufficient I)
+    (W : Physics.WolpertDecomposition.DecomposedProcessModel)
+    {kB T : ℝ} (hkB : 0 < kB) (hT : 0 < T)
+    (hFloor : landauerJoulesPerBit kB T ≤ (W.base.joulesPerBit : ℝ))
+    (hUnits : W.mismatchCostPerBit =
+      Physics.WolpertMismatch.mismatchNatLowerBound
+        actualBinaryMismatchDistribution designedBinaryMismatchDistribution) :
+    (a.dof : ℝ) * landauerJoulesPerBit kB T <
+      (energyLowerBound (W.effectiveModel) I.card : ℝ) := by
+  have hStrict :=
+    effective_model_strictly_exceeds_landauer_of_binary_mismatch W hFloor hUnits
+  exact canonical_energy_strictly_exceeds_landauer_of_strict_per_bit_floor
+    a I hI W hkB hT hStrict
+
+theorem canonical_energy_ge_landauer_plus_one_times_dof_of_binary_mismatch
+    (a : Architecture)
+    (I : Finset (Fin a.dof))
+    (hI : (canonicalDP a.dof).isSufficient I)
+    (W : Physics.WolpertDecomposition.DecomposedProcessModel)
+    {kB T : ℝ} (hkB : 0 < kB) (hT : 0 < T)
+    (hFloor : landauerJoulesPerBit kB T ≤ (W.base.joulesPerBit : ℝ))
+    (hUnits : W.mismatchCostPerBit =
+      Physics.WolpertMismatch.mismatchNatLowerBound
+        actualBinaryMismatchDistribution designedBinaryMismatchDistribution) :
+    (a.dof : ℝ) * (landauerJoulesPerBit kB T + 1) ≤
+      (energyLowerBound (W.effectiveModel) I.card : ℝ) := by
+  have hPerBit :
+      landauerJoulesPerBit kB T + 1 ≤ ((W.effectiveModel).joulesPerBit : ℝ) :=
+    effective_model_ge_landauer_plus_one_of_binary_mismatch W hFloor hUnits
+  have hLeft :
+      (a.dof : ℝ) * (landauerJoulesPerBit kB T + 1) ≤
+        (a.dof : ℝ) * ((W.effectiveModel).joulesPerBit : ℝ) := by
+    exact mul_le_mul_of_nonneg_left hPerBit (show 0 ≤ (a.dof : ℝ) by positivity)
+  have hEffPosReal : 0 < ((W.effectiveModel).joulesPerBit : ℝ) := by
+    have hLandPos : 0 < landauerJoulesPerBit kB T := landauerJoulesPerBit_pos hkB hT
+    have : 0 < landauerJoulesPerBit kB T + 1 := by linarith
+    exact lt_of_lt_of_le this hPerBit
+  have hEffPos : 0 < (W.effectiveModel).joulesPerBit := by
+    exact_mod_cast hEffPosReal
+  have hEnergyNat :
+      (W.effectiveModel).joulesPerBit * a.dof ≤
+        energyLowerBound (W.effectiveModel) I.card :=
+    srank_energy_lower_bound (a := a) I hI (W.effectiveModel) hEffPos
+  have hEnergyReal :
+      (a.dof : ℝ) * ((W.effectiveModel).joulesPerBit : ℝ) ≤
+        (energyLowerBound (W.effectiveModel) I.card : ℝ) := by
+    have hEnergyReal' :
+        ((W.effectiveModel).joulesPerBit : ℝ) * a.dof ≤
+          (energyLowerBound (W.effectiveModel) I.card : ℝ) := by
+      exact_mod_cast hEnergyNat
+    simpa [mul_comm] using hEnergyReal'
+  exact le_trans hLeft hEnergyReal
+
+theorem canonical_energy_ge_strengthened_entropy_ratio_of_binary_mismatch
+    (a : Architecture)
+    (I : Finset (Fin a.dof))
+    (hI : (canonicalDP a.dof).isSufficient I)
+    (W : Physics.WolpertDecomposition.DecomposedProcessModel)
+    {kB T : ℝ} (hkB : 0 < kB) (hT : 0 < T)
+    (hFloor : landauerJoulesPerBit kB T ≤ (W.base.joulesPerBit : ℝ))
+    (hUnits : W.mismatchCostPerBit =
+      Physics.WolpertMismatch.mismatchNatLowerBound
+        actualBinaryMismatchDistribution designedBinaryMismatchDistribution) :
+    ((landauerJoulesPerBit kB T + 1) / Real.log 2) *
+        Real.log ((canonicalDP a.dof).numOptClasses : ℝ)
+      ≤ (energyLowerBound (W.effectiveModel) I.card : ℝ) := by
+  have hLog2 : 0 < Real.log 2 := Real.log_pos (by norm_num)
+  have hEntropy :
+      Real.log ((canonicalDP a.dof).numOptClasses : ℝ) ≤
+        (a.dof : ℝ) * Real.log 2 := by
+    have hBits : (canonicalDP a.dof).quotientEntropy ≤ (a.dof : ℝ) := by
+      simpa [dof_eq_srank a] using
+        (DecisionQuotient.quotientEntropy_le_srank_binary (canonicalDP a.dof))
+    simpa [DecisionProblem.quotientEntropy, mul_comm, mul_left_comm, mul_assoc] using
+      (div_le_iff₀ hLog2).1 hBits
+  have hCoeffNonneg : 0 ≤ (landauerJoulesPerBit kB T + 1) / Real.log 2 := by
+    have hPos : 0 < landauerJoulesPerBit kB T + 1 := by
+      have hLand : 0 < landauerJoulesPerBit kB T := landauerJoulesPerBit_pos hkB hT
+      linarith
+    exact le_of_lt (div_pos hPos hLog2)
+  have hScaled :
+      ((landauerJoulesPerBit kB T + 1) / Real.log 2) *
+          Real.log ((canonicalDP a.dof).numOptClasses : ℝ)
+        ≤ ((landauerJoulesPerBit kB T + 1) / Real.log 2) * ((a.dof : ℝ) * Real.log 2) :=
+    mul_le_mul_of_nonneg_left hEntropy hCoeffNonneg
+  have hCancel :
+      ((landauerJoulesPerBit kB T + 1) / Real.log 2) * ((a.dof : ℝ) * Real.log 2)
+        = (a.dof : ℝ) * (landauerJoulesPerBit kB T + 1) := by
+    field_simp [hLog2.ne']
+  have hEnergy :=
+    canonical_energy_ge_landauer_plus_one_times_dof_of_binary_mismatch
+      a I hI W hkB hT hFloor hUnits
+  calc
+    ((landauerJoulesPerBit kB T + 1) / Real.log 2) *
+        Real.log ((canonicalDP a.dof).numOptClasses : ℝ)
+      ≤ ((landauerJoulesPerBit kB T + 1) / Real.log 2) * ((a.dof : ℝ) * Real.log 2) := hScaled
+    _ = (a.dof : ℝ) * (landauerJoulesPerBit kB T + 1) := hCancel
+    _ ≤ (energyLowerBound (W.effectiveModel) I.card : ℝ) := hEnergy
+
+theorem cumulative_strengthened_entropy_budget_of_binary_mismatch
+    (a : Architecture)
+    (I : Finset (Fin a.dof))
+    (hI : (canonicalDP a.dof).isSufficient I)
+    (W : Physics.WolpertDecomposition.DecomposedProcessModel)
+    {kB T : ℝ} (hkB : 0 < kB) (hT : 0 < T)
+    (hFloor : landauerJoulesPerBit kB T ≤ (W.base.joulesPerBit : ℝ))
+    (hUnits : W.mismatchCostPerBit =
+      Physics.WolpertMismatch.mismatchNatLowerBound
+        actualBinaryMismatchDistribution designedBinaryMismatchDistribution)
+    (cycles : ℕ) :
+    (cycles : ℝ) * (((landauerJoulesPerBit kB T + 1) / Real.log 2) *
+        Real.log ((canonicalDP a.dof).numOptClasses : ℝ))
+      ≤ (cycles : ℝ) * (energyLowerBound (W.effectiveModel) I.card : ℝ) := by
+  have hPerCycle :=
+    canonical_energy_ge_strengthened_entropy_ratio_of_binary_mismatch
+      a I hI W hkB hT hFloor hUnits
+  have hCycles : 0 ≤ (cycles : ℝ) := by positivity
+  exact mul_le_mul_of_nonneg_left hPerCycle hCycles
+
+theorem canonical_energy_ge_landauer_plus_one_times_dof_of_binary_residual_example
+    (a : Architecture)
+    (I : Finset (Fin a.dof))
+    (hI : (canonicalDP a.dof).isSufficient I)
+    (W : Physics.WolpertDecomposition.DecomposedProcessModel)
+    {kB T kT_ln2 : ℝ} (hkB : 0 < kB) (hT : 0 < T) (hkT : 0 < kT_ln2)
+    (hFloor : landauerJoulesPerBit kB T ≤ (W.base.joulesPerBit : ℝ))
+    (hUnits : W.residualDissipationPerBit =
+      Physics.WolpertResidual.binaryEncodedResidualNatLowerBound kT_ln2) :
+    (a.dof : ℝ) * (landauerJoulesPerBit kB T + 1) ≤
+      (energyLowerBound (W.effectiveModel) I.card : ℝ) := by
+  have hPerBit :
+      landauerJoulesPerBit kB T + 1 ≤ ((W.effectiveModel).joulesPerBit : ℝ) :=
+    Physics.WolpertDecomposition.effective_model_ge_landauer_plus_one_of_binary_encoded_residual_example
+      W hFloor hkT hUnits
+  have hLeft :
+      (a.dof : ℝ) * (landauerJoulesPerBit kB T + 1) ≤
+        (a.dof : ℝ) * ((W.effectiveModel).joulesPerBit : ℝ) := by
+    exact mul_le_mul_of_nonneg_left hPerBit (show 0 ≤ (a.dof : ℝ) by positivity)
+  have hEffPosReal : 0 < ((W.effectiveModel).joulesPerBit : ℝ) := by
+    have hLandPos : 0 < landauerJoulesPerBit kB T := landauerJoulesPerBit_pos hkB hT
+    linarith [hPerBit, hLandPos]
+  have hEffPos : 0 < (W.effectiveModel).joulesPerBit := by
+    exact_mod_cast hEffPosReal
+  have hEnergyNat :
+      (W.effectiveModel).joulesPerBit * a.dof ≤
+        energyLowerBound (W.effectiveModel) I.card :=
+    srank_energy_lower_bound (a := a) I hI (W.effectiveModel) hEffPos
+  have hEnergyReal' :
+      ((W.effectiveModel).joulesPerBit : ℝ) * a.dof ≤
+        (energyLowerBound (W.effectiveModel) I.card : ℝ) := by
+    exact_mod_cast hEnergyNat
+  have hEnergyReal :
+      (a.dof : ℝ) * ((W.effectiveModel).joulesPerBit : ℝ) ≤
+        (energyLowerBound (W.effectiveModel) I.card : ℝ) := by
+    simpa [mul_comm] using hEnergyReal'
+  exact le_trans hLeft hEnergyReal
+
+theorem canonical_energy_ge_strengthened_entropy_ratio_of_binary_residual_example
+    (a : Architecture)
+    (I : Finset (Fin a.dof))
+    (hI : (canonicalDP a.dof).isSufficient I)
+    (W : Physics.WolpertDecomposition.DecomposedProcessModel)
+    {kB T kT_ln2 : ℝ} (hkB : 0 < kB) (hT : 0 < T) (hkT : 0 < kT_ln2)
+    (hFloor : landauerJoulesPerBit kB T ≤ (W.base.joulesPerBit : ℝ))
+    (hUnits : W.residualDissipationPerBit =
+      Physics.WolpertResidual.binaryEncodedResidualNatLowerBound kT_ln2) :
+    ((landauerJoulesPerBit kB T + 1) / Real.log 2) *
+        Real.log ((canonicalDP a.dof).numOptClasses : ℝ)
+      ≤ (energyLowerBound (W.effectiveModel) I.card : ℝ) := by
+  have hLog2 : 0 < Real.log 2 := Real.log_pos (by norm_num)
+  have hEntropy :
+      Real.log ((canonicalDP a.dof).numOptClasses : ℝ) ≤
+        (a.dof : ℝ) * Real.log 2 := by
+    have hBits : (canonicalDP a.dof).quotientEntropy ≤ (a.dof : ℝ) := by
+      simpa [dof_eq_srank a] using
+        (DecisionQuotient.quotientEntropy_le_srank_binary (canonicalDP a.dof))
+    simpa [DecisionProblem.quotientEntropy, mul_comm, mul_left_comm, mul_assoc] using
+      (div_le_iff₀ hLog2).1 hBits
+  have hCoeffNonneg : 0 ≤ (landauerJoulesPerBit kB T + 1) / Real.log 2 := by
+    have hLandPos : 0 < landauerJoulesPerBit kB T := landauerJoulesPerBit_pos hkB hT
+    have : 0 < landauerJoulesPerBit kB T + 1 := by linarith
+    exact le_of_lt (div_pos this hLog2)
+  have hScaled :
+      ((landauerJoulesPerBit kB T + 1) / Real.log 2) *
+          Real.log ((canonicalDP a.dof).numOptClasses : ℝ)
+        ≤ ((landauerJoulesPerBit kB T + 1) / Real.log 2) * ((a.dof : ℝ) * Real.log 2) :=
+    mul_le_mul_of_nonneg_left hEntropy hCoeffNonneg
+  have hCancel :
+      ((landauerJoulesPerBit kB T + 1) / Real.log 2) * ((a.dof : ℝ) * Real.log 2)
+        = (a.dof : ℝ) * (landauerJoulesPerBit kB T + 1) := by
+    field_simp [hLog2.ne']
+  have hEnergy :=
+    canonical_energy_ge_landauer_plus_one_times_dof_of_binary_residual_example
+      a I hI W hkB hT hkT hFloor hUnits
+  calc
+    ((landauerJoulesPerBit kB T + 1) / Real.log 2) *
+        Real.log ((canonicalDP a.dof).numOptClasses : ℝ)
+      ≤ ((landauerJoulesPerBit kB T + 1) / Real.log 2) * ((a.dof : ℝ) * Real.log 2) := hScaled
+    _ = (a.dof : ℝ) * (landauerJoulesPerBit kB T + 1) := hCancel
+    _ ≤ (energyLowerBound (W.effectiveModel) I.card : ℝ) := hEnergy
+
+theorem cumulative_strengthened_entropy_budget_of_binary_residual_example
+    (a : Architecture)
+    (I : Finset (Fin a.dof))
+    (hI : (canonicalDP a.dof).isSufficient I)
+    (W : Physics.WolpertDecomposition.DecomposedProcessModel)
+    {kB T kT_ln2 : ℝ} (hkB : 0 < kB) (hT : 0 < T) (hkT : 0 < kT_ln2)
+    (hFloor : landauerJoulesPerBit kB T ≤ (W.base.joulesPerBit : ℝ))
+    (hUnits : W.residualDissipationPerBit =
+      Physics.WolpertResidual.binaryEncodedResidualNatLowerBound kT_ln2)
+    (cycles : ℕ) :
+    (cycles : ℝ) * (((landauerJoulesPerBit kB T + 1) / Real.log 2) *
+        Real.log ((canonicalDP a.dof).numOptClasses : ℝ))
+      ≤ (cycles : ℝ) * (energyLowerBound (W.effectiveModel) I.card : ℝ) := by
+  have hPerCycle :=
+    canonical_energy_ge_strengthened_entropy_ratio_of_binary_residual_example
+      a I hI W hkB hT hkT hFloor hUnits
+  have hCycles : 0 ≤ (cycles : ℝ) := by positivity
+  exact mul_le_mul_of_nonneg_left hPerCycle hCycles
+
+/-- Nat-valued decision entropy of the canonical encoding is bounded by
+    `DOF(A) * ln 2`. -/
+theorem canonical_nat_entropy_le_dof_ln2
+    (a : Architecture) :
+    Real.log ((canonicalDP a.dof).numOptClasses : ℝ) ≤
+      (a.dof : ℝ) * Real.log 2 := by
+  have hBits : (canonicalDP a.dof).quotientEntropy ≤ (a.dof : ℝ) := by
+    simpa [dof_eq_srank a] using
+      (DecisionQuotient.quotientEntropy_le_srank_binary (canonicalDP a.dof))
+  have hlog2 : 0 < Real.log 2 := Real.log_pos (by norm_num)
+  simpa [DecisionProblem.quotientEntropy, mul_comm, mul_left_comm, mul_assoc] using
+    (div_le_iff₀ hlog2).1 hBits
+
+theorem canonical_energy_ge_ideal_entropy_ratio
+    (a : Architecture)
+    (I : Finset (Fin a.dof))
+    (hI : (canonicalDP a.dof).isSufficient I)
+    (M : ThermoModel)
+    {kB T : ℝ} (hkB : 0 < kB) (hT : 0 < T)
+    (hFloor : landauerJoulesPerBit kB T ≤ (M.joulesPerBit : ℝ)) :
+    (landauerJoulesPerBit kB T / Real.log 2) *
+        Real.log ((canonicalDP a.dof).numOptClasses : ℝ)
+      ≤ (energyLowerBound M I.card : ℝ) := by
+  have hLog2 : 0 < Real.log 2 := Real.log_pos (by norm_num)
+  have hEntropy := canonical_nat_entropy_le_dof_ln2 a
+  have hCoeffNonneg : 0 ≤ landauerJoulesPerBit kB T / Real.log 2 := by
+    exact le_of_lt (div_pos (landauerJoulesPerBit_pos hkB hT) hLog2)
+  have hScaled :
+      (landauerJoulesPerBit kB T / Real.log 2) *
+          Real.log ((canonicalDP a.dof).numOptClasses : ℝ)
+        ≤ (landauerJoulesPerBit kB T / Real.log 2) * ((a.dof : ℝ) * Real.log 2) :=
+    mul_le_mul_of_nonneg_left hEntropy hCoeffNonneg
+  have hCancel :
+      (landauerJoulesPerBit kB T / Real.log 2) * ((a.dof : ℝ) * Real.log 2)
+        = (a.dof : ℝ) * landauerJoulesPerBit kB T := by
+    field_simp [hLog2.ne']
+  have hLeft :
+      (a.dof : ℝ) * landauerJoulesPerBit kB T ≤ (a.dof : ℝ) * ((M.joulesPerBit : ℝ)) := by
+    exact mul_le_mul_of_nonneg_left hFloor (show 0 ≤ (a.dof : ℝ) by positivity)
+  have hMPosReal : 0 < (M.joulesPerBit : ℝ) := lt_of_lt_of_le (landauerJoulesPerBit_pos hkB hT) hFloor
+  have hMPos : 0 < M.joulesPerBit := by exact_mod_cast hMPosReal
+  have hEnergyNat : M.joulesPerBit * a.dof ≤ energyLowerBound M I.card :=
+    srank_energy_lower_bound (a := a) I hI M hMPos
+  have hEnergyReal' :
+      ((M.joulesPerBit : ℝ) * a.dof) ≤ (energyLowerBound M I.card : ℝ) := by
+    exact_mod_cast hEnergyNat
+  have hEnergyReal :
+      (a.dof : ℝ) * (M.joulesPerBit : ℝ) ≤ (energyLowerBound M I.card : ℝ) := by
+    simpa [mul_comm] using hEnergyReal'
+  calc
+    (landauerJoulesPerBit kB T / Real.log 2) *
+        Real.log ((canonicalDP a.dof).numOptClasses : ℝ)
+      ≤ (landauerJoulesPerBit kB T / Real.log 2) * ((a.dof : ℝ) * Real.log 2) := hScaled
+    _ = (a.dof : ℝ) * landauerJoulesPerBit kB T := hCancel
+    _ ≤ (a.dof : ℝ) * (M.joulesPerBit : ℝ) := hLeft
+    _ ≤ (energyLowerBound M I.card : ℝ) := hEnergyReal
+
+theorem strengthened_entropy_coefficient_strictly_exceeds_ideal
+    {kB T : ℝ} (hkB : 0 < kB) (hT : 0 < T) :
+    landauerJoulesPerBit kB T / Real.log 2 <
+      (landauerJoulesPerBit kB T + 1) / Real.log 2 := by
+  have hLog2 : 0 < Real.log 2 := Real.log_pos (by norm_num)
+  have hLog2_ne : Real.log 2 ≠ 0 := by linarith
+  field_simp [hLog2_ne]
+  linarith
+
+theorem explicit_nonideal_energy_information_hierarchy
+    (a : Architecture)
+    (I : Finset (Fin a.dof))
+    (hI : (canonicalDP a.dof).isSufficient I)
+    (M : ThermoModel)
+    (Wm Wr : Physics.WolpertDecomposition.DecomposedProcessModel)
+    {kB T kT_ln2 : ℝ}
+    (hkB : 0 < kB) (hT : 0 < T) (hkT : 0 < kT_ln2)
+    (hFloorM : landauerJoulesPerBit kB T ≤ (M.joulesPerBit : ℝ))
+    (hFloorWm : landauerJoulesPerBit kB T ≤ (Wm.base.joulesPerBit : ℝ))
+    (hFloorWr : landauerJoulesPerBit kB T ≤ (Wr.base.joulesPerBit : ℝ))
+    (hUnitsM : Wm.mismatchCostPerBit =
+      Physics.WolpertMismatch.mismatchNatLowerBound
+        actualBinaryMismatchDistribution designedBinaryMismatchDistribution)
+    (hUnitsR : Wr.residualDissipationPerBit =
+      Physics.WolpertResidual.binaryEncodedResidualNatLowerBound kT_ln2) :
+    (landauerJoulesPerBit kB T / Real.log 2) *
+        Real.log ((canonicalDP a.dof).numOptClasses : ℝ)
+      ≤ (energyLowerBound M I.card : ℝ) ∧
+    ((landauerJoulesPerBit kB T + 1) / Real.log 2) *
+        Real.log ((canonicalDP a.dof).numOptClasses : ℝ)
+      ≤ (energyLowerBound (Wm.effectiveModel) I.card : ℝ) ∧
+    ((landauerJoulesPerBit kB T + 1) / Real.log 2) *
+        Real.log ((canonicalDP a.dof).numOptClasses : ℝ)
+      ≤ (energyLowerBound (Wr.effectiveModel) I.card : ℝ) := by
+  refine ⟨?_, ?_, ?_⟩
+  · exact canonical_energy_ge_ideal_entropy_ratio a I hI M hkB hT hFloorM
+  · exact canonical_energy_ge_strengthened_entropy_ratio_of_binary_mismatch
+      a I hI Wm hkB hT hFloorWm hUnitsM
+  · exact canonical_energy_ge_strengthened_entropy_ratio_of_binary_residual_example
+      a I hI Wr hkB hT hkT hFloorWr hUnitsR
+
+/-- Cumulative nat-valued decision entropy over `cycles` exact-resolution cycles
+    is bounded linearly by `cycles * DOF(A) * ln 2`. -/
+theorem cumulative_canonical_nat_entropy_budget
+    (a : Architecture) (cycles : ℕ) :
+    (cycles : ℝ) * Real.log ((canonicalDP a.dof).numOptClasses : ℝ) ≤
+      (cycles : ℝ) * (a.dof : ℝ) * Real.log 2 := by
+  have hPerCycle := canonical_nat_entropy_le_dof_ln2 a
+  have hCycles : 0 ≤ (cycles : ℝ) := by positivity
+  simpa [mul_assoc] using mul_le_mul_of_nonneg_left hPerCycle hCycles
+
+/-- The finite substrate lifetime ceiling bounds cumulative canonical exact-
+    resolution entropy throughput. -/
+theorem lifetime_canonical_nat_entropy_budget
+    (a : Architecture) (s : Physics.DecisionCircuit.Substrate) (cycles : ℕ)
+    (hCycles : cycles ≤ Physics.DecisionCircuit.maxCycles s) :
+    (cycles : ℝ) * Real.log ((canonicalDP a.dof).numOptClasses : ℝ) ≤
+      (Physics.DecisionCircuit.maxCycles s : ℝ) * (a.dof : ℝ) * Real.log 2 := by
+  have hCum := cumulative_canonical_nat_entropy_budget a cycles
+  have hMono :
+      (cycles : ℝ) * (a.dof : ℝ) * Real.log 2 ≤
+        (Physics.DecisionCircuit.maxCycles s : ℝ) * (a.dof : ℝ) * Real.log 2 := by
+    have hCast : (cycles : ℝ) ≤ (Physics.DecisionCircuit.maxCycles s : ℝ) := by
+      exact_mod_cast hCycles
+    have hNonneg : 0 ≤ (a.dof : ℝ) * Real.log 2 := by
+      positivity
+    simpa [mul_assoc] using mul_le_mul_of_nonneg_right hCast hNonneg
+  exact le_trans hCum hMono
 
 end Leverage

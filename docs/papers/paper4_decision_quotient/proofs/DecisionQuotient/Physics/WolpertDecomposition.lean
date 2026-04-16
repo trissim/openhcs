@@ -322,6 +322,39 @@ theorem effective_model_strictly_exceeds_landauer_of_finite_discrete_witness
     stopping_time_residual_of_finite_discrete_witness W hkT π h hUnits
   exact effective_model_strictly_exceeds_landauer_of_stopping_time_residual W hFloor hResidual
 
+/-- The explicit two-state irreversible residual example fixes the residual term
+to exactly one nat-valued overhead unit. -/
+theorem effective_model_ge_landauer_plus_one_of_binary_encoded_residual_example
+    (W : DecomposedProcessModel) {kB T kT_ln2 : ℝ}
+    (hFloor : landauerJoulesPerBit kB T ≤ (W.base.joulesPerBit : ℝ))
+    (hkT : 0 < kT_ln2)
+    (hUnits :
+      W.residualDissipationPerBit =
+        WolpertResidual.binaryEncodedResidualNatLowerBound kT_ln2) :
+    landauerJoulesPerBit kB T + 1 ≤ ((W.effectiveModel).joulesPerBit : ℝ) := by
+  have hDecomp := landauer_floor_plus_decomposition_lower_bound W hFloor
+  have hResidualEq : (W.residualDissipationPerBit : ℝ) = 1 := by
+    rw [hUnits, WolpertResidual.binaryEncodedResidualNatLowerBound_eq_one hkT]
+    norm_num
+  have hMismatchNonneg : 0 ≤ (W.mismatchCostPerBit : ℝ) := by
+    exact_mod_cast Nat.zero_le _
+  linarith [hDecomp, hResidualEq, hMismatchNonneg]
+
+/-- The same explicit residual example already forces strict separation above the
+Landauer floor. -/
+theorem effective_model_strictly_exceeds_landauer_of_binary_encoded_residual_example
+    (W : DecomposedProcessModel) {kB T kT_ln2 : ℝ}
+    (hFloor : landauerJoulesPerBit kB T ≤ (W.base.joulesPerBit : ℝ))
+    (hkT : 0 < kT_ln2)
+    (hUnits :
+      W.residualDissipationPerBit =
+        WolpertResidual.binaryEncodedResidualNatLowerBound kT_ln2) :
+    landauerJoulesPerBit kB T < ((W.effectiveModel).joulesPerBit : ℝ) := by
+  have hAdd :=
+    effective_model_ge_landauer_plus_one_of_binary_encoded_residual_example
+      W hFloor hkT hUnits
+  linarith
+
 /-- Either the derived mismatch branch or the cited residual branch is already
 sufficient to force strict separation above the Landauer floor. -/
 theorem effective_model_strictly_exceeds_landauer_of_either_cited_component

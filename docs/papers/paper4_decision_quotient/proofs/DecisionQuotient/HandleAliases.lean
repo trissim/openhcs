@@ -1179,6 +1179,11 @@ abbrev BA8 := @Physics.BoundedAcquisition.srank_one_energy_minimum
 abbrev BA9 := @Physics.BoundedAcquisition.physical_grounding_bundle
 abbrev BA10 := @Physics.BoundedAcquisition.counting_gap_theorem
 
+-- DT: substrate-level decision-time realization
+abbrev DT22 := @Physics.DecisionTime.substrate_step_realizes_decision_event
+abbrev DT23 := @Physics.DecisionTime.substrate_step_is_time_unit
+abbrev DT24 := @Physics.DecisionTime.time_unit_law_substrate_invariant
+
 -- IT: Information Theory (Information.lean)
 -- IT3 is the Entropy-Rank Inequality: H(D) ≤ srank
 abbrev IT1 := @DecisionProblem.numOptClasses
@@ -1255,6 +1260,9 @@ abbrev WR7 := @Physics.WolpertDecomposition.stopping_time_residual_of_discrete_e
 abbrev WR8 := @Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_discrete_edge_split
 abbrev WR9 := @Physics.WolpertDecomposition.stopping_time_residual_of_finite_discrete_witness
 abbrev WR10 := @Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_finite_discrete_witness
+abbrev WR11 := @Physics.WolpertResidual.binaryEncodedResidualNatLowerBound_eq_one
+abbrev WR12 := @Physics.WolpertDecomposition.effective_model_ge_landauer_plus_one_of_binary_encoded_residual_example
+abbrev WR13 := @Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_binary_encoded_residual_example
 
 -- WP: Wolpert Physics (Physics/WolpertDecomposition.lean)
 abbrev WP1 := @Physics.WolpertDecomposition.DecomposedProcessModel.totalOverheadPerBit_eq_sum

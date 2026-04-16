@@ -5,7 +5,7 @@ The formal objects that carry the mathematical-physics content are a positive de
 \subsection{Formal Object}
 
 \begin{definition}[Bounded Decision System]\label{def:architecture}
-A \emph{bounded decision system} is a finite bounded physical system equipped with a positive integer $\mathrm{DOF}(A)$. In the mechanized artifact the corresponding Lean object is named \texttt{Architecture}, but the results used below depend only on the degree-of-freedom count and on the canonical decision encoding.
+A \emph{bounded decision system} is a finite bounded physical system equipped with a positive integer $\mathrm{DOF}(A)$. The corresponding Lean object is named \texttt{Architecture}. The results used below depend only on the degree-of-freedom count and on the canonical decision encoding.
 \end{definition}
 
 \textbf{Interpretation.} $\mathrm{DOF}(A)$ counts independent coordinates that can vary separately. The rest of the paper studies what that count forces once one asks for exact resolution.
@@ -45,7 +45,7 @@ Equivalently, any bounded system with positive per-event cost admits only finite
 In $\mathbb{N}$ every positive integer is at least one, so $N = 1\cdot N \le \varepsilon N \le C$.
 \end{proof}
 
-Bounded capacity plus positive per-event cost already forbids infinite checking. Physics enters when the abstract cost unit is calibrated. Under Landauer-type calibration, exact irreversible acquisition carries positive cost, so bounded material systems inherit the counting gap directly.
+Theorem~\ref{thm:counting-gap} fixes the finite-event statement of the model. Proposition~\ref{prop:bounded-region} and Theorem~\ref{thm:bounded-acquisition} fix the geometric acquisition bound. Theorems~\ref{thm:discrete-acquisition} and \ref{thm:one-transition-one-bit} fix the acquisition-event interface. Landauer calibration is applied only after that interface is fixed.
 
 \begin{proposition}[Bounded Region]\label{prop:bounded-region}
 A bounded physical region is characterized by diameter $d>0$ and signal speed $c>0$. Its maximum information-acquisition rate is $c/d$ events per unit time.
@@ -66,14 +66,22 @@ Signals require at least $d/c$ time to traverse the region, so no more than $c/d
 \end{proof}
 
 \begin{theorem}[Discrete Acquisition]\label{thm:discrete-acquisition}
-Information acquisition is realized by discrete state transitions. A bounded physical decision process is therefore a finite transition system whose acquisition events are countable transition points.
+In the imported bounded-acquisition model, information acquisition is counted by transition points of a finite discrete system. Acquisition counts are therefore discrete event counts.
 \end{theorem}
 \leanmeta{\LH{BA3}}
 
+\begin{proof}
+The imported model represents a bounded physical decision process by a finite \texttt{DiscreteSystem}. Its acquisition count is \texttt{bitOperations}, which counts transition points along a run.
+\end{proof}
+
 \begin{theorem}[One Transition, One Bit]\label{thm:one-transition-one-bit}
-Each elementary acquisition transition carries one boolean bit. Boolean coordinates are therefore the primitive units of exact physical information exchange in the canonical model.
+In the imported discrete acquisition model, each transition point contributes one unit to the bit-operation count. The canonical binary encoding therefore uses one Boolean coordinate per elementary acquisition event.
 \end{theorem}
 \leanmeta{\LH{BA4}}
+
+\begin{proof}
+The imported theorem states that a transition point at time $t$ contributes at least one unit to the acquisition count up to time $t+1$. The model therefore treats each elementary transition as one Boolean acquisition event.
+\end{proof}
 
 Together, Theorems~\ref{thm:bounded-acquisition}, \ref{thm:discrete-acquisition}, and \ref{thm:one-transition-one-bit} identify the later binary decision encoding as the natural finite acquisition model. A bounded resolver acquires information through finitely many discrete events, and each such event contributes one elementary boolean distinction.
 
@@ -96,9 +104,7 @@ For a bounded decision system $A$ with $\mathrm{DOF}(A)=n$, the canonical decisi
 has state space $\mathrm{Fin}\;n \to \mathrm{Bool}$ and action space $\mathrm{Fin}\;n \oplus \mathrm{Unit}$. Action $\mathrm{inl}(i)$ queries coordinate $i$; the fallback action $\mathrm{inr}(\star)$ receives constant utility $1$. Query action $i$ receives utility $2$ exactly when coordinate $i$ is true and $0$ otherwise.
 \end{definition}
 
-The encoding is the exact Lean object \texttt{canonicalDP} in \texttt{Leverage/BridgeToDQ.lean}. Every coordinate is relevant by construction, so the encoding exposes the full interaction dimension of the source system.
-
-The encoding records, in the smallest exact-resolution object, the coordinate structure that any bounded physical resolver must already confront. The Boolean coordinates represent primitive acquisition events.
+The encoding is the exact Lean object \texttt{canonicalDP} in \texttt{Leverage/BridgeToDQ.lean}. The paper studies this encoding as the exact finite-resolution object attached to the declared degree-of-freedom count. It assigns one binary acquisition channel to each degree of freedom and one query action to each channel. The next section identifies the structural rank of this object with that coordinate count.
 
 \subsection{Structural Rank}
 

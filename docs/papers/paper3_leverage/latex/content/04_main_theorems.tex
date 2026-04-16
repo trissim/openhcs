@@ -1,10 +1,11 @@
 \section{Thermodynamic Consequences}\label{main-theorems}
 
-The previous section identified degree of freedom with structural rank and bounded the entropy of the decision quotient. Exact resolution requires irreducible bit events. Matter pays for them.
+The previous section identified degree of freedom with structural rank and bounded the entropy of the decision quotient. The thermodynamic theorems of this section compose three inputs: minimum bit operations, the entropy-rank bound, and a positive per-bit lower bound. Landauer furnishes the universal floor for the conversion constant.
 
 \subsection{Landauer-Linear Resolution Cost}
 
 \begin{theorem}[Rank Controls Exact-Resolution Cost]\label{thm:energy-rank}
+\leanmeta{\LHrng{BA}{6}{7}, \LH{L43}}
 Let $A$ be a bounded decision system and let $M$ be a thermodynamic model with positive per-bit conversion constant. Then
 \[
 M.\mathrm{joulesPerBit} \cdot \mathrm{DOF}(A)
@@ -13,16 +14,15 @@ M.\mathrm{joulesPerBit} \cdot \mathrm{DOF}(A)
 \]
 In particular, exact-resolution cost is at least linear in the degree-of-freedom count.
 \end{theorem}
-\leanmeta{\LHrng{BA}{6}{7}, \LH{L43}}
 
 \begin{proof}
 Theorem~\ref{thm:min-bit-operations} gives a lower bound of $\mathrm{DOF}(A)$ elementary bit-acquisition events for exact resolution. The bounded-acquisition energy theorem then converts that bit lower bound into the displayed energy lower bound.
 \end{proof}
 
 \begin{theorem}[Rank-One Ground State]\label{thm:rank-one-ground}
+\leanmeta{\LH{BA8}, \LHrng{L}{54}{55}}
 If $\mathrm{DOF}(A)=1$, then every exact-resolution cycle for the canonical problem has energy at least one Landauer unit. If $\mathrm{DOF}(A)>1$, then the system lies strictly above that ground state.
 \end{theorem}
-\leanmeta{\LH{BA8}, \LHrng{L}{54}{55}}
 
 \begin{proof}
 The rank-one statement is exactly the imported ground-state theorem for structural rank~$1$ (\LH{BA8}). For the higher-rank regime, Corollary~\ref{cor:rank-above-one} gives $\mathrm{srank}>1$, and Theorem~\ref{thm:energy-rank} then places the resulting exact-resolution cycle strictly above the one-Landauer-unit floor.
@@ -31,13 +31,13 @@ The rank-one statement is exactly the imported ground-state theorem for structur
 \subsection{Energy--Information Duality}
 
 \begin{theorem}[Energy--Information Duality]\label{thm:energy-entropy}
+\leanmeta{\LH{EI1}, \LH{IT3}, \LH{L43}}
 Let $D = \mathrm{canonicalDP}(A)$, and let $E$ be the realized energy for one exact-resolution cycle. If Landauer calibration holds at positive Boltzmann constant and temperature, then
 \[
 E \ge k_B T\, H_{\mathrm{nats}}(D).
 \]
 Equivalently, the minimum exact-resolution cost is at least $k_B T$ times the natural-log entropy of the decision quotient.
 \end{theorem}
-\leanmeta{\LH{EI1}, \LH{IT3}, \LH{L43}}
 
 \begin{proof}
 The entropy-rank inequality gives
@@ -48,44 +48,384 @@ by Theorem~\ref{thm:entropy-bound}. Theorem~\ref{thm:energy-rank} gives the comp
 \[
 E \ge \mathrm{DOF}(A) k_B T \ln 2.
 \]
-Comparing the two right-hand sides yields the announced inequality. In the mechanized artifact this is the energy-information theorem (\LH{EI1}).
+Comparing the two right-hand sides yields the announced inequality.
 \end{proof}
 
+Theorem~\ref{thm:energy-entropy} composes the entropy-rank inequality with the per-bit lower bound from Theorem~\ref{thm:energy-rank}.
+
 \begin{corollary}[Unique Minimum-Cost Regime]\label{cor:minimum-cost-regime}
+\leanmeta{\LH{BA8}, \LHrng{L}{54}{55}}
 Among bounded decision systems in the canonical binary encoding, the unique minimum-cost regime is $\mathrm{DOF}(A)=1$.
 \end{corollary}
-\leanmeta{\LH{BA8}, \LHrng{L}{54}{55}}
 
 \begin{proof}
 Theorem~\ref{thm:rank-one-ground} identifies $\mathrm{DOF}(A)=1$ as the one-Landauer-unit ground state, while every bounded decision system with more than one degree of freedom lies strictly above it.
+\end{proof}
+
+\subsection{Finite-Time and Budget Bounds}
+
+\begin{theorem}[Exact-Resolution Time Lower Bound]\label{thm:time-lower-bound}
+\leanmeta{\LHrng{BA}{1}{2}, \LHrng{BA}{5}{6}, \LH{L43}}
+Let $A$ be a bounded decision system, and let $I$ be a sufficient coordinate set for $\mathrm{canonicalDP}(A)$. Suppose $A$ is resolved inside a bounded region of diameter $d$ and signal speed $c$ over operating horizon $\tau$, and suppose
+\[
+|I| \le \frac{c\tau}{d}.
+\]
+Then
+\[
+\mathrm{DOF}(A) \le \frac{c\tau}{d}.
+\]
+\end{theorem}
+
+\begin{proof}
+Theorem~\ref{thm:min-bit-operations} gives a lower bound of $\mathrm{DOF}(A)$ elementary acquisition events for exact resolution. Theorem~\ref{thm:bounded-acquisition} bounds the total number of acquisition events on horizon $\tau$ by $c\tau/d$. Therefore exact resolution on that horizon requires $\mathrm{DOF}(A) \le c\tau/d$.
+\end{proof}
+
+\begin{theorem}[Decision-Class Bound from Spacetime and Energy Budget]\label{thm:budget-class-bound}
+\leanmeta{\LHrng{BA}{1}{2}, \LHrng{BA}{5}{6}, \LHrng{IT}{3}{4}, \LH{EI1}, \LH{L43}}
+Let $D = \mathrm{canonicalDP}(A)$, and let $I$ be a sufficient coordinate set for $D$. Suppose
+\[
+|I| \le \frac{c\tau}{d}
+\]
+inside a bounded region of diameter $d$ and signal speed $c$ over operating horizon $\tau$, and let $E$ satisfy
+\[
+E \ge \mathrm{DOF}(A)\,k_B \Theta \ln 2
+\qquad (\Theta > 0).
+\]
+Then
+\[
+\mathrm{numOptClasses}(D) \le 2^{c\tau/d}
+\qquad\text{and}\qquad
+\mathrm{numOptClasses}(D) \le \exp\!\left(\frac{E}{k_B \Theta}\right).
+\]
+Consequently,
+\[
+\mathrm{numOptClasses}(D) \le
+\min\!\left(2^{c\tau/d},\ \exp\!\left(\frac{E}{k_B \Theta}\right)\right).
+\]
+\end{theorem}
+
+\begin{proof}
+By Theorem~\ref{thm:time-lower-bound}, exact resolution on horizon $\tau$ requires $\mathrm{DOF}(A) \le c\tau/d$. Theorem~\ref{thm:numopt-bound} gives
+\[
+\mathrm{numOptClasses}(D) \le 2^{\mathrm{DOF}(A)} \le 2^{c\tau/d}.
+\]
+Theorem~\ref{thm:energy-entropy} gives
+\[
+E \ge k_B \Theta\, H_{\mathrm{nats}}(D) = k_B \Theta \ln(\mathrm{numOptClasses}(D)).
+\]
+Hence
+\[
+\ln(\mathrm{numOptClasses}(D)) \le \frac{E}{k_B \Theta},
+\]
+which is equivalent to
+\[
+\mathrm{numOptClasses}(D) \le \exp\!\left(\frac{E}{k_B \Theta}\right).
+\]
+Taking the smaller of the two upper bounds gives the final statement.
+\end{proof}
+
+\begin{corollary}[Decision-Entropy Bound from Spacetime and Energy Budget]\label{cor:budget-entropy-bound}
+\leanmeta{\LHrng{BA}{1}{2}, \LHrng{BA}{5}{6}, \LH{IT3}, \LH{EI1}, \LH{L43}}
+Let $D = \mathrm{canonicalDP}(A)$, and let $I$ be a sufficient coordinate set for $D$. Suppose
+\[
+|I| \le \frac{c\tau}{d}
+\]
+inside a bounded region of diameter $d$ and signal speed $c$ over operating horizon $\tau$, and let $E$ satisfy
+\[
+E \ge \mathrm{DOF}(A)\,k_B \Theta \ln 2
+\qquad (\Theta > 0).
+\]
+Then
+\[
+H_{\mathrm{bits}}(D) \le \frac{c\tau}{d}
+\qquad\text{and}\qquad
+H_{\mathrm{nats}}(D) \le
+\min\!\left(\frac{c\tau}{d}\ln 2,\ \frac{E}{k_B \Theta}\right).
+\]
+\end{corollary}
+
+\begin{proof}
+Theorem~\ref{thm:time-lower-bound} gives $\mathrm{DOF}(A) \le c\tau/d$. Theorem~\ref{thm:entropy-bound} gives
+\[
+H_{\mathrm{bits}}(D) \le \mathrm{DOF}(A),
+\qquad
+H_{\mathrm{nats}}(D) \le \mathrm{DOF}(A)\ln 2.
+\]
+Hence
+\[
+H_{\mathrm{bits}}(D) \le \frac{c\tau}{d},
+\qquad
+H_{\mathrm{nats}}(D) \le \frac{c\tau}{d}\ln 2.
+\]
+Theorem~\ref{thm:energy-entropy} also gives
+\[
+H_{\mathrm{nats}}(D) \le \frac{E}{k_B \Theta}.
+\]
+Taking the smaller of the two nat-valued upper bounds gives the final statement.
+\end{proof}
+
+\begin{corollary}[Independent Composition Budget Law]\label{cor:composition-budget-law}
+\leanmeta{\LH{L17}, \LH{L19}, \LH{L43}, \LHrng{BA}{1}{2}, \LHrng{BA}{5}{7}}
+Let $A_1$ and $A_2$ be disjoint bounded decision systems. Suppose the composite system $A_1 \oplus A_2$ is resolved inside a bounded region of diameter $d$ and signal speed $c$ over operating horizon $\tau$, and suppose some sufficient coordinate set for $\mathrm{canonicalDP}(A_1 \oplus A_2)$ has cardinality at most $c\tau/d$. Then
+\[
+\mathrm{DOF}(A_1)+\mathrm{DOF}(A_2) \le \frac{c\tau}{d}
+\]
+and for any thermodynamic model with positive per-bit conversion constant,
+\[
+\mathrm{joulesPerBit}\cdot\bigl(\mathrm{DOF}(A_1)+\mathrm{DOF}(A_2)\bigr)
+\le
+\mathrm{energyLowerBound}\!\left(M,\frac{c\tau}{d}\right).
+\]
+\end{corollary}
+
+\begin{proof}
+Proposition~\ref{prop:dof-additive} gives
+\[
+\mathrm{DOF}(A_1 \oplus A_2) = \mathrm{DOF}(A_1)+\mathrm{DOF}(A_2).
+\]
+Apply Theorem~\ref{thm:time-lower-bound} and Theorem~\ref{thm:energy-rank} to the composite system and substitute the additive degree-of-freedom identity.
 \end{proof}
 
 \subsection{Worked Examples}
 
 Two toy canonical systems fix the scale of the bound.
 
-\paragraph{One relevant coordinate.}
-Take states $\{0,1\}$ and actions $\{a_0,a_1\}$, with $\Opt(0)=\{a_0\}$ and $\Opt(1)=\{a_1\}$. Then $\mathrm{DOF}(A)=1$, the decision quotient has two classes, $H_{\mathrm{nats}}(D)=\ln 2$, and Theorem~\ref{thm:energy-entropy} gives
+\paragraph{One coordinate in the canonical encoding.}
+Let $A$ satisfy $\mathrm{DOF}(A)=1$, and write $D=\mathrm{canonicalDP}(A)$. Then the state space of $D$ has two states. The false state has optimal set $\{\mathrm{inr}(\star)\}$, and the true state has optimal set $\{\mathrm{inl}(0)\}$. The decision quotient therefore has two classes, $H_{\mathrm{nats}}(D)=\ln 2$, and Theorem~\ref{thm:energy-entropy} gives
 \[
 E \ge k_B T \ln 2.
 \]
 This is the rank-$1$ ground regime.
 
-\paragraph{Two independent coordinates.}
-Take states $\{00,01,10,11\}$ and actions $\{a_{00},a_{01},a_{10},a_{11}\}$, with each state having its matching optimal action. Then $\mathrm{DOF}(A)=2$, the decision quotient has four classes, $H_{\mathrm{nats}}(D)=\ln 4 = 2\ln 2$, and Theorem~\ref{thm:energy-entropy} gives
+\paragraph{Two coordinates in the canonical encoding.}
+Let $A$ satisfy $\mathrm{DOF}(A)=2$, and write $D=\mathrm{canonicalDP}(A)$. Then the four states of $D$ have optimal sets $\{\mathrm{inr}(\star)\}$, $\{\mathrm{inl}(0)\}$, $\{\mathrm{inl}(1)\}$, and $\{\mathrm{inl}(0),\mathrm{inl}(1)\}$. The decision quotient therefore has four classes, $H_{\mathrm{nats}}(D)=\ln 4 = 2\ln 2$, and Theorem~\ref{thm:energy-entropy} gives
 \[
 E \ge 2 k_B T \ln 2.
 \]
 Relative to the one-coordinate case, the minimum exact-resolution cost doubles.
+
+\subsection{Concrete Substrate Instantiation}
+
+\begin{proposition}[Threshold Channel Realization]\label{prop:threshold-channel}
+\leanmeta{\LHrng{CV}{7}{9}}
+Fix a threshold $\tau$ and a sampled substrate observable $x_t \in \mathbb{R}$. The induced readout bit
+\[
+b_t = \mathbf{1}[x_t \ge \tau]
+\]
+has binary state space $\{0,1\}$. A readout flip $b_{t+1} \ne b_t$ is equivalent to a positive one-bit lower bound, and under a positive per-bit conversion constant it implies a positive energy lower bound.
+\end{proposition}
+
+\begin{proposition}[Two-Level Atomic Realization]\label{prop:atomic-realization}
+\leanmeta{\LH{AC1}, \LHrng{AC}{3}{4}}
+Let $c_0$ and $c_1$ be atomic configurations with distinct orbital occupancies or distinct energies. Then $c_0 \ne c_1$. Upward transitions from $c_0$ to $c_1$ require positive energy input, and downward transitions release positive energy. A choice of labels $c_0 \mapsto 0$ and $c_1 \mapsto 1$ therefore gives a physical binary readout layer.
+\end{proposition}
+
+Thresholded one-bit readouts and two-level atomic transitions instantiate the same binary interface \cite{berut2012experimental,planck1901distribution,dirac1930principles,sakurai2017modern}. A $k$-channel substrate has joint readout state in $\{0,1\}^k$, and the canonical state space $\mathrm{Fin}\;k \to \mathrm{Bool}$ is the same object written in indexed form.
+
+\subsection{Substrate Time Law}
+
+\begin{proposition}[Substrate Step is Unit Interface Time]\label{prop:substrate-time-law}
+\leanmeta{\LHrng{DT}{22}{24}}
+For any substrate model whose observed interface obeys decision ticks, every one-step substrate evolution realizes a decision event and advances interface time by one unit. The tick law is independent of substrate tag.
+\end{proposition}
+
+\subsection{Strict Overhead Above Landauer}
+
+\begin{proposition}[Theorem-Level Strict Overhead Branches]\label{prop:strict-overhead}
+\leanmeta{\LH{WM6}, \LH{WR10}, \LH{WP6}, \LHrng{BA}{5}{6}, \LH{L43}}
+Let $W$ be a decomposed process model. If the mismatch term is instantiated by a theorem-level distribution-mismatch witness, then the effective per-bit lower bound of $W$ is strictly above the Landauer floor. If the residual term is instantiated by a theorem-level finite discrete residual witness, the same strict inequality holds. For any sufficient coordinate set $I$ of $\mathrm{canonicalDP}(A)$, either branch therefore yields an exact-resolution energy lower bound strictly above $\mathrm{DOF}(A)\,k_B T \ln 2$.
+\end{proposition}
+
+\begin{proposition}[Finite Discrete Residual Witness]\label{prop:finite-discrete-residual}
+\leanmeta{\LHrng{WR}{6}{7}, \LH{WR10}}
+Let a finite computational-state process admit a positive forward edge together with decision-relevant asymmetry. Then the theorem-level discrete residual lower bound is positive. If this witness is used as the residual term of a decomposed process model, the effective per-bit lower bound is strictly above the Landauer floor.
+\end{proposition}
+
+\begin{proposition}[Explicit Two-State Residual Example]\label{prop:binary-residual-example}
+\leanmeta{\LHrng{WR}{11}{12}, \LH{IT3}, \LHrng{BA}{5}{6}, \LH{L43}}
+There exists a two-state irreversible residual witness with one positive forward edge and zero reverse edge. The induced residual lower-bound term is exactly one nat-valued overhead unit. Any decomposed process model that uses this witness as its residual term therefore satisfies
+\[
+\mathrm{landauerJoulesPerBit}(k_B,T) + 1
+\le
+W.\mathrm{effectiveModel}.\mathrm{joulesPerBit},
+\]
+and for any sufficient coordinate set $I$ of $\mathrm{canonicalDP}(A)$,
+\[
+\mathrm{DOF}(A)\,(k_B T \ln 2 + 1)
+\le
+\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).
+\]
+The same example yields the strengthened energy--information inequality
+\[
+\frac{k_B T \ln 2 + 1}{\ln 2}
+\, H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).
+\]
+\end{proposition}
+
+\begin{proposition}[Repeated Residual-Example Work Law]\label{prop:binary-residual-cumulative-work}
+\leanmeta{\LHrng{WR}{11}{12}, \LH{IT3}, \LHrng{BA}{5}{6}, \LH{L43}}
+For any $m \in \mathbb{N}$, repeated exact-resolution cycles under the same explicit two-state residual witness satisfy
+\[
+m\,\frac{k_B T \ln 2 + 1}{\ln 2}
+\, H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+m\,\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).
+\]
+The required cumulative work therefore grows linearly with cycle count.
+\end{proposition}
+
+\begin{proposition}[Unified Energy--Information Hierarchy]\label{prop:ei-hierarchy}
+\leanmeta{\LH{IT3}, \LH{WM4}, \LHrng{WR}{11}{12}, \LH{WP2}, \LHrng{BA}{5}{6}, \LH{L43}}
+Let $I$ be a sufficient coordinate set for $\mathrm{canonicalDP}(A)$. Then the ideal Landauer-calibrated floor satisfies
+\[
+k_B T\,H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+\mathrm{energyLowerBound}(M,|I|)
+\]
+whenever the declared model $M$ dominates the Landauer floor. Under the explicit binary mismatch example and the explicit two-state residual example, the strengthened coefficient
+\[
+\frac{k_B T \ln 2 + 1}{\ln 2}
+\]
+replaces $k_B T$:
+\[
+\frac{k_B T \ln 2 + 1}{\ln 2}
+\,H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+\mathrm{energyLowerBound}(W_{\mathrm{mm}}.\mathrm{effectiveModel},|I|),
+\]
+\[
+\frac{k_B T \ln 2 + 1}{\ln 2}
+\,H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+\mathrm{energyLowerBound}(W_{\mathrm{res}}.\mathrm{effectiveModel},|I|).
+\]
+\end{proposition}
+
+\begin{proposition}[Structural-Resource Overhead]\label{prop:structural-resource-overhead}
+\leanmeta{\LHrng{WP}{7}{8}, \LHrng{BA}{5}{6}, \LH{L43}}
+Let $W$ be a decomposed process model and let $r$ be a declared structural resource. If $r$ is lower-bounded by the mismatch term, then the effective per-bit lower bound dominates the Landauer floor plus $r$. For any sufficient coordinate set $I$ of $\mathrm{canonicalDP}(A)$,
+\[
+\mathrm{energyLowerBound}(W.\mathrm{base},|I|) + r\,\mathrm{DOF}(A)
+\le
+\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).
+\]
+\end{proposition}
+
+\begin{proposition}[Canonical Wolpert Grounding Bundle]\label{prop:canonical-wolpert-bundle}
+\leanmeta{\LH{WP9}, \LHrng{BA}{5}{6}, \LH{L43}}
+Let $I$ be a nonempty sufficient coordinate set for $\mathrm{canonicalDP}(A)$, and let $W$ be a decomposed process model whose base lower bound dominates the Landauer floor. Then
+\[
+\mathrm{DOF}(A) \le |I|,
+\]
+\[
+W.\mathrm{effectiveModel}.\mathrm{joulesPerBit}\cdot\mathrm{DOF}(A)
+\le
+\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|),
+\]
+and
+\[
+0 < \mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).
+\]
+\end{proposition}
+
+\begin{proposition}[Strict Canonical Energy Above the Landauer Floor]\label{prop:strict-canonical-energy}
+\leanmeta{\LH{WP6}, \LHrng{BA}{5}{6}, \LH{L43}}
+Let $I$ be a sufficient coordinate set for $\mathrm{canonicalDP}(A)$, and let $W$ be a decomposed process model whose base lower bound dominates the Landauer floor. If either theorem-level Wolpert branch applies to $W$, then
+\[
+\mathrm{DOF}(A)\,k_B T \ln 2
+<
+\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).
+\]
+\end{proposition}
+
+\begin{proposition}[Explicit Binary Mismatch Example]\label{prop:binary-mismatch-example}
+\leanmeta{\LH{WM4}, \LH{WP2}, \LHrng{BA}{5}{6}, \LH{L43}}
+Fix the actual input distribution
+\[
+p(1)=\tfrac34,
+\qquad
+p(0)=\tfrac14,
+\]
+and the designed distribution
+\[
+q(1)=\tfrac14,
+\qquad
+q(0)=\tfrac34.
+\]
+The induced mismatch lower-bound term is at least one nat-valued overhead unit. Any decomposed process model that uses this witness as its mismatch term therefore satisfies
+\[
+\mathrm{landauerJoulesPerBit}(k_B,T) + 1
+\le
+W.\mathrm{effectiveModel}.\mathrm{joulesPerBit},
+\]
+and for any sufficient coordinate set $I$ of $\mathrm{canonicalDP}(A)$,
+\[
+\mathrm{DOF}(A)\,(k_B T \ln 2 + 1)
+\le
+\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).
+\]
+\end{proposition}
+
+\begin{proposition}[Binary Mismatch Strengthens the Energy--Information Coefficient]\label{prop:binary-mismatch-energy-information}
+\leanmeta{\LH{WM4}, \LH{WP2}, \LH{IT3}, \LHrng{BA}{5}{6}, \LH{L43}}
+Under the same explicit binary mismatch witness,
+\[
+\frac{k_B T \ln 2 + 1}{\ln 2}
+\, H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).
+\]
+The coefficient is strictly larger than $k_B T$.
+\end{proposition}
+
+\begin{proposition}[Repeated Binary Mismatch Work Law]\label{prop:binary-mismatch-cumulative-work}
+\leanmeta{\LH{WM4}, \LH{WP2}, \LH{IT3}, \LHrng{BA}{5}{6}, \LH{L43}}
+For any $m \in \mathbb{N}$, repeated exact-resolution cycles under the same explicit binary mismatch witness satisfy
+\[
+m\,\frac{k_B T \ln 2 + 1}{\ln 2}
+\, H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+m\,\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).
+\]
+The required cumulative work therefore grows linearly with cycle count.
+\end{proposition}
+
+\subsection{Cyclewise Heat and Lifetime}
+
+\begin{proposition}[Positive Heat and Bounded Lifetime]\label{prop:finite-lifetime}
+\leanmeta{\LHrng{SE}{1}{5}}
+In the substrate heat-capacity model, every computational cycle generates positive heat, cumulative heat grows linearly with cycle count, heat above capacity causes degradation, and finite integrity together with finite heat capacity yields bounded lifetime.
+\end{proposition}
+
+\begin{proposition}[Finite Lifetime Throughput Bound]\label{prop:lifetime-throughput}
+\leanmeta{\LH{SE5}, \LH{IT3}, \LH{L43}}
+Let $s$ be a finite substrate with lifetime ceiling $\mathrm{maxCycles}(s)$. For any run of $m$ exact-resolution cycles with
+\[
+m \le \mathrm{maxCycles}(s),
+\]
+the cumulative nat-valued decision entropy processed by $\mathrm{canonicalDP}(A)$ satisfies
+\[
+m\,H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+\mathrm{maxCycles}(s)\,\mathrm{DOF}(A)\ln 2.
+\]
+\end{proposition}
+
+\begin{proposition}[Speed-Heat Tradeoff]\label{prop:speed-heat-tradeoff}
+\leanmeta{\LH{SE6}}
+In the same substrate model, faster computation yields a larger heat rate. Once heat rate exceeds substrate capacity, faster computation yields faster degradation.
+\end{proposition}
 
 \subsection{Optimal-Transport Witness}
 
 The Landauer route lower-bounds exact resolution through irreversible bit acquisition. A complementary witness measures separation between future distributions on the integrity space $\{\mathrm{intact},\mathrm{compromised}\}$. It does not replace the main proof chain, but it supplies an independent transport-theoretic signal that multiple distinguishable futures have nonzero cost.
 
 \begin{remark}[Optimal-Transport Bridge]\label{rem:wasserstein-bridge}
+\leanmeta{\LHrng{W}{1}{4}}
 The same separation admits an independent transport-cost witness on the two-state integrity space $\{\mathrm{intact},\mathrm{compromised}\}$. The diagonal coupling has zero transport cost in the single-future regime (\LH{W1}). Any coupling with off-diagonal mass has positive transport cost (\LH{W2}). If the intact future mass dominates the compromised future mass, the intact state minimizes total transport to the future distribution (\LH{W3}). If both future states carry positive mass, then transport from either pure state is strictly positive (\LH{W4}). Multiple distinguishable futures therefore force positive transport cost independently of the Landauer route.
 \end{remark}
-\leanmeta{\LHrng{W}{1}{4}}
 
 A transport witness and the Landauer witness emphasize different structures: one counts irreducible coordinate reads, while the other measures geometric separation of future mass. In the two-state integrity model they point in the same direction, since a single future has zero transport cost whereas genuinely split futures force strictly positive transport cost.
 

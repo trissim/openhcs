@@ -44,6 +44,7 @@ import Leverage.Typing
 import Leverage.Examples
 import Leverage.WeightedLeverage
 import Leverage.FiveWayEquivalence
+import Leverage.ColumnComplexityBridge
 import Leverage.CrossPaperDependencies
 import LambdaDR
 
@@ -102,6 +103,12 @@ import LambdaDR
 - `direct_optimal_for_maintainability`: Direct wins under uniform value
 - `pareto_optimal_iff_value_optimal`: Every Pareto-optimal architecture is optimal for SOME value function
 - Universal principle: All architectural "tradeoffs" are weighted leverage maximization
+
+### Finite Compression Bridge (Leverage/ColumnComplexityBridge.lean)
+- finite fiber/cardinality scaffold reused from Paper 1
+- finite tie-broken argmin encoder induced by a compression Hamiltonian
+- exact shared-codeword collision moment theorem in compression language
+- finite zero-identity-debt transfer from raw argmin fibers to the tie-broken encoder
 
 ### λ_DR Calculus (LambdaDR.lean)
 - Core PL theory contribution: biconditional characterization of SSOT-capable languages

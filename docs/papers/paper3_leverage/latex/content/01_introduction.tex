@@ -1,6 +1,6 @@
 \section{Introduction}\label{introduction}
 
-Finite bounded physical systems resolve decisions through finitely many discrete acquisition events on bounded horizons. Under Landauer calibration \cite{landauer1961irreversibility,bennett1982thermodynamics}, exact resolution therefore carries irreducible thermodynamic cost. The formal object is a bounded decision system, represented in Lean by \texttt{Architecture}, carrying a positive degree-of-freedom count together with a canonical binary decision encoding \texttt{canonicalDP}. This counting parameter is exactly the structural rank of the encoded decision problem, it bounds the entropy of the decision quotient, and it determines the minimum per-cycle resolution cost. The quotient object is closer to zero-error and confusability-based information than to average-case coding \cite{shannon1956zero,korner1973graphs,lovasz1979shannon}. All claims are verified in Lean~4 \cite{moura2021lean4} with Mathlib support \cite{mathlib2020} and zero \texttt{sorry} placeholders.
+Finite bounded physical systems resolve decisions through finitely many discrete acquisition events on bounded horizons. The structural statements of the paper are finite counting, coordinate sufficiency, structural rank, and decision-quotient entropy statements. The empirical inputs are bounded signal speed, a discrete transition interface for acquisition, and a positive per-bit thermodynamic lower bound. Landauer furnishes the universal floor \cite{landauer1961irreversibility,bennett1982thermodynamics}. The formal object is a bounded decision system, represented in Lean by \texttt{Architecture}, carrying a positive degree-of-freedom count together with a canonical binary decision encoding \texttt{canonicalDP}. This counting parameter is exactly the structural rank of the encoded decision problem, it bounds the entropy of the decision quotient, and it determines the minimum per-cycle resolution cost. The quotient object is closer to zero-error and confusability-based information than to average-case coding \cite{shannon1956zero,korner1973graphs,lovasz1979shannon}.
 
 \subsection{Central Result}
 
@@ -24,14 +24,21 @@ An imported coherence theorem gives a separate single-source reading of the same
 \]
 where $\mathrm{SSOT}(A)$ denotes the coherent single-source condition that one locus is authoritative, every remaining encoding is a derived view, and all reachable states remain coherent.
 
-The structural-rank and thermodynamic clauses are central. The imported coherence statement is a companion interpretation of the same rank-$1$ regime, not a premise of the mathematical-physics chain.
+The structural-rank and thermodynamic clauses are central. The imported coherence statement is a companion interpretation of the same rank-$1$ regime.
+
+\subsection{Structural and Empirical Inputs}
+
+Theorem~\ref{thm:counting-gap} fixes the finite-event statement of the model.
+Proposition~\ref{prop:bounded-region} and Theorem~\ref{thm:bounded-acquisition} fix the traversal-rate statement for bounded regions.
+Theorems~\ref{thm:discrete-acquisition} and \ref{thm:one-transition-one-bit} fix the acquisition-event interface used by the canonical encoding.
+Landauer calibration enters only in Section~\ref{main-theorems}, where the per-bit lower bound is converted into energy.
 
 \subsection{Contributions}
 
 \begin{enumerate}
-\item \textbf{Finite Physical Acquisition:} bounded regions admit finitely many acquisition events, those events are discrete state transitions, and exact resolution requires a sufficient coordinate set.
+\item \textbf{Finite Physical Acquisition:} bounded systems admit finitely many acquisition events, bounded regions admit finite acquisition rates, acquisition is represented by discrete transition events, and exact resolution requires a sufficient coordinate set.
 
-\item \textbf{DOF-Structural-Rank Identification:} the canonical decision problem attached to an $n$-degree-of-freedom system has structural rank $n$.
+\item \textbf{Canonical Exact-Resolution Encoding:} the canonical decision problem assigns one binary acquisition channel to each degree of freedom, and the resulting structural rank equals that channel count.
 
 \item \textbf{Entropy-Rank Control:} the number of decision classes is at most $2^{\mathrm{DOF}(A)}$, so the decision entropy is bounded by the degree-of-freedom count.
 
@@ -39,9 +46,15 @@ The structural-rank and thermodynamic clauses are central. The imported coherenc
 
 \item \textbf{Energy-Information Duality:} the same system satisfies $E \geq k_B T\,H_{\mathrm{nats}}(D)$, linking thermodynamic cost directly to the entropy of the decision quotient.
 
+\item \textbf{Finite Budget Bounds:} bounded signal speed and minimum bit operations imply bounded-acquisition inequalities and induced decision-class and decision-entropy bounds from spacetime and energy budget.
+
+\item \textbf{Concrete Substrate Instantiation:} thresholded one-bit readouts and two-level atomic transition systems instantiate the canonical binary interface used by the theorem chain.
+
+\item \textbf{Strict-Overhead and Lifetime Branches:} theorem-level mismatch and residual witnesses force effective per-bit floors strictly above Landauer, explicit binary mismatch and two-state residual witnesses each yield an additive one-unit overhead above the Landauer floor, the same strictness lifts to canonical exact-resolution energy, substrate steps define one-unit interface time, and finite heat capacity yields bounded lifetime in the substrate degradation model.
+
 \item \textbf{Finite-Budget No-Collapse:} bounded budget, positive per-bit cost, and exponential lower-bound growth jointly preclude physical collapse of the higher-rank regime.
 
-\item \textbf{England Replication Inequality (Theorem~\ref{thm:england}):} $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$. The proof reduces the entropy gap to counting via $k \leq 2^{k-1}$. \leanmeta{\LH{L45}}
+\item \textbf{Finite Replication Entropy Gap (Theorem~\ref{thm:england}):} $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$. The proof reduces the entropy gap to counting via $k \leq 2^{k-1}$. \leanmeta{\LH{L45}}
 
 \item \textbf{Rank-1 Convergence (Theorem~\ref{thm:five-way}):} the rank-$1$ regime is simultaneously the one-coordinate regime, the tractable sufficiency regime, and the thermodynamic ground state.
 \end{enumerate}
@@ -50,8 +63,8 @@ The structural-rank and thermodynamic clauses are central. The imported coherenc
 
 \subsection{Scope}
 
-The mathematical structure links structural rank, quotient entropy, complexity, and thermodynamic cost. Theorems are stated for bounded decision systems represented by the Lean object \texttt{Architecture} and their canonical decision encoding, not for arbitrary physical systems without mediation. Architectural and programming interpretations are downstream readings of the same formal core.
+The mathematical structure links structural rank, quotient entropy, complexity, and thermodynamic cost. Theorems are stated for bounded decision systems represented by the Lean object \texttt{Architecture} and their canonical binary exact-resolution encoding. Architectural and programming interpretations are downstream readings of the same formal core.
 
 \subsection{Organization}
 
-Section~\ref{foundations} defines the structural model, the finite-acquisition interface, and the canonical decision encoding. Section~\ref{probability-model} derives the structural-rank and entropy consequences of that encoding. Section~\ref{main-theorems} derives the thermodynamic consequences. Section~\ref{five-way-equivalence} proves the convergence theorem and the England inequality. Section~\ref{related-work} situates the paper relative to thermodynamics, information theory, and formalized complexity. Section~\ref{appendix-lean} describes the Lean mechanization.
+Section~\ref{foundations} defines the structural model, the finite-acquisition interface, and the canonical decision encoding. Section~\ref{probability-model} derives the structural-rank and entropy consequences of that encoding. Section~\ref{main-theorems} derives the thermodynamic consequences. Section~\ref{five-way-equivalence} proves the convergence theorem and the finite replication entropy gap. Section~\ref{related-work} situates the paper relative to thermodynamics and information theory. Appendix~\ref{appendix-lean} records proof provenance.
