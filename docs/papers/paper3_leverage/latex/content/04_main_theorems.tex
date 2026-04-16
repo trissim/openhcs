@@ -1,6 +1,6 @@
-\section{Thermodynamic Consequences}\label{main-theorems}
+\section{Thermodynamic Cost of Exact Molecular Docking}\label{main-theorems}
 
-The previous section identified degree of freedom with structural rank and bounded the entropy of the decision quotient. The thermodynamic theorems of this section compose three inputs: minimum bit operations, the entropy-rank bound, and a positive per-bit lower bound. Landauer furnishes the universal floor for the conversion constant.
+The preceding sections identified the quotient and structural-rank boundary underlying exact molecular docking. The thermodynamic theorems of this section compose three inputs: minimum bit operations, the entropy-rank bound, and a positive per-bit lower bound. The abstract statements hold for bounded decision systems, and the constrained-molecular corollaries transport them to holonomic topologies and binding-resolution problems. Landauer furnishes the universal floor for the conversion constant.
 
 \subsection{Landauer-Linear Resolution Cost}
 
@@ -27,6 +27,8 @@ If $\mathrm{DOF}(A)=1$, then every exact-resolution cycle for the canonical prob
 \begin{proof}
 The rank-one statement is exactly the imported ground-state theorem for structural rank~$1$ (\LH{BA8}). For the higher-rank regime, Corollary~\ref{cor:rank-above-one} gives $\mathrm{srank}>1$, and Theorem~\ref{thm:energy-rank} then places the resulting exact-resolution cycle strictly above the one-Landauer-unit floor.
 \end{proof}
+
+Informally: rank one is the ground state.
 
 \subsection{Energy--Information Duality}
 
@@ -449,9 +451,7 @@ In particular, the per-cycle exact-resolution floor scales linearly with the unc
 The RATTLE holonomic status register is a $k$-bit binary interface by the finite cardinality theorem. The transported architecture has degree of freedom exactly $3N-k$ by construction. The local bridge theorem identifies the structural rank of the canonical exact-resolution problem with that same count, and the local energy lower bound then gives the displayed Landauer-linear floor.
 \end{proof}
 
-\begin{informal}
-Matter pays for what it needs to know: once holonomic constraints remove $k$ independent directions, the exact-resolution floor tracks only the remaining $3N-k$ unconstrained coordinates.
-\end{informal}
+Informally: every independent coordinate raises the floor.
 
 \subsection{Optimal-Transport Witness}
 

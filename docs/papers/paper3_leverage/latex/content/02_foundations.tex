@@ -1,4 +1,4 @@
-\section{Foundations}\label{foundations}
+\section{Foundations of Exact Molecular Docking}\label{foundations}
 
 The formal objects that carry the mathematical-physics content are a positive degree-of-freedom count, a canonical binary decision encoding, structural rank, and decision entropy.
 
@@ -10,6 +10,8 @@ A \emph{bounded decision system} is a finite bounded physical system equipped wi
 
 \textbf{Interpretation.} $\mathrm{DOF}(A)$ counts independent coordinates that can vary separately. Subsequent sections study what that count forces once one asks for exact resolution.
 
+\textbf{Molecular instantiation.} In the docking setting, the bounded decision system is a constrained molecular configuration space together with the binding decision problem induced by the chosen interaction model. The abstract degree-of-freedom count is later instantiated by holonomic constraint topology and local interaction structure.
+
 \subsection{Degrees of Freedom}
 
 \begin{definition}[Degrees of Freedom]\label{def:dof}
@@ -17,6 +19,8 @@ The quantity $\mathrm{DOF}(A) \in \mathbb{N}$ counts independent coordinates of 
 \end{definition}
 
 \textbf{Operational meaning.} If $\mathrm{DOF}(A)=n$, the system has $n$ independent coordinates that must be resolved in the worst case by any exact resolver.
+
+\textbf{Molecular instantiation.} For a constrained molecular system with $N$ atoms and $k$ independent holonomic constraints, the transported degree-of-freedom count is $3N-k$. Later sections combine this finite topological count with cutoff-local docking structure.
 
 \begin{proposition}[DOF Additivity]\label{prop:dof-additive}
 For disjoint bounded decision systems $A_1$ and $A_2$:
@@ -104,7 +108,9 @@ For a bounded decision system $A$ with $\mathrm{DOF}(A)=n$, the canonical decisi
 has state space $\mathrm{Fin}\;n \to \mathrm{Bool}$ and action space $\mathrm{Fin}\;n \oplus \mathrm{Unit}$. Action $\mathrm{inl}(i)$ queries coordinate $i$; the fallback action $\mathrm{inr}(\star)$ receives constant utility $1$. Query action $i$ receives utility $2$ exactly when coordinate $i$ is true and $0$ otherwise.
 \end{definition}
 
-The encoding is the exact Lean object \texttt{canonicalDP} in \texttt{Leverage/BridgeToDQ.lean}. The paper studies this encoding as the exact finite-resolution object attached to the declared degree-of-freedom count. It assigns one binary acquisition channel to each degree of freedom and one query action to each channel. The next section identifies the structural rank of this object with that coordinate count.
+The encoding is the exact Lean object \texttt{canonicalDP} in \texttt{Leverage/BridgeToDQ.lean}. It serves as the exact finite-resolution object attached to the declared degree-of-freedom count. It assigns one binary acquisition channel to each degree of freedom and one query action to each channel. The next section identifies the structural rank of this object with that coordinate count.
+
+\textbf{Docking reading.} The canonical exact-resolution problem records the distinctions that any exact docking resolver must preserve. The quotient of this problem is therefore the exact abstraction of docking correctness, not an auxiliary coding artifact.
 
 \subsection{Structural Rank}
 

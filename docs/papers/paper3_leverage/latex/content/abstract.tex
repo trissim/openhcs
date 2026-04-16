@@ -1,4 +1,8 @@
-Exact resolution in finite bounded physical systems carries irreducible thermodynamic cost once a positive per-bit lower bound is fixed. Under Landauer calibration, any exact-resolution cycle satisfies
+Exact molecular docking is treated as exact configuration resolution under constraints. The abstract theory is stated for bounded decision systems through sufficient coordinate sets, structural rank, and decision-quotient entropy. Constrained molecular systems instantiate the same framework through holonomic constraints, cutoff-local interaction structure, and sampled action families.
+
+General exact sufficiency certification contains a hardness core, while cutoff locality bounds docking structural rank by active-site and ligand coordinates and therefore isolates a theorem-backed low-rank regime. For sampled docking, exact and coarse winner sets agree under an explicit half-gap hypothesis, and the retained inside-cutoff coordinates are sufficient under the stated compatibility assumptions.
+
+The same exact-resolution structure carries irreducible thermodynamic cost once a positive per-bit lower bound is fixed. Under Landauer calibration, any exact-resolution cycle satisfies
 \[
 E \geq k_B T\, H_{\mathrm{nats}}(D),
 \]
@@ -14,7 +18,7 @@ The structural part of the argument is finite. Bounded systems admit only finite
 \]
 The decision quotient therefore has at most $2^{\mathrm{DOF}(A)}$ optimal-action classes, so its entropy is controlled by the same coordinate count that governs exact physical resolution.
 
-Thresholded one-bit readout channels and two-level atomic transition systems instantiate the same binary interface.
+For constrained molecular systems with $N$ atoms and $k$ independent holonomic constraints, the exact-resolution floor scales with $3N-k$. Thresholded one-bit readout channels and two-level atomic transition systems instantiate the same binary interface.
 
 For bounded regions this yields the bounded-acquisition inequality
 \[
@@ -29,4 +33,4 @@ The empirical input is the per-bit conversion constant. Landauer furnishes the u
 \Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k.
 \]
 
-Keywords: thermodynamics, Landauer principle, decision entropy, structural rank, bounded physical systems
+Keywords: molecular docking, exact resolution, structural rank, decision entropy, Landauer principle

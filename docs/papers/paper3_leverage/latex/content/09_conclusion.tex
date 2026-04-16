@@ -2,13 +2,15 @@
 
 \subsection{Summary}
 
-The central result is the convergence theorem (Theorem~\ref{thm:five-way}): the rank-$1$ regime of the canonical decision encoding is simultaneously the one-coordinate regime, the tractable sufficiency regime, and the thermodynamic ground state. An imported coherence theorem gives a separate single-source reading of the same point.
+The central result is a complete abstract-plus-molecular theory of exact resolution. Theorem~\ref{thm:five-way} identifies the rank-$1$ regime of the canonical decision encoding as simultaneously the one-coordinate regime, the tractable sufficiency regime, and the thermodynamic ground state. The molecular sections instantiate the same framework for constrained molecular systems, cutoff-local docking structure, and sampled docking.
 
-The theorem package separates a structural part from an empirical calibration. The structural part is the finite acquisition chain, the canonical exact-resolution encoding, the identity $\mathrm{DOF}(A)=\mathrm{srank}(\mathrm{canonicalDP}(A))$, and the decision-entropy bound. The empirical inputs are bounded signal speed, the discrete transition interface used for acquisition, and a positive per-bit lower bound. Landauer furnishes the universal floor.
+The theorem package separates a structural part from an empirical calibration. The structural part is the finite acquisition chain, the canonical exact-resolution encoding, the exact-sufficiency hardness core, the identity $\mathrm{DOF}(A)=\mathrm{srank}(\mathrm{canonicalDP}(A))$, the cutoff-local docking rank bounds, and the decision-entropy bound. The empirical inputs are bounded signal speed, the discrete transition interface used for acquisition, cutoff-local approximation control, and a positive per-bit lower bound. Landauer furnishes the universal floor.
 
 \textbf{Main consequences:}
 \begin{itemize}
 \item The exact identification of degree of freedom with structural rank in the canonical decision encoding.
+\item The general hardness core for exact sufficiency certification and the maximal-rank hard family.
+\item The cutoff-local structural-rank bound for molecular docking, the bounded-pocket low-rank regime, sampled exact/coarse winner preservation under a half-gap hypothesis, and inside-cutoff sufficiency for sampled docking under the stated compatibility assumptions.
 \item The energy--information theorem $E \ge k_B T H_{\mathrm{nats}}(D)$ for exact-resolution cost.
 \item The bounded-acquisition inequalities $\mathrm{DOF}(A) \le c\tau/d$, the induced decision-class and decision-entropy bounds from spacetime and energy budget, and the linear budget law for independent composition.
 \item The theorem-level strict-overhead branches above the Landauer floor, the finite discrete residual witness, the canonical Wolpert grounding bundle, the unified ideal/mismatch/residual energy--information hierarchy, the induced strict canonical energy separation above the Landauer-linear floor, explicit binary mismatch and two-state residual examples with additive one-unit overhead, strengthened energy--information coefficients, cumulative work laws, and the substrate step time law.
@@ -30,11 +32,11 @@ The theorem package separates a structural part from an empirical calibration. T
 
 \subsection{Final Remarks}
 
-The paper studies exact resolution in a finite canonical model. In that model, degree of freedom, structural rank, decision entropy, and minimum calibrated thermodynamic cost are linked by explicit theorems. The finite replication entropy gap and the finite-budget no-collapse theorem belong to the same model class.
+Exact molecular docking is therefore governed by one formal chain rather than by separate semantic, complexity, and thermodynamic stories. Abstractly, exact resolution is governed by sufficient coordinate sets, structural rank, decision quotient, and calibrated thermodynamic floor. Concretely, constrained molecular systems instantiate the same framework through holonomic constraint topology, cutoff-local interaction structure, sampled exact/coarse stability, and direct Landauer-linear cost bounds.
 
-A concrete transport target is constrained molecular dynamics. The existing molecular-docking layer uses three Cartesian coordinates per atom, while the RATTLE layer imposes holonomic constraints by explicit projection, so for an $N$-atom constrained model the effective dimension is naturally derived from molecular topology as $3N$ minus the independent constraints, with a satisfied/violated predicate for each constraint. Corollary~\ref{cor:holonomic-landauer-floor} now states that direct RATTLE finite derivation: the constraint-status interface is a $k$-bit binary register, the effective coordinate count is $3N-k$, and the canonical Landauer floor scales linearly with that remaining unconstrained dimension. Remark~\ref{rem:molecular-independence-scope} isolates the remaining scope boundary precisely: the theorem package proves the finite transport once independence is specified, but does not yet derive that independence hypothesis from a concrete geometric constraint family and molecular topology object.
+The abstract layer is not decorative generality, and the molecular layer is not an afterthought. The abstract theorems state what exact resolution costs for any bounded decision system. The molecular instantiation shows that the same theorems govern exact docking, constrained molecular computation, and repeated exact molecular resolution in matter. Corollary~\ref{cor:holonomic-landauer-floor} gives the direct RATTLE finite derivation: the constraint-status interface is a $k$-bit binary register, the effective coordinate count is $3N-k$, and the canonical Landauer floor scales linearly with that remaining unconstrained dimension. Remark~\ref{rem:molecular-independence-scope} isolates the remaining scope boundary precisely: the finite transport is proved once independence is specified, while derivation of that independence hypothesis from a concrete geometric constraint family remains additional work.
 
-A companion manuscript develops the software-engineering and case-study implications. Appendix~\ref{appendix-lean} records proof provenance.
+Appendix~\ref{appendix-lean} records proof provenance.
 
 
 \appendix

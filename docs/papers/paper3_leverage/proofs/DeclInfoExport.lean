@@ -3,6 +3,7 @@ import DependencyGraph
 import Leverage.BridgeToDQ
 import Leverage.ColumnComplexityBridge
 import Leverage.CrossPaperDependencies
+import Leverage.DockingTheoryBridge
 import Leverage.Examples
 import Leverage.FiveWayEquivalence
 import Leverage.Foundations

@@ -6,6 +6,13 @@ Charles~H. Bennett.
 \newblock {\em International Journal of Theoretical Physics}, 21(12):905--940,
   1982.
 
+\bibitem{berut2012experimental}
+Antoine B{\'e}rut, Artak Arakelyan, Arshak Petrosyan, Sergio Ciliberto, Raoul
+  Dillenschneider, and Eric Lutz.
+\newblock Experimental verification of landauer's principle linking information
+  and thermodynamics.
+\newblock {\em Nature}, 483(7388):187--189, 2012.
+
 \bibitem{crooks1999entropy}
 Gavin~E. Crooks.
 \newblock Entropy production fluctuation theorem and the nonequilibrium work
@@ -28,6 +35,11 @@ Leonardo de~Moura and Sebastian Ullrich.
 Giovanni Diana, G.~Baris Bagci, and Massimiliano Esposito.
 \newblock Finite-time erasing of information stored in fermionic bits.
 \newblock {\em Physical Review E}, 87(1):012111, 2013.
+
+\bibitem{dirac1930principles}
+Paul A.~M. Dirac.
+\newblock The principles of quantum mechanics.
+\newblock {\em Oxford University Press}, 1930.
 
 \bibitem{england2013statistical}
 Jeremy~L. England.
@@ -92,10 +104,22 @@ Tobias Nipkow, Lawrence~C. Paulson, and Markus Wenzel.
 \newblock {\em {Isabelle/HOL}: A Proof Assistant for Higher-Order Logic}.
 \newblock Springer, 2002.
 
+\bibitem{planck1901distribution}
+Max Planck.
+\newblock {\"U}ber das gesetz der energieverteilung im normalspektrum.
+\newblock {\em Annalen der Physik}, 309(3):553--563, 1901.
+
 \bibitem{proesmans2020finite}
 Karel Proesmans, Jannik Ehrich, and John Bechhoefer.
 \newblock Finite-time landauer principle.
 \newblock {\em Physical Review Letters}, 125:100602, 2020.
+
+\bibitem{sakurai2017modern}
+Jun~John Sakurai and Jim Napolitano.
+\newblock {\em Modern Quantum Mechanics}.
+\newblock Cambridge University Press, 2nd edition, 2017.
+\newblock Standard reference for angular momentum quantization and discrete
+  spectra.
 
 \bibitem{seifert2012stochastic}
 Udo Seifert.

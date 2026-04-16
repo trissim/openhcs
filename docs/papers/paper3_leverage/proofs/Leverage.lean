@@ -45,6 +45,7 @@ import Leverage.Examples
 import Leverage.WeightedLeverage
 import Leverage.FiveWayEquivalence
 import Leverage.ColumnComplexityBridge
+import Leverage.DockingTheoryBridge
 import Leverage.CrossPaperDependencies
 import LambdaDR
 
@@ -109,6 +110,11 @@ import LambdaDR
 - finite tie-broken argmin encoder induced by a compression Hamiltonian
 - exact shared-codeword collision moment theorem in compression language
 - finite zero-identity-debt transfer from raw argmin fibers to the tie-broken encoder
+
+### Docking Theory Bridge (Leverage/DockingTheoryBridge.lean)
+- local paper3 exposure of exact-sufficiency hardness core
+- local cutoff-local structural-rank bounds for molecular docking
+- docking-language bridge from general hardness to molecular low-rank regimes
 
 ### λ_DR Calculus (LambdaDR.lean)
 - Core PL theory contribution: biconditional characterization of SSOT-capable languages

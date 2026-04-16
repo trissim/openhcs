@@ -1,0 +1,81 @@
+\section{Complexity Boundary of Exact Molecular Docking}\label{complexity-boundary}
+
+Exact molecular docking has a genuine tractability boundary. General exact sufficiency certification already contains a hardness core, while molecular locality supplies a low-rank regime in which exact resolution is structurally controlled. The claims in this section isolate that boundary before the thermodynamic lower bounds are applied.
+
+\subsection{General Hardness Core}
+
+\begin{theorem}[General Hardness Core for Exact Sufficiency]\label{thm:exact-sufficiency-hardness-core}
+\leanmeta{\LH{L63}}
+For every Boolean formula $\phi$, the empty coordinate set is sufficient for the reduction problem induced by $\phi$ if and only if $\phi$ is a tautology.
+\end{theorem}
+
+\begin{proof}
+The reduction theorem is exact: tautology is encoded as sufficiency of the empty coordinate set for the induced decision problem. The equivalence therefore supplies the formal hardness core for exact sufficiency certification.
+\end{proof}
+
+\begin{theorem}[Maximal Structural Rank in the Hard Family]\label{thm:hard-family-srank}
+\leanmeta{\LH{L64}}
+Let $n>0$, and let $\phi$ be a non-tautology over $n$ Boolean variables. Then the many-coordinate reduction family has structural rank exactly $n$.
+\end{theorem}
+
+\begin{proof}
+Every coordinate is relevant in the non-tautology branch of the strengthened reduction family. Structural rank is the cardinality of the relevant-coordinate set, so the rank is exactly $n$.
+\end{proof}
+
+The hard family therefore witnesses full interaction dimensionality: exact sufficiency can force the decision boundary to depend on every available coordinate.
+
+\subsection{Cutoff-Local Docking Regime}
+
+\begin{theorem}[Cutoff-Local Structural-Rank Bound for Exact Docking]\label{thm:molecular-docking-srank-bound}
+\leanmeta{\LH{L66}}
+Let $P_{\mathrm{rel}}$ be the number of protein atoms within the cutoff radius of the binding site, and let $L$ be the number of ligand atoms. Under the strict-optimum and outside-cutoff boundedness hypotheses,
+\[
+\mathrm{srank}(D_{\mathrm{dock}}) \le 3P_{\mathrm{rel}} + 3L.
+\]
+\end{theorem}
+
+\begin{proof}
+Any protein coordinate that remains decision-relevant must come from an atom within the cutoff radius, while every ligand coordinate remains available. Structural rank is therefore bounded by three coordinates for each cutoff-local protein atom together with three coordinates for each ligand atom.
+\end{proof}
+
+\begin{corollary}[Bounded-Pocket Low-Rank Regime]\label{cor:bounded-pocket-regime}
+\leanmeta{\LH{L65}}
+If at most $K$ protein atoms lie within the cutoff radius of the binding site and the ligand has at most $L$ atoms, then
+\[
+\mathrm{srank}(D_{\mathrm{dock}}) \le 3K + 3L.
+\]
+\end{corollary}
+
+\begin{proof}
+Substitute the pocket-size and ligand-size bounds into Theorem~\ref{thm:molecular-docking-srank-bound}.
+\end{proof}
+
+Informally: bounded pockets bound exact difficulty.
+
+\subsection{Sampled Docking}
+
+\begin{theorem}[Sampled Exact-Coarse Winner Preservation]\label{thm:sampled-docking-gap}
+\leanmeta{\LH{DQ2}}
+For a finite sampled docking problem, let $a_\ast$ be a strict exact winner at a sampled state $s$. If the coarse score differs from the exact score by at most $\delta$ on every sampled action at $s$, and
+\[
+\delta < \frac{1}{2}\,\mathrm{StrictUtilityGap}(a_\ast,s),
+\]
+then the exact and coarse optimal-action sets agree at $s$.
+\end{theorem}
+
+\begin{proof}
+The theorem is the sampled docking specialization of the strict half-gap invariance principle: a perturbation smaller than half the exact winner's strict margin cannot change the optimal set.
+\end{proof}
+
+\begin{theorem}[Inside-Cutoff Sufficiency for Sampled Docking]\label{thm:sampled-inside-cutoff-sufficient}
+\leanmeta{\LH{DQ1}}
+Under the cutoff boundedness, sampled-optimum capture, coordinate-compatibility, and injectivity hypotheses, the retained coordinate set consisting of inside-cutoff protein coordinates together with all ligand coordinates is sufficient for the sampled restricted docking problem.
+\end{theorem}
+
+\begin{proof}
+Cutoff locality forces every relevant sampled coordinate into the retained set. The compatibility and injectivity hypotheses then lift the retained-set relevance bound into a sufficiency theorem for the sampled restricted problem.
+\end{proof}
+
+\subsection{Formalization}
+
+The local paper3 docking bridge theorems live in \texttt{Leverage/DockingTheoryBridge.lean}. They expose the general exact-sufficiency hardness core, the maximal-rank hard family, the cutoff-local structural-rank bounds for molecular docking, and the sampled exact/coarse preservation and sufficiency theorems used in the molecular development.
