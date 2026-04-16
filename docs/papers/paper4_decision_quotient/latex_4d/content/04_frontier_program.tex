@@ -1,6 +1,6 @@
 \section{Toward the Frontier Theorem}\label{sec:frontier-program}
 
-Sections~2 and~3 motivate a frontier question. Do the tractable families already suggest a finite optimizer-compatible criterion? In the strongest form, could exact relevance certification admit a representation-sensitive dichotomy theorem analogous to the classical dichotomy programs for satisfiability and constraint satisfaction?
+Sections~3--5 motivate a frontier question. Do the tractable families already suggest a finite optimizer-compatible criterion? In the strongest form, could exact relevance certification admit a representation-sensitive dichotomy theorem analogous to the classical dichotomy programs for satisfiability and constraint satisfaction?
 
 The most direct version of that program fails. Quotient shape is too expressive, and later in the section even structurally restricted finite classifiers fail on a theorem-forced surface. The negative theorem proved here is correspondingly scoped: it rules out exact classifiers in the direct closure-invariant structural regime, not every possible representation-sensitive invariant.
 
@@ -62,7 +62,10 @@ Closure-law invariance gives $P(U) \iff P(V)$. Exact agreement with $Q$ would th
 
 For each obstruction family, the argument constructs two same-orbit slices with different obstruction status. In all four cases the witness is a positive-affine step whose $\alpha$-component is an action-independent state term supported on a single coordinate pair. Pure relabeling cannot change the relevant obstruction statistics, and a global scale factor preserves all pairwise magnitudes up to common rescaling. The statewise additive term moves mass onto a chosen pair while remaining inside the theorem-forced closure laws. One theorem-forced transport therefore destabilizes several natural candidate predicates. Proposition~\ref{prop:orbit-gap-completeness} together with Corollary~\ref{cor:orbit-gap-completeness-domain} shows that orbit gaps are the complete obstruction criterion in the closure-invariant and correctness-forced regimes.
 
-\begin{remark}[Worked Dominant-Pair Orbit Example]\label{rem:worked-dominant-pair-orbit-example}
+\subsection*{Illustrative Orbit Example}
+
+The dominant-pair witness below is the smallest concrete orbit-gap example in the paper. One affine closure step changes the frontier predicate while leaving the underlying exact-certification problem unchanged.
+
 Take three binary coordinates $x=(x_0,x_1,x_2) \in \{0,1\}^3$ and two actions $a,b$. Define
 \[
 U(a,x)=2x_0x_1,
@@ -85,7 +88,6 @@ The optimizer sets are unchanged because
 V(a,x)-V(b,x)=U(a,x)-U(b,x)=2x_0x_1,
 \]
 so $U$ and $V$ determine the same exact-certification problem and lie in the same closure orbit. But the raw pair statistics have changed: $V$ now has larger pair magnitude on $\{1,2\}$ than on $\{0,1\}$. Thus the dominant-pair predicate flips from $\{0,1\}$ to $\{1,2\}$ even though the optimizer quotient, sufficient sets, and relevant coordinates are unchanged. This is the orbit-gap mechanism in its smallest concrete form.
-\end{remark}
 
 \begin{remark}[Transport Interpretation of the Affine Witnesses]\label{rem:transport-interpretation-affine-witnesses}
 Once transport is computed on optimizer-quotient classes, a singleton quotient admits zero-cost diagonal transport, whereas genuine branching forces positive off-diagonal transport when distinct classes carry mass. The pair-targeted affine witnesses exploit exactly this sensitivity: they move mass across a selected branch of the quotient while staying inside the same closure orbit. The witnesses therefore follow the quotient transport geometry rather than functioning as arbitrary syntactic perturbations. In the named families used below, these witnesses are bounded perturbations on constant-size support, so the representation size remains polynomially equivalent under standard sparse encodings.\leanmeta{\LHrng{FR}{183}{184}}
@@ -247,7 +249,7 @@ The implication $(1)\Rightarrow(2)$ transfers closure-law invariance across exac
 Orbit gaps are the complete obstruction criterion for exact classification of any fixed target predicate by closure-law-invariant classifiers. The four obstruction families are not claimed to exhaust all hard-side phenomena; they show that the same orbit-gap mechanism defeats several natural candidate frontier predicates.
 
 \par\medskip
-\noindent\normalfont\normalsize\upshape\mdseries
+\noindent
 Informally: only what matters can matter to a correct classifier.
 \par\medskip
 

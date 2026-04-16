@@ -1,4 +1,4 @@
-\section{Necessary Conditions on Any Frontier Statement}\label{sec:natural-families}
+\section{Exact Semantics and Structural Preconditions}\label{sec:exact-semantics-foundation}
 
 Realizability of arbitrary quotients leaves a more precise frontier question. If quotient shape alone is too expressive, what should replace it as the organizing unit of the metatheorem?
 
@@ -26,6 +26,8 @@ A coordinate $i$ is irrelevant if and only if deleting it leaves a sufficient co
 \end{corollary}
 
 Corollary~\ref{cor:relevance-erasure} makes the role of individual coordinates canonical: relevance is exactly the obstruction to retaining sufficiency after coordinate erasure.
+
+The underlying definition is already witness-based: a coordinate is relevant exactly when there exist two states that agree on all other coordinates but have different optimizer classes.
 
 \leanmetapending{\LHrng{FR}{41}{44}}
 \begin{corollary}[Certification Statistics Factor Through the Quotient Relation]\label{cor:statistics-factor}
@@ -152,6 +154,8 @@ Without admissibility restrictions, there exist normalization predicates whose m
 
 Proposition~\ref{prop:oracle-loophole} is not a by-product of the proof method. It is the expected behavior of unrestricted semantic predicates. Any meaningful frontier theorem must therefore be parameterized by a structural class that simultaneously (i) respects theorem-forced invariances and (ii) blocks direct semantic encoding.
 
+A natural first attempt is to classify tractable families by local structural signatures visible in the presentation itself: bounded treewidth, symmetry traces, support graphs, or other finite graph-pattern conditions extracted from binary pairwise syntax. The finite structural class below formalizes that first attempt under theorem-forced invariance.
+
 \leanmetapending{\LHrng{FR}{15}{20}, \LHrng{FR}{55}{60}, \LHrng{FR}{83}{85}}
 \begin{proposition}[Closure Operations Preserve Exact Certification]\label{prop:closure-operations-preserve-certification}
 The theorem-forced closure operations preserve the exact-certification problem itself. More precisely:
@@ -230,11 +234,11 @@ Thus the definition ranges over a fixed finite vocabulary of local rooted config
 
 Polynomial-time checkability is the minimal algorithmic requirement. A tractability characterization that cannot itself be recognized efficiently only relocates the computational difficulty from exact certification to the membership test for the classifier.
 
-Closure-law invariance is the semantic requirement used in the orbit-witness arguments of Section~4. It is forced by the Block~6 invariance theorems, because exact certification itself is unchanged by relabelings, positive affine utility reparameterizations, duplication operations, and binary irrelevant-coordinate extensions.
+Closure-law invariance is the semantic requirement used in the orbit-witness arguments of Section~\ref{sec:frontier-program}. It is forced by the Block~6 invariance theorems, because exact certification itself is unchanged by relabelings, positive affine utility reparameterizations, duplication operations, and binary irrelevant-coordinate extensions.
 
 Structural extractability distinguishes structural characterizations from purely semantic ones. Without such a condition, one can define predicates directly on optimizer behavior or on the solved certification instance itself, bypassing the stated aim of classifying tractability by representation-level structure.
 
-Bounded-pattern definability is the locality restriction. Its role is to exclude predicates whose membership test is implemented by an arbitrarily large finite schema or other hidden global computation. The contradiction does not use this clause. The clause restricts attention to the direct finite local regime.
+Bounded-pattern definability is the locality restriction. Its role is to formalize the local-pattern heuristic directly and to exclude predicates whose membership test is implemented by an arbitrarily large finite schema or other hidden global computation. The contradiction does not use this clause. The clause restricts attention to the direct finite local regime.
 
 The compute-cost layer adds no new orbit mechanism. Once correctness forces closure-orbit agreement for one exact task, each output-production variant inherits the same conclusion through its explicit transport law. The next results record representative instantiations.
 
@@ -248,7 +252,7 @@ If $U,V \in \Gamma$ lie in the same closure orbit, Proposition~\ref{prop:closure
 \end{proof}
 
 \par\medskip
-\noindent\normalfont\normalsize\upshape\mdseries
+\noindent
 Informally: a correct classifier gets one answer for one problem.
 \par\medskip
 
@@ -450,7 +454,7 @@ Combine Theorem~\ref{thm:exact-semantics-quotient-universality} with Proposition
 \end{proof}
 
 \par\medskip
-\noindent\normalfont\normalsize\upshape\mdseries
+\noindent
 Informally: once correctness is fixed, relevance asks which coordinates recover what matters.
 \par\medskip
 
@@ -627,7 +631,7 @@ The uniform-approximation theorem preserves the optimizer set at each state once
 Thus closeness alone does not justify an approximate relevance or sufficiency claim. Any $\varepsilon$-based surrogate claim needs an explicit reduction to the exact optimizer sets, for example by a witness-gap bound as in Proposition~\ref{prop:approximate-relevance-needs-stability-control}, because otherwise arbitrarily small perturbations can change the exact judgment.
 
 \par\medskip
-\noindent\normalfont\normalsize\upshape\mdseries
+\noindent
 Informally: without a margin, approximation does not preserve what matters.
 \par\medskip
 
