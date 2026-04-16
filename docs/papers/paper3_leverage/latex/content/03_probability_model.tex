@@ -105,6 +105,10 @@ then the induced tie-broken encoder has zero identity debt at budget $b$.
 The first identity is the exact finite shared-codeword/fiber-moment theorem for the least-minimizer relation induced by $H$. The second statement uses that each tie-broken fiber sits inside the corresponding raw argmin fiber, so a uniform raw argmin bound transfers to the deterministic tie-broken encoder.
 \end{proof}
 
+The compression bridge is the point of contact with the Landauer chain: in the exact-resolution reading of the canonical model, thermodynamic cost is the combinatorial cost of avoiding encoder collisions, because zero identity debt reduces to a uniform argmin-fiber bound, and that finite fiber-size condition is exactly what the energy--information theorem charges.
+
+Informally: to avoid collisions is to pay for distinctions.
+
 \subsection{Formalization}
 
 The structural-rank bridge is formalized in \texttt{Leverage/BridgeToDQ.lean}; the finite compression bridge is formalized in \texttt{Leverage/ColumnComplexityBridge.lean}; and the minimum-bit and entropy bounds are formalized in the decision-quotient physics and information development. These are the objects used directly by the thermodynamic theorems of the next section.

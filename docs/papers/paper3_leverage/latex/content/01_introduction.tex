@@ -1,6 +1,6 @@
 \section{Introduction}\label{introduction}
 
-Finite bounded physical systems resolve decisions through finitely many discrete acquisition events on bounded horizons. The structural statements of the paper are finite counting, coordinate sufficiency, structural rank, and decision-quotient entropy statements. The empirical inputs are bounded signal speed, a discrete transition interface for acquisition, and a positive per-bit thermodynamic lower bound. Landauer furnishes the universal floor \cite{landauer1961irreversibility,bennett1982thermodynamics}. The formal object is a bounded decision system, represented in Lean by \texttt{Architecture}, carrying a positive degree-of-freedom count together with a canonical binary decision encoding \texttt{canonicalDP}. This counting parameter is exactly the structural rank of the encoded decision problem, it bounds the entropy of the decision quotient, and it determines the minimum per-cycle resolution cost. The quotient object is closer to zero-error and confusability-based information than to average-case coding \cite{shannon1956zero,korner1973graphs,lovasz1979shannon}.
+Finite bounded physical systems resolve decisions through finitely many discrete acquisition events on bounded horizons. The structural statements are finite counting, coordinate sufficiency, structural rank, and decision-quotient entropy statements. The empirical inputs are bounded signal speed, a discrete transition interface for acquisition, and a positive per-bit thermodynamic lower bound. Landauer furnishes the universal floor \cite{landauer1961irreversibility,bennett1982thermodynamics}. The formal object is a bounded decision system, represented in Lean by \texttt{Architecture}, carrying a positive degree-of-freedom count together with a canonical binary decision encoding \texttt{canonicalDP}. This counting parameter is exactly the structural rank of the encoded decision problem, it bounds the entropy of the decision quotient, and it determines the minimum per-cycle resolution cost. The quotient object is closer to zero-error and confusability-based information than to average-case coding \cite{shannon1956zero,korner1973graphs,lovasz1979shannon}.
 
 \subsection{Central Result}
 
@@ -61,10 +61,12 @@ Landauer calibration enters only in Section~\ref{main-theorems}, where the per-b
 
 \paragraph{Physical significance.} Once finite acquisition is fixed as the physical interface, the degree-of-freedom count becomes simultaneously an interaction dimension, an entropy bound, and a Landauer-calibrated cost coordinate. The result concerns exact resolution structure in matter.
 
+Informally: exact resolution must be paid for.
+
 \subsection{Scope}
 
 The mathematical structure links structural rank, quotient entropy, complexity, and thermodynamic cost. Theorems are stated for bounded decision systems represented by the Lean object \texttt{Architecture} and their canonical binary exact-resolution encoding. Architectural and programming interpretations are downstream readings of the same formal core.
 
 \subsection{Organization}
 
-Section~\ref{foundations} defines the structural model, the finite-acquisition interface, and the canonical decision encoding. Section~\ref{probability-model} derives the structural-rank and entropy consequences of that encoding. Section~\ref{main-theorems} derives the thermodynamic consequences. Section~\ref{five-way-equivalence} proves the convergence theorem and the finite replication entropy gap. Section~\ref{related-work} situates the paper relative to thermodynamics and information theory. Appendix~\ref{appendix-lean} records proof provenance.
+Section~\ref{foundations} defines the structural model, the finite-acquisition interface, and the canonical decision encoding. Section~\ref{probability-model} derives the structural-rank and entropy consequences of that encoding. Section~\ref{main-theorems} derives the thermodynamic consequences. Section~\ref{five-way-equivalence} proves the convergence theorem and the finite replication entropy gap. Section~\ref{related-work} situates the results relative to thermodynamics and information theory. Appendix~\ref{appendix-lean} records proof provenance.

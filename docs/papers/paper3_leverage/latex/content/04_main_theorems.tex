@@ -53,6 +53,8 @@ Comparing the two right-hand sides yields the announced inequality.
 
 Theorem~\ref{thm:energy-entropy} composes the entropy-rank inequality with the per-bit lower bound from Theorem~\ref{thm:energy-rank}.
 
+Informally: the quotient fixing correctness also fixes cost.
+
 \begin{corollary}[Unique Minimum-Cost Regime]\label{cor:minimum-cost-regime}
 \leanmeta{\LH{BA8}, \LHrng{L}{54}{55}}
 Among bounded decision systems in the canonical binary encoding, the unique minimum-cost regime is $\mathrm{DOF}(A)=1$.
@@ -418,6 +420,39 @@ m\,H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
 In the same substrate model, faster computation yields a larger heat rate. Once heat rate exceeds substrate capacity, faster computation yields faster degradation.
 \end{proposition}
 
+\subsection{Constrained Molecular Application}
+
+\begin{corollary}[RATTLE Holonomic-Constraint Landauer Floor]\label{cor:holonomic-landauer-floor}
+\leanmeta{\LHrng{L}{60}{62}}
+Let $X$ be a finite RATTLE holonomic topology with $N$ atoms and $k$ independent constraints, where each constraint check is recorded as a binary satisfied/violated status. Then the full constraint-status observation space has cardinality
+\[
+2^k.
+\]
+Let $A_X$ be the transported bounded decision system with
+\[
+\mathrm{DOF}(A_X) = 3N-k.
+\]
+Then the canonical exact-resolution problem satisfies
+\[
+\mathrm{srank}(\mathrm{canonicalDP}(A_X)) = 3N-k.
+\]
+Moreover, for any sufficient coordinate set $I$ for $\mathrm{canonicalDP}(A_X)$ and any thermodynamic model with positive per-bit conversion constant,
+\[
+M.\mathrm{joulesPerBit}\cdot(3N-k)
+\le
+\mathrm{energyLowerBound}(M,|I|).
+\]
+In particular, the per-cycle exact-resolution floor scales linearly with the unconstrained molecular dimension.
+\end{corollary}
+
+\begin{proof}
+The RATTLE holonomic status register is a $k$-bit binary interface by the finite cardinality theorem. The transported architecture has degree of freedom exactly $3N-k$ by construction. The local bridge theorem identifies the structural rank of the canonical exact-resolution problem with that same count, and the local energy lower bound then gives the displayed Landauer-linear floor.
+\end{proof}
+
+\begin{informal}
+Matter pays for what it needs to know: once holonomic constraints remove $k$ independent directions, the exact-resolution floor tracks only the remaining $3N-k$ unconstrained coordinates.
+\end{informal}
+
 \subsection{Optimal-Transport Witness}
 
 The Landauer route lower-bounds exact resolution through irreversible bit acquisition. A complementary witness measures separation between future distributions on the integrity space $\{\mathrm{intact},\mathrm{compromised}\}$. It does not replace the main proof chain, but it supplies an independent transport-theoretic signal that multiple distinguishable futures have nonzero cost.
@@ -431,8 +466,8 @@ A transport witness and the Landauer witness emphasize different structures: one
 
 \subsection{Interpretation}
 
-If degree of freedom is read as the number of independent physical coordinates that can vary separately, then lower DOF means lower exact-resolution cost because fewer independent coordinates must be resolved.
+If degree of freedom is read as the number of independent physical coordinates that can vary separately, then lower DOF means lower exact-resolution cost because fewer independent coordinates must be resolved. The constrained-molecular corollary makes that transport explicit for the finite count $3N-k$.
 
 \subsection{Formalization}
 
-The local bridge from degree of freedom to structural rank is formalized in \texttt{Leverage/BridgeToDQ.lean}. The physical acquisition and Landauer theorems are imported from the decision-quotient physics stack, in particular \texttt{Physics/BoundedAcquisition.lean} and \texttt{ThermodynamicLift.lean}. The role of the local \texttt{Architecture} object in this section is to provide the coordinate count transported into those theorems.
+The local bridge from degree of freedom to structural rank is formalized in \texttt{Leverage/BridgeToDQ.lean}, including the direct finite RATTLE transport with effective dimension $3N-k$. The finite holonomic-constraint counting layer lives in \texttt{Computation/GeometricConstraints.lean}. The physical acquisition and Landauer theorems are imported from the decision-quotient physics stack, in particular \texttt{Physics/BoundedAcquisition.lean} and \texttt{ThermodynamicLift.lean}. The role of the local \texttt{Architecture} object in this section is to provide the coordinate count transported into those theorems.

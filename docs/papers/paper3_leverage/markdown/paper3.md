@@ -1,27 +1,31 @@
 # Paper: Structural Rank, Decision Entropy, and Thermodynamic Selection in Finite Information-Processing Systems
 
-**Status**: Draft-ready | **Lean**: 75987 lines, 3303 theorems
+**Status**: Draft-ready | **Lean**: 77174 lines, 3374 theorems
 
 ---
 
 ## Abstract
 
-Exact resolution in finite bounded physical systems carries irreducible thermodynamic cost. Under Landauer calibration, any exact-resolution cycle satisfies $$E \geq k_B T\, H_{\mathrm{nats}}(D),$$ where $H_{\mathrm{nats}}(D)$ is the natural-log entropy of the decision quotient. In the canonical binary encoding studied here, this bound sharpens to $$E \geq \mathrm{DOF}(A)\, k_B T \ln 2,$$ and the rank-$1$ regime is the unique thermodynamic ground state: every system with more than one degree of freedom lies strictly above the minimum per-cycle resolution cost.
+Exact resolution in finite bounded physical systems carries irreducible thermodynamic cost once a positive per-bit lower bound is fixed. Under Landauer calibration, any exact-resolution cycle satisfies $$E \geq k_B T\, H_{\mathrm{nats}}(D),$$ where $H_{\mathrm{nats}}(D)$ is the natural-log entropy of the decision quotient. In the canonical binary encoding, this bound sharpens to $$E \geq \mathrm{DOF}(A)\, k_B T \ln 2,$$ and the rank-$1$ regime is the unique thermodynamic ground state: every system with more than one degree of freedom lies strictly above the minimum per-cycle resolution cost.
 
-The England replication inequality, $$\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k,$$ is also obtained in the same framework. The proof reduces the entropy premium of replication to finite counting: a $k$-coordinate system has $2^k$ states, and the elementary inequality $k \leq 2^{k-1}$ yields the gap.
+The structural part of the argument is finite. Bounded systems admit only finitely many acquisition events. Exact resolution requires a sufficient coordinate set. The associated canonical decision problem records one binary acquisition channel for each degree of freedom, and the number of independent coordinates is identified exactly with the structural rank of the encoded decision problem: $$\mathrm{DOF}(A) = \mathrm{srank}(\mathrm{canonicalDP}(A)).$$ The decision quotient therefore has at most $2^{\mathrm{DOF}(A)}$ optimal-action classes, so its entropy is controlled by the same coordinate count that governs exact physical resolution.
 
-These thermodynamic statements are derived from a finite structural theorem. Exact resolution in a bounded system occurs through finitely many discrete acquisition events. The associated canonical decision problem records those events as Boolean coordinate reads, and the number of independent coordinates is identified exactly with the structural rank of the encoded decision problem: $$\mathrm{DOF}(A) = \mathrm{srank}(\mathrm{canonicalDP}(A)).$$ The decision quotient therefore has at most $2^{\mathrm{DOF}(A)}$ optimal-action classes, so its entropy is controlled by the same coordinate count that governs exact physical resolution.
+Thresholded one-bit readout channels and two-level atomic transition systems instantiate the same binary interface.
 
-All theorems are machine-checked in Lean 4 with no `sorry` placeholders. The mechanized artifact records the proof provenance in full.
+For bounded regions this yields the bounded-acquisition inequality $$\mathrm{DOF}(A) \le \frac{c\tau}{d},$$ and corresponding bounds on decision-class count from spacetime and energy budget.
 
-Keywords: thermodynamics, Landauer principle, decision entropy, structural rank, bounded physical systems, formal verification
+Theorem-level mismatch and residual witnesses place nonideal implementations strictly above the Landauer floor. An explicit binary mismatch witness and an explicit two-state residual witness each yield at least one additional per-bit lower-bound unit above the Landauer floor and raise the energy--information coefficient above $k_B T$. Finite-capacity substrates therefore have bounded lifetime and bounded cumulative entropy throughput.
+
+The empirical input is the per-bit conversion constant. Landauer furnishes the universal floor. The same calibrated model yields the finite replication entropy gap $$\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k.$$
+
+Keywords: thermodynamics, Landauer principle, decision entropy, structural rank, bounded physical systems
 
 
 _Failed to convert lean_stats.tex_
 
 # Introduction
 
-Finite bounded physical systems resolve decisions through finitely many discrete acquisition events on bounded horizons. Under Landauer calibration [@landauer1961irreversibility; @bennett1982thermodynamics], exact resolution therefore carries irreducible thermodynamic cost. The formal object is a bounded decision system, represented in Lean by `Architecture`, carrying a positive degree-of-freedom count together with a canonical binary decision encoding `canonicalDP`. This counting parameter is exactly the structural rank of the encoded decision problem, it bounds the entropy of the decision quotient, and it determines the minimum per-cycle resolution cost. The quotient object is closer to zero-error and confusability-based information than to average-case coding [@shannon1956zero; @korner1973graphs; @lovasz1979shannon]. All claims are verified in Lean 4 [@moura2021lean4] with Mathlib support [@mathlib2020] and zero `sorry` placeholders.
+Finite bounded physical systems resolve decisions through finitely many discrete acquisition events on bounded horizons. The structural statements are finite counting, coordinate sufficiency, structural rank, and decision-quotient entropy statements. The empirical inputs are bounded signal speed, a discrete transition interface for acquisition, and a positive per-bit thermodynamic lower bound. Landauer furnishes the universal floor [@landauer1961irreversibility; @bennett1982thermodynamics]. The formal object is a bounded decision system, represented in Lean by `Architecture`, carrying a positive degree-of-freedom count together with a canonical binary decision encoding `canonicalDP`. This counting parameter is exactly the structural rank of the encoded decision problem, it bounds the entropy of the decision quotient, and it determines the minimum per-cycle resolution cost. The quotient object is closer to zero-error and confusability-based information than to average-case coding [@shannon1956zero; @korner1973graphs; @lovasz1979shannon].
 
 ## Central Result
 
@@ -39,13 +43,17 @@ $$\begin{aligned}
 
 An imported coherence theorem gives a separate single-source reading of the same rank-$1$ point: $$\mathrm{SSOT}(A) \iff \mathrm{DOF}(A)=1,$$ where $\mathrm{SSOT}(A)$ denotes the coherent single-source condition that one locus is authoritative, every remaining encoding is a derived view, and all reachable states remain coherent.
 
-The structural-rank and thermodynamic clauses are central. The imported coherence statement is a companion interpretation of the same rank-$1$ regime, not a premise of the mathematical-physics chain.
+The structural-rank and thermodynamic clauses are central. The imported coherence statement is a companion interpretation of the same rank-$1$ regime.
+
+## Structural and Empirical Inputs
+
+Theorem [\[thm:counting-gap\]](#thm:counting-gap){reference-type="ref" reference="thm:counting-gap"} fixes the finite-event statement of the model. Proposition [\[prop:bounded-region\]](#prop:bounded-region){reference-type="ref" reference="prop:bounded-region"} and Theorem [\[thm:bounded-acquisition\]](#thm:bounded-acquisition){reference-type="ref" reference="thm:bounded-acquisition"} fix the traversal-rate statement for bounded regions. Theorems [\[thm:discrete-acquisition\]](#thm:discrete-acquisition){reference-type="ref" reference="thm:discrete-acquisition"} and [\[thm:one-transition-one-bit\]](#thm:one-transition-one-bit){reference-type="ref" reference="thm:one-transition-one-bit"} fix the acquisition-event interface used by the canonical encoding. Landauer calibration enters only in Section [\[main-theorems\]](#main-theorems){reference-type="ref" reference="main-theorems"}, where the per-bit lower bound is converted into energy.
 
 ## Contributions
 
-1.  **Finite Physical Acquisition:** bounded regions admit finitely many acquisition events, those events are discrete state transitions, and exact resolution requires a sufficient coordinate set.
+1.  **Finite Physical Acquisition:** bounded systems admit finitely many acquisition events, bounded regions admit finite acquisition rates, acquisition is represented by discrete transition events, and exact resolution requires a sufficient coordinate set.
 
-2.  **DOF-Structural-Rank Identification:** the canonical decision problem attached to an $n$-degree-of-freedom system has structural rank $n$.
+2.  **Canonical Exact-Resolution Encoding:** the canonical decision problem assigns one binary acquisition channel to each degree of freedom, and the resulting structural rank equals that channel count.
 
 3.  **Entropy-Rank Control:** the number of decision classes is at most $2^{\mathrm{DOF}(A)}$, so the decision entropy is bounded by the degree-of-freedom count.
 
@@ -53,23 +61,31 @@ The structural-rank and thermodynamic clauses are central. The imported coherenc
 
 5.  **Energy-Information Duality:** the same system satisfies $E \geq k_B T\,H_{\mathrm{nats}}(D)$, linking thermodynamic cost directly to the entropy of the decision quotient.
 
-6.  **Finite-Budget No-Collapse:** bounded budget, positive per-bit cost, and exponential lower-bound growth jointly preclude physical collapse of the higher-rank regime.
+6.  **Finite Budget Bounds:** bounded signal speed and minimum bit operations imply bounded-acquisition inequalities and induced decision-class and decision-entropy bounds from spacetime and energy budget.
 
-7.  **England Replication Inequality (Theorem [\[thm:england\]](#thm:england){reference-type="ref" reference="thm:england"}):** $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$. The proof reduces the entropy gap to counting via $k \leq 2^{k-1}$.
+7.  **Concrete Substrate Instantiation:** thresholded one-bit readouts and two-level atomic transition systems instantiate the canonical binary interface used by the theorem chain.
 
-8.  **Rank-1 Convergence (Theorem [\[thm:five-way\]](#thm:five-way){reference-type="ref" reference="thm:five-way"}):** the rank-$1$ regime is simultaneously the one-coordinate regime, the tractable sufficiency regime, and the thermodynamic ground state.
+8.  **Strict-Overhead and Lifetime Branches:** theorem-level mismatch and residual witnesses force effective per-bit floors strictly above Landauer, explicit binary mismatch and two-state residual witnesses each yield an additive one-unit overhead above the Landauer floor, the same strictness lifts to canonical exact-resolution energy, substrate steps define one-unit interface time, and finite heat capacity yields bounded lifetime in the substrate degradation model.
+
+9.  **Finite-Budget No-Collapse:** bounded budget, positive per-bit cost, and exponential lower-bound growth jointly preclude physical collapse of the higher-rank regime.
+
+10. **Finite Replication Entropy Gap (Theorem [\[thm:england\]](#thm:england){reference-type="ref" reference="thm:england"}):** $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$. The proof reduces the entropy gap to counting via $k \leq 2^{k-1}$.
+
+11. **Rank-1 Convergence (Theorem [\[thm:five-way\]](#thm:five-way){reference-type="ref" reference="thm:five-way"}):** the rank-$1$ regime is simultaneously the one-coordinate regime, the tractable sufficiency regime, and the thermodynamic ground state.
 
 #### Physical significance.
 
 Once finite acquisition is fixed as the physical interface, the degree-of-freedom count becomes simultaneously an interaction dimension, an entropy bound, and a Landauer-calibrated cost coordinate. The result concerns exact resolution structure in matter.
 
+Informally: exact resolution must be paid for.
+
 ## Scope
 
-The mathematical structure links structural rank, quotient entropy, complexity, and thermodynamic cost. Theorems are stated for bounded decision systems represented by the Lean object `Architecture` and their canonical decision encoding, not for arbitrary physical systems without mediation. Architectural and programming interpretations are downstream readings of the same formal core.
+The mathematical structure links structural rank, quotient entropy, complexity, and thermodynamic cost. Theorems are stated for bounded decision systems represented by the Lean object `Architecture` and their canonical binary exact-resolution encoding. Architectural and programming interpretations are downstream readings of the same formal core.
 
 ## Organization
 
-Section [\[foundations\]](#foundations){reference-type="ref" reference="foundations"} defines the structural model, the finite-acquisition interface, and the canonical decision encoding. Section [\[probability-model\]](#probability-model){reference-type="ref" reference="probability-model"} derives the structural-rank and entropy consequences of that encoding. Section [\[main-theorems\]](#main-theorems){reference-type="ref" reference="main-theorems"} derives the thermodynamic consequences. Section [\[five-way-equivalence\]](#five-way-equivalence){reference-type="ref" reference="five-way-equivalence"} proves the convergence theorem and the England inequality. Section [\[related-work\]](#related-work){reference-type="ref" reference="related-work"} situates the paper relative to thermodynamics, information theory, and formalized complexity. Section [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="appendix-lean"} describes the Lean mechanization.
+Section [\[foundations\]](#foundations){reference-type="ref" reference="foundations"} defines the structural model, the finite-acquisition interface, and the canonical decision encoding. Section [\[probability-model\]](#probability-model){reference-type="ref" reference="probability-model"} derives the structural-rank and entropy consequences of that encoding. Section [\[main-theorems\]](#main-theorems){reference-type="ref" reference="main-theorems"} derives the thermodynamic consequences. Section [\[five-way-equivalence\]](#five-way-equivalence){reference-type="ref" reference="five-way-equivalence"} proves the convergence theorem and the finite replication entropy gap. Section [\[related-work\]](#related-work){reference-type="ref" reference="related-work"} situates the results relative to thermodynamics and information theory. Appendix [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="appendix-lean"} records proof provenance.
 
 
 # Foundations
@@ -79,10 +95,10 @@ The formal objects that carry the mathematical-physics content are a positive de
 ## Formal Object
 
 ::: definition
-[]{#def:architecture label="def:architecture"} A *bounded decision system* is a finite bounded physical system equipped with a positive integer $\mathrm{DOF}(A)$. In the mechanized artifact the corresponding Lean object is named `Architecture`, but the results used below depend only on the degree-of-freedom count and on the canonical decision encoding.
+[]{#def:architecture label="def:architecture"} A *bounded decision system* is a finite bounded physical system equipped with a positive integer $\mathrm{DOF}(A)$. The corresponding Lean object is named `Architecture`. The results used below depend only on the degree-of-freedom count and on the canonical decision encoding.
 :::
 
-**Interpretation.** $\mathrm{DOF}(A)$ counts independent coordinates that can vary separately. The rest of the paper studies what that count forces once one asks for exact resolution.
+**Interpretation.** $\mathrm{DOF}(A)$ counts independent coordinates that can vary separately. Subsequent sections study what that count forces once one asks for exact resolution.
 
 ## Degrees of Freedom
 
@@ -110,7 +126,7 @@ The formal objects that carry the mathematical-physics content are a positive de
 *Proof.* In $\mathbb{N}$ every positive integer is at least one, so $N = 1\cdot N \le \varepsilon N \le C$. ◻
 :::
 
-Bounded capacity plus positive per-event cost already forbids infinite checking. Physics enters when the abstract cost unit is calibrated. Under Landauer-type calibration, exact irreversible acquisition carries positive cost, so bounded material systems inherit the counting gap directly.
+Theorem [\[thm:counting-gap\]](#thm:counting-gap){reference-type="ref" reference="thm:counting-gap"} fixes the finite-event statement of the model. Proposition [\[prop:bounded-region\]](#prop:bounded-region){reference-type="ref" reference="prop:bounded-region"} and Theorem [\[thm:bounded-acquisition\]](#thm:bounded-acquisition){reference-type="ref" reference="thm:bounded-acquisition"} fix the geometric acquisition bound. Theorems [\[thm:discrete-acquisition\]](#thm:discrete-acquisition){reference-type="ref" reference="thm:discrete-acquisition"} and [\[thm:one-transition-one-bit\]](#thm:one-transition-one-bit){reference-type="ref" reference="thm:one-transition-one-bit"} fix the acquisition-event interface. Landauer calibration is applied only after that interface is fixed.
 
 ::: proposition
 []{#prop:bounded-region label="prop:bounded-region"} A bounded physical region is characterized by diameter $d>0$ and signal speed $c>0$. Its maximum information-acquisition rate is $c/d$ events per unit time.
@@ -125,11 +141,19 @@ Bounded capacity plus positive per-event cost already forbids infinite checking.
 :::
 
 ::: theorem
-[]{#thm:discrete-acquisition label="thm:discrete-acquisition"} Information acquisition is realized by discrete state transitions. A bounded physical decision process is therefore a finite transition system whose acquisition events are countable transition points.
+[]{#thm:discrete-acquisition label="thm:discrete-acquisition"} In the imported bounded-acquisition model, information acquisition is counted by transition points of a finite discrete system. Acquisition counts are therefore discrete event counts.
+:::
+
+::: proof
+*Proof.* The imported model represents a bounded physical decision process by a finite `DiscreteSystem`. Its acquisition count is `bitOperations`, which counts transition points along a run. ◻
 :::
 
 ::: theorem
-[]{#thm:one-transition-one-bit label="thm:one-transition-one-bit"} Each elementary acquisition transition carries one boolean bit. Boolean coordinates are therefore the primitive units of exact physical information exchange in the canonical model.
+[]{#thm:one-transition-one-bit label="thm:one-transition-one-bit"} In the imported discrete acquisition model, each transition point contributes one unit to the bit-operation count. The canonical binary encoding therefore uses one Boolean coordinate per elementary acquisition event.
+:::
+
+::: proof
+*Proof.* The imported theorem states that a transition point at time $t$ contributes at least one unit to the acquisition count up to time $t+1$. The model therefore treats each elementary transition as one Boolean acquisition event. ◻
 :::
 
 Together, Theorems [\[thm:bounded-acquisition\]](#thm:bounded-acquisition){reference-type="ref" reference="thm:bounded-acquisition"}, [\[thm:discrete-acquisition\]](#thm:discrete-acquisition){reference-type="ref" reference="thm:discrete-acquisition"}, and [\[thm:one-transition-one-bit\]](#thm:one-transition-one-bit){reference-type="ref" reference="thm:one-transition-one-bit"} identify the later binary decision encoding as the natural finite acquisition model. A bounded resolver acquires information through finitely many discrete events, and each such event contributes one elementary boolean distinction.
@@ -148,9 +172,7 @@ Together, Theorems [\[thm:bounded-acquisition\]](#thm:bounded-acquisition){refe
 []{#def:canonical-dp label="def:canonical-dp"} For a bounded decision system $A$ with $\mathrm{DOF}(A)=n$, the canonical decision problem $$\mathrm{canonicalDP}(A)$$ has state space $\mathrm{Fin}\;n \to \mathrm{Bool}$ and action space $\mathrm{Fin}\;n \oplus \mathrm{Unit}$. Action $\mathrm{inl}(i)$ queries coordinate $i$; the fallback action $\mathrm{inr}(\star)$ receives constant utility $1$. Query action $i$ receives utility $2$ exactly when coordinate $i$ is true and $0$ otherwise.
 :::
 
-The encoding is the exact Lean object `canonicalDP` in `Leverage/BridgeToDQ.lean`. Every coordinate is relevant by construction, so the encoding exposes the full interaction dimension of the source system.
-
-The encoding records, in the smallest exact-resolution object, the coordinate structure that any bounded physical resolver must already confront. The Boolean coordinates represent primitive acquisition events.
+The encoding is the exact Lean object `canonicalDP` in `Leverage/BridgeToDQ.lean`. The paper studies this encoding as the exact finite-resolution object attached to the declared degree-of-freedom count. It assigns one binary acquisition channel to each degree of freedom and one query action to each channel. The next section identifies the structural rank of this object with that coordinate count.
 
 ## Structural Rank
 
@@ -187,7 +209,7 @@ The local degree-of-freedom object lives in `Leverage/Foundations.lean`, while t
 
 # Structural Rank and Decision Entropy {#probability-model}
 
-The canonical decision encoding has two immediate consequences. The degree-of-freedom count is exactly the interaction dimension of the encoded decision problem, and exact physical resolution must pay for that interaction dimension in discrete bit events. Structural rank is the physical count of irreducible coordinate reads required by exact resolution.
+The theorems of this section are statements about the canonical exact-resolution encoding defined in Section [\[foundations\]](#foundations){reference-type="ref" reference="foundations"}. The degree-of-freedom count is exactly the interaction dimension of that encoded decision problem, and exact physical resolution must pay for that interaction dimension in discrete bit events. Structural rank is the count of irreducible coordinate reads required by exact resolution in that encoding.
 
 ## Degree of Freedom Equals Structural Rank
 
@@ -198,6 +220,8 @@ The canonical decision encoding has two immediate consequences. The degree-of-fr
 ::: proof
 *Proof.* Write $n = \mathrm{DOF}(A)$. By Definition [\[def:canonical-dp\]](#def:canonical-dp){reference-type="ref" reference="def:canonical-dp"}, the state space is $\mathrm{Fin}\;n \to \mathrm{Bool}$, query action $\mathrm{inl}(i)$ has utility $2$ exactly when coordinate $i$ is true and utility $0$ otherwise, and the fallback action has utility $1$. Fix any coordinate $i$ and choose two states that agree everywhere except at $i$, with one state setting $i$ to true and the other setting $i$ to false; then $\mathrm{inl}(i)$ is optimal in the first state and not optimal in the second, so erasing coordinate $i$ changes the optimizer. Thus every coordinate in $\mathrm{Fin}\;n$ is relevant, the relevant-coordinate set has cardinality $n$, and the structural rank is $n$. Substituting $n = \mathrm{DOF}(A)$ gives the claim. ◻
 :::
+
+Theorem [\[thm:dof-srank\]](#thm:dof-srank){reference-type="ref" reference="thm:dof-srank"} is an exact identity for the canonical encoding attached to the degree-of-freedom count.
 
 ::: corollary
 []{#cor:rank-one label="cor:rank-one"} For every bounded decision system $A$, $$\mathrm{DOF}(A)=1 \iff \mathrm{srank}(\mathrm{canonicalDP}(A))=1.$$
@@ -235,14 +259,35 @@ H_{\mathrm{nats}}(\mathrm{canonicalDP}(A)) \le \mathrm{DOF}(A)\,\ln 2.$$
 *Proof.* The bit-entropy statement is the entropy-rank inequality for binary coordinate spaces, again composed with Theorem [\[thm:dof-srank\]](#thm:dof-srank){reference-type="ref" reference="thm:dof-srank"}. The nat-entropy statement is obtained by multiplying by $\ln 2$. ◻
 :::
 
+## Finite Compression Bridge
+
+The next proposition packages the finite bridge in direct compression language: a finite Hamiltonian induces a deterministic tie-broken compression relation, and the paper1 fiber moment becomes the exact collision moment of that relation.
+
+::: proposition
+[]{#prop:finite-compression-bridge label="prop:finite-compression-bridge"} Let $H(c,\bar c)$ be a finite compression Hamiltonian. Write $$R_H^{\min}(c,\bar c) \iff \bar c \in \operatorname*{arg\,min}_{\bar c'} H(c,\bar c'),
+\qquad
+R_H^{\mathrm{tb}}(c,\bar c) \iff \bar c \text{ is the least minimizer.}$$ For $$M_H(\bar c) := \left|\left\{c : R_H^{\mathrm{tb}}(c,\bar c)\right\}\right|,$$ and every $s \in \mathbb{N}$, $$\left|\left\{(\bar c,(c_i)_{i < s}) : \forall i,\; R_H^{\mathrm{tb}}(c_i,\bar c)\right\}\right|
+=
+\sum_{\bar c} M_H(\bar c)^s.$$ If moreover $$\left|\left\{c : R_H^{\min}(c,\bar c)\right\}\right| \le 2^b
+\qquad\text{for every } \bar c,$$ then the induced tie-broken encoder has zero identity debt at budget $b$.
+:::
+
+::: proof
+*Proof.* The first identity is the exact finite shared-codeword/fiber-moment theorem for the least-minimizer relation induced by $H$. The second statement uses that each tie-broken fiber sits inside the corresponding raw argmin fiber, so a uniform raw argmin bound transfers to the deterministic tie-broken encoder. ◻
+:::
+
+The compression bridge is the point of contact with the Landauer chain: in the exact-resolution reading of the canonical model, thermodynamic cost is the combinatorial cost of avoiding encoder collisions, because zero identity debt reduces to a uniform argmin-fiber bound, and that finite fiber-size condition is exactly what the energy--information theorem charges.
+
+Informally: to avoid collisions is to pay for distinctions.
+
 ## Formalization
 
-The structural-rank bridge is formalized in `Leverage/BridgeToDQ.lean`; the minimum-bit and entropy bounds are formalized in the decision-quotient physics and information development. These are the objects used directly by the thermodynamic theorems of the next section.
+The structural-rank bridge is formalized in `Leverage/BridgeToDQ.lean`; the finite compression bridge is formalized in `Leverage/ColumnComplexityBridge.lean`; and the minimum-bit and entropy bounds are formalized in the decision-quotient physics and information development. These are the objects used directly by the thermodynamic theorems of the next section.
 
 
 # Thermodynamic Consequences {#main-theorems}
 
-The previous section identified degree of freedom with structural rank and bounded the entropy of the decision quotient. Exact resolution requires irreducible bit events. Matter pays for them.
+The previous section identified degree of freedom with structural rank and bounded the entropy of the decision quotient. The thermodynamic theorems of this section compose three inputs: minimum bit operations, the entropy-rank bound, and a positive per-bit lower bound. Landauer furnishes the universal floor for the conversion constant.
 
 ## Landauer-Linear Resolution Cost
 
@@ -271,8 +316,12 @@ The previous section identified degree of freedom with structural rank and bound
 :::
 
 ::: proof
-*Proof.* The entropy-rank inequality gives $$H_{\mathrm{nats}}(D) \le \mathrm{DOF}(A)\ln 2$$ by Theorem [\[thm:entropy-bound\]](#thm:entropy-bound){reference-type="ref" reference="thm:entropy-bound"}. Theorem [\[thm:energy-rank\]](#thm:energy-rank){reference-type="ref" reference="thm:energy-rank"} gives the complementary lower bound $$E \ge \mathrm{DOF}(A) k_B T \ln 2.$$ Comparing the two right-hand sides yields the announced inequality. In the mechanized artifact this is the energy-information theorem (EI1). ◻
+*Proof.* The entropy-rank inequality gives $$H_{\mathrm{nats}}(D) \le \mathrm{DOF}(A)\ln 2$$ by Theorem [\[thm:entropy-bound\]](#thm:entropy-bound){reference-type="ref" reference="thm:entropy-bound"}. Theorem [\[thm:energy-rank\]](#thm:energy-rank){reference-type="ref" reference="thm:energy-rank"} gives the complementary lower bound $$E \ge \mathrm{DOF}(A) k_B T \ln 2.$$ Comparing the two right-hand sides yields the announced inequality. ◻
 :::
+
+Theorem [\[thm:energy-entropy\]](#thm:energy-entropy){reference-type="ref" reference="thm:energy-entropy"} composes the entropy-rank inequality with the per-bit lower bound from Theorem [\[thm:energy-rank\]](#thm:energy-rank){reference-type="ref" reference="thm:energy-rank"}.
+
+Informally: the quotient fixing correctness also fixes cost.
 
 ::: corollary
 []{#cor:minimum-cost-regime label="cor:minimum-cost-regime"} Among bounded decision systems in the canonical binary encoding, the unique minimum-cost regime is $\mathrm{DOF}(A)=1$.
@@ -282,17 +331,199 @@ The previous section identified degree of freedom with structural rank and bound
 *Proof.* Theorem [\[thm:rank-one-ground\]](#thm:rank-one-ground){reference-type="ref" reference="thm:rank-one-ground"} identifies $\mathrm{DOF}(A)=1$ as the one-Landauer-unit ground state, while every bounded decision system with more than one degree of freedom lies strictly above it. ◻
 :::
 
+## Finite-Time and Budget Bounds
+
+::: theorem
+[]{#thm:time-lower-bound label="thm:time-lower-bound"} Let $A$ be a bounded decision system, and let $I$ be a sufficient coordinate set for $\mathrm{canonicalDP}(A)$. Suppose $A$ is resolved inside a bounded region of diameter $d$ and signal speed $c$ over operating horizon $\tau$, and suppose $$|I| \le \frac{c\tau}{d}.$$ Then $$\mathrm{DOF}(A) \le \frac{c\tau}{d}.$$
+:::
+
+::: proof
+*Proof.* Theorem [\[thm:min-bit-operations\]](#thm:min-bit-operations){reference-type="ref" reference="thm:min-bit-operations"} gives a lower bound of $\mathrm{DOF}(A)$ elementary acquisition events for exact resolution. Theorem [\[thm:bounded-acquisition\]](#thm:bounded-acquisition){reference-type="ref" reference="thm:bounded-acquisition"} bounds the total number of acquisition events on horizon $\tau$ by $c\tau/d$. Therefore exact resolution on that horizon requires $\mathrm{DOF}(A) \le c\tau/d$. ◻
+:::
+
+::: theorem
+[]{#thm:budget-class-bound label="thm:budget-class-bound"} Let $D = \mathrm{canonicalDP}(A)$, and let $I$ be a sufficient coordinate set for $D$. Suppose $$|I| \le \frac{c\tau}{d}$$ inside a bounded region of diameter $d$ and signal speed $c$ over operating horizon $\tau$, and let $E$ satisfy $$E \ge \mathrm{DOF}(A)\,k_B \Theta \ln 2
+\qquad (\Theta > 0).$$ Then $$\mathrm{numOptClasses}(D) \le 2^{c\tau/d}
+\qquad\text{and}\qquad
+\mathrm{numOptClasses}(D) \le \exp\!\left(\frac{E}{k_B \Theta}\right).$$ Consequently, $$\mathrm{numOptClasses}(D) \le
+\min\!\left(2^{c\tau/d},\ \exp\!\left(\frac{E}{k_B \Theta}\right)\right).$$
+:::
+
+::: proof
+*Proof.* By Theorem [\[thm:time-lower-bound\]](#thm:time-lower-bound){reference-type="ref" reference="thm:time-lower-bound"}, exact resolution on horizon $\tau$ requires $\mathrm{DOF}(A) \le c\tau/d$. Theorem [\[thm:numopt-bound\]](#thm:numopt-bound){reference-type="ref" reference="thm:numopt-bound"} gives $$\mathrm{numOptClasses}(D) \le 2^{\mathrm{DOF}(A)} \le 2^{c\tau/d}.$$ Theorem [\[thm:energy-entropy\]](#thm:energy-entropy){reference-type="ref" reference="thm:energy-entropy"} gives $$E \ge k_B \Theta\, H_{\mathrm{nats}}(D) = k_B \Theta \ln(\mathrm{numOptClasses}(D)).$$ Hence $$\ln(\mathrm{numOptClasses}(D)) \le \frac{E}{k_B \Theta},$$ which is equivalent to $$\mathrm{numOptClasses}(D) \le \exp\!\left(\frac{E}{k_B \Theta}\right).$$ Taking the smaller of the two upper bounds gives the final statement. ◻
+:::
+
+::: corollary
+[]{#cor:budget-entropy-bound label="cor:budget-entropy-bound"} Let $D = \mathrm{canonicalDP}(A)$, and let $I$ be a sufficient coordinate set for $D$. Suppose $$|I| \le \frac{c\tau}{d}$$ inside a bounded region of diameter $d$ and signal speed $c$ over operating horizon $\tau$, and let $E$ satisfy $$E \ge \mathrm{DOF}(A)\,k_B \Theta \ln 2
+\qquad (\Theta > 0).$$ Then $$H_{\mathrm{bits}}(D) \le \frac{c\tau}{d}
+\qquad\text{and}\qquad
+H_{\mathrm{nats}}(D) \le
+\min\!\left(\frac{c\tau}{d}\ln 2,\ \frac{E}{k_B \Theta}\right).$$
+:::
+
+::: proof
+*Proof.* Theorem [\[thm:time-lower-bound\]](#thm:time-lower-bound){reference-type="ref" reference="thm:time-lower-bound"} gives $\mathrm{DOF}(A) \le c\tau/d$. Theorem [\[thm:entropy-bound\]](#thm:entropy-bound){reference-type="ref" reference="thm:entropy-bound"} gives $$H_{\mathrm{bits}}(D) \le \mathrm{DOF}(A),
+\qquad
+H_{\mathrm{nats}}(D) \le \mathrm{DOF}(A)\ln 2.$$ Hence $$H_{\mathrm{bits}}(D) \le \frac{c\tau}{d},
+\qquad
+H_{\mathrm{nats}}(D) \le \frac{c\tau}{d}\ln 2.$$ Theorem [\[thm:energy-entropy\]](#thm:energy-entropy){reference-type="ref" reference="thm:energy-entropy"} also gives $$H_{\mathrm{nats}}(D) \le \frac{E}{k_B \Theta}.$$ Taking the smaller of the two nat-valued upper bounds gives the final statement. ◻
+:::
+
+::: corollary
+[]{#cor:composition-budget-law label="cor:composition-budget-law"} Let $A_1$ and $A_2$ be disjoint bounded decision systems. Suppose the composite system $A_1 \oplus A_2$ is resolved inside a bounded region of diameter $d$ and signal speed $c$ over operating horizon $\tau$, and suppose some sufficient coordinate set for $\mathrm{canonicalDP}(A_1 \oplus A_2)$ has cardinality at most $c\tau/d$. Then $$\mathrm{DOF}(A_1)+\mathrm{DOF}(A_2) \le \frac{c\tau}{d}$$ and for any thermodynamic model with positive per-bit conversion constant, $$\mathrm{joulesPerBit}\cdot\bigl(\mathrm{DOF}(A_1)+\mathrm{DOF}(A_2)\bigr)
+\le
+\mathrm{energyLowerBound}\!\left(M,\frac{c\tau}{d}\right).$$
+:::
+
+::: proof
+*Proof.* Proposition [\[prop:dof-additive\]](#prop:dof-additive){reference-type="ref" reference="prop:dof-additive"} gives $$\mathrm{DOF}(A_1 \oplus A_2) = \mathrm{DOF}(A_1)+\mathrm{DOF}(A_2).$$ Apply Theorem [\[thm:time-lower-bound\]](#thm:time-lower-bound){reference-type="ref" reference="thm:time-lower-bound"} and Theorem [\[thm:energy-rank\]](#thm:energy-rank){reference-type="ref" reference="thm:energy-rank"} to the composite system and substitute the additive degree-of-freedom identity. ◻
+:::
+
 ## Worked Examples
 
 Two toy canonical systems fix the scale of the bound.
 
-#### One relevant coordinate.
+#### One coordinate in the canonical encoding.
 
-Take states $\{0,1\}$ and actions $\{a_0,a_1\}$, with $\operatorname{Opt}(0)=\{a_0\}$ and $\operatorname{Opt}(1)=\{a_1\}$. Then $\mathrm{DOF}(A)=1$, the decision quotient has two classes, $H_{\mathrm{nats}}(D)=\ln 2$, and Theorem [\[thm:energy-entropy\]](#thm:energy-entropy){reference-type="ref" reference="thm:energy-entropy"} gives $$E \ge k_B T \ln 2.$$ This is the rank-$1$ ground regime.
+Let $A$ satisfy $\mathrm{DOF}(A)=1$, and write $D=\mathrm{canonicalDP}(A)$. Then the state space of $D$ has two states. The false state has optimal set $\{\mathrm{inr}(\star)\}$, and the true state has optimal set $\{\mathrm{inl}(0)\}$. The decision quotient therefore has two classes, $H_{\mathrm{nats}}(D)=\ln 2$, and Theorem [\[thm:energy-entropy\]](#thm:energy-entropy){reference-type="ref" reference="thm:energy-entropy"} gives $$E \ge k_B T \ln 2.$$ This is the rank-$1$ ground regime.
 
-#### Two independent coordinates.
+#### Two coordinates in the canonical encoding.
 
-Take states $\{00,01,10,11\}$ and actions $\{a_{00},a_{01},a_{10},a_{11}\}$, with each state having its matching optimal action. Then $\mathrm{DOF}(A)=2$, the decision quotient has four classes, $H_{\mathrm{nats}}(D)=\ln 4 = 2\ln 2$, and Theorem [\[thm:energy-entropy\]](#thm:energy-entropy){reference-type="ref" reference="thm:energy-entropy"} gives $$E \ge 2 k_B T \ln 2.$$ Relative to the one-coordinate case, the minimum exact-resolution cost doubles.
+Let $A$ satisfy $\mathrm{DOF}(A)=2$, and write $D=\mathrm{canonicalDP}(A)$. Then the four states of $D$ have optimal sets $\{\mathrm{inr}(\star)\}$, $\{\mathrm{inl}(0)\}$, $\{\mathrm{inl}(1)\}$, and $\{\mathrm{inl}(0),\mathrm{inl}(1)\}$. The decision quotient therefore has four classes, $H_{\mathrm{nats}}(D)=\ln 4 = 2\ln 2$, and Theorem [\[thm:energy-entropy\]](#thm:energy-entropy){reference-type="ref" reference="thm:energy-entropy"} gives $$E \ge 2 k_B T \ln 2.$$ Relative to the one-coordinate case, the minimum exact-resolution cost doubles.
+
+## Concrete Substrate Instantiation
+
+::: proposition
+[]{#prop:threshold-channel label="prop:threshold-channel"} Fix a threshold $\tau$ and a sampled substrate observable $x_t \in \mathbb{R}$. The induced readout bit $$b_t = \mathbf{1}[x_t \ge \tau]$$ has binary state space $\{0,1\}$. A readout flip $b_{t+1} \ne b_t$ is equivalent to a positive one-bit lower bound, and under a positive per-bit conversion constant it implies a positive energy lower bound.
+:::
+
+::: proposition
+[]{#prop:atomic-realization label="prop:atomic-realization"} Let $c_0$ and $c_1$ be atomic configurations with distinct orbital occupancies or distinct energies. Then $c_0 \ne c_1$. Upward transitions from $c_0$ to $c_1$ require positive energy input, and downward transitions release positive energy. A choice of labels $c_0 \mapsto 0$ and $c_1 \mapsto 1$ therefore gives a physical binary readout layer.
+:::
+
+Thresholded one-bit readouts and two-level atomic transitions instantiate the same binary interface [@berut2012experimental; @planck1901distribution; @dirac1930principles; @sakurai2017modern]. A $k$-channel substrate has joint readout state in $\{0,1\}^k$, and the canonical state space $\mathrm{Fin}\;k \to \mathrm{Bool}$ is the same object written in indexed form.
+
+## Substrate Time Law
+
+::: proposition
+[]{#prop:substrate-time-law label="prop:substrate-time-law"} For any substrate model whose observed interface obeys decision ticks, every one-step substrate evolution realizes a decision event and advances interface time by one unit. The tick law is independent of substrate tag.
+:::
+
+## Strict Overhead Above Landauer
+
+::: proposition
+[]{#prop:strict-overhead label="prop:strict-overhead"} Let $W$ be a decomposed process model. If the mismatch term is instantiated by a theorem-level distribution-mismatch witness, then the effective per-bit lower bound of $W$ is strictly above the Landauer floor. If the residual term is instantiated by a theorem-level finite discrete residual witness, the same strict inequality holds. For any sufficient coordinate set $I$ of $\mathrm{canonicalDP}(A)$, either branch therefore yields an exact-resolution energy lower bound strictly above $\mathrm{DOF}(A)\,k_B T \ln 2$.
+:::
+
+::: proposition
+[]{#prop:finite-discrete-residual label="prop:finite-discrete-residual"} Let a finite computational-state process admit a positive forward edge together with decision-relevant asymmetry. Then the theorem-level discrete residual lower bound is positive. If this witness is used as the residual term of a decomposed process model, the effective per-bit lower bound is strictly above the Landauer floor.
+:::
+
+::: proposition
+[]{#prop:binary-residual-example label="prop:binary-residual-example"} There exists a two-state irreversible residual witness with one positive forward edge and zero reverse edge. The induced residual lower-bound term is exactly one nat-valued overhead unit. Any decomposed process model that uses this witness as its residual term therefore satisfies $$\mathrm{landauerJoulesPerBit}(k_B,T) + 1
+\le
+W.\mathrm{effectiveModel}.\mathrm{joulesPerBit},$$ and for any sufficient coordinate set $I$ of $\mathrm{canonicalDP}(A)$, $$\mathrm{DOF}(A)\,(k_B T \ln 2 + 1)
+\le
+\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).$$ The same example yields the strengthened energy--information inequality $$\frac{k_B T \ln 2 + 1}{\ln 2}
+\, H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).$$
+:::
+
+::: proposition
+[]{#prop:binary-residual-cumulative-work label="prop:binary-residual-cumulative-work"} For any $m \in \mathbb{N}$, repeated exact-resolution cycles under the same explicit two-state residual witness satisfy $$m\,\frac{k_B T \ln 2 + 1}{\ln 2}
+\, H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+m\,\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).$$ The required cumulative work therefore grows linearly with cycle count.
+:::
+
+::: proposition
+[]{#prop:ei-hierarchy label="prop:ei-hierarchy"} Let $I$ be a sufficient coordinate set for $\mathrm{canonicalDP}(A)$. Then the ideal Landauer-calibrated floor satisfies $$k_B T\,H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+\mathrm{energyLowerBound}(M,|I|)$$ whenever the declared model $M$ dominates the Landauer floor. Under the explicit binary mismatch example and the explicit two-state residual example, the strengthened coefficient $$\frac{k_B T \ln 2 + 1}{\ln 2}$$ replaces $k_B T$: $$\frac{k_B T \ln 2 + 1}{\ln 2}
+\,H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+\mathrm{energyLowerBound}(W_{\mathrm{mm}}.\mathrm{effectiveModel},|I|),$$ $$\frac{k_B T \ln 2 + 1}{\ln 2}
+\,H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+\mathrm{energyLowerBound}(W_{\mathrm{res}}.\mathrm{effectiveModel},|I|).$$
+:::
+
+::: proposition
+[]{#prop:structural-resource-overhead label="prop:structural-resource-overhead"} Let $W$ be a decomposed process model and let $r$ be a declared structural resource. If $r$ is lower-bounded by the mismatch term, then the effective per-bit lower bound dominates the Landauer floor plus $r$. For any sufficient coordinate set $I$ of $\mathrm{canonicalDP}(A)$, $$\mathrm{energyLowerBound}(W.\mathrm{base},|I|) + r\,\mathrm{DOF}(A)
+\le
+\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).$$
+:::
+
+::: proposition
+[]{#prop:canonical-wolpert-bundle label="prop:canonical-wolpert-bundle"} Let $I$ be a nonempty sufficient coordinate set for $\mathrm{canonicalDP}(A)$, and let $W$ be a decomposed process model whose base lower bound dominates the Landauer floor. Then $$\mathrm{DOF}(A) \le |I|,$$ $$W.\mathrm{effectiveModel}.\mathrm{joulesPerBit}\cdot\mathrm{DOF}(A)
+\le
+\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|),$$ and $$0 < \mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).$$
+:::
+
+::: proposition
+[]{#prop:strict-canonical-energy label="prop:strict-canonical-energy"} Let $I$ be a sufficient coordinate set for $\mathrm{canonicalDP}(A)$, and let $W$ be a decomposed process model whose base lower bound dominates the Landauer floor. If either theorem-level Wolpert branch applies to $W$, then $$\mathrm{DOF}(A)\,k_B T \ln 2
+<
+\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).$$
+:::
+
+::: proposition
+[]{#prop:binary-mismatch-example label="prop:binary-mismatch-example"} Fix the actual input distribution $$p(1)=\tfrac34,
+\qquad
+p(0)=\tfrac14,$$ and the designed distribution $$q(1)=\tfrac14,
+\qquad
+q(0)=\tfrac34.$$ The induced mismatch lower-bound term is at least one nat-valued overhead unit. Any decomposed process model that uses this witness as its mismatch term therefore satisfies $$\mathrm{landauerJoulesPerBit}(k_B,T) + 1
+\le
+W.\mathrm{effectiveModel}.\mathrm{joulesPerBit},$$ and for any sufficient coordinate set $I$ of $\mathrm{canonicalDP}(A)$, $$\mathrm{DOF}(A)\,(k_B T \ln 2 + 1)
+\le
+\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).$$
+:::
+
+::: proposition
+[]{#prop:binary-mismatch-energy-information label="prop:binary-mismatch-energy-information"} Under the same explicit binary mismatch witness, $$\frac{k_B T \ln 2 + 1}{\ln 2}
+\, H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).$$ The coefficient is strictly larger than $k_B T$.
+:::
+
+::: proposition
+[]{#prop:binary-mismatch-cumulative-work label="prop:binary-mismatch-cumulative-work"} For any $m \in \mathbb{N}$, repeated exact-resolution cycles under the same explicit binary mismatch witness satisfy $$m\,\frac{k_B T \ln 2 + 1}{\ln 2}
+\, H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+m\,\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).$$ The required cumulative work therefore grows linearly with cycle count.
+:::
+
+## Cyclewise Heat and Lifetime
+
+::: proposition
+[]{#prop:finite-lifetime label="prop:finite-lifetime"} In the substrate heat-capacity model, every computational cycle generates positive heat, cumulative heat grows linearly with cycle count, heat above capacity causes degradation, and finite integrity together with finite heat capacity yields bounded lifetime.
+:::
+
+::: proposition
+[]{#prop:lifetime-throughput label="prop:lifetime-throughput"} Let $s$ be a finite substrate with lifetime ceiling $\mathrm{maxCycles}(s)$. For any run of $m$ exact-resolution cycles with $$m \le \mathrm{maxCycles}(s),$$ the cumulative nat-valued decision entropy processed by $\mathrm{canonicalDP}(A)$ satisfies $$m\,H_{\mathrm{nats}}(\mathrm{canonicalDP}(A))
+\le
+\mathrm{maxCycles}(s)\,\mathrm{DOF}(A)\ln 2.$$
+:::
+
+::: proposition
+[]{#prop:speed-heat-tradeoff label="prop:speed-heat-tradeoff"} In the same substrate model, faster computation yields a larger heat rate. Once heat rate exceeds substrate capacity, faster computation yields faster degradation.
+:::
+
+## Constrained Molecular Application
+
+::: corollary
+[]{#cor:holonomic-landauer-floor label="cor:holonomic-landauer-floor"} Let $X$ be a finite RATTLE holonomic topology with $N$ atoms and $k$ independent constraints, where each constraint check is recorded as a binary satisfied/violated status. Then the full constraint-status observation space has cardinality $$2^k.$$ Let $A_X$ be the transported bounded decision system with $$\mathrm{DOF}(A_X) = 3N-k.$$ Then the canonical exact-resolution problem satisfies $$\mathrm{srank}(\mathrm{canonicalDP}(A_X)) = 3N-k.$$ Moreover, for any sufficient coordinate set $I$ for $\mathrm{canonicalDP}(A_X)$ and any thermodynamic model with positive per-bit conversion constant, $$M.\mathrm{joulesPerBit}\cdot(3N-k)
+\le
+\mathrm{energyLowerBound}(M,|I|).$$ In particular, the per-cycle exact-resolution floor scales linearly with the unconstrained molecular dimension.
+:::
+
+::: proof
+*Proof.* The RATTLE holonomic status register is a $k$-bit binary interface by the finite cardinality theorem. The transported architecture has degree of freedom exactly $3N-k$ by construction. The local bridge theorem identifies the structural rank of the canonical exact-resolution problem with that same count, and the local energy lower bound then gives the displayed Landauer-linear floor. ◻
+:::
+
+::: informal
+Matter pays for what it needs to know: once holonomic constraints remove $k$ independent directions, the exact-resolution floor tracks only the remaining $3N-k$ unconstrained coordinates.
+:::
 
 ## Optimal-Transport Witness
 
@@ -306,11 +537,11 @@ A transport witness and the Landauer witness emphasize different structures: one
 
 ## Interpretation
 
-If degree of freedom is read as the number of independent physical coordinates that can vary separately, then lower DOF means lower exact-resolution cost because fewer independent coordinates must be resolved.
+If degree of freedom is read as the number of independent physical coordinates that can vary separately, then lower DOF means lower exact-resolution cost because fewer independent coordinates must be resolved. The constrained-molecular corollary makes that transport explicit for the finite count $3N-k$.
 
 ## Formalization
 
-The local bridge from degree of freedom to structural rank is formalized in `Leverage/BridgeToDQ.lean`. The physical acquisition and Landauer theorems are imported from the decision-quotient physics stack, in particular `Physics/BoundedAcquisition.lean` and `ThermodynamicLift.lean`. The role of the local `Architecture` object in this section is to provide the coordinate count transported into those theorems.
+The local bridge from degree of freedom to structural rank is formalized in `Leverage/BridgeToDQ.lean`, including the direct finite RATTLE transport with effective dimension $3N-k$. The finite holonomic-constraint counting layer lives in `Computation/GeometricConstraints.lean`. The physical acquisition and Landauer theorems are imported from the decision-quotient physics stack, in particular `Physics/BoundedAcquisition.lean` and `ThermodynamicLift.lean`. The role of the local `Architecture` object in this section is to provide the coordinate count transported into those theorems.
 
 
 # Convergence of Rank, Tractability, and Cost {#five-way-equivalence}
@@ -323,7 +554,7 @@ Degree of freedom equals structural rank, and structural rank bounds decision en
 []{#thm:coherent-single-source label="thm:coherent-single-source"} A bounded decision system lies in the coherent unit-independent-rate regime if and only if $\mathrm{DOF}(A)=1$.
 :::
 
-::: informal
+::: remark
 In the imported coherence development, rank $1$ means exactly one locus is authoritative, every remaining encoding is a derived view, and all reachable states remain coherent.
 :::
 
@@ -333,18 +564,10 @@ In the imported coherence development, rank $1$ means exactly one locus is auth
 []{#thm:rank-identification label="thm:rank-identification"} For every bounded decision system $A$, $$\mathrm{srank}(\mathrm{canonicalDP}(A)) = \mathrm{DOF}(A).$$
 :::
 
-::: informal
-The degree-of-freedom count is not separate from the decision-theoretic object; it is exactly the interaction dimension of the canonical decision problem.
-:::
-
 ## Tractability Boundary
 
 ::: theorem
 []{#thm:tractable-rank-one label="thm:tractable-rank-one"} In the canonical decision problem family, structural rank $1$ is the tractable sufficiency regime, while higher structural rank enters the hard regime.
-:::
-
-::: informal
-When exactly one relevant coordinate survives, exact sufficiency certification is tractable. Once more than one relevant coordinate survives, the canonical family crosses into the imported hardness regime.
 :::
 
 ## Thermodynamic Selection
@@ -353,7 +576,7 @@ When exactly one relevant coordinate survives, exact sufficiency certification i
 []{#thm:thermodynamic-selection label="thm:thermodynamic-selection"} In the canonical decision encoding, every bounded decision system with $\mathrm{DOF}(A)>1$ lies strictly above the rank-$1$ Landauer ground state in per-cycle resolution cost.
 :::
 
-::: informal
+::: remark
 The theorem uses only the rank identity together with Landauer calibration. Stronger hardness consequences require additional imported hypotheses.
 :::
 
@@ -384,11 +607,11 @@ Theorem [\[thm:coherent-single-source\]](#thm:coherent-single-source){reference
 
 ## Formalization
 
-The proof chain is explicit in the mechanized artifact. The local bridge theorems live in `Leverage/BridgeToDQ.lean`; the coherence theorem is imported from `Ssot`; and the tractability and Landauer-cost theorems are imported from the decision-quotient development. The proof provenance remains fully auditable.
+The local bridge theorems live in `Leverage/BridgeToDQ.lean`; the coherence theorem is imported from `Ssot`; and the tractability and Landauer-cost theorems are imported from the decision-quotient development. Appendix [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="appendix-lean"} records source provenance.
 
-## England Replication Inequality
+## Finite Replication Entropy Gap
 
-The England Replication Inequality is mechanized in `Leverage/BridgeToDQ.lean` (L45).
+The theorem below uses the rank-indexed entropy cost $\Delta S_{\min}(r)=r k_B \ln 2$ from the calibrated exact-resolution model.
 
 ::: theorem
 []{#thm:england label="thm:england"} Let $\Delta S_{\min}(r) = r \cdot k_B \ln 2$ be the rank-indexed minimal entropy production under Landauer calibration. For the rank-$1$ ground regime and any replicated rank-$k$ regime: $$\Delta S_{\min}(1) + k_B \ln k \leq \Delta S_{\min}(k)$$ equivalently, $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$.
@@ -398,7 +621,7 @@ The England Replication Inequality is mechanized in `Leverage/BridgeToDQ.lean` (
 *Proof.* The gap is $(k-1) \cdot k_B \ln 2$. Since $k \leq 2^{k-1}$ (L52), taking logs gives $\ln k \leq (k-1) \ln 2$, so the gap is $\geq k_B \ln k$. ◻
 :::
 
-**Modeling note.** $\Delta S_{\min}$ is a definition within the model: the exact Landauer entropy cost of the canonical exact-resolution cycle. The "min" refers to physical optimality inside the calibrated decision model. In England's 2013 stochastic-thermodynamic framework [@england2013statistical], the comparison point is the entropy premium associated with replication above a single-copy baseline. The present reformulation does not reproduce England's full path-space dynamics or detailed-balance setting. It isolates the same $k_B \ln k$ multiplicity penalty as a finite-counting consequence of rank-indexed Landauer cost together with $k \le 2^{k-1}$, making the selection penalty explicit in a finite exact-resolution model.
+**Model class.** $\Delta S_{\min}$ is the rank-indexed Landauer entropy cost in the calibrated exact-resolution model. The theorem uses the finite inequality $k \le 2^{k-1}$. England's 2013 result [@england2013statistical] is a stochastic-thermodynamic path-space theorem with detailed balance and far-from-equilibrium dynamics. The common term is the multiplicity penalty $k_B \ln k$.
 
 ## Finite-Budget No-Collapse
 
@@ -422,14 +645,6 @@ then no such physical collapse profile exists.
 Finite budget, positive event cost, and exponential exact-certification demand are jointly incompatible with a physical collapse model. Any stronger complexity-collapse conclusion requires an additional bridge from the chosen complexity claim to such a collapse profile.
 :::
 
-::: corollary
-[]{#cor:pnp-nogo label="cor:pnp-nogo"} Assume a polynomial-collapse claim supplies a bridge to the finite-budget collapse profile of Theorem [\[thm:finite-budget-no-collapse\]](#thm:finite-budget-no-collapse){reference-type="ref" reference="thm:finite-budget-no-collapse"}. Then that claim is physically impossible in the same model. In particular, any bridge from a $P = NP$ collapse claim to such a feasible physical-collapse profile yields a contradiction.
-:::
-
-::: proof
-*Proof.* Theorem [\[thm:finite-budget-no-collapse\]](#thm:finite-budget-no-collapse){reference-type="ref" reference="thm:finite-budget-no-collapse"} rules out the collapse profile itself. The transfer theorem states that if a $P = NP$ claim implies that profile, then the claim is false in the model. ◻
-:::
-
 
 # Related Work
 
@@ -437,23 +652,23 @@ Finite budget, positive event cost, and exponential exact-certification demand a
 
 Landauer's principle gives the standard calibration from logically irreversible discrimination to minimum heat production and energy cost [@landauer1961irreversibility; @bennett1982thermodynamics]. Stochastic thermodynamics extends that floor to trajectory-level entropy production, work identities, and fluctuation relations [@seifert2012stochastic; @vandenbroeck2015ensemble; @wolpert2019stochastic; @jarzynski1997nonequilibrium; @crooks1999entropy]. Finite-time erasure and mismatch corrections sharpen the same theme for controlled nonequilibrium protocols [@diana2013finite; @proesmans2020finite; @manzano2024absolute]. The theorem chain above isolates a different object: a finite exact-resolution lower bound indexed by the number of independent coordinates that must be resolved to preserve the optimizer.
 
-Relative to the Seifert and Van den Broeck--Esposito framework, the present model does not attempt a full trajectory description of a driven Markov process, housekeeping heat, or protocol-dependent dissipation. It gives instead a mechanized non-asymptotic lower bound in terms of structural rank and decision-quotient entropy. Conversely, stochastic-thermodynamic frameworks resolve time-dependent nonequilibrium refinements that are outside the current finite exact-resolution model.
+Relative to the Seifert and Van den Broeck--Esposito framework, the present model gives a non-asymptotic lower bound in terms of structural rank and decision-quotient entropy. Stochastic-thermodynamic frameworks resolve time-dependent nonequilibrium refinements that are outside the current finite exact-resolution model.
 
-Non-equilibrium selection and replication arguments lie in the same neighborhood [@england2013statistical]. The entropy premium used above is deliberately discrete: multiplicity is reduced to counting over a finite quotient family and the elementary inequality $k \le 2^{k-1}$, rather than to a separate stochastic-process ansatz.
+England's 2013 result is a stochastic-thermodynamic path-space theorem with detailed balance and far-from-equilibrium dynamics [@england2013statistical]. The corresponding replication theorem in the calibrated exact-resolution model is a finite Landauer-counting statement. The common term is the multiplicity penalty $k_B \ln k$.
 
 ## Zero-Error, Functional, and Quotient Information
 
 The information object is closer to zero-error and confusability-based information theory than to average-case source coding [@shannon1956zero; @korner1973graphs; @lovasz1979shannon; @csiszar2011information]. The central quantity is not full state entropy but the entropy of the decision quotient: how many distinct optimal-action classes survive after irrelevant coordinates are erased.
 
-Function-relative information in physics and origins-of-life work also conditions information on successful function or selection [@szostak2003functional; @wong2023roles]. The object studied here is narrower and exact: coordinate erasure is admissible precisely when optimal-action correspondence is preserved. The rank-$1$ regime is therefore the one-coordinate exact-decision regime, the tractable sufficiency regime, and the minimum calibrated-cost regime.
+Function-relative information in physics and origins-of-life work also conditions information on successful function or selection [@szostak2003functional; @wong2023roles]. The exact-resolution object is narrower: coordinate erasure is admissible precisely when optimal-action correspondence is preserved. The rank-$1$ regime is therefore the one-coordinate exact-resolution regime, the tractable sufficiency regime, and the minimum calibrated-cost regime.
 
 ## Categorical Quotients and Exact Abstraction
 
 Quotienting states by equality of $\operatorname{Opt}$ is the standard coimage construction for the decision quotient of the optimizer map $\operatorname{Opt}: S \to \mathcal{P}(A)$ in **Set**, canonically equivalent to its image [@maclane1998categories]. The novelty is not the existence of that quotient, but the theorem chain tying it to coordinate sufficiency, structural rank, decision entropy, and thermodynamic cost in one proof object.
 
-## Formal Verification and Machine-Checked Theory
+## Formal Source Provenance
 
-The proofs are machine-checked in Lean 4 [@moura2021lean4] against the Mathlib library [@mathlib2020]. Related mechanized precedents include verified computability and semantics developments in Coq and Isabelle [@forster2019verified; @nipkow2002isabelle; @nipkow2014concrete] and certificate-carrying proof artifacts [@necula1997proof]. Mechanization matters because the main identifications are exact rather than rhetorical: degree of freedom, structural rank, quotient entropy, tractable sufficiency, and calibrated thermodynamic cost are kept distinct and then linked by explicit theorems.
+Appendix [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="appendix-lean"} records source provenance for the stated claims. A Lean 4 proof file accompanies the archived artifact [@moura2021lean4; @mathlib2020]. Related precedents include verified computability and semantics developments in Coq and Isabelle [@forster2019verified; @nipkow2002isabelle; @nipkow2014concrete] and certificate-carrying proof artifacts [@necula1997proof].
 
 
 # Conclusion
@@ -462,16 +677,7 @@ The proofs are machine-checked in Lean 4 [@moura2021lean4] against the Mathlib 
 
 The central result is the convergence theorem (Theorem [\[thm:five-way\]](#thm:five-way){reference-type="ref" reference="thm:five-way"}): the rank-$1$ regime of the canonical decision encoding is simultaneously the one-coordinate regime, the tractable sufficiency regime, and the thermodynamic ground state. An imported coherence theorem gives a separate single-source reading of the same point.
 
-::: center
-  **Framework**              **Rank-$1$ means**                     **Formal source**
-  -------------------------- -------------------------------------- -------------------------------------------
-  Local system parameter     $\mathrm{DOF}(A)=1$                    `Leverage/Foundations`
-  Structural information     Structural rank $= 1$                  `Leverage/BridgeToDQ`
-  Computational complexity   Tractable sufficiency checking         `DecisionQuotient`
-  Statistical physics        Minimum thermodynamic cost per cycle   `BoundedAcquisition`, `ThermodynamicLift`
-:::
-
-The theorem package is a mathematical-physics statement: DOF is identified with structural rank, structural rank bounds decision entropy, and Landauer calibration turns that rank bound into an energy bound. All of these statements are machine-checked in Lean 4 with an auditable proof trail.
+The theorem package separates a structural part from an empirical calibration. The structural part is the finite acquisition chain, the canonical exact-resolution encoding, the identity $\mathrm{DOF}(A)=\mathrm{srank}(\mathrm{canonicalDP}(A))$, and the decision-entropy bound. The empirical inputs are bounded signal speed, the discrete transition interface used for acquisition, and a positive per-bit lower bound. Landauer furnishes the universal floor.
 
 **Main consequences:**
 
@@ -479,52 +685,40 @@ The theorem package is a mathematical-physics statement: DOF is identified with 
 
 -   The energy--information theorem $E \ge k_B T H_{\mathrm{nats}}(D)$ for exact-resolution cost.
 
+-   The bounded-acquisition inequalities $\mathrm{DOF}(A) \le c\tau/d$, the induced decision-class and decision-entropy bounds from spacetime and energy budget, and the linear budget law for independent composition.
+
+-   The theorem-level strict-overhead branches above the Landauer floor, the finite discrete residual witness, the canonical Wolpert grounding bundle, the unified ideal/mismatch/residual energy--information hierarchy, the induced strict canonical energy separation above the Landauer-linear floor, explicit binary mismatch and two-state residual examples with additive one-unit overhead, strengthened energy--information coefficients, cumulative work laws, and the substrate step time law.
+
+-   The bounded-lifetime consequences of positive cyclewise heat in finite-capacity substrates and the resulting finite entropy-throughput ceiling.
+
 -   The unconditional thermodynamic selection statement that every higher-rank regime lies above the rank-$1$ Landauer ground state.
 
 -   The finite-budget no-collapse theorem: bounded budget, positive per-bit cost, and exponential lower-bound growth cannot coexist with physical collapse.
 
--   The England replication inequality (L45): $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$, proved by finite counting rather than by an informal thermodynamic analogy.
+-   The finite replication entropy gap: $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$ in the calibrated exact-resolution model.
 
-## Mechanized Status
-
-The central thermodynamic and convergence statements are all theorem-level results in the mechanized artifact:
-
--   L55: unconditional energy separation above the rank-$1$ ground state.
-
--   L49: quantitative Landauer-linear energy bound.
-
--   PH26: bounded budget plus positive bit-cost plus exponential lower bound implies no physical collapse.
-
--   L45: $\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k$ (Theorem [\[thm:england\]](#thm:england){reference-type="ref" reference="thm:england"}).
-
-## Limitations
+## Scope
 
 **1. Canonical-encoding scope:** the main theorems are exact for the canonical binary decision encoding attached to the bounded decision system. Extending the same conclusions to more general physical encodings requires an explicit transport argument.
 
-**2. Imported hardness regime:** the thermodynamic cost theorems are unconditional, but the stronger no-polynomial-certification claims rely on imported hardness results for the canonical family.
+**2. Calibration choice:** Landauer calibration supplies the physical conversion constant. Stronger substrate-dependent lower bounds belong to a different modeling layer.
 
-**3. Calibration choice:** Landauer calibration supplies the physical conversion constant. Stronger substrate-dependent lower bounds are possible, but they belong to a different modeling layer than the one studied here.
+**3. Replication theorem:** the finite replication entropy gap is a theorem of the calibrated exact-resolution model. England's 2013 theorem belongs to a stochastic-thermodynamic path-space model.
 
 **4. Finite-budget model class:** the no-collapse theorem is a statement about globally bounded budget profiles with positive per-bit cost and exponential lower-bound growth. Different collapse claims require explicit bridges into that profile language.
 
-## Impact
-
-**For mathematical physics:** the England Replication Inequality (Theorem [\[thm:england\]](#thm:england){reference-type="ref" reference="thm:england"}) is reduced to finite counting plus Landauer calibration. The result gives a mechanized, non-asymptotic entropy gap for replication without appealing to an informal thermodynamic analogy.
-
-**For information theory and complexity:** structural rank appears as the information coordinate of DOF, and the minimum-cost thermodynamic regime coincides with the tractable sufficiency regime.
-
-**For formalized theory building:** the argument shows that physically meaningful theorem packages can be built from exact finite objects and kept fully auditable at the proof-artifact level.
-
 ## Final Remarks
 
-Finite thermodynamic and structural consequences of exact resolution follow from first principles. In the formal bounded-system-to-`canonicalDP` map, the regime DOF $=1$ is the unique point at which structural rank, tractable sufficiency, and minimum calibrated thermodynamic cost coincide. The imported coherence theorem supplies a separate single-source interpretation of that same point.
+The paper studies exact resolution in a finite canonical model. In that model, degree of freedom, structural rank, decision entropy, and minimum calibrated thermodynamic cost are linked by explicit theorems. The finite replication entropy gap and the finite-budget no-collapse theorem belong to the same model class.
 
-All theorems are machine-checked. The thermodynamic lower bound is unconditional, and the replication inequality gives the entropy premium for multiplicity as $k_B \ln k$ per cycle. A companion manuscript develops the software-engineering and case-study implications. The mathematical-physics core is isolated here.
+A concrete transport target is constrained molecular dynamics. The existing molecular-docking layer uses three Cartesian coordinates per atom, while the RATTLE layer imposes holonomic constraints by explicit projection, so for an $N$-atom constrained model the effective dimension is naturally derived from molecular topology as $3N$ minus the independent constraints, with a satisfied/violated predicate for each constraint. Corollary [\[cor:holonomic-landauer-floor\]](#cor:holonomic-landauer-floor){reference-type="ref" reference="cor:holonomic-landauer-floor"} now states that direct RATTLE finite derivation: the constraint-status interface is a $k$-bit binary register, the effective coordinate count is $3N-k$, and the canonical Landauer floor scales linearly with that remaining unconstrained dimension. Remark [\[rem:molecular-independence-scope\]](#rem:molecular-independence-scope){reference-type="ref" reference="rem:molecular-independence-scope"} isolates the remaining scope boundary precisely: the theorem package proves the finite transport once independence is specified, but does not yet derive that independence hypothesis from a concrete geometric constraint family and molecular topology object.
+
+A companion manuscript develops the software-engineering and case-study implications. Appendix [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="appendix-lean"} records proof provenance.
 
 
-# Lean Proof Artifacts {#appendix-lean}
+# Proof Provenance {#appendix-lean}
 
-This appendix reports proof traceability directly from source and generated mapping artifacts.
+This appendix reports claim traceability directly from source and generated mapping artifacts.
 
 ## Claim Coverage Matrix
 
@@ -533,66 +727,116 @@ This appendix reports proof traceability directly from source and generated mapp
 ## Proof Hardness Index
 
 
-  ----------------------------------------------------------------------------------------------
-  **Paper claim**                                                  **Lean handle**
-  ---------------------------------------------------------------- -----------------------------
-  Corollary 4.4: Unique Minimum-Cost Regime                        BA8, L54, L55
+  ------------------------------------------------------------------------------------------------------------------------------
+  **Paper claim**                                                                     **Lean handle**
+  ----------------------------------------------------------------------------------- ------------------------------------------
+  Corollary 4.7: Decision-Entropy Bound from Spacetime and Energy Budget              IT3, BA1, BA2, BA5, BA6, EI1, L43
 
-  Corollary 5.9: $P = NP$ No-Go Transfer                           PH26, PH15, PH14
+  Corollary 4.8: Independent Composition Budget Law                                   L17, L19, BA1, BA2, BA7, BA5, BA6, L43
 
-  Corollary 3.3: Higher-Rank Regime                                L46, L51
+  Corollary 4.26: RATTLE Holonomic-Constraint Landauer Floor                          L60, L61, L62
 
-  Corollary 3.2: Rank-One Regime                                   L51
+  Corollary 4.4: Unique Minimum-Cost Regime                                           BA8, L54, L55
 
-  Proposition 2.5: Bounded Region                                  BA1
+  Corollary 3.3: Higher-Rank Regime                                                   L46, L51
 
-  Definition 2.3: Bounded Decision System                          L17, L19
+  Corollary 3.2: Rank-One Regime                                                      L51
 
-  Definition 2.13: Canonical Decision Problem                      QT2, QT7, QT1, QT3
+  Proposition 4.10: Two-Level Atomic Realization                                      AC1, AC3, AC4
 
-  Theorem 2.6: Bounded Acquisition Rate                            BA1, BA2
+  Proposition 4.22: Repeated Binary Mismatch Work Law                                 IT3, BA5, BA6, WP2, WM4, L43
 
-  Theorem 5.1: Coherent Single-Source Regime                       ORA1
+  Proposition 4.21: Binary Mismatch Strengthens the Energy--Information Coefficient   IT3, BA5, BA6, WP2, WM4, L43
 
-  Theorem 2.4: Counting Gap                                        BA10
+  Proposition 4.20: Explicit Binary Mismatch Example                                  BA5, BA6, WP2, WM4, L43
 
-  Theorem 2.7: Discrete Acquisition                                BA3
+  Proposition 4.15: Repeated Residual-Example Work Law                                IT3, BA5, BA6, WR12, WR11, L43
 
-  Theorem 3.1: DOF--Structural-Rank Identity                       L43
+  Proposition 4.14: Explicit Two-State Residual Example                               IT3, BA5, BA6, WR12, WR11, L43
 
-  Theorem 4.3: Energy--Information Duality                         IT3, EI1, L43
+  Proposition 2.5: Bounded Region                                                     BA1
 
-  Theorem 4.1: Rank Controls Exact-Resolution Cost                 BA7, BA6, L43
+  Proposition 4.18: Canonical Wolpert Grounding Bundle                                BA5, BA6, WP9, L43
 
-  Theorem 5.6: England Replication Inequality                      L45
+  Definition 2.3: Bounded Decision System                                             L17, L19
 
-  Theorem 3.6: Decision-Entropy Bound                              IT3, L43
+  Proposition 4.16: Unified Energy--Information Hierarchy                             IT3, BA5, BA6, WR12, WP2, WM4, WR11, L43
 
-  Theorem 5.7: Finite-Budget No-Collapse                           PH26
+  Proposition 3.7: Finite Compression-Relation Bridge                                 L57, L58
 
-  Theorem 5.5: Convergence                                         L43, L44, L47, L55
+  Proposition 4.13: Finite Discrete Residual Witness                                  WR10, WR7, WR6
 
-  Theorem 3.4: Minimum Physical Bit Operations                     BA5, BA6, L43, L46
+  Proposition 4.23: Positive Heat and Bounded Lifetime                                SE1, SE2, SE3, SE4, SE5
 
-  Theorem 3.5: Decision-Class Bound                                IT4, L43
+  Proposition 4.24: Finite Lifetime Throughput Bound                                  SE5, IT3, L43
 
-  Theorem 2.8: One Transition, One Bit                             BA3, BA4
+  Definition 2.13: Canonical Decision Problem                                         QT2, QT7, QT1, QT3
 
-  Theorem 5.2: Rank Identification                                 L43, L46, L51
+  Proposition 4.25: Speed-Heat Tradeoff                                               SE6
 
-  Theorem 4.2: Rank-One Ground State                               BA8, L54, L55
+  Proposition 4.19: Strict Canonical Energy Above the Landauer Floor                  BA5, BA6, WP6, L43
 
-  Theorem 2.9: Resolution Requires a Sufficient Coordinate Set     BA5
+  Proposition 4.12: Theorem-Level Strict Overhead Branches                            BA5, BA6, WM6, WP6, WR10, L43
 
-  Theorem 5.4: Thermodynamic Selection                             BA8, L49, L54, L55
+  Proposition 4.17: Structural-Resource Overhead                                      BA5, BA6, WP8, WP7, L43
 
-  Theorem 5.3: Tractable Sufficiency at Rank One                   L47, L53, L56
-  ----------------------------------------------------------------------------------------------
+  Proposition 4.11: Substrate Step is Unit Interface Time                             DT23, DT22, DT24
 
-*Auto summary: mapped 26/26 (full=26, derived=0, unmapped=0).*
+  Proposition 4.9: Threshold Channel Realization                                      CV8, CV9, CV7
+
+  Theorem 2.6: Bounded Acquisition Rate                                               BA1, BA2
+
+  Theorem 4.6: Decision-Class Bound from Spacetime and Energy Budget                  IT4, IT3, BA1, BA2, BA5, BA6, EI1, L43
+
+  Theorem 5.1: Coherent Single-Source Regime                                          ORA1
+
+  Theorem 2.4: Counting Gap                                                           BA10
+
+  Theorem 2.7: Discrete Acquisition                                                   BA3
+
+  Theorem 3.1: DOF--Structural-Rank Identity                                          L43
+
+  Theorem 4.3: Energy--Information Duality                                            IT3, EI1, L43
+
+  Theorem 4.1: Rank Controls Exact-Resolution Cost                                    BA7, BA6, L43
+
+  Theorem 5.8: Finite Replication Entropy Gap                                         L45
+
+  Theorem 3.6: Decision-Entropy Bound                                                 IT3, L43
+
+  Theorem 5.9: Finite-Budget No-Collapse                                              PH26
+
+  Theorem 5.7: Convergence                                                            L43, L44, L47, L55
+
+  Theorem 3.4: Minimum Physical Bit Operations                                        BA5, BA6, L43, L46
+
+  Theorem 3.5: Decision-Class Bound                                                   IT4, L43
+
+  Theorem 2.8: One Transition, One Bit                                                BA4
+
+  Theorem 5.3: Rank Identification                                                    L43, L46, L51
+
+  Theorem 4.2: Rank-One Ground State                                                  BA8, L54, L55
+
+  Theorem 2.9: Resolution Requires a Sufficient Coordinate Set                        BA5
+
+  Theorem 5.5: Thermodynamic Selection                                                BA8, L49, L54, L55
+
+  Theorem 4.5: Exact-Resolution Time Lower Bound                                      BA1, BA2, BA5, BA6, L43
+
+  Theorem 5.4: Tractable Sufficiency at Rank One                                      L47, L53, L56
+  ------------------------------------------------------------------------------------------------------------------------------
+
+*Auto summary: mapped 48/48 (full=48, derived=0, unmapped=0).*
 
 
 ::: list
+**`AC1`**[]{#lh:AC1}
+
+**`AC3`**[]{#lh:AC3}
+
+**`AC4`**[]{#lh:AC4}
+
 **`BA1`**[]{#lh:BA1} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
 
 **`BA2`**[]{#lh:BA2} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
@@ -610,6 +854,18 @@ This appendix reports proof traceability directly from source and generated mapp
 **`BA8`**[]{#lh:BA8} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
 
 **`BA10`**[]{#lh:BA10} paper4/DecisionQuotient/Physics/BoundedAcquisition.lean
+
+**`CV7`**[]{#lh:CV7} paper4/DecisionQuotient/Physics/Conversation.lean
+
+**`CV8`**[]{#lh:CV8} paper4/DecisionQuotient/Physics/Conversation.lean
+
+**`CV9`**[]{#lh:CV9} paper4/DecisionQuotient/Physics/Conversation.lean
+
+**`DT22`**[]{#lh:DT22} paper4/DecisionQuotient/Physics/DecisionTime.lean
+
+**`DT23`**[]{#lh:DT23} paper4/DecisionQuotient/Physics/DecisionTime.lean
+
+**`DT24`**[]{#lh:DT24} paper4/DecisionQuotient/Physics/DecisionTime.lean
 
 **`EI1`**[]{#lh:EI1} paper4/DecisionQuotient/ThermodynamicLift.lean
 
@@ -645,11 +901,19 @@ This appendix reports proof traceability directly from source and generated mapp
 
 **`L56`**[]{#lh:L56} paper4/DecisionQuotient/ClaimClosure.lean
 
+**`L57`**[]{#lh:L57}
+
+**`L58`**[]{#lh:L58}
+
+**`L59`**[]{#lh:L59} Leverage/BridgeToDQ.lean
+
+**`L60`**[]{#lh:L60} Leverage/BridgeToDQ.lean
+
+**`L61`**[]{#lh:L61} Leverage/BridgeToDQ.lean
+
+**`L62`**[]{#lh:L62} Leverage/BridgeToDQ.lean
+
 **`ORA1`**[]{#lh:ORA1} paper2/Ssot/Coherence.lean
-
-**`PH14`**[]{#lh:PH14} paper4/DecisionQuotient/Physics/PhysicalHardness.lean
-
-**`PH15`**[]{#lh:PH15} paper4/DecisionQuotient/Physics/PhysicalHardness.lean
 
 **`PH26`**[]{#lh:PH26} paper4/DecisionQuotient/Physics/PhysicalHardness.lean
 
@@ -661,6 +925,18 @@ This appendix reports proof traceability directly from source and generated mapp
 
 **`QT7`**[]{#lh:QT7} paper4/DecisionQuotient/Quotient.lean
 
+**`SE1`**[]{#lh:SE1} paper4/DecisionQuotient/ClaimClosure.lean
+
+**`SE2`**[]{#lh:SE2} paper4/DecisionQuotient/ClaimClosure.lean
+
+**`SE3`**[]{#lh:SE3} paper4/DecisionQuotient/ClaimClosure.lean
+
+**`SE4`**[]{#lh:SE4} paper4/DecisionQuotient/ClaimClosure.lean
+
+**`SE5`**[]{#lh:SE5} paper4/DecisionQuotient/ClaimClosure.lean
+
+**`SE6`**[]{#lh:SE6} paper4/DecisionQuotient/ClaimClosure.lean
+
 **`W1`**[]{#lh:W1} paper4/DecisionQuotient/Physics/WassersteinIntegrity.lean
 
 **`W2`**[]{#lh:W2} paper4/DecisionQuotient/Physics/WassersteinIntegrity.lean
@@ -668,180 +944,334 @@ This appendix reports proof traceability directly from source and generated mapp
 **`W3`**[]{#lh:W3} paper4/DecisionQuotient/Physics/WassersteinIntegrity.lean
 
 **`W4`**[]{#lh:W4} paper4/DecisionQuotient/Physics/WassersteinIntegrity.lean
+
+**`WM4`**[]{#lh:WM4} paper4/DecisionQuotient/Physics/WolpertMismatch.lean
+
+**`WM6`**[]{#lh:WM6} paper4/DecisionQuotient/Physics/WolpertDecomposition.lean
+
+**`WP2`**[]{#lh:WP2} paper4/DecisionQuotient/Physics/WolpertDecomposition.lean
+
+**`WP6`**[]{#lh:WP6} paper4/DecisionQuotient/Physics/WolpertDecomposition.lean
+
+**`WP7`**[]{#lh:WP7} paper4/DecisionQuotient/Physics/WolpertDecomposition.lean
+
+**`WP8`**[]{#lh:WP8} paper4/DecisionQuotient/Physics/WolpertDecomposition.lean
+
+**`WP9`**[]{#lh:WP9} paper4/DecisionQuotient/Physics/WolpertDecomposition.lean
+
+**`WR6`**[]{#lh:WR6} paper4/DecisionQuotient/Physics/WolpertResidual.lean
+
+**`WR7`**[]{#lh:WR7} paper4/DecisionQuotient/Physics/WolpertDecomposition.lean
+
+**`WR10`**[]{#lh:WR10} paper4/DecisionQuotient/Physics/WolpertDecomposition.lean
+
+**`WR11`**[]{#lh:WR11} paper4/DecisionQuotient/Physics/WolpertResidual.lean
+
+**`WR12`**[]{#lh:WR12} paper4/DecisionQuotient/Physics/WolpertDecomposition.lean
 :::
 
 ::: longtable
 \@p0.05p0.42p0.05p0.42@ **ID** & **Lean Handle / Source** & **ID** & **Lean Handle / Source**\
 **ID** & **Lean Handle / Source** & **ID** & **Lean Handle / Source**\
 \
-[**`BA1`**]{#lh:BA1} & `Physics.BoundedAcquisition.BoundedRegion`
+[**`AC1`**]{#lh:AC1} & `ClaimClosure.AtomicCircuitExports.AC1`
 
-& [**`BA2`**]{#lh:BA2} & `Physics.BoundedAcquisition.acquisition_rate_bound`
-
-\
-[**`BA3`**]{#lh:BA3} & `Physics.BoundedAcquisition.acquisitions_are_transitions`
-
-& [**`BA4`**]{#lh:BA4} & `Physics.BoundedAcquisition.one_bit_per_transition`
+& [**`AC3`**]{#lh:AC3} & `ClaimClosure.AtomicCircuitExports.AC3`
 
 \
-[**`BA5`**]{#lh:BA5} & `Physics.BoundedAcquisition.resolution_reads_sufficient`
+[**`AC4`**]{#lh:AC4} & `ClaimClosure.AtomicCircuitExports.AC4`
 
-& [**`BA6`**]{#lh:BA6} & `Physics.BoundedAcquisition.srank_le_resolution_bits`
-
-\
-[**`BA7`**]{#lh:BA7} & `Physics.BoundedAcquisition.energy_ge_srank_cost`
-
-& [**`BA8`**]{#lh:BA8} & `Physics.BoundedAcquisition.srank_one_energy_minimum`
+& [**`BA1`**]{#lh:BA1} & `Physics.BoundedAcquisition.BoundedRegion`
 
 \
-[**`BA10`**]{#lh:BA10} & `Physics.BoundedAcquisition.counting_gap_theorem`
+[**`BA2`**]{#lh:BA2} & `Physics.BoundedAcquisition.acquisition_rate_bound`
 
-& [**`EI1`**]{#lh:EI1} & `ThermodynamicLift.energy_ge_kbt_nat_entropy`
-
-\
-[**`IT3`**]{#lh:IT3} & `DecisionQuotient.quotientEntropy_le_srank_binary`
-
-& [**`IT4`**]{#lh:IT4} & `DecisionQuotient.numOptClasses_le_pow_srank_binary`
+& [**`BA3`**]{#lh:BA3} & `Physics.BoundedAcquisition.acquisitions_are_transitions`
 
 \
-[**`L17`**]{#lh:L17} & `Leverage.compose_dof`
+[**`BA4`**]{#lh:BA4} & `Physics.BoundedAcquisition.one_bit_per_transition`
 
-& [**`L19`**]{#lh:L19} & `Leverage.composition_dof_additive`
-
-\
-[**`L43`**]{#lh:L43} & `dof_eq_srank`
-
-& [**`L44`**]{#lh:L44} & `dof_one_iff_max_leverage`
+& [**`BA5`**]{#lh:BA5} & `Physics.BoundedAcquisition.resolution_reads_sufficient`
 
 \
-[**`L45`**]{#lh:L45} & `england_replication_inequality`
+[**`BA6`**]{#lh:BA6} & `Physics.BoundedAcquisition.srank_le_resolution_bits`
 
-& [**`L46`**]{#lh:L46} & `incoherent_srank_gt_one`
-
-\
-[**`L47`**]{#lh:L47} & `max_coherence_forces_tractability`
-
-& [**`L49`**]{#lh:L49} & `srank_energy_lower_bound`
+& [**`BA7`**]{#lh:BA7} & `Physics.BoundedAcquisition.energy_ge_srank_cost`
 
 \
-[**`L51`**]{#lh:L51} & `ssot_srank_one`
+[**`BA8`**]{#lh:BA8} & `Physics.BoundedAcquisition.srank_one_energy_minimum`
 
-& [**`L52`**]{#lh:L52} & `succ_le_two_pow`
-
-\
-[**`L53`**]{#lh:L53} & `sufficiency_conp_hard` & [**`L54`**]{#lh:L54} & `thermodynamic_selection`
+& [**`BA10`**]{#lh:BA10} & `Physics.BoundedAcquisition.counting_gap_theorem`
 
 \
-[**`L55`**]{#lh:L55} & `thermodynamic_selection_unconditional`
+[**`CV7`**]{#lh:CV7} & `Physics.Conversation.clamp_projection_eq_iff_same_clamped_bit`
 
-& [**`L56`**]{#lh:L56} & `tractable_bounded_core`
-
-\
-[**`ORA1`**]{#lh:ORA1} & `oracle_arbitrary`
-
-& [**`PH14`**]{#lh:PH14} & `PhysicalComplexity.p_eq_np_physically_impossible_of_collapse_map`
+& [**`CV8`**]{#lh:CV8} & `Physics.Conversation.clampDecisionEvent_iff_bitOps_pos`
 
 \
-[**`PH15`**]{#lh:PH15} & `PhysicalComplexity.p_eq_np_physically_impossible_canonical`
+[**`CV9`**]{#lh:CV9} & `Physics.Conversation.clamp_event_implies_positive_energy`
 
-& [**`PH26`**]{#lh:PH26} & `PhysicalComplexity.no_collapse_of_bounded_budget_pos_cost_exp_lb`
-
-\
-[**`QT1`**]{#lh:QT1} & `DecisionProblem.quotient_is_coarsest`
-
-& [**`QT2`**]{#lh:QT2} & `DecisionProblem.quotientMap_preservesOpt`
+& [**`DT22`**]{#lh:DT22} & `Physics.DecisionTime.substrate_step_realizes_decision_event`
 
 \
-[**`QT3`**]{#lh:QT3} & `DecisionProblem.quotient_represents_opt_equiv`
+[**`DT23`**]{#lh:DT23} & `Physics.DecisionTime.substrate_step_is_time_unit`
 
-& [**`QT7`**]{#lh:QT7} & `DecisionProblem.quotient_has_unique_factorization`
-
-\
-[**`W1`**]{#lh:W1} & `Physics.single_future_zero_cost`
-
-& [**`W2`**]{#lh:W2} & `Physics.transportCost_pos_of_offDiag`
+& [**`DT24`**]{#lh:DT24} & `Physics.DecisionTime.time_unit_law_substrate_invariant`
 
 \
-[**`W3`**]{#lh:W3} & `Physics.integrity_is_centroid`
+[**`EI1`**]{#lh:EI1} & `ThermodynamicLift.energy_ge_kbt_nat_entropy`
 
-& [**`W4`**]{#lh:W4} & `Physics.wasserstein_bridge`
+& [**`IT3`**]{#lh:IT3} & `DecisionQuotient.quotientEntropy_le_srank_binary`
 
 \
+[**`IT4`**]{#lh:IT4} & `DecisionQuotient.numOptClasses_le_pow_srank_binary`
+
+& [**`L17`**]{#lh:L17} & `Leverage.compose_dof`
+
+\
+[**`L19`**]{#lh:L19} & `Leverage.composition_dof_additive`
+
+& [**`L43`**]{#lh:L43} & `dof_eq_srank`
+
+\
+[**`L44`**]{#lh:L44} & `dof_one_iff_max_leverage`
+
+& [**`L45`**]{#lh:L45} & `england_replication_inequality`
+
+\
+[**`L46`**]{#lh:L46} & `incoherent_srank_gt_one`
+
+& [**`L47`**]{#lh:L47} & `max_coherence_forces_tractability`
+
+\
+[**`L49`**]{#lh:L49} & `srank_energy_lower_bound`
+
+& [**`L51`**]{#lh:L51} & `ssot_srank_one`
+
+\
+[**`L52`**]{#lh:L52} & `succ_le_two_pow`
+
+& [**`L53`**]{#lh:L53} & `sufficiency_conp_hard`\
+[**`L54`**]{#lh:L54} & `thermodynamic_selection`
+
+& [**`L55`**]{#lh:L55} & `thermodynamic_selection_unconditional`
+
+\
+[**`L56`**]{#lh:L56} & `tractable_bounded_core`
+
+& [**`L57`**]{#lh:L57} & `Leverage.ColumnComplexityBridge.SharedCodewordCount_eq_TieBrokenRelationMoment`
+
+\
+[**`L58`**]{#lh:L58} & `Leverage.ColumnComplexityBridge.zeroIdentityDebt_tieBrokenArgmin_of_uniform_argmin_relation_bound`
+
+& [**`L59`**]{#lh:L59} & `Leverage.constrainedMolecular_energy_lower_bound`
+
+\
+[**`L60`**]{#lh:L60} & `Leverage.rattle_constraintObservations_card`
+
+& [**`L61`**]{#lh:L61} & `Leverage.rattle_energy_lower_bound`
+
+\
+[**`L62`**]{#lh:L62} & `Leverage.rattle_srank_eq_effectiveDOF`
+
+& [**`ORA1`**]{#lh:ORA1} & `oracle_arbitrary`
+
+\
+[**`PH26`**]{#lh:PH26} & `PhysicalComplexity.no_collapse_of_bounded_budget_pos_cost_exp_lb`
+
+& [**`QT1`**]{#lh:QT1} & `DecisionProblem.quotient_is_coarsest`
+
+\
+[**`QT2`**]{#lh:QT2} & `DecisionProblem.quotientMap_preservesOpt`
+
+& [**`QT3`**]{#lh:QT3} & `DecisionProblem.quotient_represents_opt_equiv`
+
+\
+[**`QT7`**]{#lh:QT7} & `DecisionProblem.quotient_has_unique_factorization`
+
+& [**`SE1`**]{#lh:SE1} & `ClaimClosure.SE1`
+
+\
+[**`SE2`**]{#lh:SE2} & `ClaimClosure.SE2`
+
+& [**`SE3`**]{#lh:SE3} & `ClaimClosure.SE3`
+
+\
+[**`SE4`**]{#lh:SE4} & `ClaimClosure.SE4`
+
+& [**`SE5`**]{#lh:SE5} & `ClaimClosure.SE5`
+
+\
+[**`SE6`**]{#lh:SE6} & `ClaimClosure.SE6`
+
+& [**`W1`**]{#lh:W1} & `Physics.single_future_zero_cost`
+
+\
+[**`W2`**]{#lh:W2} & `Physics.transportCost_pos_of_offDiag`
+
+& [**`W3`**]{#lh:W3} & `Physics.integrity_is_centroid`
+
+\
+[**`W4`**]{#lh:W4} & `Physics.wasserstein_bridge`
+
+& [**`WM4`**]{#lh:WM4} & `Physics.WolpertMismatch.mismatchNatLowerBound_pos_of_exists_ne`
+
+\
+[**`WM6`**]{#lh:WM6} & `Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_distribution_mismatch`
+
+& [**`WP2`**]{#lh:WP2} & `Physics.WolpertDecomposition.landauer_floor_plus_decomposition_lower_bound`
+
+\
+[**`WP6`**]{#lh:WP6} & `Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_either_cited_component`
+
+& [**`WP7`**]{#lh:WP7} & `Physics.WolpertDecomposition.landauer_floor_plus_structural_resource_lower_bound`
+
+\
+[**`WP8`**]{#lh:WP8} & `Physics.WolpertDecomposition.energy_lower_bound_increases_by_structural_resource`
+
+& [**`WP9`**]{#lh:WP9} & `Physics.WolpertDecomposition.physical_grounding_bundle_with_wolpert_decomposition`
+
+\
+[**`WR6`**]{#lh:WR6} & `Physics.WolpertResidual.discreteResidualNatLowerBound_pos_of_asymmetry_or_oneway`
+
+& [**`WR7`**]{#lh:WR7} & `Physics.WolpertDecomposition.stopping_time_residual_of_discrete_edge_split`
+
+\
+[**`WR10`**]{#lh:WR10} & `Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_finite_discrete_witness`
+
+& [**`WR11`**]{#lh:WR11} & `Physics.WolpertResidual.binaryEncodedResidualNatLowerBound_eq_one`
+
+\
+[**`WR12`**]{#lh:WR12} & `Physics.WolpertDecomposition.effective_model_ge_landauer_plus_one_of_binary_encoded_residual_example`
+
+& &\
 :::
 
 
-  ------------------------------------------------------------------------------------------------------------------------
-  **Paper handle**                  **Hardness profile**   **Regime tags**           **Lean support**
-  --------------------------------- ---------------------- ------------------------- -------------------------------------
-  `cor:minimum-cost-regime`         `unspecified`          \-                        BA8, L54, L55
+  ---------------------------------------------------------------------------------------------------------------------------------------
+  **Paper handle**                            **Hardness profile**   **Regime tags**           **Lean support**
+  ------------------------------------------- ---------------------- ------------------------- ------------------------------------------
+  `cor:budget-entropy-bound`                  `unspecified`          \-                        IT3, BA1, BA2, BA5, BA6, EI1, L43
 
-  `cor:pnp-nogo`                    `unspecified`          \-                        PH26, PH15, PH14
+  `cor:composition-budget-law`                `unspecified`          \-                        L17, L19, BA1, BA2, BA7, BA5, BA6, L43
 
-  `cor:rank-above-one`              `unspecified`          \-                        L46, L51
+  `cor:holonomic-landauer-floor`              `unspecified`          \-                        L60, L61, L62
 
-  `cor:rank-one`                    `unspecified`          \-                        L51
+  `cor:minimum-cost-regime`                   `unspecified`          \-                        BA8, L54, L55
 
-  `prop:bounded-region`             `unspecified`          \-                        BA1
+  `cor:rank-above-one`                        `unspecified`          \-                        L46, L51
 
-  `prop:dof-additive`               `unspecified`          \-                        L17, L19
+  `cor:rank-one`                              `unspecified`          \-                        L51
 
-  `prop:optimizer-quotient`         `unspecified`          \-                        QT2, QT7, QT1, QT3
+  `prop:atomic-realization`                   `unspecified`          \-                        AC1, AC3, AC4
 
-  `thm:bounded-acquisition`         `unspecified`          \-                        BA1, BA2
+  `prop:binary-mismatch-cumulative-work`      `unspecified`          \-                        IT3, BA5, BA6, WP2, WM4, L43
 
-  `thm:coherent-single-source`      `unspecified`          \-                        ORA1
+  `prop:binary-mismatch-energy-information`   `unspecified`          \-                        IT3, BA5, BA6, WP2, WM4, L43
 
-  `thm:counting-gap`                `unspecified`          \-                        BA10
+  `prop:binary-mismatch-example`              `unspecified`          \-                        BA5, BA6, WP2, WM4, L43
 
-  `thm:discrete-acquisition`        `unspecified`          \-                        BA3
+  `prop:binary-residual-cumulative-work`      `unspecified`          \-                        IT3, BA5, BA6, WR12, WR11, L43
 
-  `thm:dof-srank`                   `unspecified`          \-                        L43
+  `prop:binary-residual-example`              `unspecified`          \-                        IT3, BA5, BA6, WR12, WR11, L43
 
-  `thm:energy-entropy`              `unspecified`          \-                        IT3, EI1, L43
+  `prop:bounded-region`                       `unspecified`          \-                        BA1
 
-  `thm:energy-rank`                 `unspecified`          \-                        BA7, BA6, L43
+  `prop:canonical-wolpert-bundle`             `unspecified`          \-                        BA5, BA6, WP9, L43
 
-  `thm:england`                     `unspecified`          \-                        L45
+  `prop:dof-additive`                         `unspecified`          \-                        L17, L19
 
-  `thm:entropy-bound`               `unspecified`          \-                        IT3, L43
+  `prop:ei-hierarchy`                         `unspecified`          \-                        IT3, BA5, BA6, WR12, WP2, WM4, WR11, L43
 
-  `thm:finite-budget-no-collapse`   `unspecified`          \-                        PH26
+  `prop:finite-compression-bridge`            `unspecified`          \-                        L57, L58
 
-  `thm:five-way`                    `unspecified`          \-                        L43, L44, L47, L55
+  `prop:finite-discrete-residual`             `unspecified`          \-                        WR10, WR7, WR6
 
-  `thm:min-bit-operations`          `unspecified`          \-                        BA5, BA6, L43, L46
+  `prop:finite-lifetime`                      `unspecified`          \-                        SE1, SE2, SE3, SE4, SE5
 
-  `thm:numopt-bound`                `unspecified`          \-                        IT4, L43
+  `prop:lifetime-throughput`                  `unspecified`          \-                        SE5, IT3, L43
 
-  `thm:one-transition-one-bit`      `unspecified`          \-                        BA3, BA4
+  `prop:optimizer-quotient`                   `unspecified`          \-                        QT2, QT7, QT1, QT3
 
-  `thm:rank-identification`         `unspecified`          \-                        L43, L46, L51
+  `prop:speed-heat-tradeoff`                  `unspecified`          \-                        SE6
 
-  `thm:rank-one-ground`             `unspecified`          \-                        BA8, L54, L55
+  `prop:strict-canonical-energy`              `unspecified`          \-                        BA5, BA6, WP6, L43
 
-  `thm:resolution-sufficient`       `unspecified`          \-                        BA5
+  `prop:strict-overhead`                      `unspecified`          \-                        BA5, BA6, WM6, WP6, WR10, L43
 
-  `thm:thermodynamic-selection`     `unspecified`          \-                        BA8, L49, L54, L55
+  `prop:structural-resource-overhead`         `unspecified`          \-                        BA5, BA6, WP8, WP7, L43
 
-  `thm:tractable-rank-one`          `unspecified`          \-                        L47, L53, L56
-  ------------------------------------------------------------------------------------------------------------------------
+  `prop:substrate-time-law`                   `unspecified`          \-                        DT23, DT22, DT24
 
-*Auto summary: indexed 26 claims by hardness profile (unspecified=26).*
+  `prop:threshold-channel`                    `unspecified`          \-                        CV8, CV9, CV7
+
+  `thm:bounded-acquisition`                   `unspecified`          \-                        BA1, BA2
+
+  `thm:budget-class-bound`                    `unspecified`          \-                        IT4, IT3, BA1, BA2, BA5, BA6, EI1, L43
+
+  `thm:coherent-single-source`                `unspecified`          \-                        ORA1
+
+  `thm:counting-gap`                          `unspecified`          \-                        BA10
+
+  `thm:discrete-acquisition`                  `unspecified`          \-                        BA3
+
+  `thm:dof-srank`                             `unspecified`          \-                        L43
+
+  `thm:energy-entropy`                        `unspecified`          \-                        IT3, EI1, L43
+
+  `thm:energy-rank`                           `unspecified`          \-                        BA7, BA6, L43
+
+  `thm:england`                               `unspecified`          \-                        L45
+
+  `thm:entropy-bound`                         `unspecified`          \-                        IT3, L43
+
+  `thm:finite-budget-no-collapse`             `unspecified`          \-                        PH26
+
+  `thm:five-way`                              `unspecified`          \-                        L43, L44, L47, L55
+
+  `thm:min-bit-operations`                    `unspecified`          \-                        BA5, BA6, L43, L46
+
+  `thm:numopt-bound`                          `unspecified`          \-                        IT4, L43
+
+  `thm:one-transition-one-bit`                `unspecified`          \-                        BA4
+
+  `thm:rank-identification`                   `unspecified`          \-                        L43, L46, L51
+
+  `thm:rank-one-ground`                       `unspecified`          \-                        BA8, L54, L55
+
+  `thm:resolution-sufficient`                 `unspecified`          \-                        BA5
+
+  `thm:thermodynamic-selection`               `unspecified`          \-                        BA8, L49, L54, L55
+
+  `thm:time-lower-bound`                      `unspecified`          \-                        BA1, BA2, BA5, BA6, L43
+
+  `thm:tractable-rank-one`                    `unspecified`          \-                        L47, L53, L56
+  ---------------------------------------------------------------------------------------------------------------------------------------
+
+*Auto summary: indexed 48 claims by hardness profile (unspecified=48).*
 
 
-# Notes on assumptions and extensions {#appendix-assumptions}
+# Scope Statements {#appendix-assumptions}
 
-This appendix lists the principal modeling assumptions and common extensions relevant for the finite decision-thermodynamic framework of the paper:
+This appendix lists the principal scope statements for the finite decision-thermodynamic framework:
 
 -   **Canonical encoding:** The main theorems are exact for the canonical binary decision problem attached to the bounded decision system. Other physical encodings require an explicit transport theorem.
 
+-   **Structural chain:** Counting Gap fixes the finite-event statement. Bounded Acquisition fixes the traversal-rate statement. Discrete Acquisition and One Transition, One Bit fix the acquisition-event interface.
+
 -   **Landauer calibration:** Thermodynamic cost is calibrated by a per-bit Landauer floor. Stronger substrate-dependent lower bounds may exist, but they are additional assumptions, not part of the theorem package under discussion.
 
--   **Exact decision setting:** The results concern exact sufficiency and exact-resolution cost. Approximate, stochastic, or bounded-confidence regimes require separate analysis.
+-   **Exact-resolution setting:** The results concern exact sufficiency and exact-resolution cost. Approximate, stochastic, or bounded-confidence regimes require separate analysis.
 
 -   **Finite state family:** The entropy and replication theorems are finite counting results. Continuum models must first be reduced to a finite decision quotient before these arguments apply.
 
--   **Future work:** Natural extensions include richer transport theorems from physical encodings to canonical decision problems, continuous-information analogues, and stronger substrate-specific dissipation bounds.
+-   **Replication theorem:** The finite replication entropy gap is a theorem of the calibrated exact-resolution model. England's 2013 theorem belongs to a stochastic-thermodynamic path-space model.
+
+-   **Finite-budget theorem:** Finite-Budget No-Collapse is a theorem about bounded budgets, positive per-bit cost, and exponential lower-bound growth.
+
+::: remark
+[]{#rem:molecular-independence-scope label="rem:molecular-independence-scope"} Corollary [\[cor:holonomic-landauer-floor\]](#cor:holonomic-landauer-floor){reference-type="ref" reference="cor:holonomic-landauer-floor"} proves the finite constrained-molecular transport once the RATTLE holonomic topology supplies $k$ independent constraints and the corresponding binary status interface. It does not yet derive that independence hypothesis from a concrete geometric constraint family and molecular topology object. Establishing that derivation is additional work beyond the present theorem package, not a hidden premise of the corollary.
+:::
 
 
 # Complete Theorem Index {#appendix-theorems}
@@ -878,6 +1308,8 @@ Paper-level labeled claims:
 
 -   Theorem [\[thm:entropy-bound\]](#thm:entropy-bound){reference-type="ref" reference="thm:entropy-bound"}
 
+-   Proposition [\[prop:finite-compression-bridge\]](#prop:finite-compression-bridge){reference-type="ref" reference="prop:finite-compression-bridge"}
+
 **Thermodynamic Consequences (Section 4):**
 
 -   Theorem [\[thm:energy-rank\]](#thm:energy-rank){reference-type="ref" reference="thm:energy-rank"}
@@ -888,6 +1320,50 @@ Paper-level labeled claims:
 
 -   Corollary [\[cor:minimum-cost-regime\]](#cor:minimum-cost-regime){reference-type="ref" reference="cor:minimum-cost-regime"}
 
+-   Theorem [\[thm:time-lower-bound\]](#thm:time-lower-bound){reference-type="ref" reference="thm:time-lower-bound"}
+
+-   Theorem [\[thm:budget-class-bound\]](#thm:budget-class-bound){reference-type="ref" reference="thm:budget-class-bound"}
+
+-   Corollary [\[cor:budget-entropy-bound\]](#cor:budget-entropy-bound){reference-type="ref" reference="cor:budget-entropy-bound"}
+
+-   Corollary [\[cor:composition-budget-law\]](#cor:composition-budget-law){reference-type="ref" reference="cor:composition-budget-law"}
+
+-   Proposition [\[prop:threshold-channel\]](#prop:threshold-channel){reference-type="ref" reference="prop:threshold-channel"}
+
+-   Proposition [\[prop:atomic-realization\]](#prop:atomic-realization){reference-type="ref" reference="prop:atomic-realization"}
+
+-   Proposition [\[prop:substrate-time-law\]](#prop:substrate-time-law){reference-type="ref" reference="prop:substrate-time-law"}
+
+-   Proposition [\[prop:strict-overhead\]](#prop:strict-overhead){reference-type="ref" reference="prop:strict-overhead"}
+
+-   Proposition [\[prop:finite-discrete-residual\]](#prop:finite-discrete-residual){reference-type="ref" reference="prop:finite-discrete-residual"}
+
+-   Proposition [\[prop:binary-residual-example\]](#prop:binary-residual-example){reference-type="ref" reference="prop:binary-residual-example"}
+
+-   Proposition [\[prop:binary-residual-cumulative-work\]](#prop:binary-residual-cumulative-work){reference-type="ref" reference="prop:binary-residual-cumulative-work"}
+
+-   Proposition [\[prop:ei-hierarchy\]](#prop:ei-hierarchy){reference-type="ref" reference="prop:ei-hierarchy"}
+
+-   Proposition [\[prop:structural-resource-overhead\]](#prop:structural-resource-overhead){reference-type="ref" reference="prop:structural-resource-overhead"}
+
+-   Proposition [\[prop:canonical-wolpert-bundle\]](#prop:canonical-wolpert-bundle){reference-type="ref" reference="prop:canonical-wolpert-bundle"}
+
+-   Proposition [\[prop:strict-canonical-energy\]](#prop:strict-canonical-energy){reference-type="ref" reference="prop:strict-canonical-energy"}
+
+-   Proposition [\[prop:binary-mismatch-example\]](#prop:binary-mismatch-example){reference-type="ref" reference="prop:binary-mismatch-example"}
+
+-   Proposition [\[prop:binary-mismatch-energy-information\]](#prop:binary-mismatch-energy-information){reference-type="ref" reference="prop:binary-mismatch-energy-information"}
+
+-   Proposition [\[prop:binary-mismatch-cumulative-work\]](#prop:binary-mismatch-cumulative-work){reference-type="ref" reference="prop:binary-mismatch-cumulative-work"}
+
+-   Proposition [\[prop:finite-lifetime\]](#prop:finite-lifetime){reference-type="ref" reference="prop:finite-lifetime"}
+
+-   Proposition [\[prop:lifetime-throughput\]](#prop:lifetime-throughput){reference-type="ref" reference="prop:lifetime-throughput"}
+
+-   Proposition [\[prop:speed-heat-tradeoff\]](#prop:speed-heat-tradeoff){reference-type="ref" reference="prop:speed-heat-tradeoff"}
+
+-   Corollary [\[cor:holonomic-landauer-floor\]](#cor:holonomic-landauer-floor){reference-type="ref" reference="cor:holonomic-landauer-floor"}
+
 **Convergence (Section 5):**
 
 -   Theorem [\[thm:five-way\]](#thm:five-way){reference-type="ref" reference="thm:five-way"}
@@ -896,13 +1372,13 @@ Paper-level labeled claims:
 
 -   Theorem [\[thm:finite-budget-no-collapse\]](#thm:finite-budget-no-collapse){reference-type="ref" reference="thm:finite-budget-no-collapse"}
 
--   Corollary [\[cor:pnp-nogo\]](#cor:pnp-nogo){reference-type="ref" reference="cor:pnp-nogo"}
-
 **Primary Lean sources:**
 
 -   `Leverage/Foundations.lean`
 
 -   `Leverage/BridgeToDQ.lean`
+
+-   `Leverage/ColumnComplexityBridge.lean`
 
 -   `LambdaDR.lean`
 
@@ -917,6 +1393,6 @@ Paper-level labeled claims:
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper3_leverage/proofs/`
-- Lines: 75987
-- Theorems: 3303
+- Lines: 77174
+- Theorems: 3374
 - `sorry` placeholders: 0

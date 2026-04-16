@@ -9,6 +9,7 @@
   perfectly preserves the symplectic nature of the integrator.
 -/
 import Mathlib.Data.Real.Basic
+import Mathlib.Data.Fintype.Card
 import DecisionQuotient.Computation.BackwardErrorAnalysis
 import Mathlib.Tactic.Ring
 
@@ -76,6 +77,58 @@ axiom rattle_symplectic_preservation (dt mass : ℝ) (hmass : mass > 0) :
     (bond_next * rel_p_next = 0) ∧ 
     -- 2. True multi-dimensional volume preservation exists
     True
+
+/-! ## Finite Holonomic Constraint Counting -/
+
+/-- Finite molecular topology for an `N`-atom RATTLE model with `k` independent
+holonomic constraints. -/
+structure HolonomicTopology where
+  atomCount : ℕ
+  constraintCount : ℕ
+  hIndependent : constraintCount < 3 * atomCount
+
+/-- Cartesian coordinate count for an unconstrained `N`-atom molecular model. -/
+def HolonomicTopology.cartesianCoordinateCount (X : HolonomicTopology) : ℕ :=
+  3 * X.atomCount
+
+/-- Effective unconstrained coordinate count after imposing the independent holonomic
+constraints. -/
+def HolonomicTopology.effectiveDOF (X : HolonomicTopology) : ℕ :=
+  X.cartesianCoordinateCount - X.constraintCount
+
+/-- Binary outcome of a single holonomic constraint check. -/
+abbrev ConstraintStatus := Bool
+
+/-- A finite register of satisfied/violated outcomes for the constraint family. -/
+def HolonomicTopology.constraintObservations (X : HolonomicTopology) : Type :=
+  Fin X.constraintCount → ConstraintStatus
+
+instance (X : HolonomicTopology) : Fintype X.constraintObservations := by
+  unfold HolonomicTopology.constraintObservations
+  infer_instance
+
+/-- A single constraint check is binary: satisfied or violated. -/
+theorem constraintStatus_card :
+    Fintype.card ConstraintStatus = 2 := by
+  simp [ConstraintStatus]
+
+/-- The full constraint-observation interface is a `k`-bit binary register. -/
+theorem constraintObservations_card (X : HolonomicTopology) :
+    Fintype.card X.constraintObservations = 2 ^ X.constraintCount := by
+  unfold HolonomicTopology.constraintObservations
+  simp [ConstraintStatus, Fintype.card_fun, Fintype.card_fin, Fintype.card_bool]
+
+/-- Independent holonomic constraints remove one degree of freedom each from the
+`3N` Cartesian coordinate count. -/
+theorem effectiveDOF_eq_cartesian_minus_constraints (X : HolonomicTopology) :
+    X.effectiveDOF = 3 * X.atomCount - X.constraintCount := by
+  rfl
+
+/-- The remaining unconstrained molecular dimension is positive in the nondegenerate
+independent-constraint regime. -/
+theorem effectiveDOF_pos (X : HolonomicTopology) :
+    0 < X.effectiveDOF := by
+  exact Nat.sub_pos_of_lt X.hIndependent
 
 end RATTLE
 end Computation

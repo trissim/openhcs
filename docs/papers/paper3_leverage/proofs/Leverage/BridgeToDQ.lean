@@ -30,6 +30,7 @@
 
 import Leverage.Foundations
 import Ssot.Coherence
+import DecisionQuotient.Computation.GeometricConstraints
 import DecisionQuotient.Tractability.StructuralRank
 import DecisionQuotient.Information
 import DecisionQuotient.ThermodynamicLift
@@ -312,6 +313,91 @@ theorem srank_energy_lower_bound
   have h := Physics.BoundedAcquisition.energy_ge_srank_cost
     (canonicalDP a.dof) I hI M hJ
   rwa [dof_eq_srank] at h
+
+/-- A finite molecular system with independent holonomic constraints.
+
+    The transport used in paper3 is only the finite dimension count: an unconstrained
+    `N`-atom Cartesian model has `3N` coordinates, and each independent holonomic
+    constraint removes one degree of freedom. The strict inequality records the
+    nondegenerate regime with at least one remaining degree of freedom. -/
+structure ConstrainedMolecularSystem where
+  atomCount : ℕ
+  constraintCount : ℕ
+  hIndependent : constraintCount < 3 * atomCount
+
+/-- Effective unconstrained molecular dimension. -/
+def ConstrainedMolecularSystem.effectiveDOF (X : ConstrainedMolecularSystem) : ℕ :=
+  3 * X.atomCount - X.constraintCount
+
+/-- Paper3 transport of the molecular dimension count into the local architecture object. -/
+def ConstrainedMolecularSystem.toArchitecture (X : ConstrainedMolecularSystem) : Architecture where
+  dof := X.effectiveDOF
+  capabilities := 1
+  dof_pos := by
+    exact Nat.sub_pos_of_lt X.hIndependent
+
+theorem constrainedMolecular_toArchitecture_dof (X : ConstrainedMolecularSystem) :
+    X.toArchitecture.dof = 3 * X.atomCount - X.constraintCount := by
+  rfl
+
+/-- The canonical exact-resolution problem for a constrained molecular system has structural
+    rank equal to the remaining unconstrained molecular dimension. -/
+theorem constrainedMolecular_srank_eq_effectiveDOF (X : ConstrainedMolecularSystem) :
+    (canonicalDP X.toArchitecture.dof).srank = 3 * X.atomCount - X.constraintCount := by
+  rw [constrainedMolecular_toArchitecture_dof]
+  exact canonical_srank_eq_n _
+
+/-- Landauer floor for the constrained molecular transport used in paper3.
+
+    Any exact resolver for the canonical problem on an `N`-atom system with `k`
+    independent holonomic constraints pays at least one per-bit unit for each of the
+    `3N-k` remaining coordinates. -/
+theorem constrainedMolecular_energy_lower_bound
+    (X : ConstrainedMolecularSystem)
+    (I : Finset (Fin X.toArchitecture.dof))
+    (hI : (canonicalDP X.toArchitecture.dof).isSufficient I)
+    (M : ThermoModel) (hJ : 0 < M.joulesPerBit) :
+    M.joulesPerBit * (3 * X.atomCount - X.constraintCount) ≤ energyLowerBound M I.card := by
+  simpa [constrainedMolecular_toArchitecture_dof] using
+    srank_energy_lower_bound X.toArchitecture I hI M hJ
+
+/-- Local paper3 transport of a finite RATTLE holonomic topology into the architecture
+count used by the canonical exact-resolution theorems. -/
+def rattleTopologyToArchitecture
+    (X : DecisionQuotient.Computation.RATTLE.HolonomicTopology) : Architecture :=
+  ConstrainedMolecularSystem.toArchitecture
+    { atomCount := X.atomCount
+      constraintCount := X.constraintCount
+      hIndependent := X.hIndependent }
+
+/-- The RATTLE holonomic status register is exactly a `k`-bit binary interface. -/
+theorem rattle_constraintObservations_card
+    (X : DecisionQuotient.Computation.RATTLE.HolonomicTopology) :
+    Fintype.card X.constraintObservations = 2 ^ X.constraintCount := by
+  simpa using DecisionQuotient.Computation.RATTLE.constraintObservations_card X
+
+theorem rattle_toArchitecture_dof
+    (X : DecisionQuotient.Computation.RATTLE.HolonomicTopology) :
+    (rattleTopologyToArchitecture X).dof = 3 * X.atomCount - X.constraintCount := by
+  rfl
+
+/-- Direct RATTLE specialization of the local DOF-srank bridge. -/
+theorem rattle_srank_eq_effectiveDOF
+    (X : DecisionQuotient.Computation.RATTLE.HolonomicTopology) :
+    (canonicalDP (rattleTopologyToArchitecture X).dof).srank =
+      3 * X.atomCount - X.constraintCount := by
+  rw [rattle_toArchitecture_dof]
+  exact canonical_srank_eq_n _
+
+/-- Direct RATTLE specialization of the local Landauer-linear floor. -/
+theorem rattle_energy_lower_bound
+    (X : DecisionQuotient.Computation.RATTLE.HolonomicTopology)
+    (I : Finset (Fin (rattleTopologyToArchitecture X).dof))
+    (hI : (canonicalDP (rattleTopologyToArchitecture X).dof).isSufficient I)
+    (M : ThermoModel) (hJ : 0 < M.joulesPerBit) :
+    M.joulesPerBit * (3 * X.atomCount - X.constraintCount) ≤ energyLowerBound M I.card := by
+  simpa [rattle_toArchitecture_dof] using
+    srank_energy_lower_bound (rattleTopologyToArchitecture X) I hI M hJ
 
 /-! ## England Replication Inequality -/
 
