@@ -23,7 +23,7 @@ On the positive side, we first show that all known tractable cases collapse to e
 
 Exactness is not arbitrary. At zero distortion, any summary that preserves optimal actions must still separate distinct optimizer classes: if two different optimizer classes were assigned the same summary value, the summary would merge states with different optimal-action sets and would cease to be lossless (Proposition~\ref{prop:zero-distortion-refines-quotient}). Exact relevance therefore marks the theoretical floor for lossless abstraction. Section~\ref{sec:exact-semantics-foundation} also identifies the approximation boundary: approximate surrogate claims about relevance or sufficiency are admissible only with an explicit stability reduction to the exact optimizer sets, because witness-gap control preserves the corresponding witness (Proposition~\ref{prop:approximate-relevance-needs-stability-control}), a uniform strict-gap hypothesis preserves the entire optimizer quotient together with the sufficient, relevant, and minimal-sufficient structure (Proposition~\ref{prop:global-approximation-stability}), and arbitrarily small uniform perturbations can otherwise flip the exact judgment (Corollary~\ref{cor:small-uniform-perturbations-can-flip-sufficiency}). In applied settings, this is the practical warning: approximation alone does not justify claims about which coordinates matter.
 
-Realizability of arbitrary quotients fixes the organizing principle: tractability predicates must be evaluated on representation-level structural classes, but modulo theorem-forced equivalences of presentation (Theorem~\ref{thm:labeling-realizable}). The framework is therefore universal representationally as well as semantically: arbitrary exact semantics reduce to quotient recovery, and arbitrary label kernels already occur as optimizer quotients. In particular, closure under relabelings, positive affine utility reparameterizations, duplication, and binary irrelevant-coordinate extension is not a modeling preference; it is inherited from the fact that exact certification depends only on the induced decision quotient relation (Proposition~\ref{prop:closure-operations-preserve-certification}).
+Realizability of arbitrary quotients fixes the organizing principle: tractability predicates must be evaluated on representation-level structural classes, but modulo theorem-forced equivalences of presentation (Theorem~\ref{thm:labeling-realizable}). The framework is therefore universal representationally as well as semantically: arbitrary exact semantics reduce to quotient recovery, and arbitrary label kernels already occur as optimizer quotients. In particular, closure under relabelings, positive affine utility reparameterizations, duplication, and binary irrelevant-coordinate extension is not a modeling preference; it is inherited from the fact that exact certification depends only on the induced decision quotient relation and from the resulting closure-preservation theorems (Propositions~\ref{prop:depends-only-on-opt} and~\ref{prop:closure-operations-preserve-certification}).
 
 The closure laws used below are an explicit theorem-verified generating family of presentation moves:
 \begin{itemize}
@@ -42,7 +42,7 @@ For a decision problem with state space $S$, action space $A$, and utility $U$, 
 \[
 \Opt(s)=\{a\in A : U(a,s) \text{ is maximal among all actions at } s\}.
 \]
-This induces the decision-equivalence relation
+This induces the decision quotient relation
 \[
 s \sim_{\Opt} s' \quad\Longleftrightarrow\quad \Opt(s)=\Opt(s').
 \]
@@ -60,6 +60,7 @@ Then
 \qquad
 \Opt(10)=\Opt(11)=\{a\}.
 \]
+We write a state $x_0x_1$ as the concatenated bit string for $(x_0,x_1)$, so $10$ means $(x_0=1,x_1=0)$.
 The optimizer quotient therefore has exactly two classes, namely $\{00,01\}$ and $\{10,11\}$. The coordinate set $\{0\}$ is sufficient, coordinate $1$ is irrelevant, and coordinate $0$ is relevant. Only the first coordinate changes what matters.
 
 Unrestricted predicates trivialize any impossibility theorem via direct semantic encoding. A finite structural class is therefore needed: polynomial-time checkability, structural extractability, closure-law invariance, and bounded-pattern definability. This class excludes direct semantic encoding while still covering the structural results established here. Closure-law invariance is the clause used in the contradiction (Theorem~\ref{thm:closure-sound-package-no-go}); the remaining clauses restrict the search space to finite, explicitly structural predicates.
@@ -87,6 +88,8 @@ $\mathrm{Adm}_R(s)$ & admissible outputs at state $s$ under exact specification 
 $s \sim_R s'$ & admissible-output equivalence: $\mathrm{Adm}_R(s)=\mathrm{Adm}_R(s')$ \\
 \midrule
 $S/{\sim_R}$ & quotient of states by admissible-output equivalence \\
+\midrule
+$\mathrm{Fin}(m)$ & finite type $\{0,\dots,m-1\}$ used for finite index sets \\
 \midrule
 $\Opt(s)$ & optimizer set of a decision problem at state $s$ \\
 \midrule
