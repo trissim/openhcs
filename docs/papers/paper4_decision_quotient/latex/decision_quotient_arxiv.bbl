@@ -39,38 +39,6 @@ H.~L. Bodlaender, ``A tourist guide through treewidth,'' in \emph{Acta
 E.~C. Freuder, ``Complexity of k-tree structured constraint satisfaction
   problems,'' \emph{Proceedings of AAAI}, pp. 4--9, 1990.
 
-\bibitem{forster2019verified}
-Y.~Forster, E.~Heiter, and G.~Smolka, ``Verified programming of {Turing}
-  machines in {Coq},'' in \emph{Proceedings of the 8th ACM SIGPLAN
-  International Conference on Certified Programs and Proofs}.\hskip 1em plus
-  0.5em minus 0.4em\relax ACM, 2019, pp. 114--127.
-
-\bibitem{kunze2019formal}
-F.~Kunze, G.~Smolka, and Y.~Forster, ``Formal small-step verification of a
-  call-by-value lambda calculus machine,'' in \emph{Asian Symposium on
-  Programming Languages and Systems}.\hskip 1em plus 0.5em minus 0.4em\relax
-  Springer, 2019, pp. 264--283.
-
-\bibitem{nipkow2002isabelle}
-T.~Nipkow, L.~C. Paulson, and M.~Wenzel, \emph{{Isabelle/HOL}: A Proof
-  Assistant for Higher-Order Logic}.\hskip 1em plus 0.5em minus 0.4em\relax
-  Springer, 2002.
-
-\bibitem{haslbeck2021verified}
-M.~P.~L. Haslbeck and T.~Nipkow, ``Verified analysis of list update
-  algorithms,'' in \emph{Journal of Automated Reasoning}, vol.~65.\hskip 1em
-  plus 0.5em minus 0.4em\relax Springer, 2021, pp. 117--156.
-
-\bibitem{mathlib2020}
-{The mathlib Community}, ``The {Lean} mathematical library,'' \emph{Proceedings
-  of the 9th ACM SIGPLAN International Conference on Certified Programs and
-  Proofs}, pp. 367--381, 2020.
-
-\bibitem{moura2021lean4}
-L.~de~Moura and S.~Ullrich, ``The lean 4 theorem prover and programming
-  language,'' in \emph{International Conference on Automated Deduction}.\hskip
-  1em plus 0.5em minus 0.4em\relax Springer, 2021, pp. 625--635.
-
 \bibitem{pawlak1982rough}
 Z.~Pawlak, ``Rough sets,'' \emph{International Journal of Parallel
   Programming}, vol.~11, no.~5, pp. 341--356, 1982.

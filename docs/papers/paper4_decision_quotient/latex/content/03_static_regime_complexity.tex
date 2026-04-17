@@ -98,17 +98,12 @@ For Boolean state spaces $S=\{0,1\}^n$, any sound checker for the empty-set suff
 Empty-set sufficiency asks whether $\Opt$ is constant on all $2^n$ states. A sound refutation-complete checker must be able to separate constant maps from maps that differ on some hidden antipodal partition. An adversary can place the first disagreement in any of $2^{n-1}$ independent pair slots; if fewer than $2^{n-1}$ slots are inspected, two instances remain indistinguishable to the checker but have opposite truth values. Therefore at least $2^{n-1}$ pair checks are necessary.
 \end{proof}
 
-\paragraph{Mechanization note.}
-The TAUTOLOGY reduction stack, the coNP and $\Sigma_2^P$ classifications, and the witness-budget lower-bound core are indexed by their inline Lean handles.
-
 \paragraph{Explicit-state search upper bounds.}
 Under the explicit-state step-counting model, static sufficiency
 and static anchor sufficiency are also wrapped as abstract \textsc{P}
-predicates on inputs carrying a certified state budget. The artifact proves
-these upper bounds via counted searches with quadratic and linear state-space
-dependence respectively, and it also packages the static sufficiency search as
-an explicit correctness-plus-step-bound witness and as part of the unified
-finite-search summary theorem. \leanmeta{\LHrng{DC}{70}{71}, \LH{DC76}, \LHrng{DC}{80}{82}.}
+predicates on inputs carrying a certified state budget. These upper bounds are
+realized by counted searches with quadratic and linear state-space dependence
+respectively. \leanmeta{\LHrng{DC}{70}{71}, \LH{DC76}, \LHrng{DC}{80}{82}.}
 
 This completes the baseline regime. The next section keeps the same exact
 certification question but replaces pairwise counterexample exclusion by

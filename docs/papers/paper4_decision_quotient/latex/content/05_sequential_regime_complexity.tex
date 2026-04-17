@@ -1,6 +1,6 @@
 \section{Sequential Regime Complexity}\label{sec:sequential}
 
-We now move to sequential settings with transitions and observations. Here the same certification question is asked for a sequential decision model carrying transitions, observations, and a planning horizon. In the current formalization, the certified predicate is state-based: after packaging the sequential instance as its induced one-step decision map, can one suppress some coordinates without changing the resulting optimal-action set? This is where the complexity reaches PSPACE. The structural reason is that hidden information can matter later even when it appears irrelevant now. Certification must therefore account for temporally unfolding contingencies rather than compare only one-shot optimizers or conditional expectations. This complexity jump is consonant with the exact abstraction literature for temporally structured decision models: once hidden information can affect future contingent choices, exact aggregation and exact relevance certification both require reasoning about temporally mediated distinctions rather than one-shot optimizer comparisons. In succinct models, that temporal contingency supports the same kind of alternation that drives PSPACE hardness in planning and quantified-logic reductions.
+We now move to sequential settings with transitions and observations. Here the same certification question is asked for a sequential decision model carrying transitions, observations, and a planning horizon. In this section the certified predicate is state-based: after packaging the sequential instance as its induced one-step decision map, can one suppress some coordinates without changing the resulting optimal-action set? This is where the complexity reaches PSPACE. The structural reason is that hidden information can matter later even when it appears irrelevant now. Certification must therefore account for temporally unfolding contingencies rather than compare only one-shot optimizers or conditional expectations. This complexity jump is consonant with the exact abstraction literature for temporally structured decision models: once hidden information can affect future contingent choices, exact aggregation and exact relevance certification both require reasoning about temporally mediated distinctions rather than one-shot optimizer comparisons. In succinct models, that temporal contingency supports the same kind of alternation that drives PSPACE hardness in planning and quantified-logic reductions.
 
 \subsection{Sequential Decision Problems}
 
@@ -17,7 +17,7 @@ For a sequential instance $\mathcal D_{\mathrm{seq}}$, let $\Opt_{\mathrm{seq}}(
 \[
 \forall s,s'\in S:\quad s_I=s'_I \implies \Opt_{\mathrm{seq}}(s)=\Opt_{\mathrm{seq}}(s').
 \]
-This is the sequential state-based certification predicate used throughout the paper and in the artifact.
+This is the sequential state-based certification predicate used throughout the paper.
 \end{definition}
 
 \paragraph{Two interpretations.}
@@ -54,7 +54,7 @@ For any minimal sequentially sufficient set $I$, a coordinate lies in $I$ if and
 
 
 \begin{proof}
-In the current formalization, sequential sufficiency is defined as sufficiency of the underlying one-step optimizer map on the state space. The static minimal-set/relevance equivalence therefore transports directly to the sequential setting.
+With this definition, sequential sufficiency is just sufficiency of the underlying one-step optimizer map on the state space. The static minimal-set/relevance equivalence therefore transports directly to the sequential setting.
 \end{proof}
 
 \subsection{PSPACE-Completeness}
@@ -70,7 +70,7 @@ SEQUENTIAL-SUFFICIENCY-CHECK is PSPACE-complete.
 
 
 \begin{proof}
-For membership, the verifier ranges over state pairs or candidate witnesses while evaluating the induced sequential optimizer of the input instance. Under the present finite-horizon encoding, that induced optimizer can be evaluated using only polynomial space in the succinct input description of the reduction gadgets, and the outer search can likewise be carried out in polynomial space. This is the verifier pattern abstracted by the explicit finite-search layer formalized in the artifact.
+For membership, the verifier ranges over state pairs or candidate witnesses while evaluating the induced sequential optimizer of the input instance. Under the present finite-horizon encoding, that induced optimizer can be evaluated using only polynomial space in the succinct input description of the reduction gadgets, and the outer search can likewise be carried out in polynomial space.
 
 For hardness, reduce TQBF. Encode alternating quantifiers into the reduced sequential instance so that the induced optimizer is state-independent exactly when the quantified instance is true. Then empty-set sequential sufficiency holds exactly when the source TQBF instance is true.
 \end{proof}

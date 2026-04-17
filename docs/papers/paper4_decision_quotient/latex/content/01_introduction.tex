@@ -18,14 +18,10 @@ The impossibility manifests differently across regimes. The static regime yields
 
 Six structural restrictions collapse exact certification to polynomial time: bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, and coordinate symmetry. Each removes a distinct source of hardness, providing tractable boundaries to the impossibility theorem.
 
-\subsection{Mechanized Core}
-
-A Lean 4 artifact mechanically checks the optimizer-quotient universal property, finite deciders, reduction-correctness lemmas, witness schemas, and bridge results \leanmeta{\LH{QT1}, \LH{QT7}, \LHrng{DC}{91}{99}, \LHrng{OU}{1}{2}, \LHrng{OU}{8}{12}, \LHrng{EH}{1}{10}.} The 22K-line artifact verifies the combinatorial core, while oracle-class placements are argued in the paper text.
-
 \subsection{Paper Structure}
 
 Section~\ref{sec:formal-setup} introduces the formal setup. Sections~\ref{sec:hardness}, \ref{sec:stochastic}, and \ref{sec:sequential} develop the static, stochastic, and sequential complexity classifications. Section~\ref{sec:regime-hierarchy} consolidates them into the regime matrix. Section~7 presents the impossibility theorem and trilemma. Section~8 collects structural consequences. Sections~\ref{sec:dichotomy} and~\ref{sec:tractable} cover encoding contrasts and tractable cases. Section~9 situates the work, and Appendix~\ref{app:applications} collects model translations.
 
 \subsection{Artifact Availability}
 
-The proof artifact is archived at \url{https://doi.org/10.5281/zenodo.19057595}. The cited-content snapshot contains \LeanReleaseLines\ lines across \LeanReleaseFiles\ files with \LeanReleaseSorry\ occurrences of \texttt{sorry}.
+The proof artifact is archived at \url{https://doi.org/10.5281/zenodo.19057595}. Inline theorem handles provide provenance for specific claims; the paper's mathematical arguments are intended to stand on their own without consulting the archive.

@@ -46,7 +46,7 @@ Using the same conditional optimizer map $\Opt^{\mathrm{stoch}}_I$, a coordinate
 \[
 \forall \alpha \in \mathrm{supp}(S_I)\; \exists a \in A:\quad \Opt^{\mathrm{stoch}}_I(\alpha)=\{a\}.
 \]
-In the paper, we refer to this as \emph{stochastic decisiveness}. In the current artifact, this is the stochastic predicate with the strongest succinct-encoding complexity package.
+In the paper, we refer to this as \emph{stochastic decisiveness}. It is the stochastic predicate with the strongest succinct-encoding complexity package developed here.
 \end{definition}
 
 \paragraph{From witness exclusion to counting.}
@@ -62,15 +62,15 @@ Consider a stochastic decision problem with $S=\{s_1,s_2\}$, $A=\{a,b\}$, unifor
 \renewcommand{\tabularxcolumn}[1]{m{#1}}
 \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash\hyphenpenalty=10000\exhyphenpenalty=10000}m{0.15\linewidth}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}m{0.22\linewidth}>{\raggedright\arraybackslash}m{0.18\linewidth}@{}}
 \toprule
-\textbf{Predicate/} \textbf{query} & \textbf{What is proved here} & \textbf{Mechanized core} & \textbf{Open / not formalized} \\
+\textbf{Predicate/} \textbf{query} & \textbf{What is proved here} & \textbf{Finite structural core} & \textbf{Open / omitted} \\
 \midrule
 Stochastic sufficiency (preservation) & Polynomial-time under explicit-state encoding; bridges to static sufficiency & Explicit-state decider; full-support bridge package & No succinct-encoding hardness claimed \\
 \midrule
 Minimum / anchor preservation & Polynomial-time in explicit state; under full support, inherit coNP-completeness / $\Sigma_2^P$-completeness from the static regime & Full-support inheritance theorems; finite searches; obstruction/bridge lemmas & Open; conjecture coNP-hard \\
 \midrule
-Stochastic decisiveness & Polynomial-time under explicit-state encoding; PP-hard under succinct encoding & Reduction core; finite witness/checking schemata & No oracle-machine formalization \\
+Stochastic decisiveness & Polynomial-time under explicit-state encoding; PP-hard under succinct encoding & Reduction core; finite witness/checking schemata & No oracle-machine formalization in the paper \\
 \midrule
-Minimum / anchor decisiveness & PP-hard; in $\textsf{NP}^{\textsf{PP}}$ at paper level & Existential witness/checking schemata; bounded explicit-state searches & No oracle-class membership formalization \\
+Minimum / anchor decisiveness & PP-hard; in $\textsf{NP}^{\textsf{PP}}$ at paper level & Existential witness/checking schemata; bounded explicit-state searches & No sharper classification claimed \\
 \bottomrule
 \end{tabularx}
 \caption{Regime classification summary for the stochastic row. Open entries mark explicit scope boundaries. Under full support, stochastic preservation is completely classified in the full-support base case.}
@@ -93,14 +93,14 @@ Under the explicit-state encoding, \textsc{Stochastic-Sufficiency-Check} is deci
 
 
 \begin{proof}
-For a fixed information set $I$, the verifier scans the finite state space and checks whether the conditional fiber optimizer $\Opt^{\mathrm{stoch}}_I(s_I)$ agrees with the fully conditioned optimizer $\Opt(s)$ at every state $s$. The artifact contains a counted explicit-state search witnessing exactly this predicate together with a linear-in-$|S|$ step bound \leanmeta{\LHrng{DC}{91}{93}.} Hence stochastic sufficiency is polynomial-time decidable in the explicit-state model.
+For a fixed information set $I$, the verifier scans the finite state space and checks whether the conditional fiber optimizer $\Opt^{\mathrm{stoch}}_I(s_I)$ agrees with the fully conditioned optimizer $\Opt(s)$ at every state $s$. This yields a linear-in-$|S|$ explicit-state procedure. \leanmeta{\LHrng{DC}{91}{93}.} Hence stochastic sufficiency is polynomial-time decidable in the explicit-state model.
 \end{proof}
 
 \paragraph{Conjecture 4.1 (Support-Sensitive Preservation Complexity).}\label{con:succinct-soundness}
 Under the succinct encoding of Section~\ref{sec:encoding}, \textsc{Stochastic-Preservation-Check}
 for general distributions (without the full-support assumption) is coNP-hard.
 
-Intuition: preservation remains syntactically universal (statewise optimizer agreement), so its quantifier profile aligns with coNP-style counterexample exclusion rather than PP-style majority comparison. The support-sensitive obstruction lemmas (Proposition~\ref{prop:stochastic-preservation-partial-general}) isolate why full-support transfer fails: zero-probability states can witness violations even when they never appear in conditional averages. The mechanized finite core for this obstruction is available \leanmeta{\LH{OU12}, \LH{DC96}, \LH{DC98}}.
+Intuition: preservation remains syntactically universal (statewise optimizer agreement), so its quantifier profile aligns with coNP-style counterexample exclusion rather than PP-style majority comparison. The support-sensitive obstruction lemmas (Proposition~\ref{prop:stochastic-preservation-partial-general}) isolate why full-support transfer fails: zero-probability states can witness violations even when they never appear in conditional averages. \leanmeta{\LH{OU12}, \LH{DC96}, \LH{DC98}}
 
 Open Problem 4.2.\label{prob:minimum-succinct} Determine the exact succinct-encoding complexity of
 \textsc{Stochastic-Minimum-Preservation} and \textsc{Stochastic-Anchor-Preservation}
@@ -125,7 +125,7 @@ Assume the distribution $P$ has full support and the action set is nonempty. The
 
 
 \begin{proof}
-The forward direction uses full support to show that when the static optimizer is constant on each $I$-fiber, conditional averaging cannot change the optimizer on that fiber. The reverse direction is Proposition~\ref{prop:stochastic-to-static-sufficiency}. Both directions are mechanized.
+The forward direction uses full support to show that when the static optimizer is constant on each $I$-fiber, conditional averaging cannot change the optimizer on that fiber. The reverse direction is Proposition~\ref{prop:stochastic-to-static-sufficiency}.
 \end{proof}
 
 \leanmetapending{\LHrng{DC}{97}{99}}
@@ -166,12 +166,12 @@ For minimum preservation, Proposition~\ref{prop:stochastic-full-support-equiv} a
 
 \leanmetapending{\LHrng{DQ}{86}{89}}
 \begin{proposition}[Explicit Finite Search for Preservation Variants]\label{prop:stochastic-preservation-variant-search}
-For finite instances, the artifact contains counted exhaustive-search procedures for stochastic minimum preservation and stochastic anchor preservation. Their certified step bounds are $O(2^n)$ and $O(|S|)$, respectively.
+For finite instances, counted exhaustive-search procedures exist for stochastic minimum preservation and stochastic anchor preservation. Their step bounds are $O(2^n)$ and $O(|S|)$, respectively.
 \end{proposition}
 
 
 \begin{proof}
-The minimum-preservation search scans the subset lattice and invokes the explicit-state preservation checker on each candidate set. The anchor-preservation search scans candidate anchor states and checks preservation on the induced fiber. Both procedures are packaged with correctness theorems and explicit step bounds in the artifact.
+The minimum-preservation search scans the subset lattice and invokes the explicit-state preservation checker on each candidate set. The anchor-preservation search scans candidate anchor states and checks preservation on the induced fiber.
 \end{proof}
 
 \leanmetapending{\LHrng{DQ}{92}{93}}
@@ -181,7 +181,7 @@ Under the explicit-state encoding, \textsc{Stochastic-Minimum-Preservation} and 
 
 
 \begin{proof}
-For minimum preservation, the explicit-state search enumerates coordinate subsets and invokes the explicit preservation checker on each candidate set; the resulting counted procedure is polynomial in the explicit input size for fixed state and coordinate budgets. For anchor preservation, the explicit-state search enumerates anchor states and checks preservation on the induced fiber, yielding a polynomial-time verifier. Both wrappers are mechanized in the artifact.
+For minimum preservation, the explicit-state search enumerates coordinate subsets and invokes the explicit preservation checker on each candidate set; the resulting counted procedure is polynomial in the explicit input size for fixed state and coordinate budgets. For anchor preservation, the explicit-state search enumerates anchor states and checks preservation on the induced fiber, yielding a polynomial-time verifier.
 \end{proof}
 
 \leanmetapending{\LHrng{DQ}{90}{91}, \LHrng{DQ}{96}{97}}
@@ -197,7 +197,7 @@ Let $I$ be a coordinate set.
 
 
 \begin{proof}
-The first statement composes the unconditional bridge from stochastic preservation to static sufficiency with the static theorem that every sufficient set contains all relevant coordinates. The second is the resulting cardinality bound for any witness set in the minimum query. For the positive-support statements, the mechanized proof refines the full-support argument: it uses positivity only on one representative state per relevant fiber, together with fiberwise invariance of the conditional optimizer, to propagate static sufficiency or anchor sufficiency into stochastic preservation on the whole fiber.
+The first statement composes the unconditional bridge from stochastic preservation to static sufficiency with the static theorem that every sufficient set contains all relevant coordinates. The second is the resulting cardinality bound for any witness set in the minimum query. For the positive-support statements, the same fiberwise argument uses positivity only on one representative state per relevant fiber, together with invariance of the conditional optimizer on that fiber, to propagate static sufficiency or anchor sufficiency into stochastic preservation on the whole fiber.
 \end{proof}
 
 \paragraph{What this paper establishes for preservation.}
@@ -231,25 +231,25 @@ Equivalently, some $I$-fiber has a unique conditional optimal action.
 
 \subsection{Encoding-Sensitive Complexity of Stochastic Decisiveness}
 
-The stochastic regime preserves the same underlying certification template, namely whether the retained coordinates determine the optimizer, but asks it after conditioning and expectation have been introduced. The current complexity package concerns stochastic decisiveness because it admits a clean mechanized reduction core and directly supports the existential anchor/minimum queries. For the empty-information case, one is already comparing aggregate mass of satisfying versus nonsatisfying states. More generally, stochastic decisiveness asks whether one action strictly dominates all competitors in conditional expected utility on each admissible fiber.
+The stochastic regime preserves the same underlying certification template, namely whether the retained coordinates determine the optimizer, but asks it after conditioning and expectation have been introduced. The decisiveness package is the one that directly supports the existential anchor/minimum queries. For the empty-information case, one is already comparing aggregate mass of satisfying versus nonsatisfying states. More generally, stochastic decisiveness asks whether one action strictly dominates all competitors in conditional expected utility on each admissible fiber.
 
 \leanmetapending{\LH{DC45}, \LH{DC62}, \LH{DC72}, \LHrng{OU}{8}{11}}
 \begin{theorem}[Stochastic Decisiveness is Encoding-Sensitive]\label{thm:stochastic-pp}
-For the stochastic decisiveness predicate above, \textsc{Stochastic-Decisiveness-Check} is decidable in polynomial time under the explicit-state encoding. Under the succinct encoding it is PP-hard. The accompanying upper-bound argument is proved in the paper via an explicit bad-fiber witness characterization whose finite witness/checking core is mechanized in the artifact.
+For the stochastic decisiveness predicate above, \textsc{Stochastic-Decisiveness-Check} is decidable in polynomial time under the explicit-state encoding. Under the succinct encoding it is PP-hard. The upper-bound side proceeds via an explicit bad-fiber witness characterization.
 \end{theorem}
 
 
 \begin{proof}
 For the explicit-state encoding, the number of admissible fibers is at most $|S|$, so one can enumerate the fibers and, for each fiber value $\alpha$, compute the conditional expected utilities of all actions directly from the table. Checking whether exactly one action attains the maximum on each fiber is therefore polynomial in the explicit input size.
 
-For succinct-encoding hardness, reduce MAJSAT by the three-action gadget used in the mechanized reduction. Given Boolean formula $\varphi$, take $S=\{0,1\}^n$, uniform $P$, actions $\{\mathrm{accept},\mathrm{hold}_L,\mathrm{hold}_R\}$, and utilities
+For succinct-encoding hardness, reduce MAJSAT by the three-action gadget used in the reduction. Given Boolean formula $\varphi$, take $S=\{0,1\}^n$, uniform $P$, actions $\{\mathrm{accept},\mathrm{hold}_L,\mathrm{hold}_R\}$, and utilities
 \[
 U(\mathrm{accept},s)=\mathbf{1}[\varphi(s)],\qquad
 U(\mathrm{hold}_L,s)=U(\mathrm{hold}_R,s)=\frac12-2^{-(n+1)},
 \]
 with $I=\emptyset$. There is only one admissible fiber, so stochastic decisiveness asks whether the prior-optimal action is unique. By construction, this happens exactly when $\mathbb{E}[\varphi]\ge 1/2$, i.e., in the MAJSAT case. Thus MAJSAT many-one reduces to stochastic decisiveness.
 
-For the upper bound, failure of decisiveness is witnessed by one bad state whose observed fiber does not have a singleton conditional optimum. The current artifact packages exactly this no-witness characterization together with the corresponding existential witness schema, and the two directions are bundled in a summary theorem \leanmeta{\LHrng{OU}{8}{11}.} These mechanized witness/checking packages verify the finite combinatorial core used by the paper's oracle-class arguments. Concretely, the artifact verifies the existential-universal quantifier structure of the predicate, the witness-checking schema that guesses an anchor and verifies conditional-uniqueness using PP comparisons, and the finite-step-counted search wrappers that bound the nondeterministic guessing phase.\leanmeta{\LHrng{OU}{1}{2}, \LHrng{OU}{6}{7}} The standard oracle-machine reduction proving $\textsf{NP}^{\textsf{PP}}$ membership is argued in the paper text and not mechanized. The corresponding $\textsf{coNP}^{\textsf{PP}}$-style and $\textsf{NP}^{\textsf{PP}}$-style memberships are then proved in the paper text by standard complexity-theoretic reasoning.
+For the upper bound, failure of decisiveness is witnessed by one bad state whose observed fiber does not have a singleton conditional optimum. Thus the complement has an existentially guessed bad fiber together with a PP-checkable uniqueness predicate on that fiber. A nondeterministic polynomial-time machine can guess the witness fiber and use a PP oracle to compare conditional expected utilities of the candidate actions on that fiber. This gives the corresponding oracle-class upper bounds by standard guess-and-query reasoning. \leanmeta{\LHrng{OU}{1}{2}, \LHrng{OU}{6}{11}}
 \end{proof}
 
 \leanmetapending{\LH{DC19}}
@@ -288,12 +288,12 @@ If at least half of all assignments satisfy $\varphi$, then $\mathrm{accept}$ is
 
 
 \begin{proof}
-Reduce MAJSAT to the $k=0$ slice. In the same three-action gadget used above, there exists a stochastically decisive set of size at most $0$ iff the empty set itself is stochastically decisive. This empty-set equivalence for the gadget is certified in the artifact, so MAJSAT many-one reduces to \textsc{Stochastic-Minimum-Sufficient-Set}.
+Reduce MAJSAT to the $k=0$ slice. In the same three-action gadget used above, there exists a stochastically decisive set of size at most $0$ iff the empty set itself is stochastically decisive. So MAJSAT many-one reduces to \textsc{Stochastic-Minimum-Sufficient-Set}.
 \end{proof}
 
 \leanmetapending{\LHrng{DC}{62}{65}, \LHrng{DC}{72}{73}, \LH{DC76}, \LHrng{DC}{91}{93}}
 \begin{proposition}[Explicit Finite Search for Stochastic Queries]\label{prop:stochastic-explicit-search}
-For finite instances, the artifact contains counted exhaustive-search procedures for stochastic sufficiency, stochastic decisiveness, stochastic anchor sufficiency, and stochastic minimum sufficiency. Their certified step bounds are respectively $O(|S|)$, $O(|S|)$, $O(|S||A|)$, and $O(2^n)$.
+For finite instances, counted exhaustive-search procedures exist for stochastic sufficiency, stochastic decisiveness, stochastic anchor sufficiency, and stochastic minimum sufficiency. Their step bounds are respectively $O(|S|)$, $O(|S|)$, $O(|S||A|)$, and $O(2^n)$.
 \end{proposition}
 
 
@@ -308,19 +308,19 @@ Under the present encoding, \textsc{Stochastic-Anchor-Sufficiency-Check} and \te
 
 
 \begin{proof}
-For anchor sufficiency, the mechanized collapse
+For anchor sufficiency, the query collapses to
 \[
 \begin{aligned}
 &\mathrm{STOCHASTIC\mbox{-}ANCHOR\mbox{-}SUFFICIENCY\mbox{-}CHECK}(P,I) \\
 &\qquad\iff \exists s_0\,\exists a\; \bigl(\mathrm{fiberOpt}(P,I,s_0)=\{a\}\bigr)
 \end{aligned}
 \]
-is already available in the artifact. \leanmeta{\LH{PA3}} A nondeterministic polynomial-time machine may therefore guess $(s_0,a)$ and use a PP oracle to verify that $a$ is the unique conditional optimum on the anchor fiber. Concretely, uniqueness can be checked by comparing the conditional expected utility of $a$ against every competing action on that fiber, which is exactly the same majority-style conditional comparison used in the decisiveness verification.
+\leanmeta{\LH{PA3}} A nondeterministic polynomial-time machine may therefore guess $(s_0,a)$ and use a PP oracle to verify that $a$ is the unique conditional optimum on the anchor fiber. Concretely, uniqueness can be checked by comparing the conditional expected utility of $a$ against every competing action on that fiber, which is exactly the same majority-style conditional comparison used in the decisiveness verification.
 
 For the minimum query, the machine guesses a coordinate set $I$ with $|I|\le k$ and then asks whether $I$ is stochastically decisive. The same witness/checking template used for the anchor case yields the required PP-style verifier for the guessed set, so the minimum query is also in $\textsf{NP}^{\textsf{PP}}$.
 \end{proof}
 
-Theorem~\ref{thm:stochastic-nppp-upper} completes the complexity picture for stochastic decisiveness: decisiveness is polynomial-time in the explicit-state model and PP-hard in the succinct model, while the anchor and minimum decisiveness queries are PP-hard and lie in $\textsf{NP}^{\textsf{PP}}$. Those oracle-class memberships are proved in the paper text. The artifact independently verifies the finite core behind those proofs: the bad-fiber counter-witness schema for decisiveness, the anchor-collapse equivalence, the generic existential-witness schema, bounded-witness recoveries for the explicit-state stochastic anchor and minimum searches, and existential-majority hardness/completeness packages for the anchor and decisiveness query families \leanmeta{\LHrng{OU}{8}{11}, \LHrng{EH}{2}{10}.}
+Theorem~\ref{thm:stochastic-nppp-upper} completes the complexity picture for stochastic decisiveness: decisiveness is polynomial-time in the explicit-state model and PP-hard in the succinct model, while the anchor and minimum decisiveness queries are PP-hard and lie in $\textsf{NP}^{\textsf{PP}}$. The finite witness patterns and reduction gadgets used by those oracle arguments are indexed by the inline handles. \leanmeta{\LHrng{OU}{8}{11}, \LHrng{EH}{2}{10}.}
 
 \paragraph{Scope note.}
 For stochastic preservation, this paper establishes explicit-state tractability for the preservation family, full-support inheritance, quotient equivalence, and support-sensitive obstruction/bridge lemmas beyond full support. The general-distribution minimum and anchor variants still remain open as full classification problems and are not claimed. For stochastic decisiveness, the paper establishes PP-hardness and $\textsf{NP}^{\textsf{PP}}$ membership under the stated encoding. The open entries in Table~2 are explicit scope boundaries rather than unresolved subcases.
@@ -330,7 +330,7 @@ The open entries in Table~2 are explicit scope boundaries. The gap between PP-ha
 \paragraph{Relevance boundary.}
 The stochastic decisiveness query is fiber-indexed: fixing a candidate information set $I$
 induces a derived decision problem whose optimizer is the conditional fiber
-optimizer. In the current formalization this induced problem is always
+optimizer. In this setup the induced problem is always
 $I$-sufficient \leanmeta{\LH{DC57}}, but its relevance notion is therefore also
 indexed by $I$. For that reason, the paper does not assert a single global
 relevance-set characterization for stochastic minimum sufficiency analogous to

@@ -113,8 +113,8 @@ import LambdaDR
 
 ### Docking Theory Bridge (Leverage/DockingTheoryBridge.lean)
 - local paper3 exposure of abstraction-collapse, Fisher-rank, and exact-sufficiency hardness theorems
-- quantitative checker lower bounds and docking-locality structural-rank bounds
-- sampled, top-k, and concrete scorer-family exact/coarse invariance theorems
+- quantitative checker lower bounds, conformer-search collapse regimes, and docking-locality structural-rank bounds
+- sampled, top-k, geometric-execution, electrostatic, and concrete scorer-family invariance theorems
 
 ### λ_DR Calculus (LambdaDR.lean)
 - Core PL theory contribution: biconditional characterization of SSOT-capable languages

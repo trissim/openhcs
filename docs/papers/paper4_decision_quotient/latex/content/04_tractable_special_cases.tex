@@ -2,7 +2,7 @@
 
 We distinguish the encodings of Section~\ref{sec:encoding}. The tractability results below state the model assumption explicitly.
 
-Our theory provides comprehensive coverage of tractable subcases. The artifact certifies explicit decision procedures for several families, and also certifies paper-specific reductions and complexity transfers connecting structurally interesting restrictions to standard polynomial-time algorithmic backbones. Each subcase removes one of the structural sources of hardness in exact certification: unrestricted action comparison, cross-coordinate interaction, high-width dependency structure, or unnecessary state-space multiplicity.
+Our theory provides comprehensive coverage of tractable subcases. Several families admit explicit decision procedures, and the structurally richer cases reduce to standard polynomial-time algorithmic backbones. Each subcase removes one of the structural sources of hardness in exact certification: unrestricted action comparison, cross-coordinate interaction, high-width dependency structure, or unnecessary state-space multiplicity.
 
 \begin{table}[h]
 \centering
@@ -32,12 +32,12 @@ Coordinate symmetry & orbit types replace raw state pairs & $O\!\bigl(\binom{d+k
 \end{table}
 
 \begin{theorem}[Tractable Subcases]\label{thm:tractable}
-The following structurally interesting tractable subcases are all mechanized in artifact. The artifact certifies paper-specific reductions and complexity transfers connecting each to standard polynomial-time algorithmic backbones. Formal definitions and trivial cases (single action, bounded state space, separable utility, dominance) are retained in the subsections below.
+The following structurally interesting tractable subcases are all established in the paper. Formal definitions and trivial cases (single action, bounded state space, separable utility, dominance) are retained in the subsections below.
 \begin{enumerate}
-\item \textbf{Low tensor rank:} The utility admits a rank-$R$ decomposition $U(a,s) = \sum_{r=1}^R w_r \cdot f_r(a) \cdot \prod_i g_{ri}(s_i)$. The artifact certifies reduction to factored computation with bound $O(|A| \cdot R \cdot n)$. \leanmeta{\LH{DQ77}.}
-\item \textbf{Tree-structured dependencies:} Coordinates are ordered such that $s_i$ depends only on $(s_1,\ldots, s_{i-1})$. The artifact certifies an explicit sufficiency checker for this class. \leanmeta{\LH{DQ63}.}
-\item \textbf{Bounded treewidth:} The interaction graph has treewidth $\le w$ and utility factors over edges. The artifact certifies reduction to bounded-treewidth CSP together with bound $O(n \cdot k^{w+1})$ inherited from standard CSP algorithm. \leanmeta{\LH{DQ81}.}
-\item \textbf{Coordinate symmetry:} Utility is invariant under coordinate permutations. The artifact certifies reduction to orbit-type representatives together with resulting orbit-count bound $O\bigl(\binom{d+k-1}{k-1}^2\bigr)$. \leanmeta{\LH{DQ85}.}
+\item \textbf{Low tensor rank:} The utility admits a rank-$R$ decomposition $U(a,s) = \sum_{r=1}^R w_r \cdot f_r(a) \cdot \prod_i g_{ri}(s_i)$. Then the relevant optimization step reduces to factored computation with bound $O(|A| \cdot R \cdot n)$. \leanmeta{\LH{DQ77}.}
+\item \textbf{Tree-structured dependencies:} Coordinates are ordered such that $s_i$ depends only on $(s_1,\ldots, s_{i-1})$. Then an explicit sufficiency checker exists for this class. \leanmeta{\LH{DQ63}.}
+\item \textbf{Bounded treewidth:} The interaction graph has treewidth $\le w$ and utility factors over edges. Then sufficiency checking reduces to bounded-treewidth CSP with bound $O(n \cdot k^{w+1})$. \leanmeta{\LH{DQ81}.}
+\item \textbf{Coordinate symmetry:} Utility is invariant under coordinate permutations. Then sufficiency checking reduces to orbit-type representatives with resulting orbit-count bound $O\bigl(\binom{d+k-1}{k-1}^2\bigr)$. \leanmeta{\LH{DQ85}.}
 \end{enumerate}
 \end{theorem}
 
@@ -109,12 +109,12 @@ Separable utility (Definition~\ref{def:separable}) is the special case $R = 1$ w
 
 \leanmetapending{\LHrng{DQ}{75}{77}}
 \begin{theorem}[Low Tensor Rank Reduction]\label{thm:tensor-rank}
-If utility has tensor rank $R$, the artifact certifies a reduction of the relevant optimization step to factored computation with bound $O(|A| \cdot R \cdot n)$.
+If utility has tensor rank $R$, the relevant optimization step reduces to factored computation with bound $O(|A| \cdot R \cdot n)$.
 \end{theorem}
 
 
 \begin{proof}
-The artifact certifies three ingredients. First, bounded-rank tensor contraction admits a polynomial bound \leanmeta{\LH{DQ75}.} Second, the low-rank utility representation reduces the relevant optimization step to factored computation in $O(|A| \cdot R \cdot n)$ steps \leanmeta{\LHrng{DQ}{76}{77}.} Third, these are exactly the paper-specific ingredients needed to invoke the standard tensor-network algorithms cited in the text. Thus the formal support here is a certified reduction-and-transfer statement rather than an end-to-end formalization of the tensor-network backbone itself.
+Three ingredients suffice. First, bounded-rank tensor contraction admits a polynomial bound \leanmeta{\LH{DQ75}.} Second, the low-rank utility representation reduces the relevant optimization step to factored computation in $O(|A| \cdot R \cdot n)$ steps \leanmeta{\LHrng{DQ}{76}{77}.} Third, these are exactly the ingredients needed to invoke the standard tensor-network algorithms cited in the text.
 \end{proof}
 
 %% ============================================================
@@ -170,12 +170,12 @@ with unary terms $u_i$ and binary terms $u_{ij}$ given explicitly.
 
 \leanmetapending{\LHrng{DQ}{79}{81}}
 \begin{theorem}[Bounded Treewidth Reduction]\label{thm:treewidth}
-If the interaction graph has treewidth $\le w$ and utility is pairwise with explicit factors, the artifact certifies a reduction to bounded-treewidth CSP together with standard complexity bound $O(n \cdot k^{w+1})$, where $k = \max_i |X_i|$. The reduction bridges to established CSP algorithms~\cite{bodlaender1993tourist, freuder1990complexity, bessiere2013detecting}.
+If the interaction graph has treewidth $\le w$ and utility is pairwise with explicit factors, sufficiency checking reduces to bounded-treewidth CSP with standard complexity bound $O(n \cdot k^{w+1})$, where $k = \max_i |X_i|$. The reduction bridges to established CSP algorithms~\cite{bodlaender1993tourist, freuder1990complexity, bessiere2013detecting}.
 \end{theorem}
 
 
 \begin{proof}
-The artifact certifies the paper-specific reduction from pairwise sufficiency checking to a CSP on the interaction graph \leanmeta{\LH{DQ80}.} It also certifies the transfer of the standard bounded-treewidth complexity bound \leanmeta{\LH{DQ79}, \LH{DQ81}.} Thus formal support here is a certified reduction-and-transfer theorem: the bounded-treewidth algorithm itself is standard (drawing on backdoor tractability methods~\cite{bessiere2013detecting}), while the paper-specific bridge to that algorithm is mechanized.
+The reduction maps pairwise sufficiency checking to a CSP on the interaction graph \leanmeta{\LH{DQ80}.} Standard bounded-treewidth complexity bounds then give the stated runtime \leanmeta{\LH{DQ79}, \LH{DQ81}.}
 \end{proof}
 
 %% ============================================================
@@ -231,7 +231,7 @@ For sufficiency, we need only check pairs $(s, s')$ agreeing on $I$ with \emph{d
 
 \leanmetapending{\LH{DQ56}, \LH{DQ85}}
 \begin{theorem}[Symmetric Complexity Bound]\label{thm:symmetric-complexity}
-Under symmetric utility, the artifact certifies that the number of orbit types is bounded by the stars-and-bars count:
+Under symmetric utility, the number of orbit types is bounded by the stars-and-bars count:
 \[
 |\text{OrbitTypes}| = \binom{d + k - 1}{k - 1}
 \]
@@ -240,7 +240,7 @@ and that sufficiency checking reduces to cross-orbit comparisons. Thus the effec
 
 
 \begin{proof}
-An orbit type is a multiset of $d$ values from $\{0, \ldots, k-1\}$, equivalently a $k$-tuple of non-negative integers summing to $d$. By stars-and-bars, the count is $\binom{d + k - 1}{k - 1}$. The mechanized content here is the orbit-type reduction and the resulting representative-count bound; the resulting polynomial-time conclusion then follows from this certified compression of the comparison space.
+An orbit type is a multiset of $d$ values from $\{0, \ldots, k-1\}$, equivalently a $k$-tuple of non-negative integers summing to $d$. By stars-and-bars, the count is $\binom{d + k - 1}{k - 1}$. The resulting polynomial-time conclusion follows from this compression of the comparison space.
 
 For fixed $k$, this is $O(d^{k-1})$, polynomial in $d$.
 \end{proof}

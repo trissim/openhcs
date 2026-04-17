@@ -1,6 +1,6 @@
 # Paper: Molecular Docking: A Machine-Checked Theory of Exact Resolution, Complexity, and Thermodynamic Cost
 
-**Status**: Draft-ready | **Lean**: 77434 lines, 3392 theorems
+**Status**: Draft-ready | **Lean**: 79763 lines, 3498 theorems
 
 ---
 
@@ -8,7 +8,7 @@
 
 Molecular docking lacks a rigorous theory of the exact object its methods target. Exact configuration resolution under constraints supplies that object. The abstract layer is a bounded decision system equipped with sufficient coordinate sets, a decision quotient, structural rank, and decision-quotient entropy. The molecular layer instantiates the same framework through holonomic constraints, cutoff-local interaction structure, sampled action families, and concrete scorer families.
 
-The theorem package identifies one exact-resolution spine. Surjective abstractions either factor through the decision quotient or erase a decision-relevant distinction, and any physically feasible surjective collapse must therefore factor through the quotient. Structural rank is simultaneously the irreducible coordinate count, the quotient-entropy controller, and the exact Fisher-information dimension. General exact sufficiency certification contains a hardness core, and any sound checker for that core requires witness budget at least $2^{n-1}$. Cutoff locality bounds docking structural rank by active-site and ligand coordinates and therefore isolates a theorem-backed low-rank regime. For sampled docking, exact and coarse winner sets agree under an explicit half-gap hypothesis, inside-cutoff coordinates are sufficient under the stated compatibility assumptions, exact top-$k$ survivors are preserved under a certified boundary gap, and near-tie regimes admit a certified ambiguity band. Finite sampled Lennard-Jones and Coulomb scorer families satisfy theorem-backed exact/coarse invariance criteria under explicit cutoff error and half-gap conditions.
+The theorem package identifies one exact-resolution spine. Surjective abstractions either factor through the decision quotient or erase a decision-relevant distinction, and any physically feasible surjective collapse must therefore factor through the quotient. Structural rank is simultaneously the irreducible coordinate count, the quotient-entropy controller, and the exact Fisher-information dimension. General exact sufficiency certification contains a hardness core, and any sound checker for that core requires witness budget at least $2^{n-1}$. Cutoff locality bounds docking structural rank by active-site and ligand coordinates and therefore isolates a theorem-backed low-rank regime. Continuous-to-grid resolution control yields uniform exact/coarse score approximation and strict-gap winner preservation, while large-cutoff lattice-tail bounds yield direct structural-rank bounds for exact Lennard-Jones, Coulomb, and real-space Ewald docking families. Finite sampled docking admits a canonical uniform discrepancy radius, and bounded action families admit polynomial-time exact sufficiency checking. For sampled docking, exact and coarse winner sets agree under an explicit half-gap hypothesis, an action-side symmetry-broken flat refinement canonically selects a strict sampled winner and yields a uniform positive strict gap whenever at least two sampled actions remain, inside-cutoff coordinates are sufficient under the stated compatibility assumptions, exact top-$k$ survivors are preserved under a certified boundary gap, and near-tie regimes admit a certified ambiguity band. Strict dominance and constant-sign multiplicative separability collapse conformer dependence completely by making every coordinate set sufficient. Finite sampled Lennard-Jones and Coulomb scorer families satisfy theorem-backed exact/coarse invariance criteria under explicit cutoff error and half-gap conditions. The geometric execution layer includes exact phase-space volume preservation for Velocity-Verlet, a closed-form Lennard-Jones gradient, and exponentially decaying Ewald real-space control for long-range Coulomb splitting.
 
 The same exact-resolution spine carries irreducible thermodynamic cost once a positive per-bit lower bound is fixed. Under Landauer calibration, any exact-resolution cycle satisfies $$E \geq k_B T\, H_{\mathrm{nats}}(D),$$ where $H_{\mathrm{nats}}(D)$ is the natural-log entropy of the decision quotient. In the canonical binary encoding, this bound sharpens to $$E \geq \mathrm{DOF}(A)\, k_B T \ln 2,$$ and the rank-$1$ regime is the unique thermodynamic ground state: every system with more than one degree of freedom lies strictly above the minimum per-cycle resolution cost.
 
@@ -31,9 +31,9 @@ _Failed to convert lean_stats.tex_
 
 Molecular docking lacks a rigorous theory of the exact object its methods target. Exact configuration resolution under constraints supplies that object. The structural statements are finite counting, coordinate sufficiency, structural rank, decision-quotient entropy, certification hardness, and thermodynamic lower bounds. The abstract layer is a bounded decision system, represented in Lean by `Architecture` together with the canonical binary encoding `canonicalDP`. The molecular layer instantiates the same framework through holonomic constraint topology, cutoff-local interaction structure, sampled docking families, and concrete scorer families. The quotient object is closer to zero-error and confusability-based information than to average-case coding [@shannon1956zero; @korner1973graphs; @lovasz1979shannon].
 
-One exact-resolution spine controls the manuscript. The decision quotient fixes the coarsest exact abstraction. Structural rank fixes the irreducible dimension of that quotient. The same rank controls quotient entropy, Fisher-information dimension, certification burden, and Landauer cost. For constrained molecular systems with $N$ atoms and $k$ independent holonomic constraints, the transported degree-of-freedom count is $3N-k$, and the exact-resolution floor scales with that remaining unconstrained dimension. Every docking pipeline therefore either solves this object, approximates it, or replaces it with a surrogate objective.
+One exact-resolution spine controls the theorem package. The decision quotient fixes the coarsest exact abstraction. Structural rank fixes the irreducible dimension of that quotient. The same rank controls quotient entropy, Fisher-information dimension, certification burden, and Landauer cost. For constrained molecular systems with $N$ atoms and $k$ independent holonomic constraints, the transported degree-of-freedom count is $3N-k$, and the exact-resolution floor scales with that remaining unconstrained dimension. Every docking pipeline therefore either solves this object, approximates it, or replaces it with a surrogate objective.
 
-The theorem package extends the rank-entropy-cost chain. Surjective abstractions either factor through the decision quotient or erase a decision-relevant distinction, and any physically feasible surjective collapse must therefore factor through the quotient. Any sound checker for the empty-set hardness core requires witness budget at least $2^{n-1}$. The same structural rank is also the exact Fisher-information dimension of the decision problem. Cutoff locality, sampled exact/coarse invariance, top-$k$ survivor control, ambiguity-band containment, and concrete Lennard-Jones and Coulomb cutoff theorems then transport the abstract object into a molecular docking theory with explicit scorer families and approximation regimes.
+The theorem package extends the rank-entropy-cost chain. Surjective abstractions either factor through the decision quotient or erase a decision-relevant distinction, and any physically feasible surjective collapse must therefore factor through the quotient. Any sound checker for the empty-set hardness core requires witness budget at least $2^{n-1}$. The same structural rank is also the exact Fisher-information dimension of the decision problem. Continuous-to-grid resolution control yields uniform exact/coarse approximation and strict-gap winner preservation. Lattice-tail bounds discharge the docking cutoff hypothesis and compose directly into structural-rank bounds for exact Lennard-Jones, Coulomb, and real-space Ewald docking families. Finite sampled domains admit canonical discrepancy radii, bounded action families admit polynomial-time exact checking, action-side symmetry breaking yields a canonical strict sampled winner with a uniform positive strict gap and no structural-rank increase whenever at least two sampled actions remain, cutoff locality, sampled exact/coarse invariance, top-$k$ survivor control, ambiguity-band containment, strict-dominance and multiplicative-separability collapse regimes, and concrete Lennard-Jones, Coulomb, and Ewald theorems transport the abstract object into a molecular docking theory with explicit scorer families, approximation regimes, certificates, and geometric execution structure.
 
 ## Theorem Package
 
@@ -51,9 +51,9 @@ $$\begin{aligned}
 
 An imported coherence theorem gives a separate single-source reading of the same rank-$1$ point: $$\mathrm{SSOT}(A) \iff \mathrm{DOF}(A)=1,$$ where $\mathrm{SSOT}(A)$ denotes the coherent single-source condition that one locus is authoritative, every remaining encoding is a derived view, and all reachable states remain coherent.
 
-The convergence theorem is the endpoint of the manuscript. Earlier sections establish four ingredients that make the equivalence nontrivial: the quotient boundary for exact abstractions, the identification of structural rank with both irreducible coordinate count and Fisher-information dimension, the qualitative and quantitative certification lower bounds, and the molecular locality and stability theorems that make the docking specialization concrete.
+The convergence theorem is the endpoint of the theorem chain. Earlier sections establish four ingredients that make the equivalence nontrivial: the quotient boundary for exact abstractions, the identification of structural rank with both irreducible coordinate count and Fisher-information dimension, the qualitative and quantitative certification lower bounds, and the molecular locality and stability theorems that make the docking specialization concrete.
 
-Exact molecular resolution requires a sufficient coordinate set. Cutoff locality bounds the number of decision-relevant protein coordinates by the active site together with the ligand coordinates. Sampled docking preserves exact winners under explicit half-gap control, retains exact top-$k$ survivors under a certified boundary gap, and admits a near-tie ambiguity band when strict separation fails. The resulting structural-rank bounds and thermodynamic floors constitute the concrete molecular instantiation of the abstract theory.
+Exact molecular resolution requires a sufficient coordinate set. Cutoff locality bounds the number of decision-relevant protein coordinates by the active site together with the ligand coordinates. Sampled docking preserves exact winners under explicit half-gap control, and an action-side symmetry-broken flat refinement canonically chooses a strict sampled winner with a uniform positive strict gap over the finite grid whenever the sampled action family has size at least two. The same sampled layer retains exact top-$k$ survivors under a certified boundary gap and admits a near-tie ambiguity band when strict separation fails. The resulting structural-rank bounds identify low-rank exact docking regimes. Finite flat grid encodings also carry a direct structural-rank entropy bound, and Section [\[main-theorems\]](#main-theorems){reference-type="ref" reference="main-theorems"} now applies the thermodynamic floor directly to the exact docking decision problem, to an explicit fixed-length binary encoding of the finite sampled grid problem, and to the bounded-region sampled inside-cutoff process witness under explicit sufficient-set and budget hypotheses. Together these give the concrete molecular instantiation of the abstract theory.
 
 ## Structural and Empirical Inputs
 
@@ -63,11 +63,11 @@ Theorem [\[thm:counting-gap\]](#thm:counting-gap){reference-type="ref" referenc
 
 1.  **Reference Semantics for Molecular Docking:** exact molecular docking is exact configuration resolution under constraints through sufficient coordinate sets, the decision quotient, and the canonical exact-resolution encoding. Surjective exact summaries factor through the quotient, while any extra collapse erases a decision-relevant distinction. Approximate and heuristic docking methods are thereby located relative to a single exact target object.
 
-2.  **Complexity Boundary:** general exact sufficiency certification contains a hardness core, any sound checker for that core requires witness budget at least $2^{n-1}$, cutoff locality bounds docking structural rank by active-site and ligand coordinates, sampled docking admits theorem-backed exact/coarse winner preservation and inside-cutoff sufficiency under explicit gap and compatibility hypotheses, and top-$k$ as well as near-tie regimes remain under certified control.
+2.  **Complexity Boundary:** general exact sufficiency certification contains a hardness core, any sound checker for that core requires witness budget at least $2^{n-1}$, bounded action families admit polynomial-time exact checking, cutoff locality bounds docking structural rank by active-site and ligand coordinates, sampled docking admits theorem-backed exact/coarse winner preservation and inside-cutoff sufficiency under explicit gap and compatibility hypotheses, action-side symmetry breaking yields a canonical strict sampled winner with a uniform positive strict gap and no structural-rank increase, top-$k$ as well as near-tie regimes remain under certified control, and strict-dominance or multiplicative-separable scorer families collapse conformer dependence by making every coordinate set sufficient.
 
 3.  **Thermodynamic and Statistical Dimension:** the canonical exact-resolution problem assigns one binary acquisition channel to each degree of freedom, the resulting structural rank equals that channel count, the decision entropy is bounded by the same count, the Fisher-information dimension is the same structural rank, and under Landauer calibration exact-resolution cost is bounded below by both $\mathrm{DOF}(A)\,k_B T \ln 2$ and $k_B T H_{\mathrm{nats}}(D)$.
 
-4.  **Molecular Transport and Concrete Scorer Families:** constrained molecular systems with $N$ atoms and $k$ independent holonomic constraints transport directly into the framework with effective dimension $3N-k$, binary constraint-status interface, and a Landauer-linear floor scaling with the remaining unconstrained coordinates. Finite sampled Lennard-Jones and Coulomb scorer families satisfy theorem-backed exact/coarse invariance criteria under explicit cutoff error and half-gap conditions.
+4.  **Approximation, Geometry, and Concrete Scorer Families:** constrained molecular systems with $N$ atoms and $k$ independent holonomic constraints transport directly into the framework with effective dimension $3N-k$, binary constraint-status interface, and a Landauer-linear floor scaling with the remaining unconstrained coordinates. Continuous-to-grid Lipschitz control yields uniform exact/coarse approximation radii, large-cutoff lattice-tail bounds discharge the cutoff-locality hypothesis, finite sampled docking admits a canonical discrepancy radius and theorem-backed pruning certificates, finite sampled Lennard-Jones and Coulomb scorer families satisfy exact/coarse invariance criteria under explicit cutoff error and half-gap conditions, and the geometric execution layer proves exact phase-space volume preservation for Velocity-Verlet, a closed-form Lennard-Jones gradient, and exponential Ewald decay for long-range Coulomb splitting.
 
 5.  **Nonideal Exact Resolution:** theorem-level mismatch and residual witnesses force effective per-bit floors strictly above Landauer, explicit binary mismatch and two-state residual witnesses each yield an additive one-unit overhead above the Landauer floor, and finite-capacity substrates therefore have bounded lifetime and bounded entropy throughput.
 
@@ -85,11 +85,11 @@ Informally: exact resolution must be paid for.
 
 ## Scope
 
-The mathematical structure links structural rank, quotient entropy, Fisher-information dimension, certification hardness, and thermodynamic cost. Theorems are stated abstractly for bounded decision systems represented by the Lean object `Architecture` and are instantiated concretely for constrained molecular systems, cutoff-local docking problems, sampled docking families, and finite scorer approximations.
+The mathematical structure links structural rank, quotient entropy, Fisher-information dimension, certification hardness, thermodynamic cost, and geometric execution structure. Theorems are stated abstractly for bounded decision systems represented by the Lean object `Architecture` and are instantiated concretely for constrained molecular systems, cutoff-local docking problems, sampled docking families, finite scorer approximations, and phase-space-preserving execution maps.
 
 ## Organization
 
-Section [\[foundations\]](#foundations){reference-type="ref" reference="foundations"} defines the structural model, the finite-acquisition interface, and the exact docking semantics. Section [\[probability-model\]](#probability-model){reference-type="ref" reference="probability-model"} derives the quotient boundary, structural-rank identities, Fisher-dimension theorems, and the finite compression bridge. Section [\[complexity-boundary\]](#complexity-boundary){reference-type="ref" reference="complexity-boundary"} states the hardness core, checker lower bounds, cutoff-local low-rank regime, sampled docking preservation theorems, top-$k$ and near-tie control, and concrete scorer-family invariance results. Section [\[main-theorems\]](#main-theorems){reference-type="ref" reference="main-theorems"} derives the thermodynamic cost consequences. Section [\[five-way-equivalence\]](#five-way-equivalence){reference-type="ref" reference="five-way-equivalence"} states the convergence theorem and the remaining universal consequences. Section [\[related-work\]](#related-work){reference-type="ref" reference="related-work"} situates the results relative to thermodynamics, information theory, and molecular computation. Appendix [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="appendix-lean"} records proof provenance.
+Section [\[foundations\]](#foundations){reference-type="ref" reference="foundations"} defines the structural model, the finite-acquisition interface, and the exact docking semantics. Section [\[probability-model\]](#probability-model){reference-type="ref" reference="probability-model"} derives the quotient boundary, structural-rank identities, Fisher-dimension theorems, and the finite compression bridge. Section [\[complexity-boundary\]](#complexity-boundary){reference-type="ref" reference="complexity-boundary"} states the hardness core, checker lower bounds, bounded-action checking regime, cutoff-local low-rank regime, continuous-to-grid and large-cutoff approximation bridges, conformer-search collapse regimes, sampled docking preservation theorems, top-$k$ and near-tie control, pruning certificates, concrete scorer-family invariance results, and the geometric and electrostatic support theorems. Section [\[main-theorems\]](#main-theorems){reference-type="ref" reference="main-theorems"} derives the thermodynamic cost consequences. Section [\[five-way-equivalence\]](#five-way-equivalence){reference-type="ref" reference="five-way-equivalence"} states the convergence theorem and the remaining universal consequences. Section [\[related-work\]](#related-work){reference-type="ref" reference="related-work"} situates the results relative to thermodynamics, information theory, and molecular computation. Appendix [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="appendix-lean"} records proof provenance.
 
 
 # Exact-Resolution Model {#foundations}
@@ -109,7 +109,7 @@ The formal objects that carry the mathematical-physics content are a positive de
 ## Degrees of Freedom
 
 ::: definition
-[]{#def:dof label="def:dof"} The quantity $\mathrm{DOF}(A) \in \mathbb{N}$ counts independent coordinates of variation in a bounded decision system $A$. In the mechanized development it is the local structural parameter attached to `Architecture`; later sections identify it exactly with the structural rank of a canonical decision problem.
+[]{#def:dof label="def:dof"} The quantity $\mathrm{DOF}(A) \in \mathbb{N}$ counts independent coordinates of variation in a bounded decision system $A$. In the mechanized development it is the structural parameter attached to `Architecture`; later sections identify it exactly with the structural rank of a canonical decision problem.
 :::
 
 **Operational meaning.** If $\mathrm{DOF}(A)=n$, the system has $n$ independent coordinates that must be resolved in the worst case by any exact resolver.
@@ -190,7 +190,7 @@ The encoding is the exact Lean object `canonicalDP` in `Leverage/BridgeToDQ.lean
 []{#def:srank label="def:srank"} The *structural rank* of a finite decision problem is the cardinality of its relevant coordinate set, equivalently the size of any minimal sufficient set. It is the minimum interaction dimension that must be read to determine the optimal action exactly.
 :::
 
-For the canonical decision problem attached to $A$, the relevant coordinate set is all of $\mathrm{Fin}\;\mathrm{DOF}(A)$, so the structural-rank problem is exactly matched to the local degree-of-freedom count.
+For the canonical decision problem attached to $A$, the relevant coordinate set is all of $\mathrm{Fin}\;\mathrm{DOF}(A)$, so the structural-rank problem is exactly matched to the declared degree-of-freedom count.
 
 ## Decision Quotient and Entropy
 
@@ -214,60 +214,12 @@ The physics results are naturally stated in nats because Landauer calibration co
 
 ## Formalization in Lean
 
-The local degree-of-freedom object lives in `Leverage/Foundations.lean`, while the canonical decision encoding and its rank-identification theorems live in `Leverage/BridgeToDQ.lean`. Structural rank and decision entropy are formalized in the decision-quotient development.
+The degree-of-freedom object lives in `Leverage/Foundations.lean`, while the canonical decision encoding and its rank-identification theorems live in `Leverage/BridgeToDQ.lean`. Structural rank and decision entropy are formalized in the decision-quotient development.
 
 
 # Exact Resolution, Quotient Structure, and Compression {#probability-model}
 
-The theorems of this section identify the exact object before any complexity or thermodynamic lower bound is applied. The canonical exact-resolution encoding turns the declared degree-of-freedom count into a decision problem whose structural rank is the irreducible interaction dimension of exact resolution. The quotient theorems identify the coarsest exact abstraction of that object, the Fisher theorems identify the same rank as its statistical dimension, and the compression bridge identifies the same distinction structure in finite combinatorial language.
-
-## Degree of Freedom Equals Structural Rank
-
-::: theorem
-[]{#thm:dof-srank label="thm:dof-srank"} For every bounded decision system $A$, $$\mathrm{srank}(\mathrm{canonicalDP}(A)) = \mathrm{DOF}(A).$$
-:::
-
-::: proof
-*Proof.* Write $n = \mathrm{DOF}(A)$. By Definition [\[def:canonical-dp\]](#def:canonical-dp){reference-type="ref" reference="def:canonical-dp"}, the state space is $\mathrm{Fin}\;n \to \mathrm{Bool}$, query action $\mathrm{inl}(i)$ has utility $2$ exactly when coordinate $i$ is true and utility $0$ otherwise, and the fallback action has utility $1$. Fix any coordinate $i$ and choose two states that agree everywhere except at $i$, with one state setting $i$ to true and the other setting $i$ to false; then $\mathrm{inl}(i)$ is optimal in the first state and not optimal in the second, so erasing coordinate $i$ changes the optimizer. Thus every coordinate in $\mathrm{Fin}\;n$ is relevant, the relevant-coordinate set has cardinality $n$, and the structural rank is $n$. Substituting $n = \mathrm{DOF}(A)$ gives the claim. ◻
-:::
-
-Theorem [\[thm:dof-srank\]](#thm:dof-srank){reference-type="ref" reference="thm:dof-srank"} is an exact identity for the canonical encoding attached to the degree-of-freedom count.
-
-::: corollary
-[]{#cor:rank-one label="cor:rank-one"} For every bounded decision system $A$, $$\mathrm{DOF}(A)=1 \iff \mathrm{srank}(\mathrm{canonicalDP}(A))=1.$$
-:::
-
-::: corollary
-[]{#cor:rank-above-one label="cor:rank-above-one"} For every bounded decision system $A$, $$\mathrm{DOF}(A)>1 \implies \mathrm{srank}(\mathrm{canonicalDP}(A))>1.$$
-:::
-
-::: theorem
-[]{#thm:min-bit-operations label="thm:min-bit-operations"} Any exact resolver for $\mathrm{canonicalDP}(A)$ requires at least $\mathrm{DOF}(A)$ elementary bit-acquisition events.
-:::
-
-::: proof
-*Proof.* By Theorem [\[thm:resolution-sufficient\]](#thm:resolution-sufficient){reference-type="ref" reference="thm:resolution-sufficient"}, exact resolution requires reading a sufficient coordinate set. The structural-rank theorem implies every sufficient set has cardinality at least $\mathrm{srank}(\mathrm{canonicalDP}(A))$. Theorem [\[thm:dof-srank\]](#thm:dof-srank){reference-type="ref" reference="thm:dof-srank"} identifies that rank with $\mathrm{DOF}(A)$, so at least $\mathrm{DOF}(A)$ coordinate reads are required. By Theorem [\[thm:one-transition-one-bit\]](#thm:one-transition-one-bit){reference-type="ref" reference="thm:one-transition-one-bit"}, each read contributes one elementary bit-acquisition event. ◻
-:::
-
-## Decision-Quotient Size
-
-::: theorem
-[]{#thm:numopt-bound label="thm:numopt-bound"} For the canonical binary decision problem attached to a bounded decision system $A$, $$\mathrm{numOptClasses}(\mathrm{canonicalDP}(A)) \le 2^{\mathrm{DOF}(A)}.$$
-:::
-
-::: proof
-*Proof.* For binary coordinate spaces, the number of distinct optimal-action classes is at most $2^{\mathrm{srank}}$. Apply that theorem to the canonical encoding and substitute [\[thm:dof-srank\]](#thm:dof-srank){reference-type="ref" reference="thm:dof-srank"}. ◻
-:::
-
-::: theorem
-[]{#thm:entropy-bound label="thm:entropy-bound"} For the canonical binary decision problem attached to a bounded decision system $A$, $$H_{\mathrm{bits}}(\mathrm{canonicalDP}(A)) \le \mathrm{DOF}(A),
-\qquad
-H_{\mathrm{nats}}(\mathrm{canonicalDP}(A)) \le \mathrm{DOF}(A)\,\ln 2.$$
-:::
-
-::: proof
-*Proof.* The bit-entropy statement is the entropy-rank inequality for binary coordinate spaces, again composed with Theorem [\[thm:dof-srank\]](#thm:dof-srank){reference-type="ref" reference="thm:dof-srank"}. The nat-entropy statement is obtained by multiplying by $\ln 2$. ◻
-:::
+The theorems of this section identify the exact object before any complexity or thermodynamic lower bound is applied. The decision quotient is the coarsest exact abstraction of the optimizer. Structural rank is the irreducible dimension of that exact object. Fisher information gives the same dimension a statistical reading. The canonical exact-resolution encoding then transports that abstract structure into degree-of-freedom counts, entropy bounds, and physical bit requirements.
 
 ## Abstraction Boundary
 
@@ -311,6 +263,54 @@ The quotient is the coarsest surjective exact abstraction that remains available
 
 Structural rank therefore has three exact readings in the present development: combinatorial irreducible-coordinate count, quotient entropy controller, and Fisher-information dimension.
 
+## Canonical Exact-Resolution Encoding
+
+::: theorem
+[]{#thm:dof-srank label="thm:dof-srank"} For every bounded decision system $A$, $$\mathrm{srank}(\mathrm{canonicalDP}(A)) = \mathrm{DOF}(A).$$
+:::
+
+::: proof
+*Proof.* Write $n = \mathrm{DOF}(A)$. By Definition [\[def:canonical-dp\]](#def:canonical-dp){reference-type="ref" reference="def:canonical-dp"}, the state space is $\mathrm{Fin}\;n \to \mathrm{Bool}$, query action $\mathrm{inl}(i)$ has utility $2$ exactly when coordinate $i$ is true and utility $0$ otherwise, and the fallback action has utility $1$. Fix any coordinate $i$ and choose two states that agree everywhere except at $i$, with one state setting $i$ to true and the other setting $i$ to false; then $\mathrm{inl}(i)$ is optimal in the first state and not optimal in the second, so erasing coordinate $i$ changes the optimizer. Thus every coordinate in $\mathrm{Fin}\;n$ is relevant, the relevant-coordinate set has cardinality $n$, and the structural rank is $n$. Substituting $n = \mathrm{DOF}(A)$ gives the claim. ◻
+:::
+
+The canonical encoding provides the bridge from the abstract exact object to a degree-of-freedom count carried by a declared architecture.
+
+::: corollary
+[]{#cor:rank-one label="cor:rank-one"} For every bounded decision system $A$, $$\mathrm{DOF}(A)=1 \iff \mathrm{srank}(\mathrm{canonicalDP}(A))=1.$$
+:::
+
+::: corollary
+[]{#cor:rank-above-one label="cor:rank-above-one"} For every bounded decision system $A$, $$\mathrm{DOF}(A)>1 \implies \mathrm{srank}(\mathrm{canonicalDP}(A))>1.$$
+:::
+
+::: theorem
+[]{#thm:min-bit-operations label="thm:min-bit-operations"} Any exact resolver for $\mathrm{canonicalDP}(A)$ requires at least $\mathrm{DOF}(A)$ elementary bit-acquisition events.
+:::
+
+::: proof
+*Proof.* By Theorem [\[thm:resolution-sufficient\]](#thm:resolution-sufficient){reference-type="ref" reference="thm:resolution-sufficient"}, exact resolution requires reading a sufficient coordinate set. The structural-rank theorem implies every sufficient set has cardinality at least $\mathrm{srank}(\mathrm{canonicalDP}(A))$. Theorem [\[thm:dof-srank\]](#thm:dof-srank){reference-type="ref" reference="thm:dof-srank"} identifies that rank with $\mathrm{DOF}(A)$, so at least $\mathrm{DOF}(A)$ coordinate reads are required. By Theorem [\[thm:one-transition-one-bit\]](#thm:one-transition-one-bit){reference-type="ref" reference="thm:one-transition-one-bit"}, each read contributes one elementary bit-acquisition event. ◻
+:::
+
+## Decision-Quotient Size
+
+::: theorem
+[]{#thm:numopt-bound label="thm:numopt-bound"} For the canonical binary decision problem attached to a bounded decision system $A$, $$\mathrm{numOptClasses}(\mathrm{canonicalDP}(A)) \le 2^{\mathrm{DOF}(A)}.$$
+:::
+
+::: proof
+*Proof.* For binary coordinate spaces, the number of distinct optimal-action classes is at most $2^{\mathrm{srank}}$. Apply that theorem to the canonical encoding and substitute [\[thm:dof-srank\]](#thm:dof-srank){reference-type="ref" reference="thm:dof-srank"}. ◻
+:::
+
+::: theorem
+[]{#thm:entropy-bound label="thm:entropy-bound"} For the canonical binary decision problem attached to a bounded decision system $A$, $$H_{\mathrm{bits}}(\mathrm{canonicalDP}(A)) \le \mathrm{DOF}(A),
+\qquad
+H_{\mathrm{nats}}(\mathrm{canonicalDP}(A)) \le \mathrm{DOF}(A)\,\ln 2.$$
+:::
+
+::: proof
+*Proof.* The bit-entropy statement is the entropy-rank inequality for binary coordinate spaces, again composed with Theorem [\[thm:dof-srank\]](#thm:dof-srank){reference-type="ref" reference="thm:dof-srank"}. The nat-entropy statement is obtained by multiplying by $\ln 2$. ◻
+:::
+
 ## Finite Compression Bridge
 
 The next proposition packages the finite bridge in direct compression language: a finite Hamiltonian induces a deterministic tie-broken compression relation, and the paper1 fiber moment becomes the exact collision moment of that relation.
@@ -336,7 +336,7 @@ Informally: to avoid collisions is to pay for distinctions.
 
 ## Formalization
 
-The structural-rank bridge is formalized in `Leverage/BridgeToDQ.lean`; the abstraction-collapse, Fisher-rank, and exact-sufficiency bridge theorems are exposed locally in `Leverage/DockingTheoryBridge.lean`; the finite compression bridge is formalized in `Leverage/ColumnComplexityBridge.lean`; and the minimum-bit and entropy bounds are formalized in the decision-quotient physics and information development. These are the objects used directly by the complexity and thermodynamic theorems of the next sections.
+The structural-rank bridge is formalized in `Leverage/BridgeToDQ.lean`; the abstraction-collapse, Fisher-rank, and exact-sufficiency bridge theorems are assembled in `Leverage/DockingTheoryBridge.lean`; the finite compression bridge is formalized in `Leverage/ColumnComplexityBridge.lean`; and the minimum-bit and entropy bounds are formalized in the decision-quotient physics and information development. These are the objects used directly by the complexity and thermodynamic theorems of the next sections.
 
 
 # Complexity Boundary of Exact Molecular Docking {#complexity-boundary}
@@ -389,7 +389,7 @@ The hard family therefore witnesses full interaction dimensionality: exact suffi
 *Proof.* The checking budget lower bound transfers directly to runtime once runtime dominates the number of checked pairs. ◻
 :::
 
-The hardness core is therefore quantitative as well as qualitative: exact certification is expensive not only by reduction, but by unavoidable witness budget.
+The hardness core is therefore quantitative as well as qualitative: exact certification carries an unavoidable witness budget in addition to the reduction-theoretic hardness statement.
 
 ## Cutoff-Local Docking Regime
 
@@ -411,6 +411,26 @@ The hardness core is therefore quantitative as well as qualitative: exact certif
 
 Informally: bounded pockets bound exact difficulty.
 
+## Conformer-Search Collapse Regimes
+
+::: theorem
+[]{#thm:strict-dominance-empty-sufficient label="thm:strict-dominance-empty-sufficient"} Let $D$ be a finite exact docking problem. If one action strictly dominates every other action at every state, then every coordinate set is sufficient for $D$.
+:::
+
+::: proof
+*Proof.* Strict global dominance makes the dominant action uniquely optimal at every state. The optimal-action set is therefore constant, so no coordinate distinction can change exact resolution. ◻
+:::
+
+::: theorem
+[]{#thm:multiplicative-separable-empty-sufficient label="thm:multiplicative-separable-empty-sufficient"} Let $D$ be a finite exact docking problem with utility of the form $$U(a,s)=f(a)g(s).$$ If the state factor $g$ has constant sign, then every coordinate set is sufficient for $D$.
+:::
+
+::: proof
+*Proof.* With constant-sign state factor, the optimal-action set depends only on the ordering of the action factor $f$. The optimizer is therefore independent of state and exact sufficiency collapses to the empty-information regime. ◻
+:::
+
+These theorems give exact collapse regimes for conformer search: under strict dominance or constant-sign multiplicative separability, conformational variation does not change the exact optimizer.
+
 ## Sampled Docking
 
 ::: theorem
@@ -420,6 +440,18 @@ Informally: bounded pockets bound exact difficulty.
 ::: proof
 *Proof.* The theorem is the sampled docking specialization of the strict half-gap invariance principle: a perturbation smaller than half the exact winner's strict margin cannot change the optimal set. ◻
 :::
+
+::: theorem
+[]{#thm:action-pinned-uniform-gap label="thm:action-pinned-uniform-gap"} Let $$D^{\mathrm{flat}}_{\mathrm{dock,pin}}$$ be the action-side symmetry-broken refinement of the flat exact sampled docking problem, and let $a^\dagger(s)$ denote the canonical max-code representative of the original exact optimal set at flat sampled grid state $s$. If the sampled action family has more than one retained action, then there exists $\gamma>0$ such that for every flat sampled grid state $s$, $$\gamma \le \mathrm{StrictUtilityGap}_{D^{\mathrm{flat}}_{\mathrm{dock,pin}}}(a^\dagger(s),s).$$ Moreover, $$\mathrm{srank}\!\bigl(D^{\mathrm{flat}}_{\mathrm{dock,pin}}\bigr)
+\le
+\mathrm{srank}\!\bigl(D^{\mathrm{flat}}_{\mathrm{dock,exact}}\bigr).$$
+:::
+
+::: proof
+*Proof.* Action-side pinning canonically chooses a strict sampled winner from each exact tie class. The resulting strict utility gap is positive at every flat sampled grid state, and finiteness of the sampled grid state space yields a positive global minimum $\gamma$. Because the symmetry breaking acts only on the action side, it does not increase the number of state coordinates needed for exact resolution. ◻
+:::
+
+This action-pinned refinement is the theorem-backed replacement for a generic no-ties assumption. It preserves the state-side exact-resolution problem, does not increase structural rank, and converts every finite sampled tie class into a canonical strict winner with a uniform positive margin. The later half-gap invariance theorems can therefore be applied to the pinned sampled family with an explicit witness $\gamma$ rather than an ad hoc generic-position premise.
 
 ::: theorem
 []{#thm:sampled-inside-cutoff-sufficient label="thm:sampled-inside-cutoff-sufficient"} Under the cutoff boundedness, sampled-optimum capture, coordinate-compatibility, and injectivity hypotheses, the retained coordinate set consisting of inside-cutoff protein coordinates together with all ligand coordinates is sufficient for the sampled restricted docking problem.
@@ -449,6 +481,189 @@ Informally: bounded pockets bound exact difficulty.
 
 These top-$k$ theorems give a conservative exact-screening regime even when strict single-winner separation is unavailable.
 
+## Continuous-to-Discrete Approximation Bridges
+
+::: theorem
+[]{#thm:lipschitz-grid-approx label="thm:lipschitz-grid-approx"} Let $u_{\mathrm{cont}}$ be a continuous-state score family, let $u_{\mathrm{grid}}$ be its grid approximation, and let each grid state carry a state-discretization error bounded by $\mathrm{res}$. If the score discrepancy is Lipschitz with constant $L$, then the exact-versus-grid score error is uniformly bounded by $L\,\mathrm{res}$.
+:::
+
+::: proof
+*Proof.* The Lipschitz hypothesis bounds score discrepancy at each grid state by $L$ times its state error. A uniform state-error bound by $\mathrm{res}$ therefore yields a uniform score radius $L\,\mathrm{res}$. ◻
+:::
+
+::: theorem
+[]{#thm:resolution-controlled-uniform label="thm:resolution-controlled-uniform"} If the exact-versus-grid score discrepancy is bounded by a resolution-dependent envelope $\varepsilon(\mathrm{res})$ on every lifted grid state, then the lifted grid problem is a uniform utility approximation with radius $\varepsilon(\mathrm{res})$.
+:::
+
+::: proof
+*Proof.* The resolution-controlled hypothesis already states the required pointwise uniform score bound on the lifted grid state space. ◻
+:::
+
+::: theorem
+[]{#thm:resolution-controlled-gap-invariance label="thm:resolution-controlled-gap-invariance"} Let $u_{\mathrm{cont}}$ be a continuous score family, $u_{\mathrm{grid}}$ its discretized score family, and $\mathrm{lift}$ the map from grid states to continuous states. If the exact-versus-grid score discrepancy is bounded by $\varepsilon(\mathrm{res})$ on every lifted grid state, and if $$\varepsilon(\mathrm{res}) < \frac{1}{2}\,\mathrm{StrictUtilityGap},$$ then the lifted exact optimizer and the grid optimizer agree at that grid state.
+:::
+
+::: proof
+*Proof.* Resolution-controlled approximation yields a uniform utility approximation with radius $\varepsilon(\mathrm{res})$. The standard strict half-gap criterion then gives exact/coarse winner preservation. ◻
+:::
+
+::: theorem
+[]{#thm:large-cutoff-bounded label="thm:large-cutoff-bounded"} Let a binding problem admit a lattice-tail perturbation bound with coefficient $c$ and a positive strict minimum decision gap $\gamma$. If the chosen cutoff radius satisfies $$c\,\mathrm{TailSum}_6(R_{\mathrm{cut}}) < \gamma/2,$$ then the exact docking problem satisfies the cutoff-boundedness hypothesis required by the structural-rank and sampled-docking locality theorems.
+:::
+
+::: proof
+*Proof.* The lattice-tail bound supplies a uniform upper bound on every outside-cutoff utility perturbation. The strict minimum gap condition then shows that the perturbation remains below half the exact decision gap, which is exactly the cutoff-boundedness criterion. ◻
+:::
+
+These theorems provide a direct route from continuous regularity and physical tail control to the finite exact/coarse approximation theorems used later in the docking development.
+
+::: theorem
+[]{#thm:lj-shell-derivative-envelope label="thm:lj-shell-derivative-envelope"} Fix a positive lower shell radius $r_{\min}>0$. Then every radius $r \ge r_{\min}$ satisfies $$\left|\frac{d}{dr}U_{\mathrm{LJ}}(r)\right|
+\le
+\left(24|\varepsilon|r_{\min}^{-1}\right)
+\left((|\sigma|r_{\min}^{-1})^6 + 2(|\sigma|r_{\min}^{-1})^{12}\right).$$
+:::
+
+::: proof
+*Proof.* The closed-form Lennard-Jones derivative is bounded by replacing every inverse radius factor with the lower-shell inverse $r_{\min}^{-1}$ and then bounding the polynomial terms by monotonicity on the positive shell. ◻
+:::
+
+::: theorem
+[]{#thm:lj-shell-second-derivative-envelope label="thm:lj-shell-second-derivative-envelope"} Fix a positive lower shell radius $r_{\min}>0$. Then every radius $r \ge r_{\min}$ satisfies $$\left|\frac{d^2}{dr^2}U_{\mathrm{LJ}}(r)\right|
+\le
+\left(24|\varepsilon|r_{\min}^{-2}\right)
+\left(26(|\sigma|r_{\min}^{-1})^{12} + 7(|\sigma|r_{\min}^{-1})^6\right).$$
+:::
+
+::: proof
+*Proof.* Differentiate the closed-form gradient once more and bound every inverse radius factor by the lower-shell inverse. The polynomial terms are again controlled by monotonicity on the positive shell. ◻
+:::
+
+::: theorem
+[]{#thm:lj-shell-hessian-lipschitz label="thm:lj-shell-hessian-lipschitz"} On a positive shell $[r_{\min},r_{\max}]$, any uniform bound on the Lennard-Jones second derivative yields a Lipschitz bound on the Lennard-Jones gradient: $$|U'_{\mathrm{LJ}}(y)-U'_{\mathrm{LJ}}(x)| \le K|y-x|.$$
+:::
+
+::: proof
+*Proof.* The second derivative is the derivative of the gradient. A uniform shell bound on that derivative therefore makes the gradient Lipschitz by the one-dimensional mean value theorem. ◻
+:::
+
+::: theorem
+[]{#thm:lj-shell-quadratic-remainder label="thm:lj-shell-quadratic-remainder"} Fix a positive shell $[r_{\min}, r_{\max}]$. Then for every $x,y \in [r_{\min}, r_{\max}]$, $$|U_{\mathrm{LJ}}(y)-U_{\mathrm{LJ}}(x)-U'_{\mathrm{LJ}}(x)(y-x)|
+\le
+\frac{1}{2}
+\left(24|\varepsilon|r_{\min}^{-2}\right)
+\left(26(|\sigma|r_{\min}^{-1})^{12} + 7(|\sigma|r_{\min}^{-1})^6\right)
+|y-x|^2.$$
+:::
+
+::: proof
+*Proof.* The shell second-derivative envelope gives a uniform Hessian bound on the positive shell. The one-dimensional second-order Taylor remainder is therefore bounded by one half of that shellwise Hessian envelope times the squared radial displacement. ◻
+:::
+
+::: theorem
+[]{#thm:lj-shell-grad-stability label="thm:lj-shell-grad-stability"} Fix a positive radial shell $[r_{\min}, r_{\max}]$ and assume the Lennard-Jones gradient magnitude is bounded by $C$ on that shell. Then for any two radii $x,y \in [r_{\min}, r_{\max}]$, $$|U_{\mathrm{LJ}}(y)-U_{\mathrm{LJ}}(x)| \le C|y-x|.$$
+:::
+
+::: proof
+*Proof.* The closed-form Lennard-Jones derivative is bounded by hypothesis on the positive shell. The one-dimensional mean value theorem then bounds variation of the potential by the derivative envelope times the radial displacement. ◻
+:::
+
+::: theorem
+[]{#thm:lj-shell-uniform-approx label="thm:lj-shell-uniform-approx"} Let $d_{\mathrm{exact}}$ and $d_{\mathrm{grid}}$ be exact and discretized distance maps whose values remain inside a positive shell $[r_{\min}, r_{\max}]$. If the Lennard-Jones gradient magnitude is bounded by $C$ on that shell and $$|d_{\mathrm{exact}}-d_{\mathrm{grid}}| \le \delta$$ pointwise, then the exact and grid Lennard-Jones score families form a uniform utility approximation with radius $C\delta$.
+:::
+
+::: proof
+*Proof.* The shell gradient theorem bounds score variation by $C$ times the radial displacement. Applying that bound pointwise to the exact-versus-grid distance error yields a uniform score discrepancy radius $C\delta$. ◻
+:::
+
+::: theorem
+[]{#thm:lj-shell-quadratic-discretization label="thm:lj-shell-quadratic-discretization"} Let $d_{\mathrm{exact}}$ and $d_{\mathrm{grid}}$ be exact and discretized distance maps whose values remain inside a positive shell $[r_{\min}, r_{\max}]$, and assume $$|d_{\mathrm{exact}}-d_{\mathrm{grid}}| \le \delta$$ pointwise. Then the first-order-corrected exact/grid Lennard-Jones discrepancy satisfies the quadratic bound $$\left|
+U_{\mathrm{LJ}}(d_{\mathrm{exact}})-
+\left(U_{\mathrm{LJ}}(d_{\mathrm{grid}})+U'_{\mathrm{LJ}}(d_{\mathrm{grid}})(d_{\mathrm{exact}}-d_{\mathrm{grid}})\right)
+\right|
+\le
+\frac{1}{2}
+\left(24|\varepsilon|r_{\min}^{-2}\right)
+\left(26(|\sigma|r_{\min}^{-1})^{12} + 7(|\sigma|r_{\min}^{-1})^6\right)
+\delta^2.$$
+:::
+
+::: proof
+*Proof.* Apply the quadratic Taylor remainder theorem to the shellwise exact-versus-grid radial displacement and then substitute the uniform distance-discretization bound $|d_{\mathrm{exact}}-d_{\mathrm{grid}}| \le \delta$. ◻
+:::
+
+::: theorem
+[]{#thm:lj-shell-gap-invariance label="thm:lj-shell-gap-invariance"} In the setting of Theorem [\[thm:lj-shell-uniform-approx\]](#thm:lj-shell-uniform-approx){reference-type="ref" reference="thm:lj-shell-uniform-approx"}, if the radius $C\delta$ is smaller than half the strict exact utility gap at state $s$, then the exact and grid Lennard-Jones optimal-action sets agree at $s$.
+:::
+
+::: proof
+*Proof.* The shell gradient theorem gives a uniform exact/grid score approximation radius $C\delta$. The strict half-gap criterion then yields exact/coarse winner preservation. ◻
+:::
+
+::: theorem
+[]{#thm:bounded-potential-large-cutoff-srank label="thm:bounded-potential-large-cutoff-srank"} If a molecular docking problem satisfies a uniform outside-cutoff perturbation bound with coefficient $c$ and minimum exact decision gap $\gamma$, and if the chosen cutoff satisfies $$c\,\mathrm{TailSum}_6(R_{\mathrm{cut}}) < \gamma/2,$$ then the structural rank of the exact docking problem is bounded by $$\mathrm{srank}(D_{\mathrm{dock}}) \le 3P_{\mathrm{rel}} + 3L.$$
+:::
+
+::: proof
+*Proof.* The large-cutoff condition converts the bounded-potential witness into the cutoff-boundedness hypothesis. The molecular locality theorem then bounds structural rank by the inside-cutoff protein coordinates together with all ligand coordinates. ◻
+:::
+
+::: theorem
+[]{#thm:bounded-potential-large-cutoff-sampled-srank label="thm:bounded-potential-large-cutoff-sampled-srank"} Under the same bounded-potential and large-cutoff hypotheses, the sampled restricted docking problem also satisfies $$\mathrm{srank}(D_{\mathrm{dock}}^{\mathrm{sampled}}) \le 3P_{\mathrm{rel}} + 3L.$$
+:::
+
+::: proof
+*Proof.* The large-cutoff condition again supplies the cutoff-boundedness hypothesis. The sampled cutoff locality theorem then bounds the structural rank of the restricted sampled problem by the same inside-cutoff protein coordinates together with all ligand coordinates. ◻
+:::
+
+Exact Lennard-Jones, exact Coulomb, and exact real-space Ewald scorer families each instantiate this sampled structural-rank bridge through their corresponding tail-control theorems in the mechanized development.
+
+## Certified Pruning and Finite Algorithms
+
+::: theorem
+[]{#thm:finite-uniform-error-radius label="thm:finite-uniform-error-radius"} Every finite sampled docking problem admits a canonical exact/coarse discrepancy radius that witnesses uniform approximation between its exact and coarse score families on the sampled domain.
+:::
+
+::: proof
+*Proof.* The finite sampled domain contains only finitely many exact-versus-coarse score differences. Their maximum gives the required uniform discrepancy radius. ◻
+:::
+
+::: theorem
+[]{#thm:grid-docking-entropy label="thm:grid-docking-entropy"} Let $D^{\mathrm{flat}}_{\mathrm{dock,exact}}$ be the flat exact sampled docking decision problem obtained by reconstructing each discretized molecular grid state from its finite coordinate function on a grid of side length $2N+1$. Then $$H_{\mathrm{nats}}\!\bigl(D^{\mathrm{flat}}_{\mathrm{dock,exact}}\bigr)
+\le
+\mathrm{srank}\!\bigl(D^{\mathrm{flat}}_{\mathrm{dock,exact}}\bigr)\,\ln(2N+1).$$
+:::
+
+::: proof
+*Proof.* The flat grid state family has a finite alphabet of size $2N+1$ at each coordinate. The number of exact optimizer classes is therefore bounded by $(2N+1)^{\mathrm{srank}}$, so taking natural logarithms yields the displayed entropy bound. ◻
+:::
+
+::: theorem
+[]{#thm:topk-certificate-sound label="thm:topk-certificate-sound"} Under a certified top-$k$ margin condition, the theorem-backed pruning certificate retains every exact top-$k$ action inside its survivor set.
+:::
+
+::: proof
+*Proof.* The certificate packages the top-$k$ survivor containment theorem into a finite survivor set together with its soundness proof. The soundness clause is exactly the stated inclusion. ◻
+:::
+
+::: theorem
+[]{#thm:grid-erase-irrelevant label="thm:grid-erase-irrelevant"} For discretized molecular grid states, any coordinate already known to be irrelevant may be erased from a sufficient retained set without destroying exact sufficiency.
+:::
+
+::: proof
+*Proof.* Irrelevant coordinates do not change the optimizer when toggled. Erasing one from a retained sufficient set therefore preserves the exact optimal-action correspondence. ◻
+:::
+
+::: theorem
+[]{#thm:bounded-actions-poly label="thm:bounded-actions-poly"} If the action family has size at most $k$, then exact sufficiency checking is decidable in polynomial time. More precisely, the total checking cost is bounded by $$|S|^2 (1 + k^2).$$
+:::
+
+::: proof
+*Proof.* With at most $k$ actions, each optimal-action comparison costs at most quadratic time in $k$, and sufficiency checking examines all state pairs. The resulting total cost is therefore bounded by $|S|^2(1+k^2)$. ◻
+:::
+
+These theorems convert exact-resolution stability into explicit finite certificates and polynomial-time checking regimes.
+
 ## Concrete Scorer Families
 
 ::: theorem
@@ -457,6 +672,14 @@ These top-$k$ theorems give a conservative exact-screening regime even when stri
 
 ::: proof
 *Proof.* The finite cutoff radius gives a uniform approximation theorem for exact and cutoff Lennard-Jones scores on the sampled domain. A strict half-gap bound then forces winner preservation. ◻
+:::
+
+::: theorem
+[]{#thm:lj-tail-srank label="thm:lj-tail-srank"} If an exact Lennard-Jones docking score admits a physical distance-decay tail bound, if the finite exact decision gap is positive, and if the cutoff radius is large enough that the tail term is below half that gap, then $$\mathrm{srank}(D_{\mathrm{dock}}) \le 3P_{\mathrm{rel}} + 3L.$$
+:::
+
+::: proof
+*Proof.* The physical distance-decay theorem packages the exact Lennard-Jones score into a bounded-potential witness. The large-cutoff theorem converts that witness into the cutoff-boundedness hypothesis, and the molecular locality theorem then gives the structural-rank bound. ◻
 :::
 
 ::: theorem
@@ -475,9 +698,66 @@ These top-$k$ theorems give a conservative exact-screening regime even when stri
 *Proof.* The uniform cutoff-error bound from Theorem [\[thm:coulomb-cutoff-uniform-approx\]](#thm:coulomb-cutoff-uniform-approx){reference-type="ref" reference="thm:coulomb-cutoff-uniform-approx"} combines with the strict half-gap criterion to force winner preservation. ◻
 :::
 
+::: theorem
+[]{#thm:coulomb-tail-srank label="thm:coulomb-tail-srank"} If an exact Coulomb docking score admits a tail perturbation bound, if the finite exact decision gap is positive, and if the cutoff radius is large enough that the tail term is below half that gap, then $$\mathrm{srank}(D_{\mathrm{dock}}) \le 3P_{\mathrm{rel}} + 3L.$$
+:::
+
+::: proof
+*Proof.* The Coulomb tail theorem packages the exact score into a bounded-potential witness. The large-cutoff theorem converts that witness into the cutoff-boundedness hypothesis, and the molecular locality theorem then gives the structural-rank bound. ◻
+:::
+
+::: theorem
+[]{#thm:ewald-tail-srank label="thm:ewald-tail-srank"} If an exact real-space Ewald docking score admits a tail perturbation bound, if the finite exact decision gap is positive, and if the cutoff radius is large enough that the tail term is below half that gap, then $$\mathrm{srank}(D_{\mathrm{dock}}) \le 3P_{\mathrm{rel}} + 3L.$$
+:::
+
+::: proof
+*Proof.* The real-space Ewald tail theorem packages the exact score into a bounded-potential witness. The large-cutoff theorem converts that witness into the cutoff-boundedness hypothesis, and the molecular locality theorem then gives the structural-rank bound. ◻
+:::
+
+::: theorem
+[]{#thm:lj-gradient label="thm:lj-gradient"} For nonzero separation radius $r$, the Lennard-Jones potential admits the exact derivative $$\frac{d}{dr}U_{\mathrm{LJ}}(r)
+=
+\left(24\varepsilon r^{-1}\right)
+\left((\sigma r^{-1})^6 - 2(\sigma r^{-1})^{12}\right).$$
+:::
+
+::: proof
+*Proof.* Differentiate the closed-form Lennard-Jones expression directly by the chain rule through the inverse-power representation and simplify algebraically. ◻
+:::
+
+## Geometric and Electrostatic Structure
+
+::: theorem
+[]{#thm:velocity-verlet-volume label="thm:velocity-verlet-volume"} For every differentiable potential, timestep, mass, and phase-space state, the Jacobian determinant of the Velocity-Verlet map is exactly $1$.
+:::
+
+::: proof
+*Proof.* The Jacobian factors into three block-triangular steps with unit diagonal determinants. Multiplicativity of determinant then gives exact phase-space volume preservation. ◻
+:::
+
+::: theorem
+[]{#thm:ewald-real-space-decay label="thm:ewald-real-space-decay"} For positive radius $r$ and splitting parameter $\alpha$, the Ewald real-space core satisfies $$\mathrm{Ewald}_{\mathrm{real}}(r,\alpha)
+\le
+\frac{e^{-\alpha^2 r^2}}{r}.$$
+:::
+
+::: proof
+*Proof.* The formal real-space core is defined by the Gaussian upper bound on the complementary-error screening factor. Expanding the square gives the displayed exponential-decay form exactly. ◻
+:::
+
+::: theorem
+[]{#thm:ewald-fourier-positive label="thm:ewald-fourier-positive"} For positive wavevector magnitude $k$ and splitting parameter $\alpha$, the Ewald reciprocal-space core is strictly positive.
+:::
+
+::: proof
+*Proof.* The reciprocal-space core is the product of $k^{-2}$ and a positive Gaussian factor. Both factors are positive under the stated hypotheses. ◻
+:::
+
+These geometric and electrostatic theorems show that the docking layer already contains exact statements about phase-space evolution, force-law differentiation, and long-range Coulomb splitting together with the rank and approximation bounds.
+
 ## Formalization
 
-The local paper3 docking bridge theorems live in `Leverage/DockingTheoryBridge.lean`. They expose the abstraction-collapse boundary, the Fisher-rank identities, the general exact-sufficiency hardness core, the quantitative witness/checking lower bounds, the cutoff-local structural-rank bounds for molecular docking, the sampled exact/coarse preservation and sufficiency theorems, the top-$k$ and ambiguity-band control theorems, and the concrete Lennard-Jones and Coulomb cutoff invariance statements used in the molecular development.
+The docking bridge theorems are assembled in `Leverage/DockingTheoryBridge.lean`. They expose the abstraction-collapse boundary, the Fisher-rank identities, the general exact-sufficiency hardness core, the quantitative witness/checking lower bounds, the cutoff-local structural-rank bounds for molecular docking, the conformer-search collapse regimes, the sampled exact/coarse preservation and sufficiency theorems, the top-$k$ and ambiguity-band control theorems, the concrete Lennard-Jones and Coulomb cutoff invariance statements, and the geometric and electrostatic structure theorems used in the molecular development.
 
 
 # Thermodynamic Cost of Exact Molecular Docking {#main-theorems}
@@ -526,6 +806,48 @@ Informally: the quotient fixing correctness also fixes cost.
 
 ::: proof
 *Proof.* Theorem [\[thm:rank-one-ground\]](#thm:rank-one-ground){reference-type="ref" reference="thm:rank-one-ground"} identifies $\mathrm{DOF}(A)=1$ as the one-Landauer-unit ground state, while every bounded decision system with more than one degree of freedom lies strictly above it. ◻
+:::
+
+## Exact Docking Decision Problems
+
+::: theorem
+[]{#thm:md-energy-rank label="thm:md-energy-rank"} Let $D_{\mathrm{dock}}$ be the exact docking decision problem induced by a binding problem, let $I$ be a sufficient coordinate set for $D_{\mathrm{dock}}$, and let $M$ be a thermodynamic model with positive per-bit conversion constant. Then $$M.\mathrm{joulesPerBit}\cdot \mathrm{srank}(D_{\mathrm{dock}})
+\le
+\mathrm{energyLowerBound}(M,|I|).$$
+:::
+
+::: proof
+*Proof.* This is the generic structural-rank energy lower bound applied directly to the exact docking decision problem. Exact docking therefore enters the thermodynamic layer through its own sufficient-coordinate structure, not only through the canonical binary encoding. ◻
+:::
+
+::: theorem
+[]{#thm:md-energy-entropy label="thm:md-energy-entropy"} Let $D^{\mathrm{flat}}_{\mathrm{dock,exact}}$ be the flat finite-grid exact docking problem induced by a sampled docking family, and let $$D^{\mathrm{bits}}_{\mathrm{dock,exact}}$$ be its fixed-length binary encoding. Let $I$ be a sufficient bit-register set for $D^{\mathrm{bits}}_{\mathrm{dock,exact}}$, and let $M$ satisfy Landauer calibration at positive Boltzmann constant and temperature. Then $$\mathrm{energyLowerBound}(M,|I|)
+\ge
+k_B T\,H_{\mathrm{nats}}\!\bigl(D^{\mathrm{flat}}_{\mathrm{dock,exact}}\bigr).$$ Equivalently, once the finite grid state is lifted to an exact fixed-length binary register, the Landauer floor applies directly to the entropy of the original finite docking quotient without any extra entropy-versus-rank hypothesis.
+:::
+
+::: proof
+*Proof.* The binary-encoded problem has binary state space, so its optimizer entropy is bounded by its structural rank through the native binary entropy theorem. The fixed-length decoder preserves the optimizer classes of the original flat finite-grid docking problem, so both problems have the same quotient entropy. The binary structural-rank energy theorem therefore yields the displayed lower bound for the finite docking quotient itself. ◻
+:::
+
+::: theorem
+[]{#thm:md-above-ground label="thm:md-above-ground"} Let $D_{\mathrm{dock}}$ be an exact docking decision problem induced by a binding problem, let $I$ be a sufficient coordinate set for $D_{\mathrm{dock}}$, and let $M$ be a thermodynamic model with positive per-bit conversion constant. If $$\mathrm{srank}(D_{\mathrm{dock}}) > 1,$$ then $$M.\mathrm{joulesPerBit} < \mathrm{energyLowerBound}(M,|I|).$$
+:::
+
+::: proof
+*Proof.* Structural rank above one places the exact docking problem strictly above the one-bit ground state. The structural-rank energy lower bound then transfers that strict separation to every sufficient-set exact-resolution cycle. ◻
+:::
+
+The thermodynamic bridge for docking is therefore split into two honest layers. Theorem [\[thm:md-energy-rank\]](#thm:md-energy-rank){reference-type="ref" reference="thm:md-energy-rank"} is the direct exact-docking structural-rank cost floor once a sufficient coordinate set is fixed. Theorem [\[thm:md-energy-entropy\]](#thm:md-energy-entropy){reference-type="ref" reference="thm:md-energy-entropy"} is the entropy-calibrated Landauer statement for the explicit finite binary encoding of the sampled flat grid problem. Theorem [\[thm:grid-docking-entropy\]](#thm:grid-docking-entropy){reference-type="ref" reference="thm:grid-docking-entropy"} separately bounds the same finite-grid quotient entropy in the original $(2N+1)$-ary coordinate presentation. The cutoff-local theorems from Section [\[complexity-boundary\]](#complexity-boundary){reference-type="ref" reference="complexity-boundary"} still provide only upper bounds on $\mathrm{srank}(D_{\mathrm{dock}})$; those bounds identify low-rank exact regimes, but they do not by themselves produce a coordinate-explicit lower bound.
+
+::: theorem
+[]{#thm:sampled-inside-cutoff-budget-energy label="thm:sampled-inside-cutoff-budget-energy"} Let $D^{\mathrm{sampled}}_{\mathrm{dock,exact}}$ be the sampled restricted exact docking problem. Assume the inside-cutoff retained coordinate set is sufficient for $D^{\mathrm{sampled}}_{\mathrm{dock,exact}}$, and suppose that retained set has cardinality at most the bounded-region acquisition budget $\mathrm{MaxAcquisitions}(R,T)$. Then for every thermodynamic model with positive per-bit conversion constant, $$M.\mathrm{joulesPerBit}\cdot \mathrm{srank}\!\bigl(D^{\mathrm{sampled}}_{\mathrm{dock,exact}}\bigr)
+\le
+\mathrm{energyLowerBound}\!\bigl(M,\mathrm{MaxAcquisitions}(R,T)\bigr).$$
+:::
+
+::: proof
+*Proof.* The inside-cutoff theorem supplies a concrete sufficient retained set. The budget hypothesis states that this retained set fits inside the bounded-region acquisition budget. The generic structural-rank energy theorem then applies to that exact-resolution witness and lifts the witness cardinality bound into the displayed bounded-region energy floor. ◻
 :::
 
 ## Finite-Time and Budget Bounds
@@ -715,7 +1037,7 @@ m\,\mathrm{energyLowerBound}(W.\mathrm{effectiveModel},|I|).$$ The required cumu
 :::
 
 ::: proof
-*Proof.* The RATTLE holonomic status register is a $k$-bit binary interface by the finite cardinality theorem. The transported architecture has degree of freedom exactly $3N-k$ by construction. The local bridge theorem identifies the structural rank of the canonical exact-resolution problem with that same count, and the local energy lower bound then gives the displayed Landauer-linear floor. ◻
+*Proof.* The RATTLE holonomic status register is a $k$-bit binary interface by the finite cardinality theorem. The transported architecture has degree of freedom exactly $3N-k$ by construction. The bridge theorem identifies the structural rank of the canonical exact-resolution problem with that same count, and the energy lower bound then gives the displayed Landauer-linear floor. ◻
 :::
 
 Informally: matter pays for what its topology requires it to know.
@@ -736,7 +1058,7 @@ If degree of freedom is read as the number of independent physical coordinates t
 
 ## Formalization
 
-The local bridge from degree of freedom to structural rank is formalized in `Leverage/BridgeToDQ.lean`, including the direct finite RATTLE transport with effective dimension $3N-k$. The finite holonomic-constraint counting layer lives in `Computation/GeometricConstraints.lean`. The physical acquisition and Landauer theorems are imported from the decision-quotient physics stack, in particular `Physics/BoundedAcquisition.lean` and `ThermodynamicLift.lean`. The role of the local `Architecture` object in this section is to provide the coordinate count transported into those theorems.
+The bridge from degree of freedom to structural rank is formalized in `Leverage/BridgeToDQ.lean`, including the direct finite RATTLE transport with effective dimension $3N-k$. The finite holonomic-constraint counting layer lives in `Computation/GeometricConstraints.lean`. The physical acquisition and Landauer theorems are imported from the decision-quotient physics stack, in particular `Physics/BoundedAcquisition.lean` and `ThermodynamicLift.lean`. The `Architecture` object in this section provides the coordinate count transported into those theorems.
 
 
 # Convergence and Universal Consequences {#five-way-equivalence}
@@ -802,7 +1124,7 @@ Theorem [\[thm:coherent-single-source\]](#thm:coherent-single-source){reference
 
 ## Formalization
 
-The local bridge theorems live in `Leverage/BridgeToDQ.lean`; the coherence theorem is imported from `Ssot`; and the tractability and Landauer-cost theorems are imported from the decision-quotient development. Appendix [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="appendix-lean"} records source provenance.
+The bridge theorems live in `Leverage/BridgeToDQ.lean`; the coherence theorem is imported from `Ssot`; and the tractability and Landauer-cost theorems are imported from the decision-quotient development. Appendix [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="appendix-lean"} records source provenance.
 
 ## Finite Replication Entropy Gap
 
@@ -859,6 +1181,8 @@ Function-relative information in physics and origins-of-life work also condition
 
 The molecular docking specialization adds a different layer from score benchmarking or heuristic search comparison: the claims are theorem-level statements about exact sufficiency, structural rank, and thermodynamic floor prior to algorithm choice.
 
+The same molecular layer also contains geometric execution and electrostatic control statements: exact phase-space volume preservation for Velocity-Verlet, closed-form force differentiation for Lennard-Jones, and exponential Ewald decay bounds for long-range Coulomb splitting.
+
 ## Categorical Quotients and Exact Abstraction
 
 Quotienting states by equality of $\operatorname{Opt}$ is the standard coimage construction for the decision quotient of the optimizer map $\operatorname{Opt}: S \to \mathcal{P}(A)$ in **Set**, canonically equivalent to its image [@maclane1998categories]. The theorem chain ties that quotient to coordinate sufficiency, structural rank, decision entropy, and thermodynamic cost in one proof object.
@@ -884,9 +1208,9 @@ The theorem package separates a structural part from an empirical calibration. T
 
 -   The general hardness core for exact sufficiency certification, the maximal-rank hard family, and the quantitative witness/checking lower bounds for sound exact certification.
 
--   The cutoff-local structural-rank bound for molecular docking, the bounded-pocket low-rank regime, sampled exact/coarse winner preservation under a half-gap hypothesis, inside-cutoff sufficiency for sampled docking under the stated compatibility assumptions, top-$k$ survivor preservation under a certified boundary gap, and ambiguity-band containment in near-tie regimes.
+-   The cutoff-local structural-rank bound for molecular docking, the bounded-pocket low-rank regime, strict-dominance and multiplicative-separable collapse regimes for conformer search, sampled exact/coarse winner preservation under a half-gap hypothesis, an action-side symmetry-broken sampled refinement with a canonical strict winner, a uniform positive strict gap, and no structural-rank increase, inside-cutoff sufficiency for sampled docking under the stated compatibility assumptions, top-$k$ survivor preservation under a certified boundary gap, and ambiguity-band containment in near-tie regimes.
 
--   The exact/coarse Lennard-Jones and Coulomb invariance theorems for finite sampled scorer families under explicit cutoff error and half-gap conditions.
+-   The exact/coarse Lennard-Jones and Coulomb invariance theorems for finite sampled scorer families under explicit cutoff error and half-gap conditions, the closed-form Lennard-Jones gradient, exact phase-space volume preservation for Velocity-Verlet, and exponential Ewald control for long-range Coulomb splitting.
 
 -   The energy--information theorem $E \ge k_B T H_{\mathrm{nats}}(D)$ for exact-resolution cost.
 
@@ -914,9 +1238,9 @@ The theorem package separates a structural part from an empirical calibration. T
 
 ## Final Remarks
 
-Molecular docking is governed by one formal chain linking semantic, statistical, complexity, and thermodynamic statements. Abstractly, exact resolution is governed by sufficient coordinate sets, the decision quotient, structural rank, Fisher dimension, certification burden, and calibrated thermodynamic floor. Concretely, constrained molecular systems instantiate the same framework through holonomic constraint topology, cutoff-local interaction structure, sampled exact/coarse stability, top-$k$ survivor control, concrete scorer-family invariance, and direct Landauer-linear cost bounds.
+Molecular docking now sits inside one formal decision-theoretic framework linking semantic, statistical, complexity, geometric, and thermodynamic statements. Abstractly, exact resolution is governed by sufficient coordinate sets, the decision quotient, structural rank, Fisher dimension, certification burden, and calibrated thermodynamic floor. Concretely, constrained molecular systems instantiate the same framework through holonomic constraint topology, cutoff-local interaction structure, conformer-search collapse regimes, sampled exact/coarse stability, top-$k$ survivor control, finite grid entropy bounds, explicit binary lifts of finite grid docking, concrete scorer-family invariance, exact phase-space volume preservation, long-range electrostatic splitting, and direct thermodynamic theorems for the exact docking decision problem itself.
 
-The abstract theorems state what exact resolution costs for any bounded decision system. The molecular instantiation shows that the same theorems govern exact docking, constrained molecular computation, and repeated exact molecular resolution in matter. Approximate and heuristic docking procedures lie in the same scope through approximation, sampling, or surrogate replacement. Corollary [\[cor:holonomic-landauer-floor\]](#cor:holonomic-landauer-floor){reference-type="ref" reference="cor:holonomic-landauer-floor"} gives the direct RATTLE finite derivation: the constraint-status interface is a $k$-bit binary register, the effective coordinate count is $3N-k$, and the canonical Landauer floor scales linearly with that remaining unconstrained dimension. Remark [\[rem:molecular-independence-scope\]](#rem:molecular-independence-scope){reference-type="ref" reference="rem:molecular-independence-scope"} states the remaining scope condition precisely: the finite transport is proved once independence is specified, while derivation of that independence hypothesis from a concrete geometric constraint family remains additional work.
+The abstract theorems state what exact resolution costs for any bounded decision system. The molecular instantiation now states that cost directly for the exact docking decision problem once a sufficient coordinate set is fixed, states the entropy-calibrated Landauer theorem for the explicit finite binary encoding of the sampled grid docking problem, and states the bounded-region sampled inside-cutoff consequence once the retained witness fits within a bounded-region acquisition budget. The sampled finite layer now also contains a theorem-backed action-side symmetry-breaking step: ties can be converted into a canonical strict winner with a uniform positive strict gap over the finite grid state space without increasing structural rank. The cutoff-local docking theorems separately bound the docking structural rank from above and therefore identify low-rank exact regimes rather than standalone coordinate-explicit lower bounds. Approximate and heuristic docking procedures lie in the same scope through approximation, sampling, or surrogate replacement. Corollary [\[cor:holonomic-landauer-floor\]](#cor:holonomic-landauer-floor){reference-type="ref" reference="cor:holonomic-landauer-floor"} gives the direct RATTLE finite derivation: the constraint-status interface is a $k$-bit binary register, the effective coordinate count is $3N-k$, and the canonical Landauer floor scales linearly with that remaining unconstrained dimension. Remark [\[rem:molecular-independence-scope\]](#rem:molecular-independence-scope){reference-type="ref" reference="rem:molecular-independence-scope"} states the remaining scope condition precisely: the finite transport is proved once independence is specified, while derivation of that independence hypothesis from a concrete geometric constraint family remains additional work.
 
 Appendix [\[appendix-lean\]](#appendix-lean){reference-type="ref" reference="appendix-lean"} records proof provenance.
 
@@ -932,143 +1256,209 @@ This appendix reports claim traceability directly from source and generated mapp
 ## Proof Hardness Index
 
 
-  ------------------------------------------------------------------------------------------------------------------------------
-  **Paper claim**                                                                     **Lean handle**
-  ----------------------------------------------------------------------------------- ------------------------------------------
-  Corollary 4.7: Bounded-Pocket Low-Rank Regime                                       L65
+  ---------------------------------------------------------------------------------------------------------------------------------------------
+  **Paper claim**                                                                                    **Lean handle**
+  -------------------------------------------------------------------------------------------------- ------------------------------------------
+  Corollary 4.7: Bounded-Pocket Low-Rank Regime                                                      L65
 
-  Corollary 5.7: Decision-Entropy Bound from Spacetime and Energy Budget              IT3, BA1, BA2, BA5, BA6, EI1, L43
+  Corollary 5.11: Decision-Entropy Bound from Spacetime and Energy Budget                            IT3, BA1, BA2, BA5, BA6, EI1, L43
 
-  Corollary 4.5: Checking Time Lower Bound                                            L70
+  Corollary 4.5: Checking Time Lower Bound                                                           L70
 
-  Corollary 5.8: Independent Composition Budget Law                                   L17, L19, BA1, BA2, BA7, BA5, BA6, L43
+  Corollary 5.12: Independent Composition Budget Law                                                 L17, L19, BA1, BA2, BA7, BA5, BA6, L43
 
-  Corollary 5.26: RATTLE Holonomic-Constraint Landauer Floor                          L60, L61, L62
+  Corollary 5.30: RATTLE Holonomic-Constraint Landauer Floor                                         L60, L61, L62
 
-  Corollary 5.4: Unique Minimum-Cost Regime                                           BA8, L54, L55
+  Corollary 5.4: Unique Minimum-Cost Regime                                                          BA8, L54, L55
 
-  Corollary 4.4: No Sound Checker Below Witness Budget                                L71
+  Corollary 4.4: No Sound Checker Below Witness Budget                                               L71
 
-  Corollary 3.3: Higher-Rank Regime                                                   L46, L51
+  Corollary 3.7: Higher-Rank Regime                                                                  L46
 
-  Corollary 3.2: Rank-One Regime                                                      L51
+  Corollary 3.6: Rank-One Regime                                                                     L51
 
-  Proposition 5.10: Two-Level Atomic Realization                                      AC1, AC3, AC4
+  Proposition 5.14: Two-Level Atomic Realization                                                     AC1, AC3, AC4
 
-  Proposition 5.22: Repeated Binary Mismatch Work Law                                 IT3, BA5, BA6, WP2, WM4, L43
+  Proposition 5.26: Repeated Binary Mismatch Work Law                                                IT3, BA5, BA6, WP2, WM4, L43
 
-  Proposition 5.21: Binary Mismatch Strengthens the Energy--Information Coefficient   IT3, BA5, BA6, WP2, WM4, L43
+  Proposition 5.25: Binary Mismatch Strengthens the Energy--Information Coefficient                  IT3, BA5, BA6, WP2, WM4, L43
 
-  Proposition 5.20: Explicit Binary Mismatch Example                                  BA5, BA6, WP2, WM4, L43
+  Proposition 5.24: Explicit Binary Mismatch Example                                                 BA5, BA6, WP2, WM4, L43
 
-  Proposition 5.15: Repeated Residual-Example Work Law                                IT3, BA5, BA6, WR12, WR11, L43
+  Proposition 5.19: Repeated Residual-Example Work Law                                               IT3, BA5, BA6, WR12, WR11, L43
 
-  Proposition 5.14: Explicit Two-State Residual Example                               IT3, BA5, BA6, WR12, WR11, L43
+  Proposition 5.18: Explicit Two-State Residual Example                                              IT3, BA5, BA6, WR12, WR11, L43
 
-  Proposition 2.5: Bounded Region                                                     BA1
+  Proposition 2.5: Bounded Region                                                                    BA1
 
-  Proposition 5.18: Canonical Wolpert Grounding Bundle                                BA5, BA6, WP9, L43
+  Proposition 5.22: Canonical Wolpert Grounding Bundle                                               BA5, BA6, WP9, L43
 
-  Definition 2.3: Bounded Decision System                                             L17, L19
+  Definition 2.3: Bounded Decision System                                                            L17, L19
 
-  Proposition 5.16: Unified Energy--Information Hierarchy                             IT3, BA5, BA6, WR12, WP2, WM4, WR11, L43
+  Proposition 5.20: Unified Energy--Information Hierarchy                                            IT3, BA5, BA6, WR12, WP2, WM4, WR11, L43
 
-  Proposition 3.11: Finite Compression-Relation Bridge                                L57, L58
+  Proposition 3.11: Finite Compression-Relation Bridge                                               L57, L58
 
-  Proposition 5.13: Finite Discrete Residual Witness                                  WR10, WR7, WR6
+  Proposition 5.17: Finite Discrete Residual Witness                                                 WR10, WR7, WR6
 
-  Proposition 5.23: Positive Heat and Bounded Lifetime                                SE1, SE2, SE3, SE4, SE5
+  Proposition 5.27: Positive Heat and Bounded Lifetime                                               SE1, SE2, SE3, SE4, SE5
 
-  Proposition 5.24: Finite Lifetime Throughput Bound                                  SE5, IT3, L43
+  Proposition 5.28: Finite Lifetime Throughput Bound                                                 SE5, IT3, L43
 
-  Definition 2.13: Canonical Decision Problem                                         QT2, QT7, QT1, QT3
+  Definition 2.13: Canonical Decision Problem                                                        QT2, QT7, QT1, QT3
 
-  Proposition 5.25: Speed-Heat Tradeoff                                               SE6
+  Proposition 5.29: Speed-Heat Tradeoff                                                              SE6
 
-  Proposition 5.19: Strict Canonical Energy Above the Landauer Floor                  BA5, BA6, WP6, L43
+  Proposition 5.23: Strict Canonical Energy Above the Landauer Floor                                 BA5, BA6, WP6, L43
 
-  Proposition 5.12: Theorem-Level Strict Overhead Branches                            BA5, BA6, WM6, WP6, WR10, L43
+  Proposition 5.16: Theorem-Level Strict Overhead Branches                                           BA5, BA6, WM6, WP6, WR10, L43
 
-  Proposition 5.17: Structural-Resource Overhead                                      BA5, BA6, WP8, WP7, L43
+  Proposition 5.21: Structural-Resource Overhead                                                     BA5, BA6, WP8, WP7, L43
 
-  Proposition 5.11: Substrate Step is Unit Interface Time                             DT23, DT22, DT24
+  Proposition 5.15: Substrate Step is Unit Interface Time                                            DT23, DT22, DT24
 
-  Proposition 5.9: Threshold Channel Realization                                      CV8, CV9, CV7
+  Proposition 5.13: Threshold Channel Realization                                                    CV8, CV9, CV7
 
-  Theorem 3.7: Surjective Abstractions Either Factor or Erase                         L77
+  Theorem 3.1: Surjective Abstractions Either Factor or Erase                                        L77
 
-  Theorem 2.6: Bounded Acquisition Rate                                               BA1, BA2
+  Theorem 4.11: Action-Pinned Sampled Docking Has a Uniform Positive Strict Gap                      L115, L116, L117
 
-  Theorem 5.6: Decision-Class Bound from Spacetime and Energy Budget                  IT4, IT3, BA1, BA2, BA5, BA6, EI1, L43
+  Theorem 2.6: Bounded Acquisition Rate                                                              BA1, BA2
 
-  Theorem 4.3: Checker Budget Lower Bound                                             L69
+  Theorem 4.33: Bounded-Action Exact Checking Is Polynomial-Time Decidable                           L87, L93
 
-  Theorem 6.1: Coherent Single-Source Regime                                          ORA1
+  Theorem 4.28: Bounded Potential Plus Large Cutoff Gives Sampled Structural-Rank Bound              L104
 
-  Theorem 4.14: Cutoff Coulomb Winner Preservation                                    L73
+  Theorem 4.27: Bounded Potential Plus Large Cutoff Gives Structural-Rank Bound                      L95
 
-  Theorem 4.13: Cutoff Coulomb Uniform Approximation                                  L74
+  Theorem 5.10: Decision-Class Bound from Spacetime and Energy Budget                                IT4, IT3, BA1, BA2, BA5, BA6, EI1, L43
 
-  Theorem 2.4: Counting Gap                                                           BA10
+  Theorem 4.3: Checker Budget Lower Bound                                                            L69
 
-  Theorem 2.7: Discrete Acquisition                                                   BA3
+  Theorem 6.1: Coherent Single-Source Regime                                                         ORA1
 
-  Theorem 3.1: DOF--Structural-Rank Identity                                          L43
+  Theorem 4.37: Cutoff Coulomb Winner Preservation                                                   L73
 
-  Theorem 5.3: Energy--Information Duality                                            IT3, EI1, L43
+  Theorem 4.36: Cutoff Coulomb Uniform Approximation                                                 L74
 
-  Theorem 5.1: Rank Controls Exact-Resolution Cost                                    BA7, BA6, L43
+  Theorem 4.38: Exact Coulomb Tail Control Gives Structural-Rank Bound                               L96
 
-  Theorem 6.8: Finite Replication Entropy Gap                                         L45
+  Theorem 2.4: Counting Gap                                                                          BA10
 
-  Theorem 3.6: Decision-Entropy Bound                                                 IT3, L43
+  Theorem 2.7: Discrete Acquisition                                                                  BA3
 
-  Theorem 4.1: General Hardness Core for Exact Sufficiency                            L63
+  Theorem 3.5: DOF--Structural-Rank Identity                                                         L43
 
-  Theorem 3.8: Feasible Collapse Maps Force Quotient Factorization                    L78
+  Theorem 5.3: Energy--Information Duality                                                           IT3, EI1, L43
 
-  Theorem 6.9: Finite-Budget No-Collapse                                              PH26
+  Theorem 5.1: Rank Controls Exact-Resolution Cost                                                   BA7, BA6, L43
 
-  Theorem 3.10: Fisher-Matrix Rank Equals Structural Rank                             L76
+  Theorem 6.8: Finite Replication Entropy Gap                                                        L45
 
-  Theorem 3.9: Total Fisher Information Equals Structural Rank                        L80
+  Theorem 3.10: Decision-Entropy Bound                                                               IT3, L43
 
-  Theorem 6.7: Convergence                                                            L43, L44, L47, L55
+  Theorem 4.43: Ewald Reciprocal Core Is Positive                                                    L81
 
-  Theorem 4.2: Maximal Structural Rank in the Hard Family                             L64
+  Theorem 4.42: Ewald Real-Space Exponential Decay                                                   L82
 
-  Theorem 4.12: Cutoff Lennard-Jones Winner Preservation                              L75
+  Theorem 4.39: Exact Real-Space Ewald Tail Control Gives Structural-Rank Bound                      L98
 
-  Theorem 3.4: Minimum Physical Bit Operations                                        BA5, BA6, L43, L46
+  Theorem 4.1: General Hardness Core for Exact Sufficiency                                           L63
 
-  Theorem 4.6: Cutoff-Local Structural-Rank Bound for Exact Docking                   L66
+  Theorem 3.2: Feasible Collapse Maps Force Quotient Factorization                                   L78
 
-  Theorem 3.5: Decision-Class Bound                                                   IT4, L43
+  Theorem 6.9: Finite-Budget No-Collapse                                                             PH26
 
-  Theorem 2.8: One Transition, One Bit                                                BA4
+  Theorem 4.29: Finite Sampled Docking Has a Canonical Uniform Error Radius                          L92
 
-  Theorem 6.3: Rank Identification                                                    L43, L46, L51
+  Theorem 3.4: Fisher-Matrix Rank Equals Structural Rank                                             L76
 
-  Theorem 5.2: Rank-One Ground State                                                  BA8, L54, L55
+  Theorem 3.3: Total Fisher Information Equals Structural Rank                                       L80
 
-  Theorem 2.9: Resolution Requires a Sufficient Coordinate Set                        BA5
+  Theorem 6.7: Convergence                                                                           L43, L44, L47, L55
 
-  Theorem 4.8: Sampled Exact-Coarse Winner Preservation                               L67
+  Theorem 4.30: Finite Grid Exact-Docking Entropy Is Controlled by Structural Rank                   L113
 
-  Theorem 4.9: Inside-Cutoff Sufficiency for Sampled Docking                          L68
+  Theorem 4.32: Grid Irrelevance Erasure Is Sound                                                    L88
 
-  Theorem 6.5: Thermodynamic Selection                                                BA8, L49, L54, L55
+  Theorem 4.2: Maximal Structural Rank in the Hard Family                                            L64
 
-  Theorem 5.5: Exact-Resolution Time Lower Bound                                      BA1, BA2, BA5, BA6, L43
+  Theorem 4.18: Large Cutoff Implies Docking Cutoff Boundedness                                      L89
 
-  Theorem 4.11: Exact Top-k Ambiguity-Band Containment                                L72
+  Theorem 4.15: Lipschitz Grid Error Gives Resolution-Controlled Approximation                       L90
 
-  Theorem 4.10: Top-k Preservation Under Boundary Gap                                 L79
+  Theorem 4.34: Cutoff Lennard-Jones Winner Preservation                                             L75
 
-  Theorem 6.4: Tractable Sufficiency at Rank One                                      L47, L53, L56
-  ------------------------------------------------------------------------------------------------------------------------------
+  Theorem 4.40: Closed-Form Lennard-Jones Gradient                                                   L83
 
-*Auto summary: mapped 66/66 (full=66, derived=0, unmapped=0).*
+  Theorem 4.19: Explicit Lennard-Jones Shell Derivative Envelope                                     L103
+
+  Theorem 4.26: Lennard-Jones Shell Gradient Bound Preserves Exact Winners                           L100
+
+  Theorem 4.23: Lennard-Jones Shell Gradient Bound Gives Score Stability                             L102
+
+  Theorem 4.21: Lennard-Jones Hessian Envelope Makes the Gradient Lipschitz                          L106
+
+  Theorem 4.25: First-Order-Corrected Lennard-Jones Discretization Error Is Quadratic                L107
+
+  Theorem 4.22: Lennard-Jones Hessian Envelope Gives a Quadratic Taylor Remainder                    L108
+
+  Theorem 4.20: Explicit Lennard-Jones Shell Second-Derivative Envelope                              L105
+
+  Theorem 4.24: Lennard-Jones Shell Gradient Bound Gives Uniform Exact/Grid Approximation            L101
+
+  Theorem 4.35: Exact Lennard-Jones Tail Control Gives Structural-Rank Bound                         L97
+
+  Theorem 5.7: Higher-Rank Exact Docking Lies Above the Ground State                                 L109
+
+  Theorem 5.6: Binary-Encoded Finite Grid Docking Carries Landauer Cost                              L114
+
+  Theorem 5.5: Exact Docking Structural Rank Controls Resolution Cost                                L111
+
+  Theorem 3.8: Minimum Physical Bit Operations                                                       BA5, BA6, L43
+
+  Theorem 4.6: Cutoff-Local Structural-Rank Bound for Exact Docking                                  L66
+
+  Theorem 4.9: Multiplicative Separability Eliminates Conformer Dependence                           L84
+
+  Theorem 3.9: Decision-Class Bound                                                                  IT4, L43
+
+  Theorem 2.8: One Transition, One Bit                                                               BA4
+
+  Theorem 6.3: Rank Identification                                                                   L43, L46, L51
+
+  Theorem 5.2: Rank-One Ground State                                                                 BA8, L54, L55
+
+  Theorem 4.17: Resolution-Controlled Approximation Preserves Exact Winners                          L99
+
+  Theorem 4.16: Resolution-Controlled Approximation Gives Uniform Utility Approximation              L91
+
+  Theorem 2.9: Resolution Requires a Sufficient Coordinate Set                                       BA5
+
+  Theorem 4.10: Sampled Exact-Coarse Winner Preservation                                             L67
+
+  Theorem 5.8: Inside-Cutoff Sampled Exact Resolution Gives a Concrete Bounded-Region Energy Floor   L112
+
+  Theorem 4.12: Inside-Cutoff Sufficiency for Sampled Docking                                        L68
+
+  Theorem 4.8: Strict Dominance Makes Coordinates Irrelevant                                         L85
+
+  Theorem 6.5: Thermodynamic Selection                                                               BA8, L49, L54, L55
+
+  Theorem 5.9: Exact-Resolution Time Lower Bound                                                     BA1, BA2, BA5, BA6, L43
+
+  Theorem 4.14: Exact Top-k Ambiguity-Band Containment                                               L72
+
+  Theorem 4.13: Top-k Preservation Under Boundary Gap                                                L79
+
+  Theorem 4.31: Top-k Margin Certificates Are Sound                                                  L94
+
+  Theorem 6.4: Tractable Sufficiency at Rank One                                                     L47, L53, L56
+
+  Theorem 4.41: Velocity-Verlet Preserves Phase-Space Volume                                         L86
+  ---------------------------------------------------------------------------------------------------------------------------------------------
+
+*Auto summary: mapped 99/99 (full=99, derived=0, unmapped=0).*
 
 
 ::: list
@@ -1187,6 +1577,80 @@ This appendix reports claim traceability directly from source and generated mapp
 **`L79`**[]{#lh:L79} Leverage/DockingTheoryBridge.lean
 
 **`L80`**[]{#lh:L80} Leverage/DockingTheoryBridge.lean
+
+**`L81`**[]{#lh:L81} Leverage/DockingTheoryBridge.lean
+
+**`L82`**[]{#lh:L82} Leverage/DockingTheoryBridge.lean
+
+**`L83`**[]{#lh:L83} Leverage/DockingTheoryBridge.lean
+
+**`L84`**[]{#lh:L84} Leverage/DockingTheoryBridge.lean
+
+**`L85`**[]{#lh:L85} Leverage/DockingTheoryBridge.lean
+
+**`L86`**[]{#lh:L86} Leverage/DockingTheoryBridge.lean
+
+**`L87`**[]{#lh:L87} Leverage/DockingTheoryBridge.lean
+
+**`L88`**[]{#lh:L88} Leverage/DockingTheoryBridge.lean
+
+**`L89`**[]{#lh:L89} Leverage/DockingTheoryBridge.lean
+
+**`L90`**[]{#lh:L90} Leverage/DockingTheoryBridge.lean
+
+**`L91`**[]{#lh:L91} Leverage/DockingTheoryBridge.lean
+
+**`L92`**[]{#lh:L92} Leverage/DockingTheoryBridge.lean
+
+**`L93`**[]{#lh:L93} Leverage/DockingTheoryBridge.lean
+
+**`L94`**[]{#lh:L94} Leverage/DockingTheoryBridge.lean
+
+**`L95`**[]{#lh:L95} Leverage/DockingTheoryBridge.lean
+
+**`L96`**[]{#lh:L96} Leverage/DockingTheoryBridge.lean
+
+**`L97`**[]{#lh:L97} Leverage/DockingTheoryBridge.lean
+
+**`L98`**[]{#lh:L98} Leverage/DockingTheoryBridge.lean
+
+**`L99`**[]{#lh:L99} Leverage/DockingTheoryBridge.lean
+
+**`L100`**[]{#lh:L100} Leverage/DockingTheoryBridge.lean
+
+**`L101`**[]{#lh:L101} Leverage/DockingTheoryBridge.lean
+
+**`L102`**[]{#lh:L102} Leverage/DockingTheoryBridge.lean
+
+**`L103`**[]{#lh:L103} Leverage/DockingTheoryBridge.lean
+
+**`L104`**[]{#lh:L104} Leverage/DockingTheoryBridge.lean
+
+**`L105`**[]{#lh:L105} Leverage/DockingTheoryBridge.lean
+
+**`L106`**[]{#lh:L106} Leverage/DockingTheoryBridge.lean
+
+**`L107`**[]{#lh:L107} Leverage/DockingTheoryBridge.lean
+
+**`L108`**[]{#lh:L108} Leverage/DockingTheoryBridge.lean
+
+**`L109`**[]{#lh:L109} Leverage/DockingTheoryBridge.lean
+
+**`L110`**[]{#lh:L110} Leverage/DockingTheoryBridge.lean
+
+**`L111`**[]{#lh:L111} Leverage/DockingTheoryBridge.lean
+
+**`L112`**[]{#lh:L112} Leverage/DockingTheoryBridge.lean
+
+**`L113`**[]{#lh:L113} Leverage/DockingTheoryBridge.lean
+
+**`L114`**[]{#lh:L114} Leverage/DockingTheoryBridge.lean
+
+**`L115`**[]{#lh:L115} Leverage/DockingTheoryBridge.lean
+
+**`L116`**[]{#lh:L116} Leverage/DockingTheoryBridge.lean
+
+**`L117`**[]{#lh:L117} Leverage/DockingTheoryBridge.lean
 
 **`ORA1`**[]{#lh:ORA1} paper2/Ssot/Coherence.lean
 
@@ -1392,216 +1856,375 @@ This appendix reports claim traceability directly from source and generated mapp
 & [**`L80`**]{#lh:L80} & `Leverage.totalFisher_eq_srank`
 
 \
-[**`ORA1`**]{#lh:ORA1} & `oracle_arbitrary`
+[**`L81`**]{#lh:L81} & `Leverage.ewaldFourier_positive`
 
-& [**`PH26`**]{#lh:PH26} & `PhysicalComplexity.no_collapse_of_bounded_budget_pos_cost_exp_lb`
-
-\
-[**`QT1`**]{#lh:QT1} & `DecisionProblem.quotient_is_coarsest`
-
-& [**`QT2`**]{#lh:QT2} & `DecisionProblem.quotientMap_preservesOpt`
+& [**`L82`**]{#lh:L82} & `Leverage.ewaldRealSpace_exponentialDecay`
 
 \
-[**`QT3`**]{#lh:QT3} & `DecisionProblem.quotient_represents_opt_equiv`
+[**`L83`**]{#lh:L83} & `Leverage.lennardJones_gradient`
 
-& [**`QT7`**]{#lh:QT7} & `DecisionProblem.quotient_has_unique_factorization`
-
-\
-[**`SE1`**]{#lh:SE1} & `ClaimClosure.SE1`
-
-& [**`SE2`**]{#lh:SE2} & `ClaimClosure.SE2`
+& [**`L84`**]{#lh:L84} & `Leverage.multiplicativeSeparable_emptySufficient`
 
 \
-[**`SE3`**]{#lh:SE3} & `ClaimClosure.SE3`
+[**`L85`**]{#lh:L85} & `Leverage.strictGlobalDominance_emptySufficient`
 
-& [**`SE4`**]{#lh:SE4} & `ClaimClosure.SE4`
-
-\
-[**`SE5`**]{#lh:SE5} & `ClaimClosure.SE5`
-
-& [**`SE6`**]{#lh:SE6} & `ClaimClosure.SE6`
+& [**`L86`**]{#lh:L86} & `Leverage.velocityVerlet_preservesVolume`
 
 \
-[**`W1`**]{#lh:W1} & `Physics.single_future_zero_cost`
+[**`L87`**]{#lh:L87} & `Leverage.boundedActions_polynomialTime`
 
-& [**`W2`**]{#lh:W2} & `Physics.transportCost_pos_of_offDiag`
-
-\
-[**`W3`**]{#lh:W3} & `Physics.integrity_is_centroid`
-
-& [**`W4`**]{#lh:W4} & `Physics.wasserstein_bridge`
+& [**`L88`**]{#lh:L88} & `Leverage.gridMDState_sufficient_erase_irrelevant`
 
 \
-[**`WM4`**]{#lh:WM4} & `Physics.WolpertMismatch.mismatchNatLowerBound_pos_of_exists_ne`
+[**`L89`**]{#lh:L89} & `Leverage.largeCutoff_implies_bounded`
 
-& [**`WM6`**]{#lh:WM6} & `Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_distribution_mismatch`
-
-\
-[**`WP2`**]{#lh:WP2} & `Physics.WolpertDecomposition.landauer_floor_plus_decomposition_lower_bound`
-
-& [**`WP6`**]{#lh:WP6} & `Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_either_cited_component`
+& [**`L90`**]{#lh:L90} & `Leverage.lipschitzUtilityApprox_implies_resolutionControlled`
 
 \
-[**`WP7`**]{#lh:WP7} & `Physics.WolpertDecomposition.landauer_floor_plus_structural_resource_lower_bound`
+[**`L91`**]{#lh:L91} & `Leverage.resolutionControlledApprox_implies_uniformApprox`
 
-& [**`WP8`**]{#lh:WP8} & `Physics.WolpertDecomposition.energy_lower_bound_increases_by_structural_resource`
-
-\
-[**`WP9`**]{#lh:WP9} & `Physics.WolpertDecomposition.physical_grounding_bundle_with_wolpert_decomposition`
-
-& [**`WR6`**]{#lh:WR6} & `Physics.WolpertResidual.discreteResidualNatLowerBound_pos_of_asymmetry_or_oneway`
+& [**`L92`**]{#lh:L92} & `Leverage.sampledDocking_finiteUniformErrorRadius_witnesses`
 
 \
-[**`WR7`**]{#lh:WR7} & `Physics.WolpertDecomposition.stopping_time_residual_of_discrete_edge_split`
+[**`L93`**]{#lh:L93} & `Leverage.sufficiency_poly_bounded_actions`
 
-& [**`WR10`**]{#lh:WR10} & `Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_finite_discrete_witness`
-
-\
-[**`WR11`**]{#lh:WR11} & `Physics.WolpertResidual.binaryEncodedResidualNatLowerBound_eq_one`
-
-& [**`WR12`**]{#lh:WR12} & `Physics.WolpertDecomposition.effective_model_ge_landauer_plus_one_of_binary_encoded_residual_example`
+& [**`L94`**]{#lh:L94} & `Leverage.topKMargin_certificate_sound`
 
 \
+[**`L95`**]{#lh:L95} & `Leverage.boundedPotential_largeCutoff_srank_bound`
+
+& [**`L96`**]{#lh:L96} & `Leverage.exactCoulomb_largeCutoff_srank_bound`
+
+\
+[**`L97`**]{#lh:L97} & `Leverage.exactLJ_largeCutoff_srank_bound`
+
+& [**`L98`**]{#lh:L98} & `Leverage.exactRealEwald_largeCutoff_srank_bound`
+
+\
+[**`L99`**]{#lh:L99} & `Leverage.resolutionControlled_gap_implies_opt_invariance`
+
+& [**`L100`**]{#lh:L100} & `Leverage.exactLJ_distanceError_gap_implies_opt_invariance`
+
+\
+[**`L101`**]{#lh:L101} & `Leverage.exactLJ_uniformApprox_of_distanceError_and_shellGradBound`
+
+& [**`L102`**]{#lh:L102} & `Leverage.lennardJones_value_diff_le_of_shellGradBound`
+
+\
+[**`L103`**]{#lh:L103} & `Leverage.abs_ljGradExpr_le_shellBound`
+
+& [**`L104`**]{#lh:L104} & `Leverage.boundedPotential_largeCutoff_sampledSrank_bound`
+
+\
+[**`L105`**]{#lh:L105} & `Leverage.abs_ljSecondDerivExpr_le_shellBound`
+
+& [**`L106`**]{#lh:L106} & `Leverage.lennardJones_grad_diff_le_of_shellSecondDerivBound`
+
+\
+[**`L107`**]{#lh:L107} & `Leverage.exactLJ_quadraticDiscretizationError_of_distanceError_and_shellSecondDerivShellBound`
+
+& [**`L108`**]{#lh:L108} & `Leverage.lennardJones_taylor_remainder_le_of_shellSecondDerivShellBound`
+
+\
+[**`L109`**]{#lh:L109} & `Leverage.molecularDocking_above_ground_of_srank_gt_one`
+
+& [**`L110`**]{#lh:L110} & `Leverage.molecularDocking_landauer_entropy_lower_bound`
+
+\
+[**`L111`**]{#lh:L111} & `Leverage.molecularDocking_srank_energy_lower_bound`
+
+& [**`L112`**]{#lh:L112} & `Leverage.sampledDocking_energy_le_boundedAcquisitions_of_insideCutoff_and_budget`
+
+\
+[**`L113`**]{#lh:L113} & `Leverage.sampledDocking_flatExact_natEntropy_le_srank_log_gridArity`
+
+& [**`L114`**]{#lh:L114} & `Leverage.sampledDocking_flatBinaryEncoded_landauer_entropy_lower_bound`
+
+\
+[**`L115`**]{#lh:L115} & `Leverage.sampledDocking_flatActionPinned_srank_le_srank`
+
+& [**`L116`**]{#lh:L116} & `Leverage.sampledDocking_flatActionPinned_strictOpt`
+
+\
+[**`L117`**]{#lh:L117} & `Leverage.sampledDocking_flatActionPinned_uniformStrictUtilityGap_of_card_gt_one`
+
+& [**`ORA1`**]{#lh:ORA1} & `oracle_arbitrary`
+
+\
+[**`PH26`**]{#lh:PH26} & `PhysicalComplexity.no_collapse_of_bounded_budget_pos_cost_exp_lb`
+
+& [**`QT1`**]{#lh:QT1} & `DecisionProblem.quotient_is_coarsest`
+
+\
+[**`QT2`**]{#lh:QT2} & `DecisionProblem.quotientMap_preservesOpt`
+
+& [**`QT3`**]{#lh:QT3} & `DecisionProblem.quotient_represents_opt_equiv`
+
+\
+[**`QT7`**]{#lh:QT7} & `DecisionProblem.quotient_has_unique_factorization`
+
+& [**`SE1`**]{#lh:SE1} & `ClaimClosure.SE1`
+
+\
+[**`SE2`**]{#lh:SE2} & `ClaimClosure.SE2`
+
+& [**`SE3`**]{#lh:SE3} & `ClaimClosure.SE3`
+
+\
+[**`SE4`**]{#lh:SE4} & `ClaimClosure.SE4`
+
+& [**`SE5`**]{#lh:SE5} & `ClaimClosure.SE5`
+
+\
+[**`SE6`**]{#lh:SE6} & `ClaimClosure.SE6`
+
+& [**`W1`**]{#lh:W1} & `Physics.single_future_zero_cost`
+
+\
+[**`W2`**]{#lh:W2} & `Physics.transportCost_pos_of_offDiag`
+
+& [**`W3`**]{#lh:W3} & `Physics.integrity_is_centroid`
+
+\
+[**`W4`**]{#lh:W4} & `Physics.wasserstein_bridge`
+
+& [**`WM4`**]{#lh:WM4} & `Physics.WolpertMismatch.mismatchNatLowerBound_pos_of_exists_ne`
+
+\
+[**`WM6`**]{#lh:WM6} & `Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_distribution_mismatch`
+
+& [**`WP2`**]{#lh:WP2} & `Physics.WolpertDecomposition.landauer_floor_plus_decomposition_lower_bound`
+
+\
+[**`WP6`**]{#lh:WP6} & `Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_either_cited_component`
+
+& [**`WP7`**]{#lh:WP7} & `Physics.WolpertDecomposition.landauer_floor_plus_structural_resource_lower_bound`
+
+\
+[**`WP8`**]{#lh:WP8} & `Physics.WolpertDecomposition.energy_lower_bound_increases_by_structural_resource`
+
+& [**`WP9`**]{#lh:WP9} & `Physics.WolpertDecomposition.physical_grounding_bundle_with_wolpert_decomposition`
+
+\
+[**`WR6`**]{#lh:WR6} & `Physics.WolpertResidual.discreteResidualNatLowerBound_pos_of_asymmetry_or_oneway`
+
+& [**`WR7`**]{#lh:WR7} & `Physics.WolpertDecomposition.stopping_time_residual_of_discrete_edge_split`
+
+\
+[**`WR10`**]{#lh:WR10} & `Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_finite_discrete_witness`
+
+& [**`WR11`**]{#lh:WR11} & `Physics.WolpertResidual.binaryEncodedResidualNatLowerBound_eq_one`
+
+\
+[**`WR12`**]{#lh:WR12} & `Physics.WolpertDecomposition.effective_model_ge_landauer_plus_one_of_binary_encoded_residual_example`
+
+& &\
 :::
 
 
-  ---------------------------------------------------------------------------------------------------------------------------------------
-  **Paper handle**                            **Hardness profile**   **Regime tags**           **Lean support**
-  ------------------------------------------- ---------------------- ------------------------- ------------------------------------------
-  `cor:bounded-pocket-regime`                 `unspecified`          \-                        L65
+  ------------------------------------------------------------------------------------------------------------------------------------------------
+  **Paper handle**                                     **Hardness profile**   **Regime tags**           **Lean support**
+  ---------------------------------------------------- ---------------------- ------------------------- ------------------------------------------
+  `cor:bounded-pocket-regime`                          `unspecified`          \-                        L65
 
-  `cor:budget-entropy-bound`                  `unspecified`          \-                        IT3, BA1, BA2, BA5, BA6, EI1, L43
+  `cor:budget-entropy-bound`                           `unspecified`          \-                        IT3, BA1, BA2, BA5, BA6, EI1, L43
 
-  `cor:checking-time-lower-bound`             `unspecified`          \-                        L70
+  `cor:checking-time-lower-bound`                      `unspecified`          \-                        L70
 
-  `cor:composition-budget-law`                `unspecified`          \-                        L17, L19, BA1, BA2, BA7, BA5, BA6, L43
+  `cor:composition-budget-law`                         `unspecified`          \-                        L17, L19, BA1, BA2, BA7, BA5, BA6, L43
 
-  `cor:holonomic-landauer-floor`              `unspecified`          \-                        L60, L61, L62
+  `cor:holonomic-landauer-floor`                       `unspecified`          \-                        L60, L61, L62
 
-  `cor:minimum-cost-regime`                   `unspecified`          \-                        BA8, L54, L55
+  `cor:minimum-cost-regime`                            `unspecified`          \-                        BA8, L54, L55
 
-  `cor:no-sound-checker-below-budget`         `unspecified`          \-                        L71
+  `cor:no-sound-checker-below-budget`                  `unspecified`          \-                        L71
 
-  `cor:rank-above-one`                        `unspecified`          \-                        L46, L51
+  `cor:rank-above-one`                                 `unspecified`          \-                        L46
 
-  `cor:rank-one`                              `unspecified`          \-                        L51
+  `cor:rank-one`                                       `unspecified`          \-                        L51
 
-  `prop:atomic-realization`                   `unspecified`          \-                        AC1, AC3, AC4
+  `prop:atomic-realization`                            `unspecified`          \-                        AC1, AC3, AC4
 
-  `prop:binary-mismatch-cumulative-work`      `unspecified`          \-                        IT3, BA5, BA6, WP2, WM4, L43
+  `prop:binary-mismatch-cumulative-work`               `unspecified`          \-                        IT3, BA5, BA6, WP2, WM4, L43
 
-  `prop:binary-mismatch-energy-information`   `unspecified`          \-                        IT3, BA5, BA6, WP2, WM4, L43
+  `prop:binary-mismatch-energy-information`            `unspecified`          \-                        IT3, BA5, BA6, WP2, WM4, L43
 
-  `prop:binary-mismatch-example`              `unspecified`          \-                        BA5, BA6, WP2, WM4, L43
+  `prop:binary-mismatch-example`                       `unspecified`          \-                        BA5, BA6, WP2, WM4, L43
 
-  `prop:binary-residual-cumulative-work`      `unspecified`          \-                        IT3, BA5, BA6, WR12, WR11, L43
+  `prop:binary-residual-cumulative-work`               `unspecified`          \-                        IT3, BA5, BA6, WR12, WR11, L43
 
-  `prop:binary-residual-example`              `unspecified`          \-                        IT3, BA5, BA6, WR12, WR11, L43
+  `prop:binary-residual-example`                       `unspecified`          \-                        IT3, BA5, BA6, WR12, WR11, L43
 
-  `prop:bounded-region`                       `unspecified`          \-                        BA1
+  `prop:bounded-region`                                `unspecified`          \-                        BA1
 
-  `prop:canonical-wolpert-bundle`             `unspecified`          \-                        BA5, BA6, WP9, L43
+  `prop:canonical-wolpert-bundle`                      `unspecified`          \-                        BA5, BA6, WP9, L43
 
-  `prop:dof-additive`                         `unspecified`          \-                        L17, L19
+  `prop:dof-additive`                                  `unspecified`          \-                        L17, L19
 
-  `prop:ei-hierarchy`                         `unspecified`          \-                        IT3, BA5, BA6, WR12, WP2, WM4, WR11, L43
+  `prop:ei-hierarchy`                                  `unspecified`          \-                        IT3, BA5, BA6, WR12, WP2, WM4, WR11, L43
 
-  `prop:finite-compression-bridge`            `unspecified`          \-                        L57, L58
+  `prop:finite-compression-bridge`                     `unspecified`          \-                        L57, L58
 
-  `prop:finite-discrete-residual`             `unspecified`          \-                        WR10, WR7, WR6
+  `prop:finite-discrete-residual`                      `unspecified`          \-                        WR10, WR7, WR6
 
-  `prop:finite-lifetime`                      `unspecified`          \-                        SE1, SE2, SE3, SE4, SE5
+  `prop:finite-lifetime`                               `unspecified`          \-                        SE1, SE2, SE3, SE4, SE5
 
-  `prop:lifetime-throughput`                  `unspecified`          \-                        SE5, IT3, L43
+  `prop:lifetime-throughput`                           `unspecified`          \-                        SE5, IT3, L43
 
-  `prop:optimizer-quotient`                   `unspecified`          \-                        QT2, QT7, QT1, QT3
+  `prop:optimizer-quotient`                            `unspecified`          \-                        QT2, QT7, QT1, QT3
 
-  `prop:speed-heat-tradeoff`                  `unspecified`          \-                        SE6
+  `prop:speed-heat-tradeoff`                           `unspecified`          \-                        SE6
 
-  `prop:strict-canonical-energy`              `unspecified`          \-                        BA5, BA6, WP6, L43
+  `prop:strict-canonical-energy`                       `unspecified`          \-                        BA5, BA6, WP6, L43
 
-  `prop:strict-overhead`                      `unspecified`          \-                        BA5, BA6, WM6, WP6, WR10, L43
+  `prop:strict-overhead`                               `unspecified`          \-                        BA5, BA6, WM6, WP6, WR10, L43
 
-  `prop:structural-resource-overhead`         `unspecified`          \-                        BA5, BA6, WP8, WP7, L43
+  `prop:structural-resource-overhead`                  `unspecified`          \-                        BA5, BA6, WP8, WP7, L43
 
-  `prop:substrate-time-law`                   `unspecified`          \-                        DT23, DT22, DT24
+  `prop:substrate-time-law`                            `unspecified`          \-                        DT23, DT22, DT24
 
-  `prop:threshold-channel`                    `unspecified`          \-                        CV8, CV9, CV7
+  `prop:threshold-channel`                             `unspecified`          \-                        CV8, CV9, CV7
 
-  `thm:abstraction-factors-or-erases`         `unspecified`          \-                        L77
+  `thm:abstraction-factors-or-erases`                  `unspecified`          \-                        L77
 
-  `thm:bounded-acquisition`                   `unspecified`          \-                        BA1, BA2
+  `thm:action-pinned-uniform-gap`                      `unspecified`          \-                        L115, L116, L117
 
-  `thm:budget-class-bound`                    `unspecified`          \-                        IT4, IT3, BA1, BA2, BA5, BA6, EI1, L43
+  `thm:bounded-acquisition`                            `unspecified`          \-                        BA1, BA2
 
-  `thm:checker-budget-lower-bound`            `unspecified`          \-                        L69
+  `thm:bounded-actions-poly`                           `unspecified`          \-                        L87, L93
 
-  `thm:coherent-single-source`                `unspecified`          \-                        ORA1
+  `thm:bounded-potential-large-cutoff-sampled-srank`   `unspecified`          \-                        L104
 
-  `thm:coulomb-cutoff-invariance`             `unspecified`          \-                        L73
+  `thm:bounded-potential-large-cutoff-srank`           `unspecified`          \-                        L95
 
-  `thm:coulomb-cutoff-uniform-approx`         `unspecified`          \-                        L74
+  `thm:budget-class-bound`                             `unspecified`          \-                        IT4, IT3, BA1, BA2, BA5, BA6, EI1, L43
 
-  `thm:counting-gap`                          `unspecified`          \-                        BA10
+  `thm:checker-budget-lower-bound`                     `unspecified`          \-                        L69
 
-  `thm:discrete-acquisition`                  `unspecified`          \-                        BA3
+  `thm:coherent-single-source`                         `unspecified`          \-                        ORA1
 
-  `thm:dof-srank`                             `unspecified`          \-                        L43
+  `thm:coulomb-cutoff-invariance`                      `unspecified`          \-                        L73
 
-  `thm:energy-entropy`                        `unspecified`          \-                        IT3, EI1, L43
+  `thm:coulomb-cutoff-uniform-approx`                  `unspecified`          \-                        L74
 
-  `thm:energy-rank`                           `unspecified`          \-                        BA7, BA6, L43
+  `thm:coulomb-tail-srank`                             `unspecified`          \-                        L96
 
-  `thm:england`                               `unspecified`          \-                        L45
+  `thm:counting-gap`                                   `unspecified`          \-                        BA10
 
-  `thm:entropy-bound`                         `unspecified`          \-                        IT3, L43
+  `thm:discrete-acquisition`                           `unspecified`          \-                        BA3
 
-  `thm:exact-sufficiency-hardness-core`       `unspecified`          \-                        L63
+  `thm:dof-srank`                                      `unspecified`          \-                        L43
 
-  `thm:feasible-collapse-factors`             `unspecified`          \-                        L78
+  `thm:energy-entropy`                                 `unspecified`          \-                        IT3, EI1, L43
 
-  `thm:finite-budget-no-collapse`             `unspecified`          \-                        PH26
+  `thm:energy-rank`                                    `unspecified`          \-                        BA7, BA6, L43
 
-  `thm:fisher-rank-srank`                     `unspecified`          \-                        L76
+  `thm:england`                                        `unspecified`          \-                        L45
 
-  `thm:fisher-sum-srank`                      `unspecified`          \-                        L80
+  `thm:entropy-bound`                                  `unspecified`          \-                        IT3, L43
 
-  `thm:five-way`                              `unspecified`          \-                        L43, L44, L47, L55
+  `thm:ewald-fourier-positive`                         `unspecified`          \-                        L81
 
-  `thm:hard-family-srank`                     `unspecified`          \-                        L64
+  `thm:ewald-real-space-decay`                         `unspecified`          \-                        L82
 
-  `thm:lj-cutoff-invariance`                  `unspecified`          \-                        L75
+  `thm:ewald-tail-srank`                               `unspecified`          \-                        L98
 
-  `thm:min-bit-operations`                    `unspecified`          \-                        BA5, BA6, L43, L46
+  `thm:exact-sufficiency-hardness-core`                `unspecified`          \-                        L63
 
-  `thm:molecular-docking-srank-bound`         `unspecified`          \-                        L66
+  `thm:feasible-collapse-factors`                      `unspecified`          \-                        L78
 
-  `thm:numopt-bound`                          `unspecified`          \-                        IT4, L43
+  `thm:finite-budget-no-collapse`                      `unspecified`          \-                        PH26
 
-  `thm:one-transition-one-bit`                `unspecified`          \-                        BA4
+  `thm:finite-uniform-error-radius`                    `unspecified`          \-                        L92
 
-  `thm:rank-identification`                   `unspecified`          \-                        L43, L46, L51
+  `thm:fisher-rank-srank`                              `unspecified`          \-                        L76
 
-  `thm:rank-one-ground`                       `unspecified`          \-                        BA8, L54, L55
+  `thm:fisher-sum-srank`                               `unspecified`          \-                        L80
 
-  `thm:resolution-sufficient`                 `unspecified`          \-                        BA5
+  `thm:five-way`                                       `unspecified`          \-                        L43, L44, L47, L55
 
-  `thm:sampled-docking-gap`                   `unspecified`          \-                        L67
+  `thm:grid-docking-entropy`                           `unspecified`          \-                        L113
 
-  `thm:sampled-inside-cutoff-sufficient`      `unspecified`          \-                        L68
+  `thm:grid-erase-irrelevant`                          `unspecified`          \-                        L88
 
-  `thm:thermodynamic-selection`               `unspecified`          \-                        BA8, L49, L54, L55
+  `thm:hard-family-srank`                              `unspecified`          \-                        L64
 
-  `thm:time-lower-bound`                      `unspecified`          \-                        BA1, BA2, BA5, BA6, L43
+  `thm:large-cutoff-bounded`                           `unspecified`          \-                        L89
 
-  `thm:topk-ambiguity-band`                   `unspecified`          \-                        L72
+  `thm:lipschitz-grid-approx`                          `unspecified`          \-                        L90
 
-  `thm:topk-boundary-gap`                     `unspecified`          \-                        L79
+  `thm:lj-cutoff-invariance`                           `unspecified`          \-                        L75
 
-  `thm:tractable-rank-one`                    `unspecified`          \-                        L47, L53, L56
-  ---------------------------------------------------------------------------------------------------------------------------------------
+  `thm:lj-gradient`                                    `unspecified`          \-                        L83
 
-*Auto summary: indexed 66 claims by hardness profile (unspecified=66).*
+  `thm:lj-shell-derivative-envelope`                   `unspecified`          \-                        L103
+
+  `thm:lj-shell-gap-invariance`                        `unspecified`          \-                        L100
+
+  `thm:lj-shell-grad-stability`                        `unspecified`          \-                        L102
+
+  `thm:lj-shell-hessian-lipschitz`                     `unspecified`          \-                        L106
+
+  `thm:lj-shell-quadratic-discretization`              `unspecified`          \-                        L107
+
+  `thm:lj-shell-quadratic-remainder`                   `unspecified`          \-                        L108
+
+  `thm:lj-shell-second-derivative-envelope`            `unspecified`          \-                        L105
+
+  `thm:lj-shell-uniform-approx`                        `unspecified`          \-                        L101
+
+  `thm:lj-tail-srank`                                  `unspecified`          \-                        L97
+
+  `thm:md-above-ground`                                `unspecified`          \-                        L109
+
+  `thm:md-energy-entropy`                              `unspecified`          \-                        L114
+
+  `thm:md-energy-rank`                                 `unspecified`          \-                        L111
+
+  `thm:min-bit-operations`                             `unspecified`          \-                        BA5, BA6, L43
+
+  `thm:molecular-docking-srank-bound`                  `unspecified`          \-                        L66
+
+  `thm:multiplicative-separable-empty-sufficient`      `unspecified`          \-                        L84
+
+  `thm:numopt-bound`                                   `unspecified`          \-                        IT4, L43
+
+  `thm:one-transition-one-bit`                         `unspecified`          \-                        BA4
+
+  `thm:rank-identification`                            `unspecified`          \-                        L43, L46, L51
+
+  `thm:rank-one-ground`                                `unspecified`          \-                        BA8, L54, L55
+
+  `thm:resolution-controlled-gap-invariance`           `unspecified`          \-                        L99
+
+  `thm:resolution-controlled-uniform`                  `unspecified`          \-                        L91
+
+  `thm:resolution-sufficient`                          `unspecified`          \-                        BA5
+
+  `thm:sampled-docking-gap`                            `unspecified`          \-                        L67
+
+  `thm:sampled-inside-cutoff-budget-energy`            `unspecified`          \-                        L112
+
+  `thm:sampled-inside-cutoff-sufficient`               `unspecified`          \-                        L68
+
+  `thm:strict-dominance-empty-sufficient`              `unspecified`          \-                        L85
+
+  `thm:thermodynamic-selection`                        `unspecified`          \-                        BA8, L49, L54, L55
+
+  `thm:time-lower-bound`                               `unspecified`          \-                        BA1, BA2, BA5, BA6, L43
+
+  `thm:topk-ambiguity-band`                            `unspecified`          \-                        L72
+
+  `thm:topk-boundary-gap`                              `unspecified`          \-                        L79
+
+  `thm:topk-certificate-sound`                         `unspecified`          \-                        L94
+
+  `thm:tractable-rank-one`                             `unspecified`          \-                        L47, L53, L56
+
+  `thm:velocity-verlet-volume`                         `unspecified`          \-                        L86
+  ------------------------------------------------------------------------------------------------------------------------------------------------
+
+*Auto summary: indexed 99 claims by hardness profile (unspecified=99).*
 
 
 # Scope Statements {#appendix-assumptions}
@@ -1687,7 +2310,51 @@ Paper-level labeled claims:
 
 -   Corollary [\[cor:bounded-pocket-regime\]](#cor:bounded-pocket-regime){reference-type="ref" reference="cor:bounded-pocket-regime"}
 
+-   Theorem [\[thm:lipschitz-grid-approx\]](#thm:lipschitz-grid-approx){reference-type="ref" reference="thm:lipschitz-grid-approx"}
+
+-   Theorem [\[thm:resolution-controlled-uniform\]](#thm:resolution-controlled-uniform){reference-type="ref" reference="thm:resolution-controlled-uniform"}
+
+-   Theorem [\[thm:lj-shell-derivative-envelope\]](#thm:lj-shell-derivative-envelope){reference-type="ref" reference="thm:lj-shell-derivative-envelope"}
+
+-   Theorem [\[thm:lj-shell-second-derivative-envelope\]](#thm:lj-shell-second-derivative-envelope){reference-type="ref" reference="thm:lj-shell-second-derivative-envelope"}
+
+-   Theorem [\[thm:lj-shell-hessian-lipschitz\]](#thm:lj-shell-hessian-lipschitz){reference-type="ref" reference="thm:lj-shell-hessian-lipschitz"}
+
+-   Theorem [\[thm:lj-shell-quadratic-remainder\]](#thm:lj-shell-quadratic-remainder){reference-type="ref" reference="thm:lj-shell-quadratic-remainder"}
+
+-   Theorem [\[thm:lj-shell-grad-stability\]](#thm:lj-shell-grad-stability){reference-type="ref" reference="thm:lj-shell-grad-stability"}
+
+-   Theorem [\[thm:lj-shell-uniform-approx\]](#thm:lj-shell-uniform-approx){reference-type="ref" reference="thm:lj-shell-uniform-approx"}
+
+-   Theorem [\[thm:lj-shell-quadratic-discretization\]](#thm:lj-shell-quadratic-discretization){reference-type="ref" reference="thm:lj-shell-quadratic-discretization"}
+
+-   Theorem [\[thm:lj-shell-gap-invariance\]](#thm:lj-shell-gap-invariance){reference-type="ref" reference="thm:lj-shell-gap-invariance"}
+
+-   Theorem [\[thm:resolution-controlled-gap-invariance\]](#thm:resolution-controlled-gap-invariance){reference-type="ref" reference="thm:resolution-controlled-gap-invariance"}
+
+-   Theorem [\[thm:large-cutoff-bounded\]](#thm:large-cutoff-bounded){reference-type="ref" reference="thm:large-cutoff-bounded"}
+
+-   Theorem [\[thm:bounded-potential-large-cutoff-srank\]](#thm:bounded-potential-large-cutoff-srank){reference-type="ref" reference="thm:bounded-potential-large-cutoff-srank"}
+
+-   Theorem [\[thm:bounded-potential-large-cutoff-sampled-srank\]](#thm:bounded-potential-large-cutoff-sampled-srank){reference-type="ref" reference="thm:bounded-potential-large-cutoff-sampled-srank"}
+
+-   Theorem [\[thm:finite-uniform-error-radius\]](#thm:finite-uniform-error-radius){reference-type="ref" reference="thm:finite-uniform-error-radius"}
+
+-   Theorem [\[thm:grid-docking-entropy\]](#thm:grid-docking-entropy){reference-type="ref" reference="thm:grid-docking-entropy"}
+
+-   Theorem [\[thm:topk-certificate-sound\]](#thm:topk-certificate-sound){reference-type="ref" reference="thm:topk-certificate-sound"}
+
+-   Theorem [\[thm:grid-erase-irrelevant\]](#thm:grid-erase-irrelevant){reference-type="ref" reference="thm:grid-erase-irrelevant"}
+
+-   Theorem [\[thm:bounded-actions-poly\]](#thm:bounded-actions-poly){reference-type="ref" reference="thm:bounded-actions-poly"}
+
+-   Theorem [\[thm:strict-dominance-empty-sufficient\]](#thm:strict-dominance-empty-sufficient){reference-type="ref" reference="thm:strict-dominance-empty-sufficient"}
+
+-   Theorem [\[thm:multiplicative-separable-empty-sufficient\]](#thm:multiplicative-separable-empty-sufficient){reference-type="ref" reference="thm:multiplicative-separable-empty-sufficient"}
+
 -   Theorem [\[thm:sampled-docking-gap\]](#thm:sampled-docking-gap){reference-type="ref" reference="thm:sampled-docking-gap"}
+
+-   Theorem [\[thm:action-pinned-uniform-gap\]](#thm:action-pinned-uniform-gap){reference-type="ref" reference="thm:action-pinned-uniform-gap"}
 
 -   Theorem [\[thm:sampled-inside-cutoff-sufficient\]](#thm:sampled-inside-cutoff-sufficient){reference-type="ref" reference="thm:sampled-inside-cutoff-sufficient"}
 
@@ -1697,9 +2364,23 @@ Paper-level labeled claims:
 
 -   Theorem [\[thm:lj-cutoff-invariance\]](#thm:lj-cutoff-invariance){reference-type="ref" reference="thm:lj-cutoff-invariance"}
 
+-   Theorem [\[thm:lj-tail-srank\]](#thm:lj-tail-srank){reference-type="ref" reference="thm:lj-tail-srank"}
+
 -   Theorem [\[thm:coulomb-cutoff-uniform-approx\]](#thm:coulomb-cutoff-uniform-approx){reference-type="ref" reference="thm:coulomb-cutoff-uniform-approx"}
 
 -   Theorem [\[thm:coulomb-cutoff-invariance\]](#thm:coulomb-cutoff-invariance){reference-type="ref" reference="thm:coulomb-cutoff-invariance"}
+
+-   Theorem [\[thm:coulomb-tail-srank\]](#thm:coulomb-tail-srank){reference-type="ref" reference="thm:coulomb-tail-srank"}
+
+-   Theorem [\[thm:ewald-tail-srank\]](#thm:ewald-tail-srank){reference-type="ref" reference="thm:ewald-tail-srank"}
+
+-   Theorem [\[thm:lj-gradient\]](#thm:lj-gradient){reference-type="ref" reference="thm:lj-gradient"}
+
+-   Theorem [\[thm:velocity-verlet-volume\]](#thm:velocity-verlet-volume){reference-type="ref" reference="thm:velocity-verlet-volume"}
+
+-   Theorem [\[thm:ewald-real-space-decay\]](#thm:ewald-real-space-decay){reference-type="ref" reference="thm:ewald-real-space-decay"}
+
+-   Theorem [\[thm:ewald-fourier-positive\]](#thm:ewald-fourier-positive){reference-type="ref" reference="thm:ewald-fourier-positive"}
 
 **Thermodynamic Cost (Section 5):**
 
@@ -1710,6 +2391,14 @@ Paper-level labeled claims:
 -   Theorem [\[thm:energy-entropy\]](#thm:energy-entropy){reference-type="ref" reference="thm:energy-entropy"}
 
 -   Corollary [\[cor:minimum-cost-regime\]](#cor:minimum-cost-regime){reference-type="ref" reference="cor:minimum-cost-regime"}
+
+-   Theorem [\[thm:md-energy-rank\]](#thm:md-energy-rank){reference-type="ref" reference="thm:md-energy-rank"}
+
+-   Theorem [\[thm:md-energy-entropy\]](#thm:md-energy-entropy){reference-type="ref" reference="thm:md-energy-entropy"}
+
+-   Theorem [\[thm:md-above-ground\]](#thm:md-above-ground){reference-type="ref" reference="thm:md-above-ground"}
+
+-   Theorem [\[thm:sampled-inside-cutoff-budget-energy\]](#thm:sampled-inside-cutoff-budget-energy){reference-type="ref" reference="thm:sampled-inside-cutoff-budget-energy"}
 
 -   Theorem [\[thm:time-lower-bound\]](#thm:time-lower-bound){reference-type="ref" reference="thm:time-lower-bound"}
 
@@ -1786,6 +2475,6 @@ Paper-level labeled claims:
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper3_leverage/proofs/`
-- Lines: 77434
-- Theorems: 3392
+- Lines: 79763
+- Theorems: 3498
 - `sorry` placeholders: 0

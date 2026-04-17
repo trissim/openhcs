@@ -66,6 +66,73 @@ Among bounded decision systems in the canonical binary encoding, the unique mini
 Theorem~\ref{thm:rank-one-ground} identifies $\mathrm{DOF}(A)=1$ as the one-Landauer-unit ground state, while every bounded decision system with more than one degree of freedom lies strictly above it.
 \end{proof}
 
+\subsection{Exact Docking Decision Problems}
+
+\begin{theorem}[Exact Docking Structural Rank Controls Resolution Cost]\label{thm:md-energy-rank}
+\leanmeta{\LH{L111}}
+Let $D_{\mathrm{dock}}$ be the exact docking decision problem induced by a binding problem, let $I$ be a sufficient coordinate set for $D_{\mathrm{dock}}$, and let $M$ be a thermodynamic model with positive per-bit conversion constant. Then
+\[
+M.\mathrm{joulesPerBit}\cdot \mathrm{srank}(D_{\mathrm{dock}})
+\le
+\mathrm{energyLowerBound}(M,|I|).
+\]
+\end{theorem}
+
+\begin{proof}
+This is the generic structural-rank energy lower bound applied directly to the exact docking decision problem. Exact docking therefore enters the thermodynamic layer through its own sufficient-coordinate structure, not only through the canonical binary encoding.
+\end{proof}
+
+\begin{theorem}[Binary-Encoded Finite Grid Docking Carries Landauer Cost]\label{thm:md-energy-entropy}
+\leanmeta{\LH{L114}}
+Let $D^{\mathrm{flat}}_{\mathrm{dock,exact}}$ be the flat finite-grid exact docking problem induced by a sampled docking family, and let
+\[
+ D^{\mathrm{bits}}_{\mathrm{dock,exact}}
+\]
+be its fixed-length binary encoding. Let $I$ be a sufficient bit-register set for $D^{\mathrm{bits}}_{\mathrm{dock,exact}}$, and let $M$ satisfy Landauer calibration at positive Boltzmann constant and temperature. Then
+\[
+\mathrm{energyLowerBound}(M,|I|)
+\ge
+k_B T\,H_{\mathrm{nats}}\!\bigl(D^{\mathrm{flat}}_{\mathrm{dock,exact}}\bigr).
+\]
+Equivalently, once the finite grid state is lifted to an exact fixed-length binary register, the Landauer floor applies directly to the entropy of the original finite docking quotient without any extra entropy-versus-rank hypothesis.
+\end{theorem}
+
+\begin{proof}
+The binary-encoded problem has binary state space, so its optimizer entropy is bounded by its structural rank through the native binary entropy theorem. The fixed-length decoder preserves the optimizer classes of the original flat finite-grid docking problem, so both problems have the same quotient entropy. The binary structural-rank energy theorem therefore yields the displayed lower bound for the finite docking quotient itself.
+\end{proof}
+
+\begin{theorem}[Higher-Rank Exact Docking Lies Above the Ground State]\label{thm:md-above-ground}
+\leanmeta{\LH{L109}}
+Let $D_{\mathrm{dock}}$ be an exact docking decision problem induced by a binding problem, let $I$ be a sufficient coordinate set for $D_{\mathrm{dock}}$, and let $M$ be a thermodynamic model with positive per-bit conversion constant. If
+\[
+\mathrm{srank}(D_{\mathrm{dock}}) > 1,
+\]
+then
+\[
+M.\mathrm{joulesPerBit} < \mathrm{energyLowerBound}(M,|I|).
+\]
+\end{theorem}
+
+\begin{proof}
+Structural rank above one places the exact docking problem strictly above the one-bit ground state. The structural-rank energy lower bound then transfers that strict separation to every sufficient-set exact-resolution cycle.
+\end{proof}
+
+The thermodynamic bridge for docking is therefore split into two honest layers. Theorem~\ref{thm:md-energy-rank} is the direct exact-docking structural-rank cost floor once a sufficient coordinate set is fixed. Theorem~\ref{thm:md-energy-entropy} is the entropy-calibrated Landauer statement for the explicit finite binary encoding of the sampled flat grid problem. Theorem~\ref{thm:grid-docking-entropy} separately bounds the same finite-grid quotient entropy in the original $(2N+1)$-ary coordinate presentation. The cutoff-local theorems from Section~\ref{complexity-boundary} still provide only upper bounds on $\mathrm{srank}(D_{\mathrm{dock}})$; those bounds identify low-rank exact regimes, but they do not by themselves produce a coordinate-explicit lower bound.
+
+\begin{theorem}[Inside-Cutoff Sampled Exact Resolution Gives a Concrete Bounded-Region Energy Floor]\label{thm:sampled-inside-cutoff-budget-energy}
+\leanmeta{\LH{L112}}
+Let $D^{\mathrm{sampled}}_{\mathrm{dock,exact}}$ be the sampled restricted exact docking problem. Assume the inside-cutoff retained coordinate set is sufficient for $D^{\mathrm{sampled}}_{\mathrm{dock,exact}}$, and suppose that retained set has cardinality at most the bounded-region acquisition budget $\mathrm{MaxAcquisitions}(R,T)$. Then for every thermodynamic model with positive per-bit conversion constant,
+\[
+M.\mathrm{joulesPerBit}\cdot \mathrm{srank}\!\bigl(D^{\mathrm{sampled}}_{\mathrm{dock,exact}}\bigr)
+\le
+\mathrm{energyLowerBound}\!\bigl(M,\mathrm{MaxAcquisitions}(R,T)\bigr).
+\]
+\end{theorem}
+
+\begin{proof}
+The inside-cutoff theorem supplies a concrete sufficient retained set. The budget hypothesis states that this retained set fits inside the bounded-region acquisition budget. The generic structural-rank energy theorem then applies to that exact-resolution witness and lifts the witness cardinality bound into the displayed bounded-region energy floor.
+\end{proof}
+
 \subsection{Finite-Time and Budget Bounds}
 
 \begin{theorem}[Exact-Resolution Time Lower Bound]\label{thm:time-lower-bound}
@@ -448,7 +515,7 @@ In particular, the per-cycle exact-resolution floor scales linearly with the unc
 \end{corollary}
 
 \begin{proof}
-The RATTLE holonomic status register is a $k$-bit binary interface by the finite cardinality theorem. The transported architecture has degree of freedom exactly $3N-k$ by construction. The local bridge theorem identifies the structural rank of the canonical exact-resolution problem with that same count, and the local energy lower bound then gives the displayed Landauer-linear floor.
+The RATTLE holonomic status register is a $k$-bit binary interface by the finite cardinality theorem. The transported architecture has degree of freedom exactly $3N-k$ by construction. The bridge theorem identifies the structural rank of the canonical exact-resolution problem with that same count, and the energy lower bound then gives the displayed Landauer-linear floor.
 \end{proof}
 
 Informally: matter pays for what its topology requires it to know.
@@ -470,4 +537,4 @@ If degree of freedom is read as the number of independent physical coordinates t
 
 \subsection{Formalization}
 
-The local bridge from degree of freedom to structural rank is formalized in \texttt{Leverage/BridgeToDQ.lean}, including the direct finite RATTLE transport with effective dimension $3N-k$. The finite holonomic-constraint counting layer lives in \texttt{Computation/GeometricConstraints.lean}. The physical acquisition and Landauer theorems are imported from the decision-quotient physics stack, in particular \texttt{Physics/BoundedAcquisition.lean} and \texttt{ThermodynamicLift.lean}. The role of the local \texttt{Architecture} object in this section is to provide the coordinate count transported into those theorems.
+The bridge from degree of freedom to structural rank is formalized in \texttt{Leverage/BridgeToDQ.lean}, including the direct finite RATTLE transport with effective dimension $3N-k$. The finite holonomic-constraint counting layer lives in \texttt{Computation/GeometricConstraints.lean}. The physical acquisition and Landauer theorems are imported from the decision-quotient physics stack, in particular \texttt{Physics/BoundedAcquisition.lean} and \texttt{ThermodynamicLift.lean}. The \texttt{Architecture} object in this section provides the coordinate count transported into those theorems.

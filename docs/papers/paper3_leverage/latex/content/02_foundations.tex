@@ -15,7 +15,7 @@ A \emph{bounded decision system} is a finite bounded physical system equipped wi
 \subsection{Degrees of Freedom}
 
 \begin{definition}[Degrees of Freedom]\label{def:dof}
-The quantity $\mathrm{DOF}(A) \in \mathbb{N}$ counts independent coordinates of variation in a bounded decision system $A$. In the mechanized development it is the local structural parameter attached to \texttt{Architecture}; later sections identify it exactly with the structural rank of a canonical decision problem.
+The quantity $\mathrm{DOF}(A) \in \mathbb{N}$ counts independent coordinates of variation in a bounded decision system $A$. In the mechanized development it is the structural parameter attached to \texttt{Architecture}; later sections identify it exactly with the structural rank of a canonical decision problem.
 \end{definition}
 
 \textbf{Operational meaning.} If $\mathrm{DOF}(A)=n$, the system has $n$ independent coordinates that must be resolved in the worst case by any exact resolver.
@@ -118,7 +118,7 @@ The encoding is the exact Lean object \texttt{canonicalDP} in \texttt{Leverage/B
 The \emph{structural rank} of a finite decision problem is the cardinality of its relevant coordinate set, equivalently the size of any minimal sufficient set. It is the minimum interaction dimension that must be read to determine the optimal action exactly.
 \end{definition}
 
-For the canonical decision problem attached to $A$, the relevant coordinate set is all of $\mathrm{Fin}\;\mathrm{DOF}(A)$, so the structural-rank problem is exactly matched to the local degree-of-freedom count.
+For the canonical decision problem attached to $A$, the relevant coordinate set is all of $\mathrm{Fin}\;\mathrm{DOF}(A)$, so the structural-rank problem is exactly matched to the declared degree-of-freedom count.
 
 \subsection{Decision Quotient and Entropy}
 
@@ -146,4 +146,4 @@ The physics results are naturally stated in nats because Landauer calibration co
 
 \subsection{Formalization in Lean}
 
-The local degree-of-freedom object lives in \texttt{Leverage/Foundations.lean}, while the canonical decision encoding and its rank-identification theorems live in \texttt{Leverage/BridgeToDQ.lean}. Structural rank and decision entropy are formalized in the decision-quotient development.
+The degree-of-freedom object lives in \texttt{Leverage/Foundations.lean}, while the canonical decision encoding and its rank-identification theorems live in \texttt{Leverage/BridgeToDQ.lean}. Structural rank and decision entropy are formalized in the decision-quotient development.

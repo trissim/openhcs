@@ -29,17 +29,13 @@ The impossibility manifests differently across regimes. The static regime yields
 
 Six structural restrictions collapse exact certification to polynomial time: bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, and coordinate symmetry. Each removes a distinct source of hardness, providing tractable boundaries to the impossibility theorem.
 
-## Mechanized Core
-
-A Lean 4 artifact mechanically checks the optimizer-quotient universal property, finite deciders, reduction-correctness lemmas, witness schemas, and bridge results The 22K-line artifact verifies the combinatorial core, while oracle-class placements are argued in the paper text.
-
 ## Paper Structure
 
 Section [\[sec:formal-setup\]](#sec:formal-setup){reference-type="ref" reference="sec:formal-setup"} introduces the formal setup. Sections [\[sec:hardness\]](#sec:hardness){reference-type="ref" reference="sec:hardness"}, [\[sec:stochastic\]](#sec:stochastic){reference-type="ref" reference="sec:stochastic"}, and [\[sec:sequential\]](#sec:sequential){reference-type="ref" reference="sec:sequential"} develop the static, stochastic, and sequential complexity classifications. Section [\[sec:regime-hierarchy\]](#sec:regime-hierarchy){reference-type="ref" reference="sec:regime-hierarchy"} consolidates them into the regime matrix. Section 7 presents the impossibility theorem and trilemma. Section 8 collects structural consequences. Sections [\[sec:dichotomy\]](#sec:dichotomy){reference-type="ref" reference="sec:dichotomy"} and [\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"} cover encoding contrasts and tractable cases. Section 9 situates the work, and Appendix [\[app:applications\]](#app:applications){reference-type="ref" reference="app:applications"} collects model translations.
 
 ## Artifact Availability
 
-The proof artifact is archived at <https://doi.org/10.5281/zenodo.19057595>. The cited-content snapshot contains 22068 lines across 67 files with 0 occurrences of `sorry`.
+The proof artifact is archived at <https://doi.org/10.5281/zenodo.19057595>. Inline theorem handles provide provenance for specific claims; the paper's mathematical arguments are intended to stand on their own without consulting the archive.
 
 
 # Formal Setup {#sec:formal-setup}
@@ -300,13 +296,9 @@ The next theorem sharpens the static picture. It is not only that exact certific
 *Proof.* Empty-set sufficiency asks whether $\operatorname{Opt}$ is constant on all $2^n$ states. A sound refutation-complete checker must be able to separate constant maps from maps that differ on some hidden antipodal partition. An adversary can place the first disagreement in any of $2^{n-1}$ independent pair slots; if fewer than $2^{n-1}$ slots are inspected, two instances remain indistinguishable to the checker but have opposite truth values. Therefore at least $2^{n-1}$ pair checks are necessary. ◻
 :::
 
-#### Mechanization note.
-
-The TAUTOLOGY reduction stack, the coNP and $\Sigma_2^P$ classifications, and the witness-budget lower-bound core are indexed by their inline Lean handles.
-
 #### Explicit-state search upper bounds.
 
-Under the explicit-state step-counting model, static sufficiency and static anchor sufficiency are also wrapped as abstract [P]{.smallcaps} predicates on inputs carrying a certified state budget. The artifact proves these upper bounds via counted searches with quadratic and linear state-space dependence respectively, and it also packages the static sufficiency search as an explicit correctness-plus-step-bound witness and as part of the unified finite-search summary theorem.
+Under the explicit-state step-counting model, static sufficiency and static anchor sufficiency are also wrapped as abstract [P]{.smallcaps} predicates on inputs carrying a certified state budget. These upper bounds are realized by counted searches with quadratic and linear state-space dependence respectively.
 
 This completes the baseline regime. The next section keeps the same exact certification question but replaces pairwise counterexample exclusion by conditional expected-utility comparison, which is why the complexity lifts from the static coNP/$\Sigma_2^P$ picture to PP.
 
@@ -344,7 +336,7 @@ Consider the same coordinate structure but with utility $U(a,s)=1$ if $a = s_1$,
 The conditional optimizer $\operatorname{Opt}^{\mathrm{stoch}}_I(\alpha)$ aggregates expected utilities over the entire fiber $\{s : s_I = \alpha\}$ using the distribution $P$. By contrast, the full-information optimizer $\operatorname{Opt}(s)$ conditions on the exact state $s$ itself. Preservation asks whether this averaging over a fiber ever changes which action is optimal; decisiveness asks whether, after averaging, the optimal action on each fiber is uniquely determined.
 
 ::: definition
-[]{#def:stochastic-singleton-sufficient label="def:stochastic-singleton-sufficient"} Using the same conditional optimizer map $\operatorname{Opt}^{\mathrm{stoch}}_I$, a coordinate set $I$ is *stochastically decisive* if every admissible fiber has a uniquely determined conditional optimal action: $$\forall \alpha \in \mathrm{supp}(S_I)\; \exists a \in A:\quad \operatorname{Opt}^{\mathrm{stoch}}_I(\alpha)=\{a\}.$$ In the paper, we refer to this as *stochastic decisiveness*. In the current artifact, this is the stochastic predicate with the strongest succinct-encoding complexity package.
+[]{#def:stochastic-singleton-sufficient label="def:stochastic-singleton-sufficient"} Using the same conditional optimizer map $\operatorname{Opt}^{\mathrm{stoch}}_I$, a coordinate set $I$ is *stochastically decisive* if every admissible fiber has a uniquely determined conditional optimal action: $$\forall \alpha \in \mathrm{supp}(S_I)\; \exists a \in A:\quad \operatorname{Opt}^{\mathrm{stoch}}_I(\alpha)=\{a\}.$$ In the paper, we refer to this as *stochastic decisiveness*. It is the stochastic predicate with the strongest succinct-encoding complexity package developed here.
 :::
 
 #### From witness exclusion to counting.
@@ -358,17 +350,17 @@ Consider a stochastic decision problem with $S=\{s_1,s_2\}$, $A=\{a,b\}$, unifor
 ## Stochastic Status at a Glance
 
 ::: {#tab:stochastic-summary}
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-  **Predicate/** **query**                **What is proved here**                                                                                                               **Mechanized core**                                                             **Open / not formalized**
-  --------------------------------------- ------------------------------------------------------------------------------------------------------------------------------------- ------------------------------------------------------------------------------- ------------------------------------------
+  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  **Predicate/** **query**                **What is proved here**                                                                                                               **Finite structural core**                                                      **Open / omitted**
+  --------------------------------------- ------------------------------------------------------------------------------------------------------------------------------------- ------------------------------------------------------------------------------- ----------------------------------------------
   Stochastic sufficiency (preservation)   Polynomial-time under explicit-state encoding; bridges to static sufficiency                                                          Explicit-state decider; full-support bridge package                             No succinct-encoding hardness claimed
 
   Minimum / anchor preservation           Polynomial-time in explicit state; under full support, inherit coNP-completeness / $\Sigma_2^P$-completeness from the static regime   Full-support inheritance theorems; finite searches; obstruction/bridge lemmas   Open; conjecture coNP-hard
 
-  Stochastic decisiveness                 Polynomial-time under explicit-state encoding; PP-hard under succinct encoding                                                        Reduction core; finite witness/checking schemata                                No oracle-machine formalization
+  Stochastic decisiveness                 Polynomial-time under explicit-state encoding; PP-hard under succinct encoding                                                        Reduction core; finite witness/checking schemata                                No oracle-machine formalization in the paper
 
-  Minimum / anchor decisiveness           PP-hard; in $\textsf{NP}^{\textsf{PP}}$ at paper level                                                                                Existential witness/checking schemata; bounded explicit-state searches          No oracle-class membership formalization
-  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Minimum / anchor decisiveness           PP-hard; in $\textsf{NP}^{\textsf{PP}}$ at paper level                                                                                Existential witness/checking schemata; bounded explicit-state searches          No sharper classification claimed
+  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
   : Regime classification summary for the stochastic row. Open entries mark explicit scope boundaries. Under full support, stochastic preservation is completely classified in the full-support base case.
 :::
@@ -387,14 +379,14 @@ The rest of this section unpacks the four rows of this summary. The preservation
 :::
 
 ::: proof
-*Proof.* For a fixed information set $I$, the verifier scans the finite state space and checks whether the conditional fiber optimizer $\operatorname{Opt}^{\mathrm{stoch}}_I(s_I)$ agrees with the fully conditioned optimizer $\operatorname{Opt}(s)$ at every state $s$. The artifact contains a counted explicit-state search witnessing exactly this predicate together with a linear-in-$|S|$ step bound Hence stochastic sufficiency is polynomial-time decidable in the explicit-state model. ◻
+*Proof.* For a fixed information set $I$, the verifier scans the finite state space and checks whether the conditional fiber optimizer $\operatorname{Opt}^{\mathrm{stoch}}_I(s_I)$ agrees with the fully conditioned optimizer $\operatorname{Opt}(s)$ at every state $s$. This yields a linear-in-$|S|$ explicit-state procedure. Hence stochastic sufficiency is polynomial-time decidable in the explicit-state model. ◻
 :::
 
 #### Conjecture 4.1 (Support-Sensitive Preservation Complexity). {#con:succinct-soundness}
 
 Under the succinct encoding of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}, [Stochastic-Preservation-Check]{.smallcaps} for general distributions (without the full-support assumption) is coNP-hard.
 
-Intuition: preservation remains syntactically universal (statewise optimizer agreement), so its quantifier profile aligns with coNP-style counterexample exclusion rather than PP-style majority comparison. The support-sensitive obstruction lemmas (Proposition [\[prop:stochastic-preservation-partial-general\]](#prop:stochastic-preservation-partial-general){reference-type="ref" reference="prop:stochastic-preservation-partial-general"}) isolate why full-support transfer fails: zero-probability states can witness violations even when they never appear in conditional averages. The mechanized finite core for this obstruction is available .
+Intuition: preservation remains syntactically universal (statewise optimizer agreement), so its quantifier profile aligns with coNP-style counterexample exclusion rather than PP-style majority comparison. The support-sensitive obstruction lemmas (Proposition [\[prop:stochastic-preservation-partial-general\]](#prop:stochastic-preservation-partial-general){reference-type="ref" reference="prop:stochastic-preservation-partial-general"}) isolate why full-support transfer fails: zero-probability states can witness violations even when they never appear in conditional averages.
 
 Open Problem 4.2.[]{#prob:minimum-succinct label="prob:minimum-succinct"} Determine the exact succinct-encoding complexity of [Stochastic-Minimum-Preservation]{.smallcaps} and [Stochastic-Anchor-Preservation]{.smallcaps} for general distributions. Under Conjecture [1.4.0.1](#con:succinct-soundness){reference-type="ref" reference="con:succinct-soundness"}, these inherit coNP-completeness and $\Sigma_2^P$-completeness respectively, matching the static regime; resolving the conjecture would complete the final open cell in the regime matrix (Table 2).
 
@@ -411,7 +403,7 @@ Open Problem 4.2.[]{#prob:minimum-succinct label="prob:minimum-succinct"} Determ
 :::
 
 ::: proof
-*Proof.* The forward direction uses full support to show that when the static optimizer is constant on each $I$-fiber, conditional averaging cannot change the optimizer on that fiber. The reverse direction is Proposition [\[prop:stochastic-to-static-sufficiency\]](#prop:stochastic-to-static-sufficiency){reference-type="ref" reference="prop:stochastic-to-static-sufficiency"}. Both directions are mechanized. ◻
+*Proof.* The forward direction uses full support to show that when the static optimizer is constant on each $I$-fiber, conditional averaging cannot change the optimizer on that fiber. The reverse direction is Proposition [\[prop:stochastic-to-static-sufficiency\]](#prop:stochastic-to-static-sufficiency){reference-type="ref" reference="prop:stochastic-to-static-sufficiency"}. ◻
 :::
 
 ::: proposition
@@ -447,11 +439,11 @@ Consequently, under full support, stochastic minimum preservation is coNP-comple
 :::
 
 ::: proposition
-[]{#prop:stochastic-preservation-variant-search label="prop:stochastic-preservation-variant-search"} For finite instances, the artifact contains counted exhaustive-search procedures for stochastic minimum preservation and stochastic anchor preservation. Their certified step bounds are $O(2^n)$ and $O(|S|)$, respectively.
+[]{#prop:stochastic-preservation-variant-search label="prop:stochastic-preservation-variant-search"} For finite instances, counted exhaustive-search procedures exist for stochastic minimum preservation and stochastic anchor preservation. Their step bounds are $O(2^n)$ and $O(|S|)$, respectively.
 :::
 
 ::: proof
-*Proof.* The minimum-preservation search scans the subset lattice and invokes the explicit-state preservation checker on each candidate set. The anchor-preservation search scans candidate anchor states and checks preservation on the induced fiber. Both procedures are packaged with correctness theorems and explicit step bounds in the artifact. ◻
+*Proof.* The minimum-preservation search scans the subset lattice and invokes the explicit-state preservation checker on each candidate set. The anchor-preservation search scans candidate anchor states and checks preservation on the induced fiber. ◻
 :::
 
 ::: theorem
@@ -459,7 +451,7 @@ Consequently, under full support, stochastic minimum preservation is coNP-comple
 :::
 
 ::: proof
-*Proof.* For minimum preservation, the explicit-state search enumerates coordinate subsets and invokes the explicit preservation checker on each candidate set; the resulting counted procedure is polynomial in the explicit input size for fixed state and coordinate budgets. For anchor preservation, the explicit-state search enumerates anchor states and checks preservation on the induced fiber, yielding a polynomial-time verifier. Both wrappers are mechanized in the artifact. ◻
+*Proof.* For minimum preservation, the explicit-state search enumerates coordinate subsets and invokes the explicit preservation checker on each candidate set; the resulting counted procedure is polynomial in the explicit input size for fixed state and coordinate budgets. For anchor preservation, the explicit-state search enumerates anchor states and checks preservation on the induced fiber, yielding a polynomial-time verifier. ◻
 :::
 
 ::: proposition
@@ -475,7 +467,7 @@ Consequently, under full support, stochastic minimum preservation is coNP-comple
 :::
 
 ::: proof
-*Proof.* The first statement composes the unconditional bridge from stochastic preservation to static sufficiency with the static theorem that every sufficient set contains all relevant coordinates. The second is the resulting cardinality bound for any witness set in the minimum query. For the positive-support statements, the mechanized proof refines the full-support argument: it uses positivity only on one representative state per relevant fiber, together with fiberwise invariance of the conditional optimizer, to propagate static sufficiency or anchor sufficiency into stochastic preservation on the whole fiber. ◻
+*Proof.* The first statement composes the unconditional bridge from stochastic preservation to static sufficiency with the static theorem that every sufficient set contains all relevant coordinates. The second is the resulting cardinality bound for any witness set in the minimum query. For the positive-support statements, the same fiberwise argument uses positivity only on one representative state per relevant fiber, together with invariance of the conditional optimizer on that fiber, to propagate static sufficiency or anchor sufficiency into stochastic preservation on the whole fiber. ◻
 :::
 
 #### What this paper establishes for preservation.
@@ -507,19 +499,19 @@ From this point onward, the historical names "stochastic anchor sufficiency" and
 
 ## Encoding-Sensitive Complexity of Stochastic Decisiveness
 
-The stochastic regime preserves the same underlying certification template, namely whether the retained coordinates determine the optimizer, but asks it after conditioning and expectation have been introduced. The current complexity package concerns stochastic decisiveness because it admits a clean mechanized reduction core and directly supports the existential anchor/minimum queries. For the empty-information case, one is already comparing aggregate mass of satisfying versus nonsatisfying states. More generally, stochastic decisiveness asks whether one action strictly dominates all competitors in conditional expected utility on each admissible fiber.
+The stochastic regime preserves the same underlying certification template, namely whether the retained coordinates determine the optimizer, but asks it after conditioning and expectation have been introduced. The decisiveness package is the one that directly supports the existential anchor/minimum queries. For the empty-information case, one is already comparing aggregate mass of satisfying versus nonsatisfying states. More generally, stochastic decisiveness asks whether one action strictly dominates all competitors in conditional expected utility on each admissible fiber.
 
 ::: theorem
-[]{#thm:stochastic-pp label="thm:stochastic-pp"} For the stochastic decisiveness predicate above, [Stochastic-Decisiveness-Check]{.smallcaps} is decidable in polynomial time under the explicit-state encoding. Under the succinct encoding it is PP-hard. The accompanying upper-bound argument is proved in the paper via an explicit bad-fiber witness characterization whose finite witness/checking core is mechanized in the artifact.
+[]{#thm:stochastic-pp label="thm:stochastic-pp"} For the stochastic decisiveness predicate above, [Stochastic-Decisiveness-Check]{.smallcaps} is decidable in polynomial time under the explicit-state encoding. Under the succinct encoding it is PP-hard. The upper-bound side proceeds via an explicit bad-fiber witness characterization.
 :::
 
 ::: proof
 *Proof.* For the explicit-state encoding, the number of admissible fibers is at most $|S|$, so one can enumerate the fibers and, for each fiber value $\alpha$, compute the conditional expected utilities of all actions directly from the table. Checking whether exactly one action attains the maximum on each fiber is therefore polynomial in the explicit input size.
 
-For succinct-encoding hardness, reduce MAJSAT by the three-action gadget used in the mechanized reduction. Given Boolean formula $\varphi$, take $S=\{0,1\}^n$, uniform $P$, actions $\{\mathrm{accept},\mathrm{hold}_L,\mathrm{hold}_R\}$, and utilities $$U(\mathrm{accept},s)=\mathbf{1}[\varphi(s)],\qquad
+For succinct-encoding hardness, reduce MAJSAT by the three-action gadget used in the reduction. Given Boolean formula $\varphi$, take $S=\{0,1\}^n$, uniform $P$, actions $\{\mathrm{accept},\mathrm{hold}_L,\mathrm{hold}_R\}$, and utilities $$U(\mathrm{accept},s)=\mathbf{1}[\varphi(s)],\qquad
 U(\mathrm{hold}_L,s)=U(\mathrm{hold}_R,s)=\frac12-2^{-(n+1)},$$ with $I=\emptyset$. There is only one admissible fiber, so stochastic decisiveness asks whether the prior-optimal action is unique. By construction, this happens exactly when $\mathbb{E}[\varphi]\ge 1/2$, i.e., in the MAJSAT case. Thus MAJSAT many-one reduces to stochastic decisiveness.
 
-For the upper bound, failure of decisiveness is witnessed by one bad state whose observed fiber does not have a singleton conditional optimum. The current artifact packages exactly this no-witness characterization together with the corresponding existential witness schema, and the two directions are bundled in a summary theorem These mechanized witness/checking packages verify the finite combinatorial core used by the paper's oracle-class arguments. Concretely, the artifact verifies the existential-universal quantifier structure of the predicate, the witness-checking schema that guesses an anchor and verifies conditional-uniqueness using PP comparisons, and the finite-step-counted search wrappers that bound the nondeterministic guessing phase. The standard oracle-machine reduction proving $\textsf{NP}^{\textsf{PP}}$ membership is argued in the paper text and not mechanized. The corresponding $\textsf{coNP}^{\textsf{PP}}$-style and $\textsf{NP}^{\textsf{PP}}$-style memberships are then proved in the paper text by standard complexity-theoretic reasoning. ◻
+For the upper bound, failure of decisiveness is witnessed by one bad state whose observed fiber does not have a singleton conditional optimum. Thus the complement has an existentially guessed bad fiber together with a PP-checkable uniqueness predicate on that fiber. A nondeterministic polynomial-time machine can guess the witness fiber and use a PP oracle to compare conditional expected utilities of the candidate actions on that fiber. This gives the corresponding oracle-class upper bounds by standard guess-and-query reasoning. ◻
 :::
 
 ::: proposition
@@ -544,11 +536,11 @@ U(\mathrm{hold}_L,s)=U(\mathrm{hold}_R,s)=\frac12-2^{-(n+1)}.$$ If at least half
 :::
 
 ::: proof
-*Proof.* Reduce MAJSAT to the $k=0$ slice. In the same three-action gadget used above, there exists a stochastically decisive set of size at most $0$ iff the empty set itself is stochastically decisive. This empty-set equivalence for the gadget is certified in the artifact, so MAJSAT many-one reduces to [Stochastic-Minimum-Sufficient-Set]{.smallcaps}. ◻
+*Proof.* Reduce MAJSAT to the $k=0$ slice. In the same three-action gadget used above, there exists a stochastically decisive set of size at most $0$ iff the empty set itself is stochastically decisive. So MAJSAT many-one reduces to [Stochastic-Minimum-Sufficient-Set]{.smallcaps}. ◻
 :::
 
 ::: proposition
-[]{#prop:stochastic-explicit-search label="prop:stochastic-explicit-search"} For finite instances, the artifact contains counted exhaustive-search procedures for stochastic sufficiency, stochastic decisiveness, stochastic anchor sufficiency, and stochastic minimum sufficiency. Their certified step bounds are respectively $O(|S|)$, $O(|S|)$, $O(|S||A|)$, and $O(2^n)$.
+[]{#prop:stochastic-explicit-search label="prop:stochastic-explicit-search"} For finite instances, counted exhaustive-search procedures exist for stochastic sufficiency, stochastic decisiveness, stochastic anchor sufficiency, and stochastic minimum sufficiency. Their step bounds are respectively $O(|S|)$, $O(|S|)$, $O(|S||A|)$, and $O(2^n)$.
 :::
 
 ::: proof
@@ -560,15 +552,15 @@ U(\mathrm{hold}_L,s)=U(\mathrm{hold}_R,s)=\frac12-2^{-(n+1)}.$$ If at least half
 :::
 
 ::: proof
-*Proof.* For anchor sufficiency, the mechanized collapse $$\begin{aligned}
+*Proof.* For anchor sufficiency, the query collapses to $$\begin{aligned}
 &\mathrm{STOCHASTIC\mbox{-}ANCHOR\mbox{-}SUFFICIENCY\mbox{-}CHECK}(P,I) \\
 &\qquad\iff \exists s_0\,\exists a\; \bigl(\mathrm{fiberOpt}(P,I,s_0)=\{a\}\bigr)
-\end{aligned}$$ is already available in the artifact. A nondeterministic polynomial-time machine may therefore guess $(s_0,a)$ and use a PP oracle to verify that $a$ is the unique conditional optimum on the anchor fiber. Concretely, uniqueness can be checked by comparing the conditional expected utility of $a$ against every competing action on that fiber, which is exactly the same majority-style conditional comparison used in the decisiveness verification.
+\end{aligned}$$ A nondeterministic polynomial-time machine may therefore guess $(s_0,a)$ and use a PP oracle to verify that $a$ is the unique conditional optimum on the anchor fiber. Concretely, uniqueness can be checked by comparing the conditional expected utility of $a$ against every competing action on that fiber, which is exactly the same majority-style conditional comparison used in the decisiveness verification.
 
 For the minimum query, the machine guesses a coordinate set $I$ with $|I|\le k$ and then asks whether $I$ is stochastically decisive. The same witness/checking template used for the anchor case yields the required PP-style verifier for the guessed set, so the minimum query is also in $\textsf{NP}^{\textsf{PP}}$. ◻
 :::
 
-Theorem [\[thm:stochastic-nppp-upper\]](#thm:stochastic-nppp-upper){reference-type="ref" reference="thm:stochastic-nppp-upper"} completes the complexity picture for stochastic decisiveness: decisiveness is polynomial-time in the explicit-state model and PP-hard in the succinct model, while the anchor and minimum decisiveness queries are PP-hard and lie in $\textsf{NP}^{\textsf{PP}}$. Those oracle-class memberships are proved in the paper text. The artifact independently verifies the finite core behind those proofs: the bad-fiber counter-witness schema for decisiveness, the anchor-collapse equivalence, the generic existential-witness schema, bounded-witness recoveries for the explicit-state stochastic anchor and minimum searches, and existential-majority hardness/completeness packages for the anchor and decisiveness query families
+Theorem [\[thm:stochastic-nppp-upper\]](#thm:stochastic-nppp-upper){reference-type="ref" reference="thm:stochastic-nppp-upper"} completes the complexity picture for stochastic decisiveness: decisiveness is polynomial-time in the explicit-state model and PP-hard in the succinct model, while the anchor and minimum decisiveness queries are PP-hard and lie in $\textsf{NP}^{\textsf{PP}}$. The finite witness patterns and reduction gadgets used by those oracle arguments are indexed by the inline handles.
 
 #### Scope note.
 
@@ -578,7 +570,7 @@ The open entries in Table 2 are explicit scope boundaries. The gap between PP-h
 
 #### Relevance boundary.
 
-The stochastic decisiveness query is fiber-indexed: fixing a candidate information set $I$ induces a derived decision problem whose optimizer is the conditional fiber optimizer. In the current formalization this induced problem is always $I$-sufficient , but its relevance notion is therefore also indexed by $I$. For that reason, the paper does not assert a single global relevance-set characterization for stochastic minimum sufficiency analogous to the static and sequential regimes.
+The stochastic decisiveness query is fiber-indexed: fixing a candidate information set $I$ induces a derived decision problem whose optimizer is the conditional fiber optimizer. In this setup the induced problem is always $I$-sufficient , but its relevance notion is therefore also indexed by $I$. For that reason, the paper does not assert a single global relevance-set characterization for stochastic minimum sufficiency analogous to the static and sequential regimes.
 
 ## Tractable Subcases
 
@@ -621,7 +613,7 @@ The stochastic regime therefore gives the middle layer of the paper's hierarchy:
 
 # Sequential Regime Complexity {#sec:sequential}
 
-We now move to sequential settings with transitions and observations. Here the same certification question is asked for a sequential decision model carrying transitions, observations, and a planning horizon. In the current formalization, the certified predicate is state-based: after packaging the sequential instance as its induced one-step decision map, can one suppress some coordinates without changing the resulting optimal-action set? This is where the complexity reaches PSPACE. The structural reason is that hidden information can matter later even when it appears irrelevant now. Certification must therefore account for temporally unfolding contingencies rather than compare only one-shot optimizers or conditional expectations. This complexity jump is consonant with the exact abstraction literature for temporally structured decision models: once hidden information can affect future contingent choices, exact aggregation and exact relevance certification both require reasoning about temporally mediated distinctions rather than one-shot optimizer comparisons. In succinct models, that temporal contingency supports the same kind of alternation that drives PSPACE hardness in planning and quantified-logic reductions.
+We now move to sequential settings with transitions and observations. Here the same certification question is asked for a sequential decision model carrying transitions, observations, and a planning horizon. In this section the certified predicate is state-based: after packaging the sequential instance as its induced one-step decision map, can one suppress some coordinates without changing the resulting optimal-action set? This is where the complexity reaches PSPACE. The structural reason is that hidden information can matter later even when it appears irrelevant now. Certification must therefore account for temporally unfolding contingencies rather than compare only one-shot optimizers or conditional expectations. This complexity jump is consonant with the exact abstraction literature for temporally structured decision models: once hidden information can affect future contingent choices, exact aggregation and exact relevance certification both require reasoning about temporally mediated distinctions rather than one-shot optimizer comparisons. In succinct models, that temporal contingency supports the same kind of alternation that drives PSPACE hardness in planning and quantified-logic reductions.
 
 ## Sequential Decision Problems
 
@@ -630,7 +622,7 @@ We now move to sequential settings with transitions and observations. Here the s
 :::
 
 ::: definition
-[]{#def:sequential-sufficient label="def:sequential-sufficient"} For a sequential instance $\mathcal D_{\mathrm{seq}}$, let $\operatorname{Opt}_{\mathrm{seq}}(s)$ denote the optimal-action set of its induced decision map on state $s$. A coordinate set $I$ is *sequentially sufficient* if $$\forall s,s'\in S:\quad s_I=s'_I \implies \operatorname{Opt}_{\mathrm{seq}}(s)=\operatorname{Opt}_{\mathrm{seq}}(s').$$ This is the sequential state-based certification predicate used throughout the paper and in the artifact.
+[]{#def:sequential-sufficient label="def:sequential-sufficient"} For a sequential instance $\mathcal D_{\mathrm{seq}}$, let $\operatorname{Opt}_{\mathrm{seq}}(s)$ denote the optimal-action set of its induced decision map on state $s$. A coordinate set $I$ is *sequentially sufficient* if $$\forall s,s'\in S:\quad s_I=s'_I \implies \operatorname{Opt}_{\mathrm{seq}}(s)=\operatorname{Opt}_{\mathrm{seq}}(s').$$ This is the sequential state-based certification predicate used throughout the paper.
 :::
 
 #### Two interpretations.
@@ -667,7 +659,7 @@ The sequential model studied here is a state-indexed product model, not a POMDP 
 :::
 
 ::: proof
-*Proof.* In the current formalization, sequential sufficiency is defined as sufficiency of the underlying one-step optimizer map on the state space. The static minimal-set/relevance equivalence therefore transports directly to the sequential setting. ◻
+*Proof.* With this definition, sequential sufficiency is just sufficiency of the underlying one-step optimizer map on the state space. The static minimal-set/relevance equivalence therefore transports directly to the sequential setting. ◻
 :::
 
 ## PSPACE-Completeness
@@ -681,7 +673,7 @@ The reduction follows the same structural pattern as quantified formulas and tem
 :::
 
 ::: proof
-*Proof.* For membership, the verifier ranges over state pairs or candidate witnesses while evaluating the induced sequential optimizer of the input instance. Under the present finite-horizon encoding, that induced optimizer can be evaluated using only polynomial space in the succinct input description of the reduction gadgets, and the outer search can likewise be carried out in polynomial space. This is the verifier pattern abstracted by the explicit finite-search layer formalized in the artifact.
+*Proof.* For membership, the verifier ranges over state pairs or candidate witnesses while evaluating the induced sequential optimizer of the input instance. Under the present finite-horizon encoding, that induced optimizer can be evaluated using only polynomial space in the succinct input description of the reduction gadgets, and the outer search can likewise be carried out in polynomial space.
 
 For hardness, reduce TQBF. Encode alternating quantifiers into the reduced sequential instance so that the induced optimizer is state-independent exactly when the quantified instance is true. Then empty-set sequential sufficiency holds exactly when the source TQBF instance is true. ◻
 :::
@@ -785,7 +777,7 @@ The static, stochastic, and sequential formulations are the paper's central orga
 Table [1](#tab:regime-matrix){reference-type="ref" reference="tab:regime-matrix"} is the main statement-level summary. The stochastic row is intentionally split: preservation and decisiveness are distinct predicates with different complexity behavior. Open cells are explicit scope boundaries.
 
 ::: theorem
-[]{#thm:regime-main label="thm:regime-main"} Under the encoding conventions of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}, the classification is as follows. In the static regime, sufficiency and minimum sufficiency are coNP-complete and anchor sufficiency is $\Sigma_2^P$-complete. In the stochastic regime, preservation (stochastic sufficiency) has a polynomial-time base query under explicit-state encoding with proved bridges back to static sufficiency; the minimum and anchor preservation variants are also polynomial-time under explicit-state encoding, are coNP-complete and $\Sigma_2^P$-complete under full support, and satisfy the support-sensitive partial results of Proposition [\[prop:stochastic-preservation-partial-general\]](#prop:stochastic-preservation-partial-general){reference-type="ref" reference="prop:stochastic-preservation-partial-general"}. Decisiveness (stochastic decisiveness) has a polynomial-time base query under explicit-state encoding and is PP-hard under the succinct encoding; the anchor and minimum decisiveness queries are PP-hard and lie in $\textsf{NP}^{\textsf{PP}}$, with those oracle-class memberships proved in the paper text and their finite witness/checking cores mechanized. In the sequential regime, sufficiency, minimum, and anchor queries are PSPACE-complete.
+[]{#thm:regime-main label="thm:regime-main"} Under the encoding conventions of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}, the classification is as follows. In the static regime, sufficiency and minimum sufficiency are coNP-complete and anchor sufficiency is $\Sigma_2^P$-complete. In the stochastic regime, preservation (stochastic sufficiency) has a polynomial-time base query under explicit-state encoding with proved bridges back to static sufficiency; the minimum and anchor preservation variants are also polynomial-time under explicit-state encoding, are coNP-complete and $\Sigma_2^P$-complete under full support, and satisfy the support-sensitive partial results of Proposition [\[prop:stochastic-preservation-partial-general\]](#prop:stochastic-preservation-partial-general){reference-type="ref" reference="prop:stochastic-preservation-partial-general"}. Decisiveness (stochastic decisiveness) has a polynomial-time base query under explicit-state encoding and is PP-hard under the succinct encoding; the anchor and minimum decisiveness queries are PP-hard and lie in $\textsf{NP}^{\textsf{PP}}$ by the witness-and-query arguments given in Section [\[sec:stochastic\]](#sec:stochastic){reference-type="ref" reference="sec:stochastic"}. In the sequential regime, sufficiency, minimum, and anchor queries are PSPACE-complete.
 :::
 
 ::: proof
@@ -918,7 +910,7 @@ This linear size preservation is essential for ETH transfer. In the explicit enu
 
 We distinguish the encodings of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}. The tractability results below state the model assumption explicitly.
 
-Our theory provides comprehensive coverage of tractable subcases. The artifact certifies explicit decision procedures for several families, and also certifies paper-specific reductions and complexity transfers connecting structurally interesting restrictions to standard polynomial-time algorithmic backbones. Each subcase removes one of the structural sources of hardness in exact certification: unrestricted action comparison, cross-coordinate interaction, high-width dependency structure, or unnecessary state-space multiplicity.
+Our theory provides comprehensive coverage of tractable subcases. Several families admit explicit decision procedures, and the structurally richer cases reduce to standard polynomial-time algorithmic backbones. Each subcase removes one of the structural sources of hardness in exact certification: unrestricted action comparison, cross-coordinate interaction, high-width dependency structure, or unnecessary state-space multiplicity.
 
 ::: {#tab:tractability-map}
   -------------------------------------------------------------------------------------------------------------------------------------
@@ -941,15 +933,15 @@ Our theory provides comprehensive coverage of tractable subcases. The artifact c
 :::
 
 ::: theorem
-[]{#thm:tractable label="thm:tractable"} The following structurally interesting tractable subcases are all mechanized in artifact. The artifact certifies paper-specific reductions and complexity transfers connecting each to standard polynomial-time algorithmic backbones. Formal definitions and trivial cases (single action, bounded state space, separable utility, dominance) are retained in the subsections below.
+[]{#thm:tractable label="thm:tractable"} The following structurally interesting tractable subcases are all established in the paper. Formal definitions and trivial cases (single action, bounded state space, separable utility, dominance) are retained in the subsections below.
 
-1.  **Low tensor rank:** The utility admits a rank-$R$ decomposition $U(a,s) = \sum_{r=1}^R w_r \cdot f_r(a) \cdot \prod_i g_{ri}(s_i)$. The artifact certifies reduction to factored computation with bound $O(|A| \cdot R \cdot n)$.
+1.  **Low tensor rank:** The utility admits a rank-$R$ decomposition $U(a,s) = \sum_{r=1}^R w_r \cdot f_r(a) \cdot \prod_i g_{ri}(s_i)$. Then the relevant optimization step reduces to factored computation with bound $O(|A| \cdot R \cdot n)$.
 
-2.  **Tree-structured dependencies:** Coordinates are ordered such that $s_i$ depends only on $(s_1,\ldots, s_{i-1})$. The artifact certifies an explicit sufficiency checker for this class.
+2.  **Tree-structured dependencies:** Coordinates are ordered such that $s_i$ depends only on $(s_1,\ldots, s_{i-1})$. Then an explicit sufficiency checker exists for this class.
 
-3.  **Bounded treewidth:** The interaction graph has treewidth $\le w$ and utility factors over edges. The artifact certifies reduction to bounded-treewidth CSP together with bound $O(n \cdot k^{w+1})$ inherited from standard CSP algorithm.
+3.  **Bounded treewidth:** The interaction graph has treewidth $\le w$ and utility factors over edges. Then sufficiency checking reduces to bounded-treewidth CSP with bound $O(n \cdot k^{w+1})$.
 
-4.  **Coordinate symmetry:** Utility is invariant under coordinate permutations. The artifact certifies reduction to orbit-type representatives together with resulting orbit-count bound $O\bigl(\binom{d+k-1}{k-1}^2\bigr)$.
+4.  **Coordinate symmetry:** Utility is invariant under coordinate permutations. Then sufficiency checking reduces to orbit-type representatives with resulting orbit-count bound $O\bigl(\binom{d+k-1}{k-1}^2\bigr)$.
 :::
 
 The following subsections provide the formal definitions and reduction theorems for each tractable subcase.
@@ -1007,11 +999,11 @@ Separable utility (Definition [\[def:separable\]](#def:separable){reference-typ
 :::
 
 ::: theorem
-[]{#thm:tensor-rank label="thm:tensor-rank"} If utility has tensor rank $R$, the artifact certifies a reduction of the relevant optimization step to factored computation with bound $O(|A| \cdot R \cdot n)$.
+[]{#thm:tensor-rank label="thm:tensor-rank"} If utility has tensor rank $R$, the relevant optimization step reduces to factored computation with bound $O(|A| \cdot R \cdot n)$.
 :::
 
 ::: proof
-*Proof.* The artifact certifies three ingredients. First, bounded-rank tensor contraction admits a polynomial bound Second, the low-rank utility representation reduces the relevant optimization step to factored computation in $O(|A| \cdot R \cdot n)$ steps Third, these are exactly the paper-specific ingredients needed to invoke the standard tensor-network algorithms cited in the text. Thus the formal support here is a certified reduction-and-transfer statement rather than an end-to-end formalization of the tensor-network backbone itself. ◻
+*Proof.* Three ingredients suffice. First, bounded-rank tensor contraction admits a polynomial bound Second, the low-rank utility representation reduces the relevant optimization step to factored computation in $O(|A| \cdot R \cdot n)$ steps Third, these are exactly the ingredients needed to invoke the standard tensor-network algorithms cited in the text. ◻
 :::
 
 ## Tree-Structured Dependencies {#sec:tract-tree}
@@ -1057,11 +1049,11 @@ The tree-structured case generalizes to bounded treewidth interaction graphs via
 :::
 
 ::: theorem
-[]{#thm:treewidth label="thm:treewidth"} If the interaction graph has treewidth $\le w$ and utility is pairwise with explicit factors, the artifact certifies a reduction to bounded-treewidth CSP together with standard complexity bound $O(n \cdot k^{w+1})$, where $k = \max_i |X_i|$. The reduction bridges to established CSP algorithms [@bodlaender1993tourist; @freuder1990complexity; @bessiere2013detecting].
+[]{#thm:treewidth label="thm:treewidth"} If the interaction graph has treewidth $\le w$ and utility is pairwise with explicit factors, sufficiency checking reduces to bounded-treewidth CSP with standard complexity bound $O(n \cdot k^{w+1})$, where $k = \max_i |X_i|$. The reduction bridges to established CSP algorithms [@bodlaender1993tourist; @freuder1990complexity; @bessiere2013detecting].
 :::
 
 ::: proof
-*Proof.* The artifact certifies the paper-specific reduction from pairwise sufficiency checking to a CSP on the interaction graph It also certifies the transfer of the standard bounded-treewidth complexity bound Thus formal support here is a certified reduction-and-transfer theorem: the bounded-treewidth algorithm itself is standard (drawing on backdoor tractability methods [@bessiere2013detecting]), while the paper-specific bridge to that algorithm is mechanized. ◻
+*Proof.* The reduction maps pairwise sufficiency checking to a CSP on the interaction graph Standard bounded-treewidth complexity bounds then give the stated runtime ◻
 :::
 
 ## Coordinate Symmetry {#sec:tract-symmetry}
@@ -1099,11 +1091,11 @@ For sufficiency, we need only check pairs $(s, s')$ agreeing on $I$ with *differ
 :::
 
 ::: theorem
-[]{#thm:symmetric-complexity label="thm:symmetric-complexity"} Under symmetric utility, the artifact certifies that the number of orbit types is bounded by the stars-and-bars count: $$|\text{OrbitTypes}| = \binom{d + k - 1}{k - 1}$$ and that sufficiency checking reduces to cross-orbit comparisons. Thus the effective number of representative pair checks is at most $\binom{d + k - 1}{k - 1}^2$, which is polynomial in $d$ for fixed $k$.
+[]{#thm:symmetric-complexity label="thm:symmetric-complexity"} Under symmetric utility, the number of orbit types is bounded by the stars-and-bars count: $$|\text{OrbitTypes}| = \binom{d + k - 1}{k - 1}$$ and that sufficiency checking reduces to cross-orbit comparisons. Thus the effective number of representative pair checks is at most $\binom{d + k - 1}{k - 1}^2$, which is polynomial in $d$ for fixed $k$.
 :::
 
 ::: proof
-*Proof.* An orbit type is a multiset of $d$ values from $\{0, \ldots, k-1\}$, equivalently a $k$-tuple of non-negative integers summing to $d$. By stars-and-bars, the count is $\binom{d + k - 1}{k - 1}$. The mechanized content here is the orbit-type reduction and the resulting representative-count bound; the resulting polynomial-time conclusion then follows from this certified compression of the comparison space.
+*Proof.* An orbit type is a multiset of $d$ values from $\{0, \ldots, k-1\}$, equivalently a $k$-tuple of non-negative integers summing to $d$. By stars-and-bars, the count is $\binom{d + k - 1}{k - 1}$. The resulting polynomial-time conclusion follows from this compression of the comparison space.
 
 For fixed $k$, this is $O(d^{k-1})$, polynomial in $d$. ◻
 :::
@@ -1302,7 +1294,7 @@ For runtime, the derived decider performs two operations: one call to the counte
 ### Set-Cover Transfer Boundary
 
 ::: theorem
-On the mechanized gadget family, a coordinate set is sufficient if and only if the corresponding set family is a cover. In particular, feasible solutions are in bijection and optimum cardinalities coincide exactly.
+On the set-cover gadget family, a coordinate set is sufficient if and only if the corresponding set family is a cover. In particular, feasible solutions are in bijection and optimum cardinalities coincide exactly.
 :::
 
 ::: proof
@@ -1343,50 +1335,7 @@ So omitted relevant coordinates must be handled somewhere outside the central in
 The simplicity tax operationalizes the certification trilemma (Corollary 7.3) for architectural compression. When exact relevance cannot be certified, systems cannot simply discard coordinates without consequence: the unresolved burden is conserved across the interface and must be paid elsewhere. This principle connects the complexity map to practical deployment constraints: the cost of exact certification is either paid at the center through computational investment, or distributed to the sites as externalized handling.
 
 
-## Artifact Scope and the Finite-to-Asymptotic Boundary {#sec:artifact-scope}
-
-The Lean 4 artifact verifies the finite combinatorial core used throughout Sections 3--5: reduction correctness with size bounds, explicit-state deciders and step-counted searches, bridge lemmas, and witness/checking schemas used by stochastic upper-bound arguments. The artifact checks the finite mechanisms---reduction constructions, witness structures, explicit-state deciders---that underpin the paper's asymptotic complexity claims. The asymptotic class placements (coNP-completeness, PP-hardness, PSPACE-completeness, NP\^PP membership) are argued in the text using standard complexity-theoretic conventions, as is typical for the field.
-
-The paper-level layer is the asymptotic lift: oracle-machine formulations, class memberships, and ETH-transfer arguments. In particular, the artifact does not formalize oracle Turing machines or polynomial-space machine semantics; those are argued in the manuscript using standard complexity-theoretic conventions.
-
-So the classification is intentionally hybrid: finite gadgets and decision procedures are mechanically checked, while coNP/PP/PSPACE/$\mathsf{NP}^{\mathsf{PP}}$ placements and ETH consequences are proved in text.
-
-**Summary of what is verified vs. what is assumed.**
-
-::: {#tab:artifact-scope}
-  -----------------------------------------------------------------------------------------------------------------------------
-  **Claim**                                 **Verified in Lean**                               **Paper-level**
-  ----------------------------------------- -------------------------------------------------- --------------------------------
-  Reduction correctness                     Polynomial-size output, truth-value preservation   ---
-
-  Explicit-state decidability               Exact algorithm with step bound                    ---
-
-  Witness/checking pattern                  Finite existential/universal structure             Oracle-machine encoding
-
-  coNP-completeness                         TAUTOLOGY $\to$ empty-set sufficiency (finite)     Asymptotic class membership
-
-  $\mathsf{PP}$-hardness                    MAJSAT $\to$ stochastic decisiveness (finite)      Majority-vote characterization
-
-  $\mathsf{PSPACE}$-completeness            TQBF $\to$ sequential sufficiency (finite)         Polynomial-space TM theory
-
-  $\mathsf{NP}^{\mathsf{PP}}$ upper bound   Witness/checking schema                            Oracle machine construction
-
-  ETH lower bound                           Reduction to empty-set sufficiency                 Asymptotic reduction chain
-  -----------------------------------------------------------------------------------------------------------------------------
-
-  : Summary of what is verified in Lean vs. what is argued at paper-level.
-:::
-
-The finite core is solid; the asymptotic lifts are standard but not mechanized.
-
-
 # Related Work {#sec:related}
-
-## Formalized Complexity Theory and Mechanized Reductions
-
-Machine verification of complexity-theoretic arguments remains substantially less mature than formal verification in algebra, analysis, or standard algorithmics. Forster et al. [@forster2019verified] developed certified machine models and computability infrastructure in Coq, and Kunze et al. [@kunze2019formal] formalized major proof-theoretic components in Coq as well. In Isabelle/HOL, much of the mature work has centered on verified algorithms and resource analysis for concrete procedures rather than on families of hardness reductions [@nipkow2002isabelle; @haslbeck2021verified]. Lean 4 and Mathlib provide increasingly capable foundations for mechanized finite mathematics and computation [@mathlib2020; @moura2021lean4], but reusable reduction suites for coNP/$\Sigma_2^P$/PP/PSPACE-style arguments remain relatively rare.
-
-The present artifact is intended as a problem-specific certification layer within that broader program. It does not claim to settle formal complexity theory in full generality; instead, it internalizes the reduction-correctness lemmas, size-bounded hardness packages, exact finite deciders, counted-search procedures, tractability wrappers, explicit-state upper-bound interfaces, and the finite witness/checking machinery now used for the stochastic $\textsf{NP}^{\textsf{PP}}$ upper-bound story. In that sense the contribution is closest to a certified reduction-and-decision core for one theorem family rather than to a general-purpose complexity library.
 
 ## Rough Sets, Reducts, and Attribute Reduction
 
@@ -1438,9 +1387,9 @@ Query-access lower bounds provide another nearby technique family [@dobzinski20
 
 ## Scope and Novelty
 
-The paper is intentionally synthetic. Rough sets and reducts study decision-preserving attribute reduction; feature selection studies informative subsets; statistical decision theory studies informativeness and sufficiency; abstraction and bisimulation literatures study exact aggregation of stochastic and sequential decision processes; explanation methods study local decision-preserving cores; formalized complexity work studies certified reductions and machine-checked decision procedures. The contribution here is to treat exact relevance certification itself as the common object and to develop one coherent complexity-theoretic account around it.
+The paper is intentionally synthetic. Rough sets and reducts study decision-preserving attribute reduction; feature selection studies informative subsets; statistical decision theory studies informativeness and sufficiency; abstraction and bisimulation literatures study exact aggregation of stochastic and sequential decision processes; explanation methods study local decision-preserving cores. The contribution here is to treat exact relevance certification itself as the common object and to develop one coherent complexity-theoretic account around it.
 
-What is distinctive in the present paper is not an isolated static or sequential hardness theorem taken on its own. The static regime can be recast as reduct preservation for the induced decision table, and the sequential row belongs near existing exact abstraction phenomena in richer control models. The contribution here is to formalize one exact decision-preservation predicate in optimizer language, track it coherently across static, stochastic, and sequential regimes, expose the preservation/decisiveness split in the stochastic case, identify the tractable and intractable boundaries of exact certification, and support the resulting finite combinatorial core with mechanized verification. The paper's novelty is therefore best understood as a unified exact-certification theory rather than as a single isolated theorem.
+What is distinctive in the present paper is not an isolated static or sequential hardness theorem taken on its own. The static regime can be recast as reduct preservation for the induced decision table, and the sequential row belongs near existing exact abstraction phenomena in richer control models. The contribution here is to formalize one exact decision-preservation predicate in optimizer language, track it coherently across static, stochastic, and sequential regimes, expose the preservation/decisiveness split in the stochastic case, and identify the tractable and intractable boundaries of exact certification. The paper's novelty is therefore best understood as a unified exact-certification theory rather than as a single isolated theorem.
 
 
 # Conclusion
@@ -1457,30 +1406,15 @@ The implications are direct hardness transfers. Configuration simplification is 
 
 This is also the practical meaning of the simplicity tax. In the hard exact regime, a cheap simplification procedure cannot be assumed to have removed decision-relevant structure merely because it has compressed the visible interface. Any relevance omitted from the certified core must still be paid for somewhere else in the system: by local resolution, extra queries, abstention, or weaker guarantees. Exact simplification is therefore costly, but inexact simplification is not free; it externalizes the unresolved burden.
 
-## Mechanization {#mechanization .unnumbered}
-
-The proof artifact mechanically checks the main reduction constructions, hardness packages, finite deciders, search procedures, tractability statements, step-counting wrappers, the stochastic sufficiency bridge package, the explicit-state decision procedures for the preservation family, the full-support inheritance results, the new support-sensitive obstruction and bridge lemmas for preservation, the decisiveness upper bounds, and the finite witness/checking schemata for the stochastic existential classification Full oracle-machine formalization in Lean remains outside the current state of formalized complexity theory; the paper proves the oracle-class memberships in the text following standard conventions, while the artifact provides independent verification of the finite combinatorial core. This places the mechanization in the emerging category of problem-specific certified reduction infrastructure.
-
 ## Outlook {#outlook .unnumbered}
 
-Two immediate directions remain. First, the reduction infrastructure can be integrated more tightly with general-purpose formalized complexity libraries. Second, the artifact boundary can be made even cleaner by continuing to package the existing finite-decision results into more uniform summary interfaces without changing the paper's complexity claims. On the complexity side, the remaining gap is now sharply localized: stochastic decisiveness already has succinct hardness and a verified witness/checking core for the oracle-class memberships proved in the paper text, but a fully standard oracle-machine formalization of the resulting oracle-class placement and of the $\textsf{NP}^{\textsf{PP}}$ boundary for the anchor and minimum decisiveness queries remains outside the current repository; on the preservation side, Conjecture [\[con:succinct-soundness\]](#con:succinct-soundness){reference-type="ref" reference="con:succinct-soundness"} and Open Problem [\[prob:minimum-succinct\]](#prob:minimum-succinct){reference-type="ref" reference="prob:minimum-succinct"} sharpen the remaining open terrain to the full general-distribution and succinct-encoding complexity of the minimum and anchor preservation variants. The mechanized artifact already exposes the finite combinatorial core and support-sensitive lemmas that isolate this obstruction; see the supplementary material for representative Lean handles when framing the open problem.
+Two immediate directions remain. First, the stochastic decisiveness gap can be sharpened: PP-hardness and $\textsf{NP}^{\textsf{PP}}$ membership leave open the exact status of the anchor and minimum decisiveness queries under the stated encoding. Second, on the preservation side, Conjecture [\[con:succinct-soundness\]](#con:succinct-soundness){reference-type="ref" reference="con:succinct-soundness"} and Open Problem [\[prob:minimum-succinct\]](#prob:minimum-succinct){reference-type="ref" reference="prob:minimum-succinct"} sharpen the remaining open terrain to the full general-distribution and succinct-encoding complexity of the minimum and anchor preservation variants. The support-sensitive lemmas already isolate the obstruction that makes those questions nontrivial.
 
 ## Acknowledgments {#acknowledgments .unnumbered}
 
 Generative AI tools (including Codex, Claude Code, Augment, Kilo, and OpenCode) were used throughout this manuscript, across all sections (Abstract, Introduction, theoretical development, proof sketches, applications, conclusion, and appendix) and across all stages from initial drafting to final revision. The tools were used for boilerplate generation, prose and notation refinement, LaTeX/structure cleanup, translation of informal proof ideas into candidate formal artifacts (Lean/LaTeX), and repeated adversarial critique passes to identify blind spots and clarity gaps.
 
 The author retained full intellectual and editorial control, including problem selection, theorem statements, assumptions, novelty framing, acceptance criteria, and final inclusion/exclusion decisions. No technical claim was accepted solely from AI output. Formal claims reported as machine-verified were admitted only after Lean verification (no `sorry` in cited modules) and direct author review; Lean was used as an integrity gate for responsible AI-assisted research. The author is solely responsible for all statements, citations, and conclusions.
-
-
-# Artifact Index and Supplementary Tables {#app:lean}
-
-The full Lean-handle ledger and claim-to-handle mapping are provided in the supplementary PDF (and archived artifact at <https://doi.org/10.5281/zenodo.19057595>). We omit those long tables from the main manuscript body.
-
-## Mechanized Witness Schemas and Oracle-Class Arguments {#mechanized-witness-schemas-and-oracle-class-arguments .unnumbered}
-
-The paper uses standard oracle-class language for several stochastic upper bounds, especially the $\textsf{coNP}^{\textsf{PP}}$-style complement packaging for decisiveness and the $\textsf{NP}^{\textsf{PP}}$ upper bounds for the anchor and minimum decisiveness queries. The corresponding oracle-class memberships are proved in the paper text, following standard complexity-theoretic proof conventions. The proof artifact complements those proofs by mechanizing the finite witness/checking schemata and reduction cores that the oracle arguments require.
-
-Concretely, the mechanized layer certifies ingredients of the following form: a bad fiber witnesses failure of decisiveness; an existentially guessed coordinate set or anchor witness reduces the anchor/minimum queries to the corresponding decisiveness-style verifier; and the bounded explicit-state procedures agree with the abstract predicates they are intended to decide. The paper then translates these certified witness/checking packages into the stated oracle-class membership arguments by the usual guess-and-query reasoning in complexity theory. Thus the artifact provides independent verification of the finite combinatorial core, while the oracle-class interpretation is established in the manuscript.
 
 
 # Applied Reductions and Examples {#app:applications}
