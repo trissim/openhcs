@@ -60,7 +60,7 @@ If runtime is bounded below by the number of checked witness pairs, then any sou
 The checking budget lower bound transfers directly to runtime once runtime dominates the number of checked pairs.
 \end{proof}
 
-The hardness core is therefore quantitative as well as qualitative: exact certification is expensive not only by reduction, but by unavoidable witness budget.
+The hardness core is therefore quantitative as well as qualitative: exact certification carries an unavoidable witness budget in addition to the reduction-theoretic hardness statement.
 
 \subsection{Cutoff-Local Docking Regime}
 
@@ -90,6 +90,32 @@ Substitute the pocket-size and ligand-size bounds into Theorem~\ref{thm:molecula
 
 Informally: bounded pockets bound exact difficulty.
 
+\subsection{Conformer-Search Collapse Regimes}
+
+\begin{theorem}[Strict Dominance Makes Coordinates Irrelevant]\label{thm:strict-dominance-empty-sufficient}
+\leanmeta{\LH{L85}}
+Let $D$ be a finite exact docking problem. If one action strictly dominates every other action at every state, then every coordinate set is sufficient for $D$.
+\end{theorem}
+
+\begin{proof}
+Strict global dominance makes the dominant action uniquely optimal at every state. The optimal-action set is therefore constant, so no coordinate distinction can change exact resolution.
+\end{proof}
+
+\begin{theorem}[Multiplicative Separability Eliminates Conformer Dependence]\label{thm:multiplicative-separable-empty-sufficient}
+\leanmeta{\LH{L84}}
+Let $D$ be a finite exact docking problem with utility of the form
+\[
+U(a,s)=f(a)g(s).
+\]
+If the state factor $g$ has constant sign, then every coordinate set is sufficient for $D$.
+\end{theorem}
+
+\begin{proof}
+With constant-sign state factor, the optimal-action set depends only on the ordering of the action factor $f$. The optimizer is therefore independent of state and exact sufficiency collapses to the empty-information regime.
+\end{proof}
+
+These theorems give exact collapse regimes for conformer search: under strict dominance or constant-sign multiplicative separability, conformational variation does not change the exact optimizer.
+
 \subsection{Sampled Docking}
 
 \begin{theorem}[Sampled Exact-Coarse Winner Preservation]\label{thm:sampled-docking-gap}
@@ -104,6 +130,30 @@ then the exact and coarse optimal-action sets agree at $s$.
 \begin{proof}
 The theorem is the sampled docking specialization of the strict half-gap invariance principle: a perturbation smaller than half the exact winner's strict margin cannot change the optimal set.
 \end{proof}
+
+\begin{theorem}[Action-Pinned Sampled Docking Has a Uniform Positive Strict Gap]\label{thm:action-pinned-uniform-gap}
+\leanmeta{\LHrng{L}{115}{117}}
+Let
+\[
+  D^{\mathrm{flat}}_{\mathrm{dock,pin}}
+\]
+be the action-side symmetry-broken refinement of the flat exact sampled docking problem, and let $a^\dagger(s)$ denote the canonical max-code representative of the original exact optimal set at flat sampled grid state $s$. If the sampled action family has more than one retained action, then there exists $\gamma>0$ such that for every flat sampled grid state $s$,
+\[
+\gamma \le \mathrm{StrictUtilityGap}_{D^{\mathrm{flat}}_{\mathrm{dock,pin}}}(a^\dagger(s),s).
+\]
+Moreover,
+\[
+\mathrm{srank}\!\bigl(D^{\mathrm{flat}}_{\mathrm{dock,pin}}\bigr)
+\le
+\mathrm{srank}\!\bigl(D^{\mathrm{flat}}_{\mathrm{dock,exact}}\bigr).
+\]
+\end{theorem}
+
+\begin{proof}
+Action-side pinning canonically chooses a strict sampled winner from each exact tie class. The resulting strict utility gap is positive at every flat sampled grid state, and finiteness of the sampled grid state space yields a positive global minimum $\gamma$. Because the symmetry breaking acts only on the action side, it does not increase the number of state coordinates needed for exact resolution.
+\end{proof}
+
+This action-pinned refinement is the theorem-backed replacement for a generic no-ties assumption. It preserves the state-side exact-resolution problem, does not increase structural rank, and converts every finite sampled tie class into a canonical strict winner with a uniform positive margin. The later half-gap invariance theorems can therefore be applied to the pinned sampled family with an explicit witness $\gamma$ rather than an ad hoc generic-position premise.
 
 \begin{theorem}[Inside-Cutoff Sufficiency for Sampled Docking]\label{thm:sampled-inside-cutoff-sufficient}
 \leanmeta{\LH{L68}}
@@ -136,6 +186,258 @@ The ambiguity band is defined by lowering the exact $k$th threshold by $\varepsi
 
 These top-$k$ theorems give a conservative exact-screening regime even when strict single-winner separation is unavailable.
 
+\subsection{Continuous-to-Discrete Approximation Bridges}
+
+\begin{theorem}[Lipschitz Grid Error Gives Resolution-Controlled Approximation]\label{thm:lipschitz-grid-approx}
+\leanmeta{\LH{L90}}
+Let $u_{\mathrm{cont}}$ be a continuous-state score family, let $u_{\mathrm{grid}}$ be its grid approximation, and let each grid state carry a state-discretization error bounded by $\mathrm{res}$. If the score discrepancy is Lipschitz with constant $L$, then the exact-versus-grid score error is uniformly bounded by $L\,\mathrm{res}$.
+\end{theorem}
+
+\begin{proof}
+The Lipschitz hypothesis bounds score discrepancy at each grid state by $L$ times its state error. A uniform state-error bound by $\mathrm{res}$ therefore yields a uniform score radius $L\,\mathrm{res}$.
+\end{proof}
+
+\begin{theorem}[Resolution-Controlled Approximation Gives Uniform Utility Approximation]\label{thm:resolution-controlled-uniform}
+\leanmeta{\LH{L91}}
+If the exact-versus-grid score discrepancy is bounded by a resolution-dependent envelope $\varepsilon(\mathrm{res})$ on every lifted grid state, then the lifted grid problem is a uniform utility approximation with radius $\varepsilon(\mathrm{res})$.
+\end{theorem}
+
+\begin{proof}
+The resolution-controlled hypothesis already states the required pointwise uniform score bound on the lifted grid state space.
+\end{proof}
+
+\begin{theorem}[Resolution-Controlled Approximation Preserves Exact Winners]\label{thm:resolution-controlled-gap-invariance}
+\leanmeta{\LH{L99}}
+Let $u_{\mathrm{cont}}$ be a continuous score family, $u_{\mathrm{grid}}$ its discretized score family, and $\mathrm{lift}$ the map from grid states to continuous states. If the exact-versus-grid score discrepancy is bounded by $\varepsilon(\mathrm{res})$ on every lifted grid state, and if
+\[
+\varepsilon(\mathrm{res}) < \frac{1}{2}\,\mathrm{StrictUtilityGap},
+\]
+then the lifted exact optimizer and the grid optimizer agree at that grid state.
+\end{theorem}
+
+\begin{proof}
+Resolution-controlled approximation yields a uniform utility approximation with radius $\varepsilon(\mathrm{res})$. The standard strict half-gap criterion then gives exact/coarse winner preservation.
+\end{proof}
+
+\begin{theorem}[Large Cutoff Implies Docking Cutoff Boundedness]\label{thm:large-cutoff-bounded}
+\leanmeta{\LH{L89}}
+Let a binding problem admit a lattice-tail perturbation bound with coefficient $c$ and a positive strict minimum decision gap $\gamma$. If the chosen cutoff radius satisfies
+\[
+c\,\mathrm{TailSum}_6(R_{\mathrm{cut}}) < \gamma/2,
+\]
+then the exact docking problem satisfies the cutoff-boundedness hypothesis required by the structural-rank and sampled-docking locality theorems.
+\end{theorem}
+
+\begin{proof}
+The lattice-tail bound supplies a uniform upper bound on every outside-cutoff utility perturbation. The strict minimum gap condition then shows that the perturbation remains below half the exact decision gap, which is exactly the cutoff-boundedness criterion.
+\end{proof}
+
+These theorems provide a direct route from continuous regularity and physical tail control to the finite exact/coarse approximation theorems used later in the docking development.
+
+\begin{theorem}[Explicit Lennard-Jones Shell Derivative Envelope]\label{thm:lj-shell-derivative-envelope}
+\leanmeta{\LH{L103}}
+Fix a positive lower shell radius $r_{\min}>0$. Then every radius $r \ge r_{\min}$ satisfies
+\[
+\left|\frac{d}{dr}U_{\mathrm{LJ}}(r)\right|
+\le
+\left(24|\varepsilon|r_{\min}^{-1}\right)
+\left((|\sigma|r_{\min}^{-1})^6 + 2(|\sigma|r_{\min}^{-1})^{12}\right).
+\]
+\end{theorem}
+
+\begin{proof}
+The closed-form Lennard-Jones derivative is bounded by replacing every inverse radius factor with the lower-shell inverse $r_{\min}^{-1}$ and then bounding the polynomial terms by monotonicity on the positive shell.
+\end{proof}
+
+\begin{theorem}[Explicit Lennard-Jones Shell Second-Derivative Envelope]\label{thm:lj-shell-second-derivative-envelope}
+\leanmeta{\LH{L105}}
+Fix a positive lower shell radius $r_{\min}>0$. Then every radius $r \ge r_{\min}$ satisfies
+\[
+\left|\frac{d^2}{dr^2}U_{\mathrm{LJ}}(r)\right|
+\le
+\left(24|\varepsilon|r_{\min}^{-2}\right)
+\left(26(|\sigma|r_{\min}^{-1})^{12} + 7(|\sigma|r_{\min}^{-1})^6\right).
+\]
+\end{theorem}
+
+\begin{proof}
+Differentiate the closed-form gradient once more and bound every inverse radius factor by the lower-shell inverse. The polynomial terms are again controlled by monotonicity on the positive shell.
+\end{proof}
+
+\begin{theorem}[Lennard-Jones Hessian Envelope Makes the Gradient Lipschitz]\label{thm:lj-shell-hessian-lipschitz}
+\leanmeta{\LH{L106}}
+On a positive shell $[r_{\min},r_{\max}]$, any uniform bound on the Lennard-Jones second derivative yields a Lipschitz bound on the Lennard-Jones gradient:
+\[
+|U'_{\mathrm{LJ}}(y)-U'_{\mathrm{LJ}}(x)| \le K|y-x|.
+\]
+\end{theorem}
+
+\begin{proof}
+The second derivative is the derivative of the gradient. A uniform shell bound on that derivative therefore makes the gradient Lipschitz by the one-dimensional mean value theorem.
+\end{proof}
+
+\begin{theorem}[Lennard-Jones Hessian Envelope Gives a Quadratic Taylor Remainder]\label{thm:lj-shell-quadratic-remainder}
+\leanmeta{\LH{L108}}
+Fix a positive shell $[r_{\min}, r_{\max}]$. Then for every $x,y \in [r_{\min}, r_{\max}]$,
+\[
+|U_{\mathrm{LJ}}(y)-U_{\mathrm{LJ}}(x)-U'_{\mathrm{LJ}}(x)(y-x)|
+\le
+\frac{1}{2}
+\left(24|\varepsilon|r_{\min}^{-2}\right)
+\left(26(|\sigma|r_{\min}^{-1})^{12} + 7(|\sigma|r_{\min}^{-1})^6\right)
+|y-x|^2.
+\]
+\end{theorem}
+
+\begin{proof}
+The shell second-derivative envelope gives a uniform Hessian bound on the positive shell. The one-dimensional second-order Taylor remainder is therefore bounded by one half of that shellwise Hessian envelope times the squared radial displacement.
+\end{proof}
+
+\begin{theorem}[Lennard-Jones Shell Gradient Bound Gives Score Stability]\label{thm:lj-shell-grad-stability}
+\leanmeta{\LH{L102}}
+Fix a positive radial shell $[r_{\min}, r_{\max}]$ and assume the Lennard-Jones gradient magnitude is bounded by $C$ on that shell. Then for any two radii $x,y \in [r_{\min}, r_{\max}]$,
+\[
+|U_{\mathrm{LJ}}(y)-U_{\mathrm{LJ}}(x)| \le C|y-x|.
+\]
+\end{theorem}
+
+\begin{proof}
+The closed-form Lennard-Jones derivative is bounded by hypothesis on the positive shell. The one-dimensional mean value theorem then bounds variation of the potential by the derivative envelope times the radial displacement.
+\end{proof}
+
+\begin{theorem}[Lennard-Jones Shell Gradient Bound Gives Uniform Exact/Grid Approximation]\label{thm:lj-shell-uniform-approx}
+\leanmeta{\LH{L101}}
+Let $d_{\mathrm{exact}}$ and $d_{\mathrm{grid}}$ be exact and discretized distance maps whose values remain inside a positive shell $[r_{\min}, r_{\max}]$. If the Lennard-Jones gradient magnitude is bounded by $C$ on that shell and
+\[
+|d_{\mathrm{exact}}-d_{\mathrm{grid}}| \le \delta
+\]
+pointwise, then the exact and grid Lennard-Jones score families form a uniform utility approximation with radius $C\delta$.
+\end{theorem}
+
+\begin{proof}
+The shell gradient theorem bounds score variation by $C$ times the radial displacement. Applying that bound pointwise to the exact-versus-grid distance error yields a uniform score discrepancy radius $C\delta$.
+\end{proof}
+
+\begin{theorem}[First-Order-Corrected Lennard-Jones Discretization Error Is Quadratic]\label{thm:lj-shell-quadratic-discretization}
+\leanmeta{\LH{L107}}
+Let $d_{\mathrm{exact}}$ and $d_{\mathrm{grid}}$ be exact and discretized distance maps whose values remain inside a positive shell $[r_{\min}, r_{\max}]$, and assume
+\[
+|d_{\mathrm{exact}}-d_{\mathrm{grid}}| \le \delta
+\]
+pointwise. Then the first-order-corrected exact/grid Lennard-Jones discrepancy satisfies the quadratic bound
+\[
+\left|
+U_{\mathrm{LJ}}(d_{\mathrm{exact}})-
+\left(U_{\mathrm{LJ}}(d_{\mathrm{grid}})+U'_{\mathrm{LJ}}(d_{\mathrm{grid}})(d_{\mathrm{exact}}-d_{\mathrm{grid}})\right)
+\right|
+\le
+\frac{1}{2}
+\left(24|\varepsilon|r_{\min}^{-2}\right)
+\left(26(|\sigma|r_{\min}^{-1})^{12} + 7(|\sigma|r_{\min}^{-1})^6\right)
+\delta^2.
+\]
+\end{theorem}
+
+\begin{proof}
+Apply the quadratic Taylor remainder theorem to the shellwise exact-versus-grid radial displacement and then substitute the uniform distance-discretization bound $|d_{\mathrm{exact}}-d_{\mathrm{grid}}| \le \delta$.
+\end{proof}
+
+\begin{theorem}[Lennard-Jones Shell Gradient Bound Preserves Exact Winners]\label{thm:lj-shell-gap-invariance}
+\leanmeta{\LH{L100}}
+In the setting of Theorem~\ref{thm:lj-shell-uniform-approx}, if the radius $C\delta$ is smaller than half the strict exact utility gap at state $s$, then the exact and grid Lennard-Jones optimal-action sets agree at $s$.
+\end{theorem}
+
+\begin{proof}
+The shell gradient theorem gives a uniform exact/grid score approximation radius $C\delta$. The strict half-gap criterion then yields exact/coarse winner preservation.
+\end{proof}
+
+\begin{theorem}[Bounded Potential Plus Large Cutoff Gives Structural-Rank Bound]\label{thm:bounded-potential-large-cutoff-srank}
+\leanmeta{\LH{L95}}
+If a molecular docking problem satisfies a uniform outside-cutoff perturbation bound with coefficient $c$ and minimum exact decision gap $\gamma$, and if the chosen cutoff satisfies
+\[
+c\,\mathrm{TailSum}_6(R_{\mathrm{cut}}) < \gamma/2,
+\]
+then the structural rank of the exact docking problem is bounded by
+\[
+\mathrm{srank}(D_{\mathrm{dock}}) \le 3P_{\mathrm{rel}} + 3L.
+\]
+\end{theorem}
+
+\begin{proof}
+The large-cutoff condition converts the bounded-potential witness into the cutoff-boundedness hypothesis. The molecular locality theorem then bounds structural rank by the inside-cutoff protein coordinates together with all ligand coordinates.
+\end{proof}
+
+\begin{theorem}[Bounded Potential Plus Large Cutoff Gives Sampled Structural-Rank Bound]\label{thm:bounded-potential-large-cutoff-sampled-srank}
+\leanmeta{\LH{L104}}
+Under the same bounded-potential and large-cutoff hypotheses, the sampled restricted docking problem also satisfies
+\[
+\mathrm{srank}(D_{\mathrm{dock}}^{\mathrm{sampled}}) \le 3P_{\mathrm{rel}} + 3L.
+\]
+\end{theorem}
+
+\begin{proof}
+The large-cutoff condition again supplies the cutoff-boundedness hypothesis. The sampled cutoff locality theorem then bounds the structural rank of the restricted sampled problem by the same inside-cutoff protein coordinates together with all ligand coordinates.
+\end{proof}
+
+Exact Lennard-Jones, exact Coulomb, and exact real-space Ewald scorer families each instantiate this sampled structural-rank bridge through their corresponding tail-control theorems in the mechanized development.
+
+\subsection{Certified Pruning and Finite Algorithms}
+
+\begin{theorem}[Finite Sampled Docking Has a Canonical Uniform Error Radius]\label{thm:finite-uniform-error-radius}
+\leanmeta{\LH{L92}}
+Every finite sampled docking problem admits a canonical exact/coarse discrepancy radius that witnesses uniform approximation between its exact and coarse score families on the sampled domain.
+\end{theorem}
+
+\begin{proof}
+The finite sampled domain contains only finitely many exact-versus-coarse score differences. Their maximum gives the required uniform discrepancy radius.
+\end{proof}
+
+\begin{theorem}[Finite Grid Exact-Docking Entropy Is Controlled by Structural Rank]\label{thm:grid-docking-entropy}
+\leanmeta{\LH{L113}}
+Let $D^{\mathrm{flat}}_{\mathrm{dock,exact}}$ be the flat exact sampled docking decision problem obtained by reconstructing each discretized molecular grid state from its finite coordinate function on a grid of side length $2N+1$. Then
+\[
+H_{\mathrm{nats}}\!\bigl(D^{\mathrm{flat}}_{\mathrm{dock,exact}}\bigr)
+\le
+\mathrm{srank}\!\bigl(D^{\mathrm{flat}}_{\mathrm{dock,exact}}\bigr)\,\ln(2N+1).
+\]
+\end{theorem}
+
+\begin{proof}
+The flat grid state family has a finite alphabet of size $2N+1$ at each coordinate. The number of exact optimizer classes is therefore bounded by $(2N+1)^{\mathrm{srank}}$, so taking natural logarithms yields the displayed entropy bound.
+\end{proof}
+
+\begin{theorem}[Top-k Margin Certificates Are Sound]\label{thm:topk-certificate-sound}
+\leanmeta{\LH{L94}}
+Under a certified top-$k$ margin condition, the theorem-backed pruning certificate retains every exact top-$k$ action inside its survivor set.
+\end{theorem}
+
+\begin{proof}
+The certificate packages the top-$k$ survivor containment theorem into a finite survivor set together with its soundness proof. The soundness clause is exactly the stated inclusion.
+\end{proof}
+
+\begin{theorem}[Grid Irrelevance Erasure Is Sound]\label{thm:grid-erase-irrelevant}
+\leanmeta{\LH{L88}}
+For discretized molecular grid states, any coordinate already known to be irrelevant may be erased from a sufficient retained set without destroying exact sufficiency.
+\end{theorem}
+
+\begin{proof}
+Irrelevant coordinates do not change the optimizer when toggled. Erasing one from a retained sufficient set therefore preserves the exact optimal-action correspondence.
+\end{proof}
+
+\begin{theorem}[Bounded-Action Exact Checking Is Polynomial-Time Decidable]\label{thm:bounded-actions-poly}
+\leanmeta{\LH{L87}, \LH{L93}}
+If the action family has size at most $k$, then exact sufficiency checking is decidable in polynomial time. More precisely, the total checking cost is bounded by
+\[
+|S|^2 (1 + k^2).
+\]
+\end{theorem}
+
+\begin{proof}
+With at most $k$ actions, each optimal-action comparison costs at most quadratic time in $k$, and sufficiency checking examines all state pairs. The resulting total cost is therefore bounded by $|S|^2(1+k^2)$.
+\end{proof}
+
+These theorems convert exact-resolution stability into explicit finite certificates and polynomial-time checking regimes.
+
 \subsection{Concrete Scorer Families}
 
 \begin{theorem}[Cutoff Lennard-Jones Winner Preservation]\label{thm:lj-cutoff-invariance}
@@ -145,6 +447,18 @@ For a finite sampled Lennard-Jones docking family, let $a_\ast$ be a strict exac
 
 \begin{proof}
 The finite cutoff radius gives a uniform approximation theorem for exact and cutoff Lennard-Jones scores on the sampled domain. A strict half-gap bound then forces winner preservation.
+\end{proof}
+
+\begin{theorem}[Exact Lennard-Jones Tail Control Gives Structural-Rank Bound]\label{thm:lj-tail-srank}
+\leanmeta{\LH{L97}}
+If an exact Lennard-Jones docking score admits a physical distance-decay tail bound, if the finite exact decision gap is positive, and if the cutoff radius is large enough that the tail term is below half that gap, then
+\[
+\mathrm{srank}(D_{\mathrm{dock}}) \le 3P_{\mathrm{rel}} + 3L.
+\]
+\end{theorem}
+
+\begin{proof}
+The physical distance-decay theorem packages the exact Lennard-Jones score into a bounded-potential witness. The large-cutoff theorem converts that witness into the cutoff-boundedness hypothesis, and the molecular locality theorem then gives the structural-rank bound.
 \end{proof}
 
 \begin{theorem}[Cutoff Coulomb Uniform Approximation]\label{thm:coulomb-cutoff-uniform-approx}
@@ -165,6 +479,81 @@ For a finite sampled Coulomb docking family, let $a_\ast$ be a strict exact winn
 The uniform cutoff-error bound from Theorem~\ref{thm:coulomb-cutoff-uniform-approx} combines with the strict half-gap criterion to force winner preservation.
 \end{proof}
 
+\begin{theorem}[Exact Coulomb Tail Control Gives Structural-Rank Bound]\label{thm:coulomb-tail-srank}
+\leanmeta{\LH{L96}}
+If an exact Coulomb docking score admits a tail perturbation bound, if the finite exact decision gap is positive, and if the cutoff radius is large enough that the tail term is below half that gap, then
+\[
+\mathrm{srank}(D_{\mathrm{dock}}) \le 3P_{\mathrm{rel}} + 3L.
+\]
+\end{theorem}
+
+\begin{proof}
+The Coulomb tail theorem packages the exact score into a bounded-potential witness. The large-cutoff theorem converts that witness into the cutoff-boundedness hypothesis, and the molecular locality theorem then gives the structural-rank bound.
+\end{proof}
+
+\begin{theorem}[Exact Real-Space Ewald Tail Control Gives Structural-Rank Bound]\label{thm:ewald-tail-srank}
+\leanmeta{\LH{L98}}
+If an exact real-space Ewald docking score admits a tail perturbation bound, if the finite exact decision gap is positive, and if the cutoff radius is large enough that the tail term is below half that gap, then
+\[
+\mathrm{srank}(D_{\mathrm{dock}}) \le 3P_{\mathrm{rel}} + 3L.
+\]
+\end{theorem}
+
+\begin{proof}
+The real-space Ewald tail theorem packages the exact score into a bounded-potential witness. The large-cutoff theorem converts that witness into the cutoff-boundedness hypothesis, and the molecular locality theorem then gives the structural-rank bound.
+\end{proof}
+
+\begin{theorem}[Closed-Form Lennard-Jones Gradient]\label{thm:lj-gradient}
+\leanmeta{\LH{L83}}
+For nonzero separation radius $r$, the Lennard-Jones potential admits the exact derivative
+\[
+\frac{d}{dr}U_{\mathrm{LJ}}(r)
+=
+\left(24\varepsilon r^{-1}\right)
+\left((\sigma r^{-1})^6 - 2(\sigma r^{-1})^{12}\right).
+\]
+\end{theorem}
+
+\begin{proof}
+Differentiate the closed-form Lennard-Jones expression directly by the chain rule through the inverse-power representation and simplify algebraically.
+\end{proof}
+
+\subsection{Geometric and Electrostatic Structure}
+
+\begin{theorem}[Velocity-Verlet Preserves Phase-Space Volume]\label{thm:velocity-verlet-volume}
+\leanmeta{\LH{L86}}
+For every differentiable potential, timestep, mass, and phase-space state, the Jacobian determinant of the Velocity-Verlet map is exactly $1$.
+\end{theorem}
+
+\begin{proof}
+The Jacobian factors into three block-triangular steps with unit diagonal determinants. Multiplicativity of determinant then gives exact phase-space volume preservation.
+\end{proof}
+
+\begin{theorem}[Ewald Real-Space Exponential Decay]\label{thm:ewald-real-space-decay}
+\leanmeta{\LH{L82}}
+For positive radius $r$ and splitting parameter $\alpha$, the Ewald real-space core satisfies
+\[
+\mathrm{Ewald}_{\mathrm{real}}(r,\alpha)
+\le
+\frac{e^{-\alpha^2 r^2}}{r}.
+\]
+\end{theorem}
+
+\begin{proof}
+The formal real-space core is defined by the Gaussian upper bound on the complementary-error screening factor. Expanding the square gives the displayed exponential-decay form exactly.
+\end{proof}
+
+\begin{theorem}[Ewald Reciprocal Core Is Positive]\label{thm:ewald-fourier-positive}
+\leanmeta{\LH{L81}}
+For positive wavevector magnitude $k$ and splitting parameter $\alpha$, the Ewald reciprocal-space core is strictly positive.
+\end{theorem}
+
+\begin{proof}
+The reciprocal-space core is the product of $k^{-2}$ and a positive Gaussian factor. Both factors are positive under the stated hypotheses.
+\end{proof}
+
+These geometric and electrostatic theorems show that the docking layer already contains exact statements about phase-space evolution, force-law differentiation, and long-range Coulomb splitting together with the rank and approximation bounds.
+
 \subsection{Formalization}
 
-The local paper3 docking bridge theorems live in \texttt{Leverage/DockingTheoryBridge.lean}. They expose the abstraction-collapse boundary, the Fisher-rank identities, the general exact-sufficiency hardness core, the quantitative witness/checking lower bounds, the cutoff-local structural-rank bounds for molecular docking, the sampled exact/coarse preservation and sufficiency theorems, the top-$k$ and ambiguity-band control theorems, and the concrete Lennard-Jones and Coulomb cutoff invariance statements used in the molecular development.
+The docking bridge theorems are assembled in \texttt{Leverage/DockingTheoryBridge.lean}. They expose the abstraction-collapse boundary, the Fisher-rank identities, the general exact-sufficiency hardness core, the quantitative witness/checking lower bounds, the cutoff-local structural-rank bounds for molecular docking, the conformer-search collapse regimes, the sampled exact/coarse preservation and sufficiency theorems, the top-$k$ and ambiguity-band control theorems, the concrete Lennard-Jones and Coulomb cutoff invariance statements, and the geometric and electrostatic structure theorems used in the molecular development.
