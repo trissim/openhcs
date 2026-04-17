@@ -36,6 +36,40 @@ noncomputable def StrictUtilityGap {A S : Type*} [Fintype A] (dp : DecisionProbl
     dp.utility a_star s - maxSubopt
   else 0
 
+theorem strictUtilityGap_eq_of_nonempty {A S : Type*} [Fintype A]
+    (dp : DecisionProblem A S) (a_star : A) (s : S)
+    (hSub : ((Finset.univ : Finset A).filter (fun a => a ≠ a_star)).Nonempty) :
+    StrictUtilityGap dp a_star s =
+      dp.utility a_star s -
+        ((Finset.univ : Finset A).filter (fun a => a ≠ a_star)).sup' hSub
+          (fun a => dp.utility a s) := by
+  unfold StrictUtilityGap
+  let subopts : Finset A := (Finset.univ : Finset A).filter (fun a => a ≠ a_star)
+  have hGapDef :
+      (if h : subopts.Nonempty then
+        dp.utility a_star s - subopts.sup' h (fun a => dp.utility a s)
+      else 0) =
+        dp.utility a_star s - subopts.sup' hSub (fun a => dp.utility a s) := by
+    exact dif_pos hSub
+  simpa [subopts] using hGapDef
+
+theorem strictUtilityGap_eq_of_nonempty_not_eq {A S : Type*} [Fintype A]
+    (dp : DecisionProblem A S) (a_star : A) (s : S)
+    (hSub : ((Finset.univ : Finset A).filter (fun a => ¬ a = a_star)).Nonempty) :
+    StrictUtilityGap dp a_star s =
+      dp.utility a_star s -
+        ((Finset.univ : Finset A).filter (fun a => ¬ a = a_star)).sup' hSub
+          (fun a => dp.utility a s) := by
+  unfold StrictUtilityGap
+  let subopts : Finset A := (Finset.univ : Finset A).filter (fun a => ¬ a = a_star)
+  have hGapDef :
+      (if h : subopts.Nonempty then
+        dp.utility a_star s - subopts.sup' h (fun a => dp.utility a s)
+      else 0) =
+        dp.utility a_star s - subopts.sup' hSub (fun a => dp.utility a s) := by
+    exact dif_pos hSub
+  simpa [subopts] using hGapDef
+
 /-- 
   If the utility perturbation δ for all actions is strictly less than half the UtilityGap,
   then the strictly optimal action remains strictly optimal.
