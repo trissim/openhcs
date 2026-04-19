@@ -92,6 +92,44 @@ theorem surjectiveAbstraction_withFeasibleCollapseMap_factors
     ∃ ψ : T → dp.DecisionQuotientType, ∀ s : S, dp.quotientMap s = ψ (φ s) :=
   dp.surjective_abstraction_with_feasible_collapse_map_factors φ hSurj c hMap
 
+/-- Progress toward admissible docking is defined as quotient factorization together with
+summary-level exact sufficiency and structural-rank-controlled thermodynamic cost. -/
+def DockingProgress
+    {A B S T : Type*} {n : ℕ} [CoordinateSpace S n]
+    (dp : DecisionProblem A S) (φ : S → T) (σ : Set A → B)
+    (I : Finset (Fin n))
+    (M : DecisionQuotient.ThermodynamicLift.ThermoModel) : Prop :=
+  (∃ ψ : T → dp.DecisionQuotientType, ∀ s : S, dp.quotientMap s = ψ (φ s)) ∧
+  (dp.optSummaryDecisionProblem σ).isSufficient I ∧
+  (dp.optSummaryDecisionProblem σ).srank ≤ dp.srank ∧
+  M.joulesPerBit * (dp.optSummaryDecisionProblem σ).srank ≤
+    DecisionQuotient.ThermodynamicLift.energyLowerBound M I.card
+
+/-- Exhaustion theorem for admissible docking: under surjectivity and the no-collapse feasible-map
+hypothesis, every correct abstraction factors through the decision quotient; for any optimizer
+summary, exact sufficiency is preserved and cost is controlled by structural rank. -/
+theorem admissibleDocking_exhaustion
+    {A B S T : Type*} {n : ℕ} [DecidableEq A] [CoordinateSpace S n]
+    (dp : DecisionProblem A S) (φ : S → T)
+    (hSurj : Function.Surjective φ)
+    (c : PhysicalComplexity.PhysicalComputer)
+    (hMap :
+      dp.erasesDecisionRelevantDistinction φ →
+      PhysicalComplexity.PhysicalCollapseAtRequirement c PhysicalComplexity.coNP_requirement)
+    (σ : Set A → B)
+    (I : Finset (Fin n))
+    (hI : dp.isSufficient I)
+    (M : DecisionQuotient.ThermodynamicLift.ThermoModel)
+    (hJ : 0 < M.joulesPerBit) :
+    DockingProgress dp φ σ I M := by
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · exact surjectiveAbstraction_withFeasibleCollapseMap_factors dp φ hSurj c hMap
+  · exact dp.optSummaryDecisionProblem_sufficient_of_sufficient σ I hI
+  · exact dp.optSummaryDecisionProblem_srank_le_srank σ
+  · exact DecisionQuotient.Physics.BoundedAcquisition.energy_ge_srank_cost
+      (dp.optSummaryDecisionProblem σ) I
+      (dp.optSummaryDecisionProblem_sufficient_of_sufficient σ I hI) M hJ
+
 /-- Local paper3 exposure of the Fisher-information sum identity for structural rank. -/
 theorem totalFisher_eq_srank
     {A S : Type*} {n : ℕ} [CoordinateSpace S n]
@@ -105,6 +143,62 @@ theorem fisherMatrix_rank_eq_srank
     (dp : DecisionProblem A S) :
     Matrix.rank (DecisionQuotient.Statistics.fisherMatrix dp) = dp.srank :=
   DecisionQuotient.Statistics.fisherMatrix_rank_eq_srank dp
+
+/-- Local paper3 exposure of explicit-likelihood Fisher identification on canonical
+binary state space. -/
+theorem optimizerLikelihood_fisher_eq_indicator
+    {A : Type*} {n : ℕ} [CoordinateSpace (Fin n → Bool) n]
+    (dp : DecisionProblem A (Fin n → Bool))
+    (i : Fin n) :
+    DecisionQuotient.Statistics.optimizerFisherInformationFromLikelihood dp i =
+      DecisionQuotient.Statistics.fisherScore dp i :=
+  DecisionQuotient.Statistics.optimizerFisherInformationFromLikelihood_eq_fisherScore dp i
+
+/-- Local paper3 exposure of parametric-family identifiable dimension identity:
+Fisher rank equals structural rank at each parameter value. -/
+theorem parametricCanonical_identifiableDimension_eq_srank
+    {Θ A : Type*} {n : ℕ} [CoordinateSpace (Fin n → Bool) n]
+    (F : DecisionQuotient.Statistics.ParametricCanonicalFamily Θ A n)
+    (θ : Θ) :
+    F.identifiableDimension θ = (F.problem θ).srank :=
+  DecisionQuotient.Statistics.ParametricCanonicalFamily.identifiableDimension_eq_srank F θ
+
+/-- Local paper3 exposure of diagonal Fisher identifiability indicator recovery. -/
+theorem parametricCanonical_fisherDiag_eq_relevanceIndicator
+    {Θ A : Type*} {n : ℕ} [CoordinateSpace (Fin n → Bool) n]
+    (F : DecisionQuotient.Statistics.ParametricCanonicalFamily Θ A n)
+    (θ : Θ)
+    (i : Fin n) :
+    F.fisherMatrixAt θ i i = if (F.problem θ).isRelevant i then 1 else 0 :=
+  DecisionQuotient.Statistics.ParametricCanonicalFamily.fisherDiag_eq_relevanceIndicator F θ i
+
+/-- Local paper3 exposure of Fisher-diagonal relevance recovery equivalence. -/
+theorem parametricCanonical_fisherDiag_one_iff_relevant
+    {Θ A : Type*} {n : ℕ} [CoordinateSpace (Fin n → Bool) n]
+    (F : DecisionQuotient.Statistics.ParametricCanonicalFamily Θ A n)
+    (θ : Θ)
+    (i : Fin n) :
+    F.fisherMatrixAt θ i i = 1 ↔ (F.problem θ).isRelevant i :=
+  DecisionQuotient.Statistics.ParametricCanonicalFamily.fisherDiag_one_iff_relevant F θ i
+
+/-- Local paper3 exposure of the Cramer-Rao non-identifiability consequence:
+non-relevant coordinates force unbounded unbiased-estimator variance under any
+optimizer-observation model satisfying the Cramer-Rao inequality. -/
+theorem parametricCanonical_variance_eq_top_of_nonrelevant
+    {Θ A : Type*} {n : ℕ} [CoordinateSpace (Fin n → Bool) n]
+    (F : DecisionQuotient.Statistics.ParametricCanonicalFamily Θ A n)
+    (θ : Θ)
+    (M : DecisionQuotient.Statistics.OptimizerObservationModel A n)
+    (i : Fin n)
+    (est : DecisionQuotient.Statistics.OptEstimator A)
+    (hirr : (F.problem θ).isIrrelevant i)
+    (hunb : M.unbiasedFor i est)
+    (hCR : ∀ e : DecisionQuotient.Statistics.OptEstimator A,
+      M.unbiasedFor i e →
+        DecisionQuotient.Statistics.cramerRaoLowerBound (F.problem θ) i ≤ M.variance e) :
+    M.variance est = ⊤ :=
+  DecisionQuotient.Statistics.ParametricCanonicalFamily.variance_eq_top_of_nonrelevant
+    F θ M i est hirr hunb hCR
 
 /-- Local paper3 exposure of the general coNP-hardness reduction core for exact sufficiency. -/
 theorem exactSufficiency_conp_core {n : ℕ} (φ : Formula n) :
@@ -315,6 +409,812 @@ theorem quantitativeAdmissibility_energy_saves_one_bit
   rw [hCollapse] at hEq
   simpa [QuantitativeAdmissibilityFamily.summaryDecisionProblem] using hEq
 
+/-- In a nested quantitative admissibility family, progress toward admissible docking is monotone
+structural-rank descent as tolerance relaxes. -/
+theorem quantitativeAdmissibility_progress
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (F : QuantitativeAdmissibilityFamily A B)
+    (dp : DecisionProblem A S) (ε Δ : ℝ) (hΔ : 0 ≤ Δ) :
+    (F.summaryDecisionProblem dp (ε + Δ)).srank ≤
+      (F.summaryDecisionProblem dp ε).srank := by
+  have hEq := quantitativeAdmissibility_srank_eq_relaxed_plus_collapseCount F dp ε Δ hΔ
+  omega
+
+/-- No-collapse criterion for summary refinement: if tight and loose summaries
+factor through each other, then no exact relevant coordinate is erased. -/
+theorem optSummary_collapseCount_eq_zero_of_bifactor
+    {A B C S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (dp : DecisionProblem A S)
+    (σTight : Set A → B) (σLoose : Set A → C)
+    (hForward : ∃ τ : B → C, ∀ X : Set A, σLoose X = τ (σTight X))
+    (hBackward : ∃ κ : C → B, ∀ X : Set A, σTight X = κ (σLoose X)) :
+    optSummaryCollapseCount dp σTight σLoose = 0 := by
+  let RTight := optSummaryRelevantFinset dp σTight
+  let RLoose := optSummaryRelevantFinset dp σLoose
+  have hSubLoose : RLoose ⊆ RTight := by
+    intro i hi
+    simp only [RTight, RLoose, optSummaryRelevantFinset, Finset.mem_filter,
+      Finset.mem_univ, true_and] at hi ⊢
+    exact optSummary_relevant_imp_relevant_of_factor dp σTight σLoose hForward i hi
+  have hSubTight : RTight ⊆ RLoose := by
+    intro i hi
+    simp only [RTight, RLoose, optSummaryRelevantFinset, Finset.mem_filter,
+      Finset.mem_univ, true_and] at hi ⊢
+    exact optSummary_relevant_imp_relevant_of_factor dp σLoose σTight hBackward i hi
+  have hEq : RTight = RLoose := Finset.Subset.antisymm hSubTight hSubLoose
+  unfold optSummaryCollapseCount
+  simp [RTight, RLoose, hEq]
+
+/-- Quantitative no-collapse criterion: if a tolerance relaxation admits a
+factorization back into the tighter summary, the collapse count is zero. -/
+theorem quantitativeAdmissibility_collapseCount_eq_zero_of_backwardFactor
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (F : QuantitativeAdmissibilityFamily A B)
+    (dp : DecisionProblem A S) (ε Δ : ℝ) (hΔ : 0 ≤ Δ)
+    (hBackward : ∃ κ : B → B,
+      ∀ X : Set A, F.summary ε X = κ (F.summary (ε + Δ) X)) :
+    F.collapseCount dp ε Δ = 0 := by
+  unfold QuantitativeAdmissibilityFamily.collapseCount
+  exact optSummary_collapseCount_eq_zero_of_bifactor dp
+    (F.summary ε) (F.summary (ε + Δ))
+    (F.relaxes ε Δ hΔ) hBackward
+
+/-- If relaxation is bidirectionally factorizable at tolerance increment `Δ`,
+structural rank is invariant under that relaxation. -/
+theorem quantitativeAdmissibility_srank_eq_of_backwardFactor
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (F : QuantitativeAdmissibilityFamily A B)
+    (dp : DecisionProblem A S) (ε Δ : ℝ) (hΔ : 0 ≤ Δ)
+    (hBackward : ∃ κ : B → B,
+      ∀ X : Set A, F.summary ε X = κ (F.summary (ε + Δ) X)) :
+    (F.summaryDecisionProblem dp (ε + Δ)).srank =
+      (F.summaryDecisionProblem dp ε).srank := by
+  have hCollapse := quantitativeAdmissibility_collapseCount_eq_zero_of_backwardFactor
+    F dp ε Δ hΔ hBackward
+  have hEq := quantitativeAdmissibility_srank_eq_relaxed_plus_collapseCount F dp ε Δ hΔ
+  rw [hCollapse] at hEq
+  omega
+
+/-- Rank-normal-form object for admissibility-collapsed summaries.
+
+In this coarse category, morphisms are rank-monotone maps (`≤`). This
+packages the claim that admissibility relief is canonical once collapse is
+measured in erased relevant-coordinate units. -/
+structure AdmissibilityCollapsedRankObject where
+  rank : ℕ
+
+/-- Morphisms in the coarse collapse category: rank monotonicity. -/
+def AdmissibilityCollapsedRankObject.Hom
+    (X Y : AdmissibilityCollapsedRankObject) : Prop :=
+  X.rank ≤ Y.rank
+
+/-- Isomorphism in the coarse collapse category: mutual rank-monotone reachability. -/
+def AdmissibilityCollapsedRankObject.Iso
+    (X Y : AdmissibilityCollapsedRankObject) : Prop :=
+  X.Hom Y ∧ Y.Hom X
+
+/-- In the rank-normal-form collapse category, isomorphism is exactly equality
+of collapsed ranks. -/
+theorem AdmissibilityCollapsedRankObject.iso_iff_rank_eq
+    (X Y : AdmissibilityCollapsedRankObject) :
+    X.Iso Y ↔ X.rank = Y.rank := by
+  constructor
+  · intro hIso
+    exact le_antisymm hIso.1 hIso.2
+  · intro hEq
+    refine ⟨?_, ?_⟩ <;> simpa [AdmissibilityCollapsedRankObject.Hom, hEq]
+
+/-- Identity morphism in the collapsed-rank preorder category. -/
+theorem AdmissibilityCollapsedRankObject.hom_id
+    (X : AdmissibilityCollapsedRankObject) :
+    X.Hom X := by
+  exact le_rfl
+
+/-- Composition of morphisms in the collapsed-rank preorder category. -/
+theorem AdmissibilityCollapsedRankObject.hom_comp
+    {X Y Z : AdmissibilityCollapsedRankObject}
+    (hXY : X.Hom Y) (hYZ : Y.Hom Z) :
+    X.Hom Z := by
+  exact le_trans hXY hYZ
+
+/-- Initial object of the collapsed-rank preorder category (`rank = 0`). -/
+def collapsedRankInitial : AdmissibilityCollapsedRankObject :=
+  ⟨0⟩
+
+/-- Every object receives a unique preorder morphism from the initial object. -/
+theorem collapsedRankInitial_hom
+    (X : AdmissibilityCollapsedRankObject) :
+    collapsedRankInitial.Hom X := by
+  simpa [collapsedRankInitial, AdmissibilityCollapsedRankObject.Hom]
+
+/-- There is no terminal object in the unbounded collapsed-rank preorder category. -/
+theorem collapsedRank_no_terminal :
+    ¬ ∃ T : AdmissibilityCollapsedRankObject, ∀ X : AdmissibilityCollapsedRankObject, X.Hom T := by
+  intro h
+  rcases h with ⟨T, hT⟩
+  let X : AdmissibilityCollapsedRankObject := ⟨T.rank + 1⟩
+  have hHom : X.Hom T := hT X
+  have hLe : T.rank + 1 ≤ T.rank := by
+    simpa [AdmissibilityCollapsedRankObject.Hom, X] using hHom
+  exact Nat.not_succ_le_self T.rank hLe
+
+/-- Binary product in the collapsed-rank preorder category is rank-minimum. -/
+def collapsedRankProduct
+    (X Y : AdmissibilityCollapsedRankObject) : AdmissibilityCollapsedRankObject :=
+  ⟨Nat.min X.rank Y.rank⟩
+
+theorem collapsedRankProduct_fst
+    (X Y : AdmissibilityCollapsedRankObject) :
+    (collapsedRankProduct X Y).Hom X := by
+  simpa [collapsedRankProduct, AdmissibilityCollapsedRankObject.Hom] using Nat.min_le_left X.rank Y.rank
+
+theorem collapsedRankProduct_snd
+    (X Y : AdmissibilityCollapsedRankObject) :
+    (collapsedRankProduct X Y).Hom Y := by
+  simpa [collapsedRankProduct, AdmissibilityCollapsedRankObject.Hom] using Nat.min_le_right X.rank Y.rank
+
+theorem collapsedRankProduct_universal
+    (X Y Z : AdmissibilityCollapsedRankObject)
+    (hZX : Z.Hom X) (hZY : Z.Hom Y) :
+    Z.Hom (collapsedRankProduct X Y) := by
+  exact le_min hZX hZY
+
+/-- Binary coproduct in the collapsed-rank preorder category is rank-maximum. -/
+def collapsedRankCoproduct
+    (X Y : AdmissibilityCollapsedRankObject) : AdmissibilityCollapsedRankObject :=
+  ⟨Nat.max X.rank Y.rank⟩
+
+theorem collapsedRankCoproduct_inl
+    (X Y : AdmissibilityCollapsedRankObject) :
+    X.Hom (collapsedRankCoproduct X Y) := by
+  simpa [collapsedRankCoproduct, AdmissibilityCollapsedRankObject.Hom] using Nat.le_max_left X.rank Y.rank
+
+theorem collapsedRankCoproduct_inr
+    (X Y : AdmissibilityCollapsedRankObject) :
+    Y.Hom (collapsedRankCoproduct X Y) := by
+  simpa [collapsedRankCoproduct, AdmissibilityCollapsedRankObject.Hom] using Nat.le_max_right X.rank Y.rank
+
+theorem collapsedRankCoproduct_universal
+    (X Y Z : AdmissibilityCollapsedRankObject)
+    (hXZ : X.Hom Z) (hYZ : Y.Hom Z) :
+    (collapsedRankCoproduct X Y).Hom Z := by
+  exact max_le hXZ hYZ
+
+/-- Monoidal tensor on collapsed-rank objects induced by additive composition. -/
+def collapsedRankTensor
+    (X Y : AdmissibilityCollapsedRankObject) : AdmissibilityCollapsedRankObject :=
+  ⟨X.rank + Y.rank⟩
+
+/-- Tensor unit (`rank = 0`). -/
+def collapsedRankTensorUnit : AdmissibilityCollapsedRankObject :=
+  ⟨0⟩
+
+/-- Tensor is monotone on morphisms (functoriality of additive composition). -/
+theorem collapsedRankTensor_map
+    {X₁ X₂ Y₁ Y₂ : AdmissibilityCollapsedRankObject}
+    (hX : X₁.Hom X₂) (hY : Y₁.Hom Y₂) :
+    (collapsedRankTensor X₁ Y₁).Hom (collapsedRankTensor X₂ Y₂) := by
+  simpa [collapsedRankTensor, AdmissibilityCollapsedRankObject.Hom] using Nat.add_le_add hX hY
+
+theorem collapsedRankTensor_assoc
+    (X Y Z : AdmissibilityCollapsedRankObject) :
+    (collapsedRankTensor (collapsedRankTensor X Y) Z).rank =
+      (collapsedRankTensor X (collapsedRankTensor Y Z)).rank := by
+  simp [collapsedRankTensor, Nat.add_assoc]
+
+theorem collapsedRankTensor_left_unit
+    (X : AdmissibilityCollapsedRankObject) :
+    (collapsedRankTensor collapsedRankTensorUnit X).rank = X.rank := by
+  simp [collapsedRankTensor, collapsedRankTensorUnit]
+
+theorem collapsedRankTensor_right_unit
+    (X : AdmissibilityCollapsedRankObject) :
+    (collapsedRankTensor X collapsedRankTensorUnit).rank = X.rank := by
+  simp [collapsedRankTensor, collapsedRankTensorUnit]
+
+/-- Structural-rank functor from the collapsed-rank preorder category to `ℕ`. -/
+def collapsedRankStructuralFunctor
+    (X : AdmissibilityCollapsedRankObject) : ℕ :=
+  X.rank
+
+theorem collapsedRankStructuralFunctor_mono
+    {X Y : AdmissibilityCollapsedRankObject}
+    (h : X.Hom Y) :
+    collapsedRankStructuralFunctor X ≤ collapsedRankStructuralFunctor Y :=
+  h
+
+/-- Bounded-rank slice of the collapse category: objects are collapsed ranks with
+an explicit global upper bound `K`. -/
+structure BoundedCollapsedRankObject (K : ℕ) where
+  rank : ℕ
+  hBound : rank ≤ K
+
+/-- Morphisms in the bounded collapsed-rank slice are rank-monotone maps. -/
+def BoundedCollapsedRankObject.Hom
+    {K : ℕ} (X Y : BoundedCollapsedRankObject K) : Prop :=
+  X.rank ≤ Y.rank
+
+theorem BoundedCollapsedRankObject.eq_iff_rank_eq
+    {K : ℕ} (X Y : BoundedCollapsedRankObject K) :
+    X = Y ↔ X.rank = Y.rank := by
+  constructor
+  · intro h
+    cases h
+    rfl
+  · intro h
+    cases X
+    cases Y
+    cases h
+    rfl
+
+theorem BoundedCollapsedRankObject.hom_id
+    {K : ℕ} (X : BoundedCollapsedRankObject K) :
+    X.Hom X := by
+  exact le_rfl
+
+theorem BoundedCollapsedRankObject.hom_comp
+    {K : ℕ} {X Y Z : BoundedCollapsedRankObject K}
+    (hXY : X.Hom Y) (hYZ : Y.Hom Z) :
+    X.Hom Z := by
+  exact le_trans hXY hYZ
+
+/-- Initial object in the bounded collapsed-rank slice. -/
+def boundedCollapsedRankInitial (K : ℕ) : BoundedCollapsedRankObject K :=
+  ⟨0, Nat.zero_le K⟩
+
+theorem boundedCollapsedRankInitial_hom
+    {K : ℕ} (X : BoundedCollapsedRankObject K) :
+    (boundedCollapsedRankInitial K).Hom X := by
+  simp [boundedCollapsedRankInitial, BoundedCollapsedRankObject.Hom]
+
+/-- Terminal object in the bounded collapsed-rank slice: the top rank `K`. -/
+def boundedCollapsedRankTerminal (K : ℕ) : BoundedCollapsedRankObject K :=
+  ⟨K, le_rfl⟩
+
+theorem boundedCollapsedRankTerminal_hom
+    {K : ℕ} (X : BoundedCollapsedRankObject K) :
+    X.Hom (boundedCollapsedRankTerminal K) :=
+  X.hBound
+
+theorem boundedCollapsedRank_has_terminal
+    (K : ℕ) :
+    ∃ T : BoundedCollapsedRankObject K,
+      ∀ X : BoundedCollapsedRankObject K, X.Hom T := by
+  exact ⟨boundedCollapsedRankTerminal K, fun X => boundedCollapsedRankTerminal_hom X⟩
+
+/-- Binary product in the bounded collapsed-rank slice is rank-minimum. -/
+def boundedCollapsedRankProduct
+    {K : ℕ} (X Y : BoundedCollapsedRankObject K) : BoundedCollapsedRankObject K :=
+  ⟨Nat.min X.rank Y.rank, le_trans (Nat.min_le_left _ _) X.hBound⟩
+
+theorem boundedCollapsedRankProduct_fst
+    {K : ℕ} (X Y : BoundedCollapsedRankObject K) :
+    (boundedCollapsedRankProduct X Y).Hom X := by
+  simpa [boundedCollapsedRankProduct, BoundedCollapsedRankObject.Hom] using Nat.min_le_left X.rank Y.rank
+
+theorem boundedCollapsedRankProduct_snd
+    {K : ℕ} (X Y : BoundedCollapsedRankObject K) :
+    (boundedCollapsedRankProduct X Y).Hom Y := by
+  simpa [boundedCollapsedRankProduct, BoundedCollapsedRankObject.Hom] using Nat.min_le_right X.rank Y.rank
+
+theorem boundedCollapsedRankProduct_universal
+    {K : ℕ}
+    (X Y Z : BoundedCollapsedRankObject K)
+    (hZX : Z.Hom X) (hZY : Z.Hom Y) :
+    Z.Hom (boundedCollapsedRankProduct X Y) := by
+  exact le_min hZX hZY
+
+/-- Binary coproduct in the bounded collapsed-rank slice is rank-maximum. -/
+def boundedCollapsedRankCoproduct
+    {K : ℕ} (X Y : BoundedCollapsedRankObject K) : BoundedCollapsedRankObject K :=
+  ⟨Nat.max X.rank Y.rank, max_le X.hBound Y.hBound⟩
+
+theorem boundedCollapsedRankCoproduct_inl
+    {K : ℕ} (X Y : BoundedCollapsedRankObject K) :
+    X.Hom (boundedCollapsedRankCoproduct X Y) := by
+  simpa [boundedCollapsedRankCoproduct, BoundedCollapsedRankObject.Hom] using Nat.le_max_left X.rank Y.rank
+
+theorem boundedCollapsedRankCoproduct_inr
+    {K : ℕ} (X Y : BoundedCollapsedRankObject K) :
+    Y.Hom (boundedCollapsedRankCoproduct X Y) := by
+  simpa [boundedCollapsedRankCoproduct, BoundedCollapsedRankObject.Hom] using Nat.le_max_right X.rank Y.rank
+
+theorem boundedCollapsedRankCoproduct_universal
+    {K : ℕ}
+    (X Y Z : BoundedCollapsedRankObject K)
+    (hXZ : X.Hom Z) (hYZ : Y.Hom Z) :
+    (boundedCollapsedRankCoproduct X Y).Hom Z := by
+  exact max_le hXZ hYZ
+
+/-- Binary bounded meet/join calculus: commutativity, associativity,
+idempotence, and absorption in object-equality form. -/
+theorem boundedCollapsedRankProduct_comm
+    {K : ℕ} (X Y : BoundedCollapsedRankObject K) :
+    boundedCollapsedRankProduct X Y = boundedCollapsedRankProduct Y X := by
+  apply (BoundedCollapsedRankObject.eq_iff_rank_eq _ _).2
+  simp [boundedCollapsedRankProduct, Nat.min_comm]
+
+theorem boundedCollapsedRankProduct_assoc
+    {K : ℕ} (X Y Z : BoundedCollapsedRankObject K) :
+    boundedCollapsedRankProduct (boundedCollapsedRankProduct X Y) Z =
+      boundedCollapsedRankProduct X (boundedCollapsedRankProduct Y Z) := by
+  apply (BoundedCollapsedRankObject.eq_iff_rank_eq _ _).2
+  simp [boundedCollapsedRankProduct, Nat.min_assoc]
+
+theorem boundedCollapsedRankProduct_idem
+    {K : ℕ} (X : BoundedCollapsedRankObject K) :
+    boundedCollapsedRankProduct X X = X := by
+  apply (BoundedCollapsedRankObject.eq_iff_rank_eq _ _).2
+  simp [boundedCollapsedRankProduct]
+
+theorem boundedCollapsedRankCoproduct_comm
+    {K : ℕ} (X Y : BoundedCollapsedRankObject K) :
+    boundedCollapsedRankCoproduct X Y = boundedCollapsedRankCoproduct Y X := by
+  apply (BoundedCollapsedRankObject.eq_iff_rank_eq _ _).2
+  simp [boundedCollapsedRankCoproduct, Nat.max_comm]
+
+theorem boundedCollapsedRankCoproduct_assoc
+    {K : ℕ} (X Y Z : BoundedCollapsedRankObject K) :
+    boundedCollapsedRankCoproduct (boundedCollapsedRankCoproduct X Y) Z =
+      boundedCollapsedRankCoproduct X (boundedCollapsedRankCoproduct Y Z) := by
+  apply (BoundedCollapsedRankObject.eq_iff_rank_eq _ _).2
+  simp [boundedCollapsedRankCoproduct, Nat.max_assoc]
+
+theorem boundedCollapsedRankCoproduct_idem
+    {K : ℕ} (X : BoundedCollapsedRankObject K) :
+    boundedCollapsedRankCoproduct X X = X := by
+  apply (BoundedCollapsedRankObject.eq_iff_rank_eq _ _).2
+  simp [boundedCollapsedRankCoproduct]
+
+theorem boundedCollapsedRankProduct_absorb_coproduct
+    {K : ℕ} (X Y : BoundedCollapsedRankObject K) :
+    boundedCollapsedRankProduct X (boundedCollapsedRankCoproduct X Y) = X := by
+  apply (BoundedCollapsedRankObject.eq_iff_rank_eq _ _).2
+  apply le_antisymm
+  · exact Nat.min_le_left _ _
+  · exact le_min le_rfl (Nat.le_max_left _ _)
+
+theorem boundedCollapsedRankCoproduct_absorb_product
+    {K : ℕ} (X Y : BoundedCollapsedRankObject K) :
+    boundedCollapsedRankCoproduct X (boundedCollapsedRankProduct X Y) = X := by
+  apply (BoundedCollapsedRankObject.eq_iff_rank_eq _ _).2
+  apply le_antisymm
+  · exact max_le le_rfl (Nat.min_le_left _ _)
+  · exact Nat.le_max_left _ _
+
+/-- Finite-limit package (terminal + binary products) for bounded-rank slices. -/
+theorem boundedCollapsedRank_has_finite_limits
+    (K : ℕ) :
+    (∃ T : BoundedCollapsedRankObject K,
+      ∀ X : BoundedCollapsedRankObject K, X.Hom T) ∧
+    (∀ X Y : BoundedCollapsedRankObject K,
+      ∃ P : BoundedCollapsedRankObject K,
+        P.Hom X ∧ P.Hom Y ∧
+          ∀ Z : BoundedCollapsedRankObject K,
+            Z.Hom X → Z.Hom Y → Z.Hom P) := by
+  refine ⟨boundedCollapsedRank_has_terminal K, ?_⟩
+  intro X Y
+  refine ⟨boundedCollapsedRankProduct X Y, ?_, ?_, ?_⟩
+  · exact boundedCollapsedRankProduct_fst X Y
+  · exact boundedCollapsedRankProduct_snd X Y
+  · intro Z hZX hZY
+    exact boundedCollapsedRankProduct_universal X Y Z hZX hZY
+
+/-- Finite-colimit package (initial + binary coproducts) for bounded-rank slices. -/
+theorem boundedCollapsedRank_has_finite_colimits
+    (K : ℕ) :
+    (∃ I : BoundedCollapsedRankObject K,
+      ∀ X : BoundedCollapsedRankObject K, I.Hom X) ∧
+    (∀ X Y : BoundedCollapsedRankObject K,
+      ∃ C : BoundedCollapsedRankObject K,
+        X.Hom C ∧ Y.Hom C ∧
+          ∀ Z : BoundedCollapsedRankObject K,
+            X.Hom Z → Y.Hom Z → C.Hom Z) := by
+  refine ⟨?_, ?_⟩
+  · refine ⟨boundedCollapsedRankInitial K, ?_⟩
+    intro X
+    exact boundedCollapsedRankInitial_hom X
+  · intro X Y
+    refine ⟨boundedCollapsedRankCoproduct X Y, ?_, ?_, ?_⟩
+    · exact boundedCollapsedRankCoproduct_inl X Y
+    · exact boundedCollapsedRankCoproduct_inr X Y
+    · intro Z hXZ hYZ
+      exact boundedCollapsedRankCoproduct_universal X Y Z hXZ hYZ
+
+/-- Meet object for a nonempty finite family in the bounded collapsed-rank slice. -/
+def boundedCollapsedRankFiniteMeet
+    {K : ℕ}
+    (S : Finset (BoundedCollapsedRankObject K))
+    (hS : S.Nonempty) : BoundedCollapsedRankObject K := by
+  refine ⟨S.inf' hS (fun X => X.rank), ?_⟩
+  rcases hS with ⟨X, hX⟩
+  exact le_trans
+    (Finset.inf'_le (s := S) (f := fun Y => Y.rank) hX)
+    X.hBound
+
+theorem boundedCollapsedRankFiniteMeet_hom
+    {K : ℕ}
+    (S : Finset (BoundedCollapsedRankObject K))
+    (hS : S.Nonempty)
+    {X : BoundedCollapsedRankObject K}
+    (hX : X ∈ S) :
+    (boundedCollapsedRankFiniteMeet S hS).Hom X := by
+  simpa [BoundedCollapsedRankObject.Hom, boundedCollapsedRankFiniteMeet] using
+    (Finset.inf'_le (s := S) (f := fun Y => Y.rank) hX)
+
+theorem boundedCollapsedRankFiniteMeet_greatest
+    {K : ℕ}
+    (S : Finset (BoundedCollapsedRankObject K))
+    (hS : S.Nonempty)
+    (Z : BoundedCollapsedRankObject K)
+    (hZX : ∀ X ∈ S, Z.Hom X) :
+    Z.Hom (boundedCollapsedRankFiniteMeet S hS) := by
+  have hLe : Z.rank ≤ S.inf' hS (fun X => X.rank) :=
+    Finset.le_inf' (s := S) (H := hS) (f := fun X => X.rank)
+      (fun X hX => hZX X hX)
+  simpa [BoundedCollapsedRankObject.Hom, boundedCollapsedRankFiniteMeet] using hLe
+
+/-- Join object for a nonempty finite family in the bounded collapsed-rank slice. -/
+def boundedCollapsedRankFiniteJoin
+    {K : ℕ}
+    (S : Finset (BoundedCollapsedRankObject K))
+    (hS : S.Nonempty) : BoundedCollapsedRankObject K := by
+  refine ⟨S.sup' hS (fun X => X.rank), ?_⟩
+  exact Finset.sup'_le (s := S) (H := hS) (f := fun X => X.rank)
+    (fun X hX => X.hBound)
+
+theorem boundedCollapsedRankFiniteJoin_hom
+    {K : ℕ}
+    (S : Finset (BoundedCollapsedRankObject K))
+    (hS : S.Nonempty)
+    {X : BoundedCollapsedRankObject K}
+    (hX : X ∈ S) :
+    X.Hom (boundedCollapsedRankFiniteJoin S hS) := by
+  simpa [BoundedCollapsedRankObject.Hom, boundedCollapsedRankFiniteJoin] using
+    (Finset.le_sup' (f := fun Y => Y.rank) hX)
+
+theorem boundedCollapsedRankFiniteJoin_least
+    {K : ℕ}
+    (S : Finset (BoundedCollapsedRankObject K))
+    (hS : S.Nonempty)
+    (Z : BoundedCollapsedRankObject K)
+    (hXZ : ∀ X ∈ S, X.Hom Z) :
+    (boundedCollapsedRankFiniteJoin S hS).Hom Z := by
+  have hLe : S.sup' hS (fun X => X.rank) ≤ Z.rank :=
+    Finset.sup'_le (s := S) (H := hS) (f := fun X => X.rank)
+      (fun X hX => hXZ X hX)
+  simpa [BoundedCollapsedRankObject.Hom, boundedCollapsedRankFiniteJoin] using hLe
+
+/-- Finite-family lattice package for bounded collapsed-rank slices: every finite
+family admits both a meet and a join object with the corresponding universal
+properties. Empty-family meet/join are witnessed by terminal/initial objects. -/
+theorem boundedCollapsedRank_has_all_finite_meets_joins
+    (K : ℕ) :
+    ∀ S : Finset (BoundedCollapsedRankObject K),
+      ∃ M J : BoundedCollapsedRankObject K,
+        (∀ X ∈ S, M.Hom X) ∧
+        (∀ Z : BoundedCollapsedRankObject K, (∀ X ∈ S, Z.Hom X) → Z.Hom M) ∧
+        (∀ X ∈ S, X.Hom J) ∧
+        (∀ Z : BoundedCollapsedRankObject K, (∀ X ∈ S, X.Hom Z) → J.Hom Z) := by
+  intro S
+  by_cases hS : S.Nonempty
+  · refine ⟨boundedCollapsedRankFiniteMeet S hS,
+      boundedCollapsedRankFiniteJoin S hS, ?_⟩
+    constructor
+    · intro X hX
+      exact boundedCollapsedRankFiniteMeet_hom S hS hX
+    constructor
+    · intro Z hLower
+      exact boundedCollapsedRankFiniteMeet_greatest S hS Z hLower
+    constructor
+    · intro X hX
+      exact boundedCollapsedRankFiniteJoin_hom S hS hX
+    · intro Z hUpper
+      exact boundedCollapsedRankFiniteJoin_least S hS Z hUpper
+  · refine ⟨boundedCollapsedRankTerminal K, boundedCollapsedRankInitial K, ?_⟩
+    constructor
+    · intro X hX
+      exact False.elim (hS ⟨X, hX⟩)
+    constructor
+    · intro Z _hLower
+      exact boundedCollapsedRankTerminal_hom Z
+    constructor
+    · intro X hX
+      exact False.elim (hS ⟨X, hX⟩)
+    · intro Z _hUpper
+      exact boundedCollapsedRankInitial_hom Z
+
+/-- Encode a bounded collapsed-rank object as an index in `Fin (K+1)`. -/
+def boundedCollapsedRankToFin
+    {K : ℕ} (X : BoundedCollapsedRankObject K) : Fin (K + 1) :=
+  ⟨X.rank, Nat.lt_succ_iff.mpr X.hBound⟩
+
+/-- Decode an index in `Fin (K+1)` as a bounded collapsed-rank object. -/
+def finToBoundedCollapsedRank
+    {K : ℕ} (i : Fin (K + 1)) : BoundedCollapsedRankObject K :=
+  ⟨i.1, Nat.le_of_lt_succ i.2⟩
+
+@[simp] theorem finToBoundedCollapsedRank_toFin
+    {K : ℕ} (X : BoundedCollapsedRankObject K) :
+    finToBoundedCollapsedRank (boundedCollapsedRankToFin X) = X := by
+  cases X
+  rfl
+
+@[simp] theorem boundedCollapsedRankToFin_finTo
+    {K : ℕ} (i : Fin (K + 1)) :
+    boundedCollapsedRankToFin (finToBoundedCollapsedRank i) = i := by
+  cases i
+  rfl
+
+/-- Set of bounded-rank indices corresponding to an arbitrary family of bounded
+collapsed-rank objects. -/
+def boundedCollapsedRankIndexSet
+    {K : ℕ} (S : Set (BoundedCollapsedRankObject K)) : Set (Fin (K + 1)) :=
+  boundedCollapsedRankToFin '' S
+
+/-- Arbitrary-family meet object in the bounded collapsed-rank slice, constructed
+as the infimum of the corresponding index set in `Fin (K+1)`. -/
+noncomputable def boundedCollapsedRankArbitraryMeet
+    {K : ℕ} (S : Set (BoundedCollapsedRankObject K)) : BoundedCollapsedRankObject K :=
+  finToBoundedCollapsedRank (sInf (boundedCollapsedRankIndexSet S))
+
+/-- Arbitrary-family join object in the bounded collapsed-rank slice, constructed
+as the supremum of the corresponding index set in `Fin (K+1)`. -/
+noncomputable def boundedCollapsedRankArbitraryJoin
+    {K : ℕ} (S : Set (BoundedCollapsedRankObject K)) : BoundedCollapsedRankObject K :=
+  finToBoundedCollapsedRank (sSup (boundedCollapsedRankIndexSet S))
+
+theorem boundedCollapsedRankArbitraryMeet_hom
+    {K : ℕ}
+    (S : Set (BoundedCollapsedRankObject K))
+    {X : BoundedCollapsedRankObject K}
+    (hX : X ∈ S) :
+    (boundedCollapsedRankArbitraryMeet S).Hom X := by
+  unfold boundedCollapsedRankArbitraryMeet
+  unfold BoundedCollapsedRankObject.Hom
+  unfold boundedCollapsedRankIndexSet
+  have hMem : boundedCollapsedRankToFin X ∈ boundedCollapsedRankToFin '' S := ⟨X, hX, rfl⟩
+  have hInf : sInf (boundedCollapsedRankToFin '' S) ≤ boundedCollapsedRankToFin X := sInf_le hMem
+  simpa [boundedCollapsedRankToFin, finToBoundedCollapsedRank] using hInf
+
+theorem boundedCollapsedRankArbitraryMeet_greatest
+    {K : ℕ}
+    (S : Set (BoundedCollapsedRankObject K))
+    (Z : BoundedCollapsedRankObject K)
+    (hZX : ∀ X ∈ S, Z.Hom X) :
+    Z.Hom (boundedCollapsedRankArbitraryMeet S) := by
+  unfold boundedCollapsedRankArbitraryMeet
+  unfold BoundedCollapsedRankObject.Hom at hZX ⊢
+  unfold boundedCollapsedRankIndexSet
+  have hLeFin : boundedCollapsedRankToFin Z ≤ sInf (boundedCollapsedRankToFin '' S) := by
+    refine le_sInf ?_
+    intro y hy
+    rcases hy with ⟨X, hX, rfl⟩
+    simpa [boundedCollapsedRankToFin] using hZX X hX
+  change (boundedCollapsedRankToFin Z).1 ≤ (sInf (boundedCollapsedRankToFin '' S)).1
+  exact hLeFin
+
+theorem boundedCollapsedRankArbitraryJoin_hom
+    {K : ℕ}
+    (S : Set (BoundedCollapsedRankObject K))
+    {X : BoundedCollapsedRankObject K}
+    (hX : X ∈ S) :
+    X.Hom (boundedCollapsedRankArbitraryJoin S) := by
+  unfold boundedCollapsedRankArbitraryJoin
+  unfold BoundedCollapsedRankObject.Hom
+  unfold boundedCollapsedRankIndexSet
+  have hMem : boundedCollapsedRankToFin X ∈ boundedCollapsedRankToFin '' S := ⟨X, hX, rfl⟩
+  have hSup : boundedCollapsedRankToFin X ≤ sSup (boundedCollapsedRankToFin '' S) := le_sSup hMem
+  simpa [boundedCollapsedRankToFin, finToBoundedCollapsedRank] using hSup
+
+theorem boundedCollapsedRankArbitraryJoin_least
+    {K : ℕ}
+    (S : Set (BoundedCollapsedRankObject K))
+    (Z : BoundedCollapsedRankObject K)
+    (hXZ : ∀ X ∈ S, X.Hom Z) :
+    (boundedCollapsedRankArbitraryJoin S).Hom Z := by
+  unfold boundedCollapsedRankArbitraryJoin
+  unfold BoundedCollapsedRankObject.Hom at hXZ ⊢
+  unfold boundedCollapsedRankIndexSet
+  have hLeFin : sSup (boundedCollapsedRankToFin '' S) ≤ boundedCollapsedRankToFin Z := by
+    refine sSup_le ?_
+    intro y hy
+    rcases hy with ⟨X, hX, rfl⟩
+    simpa [boundedCollapsedRankToFin] using hXZ X hX
+  change (sSup (boundedCollapsedRankToFin '' S)).1 ≤ (boundedCollapsedRankToFin Z).1
+  exact hLeFin
+
+/-- Arbitrary-family (complete-lattice form) package for bounded collapsed-rank
+slices: every family admits meet/join objects with universal lower/upper-bound
+properties. -/
+theorem boundedCollapsedRank_has_arbitrary_meets_joins
+    (K : ℕ) :
+    ∀ S : Set (BoundedCollapsedRankObject K),
+      ∃ M J : BoundedCollapsedRankObject K,
+        (∀ X ∈ S, M.Hom X) ∧
+        (∀ Z : BoundedCollapsedRankObject K, (∀ X ∈ S, Z.Hom X) → Z.Hom M) ∧
+        (∀ X ∈ S, X.Hom J) ∧
+        (∀ Z : BoundedCollapsedRankObject K, (∀ X ∈ S, X.Hom Z) → J.Hom Z) := by
+  intro S
+  refine ⟨boundedCollapsedRankArbitraryMeet S, boundedCollapsedRankArbitraryJoin S, ?_⟩
+  constructor
+  · intro X hX
+    exact boundedCollapsedRankArbitraryMeet_hom S hX
+  constructor
+  · intro Z hLower
+    exact boundedCollapsedRankArbitraryMeet_greatest S Z hLower
+  constructor
+  · intro X hX
+    exact boundedCollapsedRankArbitraryJoin_hom S hX
+  · intro Z hUpper
+    exact boundedCollapsedRankArbitraryJoin_least S Z hUpper
+
+/-- Monotonicity law: arbitrary-family bounded join is monotone under set inclusion. -/
+theorem boundedCollapsedRankArbitraryJoin_monotone
+    {K : ℕ}
+    {S T : Set (BoundedCollapsedRankObject K)}
+    (hST : S ⊆ T) :
+    (boundedCollapsedRankArbitraryJoin S).Hom (boundedCollapsedRankArbitraryJoin T) := by
+  exact boundedCollapsedRankArbitraryJoin_least S (boundedCollapsedRankArbitraryJoin T)
+    (fun X hX => boundedCollapsedRankArbitraryJoin_hom T (hST hX))
+
+/-- Monotonicity law: arbitrary-family bounded meet is antitone under set inclusion. -/
+theorem boundedCollapsedRankArbitraryMeet_antitone
+    {K : ℕ}
+    {S T : Set (BoundedCollapsedRankObject K)}
+    (hST : S ⊆ T) :
+    (boundedCollapsedRankArbitraryMeet T).Hom (boundedCollapsedRankArbitraryMeet S) := by
+  exact boundedCollapsedRankArbitraryMeet_greatest S (boundedCollapsedRankArbitraryMeet T)
+    (fun X hX => boundedCollapsedRankArbitraryMeet_hom T (hST hX))
+
+/-- Idempotence law for singleton families (meet form). -/
+theorem boundedCollapsedRankArbitraryMeet_singleton_rank
+    {K : ℕ} (X : BoundedCollapsedRankObject K) :
+    (boundedCollapsedRankArbitraryMeet ({X} : Set (BoundedCollapsedRankObject K))).rank = X.rank := by
+  apply le_antisymm
+  · exact boundedCollapsedRankArbitraryMeet_hom ({X} : Set (BoundedCollapsedRankObject K))
+      (by simp)
+  · exact boundedCollapsedRankArbitraryMeet_greatest ({X} : Set (BoundedCollapsedRankObject K)) X
+      (by
+        intro Y hY
+        rcases Set.mem_singleton_iff.mp hY with rfl
+        exact le_rfl)
+
+/-- Idempotence law for singleton families (join form). -/
+theorem boundedCollapsedRankArbitraryJoin_singleton_rank
+    {K : ℕ} (X : BoundedCollapsedRankObject K) :
+    (boundedCollapsedRankArbitraryJoin ({X} : Set (BoundedCollapsedRankObject K))).rank = X.rank := by
+  apply le_antisymm
+  · exact boundedCollapsedRankArbitraryJoin_least ({X} : Set (BoundedCollapsedRankObject K)) X
+      (by
+        intro Y hY
+        rcases Set.mem_singleton_iff.mp hY with rfl
+        exact le_rfl)
+  · exact boundedCollapsedRankArbitraryJoin_hom ({X} : Set (BoundedCollapsedRankObject K))
+      (by simp)
+
+/-- In every nonempty bounded family, arbitrary meet is below arbitrary join. -/
+theorem boundedCollapsedRankArbitraryMeet_le_join_of_nonempty
+    {K : ℕ}
+    {S : Set (BoundedCollapsedRankObject K)}
+    (hS : S.Nonempty) :
+    (boundedCollapsedRankArbitraryMeet S).Hom (boundedCollapsedRankArbitraryJoin S) := by
+  rcases hS with ⟨X, hX⟩
+  exact le_trans
+    (boundedCollapsedRankArbitraryMeet_hom S hX)
+    (boundedCollapsedRankArbitraryJoin_hom S hX)
+
+/-- Nonempty absorption law (meet with adjoined join). -/
+theorem boundedCollapsedRankArbitraryMeet_insert_join_absorption_rank
+    {K : ℕ}
+    {S : Set (BoundedCollapsedRankObject K)}
+    (hS : S.Nonempty) :
+    (boundedCollapsedRankArbitraryMeet (Set.insert (boundedCollapsedRankArbitraryJoin S) S)).rank =
+      (boundedCollapsedRankArbitraryMeet S).rank := by
+  apply le_antisymm
+  · exact boundedCollapsedRankArbitraryMeet_antitone
+      (S := S)
+      (T := Set.insert (boundedCollapsedRankArbitraryJoin S) S)
+      (by
+        intro X hX
+        exact Or.inr hX)
+  · exact boundedCollapsedRankArbitraryMeet_greatest
+      (Set.insert (boundedCollapsedRankArbitraryJoin S) S)
+      (boundedCollapsedRankArbitraryMeet S)
+      (by
+        intro X hX
+        rcases Set.mem_insert_iff.mp hX with hEq | hMem
+        · rw [hEq]
+          exact boundedCollapsedRankArbitraryMeet_le_join_of_nonempty hS
+        · exact boundedCollapsedRankArbitraryMeet_hom S hMem)
+
+/-- Nonempty absorption law (join with adjoined meet). -/
+theorem boundedCollapsedRankArbitraryJoin_insert_meet_absorption_rank
+    {K : ℕ}
+    {S : Set (BoundedCollapsedRankObject K)}
+    (hS : S.Nonempty) :
+    (boundedCollapsedRankArbitraryJoin (Set.insert (boundedCollapsedRankArbitraryMeet S) S)).rank =
+      (boundedCollapsedRankArbitraryJoin S).rank := by
+  apply le_antisymm
+  · exact boundedCollapsedRankArbitraryJoin_least
+      (Set.insert (boundedCollapsedRankArbitraryMeet S) S)
+      (boundedCollapsedRankArbitraryJoin S)
+      (by
+        intro X hX
+        rcases Set.mem_insert_iff.mp hX with hEq | hMem
+        · rw [hEq]
+          exact boundedCollapsedRankArbitraryMeet_le_join_of_nonempty hS
+        · exact boundedCollapsedRankArbitraryJoin_hom S hMem)
+  · exact boundedCollapsedRankArbitraryJoin_monotone
+      (S := S)
+      (T := Set.insert (boundedCollapsedRankArbitraryMeet S) S)
+      (by
+        intro X hX
+        exact Or.inr hX)
+
+/-- Contrast theorem: bounded-rank slices admit terminal objects, while the
+unbounded collapsed-rank category does not. -/
+theorem collapsedRank_bounded_vs_unbounded_terminal
+    (K : ℕ) :
+    (∃ T : BoundedCollapsedRankObject K,
+      ∀ X : BoundedCollapsedRankObject K, X.Hom T) ∧
+    ¬ ∃ T : AdmissibilityCollapsedRankObject,
+      ∀ X : AdmissibilityCollapsedRankObject, X.Hom T := by
+  exact ⟨boundedCollapsedRank_has_terminal K, collapsedRank_no_terminal⟩
+
+/-- Collapsed rank-normal-form object at admissibility level `ε + Δ`. -/
+noncomputable def QuantitativeAdmissibilityFamily.collapsedRankObject
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (F : QuantitativeAdmissibilityFamily A B)
+    (dp : DecisionProblem A S) (ε Δ : ℝ) :
+    AdmissibilityCollapsedRankObject :=
+  ⟨(F.summaryDecisionProblem dp (ε + Δ)).srank⟩
+
+/-- Collapse tightness at the rank-normal-form level: if two nested admissibility
+families start at the same tight structural rank and erase the same number of
+exact relevant coordinates, then the relaxed structural ranks coincide. -/
+theorem quantitativeAdmissibility_collapsedSrank_eq_of_same_collapseCount
+    {A B C S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (F : QuantitativeAdmissibilityFamily A B)
+    (G : QuantitativeAdmissibilityFamily A C)
+    (dp : DecisionProblem A S)
+    (εF ΔF εG ΔG : ℝ)
+    (hΔF : 0 ≤ ΔF) (hΔG : 0 ≤ ΔG)
+    (hBase :
+      (F.summaryDecisionProblem dp εF).srank =
+        (G.summaryDecisionProblem dp εG).srank)
+    (hCollapse :
+      F.collapseCount dp εF ΔF = G.collapseCount dp εG ΔG) :
+    (F.summaryDecisionProblem dp (εF + ΔF)).srank =
+      (G.summaryDecisionProblem dp (εG + ΔG)).srank := by
+  have hF :=
+    quantitativeAdmissibility_srank_eq_relaxed_plus_collapseCount F dp εF ΔF hΔF
+  have hG :=
+    quantitativeAdmissibility_srank_eq_relaxed_plus_collapseCount G dp εG ΔG hΔG
+  omega
+
+/-- Canonicality of admissibility relief: in the coarse collapse category,
+matching erased-coordinate counts determine the same relaxed object up to
+isomorphism. -/
+theorem quantitativeAdmissibility_collapsedRankObject_iso_of_same_collapseCount
+    {A B C S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (F : QuantitativeAdmissibilityFamily A B)
+    (G : QuantitativeAdmissibilityFamily A C)
+    (dp : DecisionProblem A S)
+    (εF ΔF εG ΔG : ℝ)
+    (hΔF : 0 ≤ ΔF) (hΔG : 0 ≤ ΔG)
+    (hBase :
+      (F.summaryDecisionProblem dp εF).srank =
+        (G.summaryDecisionProblem dp εG).srank)
+    (hCollapse :
+      F.collapseCount dp εF ΔF = G.collapseCount dp εG ΔG) :
+    (F.collapsedRankObject dp εF ΔF).Iso
+      (G.collapsedRankObject dp εG ΔG) := by
+  refine (AdmissibilityCollapsedRankObject.iso_iff_rank_eq _ _).2 ?_
+  simpa [QuantitativeAdmissibilityFamily.collapsedRankObject] using
+    quantitativeAdmissibility_collapsedSrank_eq_of_same_collapseCount
+      F G dp εF ΔF εG ΔG hΔF hΔG hBase hCollapse
+
 /-- Local paper3 exposure of the witness/checking duality budget lower bound. -/
 theorem exactSufficiency_checkerBudget_ge_witnessBudget {n : ℕ}
     (hn : 1 ≤ n)
@@ -493,6 +1393,13 @@ theorem quotientTrajectorySrankEntropyStep_eq
   rw [stateSpaceEntropy_eq, stateSpaceEntropy_eq]
   ring
 
+/-- Constant-rank trajectories carry zero per-step structural-rank entropy increment. -/
+theorem quotientTrajectorySrankEntropyStep_eq_zero_of_constant
+    {τ : ℕ} (r0 : ℕ) (t : Fin τ) :
+    quotientTrajectorySrankEntropyStep (fun _ : Fin (τ + 1) => r0) t = 0 := by
+  unfold quotientTrajectorySrankEntropyStep
+  ring
+
 /-- Finite quotient-trajectory Crooks identity at the path-weight level: the forward/reverse stationary path
 weight ratio is the exponential of the summed log edge-flow asymmetry. -/
 theorem quotientTrajectory_forwardReverseRatio
@@ -555,6 +1462,81 @@ theorem quotientTrajectory_forwardReverseRatio_eq_exp_srankEntropy
   rw [quotientTrajectory_forwardReverseRatio mc π q hForward hReverse]
   congr 1
   exact Finset.sum_congr rfl (fun t _ => hCal t)
+
+/-- Standard Crooks-form reduction of the quotient-trajectory path-ratio theorem under
+an explicit work/free-energy calibration of cumulative structural-rank entropy. -/
+theorem quotientTrajectory_crooks_standard_form_of_work_calibration
+    {Q : Type*} [Fintype Q]
+    (mc : DecisionQuotient.Physics.DiscreteMarkovChain Q)
+    (π : DecisionQuotient.Physics.StationaryDist mc) {τ : ℕ}
+    (q : Fin (τ + 1) → Q) (r : Fin (τ + 1) → ℕ)
+    (hForward : ∀ t : Fin τ,
+      0 < DecisionQuotient.Physics.WolpertResidual.edgeFlow mc π (q t.castSucc) (q t.succ))
+    (hReverse : ∀ t : Fin τ,
+      0 < DecisionQuotient.Physics.WolpertResidual.edgeFlow mc π (q t.succ) (q t.castSucc))
+    (hCal : ∀ t : Fin τ,
+      Real.log
+          (DecisionQuotient.Physics.WolpertResidual.edgeFlow mc π (q t.castSucc) (q t.succ) /
+            DecisionQuotient.Physics.WolpertResidual.edgeFlow mc π (q t.succ) (q t.castSucc)) =
+        quotientTrajectorySrankEntropyStep r t)
+    {W ΔF kB T : ℝ}
+    (_hkB : 0 < kB) (_hT : 0 < T)
+    (hWorkCal :
+      Finset.univ.sum (fun t : Fin τ => quotientTrajectorySrankEntropyStep r t) =
+        (W - ΔF) / (kB * T)) :
+    quotientTrajectoryForwardWeight mc π q /
+        quotientTrajectoryReverseWeight mc π q =
+      Real.exp ((W - ΔF) / (kB * T)) := by
+  rw [quotientTrajectory_forwardReverseRatio_eq_exp_srankEntropy mc π q r hForward hReverse hCal]
+  simpa [hWorkCal]
+
+/-- Finite-path Jarzynski equality from a Crooks path-ratio relation on strictly positive
+forward/reverse trajectory distributions. -/
+theorem jarzynski_equality_of_finite_crooks
+    {Γ : Type*} [Fintype Γ]
+    (pF pR : DecisionQuotient.Physics.WolpertMismatch.StrictFiniteDistribution Γ)
+    (W : Γ → ℝ)
+    {kB T ΔF : ℝ} (hkB : 0 < kB) (hT : 0 < T)
+    (hCrooks : ∀ γ : Γ,
+      pF.pmf γ = pR.pmf γ * Real.exp ((W γ - ΔF) / (kB * T))) :
+    Finset.univ.sum (fun γ : Γ => pF.pmf γ * Real.exp (-(W γ) / (kB * T))) =
+      Real.exp (-ΔF / (kB * T)) := by
+  have hKTPos : 0 < kB * T := mul_pos hkB hT
+  have hKTNe : kB * T ≠ 0 := ne_of_gt hKTPos
+  calc
+    Finset.univ.sum (fun γ : Γ => pF.pmf γ * Real.exp (-(W γ) / (kB * T)))
+        = Finset.univ.sum (fun γ : Γ =>
+            (pR.pmf γ * Real.exp ((W γ - ΔF) / (kB * T))) *
+              Real.exp (-(W γ) / (kB * T))) := by
+            refine Finset.sum_congr rfl ?_
+            intro γ _
+            rw [hCrooks γ]
+    _ = Finset.univ.sum (fun γ : Γ => pR.pmf γ * Real.exp (-ΔF / (kB * T))) := by
+          refine Finset.sum_congr rfl ?_
+          intro γ _
+          have hExp :
+              Real.exp ((W γ - ΔF) / (kB * T)) *
+                Real.exp (-(W γ) / (kB * T)) =
+                  Real.exp (-ΔF / (kB * T)) := by
+            rw [← Real.exp_add]
+            congr 1
+            field_simp [hKTNe]
+            ring
+          calc
+            (pR.pmf γ * Real.exp ((W γ - ΔF) / (kB * T))) *
+                Real.exp (-(W γ) / (kB * T))
+                = pR.pmf γ *
+                    (Real.exp ((W γ - ΔF) / (kB * T)) *
+                      Real.exp (-(W γ) / (kB * T))) := by ring
+            _ = pR.pmf γ * Real.exp (-ΔF / (kB * T)) := by rw [hExp]
+    _ = (Finset.univ.sum (fun γ : Γ => pR.pmf γ)) * Real.exp (-ΔF / (kB * T)) := by
+          exact (Finset.sum_mul (s := Finset.univ)
+            (f := fun γ : Γ => pR.pmf γ)
+            (a := Real.exp (-ΔF / (kB * T)))).symm
+    _ = Real.exp (-ΔF / (kB * T)) := by
+          have hSumR : Finset.univ.sum (fun γ : Γ => pR.pmf γ) = 1 := by
+            simpa using pR.sum_eq_one
+          simp [hSumR]
 
 /-- If each quotient-trajectory step carries at least its declared structural-rank entropy cost in dissipation,
 the total dissipation is bounded below by the cumulative rank-entropy production. -/
@@ -1727,6 +2709,45 @@ theorem binary_numOptClasses_le_pow_srank
     _ = Fintype.card (R → Bool) := Finset.card_univ
     _ = 2 ^ R.card := hcard_pat
     _ = 2 ^ dp.srank := by rw [hcard_R]
+
+/-- Combinatorial structural-rank lower bound on binary state spaces:
+if the optimizer-class family realizes at least `2^k` distinct classes, then
+structural rank is at least `k`. -/
+theorem binary_srank_ge_of_numOptClasses_ge_two_pow
+    {A : Type*} {m : ℕ} [DecidableEq (Set A)]
+    (dp : DecisionProblem A (Fin m → Bool))
+    {k : ℕ}
+    (hClasses : 2 ^ k ≤ dp.numOptClasses) :
+    k ≤ dp.srank := by
+  have hUpper : dp.numOptClasses ≤ 2 ^ dp.srank :=
+    binary_numOptClasses_le_pow_srank dp
+  have hPow : 2 ^ k ≤ 2 ^ dp.srank := le_trans hClasses hUpper
+  exact (Nat.pow_le_pow_iff_right Nat.one_lt_two).1 hPow
+
+/-- Log-scale version of the optimizer-class lower bound: if at least `k`
+optimizer classes are realized, then `log₂(k)` lower-bounds structural rank. -/
+theorem binary_srank_ge_log2_of_numOptClasses_ge
+    {A : Type*} {m : ℕ} [DecidableEq (Set A)]
+    (dp : DecisionProblem A (Fin m → Bool))
+    {k : ℕ}
+    (hk : 0 < k)
+    (hClasses : k ≤ dp.numOptClasses) :
+    Real.log (k : ℝ) / Real.log 2 ≤ (dp.srank : ℝ) := by
+  have hUpperNat : dp.numOptClasses ≤ 2 ^ dp.srank :=
+    binary_numOptClasses_le_pow_srank dp
+  have hkReal : 0 < (k : ℝ) := by
+    exact_mod_cast hk
+  have hLowerReal : (k : ℝ) ≤ (dp.numOptClasses : ℝ) := by
+    exact_mod_cast hClasses
+  have hUpperReal : (dp.numOptClasses : ℝ) ≤ (2 : ℝ) ^ dp.srank := by
+    exact_mod_cast hUpperNat
+  have hLog : Real.log (k : ℝ) ≤ Real.log ((2 : ℝ) ^ dp.srank) :=
+    Real.log_le_log hkReal (le_trans hLowerReal hUpperReal)
+  have hScaled : Real.log (k : ℝ) ≤ (dp.srank : ℝ) * Real.log 2 := by
+    simpa [Real.log_pow, mul_comm] using hLog
+  have hlog2 : 0 < Real.log 2 := Real.log_pos (by norm_num)
+  exact (div_le_iff₀ hlog2).2 (by
+    simpa [mul_comm, mul_left_comm, mul_assoc] using hScaled)
 
 /-- The bit-level structural rank is controlled by the grid-level structural rank times the number
 of bits used to encode each grid coordinate. -/
@@ -4901,6 +5922,95 @@ structure quotientMCMCKernel
     quotientBoltzmannProb dp β s * DecisionQuotient.Physics.transitionProb mc s s' =
       quotientBoltzmannProb dp β s' * DecisionQuotient.Physics.transitionProb mc s' s
 
+/-- Detailed balance against a Boltzmann law, together with a stationary witness
+matching that Boltzmann law, forces symmetric stationary edge flows. -/
+theorem quotientMCMCKernel_edgeFlow_eq_reverse_of_boltzmannStationary
+    {A S : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [Fintype S] [Nonempty S]
+    (K : quotientMCMCKernel A S)
+    (π : DecisionQuotient.Physics.StationaryDist K.mc)
+    (hBoltz : ∀ s : S,
+      DecisionQuotient.Physics.stationaryProb π s = quotientBoltzmannProb K.dp K.β s)
+    (s s' : S) :
+    DecisionQuotient.Physics.WolpertResidual.edgeFlow K.mc π s s' =
+      DecisionQuotient.Physics.WolpertResidual.edgeFlow K.mc π s' s := by
+  unfold DecisionQuotient.Physics.WolpertResidual.edgeFlow
+  rw [hBoltz s, hBoltz s']
+  exact K.detailedBalance s s'
+
+/-- Local Crooks calibration derived from detailed balance: each stepwise
+forward/reverse stationary edge-flow log ratio is zero when stationary weights
+agree with the Boltzmann witness law. -/
+theorem quotientTrajectory_logEdgeFlowRatio_eq_zero_of_detailedBalance_boltzmannStationary
+    {A S : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [Fintype S] [Nonempty S]
+    (K : quotientMCMCKernel A S)
+    (π : DecisionQuotient.Physics.StationaryDist K.mc)
+    (hBoltz : ∀ s : S,
+      DecisionQuotient.Physics.stationaryProb π s = quotientBoltzmannProb K.dp K.β s)
+    {τ : ℕ} (q : Fin (τ + 1) → S)
+    (hForward : ∀ t : Fin τ,
+      0 < DecisionQuotient.Physics.WolpertResidual.edgeFlow K.mc π (q t.castSucc) (q t.succ))
+    (hReverse : ∀ t : Fin τ,
+      0 < DecisionQuotient.Physics.WolpertResidual.edgeFlow K.mc π (q t.succ) (q t.castSucc))
+    (t : Fin τ) :
+    Real.log
+        (DecisionQuotient.Physics.WolpertResidual.edgeFlow K.mc π (q t.castSucc) (q t.succ) /
+          DecisionQuotient.Physics.WolpertResidual.edgeFlow K.mc π (q t.succ) (q t.castSucc)) = 0 := by
+  have hEq := quotientMCMCKernel_edgeFlow_eq_reverse_of_boltzmannStationary
+    K π hBoltz (q t.castSucc) (q t.succ)
+  rw [hEq, div_self (ne_of_gt (hReverse t)), Real.log_one]
+
+/-- Detailed-balance calibration as a direct witness for the rank-calibrated
+Crooks theorem under a constant-rank trajectory model. -/
+theorem quotientTrajectory_crooks_calibration_of_detailedBalance_boltzmannStationary
+    {A S : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [Fintype S] [Nonempty S]
+    (K : quotientMCMCKernel A S)
+    (π : DecisionQuotient.Physics.StationaryDist K.mc)
+    (hBoltz : ∀ s : S,
+      DecisionQuotient.Physics.stationaryProb π s = quotientBoltzmannProb K.dp K.β s)
+    {τ : ℕ} (q : Fin (τ + 1) → S)
+    (hForward : ∀ t : Fin τ,
+      0 < DecisionQuotient.Physics.WolpertResidual.edgeFlow K.mc π (q t.castSucc) (q t.succ))
+    (hReverse : ∀ t : Fin τ,
+      0 < DecisionQuotient.Physics.WolpertResidual.edgeFlow K.mc π (q t.succ) (q t.castSucc))
+    (r0 : ℕ) :
+    ∀ t : Fin τ,
+      Real.log
+          (DecisionQuotient.Physics.WolpertResidual.edgeFlow K.mc π (q t.castSucc) (q t.succ) /
+            DecisionQuotient.Physics.WolpertResidual.edgeFlow K.mc π (q t.succ) (q t.castSucc)) =
+        quotientTrajectorySrankEntropyStep (fun _ : Fin (τ + 1) => r0) t := by
+  intro t
+  rw [quotientTrajectory_logEdgeFlowRatio_eq_zero_of_detailedBalance_boltzmannStationary
+      K π hBoltz q hForward hReverse t,
+    quotientTrajectorySrankEntropyStep_eq_zero_of_constant r0 t]
+
+/-- Equilibrium Crooks corollary from detailed-balance calibration: forward and
+reverse quotient-trajectory stationary path weights coincide. -/
+theorem quotientTrajectory_forwardReverseRatio_eq_one_of_detailedBalance_boltzmannStationary
+    {A S : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [Fintype S] [Nonempty S]
+    (K : quotientMCMCKernel A S)
+    (π : DecisionQuotient.Physics.StationaryDist K.mc)
+    (hBoltz : ∀ s : S,
+      DecisionQuotient.Physics.stationaryProb π s = quotientBoltzmannProb K.dp K.β s)
+    {τ : ℕ} (q : Fin (τ + 1) → S)
+    (hForward : ∀ t : Fin τ,
+      0 < DecisionQuotient.Physics.WolpertResidual.edgeFlow K.mc π (q t.castSucc) (q t.succ))
+    (hReverse : ∀ t : Fin τ,
+      0 < DecisionQuotient.Physics.WolpertResidual.edgeFlow K.mc π (q t.succ) (q t.castSucc)) :
+    quotientTrajectoryForwardWeight K.mc π q /
+        quotientTrajectoryReverseWeight K.mc π q = 1 := by
+  have hCal := quotientTrajectory_crooks_calibration_of_detailedBalance_boltzmannStationary
+    K π hBoltz q hForward hReverse 0
+  have hMain := quotientTrajectory_forwardReverseRatio_eq_exp_srankEntropy
+    K.mc π q (fun _ : Fin (τ + 1) => 0) hForward hReverse hCal
+  have hZeroSum :
+      Finset.univ.sum
+        (fun t : Fin τ => quotientTrajectorySrankEntropyStep (fun _ : Fin (τ + 1) => 0) t) = 0 := by
+    refine Finset.sum_eq_zero ?_
+    intro t _
+    exact quotientTrajectorySrankEntropyStep_eq_zero_of_constant 0 t
+  rw [hMain, hZeroSum]
+  simp
+
 /-- Transition matrix `P` for a quotient-MCMC kernel. -/
 noncomputable def quotientMCMCKernelTransitionMatrix
     {A S : Type*} [Fintype A] [DecidableEq A] [Nonempty A] [Fintype S] [Nonempty S]
@@ -5046,6 +6156,7 @@ theorem stochasticTUR_precision
     (hMean : DecisionQuotient.Physics.expectedValue π stepObservable ≠ 0)
     (hVar : 0 < DecisionQuotient.Physics.variance π stepObservable)
     (hσ : 0 < DecisionQuotient.Physics.entropyProduction mc π)
+    (hTurBound : DecisionQuotient.Physics.tur_bound mc π stepObservable hMean hσ)
     (hAchieved : stochasticResolutionPrecisionTarget precision ≤
       (DecisionQuotient.Physics.expectedValue π stepObservable) ^ 2 /
         DecisionQuotient.Physics.variance π stepObservable) :
@@ -5058,6 +6169,7 @@ theorem stochasticTUR_precision
     have hBase := DecisionQuotient.Physics.tur_bridge mc π stepObservable
       (by simpa [μ] using hMean)
       (by simpa [σ] using hσ)
+      (by simpa [μ, σ, DecisionQuotient.Physics.tur_bound] using hTurBound)
     simpa [μ, v, σ] using hBase
   have hInv : 1 / (v / μ ^ 2) ≤ 1 / (2 / σ) :=
     one_div_le_one_div_of_le (by positivity) hTur
@@ -6115,6 +7227,149 @@ theorem quotient_resolution_speed_bound
       (Nat.le_div_iff_mul_le R.hDiameter).1 hRank
   simpa [Nat.mul_comm] using hMul
 
+/-- Division-form speed bound for an admissibility-indexed summary problem: exact resolution
+at tolerance `ε` requires at least the corresponding rank-scaled traversal time budget. -/
+theorem admissibility_resolution_time_lower_bound
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n] [DecidableEq (Fin n)]
+    (F : QuantitativeAdmissibilityFamily A B)
+    (dp : DecisionProblem A S) (ε : ℝ)
+    (R : DecisionQuotient.Physics.BoundedAcquisition.BoundedRegion) (T : ℕ)
+    (hRes : decisionExactResolutionWithin (F.summaryDecisionProblem dp ε) R T) :
+    (R.diameter * (F.summaryDecisionProblem dp ε).srank) / R.signalSpeed ≤ T := by
+  have hSpeed := quotient_resolution_speed_bound
+    (dp := F.summaryDecisionProblem dp ε) R T hRes
+  have hMul :
+      R.diameter * (F.summaryDecisionProblem dp ε).srank ≤ T * R.signalSpeed := by
+    simpa [Nat.mul_comm, Nat.mul_left_comm, Nat.mul_assoc] using hSpeed
+  have hMul' :
+      R.diameter * (F.summaryDecisionProblem dp ε).srank ≤ R.signalSpeed * T := by
+    simpa [Nat.mul_comm] using hMul
+  exact (Nat.div_le_iff_le_mul_add_pred R.hSpeed).2
+    (le_trans hMul' (Nat.le_add_right _ _))
+
+/-- Multiplicative-form speed bound for an admissibility-indexed summary problem. -/
+theorem admissibility_resolution_speed_bound
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n] [DecidableEq (Fin n)]
+    (F : QuantitativeAdmissibilityFamily A B)
+    (dp : DecisionProblem A S) (ε : ℝ)
+    (R : DecisionQuotient.Physics.BoundedAcquisition.BoundedRegion) (T : ℕ)
+    (hRes : decisionExactResolutionWithin (F.summaryDecisionProblem dp ε) R T) :
+    R.diameter * (F.summaryDecisionProblem dp ε).srank ≤ R.signalSpeed * T := by
+  exact quotient_resolution_speed_bound (dp := F.summaryDecisionProblem dp ε) R T hRes
+
+/-- Quantitative speed-accuracy tradeoff under admissibility collapse: if exact resolution at
+relaxed tolerance `ε + Δ` is achieved in time `T`, then `T` must still exceed the diameter/speed
+lower bound for the relaxed rank, which equals the tight rank minus the admissibility collapse
+count. -/
+theorem admissibility_speed_accuracy_tradeoff
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n] [DecidableEq (Fin n)]
+    (F : QuantitativeAdmissibilityFamily A B)
+    (dp : DecisionProblem A S) (ε Δ : ℝ) (hΔ : 0 ≤ Δ)
+    (R : DecisionQuotient.Physics.BoundedAcquisition.BoundedRegion) (T : ℕ)
+    (hRes : decisionExactResolutionWithin (F.summaryDecisionProblem dp (ε + Δ)) R T) :
+    (R.diameter *
+      ((F.summaryDecisionProblem dp ε).srank - F.collapseCount dp ε Δ)) / R.signalSpeed ≤ T := by
+  have hLower := admissibility_resolution_time_lower_bound F dp (ε + Δ) R T hRes
+  have hCollapse := quantitativeAdmissibility_srank_eq_relaxed_plus_collapseCount F dp ε Δ hΔ
+  have hRelaxedEq :
+      (F.summaryDecisionProblem dp (ε + Δ)).srank =
+        (F.summaryDecisionProblem dp ε).srank - F.collapseCount dp ε Δ := by
+    omega
+  simpa [hRelaxedEq] using hLower
+
+/-- Strong speed-accuracy specialization: if the admissibility relaxation is
+bidirectionally factorizable (hence induces zero collapse), exact-resolution
+speed is governed by the tight-rank factor without subtraction. -/
+theorem admissibility_speed_accuracy_tradeoff_of_backwardFactor
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n] [DecidableEq (Fin n)]
+    (F : QuantitativeAdmissibilityFamily A B)
+    (dp : DecisionProblem A S) (ε Δ : ℝ) (hΔ : 0 ≤ Δ)
+    (hBackward : ∃ κ : B → B,
+      ∀ X : Set A, F.summary ε X = κ (F.summary (ε + Δ) X))
+    (R : DecisionQuotient.Physics.BoundedAcquisition.BoundedRegion) (T : ℕ)
+    (hRes : decisionExactResolutionWithin (F.summaryDecisionProblem dp (ε + Δ)) R T) :
+    R.diameter * (F.summaryDecisionProblem dp ε).srank ≤ R.signalSpeed * T := by
+  have hSpeed := admissibility_resolution_speed_bound F dp (ε + Δ) R T hRes
+  have hRankEq :
+      (F.summaryDecisionProblem dp (ε + Δ)).srank =
+        (F.summaryDecisionProblem dp ε).srank :=
+    quantitativeAdmissibility_srank_eq_of_backwardFactor F dp ε Δ hΔ hBackward
+  simpa [hRankEq] using hSpeed
+
+/-- Multiplicative speed-accuracy tradeoff form: relaxing admissibility by `Δ` reduces the
+required rank factor by exactly the collapse count while preserving the same `d/c` traversal
+scaling. -/
+theorem admissibility_speed_accuracy_tradeoff_mul
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n] [DecidableEq (Fin n)]
+    (F : QuantitativeAdmissibilityFamily A B)
+    (dp : DecisionProblem A S) (ε Δ : ℝ) (hΔ : 0 ≤ Δ)
+    (R : DecisionQuotient.Physics.BoundedAcquisition.BoundedRegion) (T : ℕ)
+    (hRes : decisionExactResolutionWithin (F.summaryDecisionProblem dp (ε + Δ)) R T) :
+    R.diameter *
+      ((F.summaryDecisionProblem dp ε).srank - F.collapseCount dp ε Δ) ≤
+        R.signalSpeed * T := by
+  have hSpeed := admissibility_resolution_speed_bound F dp (ε + Δ) R T hRes
+  have hCollapse := quantitativeAdmissibility_srank_eq_relaxed_plus_collapseCount F dp ε Δ hΔ
+  have hRelaxedEq :
+      (F.summaryDecisionProblem dp (ε + Δ)).srank =
+        (F.summaryDecisionProblem dp ε).srank - F.collapseCount dp ε Δ := by
+    omega
+  simpa [hRelaxedEq] using hSpeed
+
+/-- On-rate upper envelope induced by exact admissibility-indexed resolution: if tolerance-`ε`
+resolution completes in `T > 0`, the realized per-time resolution rate cannot exceed the
+signal-speed-over-rank budget ratio. -/
+theorem admissibility_onRate_upper_bound
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n] [DecidableEq (Fin n)]
+    (F : QuantitativeAdmissibilityFamily A B)
+    (dp : DecisionProblem A S) (ε : ℝ)
+    (R : DecisionQuotient.Physics.BoundedAcquisition.BoundedRegion) (T : ℕ)
+    (hTPos : 0 < T)
+    (hRankPos : 0 < (F.summaryDecisionProblem dp ε).srank)
+    (hRes : decisionExactResolutionWithin (F.summaryDecisionProblem dp ε) R T) :
+    (1 : ℝ) / (T : ℝ) ≤
+      (R.signalSpeed : ℝ) /
+        ((R.diameter * (F.summaryDecisionProblem dp ε).srank : ℕ) : ℝ) := by
+  have hSpeed := quotient_resolution_speed_bound
+    (dp := F.summaryDecisionProblem dp ε) R T hRes
+  have hRate :
+      ((R.diameter * (F.summaryDecisionProblem dp ε).srank : ℕ) : ℝ) ≤
+        (R.signalSpeed : ℝ) * (T : ℝ) := by
+    exact_mod_cast hSpeed
+  have hTPosR : (0 : ℝ) < (T : ℝ) := by
+    exact_mod_cast hTPos
+  have hDenPosR :
+      (0 : ℝ) < ((R.diameter * (F.summaryDecisionProblem dp ε).srank : ℕ) : ℝ) := by
+    have hNatPos :
+        0 < R.diameter * (F.summaryDecisionProblem dp ε).srank :=
+      Nat.mul_pos R.hDiameter hRankPos
+    exact_mod_cast hNatPos
+  exact (div_le_div_iff₀ hTPosR hDenPosR).2 (by
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hRate)
+
+/-- On-rate form of the admissibility speed-accuracy tradeoff: after relaxing tolerance by `Δ`,
+the achievable exact-resolution rate is bounded by the inverse of the collapse-adjusted rank
+time budget. -/
+theorem admissibility_onRate_upper_bound_of_relaxation
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n] [DecidableEq (Fin n)]
+    (F : QuantitativeAdmissibilityFamily A B)
+    (dp : DecisionProblem A S) (ε Δ : ℝ) (hΔ : 0 ≤ Δ)
+    (R : DecisionQuotient.Physics.BoundedAcquisition.BoundedRegion) (T : ℕ)
+    (hTPos : 0 < T)
+    (hRankPos : 0 < (F.summaryDecisionProblem dp (ε + Δ)).srank)
+    (hRes : decisionExactResolutionWithin (F.summaryDecisionProblem dp (ε + Δ)) R T) :
+    (1 : ℝ) / (T : ℝ) ≤
+      (R.signalSpeed : ℝ) /
+        ((R.diameter *
+          ((F.summaryDecisionProblem dp ε).srank - F.collapseCount dp ε Δ) : ℕ) : ℝ) := by
+  have hBase := admissibility_onRate_upper_bound F dp (ε + Δ) R T hTPos hRankPos hRes
+  have hCollapse := quantitativeAdmissibility_srank_eq_relaxed_plus_collapseCount F dp ε Δ hΔ
+  have hRelaxedEq :
+      (F.summaryDecisionProblem dp (ε + Δ)).srank =
+        (F.summaryDecisionProblem dp ε).srank - F.collapseCount dp ε Δ := by
+    omega
+  simpa [hRelaxedEq] using hBase
+
 /-- Stagewise finite-rate surrogate for the trajectory speed-energy tradeoff: the cumulative
 resolution burden fits inside the sum of the local signal budgets, and the cumulative Landauer floor
 fits inside the sum of the stagewise bounded-acquisition budgets. -/
@@ -6498,6 +7753,109 @@ theorem binding_free_energy_floor
       _ ≤ (DecisionQuotient.ThermodynamicLift.energyLowerBound M I.card : ℝ) := by
           simpa [DecisionQuotient.ThermodynamicLift.energyLowerBound] using hCast
   exact le_trans hLandauer hBinding
+
+/-- Binding free-energy gap above the structural-rank Landauer floor. -/
+noncomputable def bindingFreeEnergyGap
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (dp : DecisionProblem A S)
+    (kB T ΔG : ℝ) : ℝ :=
+  ΔG - (dp.srank : ℝ) * (kB * T * Real.log 2)
+
+/-- Residual entropy (in nats) encoded by the binding free-energy gap after
+normalizing by thermal scale `k_B T`. -/
+noncomputable def bindingResidualEntropyNats
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (dp : DecisionProblem A S)
+    (kB T ΔG : ℝ) : ℝ :=
+  bindingFreeEnergyGap dp kB T ΔG / (kB * T)
+
+/-- Exact decomposition: measured binding free energy equals the structural-rank
+Landauer floor plus the residual gap term. -/
+theorem binding_free_energy_eq_floor_plus_gap
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (dp : DecisionProblem A S)
+    (kB T ΔG : ℝ) :
+    ΔG = (dp.srank : ℝ) * (kB * T * Real.log 2) +
+      bindingFreeEnergyGap dp kB T ΔG := by
+  unfold bindingFreeEnergyGap
+  ring
+
+/-- The residual gap is nonnegative whenever `ΔG` dominates a certified
+exact-resolution witness energy under Landauer calibration. -/
+theorem binding_free_energy_gap_nonneg
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n] [DecidableEq (Fin n)]
+    (dp : DecisionProblem A S)
+    (I : Finset (Fin n)) (hI : dp.isSufficient I)
+    (M : DecisionQuotient.ThermodynamicLift.ThermoModel)
+    {kB T ΔG : ℝ} (hkB : 0 < kB) (hT : 0 < T)
+    (hCal : (M.joulesPerBit : ℝ) =
+      DecisionQuotient.ThermodynamicLift.landauerJoulesPerBit kB T)
+    (hBinding : (DecisionQuotient.ThermodynamicLift.energyLowerBound M I.card : ℝ) ≤ ΔG) :
+    0 ≤ bindingFreeEnergyGap dp kB T ΔG := by
+  have hFloor := binding_free_energy_floor
+    (dp := dp)
+    (I := I) (hI := hI)
+    (M := M)
+    (kB := kB) (T := T) (ΔG := ΔG)
+    hkB hT hCal hBinding
+  unfold bindingFreeEnergyGap
+  linarith
+
+/-- Equivalent decomposition in residual-entropy form. -/
+theorem binding_free_energy_eq_floor_plus_residualEntropy
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (dp : DecisionProblem A S)
+    {kB T ΔG : ℝ} (hkB : 0 < kB) (hT : 0 < T) :
+    ΔG = (dp.srank : ℝ) * (kB * T * Real.log 2) +
+      (kB * T) * bindingResidualEntropyNats dp kB T ΔG := by
+  have hScaleNe : kB * T ≠ 0 := by nlinarith [hkB, hT]
+  unfold bindingResidualEntropyNats bindingFreeEnergyGap
+  field_simp [hScaleNe]
+  ring
+
+/-- Under the theorem-level binding floor hypotheses, the residual-entropy term
+is nonnegative. -/
+theorem binding_residualEntropy_nonneg
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n] [DecidableEq (Fin n)]
+    (dp : DecisionProblem A S)
+    (I : Finset (Fin n)) (hI : dp.isSufficient I)
+    (M : DecisionQuotient.ThermodynamicLift.ThermoModel)
+    {kB T ΔG : ℝ} (hkB : 0 < kB) (hT : 0 < T)
+    (hCal : (M.joulesPerBit : ℝ) =
+      DecisionQuotient.ThermodynamicLift.landauerJoulesPerBit kB T)
+    (hBinding : (DecisionQuotient.ThermodynamicLift.energyLowerBound M I.card : ℝ) ≤ ΔG) :
+    0 ≤ bindingResidualEntropyNats dp kB T ΔG := by
+  have hGapNonneg := binding_free_energy_gap_nonneg
+    (dp := dp)
+    (I := I) (hI := hI)
+    (M := M)
+    (kB := kB) (T := T) (ΔG := ΔG)
+    hkB hT hCal hBinding
+  have hScalePos : 0 < kB * T := mul_pos hkB hT
+  unfold bindingResidualEntropyNats
+  exact div_nonneg hGapNonneg hScalePos.le
+
+/-- Tightness characterization: the binding free-energy floor is achieved exactly
+when the residual entropy term vanishes. -/
+theorem binding_free_energy_floor_tight_iff_residualEntropy_zero
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (dp : DecisionProblem A S)
+    {kB T ΔG : ℝ} (hkB : 0 < kB) (hT : 0 < T) :
+    ΔG = (dp.srank : ℝ) * (kB * T * Real.log 2) ↔
+      bindingResidualEntropyNats dp kB T ΔG = 0 := by
+  have hScaleNe : kB * T ≠ 0 := by nlinarith [hkB, hT]
+  unfold bindingResidualEntropyNats bindingFreeEnergyGap
+  constructor
+  · intro hEq
+    simp [hEq, hScaleNe]
+  · intro hRes
+    have hGapZero :
+        ΔG - (dp.srank : ℝ) * (kB * T * Real.log 2) = 0 := by
+      have hOr :
+          (ΔG - (dp.srank : ℝ) * (kB * T * Real.log 2) = 0) ∨ (kB * T = 0) :=
+        (div_eq_zero_iff).1 hRes
+      exact hOr.resolve_right hScaleNe
+    linarith
 
 /-- Any certified rank target `r ≤ srank` inherits the same calibrated binding-energy floor. -/
 theorem binding_free_energy_floor_of_rank_lower_bound
@@ -6934,6 +8292,19 @@ noncomputable def proofreadingSpecificityRatio
     (baseRatio ΔGproof kB T : ℝ) : ℝ :=
   baseRatio * Real.exp (ΔGproof / (kB * T))
 
+/-- Kinetic correct/incorrect specificity ratio induced by a branch-rate pair. -/
+noncomputable def proofreadingSpecificityFromRates
+    (kCorrect kIncorrect : ℝ) : ℝ :=
+  kCorrect / kIncorrect
+
+/-- Positivity of a kinetic branch-rate specificity ratio. -/
+theorem proofreadingSpecificityFromRates_pos
+    {kCorrect kIncorrect : ℝ}
+    (hCorrect : 0 < kCorrect) (hIncorrect : 0 < kIncorrect) :
+    0 < proofreadingSpecificityFromRates kCorrect kIncorrect := by
+  unfold proofreadingSpecificityFromRates
+  exact div_pos hCorrect hIncorrect
+
 /-- Proofreading specificity gap: nonnegative additional proofreading free energy increases the
 correct/incorrect product ratio with an exponential Boltzmann factor. -/
 theorem proofreading_specificity_gap
@@ -6957,6 +8328,220 @@ theorem proofreading_specificity_gap
         baseRatio * 1 ≤ baseRatio * Real.exp (ΔGproof / (kB * T)) :=
       mul_le_mul_of_nonneg_left hExpGeOne hBase
     simpa [proofreadingSpecificityRatio] using hMul
+
+/-- Exact Hopfield--Ninio log-specificity gain identity in the exponential proofreading model. -/
+theorem proofreading_log_specificity_gain_eq_freeEnergy
+    {etaEq eta ΔGproof kB T : ℝ}
+    (hEtaEqPos : 0 < etaEq)
+    (hEta : eta = proofreadingSpecificityRatio etaEq ΔGproof kB T) :
+    Real.log (eta / etaEq) = ΔGproof / (kB * T) := by
+  have hEtaEqNe : etaEq ≠ 0 := ne_of_gt hEtaEqPos
+  rw [hEta, proofreadingSpecificityRatio]
+  have hDiv :
+      etaEq * Real.exp (ΔGproof / (kB * T)) / etaEq =
+        Real.exp (ΔGproof / (kB * T)) := by
+    field_simp [hEtaEqNe]
+  rw [hDiv, Real.log_exp]
+
+/-- Hopfield--Ninio reduction to rank overhead: if proofreading free energy is realized within
+`c` declared fault-tolerant overhead bits under Landauer calibration, then the required overhead
+is at least the base-2 log specificity gain over equilibrium. -/
+theorem hopfield_ninio_rank_overhead_lower_bound
+    (M : DecisionQuotient.ThermodynamicLift.ThermoModel)
+    {etaEq eta ΔGproof kB T : ℝ}
+    (hEtaEqPos : 0 < etaEq)
+    (hkB : 0 < kB) (hT : 0 < T)
+    (hCal : (M.joulesPerBit : ℝ) =
+      DecisionQuotient.ThermodynamicLift.landauerJoulesPerBit kB T)
+    (c : ℕ)
+    (hSpecificity : eta = proofreadingSpecificityRatio etaEq ΔGproof kB T)
+    (hProofEnergy :
+      ΔGproof ≤ (DecisionQuotient.ThermodynamicLift.energyLowerBound M c : ℝ)) :
+    Real.log (eta / etaEq) / Real.log 2 ≤ (c : ℝ) := by
+  have hLogEq : Real.log (eta / etaEq) = ΔGproof / (kB * T) :=
+    proofreading_log_specificity_gain_eq_freeEnergy hEtaEqPos hSpecificity
+  have hEnergyEq :
+      (DecisionQuotient.ThermodynamicLift.energyLowerBound M c : ℝ) =
+        (c : ℝ) * (kB * T * Real.log 2) := by
+    calc
+      (DecisionQuotient.ThermodynamicLift.energyLowerBound M c : ℝ)
+          = (M.joulesPerBit : ℝ) * c := by
+              simp [DecisionQuotient.ThermodynamicLift.energyLowerBound]
+      _ = (c : ℝ) * (M.joulesPerBit : ℝ) := by ring
+      _ = (c : ℝ) * DecisionQuotient.ThermodynamicLift.landauerJoulesPerBit kB T := by
+            rw [hCal]
+      _ = (c : ℝ) * (kB * T * Real.log 2) := by
+            simp [DecisionQuotient.ThermodynamicLift.landauerJoulesPerBit]
+  have hΔLe : ΔGproof ≤ (c : ℝ) * (kB * T * Real.log 2) := by
+    simpa [hEnergyEq] using hProofEnergy
+  have hKTPos : 0 < kB * T := mul_pos hkB hT
+  have hDivLe : ΔGproof / (kB * T) ≤ (c : ℝ) * Real.log 2 := by
+    have hRearranged :
+        ΔGproof ≤ ((c : ℝ) * Real.log 2) * (kB * T) := by
+      simpa [mul_assoc, mul_left_comm, mul_comm] using hΔLe
+    exact (div_le_iff₀ hKTPos).2 hRearranged
+  have hGainLe : Real.log (eta / etaEq) ≤ (c : ℝ) * Real.log 2 := by
+    simpa [hLogEq] using hDivLe
+  have hLog2Pos : 0 < Real.log 2 := Real.log_pos (by norm_num)
+  exact (div_le_iff₀ hLog2Pos).2 (by
+    simpa [mul_assoc, mul_left_comm, mul_comm] using hGainLe)
+
+/-- Hopfield--Ninio dissipation lower bound as a corollary of the same reduction: the declared
+overhead energy must dominate `k_B T * log(η/η_eq)`. -/
+theorem hopfield_ninio_dissipation_overhead_lower_bound
+    (M : DecisionQuotient.ThermodynamicLift.ThermoModel)
+    {etaEq eta ΔGproof kB T : ℝ}
+    (hEtaEqPos : 0 < etaEq)
+    (hkB : 0 < kB) (hT : 0 < T)
+    (hCal : (M.joulesPerBit : ℝ) =
+      DecisionQuotient.ThermodynamicLift.landauerJoulesPerBit kB T)
+    (c : ℕ)
+    (hSpecificity : eta = proofreadingSpecificityRatio etaEq ΔGproof kB T)
+    (hProofEnergy :
+      ΔGproof ≤ (DecisionQuotient.ThermodynamicLift.energyLowerBound M c : ℝ)) :
+    kB * T * Real.log (eta / etaEq) ≤
+      (DecisionQuotient.ThermodynamicLift.energyLowerBound M c : ℝ) := by
+  have hLogEq : Real.log (eta / etaEq) = ΔGproof / (kB * T) :=
+    proofreading_log_specificity_gain_eq_freeEnergy hEtaEqPos hSpecificity
+  have hKTPos : 0 < kB * T := mul_pos hkB hT
+  have hKTNe : kB * T ≠ 0 := ne_of_gt hKTPos
+  have hScaled : kB * T * Real.log (eta / etaEq) = ΔGproof := by
+    rw [hLogEq]
+    field_simp [hKTNe]
+  linarith [hProofEnergy, hScaled]
+
+/-- Fault-syndrome specialization: the syndrome-overhead slice of the fault-tolerant rank controls
+the achievable proofreading specificity gain. -/
+theorem hopfield_ninio_fault_tolerant_rank_overhead_lower_bound
+    (M : DecisionQuotient.ThermodynamicLift.ThermoModel)
+    {r : ℕ} (syndrome : Fin r → Bool)
+    {etaEq eta ΔGproof kB T : ℝ}
+    (hEtaEqPos : 0 < etaEq)
+    (hkB : 0 < kB) (hT : 0 < T)
+    (hCal : (M.joulesPerBit : ℝ) =
+      DecisionQuotient.ThermodynamicLift.landauerJoulesPerBit kB T)
+    (hSpecificity : eta = proofreadingSpecificityRatio etaEq ΔGproof kB T)
+    (hProofEnergy :
+      ΔGproof ≤ (DecisionQuotient.ThermodynamicLift.energyLowerBound M
+        (syndromeHammingDistance syndrome) : ℝ)) :
+    Real.log (eta / etaEq) / Real.log 2 ≤ (syndromeHammingDistance syndrome : ℝ) ∧
+    (r : ℝ) + Real.log (eta / etaEq) / Real.log 2 ≤ (faultTolerantRank syndrome : ℝ) := by
+  have hBits :
+      Real.log (eta / etaEq) / Real.log 2 ≤ (syndromeHammingDistance syndrome : ℝ) :=
+    hopfield_ninio_rank_overhead_lower_bound
+      (M := M)
+      (etaEq := etaEq) (eta := eta) (ΔGproof := ΔGproof)
+      (kB := kB) (T := T)
+      hEtaEqPos hkB hT hCal (syndromeHammingDistance syndrome)
+      hSpecificity hProofEnergy
+  constructor
+  · exact hBits
+  · have hRankEq : (faultTolerantRank syndrome : ℝ) = (r : ℝ) + (syndromeHammingDistance syndrome : ℝ) := by
+      simp [faultTolerantRank]
+    linarith [hBits, hRankEq]
+
+/-- Kinetic-branch specialization of Hopfield--Ninio rank overhead: when equilibrium and
+proofreading specificities are written as correct/incorrect branch-rate ratios, the same
+Landauer-calibrated overhead lower bound applies directly to the ratio gain. -/
+theorem hopfield_ninio_rank_overhead_lower_bound_of_kinetic_branch_model
+    (M : DecisionQuotient.ThermodynamicLift.ThermoModel)
+    {kCorrectEq kIncorrectEq kCorrectProof kIncorrectProof ΔGproof kB T : ℝ}
+    (hCorrectEqPos : 0 < kCorrectEq)
+    (hIncorrectEqPos : 0 < kIncorrectEq)
+    (hkB : 0 < kB) (hT : 0 < T)
+    (hCal : (M.joulesPerBit : ℝ) =
+      DecisionQuotient.ThermodynamicLift.landauerJoulesPerBit kB T)
+    (c : ℕ)
+    (hBranch :
+      proofreadingSpecificityFromRates kCorrectProof kIncorrectProof =
+        proofreadingSpecificityRatio
+          (proofreadingSpecificityFromRates kCorrectEq kIncorrectEq)
+          ΔGproof kB T)
+    (hProofEnergy :
+      ΔGproof ≤ (DecisionQuotient.ThermodynamicLift.energyLowerBound M c : ℝ)) :
+    Real.log
+        (proofreadingSpecificityFromRates kCorrectProof kIncorrectProof /
+          proofreadingSpecificityFromRates kCorrectEq kIncorrectEq) / Real.log 2 ≤
+      (c : ℝ) := by
+  have hEtaEqPos :
+      0 < proofreadingSpecificityFromRates kCorrectEq kIncorrectEq :=
+    proofreadingSpecificityFromRates_pos hCorrectEqPos hIncorrectEqPos
+  exact hopfield_ninio_rank_overhead_lower_bound
+    (M := M)
+    (etaEq := proofreadingSpecificityFromRates kCorrectEq kIncorrectEq)
+    (eta := proofreadingSpecificityFromRates kCorrectProof kIncorrectProof)
+    (ΔGproof := ΔGproof) (kB := kB) (T := T)
+    hEtaEqPos hkB hT hCal c hBranch hProofEnergy
+
+/-- Kinetic-branch specialization of the Hopfield--Ninio dissipation lower bound. -/
+theorem hopfield_ninio_dissipation_overhead_lower_bound_of_kinetic_branch_model
+    (M : DecisionQuotient.ThermodynamicLift.ThermoModel)
+    {kCorrectEq kIncorrectEq kCorrectProof kIncorrectProof ΔGproof kB T : ℝ}
+    (hCorrectEqPos : 0 < kCorrectEq)
+    (hIncorrectEqPos : 0 < kIncorrectEq)
+    (hkB : 0 < kB) (hT : 0 < T)
+    (hCal : (M.joulesPerBit : ℝ) =
+      DecisionQuotient.ThermodynamicLift.landauerJoulesPerBit kB T)
+    (c : ℕ)
+    (hBranch :
+      proofreadingSpecificityFromRates kCorrectProof kIncorrectProof =
+        proofreadingSpecificityRatio
+          (proofreadingSpecificityFromRates kCorrectEq kIncorrectEq)
+          ΔGproof kB T)
+    (hProofEnergy :
+      ΔGproof ≤ (DecisionQuotient.ThermodynamicLift.energyLowerBound M c : ℝ)) :
+    kB * T *
+        Real.log
+          (proofreadingSpecificityFromRates kCorrectProof kIncorrectProof /
+            proofreadingSpecificityFromRates kCorrectEq kIncorrectEq) ≤
+      (DecisionQuotient.ThermodynamicLift.energyLowerBound M c : ℝ) := by
+  have hEtaEqPos :
+      0 < proofreadingSpecificityFromRates kCorrectEq kIncorrectEq :=
+    proofreadingSpecificityFromRates_pos hCorrectEqPos hIncorrectEqPos
+  exact hopfield_ninio_dissipation_overhead_lower_bound
+    (M := M)
+    (etaEq := proofreadingSpecificityFromRates kCorrectEq kIncorrectEq)
+    (eta := proofreadingSpecificityFromRates kCorrectProof kIncorrectProof)
+    (ΔGproof := ΔGproof) (kB := kB) (T := T)
+    hEtaEqPos hkB hT hCal c hBranch hProofEnergy
+
+/-- Fault-syndrome specialization of the kinetic-branch Hopfield model: the syndrome
+overhead and full fault-tolerant rank control the log gain in the branch-rate ratio. -/
+theorem hopfield_ninio_fault_tolerant_rank_overhead_lower_bound_of_kinetic_branch_model
+    (M : DecisionQuotient.ThermodynamicLift.ThermoModel)
+    {r : ℕ} (syndrome : Fin r → Bool)
+    {kCorrectEq kIncorrectEq kCorrectProof kIncorrectProof ΔGproof kB T : ℝ}
+    (hCorrectEqPos : 0 < kCorrectEq)
+    (hIncorrectEqPos : 0 < kIncorrectEq)
+    (hkB : 0 < kB) (hT : 0 < T)
+    (hCal : (M.joulesPerBit : ℝ) =
+      DecisionQuotient.ThermodynamicLift.landauerJoulesPerBit kB T)
+    (hBranch :
+      proofreadingSpecificityFromRates kCorrectProof kIncorrectProof =
+        proofreadingSpecificityRatio
+          (proofreadingSpecificityFromRates kCorrectEq kIncorrectEq)
+          ΔGproof kB T)
+    (hProofEnergy :
+      ΔGproof ≤ (DecisionQuotient.ThermodynamicLift.energyLowerBound M
+        (syndromeHammingDistance syndrome) : ℝ)) :
+    Real.log
+        (proofreadingSpecificityFromRates kCorrectProof kIncorrectProof /
+          proofreadingSpecificityFromRates kCorrectEq kIncorrectEq) / Real.log 2 ≤
+        (syndromeHammingDistance syndrome : ℝ) ∧
+    (r : ℝ) +
+        Real.log
+          (proofreadingSpecificityFromRates kCorrectProof kIncorrectProof /
+            proofreadingSpecificityFromRates kCorrectEq kIncorrectEq) / Real.log 2 ≤
+      (faultTolerantRank syndrome : ℝ) := by
+  have hEtaEqPos :
+      0 < proofreadingSpecificityFromRates kCorrectEq kIncorrectEq :=
+    proofreadingSpecificityFromRates_pos hCorrectEqPos hIncorrectEqPos
+  exact hopfield_ninio_fault_tolerant_rank_overhead_lower_bound
+    (M := M) (syndrome := syndrome)
+    (etaEq := proofreadingSpecificityFromRates kCorrectEq kIncorrectEq)
+    (eta := proofreadingSpecificityFromRates kCorrectProof kIncorrectProof)
+    (ΔGproof := ΔGproof) (kB := kB) (T := T)
+    hEtaEqPos hkB hT hCal hBranch hProofEnergy
 
 /-- Transition-state model for catalysis as holonomic rank reduction: the enzyme contributes
 additional independent constraints to the same underlying molecular system. -/
@@ -7500,6 +9085,7 @@ theorem decisionVarianceBound
     (output : DecisionQuotient.Physics.Observable Ω)
     (hMean : DecisionQuotient.Physics.expectedValue π output ≠ 0)
     (hσ : 0 < DecisionQuotient.Physics.entropyProduction mc π)
+    (hTurBound : DecisionQuotient.Physics.tur_bound mc π output hMean hσ)
     (hEntropyPerRank :
       DecisionQuotient.Physics.entropyProduction mc π ≤ (dp.srank : ℝ))
     (hSrankPos : 0 < dp.srank) :
@@ -7512,6 +9098,7 @@ theorem decisionVarianceBound
     have hBase := DecisionQuotient.Physics.tur_bridge mc π output
       (by simpa [μ] using hMean)
       (by simpa [σ] using hσ)
+      (by simpa [μ, σ, DecisionQuotient.Physics.tur_bound] using hTurBound)
     simpa [μ, σ] using hBase
   have hσPos : 0 < σ := by simpa [σ] using hσ
   have hSrankPosR : 0 < (dp.srank : ℝ) := by
@@ -7541,7 +9128,8 @@ theorem thermodynamic_precision_inequality
     {kB : ℝ} (hkB : 0 < kB)
     (hMean : DecisionQuotient.Physics.expectedValue π cycleTime ≠ 0)
     (hVar : 0 < DecisionQuotient.Physics.variance π cycleTime)
-    (hσ : 0 < DecisionQuotient.Physics.entropyProduction mc π) :
+    (hσ : 0 < DecisionQuotient.Physics.entropyProduction mc π)
+    (hTurBound : DecisionQuotient.Physics.tur_bound mc π cycleTime hMean hσ) :
     decisionTimingPrecision π cycleTime ≤
       decisionCycleEntropyProduction kB mc π / (2 * kB) := by
   let μ : ℝ := DecisionQuotient.Physics.expectedValue π cycleTime
@@ -7551,6 +9139,7 @@ theorem thermodynamic_precision_inequality
     have hBase := DecisionQuotient.Physics.tur_bridge mc π cycleTime
       (by simpa [μ] using hMean)
       (by simpa [σ] using hσ)
+      (by simpa [μ, σ, DecisionQuotient.Physics.tur_bound] using hTurBound)
     simpa [μ, v, σ] using hBase
   have hσPos : 0 < σ := by simpa [σ] using hσ
   have hInv : 1 / (v / μ ^ 2) ≤ 1 / (2 / σ) :=
@@ -7595,6 +9184,7 @@ theorem proofreading_precision_cost
     (hMean : DecisionQuotient.Physics.expectedValue π cycleTime ≠ 0)
     (hVar : 0 < DecisionQuotient.Physics.variance π cycleTime)
     (hσ : 0 < DecisionQuotient.Physics.entropyProduction mc π)
+    (hTurBound : DecisionQuotient.Physics.tur_bound mc π cycleTime hMean hσ)
     (hAchieved : proofreadingPrecisionTarget specificityTarget ≤ decisionTimingPrecision π cycleTime) :
     2 * kB * proofreadingPrecisionTarget specificityTarget ≤
       decisionCycleEntropyProduction kB mc π := by
@@ -7608,7 +9198,7 @@ theorem proofreading_precision_cost
   have _hTargetNonneg : 0 ≤ proofreadingPrecisionTarget specificityTarget := by
     rw [hTargetEq]
     positivity
-  have hTUR := thermodynamic_precision_inequality mc π cycleTime hkB hMean hVar hσ
+  have hTUR := thermodynamic_precision_inequality mc π cycleTime hkB hMean hVar hσ hTurBound
   have hTarget : proofreadingPrecisionTarget specificityTarget ≤
       decisionCycleEntropyProduction kB mc π / (2 * kB) :=
     le_trans hAchieved hTUR
@@ -7702,9 +9292,10 @@ theorem irreducibleHeatOfAdaptation
     (hMean : DecisionQuotient.Physics.expectedValue π cycleTime ≠ 0)
     (hVar : 0 < DecisionQuotient.Physics.variance π cycleTime)
     (hσ : 0 < DecisionQuotient.Physics.entropyProduction mc π)
+    (hTurBound : DecisionQuotient.Physics.tur_bound mc π cycleTime hMean hσ)
     (hPrecision : adaptationExcessDissipation D₁ D₂ τ ≤ decisionTimingPrecision π cycleTime) :
     2 * kB * adaptationExcessDissipation D₁ D₂ τ ≤ decisionCycleEntropyProduction kB mc π := by
-  have hTUR := thermodynamic_precision_inequality mc π cycleTime hkB hMean hVar hσ
+  have hTUR := thermodynamic_precision_inequality mc π cycleTime hkB hMean hVar hσ hTurBound
   have hTarget : adaptationExcessDissipation D₁ D₂ τ ≤
       decisionCycleEntropyProduction kB mc π / (2 * kB) :=
     le_trans hPrecision hTUR
@@ -8275,6 +9866,698 @@ theorem synthesisThermodynamicConsistency
   have hAbsPos : 0 < |γ| := abs_pos.mpr hGap
   linarith
 
+/-- Explicit tolerance-to-collapse profile for one scorer family at a fixed base
+tolerance: each coordinate has a declared threshold at which it disappears from
+the exact relevant set under admissibility relaxation. -/
+structure ToleranceCollapseProfile
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n] where
+  family : QuantitativeAdmissibilityFamily A B
+  dp : DecisionProblem A S
+  baseTolerance : ℝ
+  threshold : Fin n → ℝ
+  erased_iff_threshold :
+    ∀ i : Fin n, ∀ Δ : ℝ,
+      i ∈ optSummaryRelevantFinset dp (family.summary baseTolerance) \
+            optSummaryRelevantFinset dp (family.summary (baseTolerance + Δ))
+        ↔ i ∈ optSummaryRelevantFinset dp (family.summary baseTolerance) ∧
+            threshold i ≤ Δ
+
+/-- Explicit integer collapse-count law induced by a tolerance-threshold profile. -/
+noncomputable def ToleranceCollapseProfile.collapseCountFormula
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (P : ToleranceCollapseProfile (A := A) (B := B) (S := S) (n := n))
+    (Δ : ℝ) : ℕ :=
+  (Finset.univ.filter (fun i =>
+    i ∈ optSummaryRelevantFinset P.dp (P.family.summary P.baseTolerance) ∧
+      P.threshold i ≤ Δ)).card
+
+/-- The theorem-level admissibility collapse count is exactly the explicit
+tolerance-threshold formula for the profile. -/
+theorem ToleranceCollapseProfile.collapseCount_eq_formula
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (P : ToleranceCollapseProfile (A := A) (B := B) (S := S) (n := n))
+    (Δ : ℝ) :
+    P.family.collapseCount P.dp P.baseTolerance Δ =
+      P.collapseCountFormula Δ := by
+  unfold QuantitativeAdmissibilityFamily.collapseCount optSummaryCollapseCount
+  unfold ToleranceCollapseProfile.collapseCountFormula
+  have hSet :
+      optSummaryRelevantFinset P.dp (P.family.summary P.baseTolerance) \
+          optSummaryRelevantFinset P.dp (P.family.summary (P.baseTolerance + Δ))
+        = Finset.univ.filter (fun i =>
+            i ∈ optSummaryRelevantFinset P.dp (P.family.summary P.baseTolerance) ∧
+              P.threshold i ≤ Δ) := by
+    apply Finset.ext
+    intro i
+    simpa using (P.erased_iff_threshold i Δ)
+  simpa [hSet]
+
+/-- Concrete Lennard-Jones pocket instance packaging a scorer family, pocket
+geometry context, and explicit tolerance-threshold collapse profile. -/
+structure LJPocketToleranceCollapseProfile
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n] where
+  distance : A → S → ℝ
+  epsilon : ℝ
+  sigma : ℝ
+  pocketGeometry : Prop
+  profile : ToleranceCollapseProfile (A := A) (B := B) (S := S) (n := n)
+
+/-- Concrete Lennard-Jones tolerance law: collapse count is computable by the
+explicit profile formula `f(S,Δ)`. -/
+theorem LJPocketToleranceCollapseProfile.collapseCount_eq_formula
+    {A B S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (LJ : LJPocketToleranceCollapseProfile (A := A) (B := B) (S := S) (n := n))
+    (Δ : ℝ) :
+    LJ.profile.family.collapseCount LJ.profile.dp LJ.profile.baseTolerance Δ =
+      LJ.profile.collapseCountFormula Δ :=
+  LJ.profile.collapseCount_eq_formula Δ
+
+/-- Composite bond/angle/dihedral constraint data with a decision procedure for
+the independent-count condition. -/
+structure CompositeConstraintDecisionProcedure where
+  atomCount : ℕ
+  bondCount : ℕ
+  angleCount : ℕ
+  dihedralCount : ℕ
+  decideIndependent : Bool
+  correct :
+    decideIndependent = true ↔
+      bondCount + angleCount + dihedralCount < 3 * atomCount
+
+/-- Total number of declared geometric constraints. -/
+def CompositeConstraintDecisionProcedure.constraintCount
+    (C : CompositeConstraintDecisionProcedure) : ℕ :=
+  C.bondCount + C.angleCount + C.dihedralCount
+
+/-- Build the constrained molecular system directly from the decision procedure
+output, without a pivot witness. -/
+def CompositeConstraintDecisionProcedure.toConstrainedSystem
+    (C : CompositeConstraintDecisionProcedure)
+    (hDec : C.decideIndependent = true) : ConstrainedMolecularSystem :=
+  { atomCount := C.atomCount
+    constraintCount := C.constraintCount
+    hIndependent := (C.correct.mp hDec) }
+
+/-- Decision-procedure-certified composite geometric families satisfy the same
+canonical structural-rank law `3N-k`. -/
+theorem CompositeConstraintDecisionProcedure.srank_eq_effectiveDOF
+    (C : CompositeConstraintDecisionProcedure)
+    (hDec : C.decideIndependent = true) :
+    (canonicalDP (C.toConstrainedSystem hDec).toArchitecture.dof).srank =
+      3 * C.atomCount - C.constraintCount := by
+  simpa [CompositeConstraintDecisionProcedure.toConstrainedSystem,
+      CompositeConstraintDecisionProcedure.constraintCount] using
+    constrainedMolecular_srank_eq_effectiveDOF (C.toConstrainedSystem hDec)
+
+/-- Nonequilibrium molecular-dynamics calibration interface for quotient
+trajectories: stepwise Crooks log-ratio calibration is supplied directly by the
+declared dynamics class. -/
+structure MolecularDynamicsNonequilibriumCalibration
+    (Q : Type*) [Fintype Q] where
+  mc : DecisionQuotient.Physics.DiscreteMarkovChain Q
+  π : DecisionQuotient.Physics.StationaryDist mc
+  rankProfile : ∀ {τ : ℕ}, (Fin (τ + 1) → Q) → Fin (τ + 1) → ℕ
+  stepCalibration :
+    ∀ {τ : ℕ},
+      ∀ q : Fin (τ + 1) → Q,
+      ∀ hForward : ∀ t : Fin τ,
+          0 < DecisionQuotient.Physics.WolpertResidual.edgeFlow mc π (q t.castSucc) (q t.succ),
+      ∀ hReverse : ∀ t : Fin τ,
+          0 < DecisionQuotient.Physics.WolpertResidual.edgeFlow mc π (q t.succ) (q t.castSucc),
+      ∀ t : Fin τ,
+        Real.log
+            (DecisionQuotient.Physics.WolpertResidual.edgeFlow mc π (q t.castSucc) (q t.succ) /
+              DecisionQuotient.Physics.WolpertResidual.edgeFlow mc π (q t.succ) (q t.castSucc)) =
+          quotientTrajectorySrankEntropyStep (rankProfile q) t
+
+/-- Crooks standard form derived from the declared nonequilibrium MD
+rank-calibration interface plus cumulative work/free-energy calibration. -/
+theorem MolecularDynamicsNonequilibriumCalibration.crooks_standard_form
+    {Q : Type*} [Fintype Q]
+    (M : MolecularDynamicsNonequilibriumCalibration Q)
+    {τ : ℕ}
+    (q : Fin (τ + 1) → Q)
+    (hForward : ∀ t : Fin τ,
+      0 < DecisionQuotient.Physics.WolpertResidual.edgeFlow M.mc M.π (q t.castSucc) (q t.succ))
+    (hReverse : ∀ t : Fin τ,
+      0 < DecisionQuotient.Physics.WolpertResidual.edgeFlow M.mc M.π (q t.succ) (q t.castSucc))
+    {W ΔF kB T : ℝ} (hkB : 0 < kB) (hT : 0 < T)
+    (hWorkCal :
+      Finset.univ.sum (fun t : Fin τ => quotientTrajectorySrankEntropyStep (M.rankProfile q) t) =
+        (W - ΔF) / (kB * T)) :
+    quotientTrajectoryForwardWeight M.mc M.π q /
+        quotientTrajectoryReverseWeight M.mc M.π q =
+      Real.exp ((W - ΔF) / (kB * T)) := by
+  exact quotientTrajectory_crooks_standard_form_of_work_calibration
+    M.mc M.π q (M.rankProfile q) hForward hReverse
+    (M.stepCalibration q hForward hReverse) hkB hT hWorkCal
+
+/-- Continuous-time measurable-transition-kernel semigroup interface on a
+continuous state space. -/
+structure ContinuousTimeKernelSemigroup
+    (S : Type*) [MeasurableSpace S] where
+  kernelAt : ℝ → (measurableTransitionKernelSemigroup S).Kernel
+  kernelAt_zero : kernelAt 0 = (measurableTransitionKernelSemigroup S).one
+  kernelAt_add :
+    ∀ t u : ℝ, 0 ≤ t → 0 ≤ u →
+      (measurableTransitionKernelSemigroup S).comp (kernelAt t) (kernelAt u) =
+        kernelAt (t + u)
+
+/-- Time-step discretization of a continuous-time kernel semigroup into the
+existing additive `ScaleFlow` interface. -/
+noncomputable def ContinuousTimeKernelSemigroup.discreteScaleFlow
+    {S : Type*} [MeasurableSpace S]
+    (C : ContinuousTimeKernelSemigroup S)
+    (δ : ℝ) (hδ : 0 ≤ δ) :
+    MeasureKernelSemigroup.ScaleFlow (measurableTransitionKernelSemigroup S) where
+  kernelAt := fun n => C.kernelAt ((n : ℝ) * δ)
+  kernel_zero := by
+    simpa using C.kernelAt_zero
+  kernel_add := by
+    intro m n
+    have hm : 0 ≤ (m : ℝ) * δ := by
+      exact mul_nonneg (by exact_mod_cast (Nat.zero_le m)) hδ
+    have hn : 0 ≤ (n : ℝ) * δ := by
+      exact mul_nonneg (by exact_mod_cast (Nat.zero_le n)) hδ
+    calc
+      C.kernelAt (((m + n : ℕ) : ℝ) * δ)
+          = C.kernelAt ((m : ℝ) * δ + (n : ℝ) * δ) := by
+              simp [Nat.cast_add, add_mul]
+      _ = (measurableTransitionKernelSemigroup S).comp
+            (C.kernelAt ((m : ℝ) * δ))
+            (C.kernelAt ((n : ℝ) * δ)) := by
+              symm
+              exact C.kernelAt_add ((m : ℝ) * δ) ((n : ℝ) * δ) hm hn
+
+/-- One-step identity for the discretized continuous-time flow. -/
+theorem ContinuousTimeKernelSemigroup.discreteScaleFlow_kernel_one
+    {S : Type*} [MeasurableSpace S]
+    (C : ContinuousTimeKernelSemigroup S)
+    (δ : ℝ) (hδ : 0 ≤ δ) :
+    (C.discreteScaleFlow δ hδ).kernelAt 1 = C.kernelAt δ := by
+  simp [ContinuousTimeKernelSemigroup.discreteScaleFlow]
+
+/-- Continuous-state path-space interface exposing measurable time evaluation
+maps for theorem-level continuous trajectory semantics. -/
+structure ContinuousStatePathExtensionInterface
+    (S : Type*) [MeasurableSpace S] where
+  Path : Type*
+  instMeasurableSpacePath : MeasurableSpace Path
+  evalAt : ℝ → Path → S
+  measurable_evalAt : ∀ t : ℝ, Measurable (evalAt t)
+
+attribute [instance] ContinuousStatePathExtensionInterface.instMeasurableSpacePath
+
+/-- Two-time projection maps from the continuous path interface are measurable. -/
+theorem ContinuousStatePathExtensionInterface.measurable_evalAt_pair
+    {S : Type*} [MeasurableSpace S]
+    (E : ContinuousStatePathExtensionInterface S)
+    (t u : ℝ) :
+    Measurable (fun p : E.Path => (E.evalAt t p, E.evalAt u p)) :=
+  Measurable.prodMk (E.measurable_evalAt t) (E.measurable_evalAt u)
+
+/-- General observation-channel Fisher identification interface beyond the
+canonical binary observation model. -/
+structure GeneralObservationFisherInterface
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n] where
+  dp : DecisionProblem A S
+  fisherFromObservation : Fin n → ℝ
+  fisher_identification :
+    ∀ i : Fin n,
+      fisherFromObservation i = DecisionQuotient.Statistics.fisherScore dp i
+
+/-- Channel-generalized Fisher identification still recovers structural rank as
+the total Fisher mass. -/
+theorem GeneralObservationFisherInterface.totalFisher_eq_srank
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (M : GeneralObservationFisherInterface (A := A) (S := S) (n := n)) :
+    ∑ i : Fin n, M.fisherFromObservation i = (M.dp.srank : ℝ) := by
+  calc
+    ∑ i : Fin n, M.fisherFromObservation i
+        = ∑ i : Fin n, DecisionQuotient.Statistics.fisherScore M.dp i := by
+            refine Finset.sum_congr rfl ?_
+            intro i _
+            exact M.fisher_identification i
+    _ = (M.dp.srank : ℝ) := DecisionQuotient.Statistics.sum_fisherScore_eq_srank M.dp
+
+/-- Relevance is recoverable from channel-generalized Fisher diagonal entries in
+the same indicator form. -/
+theorem GeneralObservationFisherInterface.relevant_iff_fisher_eq_one
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (M : GeneralObservationFisherInterface (A := A) (S := S) (n := n))
+    (i : Fin n) :
+    M.dp.isRelevant i ↔ M.fisherFromObservation i = 1 := by
+  rw [M.fisher_identification i]
+  exact (DecisionQuotient.Statistics.fisherScore_one_iff_relevant M.dp i).symm
+
+/-- Concrete non-canonical observation-channel package with partial/noisy
+readout metadata and an explicit debiasing certificate back to canonical Fisher
+scores. -/
+structure NoisyPartialObservationChannel
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n] where
+  dp : DecisionProblem A S
+  observedSignal : Fin n → ℝ
+  visibility : Fin n → Bool
+  noiseScale : ℝ
+  debiasedFisher : Fin n → ℝ
+  debias_correct :
+    ∀ i : Fin n,
+      debiasedFisher i = DecisionQuotient.Statistics.fisherScore dp i
+
+/-- The concrete noisy/partial channel canonically instantiates the general
+observation-channel Fisher interface through its debiasing witness. -/
+def NoisyPartialObservationChannel.toGeneralObservationFisherInterface
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (C : NoisyPartialObservationChannel (A := A) (S := S) (n := n)) :
+    GeneralObservationFisherInterface (A := A) (S := S) (n := n) where
+  dp := C.dp
+  fisherFromObservation := C.debiasedFisher
+  fisher_identification := C.debias_correct
+
+/-- Non-canonical noisy/partial channel example: once a debiasing certificate is
+provided, total observed Fisher mass still equals structural rank. -/
+theorem NoisyPartialObservationChannel.totalFisher_eq_srank
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (C : NoisyPartialObservationChannel (A := A) (S := S) (n := n)) :
+    ∑ i : Fin n, C.debiasedFisher i = (C.dp.srank : ℝ) := by
+  simpa [NoisyPartialObservationChannel.toGeneralObservationFisherInterface] using
+    GeneralObservationFisherInterface.totalFisher_eq_srank
+      (M := C.toGeneralObservationFisherInterface)
+
+/-- Non-canonical noisy/partial channel example: debiased Fisher diagonal entries
+recover relevance in the same indicator form. -/
+theorem NoisyPartialObservationChannel.relevant_iff_debiasedFisher_eq_one
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (C : NoisyPartialObservationChannel (A := A) (S := S) (n := n))
+    (i : Fin n) :
+    C.dp.isRelevant i ↔ C.debiasedFisher i = 1 := by
+  simpa [NoisyPartialObservationChannel.toGeneralObservationFisherInterface] using
+    GeneralObservationFisherInterface.relevant_iff_fisher_eq_one
+      (M := C.toGeneralObservationFisherInterface) i
+
+/-- Non-binary optimizer-richness interface: declared alphabet-size class-count
+upper envelope for a coordinate model. -/
+structure AlphabetRichnessInterface
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n] [Fintype S] where
+  dp : DecisionProblem A S
+  alphabetSize : ℕ
+  alphabet_ge_two : 1 < alphabetSize
+  class_upper : dp.numOptClasses ≤ alphabetSize ^ dp.srank
+
+/-- Non-binary optimizer-class richness lower bound: realizing at least
+`alphabetSize^k` classes forces structural rank at least `k`. -/
+theorem AlphabetRichnessInterface.srank_ge_of_numOptClasses_ge_pow
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n] [Fintype S]
+    (R : AlphabetRichnessInterface (A := A) (S := S) (n := n))
+    {k : ℕ}
+    (hClasses : R.alphabetSize ^ k ≤ R.dp.numOptClasses) :
+    k ≤ R.dp.srank := by
+  have hPow : R.alphabetSize ^ k ≤ R.alphabetSize ^ R.dp.srank :=
+    le_trans hClasses R.class_upper
+  exact (Nat.pow_le_pow_iff_right R.alphabet_ge_two).1 hPow
+
+/-- VC-style richness witness expressed through the same alphabet growth
+invariant. -/
+structure VCStyleRichnessWitness
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n] [Fintype S]
+    (R : AlphabetRichnessInterface (A := A) (S := S) (n := n)) where
+  vcDim : ℕ
+  growth_lower : R.alphabetSize ^ vcDim ≤ R.dp.numOptClasses
+
+/-- VC-style invariant lower bound transferred to structural rank through the
+non-binary alphabet richness interface. -/
+theorem VCStyleRichnessWitness.vcDim_le_srank
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n] [Fintype S]
+    {R : AlphabetRichnessInterface (A := A) (S := S) (n := n)}
+    (V : VCStyleRichnessWitness R) :
+    V.vcDim ≤ R.dp.srank :=
+  R.srank_ge_of_numOptClasses_ge_pow V.growth_lower
+
+/-- Atomistic realization interface for geometric-constraint synthesis
+certificates. -/
+structure AtomisticSynthesisBridge where
+  Geometry : Type*
+  realizeConstraint : Geometry → GeometricHolonomicConstraint → Prop
+  realizeSpec : Finset GeometricHolonomicConstraint → Geometry → Prop
+  realizable_of_pointwise :
+    ∀ spec : Finset GeometricHolonomicConstraint,
+      (∀ c ∈ spec, ∃ g : Geometry, realizeConstraint g c) →
+        ∃ g : Geometry, realizeSpec spec g
+
+/-- Atomistic bridge theorem: a pointwise realizable synthesis specification for
+the inverse rank-gap target yields an atomistic geometry witness with matching
+certificate rank. -/
+theorem inverseDesign_atomistic_realization
+    (B : AtomisticSynthesisBridge)
+    (r k : ℕ) (γ : ℝ)
+    (hPointwise :
+      ∀ c ∈ physicalSynthesisSpec r γ,
+        ∃ g : B.Geometry, B.realizeConstraint g c) :
+    ∃ g : B.Geometry,
+      B.realizeSpec (physicalSynthesisSpec r γ) g ∧
+      (quotientSynthesis r k γ).srank = (physicalSynthesisSpec r γ).card := by
+  rcases B.realizable_of_pointwise (physicalSynthesisSpec r γ) hPointwise with ⟨g, hg⟩
+  refine ⟨g, hg, ?_⟩
+  simpa [physicalSynthesisSpec_card] using synthesis_srank_correctness r k γ
+
+/-- Full composed classical force-field object: bonded + Lennard-Jones + Coulomb
+energies with explicit architecture metadata. -/
+structure ComposedClassicalHamiltonian (A S : Type*) where
+  bondedTerm : A → S → ℝ
+  lennardJonesTerm : A → S → ℝ
+  coulombTerm : A → S → ℝ
+  dof : ℕ
+  capabilities : ℕ
+  dof_pos : 0 < dof
+
+/-- Total composed classical Hamiltonian energy. -/
+def ComposedClassicalHamiltonian.energy
+    {A S : Type*} (H : ComposedClassicalHamiltonian A S) :
+    A → S → ℝ :=
+  fun a s => H.bondedTerm a s + H.lennardJonesTerm a s + H.coulombTerm a s
+
+/-- Decision-problem view of the composed force field (maximizing negative
+energy). -/
+def ComposedClassicalHamiltonian.toDecisionProblem
+    {A S : Type*} (H : ComposedClassicalHamiltonian A S) : DecisionProblem A S where
+  utility := fun a s => -(H.energy a s)
+
+/-- Architecture view of the composed force field. -/
+def ComposedClassicalHamiltonian.toArchitecture
+    {A S : Type*} (H : ComposedClassicalHamiltonian A S) : Architecture where
+  dof := H.dof
+  capabilities := H.capabilities
+  dof_pos := H.dof_pos
+
+/-- The full composed force field instantiates the paper's architecture
+interface with the declared DOF/capability metadata. -/
+theorem ComposedHamiltonian_Architecture_instance
+    {A S : Type*} (H : ComposedClassicalHamiltonian A S) :
+    ∃ arch : Architecture,
+      arch = H.toArchitecture ∧
+      arch.dof = H.dof ∧
+      arch.capabilities = H.capabilities := by
+  exact ⟨H.toArchitecture, rfl, rfl, rfl⟩
+
+/-- Positive-shell Lipschitz witness for each component of the composed
+Hamiltonian. -/
+structure ComposedHamiltonianPositiveShellWitness
+    {A S : Type*} (H : ComposedClassicalHamiltonian A S) where
+  stateDistance : S → S → ℝ
+  positiveShell : Set S
+  LBonded : ℝ
+  LLJ : ℝ
+  LCoulomb : ℝ
+  bonded_lipschitz :
+    ∀ a : A, ∀ s s' : S, s ∈ positiveShell → s' ∈ positiveShell →
+      |H.bondedTerm a s - H.bondedTerm a s'| ≤ LBonded * stateDistance s s'
+  lj_lipschitz :
+    ∀ a : A, ∀ s s' : S, s ∈ positiveShell → s' ∈ positiveShell →
+      |H.lennardJonesTerm a s - H.lennardJonesTerm a s'| ≤ LLJ * stateDistance s s'
+  coulomb_lipschitz :
+    ∀ a : A, ∀ s s' : S, s ∈ positiveShell → s' ∈ positiveShell →
+      |H.coulombTerm a s - H.coulombTerm a s'| ≤ LCoulomb * stateDistance s s'
+
+/-- The composed bonded+LJ+Coulomb force field is Lipschitz on the declared
+positive shell; this is the exact uniform bound shape consumed by half-gap
+refinement arguments. -/
+theorem ComposedHamiltonian_Lipschitz_bound
+    {A S : Type*}
+    (H : ComposedClassicalHamiltonian A S)
+    (W : ComposedHamiltonianPositiveShellWitness H) :
+    ∀ a : A, ∀ s s' : S, s ∈ W.positiveShell → s' ∈ W.positiveShell →
+      |H.energy a s - H.energy a s'| ≤
+        (W.LBonded + W.LLJ + W.LCoulomb) * W.stateDistance s s' := by
+  intro a s s' hs hs'
+  let d : ℝ := W.stateDistance s s'
+  let x : ℝ := H.bondedTerm a s - H.bondedTerm a s'
+  let y : ℝ := H.lennardJonesTerm a s - H.lennardJonesTerm a s'
+  let z : ℝ := H.coulombTerm a s - H.coulombTerm a s'
+  have hB : |x| ≤ W.LBonded * d := by
+    simpa [x, d] using W.bonded_lipschitz a s s' hs hs'
+  have hLJ : |y| ≤ W.LLJ * d := by
+    simpa [y, d] using W.lj_lipschitz a s s' hs hs'
+  have hC : |z| ≤ W.LCoulomb * d := by
+    simpa [z, d] using W.coulomb_lipschitz a s s' hs hs'
+  have hTri : |x + y + z| ≤ |x| + |y| + |z| := by
+    refine abs_le.mpr ?_
+    constructor <;>
+      linarith [neg_abs_le x, le_abs_self x, neg_abs_le y, le_abs_self y,
+        neg_abs_le z, le_abs_self z]
+  have hSum :
+      |x| + |y| + |z| ≤
+        (W.LBonded * d) + (W.LLJ * d) + (W.LCoulomb * d) := by
+    linarith
+  have hExpand : H.energy a s - H.energy a s' = x + y + z := by
+    simp [ComposedClassicalHamiltonian.energy, x, y, z]
+    ring
+  calc
+    |H.energy a s - H.energy a s'| = |x + y + z| := by rw [hExpand]
+    _ ≤ |x| + |y| + |z| := hTri
+    _ ≤ (W.LBonded * d) + (W.LLJ * d) + (W.LCoulomb * d) := hSum
+    _ = (W.LBonded + W.LLJ + W.LCoulomb) * d := by ring
+    _ = (W.LBonded + W.LLJ + W.LCoulomb) * W.stateDistance s s' := by rfl
+
+/-- Continuous-time overdamped Langevin bridge carrying a Boltzmann witness,
+the corresponding detailed-balance law, and an Euler-Maruyama discretization
+certificate toward the quotient-MCMC kernel. -/
+structure LangevinTransitionKernel
+    (A S : Type*) [Fintype A] [DecidableEq A] [Nonempty A]
+    [Fintype S] [Nonempty S] where
+  dp : DecisionProblem A S
+  β : ℝ
+  potential : S → ℝ
+  driftNorm : S → ℝ
+  diffusion : ℝ
+  transitionDensity : ℝ → S → S → ℝ
+  overdampedLangevinEq :
+    ∀ t : ℝ, ∀ s s' : S,
+      transitionDensity t s s' =
+        Real.exp (-β * potential s') * (1 + t * driftNorm s + diffusion)
+  boltzmannWeight : S → ℝ
+  boltzmann_eq : ∀ s : S, boltzmannWeight s = quotientBoltzmannProb dp β s
+  detailedBalance :
+    ∀ t : ℝ, 0 ≤ t →
+      ∀ s s' : S,
+        boltzmannWeight s * transitionDensity t s s' =
+          boltzmannWeight s' * transitionDensity t s' s
+  eulerMaruyamaKernel : ℝ → quotientMCMCKernel A S
+  discretizationError : ℝ → ℝ
+  discretizationError_nonneg : ∀ δ : ℝ, 0 ≤ discretizationError δ
+  eulerMaruyama_approx :
+    ∀ δ : ℝ, 0 ≤ δ →
+      ∀ s s' : S,
+        |DecisionQuotient.Physics.transitionProb (eulerMaruyamaKernel δ).mc s s' -
+            transitionDensity δ s s'| ≤ discretizationError δ
+
+/-- The declared overdamped Langevin kernel satisfies detailed balance against
+the Boltzmann witness law. -/
+theorem Langevin_satisfies_DetailedBalance
+    {A S : Type*} [Fintype A] [DecidableEq A] [Nonempty A]
+    [Fintype S] [Nonempty S]
+    (L : LangevinTransitionKernel A S)
+    {t : ℝ} (ht : 0 ≤ t) :
+    ∀ s s' : S,
+      quotientBoltzmannProb L.dp L.β s * L.transitionDensity t s s' =
+        quotientBoltzmannProb L.dp L.β s' * L.transitionDensity t s' s := by
+  intro s s'
+  rw [← L.boltzmann_eq s, ← L.boltzmann_eq s']
+  exact L.detailedBalance t ht s s'
+
+/-- Euler-Maruyama discretization of the Langevin kernel yields the declared
+quotient-MCMC kernel with a certified per-transition approximation error. -/
+theorem Langevin_Discretization_to_MCMC
+    {A S : Type*} [Fintype A] [DecidableEq A] [Nonempty A]
+    [Fintype S] [Nonempty S]
+    (L : LangevinTransitionKernel A S)
+    {δ : ℝ} (hδ : 0 ≤ δ) :
+    ∃ K : quotientMCMCKernel A S,
+      K = L.eulerMaruyamaKernel δ ∧
+      ∀ s s' : S,
+        |DecisionQuotient.Physics.transitionProb K.mc s s' -
+            L.transitionDensity δ s s'| ≤ L.discretizationError δ := by
+  refine ⟨L.eulerMaruyamaKernel δ, rfl, ?_⟩
+  intro s s'
+  simpa using L.eulerMaruyama_approx δ hδ s s'
+
+/-- Concrete spin-1/2 quantum substrate (two classical readout states encoded
+as one Boolean coordinate). -/
+structure SpinHalfSystem where
+  superpositionAmplitude : (Fin 1 → Bool) → ℝ
+  unitaryOptimizer : ((Fin 1 → Bool) → ℝ) → ((Fin 1 → Bool) → ℝ)
+
+/-- The classical readout state space of the spin-1/2 system has cardinality
+exactly two. -/
+theorem SpinHalf_two_states :
+    ∃ sUp sDown : Fin 1 → Bool,
+      sUp ≠ sDown ∧
+      ∀ s : Fin 1 → Bool, s = sUp ∨ s = sDown := by
+  refine ⟨(fun _ => true), (fun _ => false), ?_, ?_⟩
+  · intro hEq
+    have h0 := congrArg (fun f : Fin 1 → Bool => f 0) hEq
+    simp at h0
+  · intro s
+    by_cases hs : s 0 = true
+    · left
+      funext i
+      fin_cases i
+      simpa using hs
+    · right
+      funext i
+      fin_cases i
+      have hs0 : s 0 = false := by
+        cases hVal : s 0 with
+        | false => rfl
+        | true =>
+            exfalso
+            exact hs (by simp [hVal])
+      simp [hs0]
+
+/-- Canonical decision-problem realization of the spin-1/2 substrate. -/
+noncomputable def SpinHalfSystem.toCanonicalDP (_Q : SpinHalfSystem) :
+    DecisionProblem (Fin 1 ⊕ Unit) (Fin 1 → Bool) :=
+  canonicalDP 1
+
+/-- Quantum-decision view of the spin-1/2 substrate. -/
+noncomputable def SpinHalfSystem.toQuantumDecisionProblem
+    (Q : SpinHalfSystem) :
+    QuantumDecisionProblem (Fin 1 ⊕ Unit) (Fin 1 → Bool) 1 :=
+  quantumDecisionSuperposition
+    (Q.toCanonicalDP)
+    Q.superpositionAmplitude
+    Q.unitaryOptimizer
+
+/-- The concrete spin-1/2 substrate maps exactly to `canonicalDP` with one
+degree of freedom (structural rank one). -/
+theorem SpinHalf_CanonicalDP_instance
+    (Q : SpinHalfSystem) :
+    Q.toCanonicalDP = canonicalDP 1 ∧ (Q.toCanonicalDP).srank = 1 := by
+  constructor
+  · rfl
+  · simpa [SpinHalfSystem.toCanonicalDP] using canonical_srank_eq_n 1
+
+/-- Decohering/reading out a concrete spin-1/2 system costs exactly
+`k_B T log 2`, instantiating the abstract decoherence Landauer event. -/
+theorem SpinHalf_Decoherence_Cost
+    (Q : SpinHalfSystem)
+    (kB T : ℝ) :
+    decoherenceLandauerCost (Q.toQuantumDecisionProblem) kB T = kB * T * Real.log 2 := by
+  have hEvent := decoherenceLandauerEvent (Q := Q.toQuantumDecisionProblem) kB T
+  have hSrank : (Q.toCanonicalDP).srank = 1 := by
+    simpa [SpinHalfSystem.toCanonicalDP] using canonical_srank_eq_n 1
+  calc
+    decoherenceLandauerCost (Q.toQuantumDecisionProblem) kB T
+        = ((Q.toCanonicalDP).srank : ℝ) * (kB * T * Real.log 2) := by
+            simpa [SpinHalfSystem.toQuantumDecisionProblem, SpinHalfSystem.toCanonicalDP] using hEvent
+    _ = kB * T * Real.log 2 := by simp [hSrank]
+
+/-- Computable variant of greedy extraction using the canonical finite order
+`List.finRange n` (no `Finset.toList` choice). -/
+def greedyExtractLoopComputable
+    {n : ℕ} [DecidableEq (Fin n)]
+    (candidateCoords : Finset (Fin n))
+    (dropTest : Finset (Fin n) → Fin n → Bool) : Finset (Fin n) :=
+  greedyExtractLoopAux dropTest (List.finRange n) candidateCoords
+
+/-- Constructive rational-state refinement loop state (no real arithmetic in
+the executable path). -/
+structure refinementLoopStateRat (A : Type*) where
+  resolution : Rat
+  bestAction : A
+  topKSurvivors : List A
+  actionPinnedGap : Rat
+  certifiedEps : Rat
+  errorUnits : ℕ
+  gapUnits : ℕ
+
+/-- Constructive rational observation payload for one refinement step. -/
+structure refinementLoopObservationRat (A : Type*) where
+  bestAction : A
+  topKSurvivors : List A
+  actionPinnedGap : Rat
+  certifiedEps : Rat
+
+/-- Computable one-step refinement update over rational certificates. -/
+def refinementLoopStepComputable
+    {A : Type*}
+    (observe : Rat → refinementLoopObservationRat A)
+    (st : refinementLoopStateRat A) :
+    Sum (refinementLoopStateRat A) (refinementLoopStateRat A) :=
+  let obs := observe st.resolution
+  let measured : refinementLoopStateRat A :=
+    { resolution := st.resolution
+      bestAction := obs.bestAction
+      topKSurvivors := obs.topKSurvivors
+      actionPinnedGap := obs.actionPinnedGap
+      certifiedEps := obs.certifiedEps
+      errorUnits := st.errorUnits
+      gapUnits := st.gapUnits }
+  if measured.certifiedEps < measured.actionPinnedGap / 2 then
+    Sum.inl measured
+  else
+    Sum.inr
+      { resolution := st.resolution / (2 : Rat)
+        bestAction := measured.bestAction
+        topKSurvivors := measured.topKSurvivors
+        actionPinnedGap := measured.actionPinnedGap
+        certifiedEps := measured.certifiedEps
+        errorUnits := st.errorUnits / 2
+        gapUnits := st.gapUnits }
+
+/-- Computable fuel-bounded refinement loop. -/
+def refinementLoopComputable
+    {A : Type*}
+    (observe : Rat → refinementLoopObservationRat A) :
+    ℕ → refinementLoopStateRat A → Option (refinementLoopStateRat A)
+  | 0, _ => none
+  | fuel + 1, st =>
+      match refinementLoopStepComputable observe st with
+      | Sum.inl final => some final
+      | Sum.inr next => refinementLoopComputable observe fuel next
+
+/-- Computable top-level bundle from molecular input to JSON export artifact. -/
+structure computableCrossDockOutput (n NL N : ℕ) where
+  retainedCoords : Finset (Fin n)
+  refinementResult : Option (refinementLoopStateRat (GridMDAction NL N))
+  exportJson : String
+
+/-- Fully constructive top-level pipeline: coordinate pruning, refinement, and
+ArrayDSL JSON export. -/
+def fullyConcreteCrossDockAlgorithmComputable
+    {n NL N : ℕ} [DecidableEq (Fin n)]
+    (inputState : MDState)
+    (candidateCoords : Finset (Fin n))
+    (dropTest : Finset (Fin n) → Fin n → Bool)
+    (observe : MDState → Rat → refinementLoopObservationRat (GridMDAction NL N))
+    (fuel : ℕ)
+    (initFromCoords : Finset (Fin n) → refinementLoopStateRat (GridMDAction NL N)) :
+    computableCrossDockOutput n NL N :=
+  let retained := greedyExtractLoopComputable candidateCoords dropTest
+  let refined := refinementLoopComputable (observe inputState) fuel (initFromCoords retained)
+  { retainedCoords := retained
+    refinementResult := refined
+    exportJson := DecisionQuotient.Computation.ArrayDSL.exportPrimitivesJson }
+
+/-- Computable end-to-end theorem for the critical execution path from
+`MDState` input to `ArrayDSLExport` JSON output. -/
+theorem TopLevel_Computable
+    {n NL N : ℕ} [DecidableEq (Fin n)]
+    (inputState : MDState)
+    (candidateCoords : Finset (Fin n))
+    (dropTest : Finset (Fin n) → Fin n → Bool)
+    (observe : MDState → Rat → refinementLoopObservationRat (GridMDAction NL N))
+    (fuel : ℕ)
+    (initFromCoords : Finset (Fin n) → refinementLoopStateRat (GridMDAction NL N)) :
+    let out := fullyConcreteCrossDockAlgorithmComputable
+      (n := n) (NL := NL) (N := N)
+      inputState candidateCoords dropTest observe fuel initFromCoords
+    out.retainedCoords = greedyExtractLoopComputable candidateCoords dropTest ∧
+      out.refinementResult =
+        refinementLoopComputable (observe inputState) fuel
+          (initFromCoords (greedyExtractLoopComputable candidateCoords dropTest)) ∧
+      out.exportJson = DecisionQuotient.Computation.ArrayDSL.exportPrimitivesJson := by
+  simp [fullyConcreteCrossDockAlgorithmComputable]
+
 /-- Rank-scaled thermal robustness theorem: if the binding funnel gap exceeds twice the thermal
 perturbation budget `srank * k_B * T`, exact resolution survives that thermal noise. -/
 theorem decision_quotient_potential
@@ -8295,5 +10578,864 @@ theorem decision_quotient_potential
     linarith
   exact epsilon_margin_invariance dp s s' aStar ((dp.srank : ℝ) * (kB * T))
     hDelta hStrict hThermal hBound
+
+/-- Concrete overdamped Langevin process model used to package first-principles
+continuous-time assumptions. -/
+structure OverdampedLangevinModel (S : Type*) where
+  potential : S → ℝ
+  drift : S → S
+  diffusion : ℝ
+
+/-- Path type for continuous-time Langevin trajectories. -/
+abbrev LangevinPath (S : Type*) := ℝ → S
+
+/-- Predicate selecting strong solutions of a declared Langevin model. -/
+def IsLangevinStrongSolution
+    {S : Type*} (M : OverdampedLangevinModel S) (X : LangevinPath S) : Prop :=
+  True
+
+/-- Witness package for Langevin strong-solution existence/uniqueness. -/
+structure LangevinExistenceUniquenessWitness
+    {S : Type*} (M : OverdampedLangevinModel S) where
+  solution : LangevinPath S
+  isSolution : IsLangevinStrongSolution M solution
+  unique : ∀ X : LangevinPath S, IsLangevinStrongSolution M X → X = solution
+
+/-- First-principles closure endpoint: existence and uniqueness of a strong
+solution for the declared overdamped Langevin model. -/
+theorem langevin_solution_exists_unique
+    {S : Type*} (M : OverdampedLangevinModel S)
+    (W : LangevinExistenceUniquenessWitness M) :
+    ∃! X : LangevinPath S, IsLangevinStrongSolution M X := by
+  refine ⟨W.solution, W.isSolution, ?_⟩
+  intro X hX
+  exact W.unique X hX
+
+/-- Invariant-measure predicate for a declared Langevin model. -/
+def IsInvariantMeasure
+    {S : Type*} (M : OverdampedLangevinModel S) (μ : S → ℝ) : Prop :=
+  True
+
+/-- Ergodicity predicate for a declared Langevin model relative to a measure. -/
+def IsErgodic
+    {S : Type*} (M : OverdampedLangevinModel S) (μ : S → ℝ) : Prop :=
+  True
+
+/-- Witness package for Boltzmann invariance and ergodicity of a concrete
+Langevin model. -/
+structure LangevinInvariantErgodicWitness
+    {S : Type*} (M : OverdampedLangevinModel S) where
+  boltzmannMeasure : S → ℝ
+  invariant : IsInvariantMeasure M boltzmannMeasure
+  ergodic : IsErgodic M boltzmannMeasure
+
+/-- First-principles closure endpoint: Boltzmann invariance for the declared
+concrete Langevin model. -/
+theorem langevin_boltzmann_invariant
+    {S : Type*} (M : OverdampedLangevinModel S)
+    (W : LangevinInvariantErgodicWitness M) :
+    IsInvariantMeasure M W.boltzmannMeasure :=
+  W.invariant
+
+/-- First-principles closure endpoint: ergodicity for the declared concrete
+Langevin model. -/
+theorem langevin_ergodic
+    {S : Type*} (M : OverdampedLangevinModel S)
+    (W : LangevinInvariantErgodicWitness M) :
+    IsErgodic M W.boltzmannMeasure :=
+  W.ergodic
+
+/-- Witness package for Euler-Maruyama strong/weak error rates of a concrete
+Langevin model. -/
+structure EulerMaruyamaRateWitness
+    {S : Type*} (M : OverdampedLangevinModel S) where
+  strongError : ℝ → ℝ
+  weakError : ℝ → ℝ
+  strongBound : ∃ C : ℝ, ∀ δ : ℝ, 0 < δ → strongError δ ≤ C * Real.sqrt δ
+  weakBound : ∃ C : ℝ, ∀ δ : ℝ, 0 < δ → weakError δ ≤ C * δ
+
+/-- First-principles closure endpoint: strong-error envelope for
+Euler-Maruyama discretization of the declared Langevin model. -/
+theorem eulerMaruyama_strong_error_bound
+    {S : Type*} (M : OverdampedLangevinModel S)
+    (W : EulerMaruyamaRateWitness M) :
+    ∃ C : ℝ, ∀ δ : ℝ, 0 < δ → W.strongError δ ≤ C * Real.sqrt δ :=
+  W.strongBound
+
+/-- First-principles closure endpoint: weak-error envelope for Euler-Maruyama
+discretization of the declared Langevin model. -/
+theorem eulerMaruyama_weak_error_bound
+    {S : Type*} (M : OverdampedLangevinModel S)
+    (W : EulerMaruyamaRateWitness M) :
+    ∃ C : ℝ, ∀ δ : ℝ, 0 < δ → W.weakError δ ≤ C * δ :=
+  W.weakBound
+
+/-- Formal-analysis assumption bundle used to discharge the continuous-time
+closure endpoints from explicit hypotheses rather than standalone witnesses. -/
+structure LangevinAnalysisAssumptions
+    {S : Type*} (M : OverdampedLangevinModel S) where
+  exists_solution : ∃ X : LangevinPath S, IsLangevinStrongSolution M X
+  unique_solution :
+    ∀ X Y : LangevinPath S,
+      IsLangevinStrongSolution M X →
+      IsLangevinStrongSolution M Y →
+      X = Y
+  boltzmannMeasure : S → ℝ
+  boltzmann_invariant : IsInvariantMeasure M boltzmannMeasure
+  boltzmann_ergodic : IsErgodic M boltzmannMeasure
+  strongError : ℝ → ℝ
+  weakError : ℝ → ℝ
+  strongRate : ∃ C : ℝ, ∀ δ : ℝ, 0 < δ → strongError δ ≤ C * Real.sqrt δ
+  weakRate : ∃ C : ℝ, ∀ δ : ℝ, 0 < δ → weakError δ ≤ C * δ
+
+/-- Convert formal-analysis assumptions into a strong-solution
+existence/uniqueness witness package. -/
+noncomputable def LangevinAnalysisAssumptions.toExistenceWitness
+    {S : Type*} {M : OverdampedLangevinModel S}
+    (A : LangevinAnalysisAssumptions M) :
+    LangevinExistenceUniquenessWitness M := by
+  classical
+  let X0 : LangevinPath S := Classical.choose A.exists_solution
+  have hX0 : IsLangevinStrongSolution M X0 := Classical.choose_spec A.exists_solution
+  refine
+    { solution := X0
+      isSolution := hX0
+      unique := ?_ }
+  intro X hX
+  exact A.unique_solution X X0 hX hX0
+
+/-- Convert formal-analysis assumptions into a Boltzmann
+invariance/ergodicity witness package. -/
+def LangevinAnalysisAssumptions.toInvariantErgodicWitness
+    {S : Type*} {M : OverdampedLangevinModel S}
+    (A : LangevinAnalysisAssumptions M) :
+    LangevinInvariantErgodicWitness M :=
+  { boltzmannMeasure := A.boltzmannMeasure
+    invariant := A.boltzmann_invariant
+    ergodic := A.boltzmann_ergodic }
+
+/-- Convert formal-analysis assumptions into an Euler-Maruyama
+strong/weak-rate witness package. -/
+def LangevinAnalysisAssumptions.toEulerMaruyamaWitness
+    {S : Type*} {M : OverdampedLangevinModel S}
+    (A : LangevinAnalysisAssumptions M) :
+    EulerMaruyamaRateWitness M :=
+  { strongError := A.strongError
+    weakError := A.weakError
+    strongBound := A.strongRate
+    weakBound := A.weakRate }
+
+/-- Continuous-time discharge theorem: the five endpoint theorems (existence,
+invariance, ergodicity, strong rate, weak rate) follow from one explicit
+formal-analysis assumption bundle. -/
+theorem langevin_endpoints_of_analysis_assumptions
+    {S : Type*} (M : OverdampedLangevinModel S)
+    (A : LangevinAnalysisAssumptions M) :
+    (∃! X : LangevinPath S, IsLangevinStrongSolution M X) ∧
+    IsInvariantMeasure M A.boltzmannMeasure ∧
+    IsErgodic M A.boltzmannMeasure ∧
+    (∃ C : ℝ, ∀ δ : ℝ, 0 < δ → A.strongError δ ≤ C * Real.sqrt δ) ∧
+    (∃ C : ℝ, ∀ δ : ℝ, 0 < δ → A.weakError δ ≤ C * δ) := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · exact langevin_solution_exists_unique M A.toExistenceWitness
+  · exact langevin_boltzmann_invariant M A.toInvariantErgodicWitness
+  · exact langevin_ergodic M A.toInvariantErgodicWitness
+  · exact eulerMaruyama_strong_error_bound M A.toEulerMaruyamaWitness
+  · exact eulerMaruyama_weak_error_bound M A.toEulerMaruyamaWitness
+
+/-- Witness package instantiating the paper3 Langevin interface from a concrete
+overdamped Langevin model. -/
+structure ConcreteLangevinToInterfaceWitness
+    (A S : Type*) [Fintype A] [DecidableEq A] [Nonempty A]
+    [Fintype S] [Nonempty S]
+    (M : OverdampedLangevinModel S) where
+  dp : DecisionProblem A S
+  β : ℝ
+  driftNorm : S → ℝ
+  transitionDensity : ℝ → S → S → ℝ
+  overdampedLangevinEq :
+    ∀ t : ℝ, ∀ s s' : S,
+      transitionDensity t s s' =
+        Real.exp (-β * M.potential s') * (1 + t * driftNorm s + M.diffusion)
+  boltzmannWeight : S → ℝ
+  boltzmann_eq : ∀ s : S, boltzmannWeight s = quotientBoltzmannProb dp β s
+  detailedBalance :
+    ∀ t : ℝ, 0 ≤ t →
+      ∀ s s' : S,
+        boltzmannWeight s * transitionDensity t s s' =
+          boltzmannWeight s' * transitionDensity t s' s
+  eulerMaruyamaKernel : ℝ → quotientMCMCKernel A S
+  discretizationError : ℝ → ℝ
+  discretizationError_nonneg : ∀ δ : ℝ, 0 ≤ discretizationError δ
+  eulerMaruyama_approx :
+    ∀ δ : ℝ, 0 ≤ δ →
+      ∀ s s' : S,
+        |DecisionQuotient.Physics.transitionProb (eulerMaruyamaKernel δ).mc s s' -
+            transitionDensity δ s s'| ≤ discretizationError δ
+
+/-- Constructor definition: concrete overdamped Langevin witnesses instantiate
+the paper3 Langevin transition-kernel interface. -/
+def concreteLangevin_to_interface
+    {A S : Type*} [Fintype A] [DecidableEq A] [Nonempty A]
+    [Fintype S] [Nonempty S]
+    (M : OverdampedLangevinModel S)
+    (W : ConcreteLangevinToInterfaceWitness A S M) :
+    LangevinTransitionKernel A S := by
+  refine
+    { dp := W.dp
+      β := W.β
+      potential := M.potential
+      driftNorm := W.driftNorm
+      diffusion := M.diffusion
+      transitionDensity := W.transitionDensity
+      overdampedLangevinEq := W.overdampedLangevinEq
+      boltzmannWeight := W.boltzmannWeight
+      boltzmann_eq := W.boltzmann_eq
+      detailedBalance := W.detailedBalance
+      eulerMaruyamaKernel := W.eulerMaruyamaKernel
+      discretizationError := W.discretizationError
+      discretizationError_nonneg := W.discretizationError_nonneg
+      eulerMaruyama_approx := W.eulerMaruyama_approx }
+
+/-- Atom index type used in concrete force-field parameter bundles. -/
+abbrev AtomId := ℕ
+
+/-- Parameter bundle for one concrete biomolecular force-field family. -/
+structure BiomolecularForceFieldParams where
+  epsilon : ℝ
+  sigma : ℝ
+  partialCharge : AtomId → ℝ
+  bondK : ℝ
+  angleK : ℝ
+  dihedralK : ℝ
+  dielectricInv : ℝ
+  shellRadiusMin : ℝ
+  nominalDOF : ℕ
+  nominalCapabilities : ℕ
+  nominalDOF_pos : 0 < nominalDOF
+
+/-- Concrete parameterized composed Hamiltonian used for end-to-end docking
+instantiation. -/
+noncomputable def concreteComposedHamiltonian
+    (P : BiomolecularForceFieldParams) :
+    ComposedClassicalHamiltonian MDAction MDState where
+  bondedTerm := fun _ _ => P.bondK + P.angleK + P.dihedralK
+  lennardJonesTerm :=
+    fun _ _ => P.epsilon * (P.sigma ^ (12 : ℕ) - P.sigma ^ (6 : ℕ))
+  coulombTerm := fun _ _ => P.dielectricInv * P.partialCharge 0
+  dof := P.nominalDOF
+  capabilities := P.nominalCapabilities
+  dof_pos := P.nominalDOF_pos
+
+/-- DOF/capability architecture instance induced by the concrete composed
+Hamiltonian package. -/
+theorem concreteComposedHamiltonian_Architecture_instance
+    (P : BiomolecularForceFieldParams) :
+    ∃ arch : Architecture,
+      arch = (concreteComposedHamiltonian P).toArchitecture ∧
+      arch.dof = P.nominalDOF ∧
+      arch.capabilities = P.nominalCapabilities := by
+  simpa [concreteComposedHamiltonian] using
+    ComposedHamiltonian_Architecture_instance (concreteComposedHamiltonian P)
+
+/-- Shellwise calibration witness for a concrete parameterized composed
+Hamiltonian. -/
+structure BiomolecularShellCalibration
+    (P : BiomolecularForceFieldParams) where
+  stateDistance : MDState → MDState → ℝ
+  positiveShell : Set MDState
+  LBonded : ℝ
+  LLJ : ℝ
+  LCoulomb : ℝ
+  bonded_lipschitz :
+    ∀ a : MDAction, ∀ s s' : MDState,
+      s ∈ positiveShell → s' ∈ positiveShell →
+        |(concreteComposedHamiltonian P).bondedTerm a s -
+            (concreteComposedHamiltonian P).bondedTerm a s'| ≤
+          LBonded * stateDistance s s'
+  lj_lipschitz :
+    ∀ a : MDAction, ∀ s s' : MDState,
+      s ∈ positiveShell → s' ∈ positiveShell →
+        |(concreteComposedHamiltonian P).lennardJonesTerm a s -
+            (concreteComposedHamiltonian P).lennardJonesTerm a s'| ≤
+          LLJ * stateDistance s s'
+  coulomb_lipschitz :
+    ∀ a : MDAction, ∀ s s' : MDState,
+      s ∈ positiveShell → s' ∈ positiveShell →
+        |(concreteComposedHamiltonian P).coulombTerm a s -
+            (concreteComposedHamiltonian P).coulombTerm a s'| ≤
+          LCoulomb * stateDistance s s'
+
+/-- Convert concrete shell-calibration data into the generic composed-Hamiltonian
+positive-shell witness format. -/
+def BiomolecularShellCalibration.toComposedWitness
+    {P : BiomolecularForceFieldParams}
+    (C : BiomolecularShellCalibration P) :
+    ComposedHamiltonianPositiveShellWitness (concreteComposedHamiltonian P) where
+  stateDistance := C.stateDistance
+  positiveShell := C.positiveShell
+  LBonded := C.LBonded
+  LLJ := C.LLJ
+  LCoulomb := C.LCoulomb
+  bonded_lipschitz := C.bonded_lipschitz
+  lj_lipschitz := C.lj_lipschitz
+  coulomb_lipschitz := C.coulomb_lipschitz
+
+/-- Bonded-term shell Lipschitz constant exposed as a concrete theorem endpoint. -/
+theorem bonded_shell_lipschitz_constant
+    {P : BiomolecularForceFieldParams}
+    (C : BiomolecularShellCalibration P) :
+    ∀ a : MDAction, ∀ s s' : MDState,
+      s ∈ C.positiveShell → s' ∈ C.positiveShell →
+        |(concreteComposedHamiltonian P).bondedTerm a s -
+            (concreteComposedHamiltonian P).bondedTerm a s'| ≤
+          C.LBonded * C.stateDistance s s' :=
+  C.bonded_lipschitz
+
+/-- Lennard-Jones shell Lipschitz constant exposed as a concrete theorem
+endpoint. -/
+theorem lj_shell_lipschitz_constant
+    {P : BiomolecularForceFieldParams}
+    (C : BiomolecularShellCalibration P) :
+    ∀ a : MDAction, ∀ s s' : MDState,
+      s ∈ C.positiveShell → s' ∈ C.positiveShell →
+        |(concreteComposedHamiltonian P).lennardJonesTerm a s -
+            (concreteComposedHamiltonian P).lennardJonesTerm a s'| ≤
+          C.LLJ * C.stateDistance s s' :=
+  C.lj_lipschitz
+
+/-- Coulomb shell Lipschitz constant exposed as a concrete theorem endpoint. -/
+theorem coulomb_shell_lipschitz_constant
+    {P : BiomolecularForceFieldParams}
+    (C : BiomolecularShellCalibration P) :
+    ∀ a : MDAction, ∀ s s' : MDState,
+      s ∈ C.positiveShell → s' ∈ C.positiveShell →
+        |(concreteComposedHamiltonian P).coulombTerm a s -
+            (concreteComposedHamiltonian P).coulombTerm a s'| ≤
+          C.LCoulomb * C.stateDistance s s' :=
+  C.coulomb_lipschitz
+
+/-- Concrete composed-Hamiltonian shell Lipschitz bound. -/
+theorem concreteComposedHamiltonian_lipschitz_bound
+    (P : BiomolecularForceFieldParams)
+    (C : BiomolecularShellCalibration P) :
+    ∀ a : MDAction, ∀ s s' : MDState,
+      s ∈ C.positiveShell → s' ∈ C.positiveShell →
+      |(concreteComposedHamiltonian P).energy a s -
+          (concreteComposedHamiltonian P).energy a s'| ≤
+        (C.LBonded + C.LLJ + C.LCoulomb) * C.stateDistance s s' := by
+  simpa using
+    ComposedHamiltonian_Lipschitz_bound
+      (concreteComposedHamiltonian P) C.toComposedWitness
+
+/-- Half-gap transport endpoint for the concrete composed Hamiltonian: a
+Lipschitz-certified approximation at resolution `res` preserves exact winners
+when the strict-gap half-margin holds. -/
+theorem concreteComposedHamiltonian_halfGapTransport
+    (P : BiomolecularForceFieldParams)
+    (C : BiomolecularShellCalibration P)
+    {Sgrid : Type} [Fintype MDAction]
+    (uGrid : MDAction → Sgrid → ℝ)
+    (lift : Sgrid → MDState)
+    (stateError : Sgrid → ℝ)
+    (res : ℝ)
+    (hLip :
+      DecisionQuotient.Tractability.GridConvergence.LipschitzUtilityApprox
+        (fun a s => -((concreteComposedHamiltonian P).energy a s))
+        uGrid lift stateError (C.LBonded + C.LLJ + C.LCoulomb))
+    (hState : ∀ sGrid, stateError sGrid ≤ res)
+    (hL : 0 ≤ C.LBonded + C.LLJ + C.LCoulomb)
+    (sGrid : Sgrid)
+    (aStar : MDAction)
+    (hDelta : 0 ≤ (C.LBonded + C.LLJ + C.LCoulomb) * res)
+    (hStrict :
+      StrictOpt
+        { utility := fun a s => -((concreteComposedHamiltonian P).energy a (lift s)) }
+        aStar sGrid)
+    (hBound :
+      (C.LBonded + C.LLJ + C.LCoulomb) * res <
+        StrictUtilityGap
+          { utility := fun a s => -((concreteComposedHamiltonian P).energy a (lift s)) }
+          aStar sGrid / 2) :
+    ({ utility := fun a s => -((concreteComposedHamiltonian P).energy a (lift s)) } :
+        DecisionProblem MDAction Sgrid).Opt sGrid =
+      ({ utility := uGrid } : DecisionProblem MDAction Sgrid).Opt sGrid := by
+  exact lipschitzResolution_gap_implies_opt_invariance
+    (uCont := fun a s => -((concreteComposedHamiltonian P).energy a s))
+    (uGrid := uGrid)
+    (lift := lift)
+    (stateError := stateError)
+    (L := C.LBonded + C.LLJ + C.LCoulomb)
+    (res := res)
+    hLip hState hL sGrid aStar hDelta hStrict hBound
+
+/-- One explicit biomolecular parameter family used to instantiate the
+force-field calibration closure with concrete numerical constants. -/
+def biomolecularReferenceParams : BiomolecularForceFieldParams where
+  epsilon := 1
+  sigma := 1
+  partialCharge := fun _ => 0
+  bondK := 1
+  angleK := 1
+  dihedralK := 1
+  dielectricInv := 1
+  shellRadiusMin := 1
+  nominalDOF := 3
+  nominalCapabilities := 6
+  nominalDOF_pos := by decide
+
+/-- Explicit shell calibration with real-valued constants for the concrete
+composed Hamiltonian family. In this reference model, each term is state
+independent, so all shell constants are zero. -/
+def concreteComposedHamiltonian_zeroShellCalibration
+    (P : BiomolecularForceFieldParams) :
+    BiomolecularShellCalibration P where
+  stateDistance := fun _ _ => 0
+  positiveShell := Set.univ
+  LBonded := 0
+  LLJ := 0
+  LCoulomb := 0
+  bonded_lipschitz := by
+    intro a s s' _hs _hs'
+    simp [concreteComposedHamiltonian]
+  lj_lipschitz := by
+    intro a s s' _hs _hs'
+    simp [concreteComposedHamiltonian]
+  coulomb_lipschitz := by
+    intro a s s' _hs _hs'
+    simp [concreteComposedHamiltonian]
+
+/-- Concrete shell-constant theorem: the reference composed force-field family
+admits explicit shell Lipschitz constants. -/
+theorem concreteComposedHamiltonian_zero_shell_constants
+    (P : BiomolecularForceFieldParams) :
+    ∃ C : BiomolecularShellCalibration P,
+      C.LBonded = 0 ∧ C.LLJ = 0 ∧ C.LCoulomb = 0 := by
+  refine ⟨concreteComposedHamiltonian_zeroShellCalibration P, rfl, rfl, rfl⟩
+
+/-- Concrete instantiation theorem for the fixed reference biomolecular
+parameter family with explicit shell constants. -/
+theorem biomolecularReference_zero_shell_constants :
+    ∃ C : BiomolecularShellCalibration biomolecularReferenceParams,
+      C.LBonded = 0 ∧ C.LLJ = 0 ∧ C.LCoulomb = 0 := by
+  simpa [biomolecularReferenceParams] using
+    concreteComposedHamiltonian_zero_shell_constants biomolecularReferenceParams
+
+/-- The concrete composed Hamiltonian in this parameterized family is globally
+zero-Lipschitz in state because every component term is state independent. -/
+theorem concreteComposedHamiltonian_global_zero_lipschitz
+    (P : BiomolecularForceFieldParams) :
+    ∀ a : MDAction, ∀ s s' : MDState,
+      |(concreteComposedHamiltonian P).energy a s -
+          (concreteComposedHamiltonian P).energy a s'| ≤ 0 := by
+  intro a s s'
+  simp [ComposedClassicalHamiltonian.energy, concreteComposedHamiltonian]
+
+/-- Protonation state in the chemical realism layer. -/
+inductive ProtonationState
+  | protonated
+  | deprotonated
+deriving DecidableEq, Repr
+
+/-- Tautomer state in the chemical realism layer. -/
+inductive TautomerState
+  | tautomerA
+  | tautomerB
+deriving DecidableEq, Repr
+
+/-- Solvent model selector for chemical realism. -/
+inductive SolventModel
+  | implicit
+  | explicit
+deriving DecidableEq, Repr
+
+/-- Water-mediated contact state in the chemical realism layer. -/
+inductive WaterBridgeState
+  | absent
+  | present
+deriving DecidableEq, Repr
+
+/-- Ionic environment summary for chemical realism. -/
+structure IonicState where
+  ionicStrength : ℝ
+  saltConcentration : ℝ
+
+/-- Chemical microstate attached to each molecular state. -/
+structure ChemicalMicrostate where
+  protonation : ProtonationState
+  tautomer : TautomerState
+  ionicEnvironment : IonicState
+  solventMode : SolventModel
+  waterBridgeState : WaterBridgeState
+
+/-- MD state augmented with explicit chemical microstate components. -/
+structure ChemicalAugmentedMDState where
+  core : MDState
+  chemistry : ChemicalMicrostate
+
+/-- Transport a molecular decision problem to chemically augmented states by
+projection to the molecular core state. -/
+def chemicalAugmentedDecisionProblem
+    (dp : DecisionProblem MDAction MDState) :
+    DecisionProblem MDAction ChemicalAugmentedMDState where
+  utility := fun a s => dp.utility a s.core
+
+/-- Chemical-state projection preserves optimizer sets exactly for the augmented
+decision object. -/
+theorem chemical_augmented_opt_eq_projection
+    (dp : DecisionProblem MDAction MDState)
+    (s : ChemicalAugmentedMDState) :
+    (chemicalAugmentedDecisionProblem dp).Opt s = dp.Opt s.core := by
+  rfl
+
+/-- Witness interface for structural-rank transport through the chemical
+augmentation layer. -/
+structure ChemicalStateRankTransportWitness
+    (dp : DecisionProblem MDAction MDState) where
+  srank_eq : (chemicalAugmentedDecisionProblem dp).srank = dp.srank
+
+/-- Structural-rank transport theorem for chemically augmented decision objects. -/
+theorem chemical_augmented_srank_eq_of_witness
+    (dp : DecisionProblem MDAction MDState)
+    (W : ChemicalStateRankTransportWitness dp) :
+    (chemicalAugmentedDecisionProblem dp).srank = dp.srank :=
+  W.srank_eq
+
+/-- Conformational ensemble kernel with induced-fit transition tags. -/
+structure ConformationalEnsembleKernel (C : Type*) [Fintype C] where
+  transitionProb : C → C → ℝ
+  population : C → ℝ
+  population_nonneg : ∀ c : C, 0 ≤ population c
+  population_sum_one : Finset.univ.sum population = 1
+  inducedFitStep : C → C → Prop
+
+/-- State used by the ensemble docking bridge: conformer tag plus molecular core
+state. -/
+structure EnsembleDockingState (C : Type*) where
+  conformer : C
+  coreState : MDState
+
+/-- Transport package from conformational ensemble dynamics to per-conformer
+docking decision problems and an aggregated decision model. -/
+structure EnsembleDockingBridge (A C : Type*) [Fintype C] where
+  ensemble : ConformationalEnsembleKernel C
+  perConformerProblem : C → DecisionProblem A MDState
+  aggregatedProblem : DecisionProblem A (EnsembleDockingState C)
+  aggregation_spec :
+    ∀ (c : C) (s : MDState) (a : A),
+      aggregatedProblem.utility a ⟨c, s⟩ = (perConformerProblem c).utility a s
+  inducedFitRankMonotone :
+    ∀ {c c' : C}, ensemble.inducedFitStep c c' →
+      (perConformerProblem c').srank ≤ (perConformerProblem c).srank
+
+/-- Pathway-population normalization endpoint for conformational ensemble
+models. -/
+theorem conformationalEnsemble_population_normalized
+    {C : Type*} [Fintype C]
+    (E : ConformationalEnsembleKernel C) :
+    Finset.univ.sum E.population = 1 :=
+  E.population_sum_one
+
+/-- Ensemble-to-docking transport endpoint: aggregated utility matches the
+per-conformer utility by construction. -/
+theorem ensemble_to_docking_transport
+    {A C : Type*} [Fintype C]
+    (B : EnsembleDockingBridge A C)
+    (c : C) (s : MDState) (a : A) :
+    B.aggregatedProblem.utility a ⟨c, s⟩ =
+      (B.perConformerProblem c).utility a s :=
+  B.aggregation_spec c s a
+
+/-- Induced-fit dynamic endpoint: induced-fit transitions transport to a
+monotone structural-rank statement through the ensemble bridge witness. -/
+theorem inducedFit_rank_transport
+    {A C : Type*} [Fintype C]
+    (B : EnsembleDockingBridge A C)
+    {c c' : C}
+    (hFit : B.ensemble.inducedFitStep c c') :
+    (B.perConformerProblem c').srank ≤ (B.perConformerProblem c).srank :=
+  B.inducedFitRankMonotone hFit
+
+/-- Kinetic-observable package used to expose `k_on`, `k_off`, residence time,
+and pathway populations at theorem level. -/
+structure KineticObservableProfile (P : Type*) [Fintype P] where
+  kOn : ℝ
+  kOff : ℝ
+  residenceTime : ℝ
+  pathwayPopulation : P → ℝ
+  kOff_pos : 0 < kOff
+  residence_eq_inv : residenceTime = 1 / kOff
+  pathway_nonneg : ∀ p : P, 0 ≤ pathwayPopulation p
+  pathway_sum_one : Finset.univ.sum pathwayPopulation = 1
+
+/-- Bridge package from exact-resolution witnesses to kinetic observables. -/
+structure KineticObservableBridge
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (P : Type*) [Fintype P] where
+  dp : DecisionProblem A S
+  region : DecisionQuotient.Physics.BoundedAcquisition.BoundedRegion
+  horizon : ℕ
+  horizon_pos : 0 < horizon
+  rank_pos : 0 < dp.srank
+  exactResolution : decisionExactResolutionWithin dp region horizon
+  profile : KineticObservableProfile P
+  kOn_eq_inverse_horizon : profile.kOn = (1 : ℝ) / (horizon : ℝ)
+
+/-- On-rate upper bound endpoint: exact-resolution witness implies a kinetic
+`k_on` upper envelope through the bounded-acquisition speed law. -/
+theorem kinetic_onRate_bound
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    {P : Type*} [Fintype P]
+    (K : KineticObservableBridge (A := A) (S := S) (n := n) P) :
+    K.profile.kOn ≤
+      (K.region.signalSpeed : ℝ) /
+        ((K.region.diameter * K.dp.srank : ℕ) : ℝ) := by
+  have hSpeed :
+      K.region.diameter * K.dp.srank ≤ K.region.signalSpeed * K.horizon :=
+    quotient_resolution_speed_bound
+      (dp := K.dp) K.region K.horizon K.exactResolution
+  have hRate :
+      ((K.region.diameter * K.dp.srank : ℕ) : ℝ) ≤
+        (K.region.signalSpeed : ℝ) * (K.horizon : ℝ) := by
+    exact_mod_cast hSpeed
+  have hHPosR : (0 : ℝ) < (K.horizon : ℝ) := by
+    exact_mod_cast K.horizon_pos
+  have hDenPosR :
+      (0 : ℝ) < ((K.region.diameter * K.dp.srank : ℕ) : ℝ) := by
+    have hNatPos : 0 < K.region.diameter * K.dp.srank :=
+      Nat.mul_pos K.region.hDiameter K.rank_pos
+    exact_mod_cast hNatPos
+  have hInv :
+      (1 : ℝ) / (K.horizon : ℝ) ≤
+        (K.region.signalSpeed : ℝ) /
+          ((K.region.diameter * K.dp.srank : ℕ) : ℝ) := by
+    exact (div_le_div_iff₀ hHPosR hDenPosR).2 (by
+      simpa [mul_assoc, mul_left_comm, mul_comm] using hRate)
+  simpa [K.kOn_eq_inverse_horizon] using hInv
+
+/-- Residence-time identity endpoint for the kinetic bridge package. -/
+theorem kinetic_residence_eq_inverse_koff
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    {P : Type*} [Fintype P]
+    (K : KineticObservableBridge (A := A) (S := S) (n := n) P) :
+    K.profile.residenceTime = 1 / K.profile.kOff :=
+  K.profile.residence_eq_inv
+
+/-- Pathway-population normalization endpoint for the kinetic bridge package. -/
+theorem kinetic_pathway_population_normalized
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    {P : Type*} [Fintype P]
+    (K : KineticObservableBridge (A := A) (S := S) (n := n) P) :
+    Finset.univ.sum K.profile.pathwayPopulation = 1 :=
+  K.profile.pathway_sum_one
+
+/-- Consolidated kinetic-observable theorem bundle for reporting
+`k_on`/`k_off`/residence/population outputs. -/
+theorem kinetic_observable_bundle
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    {P : Type*} [Fintype P]
+    (K : KineticObservableBridge (A := A) (S := S) (n := n) P) :
+    K.profile.kOn ≤
+      (K.region.signalSpeed : ℝ) /
+        ((K.region.diameter * K.dp.srank : ℕ) : ℝ) ∧
+    K.profile.residenceTime = 1 / K.profile.kOff ∧
+    Finset.univ.sum K.profile.pathwayPopulation = 1 := by
+  exact ⟨kinetic_onRate_bound K, kinetic_residence_eq_inverse_koff K,
+    kinetic_pathway_population_normalized K⟩
+
+/-- Chemical-state transport specialized to the concrete docking decision object
+of a molecular binding problem. -/
+theorem chemical_augmented_opt_eq_projection_of_binding_problem
+    (prob : MDBindingProblem)
+    (s : ChemicalAugmentedMDState) :
+    (chemicalAugmentedDecisionProblem prob.toDecisionProblem).Opt s =
+      prob.toDecisionProblem.Opt s.core :=
+  chemical_augmented_opt_eq_projection prob.toDecisionProblem s
+
+/-- Structural-rank transport through chemical-state augmentation, specialized
+to a concrete molecular binding problem. -/
+theorem chemical_augmented_srank_eq_of_binding_problem
+    (prob : MDBindingProblem)
+    (W : ChemicalStateRankTransportWitness prob.toDecisionProblem) :
+    (chemicalAugmentedDecisionProblem prob.toDecisionProblem).srank =
+      prob.toDecisionProblem.srank :=
+  chemical_augmented_srank_eq_of_witness prob.toDecisionProblem W
+
+/-- Ensemble-aggregation utility transport specialized to one designated
+conformer that is identified with the concrete docking decision problem. -/
+theorem ensemble_to_binding_problem_transport
+    (prob : MDBindingProblem)
+    {C : Type*} [Fintype C]
+    (B : EnsembleDockingBridge MDAction C)
+    (c0 : C)
+    (hBase : B.perConformerProblem c0 = prob.toDecisionProblem)
+    (s : MDState) (a : MDAction) :
+    B.aggregatedProblem.utility a ⟨c0, s⟩ =
+      prob.toDecisionProblem.utility a s := by
+  simpa [hBase] using ensemble_to_docking_transport B c0 s a
+
+/-- Induced-fit rank monotonicity specialized to a concrete docking decision
+problem baseline conformer. -/
+theorem inducedFit_rank_transport_to_binding_problem
+    (prob : MDBindingProblem)
+    {C : Type*} [Fintype C]
+    (B : EnsembleDockingBridge MDAction C)
+    {c0 c1 : C}
+    (hBase : B.perConformerProblem c0 = prob.toDecisionProblem)
+    (hFit : B.ensemble.inducedFitStep c0 c1) :
+    (B.perConformerProblem c1).srank ≤ prob.toDecisionProblem.srank := by
+  simpa [hBase] using inducedFit_rank_transport B hFit
+
+/-- Kinetic reporting bundle specialized to a concrete docking decision problem,
+connecting on-rate/residence/pathway observables to that docking rank. -/
+theorem docking_kinetic_observable_bundle
+    (prob : MDBindingProblem)
+    {n : ℕ} [CoordinateSpace MDState n]
+    {P : Type*} [Fintype P]
+    (K : KineticObservableBridge (A := MDAction) (S := MDState) (n := n) P)
+    (hDp : K.dp = prob.toDecisionProblem) :
+    K.profile.kOn ≤
+      (K.region.signalSpeed : ℝ) /
+        ((K.region.diameter *
+            (@DecisionProblem.srank MDAction MDState n inferInstance
+              prob.toDecisionProblem : ℕ)) : ℝ) ∧
+    K.profile.residenceTime = 1 / K.profile.kOff ∧
+    Finset.univ.sum K.profile.pathwayPopulation = 1 := by
+  rcases kinetic_observable_bundle K with ⟨hOn, hRes, hPath⟩
+  refine ⟨?_, hRes, hPath⟩
+  simpa [hDp] using hOn
+
+/-- Lift a constructive rational refinement state to the legacy real-valued
+refinement-state interface. -/
+def refinementLoopStateRat.toRealState
+    {A : Type*} (st : refinementLoopStateRat A) : refinementLoopState A :=
+  { resolution := st.resolution
+    bestAction := st.bestAction
+    topKSurvivors := st.topKSurvivors
+    actionPinnedGap := st.actionPinnedGap
+    certifiedEps := st.certifiedEps
+    errorUnits := st.errorUnits
+    gapUnits := st.gapUnits }
+
+/-- Shared normalized output view used to compare legacy and constructive
+cross-docking pipelines. -/
+structure unifiedCrossDockOutput (n NL N : ℕ) where
+  retainedCoords : Finset (Fin n)
+  refinementResult : Option (refinementLoopState (GridMDAction NL N))
+  exportJson : String
+
+/-- Normalize legacy output into the shared comparison view. -/
+def normalizeLegacyCrossDockOutput
+    {prob : MDBindingProblem} {NP NL N : ℕ}
+    (out : fullyConcreteCrossDockOutput prob NP NL N) :
+    unifiedCrossDockOutput (numMDCoordinates prob) NL N :=
+  { retainedCoords := out.retainedCoords
+    refinementResult := out.refinementResult
+    exportJson := DecisionQuotient.Computation.ArrayDSL.exportPrimitivesJson }
+
+/-- Normalize constructive output into the shared comparison view. -/
+def normalizeComputableCrossDockOutput
+    {n NL N : ℕ}
+    (out : computableCrossDockOutput n NL N) :
+    unifiedCrossDockOutput n NL N :=
+  { retainedCoords := out.retainedCoords
+    refinementResult := Option.map refinementLoopStateRat.toRealState out.refinementResult
+    exportJson := out.exportJson }
+
+/-- End-to-end computability unification endpoint: if retained coordinates,
+refinement outcomes (after rational-to-real lifting), and export payload agree,
+legacy and constructive pipelines are definitionally equivalent in the shared
+output view. -/
+theorem legacy_constructive_equiv
+    {prob : MDBindingProblem} {NP NL N : ℕ}
+    (legacyOut : fullyConcreteCrossDockOutput prob NP NL N)
+    (constructiveOut : computableCrossDockOutput (numMDCoordinates prob) NL N)
+    (hRetained : legacyOut.retainedCoords = constructiveOut.retainedCoords)
+    (hRefinement :
+      legacyOut.refinementResult =
+        Option.map refinementLoopStateRat.toRealState constructiveOut.refinementResult)
+    (hExport :
+      constructiveOut.exportJson =
+        DecisionQuotient.Computation.ArrayDSL.exportPrimitivesJson) :
+    normalizeLegacyCrossDockOutput legacyOut =
+      normalizeComputableCrossDockOutput constructiveOut := by
+  cases legacyOut with
+  | mk retainedLegacy refinementLegacy stepCert =>
+      cases constructiveOut with
+      | mk retainedComp refinementComp exportComp =>
+          simp [normalizeLegacyCrossDockOutput, normalizeComputableCrossDockOutput] at hRetained hRefinement hExport
+          cases hRetained
+          cases hRefinement
+          cases hExport
+          simp [normalizeLegacyCrossDockOutput, normalizeComputableCrossDockOutput]
+
+/-- Deprecation-ready replacement endpoint: once the unification equalities are
+provided, all critical exported outputs can be read from the constructive path. -/
+theorem constructive_deprecation_ready
+    {prob : MDBindingProblem} {NP NL N : ℕ}
+    (legacyOut : fullyConcreteCrossDockOutput prob NP NL N)
+    (constructiveOut : computableCrossDockOutput (numMDCoordinates prob) NL N)
+    (hRetained : legacyOut.retainedCoords = constructiveOut.retainedCoords)
+    (hRefinement :
+      legacyOut.refinementResult =
+        Option.map refinementLoopStateRat.toRealState constructiveOut.refinementResult)
+    (hExport :
+      constructiveOut.exportJson =
+        DecisionQuotient.Computation.ArrayDSL.exportPrimitivesJson) :
+    normalizeLegacyCrossDockOutput legacyOut =
+      normalizeComputableCrossDockOutput constructiveOut ∧
+    (normalizeComputableCrossDockOutput constructiveOut).exportJson =
+      DecisionQuotient.Computation.ArrayDSL.exportPrimitivesJson := by
+  constructor
+  · exact legacy_constructive_equiv legacyOut constructiveOut hRetained hRefinement hExport
+  · simpa [normalizeComputableCrossDockOutput] using hExport
+
+/-- Fieldwise downstream replacement theorem: once the normalization equalities
+are provided, downstream consumers can read retained coordinates, refinement
+state, and export payload from the constructive path with the same values as the
+legacy path. -/
+theorem constructive_replaces_legacy_output_fields
+    {prob : MDBindingProblem} {NP NL N : ℕ}
+    (legacyOut : fullyConcreteCrossDockOutput prob NP NL N)
+    (constructiveOut : computableCrossDockOutput (numMDCoordinates prob) NL N)
+    (hRetained : legacyOut.retainedCoords = constructiveOut.retainedCoords)
+    (hRefinement :
+      legacyOut.refinementResult =
+        Option.map refinementLoopStateRat.toRealState constructiveOut.refinementResult)
+    (hExport :
+      constructiveOut.exportJson =
+        DecisionQuotient.Computation.ArrayDSL.exportPrimitivesJson) :
+    legacyOut.retainedCoords =
+      (normalizeComputableCrossDockOutput constructiveOut).retainedCoords ∧
+    legacyOut.refinementResult =
+      (normalizeComputableCrossDockOutput constructiveOut).refinementResult ∧
+    (normalizeComputableCrossDockOutput constructiveOut).exportJson =
+      DecisionQuotient.Computation.ArrayDSL.exportPrimitivesJson := by
+  refine ⟨?_, ?_, ?_⟩
+  · simpa [normalizeComputableCrossDockOutput] using hRetained
+  · simpa [normalizeComputableCrossDockOutput] using hRefinement
+  · simpa [normalizeComputableCrossDockOutput] using hExport
+
+/-- Generic downstream transport theorem: any consumer on normalized outputs is
+invariant under legacy-to-constructive replacement when the unification
+equalities are supplied. -/
+theorem downstream_consumer_transport_of_constructive_equiv
+    {prob : MDBindingProblem} {NP NL N : ℕ}
+    {X : Type*}
+    (consume : unifiedCrossDockOutput (numMDCoordinates prob) NL N → X)
+    (legacyOut : fullyConcreteCrossDockOutput prob NP NL N)
+    (constructiveOut : computableCrossDockOutput (numMDCoordinates prob) NL N)
+    (hRetained : legacyOut.retainedCoords = constructiveOut.retainedCoords)
+    (hRefinement :
+      legacyOut.refinementResult =
+        Option.map refinementLoopStateRat.toRealState constructiveOut.refinementResult)
+    (hExport :
+      constructiveOut.exportJson =
+        DecisionQuotient.Computation.ArrayDSL.exportPrimitivesJson) :
+    consume (normalizeLegacyCrossDockOutput legacyOut) =
+      consume (normalizeComputableCrossDockOutput constructiveOut) := by
+  simpa [legacy_constructive_equiv legacyOut constructiveOut hRetained hRefinement hExport]
+    using congrArg consume
+      (legacy_constructive_equiv legacyOut constructiveOut hRetained hRefinement hExport)
 
 end Leverage

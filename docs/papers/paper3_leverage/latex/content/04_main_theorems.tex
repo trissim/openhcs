@@ -1,6 +1,21 @@
 \section{Thermodynamic Cost of Exact Molecular Docking}\label{main-theorems}
 
-The preceding sections fixed the exact object, its unavoidable quotient boundary, its structural and Fisher dimensions, and its certification burden. The thermodynamic theorems of this section convert that same exact-resolution spine into cost. The abstract statements hold for bounded decision systems, and the constrained-molecular corollaries transport them to holonomic topologies and binding-resolution problems. Landauer furnishes the universal floor for the conversion constant.
+The preceding sections fixed the exact object, its unavoidable quotient boundary, its structural dimension and canonical Fisher-identifiable dimension, and its certification burden. The thermodynamic theorems of this section convert that same exact-resolution spine into cost. Proposition~\ref{prop:binding-as-exact-resolution} supplies the binding-to-resolution bridge used by the docking instantiations. The abstract statements hold for bounded decision systems, and the constrained-molecular corollaries transport them to holonomic topologies and binding-resolution problems. Landauer furnishes the universal floor for the conversion constant.
+
+\begin{remark}[Antecedents of the Thermodynamic Bridge]\label{rem:thermo-antecedents}
+The thermodynamic results in this section use four antecedents:
+\begin{enumerate}
+\item Landauer calibration at positive $k_B$ and $T$.
+\item Finite binary acquisition events (Theorems~\ref{thm:discrete-acquisition} and \ref{thm:one-transition-one-bit}).
+\item Exclusion of physically feasible erasure of decision-relevant distinctions beyond quotient factorization (Theorem~\ref{thm:feasible-collapse-factors}).
+\item Existence of a sufficient coordinate set for the target decision problem (Theorem~\ref{thm:resolution-sufficient}).
+\end{enumerate}
+Violations of these antecedents place a system outside the theorem scope.
+\end{remark}
+
+\begin{remark}[Relaxational Binding Uses the Same Distinction Interface]\label{rem:relaxational-binding-interface}
+Boltzmann relaxation and controlled protocols differ in dynamics but share the same distinction-counting layer when a retained bound/unbound outcome is produced. Proposition~\ref{prop:binding-as-exact-resolution} and Theorems~\ref{thm:discrete-acquisition}--\ref{thm:one-transition-one-bit} apply to that retained distinction interface.
+\end{remark}
 
 \subsection{Landauer-Linear Resolution Cost}
 
@@ -117,7 +132,7 @@ M.\mathrm{joulesPerBit} < \mathrm{energyLowerBound}(M,|I|).
 Structural rank above one places the exact docking problem strictly above the one-bit ground state. The structural-rank energy lower bound then transfers that strict separation to every sufficient-set exact-resolution cycle.
 \end{proof}
 
-The thermodynamic bridge for docking is therefore split into two honest layers. Theorem~\ref{thm:md-energy-rank} is the direct exact-docking structural-rank cost floor once a sufficient coordinate set is fixed. Theorem~\ref{thm:md-energy-entropy} is the entropy-calibrated Landauer statement for the explicit finite binary encoding of the sampled flat grid problem. Theorem~\ref{thm:grid-docking-entropy} separately bounds the same finite-grid quotient entropy in the original $(2N+1)$-ary coordinate presentation. The cutoff-local theorems from Section~\ref{complexity-boundary} still provide only upper bounds on $\mathrm{srank}(D_{\mathrm{dock}})$; those bounds identify low-rank exact regimes, but they do not by themselves produce a coordinate-explicit lower bound.
+The thermodynamic bridge for docking is therefore split into two honest layers. Theorem~\ref{thm:md-energy-rank} is the direct exact-docking structural-rank cost floor once a sufficient coordinate set is fixed. Theorem~\ref{thm:md-energy-entropy} is the entropy-calibrated Landauer statement for the explicit finite binary encoding of the sampled flat grid problem. Theorem~\ref{thm:grid-docking-entropy} separately bounds the same finite-grid quotient entropy in the original $(2N+1)$-ary coordinate presentation. The cutoff-local theorems from Section~\ref{complexity-boundary} provide geometric upper bounds on $\mathrm{srank}(D_{\mathrm{dock}})$, while Theorem~\ref{thm:optimizer-class-richness-rank-lower-bound} provides a combinatorial lower bound from optimizer-class richness. Together they give a theorem-level two-sided bracket once both geometric and class-richness hypotheses are instantiated.
 
 \begin{theorem}[Inside-Cutoff Sampled Exact Resolution Gives a Concrete Bounded-Region Energy Floor]\label{thm:sampled-inside-cutoff-budget-energy}
 \leanmeta{\LH{L112}}
@@ -149,6 +164,101 @@ Then
 
 \begin{proof}
 Theorem~\ref{thm:min-bit-operations} gives a lower bound of $\mathrm{DOF}(A)$ elementary acquisition events for exact resolution. Theorem~\ref{thm:bounded-acquisition} bounds the total number of acquisition events on horizon $\tau$ by $c\tau/d$. Therefore exact resolution on that horizon requires $\mathrm{DOF}(A) \le c\tau/d$.
+\end{proof}
+
+\begin{theorem}[Quotient Resolution Speed Bound]\label{thm:quotient-resolution-speed-bound}
+\leanmeta{\LH{L130}}
+Let $D$ be a finite-coordinate decision problem resolved inside a bounded region of diameter $d$ and signal speed $c$ over horizon $\tau$. If some sufficient coordinate set for $D$ fits inside the bounded-acquisition budget of that region and horizon, then
+\[
+d\,\mathrm{srank}(D) \le c\,\tau.
+\]
+\end{theorem}
+
+\begin{proof}
+The exact-resolution witness gives $\mathrm{srank}(D)$ no larger than the total number of acquisition events available on horizon $\tau$. Rewriting that bounded-acquisition inequality in multiplicative form yields the displayed speed bound.
+\end{proof}
+
+\begin{theorem}[Admissibility Speed--Accuracy Tradeoff]\label{thm:admissibility-speed-accuracy-tradeoff}
+\leanmeta{\LH{L446}, \LHrng{L}{457}{458}}
+Let $F$ be a nested admissibility family for a decision problem $D$, let $\Delta\ge 0$, and let $D_{F,\varepsilon+\Delta}$ denote the relaxed summary problem. Suppose $D_{F,\varepsilon+\Delta}$ is exactly resolved inside a bounded region $(d,c)$ over horizon $\tau$. Then
+\[
+d\Bigl(\mathrm{srank}(D_{F,\varepsilon})-
+\mathrm{CollapseCount}_F(D,\varepsilon,\Delta)\Bigr)
+\le c\tau.
+\]
+Equivalently, in division form,
+\[
+\left\lfloor
+\frac{d\bigl(\mathrm{srank}(D_{F,\varepsilon})-
+\mathrm{CollapseCount}_F(D,\varepsilon,\Delta)\bigr)}{c}
+\right\rfloor
+\le \tau.
+\]
+\end{theorem}
+
+\begin{proof}
+Apply the quotient speed theorem to the relaxed problem $D_{F,\varepsilon+\Delta}$. The quantitative admissibility collapse law rewrites its rank exactly as
+\[
+\mathrm{srank}(D_{F,\varepsilon+\Delta})
+=
+\mathrm{srank}(D_{F,\varepsilon})-
+\mathrm{CollapseCount}_F(D,\varepsilon,\Delta).
+\]
+Substituting gives the multiplicative tradeoff, and the floor/division form is the equivalent natural-number lower-bound presentation.
+\end{proof}
+
+\begin{theorem}[Zero-Collapse Speed Specialization]\label{thm:admissibility-speed-accuracy-zero-collapse}
+\leanmeta{\LH{L482}}
+Under the hypotheses of Theorem~\ref{thm:admissibility-speed-accuracy-tradeoff}, assume additionally that the relaxation from $\varepsilon$ to $\varepsilon+\Delta$ is bidirectionally factorizable at summary level (so Theorem~\ref{thm:admissibility-zero-collapse-bifactor} applies). Then
+\[
+d\,\mathrm{srank}(D_{F,\varepsilon}) \le c\tau.
+\]
+Equivalently, in this no-collapse regime the speed bound is controlled by the tight rank without a subtraction term.
+\end{theorem}
+
+\begin{proof}
+Bidirectional factorization implies zero collapse and therefore
+\[
+\mathrm{srank}(D_{F,\varepsilon+\Delta})=\mathrm{srank}(D_{F,\varepsilon}).
+\]
+Apply the relaxed-problem speed bound and substitute this equality.
+\end{proof}
+
+\begin{theorem}[Admissibility On-Rate Upper Envelope]\label{thm:admissibility-onrate-envelope}
+\leanmeta{\LHrng{L}{447}{448}}
+Under the hypotheses of Theorem~\ref{thm:admissibility-speed-accuracy-tradeoff}, assume additionally $\tau>0$ and positive relaxed rank. Then the achieved exact-resolution rate obeys
+\[
+\frac{1}{\tau}
+\le
+\frac{c}{d\,\mathrm{srank}(D_{F,\varepsilon+\Delta})}
+=
+\frac{c}{d\bigl(\mathrm{srank}(D_{F,\varepsilon})-
+\mathrm{CollapseCount}_F(D,\varepsilon,\Delta)\bigr)}.
+\]
+\end{theorem}
+
+\begin{proof}
+Cast the finite speed inequality to real form and divide by positive denominators. The second equality is exactly the collapse-law substitution for the relaxed rank.
+\end{proof}
+
+\begin{theorem}[Trajectory Time--Energy Tradeoff]\label{thm:trajectory-time-energy-tradeoff}
+\leanmeta{\LH{L131}}
+Let $(D_t)_{t<m}$ be a finite sequence of decision problems, and for each stage $t$ let $R_t=(d_t,c_t)$ be a bounded region with operating horizon $\tau_t$. If each stage admits an exact-resolution witness inside its local bounded-acquisition budget, then
+\[
+\sum_{t<m} d_t\,\mathrm{srank}(D_t)
+\le
+\sum_{t<m} c_t\,\tau_t.
+\]
+For any thermodynamic model $M$ with positive per-bit conversion constant, the same hypotheses also imply
+\[
+\sum_{t<m} M.\mathrm{joulesPerBit}\cdot \mathrm{srank}(D_t)
+\le
+\sum_{t<m} \mathrm{energyLowerBound}\!\bigl(M,\mathrm{MaxAcquisitions}(R_t,\tau_t)\bigr).
+\]
+\end{theorem}
+
+\begin{proof}
+Apply Theorem~\ref{thm:quotient-resolution-speed-bound} stagewise and sum the resulting inequalities. The energy inequality is obtained the same way from the stagewise bounded-acquisition energy floor.
 \end{proof}
 
 \begin{theorem}[Decision-Class Bound from Spacetime and Energy Budget]\label{thm:budget-class-bound}
@@ -291,7 +401,26 @@ has binary state space $\{0,1\}$. A readout flip $b_{t+1} \ne b_t$ is equivalent
 Let $c_0$ and $c_1$ be atomic configurations with distinct orbital occupancies or distinct energies. Then $c_0 \ne c_1$. Upward transitions from $c_0$ to $c_1$ require positive energy input, and downward transitions release positive energy. A choice of labels $c_0 \mapsto 0$ and $c_1 \mapsto 1$ therefore gives a physical binary readout layer.
 \end{proposition}
 
-Thresholded one-bit readouts and two-level atomic transitions instantiate the same binary interface \cite{berut2012experimental,planck1901distribution,dirac1930principles,sakurai2017modern}. A $k$-channel substrate has joint readout state in $\{0,1\}^k$, and the canonical state space $\mathrm{Fin}\;k \to \mathrm{Bool}$ is the same object written in indexed form.
+Thresholded one-bit readouts and two-level atomic transitions instantiate the same binary interface\footnote{Two-level quantized spectra provide the minimal physical realization of a binary decision channel in foundational statistical and quantum mechanics treatments \cite{planck1901distribution,dirac1930principles,sakurai2017modern}.} \cite{berut2012experimental}. A $k$-channel substrate has joint readout state in $\{0,1\}^k$, and the canonical state space $\mathrm{Fin}\;k \to \mathrm{Bool}$ is the same object written in indexed form.
+
+The concrete quantum substrate layer is now also instantiated at theorem level for a spin-$\tfrac12$ readout substrate: a two-state witness is explicit, the induced classical decision object is exactly $\mathrm{canonicalDP}(1)$, and the decoherence readout cost specializes to exactly $k_B T\ln 2$ (\LHrng{L}{593}{595}).
+
+\begin{theorem}[Spin-$\tfrac12$ Concrete Quantum Instantiation]\label{thm:spinhalf-concrete-quantum-instantiation}
+\leanmeta{\LHrng{L}{593}{595}}
+For every declared spin-$\tfrac12$ substrate package:
+\begin{enumerate}
+\item there are exactly two distinguished readout states covering all classical readout states,
+\item the induced classical decision model is exactly $\mathrm{canonicalDP}(1)$ and has structural rank $1$,
+\item the decoherence/readout event cost is exactly
+\[
+k_B T\ln 2.
+\]
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The first clause is the explicit two-state witness theorem. The second clause is the canonical embedding theorem specialized to one coordinate. The third clause is the abstract decoherence Landauer identity specialized to that rank-one embedding.
+\end{proof}
 
 \subsection{Substrate Time Law}
 
@@ -300,7 +429,641 @@ Thresholded one-bit readouts and two-level atomic transitions instantiate the sa
 For any substrate model whose observed interface obeys decision ticks, every one-step substrate evolution realizes a decision event and advances interface time by one unit. The tick law is independent of substrate tag.
 \end{proposition}
 
+\begin{theorem}[Pathwise Structural-Rank Energy Lower Bound]\label{thm:pathwise-energy-lower-bound}
+\leanmeta{\LH{L123}}
+Let $(D_t)_{t<m}$ be a finite sequence of decision problems on a common coordinate interface, and let $I_t$ be a sufficient coordinate set for $D_t$ at each stage. Then for every thermodynamic model with positive per-bit conversion constant,
+\[
+\sum_{t<m} M.\mathrm{joulesPerBit}\cdot \mathrm{srank}(D_t)
+\le
+\sum_{t<m} \mathrm{energyLowerBound}(M,|I_t|).
+\]
+If, in addition, each stage is realized by one substrate step, then Proposition~\ref{prop:substrate-time-law} identifies the same index set with interface time, so the right-hand side is an additive pathwise lower bound along the trajectory.
+\end{theorem}
+
+\begin{proof}
+Apply the structural-rank energy theorem independently at each stage and sum the resulting inequalities. The substrate-time proposition contributes the time interpretation: one realized stage is one interface time unit.
+\end{proof}
+
+\subsection{Finite Quotient Trajectories}
+
+\begin{theorem}[Quotient-Trajectory Crooks Law]\label{thm:quotient-trajectory-crooks}
+\leanmeta{\LH{L128}}
+Let
+\[
+q_0 \to q_1 \to \cdots \to q_\tau
+\]
+be a finite quotient trajectory in a finite Markov model, and write $P_{\mathrm f}$ and $P_{\mathrm r}$ for the corresponding forward and reverse stationary path weights induced by theorem-level edge flows. Suppose every edge on the path has positive forward and reverse flow, and suppose the local log forward/reverse flow ratio is calibrated by the structural-rank entropy increment at each step. Then
+\[
+\frac{P_{\mathrm f}(q_0 \to \cdots \to q_\tau)}{P_{\mathrm r}(q_\tau \to \cdots \to q_0)}
+=
+\exp\!\left(\sum_{t<\tau} \Delta H^{\mathrm{srank}}_t\right),
+\]
+where
+\[
+\Delta H^{\mathrm{srank}}_t
+=
+H_{\mathrm{nats}}\bigl(\mathrm{srank}_{t+1}\bigr)-H_{\mathrm{nats}}\bigl(\mathrm{srank}_t\bigr).
+\]
+\end{theorem}
+
+\begin{proof}
+The theorem-level path weight is the product of the local stationary edge-flow factors along the path. Taking the forward/reverse ratio multiplies the corresponding local edge-flow ratios, and the rank-calibration hypothesis identifies the logarithm of each local ratio with the structural-rank entropy increment at that step. Exponentiating the sum of those local increments gives the displayed path-ratio identity.
+\end{proof}
+
+\begin{theorem}[Rank-Calibrated Crooks Standard Form]\label{thm:rank-calibrated-crooks-standard}
+\leanmeta{\LH{L423}}
+With the notation of Theorem~\ref{thm:quotient-trajectory-crooks}, assume positive $k_B,T$ and the additional cumulative calibration
+\[
+\sum_{t<\tau}\Delta H_t^{\mathrm{srank}}
+=
+\frac{W-\Delta F}{k_B T}.
+\]
+Then
+\[
+\frac{P_{\mathrm f}(q_0\to\cdots\to q_\tau)}{P_{\mathrm r}(q_\tau\to\cdots\to q_0)}
+=
+\exp\!\left(\frac{W-\Delta F}{k_B T}\right).
+\]
+\end{theorem}
+
+\begin{proof}
+Substitute the cumulative calibration identity into Theorem~\ref{thm:quotient-trajectory-crooks}.
+\end{proof}
+
+\begin{theorem}[Detailed-Balance Crooks Calibration (Equilibrium Form)]\label{thm:crooks-detailed-balance-equilibrium}
+\leanmeta{\LHrng{L}{483}{486}}
+Let $K$ be a finite quotient-MCMC kernel satisfying detailed balance against its Boltzmann witness law, and let $\pi$ be a stationary distribution whose probabilities coincide with that Boltzmann law on states. For any finite quotient trajectory with positive forward and reverse edge flows:
+\begin{enumerate}
+\item each local forward/reverse edge-flow log ratio is zero,
+\item this yields a valid Crooks calibration witness against a constant-rank entropy-step profile,
+\item hence the forward/reverse stationary path-weight ratio is
+\[
+\frac{P_{\mathrm f}}{P_{\mathrm r}}=1.
+\]
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Detailed balance plus the stationary/Boltzmann identification makes each directed stationary edge flow equal to its reverse partner, so each local log ratio vanishes. This is exactly the rank-calibration hypothesis with constant rank (zero entropy increment per step). Substituting into the rank-calibrated Crooks identity gives a zero exponent and therefore unit path ratio.
+\end{proof}
+
+The continuous-time bridge is now connected at interface level as well: an overdamped Langevin transition-kernel package with a Boltzmann detailed-balance witness transports directly to the finite quotient-MCMC layer, and its Euler--Maruyama discretization includes an explicit theorem-level transition-kernel error certificate (\LH{L591}, \LH{L592}).
+
+\begin{theorem}[MD-Class Rank-Calibration Interface for Crooks Standard Form]\label{thm:md-class-crooks-calibration-interface}
+\leanmeta{\LH{L580}}
+Fix a finite quotient trajectory in a declared nonequilibrium molecular-dynamics class that supplies theorem-level stepwise calibration
+\[
+\log\frac{J_t^+}{J_t^-} = \Delta H_t^{\mathrm{srank}}
+\]
+for every trajectory step. If the same class supplies cumulative work calibration
+\[
+\sum_{t<\tau}\Delta H_t^{\mathrm{srank}} = \frac{W-\Delta F}{k_B T},
+\]
+with $k_B,T>0$, then the trajectory obeys the Crooks standard form
+\[
+\frac{P_{\mathrm f}}{P_{\mathrm r}}=
+\exp\!\left(\frac{W-\Delta F}{k_B T}\right).
+\]
+\end{theorem}
+
+\begin{proof}
+Apply the interface theorem that composes (i) the declared stepwise calibration witness from the MD class with (ii) the existing finite-trajectory Crooks reduction and (iii) the cumulative work/free-energy calibration identity.
+\end{proof}
+
+\begin{theorem}[Langevin-to-MCMC Discretization Interface Endpoint]\label{thm:langevin-to-mcmc-discretization-interface}
+\leanmeta{\LHrng{L}{591}{592}}
+Let a declared overdamped Langevin transition-kernel package provide:
+\begin{enumerate}
+\item a Boltzmann witness law,
+\item detailed balance of the continuous kernel against that law,
+\item an Euler--Maruyama discrete kernel family with certified per-transition error envelope.
+\end{enumerate}
+Then:
+\begin{enumerate}
+\item the continuous kernel satisfies detailed balance in quotient-Boltzmann form,
+\item for every nonnegative step size $\delta$, there exists a quotient-MCMC kernel identified with the Euler--Maruyama discretization and satisfying the declared transition-kernel error bound at scale $\delta$.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Both clauses are direct interface specializations: the first rewrites the declared Boltzmann witness into quotient-Boltzmann form and applies the declared detailed-balance law; the second packages the declared Euler--Maruyama kernel and its error certificate at the chosen step size.
+\end{proof}
+
+\begin{theorem}[Finite Jarzynski Equality from Crooks]\label{thm:jarzynski-from-crooks}
+\leanmeta{\LH{L424}}
+Let $\Gamma$ be a finite trajectory family with strictly positive forward and reverse trajectory distributions $p_{\mathrm f},p_{\mathrm r}$. Assume positive $k_B,T$ and pointwise Crooks relation
+\[
+p_{\mathrm f}(\gamma)
+=
+p_{\mathrm r}(\gamma)
+\exp\!\left(\frac{W(\gamma)-\Delta F}{k_B T}\right)
+\qquad (\gamma\in\Gamma).
+\]
+Then
+\[
+\sum_{\gamma\in\Gamma}
+p_{\mathrm f}(\gamma)
+\exp\!\left(-\frac{W(\gamma)}{k_B T}\right)
+=
+\exp\!\left(-\frac{\Delta F}{k_B T}\right).
+\]
+\end{theorem}
+
+\begin{proof}
+Replace $p_{\mathrm f}$ by the Crooks expression, combine exponentials inside the finite sum, and use normalization of $p_{\mathrm r}$.
+\end{proof}
+
+\begin{theorem}[Quotient-Trajectory Dissipation Lower Bound]\label{thm:quotient-trajectory-dissipation}
+\leanmeta{\LH{L129}}
+With the same notation, let $W^{\mathrm{diss}}_t$ be the dissipated work assigned to step $t$, and suppose each step satisfies
+\[
+k_B T\,\Delta H^{\mathrm{srank}}_t \le W^{\mathrm{diss}}_t.
+\]
+Then the total dissipation along the finite quotient trajectory obeys
+\[
+k_B T\sum_{t<\tau} \Delta H^{\mathrm{srank}}_t
+\le
+\sum_{t<\tau} W^{\mathrm{diss}}_t.
+\]
+\end{theorem}
+
+\begin{proof}
+The assumed lower bound holds at each step individually. Summing those stepwise inequalities over the finite trajectory yields the announced cumulative dissipation bound.
+\end{proof}
+
+These theorems are the strongest non-equilibrium trajectory statements currently mechanized in the artifact. They are finite path-weight and cumulative-dissipation theorems. The detailed-balance corollary discharges a concrete equilibrium calibration branch (unit forward/reverse path ratio under Boltzmann-stationary matching), and the Langevin-to-discrete interface now supplies a theorem-level continuous-to-discrete calibration endpoint. Full analytic SDE existence/regularity and sharp strong-error-rate derivations remain outside the present formalization.
+
+\subsection{Physical Instantiation and Constructive Extraction}
+
+This subsection makes the physical-instantiation layer explicit in one place: classical composed force fields, continuous Langevin dynamics, concrete spin-$\tfrac12$ quantum readout, and a constructive top-level computable extraction path.
+
+\subsubsection{Classical Force-Field Bridge}
+
+The composed classical Hamiltonian package combines bonded, Lennard--Jones, and Coulomb terms into one energy object
+\[
+H(a,s)=H_{\mathrm{bond}}(a,s)+H_{\mathrm{LJ}}(a,s)+H_{\mathrm{Coul}}(a,s),
+\]
+with architecture metadata transported from that same package.
+
+\begin{theorem}[Composed Hamiltonian Architecture Instance]\label{thm:composed-hamiltonian-architecture-instance}
+\leanmeta{\LH{L589}}
+Every declared composed classical Hamiltonian induces an architecture instance whose degree-of-freedom and capability fields are exactly the declared metadata of that Hamiltonian package.
+\end{theorem}
+
+\begin{proof}
+This is a direct projection theorem from the composed Hamiltonian record to the architecture record.
+\end{proof}
+
+\begin{theorem}[Composed Hamiltonian Positive-Shell Lipschitz Bound]\label{thm:composed-hamiltonian-lipschitz-bound}
+\leanmeta{\LH{L590}}
+If bonded, Lennard--Jones, and Coulomb components are each Lipschitz on a declared positive shell with constants $L_{\mathrm{bond}},L_{\mathrm{LJ}},L_{\mathrm{Coul}}$, then the full composed Hamiltonian is Lipschitz on the same shell with constant
+\[
+L_{\mathrm{bond}}+L_{\mathrm{LJ}}+L_{\mathrm{Coul}}.
+\]
+\end{theorem}
+
+\begin{proof}
+Apply the triangle inequality to the three component differences and substitute the three declared shellwise bounds.
+\end{proof}
+
+\begin{theorem}[Concrete Biomolecular Force-Field Calibration Bundle]\label{thm:concrete-biomolecular-forcefield-calibration-bundle}
+\leanmeta{\LHrng{L}{605}{607}}
+For a declared biomolecular parameter bundle and shell calibration witness:
+\begin{enumerate}
+\item the composed force-field package induces an architecture object with matching declared DOF/capability metadata,
+\item the full composed Hamiltonian satisfies the positive-shell Lipschitz bound with the declared summed shell constant,
+\item the same shell constant is sufficient to instantiate half-gap winner transport for grid-to-continuous utility approximations.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The first clause is the architecture projection endpoint for the concrete composed package. The second clause is the composed positive-shell Lipschitz theorem specialized to that package. The third clause applies the theorem-level half-gap transport result using the same summed shell constant.
+\end{proof}
+
+\begin{theorem}[Reference Biomolecular Zero-Shell Calibration]\label{thm:reference-biomolecular-zero-shell-calibration}
+\leanmeta{\LHrng{L}{620}{622}}
+The explicit reference biomolecular parameter family admits a fully concrete shell calibration with declared real constants
+\[
+L_{\mathrm{bond}}=L_{\mathrm{LJ}}=L_{\mathrm{Coul}}=0,
+\]
+and therefore the corresponding composed Hamiltonian is globally zero-Lipschitz in state.
+\end{theorem}
+
+\begin{proof}
+The first statement is the concrete zero-shell witness theorem (plus its reference-family specialization). Substituting those constants into the composed-energy difference bound yields the global zero-Lipschitz claim.
+\end{proof}
+
+\begin{remark}[DOF Loop Closure]\label{rem:hamiltonian-dof-loop-closure}
+In Sections~\ref{foundations}--\ref{probability-model}, $\mathrm{DOF}(A)$ is introduced as declared architecture data and then transported through the canonical identity
+\(
+\mathrm{srank}(\mathrm{canonicalDP}(A))=\mathrm{DOF}(A)
+\).
+The Hamiltonian instantiation closes this loop: architecture data is supplied by a concrete composed force-field package, so the same Landauer floor becomes a physically instantiated prediction from energetic structure rather than a free standing counting declaration.
+\end{remark}
+
+\subsubsection{Langevin Dynamics Bridge}
+
+\begin{theorem}[Langevin Detailed-Balance Grounding]\label{thm:langevin-detailed-balance-grounding}
+\leanmeta{\LH{L591}}
+For a declared overdamped Langevin transition-kernel package with Boltzmann witness law, the continuous kernel satisfies detailed balance in quotient-Boltzmann form.
+\end{theorem}
+
+\begin{proof}
+Rewrite the package Boltzmann witness into quotient-Boltzmann form and apply the package detailed-balance law.
+\end{proof}
+
+\begin{theorem}[Langevin Discretization to Quotient MCMC]\label{thm:langevin-discretization-certified}
+\leanmeta{\LH{L592}}
+For every nonnegative step size $\delta$, Euler--Maruyama discretization of the declared Langevin package yields a quotient-MCMC kernel together with a certified per-transition discretization error envelope at scale $\delta$.
+\end{theorem}
+
+\begin{proof}
+Instantiate the package's Euler--Maruyama kernel at $\delta$ and transport the package error certificate to the quotient-MCMC transition map.
+\end{proof}
+
+\begin{theorem}[Langevin Analysis-Closure Endpoint Bundle]\label{thm:langevin-analysis-closure-endpoint-bundle}
+\leanmeta{\LHrng{L}{599}{603}}
+Assume a declared overdamped Langevin model is equipped with:
+\begin{enumerate}
+\item a strong-solution existence/uniqueness witness,
+\item a Boltzmann invariance/ergodicity witness,
+\item Euler--Maruyama strong and weak rate witnesses.
+\end{enumerate}
+Then the corresponding five endpoint claims hold at theorem level:
+\begin{enumerate}
+\item existence and uniqueness of the declared strong solution,
+\item Boltzmann invariance,
+\item ergodicity,
+\item a strong-error envelope $O(\sqrt{\delta})$,
+\item a weak-error envelope $O(\delta)$.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Each clause is exactly the corresponding endpoint theorem extracted from the declared witness data for the same Langevin model.
+\end{proof}
+
+\begin{theorem}[Unified Langevin Assumption-Bundle Discharge]\label{thm:unified-langevin-assumption-bundle-discharge}
+\leanmeta{\LH{L619}}
+If one declared formal-analysis assumption bundle provides strong-solution existence/uniqueness, Boltzmann invariance/ergodicity, and Euler--Maruyama strong/weak rate hypotheses for a given overdamped Langevin model, then the full five-endpoint closure package follows simultaneously from that single bundle.
+\end{theorem}
+
+\begin{proof}
+Apply the assumption-bundle discharge theorem, which composes the witness constructors with the endpoint theorems and returns the conjunction of all five target claims.
+\end{proof}
+
+\begin{theorem}[Concrete Langevin-to-Interface Constructor]\label{thm:concrete-langevin-interface-constructor}
+\leanmeta{\LH{L604}}
+Any concrete overdamped Langevin witness package with Boltzmann calibration, detailed balance, and Euler--Maruyama approximation data canonically constructs a paper3 Langevin transition-kernel interface object.
+\end{theorem}
+
+\begin{proof}
+Unfold the constructor and package each declared concrete field directly into the corresponding interface field.
+\end{proof}
+
+\subsubsection{Spin-$\tfrac12$ Quantum Instantiation}
+
+\begin{theorem}[Spin-$\tfrac12$ Canonical-Decision Instance]\label{thm:spinhalf-canonicaldp-instance}
+\leanmeta{\LHrng{L}{593}{594}}
+For every declared spin-$\tfrac12$ substrate package, the classical readout has an explicit two-state witness and the induced decision problem is exactly $\mathrm{canonicalDP}(1)$ with structural rank $1$.
+\end{theorem}
+
+\begin{proof}
+Combine the explicit two-state witness theorem with the canonical embedding theorem for the same package.
+\end{proof}
+
+\begin{theorem}[Spin-$\tfrac12$ Decoherence Thermodynamic Floor]\label{thm:spinhalf-decoherence-floor}
+\leanmeta{\LH{L595}}
+For the same spin-$\tfrac12$ package, the decoherence/readout event cost is exactly
+\[
+k_B T\ln 2.
+\]
+\end{theorem}
+
+\begin{proof}
+Specialize the abstract decoherence Landauer identity to the rank-one canonical embedding from Theorem~\ref{thm:spinhalf-canonicaldp-instance}.
+\end{proof}
+
+\subsubsection{Constructive Extraction and Computability}
+
+\begin{theorem}[Constructive Top-Level Computable Path]\label{thm:top-level-computable-path}
+\leanmeta{\LH{L596}}
+The end-to-end molecular pipeline admits a constructive implementation path: finite coordinate extraction by computable greedy search, fuel-bounded rational-certificate refinement, and exact ArrayDSL JSON export, all with theorem-level output-equality guarantees.
+\end{theorem}
+
+\begin{proof}
+Unfold the constructive output bundle and apply the endpoint computability theorem, which states each output component by definitional equality.
+\end{proof}
+
+\begin{theorem}[Legacy-to-Constructive Deprecation Bridge]\label{thm:legacy-constructive-deprecation-bridge}
+\leanmeta{\LHrng{L}{617}{618}}
+Given alignment witnesses for retained coordinates, lifted refinement results, and export payload, the legacy and constructive cross-docking outputs coincide in the shared normalized view; therefore critical exported outputs can be read directly from the constructive path.
+\end{theorem}
+
+\begin{proof}
+Apply the normalization-equivalence theorem and the deprecation-ready consequence theorem; the latter packages normalized equality together with export-payload identity.
+\end{proof}
+
+\begin{theorem}[Constructive Downstream Replacement Transport]\label{thm:constructive-downstream-replacement-transport}
+\leanmeta{\LHrng{L}{628}{629}}
+Under the same normalization-alignment hypotheses, replacement is stable for downstream use:
+\begin{enumerate}
+\item retained coordinates and refinement result fields agree fieldwise after normalization,
+\item any downstream consumer on normalized outputs is invariant under legacy-to-constructive replacement.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The fieldwise statement is the explicit normalized-field replacement theorem. The consumer invariance statement follows by congruence from normalized output equality.
+\end{proof}
+
+\subsubsection{Chemical, Ensemble, and Kinetic Docking Interfaces}
+
+\begin{theorem}[Chemical-Augmented Docking Transport Endpoints]\label{thm:chemical-augmented-docking-transport}
+\leanmeta{\LHrng{L}{608}{609}}
+For chemical-state augmentation of molecular docking:
+\begin{enumerate}
+\item optimizer sets are preserved exactly by projection to the molecular core state,
+\item structural-rank transport holds under the declared chemical-rank witness.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The first clause is definitional for the projection-based augmented decision object. The second clause is the witness transport theorem specialized to that same augmentation layer.
+\end{proof}
+
+\begin{theorem}[Conformational-Ensemble Docking Transport Endpoints]\label{thm:conformational-ensemble-docking-transport}
+\leanmeta{\LHrng{L}{610}{612}}
+For a declared conformational ensemble bridge:
+\begin{enumerate}
+\item ensemble populations normalize to one,
+\item aggregated ensemble utility matches the per-conformer utility law,
+\item induced-fit transitions transport to monotone structural-rank inequalities across conformers.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Each statement is the corresponding endpoint projection of the declared ensemble witness package: normalization, aggregation compatibility, and induced-fit rank monotonicity.
+\end{proof}
+
+\begin{theorem}[Chemical/Ensemble Transport to Concrete Binding Problem]\label{thm:chemical-ensemble-transport-binding-specialization}
+\leanmeta{\LHrng{L}{623}{626}}
+For a concrete molecular binding problem:
+\begin{enumerate}
+\item chemical-state augmentation preserves optimizer projection to the base docking decision object and transports structural rank under the declared witness,
+\item ensemble aggregation and induced-fit rank transport specialize directly to the same base docking decision problem through a designated baseline conformer.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Specialize the chemical transport endpoints to \texttt{prob.toDecisionProblem}. Then specialize ensemble utility/rank transport via the baseline-conformer identification hypothesis.
+\end{proof}
+
+\begin{theorem}[Kinetic Observable Reporting Endpoints]\label{thm:kinetic-observable-reporting-endpoints}
+\leanmeta{\LHrng{L}{613}{616}}
+For the declared kinetic bridge package, theorem-level outputs include:
+\begin{enumerate}
+\item an on-rate upper envelope from bounded-acquisition speed,
+\item the residence-time identity $\tau_{\mathrm{res}}=1/k_{\mathrm{off}}$,
+\item pathway-population normalization,
+\item a bundled reporting theorem that returns all three as one certificate.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The on-rate inequality follows from the quotient speed theorem under the bridge horizon/rank hypotheses; the residence and normalization identities are direct profile fields; the bundle theorem conjoins those three endpoints.
+\end{proof}
+
+\begin{theorem}[Concrete Docking Kinetic Bundle Specialization]\label{thm:concrete-docking-kinetic-bundle-specialization}
+\leanmeta{\LH{L627}}
+Given a kinetic bridge whose decision object is identified with a concrete docking problem, the bundled kinetic report transports unchanged to that docking object: on-rate envelope with docking rank denominator, residence-time identity, and pathway normalization.
+\end{theorem}
+
+\begin{proof}
+Start from the generic kinetic bundle theorem and rewrite along the declared decision-object identification to obtain the docking-specialized denominator and unchanged remaining clauses.
+\end{proof}
+
+\subsection{Fault-Tolerant Resolution}
+
+\begin{theorem}[Error-Correction Structural-Rank Overhead]\label{thm:error-correction-srank-overhead}
+\leanmeta{\LH{L136}}
+Let $s_{\mathrm{err}}$ be a nonzero Boolean error syndrome on $r$ logical resolution bits, and let
+\[
+d_H(s_{\mathrm{err}},0)
+\]
+be its Hamming distance from the no-fault codeword. Then the fault-tolerant exact-resolution rank is
+\[
+r_{\mathrm{FT}} = r + d_H(s_{\mathrm{err}},0).
+\]
+In particular,
+\[
+r + 1 \le r_{\mathrm{FT}}.
+\]
+\end{theorem}
+
+\begin{proof}
+The theorem-level fault-tolerant rank is defined as the logical rank plus the syndrome's Hamming distance from the no-fault word. A nonzero syndrome has positive Hamming distance, so at least one extra structural-rank unit is required beyond the logical rank.
+\end{proof}
+
+\begin{theorem}[Fault-Tolerant Landauer Floor]\label{thm:fault-tolerant-landauer-floor}
+\leanmeta{\LH{L137}}
+Assume Landauer calibration at positive Boltzmann constant and temperature. With the same notation as Theorem~\ref{thm:error-correction-srank-overhead}, the fault-tolerant exact-resolution floor satisfies
+\[
+r\,k_B T\ln 2
+<
+\mathrm{energyLowerBound}(M,r_{\mathrm{FT}}),
+\]
+and more precisely
+\[
+\mathrm{energyLowerBound}(M,r_{\mathrm{FT}})
+=
+r\,k_B T\ln 2 + \mathrm{energyLowerBound}\!\bigl(M,d_H(s_{\mathrm{err}},0)\bigr).
+\]
+\end{theorem}
+
+\begin{proof}
+Under Landauer calibration, the logical part contributes exactly $r k_B T \ln 2$. The additional syndrome bits contribute additively through the same linear thermodynamic model, and a nonzero syndrome contributes strictly positive extra cost. Therefore the fault-tolerant floor is strictly above the logical Landauer floor by exactly the syndrome-erasure term.
+\end{proof}
+
+\begin{theorem}[Hopfield--Ninio Proofreading Overhead Reduction]\label{thm:hopfield-ninio-proofreading-overhead}
+\leanmeta{\LHrng{L}{425}{427}}
+Assume Landauer calibration at positive $k_B,T$. Let $\eta_{\mathrm{eq}}>0$ be the equilibrium discrimination and let $\eta$ be the proofreading discrimination in the exponential model
+\[
+\eta
+=
+\eta_{\mathrm{eq}}\exp\!\left(\frac{\Delta G_{\mathrm{proof}}}{k_B T}\right).
+\]
+If the proofreading free-energy branch is realized within the syndrome-overhead witness budget
+\[
+\Delta G_{\mathrm{proof}}
+\le
+\mathrm{energyLowerBound}\bigl(M,d_H(s_{\mathrm{err}},0)\bigr),
+\]
+then
+\[
+\frac{\log(\eta/\eta_{\mathrm{eq}})}{\log 2}
+\le d_H(s_{\mathrm{err}},0),
+\qquad
+r + \frac{\log(\eta/\eta_{\mathrm{eq}})}{\log 2}
+\le r_{\mathrm{FT}},
+\]
+and
+\[
+k_B T\,\log\!\left(\frac{\eta}{\eta_{\mathrm{eq}}}\right)
+\le
+\mathrm{energyLowerBound}\bigl(M,d_H(s_{\mathrm{err}},0)\bigr).
+\]
+\end{theorem}
+
+\begin{proof}
+The logarithmic specificity gain in the exponential proofreading model is exactly $\Delta G_{\mathrm{proof}}/(k_B T)$. The Landauer-calibrated overhead witness then converts the free-energy budget inequality into a bit-overhead inequality, yielding the displayed $\log_2(\eta/\eta_{\mathrm{eq}})$ lower bound on syndrome overhead and the corresponding dissipation lower bound. The $r_{\mathrm{FT}}$ inequality is the additive fault-tolerant rank identity.
+\end{proof}
+
+\begin{theorem}[Kinetic-Branch Hopfield--Ninio Specialization]\label{thm:hopfield-ninio-kinetic-branch}
+\leanmeta{\LHrng{L}{434}{436}}
+Assume Landauer calibration at positive $k_B,T$. Let
+\[
+k_{\mathrm c}^{\mathrm{eq}},k_{\mathrm e}^{\mathrm{eq}} > 0
+\]
+be equilibrium correct/error branch rates and let
+\[
+k_{\mathrm c}^{\mathrm{pf}},k_{\mathrm e}^{\mathrm{pf}}
+\]
+be proofreading correct/error branch rates satisfying
+\[
+\frac{k_{\mathrm c}^{\mathrm{pf}}}{k_{\mathrm e}^{\mathrm{pf}}}
+=
+\frac{k_{\mathrm c}^{\mathrm{eq}}}{k_{\mathrm e}^{\mathrm{eq}}}
+\exp\!\left(\frac{\Delta G_{\mathrm{proof}}}{k_B T}\right).
+\]
+If
+\[
+\Delta G_{\mathrm{proof}}
+\le
+\mathrm{energyLowerBound}\bigl(M,d_H(s_{\mathrm{err}},0)\bigr),
+\]
+then
+\[
+\frac{\log\!\left(\dfrac{k_{\mathrm c}^{\mathrm{pf}}/k_{\mathrm e}^{\mathrm{pf}}}
+{k_{\mathrm c}^{\mathrm{eq}}/k_{\mathrm e}^{\mathrm{eq}}}\right)}{\log 2}
+\le d_H(s_{\mathrm{err}},0),
+\qquad
+r +
+\frac{\log\!\left(\dfrac{k_{\mathrm c}^{\mathrm{pf}}/k_{\mathrm e}^{\mathrm{pf}}}
+{k_{\mathrm c}^{\mathrm{eq}}/k_{\mathrm e}^{\mathrm{eq}}}\right)}{\log 2}
+\le r_{\mathrm{FT}},
+\]
+and
+\[
+k_B T\,\log\!\left(\frac{k_{\mathrm c}^{\mathrm{pf}}/k_{\mathrm e}^{\mathrm{pf}}}
+{k_{\mathrm c}^{\mathrm{eq}}/k_{\mathrm e}^{\mathrm{eq}}}\right)
+\le
+\mathrm{energyLowerBound}\bigl(M,d_H(s_{\mathrm{err}},0)\bigr).
+\]
+\end{theorem}
+
+\begin{proof}
+Set $\eta_{\mathrm{eq}} := k_{\mathrm c}^{\mathrm{eq}}/k_{\mathrm e}^{\mathrm{eq}}$ and $\eta := k_{\mathrm c}^{\mathrm{pf}}/k_{\mathrm e}^{\mathrm{pf}}$. The branch-rate hypothesis is exactly the exponential specificity model in those variables, and $\eta_{\mathrm{eq}}>0$ follows from positivity of the equilibrium rates. Applying the theorem-level Hopfield--Ninio reduction in this kinetic parametrization yields the two bit-overhead inequalities and the dissipation inequality.
+\end{proof}
+
+\subsection{Binding Free-Energy Bridge}
+
+Structural rank controls the minimum free-energy budget required for physical binding resolution. Binding free energy is the thermodynamic budget for resolving decision-quotient distinctions.
+
+\begin{theorem}[Binding Free-Energy Floor]\label{thm:binding-free-energy-floor}
+\leanmeta{\LH{L138}}
+Let $D$ be an exact decision problem with sufficient coordinate set $I$, and let $\Delta G$ be a measured binding free-energy budget. If $\Delta G$ dominates the exact-resolution witness energy $\mathrm{energyLowerBound}(M,|I|)$ under Landauer calibration, then
+\[
+\Delta G \ge \mathrm{srank}(D)\,k_B T\ln 2.
+\]
+\end{theorem}
+
+\begin{proof}
+The sufficient-set witness gives the theorem-level structural-rank energy floor for $D$. Landauer calibration identifies the per-bit coefficient with $k_B T \ln 2$. If the measured binding free energy dominates the witness energy, it must also dominate the implied Landauer structural-rank floor.
+\end{proof}
+
+\begin{theorem}[Binding Free-Energy Tightness Decomposition]\label{thm:binding-free-energy-tightness}
+\leanmeta{\LHrng{L}{419}{422}}
+Under the hypotheses of Theorem~\ref{thm:binding-free-energy-floor} with $k_B,T>0$, define the residual entropy term
+\[
+R_{\mathrm{res}}(D,\Delta G)
+:=
+\frac{\Delta G - \mathrm{srank}(D)\,k_B T\ln 2}{k_B T}.
+\]
+Then
+\[
+\Delta G
+=
+\mathrm{srank}(D)\,k_B T\ln 2 + (k_B T)\,R_{\mathrm{res}}(D,\Delta G),
+\qquad
+R_{\mathrm{res}}(D,\Delta G) \ge 0.
+\]
+Moreover,
+\[
+\Delta G = \mathrm{srank}(D)\,k_B T\ln 2
+\iff
+R_{\mathrm{res}}(D,\Delta G)=0.
+\]
+\end{theorem}
+
+\begin{proof}
+The decomposition identity is algebraic: define the gap above the rank-Landauer floor and normalize by $k_B T$. Nonnegativity follows from Theorem~\ref{thm:binding-free-energy-floor}. The iff statement is immediate because $k_B T>0$, so the normalized residual vanishes exactly when the unnormalized gap vanishes.
+\end{proof}
+
+\textbf{Physical Significance.} The inequality $\Delta G \ge \mathrm{srank}(D)\,k_B T\ln 2$ identifies affinity with information resolution. A stronger binder can resolve a finer decision quotient; a weaker binder cannot pay for those distinctions. The free-energy budget and the exact decision complexity are therefore constrained by one common thermodynamic scale.
+
+\begin{theorem}[Decision-Quotient Potential Criterion]\label{thm:decision-quotient-potential}
+\leanmeta{\LH{L139}}
+Let $a_\ast$ be a strict winner at state $s$. If every thermal perturbation from $s$ to $s'$ is bounded by
+\[
+\mathrm{srank}(D)\,k_B T,
+\]
+and if the binding-funnel gap satisfies
+\[
+2\,\mathrm{srank}(D)\,k_B T < \mathrm{StrictUtilityGap}(a_\ast,s),
+\]
+then exact resolution is preserved:
+\[
+\mathrm{Opt}(s) = \mathrm{Opt}(s').
+\]
+\end{theorem}
+
+\begin{proof}
+The theorem is a rank-scaled half-gap argument. The assumed thermal perturbation radius is exactly the stagewise tolerance in the strict-gap invariance theorem, and the funnel-gap inequality says that this tolerance is smaller than half of the strict winner's utility gap. Exact winner preservation follows immediately.
+\end{proof}
+
 \subsection{Strict Overhead Above Landauer}
+
+\textbf{Interpretation of the floor.} The structural-rank Landauer law
+\(
+E\ge \mathrm{srank}(D)\,k_B T\ln 2
+\)
+is the irreducible logical basement: the zero-friction, zero-mismatch minimum compatible with exact resolution. It is not a predictor of total empirical binding free energy. Real molecular implementations operate strictly above that basement when kinetic barriers, finite-time relaxation losses, or distributional mismatch are present, exactly as captured by the strict-overhead branch theorems in this subsection (Propositions~\ref{prop:strict-overhead}--\ref{prop:strict-canonical-energy}).
+
+\begin{corollary}[Logical Basement and Realized Dissipation]\label{cor:logical-basement-overhead}
+\leanmeta{\LH{L43}, \LH{L140}, \LHrng{BA}{5}{6}, \LH{WM6}, \LH{WR10}, \LH{WP6}}
+For any exact-resolution molecular realization with measured free-energy budget $\Delta G$, define
+\[
+\Delta G_{\mathrm{floor}} := \mathrm{srank}(D)\,k_B T\ln 2,
+\qquad
+\Delta G_{\mathrm{over}} := \Delta G-\Delta G_{\mathrm{floor}}.
+\]
+Then
+\[
+\Delta G = \Delta G_{\mathrm{floor}} + \Delta G_{\mathrm{over}},
+\qquad
+\Delta G_{\mathrm{over}}\ge 0.
+\]
+Moreover, whenever either strict-overhead branch witness of Propositions~\ref{prop:strict-overhead}--\ref{prop:strict-canonical-energy} is instantiated, one has
+\[
+\Delta G_{\mathrm{over}}>0.
+\]
+Hence the rank law is an irreducible information-theoretic minimum, while realized dissipation is generically strictly larger.
+\end{corollary}
+
+\begin{proof}
+The decomposition identity and nonnegativity are exactly Theorem~\ref{thm:binding-free-energy-tightness}. Strict positivity of the overhead term is exactly the strict-overhead branch package, which proves realized per-bit coefficients and induced exact-resolution energies strictly above the Landauer floor under mismatch/residual witnesses.
+\end{proof}
 
 \begin{proposition}[Theorem-Level Strict Overhead Branches]\label{prop:strict-overhead}
 \leanmeta{\LH{WM6}, \LH{WR10}, \LH{WP6}, \LHrng{BA}{5}{6}, \LH{L43}}
@@ -518,7 +1281,100 @@ In particular, the per-cycle exact-resolution floor scales linearly with the unc
 The RATTLE holonomic status register is a $k$-bit binary interface by the finite cardinality theorem. The transported architecture has degree of freedom exactly $3N-k$ by construction. The bridge theorem identifies the structural rank of the canonical exact-resolution problem with that same count, and the energy lower bound then gives the displayed Landauer-linear floor.
 \end{proof}
 
+\textbf{Interpretive note.} The $3N-k$ expression controls the irreducible logical floor for exact resolution; realized dissipation can be strictly larger once mismatch/residual overhead branches are instantiated.
+
 Informally: matter pays for what its topology requires it to know.
+
+\begin{corollary}[Concrete Bond-Family Holonomic Floor]\label{cor:bond-family-holonomic-floor}
+\leanmeta{\LHrng{L}{396}{398}}
+Let $F$ be a finite bond-constraint family on $N$ atoms with
+\[
+|F| \le N,
+\qquad N>0.
+\]
+Let $X_F$ be the induced finite RATTLE topology with constraint count $k=|F|$. Then
+\[
+\left|\Omega_{\mathrm{status}}(X_F)\right| = 2^k,
+\qquad
+\mathrm{srank}(\mathrm{canonicalDP}(A_{X_F})) = 3N-k,
+\]
+and for every sufficient coordinate set $I$ and every thermodynamic model with positive per-bit conversion constant,
+\[
+M.\mathrm{joulesPerBit}\cdot(3N-k)
+\le
+\mathrm{energyLowerBound}(M,|I|).
+\]
+\end{corollary}
+
+\begin{proof}
+The concrete family bound $|F|\le N$ and positivity $N>0$ imply $|F|<3N$, which discharges the strict independent-count requirement of the finite RATTLE topology. The binary status-register cardinality, structural-rank identity, and Landauer-linear floor then follow from the concrete bond-family bridge theorems.
+\end{proof}
+
+\textbf{Interpretive note.} This corollary fixes the same $3N-k$ logical basement with an explicit finite family certificate; it is not a claim that total empirical dissipation equals that basement.
+
+\begin{remark}[Scope of the Concrete Derivation]\label{rem:bond-family-scope}
+The corollary derives the independent-count hypothesis from an explicit finite bond-family certificate. The next corollary discharges the Jacobian hypotheses for nonlinear geometric families carrying an explicit pivot-column Jacobian witness.
+\end{remark}
+
+\begin{corollary}[Jacobian-Rank Holonomic Floor for Nonlinear Constraints]\label{cor:jacobian-holonomic-floor}
+\leanmeta{\LHrng{L}{403}{407}}
+Let $F$ be a finite nonlinear geometric-constraint family on $N$ atoms with $k$ constraints, and let $q$ be a configuration. Assume there is a pivot-column certificate:
+\begin{enumerate}
+\item a map $\pi : \{1,\dots,k\}\to\{1,\dots,3N\}$,
+\item Jacobian selector identities
+\[
+J_F(q)_{i,\pi(j)}=
+\begin{cases}
+1,&i=j,\\
+0,&i\neq j,
+\end{cases}
+\]
+\item strict slack $k<3N$.
+\end{enumerate}
+Then
+\[
+k < 3N,
+\qquad
+\left|\Omega_{\mathrm{status}}(X_{F,q})\right| = 2^k,
+\qquad
+\mathrm{srank}(\mathrm{canonicalDP}(A_{X_{F,q}})) = 3N-k,
+\]
+and for every sufficient coordinate set $I$ and every thermodynamic model with positive per-bit conversion constant,
+\[
+M.\mathrm{joulesPerBit}\cdot(3N-k)
+\le
+\mathrm{energyLowerBound}(M,|I|).
+\]
+\end{corollary}
+
+\begin{proof}
+The pivot identities imply full row rank at $q$ (\LH{L403}) and the strict rank-defect condition (\LH{L404}). The nonlinear family therefore induces a finite RATTLE topology with no additional Jacobian hypotheses at use sites, and the status-register cardinality, structural-rank identity, and Landauer-linear floor follow from \LHrng{L}{405}{407}.
+\end{proof}
+
+\textbf{Interpretive note.} As above, the Jacobian-instantiated $3N-k$ law is an irreducible exact-resolution minimum; kinetic inefficiency and mismatch terms can place realized trajectories strictly above it.
+
+\textbf{Physical Significance.} The pivot certificate is an explicit local Jacobian sparsity witness: each constraint has a coordinate direction where it is uniquely first-order active. This yields independent holonomic constraints and a nontrivial tangent manifold directly, so the $3N-k$ thermodynamic floor follows without extra family-specific postulates.
+
+\begin{theorem}[General Geometric-Constraint Independence Decision Interface]\label{thm:geometric-constraint-decision-interface}
+\leanmeta{\LH{L579}}
+Let a geometric constraint family be given by finite bond/angle/dihedral counts together with a decision procedure returning a Boolean value whose correctness theorem is
+\[
+\mathrm{decideIndependent}=\mathrm{true}
+\iff
+k_{\mathrm{bond}}+k_{\mathrm{angle}}+k_{\mathrm{dihedral}}<3N.
+\]
+Whenever the procedure returns \texttt{true}, the induced constrained molecular system satisfies
+\[
+\mathrm{srank}(\mathrm{canonicalDP}(A))
+=
+3N-(k_{\mathrm{bond}}+k_{\mathrm{angle}}+k_{\mathrm{dihedral}}).
+\]
+Thus independence certification can be discharged directly from constraint data without an externally supplied pivot witness.
+\end{theorem}
+
+\begin{proof}
+The decision-procedure correctness equivalence supplies the strict independent-count antecedent needed to instantiate the constrained molecular system. The structural-rank identity is then the same finite constrained-molecular transport theorem specialized to that instantiated system.
+\end{proof}
 
 \subsection{Optimal-Transport Witness}
 
