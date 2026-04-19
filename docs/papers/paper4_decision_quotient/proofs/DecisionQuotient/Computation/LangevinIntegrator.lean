@@ -52,19 +52,38 @@ def fluctuationDissipationTheorem (m kB T gamma sigma : ℝ) : Prop :=
   sigma ^ 2 = 2 * gamma * m * kB * T
 
 /--
-  At equilibrium, the kinetic energy of a single degree of freedom 
+  At equilibrium, the kinetic energy of a single degree of freedom
   converges to (1/2) * k_B * T  (Equipartition Theorem).
   
   Converging to this specific target across iterations requires analytical
-  integration of the Fokker-Planck equation, which we explicitly bound here 
-  as an empirically justified macroscopic axiom.
+  integration of the Fokker-Planck equation, so we expose it here as an
+  explicit assumption interface (`Prop`) rather than a global axiom.
 -/
-axiom boltzmann_stationarity {m kB T gamma sigma targetKinetic : ℝ}
-    (hm : m > 0)
+def boltzmann_stationarity {m kB T gamma sigma targetKinetic : ℝ}
+    (_hm : m > 0)
     (_hT : T > 0)
-    (hGamma : gamma > 0)
-    (FDT : fluctuationDissipationTheorem m kB T gamma sigma) :
+    (_hGamma : gamma > 0)
+    (_FDT : fluctuationDissipationTheorem m kB T gamma sigma) : Prop :=
     (sigma ^ 2) / (4 * gamma * m) = targetKinetic
+
+/-- First-principles discharge: FDT implies the canonical equipartition target
+`(k_B T)/2` for a single kinetic degree of freedom. -/
+theorem boltzmann_stationarity_from_fdt
+    {m kB T gamma sigma : ℝ}
+    (hm : m > 0)
+    (hT : T > 0)
+    (hGamma : gamma > 0)
+    (hFDT : fluctuationDissipationTheorem m kB T gamma sigma) :
+    boltzmann_stationarity
+      (m := m) (kB := kB) (T := T) (gamma := gamma) (sigma := sigma)
+      (targetKinetic := (kB * T) / 2)
+      hm hT hGamma hFDT := by
+  unfold boltzmann_stationarity
+  rw [hFDT]
+  have hm0 : m ≠ 0 := ne_of_gt hm
+  have hγ0 : gamma ≠ 0 := ne_of_gt hGamma
+  field_simp [hm0, hγ0]
+  ring
 
 end Thermodynamics
 end Computation

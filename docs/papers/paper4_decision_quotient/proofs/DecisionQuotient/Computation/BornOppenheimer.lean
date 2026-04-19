@@ -32,11 +32,23 @@ structure FastHamiltonian (n : ℕ) where
   the nuclear dynamics evolve classically upon a potential energy surface 
   exactly equal to the instantaneous electronic ground state energy.
   
-  This is an empirical physics axiom that cannot be computationally derived 
-  from first principles without formalizing the many-body Schrödinger equation.
+  This is exposed as an empirical assumption interface (`Prop`), since deriving
+  it internally would require a full formalization of the many-body
+  Schrödinger equation.
 -/
-axiom born_oppenheimer (n : ℕ) (H_electronic : FastHamiltonian n) :
+def born_oppenheimer (n : ℕ) (H_electronic : FastHamiltonian n) : Prop :=
   ∃ U : DiffFunctionN n, ∀ q, U.fn q = H_electronic.groundStateEnergy q
+
+/-- Constructive discharge rule: differentiability of the electronic ground-state
+energy surface is sufficient to instantiate the Born-Oppenheimer interface. -/
+theorem born_oppenheimer_of_differentiable_ground_state
+    (n : ℕ)
+    (H_electronic : FastHamiltonian n)
+    (hDiff : Differentiable ℝ H_electronic.groundStateEnergy) :
+    born_oppenheimer n H_electronic := by
+  refine ⟨{ fn := H_electronic.groundStateEnergy, differentiable := hDiff }, ?_⟩
+  intro q
+  rfl
 
 end QuantumOrigin
 end Computation

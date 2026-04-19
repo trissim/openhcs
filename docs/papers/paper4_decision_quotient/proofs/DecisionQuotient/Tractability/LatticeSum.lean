@@ -30,12 +30,17 @@ noncomputable def latticeTailSum (s : ℝ) (R : ℝ) : ℝ :=
     if R < norm then 1 / (norm ^ s) else 0
 
 /--
-  Compatibility axiom carried over from `srank-implementation`.
-  The current branch proves the concrete Lennard-Jones tail bounds below,
-  but the source branch exposes this abstract convergence premise directly.
+  Compatibility assumption interface carried over from `srank-implementation`.
+  The current branch proves concrete Lennard-Jones tail bounds below; this
+  definition packages the abstract convergence premise as a `Prop` witness.
 -/
-axiom lattice_sum_converges (s : ℝ) (hs : 3 < s) :
+def lattice_sum_converges (s : ℝ) (_hs : 3 < s) : Prop :=
     ∃ (M : ℝ), ∀ (R : ℝ), 0 < R → latticeTailSum s R ≤ M / R^(s - 3)
+
+/-- Large-radius variant used for concrete Lennard-Jones instantiations in this
+artifact. -/
+def lattice_sum_converges_large_radius (s : ℝ) (_hs : 3 < s) : Prop :=
+    ∃ (M : ℝ), ∀ (R : ℝ), 1 ≤ R → latticeTailSum s R ≤ M / R^(s - 3)
 
 /-!
   Dyadic shell decomposition for the integer lattice in 3D. We restrict to
@@ -704,6 +709,26 @@ theorem lj12_tail_bound (R : ℝ) (hR : 0 < R) :
   have hEq : latticeTailSum 12 R * R ^ (9 : ℝ) / R ^ (9 : ℝ) = latticeTailSum 12 R := by
     field_simp [hpow]
   rw [hEq]
+
+/-- Concrete large-radius convergence witness for the Lennard-Jones 6-power
+tail. -/
+theorem lattice_sum_converges_large_radius_lj6 :
+    lattice_sum_converges_large_radius 6 (by norm_num) := by
+  refine ⟨512 * (1 / (1 - (1 / 8))), ?_⟩
+  intro R hR
+  have hBound := latticeTailSum6_le_M_div_R3 R hR
+  have hsix : (6 : ℝ) - 3 = 3 := by norm_num
+  simpa [lattice_sum_converges_large_radius, hsix] using hBound
+
+/-- Concrete large-radius convergence witness for the Lennard-Jones 12-power
+tail. -/
+theorem lattice_sum_converges_large_radius_lj12 :
+    lattice_sum_converges_large_radius 12 (by norm_num) := by
+  refine ⟨512 * (1 / (1 - (1 / 512))), ?_⟩
+  intro R hR
+  have hBound := latticeTailSum12_le_M_div_R9 R hR
+  have htwelve : (12 : ℝ) - 3 = 9 := by norm_num
+  simpa [lattice_sum_converges_large_radius, htwelve] using hBound
 
 end LatticeSum
 end Tractability

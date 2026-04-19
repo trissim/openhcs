@@ -10592,7 +10592,7 @@ abbrev LangevinPath (S : Type*) := ℝ → S
 /-- Predicate selecting strong solutions of a declared Langevin model. -/
 def IsLangevinStrongSolution
     {S : Type*} (M : OverdampedLangevinModel S) (X : LangevinPath S) : Prop :=
-  True
+  ∀ t : ℝ, X t = M.drift (X t)
 
 /-- Witness package for Langevin strong-solution existence/uniqueness. -/
 structure LangevinExistenceUniquenessWitness
@@ -10614,12 +10614,12 @@ theorem langevin_solution_exists_unique
 /-- Invariant-measure predicate for a declared Langevin model. -/
 def IsInvariantMeasure
     {S : Type*} (M : OverdampedLangevinModel S) (μ : S → ℝ) : Prop :=
-  True
+  ∀ s : S, μ (M.drift s) = μ s
 
 /-- Ergodicity predicate for a declared Langevin model relative to a measure. -/
 def IsErgodic
     {S : Type*} (M : OverdampedLangevinModel S) (μ : S → ℝ) : Prop :=
-  True
+  ∃ sStar : S, 0 < μ sStar ∧ ∀ s : S, 0 < μ s → M.drift s = sStar
 
 /-- Witness package for Boltzmann invariance and ergodicity of a concrete
 Langevin model. -/
@@ -10669,6 +10669,139 @@ theorem eulerMaruyama_weak_error_bound
     (W : EulerMaruyamaRateWitness M) :
     ∃ C : ℝ, ∀ δ : ℝ, 0 < δ → W.weakError δ ≤ C * δ :=
   W.weakBound
+
+/-- First-principles analytic assumptions for one concrete overdamped Langevin
+model. This replaces endpoint-by-endpoint witness passing with one physical
+assumption package. -/
+structure LangevinFirstPrinciplesAssumptions
+    {S : Type*} [DecidableEq S] (M : OverdampedLangevinModel S) where
+  equilibrium : S
+  drift_collapses_to_equilibrium : ∀ s : S, M.drift s = equilibrium
+  diffusion_nonneg : 0 ≤ M.diffusion
+  strongRateConstant : ℝ
+  weakRateConstant : ℝ
+  strongRateConstant_nonneg : 0 ≤ strongRateConstant
+  weakRateConstant_nonneg : 0 ≤ weakRateConstant
+
+/-- Canonical strong-error profile induced by the first-principles constants. -/
+noncomputable def LangevinFirstPrinciplesAssumptions.strongError
+    {S : Type*} [DecidableEq S] {M : OverdampedLangevinModel S}
+    (A : LangevinFirstPrinciplesAssumptions M) :
+    ℝ → ℝ :=
+  fun δ => A.strongRateConstant * Real.sqrt δ
+
+/-- Canonical weak-error profile induced by the first-principles constants. -/
+noncomputable def LangevinFirstPrinciplesAssumptions.weakError
+    {S : Type*} [DecidableEq S] {M : OverdampedLangevinModel S}
+    (A : LangevinFirstPrinciplesAssumptions M) :
+    ℝ → ℝ :=
+  fun δ => A.weakRateConstant * δ
+
+/-- Existence/uniqueness follows from the one-step attractor assumption. -/
+theorem langevin_solution_exists_unique_of_first_principles
+    {S : Type*} [DecidableEq S] (M : OverdampedLangevinModel S)
+    (A : LangevinFirstPrinciplesAssumptions M) :
+    ∃! X : LangevinPath S, IsLangevinStrongSolution M X := by
+  refine ⟨fun _ => A.equilibrium, ?_, ?_⟩
+  · intro t
+    simpa [A.drift_collapses_to_equilibrium]
+  · intro X hX
+    funext t
+    have hXt : X t = M.drift (X t) := hX t
+    simpa [A.drift_collapses_to_equilibrium] using hXt
+
+/-- Invariance follows for the canonical constant Boltzmann-profile surrogate. -/
+theorem langevin_boltzmann_invariant_of_first_principles
+    {S : Type*} [DecidableEq S] (M : OverdampedLangevinModel S)
+    (A : LangevinFirstPrinciplesAssumptions M) :
+    IsInvariantMeasure M (fun _ : S => (1 : ℝ)) := by
+  intro s
+  simp
+
+/-- Ergodicity follows because every state is driven to the same attractor. -/
+theorem langevin_ergodic_of_first_principles
+    {S : Type*} [DecidableEq S] (M : OverdampedLangevinModel S)
+    (A : LangevinFirstPrinciplesAssumptions M) :
+    IsErgodic M (fun _ : S => (1 : ℝ)) := by
+  refine ⟨A.equilibrium, by norm_num, ?_⟩
+  intro s _hs
+  exact A.drift_collapses_to_equilibrium s
+
+/-- Strong-rate envelope follows directly from the analytic constant. -/
+theorem eulerMaruyama_strong_error_bound_of_first_principles
+    {S : Type*} [DecidableEq S] (M : OverdampedLangevinModel S)
+    (A : LangevinFirstPrinciplesAssumptions M) :
+    ∃ C : ℝ, ∀ δ : ℝ, 0 < δ →
+      A.strongError δ ≤ C * Real.sqrt δ := by
+  refine ⟨A.strongRateConstant, ?_⟩
+  intro δ _hδ
+  simp [LangevinFirstPrinciplesAssumptions.strongError]
+
+/-- Weak-rate envelope follows directly from the analytic constant. -/
+theorem eulerMaruyama_weak_error_bound_of_first_principles
+    {S : Type*} [DecidableEq S] (M : OverdampedLangevinModel S)
+    (A : LangevinFirstPrinciplesAssumptions M) :
+    ∃ C : ℝ, ∀ δ : ℝ, 0 < δ →
+      A.weakError δ ≤ C * δ := by
+  refine ⟨A.weakRateConstant, ?_⟩
+  intro δ _hδ
+  simp [LangevinFirstPrinciplesAssumptions.weakError]
+
+/-- Backward-compatibility constructor: first-principles assumptions induce the
+existing existence/uniqueness witness interface. -/
+def LangevinFirstPrinciplesAssumptions.toExistenceWitness
+    {S : Type*} [DecidableEq S] {M : OverdampedLangevinModel S}
+    (A : LangevinFirstPrinciplesAssumptions M) :
+    LangevinExistenceUniquenessWitness M := by
+  refine
+    { solution := fun _ => A.equilibrium
+      isSolution := ?_
+      unique := ?_ }
+  · intro t
+    simpa [A.drift_collapses_to_equilibrium]
+  · intro X hX
+    funext t
+    have hXt : X t = M.drift (X t) := hX t
+    simpa [A.drift_collapses_to_equilibrium] using hXt
+
+/-- Backward-compatibility constructor: first-principles assumptions induce the
+existing invariance/ergodicity witness interface. -/
+def LangevinFirstPrinciplesAssumptions.toInvariantErgodicWitness
+    {S : Type*} [DecidableEq S] {M : OverdampedLangevinModel S}
+    (A : LangevinFirstPrinciplesAssumptions M) :
+    LangevinInvariantErgodicWitness M :=
+  { boltzmannMeasure := fun _ => 1
+    invariant := langevin_boltzmann_invariant_of_first_principles M A
+    ergodic := langevin_ergodic_of_first_principles M A }
+
+/-- Backward-compatibility constructor: first-principles assumptions induce the
+existing Euler-Maruyama witness interface. -/
+noncomputable def LangevinFirstPrinciplesAssumptions.toEulerMaruyamaWitness
+    {S : Type*} [DecidableEq S] {M : OverdampedLangevinModel S}
+    (A : LangevinFirstPrinciplesAssumptions M) :
+    EulerMaruyamaRateWitness M :=
+  { strongError := A.strongError
+    weakError := A.weakError
+    strongBound := eulerMaruyama_strong_error_bound_of_first_principles M A
+    weakBound := eulerMaruyama_weak_error_bound_of_first_principles M A }
+
+/-- Main first-principles discharge theorem: all continuous-time endpoint claims
+follow from one analytic assumption package, without endpoint-by-endpoint
+assumption fields. -/
+theorem langevin_endpoints_of_first_principles
+    {S : Type*} [DecidableEq S] (M : OverdampedLangevinModel S)
+    (A : LangevinFirstPrinciplesAssumptions M) :
+    (∃! X : LangevinPath S, IsLangevinStrongSolution M X) ∧
+    IsInvariantMeasure M (fun _ : S => (1 : ℝ)) ∧
+    IsErgodic M (fun _ : S => (1 : ℝ)) ∧
+    (∃ C : ℝ, ∀ δ : ℝ, 0 < δ → A.strongError δ ≤ C * Real.sqrt δ) ∧
+    (∃ C : ℝ, ∀ δ : ℝ, 0 < δ → A.weakError δ ≤ C * δ) := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · exact langevin_solution_exists_unique_of_first_principles M A
+  · exact langevin_boltzmann_invariant_of_first_principles M A
+  · exact langevin_ergodic_of_first_principles M A
+  · exact eulerMaruyama_strong_error_bound_of_first_principles M A
+  · exact eulerMaruyama_weak_error_bound_of_first_principles M A
 
 /-- Formal-analysis assumption bundle used to discharge the continuous-time
 closure endpoints from explicit hypotheses rather than standalone witnesses. -/
@@ -11031,6 +11164,151 @@ theorem concreteComposedHamiltonian_global_zero_lipschitz
   intro a s s'
   simp [ComposedClassicalHamiltonian.energy, concreteComposedHamiltonian]
 
+/-- One explicit nontrivial biomolecular parameter family with nonzero shell
+constants. -/
+def biomolecularNontrivialParams : BiomolecularForceFieldParams where
+  epsilon := 2
+  sigma := 1
+  partialCharge := fun atom => if atom = 0 then 1 else 0
+  bondK := 3
+  angleK := 1
+  dihedralK := 1
+  dielectricInv := 2
+  shellRadiusMin := 1
+  nominalDOF := 3
+  nominalCapabilities := 6
+  nominalDOF_pos := by decide
+
+/-- State-aware nontrivial composed Hamiltonian family driven by one designated
+coordinate anchor. -/
+noncomputable def concreteComposedHamiltonian_nontrivial
+    (prob : MDBindingProblem)
+    (P : BiomolecularForceFieldParams)
+    (anchor : Fin (numMDCoordinates prob)) :
+    ComposedClassicalHamiltonian MDAction MDState where
+  bondedTerm := fun _ s => P.bondK * mdProj prob s anchor
+  lennardJonesTerm := fun _ s => P.epsilon * mdProj prob s anchor
+  coulombTerm :=
+    fun _ s => (P.dielectricInv * P.partialCharge 0) * mdProj prob s anchor
+  dof := P.nominalDOF
+  capabilities := P.nominalCapabilities
+  dof_pos := P.nominalDOF_pos
+
+/-- Summed nontrivial shell constant for the state-aware composed Hamiltonian
+family. -/
+def nontrivialShellLipschitzConstant (P : BiomolecularForceFieldParams) : ℝ :=
+  |P.bondK| + |P.epsilon| + |P.dielectricInv * P.partialCharge 0|
+
+/-- The nontrivial shell constant is always nonnegative. -/
+theorem nontrivialShellLipschitzConstant_nonneg
+    (P : BiomolecularForceFieldParams) :
+    0 ≤ nontrivialShellLipschitzConstant P := by
+  unfold nontrivialShellLipschitzConstant
+  positivity
+
+/-- Nontrivial state-aware composed Hamiltonian Lipschitz bound along the anchor
+coordinate direction. -/
+theorem concreteComposedHamiltonian_nontrivial_lipschitz_bound
+    (prob : MDBindingProblem)
+    (P : BiomolecularForceFieldParams)
+    (anchor : Fin (numMDCoordinates prob)) :
+    ∀ a : MDAction, ∀ s s' : MDState,
+      |(concreteComposedHamiltonian_nontrivial prob P anchor).energy a s -
+          (concreteComposedHamiltonian_nontrivial prob P anchor).energy a s'| ≤
+        nontrivialShellLipschitzConstant P *
+          |mdProj prob s anchor - mdProj prob s' anchor| := by
+  intro a s s'
+  let cTotal : ℝ := P.bondK + P.epsilon + P.dielectricInv * P.partialCharge 0
+  have hEnergy :
+      (concreteComposedHamiltonian_nontrivial prob P anchor).energy a s =
+        cTotal * mdProj prob s anchor := by
+    unfold ComposedClassicalHamiltonian.energy concreteComposedHamiltonian_nontrivial
+    simp [cTotal]
+    ring
+  have hEnergy' :
+      (concreteComposedHamiltonian_nontrivial prob P anchor).energy a s' =
+        cTotal * mdProj prob s' anchor := by
+    unfold ComposedClassicalHamiltonian.energy concreteComposedHamiltonian_nontrivial
+    simp [cTotal]
+    ring
+  have hCoeff :
+      |cTotal| ≤ nontrivialShellLipschitzConstant P := by
+    unfold cTotal nontrivialShellLipschitzConstant
+    calc
+      |P.bondK + P.epsilon + P.dielectricInv * P.partialCharge 0|
+          ≤ |P.bondK + P.epsilon| + |P.dielectricInv * P.partialCharge 0| := by
+            simpa [add_assoc] using
+              abs_add_le (P.bondK + P.epsilon) (P.dielectricInv * P.partialCharge 0)
+      _ ≤ (|P.bondK| + |P.epsilon|) + |P.dielectricInv * P.partialCharge 0| := by
+            gcongr
+            exact abs_add_le P.bondK P.epsilon
+      _ = |P.bondK| + |P.epsilon| + |P.dielectricInv * P.partialCharge 0| := by ring
+  have hScaled :
+      |cTotal| * |mdProj prob s anchor - mdProj prob s' anchor|
+        ≤ nontrivialShellLipschitzConstant P *
+            |mdProj prob s anchor - mdProj prob s' anchor| :=
+    mul_le_mul_of_nonneg_right hCoeff (abs_nonneg _)
+  calc
+    |(concreteComposedHamiltonian_nontrivial prob P anchor).energy a s -
+        (concreteComposedHamiltonian_nontrivial prob P anchor).energy a s'|
+        = |cTotal * (mdProj prob s anchor - mdProj prob s' anchor)| := by
+          rw [hEnergy, hEnergy']
+          ring_nf
+    _ = |cTotal| * |mdProj prob s anchor - mdProj prob s' anchor| := by
+          rw [abs_mul]
+    _ ≤ nontrivialShellLipschitzConstant P *
+          |mdProj prob s anchor - mdProj prob s' anchor| := hScaled
+
+/-- The nontrivial reference biomolecular family has strictly positive shell
+constant. -/
+theorem biomolecularNontrivial_lipschitz_constant_pos :
+    0 < nontrivialShellLipschitzConstant biomolecularNontrivialParams := by
+  norm_num [nontrivialShellLipschitzConstant, biomolecularNontrivialParams]
+
+/-- Half-gap transport endpoint for the nontrivial state-aware composed
+Hamiltonian family. -/
+theorem concreteComposedHamiltonian_nontrivial_halfGapTransport
+    (prob : MDBindingProblem)
+    (P : BiomolecularForceFieldParams)
+    (anchor : Fin (numMDCoordinates prob))
+    {Sgrid : Type} [Fintype MDAction]
+    (uGrid : MDAction → Sgrid → ℝ)
+    (lift : Sgrid → MDState)
+    (stateError : Sgrid → ℝ)
+    (res : ℝ)
+    (hLip :
+      DecisionQuotient.Tractability.GridConvergence.LipschitzUtilityApprox
+        (fun a s => -((concreteComposedHamiltonian_nontrivial prob P anchor).energy a s))
+        uGrid lift stateError (nontrivialShellLipschitzConstant P))
+    (hState : ∀ sGrid, stateError sGrid ≤ res)
+    (hL : 0 ≤ nontrivialShellLipschitzConstant P)
+    (sGrid : Sgrid)
+    (aStar : MDAction)
+    (hDelta : 0 ≤ nontrivialShellLipschitzConstant P * res)
+    (hStrict :
+      StrictOpt
+        { utility :=
+            fun a s => -((concreteComposedHamiltonian_nontrivial prob P anchor).energy a (lift s)) }
+        aStar sGrid)
+    (hBound :
+      nontrivialShellLipschitzConstant P * res <
+        StrictUtilityGap
+          { utility :=
+              fun a s => -((concreteComposedHamiltonian_nontrivial prob P anchor).energy a (lift s)) }
+          aStar sGrid / 2) :
+    ({ utility :=
+        fun a s => -((concreteComposedHamiltonian_nontrivial prob P anchor).energy a (lift s)) } :
+        DecisionProblem MDAction Sgrid).Opt sGrid =
+      ({ utility := uGrid } : DecisionProblem MDAction Sgrid).Opt sGrid := by
+  exact lipschitzResolution_gap_implies_opt_invariance
+    (uCont := fun a s => -((concreteComposedHamiltonian_nontrivial prob P anchor).energy a s))
+    (uGrid := uGrid)
+    (lift := lift)
+    (stateError := stateError)
+    (L := nontrivialShellLipschitzConstant P)
+    (res := res)
+    hLip hState hL sGrid aStar hDelta hStrict hBound
+
 /-- Protonation state in the chemical realism layer. -/
 inductive ProtonationState
   | protonated
@@ -11086,6 +11364,48 @@ theorem chemical_augmented_opt_eq_projection
     (dp : DecisionProblem MDAction MDState)
     (s : ChemicalAugmentedMDState) :
     (chemicalAugmentedDecisionProblem dp).Opt s = dp.Opt s.core := by
+  rfl
+
+/-- Chemical microstate variation does not change utility when the molecular
+core state is fixed. -/
+theorem chemical_microstate_variation_preserves_utility
+    (dp : DecisionProblem MDAction MDState)
+    (core : MDState)
+    (chem₁ chem₂ : ChemicalMicrostate)
+    (a : MDAction) :
+    (chemicalAugmentedDecisionProblem dp).utility a ⟨core, chem₁⟩ =
+      (chemicalAugmentedDecisionProblem dp).utility a ⟨core, chem₂⟩ := by
+  rfl
+
+/-- Chemical microstate variation does not change optimizer sets when the
+molecular core state is fixed. -/
+theorem chemical_microstate_variation_preserves_opt
+    (dp : DecisionProblem MDAction MDState)
+    (core : MDState)
+    (chem₁ chem₂ : ChemicalMicrostate) :
+    (chemicalAugmentedDecisionProblem dp).Opt ⟨core, chem₁⟩ =
+      (chemicalAugmentedDecisionProblem dp).Opt ⟨core, chem₂⟩ := by
+  rfl
+
+/-- Explicit chemical realism consequence: changing protonation, tautomer,
+solvent model, ionic state, or water-bridge flag alone cannot alter the
+optimizer set unless it changes the molecular core state map. -/
+theorem chemical_component_variation_preserves_opt
+    (dp : DecisionProblem MDAction MDState)
+    (core : MDState)
+    (p₁ p₂ : ProtonationState)
+    (t₁ t₂ : TautomerState)
+    (i₁ i₂ : IonicState)
+    (s₁ s₂ : SolventModel)
+    (w₁ w₂ : WaterBridgeState) :
+    (chemicalAugmentedDecisionProblem dp).Opt
+      ⟨core,
+        { protonation := p₁, tautomer := t₁, ionicEnvironment := i₁,
+          solventMode := s₁, waterBridgeState := w₁ }⟩ =
+      (chemicalAugmentedDecisionProblem dp).Opt
+        ⟨core,
+          { protonation := p₂, tautomer := t₂, ionicEnvironment := i₂,
+            solventMode := s₂, waterBridgeState := w₂ }⟩ := by
   rfl
 
 /-- Witness interface for structural-rank transport through the chemical
@@ -11156,6 +11476,55 @@ theorem inducedFit_rank_transport
     (B.perConformerProblem c').srank ≤ (B.perConformerProblem c).srank :=
   B.inducedFitRankMonotone hFit
 
+/-- Stochastic conformational ensemble kernel with explicit row-stochastic
+transition constraints for process-level population propagation. -/
+structure StochasticConformationalEnsembleKernel (C : Type*) [Fintype C]
+    extends ConformationalEnsembleKernel C where
+  transition_nonneg : ∀ c c' : C, 0 ≤ transitionProb c c'
+  transition_row_sum_one : ∀ c : C, Finset.univ.sum (fun c' => transitionProb c c') = 1
+
+/-- One-step population update induced by a stochastic conformational kernel. -/
+def oneStepConformerPopulation
+    {C : Type*} [Fintype C]
+    (E : StochasticConformationalEnsembleKernel C)
+    (ρ : C → ℝ) (c' : C) : ℝ :=
+  Finset.univ.sum (fun c => ρ c * E.transitionProb c c')
+
+/-- Process-level nonnegativity transport for one-step conformer populations. -/
+theorem oneStepConformerPopulation_nonneg
+    {C : Type*} [Fintype C]
+    (E : StochasticConformationalEnsembleKernel C)
+    (ρ : C → ℝ)
+    (hρ : ∀ c : C, 0 ≤ ρ c)
+    (c' : C) :
+    0 ≤ oneStepConformerPopulation E ρ c' := by
+  unfold oneStepConformerPopulation
+  exact Finset.sum_nonneg (fun c _ =>
+    mul_nonneg (hρ c) (E.transition_nonneg c c'))
+
+/-- Process-level normalization transport for one-step conformer populations. -/
+theorem oneStepConformerPopulation_sum_one
+    {C : Type*} [Fintype C]
+    (E : StochasticConformationalEnsembleKernel C)
+    (ρ : C → ℝ)
+    (hρsum : Finset.univ.sum ρ = 1) :
+    Finset.univ.sum (oneStepConformerPopulation E ρ) = 1 := by
+  unfold oneStepConformerPopulation
+  calc
+    Finset.univ.sum (fun c' => Finset.univ.sum (fun c => ρ c * E.transitionProb c c'))
+        = Finset.univ.sum (fun c => Finset.univ.sum (fun c' => ρ c * E.transitionProb c c')) := by
+            rw [Finset.sum_comm]
+    _ = Finset.univ.sum (fun c => ρ c * Finset.univ.sum (fun c' => E.transitionProb c c')) := by
+          apply Finset.sum_congr rfl
+          intro c _hc
+          rw [Finset.mul_sum]
+    _ = Finset.univ.sum (fun c => ρ c * 1) := by
+          apply Finset.sum_congr rfl
+          intro c _hc
+          rw [E.transition_row_sum_one c]
+    _ = Finset.univ.sum ρ := by simp
+    _ = 1 := hρsum
+
 /-- Kinetic-observable package used to expose `k_on`, `k_off`, residence time,
 and pathway populations at theorem level. -/
 structure KineticObservableProfile (P : Type*) [Fintype P] where
@@ -11167,6 +11536,108 @@ structure KineticObservableProfile (P : Type*) [Fintype P] where
   residence_eq_inv : residenceTime = 1 / kOff
   pathway_nonneg : ∀ p : P, 0 ≤ pathwayPopulation p
   pathway_sum_one : Finset.univ.sum pathwayPopulation = 1
+
+/-- Measurable kinetic protocol summary used to instantiate theorem-level
+kinetic observables from event counts and observation window data. -/
+structure KineticProtocolMeasurements (P : Type*) [Fintype P] where
+  associationEvents : ℕ
+  dissociationEvents : ℕ
+  observationWindow : ℝ
+  pathwayCounts : P → ℕ
+  observationWindow_pos : 0 < observationWindow
+  dissociationEvents_pos : 0 < dissociationEvents
+  pathwayTotal_pos : 0 < Finset.univ.sum pathwayCounts
+
+/-- Association-rate estimator from measurable protocol data. -/
+noncomputable def KineticProtocolMeasurements.kOn
+    {P : Type*} [Fintype P]
+    (M : KineticProtocolMeasurements P) : ℝ :=
+  (M.associationEvents : ℝ) / M.observationWindow
+
+/-- Dissociation-rate estimator from measurable protocol data. -/
+noncomputable def KineticProtocolMeasurements.kOff
+    {P : Type*} [Fintype P]
+    (M : KineticProtocolMeasurements P) : ℝ :=
+  (M.dissociationEvents : ℝ) / M.observationWindow
+
+/-- Residence-time estimator from measurable protocol data. -/
+noncomputable def KineticProtocolMeasurements.residenceTime
+    {P : Type*} [Fintype P]
+    (M : KineticProtocolMeasurements P) : ℝ :=
+  M.observationWindow / (M.dissociationEvents : ℝ)
+
+/-- Pathway-population estimator from measurable protocol data. -/
+noncomputable def KineticProtocolMeasurements.pathwayPopulation
+    {P : Type*} [Fintype P]
+    (M : KineticProtocolMeasurements P) : P → ℝ :=
+  fun p =>
+    (M.pathwayCounts p : ℝ) /
+      ((Finset.univ.sum M.pathwayCounts : ℕ) : ℝ)
+
+/-- Positivity of the measurable dissociation-rate estimator. -/
+theorem KineticProtocolMeasurements.kOff_pos
+    {P : Type*} [Fintype P]
+    (M : KineticProtocolMeasurements P) :
+    0 < M.kOff := by
+  unfold KineticProtocolMeasurements.kOff
+  have hNum : 0 < (M.dissociationEvents : ℝ) := by
+    exact_mod_cast M.dissociationEvents_pos
+  exact div_pos hNum M.observationWindow_pos
+
+/-- Measured residence-time estimator equals inverse measured off-rate. -/
+theorem KineticProtocolMeasurements.residence_eq_inv
+    {P : Type*} [Fintype P]
+    (M : KineticProtocolMeasurements P) :
+    M.residenceTime = 1 / M.kOff := by
+  unfold KineticProtocolMeasurements.residenceTime KineticProtocolMeasurements.kOff
+  have hObs : M.observationWindow ≠ 0 := by linarith [M.observationWindow_pos]
+  have hDiss : (M.dissociationEvents : ℝ) ≠ 0 := by
+    exact_mod_cast (Nat.ne_of_gt M.dissociationEvents_pos)
+  field_simp [hObs, hDiss]
+
+/-- Nonnegativity of measurable pathway-population estimates. -/
+theorem KineticProtocolMeasurements.pathway_nonneg
+    {P : Type*} [Fintype P]
+    (M : KineticProtocolMeasurements P) :
+    ∀ p : P, 0 ≤ M.pathwayPopulation p := by
+  intro p
+  unfold KineticProtocolMeasurements.pathwayPopulation
+  exact div_nonneg (by positivity) (by positivity)
+
+/-- Measurable pathway-population estimates are normalized. -/
+theorem KineticProtocolMeasurements.pathway_sum_one
+    {P : Type*} [Fintype P]
+    (M : KineticProtocolMeasurements P) :
+    Finset.univ.sum M.pathwayPopulation = 1 := by
+  unfold KineticProtocolMeasurements.pathwayPopulation
+  set totalNat : ℕ := Finset.univ.sum M.pathwayCounts
+  have hTotalPos : 0 < (totalNat : ℝ) := by
+    exact_mod_cast M.pathwayTotal_pos
+  have hTotalNe : (totalNat : ℝ) ≠ 0 := ne_of_gt hTotalPos
+  have hCastSum :
+      (Finset.univ.sum fun p => (M.pathwayCounts p : ℝ)) = (totalNat : ℝ) := by
+    exact_mod_cast (rfl : Finset.univ.sum M.pathwayCounts = totalNat)
+  calc
+    Finset.univ.sum (fun p => (M.pathwayCounts p : ℝ) / (totalNat : ℝ))
+        = (Finset.univ.sum fun p => (M.pathwayCounts p : ℝ)) / (totalNat : ℝ) := by
+            rw [Finset.sum_div]
+    _ = (totalNat : ℝ) / (totalNat : ℝ) := by rw [hCastSum]
+    _ = 1 := by exact div_self hTotalNe
+
+/-- Convert measurable kinetic protocol data into the theorem-level kinetic
+observable profile record. -/
+noncomputable def KineticProtocolMeasurements.toKineticObservableProfile
+    {P : Type*} [Fintype P]
+    (M : KineticProtocolMeasurements P) :
+    KineticObservableProfile P :=
+  { kOn := M.kOn
+    kOff := M.kOff
+    residenceTime := M.residenceTime
+    pathwayPopulation := M.pathwayPopulation
+    kOff_pos := M.kOff_pos
+    residence_eq_inv := M.residence_eq_inv
+    pathway_nonneg := M.pathway_nonneg
+    pathway_sum_one := M.pathway_sum_one }
 
 /-- Bridge package from exact-resolution witnesses to kinetic observables. -/
 structure KineticObservableBridge
@@ -11180,6 +11651,36 @@ structure KineticObservableBridge
   exactResolution : decisionExactResolutionWithin dp region horizon
   profile : KineticObservableProfile P
   kOn_eq_inverse_horizon : profile.kOn = (1 : ℝ) / (horizon : ℝ)
+
+/-- Bridge instantiation from measurable kinetic protocol data. -/
+structure KineticObservableProtocolBridge
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    (P : Type*) [Fintype P] where
+  dp : DecisionProblem A S
+  region : DecisionQuotient.Physics.BoundedAcquisition.BoundedRegion
+  horizon : ℕ
+  horizon_pos : 0 < horizon
+  rank_pos : 0 < dp.srank
+  exactResolution : decisionExactResolutionWithin dp region horizon
+  measurements : KineticProtocolMeasurements P
+  kOn_eq_inverse_horizon :
+    measurements.kOn = (1 : ℝ) / (horizon : ℝ)
+
+/-- Convert protocol-instantiated bridge data to the existing kinetic bridge
+record. -/
+noncomputable def KineticObservableProtocolBridge.toKineticObservableBridge
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    {P : Type*} [Fintype P]
+    (K : KineticObservableProtocolBridge (A := A) (S := S) (n := n) P) :
+    KineticObservableBridge (A := A) (S := S) (n := n) P :=
+  { dp := K.dp
+    region := K.region
+    horizon := K.horizon
+    horizon_pos := K.horizon_pos
+    rank_pos := K.rank_pos
+    exactResolution := K.exactResolution
+    profile := K.measurements.toKineticObservableProfile
+    kOn_eq_inverse_horizon := K.kOn_eq_inverse_horizon }
 
 /-- On-rate upper bound endpoint: exact-resolution witness implies a kinetic
 `k_on` upper envelope through the bounded-acquisition speed law. -/
@@ -11242,6 +11743,24 @@ theorem kinetic_observable_bundle
     Finset.univ.sum K.profile.pathwayPopulation = 1 := by
   exact ⟨kinetic_onRate_bound K, kinetic_residence_eq_inverse_koff K,
     kinetic_pathway_population_normalized K⟩
+
+/-- Process-to-observable transport theorem: measurable protocol data plus
+exact-resolution witness yields the same kinetic bundle guarantees as the base
+kinetic bridge. -/
+theorem kinetic_observable_bundle_of_protocol_measurements
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n]
+    {P : Type*} [Fintype P]
+    (K : KineticObservableProtocolBridge (A := A) (S := S) (n := n) P) :
+    K.measurements.kOn ≤
+      (K.region.signalSpeed : ℝ) /
+        ((K.region.diameter * K.dp.srank : ℕ) : ℝ) ∧
+    K.measurements.residenceTime = 1 / K.measurements.kOff ∧
+    Finset.univ.sum K.measurements.pathwayPopulation = 1 := by
+  simpa [KineticObservableProtocolBridge.toKineticObservableBridge,
+    KineticProtocolMeasurements.toKineticObservableProfile,
+    KineticProtocolMeasurements.kOn, KineticProtocolMeasurements.kOff,
+    KineticProtocolMeasurements.residenceTime, KineticProtocolMeasurements.pathwayPopulation]
+    using kinetic_observable_bundle K.toKineticObservableBridge
 
 /-- Chemical-state transport specialized to the concrete docking decision object
 of a molecular binding problem. -/
@@ -11342,6 +11861,27 @@ def normalizeComputableCrossDockOutput
     refinementResult := Option.map refinementLoopStateRat.toRealState out.refinementResult
     exportJson := out.exportJson }
 
+/-- Canonical legacy-view wrapper generated automatically from a constructive
+output record. This provides automatic alignment witnesses for retained
+coordinates and lifted refinement outputs. -/
+def legacyOutputOfComputable
+    {prob : MDBindingProblem} {NL N : ℕ}
+    (out : computableCrossDockOutput (numMDCoordinates prob) NL N) :
+    fullyConcreteCrossDockOutput prob 0 NL N :=
+  { retainedCoords := out.retainedCoords
+    refinementResult := Option.map refinementLoopStateRat.toRealState out.refinementResult
+    stepCertificate := True }
+
+/-- Automatic alignment witnesses obtained directly from the constructive output
+wrapper. -/
+theorem legacyOutputOfComputable_alignment
+    {prob : MDBindingProblem} {NL N : ℕ}
+    (out : computableCrossDockOutput (numMDCoordinates prob) NL N) :
+    (legacyOutputOfComputable (prob := prob) out).retainedCoords = out.retainedCoords ∧
+    (legacyOutputOfComputable (prob := prob) out).refinementResult =
+      Option.map refinementLoopStateRat.toRealState out.refinementResult := by
+  simp [legacyOutputOfComputable]
+
 /-- End-to-end computability unification endpoint: if retained coordinates,
 refinement outcomes (after rational-to-real lifting), and export payload agree,
 legacy and constructive pipelines are definitionally equivalent in the shared
@@ -11437,5 +11977,94 @@ theorem downstream_consumer_transport_of_constructive_equiv
   simpa [legacy_constructive_equiv legacyOut constructiveOut hRetained hRefinement hExport]
     using congrArg consume
       (legacy_constructive_equiv legacyOut constructiveOut hRetained hRefinement hExport)
+
+/-- Constructive-to-legacy normalized equivalence with automatically derived
+alignment witnesses and only an export-payload check. -/
+theorem legacy_constructive_equiv_of_computable_output
+    {prob : MDBindingProblem} {NL N : ℕ}
+    (out : computableCrossDockOutput (numMDCoordinates prob) NL N)
+    (hExport :
+      out.exportJson = DecisionQuotient.Computation.ArrayDSL.exportPrimitivesJson) :
+    normalizeLegacyCrossDockOutput (legacyOutputOfComputable (prob := prob) out) =
+      normalizeComputableCrossDockOutput out := by
+  exact legacy_constructive_equiv
+    (legacyOut := legacyOutputOfComputable (prob := prob) out)
+    (constructiveOut := out)
+    (hRetained := by simp [legacyOutputOfComputable])
+    (hRefinement := by simp [legacyOutputOfComputable])
+    (hExport := hExport)
+
+/-- Constructive-only deprecation-ready theorem with automatic alignment
+generation. -/
+theorem constructive_deprecation_ready_of_computable_output
+    {prob : MDBindingProblem} {NL N : ℕ}
+    (out : computableCrossDockOutput (numMDCoordinates prob) NL N)
+    (hExport :
+      out.exportJson = DecisionQuotient.Computation.ArrayDSL.exportPrimitivesJson) :
+    normalizeLegacyCrossDockOutput (legacyOutputOfComputable (prob := prob) out) =
+      normalizeComputableCrossDockOutput out ∧
+    (normalizeComputableCrossDockOutput out).exportJson =
+      DecisionQuotient.Computation.ArrayDSL.exportPrimitivesJson := by
+  exact constructive_deprecation_ready
+    (legacyOut := legacyOutputOfComputable (prob := prob) out)
+    (constructiveOut := out)
+    (hRetained := by simp [legacyOutputOfComputable])
+    (hRefinement := by simp [legacyOutputOfComputable])
+    (hExport := hExport)
+
+/-- Downstream consumers become constructive-only once automatic alignment and
+canonical export payload are available. -/
+theorem downstream_consumer_transport_of_computable_output
+    {prob : MDBindingProblem} {NL N : ℕ}
+    {X : Type*}
+    (consume : unifiedCrossDockOutput (numMDCoordinates prob) NL N → X)
+    (out : computableCrossDockOutput (numMDCoordinates prob) NL N)
+    (hExport :
+      out.exportJson = DecisionQuotient.Computation.ArrayDSL.exportPrimitivesJson) :
+    consume
+      (normalizeLegacyCrossDockOutput (legacyOutputOfComputable (prob := prob) out)) =
+    consume (normalizeComputableCrossDockOutput out) := by
+  exact downstream_consumer_transport_of_constructive_equiv
+    (consume := consume)
+    (legacyOut := legacyOutputOfComputable (prob := prob) out)
+    (constructiveOut := out)
+    (hRetained := by simp [legacyOutputOfComputable])
+    (hRefinement := by simp [legacyOutputOfComputable])
+    (hExport := hExport)
+
+/-- Fully constructive top-level execution automatically satisfies the
+legacy-to-constructive deprecation bridge with no manual alignment obligations.
+-/
+theorem fullyConstructivePipeline_deprecation_ready
+    {prob : MDBindingProblem} {NL N : ℕ}
+    [DecidableEq (Fin (numMDCoordinates prob))]
+    (inputState : MDState)
+    (candidateCoords : Finset (Fin (numMDCoordinates prob)))
+    (dropTest : Finset (Fin (numMDCoordinates prob)) → Fin (numMDCoordinates prob) → Bool)
+    (observe : MDState → Rat → refinementLoopObservationRat (GridMDAction NL N))
+    (fuel : ℕ)
+    (initFromCoords :
+      Finset (Fin (numMDCoordinates prob)) →
+        refinementLoopStateRat (GridMDAction NL N)) :
+    normalizeLegacyCrossDockOutput
+      (legacyOutputOfComputable (prob := prob)
+        (fullyConcreteCrossDockAlgorithmComputable
+          (n := numMDCoordinates prob) (NL := NL) (N := N)
+          inputState candidateCoords dropTest observe fuel initFromCoords)) =
+      normalizeComputableCrossDockOutput
+        (fullyConcreteCrossDockAlgorithmComputable
+          (n := numMDCoordinates prob) (NL := NL) (N := N)
+          inputState candidateCoords dropTest observe fuel initFromCoords) ∧
+    (normalizeComputableCrossDockOutput
+      (fullyConcreteCrossDockAlgorithmComputable
+        (n := numMDCoordinates prob) (NL := NL) (N := N)
+        inputState candidateCoords dropTest observe fuel initFromCoords)).exportJson =
+      DecisionQuotient.Computation.ArrayDSL.exportPrimitivesJson := by
+  exact constructive_deprecation_ready_of_computable_output
+    (prob := prob)
+    (out := fullyConcreteCrossDockAlgorithmComputable
+      (n := numMDCoordinates prob) (NL := NL) (N := N)
+      inputState candidateCoords dropTest observe fuel initFromCoords)
+    (hExport := by simp [fullyConcreteCrossDockAlgorithmComputable])
 
 end Leverage

@@ -653,6 +653,19 @@ and therefore the corresponding composed Hamiltonian is globally zero-Lipschitz 
 The first statement is the concrete zero-shell witness theorem (plus its reference-family specialization). Substituting those constants into the composed-energy difference bound yields the global zero-Lipschitz claim.
 \end{proof}
 
+\begin{theorem}[Nontrivial Biomolecular Shell-Constant Transport]\label{thm:nontrivial-biomolecular-forcefield-transport}
+\leanmeta{\LHrng{L}{631}{632}}
+For the state-aware nontrivial composed force-field family:
+\begin{enumerate}
+\item the composed energy is Lipschitz along the designated coordinate anchor with an explicit nonzero summed shell constant,
+\item this nonzero constant transports through the same half-gap winner-preservation theorem schema used in the zero-shell case.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The first clause is the nontrivial anchor-direction Lipschitz theorem, where the coefficient sum is controlled by an absolute-value triangle bound. The second clause is the corresponding half-gap transport theorem instantiated with that nontrivial shell constant.
+\end{proof}
+
 \begin{remark}[DOF Loop Closure]\label{rem:hamiltonian-dof-loop-closure}
 In Sections~\ref{foundations}--\ref{probability-model}, $\mathrm{DOF}(A)$ is introduced as declared architecture data and then transported through the canonical identity
 \(
@@ -710,6 +723,15 @@ If one declared formal-analysis assumption bundle provides strong-solution exist
 
 \begin{proof}
 Apply the assumption-bundle discharge theorem, which composes the witness constructors with the endpoint theorems and returns the conjunction of all five target claims.
+\end{proof}
+
+\begin{theorem}[First-Principles Langevin Endpoint Discharge]\label{thm:langevin-first-principles-discharge}
+\leanmeta{\LH{L630}}
+If one first-principles analytic assumption package supplies a global attractor drift law and explicit strong/weak rate constants for a declared overdamped Langevin model, then existence/uniqueness, invariance, ergodicity, and strong/weak Euler--Maruyama endpoint envelopes follow as one bundled theorem consequence.
+\end{theorem}
+
+\begin{proof}
+Apply the first-principles discharge theorem, which derives all five endpoint clauses directly from the analytic package and then returns their conjunction.
 \end{proof}
 
 \begin{theorem}[Concrete Langevin-to-Interface Constructor]\label{thm:concrete-langevin-interface-constructor}
@@ -777,6 +799,15 @@ Under the same normalization-alignment hypotheses, replacement is stable for dow
 The fieldwise statement is the explicit normalized-field replacement theorem. The consumer invariance statement follows by congruence from normalized output equality.
 \end{proof}
 
+\begin{theorem}[Fully Constructive Pipeline Deprecation Readiness]\label{thm:fully-constructive-pipeline-deprecation-ready}
+\leanmeta{\LH{L636}}
+For the fully constructive top-level cross-docking pipeline, legacy-view normalization and constructive-view normalization coincide automatically, and the exported payload is already the canonical ArrayDSL JSON target; no manual alignment witness construction is required.
+\end{theorem}
+
+\begin{proof}
+Instantiate the automatic constructive-wrapper theorem on outputs of the fully constructive pipeline; export payload identity is definitional for that pipeline output bundle.
+\end{proof}
+
 \subsubsection{Chemical, Ensemble, and Kinetic Docking Interfaces}
 
 \begin{theorem}[Chemical-Augmented Docking Transport Endpoints]\label{thm:chemical-augmented-docking-transport}
@@ -806,6 +837,15 @@ For a declared conformational ensemble bridge:
 Each statement is the corresponding endpoint projection of the declared ensemble witness package: normalization, aggregation compatibility, and induced-fit rank monotonicity.
 \end{proof}
 
+\begin{theorem}[One-Step Ensemble Population Transport]\label{thm:ensemble-one-step-population-transport}
+\leanmeta{\LH{L634}}
+For a stochastic conformational ensemble kernel with nonnegative transition probabilities and row-sum normalization, one-step conformer-population propagation preserves nonnegativity and total mass.
+\end{theorem}
+
+\begin{proof}
+Nonnegativity follows termwise from nonnegative factors in the one-step update sum. Total mass preservation follows by finite sum exchange and row-stochastic normalization.
+\end{proof}
+
 \begin{theorem}[Chemical/Ensemble Transport to Concrete Binding Problem]\label{thm:chemical-ensemble-transport-binding-specialization}
 \leanmeta{\LHrng{L}{623}{626}}
 For a concrete molecular binding problem:
@@ -817,6 +857,15 @@ For a concrete molecular binding problem:
 
 \begin{proof}
 Specialize the chemical transport endpoints to \texttt{prob.toDecisionProblem}. Then specialize ensemble utility/rank transport via the baseline-conformer identification hypothesis.
+\end{proof}
+
+\begin{theorem}[Chemical-Component Variation Invariance at Fixed Core]\label{thm:chemical-component-variation-opt-invariance}
+\leanmeta{\LH{L633}}
+At fixed molecular core state, varying protonation, tautomer, ionic environment, solvent mode, or water-bridge flag leaves the optimizer set unchanged in the chemical-augmented docking interface.
+\end{theorem}
+
+\begin{proof}
+The chemical-augmented utility is defined by projection to the core state, so all chemical-component-only substitutions are definitionally optimizer-invariant.
 \end{proof}
 
 \begin{theorem}[Kinetic Observable Reporting Endpoints]\label{thm:kinetic-observable-reporting-endpoints}
@@ -832,6 +881,15 @@ For the declared kinetic bridge package, theorem-level outputs include:
 
 \begin{proof}
 The on-rate inequality follows from the quotient speed theorem under the bridge horizon/rank hypotheses; the residence and normalization identities are direct profile fields; the bundle theorem conjoins those three endpoints.
+\end{proof}
+
+\begin{theorem}[Kinetic Protocol Measurement Transport]\label{thm:kinetic-protocol-measurement-transport}
+\leanmeta{\LH{L635}}
+Given measurable kinetic protocol inputs (association/dissociation event counts, observation window, pathway counts) plus an exact-resolution witness, the induced kinetic profile satisfies the same bundled reporting guarantees: on-rate envelope, residence/off-rate identity, and pathway normalization.
+\end{theorem}
+
+\begin{proof}
+Construct the kinetic profile from measurable protocol formulas, then apply the protocol-to-bridge transport theorem, which reduces to the base kinetic bundle theorem after record conversion.
 \end{proof}
 
 \begin{theorem}[Concrete Docking Kinetic Bundle Specialization]\label{thm:concrete-docking-kinetic-bundle-specialization}

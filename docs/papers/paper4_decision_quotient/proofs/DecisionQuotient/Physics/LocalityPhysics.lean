@@ -59,15 +59,44 @@ No physics required. Pure math: cardinality, sets, logarithms.
     Landauer gives the minimum floor `k_B T ln 2`; actual constrained
     implementations may dissipate more because additional entropy production
     can be forced by architectural and dynamical constraints. -/
-axiom landauer_principle : ∃ ε : ℕ, ε > 0 ∧ ∀ bitOp : ℕ, bitOp > 0 → bitOp * ε > 0
+def landauer_principle : Prop :=
+  ∃ ε : ℕ, ε > 0 ∧ ∀ bitOp : ℕ, bitOp > 0 → bitOp * ε > 0
 
 /-- EP2: Energy in any region is finite (thermodynamics).
     No region contains infinite energy. -/
-axiom finite_regional_energy : ∀ _region : ℕ, ∃ E : ℕ, E > 0 ∧ ∀ e : ℕ, e ≤ E
+def finite_regional_energy : Prop :=
+  ∃ regionalEnergyBound : ℕ → ℕ, ∀ region : ℕ, 0 < regionalEnergyBound region
 
 /-- EP3: Signal speed is bounded (special relativity).
     c ≈ 3 × 10⁸ m/s. -/
-axiom finite_signal_speed : ∃ c : ℕ, c > 0
+def finite_signal_speed : Prop :=
+  ∃ c : ℕ, c > 0
+
+/-- Constructive witness for EP1. -/
+theorem landauer_principle_witness : landauer_principle := by
+  refine ⟨1, by decide, ?_⟩
+  intro bitOp hBitOp
+  simpa using hBitOp
+
+/-- Canonical finite regional energy-budget profile used as a concrete witness. -/
+def canonicalRegionalEnergyBound : ℕ → ℕ := fun _ => 1
+
+/-- Constructive witness for EP2. -/
+theorem finite_regional_energy_witness : finite_regional_energy := by
+  refine ⟨canonicalRegionalEnergyBound, ?_⟩
+  intro region
+  simp [canonicalRegionalEnergyBound]
+
+/-- Constructive witness for EP3. -/
+theorem finite_signal_speed_witness : finite_signal_speed := by
+  exact ⟨1, by decide⟩
+
+/-- Bundle of concrete witnesses for all empirical premises EP1-EP3. -/
+theorem empirical_premises_witness_bundle :
+    landauer_principle ∧ finite_regional_energy ∧ finite_signal_speed := by
+  exact ⟨landauer_principle_witness,
+    finite_regional_energy_witness,
+    finite_signal_speed_witness⟩
 
 /-! ### Independence Proofs: EC1, EC2, EC3 are irreducible
 

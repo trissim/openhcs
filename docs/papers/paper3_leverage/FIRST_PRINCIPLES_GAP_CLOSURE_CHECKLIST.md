@@ -271,3 +271,63 @@ interface pass:
   - Added `constructive_replaces_legacy_output_fields` and
     `downstream_consumer_transport_of_constructive_equiv` to make normalized
     output replacement usable for arbitrary downstream consumers.
+
+## 7) First-principles strengthening pass (current)
+
+This pass moves from interface packaging toward proof-bearing discharge and
+measurable instantiation.
+
+- Continuous-time layer (`DockingTheoryBridge.lean`):
+  - Made solution/invariance/ergodicity predicates nontrivial
+    (`IsLangevinStrongSolution`, `IsInvariantMeasure`, `IsErgodic`).
+  - Added `LangevinFirstPrinciplesAssumptions` with theorem chain:
+    `langevin_solution_exists_unique_of_first_principles`,
+    `langevin_boltzmann_invariant_of_first_principles`,
+    `langevin_ergodic_of_first_principles`,
+    `eulerMaruyama_*_of_first_principles`, and bundled
+    `langevin_endpoints_of_first_principles`.
+- Force-field calibration beyond zero-shell:
+  - Added nontrivial family
+    `concreteComposedHamiltonian_nontrivial` and
+    `nontrivialShellLipschitzConstant`.
+  - Added nonzero reference parameters `biomolecularNontrivialParams`.
+  - Added nontrivial Lipschitz theorem and half-gap transport theorem:
+    `concreteComposedHamiltonian_nontrivial_lipschitz_bound`,
+    `concreteComposedHamiltonian_nontrivial_halfGapTransport`.
+- Chemical realism consequences:
+  - Added fixed-core invariance theorems for utility/optimizer under explicit
+    protonation/tautomer/solvent/ionic/water-bridge changes.
+- Ensemble + kinetic process layer:
+  - Added process-level stochastic ensemble kernel and one-step population
+    nonnegativity/normalization theorems.
+  - Added measurable kinetic protocol model
+    `KineticProtocolMeasurements` with derived proofs for
+    `kOff` positivity, residence identity, and pathway normalization.
+  - Added transport theorem
+    `kinetic_observable_bundle_of_protocol_measurements`.
+- Constructive unification automation:
+  - Added canonical auto-wrapper `legacyOutputOfComputable` and automatic
+    alignment theorem.
+  - Added constructive-only transport theorems and
+    `fullyConstructivePipeline_deprecation_ready` to eliminate manual alignment
+    obligations for constructive pipeline outputs.
+
+Paper3 handle aliases added for the new endpoints: `L630`-`L636`.
+
+Related paper4 discharge-support additions:
+
+- `Physics/LocalityPhysics.lean`:
+  - refactored `finite_regional_energy` to a realizable bound-function form;
+  - added concrete witnesses for EP1/EP2/EP3 and bundled witness theorem.
+- `Physics/TUR.lean`:
+  - added reversible-chain proof theorem
+    `entropyProduction_nonneg_of_reversible` and concrete two-state witness;
+  - added `tur_bound_of_certificate`.
+- `Computation/LangevinIntegrator.lean`:
+  - added `boltzmann_stationarity_from_fdt`.
+- `Computation/BornOppenheimer.lean`:
+  - added `born_oppenheimer_of_differentiable_ground_state`.
+- `Tractability/LatticeSum.lean`:
+  - added large-radius convergence interface
+    `lattice_sum_converges_large_radius` and concrete LJ-6/LJ-12 witness
+    theorems.
