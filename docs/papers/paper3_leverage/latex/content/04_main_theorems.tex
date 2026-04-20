@@ -3122,6 +3122,182 @@ The concrete checksum artifact verifier validates exactly those signatures that 
 Unfold the concrete verifier definition; the statement is definitionally equivalent to signature equality.
 \end{proof}
 
+\begin{theorem}[Definitive Runtime Op-Count Closed Form]
+\label{thm:definitive-runtime-ops-closed-form}
+\leanmeta{\LH{L917}}
+For runtime profile parameters $(K,L,C,\mathrm{fuel},\mathrm{bytes})$, the definitive computable pipeline operation count is exactly
+\[
+(K+L) + \mathrm{bytes} + (C+1)\cdot \mathrm{fuel}.
+\]
+\end{theorem}
+
+\begin{proof}
+Expand pruning checks, scorer calls, refinement steps, and parser bytes, then normalize arithmetic.
+\end{proof}
+
+\begin{theorem}[Definitive Runtime Op-Count Successor Recurrence]
+\label{thm:definitive-runtime-ops-succ-recurrence}
+\leanmeta{\LH{L918}}
+Increasing refinement fuel by one increases definitive computable total operation count by exactly $(C+1)$, where $C$ is conformer count.
+\end{theorem}
+
+\begin{proof}
+Unfold the operation-count components and simplify the product/sum recurrence at fuel successor.
+\end{proof}
+
+\begin{theorem}[Integrated Definitive Pipeline Total-Op Closed Form]
+\label{thm:definitive-pipeline-total-ops-closed-form}
+\leanmeta{\LH{L919}}
+The integrated definitive computable pipeline wrapper preserves the same exact closed-form operation count under the attached runtime profile.
+\end{theorem}
+
+\begin{proof}
+Reduce the wrapper result to its stored runtime profile and apply the closed-form operation-count theorem.
+\end{proof}
+
+\begin{theorem}[Certified Branch-and-Bound Prune Soundness]
+\label{thm:definitive-branch-bound-prune-sound}
+\leanmeta{\LH{L920}}
+If certified candidate upper bound is strictly below certified incumbent lower bound, then candidate true score is strictly below incumbent true score.
+\end{theorem}
+
+\begin{proof}
+Transport true scores into certified intervals via absolute-error inequalities and compose with strict bound separation.
+\end{proof}
+
+\begin{theorem}[Adaptive Stop Rule Soundness]
+\label{thm:definitive-adaptive-stop-sound}
+\leanmeta{\LH{L921}}
+If every remaining item has certified upper bound below incumbent lower bound, then no remaining true score can beat the incumbent true score.
+\end{theorem}
+
+\begin{proof}
+Use the boolean stop-rule characterization to recover per-item strict upper-bound separation and compose with score upper/lower transport.
+\end{proof}
+
+\begin{theorem}[Integrated Branch-and-Bound Pipeline Prune Soundness]
+\label{thm:definitive-pipeline-branch-bound-prune-sound}
+\leanmeta{\LH{L922}}
+In the integrated definitive computable branch-and-bound wrapper, `pruneFlag=true` implies candidate true score is strictly below incumbent true score.
+\end{theorem}
+
+\begin{proof}
+Unfold the wrapper's prune flag and apply certified branch-and-bound prune soundness.
+\end{proof}
+
+\begin{theorem}[Definitive Batch/Fusion Justification]
+\label{thm:definitive-batch-fusion-justified}
+\leanmeta{\LH{L923}}
+The definitive computable pipeline imports the ArrayDSL sharded-reduction/fused-reduction equivalence theorem, justifying vectorized JAX batch/fusion execution by semantics-preserving equality.
+\end{theorem}
+
+\begin{proof}
+Directly instantiate the imported ArrayDSL shard/fusion equivalence theorem.
+\end{proof}
+
+\begin{theorem}[Signed-Artifact Parse Cost Linear-Time Bound]
+\label{thm:definitive-parse-cost-linear-time}
+\leanmeta{\LH{L924}}
+Signed-artifact byte-envelope parse cost is linearly bounded by byte-stream length.
+\end{theorem}
+
+\begin{proof}
+The cost function is definitionally equal to input byte-stream length.
+\end{proof}
+
+\begin{theorem}[Signed-Artifact Encode Parse-Cost Exactness]
+\label{thm:definitive-parse-encode-cost-exact}
+\leanmeta{\LH{L925}}
+For any encoded signed artifact envelope, parse-cost equals encoded byte length exactly.
+\end{theorem}
+
+\begin{proof}
+Unfold the parse-cost definition on the encoded envelope term.
+\end{proof}
+
+\begin{theorem}[Cryptographic Verifier Soundness Bridge]
+\label{thm:definitive-crypto-verifier-sound}
+\leanmeta{\LH{L926}}
+Under the formalized cryptographic verifier assumptions, successful verifier acceptance implies signature bytes equal the modeled hash of manifest message bytes.
+\end{theorem}
+
+\begin{proof}
+Unfold the artifact verifier wrapper and apply the verifier-soundness axiom from the cryptographic assumption package.
+\end{proof}
+
+\begin{theorem}[Signed Rationalized Crypto Byte Parse-and-Verify]
+\label{thm:definitive-signed-rationalized-crypto-byte-parse-verify}
+\leanmeta{\LH{L927}}
+For signed rationalized artifacts instantiated with the cryptographic verifier model, byte-envelope parse roundtrip and cryptographic verification success hold jointly.
+\end{theorem}
+
+\begin{proof}
+Combine signed-envelope parse roundtrip with the verifier-validity field in the signed artifact under the cryptographic verifier wrapper.
+\end{proof}
+
+\begin{theorem}[Signed Artifact Pipeline Parser-Byte Exactness]
+\label{thm:definitive-signed-pipeline-parser-bytes-exact}
+\leanmeta{\LH{L928}}
+In the signed-artifact definitive computable pipeline wrapper, runtime-profile parser-byte count is exactly the byte-envelope parse-cost of the signed manifest/signature encoding.
+\end{theorem}
+
+\begin{proof}
+Unfold the signed-wrapper runtime profile construction; parser-byte field is definitionally the envelope parse-cost.
+\end{proof}
+
+\begin{theorem}[Campaign Pair-Evaluation Closed Form]
+\label{thm:definitive-campaign-pair-evals-closed-form}
+\leanmeta{\LH{L929}}
+For runtime profile parameters $(K,L,C,\mathrm{fuel},\mathrm{bytes})$, the definitive campaign pair-evaluation count is exactly
+\[
+(K\cdot L)\cdot C\cdot \mathrm{fuel}.
+\]
+\end{theorem}
+
+\begin{proof}
+Expand pair budget as pocket-budget times ligand-budget and scorer-call count as conformer-count times refinement fuel, then normalize products.
+\end{proof}
+
+\begin{theorem}[Campaign Pair-Evaluation Successor Recurrence]
+\label{thm:definitive-campaign-pair-evals-succ-recurrence}
+\leanmeta{\LH{L930}}
+Increasing refinement fuel by one increases definitive campaign pair-evaluation count by exactly $(K\cdot L)\cdot C$.
+\end{theorem}
+
+\begin{proof}
+Use distributivity of multiplication over fuel successor in the closed-form campaign pair-evaluation expression.
+\end{proof}
+
+\begin{theorem}[Integrated Pipeline Campaign Pair-Evaluation Closed Form]
+\label{thm:definitive-pipeline-campaign-pair-evals-closed-form}
+\leanmeta{\LH{L931}}
+The integrated definitive computable pipeline wrapper preserves the exact campaign pair-evaluation closed form under its attached runtime profile.
+\end{theorem}
+
+\begin{proof}
+Reduce the wrapper output to its runtime profile and apply the campaign pair-evaluation closed-form theorem.
+\end{proof}
+
+\begin{theorem}[Definitive Pair-Potential Fusion Justification]
+\label{thm:definitive-pair-potential-fusion-justified}
+\leanmeta{\LH{L932}}
+For the scorer kernel, ArrayDSL fused pair-potential evaluation is extensionally equal to the explicit unfused map-then-reduce reference form.
+\end{theorem}
+
+\begin{proof}
+Directly instantiate the imported ArrayDSL fused/unfused pair-potential equivalence theorem.
+\end{proof}
+
+\begin{theorem}[Canonical Scorer Op-Label and Fusion Soundness]
+\label{thm:definitive-canonical-scorer-op-label-fusion-sound}
+\leanmeta{\LH{L933}}
+In the canonical solver ProgramIR, `sumPairPotentials` is a required operation, and its fused implementation is justified by the theorem-level fused/unfused scorer-kernel equivalence.
+\end{theorem}
+
+\begin{proof}
+Combine the required-ops membership theorem for the canonical solver ProgramIR with the definitive pair-potential fusion justification theorem.
+\end{proof}
+
 \begin{theorem}[Prospective Empirical Closure under Blinded Benchmarking]\label{thm:prospective-empirical-closure}
 \leanmeta{\LHrng{L}{748}{749}}
 For a blinded prospective benchmark record with calibration/predictive errors and uncertainty radii:

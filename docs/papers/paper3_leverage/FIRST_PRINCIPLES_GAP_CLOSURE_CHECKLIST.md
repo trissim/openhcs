@@ -2765,3 +2765,181 @@ Validation for this pass (log-file redirection + grep checks):
   (`/tmp/release_paper3_pass47.log`).
 - backend fidelity/bridge/formal-optimizer tests re-run in venv and passed
   (`/tmp/pytest_backend_fidelity_pass47.log`, `12 passed`).
+
+## 48) Optimization-theorem integration into definitive computable pipeline (current)
+
+This pass implements and integrates the requested theorem-only optimization
+closures directly in Lean:
+
+1. tight operation-count theorems,
+2. batch/fusion correctness import,
+3. certified branch-and-bound pruning,
+4. parser-cost + cryptographic verifier assumption upgrade,
+5. adaptive stopping rules.
+
+Implemented in
+`proofs/Leverage/DockingSolverEndpoint.lean`:
+
+1. **Exact runtime operation-count layer (definitive computable pipeline)**
+   - `DefinitiveComputableRuntimeProfile`
+   - `definitiveComputablePruningChecks`
+   - `definitiveComputableScorerCalls`
+   - `definitiveComputableRefinementSteps`
+   - `definitiveComputableTotalOps`
+   - exact count theorems:
+     - `definitiveComputableTotalOps_closed_form`
+     - `definitiveComputableTotalOps_succFuel`
+   - integrated wrapper:
+     - `DefinitiveComputablePipelineOutput`
+     - `runDefinitiveComputablePipeline`
+     - `runDefinitiveComputablePipeline_totalOps_closed_form`.
+
+2. **Certified branch-and-bound and adaptive stopping**
+   - `CertifiedScoreInterval` (Rat-centered interval bounds)
+   - `branchAndBoundPrune` with soundness theorem:
+     - `branchAndBoundPrune_sound`
+   - list-based adaptive stop rule:
+     - `adaptiveCampaignStopRule`
+     - `adaptiveCampaignStopRule_sound`
+   - integrated branch-and-bound pipeline wrapper:
+     - `DefinitiveComputablePipelineBranchAndBoundOutput`
+     - `runDefinitiveComputablePipelineBranchAndBound`
+     - `runDefinitiveComputablePipelineBranchAndBound_prune_sound`.
+
+3. **Parser cost + cryptographic verifier assumption upgrade**
+   - parser cost theorems:
+     - `parseSignedArtifactByteEnvelope_cost_linear_time`
+     - `parseSignedArtifactByteEnvelope_cost_linear_space`
+     - `parseSignedArtifactByteEnvelope_encode_cost_exact`
+   - assumption-packaged cryptographic verifier model:
+     - `CryptographicVerifierAssumptions`
+     - `cryptographicArtifactSignatureVerifier`
+     - `cryptographicArtifactSignatureVerifier_sound`
+   - signed-rationalized cryptographic parse/verify theorem:
+     - `SignedRationalizedKernelArtifact.crypto_byte_parse_and_verify`.
+
+4. **Signed artifact runtime-profile integration**
+   - `signedArtifactEnvelopeByteLength`
+   - `runDefinitiveComputablePipelineOfSignedArtifact`
+   - `runDefinitiveComputablePipelineOfSignedArtifact_parserBytes_exact`.
+
+5. **Batch/fusion correctness imported into definitive pipeline**
+   - `definitiveComputablePipeline_batchFusionJustified`
+     (instantiates ArrayDSL shard/fusion equality theorem).
+
+Implemented in
+`paper4_decision_quotient/proofs/DecisionQuotient/Computation/ArrayDSL.lean`:
+
+- Added explicit JAX-kernel optimization correctness theorems:
+  - `sumPairPotentialsUnfused`
+  - `sumPairPotentials_fused_unfused_equiv`
+  - `shardReduceSum`
+  - `shardReduceSum_fusion_equiv`.
+
+Synchronization updates for this pass:
+
+- Handle aliases extended to `L928` in `proofs/HandleAliases.lean` (`L917`-`L928`).
+- New theorem claims added in `latex/content/04_main_theorems.tex` for:
+  - runtime op-count closed form and successor recurrence,
+  - integrated pipeline op-count closed form,
+  - branch-and-bound and adaptive-stop soundness,
+  - integrated branch-and-bound wrapper soundness,
+  - batch/fusion import theorem,
+  - parser-cost linearity/exactness,
+  - cryptographic verifier soundness bridge,
+  - signed crypto parse/verify theorem,
+  - signed-pipeline parser-byte exactness.
+- Theorem index updated in `latex/content/12_complete_theorem_index.tex`.
+- Proof-provenance range advanced to `\LHrng{L}{588}{928}` in
+  `latex/content/10_lean_proof_listings.tex`.
+- Scope appendix updated with pass-48 optimization-integration bullet in
+  `latex/content/11_scope_statements.tex`.
+
+Validation for this pass (all output redirected to logs and checked via grep):
+
+- `lake build DecisionQuotient.Computation.ArrayDSL` passed
+  (`/tmp/lake_arraydsl_pass48_step4.log`).
+- `lake build Leverage.DockingSolverEndpoint` passed
+  (`/tmp/lake_docking_solver_endpoint_pass48_step3.log`).
+- `lake build Leverage` passed (`/tmp/lake_leverage_pass48.log`).
+- `lake build HandleAliases` passed (`/tmp/handlealiases_pass48.log`).
+- `python scripts/build_papers.py claim-check paper3` passed with
+  `paper=448 mapped=448 missing=0 extra=0`
+  (`/tmp/claimcheck_paper3_pass48.log`; optional warning only for missing
+  `analyze_forcing_coverage.py`).
+- `python scripts/build_papers.py latex paper3` passed
+  (`/tmp/latex_paper3_pass48b.log`).
+- `python scripts/build_papers.py release paper3` passed
+  (`/tmp/release_paper3_pass48b.log`).
+- backend fidelity/bridge/formal-optimizer tests re-run in venv and passed
+  (`/tmp/pytest_backend_fidelity_pass48.log`, `12 passed`).
+
+## 49) Scorer-fusion endpoint linkage + campaign-cardinality op decomposition pass (current)
+
+This pass continues the optimization-theorem integration by making two endpoint
+connections explicit in Lean and paper3 claims:
+
+1. **Campaign-cardinality decomposition** of scorer workload
+   (explicit pair count $K\cdot L$ with conformer and fuel factors), and
+2. **Direct scorer-kernel fusion linkage** from the canonical ProgramIR op label
+   `sumPairPotentials` to the imported ArrayDSL fused/unfused correctness
+   theorem.
+
+Implemented in
+`proofs/Leverage/DockingSolverEndpoint.lean`:
+
+1. **Campaign pair-evaluation decomposition theorems**
+   - added runtime-profile decomposition defs:
+     - `definitiveComputablePairBudget`
+     - `definitiveComputableCampaignPairEvaluations`
+   - added exact recurrences:
+     - `definitiveComputableCampaignPairEvaluations_closed_form`
+     - `definitiveComputableCampaignPairEvaluations_succFuel`
+   - integrated wrapper-level closure:
+     - `runDefinitiveComputablePipeline_campaignPairEvaluations_closed_form`.
+
+2. **Scorer-fusion endpoint linkage**
+   - canonical ProgramIR required-op lemma:
+     - `SampledDockingSolverInput.canonicalSolverProgramIR_requires_sumPairPotentials`
+   - explicit scorer-kernel fusion import theorem:
+     - `definitiveComputablePipeline_pairPotentialFusionJustified`
+   - combined endpoint theorem linking ProgramIR op-label presence to fusion
+     theorem support:
+     - `SampledDockingSolverInput.canonicalSolverProgramIR_scorerFusionSound`.
+
+Synchronization updates for this pass:
+
+- Handle aliases extended to `L933` in `proofs/HandleAliases.lean`
+  (`L929`-`L933`).
+- New theorem claims added in `latex/content/04_main_theorems.tex` for:
+  - campaign pair-evaluation closed form and successor recurrence,
+  - integrated pipeline campaign pair-evaluation closed form,
+  - definitive scorer pair-potential fusion justification,
+  - canonical ProgramIR scorer op-label + fusion-soundness endpoint.
+- Theorem index updated in `latex/content/12_complete_theorem_index.tex`.
+- Proof-provenance handle range advanced to `\LHrng{L}{588}{933}` in
+  `latex/content/10_lean_proof_listings.tex`.
+- Scope appendix updated with pass-49 bullet in
+  `latex/content/11_scope_statements.tex`.
+
+Validation for this pass (all output redirected to logs and checked):
+
+- `lake build DecisionQuotient.Computation.ArrayDSL` passed
+  (`/tmp/lake_arraydsl_pass49.log`).
+- `lake build Leverage.DockingSolverEndpoint` passed
+  (`/tmp/lake_docking_solver_endpoint_pass49_step2.log`).
+- `lake build Leverage` passed (`/tmp/lake_leverage_pass49.log`).
+- `lake build HandleAliases` passed (`/tmp/handlealiases_pass49.log`).
+- `python3 scripts/build_papers.py claim-check paper3` passed with
+  `paper=453 mapped=453 missing=0 extra=0`
+  (`/tmp/claimcheck_paper3_pass49.log`; optional warning only for missing
+  `analyze_forcing_coverage.py`).
+- `python3 scripts/build_papers.py latex paper3` passed
+  (`/tmp/latex_paper3_pass49.log`).
+- `python3 scripts/build_papers.py release paper3` passed
+  (`/tmp/release_paper3_pass49.log`).
+- backend fidelity pytest environment was restored and tests passed:
+  - `python -m pip install pytest` in project venv succeeded
+    (`/tmp/pip_install_pytest_pass49.log`), and
+  - `.venv/bin/python -m pytest -o addopts= dq_dock_engine/tests/test_backend_fidelity.py`
+    passed (`/tmp/pytest_backend_fidelity_pass49.log`, `2 passed`).

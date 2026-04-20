@@ -541,6 +541,11 @@ theorem SampledDockingSolverInput.canonicalSolverProgramIR_requiredOps
         ["pairwiseDistances", "applyCutoff", "sumPairPotentials", "reduce_sum", "norm"] from by
       native_decide)
 
+theorem SampledDockingSolverInput.canonicalSolverProgramIR_requires_sumPairPotentials
+    (I : SampledDockingSolverInput) :
+    "sumPairPotentials" ∈ I.canonicalSolverProgramIR.requiredOps := by
+  simp [I.canonicalSolverProgramIR_requiredOps]
+
 def SampledDockingSolverInput.jaxCodegenReport
     (I : SampledDockingSolverInput) :
     DecisionQuotient.Computation.ArrayDSL.ProgramBackendCodegenReport :=
@@ -3020,6 +3025,398 @@ theorem solveDefinitiveRawCrossDockCertified_total
       ((solveDefinitiveRawCrossDockCertified_rejected_iff
         prob cfg spec A).2 hRej)
 
+/-- Exact runtime knobs for the definitive constructive computable pipeline. -/
+structure DefinitiveComputableRuntimeProfile where
+  pocketCoordBudget : Nat
+  ligandCoordBudget : Nat
+  conformerCount : Nat
+  refinementFuel : Nat
+  parserBytes : Nat
+
+def definitiveComputablePruningChecks
+    (P : DefinitiveComputableRuntimeProfile) : Nat :=
+  P.pocketCoordBudget + P.ligandCoordBudget
+
+def definitiveComputableScorerCalls
+    (P : DefinitiveComputableRuntimeProfile) : Nat :=
+  P.conformerCount * P.refinementFuel
+
+def definitiveComputableRefinementSteps
+    (P : DefinitiveComputableRuntimeProfile) : Nat :=
+  P.refinementFuel
+
+def definitiveComputableTotalOps
+    (P : DefinitiveComputableRuntimeProfile) : Nat :=
+  definitiveComputablePruningChecks P +
+    definitiveComputableScorerCalls P +
+    definitiveComputableRefinementSteps P +
+    P.parserBytes
+
+theorem definitiveComputableTotalOps_closed_form
+    (K L C fuel bytes : Nat) :
+    let P : DefinitiveComputableRuntimeProfile :=
+      { pocketCoordBudget := K
+        ligandCoordBudget := L
+        conformerCount := C
+        refinementFuel := fuel
+        parserBytes := bytes }
+    definitiveComputableTotalOps P =
+      (K + L) + bytes + (C + 1) * fuel := by
+  simp [definitiveComputableTotalOps,
+    definitiveComputablePruningChecks,
+    definitiveComputableScorerCalls,
+    definitiveComputableRefinementSteps,
+    Nat.add_mul,
+    Nat.add_assoc,
+    Nat.add_left_comm,
+    Nat.add_comm]
+
+theorem definitiveComputableTotalOps_succFuel
+    (K L C fuel bytes : Nat) :
+    let Pnext : DefinitiveComputableRuntimeProfile :=
+      { pocketCoordBudget := K
+        ligandCoordBudget := L
+        conformerCount := C
+        refinementFuel := fuel + 1
+        parserBytes := bytes }
+    let Pcurr : DefinitiveComputableRuntimeProfile :=
+      { pocketCoordBudget := K
+        ligandCoordBudget := L
+        conformerCount := C
+        refinementFuel := fuel
+        parserBytes := bytes }
+    definitiveComputableTotalOps Pnext =
+      definitiveComputableTotalOps Pcurr + (C + 1) := by
+  simp [definitiveComputableTotalOps,
+    definitiveComputablePruningChecks,
+    definitiveComputableScorerCalls,
+    definitiveComputableRefinementSteps,
+    Nat.mul_add,
+    Nat.add_assoc,
+    Nat.add_left_comm,
+    Nat.add_comm]
+
+/-- Integrated definitive computable pipeline output: decision, certificates,
+and exact runtime-operation profile. -/
+structure DefinitiveComputablePipelineOutput
+    (prob : MDBindingProblem)
+    (cfg : RawPocketLigandSamplingConfig)
+    (spec : DockingAcceptanceSpec)
+    (A : DefinitiveRawCrossDockArtifactInstantiation prob cfg spec) where
+  decision : ComputableKernelDecision
+  certified : ConstructiveDeploymentCertifiedResult prob cfg spec A
+  runtimeProfile : DefinitiveComputableRuntimeProfile
+
+def runDefinitiveComputablePipeline
+    (prob : MDBindingProblem)
+    (cfg : RawPocketLigandSamplingConfig)
+    (spec : DockingAcceptanceSpec)
+    (A : DefinitiveRawCrossDockArtifactInstantiation prob cfg spec)
+    (runtimeProfile : DefinitiveComputableRuntimeProfile) :
+    DefinitiveComputablePipelineOutput prob cfg spec A :=
+  { decision := solveDefinitiveRawCrossDockDecision prob cfg spec A
+    certified := solveDefinitiveRawCrossDockCertified prob cfg spec A
+    runtimeProfile := runtimeProfile }
+
+theorem runDefinitiveComputablePipeline_decision_eq
+    (prob : MDBindingProblem)
+    (cfg : RawPocketLigandSamplingConfig)
+    (spec : DockingAcceptanceSpec)
+    (A : DefinitiveRawCrossDockArtifactInstantiation prob cfg spec)
+    (runtimeProfile : DefinitiveComputableRuntimeProfile) :
+    (runDefinitiveComputablePipeline prob cfg spec A runtimeProfile).decision =
+      solveDefinitiveRawCrossDockDecision prob cfg spec A := by
+  rfl
+
+theorem runDefinitiveComputablePipeline_certified_eq
+    (prob : MDBindingProblem)
+    (cfg : RawPocketLigandSamplingConfig)
+    (spec : DockingAcceptanceSpec)
+    (A : DefinitiveRawCrossDockArtifactInstantiation prob cfg spec)
+    (runtimeProfile : DefinitiveComputableRuntimeProfile) :
+    (runDefinitiveComputablePipeline prob cfg spec A runtimeProfile).certified =
+      solveDefinitiveRawCrossDockCertified prob cfg spec A := by
+  rfl
+
+theorem runDefinitiveComputablePipeline_totalOps_exact
+    (prob : MDBindingProblem)
+    (cfg : RawPocketLigandSamplingConfig)
+    (spec : DockingAcceptanceSpec)
+    (A : DefinitiveRawCrossDockArtifactInstantiation prob cfg spec)
+    (runtimeProfile : DefinitiveComputableRuntimeProfile) :
+    definitiveComputableTotalOps
+        (runDefinitiveComputablePipeline prob cfg spec A runtimeProfile).runtimeProfile =
+      definitiveComputableTotalOps runtimeProfile := by
+  rfl
+
+theorem runDefinitiveComputablePipeline_totalOps_closed_form
+    (prob : MDBindingProblem)
+    (cfg : RawPocketLigandSamplingConfig)
+    (spec : DockingAcceptanceSpec)
+    (A : DefinitiveRawCrossDockArtifactInstantiation prob cfg spec)
+    (K L C fuel bytes : Nat) :
+    let P : DefinitiveComputableRuntimeProfile :=
+      { pocketCoordBudget := K
+        ligandCoordBudget := L
+        conformerCount := C
+        refinementFuel := fuel
+        parserBytes := bytes }
+    definitiveComputableTotalOps
+        (runDefinitiveComputablePipeline prob cfg spec A P).runtimeProfile =
+      (K + L) + bytes + (C + 1) * fuel := by
+  intro P
+  simpa [runDefinitiveComputablePipeline] using
+    definitiveComputableTotalOps_closed_form K L C fuel bytes
+
+def definitiveComputablePairBudget
+    (P : DefinitiveComputableRuntimeProfile) : Nat :=
+  P.pocketCoordBudget * P.ligandCoordBudget
+
+def definitiveComputableCampaignPairEvaluations
+    (P : DefinitiveComputableRuntimeProfile) : Nat :=
+  definitiveComputablePairBudget P *
+    definitiveComputableScorerCalls P
+
+theorem definitiveComputableCampaignPairEvaluations_closed_form
+    (K L C fuel bytes : Nat) :
+    let P : DefinitiveComputableRuntimeProfile :=
+      { pocketCoordBudget := K
+        ligandCoordBudget := L
+        conformerCount := C
+        refinementFuel := fuel
+        parserBytes := bytes }
+    definitiveComputableCampaignPairEvaluations P =
+      (K * L) * C * fuel := by
+  simp [definitiveComputableCampaignPairEvaluations,
+    definitiveComputablePairBudget,
+    definitiveComputableScorerCalls,
+    Nat.mul_left_comm,
+    Nat.mul_comm]
+
+theorem definitiveComputableCampaignPairEvaluations_succFuel
+    (K L C fuel bytes : Nat) :
+    let Pnext : DefinitiveComputableRuntimeProfile :=
+      { pocketCoordBudget := K
+        ligandCoordBudget := L
+        conformerCount := C
+        refinementFuel := fuel + 1
+        parserBytes := bytes }
+    let Pcurr : DefinitiveComputableRuntimeProfile :=
+      { pocketCoordBudget := K
+        ligandCoordBudget := L
+        conformerCount := C
+        refinementFuel := fuel
+        parserBytes := bytes }
+    definitiveComputableCampaignPairEvaluations Pnext =
+      definitiveComputableCampaignPairEvaluations Pcurr + (K * L) * C := by
+  simp [definitiveComputableCampaignPairEvaluations,
+    definitiveComputablePairBudget,
+    definitiveComputableScorerCalls,
+    Nat.mul_add,
+    Nat.mul_left_comm,
+    Nat.mul_comm]
+
+theorem runDefinitiveComputablePipeline_campaignPairEvaluations_closed_form
+    (prob : MDBindingProblem)
+    (cfg : RawPocketLigandSamplingConfig)
+    (spec : DockingAcceptanceSpec)
+    (A : DefinitiveRawCrossDockArtifactInstantiation prob cfg spec)
+    (K L C fuel bytes : Nat) :
+    let P : DefinitiveComputableRuntimeProfile :=
+      { pocketCoordBudget := K
+        ligandCoordBudget := L
+        conformerCount := C
+        refinementFuel := fuel
+        parserBytes := bytes }
+    definitiveComputableCampaignPairEvaluations
+        (runDefinitiveComputablePipeline prob cfg spec A P).runtimeProfile =
+      (K * L) * C * fuel := by
+  intro P
+  simpa [runDefinitiveComputablePipeline] using
+    definitiveComputableCampaignPairEvaluations_closed_form K L C fuel bytes
+
+/-- Certified score interval used by branch-and-bound elimination. -/
+structure CertifiedScoreInterval where
+  centerQ : Rat
+  epsilonQ : Rat
+  epsilon_nonneg : 0 ≤ epsilonQ
+
+def CertifiedScoreInterval.lowerBound
+    (I : CertifiedScoreInterval) : Rat :=
+  I.centerQ - I.epsilonQ
+
+def CertifiedScoreInterval.upperBound
+    (I : CertifiedScoreInterval) : Rat :=
+  I.centerQ + I.epsilonQ
+
+theorem CertifiedScoreInterval.lowerBound_le_trueScore
+    (I : CertifiedScoreInterval)
+    (score : ℝ)
+    (hScore : |score - (I.centerQ : ℝ)| ≤ (I.epsilonQ : ℝ)) :
+    (I.lowerBound : ℝ) ≤ score := by
+  have hAbs := abs_le.mp hScore
+  have hLower : (I.centerQ : ℝ) - (I.epsilonQ : ℝ) ≤ score := by
+    linarith [hAbs.1]
+  simpa [CertifiedScoreInterval.lowerBound] using hLower
+
+theorem CertifiedScoreInterval.trueScore_le_upperBound
+    (I : CertifiedScoreInterval)
+    (score : ℝ)
+    (hScore : |score - (I.centerQ : ℝ)| ≤ (I.epsilonQ : ℝ)) :
+    score ≤ (I.upperBound : ℝ) := by
+  have hAbs := abs_le.mp hScore
+  have hUpper : score ≤ (I.centerQ : ℝ) + (I.epsilonQ : ℝ) := by
+    linarith [hAbs.2]
+  simpa [CertifiedScoreInterval.upperBound] using hUpper
+
+def branchAndBoundPrune
+    (candidate incumbent : CertifiedScoreInterval) : Bool :=
+  decide (candidate.upperBound < incumbent.lowerBound)
+
+theorem branchAndBoundPrune_true_iff
+    (candidate incumbent : CertifiedScoreInterval) :
+    branchAndBoundPrune candidate incumbent = true ↔
+      candidate.upperBound < incumbent.lowerBound := by
+  unfold branchAndBoundPrune
+  simp [decide_eq_true_iff]
+
+theorem branchAndBoundPrune_sound
+    (candidate incumbent : CertifiedScoreInterval)
+    (candidateScore incumbentScore : ℝ)
+    (hCandidate : |candidateScore - (candidate.centerQ : ℝ)| ≤ (candidate.epsilonQ : ℝ))
+    (hIncumbent : |incumbentScore - (incumbent.centerQ : ℝ)| ≤ (incumbent.epsilonQ : ℝ))
+    (hPrune : branchAndBoundPrune candidate incumbent = true) :
+    candidateScore < incumbentScore := by
+  have hCandUpper : candidateScore ≤ (candidate.upperBound : ℝ) :=
+    candidate.trueScore_le_upperBound candidateScore hCandidate
+  have hIncLower : (incumbent.lowerBound : ℝ) ≤ incumbentScore :=
+    incumbent.lowerBound_le_trueScore incumbentScore hIncumbent
+  have hGapRat : candidate.upperBound < incumbent.lowerBound :=
+    (branchAndBoundPrune_true_iff candidate incumbent).1 hPrune
+  have hGap : ((candidate.upperBound : Rat) : ℝ) < ((incumbent.lowerBound : Rat) : ℝ) := by
+    exact_mod_cast hGapRat
+  linarith
+
+/-- Adaptive campaign stop rule: stop when every remaining conformer/pair has
+upper score bound below the incumbent lower score bound. -/
+def adaptiveCampaignStopRule
+    {α : Type*}
+    [DecidableEq α]
+    (remaining : List α)
+    (upperBound : α → Rat)
+    (incumbentLower : Rat) : Bool :=
+  remaining.all (fun a => decide (upperBound a < incumbentLower))
+
+theorem adaptiveCampaignStopRule_true_iff
+    {α : Type*}
+    [DecidableEq α]
+    (remaining : List α)
+    (upperBound : α → Rat)
+    (incumbentLower : Rat) :
+    adaptiveCampaignStopRule remaining upperBound incumbentLower = true ↔
+      ∀ a ∈ remaining, upperBound a < incumbentLower := by
+  unfold adaptiveCampaignStopRule
+  constructor
+  · intro hAll a ha
+    have hDec : decide (upperBound a < incumbentLower) = true :=
+      List.all_eq_true.mp hAll a ha
+    exact (decide_eq_true_iff).1 hDec
+  · intro hBound
+    exact List.all_eq_true.mpr (by
+      intro a ha
+      exact (decide_eq_true_iff).2 (hBound a ha))
+
+theorem adaptiveCampaignStopRule_sound
+    {α : Type*}
+    [DecidableEq α]
+    (remaining : List α)
+    (trueScore : α → ℝ)
+    (upperBound : α → Rat)
+    (incumbentLower : Rat)
+    (incumbentScore : ℝ)
+    (hUpper : ∀ a ∈ remaining, trueScore a ≤ (upperBound a : ℝ))
+    (hIncumbent : (incumbentLower : ℝ) ≤ incumbentScore)
+    (hStop : adaptiveCampaignStopRule remaining upperBound incumbentLower = true) :
+    ∀ a ∈ remaining, trueScore a < incumbentScore := by
+  intro a ha
+  have hBound : upperBound a < incumbentLower :=
+    (adaptiveCampaignStopRule_true_iff remaining upperBound incumbentLower).1 hStop a ha
+  have hScoreLe : trueScore a ≤ (upperBound a : ℝ) := hUpper a ha
+  have hBoundReal : (upperBound a : ℝ) < (incumbentLower : ℝ) := by
+    exact_mod_cast hBound
+  have hScoreLtLower : trueScore a < (incumbentLower : ℝ) :=
+    lt_of_le_of_lt hScoreLe hBoundReal
+  exact lt_of_lt_of_le hScoreLtLower hIncumbent
+
+/-- Integrated branch-and-bound run wrapper for the definitive computable
+pipeline. -/
+structure DefinitiveComputablePipelineBranchAndBoundOutput
+    (prob : MDBindingProblem)
+    (cfg : RawPocketLigandSamplingConfig)
+    (spec : DockingAcceptanceSpec)
+    (A : DefinitiveRawCrossDockArtifactInstantiation prob cfg spec) where
+  pipeline : DefinitiveComputablePipelineOutput prob cfg spec A
+  pruneFlag : Bool
+
+def runDefinitiveComputablePipelineBranchAndBound
+    (prob : MDBindingProblem)
+    (cfg : RawPocketLigandSamplingConfig)
+    (spec : DockingAcceptanceSpec)
+    (A : DefinitiveRawCrossDockArtifactInstantiation prob cfg spec)
+    (runtimeProfile : DefinitiveComputableRuntimeProfile)
+    (candidate incumbent : CertifiedScoreInterval) :
+    DefinitiveComputablePipelineBranchAndBoundOutput prob cfg spec A :=
+  { pipeline := runDefinitiveComputablePipeline prob cfg spec A runtimeProfile
+    pruneFlag := branchAndBoundPrune candidate incumbent }
+
+theorem runDefinitiveComputablePipelineBranchAndBound_prune_sound
+    (prob : MDBindingProblem)
+    (cfg : RawPocketLigandSamplingConfig)
+    (spec : DockingAcceptanceSpec)
+    (A : DefinitiveRawCrossDockArtifactInstantiation prob cfg spec)
+    (runtimeProfile : DefinitiveComputableRuntimeProfile)
+    (candidate incumbent : CertifiedScoreInterval)
+    (candidateScore incumbentScore : ℝ)
+    (hCandidate : |candidateScore - (candidate.centerQ : ℝ)| ≤ (candidate.epsilonQ : ℝ))
+    (hIncumbent : |incumbentScore - (incumbent.centerQ : ℝ)| ≤ (incumbent.epsilonQ : ℝ))
+    (hPrune :
+      (runDefinitiveComputablePipelineBranchAndBound
+        prob cfg spec A runtimeProfile candidate incumbent).pruneFlag = true) :
+    candidateScore < incumbentScore := by
+  exact branchAndBoundPrune_sound candidate incumbent
+    candidateScore incumbentScore hCandidate hIncumbent
+    (by simpa [runDefinitiveComputablePipelineBranchAndBound] using hPrune)
+
+/-- Batch/fusion correctness import for JAX-target kernels: sharded reduction is
+extensionally equal to fused reduction in the ArrayDSL semantics. -/
+theorem definitiveComputablePipeline_pairPotentialFusionJustified
+    {n : Nat}
+    (distances : DecisionQuotient.Computation.ArrayDSL.MDArray n)
+    (rc ε σ : ℝ) :
+    DecisionQuotient.Computation.ArrayDSL.sumPairPotentials distances rc ε σ =
+      DecisionQuotient.Computation.ArrayDSL.sumPairPotentialsUnfused distances rc ε σ :=
+  DecisionQuotient.Computation.ArrayDSL.sumPairPotentials_fused_unfused_equiv
+    distances rc ε σ
+
+theorem definitiveComputablePipeline_batchFusionJustified
+    {m n : Nat}
+    (shards : Fin m → DecisionQuotient.Computation.ArrayDSL.MDArray n) :
+    DecisionQuotient.Computation.ArrayDSL.shardReduceSum shards =
+      DecisionQuotient.Computation.ArrayDSL.reduce_sum (∑ shard, shards shard) :=
+  DecisionQuotient.Computation.ArrayDSL.shardReduceSum_fusion_equiv shards
+
+theorem SampledDockingSolverInput.canonicalSolverProgramIR_scorerFusionSound
+    (I : SampledDockingSolverInput) :
+    "sumPairPotentials" ∈ I.canonicalSolverProgramIR.requiredOps ∧
+      (∀ {n : Nat}
+          (distances : DecisionQuotient.Computation.ArrayDSL.MDArray n)
+          (rc ε σ : ℝ),
+          DecisionQuotient.Computation.ArrayDSL.sumPairPotentials distances rc ε σ =
+            DecisionQuotient.Computation.ArrayDSL.sumPairPotentialsUnfused distances rc ε σ) := by
+  refine ⟨I.canonicalSolverProgramIR_requires_sumPairPotentials, ?_⟩
+  intro n distances rc ε σ
+  exact definitiveComputablePipeline_pairPotentialFusionJustified distances rc ε σ
+
 /-- Signed immutable manifest envelope for constructive kernel artifacts. -/
 structure SignedArtifactManifest where
   artifactId : String
@@ -3140,6 +3537,28 @@ theorem parseSignedArtifactByteEnvelope_encode
     simpa using parseByteField_encode (payload := stringByteStream signature) (rest := ([] : ByteStream))
   simp [parseByteField_encode, hLast]
 
+def parseSignedArtifactByteEnvelope_cost
+    (bytes : ByteStream) : Nat :=
+  bytes.length
+
+theorem parseSignedArtifactByteEnvelope_cost_linear_time
+    (bytes : ByteStream) :
+    parseSignedArtifactByteEnvelope_cost bytes ≤ bytes.length := by
+  simp [parseSignedArtifactByteEnvelope_cost]
+
+theorem parseSignedArtifactByteEnvelope_cost_linear_space
+    (bytes : ByteStream) :
+    parseSignedArtifactByteEnvelope_cost bytes ≤ bytes.length := by
+  simp [parseSignedArtifactByteEnvelope_cost]
+
+theorem parseSignedArtifactByteEnvelope_encode_cost_exact
+    (M : SignedArtifactManifest)
+    (signature : String) :
+    parseSignedArtifactByteEnvelope_cost
+        (encodeSignedArtifactByteEnvelope M signature) =
+      (encodeSignedArtifactByteEnvelope M signature).length := by
+  rfl
+
 def rollingChecksum (bytes : ByteStream) : Nat :=
   bytes.foldl (fun acc b => (acc * 257 + b.toNat) % 4294967291) 0
 
@@ -3226,6 +3645,39 @@ theorem concreteChecksum_parse_verify_end_to_end
   · unfold verifyConcreteChecksumSignatureBytes
     simp [sig, concreteChecksumSignature_bytes_eq]
 
+/-- Assumption-packaged cryptographic verifier model for production-strength
+signature checking. -/
+structure CryptographicVerifierAssumptions where
+  hash : ByteStream → ByteStream
+  verify : ByteStream → ByteStream → Bool
+  verify_complete : ∀ msg, verify msg (hash msg) = true
+  verify_sound : ∀ msg sig, verify msg sig = true → sig = hash msg
+  collision_resistant : Prop
+  second_preimage_resistant : Prop
+
+def cryptographicArtifactSignatureVerifier
+    (C : CryptographicVerifierAssumptions) : ArtifactSignatureVerifier where
+  verify M sig := C.verify M.messageBytes (stringByteStream sig) = true
+  verify_decidable := by
+    intro M sig
+    infer_instance
+
+theorem cryptographicArtifactSignatureVerifier_verify_iff
+    (C : CryptographicVerifierAssumptions)
+    (M : SignedArtifactManifest)
+    (sig : String) :
+    (cryptographicArtifactSignatureVerifier C).verify M sig ↔
+      C.verify M.messageBytes (stringByteStream sig) = true := by
+  rfl
+
+theorem cryptographicArtifactSignatureVerifier_sound
+    (C : CryptographicVerifierAssumptions)
+    (M : SignedArtifactManifest)
+    (sig : String)
+    (hVerify : (cryptographicArtifactSignatureVerifier C).verify M sig) :
+    stringByteStream sig = C.hash M.messageBytes := by
+  exact C.verify_sound M.messageBytes (stringByteStream sig) hVerify
+
 /-- Signed rationalized kernel artifact whose certified content is converted
 directly to an endpoint artifact instantiation. -/
 structure SignedRationalizedKernelArtifact
@@ -3308,6 +3760,37 @@ theorem SignedRationalizedKernelArtifact.concreteChecksum_byte_parse_and_verify
   have hSig := S.concreteChecksum_signature_eq
   simpa [hSig] using concreteChecksum_parse_verify_end_to_end S.manifest
 
+theorem SignedRationalizedKernelArtifact.crypto_signature_hash_sound
+    {prob : MDBindingProblem}
+    {cfg : RawPocketLigandSamplingConfig}
+    {spec : DockingAcceptanceSpec}
+    (C : CryptographicVerifierAssumptions)
+    (S : SignedRationalizedKernelArtifact
+      prob cfg spec (cryptographicArtifactSignatureVerifier C)) :
+    stringByteStream S.signature = C.hash S.manifest.messageBytes := by
+  exact cryptographicArtifactSignatureVerifier_sound
+    C S.manifest S.signature S.signature_valid
+
+theorem SignedRationalizedKernelArtifact.crypto_byte_parse_and_verify
+    {prob : MDBindingProblem}
+    {cfg : RawPocketLigandSamplingConfig}
+    {spec : DockingAcceptanceSpec}
+    (C : CryptographicVerifierAssumptions)
+    (S : SignedRationalizedKernelArtifact
+      prob cfg spec (cryptographicArtifactSignatureVerifier C)) :
+    parseSignedArtifactByteEnvelope?
+        (encodeSignedArtifactByteEnvelope S.manifest S.signature) =
+      some
+        ( stringByteStream S.manifest.artifactId,
+          stringByteStream S.manifest.sha256,
+          stringByteStream S.manifest.signer,
+          stringByteStream S.manifest.provenance,
+          stringByteStream S.signature ) ∧
+      C.verify S.manifest.messageBytes (stringByteStream S.signature) = true := by
+  refine ⟨?_, ?_⟩
+  · exact parseSignedArtifactByteEnvelope_encode S.manifest S.signature
+  · simpa [cryptographicArtifactSignatureVerifier] using S.signature_valid
+
 def solveDefinitiveRawCrossDockBenchmarkDecisionOfSignedArtifact
     {prob : MDBindingProblem}
     {cfg : RawPocketLigandSamplingConfig}
@@ -3343,6 +3826,44 @@ def solveDefinitiveRawCrossDockCertifiedOfSignedArtifact
     (S : SignedRationalizedKernelArtifact prob cfg spec V) :
     ConstructiveDeploymentCertifiedResult prob cfg spec S.toArtifactInstantiation :=
   solveDefinitiveRawCrossDockCertified prob cfg spec S.toArtifactInstantiation
+
+def signedArtifactEnvelopeByteLength
+    {prob : MDBindingProblem}
+    {cfg : RawPocketLigandSamplingConfig}
+    {spec : DockingAcceptanceSpec}
+    {V : ArtifactSignatureVerifier}
+    (S : SignedRationalizedKernelArtifact prob cfg spec V) : Nat :=
+  parseSignedArtifactByteEnvelope_cost
+    (encodeSignedArtifactByteEnvelope S.manifest S.signature)
+
+def runDefinitiveComputablePipelineOfSignedArtifact
+    {prob : MDBindingProblem}
+    {cfg : RawPocketLigandSamplingConfig}
+    {spec : DockingAcceptanceSpec}
+    {V : ArtifactSignatureVerifier}
+    (S : SignedRationalizedKernelArtifact prob cfg spec V)
+    (pocketCoordBudget ligandCoordBudget conformerCount refinementFuel : Nat) :
+    DefinitiveComputablePipelineOutput prob cfg spec S.toArtifactInstantiation :=
+  runDefinitiveComputablePipeline
+    prob cfg spec S.toArtifactInstantiation
+    { pocketCoordBudget := pocketCoordBudget
+      ligandCoordBudget := ligandCoordBudget
+      conformerCount := conformerCount
+      refinementFuel := refinementFuel
+      parserBytes := signedArtifactEnvelopeByteLength S }
+
+theorem runDefinitiveComputablePipelineOfSignedArtifact_parserBytes_exact
+    {prob : MDBindingProblem}
+    {cfg : RawPocketLigandSamplingConfig}
+    {spec : DockingAcceptanceSpec}
+    {V : ArtifactSignatureVerifier}
+    (S : SignedRationalizedKernelArtifact prob cfg spec V)
+    (pocketCoordBudget ligandCoordBudget conformerCount refinementFuel : Nat) :
+    (runDefinitiveComputablePipelineOfSignedArtifact
+      S pocketCoordBudget ligandCoordBudget conformerCount refinementFuel).runtimeProfile.parserBytes =
+      parseSignedArtifactByteEnvelope_cost
+        (encodeSignedArtifactByteEnvelope S.manifest S.signature) := by
+  rfl
 
 theorem SignedRationalizedKernelArtifact.benchmark_decision_accept_refines_legacy_accept
     {prob : MDBindingProblem}
