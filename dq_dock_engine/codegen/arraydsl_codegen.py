@@ -210,7 +210,9 @@ def validate_generated_modules(
     output_dir: Path,
     package_name: str = DEFAULT_OUTPUT_PACKAGE,
 ) -> None:
+    from dq_dock_engine.codegen.backend_fidelity import check_registry_semantics
     from dq_dock_engine.codegen.arraydsl_runtime import clear_registry
+    from dq_dock_engine.codegen.arraydsl_runtime import PrimitiveMetadata
 
     primitives = _load_export(export_path)
     generated_names = {primitive.name for primitive in primitives}
@@ -220,12 +222,14 @@ def validate_generated_modules(
     registry_path = output_dir / "arraydsl_registry.py"
     exec(compile(registry_path.read_text(), str(registry_path), "exec"), namespace)
 
-    registry = cast(Dict[str, object], namespace["PRIMITIVE_REGISTRY"])
+    registry = cast(Dict[str, PrimitiveMetadata], namespace["PRIMITIVE_REGISTRY"])
     registered_names = set(registry)
     if registered_names != generated_names:
         raise ValueError(
             f"Generated registry mismatch: expected {sorted(generated_names)}, got {sorted(registered_names)}"
         )
+
+    check_registry_semantics(registry)
 
 
 def export_lean_ir(

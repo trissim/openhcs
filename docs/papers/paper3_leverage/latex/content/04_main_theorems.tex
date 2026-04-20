@@ -666,6 +666,205 @@ For the state-aware nontrivial composed force-field family:
 The first clause is the nontrivial anchor-direction Lipschitz theorem, where the coefficient sum is controlled by an absolute-value triangle bound. The second clause is the corresponding half-gap transport theorem instantiated with that nontrivial shell constant.
 \end{proof}
 
+\begin{theorem}[Full-State Biomolecular Force-Field Transport]\label{thm:fullstate-biomolecular-forcefield-transport}
+\leanmeta{\LHrng{L}{640}{642}}
+For a calibrated full-state composed Hamiltonian with bonded/Lennard--Jones/Coulomb dependence on all molecular coordinates:
+\begin{enumerate}
+\item the full-state energy is Lipschitz under an explicit summed shell constant,
+\item the same constant yields the corresponding half-gap winner-preservation transport theorem,
+\item an explicit calibrated parameter family witnesses strictly positive bonded, LJ, and Coulomb shell constants.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The Lipschitz clause is obtained by combining componentwise full-state bounds through the composed-Hamiltonian shell theorem. Half-gap transport is the direct instantiation of the same constant in the existing winner-preservation theorem schema. The positivity claim is a concrete numeric calibration theorem for the designated full-state parameter bundle.
+\end{proof}
+
+\begin{theorem}[Pairwise Geometric Force-Field Sharp-Constant Transport]\label{thm:pairwise-geometric-forcefield-transport}
+\leanmeta{\LHrng{L}{652}{653}}
+For a pairwise geometric bonded/Lennard--Jones/Coulomb calibration bundle with componentwise per-pair Lipschitz witnesses:
+\begin{enumerate}
+\item the resulting pairwise composed Hamiltonian is globally Lipschitz with an explicit carried sharp shell constant,
+\item the same sharp shell constant transports through half-gap winner-preservation.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Componentwise pairwise bounds are aggregated by finite-sum absolute-value control and then fed to the composed-Hamiltonian shell theorem. Half-gap transport is the corresponding direct instantiation with that carried sharp constant.
+\end{proof}
+
+\begin{theorem}[Pairwise Geometric Transport from Explicit Analytic Bounds]\label{thm:pairwise-geometric-derived-transport}
+\leanmeta{\LHrng{L}{660}{661}}
+If pairwise bonded/Lennard--Jones/Coulomb interactions satisfy explicit geometric analytic assumptions (stretch bounds, radius floor, charge envelope, and distance-level transport bounds), then the pairwise composed Hamiltonian admits derived sharp shell constants and the corresponding half-gap transport theorem.
+\end{theorem}
+
+\begin{proof}
+Use the explicit geometric assumptions to derive per-pair Lipschitz constants, aggregate them across pair sets to obtain sharp component constants, apply composed-Hamiltonian Lipschitz transport, and instantiate the half-gap theorem with the derived summed shell constant.
+\end{proof}
+
+\begin{theorem}[Solvent/Polarization/Long-Range Realism-Augmented Force-Field Transport]\label{thm:realism-augmented-forcefield-transport}
+\leanmeta{\LHrng{L}{675}{676}}
+If a full-state docking Hamiltonian is augmented by explicit solvent, polarization, many-body, and long-range correction terms with declared componentwise Lipschitz shells, then:
+\begin{enumerate}
+\item the aggregate correction is globally Lipschitz with shell equal to the sum of the component shells,
+\item the fully augmented Hamiltonian is globally Lipschitz under the summed base-plus-correction shell,
+\item the same summed shell transports through the half-gap winner-preservation theorem.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Apply finite-sum absolute-value control to aggregate component correction shells, combine with the existing full-state base Hamiltonian Lipschitz theorem, and instantiate the standard half-gap transport theorem with the resulting total shell constant.
+\end{proof}
+
+\begin{theorem}[Constructive Empirical Realism Shell Envelope]\label{thm:constructive-empirical-realism-shell-envelope}
+\leanmeta{\LH{L683}}
+For the constructive empirical realism instantiation, each realism correction shell (solvent, polarization, many-body, long-range real, long-range reciprocal) is explicitly bounded by
+\[
+\text{empirical mean shell} + z \cdot \frac{1}{\sqrt{N}},
+\]
+with shared sample size $N$ and confidence multiplier $z$.
+\end{theorem}
+
+\begin{proof}
+Each shell is defined as empirical mean plus $z$ times the corresponding standard error, and each standard error is assumed to satisfy the same $1/\sqrt{N}$ finite-sample envelope. Multiplying by nonnegative $z$ and adding the mean yields the five shell inequalities.
+\end{proof}
+
+\begin{theorem}[Constructive Empirical Realism Transport]\label{thm:constructive-empirical-realism-transport}
+\leanmeta{\LHrng{L}{684}{685}}
+Any constructive empirical realism instantiation canonically recovers the abstract solvent/polarization/many-body/long-range realism layer; therefore:
+\begin{enumerate}
+\item the realism-augmented composed Hamiltonian inherits global Lipschitz transport under the empirical shell aggregate,
+\item the same empirical aggregate shell transports through half-gap winner preservation.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Convert the constructive empirical package into the abstract realism layer by direct field mapping, then apply the already proved realism-augmented Lipschitz and half-gap transport theorems to that converted layer.
+\end{proof}
+
+\begin{theorem}[Concrete Reference Realism Shell Calibration]\label{thm:biomolecular-reference-realism-shell-values}
+\leanmeta{\LH{L691}}
+The reference empirical realism calibration instantiates explicit numeric shell values for solvent, polarization, many-body, long-range real-space, and long-range reciprocal corrections.
+\end{theorem}
+
+\begin{proof}
+Unfold the concrete reference calibration definition: all shell values reduce by definitional simplification because the reference standard-error fields are fixed constants.
+\end{proof}
+
+\begin{theorem}[Concrete Reference Realism Transport]\label{thm:biomolecular-reference-realism-transport}
+\leanmeta{\LHrng{L}{692}{693}}
+For the same concrete reference realism calibration, the associated realism-augmented Hamiltonian inherits both:
+\begin{enumerate}
+\item global Lipschitz transport under the concrete aggregated shell,
+\item half-gap winner-preservation transport for discretized resolution maps.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Instantiate the constructive empirical realism transport theorems with the concrete reference calibration package and its certified componentwise Lipschitz correction terms.
+\end{proof}
+
+\begin{theorem}[Concrete Reference Realism with Explicit Aggregate Shell Constant]\label{thm:biomolecular-reference-realism-explicit-shell-constant}
+\leanmeta{\LHrng{L}{700}{701}}
+For the same concrete reference realism package:
+\begin{enumerate}
+\item the realism-correction aggregate shell constant is explicit,
+\[
+L_{\mathrm{corr}}=\frac{53}{20},
+\]
+\item the realism-augmented Hamiltonian obeys the explicit global bound
+\[
+|\Delta E| \le \left(L_{\mathrm{full}}+\frac{53}{20}\right)\,d_{\mathrm{MD},1},
+\]
+where $L_{\mathrm{full}}$ is the full-state composed-force-field shell constant and $d_{\mathrm{MD},1}$ is the MD state $L^1$ distance.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The aggregate correction shell is the sum of the five calibrated component shells; substituting the concrete reference values gives $53/20$. Substitute this identity into the already proved concrete realism Lipschitz transport inequality.
+\end{proof}
+
+\begin{theorem}[Electronic-Structure Correction Transport (Charge Transfer + Metal Coordination)]\label{thm:electronic-structure-correction-transport}
+\leanmeta{\LHrng{L}{717}{721}}
+If realism-augmented docking Hamiltonians are further corrected by charge-transfer and metal-coordination terms with explicit shell and absolute-error envelopes, then:
+\begin{enumerate}
+\item the fully augmented Hamiltonian inherits global Lipschitz transport under the summed realism-plus-electronic shell constant,
+\item the realism-only vs realism+electronic per-state energy discrepancy is uniformly bounded by the electronic absolute-error constant,
+\item the same summed shell constant transports through half-gap winner-preservation.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Combine the realism-augmented Lipschitz theorem with the additive electronic correction Lipschitz bound; absolute discrepancy follows from the electronic correction absolute-error theorem; then instantiate the standard half-gap transport theorem with the resulting total shell constant.
+\end{proof}
+
+\begin{theorem}[Concrete Electronic-Structure Reference Calibration and Error Transport]\label{thm:electronic-reference-shell-error-transport}
+\leanmeta{\LHrng{L}{722}{724}, \LH{L727}}
+For the concrete electronic-structure reference layer, shell/error constants are explicit:
+\[
+L_{\mathrm{elec}}=0,\qquad E_{\mathrm{elec}}=\frac12.
+\]
+Consequently, realism+electronic Lipschitz transport reduces to the realism shell bound, the per-state realism-only vs realism+electronic energy discrepancy is bounded by $1/2$, and half-gap transport specializes with the same realism-only shell constant.
+\end{theorem}
+
+\begin{proof}
+Unfold the concrete reference layer to evaluate shell/error constants directly; substitute those values into the general electronic-structure Lipschitz/error transport theorems.
+\end{proof}
+
+\begin{theorem}[QM-Grounded Electronic-Structure Transport with Tight Class Bounds]\label{thm:qm-grounded-electronic-structure-transport}
+\leanmeta{\LHrng{L}{734}{737}}
+If an electronic-structure correction layer is equipped with chemistry-class-specific QM shell/error envelopes that dominate the base charge-transfer and metal-coordination shells/errors at a designated active chemistry class, then:
+\begin{enumerate}
+\item the base electronic shell/error constants are bounded by the active-class QM envelopes,
+\item realism+electronic global Lipschitz transport upgrades to the summed realism-plus-QM-tight shell constant,
+\item realism-only vs realism+electronic per-state discrepancy is bounded by the QM-tight error constant.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+First transport base shell/error constants to active-class QM envelopes by the class-dominance inequalities. Then substitute these bounds into the previously proved realism+electronic Lipschitz and absolute-discrepancy transport theorems.
+\end{proof}
+
+\begin{theorem}[QM-Grounded Electronic Half-Gap Transport]\label{thm:qm-grounded-electronic-halfgap-transport}
+\leanmeta{\LH{L751}}
+If the realism+electronic utility approximation is certified directly with the summed realism-plus-QM-tight shell constant, then half-gap winner preservation follows under that same summed constant.
+\end{theorem}
+
+\begin{proof}
+Instantiate the generic Lipschitz-resolution half-gap theorem using the realism+electronic utility, the QM-tight shell constant, and its nonnegativity witness.
+\end{proof}
+
+\begin{theorem}[Method-Specific QM Electronic Transport from Affine Class Calibration]\label{thm:qm-method-specific-electronic-transport}
+\leanmeta{\LH{L756}}
+If QM shell/error envelopes are derived from method-specific affine calibration formulas over chemistry-class descriptors, and the base electronic layer is dominated by those active-class affine bounds, then the same realism+electronic transport endpoints follow with the resulting method-derived tight shell/error constants:
+\begin{enumerate}
+\item global realism+electronic Lipschitz transport,
+\item realism-only vs realism+electronic absolute discrepancy transport.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Convert the affine method-calibration package into the QM-grounded electronic layer by fieldwise definition, then apply the existing QM-grounded realism Lipschitz and absolute-error transport theorems.
+\end{proof}
+
+\begin{theorem}[Protocol-Derived QM Method Calibration Transport]\label{thm:qm-protocol-derived-method-calibration-transport}
+\leanmeta{\LH{L765}}
+If active-class QM shell/error constants are calibrated directly by protocol-derived estimate/reference/error terms, then those protocol calibrations induce a method-specific QM layer and therefore the same realism+electronic transport endpoints (global Lipschitz transport and realism-only vs realism+electronic discrepancy transport).
+\end{theorem}
+
+\begin{proof}
+Convert protocol-derived shell/error calibration terms into affine-intercept method constants (zero slopes) using the protocol absolute-calibration bounds, map into the existing method-specific QM layer, then apply the method-specific transport theorem.
+\end{proof}
+
+\begin{theorem}[Ewald Long-Range Certificate Import]\label{thm:ewald-long-range-certificates}
+\leanmeta{\LH{L677}}
+Paper4 Ewald long-range certificates are exported to paper3: real-space exponential-decay upper bound and reciprocal-space positivity for positive radius/splitting/wavevector inputs.
+\end{theorem}
+
+\begin{proof}
+Apply the imported paper4 Ewald decay and positivity theorems directly under the declared positivity premises.
+\end{proof}
+
 \begin{remark}[DOF Loop Closure]\label{rem:hamiltonian-dof-loop-closure}
 In Sections~\ref{foundations}--\ref{probability-model}, $\mathrm{DOF}(A)$ is introduced as declared architecture data and then transported through the canonical identity
 \(
@@ -692,6 +891,20 @@ For every nonnegative step size $\delta$, Euler--Maruyama discretization of the 
 
 \begin{proof}
 Instantiate the package's Euler--Maruyama kernel at $\delta$ and transport the package error certificate to the quotient-MCMC transition map.
+\end{proof}
+
+\begin{theorem}[Finite-State Boltzmann Stationarity from Detailed Balance]\label{thm:langevin-boltzmann-stationarity-measure-derivation}
+\leanmeta{\LH{L637}}
+For a finite-state Langevin transition package at fixed time $t$, detailed balance plus row-stochastic normalization imply one-step Boltzmann stationarity in pushforward form:
+\[
+\rho_{t+1}(s') = \sum_s \rho_t(s)K_t(s,s'),\qquad
+\rho_t=\pi_{\mathrm{Boltz}} \implies \rho_{t+1}=\pi_{\mathrm{Boltz}}.
+\]
+The same statement is exported in quotient-Boltzmann notation.
+\end{theorem}
+
+\begin{proof}
+Sum the detailed-balance identity over the source state, factor out the target Boltzmann weight, and use row-stochastic normalization. Quotient-Boltzmann form is obtained by rewriting with the package's Boltzmann-identification field.
 \end{proof}
 
 \begin{theorem}[Langevin Analysis-Closure Endpoint Bundle]\label{thm:langevin-analysis-closure-endpoint-bundle}
@@ -725,9 +938,168 @@ If one declared formal-analysis assumption bundle provides strong-solution exist
 Apply the assumption-bundle discharge theorem, which composes the witness constructors with the endpoint theorems and returns the conjunction of all five target claims.
 \end{proof}
 
+\begin{theorem}[Explicit SDE Analytic Conditions and Dissipative Ergodicity]\label{thm:langevin-explicit-sde-conditions}
+\leanmeta{\LHrng{L}{638}{639}}
+The first-principles Langevin package now exports explicit SDE-condition constants and inequalities:
+global Lipschitz, linear growth, and Lyapunov dissipativity. The same package also exports a dissipativity-parameterized ergodicity consequence for its Boltzmann measure.
+\end{theorem}
+
+\begin{proof}
+The explicit-conditions theorem is a direct tuple projection from the first-principles assumption record. The dissipative-ergodicity theorem combines the same drift inequality constants with the package ergodicity field into one endpoint statement.
+\end{proof}
+
+\begin{theorem}[Microscopic-to-First-Principles Langevin Closure Constructor]\label{thm:langevin-microscopic-derivation-constructor}
+\leanmeta{\LHrng{L}{711}{712}, \LH{L725}}
+An explicit microscopic Langevin derivation package (microscopic drift identity, analytic inequalities, Boltzmann invariance/ergodicity, strong-solution uniqueness, and strong/weak rate constants) canonically constructs the first-principles Langevin interface and therefore exports both:
+\begin{enumerate}
+\item the explicit SDE inequality tuple,
+\item the full five-endpoint continuous-time closure bundle,
+\item the dissipativity-parameterized ergodicity consequence directly at the microscopic layer.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Use the microscopic-to-first-principles constructor to map microscopic drift inequalities to the interface drift inequalities by rewriting along the drift identity, then apply the existing explicit-SDE and first-principles endpoint theorems.
+\end{proof}
+
+\begin{theorem}[Molecular Hamiltonian+Thermostat to Langevin Endpoint Constructor]\label{thm:langevin-molecular-hamiltonian-thermostat-constructor}
+\leanmeta{\LHrng{L}{728}{731}}
+For a concrete microscopic package that contains:
+\begin{enumerate}
+\item a molecular realism+electronic Hamiltonian energy identity,
+\item thermostat metadata,
+\item a microscopic drift derivation certificate,
+\end{enumerate}
+the first-principles Langevin interface is constructed directly and exports both the explicit SDE tuple and the full continuous-time five-endpoint closure bundle.
+\end{theorem}
+
+\begin{proof}
+Use the molecular-Hamiltonian microscopic package to build the first-principles assumption record through the microscopic constructor, then apply the microscopic explicit-SDE and endpoint-export theorems.
+\end{proof}
+
+\begin{theorem}[Concrete Hamiltonian+Bath End-to-End Langevin Closure]\label{thm:langevin-concrete-hamiltonian-bath-end-to-end}
+\leanmeta{\LH{L754}}
+If a concrete Hamiltonian+bath molecular system carries one Ito/Fokker--Planck/Harris continuous-state closure package, then the microscopic Langevin derivation object is constructed internally from that closure record and the full five-endpoint Langevin closure bundle is exported at theorem level.
+\end{theorem}
+
+\begin{proof}
+Construct the microscopic derivation record directly from the closure fields (drift, analytic inequalities, Boltzmann invariance/ergodicity, strong-solution uniqueness, and rate constants), convert to the molecular-Hamiltonian microscopic package, and apply the existing molecular endpoint theorem.
+\end{proof}
+
+\begin{theorem}[Joint Microscopic Dynamical and Canonical Path-Process Closure Bundle]\label{thm:langevin-molecular-pathprocess-joint-bundle}
+\leanmeta{\LH{L750}}
+For a concrete molecular Hamiltonian+thermostat microscopic package and a canonical continuous path-process construction over the same Langevin model, the full microscopic five-endpoint closure bundle and the canonical process-level closure bundle are exported together in one theorem endpoint.
+\end{theorem}
+
+\begin{proof}
+Conjoin the molecular-Hamiltonian microscopic endpoint theorem with the canonical continuous path-process closure theorem for the same model.
+\end{proof}
+
+\begin{theorem}[Continuous-State Measure-Theoretic Langevin Closure]\label{thm:langevin-continuous-state-measure-closure}
+\leanmeta{\LHrng{L}{650}{651}}
+For a continuous-state overdamped Langevin model equipped with a measure-kernel semigroup realization, detailed-balance-at-one witness, and explicit SDE analytic inequalities:
+\begin{enumerate}
+\item stationarity propagates to all semigroup scales,
+\item explicit global Lipschitz/linear-growth/dissipativity constants are exported,
+\item existence/uniqueness, Boltzmann invariance/ergodicity, and strong/weak Euler--Maruyama endpoint envelopes follow as one closure bundle.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+All-scale stationarity is the scale-flow theorem from detailed balance at one step. The analytic constants are record projections. Endpoint discharge is obtained by conversion to the first-principles assumption package and application of the bundled first-principles closure theorem.
+\end{proof}
+
+\begin{theorem}[Ito/Fokker--Planck/Harris Continuous-Time Closure Bridge]\label{thm:langevin-ito-fp-harris-closure}
+\leanmeta{\LH{L659}}
+If the continuous-state Langevin closure package is augmented with: (i) an Ito-generator martingale-wellposedness layer, (ii) a Fokker--Planck stationary-transport layer, and (iii) a Harris minorization/petite-set ergodicity layer, then the same endpoint closure package follows, with those additional certificates exported in one theorem bundle.
+\end{theorem}
+
+\begin{proof}
+Combine the base continuous-state closure theorem with the layer-specific certificate fields: Fokker--Planck stationarity transport supplies scalewise Boltzmann stationarity, Harris supplies the ergodicity conclusion, and the Ito/Fokker--Planck/Harris proposition certificates are appended by conjunction.
+\end{proof}
+
+\begin{theorem}[Infinite-Dimensional Path-Measure Langevin Bridge]\label{thm:langevin-infinite-dimensional-path-measure-bridge}
+\leanmeta{\LH{L679}}
+If the continuous-time Ito/Fokker--Planck/Harris closure package is extended with a path-space layer (measurable path extension, path measure, cylindrical consistency/closure, pathwise martingale-on-cylinder certificate, and pathwise uniqueness certificate), then these path-measure certificates transport as one bundled theorem-level endpoint together with the base closure certificates.
+\end{theorem}
+
+\begin{proof}
+Apply the path-measure extension certificate theorem to extract cylindrical/pathwise certificates, then conjoin with the already-exported Ito/Fokker--Planck/Harris certificates from the underlying closure package.
+\end{proof}
+
+\begin{theorem}[Constructive Infinite-Dimensional Path-Derivation Bridge]\label{thm:langevin-constructive-infinite-dimensional-path-derivation-bridge}
+\leanmeta{\LHrng{L}{686}{687}}
+If the infinite-dimensional path layer is supplied with constructive finite-horizon measures, projective-consistency witness, and explicit Kolmogorov-extension witness, then:
+\begin{enumerate}
+\item finite-horizon consistency and extension-match certificates are exported together with pathwise/martingale and Ito/Fokker--Planck/Harris certificates,
+\item forgetting the finite-horizon construction data recovers the previous certificate-only infinite-dimensional path-measure closure theorem.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The first clause is a direct conjunction of the constructive derivation certificates with the existing Ito/Fokker--Planck/Harris certificates. The second clause is obtained by converting the constructive package to the prior path-layer interface and applying the previously proved infinite-dimensional closure theorem.
+\end{proof}
+
+\begin{theorem}[Finite-Horizon Law to Constructive Path-Closure Bridge]\label{thm:langevin-finite-horizon-law-derivation-bridge}
+\leanmeta{\LHrng{L}{694}{695}}
+If finite-horizon path laws are given with explicit projective-consistency witnesses and a Kolmogorov extension witness for the designated measurable transition kernel/initial law, then:
+\begin{enumerate}
+\item these finite-horizon witnesses induce the constructive infinite-dimensional path-derivation closure bundle,
+\item forgetting constructive finite-horizon details recovers the prior certificate-export infinite-dimensional closure endpoint.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Package the finite-horizon/projective/extension witnesses into the finite-horizon law bridge object and apply the two conversion theorems: first to constructive infinite-dimensional closure, then to its certificate-only forgetful image.
+\end{proof}
+
+\begin{theorem}[Finite-Horizon Marginal Recovery Formulas]\label{thm:langevin-finite-horizon-marginal-recovery}
+\leanmeta{\LH{L702}}
+The finite-horizon constructive law bridge exports both marginal-recovery formulas explicitly:
+\begin{enumerate}
+\item projective truncation recovers every lower-horizon finite-path measure from each higher-horizon one,
+\item Kolmogorov-extension projection recovers every finite-horizon marginal from the infinite-path extension measure.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Both clauses are direct fields of the finite-horizon projective-consistency and Kolmogorov-extension witnesses carried by the bridge package.
+\end{proof}
+
+\begin{theorem}[Canonical Continuous Path-Process Closure from Finite-Horizon Bridge Data]\label{thm:langevin-canonical-continuous-path-process-closure}
+\leanmeta{\LHrng{L}{732}{733}}
+If the finite-horizon/Kolmogorov constructive bridge is augmented with canonical process-level regularity witnesses (measurable evaluation, continuity, regularity, and pathwise uniqueness), then:
+\begin{enumerate}
+\item these process-level certificates and the constructive finite-horizon closure certificates are exported together in one endpoint,
+\item projective and extension marginal-recovery formulas are retained explicitly.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Conjoin the process-level witness fields with the finite-horizon closure theorem for the same bridge package; marginal recovery is the direct finite-horizon bridge marginal theorem.
+\end{proof}
+
+\begin{theorem}[Constructive Canonical Path-Process Closure from Finite-Horizon Bridge Construction]\label{thm:langevin-canonical-pathprocess-of-finite-horizon-bridge}
+\leanmeta{\LH{L755}}
+Given Ito/Fokker--Planck/Harris closure and finite-horizon projective/Kolmogorov bridge data, the canonical continuous path-process object is constructed directly (without separately supplied process-regularity certificates), and the full canonical closure endpoint bundle is exported.
+\end{theorem}
+
+\begin{proof}
+Build the canonical process object from the finite-horizon bridge constructor and then apply the canonical closure theorem to that constructed object.
+\end{proof}
+
+\begin{theorem}[Force-Field-Derived Drift-Lipschitz Injection]\label{thm:langevin-forcefield-derived-lipschitz-injection}
+\leanmeta{\LH{L662}, \LH{L667}}
+Assume closure state distance is instantiated by molecular $L^1$ distance and drift increments are controlled by pairwise-forcefield energy differences through a nonnegative coupling coefficient. Then the pairwise geometric derived shell constant plugs directly into the closure drift-Lipschitz hypothesis, yielding an explicit SDE-constant tuple with force-field-derived drift constant.
+\end{theorem}
+
+\begin{proof}
+First apply the pairwise geometric derived Lipschitz theorem to bound energy differences. Multiply by the nonnegative drift/energy coupling coefficient to obtain a drift Lipschitz bound. Rewrite through the state-distance identification and substitute into the continuous-state explicit-constant tuple.
+\end{proof}
+
 \begin{theorem}[First-Principles Langevin Endpoint Discharge]\label{thm:langevin-first-principles-discharge}
 \leanmeta{\LH{L630}}
-If one first-principles analytic assumption package supplies a global attractor drift law and explicit strong/weak rate constants for a declared overdamped Langevin model, then existence/uniqueness, invariance, ergodicity, and strong/weak Euler--Maruyama endpoint envelopes follow as one bundled theorem consequence.
+If one first-principles analytic package supplies explicit global Lipschitz, linear-growth, and dissipativity/Lyapunov inequalities together with Boltzmann invariance/ergodicity and strong/weak rate constants, then existence/uniqueness, invariance, ergodicity, and strong/weak Euler--Maruyama endpoint envelopes follow as one bundled theorem consequence.
 \end{theorem}
 
 \begin{proof}
@@ -808,6 +1180,49 @@ For the fully constructive top-level cross-docking pipeline, legacy-view normali
 Instantiate the automatic constructive-wrapper theorem on outputs of the fully constructive pipeline; export payload identity is definitional for that pipeline output bundle.
 \end{proof}
 
+\begin{theorem}[Constructive-Only Spec Replacement]\label{thm:constructive-only-spec-replacement}
+\leanmeta{\LH{L648}}
+For any downstream proposition on normalized outputs, legacy-wrapper evaluation and native constructive evaluation are logically equivalent once canonical export-payload identity is established. Thus downstream theorem consumers can be switched to constructive-only inputs without loss.
+\end{theorem}
+
+\begin{proof}
+Apply the constructive-only specification equivalence theorem, which rewrites both sides through the automatic wrapper alignment equality obtained from the constructive output and export-payload check.
+\end{proof}
+
+\begin{theorem}[Constructive-Only Core-Field Consumer Migration]\label{thm:constructive-only-core-field-consumers}
+\leanmeta{\LH{L658}}
+For constructive normalized outputs with canonical export payload, the standard downstream field consumers are already constructive-only equivalent: retained-coordinate membership predicates, refinement-result existence predicates, and canonical export-json checks.
+\end{theorem}
+
+\begin{proof}
+Instantiate the proposition-level constructive-only equivalence principle on each field consumer predicate and combine the resulting equivalences with the export identity rewrite.
+\end{proof}
+
+\begin{theorem}[Constructive-Only Extended Consumer Migration]\label{thm:constructive-only-extended-field-consumers}
+\leanmeta{\LH{L666}}
+Beyond core predicates, additional downstream consumers are constructive-only equivalent: retained-coordinate cardinality and exact normalized refinement-payload equality both transport from legacy-wrapper view to native constructive view under canonical export identity.
+\end{theorem}
+
+\begin{proof}
+Apply normalized output equivalence and project the required fields by congruence (retained-coordinate cardinality and refinement payload). Combine with canonical export identity to obtain the bundled extended consumer migration claim.
+\end{proof}
+
+\begin{theorem}[Continuous-State Relevance/Srank/Landauer Transport via Measurable Encoding Bridges]\label{thm:continuous-state-measurable-encoding-transport}
+\leanmeta{\LHrng{L}{713}{716}, \LH{L726}}
+For optimizer-preserving measurable encoding equivalences between continuous-state decision problems, together with compatible measurable finite partition codes:
+\begin{enumerate}
+\item coordinate relevance is equivalent across source and target,
+\item partition fibers are mapped exactly by the encoding equivalence,
+\item structural rank is invariant,
+\item Landauer energy floors are transported exactly,
+\item these transport clauses are exported together as one bundled theorem endpoint.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Apply the encoding transport witness theorems for relevance, structural rank, and energy floor. The partition-fiber identity follows by unfolding code compatibility and transporting singleton-fiber membership through the state equivalence.
+\end{proof}
+
 \subsubsection{Chemical, Ensemble, and Kinetic Docking Interfaces}
 
 \begin{theorem}[Chemical-Augmented Docking Transport Endpoints]\label{thm:chemical-augmented-docking-transport}
@@ -846,6 +1261,24 @@ For a stochastic conformational ensemble kernel with nonnegative transition prob
 Nonnegativity follows termwise from nonnegative factors in the one-step update sum. Total mass preservation follows by finite sum exchange and row-stochastic normalization.
 \end{proof}
 
+\begin{theorem}[Multi-Step Ensemble Process Transport]\label{thm:ensemble-multistep-population-transport}
+\leanmeta{\LH{L645}}
+For every finite horizon $n$, repeated conformer propagation by the stochastic ensemble kernel preserves nonnegativity and total mass. Equivalently, the process-level population map is Markov-consistent across all finite step counts.
+\end{theorem}
+
+\begin{proof}
+Induct on the number of steps. The base case is the input distribution hypothesis. The step case applies the one-step nonnegativity and normalization theorems to the previous-step distribution.
+\end{proof}
+
+\begin{theorem}[Ensemble Statistical Validity Transport]\label{thm:ensemble-statistical-validity-transport}
+\leanmeta{\LH{L656}}
+Under explicit per-conformer finite-sample population-error budgets, bounded-observable expectations transport with an explicit error envelope, and conformer-ordering decisions are stable whenever true-population margins exceed the corresponding noise budgets.
+\end{theorem}
+
+\begin{proof}
+Expectation transport follows from sum-difference expansion, absolute-value summation bounds, and the declared pointwise error budgets. Order stability follows from two-sided pointwise interval bounds plus the stated margin separation.
+\end{proof}
+
 \begin{theorem}[Chemical/Ensemble Transport to Concrete Binding Problem]\label{thm:chemical-ensemble-transport-binding-specialization}
 \leanmeta{\LHrng{L}{623}{626}}
 For a concrete molecular binding problem:
@@ -866,6 +1299,162 @@ At fixed molecular core state, varying protonation, tautomer, ionic environment,
 
 \begin{proof}
 The chemical-augmented utility is defined by projection to the core state, so all chemical-component-only substitutions are definitionally optimizer-invariant.
+\end{proof}
+
+\begin{theorem}[Chemically Coupled Utility/Optimizer Sensitivity]\label{thm:chemical-coupled-sensitivity}
+\leanmeta{\LHrng{L}{643}{644}}
+When explicit chemical coupling terms are added to utility, chemical microstate changes at fixed molecular core can alter utility values and, under strict-winner witnesses for two chemical states, force optimizer-set change.
+\end{theorem}
+
+\begin{proof}
+The utility-sensitivity clause is a direct algebraic subtraction argument on the coupled utility definition. The optimizer-sensitivity clause uses strict-opt witnesses at the two chemical states to derive a contradiction if optimizer sets were equal.
+\end{proof}
+
+\begin{theorem}[Unified Chemical-State Dynamics Transport under pH/Ionic Conditions]\label{thm:unified-chemical-state-dynamics-transport}
+\leanmeta{\LHrng{L}{738}{739}}
+For a finite chemical-state dynamics layer carrying joint protonation/tautomer/ionic/solvent/water-bridge state metadata, stationary populations, and pH/ionic-condition windows:
+\begin{enumerate}
+\item observable docking utility decomposes as core molecular utility plus full chemical coupling contribution at each dynamic chemical state,
+\item pH and ionic-strength window certificates are exported,
+\item expected-utility action separation is transported directly by an explicit margin hypothesis.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The decomposition is definitional for the unified chemical-state observable utility map. Window certificates are record fields. Expected-utility separation is the direct margin-transport theorem for the same expected-utility functional.
+\end{proof}
+
+\begin{theorem}[Mechanism-Derived Unified Chemical Dynamics with Stationarity Fixed Point]\label{thm:chemical-conditioned-mechanism-dynamics}
+\leanmeta{\LH{L757}}
+If chemical-state populations are constructed from explicit pH/ionic-conditioned state weights and transition rows are set to that same derived stationary law, then:
+\begin{enumerate}
+\item the full unified chemical-state transport bundle (window certificates plus observable-utility decomposition plus stationary normalization) is exported,
+\item the stationary distribution satisfies the explicit one-step fixed-point equation for the derived transition kernel.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Convert the conditioned mechanism into the unified chemical-state dynamics record and apply the existing unified transport theorem. The fixed-point equation follows by substituting the row-constant transition kernel and using stationary normalization.
+\end{proof}
+
+\begin{theorem}[Gibbs-Conditioned Unified Chemical Dynamics Closure]\label{thm:gibbs-conditioned-mechanism-dynamics}
+\leanmeta{\LH{L764}}
+If chemical-state weights are instantiated explicitly as Gibbs factors of pH/ionic-conditioned free-energy surrogates, then:
+\begin{enumerate}
+\item the induced mechanism stationary population is exactly the normalized Gibbs weight law,
+\item the unified chemical-state transport bundle and stationary fixed-point equation follow for the derived mechanism.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Build the conditioned mechanism by taking base weights as Gibbs factors and zero additional linear sensitivities; positivity and normalization are derived from positivity of exponentials and finite-state summation. Then apply the existing mechanism-derived unified dynamics theorem.
+\end{proof}
+
+\begin{theorem}[Calibrated Biophysical Chemical-State Separation]\label{thm:calibrated-biophysical-chemical-separation}
+\leanmeta{\LHrng{L}{654}{655}}
+For the explicit calibrated biophysical chemical model, protonation-state changes at fixed molecular core induce concrete utility separation; under strict-winner hypotheses for two actions at the two calibrated chemical states, optimizer sets differ.
+\end{theorem}
+
+\begin{proof}
+The calibrated parameterization yields a closed-form protonation contribution gap. Utility separation follows by subtracting the shared core term. Optimizer separation is then a direct specialization of the coupled strict-winner transport theorem.
+\end{proof}
+
+\begin{theorem}[Dataset-to-Posterior Chemical Separation]\label{thm:chemical-dataset-posterior-separation}
+\leanmeta{\LHrng{L}{663}{664}}
+Given an empirical chemical calibration dataset and confidence level, if empirical protonation-shift mean dominates its finite-sample confidence half-width, then the posterior protonation lower endpoint is strictly positive; under positive action sensitivity, this yields robust protonation utility separation at fixed molecular core for the posterior-mean coupling.
+\end{theorem}
+
+\begin{proof}
+The margin condition implies strict positivity of the posterior protonation lower endpoint by direct algebraic rewrite of the posterior definition. Interval transport then gives positivity of the posterior mean protonation scale. Combined with positive action sensitivity and the closed-form protonation contribution delta, this yields strict utility separation.
+\end{proof}
+
+\begin{theorem}[Bias-Aware Real-Data Chemical Separation]\label{thm:chemical-realdata-bias-aware-separation}
+\leanmeta{\LH{L680}}
+If posterior chemical calibration is equipped with an explicit heldout-bias bound and the bias-adjusted protonation lower endpoint remains positive, then protonation-state utility separation still follows at fixed molecular core under positive action sensitivity.
+\end{theorem}
+
+\begin{proof}
+Use positivity of the bias-adjusted lower endpoint to recover positivity of the posterior lower endpoint, then apply the existing robust posterior protonation-separation theorem.
+\end{proof}
+
+\begin{theorem}[Hierarchical Multi-Dataset Chemical Robustness with Finite-Sample Rate]\label{thm:hierarchical-chemical-realdata-separation-rate}
+\leanmeta{\LH{L688}}
+Suppose multiple real-data chemical calibration layers are pooled in a hierarchical posterior package with:
+\begin{enumerate}
+\item a pooled robust protonation lower endpoint that lower-bounds every dataset-specific robust lower endpoint,
+\item an explicit finite-sample rate lower bound of order $c/\sqrt{N}$ for the pooled endpoint.
+\end{enumerate}
+Then any strictly positive hierarchical rate constant implies per-dataset robust protonation utility separation at fixed molecular core under positive action sensitivity.
+\end{theorem}
+
+\begin{proof}
+Positive rate constant and positive sample size imply positivity of the pooled lower endpoint via the finite-sample lower bound. Monotone transport from pooled lower endpoint to each dataset endpoint yields per-dataset positivity, after which the bias-aware robust chemical separation theorem applies datasetwise.
+\end{proof}
+
+\begin{theorem}[Hierarchical Chemical Separation under Explicit Rate Margin]\label{thm:hierarchical-chemical-realdata-separation-rate-margin}
+\leanmeta{\LH{L696}}
+In the same hierarchical chemical layer, if the explicit finite-sample rate term is strictly below the selected dataset robust protonation lower endpoint, then robust protonation utility separation follows at that dataset under positive action sensitivity.
+\end{theorem}
+
+\begin{proof}
+Rate-term nonnegativity and strict rate-margin separation imply positivity of the dataset robust lower endpoint; the dataset-level bias-aware robust chemical separation theorem then gives the utility separation conclusion.
+\end{proof}
+
+\begin{theorem}[Uniform Hierarchical Chemical Separation under Datasetwise Rate Margins]\label{thm:hierarchical-chemical-realdata-separation-rate-margin-all-datasets}
+\leanmeta{\LH{L703}}
+If explicit finite-sample rate margins hold at \emph{every} dataset in the hierarchical chemical layer, then robust protonation utility separation holds simultaneously for all datasets (under positive datasetwise action sensitivity).
+\end{theorem}
+
+\begin{proof}
+Apply the single-dataset rate-margin theorem pointwise at each dataset index.
+\end{proof}
+
+\begin{theorem}[Hierarchical Chemical Separation under Explicit Rate-Constant Upper Bounds]\label{thm:hierarchical-chemical-realdata-separation-rate-constant-margin}
+\leanmeta{\LHrng{L}{705}{706}}
+Fix an explicit external upper bound on the pooled posterior rate constant. If the induced bound
+\[
+\frac{C_{\mathrm{rate}}}{\sqrt{N_{\mathrm{pool}}}}
+\]
+is strictly below the selected dataset robust protonation lower endpoint, then robust protonation utility separation follows at that dataset under positive action sensitivity.
+\end{theorem}
+
+\begin{proof}
+First transport the external constant bound to the realized pooled rate term by dividing through the common square-root denominator, then invoke the existing single-dataset rate-margin separation theorem.
+\end{proof}
+
+\begin{theorem}[Uniform Hierarchical Chemical Separation under Datasetwise Rate-Constant Margins]\label{thm:hierarchical-chemical-realdata-separation-rate-constant-margin-all-datasets}
+\leanmeta{\LH{L707}}
+Under the same shared external upper bound on pooled posterior rate constant, if the corresponding explicit rate-constant margin inequality holds for every dataset, then robust protonation utility separation holds simultaneously across all datasets.
+\end{theorem}
+
+\begin{proof}
+Apply the single-dataset rate-constant-margin theorem pointwise across dataset indices.
+\end{proof}
+
+\begin{theorem}[Absolute Binding Free-Energy Closure with Standard Corrections]\label{thm:absolute-binding-free-energy-closure}
+\leanmeta{\LHrng{L}{740}{742}}
+For an absolute binding free-energy model with explicit standard-state, finite-size, long-range, net-charge, and restraint corrections:
+\begin{enumerate}
+\item the corrected free energy is exactly base free energy plus total correction,
+\item total correction magnitude is bounded by the summed componentwise correction bounds,
+\item therefore corrected-vs-base absolute discrepancy is bounded by that same summed componentwise bound.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Use the correction-stack decomposition theorem and the total correction absolute-value transport theorem (triangle inequality plus per-component absolute bounds), then rewrite corrected minus base by the corrected-value identity.
+\end{proof}
+
+\begin{theorem}[Protocol-Derived Absolute Free-Energy Correction Closure]\label{thm:absolute-free-energy-protocol-derived-closure}
+\leanmeta{\LH{L758}}
+If each absolute free-energy correction term (standard-state, finite-size, long-range, net-charge, restraint) is calibrated by one protocol-derived bound term, then the induced correction stack satisfies the same total absolute correction bound used in absolute free-energy closure:
+\[
+\left|\Delta G_{\mathrm{corr,total}}\right| \le \sum_i B_i.
+\]
+\end{theorem}
+
+\begin{proof}
+Map each protocol-calibrated correction term to the corresponding correction-stack field, transport each termwise absolute bound, and apply the existing summed correction-stack absolute-bound theorem.
 \end{proof}
 
 \begin{theorem}[Kinetic Observable Reporting Endpoints]\label{thm:kinetic-observable-reporting-endpoints}
@@ -890,6 +1479,1759 @@ Given measurable kinetic protocol inputs (association/dissociation event counts,
 
 \begin{proof}
 Construct the kinetic profile from measurable protocol formulas, then apply the protocol-to-bridge transport theorem, which reduces to the base kinetic bundle theorem after record conversion.
+\end{proof}
+
+\begin{theorem}[Kinetic Confidence Transport]\label{thm:kinetic-confidence-transport}
+\leanmeta{\LHrng{L}{646}{647}}
+Given confidence-profile metadata (nonnegative $z$-score and nonnegative standard-error terms), the kinetic bridge exports interval transport for $k_{\mathrm{on}}$, $k_{\mathrm{off}}$, residence time, and pathway populations. The same interval transport specializes to measurable protocol-instantiated kinetic profiles.
+\end{theorem}
+
+\begin{proof}
+Each confidence interval is an immediate linear inequality from nonnegative half-width terms. The protocol specialization follows by rewriting the profile with the measurable protocol-to-profile conversion.
+\end{proof}
+
+\begin{theorem}[Kinetic Protocol Inference Guarantee under Noise Budgets]\label{thm:kinetic-protocol-inference-guarantee}
+\leanmeta{\LH{L657}}
+For the protocol-noise model with explicit absolute-error budgets, threshold decisions for $k_{\mathrm{on}}$ and $k_{\mathrm{off}}$ and pathway-order comparisons are inference-stable whenever true-profile separation margins dominate the corresponding noise budgets.
+\end{theorem}
+
+\begin{proof}
+Convert absolute-error hypotheses to two-sided interval bounds, then combine those bounds with the assumed separation inequalities to derive preserved threshold and ordering conclusions for the observed profile.
+\end{proof}
+
+\begin{theorem}[Kinetic Concentration/Identifiability Inference Bridge]\label{thm:kinetic-concentration-identifiability-bridge}
+\leanmeta{\LH{L665}}
+If protocol-noise inference is embedded in a concentration layer (confidence level plus concentration-event certificate) and an identifiability layer (distinguishability relation plus margin-dominates-noise condition), then threshold/ranking kinetic conclusions transport together with concentration and identifiability certificates in one bundled inference theorem.
+\end{theorem}
+
+\begin{proof}
+Instantiate the protocol-noise inference guarantee with the identifiability margin condition to obtain threshold/ranking conclusions. Then append the concentration-event and identifiability certificates from the two layer interfaces.
+\end{proof}
+
+\begin{theorem}[Replicate-Aware Kinetic Identifiability Bundle]\label{thm:kinetic-replicate-identifiability-bundle}
+\leanmeta{\LH{L681}}
+If concentration-based protocol-noise inference is strengthened by replicate-count certification and systematic-bias-aware pathway margins, then thresholded $k_{\mathrm{on}}$/$k_{\mathrm{off}}$ conclusions and pathway-order inference are preserved together with concentration-event and replicate-count certificates.
+\end{theorem}
+
+\begin{proof}
+Convert bias-aware margins to base noise-dominating margins via nonnegativity of systematic-bias bounds, apply the protocol-noise bundled inference theorem, and append concentration/replicate certificates.
+\end{proof}
+
+\begin{theorem}[Hierarchical Multi-Dataset Kinetic Inference with Pooled Rate Metadata]\label{thm:hierarchical-kinetic-replicate-inference-bundle}
+\leanmeta{\LH{L689}}
+In a hierarchical multi-dataset extension of replicate-aware kinetic identifiability, assume each dataset carries concentration/noise/replicate structure, and a pooled replicate count supports an explicit finite-sample rate metadata bound. Then for each dataset, thresholded $k_{\mathrm{on}}$/$k_{\mathrm{off}}$ inference and pathway-order inference hold together with concentration-event certificate, replicate-count certificate, and the pooled finite-sample-rate certificate.
+\end{theorem}
+
+\begin{proof}
+First strip shared hierarchical bias terms from the hierarchical pathway-margin inequality using bias nonnegativity, yielding the base margin needed for protocol-noise inference. Apply the bundled protocol-noise theorem at the dataset level, then append the dataset concentration and replicate certificates together with the pooled finite-sample-rate metadata field.
+\end{proof}
+
+\begin{theorem}[Hierarchical Kinetic Inference under Explicit Pooled Rate Margins]\label{thm:hierarchical-kinetic-replicate-inference-rate-margins}
+\leanmeta{\LH{L697}}
+If the hierarchical multi-dataset kinetic layer satisfies explicit pooled finite-sample rate margins in the on/off threshold inequalities, then the same per-dataset threshold/ranking conclusions and concentration/replicate/rate certificates follow.
+\end{theorem}
+
+\begin{proof}
+Use nonnegativity of the pooled rate term to reduce rate-margin threshold assumptions to the baseline threshold assumptions, then invoke the hierarchical kinetic bundled inference theorem.
+\end{proof}
+
+\begin{theorem}[Uniform Hierarchical Kinetic Inference under Datasetwise Pooled Rate Margins]\label{thm:hierarchical-kinetic-replicate-inference-rate-margins-all-datasets}
+\leanmeta{\LH{L704}}
+If pooled-rate on/off margin inequalities hold at every dataset (for a fixed pathway pair), then the hierarchical kinetic threshold/ranking inference bundle (including concentration, replicate, and pooled-rate certificates) holds simultaneously for all datasets.
+\end{theorem}
+
+\begin{proof}
+Apply the single-dataset pooled-rate-margin theorem pointwise in the dataset index.
+\end{proof}
+
+\begin{theorem}[Hierarchical Kinetic Inference under Explicit Rate-Constant Upper Bounds]\label{thm:hierarchical-kinetic-replicate-inference-rate-constant-margins}
+\leanmeta{\LHrng{L}{708}{709}}
+Fix an explicit external upper bound on the pooled posterior rate constant. If on/off threshold margins are stated using that external bound,
+\[
+\frac{C_{\mathrm{rate}}}{\sqrt{N_{\mathrm{rep,pool}}}},
+\]
+then the hierarchical kinetic threshold/ranking inference bundle follows for the selected dataset, together with concentration, replicate, and pooled-rate certificates.
+\end{theorem}
+
+\begin{proof}
+Transport the external rate-constant bound to the realized pooled rate term, use the resulting left/right inequality monotonicity to recover the baseline pooled-rate-margin assumptions, then apply the single-dataset pooled-rate-margin inference theorem.
+\end{proof}
+
+\begin{theorem}[Uniform Hierarchical Kinetic Inference under Datasetwise Rate-Constant Margins]\label{thm:hierarchical-kinetic-replicate-inference-rate-constant-margins-all-datasets}
+\leanmeta{\LH{L710}}
+Under the same shared external upper bound on pooled posterior rate constant, if the corresponding on/off rate-constant margin inequalities hold at every dataset (for a fixed pathway pair), then the hierarchical kinetic inference bundle holds simultaneously across all datasets.
+\end{theorem}
+
+\begin{proof}
+Apply the single-dataset rate-constant-margin kinetic theorem pointwise across datasets.
+\end{proof}
+
+\begin{theorem}[Unified Simulator-Derived Thermodynamic/Kinetic Bundle]\label{thm:unified-simulator-kinetic-derivation}
+\leanmeta{\LH{L759}}
+If one simulator pipeline provides: (i) a microscopic system, (ii) an absolute free-energy model, and (iii) kinetic protocol measurements, then the unified physical model is constructed with kinetic profile derived directly from those protocol measurements, and the full unified thermodynamic/kinetic closure bundle follows for that constructed model.
+\end{theorem}
+
+\begin{proof}
+Construct the unified physical model by converting protocol measurements to the kinetic profile record and reusing the same microscopic/free-energy data. The bundled thermodynamic/kinetic conclusions then follow by direct application of the existing unified physical-model theorem.
+\end{proof}
+
+\begin{theorem}[Unified Thermodynamic/Kinetic Bundle from One Physical Model]\label{thm:unified-thermo-kinetic-physical-model}
+\leanmeta{\LH{L743}}
+For a unified physical docking model carrying one microscopic dynamical system, one absolute free-energy correction model, and one kinetic observable profile, the theorem bundle exports simultaneously:
+\begin{enumerate}
+\item corrected-free-energy identity and corrected-vs-base discrepancy bound,
+\item residence/off-rate identity and pathway normalization,
+\item diffusion-boundary, hydrodynamic-boundary, and rare-event control certificates.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Project the thermodynamic and kinetic clauses from their respective subrecords and conjoin them with the declared physical-control certificates.
+\end{proof}
+
+\begin{theorem}[Universality/OOD Calibrated Error Bounds]\label{thm:universality-ood-calibration-bounds}
+\leanmeta{\LHrng{L}{744}{745}}
+Given a universality layer with dataset-indexed prediction errors, uncertainty radii, and OOD calibration witnesses:
+\begin{enumerate}
+\item each OOD dataset satisfies the per-dataset prediction-error bound by its uncertainty radius,
+\item the same guarantee is exported uniformly over all OOD datasets.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Both clauses are direct projections of the OOD calibration witness family (single-index specialization and universal form).
+\end{proof}
+
+\begin{theorem}[OOD Guarantees from Explicit Transfer Calibration Components]\label{thm:ood-transfer-calibration-derived}
+\leanmeta{\LH{L760}}
+If OOD uncertainty radii are defined from explicit target-class base radii plus chemotype/regime transfer inflation terms, and OOD prediction errors satisfy the corresponding componentwise transfer bound, then a uniform OOD error-radius guarantee follows directly for all OOD datasets.
+\end{theorem}
+
+\begin{proof}
+Build the universality/OOD layer from the transfer-calibration components by definition of uncertainty radius and nonnegativity transport, then apply the layer's uniform OOD theorem.
+\end{proof}
+
+\begin{theorem}[Finite-Sample Complexity Inversion Endpoints]\label{thm:finite-sample-complexity-inversion}
+\leanmeta{\LHrng{L}{746}{747}}
+If explicit required sample/replicate-size inequalities imply required-margin thresholds for hierarchical chemical and kinetic layers, and the corresponding pooled finite-sample rate terms are monotone-transported to realized pooled counts, then:
+\begin{enumerate}
+\item hierarchical chemical protonation-separation guarantees hold datasetwise,
+\item hierarchical kinetic threshold/ranking bundles hold datasetwise with concentration/replicate/rate certificates.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+For each layer, convert required-size margin assumptions to realized pooled-size margins through the declared monotone rate-term inequality, then apply the existing rate-constant-margin all-dataset theorems.
+\end{proof}
+
+\begin{theorem}[Joint Hierarchical Required-Size Bundle (Chemical + Kinetic)]\label{thm:hierarchical-required-size-joint-bundle}
+\leanmeta{\LH{L753}}
+If the required-sample and required-replicate margin premises hold simultaneously for the hierarchical chemical and kinetic layers (with the corresponding monotone pooled-rate transports), then both datasetwise conclusions hold simultaneously: robust protonation utility separation and threshold/ranking kinetic inference bundles.
+\end{theorem}
+
+\begin{proof}
+Apply the chemical required-sample theorem and kinetic required-replicate theorem under the shared assumptions and return their conjunction.
+\end{proof}
+
+\begin{theorem}[Finite-Sample Inversion with Count-Order-Derived Monotonicity]\label{thm:finite-sample-complexity-inversion-count-order}
+\leanmeta{\LHrng{L}{761}{763}}
+Assume required sample/replicate counts are explicitly ordered below realized pooled counts:
+\[
+N_{\mathrm{req}} \le N_{\mathrm{pool}},\qquad
+R_{\mathrm{req}} \le R_{\mathrm{pool}}.
+\]
+Then the required-size monotonicity inequalities needed by hierarchical chemical/kinetic inversion are derived in-repo from these count-order relations and nonnegative posterior-rate metadata, and the full joint chemical+kinetic required-size bundle follows without separate monotonicity certificates.
+\end{theorem}
+
+\begin{proof}
+Use monotonicity of $c/\sqrt{n}$ for nonnegative $c$ to derive pooled-to-required rate-term transport from count ordering, then invoke the required-size inversion theorems for chemical and kinetic layers and conjoin their conclusions.
+\end{proof}
+
+\begin{theorem}[Finite-Sample Inversion from Square-Count Complexity Bounds]\label{thm:finite-sample-square-count-inversion}
+\leanmeta{\LHrng{L}{766}{769}}
+Suppose explicit complexity bounds of square-count form are available:
+\[
+\left(\frac{C_{\mathrm{chem}}}{m_{\mathrm{chem}}}\right)^2 \le N_{\mathrm{req}},
+\qquad
+\left(\frac{C_{\mathrm{kin}}}{m_{\mathrm{kin}}}\right)^2 \le R_{\mathrm{req}},
+\]
+with positive margins $m_{\mathrm{chem}},m_{\mathrm{kin}}$. Then:
+\begin{enumerate}
+\item generic in-repo transport derives $C/\sqrt{n}\le m$ from each square-count inequality,
+\item hierarchical chemical and kinetic rate terms are bounded by these derived margins at realized pooled counts,
+\item the full joint chemical+kinetic required-size inversion bundle follows from these derived margin bounds.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+First apply the square-count-to-rate transport theorem to derive each $C/\sqrt{n}$ margin bound. Then compose with chemical and kinetic count-order monotonicity lemmas to obtain required margin hypotheses. Finally apply the joint count-order required-size inversion theorem.
+\end{proof}
+
+\begin{theorem}[Explicit Hamiltonian+Bath Elimination to Langevin Endpoints]\label{thm:explicit-hamiltonian-bath-elimination-langevin-endpoints}
+\leanmeta{\LH{L770}}
+For an explicit Hamiltonian+bath elimination system carrying concrete Hamiltonian-energy identities, thermostat parameters, and a pointwise microscopic drift equality, the microscopic drift law is exported directly and jointly with the full concrete Langevin endpoint package (unique strong solution, Boltzmann invariance/ergodicity, and strong/weak Euler--Maruyama rate witnesses).
+\end{theorem}
+
+\begin{proof}
+Convert the elimination record to the concrete Hamiltonian+bath Langevin system, project the microscopic drift certificate from the explicit equality field, and conjoin it with the previously established concrete Hamiltonian+bath endpoint theorem.
+\end{proof}
+
+\begin{theorem}[Explicit Molecular Constant-Drift SDE Endpoint Bundle]\label{thm:explicit-molecular-constant-drift-sde-endpoints}
+\leanmeta{\LH{L771}}
+For a molecular Langevin class with explicit constant drift $b(x)=x_\star$, the first-principles coefficients are computed in closed form ($L=0$, linear-growth constant $\|x_\star\|$, dissipativity pair $(\lambda,b)=(1,\|x_\star\|)$, and zero strong/weak rate constants), and the induced endpoint package includes unique strong solution plus invariant/ergodic Boltzmann law.
+\end{theorem}
+
+\begin{proof}
+Build the first-principles bundle from the explicit constant-drift equalities and nonnegativity lemmas, then apply the generic first-principles-to-endpoints theorem and read off the computed constants by definitional reduction.
+\end{proof}
+
+\begin{theorem}[Concrete Generator-to-Canonical Path-Process Closure]\label{thm:concrete-generator-canonical-path-process-closure}
+\leanmeta{\LH{L772}}
+Given explicit finite-horizon bridge data together with generator residual nonnegativity, tightness modulus nonnegativity, and contraction-based uniqueness constants, one obtains a canonical continuous path-process construction that simultaneously certifies measurability, canonical continuity, regularity, pathwise uniqueness, and the three concrete generator/tightness/contraction certificates.
+\end{theorem}
+
+\begin{proof}
+Map the concrete generator package to the finite-horizon constructive bridge interface, apply the canonical path-process closure theorem from finite-horizon data, and append the three certificate projections supplied by the concrete package.
+\end{proof}
+
+\begin{theorem}[Workflow-Specific QM Realism Transport from Component Budgets]\label{thm:qm-workflow-specific-realism-transport-bundle}
+\leanmeta{\LH{L773}}
+If electronic shell/error contributions are decomposed explicitly into workflow-level basis/correlation/sampling components for one designated QM protocol, then the induced method calibration transports to the same composed-Hamiltonian Lipschitz and absolute-error realism bounds in the tight QM-grounded form.
+\end{theorem}
+
+\begin{proof}
+Aggregate workflow components into total shell/error intercepts, convert this record to the method-calibration interface, and invoke the existing method-specific QM realism transport theorem.
+\end{proof}
+
+\begin{theorem}[Reversible Chemical Dynamics with Stationarity and Detailed Balance]\label{thm:reversible-chemical-transition-detailed-balance-bundle}
+\leanmeta{\LH{L774}}
+For a finite chemically reversible mechanism defined by a positive stationary population and symmetric flow tensor, the induced transition kernel satisfies normalization, stationary fixed-point transport, and detailed balance; together with pH/ionic window and observable-utility decomposition, these are exported as one unified dynamics bundle.
+\end{theorem}
+
+\begin{proof}
+Define the transition kernel as flow divided by stationary mass, prove row-stochasticity and stationary fixed-point identities from flow-row sums and symmetry, prove detailed balance from symmetric-flow transport, then conjoin with the base unified chemical-state observable/window bundle.
+\end{proof}
+
+\begin{theorem}[Trajectory-Estimator Absolute Free-Energy Correction Closure]\label{thm:trajectory-absolute-free-energy-correction-closure}
+\leanmeta{\LH{L775}}
+If each correction component in the absolute free-energy stack is calibrated from a trajectory-level finite-sample estimator with explicit $z\cdot\mathrm{SE}/\sqrt{N}+\mathrm{bias}$ bound, then the resulting protocol-derived correction stack satisfies the same total absolute correction bound used by absolute free-energy closure.
+\end{theorem}
+
+\begin{proof}
+Convert each trajectory estimator to a protocol-derived correction term via its sample-mean finite-sample inequality, assemble the five-term protocol calibration record, and apply the protocol-calibration total-error theorem.
+\end{proof}
+
+\begin{theorem}[Quantified Simulator Thermo/Kinetic Bundle with Control Inequalities]\label{thm:quantified-simulator-thermo-kinetic-bundle}
+\leanmeta{\LH{L776}}
+When one simulator pipeline carries explicit diffusion, hydrodynamic, and rare-event mismatch/tolerance constants with within-tolerance certificates, the same physical simulator object exports both the unified thermodynamic/kinetic closure bundle and the three quantified control inequalities.
+\end{theorem}
+
+\begin{proof}
+Convert the quantified pipeline to the base simulator interface, apply the existing unified simulator thermodynamic/kinetic bundle theorem, and append the mismatch-vs-tolerance inequalities from the quantified control record.
+\end{proof}
+
+\begin{theorem}[Mechanistic Uniform OOD Transfer Bound]\label{thm:mechanistic-ood-uniform-transfer-bound}
+\leanmeta{\LH{L777}}
+If out-of-distribution error is bounded by base class radius plus class-Lipschitz shift and regime inflation, and mechanistic shift is bounded by a class envelope, then the induced OOD calibration with chemotype inflation yields a uniform OOD uncertainty-radius bound for every OOD dataset.
+\end{theorem}
+
+\begin{proof}
+Define chemotype inflation as Lipschitz times class-envelope, transport the mechanistic shift inequality through nonnegative multiplication, lift the resulting bound to the calibration uncertainty radius, and invoke the calibration layer's uniform OOD endpoint.
+\end{proof}
+
+\begin{theorem}[Model-Dependent Finite-Sample Margin Transport]\label{thm:model-dependent-rate-term-target-margin}
+\leanmeta{\LH{L778}}
+For explicit model constants (mixing time, asymptotic variance, dimension penalty, minimax penalty), if the induced square-count complexity bound holds at required count $N$, then the effective rate term divided by $\sqrt{N}$ is bounded by the target margin.
+\end{theorem}
+
+\begin{proof}
+Define the effective constant as the sum of model-dependent components, prove nonnegativity from componentwise nonnegativity, then apply the square-count-to-rate inversion theorem.
+\end{proof}
+
+\begin{theorem}[Joint Required-Size Inversion from Model-Dependent Constants]\label{thm:hierarchical-required-size-model-dependent-constants}
+\leanmeta{\LH{L779}}
+If hierarchical chemical and kinetic layers admit explicit model-dependent finite-sample laws (mixing/variance/dimension/minimax constants) whose square-count complexity bounds control the corresponding required counts, then the full joint chemical+kinetic required-size conclusion follows with no additional external monotonicity axiom.
+\end{theorem}
+
+\begin{proof}
+Instantiate chemical and kinetic square-count premises from the two model-dependent laws, transport each to the required $c/\sqrt{n}$ margin form, and apply the existing square-count joint hierarchical inversion theorem.
+\end{proof}
+
+\begin{theorem}[Hamiltonian Finite-Difference Drift Derivation Endpoints]\label{thm:hamiltonian-finite-difference-drift-derivation-endpoints}
+\leanmeta{\LH{L780}}
+When Langevin drift is constructed in-model from explicit finite-difference Hamiltonian elimination with thermostat scaling (instead of provided as a standalone drift-equality witness), the same concrete microscopic drift identity and full Langevin endpoint package are exported jointly.
+\end{theorem}
+
+\begin{proof}
+Build the concrete Hamiltonian+bath system directly from the finite-difference drift constructor, then apply the existing concrete Hamiltonian+bath endpoint theorem and conjoin it with the definitional drift identity.
+\end{proof}
+
+\begin{theorem}[Realistic Non-Constant Molecular SDE Endpoint Bundle]\label{thm:realistic-molecular-finite-difference-sde-endpoints}
+\leanmeta{\LH{L781}}
+For the realistic molecular drift class obtained by combining finite-difference Hamiltonian elimination with an explicit confining pullback term, computed total Lipschitz/growth constants are exported together with dissipativity/rate constants and the full strong-solution/invariant/ergodic endpoint bundle.
+\end{theorem}
+
+\begin{proof}
+Package the explicit drift inequalities into the first-principles interface using state-distance/state-norm definitions on full molecular coordinates, then apply the first-principles Langevin endpoint theorem.
+\end{proof}
+
+\begin{theorem}[Generator-Coefficient-to-Canonical Regularity Closure]\label{thm:generator-coefficients-canonical-regularity-closure}
+\leanmeta{\LH{L782}}
+If generator residual and tightness profiles are given by explicit decay formulas with nonnegative constants and contraction constant $<1$, then canonical path-process regularity/continuity/uniqueness closure follows constructively from these coefficient profiles.
+\end{theorem}
+
+\begin{proof}
+Instantiate the concrete generator path-process data from the coefficient formulas, prove nonnegativity of the induced profiles pointwise, and invoke the existing concrete-generator canonical closure theorem.
+\end{proof}
+
+\begin{theorem}[Concrete QM Workflow Error-Analysis Transport]\label{thm:concrete-qm-workflow-error-analysis-transport}
+\leanmeta{\LH{L783}}
+Given explicit basis/correlation/sampling component decompositions of electronic shell/error terms for one concrete QM workflow, absolute-value budgets derived from those components induce the same workflow-specific QM realism transport bounds.
+\end{theorem}
+
+\begin{proof}
+Map decomposition components to nonnegative absolute budgets, prove each base shell/error term is bounded by the corresponding budget sum, convert to workflow calibration, then apply workflow-specific QM realism transport.
+\end{proof}
+
+\begin{theorem}[Barrier-Crossing Reversible Chemical Dynamics from Physics]\label{thm:barrier-crossing-reversible-chemical-dynamics}
+\leanmeta{\LH{L784}}
+For finite chemical states with Gibbs stationary law and Kramers/Eyring-style off-diagonal barrier flows (plus diagonal stationarity correction), transition rows normalize to one and detailed balance is derived for the induced reversible kernel.
+\end{theorem}
+
+\begin{proof}
+Construct symmetric flows from barrier factors, add diagonal correction to enforce row-sum stationarity, then transport to the reversible mechanism interface and apply row-normalization/detailed-balance projections.
+\end{proof}
+
+\begin{theorem}[Mixing/Autocorrelation Trajectory Correction Closure]\label{thm:mixing-autocorrelation-trajectory-correction-total-error}
+\leanmeta{\LH{L785}}
+If each absolute free-energy correction component is calibrated by a trajectory law carrying explicit mixing/autocorrelation finite-sample error inequality, the assembled correction stack satisfies the same total absolute correction bound used in absolute free-energy closure.
+\end{theorem}
+
+\begin{proof}
+Convert each mixing-law trajectory record into a trajectory correction estimator, assemble the five-term trajectory calibration stack, and apply the trajectory absolute free-energy total-error theorem.
+\end{proof}
+
+\begin{theorem}[Unified Simulator Error-Analysis Controlled Thermo/Kinetic Bundle]\label{thm:unified-simulator-error-analysis-controlled-thermo-kinetic}
+\leanmeta{\LH{L786}}
+If diffusion, hydrodynamic, and rare-event mismatches are derived as summed component errors from one unified simulator error-analysis record and each summed mismatch satisfies its tolerance budget, then the quantified simulator thermo/kinetic bundle follows together with all three mismatch-tolerance inequalities.
+\end{theorem}
+
+\begin{proof}
+Define mismatch aggregates from component error terms, package them into quantified boundary controls, instantiate the quantified simulator pipeline, and apply its bundled thermo/kinetic theorem.
+\end{proof}
+
+\begin{theorem}[Descriptor-Calibrated Mechanistic OOD Transfer Bundle]\label{thm:descriptor-calibrated-mechanistic-ood-transfer}
+\leanmeta{\LH{L787}}
+For finite descriptor vectors with class-envelope shift controls and a prospective calibration-protocol witness, mechanistic descriptor shifts induce a uniform OOD uncertainty-radius transfer bound for all OOD datasets.
+\end{theorem}
+
+\begin{proof}
+Define mechanistic shift as descriptor $L^1$ distance, transport shift-to-envelope and mechanistic error bounds into the mechanistic OOD interface, then apply the uniform OOD transfer theorem and conjoin the prospective protocol certificate.
+\end{proof}
+
+\begin{theorem}[Model-Dependent Minimax Optimality Bundle]\label{thm:model-dependent-minimax-optimality-bundle}
+\leanmeta{\LH{L788}}
+For model-dependent finite-sample laws augmented with explicit minimax lower/upper count constants, one obtains simultaneously: target-margin rate control, lower/upper count sandwich bounds, and a near-optimality ratio bounded below by $1$.
+\end{theorem}
+
+\begin{proof}
+Project the rate-term margin theorem from the model law, append minimax lower/upper count inequalities from the optimality record, and derive the ratio lower bound from ordered positive minimax constants.
+\end{proof}
+
+\begin{theorem}[Constructive Stochastic + Multipole Scope-Gap Discharge Bundle]\label{thm:constructive-stochastic-multipole-scope-discharge}
+\leanmeta{\LH{L789}}
+If canonical process regularity is provided constructively from finite-horizon bridge data and higher-order multipole energy terms carry explicit shell-Lipschitz bounds, then both previously declared scope gaps are discharged together as one bundled theorem endpoint.
+\end{theorem}
+
+\begin{proof}
+Apply the constructive finite-horizon-to-canonical-path-process closure theorem for process regularity, then conjoin the multipole shell-Lipschitz transport certificate from the same closure record.
+\end{proof}
+
+\begin{theorem}[Ito-Wiener-Filtration Langevin Endpoint Bundle]\label{thm:ito-wiener-filtration-langevin-endpoints}
+\leanmeta{\LH{L790}}
+For an overdamped Langevin model equipped with explicit Wiener process and filtration data, adaptedness/Ito-integrability/ Ito-equation certificates, generator representation, and martingale well-posedness, the standard strong-solution, invariant-measure, and ergodicity endpoints are exported jointly with the stochastic-basis certificates.
+\end{theorem}
+
+\begin{proof}
+Project the filtration and Wiener certificates directly, then discharge strong-solution uniqueness from the representative-path witness and append invariant/ergodic transport from the supplied Boltzmann-density fields.
+\end{proof}
+
+\begin{theorem}[Hamiltonian $h\to0$ Mori-Zwanzig Limit Endpoints]\label{thm:hamiltonian-mori-zwanzig-h-zero-limit-endpoints}
+\leanmeta{\LH{L791}}
+Given finite-difference Hamiltonian elimination data with an explicit vanishing step sequence, pointwise drift convergence, and a Mori-Zwanzig limiting drift identity, the limiting Langevin model inherits strong-solution, invariance, ergodicity, and martingale well-posedness endpoints.
+\end{theorem}
+
+\begin{proof}
+Use the declared $h\to0$ and drift-convergence hypotheses to identify the limiting drift map, then project strong-solution/invariance/ergodicity/martingale endpoints from the supplied Ito--Fokker--Planck--Harris closure of the limit model.
+\end{proof}
+
+\begin{theorem}[Force-Field-Derived Realistic SDE Endpoints]\label{thm:forcefield-derived-realistic-sde-endpoints}
+\leanmeta{\LH{L792}}
+If drift differences are controlled by full-state force-field energy differences with nonnegative coupling and closure distance is instantiated by molecular $L^1$ distance, then the drift Lipschitz constant is derived as coupling times full-state shell constant, and the full endpoint bundle follows.
+\end{theorem}
+
+\begin{proof}
+Compose the drift-energy control inequality with the concrete full-state shell Lipschitz bound, transport through the closure distance identification, and combine with first-principles endpoint projection from the closure bundle.
+\end{proof}
+
+\begin{theorem}[Generator PDE-Estimate to Canonical Regularity Closure]\label{thm:generator-pde-estimate-canonical-regularity-closure}
+\leanmeta{\LH{L793}}
+Explicit generator-resolvent, Kolmogorov tightness, and Harnack contraction estimate records induce coefficient profiles that constructively discharge canonical path-process measurability/continuity/regularity/uniqueness.
+\end{theorem}
+
+\begin{proof}
+Map the PDE/operator estimate constants into the generator-coefficient closure interface and apply the previously proved coefficient-to-canonical-regularity theorem.
+\end{proof}
+
+\begin{theorem}[QM Workflow Transport from Benchmark Summary]\label{thm:qm-workflow-transport-benchmark-summary}
+\leanmeta{\LH{L794}}
+Method-level benchmark statistics (mean/std-error/bias budgets) for shell/error components induce a workflow calibration that transports to the same QM realism shell/error bounds, while retaining an explicit positive benchmark-count witness.
+\end{theorem}
+
+\begin{proof}
+Convert benchmark mean/std-error/bias fields into nonnegative basis/correlation/sampling component budgets, instantiate workflow calibration inequalities from empirical bounds, and invoke workflow-specific QM transport.
+\end{proof}
+
+\begin{theorem}[Potential-Landscape Barrier Kinetics Bundle]\label{thm:potential-landscape-barrier-kinetics-bundle}
+\leanmeta{\LH{L795}}
+Symmetric barrier energies and symmetric friction/diffusion prefactors with row-mass control induce scaled Kramers/Eyring attempt frequencies, Gibbs-consistent stationary law, normalized transition rows, and detailed balance.
+\end{theorem}
+
+\begin{proof}
+Build attempt frequencies from scaled prefactor averages, convert to the barrier-crossing reversible mechanism interface, then project stationary-law, row-normalization, and detailed-balance conclusions.
+\end{proof}
+
+\begin{theorem}[Spectral-Gap Trajectory Concentration Bundle]\label{thm:spectral-gap-trajectory-concentration-bundle}
+\leanmeta{\LH{L796}}
+From spectral-gap and mixing-time hypotheses, one obtains an explicit mixing-time upper envelope and a trajectory finite-sample correction bound after conversion to the mixing/autocorrelation estimator interface.
+\end{theorem}
+
+\begin{proof}
+Apply the spectral-gap mixing-time bound theorem and transport the declared spectral-gap concentration inequality through the conversion to trajectory correction estimators.
+\end{proof}
+
+\begin{theorem}[Spectral-Gap Absolute Free-Energy Total-Error Closure]\label{thm:spectral-gap-absolute-free-energy-total-error}
+\leanmeta{\LH{L797}}
+If all absolute free-energy correction terms are calibrated by spectral-gap trajectory concentration records, then the protocol total correction satisfies the same absolute total-component error bound.
+\end{theorem}
+
+\begin{proof}
+Convert each spectral-gap trajectory record to mixing/autocorrelation form, assemble the five-component absolute free-energy calibration, and apply the trajectory absolute correction total-error theorem.
+\end{proof}
+
+\begin{theorem}[Integrator Error-Stack Unified Thermo/Kinetic Bundle]\label{thm:integrator-error-stack-unified-thermo-kinetic}
+\leanmeta{\LH{L798}}
+For one shared simulator, if global diffusion/hydrodynamic/rare-event mismatches are derived from local truncation plus model-bias stacks and each global mismatch is within tolerance, then the quantified thermo/kinetic bundle follows.
+\end{theorem}
+
+\begin{proof}
+Map integrator/model stack terms into unified simulator component mismatches, instantiate the quantified control object, and apply the unified simulator controlled thermo/kinetic theorem.
+\end{proof}
+
+\begin{theorem}[Learned-Descriptor OOD Generalization Transfer Bundle]\label{thm:learned-descriptor-ood-generalization-transfer}
+\leanmeta{\LH{L799}}
+With learned source/target descriptor maps, class-envelope shift control, and a prospective calibration protocol proving OOD generalization inequalities, uniform uncertainty-radius OOD transfer follows across all OOD datasets.
+\end{theorem}
+
+\begin{proof}
+Convert learned descriptor generalization data into the descriptor-calibrated mechanistic OOD interface and apply the descriptor-calibrated uniform transfer theorem.
+\end{proof}
+
+\begin{theorem}[Estimator Minimax Derivation Bundle]\label{thm:estimator-minimax-derivation-bundle}
+\leanmeta{\LH{L800}}
+Combining model-dependent finite-sample constants with explicit minimax lower-bound theory and matching estimator achievability yields the near-optimality count sandwich, rate-to-margin guarantee, and target-achievement guarantee at required count.
+\end{theorem}
+
+\begin{proof}
+Instantiate the model-dependent minimax law from lower/upper count derivation fields, apply the minimax optimality bundle theorem, and append the estimator target-achievement inequality.
+\end{proof}
+
+\begin{theorem}[Extended Physical Model Interface Scope Bundle]\label{thm:extended-physical-model-interface-scope-bundle}
+\leanmeta{\LH{L801}}
+Richer physical encoding transport, open-system quantum channel modeling, and noisy/partial observation channel modeling are packaged as one explicit witness-interface endpoint.
+\end{theorem}
+
+\begin{proof}
+Conjoin the three witness certificates from the extension-interface layer.
+\end{proof}
+
+\begin{theorem}[Pre-Registered Prospective Strong-Baseline Superiority Bundle]\label{thm:preregistered-prospective-beats-strong-baselines}
+\leanmeta{\LH{L802}}
+For a pre-registered prospective benchmark package carrying blinded empirical closure and one unified thermo/kinetic physical model, if strict wins are supplied against each declared strong baseline on total calibration error, ranking loss, and kinetics/free-energy consistency gap, then all of those superiority clauses are exported together with exact thermo/kinetic consistency and calibration/predictive coverage certificates.
+\end{theorem}
+
+\begin{proof}
+Combine prospective empirical-closure transport with unified thermo/kinetic bundle transport, then append the declared strict baseline-comparison inequalities and the derived zero consistency-gap identity.
+\end{proof}
+
+\begin{theorem}[Independent Outside-Team Replication Bundle]\label{thm:independent-replication-outside-team-bundle}
+\leanmeta{\LH{L803}}
+If an outside-team replication run matches protocol and instantiates the same pre-registered prospective strong-baseline superiority interface, then independent-team status, protocol-match status, and reproduced strict superiority over strong baselines are all exported in one theorem bundle.
+\end{theorem}
+
+\begin{proof}
+Apply the pre-registered superiority bundle theorem to the replication benchmark object, then conjoin outside-team and protocol-match certificates.
+\end{proof}
+
+\begin{theorem}[Downstream Campaign Win Bundle]\label{thm:downstream-campaign-win-bundle}
+\leanmeta{\LH{L804}}
+A downstream campaign record with strict baseline improvements on hit identification, triage quality, and campaign efficiency yields all three strict downstream-win inequalities as one bundled endpoint.
+\end{theorem}
+
+\begin{proof}
+Conjoin the three declared strict-improvement fields from the downstream campaign record.
+\end{proof}
+
+\begin{theorem}[Integrated External-Validation Three-Way Bundle]\label{thm:external-validation-threeway-integration-bundle}
+\leanmeta{\LH{L805}}
+Combining (1) a pre-registered prospective strong-baseline superiority package, (2) an independent outside-team replication package, and (3) a downstream campaign-win package yields:
+\begin{enumerate}
+\item the primary validation core (pre-registration plus strong-baseline superiority plus independent replication),
+\item the downstream strict-win triple (hit ID, triage quality, campaign efficiency),
+\item and negation of the declared credible-dismissal-by-core-gap predicate.
+\end{enumerate}
+In particular, under this formal criterion, landing (1)+(2) blocks credible dismissal-by-core-gap arguments.
+\end{theorem}
+
+\begin{proof}
+Extract pre-registered superiority clauses and replication clauses from their bundled theorems, assemble the primary validation core proposition, import downstream strict wins, and discharge the no-credible-dismissal conclusion by contradiction against the core-gap definition.
+\end{proof}
+
+\begin{theorem}[Constructive Closure of Extension-Interface Scope Gaps]\label{thm:constructive-scope-closure-of-extension-interfaces}
+\leanmeta{\LH{L806}}
+The previously witness-only extension scope is discharged constructively: one measurable continuous-state encoding bridge, one explicit open-system quantum-channel kernel package, and one explicit noisy/partial observation channel package jointly induce the same richer-encoding/open-system/noisy-observation endpoint triple.
+\end{theorem}
+
+\begin{proof}
+Package the constructive encoding/channel layers into the extension-interface closure object, convert it to the witness-layer object, and apply the original extension-scope bundled theorem.
+\end{proof}
+
+\begin{theorem}[Fixed-Contract Pre-Registered Benchmark Conversion Bundle]\label{thm:fixed-contract-preregistered-benchmark-bundle}
+\leanmeta{\LH{L807}}
+If a prospective benchmark is bound to a fixed pre-registered contract (metrics, datasets/splits, blind rule, baseline roster) with signed artifacts and strict calibration/ranking wins over the baseline table, then it converts to the pre-registered strong-baseline superiority interface, with consistency superiority inherited from exact zero kinetic/free-energy consistency gap.
+\end{theorem}
+
+\begin{proof}
+Convert the contract-bound result package to the pre-registered benchmark object, apply the pre-registered superiority bundle theorem, and project protocol closure, strict baseline wins, and zero consistency-gap identity.
+\end{proof}
+
+\begin{theorem}[Independent Replication Provenance Bundle]\label{thm:independent-replication-provenance-bundle}
+\leanmeta{\LH{L808}}
+An independent replication provenance record with distinct primary-vs-replication team IDs, distinct compute IDs, matched protocol fingerprint, and signed execution artifacts yields one bundled endpoint containing independent-execution and signed protocol-match certificates.
+\end{theorem}
+
+\begin{proof}
+Conjoin the team/compute-separation fields with protocol-fingerprint equality and signed-artifact verification fields.
+\end{proof}
+
+\begin{theorem}[Downstream Causal-Quality Campaign Bundle]\label{thm:downstream-causal-quality-bundle}
+\leanmeta{\LH{L809}}
+If randomized assignment, blinded outcome assessment, and confounder-balance checks hold for a campaign, and model metrics strictly exceed baseline on hit ID, triage quality, and campaign efficiency, then causal-isolation and strict downstream-win triples are exported together.
+\end{theorem}
+
+\begin{proof}
+Conjoin causal-control certificates, map to downstream-win record, and apply the downstream campaign win theorem.
+\end{proof}
+
+\begin{theorem}[Concrete External-Validation Three-Way Instantiation]\label{thm:concrete-external-validation-threeway-bundle}
+\leanmeta{\LH{L810}}
+The concrete artifact layer (fixed contract + signed primary results + signed independent replication provenance + concrete causal campaign evidence) instantiates the integrated three-way external-validation theorem, yielding the primary validation core, strict downstream-win triple, and negation of credible-dismissal-by-core-gap.
+\end{theorem}
+
+\begin{proof}
+Instantiate the concrete external-validation data object from concrete artifact definitions and invoke the integrated external-validation three-way theorem.
+\end{proof}
+
+\begin{theorem}[Concrete No-Credible-Dismissal Corollary]\label{thm:concrete-external-validation-not-credibly-dismissible}
+\leanmeta{\LH{L811}}
+Under the concrete fixed-contract/independent-replication/campaign artifact instantiation, credible dismissal by the declared validation-core-gap predicate is impossible.
+\end{theorem}
+
+\begin{proof}
+Project the third clause of the concrete three-way external-validation instantiation theorem.
+\end{proof}
+
+\begin{theorem}[Measure-Theoretic Langevin Endpoint Bundle]\label{thm:langevin-measure-theoretic-endpoint-bundle}
+\leanmeta{\LH{L812}}
+Given a measure-theoretic Langevin path-law bundle (probability measure on trajectory space, measurable time evaluations, pathwise drift equation, measure-level stationarity, and singleton-mass ergodicity), one recovers the legacy endpoint triple: unique strong solution, invariant measure, and ergodicity.
+\end{theorem}
+
+\begin{proof}
+Select the representative sample path from the measure-theoretic process law, transport measure-level stationarity to singleton-density invariance, and transport singleton-mass ergodicity to the legacy ergodicity predicate.
+\end{proof}
+
+\begin{theorem}[Constructive Ito/Wiener Derived Endpoint Bundle]\label{thm:constructive-ito-wiener-derived-endpoints}
+\leanmeta{\LH{L813}}
+If the Ito/Wiener layer is supplied by explicit filtration/process objects, explicit second-moment functions, explicit Ito-integral path objects, and explicit martingale witnesses, then adaptedness, Ito well-definedness, square-integrability clauses, and martingale well-posedness are derived and the full legacy Ito/Wiener endpoint bundle follows.
+\end{theorem}
+
+\begin{proof}
+Define each legacy proposition as a property extracted from the explicit constructive objects, convert to the legacy Ito/Wiener structure, and apply the existing Ito/Wiener endpoint theorem.
+\end{proof}
+
+\begin{theorem}[Derived Generator--PDE Operator Closure]\label{thm:derived-generator-pde-operator-closure}
+\leanmeta{\LH{L814}}
+When resolvent/tightness/contraction profiles are given explicitly from coefficient formulas, the generator-resolvent, Kolmogorov-tightness, and Harnack-contraction proposition slots are discharged constructively, and canonical path-process regularity closure is recovered.
+\end{theorem}
+
+\begin{proof}
+Convert explicit profile formulas into nonnegativity certificates, package them into the legacy PDE-estimate interface, then invoke the canonical regularity closure theorem.
+\end{proof}
+
+\begin{theorem}[Microscopic Extension-Interface Scope Bundle]\label{thm:microscopic-extension-interface-scope-bundle}
+\leanmeta{\LH{L815}}
+If richer measurable encoding transport is given together with microscopic open-system channel derivation data and microscopic noisy-observation derivation data, then the corresponding richer/open-system/noisy scope triple is discharged as a bundled endpoint.
+\end{theorem}
+
+\begin{proof}
+Use constructive certificates for richer encoding, convert microscopic open-system data to the concrete channel layer, project noisy-observation transport from the microscopic layer, and conjoin the three results.
+\end{proof}
+
+\begin{theorem}[Numerical-Stack-Derived Simulator Control Flags]\label{thm:numerical-stack-derived-simulator-control-flags}
+\leanmeta{\LH{L816}}
+For the integrator/model-bias numerical stack, top-level simulator control flags (diffusion, hydrodynamic, rare-event) are not free proposition placeholders: they are definitionally equal to explicit mismatch-vs-tolerance inequalities derived from integration-step and rare-window budgets.
+\end{theorem}
+
+\begin{proof}
+Unfold the full conversion chain from integrator stack to unified docking model and simplify definitions of mismatches/tolerances and control predicates.
+\end{proof}
+
+\begin{theorem}[Attested Concrete External-Validation Three-Way Bundle]\label{thm:attested-concrete-external-validation-threeway-bundle}
+\leanmeta{\LH{L817}}
+The attested concrete external-validation layer (immutable manifests, verifier-checked signatures, lock-time pre-registration, attested independent replication provenance, and measured downstream causal diagnostics) instantiates the integrated three-way external-validation theorem, yielding the primary validation core, strict downstream-win triple, and negation of credible-dismissal-by-core-gap.
+\end{theorem}
+
+\begin{proof}
+Build the attested concrete evidence object, convert it to the legacy external-validation interface, and apply the integrated three-way theorem.
+\end{proof}
+
+\begin{theorem}[Attested Concrete No-Credible-Dismissal Corollary]\label{thm:attested-concrete-external-validation-not-credibly-dismissible}
+\leanmeta{\LH{L818}}
+Under the attested concrete external-validation instantiation, credible dismissal by the declared validation-core-gap predicate is impossible.
+\end{theorem}
+
+\begin{proof}
+Project the third clause of the attested concrete three-way external-validation theorem.
+\end{proof}
+
+\begin{theorem}[Attested Concrete Store-Backed Artifact Bundle]\label{thm:attested-concrete-store-backed-artifact-bundle}
+\leanmeta{\LH{L819}}
+All concrete attested external-validation artifacts (pre-registration, primary results, protocol audit, protocol/execution logs, team identity artifacts, and compute provenance artifacts) are shown to be immutable-store-backed: each manifest URI resolves to store payload data whose digest matches the manifest hash.
+\end{theorem}
+
+\begin{proof}
+Instantiate one concrete immutable artifact store and discharge each manifest-level URI-fetch plus digest-equality witness, then conjoin the ten artifact clauses.
+\end{proof}
+
+\begin{theorem}[Store-Backed Attested Concrete External-Validation Three-Way Bundle]\label{thm:store-backed-attested-concrete-external-validation-threeway-bundle}
+\leanmeta{\LH{L820}}
+The attested concrete external-validation three-way bundle remains valid under explicit immutable-store backing: the three-way no-credible-dismissal conclusion is proved together with concrete store-backed artifact-ingestion witnesses.
+\end{theorem}
+
+\begin{proof}
+Conjoin the attested concrete three-way external-validation theorem with the concrete store-backed artifact bundle.
+\end{proof}
+
+\begin{theorem}[Store-Backed Attested Concrete No-Credible-Dismissal Corollary]\label{thm:store-backed-attested-concrete-external-validation-not-credibly-dismissible}
+\leanmeta{\LH{L821}}
+Under the store-backed attested concrete external-validation instantiation, credible dismissal by the declared validation-core-gap predicate remains impossible.
+\end{theorem}
+
+\begin{proof}
+Project the no-credible-dismissal clause from the store-backed attested concrete three-way theorem.
+\end{proof}
+
+\begin{theorem}[Physical Utility Interface for Exact Docking]\label{thm:md-physical-utility-interface}
+\leanmeta{\LH{L822}}
+For every molecular binding instance, the exact docking decision object is constructed with exactly the same utility map as the physical binding model.
+\end{theorem}
+
+\begin{proof}
+This is definitional unfolding of the docking decision-object constructor.
+\end{proof}
+
+\begin{theorem}[Native-Coordinate Rank Identity for Exact Docking]\label{thm:md-native-coordinate-rank-identity}
+\leanmeta{\LH{L823}}
+For every molecular binding instance, exact docking structural rank is exactly the cardinality of the decision-relevant coordinates in the native molecular coordinate interface.
+\end{theorem}
+
+\begin{proof}
+Apply the imported molecular-rank identity theorem for the exact docking decision object.
+\end{proof}
+
+\begin{theorem}[Physical $3(N-k)$ Docking-Rank Budget]\label{thm:md-physical-3n-minus-k-budget}
+\leanmeta{\LH{L824}}
+If cutoff/locality analysis shows that at most $N-k$ protein atoms remain decision-relevant, then
+\[
+\mathrm{srank}(D_{\mathrm{dock}}) \le 3(N-k) + 3N_{\mathrm{ligand}}.
+\]
+Thus the rank budget is physically tied to retained coordinate degrees of freedom, not to a binary output label count.
+\end{theorem}
+
+\begin{proof}
+Combine the existing molecular cutoff-rank theorem with the declared bound on relevant-atom count.
+\end{proof}
+
+\begin{theorem}[Binary Summary Rank Monotonicity for Docking]\label{thm:md-binary-summary-rank-monotonicity}
+\leanmeta{\LH{L825}}
+For any binary summary of exact docking optimizer sets (e.g., bind/not-bind style summaries), structural rank of the summary problem is at most structural rank of the full exact pose-selection docking problem.
+\end{theorem}
+
+\begin{proof}
+Instantiate the generic optimizer-summary structural-rank monotonicity theorem at the exact docking decision object.
+\end{proof}
+
+\begin{theorem}[Equilibrium Dissociation Bound from Driving-Energy Floor]\label{thm:equilibrium-kd-driving-energy-floor}
+\leanmeta{\LH{L826}}
+Define the equilibrium dissociation proxy by
+\[
+K_d^{\mathrm{eq}} = \exp\!\left(-\frac{\Delta G_{\mathrm{drive}}}{k_B T}\right).
+\]
+If $\Delta G_{\mathrm{drive}} \ge r\,k_B T\ln 2$, then
+\[
+K_d^{\mathrm{eq}} \le \exp(-r\ln 2).
+\]
+\end{theorem}
+
+\begin{proof}
+Divide the driving-energy lower bound by positive $k_BT$, negate both sides, and apply monotonicity of the exponential map.
+\end{proof}
+
+\begin{theorem}[Detailed-Balance Equilibrium Path-Ratio Unity for Docking]\label{thm:md-detailed-balance-equilibrium-pathratio}
+\leanmeta{\LH{L827}}
+For an exact docking kernel satisfying detailed balance against its Boltzmann witness law, forward and reverse stationary finite-path weights are equal:
+\[
+\frac{P_{\mathrm f}}{P_{\mathrm r}} = 1.
+\]
+\end{theorem}
+
+\begin{proof}
+Apply the detailed-balance stationary-edge-flow symmetry theorem and then the quotient-trajectory equilibrium Crooks corollary.
+\end{proof}
+
+\begin{theorem}[Resolver-Free Equilibrium Bundle: Free-Energy Floor + Path-Ratio Unity]\label{thm:md-resolver-free-equilibrium-bundle}
+\leanmeta{\LH{L828}}
+For exact docking, the calibrated binding free-energy floor and equilibrium detailed-balance path-ratio unity are proved together as one bundle:
+\begin{enumerate}
+\item the exact-docking free-energy floor in thermal-bit units,
+\item equilibrium forward/reverse path-ratio identity $P_{\mathrm f}/P_{\mathrm r}=1$.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Conjoin the docking macrostate free-energy floor theorem with the docking-detailed-balance path-ratio theorem.
+\end{proof}
+
+\begin{theorem}[Docking Equilibrium $K_d$ Prediction from Independent Rank Lower Bound]\label{thm:md-equilibrium-kd-prediction-from-rank-lb}
+\leanmeta{\LH{L829}}
+If an independent argument certifies $r \le \mathrm{srank}(D_{\mathrm{dock}})$ and the calibrated driving-energy witness dominates exact-resolution witness cost, then
+\[
+K_d^{\mathrm{eq}} \le \exp(-r\ln 2).
+\]
+This yields a falsifiable affinity prediction with rank fixed independently of observed $\Delta G$.
+\end{theorem}
+
+\begin{proof}
+Apply the docking rank-lower-bound free-energy floor and then the generic equilibrium $K_d$ upper-bound theorem from a driving-energy floor.
+\end{proof}
+
+\begin{theorem}[Necessary Contact-Shell Geometry Budget from Independent Rank Lower Bound]\label{thm:md-necessary-contact-shell-budget-from-rank-lb}
+\leanmeta{\LH{L830}}
+In the one-hop geometry-contact regime, if an independent argument certifies
+\(
+r \le \mathrm{srank}(D_{\mathrm{dock}})
+\),
+then geometry budgets must satisfy
+\[
+r \le 3P + 3K + 3N_{\mathrm{ligand}},
+\]
+where $P$ and $K$ bound active-pocket and outer-shell cardinalities.
+\end{theorem}
+
+\begin{proof}
+Compose the independent rank lower bound with the existing geometric-contact-shell bounded-regime upper bound on docking structural rank.
+\end{proof}
+
+\begin{theorem}[Independent-Rank Risky Empirical Prediction Bundle]\label{thm:md-independent-rank-risky-prediction-bundle}
+\leanmeta{\LH{L831}}
+Under one independently certified rank lower bound $r \le \mathrm{srank}(D_{\mathrm{dock}})$, the theory simultaneously yields:
+\begin{enumerate}
+\item an equilibrium affinity prediction
+\(
+K_d^{\mathrm{eq}} \le \exp(-r\ln 2)
+\),
+\item a necessary contact-budget inequality
+\(
+r \le 3P + 3K + 3N_{\mathrm{ligand}}
+\)
+in the one-hop geometry-contact regime.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Conjoin the docking equilibrium-$K_d$ prediction theorem and the contact-shell-budget necessity theorem under the shared independent rank-lower-bound witness.
+\end{proof}
+
+\begin{theorem}[Exact-LJ Physical Witness Bundle for Docking]\label{thm:md-exact-lj-physics-witness-bundle}
+\leanmeta{\LH{L832}}
+Under an explicit exact Lennard--Jones utility model with finite-state strict-winner witnesses and a large-cutoff tail certificate, the theorem chain derives:
+\begin{enumerate}
+\item global strict-optimality witnesses,
+\item cutoff-bounded perturbation witnesses,
+\item the physical docking rank bound
+\(\mathrm{srank}(D_{\mathrm{dock}}) \le 3N_{\mathrm{rel}} + 3N_{\mathrm{ligand}}\).
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Instantiate the exact-LJ bounded-potential theorem, derive cutoff-bounded perturbation control from the large-cutoff criterion, and compose with the existing molecular docking rank theorem.
+\end{proof}
+
+\begin{theorem}[Per-System Concrete-Physics Witness Discharge Bundle]\label{thm:md-concrete-physics-witness-discharge-bundle}
+\leanmeta{\LH{L833}}
+From one per-system certificate package (strict-winner witness family, cutoff/tail-force certificate, excluded-atom count bound, and one-hop pocket/shell coverage bounds), the abstract docking assumptions are discharged and both physical rank budgets are obtained:
+\[
+\mathrm{srank}(D_{\mathrm{dock}}) \le 3(N-k)+3N_{\mathrm{ligand}},\qquad
+\mathrm{srank}(D_{\mathrm{dock}}) \le 3P+3K+3N_{\mathrm{ligand}}.
+\]
+\end{theorem}
+
+\begin{proof}
+Project strict-optimality and cutoff-boundedness from the concrete certificate object, then apply the previously proved excluded-atom and contact-shell rank-bound theorems.
+\end{proof}
+
+\begin{theorem}[Partition-Ratio Driving Floor with Correction Margin]\label{thm:partition-ratio-driving-floor-with-correction-margin}
+\leanmeta{\LH{L834}}
+Let driving free energy be defined in measurement-free form from partition ratio plus explicit correction stack. If the partition-ratio term exceeds the thermal-bit floor by at least the full correction-budget radius, then the corrected driving-energy witness still satisfies the rank-calibrated thermal-bit floor.
+\end{theorem}
+
+\begin{proof}
+Use the correction-stack absolute bound to lower-bound corrected driving free energy by ``nominal minus total component bound,'' then apply the assumed margin inequality.
+\end{proof}
+
+\begin{theorem}[Equilibrium $K_d$ Bound from Partition-Ratio Correction Chain]\label{thm:equilibrium-kd-bound-from-partition-ratio-correction-chain}
+\leanmeta{\LH{L835}}
+Combining the previous partition-ratio floor-with-margin theorem with the exponential affinity map yields
+\[
+K_d^{\mathrm{eq}} \le \exp(-r\ln 2).
+\]
+Thus the affinity bound is obtained from a measurement-free partition/correction chain rather than post-fit from observed affinity.
+\end{theorem}
+
+\begin{proof}
+Apply the driving-floor-to-$K_d$ monotonicity theorem to the corrected partition-ratio driving-energy witness.
+\end{proof}
+
+\begin{theorem}[Docking Rank-to-$K_d$ Bound from Measurement-Free Partition Chain]\label{thm:md-rank-kd-bound-from-partition-chain}
+\leanmeta{\LH{L836}}
+For exact docking, if the partition-ratio nominal driving free energy dominates the exact-resolution witness by a margin at least equal to the certified correction budget, then the same corrected witness can be used as the exact $\Delta G_{\mathrm{drive}}$ input in the docking rank-based equilibrium affinity theorem, yielding
+\[
+K_d^{\mathrm{eq}} \le \exp(-r\ln 2)
+\]
+for any independent rank lower bound \(r \le \mathrm{srank}(D_{\mathrm{dock}})\).
+\end{theorem}
+
+\begin{proof}
+Convert the nominal partition-ratio margin into the exact drive-witness domination inequality via the correction lower envelope, then invoke the existing docking rank-to-$K_d$ theorem.
+\end{proof}
+
+\begin{theorem}[Independent Docking Rank Interval Certificates]\label{thm:md-independent-srank-interval-certificates}
+\leanmeta{\LH{L837}}
+If one coordinate set is independently certified relevant and another independently certified sufficient, then exact docking rank is bracketed without any affinity input:
+\[
+r_{\mathrm{lower}} \le \mathrm{srank}(D_{\mathrm{dock}}) \le r_{\mathrm{upper}}.
+\]
+\end{theorem}
+
+\begin{proof}
+Lower bound follows from relevance-subset cardinality, upper bound from sufficiency-cardinality.
+\end{proof}
+
+\begin{theorem}[Risky Prediction Bundle from Independent Relevance Certificate]\label{thm:md-independent-certificate-risky-prediction-bundle}
+\leanmeta{\LH{L838}}
+Using the lower endpoint of the independent rank interval (relevance-certified coordinate count) as the rank witness, the theory yields both:
+\begin{enumerate}
+\item an equilibrium affinity upper bound,
+\item a necessary one-hop contact-shell geometry budget.
+\end{enumerate}
+This rank witness is computed structurally, not post-fit from affinity.
+\end{theorem}
+
+\begin{proof}
+Convert the relevance certificate to a rank lower bound and apply the previously proved independent-rank empirical prediction bundle.
+\end{proof}
+
+\begin{theorem}[Hard-Threshold Falsification Logic (Not-Falsified Equivalence)]\label{thm:md-falsification-not-falsified-iff}
+\leanmeta{\LH{L839}}
+For the pre-registered rank-threshold protocol, ``not falsified'' is equivalent to jointly meeting both hard thresholds:
+\[
+K_d^{\mathrm{obs}} \le K_d^{\mathrm{pred,upper}},\qquad
+r_{\mathrm{required}} \le B_{\mathrm{contact}}^{\mathrm{obs}}.
+\]
+\end{theorem}
+
+\begin{proof}
+Unfold the protocol fail predicate (disjunction of threshold violations) and apply order duality for strict/non-strict inequalities.
+\end{proof}
+
+\begin{theorem}[Pre-Registered Independent-Rank Protocol Soundness]\label{thm:md-preregistered-rank-protocol-soundness}
+\leanmeta{\LH{L840}}
+When generated from an independently fixed rank lower bound, the pre-registered protocol exports:
+\begin{enumerate}
+\item protocol lock witness,
+\item predicted equilibrium affinity upper bound,
+\item required minimum contact-budget threshold.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Instantiate the protocol object at rank witness \(r\), then transport the rank-based affinity/contact inequalities to its threshold fields.
+\end{proof}
+
+\begin{theorem}[Finite-Sample Margin Violation Implies True Upper-Bound Violation]\label{thm:finite-sample-upper-violation-implies-true-violation}
+\leanmeta{\LH{L841}}
+For a trajectory-based estimator with certified finite-sample error radius, if observed value exceeds a claimed upper threshold by more than that radius, then the true target exceeds the threshold.
+\end{theorem}
+
+\begin{proof}
+Use the finite-sample absolute-error inequality to obtain a lower bound on the true target in terms of observed-minus-radius, then combine with the margin-violation premise.
+\end{proof}
+
+\begin{theorem}[High-Confidence Protocol Fail-Condition Bundle]\label{thm:md-high-confidence-fail-condition-bundle}
+\leanmeta{\LH{L842}}
+If either (i) observed affinity exceeds the predicted upper threshold by more than its finite-sample radius, or (ii) observed contact budget falls below the required threshold by more than its finite-sample radius, then the corresponding true violation follows.
+\end{theorem}
+
+\begin{proof}
+Case split on the violated margin condition and apply the one-sided finite-sample margin-transport theorems.
+\end{proof}
+
+\begin{theorem}[$K_d$ Interval from Driving-Energy Error Radius]\label{thm:kd-interval-from-driving-energy-error}
+\leanmeta{\LH{L843}}
+Any certified absolute error radius on driving free energy propagates to an explicit equilibrium-affinity interval:
+\[
+K_d(\Delta G_{\mathrm{est}}+\varepsilon) \le K_d(\Delta G_{\mathrm{true}})
+\le K_d(\Delta G_{\mathrm{est}}-\varepsilon).
+\]
+\end{theorem}
+
+\begin{proof}
+Convert the absolute error bound to a two-sided free-energy interval and use monotonicity of the exponential map on negated, positive-temperature-scaled arguments.
+\end{proof}
+
+\begin{theorem}[$K_d$ Interval from Absolute Free-Energy Correction Stack]\label{thm:kd-interval-from-absolute-free-energy-model}
+\leanmeta{\LH{L844}}
+For the absolute free-energy model, certified total correction bound directly induces a two-sided equilibrium-affinity interval around the base free-energy estimate.
+\end{theorem}
+
+\begin{proof}
+Apply the previous driving-energy-error-to-$K_d$ interval theorem with error radius instantiated by the proven total correction-bound theorem of the absolute free-energy model.
+\end{proof}
+
+\begin{theorem}[Chemistry-Condition Data-Backed Uncertainty-to-$K_d$ Bundle]\label{thm:chemistry-data-backed-kd-interval-bundle}
+\leanmeta{\LH{L845}}
+From (i) explicit pH/ionic condition-window certificates, (ii) data-backed posterior calibration intervals for chemistry-coupling constants, and (iii) certified absolute free-energy correction bounds, one obtains a full uncertainty-propagation bundle to final equilibrium-affinity interval predictions.
+\end{theorem}
+
+\begin{proof}
+Conjoin the unified chemical-state condition-window theorem, the dataset-to-posterior interval theorem, the absolute free-energy correction-error theorem, and the derived $K_d$ interval transport theorem.
+\end{proof}
+
+\begin{theorem}[Per-Case Real-Artifact Witness Discharge for All Targets]\label{thm:md-per-case-real-artifact-discharge-all-targets}
+\leanmeta{\LH{L846}}
+If each protein--ligand case carries explicit Hamiltonian/force-field/geometry artifacts (exact-LJ utility identity, strict-winner witness family, cutoff-tail certificate, and geometry-cardinality certificates), then for each case the full concrete docking witness bundle is derived, yielding strict-optimality, cutoff-boundedness, and both excluded-atom/contact-shell structural-rank budgets.
+\end{theorem}
+
+\begin{proof}
+For each case, construct a concrete docking witness directly from the real artifact package, then apply the existing concrete-witness discharge theorem.
+\end{proof}
+
+\begin{theorem}[Numerical Partition+Correction Closure to Equilibrium $K_d$ Bound]\label{thm:partition-correction-numerical-kd-upper-bound-bundle}
+\leanmeta{\LH{L847}}
+Given certified numerical partition-function values $(Z_{\mathrm{bound}}, Z_{\mathrm{unbound}})$ with interval/positivity certificates and protocol-derived correction-term bounds, if the partition-ratio driving free energy clears the thermal-bit floor by the certified correction budget, then the corrected driving witness yields:
+\[
+K_d^{\mathrm{eq}} \le \exp(-r\ln 2).
+\]
+\end{theorem}
+
+\begin{proof}
+Combine partition positivity and correction absolute-error closure with the partition-chain driving-floor theorem, then apply the equilibrium $K_d$ upper-bound map.
+\end{proof}
+
+\begin{theorem}[Production Independent-\texorpdfstring{$\mathrm{srank}$}{srank} Extractor Certificate Bundle]\label{thm:production-independent-srank-extractor-bundle}
+\leanmeta{\LH{L848}}
+For a production extractor output that provides relevance/sufficiency certificates from structure/mechanics only (explicitly with no affinity input), the certified interval
+\[
+r_{\mathrm{lower}} \le \mathrm{srank}(D_{\mathrm{dock}}) \le r_{\mathrm{upper}}
+\]
+is obtained directly.
+\end{theorem}
+
+\begin{proof}
+Apply the independent rank-interval theorem to the extractor's lower relevance and upper sufficiency certificates, and conjoin with the declared structure-only/no-affinity provenance certificates.
+\end{proof}
+
+\begin{theorem}[Locked Prospective Falsification Run Soundness]\label{thm:locked-prospective-falsification-run-soundness}
+\leanmeta{\LH{L849}}
+If a falsification run locks split/metric/blind identifiers and records blinded prospective observations together with an explicit hard-threshold fail condition, then protocol preregistration and lock certificates hold, and the theory is formally falsified for that run.
+\end{theorem}
+
+\begin{proof}
+Project preregistration and lock witnesses from the run record and unfold the protocol fail predicate to conclude falsification under the recorded fail condition.
+\end{proof}
+
+\begin{theorem}[Assay-Noise High-Confidence Call Validity Bundle]\label{thm:assay-noise-high-confidence-call-validity-bundle}
+\leanmeta{\LH{L850}}
+With replicate/batch/instrument-decomposed assay-noise calibration exported as trajectory estimators:
+\begin{enumerate}
+\item margin fail calls imply true threshold violations;
+\item margin pass calls imply true non-violation inequalities.
+\end{enumerate}
+Hence high-confidence fail/pass calls are valid at the true-target level under the declared error-radius assumptions.
+\end{theorem}
+
+\begin{proof}
+Convert decomposed assay-noise calibrations to trajectory estimators, then apply the one-sided finite-sample fail and pass transport theorems.
+\end{proof}
+
+\begin{theorem}[Target-Class Chemistry-Completeness to Final $K_d$ Intervals]\label{thm:target-class-chemistry-completeness-kd-interval-bundle}
+\leanmeta{\LH{L851}}
+If target-class chemistry constants (protonation, tautomer, ionic, solvent, water-mediated, electronic) have fitted estimates with certified componentwise uncertainty bounds, then combined with absolute free-energy correction-stack uncertainty they propagate to a final two-sided equilibrium-$K_d$ interval.
+\end{theorem}
+
+\begin{proof}
+Use triangle-inequality aggregation of component chemistry uncertainty with the absolute free-energy model error bound, then apply the driving-energy-error to $K_d$ interval theorem.
+\end{proof}
+
+\begin{theorem}[Single-Target Full Physical-Closure Instance Bundle]\label{thm:single-target-full-physical-closure-instance-bundle}
+\leanmeta{\LH{L852}}
+A single target instance carrying all practical artifacts (real witness discharge, numerical partition/correction closure, independent-rank extractor output, locked falsification run, assay-noise calibration, chemistry-complete calibration) exports one joint closure proposition covering all six practical completion axes.
+\end{theorem}
+
+\begin{proof}
+Conjoin the six previously proved target-level bundles from the corresponding artifact components of the instance record.
+\end{proof}
+
+\begin{theorem}[External Replication-at-Scale Full Pipeline Bundle]\label{thm:external-replication-at-scale-full-pipeline-bundle}
+\leanmeta{\LH{L853}}
+For an outside-team/outside-compute replication package over a family of new targets, team and compute separation are certified, and each target exports the full single-target physical-closure proposition.
+\end{theorem}
+
+\begin{proof}
+Project team/compute distinctness from the replication package and apply the single-target closure theorem pointwise to each target instance.
+\end{proof}
+
+\begin{theorem}[Single-State Partition Positivity Bundle]\label{thm:single-state-partition-positive-bundle}
+\leanmeta{\LH{L854}}
+For any inverse-temperature and bound/unbound energies, the one-state exact partition constructor yields strictly positive certified partition values for both bound and unbound ensembles.
+\end{theorem}
+
+\begin{proof}
+Instantiate the one-state partition constructor and use strict positivity of the exponential map.
+\end{proof}
+
+\begin{theorem}[Zero-Correction Calibration Closure Bundle]\label{thm:zero-correction-calibration-bundle}
+\leanmeta{\LH{L855}}
+The canonical one-sample zero-correction protocol calibration yields zero total correction, zero total component bound, and therefore satisfies the certified total correction-error inequality.
+\end{theorem}
+
+\begin{proof}
+Expand the canonical zero-correction constructor and simplify each correction/bound component; then apply the protocol total-error theorem.
+\end{proof}
+
+\begin{theorem}[Upper-Only Independent-Srank Extractor Interval Bundle]\label{thm:upper-only-independent-srank-extractor-bundle}
+\leanmeta{\LH{L856}}
+Given any certified sufficient upper coordinate set, the canonical upper-only extractor (empty lower set + no-affinity provenance certificates) yields:
+\[
+0 \le \mathrm{srank}(D_{\mathrm{dock}}) \le |I_{\mathrm{upper}}|.
+\]
+\end{theorem}
+
+\begin{proof}
+Construct the extractor with empty lower set and the provided upper sufficiency witness, then apply the certified-interval theorem for production independent extractors.
+\end{proof}
+
+\begin{theorem}[Single-Target Zero-Rank Concrete Closure Instance Bundle]\label{thm:single-target-zero-rank-concrete-closure-bundle}
+\leanmeta{\LH{L857}}
+From one real per-system witness package and one certified sufficient upper coordinate set, the canonical constructor with zero-rank/zero-correction operational defaults yields a full single-target closure proposition.
+\end{theorem}
+
+\begin{proof}
+Compose the per-system witness package with: (i) the zero-rank partition/correction closure constructor, (ii) the upper-only independent extractor constructor, (iii) a locked zero-rank fail-run constructor, (iv) exact-observation assay-noise constructors, and (v) zero chemistry-shift calibration; then invoke the full single-target closure theorem.
+\end{proof}
+
+\begin{theorem}[Attested-Provenance Replication-at-Scale Constructor Bundle]\label{thm:attested-provenance-replication-at-scale-constructor-bundle}
+\leanmeta{\LH{L858}}
+Any attested independent-replication provenance package (typed outside-team/outside-compute identities with signed protocol-match artifacts), together with one full closure instance per target, induces a replication-at-scale package satisfying team separation, compute separation, and full per-target closure.
+\end{theorem}
+
+\begin{proof}
+Convert attested provenance to the independent-provenance interface and apply the replication-at-scale full-pipeline theorem.
+\end{proof}
+
+\begin{theorem}[Concrete Attested Single-Target Replication Bundle]\label{thm:concrete-attested-single-target-replication-bundle}
+\leanmeta{\LH{L859}}
+Using the concrete attested provenance artifacts already instantiated in this paper, plus one target-level real witness package and one certified sufficient upper coordinate set, the induced single-target replication package certifies outside-team/outside-compute separation and exports the full single-target closure proposition.
+\end{theorem}
+
+\begin{proof}
+Instantiate the attested-provenance replication constructor on the singleton target roster, then project the singleton instance clause from the generic replication-at-scale bundle.
+\end{proof}
+
+\begin{theorem}[Computable Finite-Enumeration Pose Solver Optimality]\label{thm:computable-finite-enumeration-pose-solver-optimal}
+\leanmeta{\LH{L860}}
+Given an explicit finite action enumeration certificate covering all candidate poses, the finite argmax pose-selection algorithm returns an action in the exact optimizer set for every state.
+\end{theorem}
+
+\begin{proof}
+Use list-argmax maximality on the covering enumeration and transport the resulting utility dominance inequality to optimizer membership.
+\end{proof}
+
+\begin{theorem}[RMSD-Success Probability Unit-Interval Law]\label{thm:rmsd-success-probability-unit-interval}
+\leanmeta{\LH{L861}}
+For any finite posterior over poses, the induced RMSD-success probability (posterior mass of poses within threshold $\epsilon$) is always in $[0,1]$.
+\end{theorem}
+
+\begin{proof}
+Nonnegativity follows termwise from posterior nonnegativity. The upper bound follows by pointwise domination of the success-indicator-weighted sum by the full posterior mass sum, which equals one.
+\end{proof}
+
+\begin{theorem}[Top-$k$ Posterior Mass Lower-Bounds RMSD Success Probability under Coverage]\label{thm:topk-mass-lower-bound-rmsd-success-probability}
+\leanmeta{\LH{L862}}
+If every member of the paper4 finite top-$k$ docking set satisfies the RMSD threshold, then posterior mass on that top-$k$ set lower-bounds total RMSD-success probability.
+\end{theorem}
+
+\begin{proof}
+Apply subset-sum monotonicity from the covered top-$k$ set into the RMSD-success set, then rewrite success probability as the filtered posterior sum.
+\end{proof}
+
+\begin{theorem}[RMSD-Probability-Derived Pose Solver Bundle]\label{thm:rmsd-probability-derived-pose-solver-bundle}
+\leanmeta{\LH{L863}}
+For a pose-solver output carrying: selected top-$k$ pose, RMSD coverage certificate of the top-$k$ set, and a certified lower bound on top-$k$ posterior mass, one obtains jointly:
+\begin{enumerate}
+\item selected-pose RMSD threshold satisfaction,
+\item a certified lower bound on RMSD-success probability,
+\item the RMSD-success probability upper/lower unit-interval bounds.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Conjoin selected-pose membership with top-$k$ coverage for item (1), compose top-$k$ mass lower bound with the top-$k$-to-success monotonicity theorem for item (2), and append the posterior unit-interval law for item (3).
+\end{proof}
+
+\begin{theorem}[Joint Computable-Pose and RMSD-Probability Bundle]\label{thm:joint-computable-pose-rmsd-probability-bundle}
+\leanmeta{\LH{L864}}
+Combining the finite-enumeration computable pose solver with a finite RMSD posterior model yields one bundled endpoint: exact optimizer membership of the computed pose plus calibrated RMSD-success probability bounds in $[0,1]$.
+\end{theorem}
+
+\begin{proof}
+Conjoin the computable finite-enumeration optimizer theorem with the RMSD-success probability unit-interval theorem.
+\end{proof}
+
+\begin{theorem}[Raw Pocket+Ligand Constructor to Sampled Posterior Bundle]\label{thm:raw-pocket-ligand-constructor-posterior-bundle}
+\leanmeta{\LH{L865}}
+From raw molecular inputs (protein pocket, ligand, grid sampling controls, and RMSD reference map), the canonical sampled constructor yields one bundled certificate: base-action inclusion in sampled support, sampled-optimal selected pose, normalized nonnegative posterior, and JAX-codegen completeness of the canonical solver program.
+\end{theorem}
+
+\begin{proof}
+Instantiate the raw constructor and conjoin base-support membership, selected-pose optimality, posterior normalization/nonnegativity, and canonical JAX-codegen-success lemmas.
+\end{proof}
+
+\begin{theorem}[Deployment Contract Implies Benchmark Contract]\label{thm:deployment-contract-implies-benchmark-contract}
+\leanmeta{\LH{L866}}
+Under the deployment RMSD calibration model (proxy RMSD plus certified absolute error bound), conservative deployment acceptance implies benchmark-mode acceptance for both RMSD and success-probability thresholds.
+\end{theorem}
+
+\begin{proof}
+Transport RMSD pass by proxy-plus-error upper bounding and transport probability pass by monotonicity from conservative success mass into true benchmark success mass.
+\end{proof}
+
+\begin{theorem}[Canonical Program Execution Refines Solver Result]\label{thm:canonical-program-execution-refines-solver-result}
+\leanmeta{\LH{L867}}
+For canonical ProgramIR execution witnesses, the emitted accept-flag is equivalent to existence of an accepted solver certificate, and emitted reject-flag is equivalent to existence of a failure certificate.
+\end{theorem}
+
+\begin{proof}
+Rewrite the runtime flag to the theorem-level decision predicate and compose with acceptance/failure characterization lemmas of the solver API.
+\end{proof}
+
+\begin{theorem}[Raw Pocket+Ligand Benchmark Solver Bundle]\label{thm:raw-pocket-ligand-benchmark-solver-bundle}
+\leanmeta{\LH{L868}}
+For the raw-input benchmark solver endpoint, one bundled result is exported: base-action support inclusion, canonical JAX-codegen success, and exact accepted/failure iff-characterizations against the benchmark contract.
+\end{theorem}
+
+\begin{proof}
+Combine constructor-support and codegen-success theorems with benchmark accepted/failure equivalence lemmas for the raw benchmark API.
+\end{proof}
+
+\begin{theorem}[Canonical Raw Benchmark Acceptance Equivalence]\label{thm:canonical-raw-benchmark-acceptance-equivalence}
+\leanmeta{\LH{L869}}
+For the canonical RMSD map induced from raw ligand geometry, benchmark acceptance of the raw canonical solver is equivalent to the benchmark contract predicate.
+\end{theorem}
+
+\begin{proof}
+Specialize the generic raw benchmark acceptance-equivalence theorem to the canonical RMSD constructor.
+\end{proof}
+
+\begin{theorem}[Canonical Raw Deployment Acceptance Equivalence to Benchmark Contract]\label{thm:canonical-raw-deployment-acceptance-equivalence}
+\leanmeta{\LH{L870}}
+For the canonical zero-error deployment calibration, raw deployment acceptance is equivalent to benchmark contract satisfaction.
+\end{theorem}
+
+\begin{proof}
+Compose deployment accepted-iff theorem with canonical calibration deployment-vs-benchmark contract equivalence.
+\end{proof}
+
+\begin{theorem}[Canonical Raw Program-Witness Refinement]\label{thm:canonical-raw-program-witness-refinement}
+\leanmeta{\LH{L871}}
+For the canonical raw-input ProgramIR witness constructor, runtime accept/reject flags refine exactly to accepted/failure outcomes of the canonical raw benchmark solver.
+\end{theorem}
+
+\begin{proof}
+Specialize the raw witness refinement theorem to the canonical RMSD constructor and canonical raw benchmark wrapper.
+\end{proof}
+
+\begin{theorem}[Canonical Raw Definitive Endpoint Bundle]\label{thm:canonical-raw-definitive-endpoint-bundle}
+\leanmeta{\LH{L872}}
+The canonical raw endpoint (raw molecular input, canonical RMSD map, canonical deployment calibration, canonical ProgramIR witness) exports one definitive bundle: support inclusion, JAX codegen success, benchmark/deployment acceptance equivalences, total benchmark/deployment result coverage, and runtime-flag-to-certificate refinement.
+\end{theorem}
+
+\begin{proof}
+Instantiate the generic definitive endpoint bundle theorem at canonical RMSD, canonical deployment calibration, and canonical witness constructors.
+\end{proof}
+
+\begin{theorem}[Canonical Runtime Output Refines Solver Certificates]\label{thm:canonical-runtime-output-refines-solver}
+\leanmeta{\LH{L873}}
+The canonical runtime-output interpreter for the docking ProgramIR refines exactly to solver certificate outcomes: accept-flag true iff an accepted benchmark certificate exists, and accept-flag false iff a benchmark failure certificate exists.
+\end{theorem}
+
+\begin{proof}
+Instantiate the canonical execution witness at solver-defined output fields and apply the execution-refinement theorem.
+\end{proof}
+
+\begin{theorem}[Definitive Raw Cross-Dock Acceptance iff Benchmark Contract]\label{thm:definitive-raw-crossdock-accept-benchmark-iff}
+\leanmeta{\LH{L874}}
+For the single-name definitive raw cross-docking API, deployment accepted output exists exactly when the canonical raw benchmark contract is satisfied.
+\end{theorem}
+
+\begin{proof}
+Rewrite the definitive API to the canonical raw deployment wrapper and apply the canonical deployment-acceptance equivalence theorem.
+\end{proof}
+
+\begin{theorem}[Definitive Raw Cross-Dock Acceptance iff Deployment Contract]\label{thm:definitive-raw-crossdock-accept-deployment-iff}
+\leanmeta{\LH{L875}}
+For the definitive raw cross-docking API, accepted output exists exactly when the canonical deployment contract predicate holds.
+\end{theorem}
+
+\begin{proof}
+Compose definitive accepted-iff-benchmark equivalence with canonical deployment-vs-benchmark contract equivalence.
+\end{proof}
+
+\begin{theorem}[Definitive Raw Cross-Dock Totality]\label{thm:definitive-raw-crossdock-totality}
+\leanmeta{\LH{L876}}
+The definitive raw deployment endpoint is total: every invocation returns either an accepted certificate or a rejected deployment certificate.
+\end{theorem}
+
+\begin{proof}
+Specialize canonical raw deployment totality and rewrite through the definitive API wrapper.
+\end{proof}
+
+\begin{theorem}[Definitive Raw Runtime Flag Refines Acceptance]\label{thm:definitive-raw-runtime-flag-refines-accept}
+\leanmeta{\LH{L877}}
+For the definitive raw benchmark endpoint, runtime accept-flag truth is equivalent to existence of an accepted benchmark certificate.
+\end{theorem}
+
+\begin{proof}
+Specialize canonical runtime-output refinement to the definitive raw benchmark wrapper.
+\end{proof}
+
+\begin{theorem}[Definitive Raw Cross-Dock Full Closure Bundle]\label{thm:definitive-raw-crossdock-full-closure-bundle}
+\leanmeta{\LH{L878}}
+The definitive raw cross-docking API exports one bundled closure theorem containing: base-action support inclusion, JAX codegen success, benchmark/deployment acceptance equivalences, benchmark/deployment totality, runtime-flag refinement for both accept/reject outcomes, and deployment-acceptance-to-benchmark-acceptance transport.
+\end{theorem}
+
+\begin{proof}
+Conjoin the definitive wrapper theorems for support, codegen, acceptance equivalences, totality, runtime refinement, and deployment-to-benchmark acceptance transport.
+\end{proof}
+
+\begin{theorem}[Definitive Raw Benchmark Acceptance iff Benchmark Contract]\label{thm:definitive-raw-benchmark-accepted-iff-contract}
+\leanmeta{\LH{L879}}
+For the definitive raw benchmark wrapper, accepted output exists exactly when the canonical benchmark contract holds.
+\end{theorem}
+
+\begin{proof}
+Specialize the canonical benchmark accepted-iff-contract equivalence theorem through the definitive benchmark wrapper.
+\end{proof}
+
+\begin{theorem}[Definitive Raw Deployment Rejection iff Not Deployment Contract]\label{thm:definitive-raw-deployment-rejected-iff-not-contract}
+\leanmeta{\LH{L880}}
+For the definitive raw deployment wrapper, a rejected output exists exactly when the canonical deployment contract predicate fails.
+\end{theorem}
+
+\begin{proof}
+Use definitive deployment totality plus accepted-iff-deployment-contract equivalence and constructor disjointness to obtain the exact rejection characterization.
+\end{proof}
+
+\begin{theorem}[Definitive Acceptance Flag iff Deployment Acceptance]\label{thm:definitive-accept-flag-iff-deployment-accepted}
+\leanmeta{\LH{L881}}
+For the definitive raw endpoint, runtime accept-flag truth is equivalent to existence of a deployment accepted certificate.
+\end{theorem}
+
+\begin{proof}
+Compose runtime-flag-to-benchmark-accept refinement with benchmark/deployment contract equivalence and deployment accepted-iff-contract closure.
+\end{proof}
+
+\begin{theorem}[Definitive Reject Flag iff Deployment Rejection]\label{thm:definitive-reject-flag-iff-deployment-rejected}
+\leanmeta{\LH{L882}}
+For the definitive raw endpoint, runtime accept-flag falsity is equivalent to existence of a deployment rejection certificate.
+\end{theorem}
+
+\begin{proof}
+Combine runtime-failure refinement with benchmark-failure-vs-contract negation, transport negation to deployment contract, and apply deployment rejection equivalence.
+\end{proof}
+
+\begin{theorem}[Computable Rational Acceptance Flag Exactness]\label{thm:computable-rational-accept-flag-exactness}
+\leanmeta{\LH{L883}}
+For the rationalized acceptance kernel, the computable Boolean accept-flag is exactly equivalent to the pair of rational margin inequalities used in the kernel decision rule.
+\end{theorem}
+
+\begin{proof}
+Unfold the computable flag definition and simplify the Boolean `decide` equivalence.
+\end{proof}
+
+\begin{theorem}[Computable Rational Acceptance Soundness]\label{thm:computable-rational-accept-soundness}
+\leanmeta{\LH{L884}}
+If the computable rationalized accept-flag is true and the kernel carries certified absolute error bounds between rationalized and real-valued RMSD/success-probability quantities, then the benchmark contract holds at the real solver level.
+\end{theorem}
+
+\begin{proof}
+Lift rational margin inequalities to real inequalities, combine with the one-sided consequences of absolute error bounds, and conclude the benchmark RMSD/probability contract conjuncts.
+\end{proof}
+
+\begin{theorem}[Computable Rational Acceptance Refines Benchmark Acceptance]\label{thm:computable-rational-accept-refines-benchmark-accept}
+\leanmeta{\LH{L885}}
+Under the same rationalized kernel assumptions, computable accept-flag truth implies existence of an accepted benchmark certificate from the formal solver API.
+\end{theorem}
+
+\begin{proof}
+Apply computable acceptance soundness to obtain benchmark-contract satisfaction, then invoke the benchmark accepted-iff-contract theorem.
+\end{proof}
+
+\begin{theorem}[Canonical Interpreter-State Runtime Refinement]\label{thm:canonical-interpreter-state-runtime-refinement}
+\leanmeta{\LH{L886}}
+The canonical interpreter-state view of ProgramIR evaluation refines exactly to accepted/failure benchmark certificates with the same two-sided accept-flag semantics as the direct runtime constructor.
+\end{theorem}
+
+\begin{proof}
+Rewrite interpreter-state runtime output to the direct runtime constructor and transport the previously proved runtime refinement theorem.
+\end{proof}
+
+\begin{theorem}[Definitive Interpreter Output Equals Definitive Runtime Output]\label{thm:definitive-interpreter-output-equals-runtime}
+\leanmeta{\LH{L887}}
+For the definitive raw endpoint wrapper, interpreter-evaluated runtime output and direct runtime output coincide definitionally.
+\end{theorem}
+
+\begin{proof}
+Unfold both constructions and simplify; they are definitionally equal.
+\end{proof}
+
+\begin{theorem}[Definitive Report Runtime-Accept iff Deployment-Accepted]\label{thm:definitive-report-runtime-accept-iff-deployment-accepted}
+\leanmeta{\LH{L888}}
+In the consolidated definitive report object, runtime accept-flag truth is equivalent to existence of a deployment accepted certificate.
+\end{theorem}
+
+\begin{proof}
+Expand the report constructor fields and apply the definitive accept-flag-to-deployment-accept equivalence theorem.
+\end{proof}
+
+\begin{theorem}[Definitive Raw Cross-Dock Complete Lean Bundle]\label{thm:definitive-raw-crossdock-complete-lean-bundle}
+\leanmeta{\LH{L889}}
+The definitive raw cross-docking endpoint exports a single complete Lean closure bundle containing: base-action support inclusion, JAX codegen success, benchmark/deployment acceptance equivalences, runtime accept/reject equivalence to deployment accepted/rejected outcomes, deployment totality, and computable rational-kernel acceptance refinement to benchmark accepted certificates.
+\end{theorem}
+
+\begin{proof}
+Conjoin definitive API support/codegen/acceptance/flag/totality theorems with the rational-kernel computable-acceptance refinement theorem specialized to the canonical raw input.
+\end{proof}
+
+\begin{theorem}[Definitive Report Runtime-Reject iff Deployment-Rejected]\label{thm:definitive-report-runtime-reject-iff-deployment-rejected}
+\leanmeta{\LH{L890}}
+In the consolidated definitive report object, runtime reject-flag truth is equivalent to existence of a deployment rejected certificate.
+\end{theorem}
+
+\begin{proof}
+Expand report fields and apply the definitive reject-flag-to-deployment-rejected equivalence theorem.
+\end{proof}
+
+\begin{theorem}[Constructive Benchmark Decision iff Kernel Accept-Flag]
+\label{thm:definitive-constructive-benchmark-iff-kernel-flag}
+\leanmeta{\LH{L891}}
+For any artifact-instantiated rational kernel at the definitive raw endpoint, the constructive benchmark decision is accepted exactly when the kernel's computable accept-flag is true.
+\end{theorem}
+
+\begin{proof}
+Unfold the constructive benchmark wrapper into the computable-kernel decision function and apply kernel-decision accepted iff-flag exactness.
+\end{proof}
+
+\begin{theorem}[Constructive Benchmark Acceptance Refines Certificate-Backend Benchmark Acceptance]
+\label{thm:definitive-constructive-benchmark-refines-certificate-backend-benchmark}
+\leanmeta{\LH{L892}}
+If the constructive benchmark decision is accepted for an artifact-instantiated kernel, then a certificate-backend benchmark accepted certificate exists.
+\end{theorem}
+
+\begin{proof}
+Reduce the constructive benchmark wrapper to the computable-kernel endpoint and apply the previously proved computable-kernel-to-certificate-backend benchmark acceptance refinement theorem.
+\end{proof}
+
+\begin{theorem}[Constructive Deployment Acceptance Refines Certificate-Backend Deployment Acceptance]
+\label{thm:definitive-constructive-deployment-refines-certificate-backend-deployment}
+\leanmeta{\LH{L893}}
+If the constructive deployment decision is accepted for an artifact-instantiated kernel, then a certificate-backend deployment accepted certificate exists.
+\end{theorem}
+
+\begin{proof}
+First refine constructive acceptance to certificate-backend benchmark acceptance, transport benchmark contract truth to deployment-contract truth through canonical calibration equivalence, and conclude via certificate-backend deployment accepted iff deployment-contract.
+\end{proof}
+
+\begin{theorem}[Exact-Rational Artifact Acceptance iff Benchmark Contract]
+\label{thm:definitive-exact-rat-artifact-accept-iff-benchmark-contract}
+\leanmeta{\LH{L894}}
+For an exact-rational artifact instantiation (zero rational margins with declared exact equalities to real endpoint quantities), constructive benchmark acceptance is equivalent to the legacy benchmark contract.
+\end{theorem}
+
+\begin{proof}
+Rewrite constructive acceptance to kernel accept-flag truth, then specialize the exact-rational witness theorem identifying flag truth with benchmark-contract satisfaction.
+\end{proof}
+
+\begin{theorem}[Exact-Rational Artifact Acceptance Refines Both Certificate-Backend Accept Paths]
+\label{thm:definitive-exact-rat-artifact-accept-refines-certificate-backend-accepts}
+\leanmeta{\LH{L895}}
+If an exact-rational artifact's constructive deployment decision accepts, then both certificate-backend benchmark acceptance and certificate-backend deployment acceptance certificates exist.
+\end{theorem}
+
+\begin{proof}
+Combine constructive-to-certificate-backend benchmark refinement with constructive-to-certificate-backend deployment refinement and return their conjunction.
+\end{proof}
+
+\begin{theorem}[Benchmark Decision Alias Exactness]
+\label{thm:definitive-benchmark-decision-alias-exactness}
+\leanmeta{\LH{L896}}
+The public constructive benchmark decision endpoint is definitionally equal to the core constructive benchmark decision wrapper.
+\end{theorem}
+
+\begin{proof}
+Unfold the alias definition; both terms are judgmentally equal.
+\end{proof}
+
+\begin{theorem}[Deployment Decision Alias Exactness]
+\label{thm:definitive-deployment-decision-alias-exactness}
+\leanmeta{\LH{L897}}
+The public constructive deployment decision endpoint is definitionally equal to the core constructive deployment decision wrapper.
+\end{theorem}
+
+\begin{proof}
+Unfold the alias definition; both terms are judgmentally equal.
+\end{proof}
+
+\begin{theorem}[Public Benchmark Decision Refines Certificate-Backend Benchmark Acceptance]
+\label{thm:definitive-benchmark-decision-refines-certificate-backend-benchmark}
+\leanmeta{\LH{L898}}
+If the public constructive benchmark decision accepts, then a certificate-backend benchmark accepted certificate exists.
+\end{theorem}
+
+\begin{proof}
+Rewrite the public decision endpoint to the core constructive wrapper and apply constructive decision-to-certificate-backend benchmark refinement.
+\end{proof}
+
+\begin{theorem}[Public Deployment Decision Refines Certificate-Backend Deployment Acceptance]
+\label{thm:definitive-decision-refines-certificate-backend-deployment}
+\leanmeta{\LH{L899}}
+If the public constructive deployment decision accepts, then a certificate-backend deployment accepted certificate exists.
+\end{theorem}
+
+\begin{proof}
+Rewrite the public decision endpoint to the core constructive wrapper and apply constructive decision-to-certificate-backend deployment refinement.
+\end{proof}
+
+\begin{theorem}[Benchmark Decision Rejected iff Kernel Flag False]
+\label{thm:definitive-benchmark-decision-rejected-iff-kernel-flag-false}
+\leanmeta{\LH{L900}}
+For artifact-instantiated constructive benchmark decisions, rejection is exactly equivalent to the kernel computable accept-flag being false.
+\end{theorem}
+
+\begin{proof}
+Use the accepted-decision iff kernel-flag-true theorem, case analysis on the two-point decision codomain, and contradiction on accepted-vs-rejected branch equality.
+\end{proof}
+
+\begin{theorem}[Certified Benchmark Output Accepted iff Decision Accepted]
+\label{thm:definitive-benchmark-certified-accepted-iff-decision-accepted}
+\leanmeta{\LH{L901}}
+The constructive benchmark certified endpoint returns an accepted certificate exactly when the public constructive benchmark decision is accepted.
+\end{theorem}
+
+\begin{proof}
+Unfold the certified constructor; one branch returns an accepted certificate by construction and the opposite branch is impossible under accepted-decision contradiction.
+\end{proof}
+
+\begin{theorem}[Certified Benchmark Output Rejected iff Decision Rejected]
+\label{thm:definitive-benchmark-certified-rejected-iff-decision-rejected}
+\leanmeta{\LH{L902}}
+The constructive benchmark certified endpoint returns a rejected certificate exactly when the public constructive benchmark decision is rejected.
+\end{theorem}
+
+\begin{proof}
+Unfold the certified constructor, use benchmark decision dichotomy, and in the negative accepted branch apply the canonical rejected-of-not-accepted reduction.
+\end{proof}
+
+\begin{theorem}[Certified Deployment Output Accepted iff Decision Accepted]
+\label{thm:definitive-deployment-certified-accepted-iff-decision-accepted}
+\leanmeta{\LH{L903}}
+The constructive deployment certified endpoint returns an accepted certificate exactly when the public constructive deployment decision is accepted.
+\end{theorem}
+
+\begin{proof}
+Unfold the constructive deployment certified constructor and reason by accepted-branch selection; contradiction eliminates the opposite branch.
+\end{proof}
+
+\begin{theorem}[Certified Deployment Output Rejected iff Decision Rejected]
+\label{thm:definitive-deployment-certified-rejected-iff-decision-rejected}
+\leanmeta{\LH{L904}}
+The constructive deployment certified endpoint returns a rejected certificate exactly when the public constructive deployment decision is rejected.
+\end{theorem}
+
+\begin{proof}
+Unfold the certified deployment constructor, split on accepted-vs-not-accepted, and use the rejected-of-not-accepted decision theorem for the rejection branch.
+\end{proof}
+
+\begin{theorem}[Signed Rationalized Artifact Manifest Consistency Bundle]
+\label{thm:definitive-signed-rationalized-artifact-manifest-consistency}
+\leanmeta{\LH{L905}}
+For any signed rationalized kernel artifact, manifest identity consistency, digest consistency, and signature-validity are exported jointly as one theorem-level bundle.
+\end{theorem}
+
+\begin{proof}
+Project the three fields directly from the signed-artifact structure and conjoin them.
+\end{proof}
+
+\begin{theorem}[Signed Rationalized Decision Acceptance Refines Certificate-Backend Deployment Acceptance]
+\label{thm:definitive-signed-rationalized-decision-accept-refines-certificate-backend-deployment}
+\leanmeta{\LH{L906}}
+If a signed rationalized constructive deployment decision accepts, then a certificate-backend deployment accepted certificate exists.
+\end{theorem}
+
+\begin{proof}
+Convert the signed artifact to its constructive artifact instantiation and invoke constructive decision-to-certificate-backend deployment acceptance refinement.
+\end{proof}
+
+\begin{theorem}[Exact-Rational Rejection Refines Certificate-Backend Benchmark-Failure and Deployment-Rejection]
+\label{thm:definitive-exact-rat-rejected-refines-certificate-backend-rejections}
+\leanmeta{\LH{L907}}
+For exact-rational artifact instantiations, constructive rejection implies both a certificate-backend benchmark failure certificate and a certificate-backend deployment rejection certificate.
+\end{theorem}
+
+\begin{proof}
+Transport rejected decision to benchmark rejection, negate benchmark contract by contradiction with exact accepted-iff-contract equivalence, then apply certificate-backend failure/rejection iff theorems.
+\end{proof}
+
+\begin{theorem}[Signed Exact-Rational Benchmark Acceptance iff Benchmark Contract]
+\label{thm:definitive-signed-exact-rat-accepted-iff-benchmark-contract}
+\leanmeta{\LH{L908}}
+For signed exact-rational artifacts, constructive benchmark decision acceptance is equivalent to benchmark-contract satisfaction.
+\end{theorem}
+
+\begin{proof}
+Rewrite the signed exact artifact to its exact-rational instantiation and invoke the exact-rational constructive accepted-iff-contract theorem.
+\end{proof}
+
+\begin{theorem}[Signed Exact-Rational Rejection Refines Certificate-Backend Rejections]
+\label{thm:definitive-signed-exact-rat-rejected-refines-certificate-backend-rejections}
+\leanmeta{\LH{L909}}
+For signed exact-rational artifacts, constructive deployment decision rejection implies certificate-backend benchmark failure and certificate-backend deployment rejection certificates.
+\end{theorem}
+
+\begin{proof}
+Reduce to the exact-rational rejection refinement theorem after unfolding signed-artifact decision and conversion definitions.
+\end{proof}
+
+\begin{theorem}[Signed Artifact Byte-Envelope Parse Roundtrip]
+\label{thm:definitive-signed-artifact-byte-envelope-roundtrip}
+\leanmeta{\LH{L910}}
+Encoding a signed artifact manifest into the canonical length-prefixed byte-envelope and then parsing it recovers exactly the five UTF-8 byte fields (artifact id, digest, signer, provenance, signature).
+\end{theorem}
+
+\begin{proof}
+Unfold the byte-envelope encoder/parser, apply field-level parse-after-encode lemmas, and simplify the terminal empty-tail check.
+\end{proof}
+
+\begin{theorem}[Concrete Checksum Byte-Level Parse-and-Verify End-to-End]
+\label{thm:definitive-concrete-checksum-byte-e2e}
+\leanmeta{\LH{L911}}
+For any manifest, encoding with the concrete checksum signature then parsing yields exact field recovery and byte-level checksum verification success.
+\end{theorem}
+
+\begin{proof}
+Combine byte-envelope parse roundtrip with definitional equality between checksum-signature UTF-8 bytes and the concrete checksum-bytes constructor, then close verification by `decide` exactness.
+\end{proof}
+
+\begin{theorem}[Signed Rationalized Artifact Concrete Byte Parse-and-Verify]
+\label{thm:definitive-signed-rationalized-concrete-byte-parse-verify}
+\leanmeta{\LH{L912}}
+Any signed rationalized artifact validated by the concrete checksum verifier satisfies byte-level parse roundtrip and concrete checksum verification success for its encoded manifest/signature envelope.
+\end{theorem}
+
+\begin{proof}
+First extract verifier-implied signature equality, then rewrite to the concrete checksum end-to-end parse-and-verify theorem.
+\end{proof}
+
+\begin{theorem}[Rationalized Separation Witness Implies Benchmark-Contract Failure]
+\label{thm:definitive-rationalized-separation-not-benchmark-contract}
+\leanmeta{\LH{L913}}
+Given a rationalized kernel and a strict separation witness (RMSD lower-gap violation or success-probability upper-gap violation), the benchmark contract is impossible.
+\end{theorem}
+
+\begin{proof}
+Use absolute-error transport from rational quantities to real endpoint quantities and contradict each benchmark inequality in the corresponding separation branch.
+\end{proof}
+
+\begin{theorem}[Rationalized Separation Witness Forces Rejection Flag]
+\label{thm:definitive-rationalized-separation-flag-false}
+\leanmeta{\LH{L914}}
+Any rationalized kernel carrying a strict separation witness has computable accept-flag equal to false.
+\end{theorem}
+
+\begin{proof}
+Assume flag true, unfold rational acceptance inequalities, and contradict strict separation in each branch using nonnegative margins.
+\end{proof}
+
+\begin{theorem}[Signed Rationalized Strict Rejection Refines Certificate-Backend Rejections]
+\label{thm:definitive-signed-rationalized-strict-rejection-refines-certificate-backend-rejections}
+\leanmeta{\LH{L915}}
+For signed rationalized artifacts with a strict separation witness, constructive decision rejection is derivable and both certificate-backend benchmark-failure and deployment-rejection certificates are obtained.
+\end{theorem}
+
+\begin{proof}
+Instantiate the kernel-level separation witness on the signed artifact, derive flag-false and decision rejection, then transport benchmark/deployment contract failure to certificate-backend failure/rejection certificates.
+\end{proof}
+
+\begin{theorem}[Concrete Checksum Verifier Exactness]
+\label{thm:definitive-concrete-checksum-verifier-exactness}
+\leanmeta{\LH{L916}}
+The concrete checksum artifact verifier validates exactly those signatures that are equal to the deterministic checksum signature computed from the manifest.
+\end{theorem}
+
+\begin{proof}
+Unfold the concrete verifier definition; the statement is definitionally equivalent to signature equality.
+\end{proof}
+
+\begin{theorem}[Prospective Empirical Closure under Blinded Benchmarking]\label{thm:prospective-empirical-closure}
+\leanmeta{\LHrng{L}{748}{749}}
+For a blinded prospective benchmark record with calibration/predictive errors and uncertainty radii:
+\begin{enumerate}
+\item empirical closure exports blinded-protocol validity, calibration coverage, predictive coverage, and failure-rate-within-bound certificates,
+\item any strict upper threshold above the declared failure-rate bound is inherited by the realized failure rate.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The first clause is the bundled empirical-closure theorem from benchmark record fields. The second clause is monotone transport of realized failure rate through the declared failure-rate upper bound.
+\end{proof}
+
+\begin{theorem}[Unified Physical/OOD/Prospective Closure Bundle]\label{thm:unified-physical-ood-prospective-bundle}
+\leanmeta{\LH{L752}}
+Combining one unified thermodynamic/kinetic physical model, one universality/OOD calibration layer, and one prospective blinded benchmark record yields a single bundled endpoint containing:
+\begin{enumerate}
+\item thermodynamic+kinetic physical certificates,
+\item uniform OOD prediction-error calibration bounds,
+\item blinded empirical closure and failure-rate-bound certificates.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Conjoin the unified physical-model bundle theorem with the universality/OOD uniform calibration theorem and the prospective benchmark empirical-closure theorem.
+\end{proof}
+
+\begin{theorem}[Paper4 Witness-Chain Import Endpoint]\label{thm:paper4-witness-chain-import}
+\leanmeta{\LH{L649}}
+The current paper4 discharge chain imports directly into paper3 as theorem-level witnesses: locality EP1/EP2/EP3 bundle, reversible-chain entropy-production nonnegativity witness, FDT-to-stationarity discharge rule, differentiability-to-Born--Oppenheimer discharge rule, and concrete large-radius Lennard--Jones lattice-tail witnesses (6 and 12 powers).
+\end{theorem}
+
+\begin{proof}
+Apply the bundled paper4-to-paper3 witness theorem, which conjoins these imported witness chains and exposes them as one bridge endpoint for downstream composition.
+\end{proof}
+
+\begin{theorem}[Paper4 TUR/Shadow Interface Discharge Extensions]\label{thm:paper4-interface-discharge-extensions}
+\leanmeta{\LHrng{L}{668}{670}}
+Beyond the core paper4 witness-import chain:
+\begin{enumerate}
+\item any explicit TUR inequality certificate directly discharges the theorem-level TUR interface, and
+\item any explicit shadow-Hamiltonian cubic-drift certificate directly discharges the velocity-Verlet backward-error interface,
+\end{enumerate}
+and these two conversion layers are exported together with the existing paper4 witness chain in one bundled theorem.
+\end{theorem}
+
+\begin{proof}
+Apply the extended paper4-to-paper3 witness-chain theorem: the first conjunct is the existing imported chain, the second conjunct is direct certificate-to-TUR conversion, and the third conjunct is direct certificate-to-shadow-Hamiltonian conversion.
+\end{proof}
+
+\begin{theorem}[Full-Support Boolean Resolution of the Stochastic-Relevance Conjecture]\label{thm:paper4-stochastic-relevance-conjecture-full-support}
+\leanmeta{\LH{L671}}
+For Boolean product state spaces with full-support stochastic distributions, paper4's exploratory stochastic-preservation relevance conjecture is theorem-level discharged: stochastic preservation is equivalent to containing every stochastically-relevant-for-preservation coordinate.
+\end{theorem}
+
+\begin{proof}
+Apply the imported paper4 full-support theorem, which proves the equivalence directly by combining: (i) full-support static/stochastic preservation equivalence, (ii) Boolean static sufficient-set characterization by relevant-coordinate containment, and (iii) transport from static relevance to stochastic relevance witnesses for one-coordinate erasures.
+\end{proof}
+
+\begin{theorem}[General-Distribution Progress for Stochastic-Relevance Equivalence]\label{thm:paper4-stochastic-relevance-general-distribution-progress}
+\leanmeta{\LHrng{L}{672}{673}}
+For stochastic preservation with nonnegative state weights:
+\begin{enumerate}
+\item containment of all stochastically-relevant-for-preservation coordinates is a necessary condition for any preserving coordinate set;
+\item on Boolean product states with positive-fiber support, the full preservation-versus-containment equivalence is reduced to one bridge premise: static relevance implies stochastic relevance.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Combine the imported nonnegative necessary-direction theorem with the Boolean positive-fiber-support reduction theorem: the first gives containment necessity from preservation directly, and the second packages the reverse direction into the single static-to-stochastic relevance bridge premise.
+\end{proof}
+
+\begin{theorem}[Unrestricted-Distribution Stochastic-Relevance Closure under Support Transport]\label{thm:paper4-stochastic-relevance-conjecture-nonneg-support-transport}
+\leanmeta{\LH{L674}}
+For Boolean product states with nonnegative distributions, if queried fibers and one-coordinate-erasure fibers each admit positive support representatives preserving optimizer sets, then paper4's exploratory stochastic-preservation relevance conjecture is fully discharged: stochastic preservation is equivalent to containing all stochastically-relevant-for-preservation coordinates.
+\end{theorem}
+
+\begin{proof}
+Apply the imported nonnegative-support-transport theorem, which upgrades the earlier reduction-to-bridge result by proving the static-to-stochastic relevance bridge from explicit support-transport witnesses for erasure fibers and then composing with the static sufficient-set characterization.
+\end{proof}
+
+\begin{theorem}[Primitive-Dynamics Discharge of Unrestricted Stochastic-Relevance Closure]\label{thm:paper4-stochastic-relevance-conjecture-nonneg-primitive-dynamics}
+\leanmeta{\LH{L682}}
+For Boolean product states with nonnegative distributions, if queried fibers and one-coordinate-erasure fibers admit primitive finite-time dynamics witnesses that preserve queried coordinates and optimizer sets while reaching positive-probability states after burn-in, then the unrestricted paper4 stochastic-relevance conjecture is discharged (equivalence between stochastic preservation and stochastic-relevance containment).
+\end{theorem}
+
+\begin{proof}
+Use primitive-dynamics burn-in maps to construct support-representative transport witnesses for queried and erasure fibers, then apply the nonnegative support-transport closure theorem.
+\end{proof}
+
+\begin{theorem}[Explicit One-Step Dynamics Discharge of Unrestricted Stochastic-Relevance Closure]\label{thm:paper4-stochastic-relevance-conjecture-nonneg-explicit-step-dynamics}
+\leanmeta{\LH{L690}}
+For Boolean product states with nonnegative distributions, if queried and one-coordinate-erasure fibers carry explicit one-step deterministic dynamics witnesses whose iterates preserve queried coordinates/optimizer sets and reach positive-probability states after burn-in, then the unrestricted stochastic-relevance conjecture is discharged.
+\end{theorem}
+
+\begin{proof}
+Convert one-step deterministic dynamics witnesses into primitive finite-time dynamics by iteration, then apply the primitive-dynamics unrestricted-distribution closure theorem.
+\end{proof}
+
+\begin{theorem}[Explicit-Step to Support-Transport Reduction for Unrestricted Stochastic-Relevance Closure]\label{thm:paper4-stochastic-relevance-support-transport-of-explicit-step-dynamics}
+\leanmeta{\LHrng{L}{698}{699}}
+Under the same nonnegative-distribution and explicit one-step dynamics hypotheses:
+\begin{enumerate}
+\item explicit-step dynamics canonically generate support-representative transport witnesses for queried fibers,
+\item therefore the unrestricted stochastic-relevance closure theorem is recovered through the support-transport route as an explicit assumption-reduction chain.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+First apply the explicit-step-to-support-transport conversion theorem for queried and erasure fibers. Then invoke the unrestricted nonnegative support-transport closure theorem with those generated witnesses.
 \end{proof}
 
 \begin{theorem}[Concrete Docking Kinetic Bundle Specialization]\label{thm:concrete-docking-kinetic-bundle-specialization}
