@@ -1,6 +1,9 @@
 \section{Complexity Boundary of Exact Molecular Docking}\label{complexity-boundary}
 
-Exact molecular docking has a genuine tractability boundary because the exact object already carries both qualitative and quantitative certification lower bounds. General exact sufficiency certification contains a hardness core. Sound checking requires witness budget. Molecular locality, sampling hypotheses, and concrete scorer approximations then carve out theorem-backed low-rank and stability regimes inside that harder ambient problem class. The claims in this section isolate that boundary before the thermodynamic lower bounds are applied.
+Exact molecular docking has a genuine tractability boundary because the exact object already carries both qualitative and quantitative certification lower bounds. Proposition~\ref{prop:binding-as-exact-resolution} identifies binding discrimination with exact quotient resolution under sufficiency. General exact sufficiency certification contains a hardness core. Sound checking requires witness budget. Molecular locality, sampling hypotheses, and concrete scorer approximations then carve out theorem-backed low-rank and stability regimes inside that harder ambient problem class. The claims in this section isolate that boundary before the thermodynamic lower bounds are applied.
+
+\paragraph{The Hardness Boundary (Sections~4.1--4.2).}
+The first two blocks establish the worst-case baseline: exact certification is structurally hard, and sound certification requires exponentially large witness access in the hard family. This is the ambient boundary that any physically realistic escape route must respect.
 
 \subsection{General Hardness Core}
 
@@ -62,6 +65,9 @@ The checking budget lower bound transfers directly to runtime once runtime domin
 
 The hardness core is therefore quantitative as well as qualitative: exact certification carries an unavoidable witness budget in addition to the reduction-theoretic hardness statement.
 
+\paragraph{Physical Escape Hatches: Locality and Mechanics (Sections~4.3--4.4).}
+The next two blocks show why molecular search is not generic SAT-like worst case in practice. Finite interaction cutoffs and rigid mechanical coupling restrict the set of coordinates that can affect optimizer classes. Physics therefore constrains rank before any thermodynamic statement is invoked.
+
 \subsection{Cutoff-Local Docking Regime}
 
 \begin{theorem}[Cutoff-Local Structural-Rank Bound for Exact Docking]\label{thm:molecular-docking-srank-bound}
@@ -89,6 +95,279 @@ Substitute the pocket-size and ligand-size bounds into Theorem~\ref{thm:molecula
 \end{proof}
 
 Informally: bounded pockets bound exact difficulty.
+
+\subsection{Allosteric and Hierarchical Extensions}
+
+\begin{theorem}[Allosteric Graph-Local Structural-Rank Bound]\label{thm:allosteric-srank-graph}
+\leanmeta{\LH{L132}}
+Let $G$ be a rigid mechanical graph on the protein atoms, let $P_{\mathrm{act}}$ be an active-pocket set, and define the graph-level mechanical neighborhood
+\[
+\mathcal{N}_G(P_{\mathrm{act}})
+=
+\{x : \exists y \in P_{\mathrm{act}},\ \mathrm{RigidPath}_G(x,y)\}.
+\]
+If every currently relevant protein atom lies in that mechanical neighborhood, then
+\[
+\mathrm{srank}(D_{\mathrm{dock}})
+\le
+3\bigl|\mathcal{N}_G(P_{\mathrm{act}})\bigr| + 3L.
+\]
+\end{theorem}
+
+\begin{proof}
+The cutoff-local theorem already bounds docking rank by three times the number of protein atoms that remain decision-relevant, plus the ligand contribution. The reusable protein mechanical graph API packages the allosteric side as a finite graph-neighborhood cover: once every relevant atom lies in $\mathcal{N}_G(P_{\mathrm{act}})$, the generic atom-cover theorem applies directly to that neighborhood and yields the displayed bound.
+\end{proof}
+
+\textbf{Physical Significance.} This theorem formalizes the mechanistic basis of allostery. Distal mutations can influence binding only when they remain connected to the active site through a rigid mechanical pathway. If that pathway is broken (for example, by a floppy hinge), the distal coordinate becomes decision-irrelevant, structural rank drops, and the allosteric signal is thermodynamically insulated from the binding decision.
+
+An explicit rigid path is still useful, but now only as a certificate that a particular distant atom lies in the graph neighborhood of the active pocket. The theorem surface itself is stronger and more reusable: any future rigidity or geometry engine only needs to certify inclusion in $\mathcal{N}_G(P_{\mathrm{act}})$, or upper-bound its cardinality, to recover the same structural-rank conclusion.
+
+\begin{theorem}[Geometry-Derived Contact-Graph Allosteric Bound]\label{thm:geometric-contact-allostery}
+\leanmeta{\LH{L140}}
+Fix a contact radius $c$ and a site radius $r$. Let $G_c$ be the protein contact graph whose edges join protein atoms whose reference positions are at distance at most $c$, and let
+\[
+P_r=
+\{x : \mathrm{dist}(x,\mathrm{site\ center}) < r\}
+\]
+be the radius-$r$ active pocket around the binding-site center. If every currently relevant protein atom lies in the mechanical neighborhood $\mathcal{N}_{G_c}(P_r)$, then
+\[
+\mathrm{srank}(D_{\mathrm{dock}})
+\le
+3\bigl|\mathcal{N}_{G_c}(P_r)\bigr| + 3L.
+\]
+\end{theorem}
+
+\begin{proof}
+This is the generic graph-local theorem instantiated with two Lean-defined geometric objects: the contact graph built directly from reference protein coordinates and the active pocket built directly from the binding-site geometry. The formalization therefore now derives the graph itself from existing geometry, while honestly leaving the graph-neighborhood coverage condition as the remaining external allostery hypothesis.
+\end{proof}
+
+\begin{theorem}[Direct-Contact Neighborhood Allosteric Bound]\label{thm:contact-shell-allostery}
+\leanmeta{\LH{L141}}
+Fix a contact radius $c$ and a site radius $r$. Let $P_r$ be the radius-$r$ active pocket around the binding-site center, and let
+\[
+\mathcal{S}_{G_c}(P_r)=
+\{x : \exists y \in P_r,\ (x,y) \in E(G_c)\}
+\]
+be its one-hop contact neighborhood in the geometry-derived contact graph $G_c$. If every currently relevant protein atom lies in
+\[
+P_r \cup \mathcal{S}_{G_c}(P_r),
+\]
+then
+\[
+\mathrm{srank}(D_{\mathrm{dock}})
+\le
+3|P_r| + 3\bigl|\mathcal{S}_{G_c}(P_r)\bigr| + 3L.
+\]
+\end{theorem}
+
+\begin{proof}
+This is the one-hop specialization of the graph-local allostery layer. Instead of requiring an arbitrary reachability cover, it is enough to cover every relevant protein atom by the radius-defined active pocket together with its direct contact neighborhood in the geometry-derived graph. The formal proof then applies the generic atom-cover theorem to the union of those two finite sets and bounds its cardinality by the sum of the pocket and contact-neighborhood cardinalities.
+\end{proof}
+
+\begin{corollary}[Bounded Contact-Shell Low-Rank Regime]\label{cor:bounded-contact-shell-regime}
+\leanmeta{\LH{L142}}
+Under the same one-hop contact-cover hypothesis, if
+\[
+|P_r| \le P
+\qquad\text{and}\qquad
+\bigl|\mathcal{S}_{G_c}(P_r)\bigr| \le K,
+\]
+then
+\[
+\mathrm{srank}(D_{\mathrm{dock}})
+\le
+3P + 3K + 3L.
+\]
+\end{corollary}
+
+\begin{proof}
+Substitute the pocket-size and direct-contact-shell bounds into Theorem~\ref{thm:contact-shell-allostery}.
+\end{proof}
+
+\begin{theorem}[Distance-Decay Allosteric Contribution Law]\label{thm:allosteric-distance-decay-law}
+\leanmeta{\LHrng{L}{428}{430}}
+Let $G$ be a protein mechanical graph, $P_{\mathrm{act}}$ an active pocket, and $k\in\mathbb{N}$. Suppose relevant atoms are covered by the $k$-hop neighborhood expansion and each outer shell obeys a distance-indexed envelope
+\[
+\bigl|\mathrm{Shell}_d\bigr|
+\le b(d)
+\qquad (d<k),
+\]
+where $b$ is non-increasing:
+\[
+b(d+1) \le b(d).
+\]
+Then the per-distance allosteric contribution upper profile
+\[
+C(d):=3b(d)
+\]
+is non-increasing:
+\[
+C(d+1)\le C(d),
+\]
+and the docking structural rank satisfies
+\[
+\mathrm{srank}(D_{\mathrm{dock}})
+\le
+3|P_{\mathrm{act}}| + 3\sum_{d<k} b(d) + 3L.
+\]
+\end{theorem}
+
+\begin{proof}
+The monotonicity statement is the direct monotonicity of the declared shell envelope under multiplication by the coordinate factor $3$. The rank bound is the shell-budget allostery theorem with the distance envelope $b$ as shell budget.
+\end{proof}
+
+\begin{theorem}[Exponential Distance-Envelope Allosteric Bound]\label{thm:allosteric-exponential-distance-decay}
+\leanmeta{\LHrng{L}{431}{433}}
+Let $G$ be a protein mechanical graph, $P_{\mathrm{act}}$ an active pocket, and $k\in\mathbb{N}$. Assume relevant atoms are covered by the $k$-hop neighborhood expansion and there are constants $\Lambda\ge 0$ and $\alpha\ge 0$ such that
+\[
+\bigl|\mathrm{Shell}_d\bigr|
+\le
+\left\lceil \Lambda e^{-\alpha d} \right\rceil
+\qquad (d<k).
+\]
+Then the declared integer per-distance contribution profile
+\[
+C_{\exp}(d):=3\left\lceil \Lambda e^{-\alpha d} \right\rceil
+\]
+is non-increasing in $d$, and
+\[
+\mathrm{srank}(D_{\mathrm{dock}})
+\le
+3|P_{\mathrm{act}}| + 3\sum_{d<k}\left\lceil \Lambda e^{-\alpha d} \right\rceil + 3L.
+\]
+\end{theorem}
+
+\begin{proof}
+For $\alpha\ge 0$, the real envelope $\Lambda e^{-\alpha d}$ is antitone in $d$; taking ceilings preserves this monotonicity, and multiplying by $3$ yields the monotone contribution profile. The rank inequality is exactly the exponential-profile specialization of the distance-profile shell-sum theorem (and its geometry-contact instance).
+\end{proof}
+
+\begin{theorem}[Polynomial Distance-Envelope Allosteric Bound]\label{thm:allosteric-polynomial-distance-decay}
+\leanmeta{\LHrng{L}{437}{439}}
+Let $G$ be a protein mechanical graph, $P_{\mathrm{act}}$ an active pocket, and $k\in\mathbb{N}$. Assume relevant atoms are covered by the $k$-hop neighborhood expansion, and let $\Lambda\ge 0$ and $p\in\mathbb{N}$. If
+\[
+\bigl|\mathrm{Shell}_d\bigr|
+\le
+\left\lceil \frac{\Lambda}{(d+1)^p} \right\rceil
+\qquad (d<k),
+\]
+then the declared integer per-distance contribution profile
+\[
+C_{\mathrm{poly}}(d):=3\left\lceil \frac{\Lambda}{(d+1)^p} \right\rceil
+\]
+is non-increasing in $d$, and
+\[
+\mathrm{srank}(D_{\mathrm{dock}})
+\le
+3|P_{\mathrm{act}}| + 3\sum_{d<k}\left\lceil \frac{\Lambda}{(d+1)^p} \right\rceil + 3L.
+\]
+\end{theorem}
+
+\begin{proof}
+For $\Lambda\ge 0$, the real envelope $\Lambda/(d+1)^p$ is antitone in $d$ for natural exponent $p$; ceilings preserve this monotonicity and multiplication by $3$ gives the monotone contribution profile. The structural-rank inequality is the polynomial-profile specialization of the distance-profile shell-sum theorem (and its geometry-contact instance).
+\end{proof}
+
+\begin{theorem}[Polynomial $p$-Series Budget Corollary]\label{thm:allosteric-polynomial-series-budget}
+\leanmeta{\LHrng{L}{440}{441}}
+Under the hypotheses of Theorem~\ref{thm:allosteric-polynomial-distance-decay}, assume additionally that
+\[
+\sum_{d<k}\frac{1}{(d+1)^p} \le Z
+\]
+for some real budget constant $Z$. Then the theorem-level real-form rank bound satisfies
+\[
+\mathrm{srank}(D_{\mathrm{dock}})
+\le
+3|P_{\mathrm{act}}| + 3k + 3\Lambda Z + 3L.
+\]
+For $p>1$, any finite reciprocal-power bound on the partial sum can be used as $Z$.
+\end{theorem}
+
+\begin{proof}
+The polynomial profile theorem gives the shell-sum term $3\sum_{d<k}\lceil\Lambda/(d+1)^p\rceil$. Each ceiling contributes at most one additive unit above its real argument, so this term is bounded by
+\[
+3k + 3\Lambda\sum_{d<k}\frac{1}{(d+1)^p}.
+\]
+Applying the assumed partial-series budget yields the displayed closed-form bound.
+\end{proof}
+
+\begin{theorem}[Explicit Polynomial Series Instantiation ($p\ge 2$)]\label{thm:allosteric-polynomial-series-explicit}
+\leanmeta{\LHrng{L}{442}{444}}
+Under the hypotheses of Theorem~\ref{thm:allosteric-polynomial-distance-decay}, assume additionally that
+\[
+p\ge 2.
+\]
+Then the reciprocal-power budget can be instantiated without an external parameter:
+\[
+\sum_{d<k}\frac{1}{(d+1)^p}
+\le
+1 + \frac{k}{4},
+\]
+hence
+\[
+\mathrm{srank}(D_{\mathrm{dock}})
+\le
+3|P_{\mathrm{act}}| + 3k + 3\Lambda\left(1+\frac{k}{4}\right) + 3L.
+\]
+\end{theorem}
+
+\begin{proof}
+For $p\ge 2$, each reciprocal-power term beyond the first is at most $1/4$, giving the explicit finite partial-sum budget $1+k/4$. Substituting that budget into the polynomial series-budget theorem yields the displayed no-parameter closed-form rank bound.
+\end{proof}
+
+\begin{theorem}[Mechanochemical Coupling Collapse]\label{thm:mechanochemical-coupling-gap}
+\leanmeta{\LH{L133}}
+Let $D$ be a decision problem, let $\sigma_{\mathrm{intact}}$ and $\sigma_{\mathrm{broken}}$ be optimizer summaries with $\sigma_{\mathrm{broken}}$ factoring through $\sigma_{\mathrm{intact}}$, and let $i_{\mathrm{allo}}$ be a distant allosteric coordinate. If $i_{\mathrm{allo}}$ is relevant for the intact summary problem but irrelevant for the broken summary problem, then
+\[
+\mathrm{srank}(D_{\sigma_{\mathrm{broken}}})
+<
+\mathrm{srank}(D_{\sigma_{\mathrm{intact}}}),
+\]
+and the theorem-level allosteric coupling cost assigned to $i_{\mathrm{allo}}$ vanishes.
+\end{theorem}
+
+\begin{proof}
+Once the broken summary factors through the intact summary, any coordinate that disappears across that factorization contributes positively to the exact collapse count. The broken summary therefore has strictly smaller structural rank. The mechanochemical coupling term is defined to charge one declared per-bit unit exactly when the coordinate remains decision-relevant, so irrelevance in the broken regime forces that term to zero.
+\end{proof}
+
+\begin{theorem}[Hierarchical Bundling Rank Bound]\label{thm:hierarchical-srank-bound}
+\leanmeta{\LH{L134}}
+Let $\sigma_{\mathrm{micro}}$ and $\sigma_{\mathrm{macro}}$ be micro and macro optimizer summaries with $\sigma_{\mathrm{macro}}$ factoring through $\sigma_{\mathrm{micro}}$, and let $I_{\mathrm{sub}}$ be a bundled micro block. If the bundling step erases at least
+\[
+|I_{\mathrm{sub}}|-1
+\]
+exact relevant coordinates, then
+\[
+\mathrm{srank}(D_{\sigma_{\mathrm{macro}}})
+\le
+\mathrm{srank}(D_{\sigma_{\mathrm{micro}}}) - (|I_{\mathrm{sub}}|-1).
+\]
+\end{theorem}
+
+\begin{proof}
+The factorization hypothesis identifies bundling with a controlled collapse from the micro summary to the macro summary. The exact rank-collapse law then says that the macro rank equals the micro rank minus the number of erased relevant coordinates. If that collapse count dominates the internal degrees of freedom of the bundled block, the displayed inequality follows immediately.
+\end{proof}
+
+\begin{theorem}[Renormalized Admissibility Equivalence]\label{thm:renormalized-admissibility-equivalence}
+\leanmeta{\LH{L135}}
+Let $F$ be a nested admissibility family. If relaxing the admissibility band from $\varepsilon$ to $\varepsilon + \Delta$ erases no exact relevant coordinate, then the two induced summary problems have the same relevant-coordinate quotient and the same structural rank. Equivalently, for every coordinate $i$,
+\[
+i \text{ is relevant for } D_{F,\varepsilon}
+\iff
+i \text{ is relevant for } D_{F,\varepsilon+\Delta},
+\]
+and
+\[
+\mathrm{srank}(D_{F,\varepsilon}) = \mathrm{srank}(D_{F,\varepsilon+\Delta}).
+\]
+\end{theorem}
+
+\begin{proof}
+Zero collapse count means the tighter and relaxed relevant-coordinate sets have empty set difference. Hence no exact relevant coordinate disappears under the admissibility relaxation, so relevance agrees coordinatewise. Structural rank is the cardinality of that relevant set, so the two summary problems have equal rank.
+\end{proof}
+
+These hierarchical theorems now sit on an explicit bundled macro-state layer in Lean: the artifact contains literal forward and reverse maps between micro coordinate states and their bundled macro representations, so the renormalization argument is stated over an actual coarse state object rather than only an informal coarse variable.
+
+\paragraph{Lawful Approximation: Admissibility and Collapse (Sections~4.5--4.6).}
+The next two blocks isolate the only approximation class that preserves theorem-level exactness claims: quotient-coarsened admissibility. Approximation is lawful when it collapses decision distinctions in a controlled way, and the collapse is measured directly in structural-rank units.
 
 \subsection{Conformer-Search Collapse Regimes}
 
@@ -155,6 +434,270 @@ Action-side pinning canonically chooses a strict sampled winner from each exact 
 
 This action-pinned refinement is the theorem-backed replacement for a generic no-ties assumption. It preserves the state-side exact-resolution problem, does not increase structural rank, and converts every finite sampled tie class into a canonical strict winner with a uniform positive margin. The later half-gap invariance theorems can therefore be applied to the pinned sampled family with an explicit witness $\gamma$ rather than an ad hoc generic-position premise.
 
+\begin{theorem}[Quotient-Coarsened Admissibility Cannot Increase Structural Rank]\label{thm:admissibility-rank-reduction}
+\leanmeta{\LHrng{L}{118}{119}}
+Let $D$ be a finite decision problem, and let $\sigma$ be any admissibility summary that depends only on the exact optimal-action set. Write $D_\sigma$ for the induced singleton-valued summary problem whose optimizer at state $s$ is
+\[
+\{\sigma(\operatorname{Opt}_D(s))\}.
+\]
+Then
+\[
+\mathrm{srank}(D_\sigma) \le \mathrm{srank}(D).
+\]
+Moreover,
+\[
+\mathrm{srank}(D_\sigma) < \mathrm{srank}(D)
+\iff
+\text{some coordinate is relevant for $D$ but irrelevant for $D_\sigma$.}
+\]
+\end{theorem}
+
+\begin{proof}
+A coordinate relevant for the summary problem is already relevant for the exact problem, so the summary relevant set is contained in the exact relevant set. Taking cardinalities gives the weak inequality. The inequality is strict exactly when that containment is proper, which is equivalent to the existence of an exact relevant coordinate that the admissibility summary erases.
+\end{proof}
+
+Combined with the generic Landauer theorem, the admissibility problem $D_\sigma$ therefore carries the floor
+\[
+E \ge \mathrm{srank}(D_\sigma)\,k_B T\ln 2.
+\]
+Relaxing exactness lowers that floor only by destroying exact relevant coordinates. The factor-through-the-exact-quotient hypothesis is essential: a raw utility-profile band such as ``all actions within $\varepsilon$ of the optimum'' can refine the exact quotient rather than coarsen it, so the theorem isolates the precise structural notion of admissible exact approximation used here.
+
+\begin{theorem}[Quantitative Admissibility Rank-Collapse Law]\label{thm:quantitative-admissibility-rank-collapse}
+\leanmeta{\LHrng{L}{124}{125}}
+Let $F$ be a tolerance-indexed admissibility family such that for every $\Delta \ge 0$, the relaxed summary at tolerance $\varepsilon+\Delta$ factors through the tighter summary at tolerance $\varepsilon$. Write $D_{F,\varepsilon}$ for the induced summary problem, and let
+\[
+\mathrm{CollapseCount}_F(D,\varepsilon,\Delta)
+\]
+denote the number of exact relevant coordinates erased by the relaxation from $\varepsilon$ to $\varepsilon+\Delta$. Then
+\[
+\mathrm{srank}(D_{F,\varepsilon})
+=
+\mathrm{srank}(D_{F,\varepsilon+\Delta})
++
+\mathrm{CollapseCount}_F(D,\varepsilon,\Delta).
+\]
+In particular, if exactly one coordinate is erased, then
+\[
+\mathrm{srank}(D_{F,\varepsilon+\Delta})
+=
+\mathrm{srank}(D_{F,\varepsilon})-1,
+\]
+and for every declared thermodynamic model $M$,
+\[
+\mathrm{energyLowerBound}\bigl(M,\mathrm{srank}(D_{F,\varepsilon})\bigr)
+=
+\mathrm{energyLowerBound}\bigl(M,\mathrm{srank}(D_{F,\varepsilon+\Delta})\bigr)
++ M.\mathrm{joulesPerBit}.
+\]
+\end{theorem}
+
+\begin{proof}
+The tighter relevant-coordinate set contains the relaxed relevant-coordinate set, and their set difference is exactly the family's collapse count. Structural rank is the cardinality of the relevant-coordinate set, so the first identity is a finite-cardinality decomposition. The one-coordinate case is the specialization where the set difference has cardinality one, and the energy identity is the same statement pushed through the declared linear energy model.
+\end{proof}
+
+\begin{theorem}[Zero-Collapse Criterion via Bidirectional Factorization]\label{thm:admissibility-zero-collapse-bifactor}
+\leanmeta{\LHrng{L}{479}{481}}
+Let $F$ be a nested admissibility family for decision problem $D$. Fix $(\varepsilon,\Delta)$ with $\Delta\ge 0$, and assume the usual forward relaxation factorization
+\[
+F_{\varepsilon+\Delta}=\tau\circ F_{\varepsilon}
+\]
+together with a backward factorization witness
+\[
+F_{\varepsilon}=\kappa\circ F_{\varepsilon+\Delta}
+\]
+for some maps $\tau,\kappa$ on summary codomains. Then
+\[
+\mathrm{CollapseCount}_F(D,\varepsilon,\Delta)=0,
+\qquad
+\mathrm{srank}(D_{F,\varepsilon+\Delta})=\mathrm{srank}(D_{F,\varepsilon}).
+\]
+\end{theorem}
+
+\begin{proof}
+Forward factorization gives inclusion of relaxed relevant coordinates into tight relevant coordinates; backward factorization gives the reverse inclusion. Hence the relevant-coordinate sets are equal, so their set difference (the collapse count) is zero. Substituting this into the quantitative rank-collapse law yields rank invariance.
+\end{proof}
+
+\begin{theorem}[Admissibility-Collapse Canonicality at Fixed Erasure Count]\label{thm:admissibility-collapse-canonicality}
+\leanmeta{\LHrng{L}{415}{416}}
+Let $F$ and $G$ be nested admissibility families (possibly with different summary codomains) for the same exact decision problem $D$. Assume
+\[
+\mathrm{srank}(D_{F,\varepsilon_F})
+=
+\mathrm{srank}(D_{G,\varepsilon_G})
+\]
+and
+\[
+\mathrm{CollapseCount}_F(D,\varepsilon_F,\Delta_F)
+=
+\mathrm{CollapseCount}_G(D,\varepsilon_G,\Delta_G),
+\qquad
+\Delta_F,\Delta_G\ge 0.
+\]
+Then
+\[
+\mathrm{srank}(D_{F,\varepsilon_F+\Delta_F})
+=
+\mathrm{srank}(D_{G,\varepsilon_G+\Delta_G}).
+\]
+Equivalently, after passing to the rank-normal-form collapse category (objects are collapsed ranks, morphisms are monotone rank maps), the two relaxed collapse objects are isomorphic.
+\end{theorem}
+
+\begin{proof}
+Apply the quantitative collapse law to each family separately. Each relaxed rank equals the corresponding tight rank minus the corresponding collapse count. The hypotheses identify those two right-hand sides, so the relaxed ranks agree. In the rank-normal-form collapse category, isomorphism is exactly equality of collapsed ranks.
+\end{proof}
+
+\begin{theorem}[Collapsed-Rank Category Structure]\label{thm:collapsed-rank-category-structure}
+\leanmeta{\LHrng{L}{449}{456}}
+Let $\mathcal{C}_{\mathrm{coll}}$ be the rank-normal-form collapse category whose objects are collapsed ranks and whose morphisms are monotone rank maps.
+
+Then:
+\begin{enumerate}
+\item Identity and composition hold (preorder-category laws).
+\item An initial object exists (rank $0$), while no terminal object exists in the unbounded category.
+\item Binary products and coproducts exist, realized by rank minimum and rank maximum, respectively.
+\item Additive composition defines a monoidal tensor on objects (rank addition) with unit rank $0$, and this tensor is monotone on morphisms.
+\item Structural rank is a monotone functor from $\mathcal{C}_{\mathrm{coll}}$ to $(\mathbb{N},\le)$.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+All clauses are direct from the mechanized order-theoretic construction: morphisms are inequalities on ranks, so identity/composition are reflexivity/transitivity; $0$ is initial; unboundedness rules out a terminal top rank; finite meet/join are min/max; tensor is additive with unit $0$; and rank projection is monotone by definition.
+\end{proof}
+
+\begin{theorem}[Bounded Collapsed-Rank Slice Has Finite (Co)Limits]\label{thm:bounded-collapsed-rank-finite-colimits}
+\leanmeta{\LHrng{L}{459}{461}}
+Fix a rank cap $K\in\mathbb{N}$ and restrict to collapsed-rank objects with rank at most $K$. In this bounded slice:
+\begin{enumerate}
+\item a terminal object exists (rank $K$),
+\item finite limits exist (terminal object plus binary products),
+\item finite colimits exist (initial object plus binary coproducts), and
+\item this contrasts with the unbounded collapse category, which has no terminal object.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The bounded cap contributes a top element $K$, so every bounded object maps to rank $K$. Binary products/coproducts remain rank min/max with universal properties inherited from the preorder structure, and together with terminal/initial objects they give finite limits/colimits. The unbounded no-terminal claim is the previously proved obstruction theorem.
+\end{proof}
+
+\begin{theorem}[Bounded Finite-Family Meet/Join Package]\label{thm:bounded-collapsed-rank-finite-family-lattice}
+\leanmeta{\LH{L462}}
+Fix a rank cap $K\in\mathbb{N}$ and a finite family $\mathcal{S}$ of collapsed-rank objects with rank at most $K$. Then there exist objects
+\[
+\bigwedge \mathcal{S},\qquad \bigvee \mathcal{S}
+\]
+in the bounded slice such that:
+\begin{enumerate}
+\item $\bigwedge \mathcal{S}$ maps to every element of $\mathcal{S}$ and is greatest among all such lower bounds,
+\item every element of $\mathcal{S}$ maps to $\bigvee \mathcal{S}$ and it is least among all such upper bounds.
+\end{enumerate}
+For empty families, these specialize to terminal and initial objects respectively.
+\end{theorem}
+
+\begin{proof}
+In the bounded preorder, nonempty finite-family meet and join are realized by finite infimum/supremum of ranks, with universality inherited from order-theoretic inf/sup laws. For the empty family, the universal lower/upper bounds are exactly the terminal/initial objects already available in the bounded slice.
+\end{proof}
+
+\begin{theorem}[Bounded Arbitrary-Family Complete-Lattice Form]\label{thm:bounded-collapsed-rank-complete-lattice}
+\leanmeta{\LH{L463}}
+Fix a rank cap $K\in\mathbb{N}$ and consider the bounded collapsed-rank slice. For every (possibly infinite) family $\mathcal{S}$ of bounded collapsed-rank objects, there exist objects
+\[
+\bigwedge \mathcal{S},\qquad \bigvee \mathcal{S}
+\]
+such that:
+\begin{enumerate}
+\item $\bigwedge \mathcal{S}$ maps to every member of $\mathcal{S}$ and is greatest among all lower bounds,
+\item every member of $\mathcal{S}$ maps to $\bigvee \mathcal{S}$ and it is least among all upper bounds.
+\end{enumerate}
+Equivalently, the bounded collapsed-rank slice is complete-lattice-like at theorem level.
+\end{theorem}
+
+\begin{proof}
+Bounded objects are encoded into the finite index order $\mathrm{Fin}(K+1)$; arbitrary-family meet and join are pulled back from set-theoretic infimum/supremum in that complete finite order. The universal lower/upper-bound properties are then transported back to bounded collapsed-rank objects by the encoding/decoding equivalence.
+\end{proof}
+
+\begin{theorem}[Bounded Meet/Join Algebraic Corollaries]\label{thm:bounded-collapsed-rank-algebraic-laws}
+\leanmeta{\LHrng{L}{464}{470}}
+In the bounded collapsed-rank slice:
+\begin{enumerate}
+\item (Monotonicity) If $\mathcal{S}\subseteq\mathcal{T}$, then
+\[
+\bigwedge\mathcal{T}\to\bigwedge\mathcal{S},
+\qquad
+\bigvee\mathcal{S}\to\bigvee\mathcal{T}.
+\]
+\item (Singleton idempotence)
+\[
+\operatorname{rank}(\bigwedge\{X\})=\operatorname{rank}(X)=\operatorname{rank}(\bigvee\{X\}).
+\]
+\item (Nonempty absorption) If $\mathcal{S}\neq\varnothing$, then
+\[
+\operatorname{rank}\!\left(\bigwedge\bigl(\mathcal{S}\cup\{\bigvee\mathcal{S}\}\bigr)\right)
+=
+\operatorname{rank}(\bigwedge\mathcal{S}),
+\]
+\[
+\operatorname{rank}\!\left(\bigvee\bigl(\mathcal{S}\cup\{\bigwedge\mathcal{S}\}\bigr)\right)
+=
+\operatorname{rank}(\bigvee\mathcal{S}).
+\]
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Monotonicity follows from the universal definitions of arbitrary meet/join as greatest lower and least upper bounds. Singleton idempotence is the same universal property specialized to one element. For nonempty absorption, first use $\bigwedge\mathcal{S}\to\bigvee\mathcal{S}$, then show that adjoining this already-implied bound leaves the corresponding greatest-lower/least-upper object unchanged.
+\end{proof}
+
+\begin{theorem}[Binary Bounded Meet/Join Rewrite Calculus]\label{thm:bounded-collapsed-rank-binary-calculus}
+\leanmeta{\LHrng{L}{471}{478}}
+For bounded collapsed-rank objects $X,Y,Z$ (at fixed cap $K$), the binary meet/join operations satisfy:
+\begin{enumerate}
+\item commutativity and associativity,
+\[
+X\wedge Y = Y\wedge X,
+\qquad
+(X\wedge Y)\wedge Z = X\wedge (Y\wedge Z),
+\]
+\[
+X\vee Y = Y\vee X,
+\qquad
+(X\vee Y)\vee Z = X\vee (Y\vee Z),
+\]
+\item idempotence,
+\[
+X\wedge X = X,
+\qquad
+X\vee X = X,
+\]
+\item absorption,
+\[
+X\wedge (X\vee Y) = X,
+\qquad
+X\vee (X\wedge Y) = X.
+\]
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+In the bounded slice, binary meet/join are rank-level min/max. The displayed equalities are exactly the min/max commutativity, associativity, idempotence, and absorption identities transported through the object constructor.
+\end{proof}
+
+\textbf{Physical Significance (Collapse Law).} Theorem~\ref{thm:quantitative-admissibility-rank-collapse} gives the exact exchange rate between physical slack and thermodynamic cost. When a molecular system relaxes admissibility (for example, accepting any binding mode within $2\,\mathrm{kcal/mol}$ of the optimum), search burden decreases through lawful structural-rank collapse. Each exact decision distinction rendered irrelevant removes one calibrated Landauer unit from the floor, i.e. one factor of $k_B T\ln 2$ in the linear per-coordinate model.
+
+\begin{theorem}[Threshold-Explicit Tolerance-to-Collapse Law (Lennard-Jones Pocket Interface)]\label{thm:lj-tolerance-collapse-explicit}
+\leanmeta{\LHrng{L}{577}{578}}
+Fix a nested admissibility family at base tolerance $\varepsilon_0$ and suppose each coordinate has an explicit collapse threshold so that coordinate erasure under relaxation by $\Delta\varepsilon$ is equivalent to crossing that coordinate's threshold. Then
+\[
+\mathrm{CollapseCount}_F(D,\varepsilon_0,\Delta\varepsilon)
+=
+f_{\mathrm{threshold}}(D,F,\Delta\varepsilon),
+\]
+where $f_{\mathrm{threshold}}$ is the explicit finite threshold-count formula from the theorem interface. In particular, for the packaged Lennard-Jones pocket scorer instance, the same explicit formula computes collapse count as a function of physical tolerance increment.
+\end{theorem}
+
+\begin{proof}
+The profile theorem identifies collapse count with the declared threshold-count formula. The Lennard-Jones pocket statement is the direct specialization of that identity to the packaged LJ instance.
+\end{proof}
+
 \begin{theorem}[Inside-Cutoff Sufficiency for Sampled Docking]\label{thm:sampled-inside-cutoff-sufficient}
 \leanmeta{\LH{L68}}
 Under the cutoff boundedness, sampled-optimum capture, coordinate-compatibility, and injectivity hypotheses, the retained coordinate set consisting of inside-cutoff protein coordinates together with all ligand coordinates is sufficient for the sampled restricted docking problem.
@@ -163,6 +706,9 @@ Under the cutoff boundedness, sampled-optimum capture, coordinate-compatibility,
 \begin{proof}
 Cutoff locality forces every relevant sampled coordinate into the retained set. The compatibility and injectivity hypotheses then lift the retained-set relevance bound into a sufficiency theorem for the sampled restricted problem.
 \end{proof}
+
+\paragraph{The Discretization Bridge (Sections~4.7--4.8).}
+The final two blocks connect continuous molecular physics to finite theorem objects. Controlled transport requires winner-class and survivor-set stability under explicit approximation radii and gap conditions.
 
 \subsection{Top-k and Near-Tie Control}
 
@@ -185,6 +731,22 @@ The ambiguity band is defined by lowering the exact $k$th threshold by $\varepsi
 \end{proof}
 
 These top-$k$ theorems give a conservative exact-screening regime even when strict single-winner separation is unavailable.
+
+\begin{theorem}[Composed Classical Force-Field Interface Endpoint]\label{thm:composed-classical-forcefield-interface}
+\leanmeta{\LHrng{L}{589}{590}}
+Let $H$ be a composed classical Hamiltonian with bonded, Lennard-Jones, and Coulomb terms. Then:
+\begin{enumerate}
+\item $H$ induces a canonical architecture object carrying exactly the declared $(\mathrm{DOF},\mathrm{capabilities})$ metadata.
+\item If each component term is Lipschitz on a declared positive shell with constants $L_{\mathrm{bond}},L_{\mathrm{LJ}},L_{\mathrm{Coul}}$, then the total composed energy is Lipschitz on that shell with constant
+\[
+L_{\mathrm{bond}}+L_{\mathrm{LJ}}+L_{\mathrm{Coul}}.
+\]
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The architecture clause is definitional from the composed-force-field record projection. The shell Lipschitz clause is the triangle-inequality composition of the three component bounds.
+\end{proof}
 
 \subsection{Continuous-to-Discrete Approximation Bridges}
 
@@ -219,6 +781,40 @@ then the lifted exact optimizer and the grid optimizer agree at that grid state.
 Resolution-controlled approximation yields a uniform utility approximation with radius $\varepsilon(\mathrm{res})$. The standard strict half-gap criterion then gives exact/coarse winner preservation.
 \end{proof}
 
+\begin{theorem}[Action-Pinned Grid Gaps Lift to Continuous Admissibility]\label{thm:action-pinned-lifting}
+\leanmeta{\LHrng{L}{120}{121}}
+Let $u_{\mathrm{cont}}$ be a continuous score family, let $u_{\mathrm{grid}}$ be its discretized score family, and let $\mathrm{lift}$ map grid states into continuous states. Fix a grid state $s$, let
+\[
+  D_{\mathrm{grid,pin}}
+\]
+be the action-pinned grid problem, and let
+\[
+  D^{\mathrm{lift}}_{\mathrm{cont,pin}[\mathrm{grid}]}
+\]
+denote the lifted continuous problem on grid states obtained by adding the same statewise tie-break perturbation used in $D_{\mathrm{grid,pin}}$. If the exact-versus-grid score discrepancy is bounded by $\varepsilon(\mathrm{res})$ on every lifted grid state and if
+\[
+\varepsilon(\mathrm{res}) < \frac{1}{2}\,\mathrm{StrictUtilityGap}_{D_{\mathrm{grid,pin}}}(a^\dagger(s),s),
+\]
+then
+\[
+\operatorname{Opt}_{D_{\mathrm{grid,pin}}}(s)
+=
+\operatorname{Opt}_{D^{\mathrm{lift}}_{\mathrm{cont,pin}[\mathrm{grid}]}}(s).
+\]
+Moreover, every action $a$ in this common optimal set satisfies
+\[
+u_{\mathrm{cont}}(a,\mathrm{lift}(s))
+\ge
+\max_b u_{\mathrm{cont}}(b,\mathrm{lift}(s)) - 2\varepsilon(\mathrm{res}).
+\]
+\end{theorem}
+
+\begin{proof}
+Using the same statewise tie-break perturbation on both the lifted continuous and grid score families leaves only the physical continuous-to-grid score discrepancy $\varepsilon(\mathrm{res})$. The pinned grid half-gap condition therefore preserves the selected pinned winner between those two problems. Any grid-optimal action is within $2\varepsilon(\mathrm{res})$ of the lifted continuous optimum, so the common selected action is canonically admissible for the continuous problem even when the continuous exact optimizer is tied.
+\end{proof}
+
+This is the legitimate point at which the finite pinned gap $\gamma_{\mathrm{grid}}$ enters the continuous story. It is not inserted into the unpinned continuous strict-winner theorem. Instead, the grid tie-break rule is transported unchanged to the lifted continuous problem, so the half-gap comparison is made between two pinned problems with the same artificial perturbation. The conclusion is therefore an admissibility statement for the continuous physics, not a false claim that the continuous problem itself has a strict exact winner.
+
 \begin{theorem}[Large Cutoff Implies Docking Cutoff Boundedness]\label{thm:large-cutoff-bounded}
 \leanmeta{\LH{L89}}
 Let a binding problem admit a lattice-tail perturbation bound with coefficient $c$ and a positive strict minimum decision gap $\gamma$. If the chosen cutoff radius satisfies
@@ -233,6 +829,8 @@ The lattice-tail bound supplies a uniform upper bound on every outside-cutoff ut
 \end{proof}
 
 These theorems provide a direct route from continuous regularity and physical tail control to the finite exact/coarse approximation theorems used later in the docking development.
+
+At the force-field object level, the mechanization now includes an explicit composed classical Hamiltonian that packages bonded, Lennard-Jones, and Coulomb terms into one theorem-level object with both decision-problem and architecture projections (\LH{L589}). The same block also proves a positive-shell Lipschitz composition law for the full Hamiltonian from componentwise shell bounds (\LH{L590}), which is exactly the bound shape consumed by half-gap refinement arguments.
 
 \begin{theorem}[Explicit Lennard-Jones Shell Derivative Envelope]\label{thm:lj-shell-derivative-envelope}
 \leanmeta{\LH{L103}}
@@ -436,7 +1034,70 @@ If the action family has size at most $k$, then exact sufficiency checking is de
 With at most $k$ actions, each optimal-action comparison costs at most quadratic time in $k$, and sufficiency checking examines all state pairs. The resulting total cost is therefore bounded by $|S|^2(1+k^2)$.
 \end{proof}
 
+\begin{theorem}[Bounded-Action Coordinate Extraction Recovers Structural Rank]\label{thm:coordinate-extraction-poly}
+\leanmeta{\LH{L122}}
+Let $D$ be a finite product-state decision problem on $n$ coordinates with injective full coordinate projection, and assume the action family has size at most $k$. Define the extracted coordinate set by the explicit rule
+\[
+I_{\mathrm{alg}}
+=
+\bigl\{i : \mathrm{CHECKSUFF}(\{1,\dots,n\}\setminus\{i\}) = \mathrm{false}\bigr\}.
+\]
+Then $I_{\mathrm{alg}}$ is sufficient for $D$ and
+\[
+|I_{\mathrm{alg}}| = \mathrm{srank}(D).
+\]
+Moreover, the total extraction cost is bounded by
+\[
+n\,|S|^2(1+k^2).
+\]
+\end{theorem}
+
+\begin{proof}
+The single-coordinate deletion test removes exactly those coordinates whose erasure destroys sufficiency. In the product-space setting that criterion is equivalent to relevance, so the extracted set is exactly the relevant-coordinate set. That set is sufficient, and its cardinality is by definition the structural rank. Because the rule performs one bounded-action sufficiency check per coordinate, the total cost is at most $n$ times the per-check bound.
+\end{proof}
+
 These theorems convert exact-resolution stability into explicit finite certificates and polynomial-time checking regimes.
+
+\begin{theorem}[Inverse Rank-Gap Design Certificate]\label{thm:inverse-rank-gap-design}
+\leanmeta{\LHrng{L}{126}{127}}
+Fix $K \in \mathbb{N}$ and $\gamma \in \mathbb{R}$, and write
+\[
+\Gamma(K,\gamma)
+=
+\bigl\{D : \mathrm{srank}(D) \le K \text{ and every state has a strict winner with gap at least } \gamma\bigr\}.
+\]
+If a finite decision problem admits a sufficient coordinate set $I$ with $|I|\le K$ and a uniform strict gap lower bound $\gamma$, then $D\in\Gamma(K,\gamma)$. In the bounded-action product-state regime, if $\mathrm{srank}(D)\le K$ and
+\[
+\mathrm{energyLowerBound}(M,K) \le E,
+\]
+then the constructive extraction algorithm returns a sufficient free-coordinate set $I$ such that
+\[
+|I| \le K,
+\qquad
+|\{1,\dots,n\}\setminus I| = n-|I|,
+\qquad
+\mathrm{energyLowerBound}(M,\mathrm{srank}(D)) \le E.
+\]
+Hence the complement of $I$ is a theorem-backed coordinate-constraint certificate meeting the requested rank and energy budget.
+\end{theorem}
+
+\begin{proof}
+Any sufficient coordinate witness of size at most $K$ bounds structural rank by $K$, and the uniform strict-gap hypothesis supplies the gap half of the class definition. In the bounded-action regime, the extraction theorem returns the relevant-coordinate set itself, so its cardinality is exactly structural rank. If that rank is at most $K$, then the extracted free set also has size at most $K$, its complement has cardinality $n-|I|$, and monotonicity of the linear energy model transfers the target budget bound from $K$ to the actual rank.
+\end{proof}
+
+\begin{theorem}[Atomistic Realization Bridge for Inverse Rank-Gap Synthesis]\label{thm:inverse-design-atomistic-bridge}
+\leanmeta{\LH{L586}}
+Assume an atomistic synthesis bridge that lifts pointwise realizability of each geometric holonomic constraint in a finite synthesis specification to realizability of the full specification by one atomistic geometry witness. Then every inverse rank-gap synthesis target $(r,k,\gamma)$ has a realized atomistic geometry witness for the canonical specification, with certificate rank equality
+\[
+\mathrm{srank}(\mathrm{quotientSynthesis}(r,k,\gamma))
+=
+\bigl|\mathrm{physicalSynthesisSpec}(r,\gamma)\bigr|.
+\]
+\end{theorem}
+
+\begin{proof}
+Use the bridge interface hypothesis to lift pointwise realizability over the canonical synthesis specification to one global atomistic witness. The rank identity is the existing synthesis-certificate equality specialized to the same specification.
+\end{proof}
 
 \subsection{Concrete Scorer Families}
 
@@ -556,4 +1217,18 @@ These geometric and electrostatic theorems show that the docking layer already c
 
 \subsection{Formalization}
 
-The docking bridge theorems are assembled in \texttt{Leverage/DockingTheoryBridge.lean}. They expose the abstraction-collapse boundary, the Fisher-rank identities, the general exact-sufficiency hardness core, the quantitative witness/checking lower bounds, the cutoff-local structural-rank bounds for molecular docking, the conformer-search collapse regimes, the sampled exact/coarse preservation and sufficiency theorems, the top-$k$ and ambiguity-band control theorems, the concrete Lennard-Jones and Coulomb cutoff invariance statements, and the geometric and electrostatic structure theorems used in the molecular development.
+\begin{theorem}[Constructive Top-Level Export Computability Endpoint]\label{thm:top-level-computable-export}
+\leanmeta{\LH{L596}}
+There is a constructive top-level cross-docking execution path from molecular input state to ArrayDSL JSON export artifact such that:
+\begin{enumerate}
+\item retained coordinates are produced by a computable greedy extraction loop over canonical finite coordinate order,
+\item refinement output is produced by a computable fuel-bounded loop over rational certificates,
+\item exported JSON is exactly the canonical ArrayDSL primitive export string.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Each clause is a definitional projection of the constructive top-level output bundle, and the endpoint theorem is the conjunction of those definitional equalities.
+\end{proof}
+
+The docking bridge theorems are assembled in \texttt{Leverage/DockingTheoryBridge.lean}. They expose the abstraction-collapse boundary, the Fisher-rank identities, the general exact-sufficiency hardness core, the quantitative witness/checking lower bounds, the cutoff-local structural-rank bounds for molecular docking, the conformer-search collapse regimes, the sampled exact/coarse preservation and sufficiency theorems, the top-$k$ and ambiguity-band control theorems, the concrete Lennard-Jones and Coulomb cutoff invariance statements, and the geometric and electrostatic structure theorems used in the molecular development. The same file now also contains a constructive top-level execution path from molecular input to ArrayDSL JSON export with a theorem-level computability endpoint (\LH{L596}).

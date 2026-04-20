@@ -39,19 +39,33 @@ noncomputable def shadowHamiltonian {n : ℕ}
   This geometric limit strictly restricts numerical heating via macroscopic Taylor 
   series residual scaling. 
   
-  We separate this mathematically true theorem from our automated computation stack
-  via an explicit macro-axiom, due to the density of multivariable Taylor mean remainder
-  expansions (`taylor_mean_remainder`) required to derive `C(B)`.
+  This file records the shadow-Hamiltonian statement as an explicit assumption
+  interface (`Prop`) so downstream theorems are conditional on the bound witness,
+  while keeping the executable stack free of global axioms.
 -/
-axiom velocity_verlet_shadow_hamiltonian_bound {n : ℕ}
-    (U : DiffFunctionN n) (dt mass : ℝ) 
+def velocity_verlet_shadow_hamiltonian_bound {n : ℕ}
+    (U : DiffFunctionN n) (dt mass : ℝ)
     (B : ℝ) -- Bound on the third derivative of U
-    (h_B : B > 0)
-    (h_mass : mass > 0) :
+    (_h_B : B > 0)
+    (_h_mass : mass > 0) : Prop :=
     ∃ (correction_term : PhaseSpace n → ℝ) (C : ℝ),
-      ∀ s : PhaseSpace n, 
+      ∀ s : PhaseSpace n,
         let s_next := velocityVerletStep U dt mass s
         |shadowHamiltonian U dt mass s_next correction_term - shadowHamiltonian U dt mass s correction_term| ≤ C * |dt|^3
+
+/-- Direct certificate-to-shadow-bound conversion. Supplying an explicit
+correction term and cubic drift envelope discharges the shadow-Hamiltonian
+interface without additional axioms. -/
+theorem velocity_verlet_shadow_hamiltonian_bound_of_certificate {n : ℕ}
+    (U : DiffFunctionN n) (dt mass : ℝ)
+    (B : ℝ) (h_B : B > 0) (h_mass : mass > 0)
+    (correction_term : PhaseSpace n → ℝ) (C : ℝ)
+    (hCert : ∀ s : PhaseSpace n,
+      let s_next := velocityVerletStep U dt mass s
+      |shadowHamiltonian U dt mass s_next correction_term -
+          shadowHamiltonian U dt mass s correction_term| ≤ C * |dt|^3) :
+    velocity_verlet_shadow_hamiltonian_bound U dt mass B h_B h_mass := by
+  exact ⟨correction_term, C, hCert⟩
 
 end BackwardError
 end Computation

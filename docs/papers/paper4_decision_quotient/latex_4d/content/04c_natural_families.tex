@@ -22,7 +22,7 @@ Sufficiency is purely relational: the coordinate-agreement relation induced by $
 
 \leanmetapending{\LHrng{FR}{49}{50}}
 \begin{corollary}[Relevance Is Failure of Erased Sufficiency]\label{cor:relevance-erasure}
-A coordinate $i$ is irrelevant if and only if deleting it leaves a sufficient coordinate set, namely $\mathrm{univ}\setminus\{i\}$. Equivalently, $i$ is relevant if and only if that erased set is not sufficient.
+A coordinate $i$ is irrelevant if and only if the set $\mathrm{univ}\setminus\{i\}$ is sufficient. Equivalently, $i$ is relevant if and only if $\mathrm{univ}\setminus\{i\}$ is not sufficient.
 \end{corollary}
 
 Corollary~\ref{cor:relevance-erasure} makes the role of individual coordinates canonical: relevance is exactly the obstruction to retaining sufficiency after coordinate erasure.
@@ -62,9 +62,9 @@ These two statements give a genuinely positive global structure theorem: once a 
 
 \leanmetapending{\LH{FR354}}
 \begin{corollary}[Structural Rank Lower-Bounds Any Sufficient Description]\label{cor:srank-lower-bounds-sufficient}
-Let $\mathcal{D}$ be a decision problem with structural rank $\mathrm{srank}(\mathcal{D})$, and let $I$ be any sufficient coordinate set. Then
+Let $\mathcal{D}$ be a decision problem with structural rank $\srank(\mathcal{D})$, and let $I$ be any sufficient coordinate set. Then
 \[
-\mathrm{srank}(\mathcal{D}) \le |I|.
+\srank(\mathcal{D}) \le |I|.
 \]
 In particular, no sufficient description can use fewer coordinates than the number of relevant coordinates.
 \end{corollary}
@@ -161,7 +161,7 @@ Any genuine optimizer-compatible frontier theorem will need both. Without decisi
 
 \leanmetapending{\LHrng{FR}{178}{182}}
 \begin{proposition}[Independent Summary Frameworks Converge on the Same Structural Core]\label{prop:structural-convergence}
-Write $r=\mathrm{srank}(\mathcal{D})$ for the number of relevant coordinates of a Boolean decision problem, and let $m$ be the number of optimizer-quotient classes. Then:
+Write $r=\srank(\mathcal{D})$ for the number of relevant coordinates of a Boolean decision problem, and let $m$ be the number of optimizer-quotient classes. Then:
 \begin{enumerate}
 \item $m \le 2^r$, so the counting entropy $\log_2 m$ is at most $r$;
 \item the diagonal $0/1$ relevance-support matrix has rank exactly $r$;
@@ -175,7 +175,7 @@ If two states agree on all relevant coordinates, then they differ only on irrele
 
 For the second clause, the diagonal relevance-support matrix has a $1$ exactly on relevant coordinates and a $0$ elsewhere. Its rank is therefore the number of relevant coordinates, namely $r$.
 
-The third clause is exactly Proposition~\ref{prop:zero-distortion-refines-quotient}: a zero-distortion summary must assign distinct symbols to distinct optimizer classes.
+The third clause is exactly Proposition~\ref{prop:zero-distortion-refines-quotient}. A zero-distortion summary must assign distinct symbols to distinct optimizer classes.
 \end{proof}
 
 Proposition~\ref{prop:structural-convergence} does not identify entropy, support counting, and lossless summaries as identical notions. It shows that they already converge on the same structural content before any admissibility axiom is imposed. Closure-law invariance follows from this convergence: once several independent frameworks ignore surface presentation in favor of the support/quotient core, a structural tractability classifier should do the same. The remaining admissibility clauses serve as algorithmic and semantic guardrails.
@@ -224,7 +224,7 @@ Positive affine reparameterization & same sufficient sets and relevant coordinat
 \midrule
 Action/state duplication & same sufficient sets and relevant coordinates & carrier duplication only \\
 \midrule
-Binary irrelevant-coordinate extension & $I \leftrightarrow \mathrm{lift}(I)$, old relevance preserved, new coordinate irrelevant & arity increases by one binary coordinate \\
+Binary irrelevant-coordinate extension & $I \leftrightarrow \lift(I)$, old relevance preserved, new coordinate irrelevant & arity increases by one binary coordinate \\
 \bottomrule
 \end{tabularx}
 \caption{Closure-operation transport for exact certification. The transport column records the exact-certification invariance stated in the closure theorems; the encoding-effect column records the direct representation-level effect of each operation in the binary-pairwise presentation.}
@@ -353,7 +353,7 @@ For a binary pairwise slice $U$, let $d(U)$ be the number of distinct action uti
 Replace each action by its full utility profile over states and quotient the action set by profile equality. Duplicated actions collapse to a single profile action, but exact certification is unchanged because optimizer equality depends only on which profiles are optimal, not on how many labels realize a given profile. The compressed slice has exactly $d(U)$ actions by construction, and the sufficient-coordinate and relevant-coordinate predicates agree between $U$ and $U^{\mathrm{prof}}$. The existing bounded-actions polynomial-time theorem then applies to the compressed slice.
 \end{proof}
 
-Proposition~\ref{prop:distinct-profile-compression} isolates a genuine positive tractable subcase by compression to bounded actions. It is stated as a compression theorem rather than direct membership in the finite structural class because Definition~\ref{def:admissible-normalization} fixes a bounded-pattern action alphabet in advance. The proposition shows that nontrivial positive classification work is available through closure-law-respecting reduction inside the framework.
+Proposition~\ref{prop:distinct-profile-compression} isolates a genuine positive tractable subcase by compression to bounded actions. The proposition shows that nontrivial positive classification work is available through closure-law-respecting reduction inside the framework.
 
 \leanmetapending{\LHrng{FR}{214}{216}}
 \begin{proposition}[Bounded-Pattern Predicates Stabilize Above a Finite Action Bound]\label{prop:bounded-pattern-action-stability}
@@ -364,7 +364,7 @@ For every bounded-pattern definable predicate $Q$, there exists a finite bound $
 In a bounded-pattern scheme every witness and forbidden pattern has action alphabet size at most a fixed bound $B$. If a slice has more than $B$ actions, then no listed local pattern can occur in it, because occurrence requires an action-set equivalence between the pattern and the slice. The witness branch of the scheme is therefore impossible, while the forbidden branch is determined only by whether the forbidden list is empty. Hence the predicate is constant above the fixed action bound.
 \end{proof}
 
-Proposition~\ref{prop:distinct-profile-compression} is stated as a compression theorem rather than as direct admissibility membership for the distinct-profile predicate. Unbounded profile counting is a global algebraic quantity and does not naturally fit a definition whose bounded-pattern clause fixes a finite action alphabet in advance.
+Proposition~\ref{prop:bounded-pattern-action-stability} explains the obstruction behind the preceding remark. Once the action alphabet exceeds the finite bound built into a bounded-pattern scheme, such a scheme can no longer detect unbounded profile counting. This is why Proposition~\ref{prop:distinct-profile-compression} appears as a compression theorem rather than as direct admissibility membership for the distinct-profile predicate.
 
 \leanmetapending{\LHrng{FR}{217}{222}}
 \begin{proposition}[Deterministic Payload Transfer]\label{prop:payload-transfer}
@@ -447,10 +447,10 @@ Approximation, statistical, and randomized semantics remain exact in the followi
 Rigorous specification, in the exact sense relevant here, is the determination of such a validity relation. If a purported specification does not determine which outputs are valid at each state, objective correctness is not yet fixed, so the exact semantic questions studied here are not well-posed for it. Formal methods do not add this structure from outside; they make explicit the structure that rigor already requires. Different coordinate presentations may make quotient recovery trivial or rich, but they do not change the canonical quotient carried by the specification.
 
 \leanmetapending{\LH{FR342}}
-\begin{proposition}[Sufficiency Is Relation Refinement]\label{prop:sufficiency-is-relation-refinement}
-Let $R(s,a)$ be any exact correctness relation, write $\mathrm{Adm}_R(s)=\{a : R(s,a)\}$, and define
+\begin{proposition}[Admissible-Output Sufficiency Is Relation Refinement]\label{prop:sufficiency-is-relation-refinement}
+Let $R(s,a)$ be any exact correctness relation, write $\Adm_R(s)=\{a : R(s,a)\}$, and define
 \[
-s \sim_R s' \quad\Longleftrightarrow\quad \mathrm{Adm}_R(s)=\mathrm{Adm}_R(s').
+s \sim_R s' \quad\Longleftrightarrow\quad \Adm_R(s)=\Adm_R(s').
 \]
 Then a coordinate set $I$ is sufficient if and only if agreement on $I$ forces $s \sim_R s'$.
 \end{proposition}
@@ -460,7 +460,7 @@ The relation being refined is the admissible-output equivalence relation itself.
 \end{proof}
 
 \leanmetapending{\LH{FR343}}
-\begin{corollary}[Relevance Is Erased Failure of Refinement]\label{cor:relevance-is-erased-failure-of-refinement}
+\begin{corollary}[Admissible-Output Relevance Is Failure of Erased Sufficiency]\label{cor:relevance-is-erased-failure-of-refinement}
 Let $R(s,a)$ be any exact correctness relation. A coordinate $i$ is relevant if and only if agreement on all coordinates except $i$ does not force equality of admissible-output classes. Equivalently, the full coordinate set with $i$ erased is not sufficient.
 \end{corollary}
 
@@ -470,9 +470,9 @@ Erase coordinate $i$ and apply Proposition~\ref{prop:sufficiency-is-relation-ref
 
 \leanmetapending{\LH{FR345}}
 \begin{theorem}[Exact Semantics Quotient Universality]\label{thm:exact-semantics-quotient-universality}
-Let $R(s,a)$ be any exact correctness condition, write $\mathrm{Adm}_R(s)=\{a : R(s,a)\}$, and define
+Let $R(s,a)$ be any exact correctness condition, write $\Adm_R(s)=\{a : R(s,a)\}$, and define
 \[
-s \sim_R s' \quad\Longleftrightarrow\quad \mathrm{Adm}_R(s)=\mathrm{Adm}_R(s').
+s \sim_R s' \quad\Longleftrightarrow\quad \Adm_R(s)=\Adm_R(s').
 \]
 Then $\sim_R$ is the canonical semantic object of the problem. Exact relevance certification for the induced decision problem realizes exactly the same sufficient-coordinate family and relevant-coordinate set; a coordinate set is sufficient exactly when it recovers the $\sim_R$-classes; and a coordinate is relevant exactly when erasing it destroys that recovery.
 \end{theorem}
@@ -487,7 +487,7 @@ Every rigorously specified computational problem determines an exact admissible-
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-Combine Theorem~\ref{thm:exact-semantics-quotient-universality} with Proposition~\ref{prop:every-exact-specification-admits-coordinate-presentation}.
+Apply Theorem~\ref{thm:exact-semantics-quotient-universality} to obtain the canonical admissible-output semantics and its induced decision problem. A coordinate presentation always exists by taking the entire state as a single coordinate, so the resulting exact relevance profile is realized by exact relevance certification.
 \end{proof}
 
 \par\medskip
@@ -499,7 +499,7 @@ At the semantic level:
 \[
 \text{rigorous specification}
 \;\rightsquigarrow\;
-\mathrm{Adm}_R
+\Adm_R
 \;\rightsquigarrow\;
 {\sim_R}
 \;\rightsquigarrow\;
@@ -544,16 +544,14 @@ Encode each state by a natural number and use its binary digits as Boolean coord
 
 \leanmetapending{\LHrng{FR}{314}{315}}
 \begin{proposition}[Finite Exact Specifications Admit Low-Dimensional Boolean Presentations]\label{prop:finite-specifications-admit-low-dimensional-boolean-presentations}
-Every finite-state exact output specification admits a Boolean coordinate presentation using only $\mathrm{size}(|S|)$ coordinates, where $\mathrm{size}(|S|)$ is the bit-length of the state-space cardinality. Under this presentation, the exact relevance profile is again realized by exact relevance certification for the induced decision problem.
+Every finite-state exact output specification admits a Boolean coordinate presentation using only $\sizefn(|S|)$ coordinates, where $\sizefn(|S|)$ is the bit-length of the state-space cardinality. Under this presentation, the exact relevance profile is again realized by exact relevance certification for the induced decision problem.
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-Index states by $0,\dots,|S|-1$ and use the binary digits of the index as Boolean coordinates. Since every index is less than $2^{\mathrm{size}(|S|)}$, equality of those finitely many bits determines the state. This low-dimensional Boolean presentation identifies the induced exact relevance profile with exact relevance certification.
+Index states by $0,\dots,|S|-1$ and use the binary digits of the index as Boolean coordinates. Since every index is less than $2^{\sizefn(|S|)}$, equality of those finitely many bits determines the state. This low-dimensional Boolean presentation identifies the induced exact relevance profile with exact relevance certification.
 \end{proof}
 
-Every exact correctness claim admits a coordinate presentation, so the question of which coordinates matter is always a quotient-recovery problem for admissible-output classes. This includes decision, counting, search, approximation guarantees, PAC/regret/risk guarantees, anytime or finite-horizon guarantees, randomized-output guarantees, distributional specifications, and any other specification stated by the outputs that count as correct at each state.
-
-Proposition~\ref{prop:every-exact-specification-admits-coordinate-presentation} gives the universal one-coordinate realization, while Propositions~\ref{prop:finite-specifications-admit-coordinate-presentations}--\ref{prop:finite-specifications-admit-low-dimensional-boolean-presentations} show that the same semantics can also admit finite or countable Boolean realizations. Vacuous and informative encodings are therefore different presentations of one semantic object, not different semantics. For example, SAT appears through its exact yes/no validity predicate, sorting through the set of correctly sorted outputs for each input, and fixed approximation or PAC guarantees through the outputs meeting the stated threshold.
+Every exact correctness claim therefore admits a coordinate presentation, so the question of which coordinates matter is always a quotient-recovery problem for admissible-output classes. The propositions above range from the trivial one-coordinate realization to finite or countable Boolean presentations when additional structure is available. Vacuous and informative encodings are different presentations of one semantic object, not different semantics.
 
 This universality does not dilute the frontier theorem. It sharpens it. The canonical optimizer-set exact specifications of binary pairwise slices are rigorously specified problems inside the same semantic universe, so any universal exact-certification characterization must already handle that witness class and inherits the same no-go on restriction; see Corollary~\ref{cor:universal-exact-specification-no-go} below.
 
@@ -592,7 +590,7 @@ Once a PAC, regret, statistical-risk, anytime, or finite-horizon guarantee is wr
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-Corollary~\ref{cor:statistical-guarantee-transfer} reduces each named statistical guarantee semantics to exact relevance certification for the induced decision problem. Any semantics whose tractability predicate is definitionally equivalent to a closure-law-invariant target inherits the same closure-orbit agreement and orbit-gap consequences. Statistical guarantee semantics are named instances of that principle. They also inherit the same exact-semantics quotient invariance, because their sufficient-coordinate family and relevant-coordinate set depend only on admissible-output equivalence.
+The same transfer-plus-application argument as in Corollary~\ref{cor:randomized-guarantee-closure-consequences} applies here, now starting from Corollary~\ref{cor:statistical-guarantee-transfer}. Statistical guarantee semantics also inherit the same exact-semantics quotient invariance, because their sufficient-coordinate family and relevant-coordinate set depend only on admissible-output equivalence.
 \end{proof}
 
 \leanmetapending{\LHrng{FR}{232}{234}}
@@ -635,7 +633,7 @@ Randomized output & admissible distributions, kernels, estimators, or policies &
 
 \leanmetapending{\LH{FR263}, \LH{FR266}}
 \begin{proposition}[Approximate Relevance and Sufficiency Claims Need Explicit Stability Control]\label{prop:approximate-relevance-needs-stability-control}
-Let $D$ and $D'$ be decision problems on the same coordinate space, and suppose their utilities are uniformly $\delta$-close. If coordinate $i$ has a relevance witness in $D$ given by states $s,s'$ with distinct strict optimal actions at the two witness states, and if the strict utility gap at each witness state exceeds $2\delta$, then $i$ is also relevant in $D'$. Likewise, if a coordinate set $I$ has a non-sufficiency witness in $D$ given by states $s,s'$ that agree on $I$ but have distinct strict optimal actions, and if the strict utility gap at each witness state exceeds $2\delta$, then $I$ is still not sufficient in $D'$.
+Let $D$ and $D'$ be decision problems on the same coordinate space, and suppose their utilities are uniformly $\delta$-close. If coordinate $i$ has a relevance witness in $D$ given by states $s,s'$ whose optimizer sets in $D$ are distinct singletons, and if the strict utility gap at each witness state exceeds $2\delta$, then $i$ is also relevant in $D'$. Likewise, if a coordinate set $I$ has a non-sufficiency witness in $D$ given by states $s,s'$ that agree on $I$ and whose optimizer sets in $D$ are distinct singletons, and if the strict utility gap at each witness state exceeds $2\delta$, then $I$ is still not sufficient in $D'$.
 \end{proposition}
 
 \begin{proof}[Proof sketch]
@@ -703,4 +701,4 @@ Let $C$ be any claim about exact output semantics that depends only on admissibl
 Semantically extensional exact claims descend to the quotient by admissible-output equivalence. If $C$ takes the same truth value on any two semantics with the same admissible-output equivalence, then $C$ factors through that quotient.
 \end{proof}
 
-Closure-law invariance is theorem-forced. Theorem~\ref{thm:correct-classifier-forces-invariance} shows that correctness already forces closure-orbit agreement, and Theorem~\ref{thm:closure-sound-package-no-go} together with Proposition~\ref{prop:logical-dependency-no-go} shows that this theorem-forced congruence is the only hypothesis used in the no-go theorem. Clauses 1, 3, and 4 are guardrails against the failure modes identified in Proposition~\ref{prop:oracle-loophole}.
+Closure-law invariance is theorem-forced. Theorem~\ref{thm:correct-classifier-forces-invariance} shows that correctness already forces closure-orbit agreement, and Theorem~\ref{thm:closure-sound-package-no-go} together with Remark~\ref{prop:logical-dependency-no-go} shows that this theorem-forced congruence is the only hypothesis used in the no-go theorem. Clauses 1, 3, and 4 are guardrails against the failure modes identified in Proposition~\ref{prop:oracle-loophole}.

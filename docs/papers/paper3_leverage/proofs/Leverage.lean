@@ -46,6 +46,7 @@ import Leverage.WeightedLeverage
 import Leverage.FiveWayEquivalence
 import Leverage.ColumnComplexityBridge
 import Leverage.DockingTheoryBridge
+import Leverage.DockingSolverEndpoint
 import Leverage.CrossPaperDependencies
 import LambdaDR
 
@@ -115,6 +116,11 @@ import LambdaDR
 - local paper3 exposure of abstraction-collapse, Fisher-rank, and exact-sufficiency hardness theorems
 - quantitative checker lower bounds, conformer-search collapse regimes, and docking-locality structural-rank bounds
 - sampled, top-k, geometric-execution, electrostatic, and concrete scorer-family invariance theorems
+
+### Docking Solver Endpoint (Leverage/DockingSolverEndpoint.lean)
+- canonical ProgramIR for the sampled docking solver with JAX-codegen-complete required ops
+- finite Boltzmann posterior synthesis from pocket+ligand inputs over sampled pose families
+- acceptance-constrained solver API returning either a certified pose or a failure certificate
 
 ### λ_DR Calculus (LambdaDR.lean)
 - Core PL theory contribution: biconditional characterization of SSOT-capable languages

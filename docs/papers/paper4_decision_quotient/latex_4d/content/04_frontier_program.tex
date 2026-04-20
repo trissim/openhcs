@@ -142,16 +142,7 @@ No predicate in the finite structural class can decide the additive/statewise of
 For additive/statewise offset concentration, the target predicate requires two actions with distinct anchor-pair interaction magnitudes, namely $1$ and $0$. This family isolates the action-specific mismatch that survives after earlier offset normalizations. A pair-supported affine term changes the anchor-pair statistics while remaining in the same closure orbit. Again, Proposition~\ref{prop:orbit-gap-template} yields the contradiction.
 \end{proof}
 
-\leanmetapending{\LH{FR190}}
-\begin{theorem}[Finite-Structural Collapse Across the Four Obstruction Families]\label{thm:admissible-collapse-four-families}
-Let $P$ be a normalization predicate in the finite structural class. Then $P$ is not a tractability characterization.
-\end{theorem}
-
-\begin{proof}[Proof idea]
-If $P$ belonged to the finite structural class and were an exact tractability characterization, it would have to decide each of the four obstruction predicates above. Theorem~\ref{thm:dominant-pair-admissible-no-go}, Theorem~\ref{thm:margin-masking-admissible-no-go}, Theorem~\ref{thm:ghost-action-admissible-no-go}, and Theorem~\ref{thm:offset-admissible-no-go} show that this is impossible. Hence no predicate in the finite structural class yields the desired frontier theorem.
-\end{proof}
-
-The four obstruction families are witnesses for the orbit-gap template (Proposition~\ref{prop:orbit-gap-template}), not the scope of Theorem~\ref{thm:admissible-collapse-four-families}. Nor are they four different proof mechanisms: the witness move is uniform, while the target predicates differ. The theorem ranges over the entire finite structural class. The role of the four families is to show that the same closure-orbit mechanism destabilizes several natural representation-level predicates, while Proposition~\ref{prop:orbit-gap-completeness} identifies orbit gaps as the complete obstruction criterion for exact classification by closure-law-invariant predicates.
+The four obstruction families are witnesses for the orbit-gap template (Proposition~\ref{prop:orbit-gap-template}), not four different proof mechanisms. The witness move is uniform, while the target predicates differ. The generic closure-sound theorem below packages the same mechanism at the class level, and Proposition~\ref{prop:orbit-gap-completeness} identifies orbit gaps as the complete obstruction criterion for exact classification by closure-law-invariant predicates.
 
 Table~\ref{tab:obstruction-families-summary} summarizes the target predicates and the corresponding collapse modes.
 
@@ -178,38 +169,25 @@ Additive/statewise offset & additive/statewise offset signature & action-specifi
 \label{tab:obstruction-families-summary}
 \end{table}
 
-Abstractly, let $\Gamma$ be a class of slice predicates, and call a predicate $\Gamma$-admissible when it belongs to $\Gamma$. Call $\Gamma$ \emph{closure-sound} if every $\Gamma$-admissible predicate is closure-law invariant. Call $\Gamma$ a \emph{finite structural admissibility package} if it is closure-sound and also imposes auxiliary restrictions such as efficient checkability, structural extractability, and bounded-pattern definability. The proof below uses only closure-soundness; the remaining clauses specify which finite structural search spaces the no-go is meant to cover.\leanmeta{\LHrng{FR}{191}{192}}
+Abstractly, let $\Gamma$ be a class of slice predicates. Call $\Gamma$ \emph{closure-sound} if every predicate in $\Gamma$ is closure-law invariant. Call $\Gamma$ a \emph{finite structural admissibility package} if it is closure-sound and also imposes auxiliary restrictions such as efficient checkability, structural extractability, and bounded-pattern definability. The proof below uses only closure-soundness; the remaining clauses specify which finite structural search spaces the no-go is meant to cover.\leanmeta{\LHrng{FR}{191}{192}}
 
 \leanmetapending{\LH{FR193}}
 \begin{theorem}[Closure-Sound Package No-Go]\label{thm:closure-sound-package-no-go}
-Let $\Gamma$ be any class of slice predicates such that every $\Gamma$-admissible predicate is closure-law invariant. Then no $\Gamma$-admissible predicate can simultaneously characterize the four obstruction families. The no-go theorem depends only on closure-law invariance; the remaining clauses of Definition~\ref{def:admissible-normalization} delimit the finite structural class and do not enter the contradiction.
+Let $\Gamma$ be a closure-sound class of slice predicates. Then no predicate in $\Gamma$ can simultaneously characterize the four obstruction families. The no-go theorem depends only on closure-law invariance; the remaining clauses of Definition~\ref{def:admissible-normalization} delimit the finite structural class and do not enter the contradiction.
 \end{theorem}
 
 \begin{proof}[Proof sketch]
 Closure-law invariance suffices to invoke Proposition~\ref{prop:orbit-gap-template} against each of the four obstruction families. The same orbit-gap proofs underlying Theorem~\ref{thm:dominant-pair-admissible-no-go}, Theorem~\ref{thm:margin-masking-admissible-no-go}, Theorem~\ref{thm:ghost-action-admissible-no-go}, and Theorem~\ref{thm:offset-admissible-no-go} then yield the contradiction directly. Any one of the four families independently witnesses the collapse; we state all four to make explicit that the obstruction is robust across multiple natural target predicates.
 \end{proof}
 
-At the $\Gamma$-generic level, the contradiction is simultaneous: one $\Gamma$-admissible predicate cannot characterize all four families at once. The individual-family contradictions above are stated separately for the finite structural class of Definition~\ref{def:admissible-normalization}.
+At the $\Gamma$-generic level, the contradiction is simultaneous: one closure-sound class cannot contain an exact classifier for all four families at once. The individual-family contradictions above are the concrete witnesses behind this generic statement.
 
 \leanmetapending{\LH{FR347}}
-\begin{proposition}[Logical Dependency of the No-Go]\label{prop:logical-dependency-no-go}
+\begin{remark}[Logical Dependency of the No-Go]\label{prop:logical-dependency-no-go}
 The contradiction in Theorem~\ref{thm:closure-sound-package-no-go} depends only on closure-law invariance. The derivation of closure-law invariance in Theorem~\ref{thm:correct-classifier-forces-invariance} depends only on correctness over a closure-closed domain together with Proposition~\ref{prop:closure-operations-preserve-certification}. Polynomial-time checkability, structural extractability, and bounded-pattern definability do not enter either proof.
-\end{proposition}
+\end{remark}
 
-\begin{proof}
-Immediate from the displayed proofs of Theorem~\ref{thm:closure-sound-package-no-go} and Theorem~\ref{thm:correct-classifier-forces-invariance}.
-\end{proof}
-
-Theorem~\ref{thm:closure-sound-package-no-go} is the generic form of Theorem~\ref{thm:admissible-collapse-four-families}. Any admissibility notion whose predicates are closure-law invariant inherits the impossibility conclusion. Proposition~\ref{prop:depends-only-on-opt} identifies quotient dependence as the semantic core, Proposition~\ref{prop:closure-operations-preserve-certification} packages the resulting closure laws, and Theorem~\ref{thm:correct-classifier-forces-invariance} shows that correctness forces the same invariance on any tractability classifier. Definition~\ref{def:admissible-normalization} specifies the finite structural class used in the named family theorems.
-
-\leanmetapending{\LH{FR194}}
-\begin{corollary}[Finite Structural Admissibility Packages]\label{cor:reasonable-guardrail-packages}
-The same conclusion holds for every finite structural admissibility package. In particular, efficient checkability, structural extractability, bounded-pattern definability, and the exclusion of direct semantic encoding restrict the search space but do not enter the contradiction itself.
-\end{corollary}
-
-\begin{proof}
-Immediate from Theorem~\ref{thm:closure-sound-package-no-go}, since only the closure-soundness clause is used.
-\end{proof}
+Theorem~\ref{thm:closure-sound-package-no-go} is the generic no-go. Proposition~\ref{prop:depends-only-on-opt} identifies quotient dependence as the semantic core, Proposition~\ref{prop:closure-operations-preserve-certification} packages the resulting closure laws, and Theorem~\ref{thm:correct-classifier-forces-invariance} shows that correctness forces the same invariance on any tractability classifier.
 
 \leanmetapending{\LH{FR193}, \LHrng{FR}{197}{199}}
 \begin{corollary}[No Finite Structural Tractability Classifier]\label{cor:no-correct-tractability-classifier}
@@ -220,7 +198,12 @@ Let $C$ be a tractability classifier on a domain that is closed under the closur
 If $C$ were correct, Theorem~\ref{thm:correct-classifier-forces-invariance} would force closure-orbit agreement on its domain. If its predicate also belonged to the finite structural class, Theorem~\ref{thm:closure-sound-package-no-go} would rule out exact characterization across the four obstruction families.
 \end{proof}
 
-Correctness alone still forces closure-orbit agreement on any closure-closed domain containing the obstruction families. Theorem~\ref{thm:closure-sound-package-no-go} isolates closure-law invariance as the only hypothesis used in the contradiction, Proposition~\ref{prop:logical-dependency-no-go} identifies the exact dependency of the contradiction, and Theorem~\ref{thm:correct-classifier-forces-invariance} derives the same orbit agreement directly from correctness. The abstract closure-hull classifier therefore exists whenever tractability is orbit-constant on the domain, but Corollary~\ref{cor:no-correct-tractability-classifier} says that this classifier is not available inside the finite structural regime. Corollary~\ref{cor:domain-restriction-only-removes-orbit-gaps} gives the domain-relative form: restricting the domain helps only if it removes all orbit gaps for the target notion.
+\par\medskip
+\noindent
+Informally: only what matters can matter to a correct classifier.
+\par\medskip
+
+Correctness alone still forces closure-orbit agreement on any closure-closed domain containing the obstruction families. The abstract closure-hull classifier therefore exists whenever tractability is orbit-constant on the domain, but Corollary~\ref{cor:no-correct-tractability-classifier} says that this classifier is not available inside the finite structural regime. Corollary~\ref{cor:domain-restriction-only-removes-orbit-gaps} gives the domain-relative form: restricting the domain helps only if it removes all orbit gaps for the target notion.
 
 \leanmetapending{\LHrng{FR}{348}{349}}
 \begin{proposition}[Full Binary Pairwise Domain Is Closure-Closed]\label{prop:full-binary-pairwise-domain-closure}
@@ -270,11 +253,6 @@ The implication $(1)\Rightarrow(2)$ transfers closure-law invariance across exac
 
 Orbit gaps are the complete obstruction criterion for exact classification of any fixed target predicate by closure-law-invariant classifiers. The four obstruction families are not claimed to exhaust all hard-side phenomena; they show that the same orbit-gap mechanism defeats several natural candidate frontier predicates.
 
-\par\medskip
-\noindent
-Informally: only what matters can matter to a correct classifier.
-\par\medskip
-
 \leanmetapending{\LHrng{FR}{210}{213}}
 \begin{corollary}[Orbit-Gap Completeness on Closure-Closed Domains]\label{cor:orbit-gap-completeness-domain}
 Let $D$ be a closure-closed domain of slices, and let $T$ be a target predicate on $D$. Then $T$ admits an exact characterization on $D$ by a closure-law-invariant predicate if and only if $T$ has no orbit-gap witness inside $D$. Equivalently, exact characterization on $D$ by closure-law-invariant predicates fails if and only if there exist $U,V \in D$ in the same closure orbit with different $T$-status.
@@ -290,7 +268,7 @@ The positive side of orbit-gap completeness is as important as the obstruction. 
 
 Write
 \[
-\operatorname{Hull}(Q)(U) \;:\!\iff\; \exists V\,\bigl(V \sim_{\mathrm{cl}} U \land Q(V)\bigr)
+\Hull(Q)(U) \;:\!\iff\; \exists V\,\bigl(V \sim_{\mathrm{cl}} U \land Q(V)\bigr)
 \]
 for the closure hull of a slice predicate $Q$, where $\sim_{\mathrm{cl}}$ denotes closure equivalence.
 
@@ -299,9 +277,9 @@ for the closure hull of a slice predicate $Q$, where $\sim_{\mathrm{cl}}$ denote
 For any slice predicate $Q$, the following are equivalent:
 \begin{enumerate}
 \item $Q$ is closure-law invariant;
-\item for every slice $U$, $\operatorname{Hull}(Q)(U) \iff Q(U)$.
+\item for every slice $U$, $\Hull(Q)(U) \iff Q(U)$.
 \end{enumerate}
-Equivalently, closure-law-invariant predicates are exactly the fixed points of the orbit-saturation operator $\operatorname{Hull}$.
+Equivalently, closure-law-invariant predicates are exactly the fixed points of the orbit-saturation operator $\Hull$.
 \end{proposition}
 
 \begin{proof}[Proof sketch]
@@ -312,7 +290,7 @@ If $Q$ is closure-law invariant, it is constant on closure orbits, so adding all
 \begin{theorem}[Exact Classification Equals Hull Separation]\label{thm:exact-classification-hull-separation}
 Let $D$ be a closure-closed domain and let $Q$ be a target predicate on $D$. Then $Q$ admits an exact characterization on $D$ by a closure-law-invariant predicate if and only if the positive and negative orbit saturations are disjoint:
 \[
-\operatorname{Hull}(D \cap Q) \cap \operatorname{Hull}(D \cap \neg Q) = \varnothing.
+\Hull(D \cap Q) \cap \Hull(D \cap \neg Q) = \varnothing.
 \]
 Equivalently, exact classification fails exactly when one closure orbit meets both the positive and negative parts of the domain.
 \end{theorem}
@@ -323,7 +301,7 @@ The orbit-gap criterion says exact classification fails exactly when some closur
 
 \leanmetapending{\LH{FR358}}
 \begin{corollary}[Least Exact Closure-Invariant Classifier]\label{cor:least-exact-classifier}
-Let $D$ be a closure-closed domain and let $Q$ have no orbit gaps on $D$. Then $\operatorname{Hull}(D \cap Q)$ is the least closure-law-invariant predicate that classifies $Q$ exactly on $D$: it is correct on $D$, and every other exact closure-law-invariant classifier on $D$ contains it.
+Let $D$ be a closure-closed domain and let $Q$ have no orbit gaps on $D$. Then $\Hull(D \cap Q)$ is the least closure-law-invariant predicate that classifies $Q$ exactly on $D$: it is correct on $D$, and every other exact closure-law-invariant classifier on $D$ contains it.
 \end{corollary}
 
 \begin{proof}[Proof sketch]
@@ -338,7 +316,7 @@ Let $D$ be a closure-closed domain, and let $Q$ be a target predicate on $D$ suc
 \end{corollary}
 
 \begin{proof}[Proof sketch]
-The reverse implication is Corollary~\ref{cor:orbit-gap-completeness-domain}. For the forward implication, correctness-forced orbit agreement rules out any same-orbit disagreement inside $D$. The same orbit-gap reasoning therefore yields the abstract criterion directly. The optimizer-computation corollaries are concrete compute-cost instances of the same argument.
+The reverse implication is Corollary~\ref{cor:orbit-gap-completeness-domain}. For the forward implication, correctness-forced orbit agreement rules out any same-orbit disagreement inside $D$. The same orbit-gap reasoning therefore yields the abstract criterion directly. Theorem~\ref{thm:optimizer-computation-classifier-forces-invariance} and Corollary~\ref{cor:payload-search-compute-classifier-forces-invariance} are concrete compute-cost instances of the same argument.
 \end{proof}
 
 Domain restriction is governed by orbit-gap freedom on the restricted closure-closed domain. Excluding the four named witness families is not enough by itself. Those families witness orbit gaps, but any remaining orbit gap triggers the same impossibility theorem. If no orbit gap remains, the closure-hull construction yields a correct classifier on that domain.

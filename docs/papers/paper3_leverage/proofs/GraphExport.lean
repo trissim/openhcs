@@ -3,12 +3,14 @@ import DependencyGraph
 import Leverage.BridgeToDQ
 import Leverage.ColumnComplexityBridge
 import Leverage.CrossPaperDependencies
+import Leverage.DockingSolverEndpoint
 import Leverage.DockingTheoryBridge
 import Leverage.Examples
 import Leverage.FiveWayEquivalence
 import Leverage.Foundations
 import Leverage.Physical
 import Leverage.Probability
+import Leverage.ProteinMechanicalGraph
 import Leverage.SSOT
 import Leverage.Theorems
 import Leverage.Typing

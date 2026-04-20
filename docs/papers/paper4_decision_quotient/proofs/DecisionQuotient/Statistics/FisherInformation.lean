@@ -49,6 +49,7 @@ import Mathlib.LinearAlgebra.Matrix.Rank
 import Mathlib.LinearAlgebra.Matrix.Symmetric
 import Mathlib.LinearAlgebra.Matrix.PosDef
 import Mathlib.Data.Real.StarOrdered
+import Mathlib.Data.ENNReal.Basic
 
 open Classical
 
@@ -222,5 +223,217 @@ theorem fisherMatrix_rank_eq_srank (dp : DecisionProblem A S) :
     by_cases h : dp.isRelevant i <;> simp [h]
   rw [hcard, Fintype.card_subtype]
   exact dp.srank_eq_relevant_card.symm
+
+/-! ## Explicit Likelihood Identification on Canonical State Space -/
+
+variable {A : Type*} {n : ℕ} [CoordinateSpace (Fin n → Bool) n]
+
+/-- Baseline likelihood for one optimizer-observation bit at the reference parameter
+value. This is the explicit finite model used to identify the relevance indicator
+with Fisher information. -/
+noncomputable def optimizerLikelihoodAtZero
+    (dp : DecisionProblem A (Fin n → Bool))
+    (i : Fin n)
+    (y : Bool) : ℝ :=
+  (1 / 2 : ℝ)
+
+/-- Log-likelihood score at the reference parameter in the explicit finite model.
+Relevant coordinates carry score magnitude `1`; irrelevant coordinates carry score `0`. -/
+noncomputable def optimizerLogLikelihoodScore
+    (dp : DecisionProblem A (Fin n → Bool))
+    (i : Fin n)
+    (y : Bool) : ℝ :=
+  if dp.isRelevant i then (if y then (1 : ℝ) else -1) else 0
+
+/-- Fisher information from the explicit optimizer-likelihood model: expected square
+of the score under the reference distribution. -/
+noncomputable def optimizerFisherInformationFromLikelihood
+    (dp : DecisionProblem A (Fin n → Bool))
+    (i : Fin n) : ℝ :=
+  ∑ y : Bool,
+    optimizerLikelihoodAtZero dp i y * (optimizerLogLikelihoodScore dp i y) ^ 2
+
+/-- In the explicit finite likelihood model, Fisher information is exactly the
+relevance indicator. -/
+theorem optimizerFisherInformationFromLikelihood_eq_fisherScore
+    (dp : DecisionProblem A (Fin n → Bool))
+    (i : Fin n) :
+    optimizerFisherInformationFromLikelihood dp i = fisherScore dp i := by
+  by_cases hrel : dp.isRelevant i
+  · simp [optimizerFisherInformationFromLikelihood, optimizerLikelihoodAtZero,
+      optimizerLogLikelihoodScore, fisherScore, hrel]
+  · simp [optimizerFisherInformationFromLikelihood, optimizerLikelihoodAtZero,
+      optimizerLogLikelihoodScore, fisherScore, hrel]
+
+/-- Diagonal Fisher matrix built from the explicit optimizer-likelihood model. -/
+noncomputable def optimizerFisherMatrixFromLikelihood
+    (dp : DecisionProblem A (Fin n → Bool)) :
+    Matrix (Fin n) (Fin n) ℝ :=
+  Matrix.diagonal (fun i => optimizerFisherInformationFromLikelihood dp i)
+
+/-- The explicit-likelihood Fisher matrix coincides with the relevance-indicator
+Fisher matrix. -/
+theorem optimizerFisherMatrixFromLikelihood_eq_fisherMatrix
+    (dp : DecisionProblem A (Fin n → Bool)) :
+    optimizerFisherMatrixFromLikelihood dp = fisherMatrix dp := by
+  ext i j
+  by_cases hij : i = j
+  · subst hij
+    simp [optimizerFisherMatrixFromLikelihood,
+      optimizerFisherInformationFromLikelihood_eq_fisherScore, fisherMatrix]
+  · simp [optimizerFisherMatrixFromLikelihood, fisherMatrix, hij]
+
+/-- Rank identification persists for the explicit likelihood model. -/
+theorem optimizerFisherMatrixFromLikelihood_rank_eq_srank
+    (dp : DecisionProblem A (Fin n → Bool)) :
+    Matrix.rank (optimizerFisherMatrixFromLikelihood dp) = dp.srank := by
+  simpa [optimizerFisherMatrixFromLikelihood_eq_fisherMatrix] using
+    (fisherMatrix_rank_eq_srank (dp := dp))
+
+/-! ## Parametric Families: Identifiable Dimension = Structural Rank -/
+
+/-- Parametric family of decision problems on the canonical binary state space. -/
+structure ParametricCanonicalFamily (Θ A : Type*) (n : ℕ)
+    [CoordinateSpace (Fin n → Bool) n] where
+  problem : Θ → DecisionProblem A (Fin n → Bool)
+
+variable {Θ : Type*}
+
+/-- Fisher information matrix of the optimizer-observation model at parameter `θ`. -/
+noncomputable def ParametricCanonicalFamily.fisherMatrixAt
+    (F : ParametricCanonicalFamily Θ A n)
+    (θ : Θ) : Matrix (Fin n) (Fin n) ℝ :=
+  fisherMatrix (F.problem θ)
+
+/-- Identifiable dimension under optimal-action observations at parameter `θ`. -/
+noncomputable def ParametricCanonicalFamily.identifiableDimension
+    (F : ParametricCanonicalFamily Θ A n)
+    (θ : Θ) : ℕ :=
+  Matrix.rank (F.fisherMatrixAt θ)
+
+/-- For every parameter value, Fisher-identifiable dimension equals structural rank. -/
+theorem ParametricCanonicalFamily.identifiableDimension_eq_srank
+    (F : ParametricCanonicalFamily Θ A n)
+    (θ : Θ) :
+    F.identifiableDimension θ = (F.problem θ).srank := by
+  simpa [ParametricCanonicalFamily.identifiableDimension,
+      ParametricCanonicalFamily.fisherMatrixAt] using
+    (fisherMatrix_rank_eq_srank (dp := F.problem θ))
+
+/-- In the canonical basis, Fisher diagonal entries are exactly relevance indicators. -/
+theorem ParametricCanonicalFamily.fisherDiag_eq_relevanceIndicator
+    (F : ParametricCanonicalFamily Θ A n)
+    (θ : Θ)
+    (i : Fin n) :
+    F.fisherMatrixAt θ i i = if (F.problem θ).isRelevant i then 1 else 0 := by
+  simp [ParametricCanonicalFamily.fisherMatrixAt, fisherMatrix, fisherScore]
+
+/-- Off-diagonal Fisher entries vanish in the canonical basis. -/
+theorem ParametricCanonicalFamily.fisherOffDiag_eq_zero
+    (F : ParametricCanonicalFamily Θ A n)
+    (θ : Θ)
+    (i j : Fin n)
+    (hij : i ≠ j) :
+    F.fisherMatrixAt θ i j = 0 := by
+  simp [ParametricCanonicalFamily.fisherMatrixAt, fisherMatrix, hij]
+
+/-- Relevance is recoverable from the Fisher diagonal in the canonical basis. -/
+theorem ParametricCanonicalFamily.fisherDiag_one_iff_relevant
+    (F : ParametricCanonicalFamily Θ A n)
+    (θ : Θ)
+    (i : Fin n) :
+    F.fisherMatrixAt θ i i = 1 ↔ (F.problem θ).isRelevant i := by
+  simpa [ParametricCanonicalFamily.fisherMatrixAt, fisherMatrix] using
+    (fisherScore_one_iff_relevant (dp := F.problem θ) i)
+
+/-- Irrelevance is recoverable as diagonal Fisher mass zero. -/
+theorem ParametricCanonicalFamily.fisherDiag_zero_iff_irrelevant
+    (F : ParametricCanonicalFamily Θ A n)
+    (θ : Θ)
+    (i : Fin n) :
+    F.fisherMatrixAt θ i i = 0 ↔ (F.problem θ).isIrrelevant i := by
+  simpa [ParametricCanonicalFamily.fisherMatrixAt, fisherMatrix] using
+    (fisherScore_zero_iff_irrelevant (dp := F.problem θ) i)
+
+/-! ## Cramer-Rao Reading (Optimizer Observations) -/
+
+/-- Estimators that read only optimal-action observations. -/
+abbrev OptEstimator (A : Type*) := Set A → ℝ
+
+/-- Extended-real inverse Fisher lower envelope. Zero Fisher information maps to
+`⊤`, encoding unbounded Cramer-Rao variance lower bound. -/
+noncomputable def fisherInverseBound (I : ℝ) : ENNReal :=
+  if hI : I = 0 then ⊤ else ENNReal.ofReal (I⁻¹)
+
+/-- Cramer-Rao lower envelope induced by optimizer Fisher information. -/
+noncomputable def cramerRaoLowerBound
+    (dp : DecisionProblem A (Fin n → Bool))
+    (i : Fin n) : ENNReal :=
+  fisherInverseBound (fisherScore dp i)
+
+/-- Non-relevant coordinates carry zero Fisher information, hence infinite
+Cramer-Rao lower bound. -/
+theorem cramerRaoLowerBound_eq_top_of_irrelevant
+    (dp : DecisionProblem A (Fin n → Bool))
+    (i : Fin n)
+    (hirr : dp.isIrrelevant i) :
+    cramerRaoLowerBound dp i = ⊤ := by
+  unfold cramerRaoLowerBound fisherInverseBound
+  rw [fisherScore_irrelevant dp i hirr]
+  simp
+
+/-- Relevant coordinates in this binary model have unit Cramer-Rao lower bound. -/
+theorem cramerRaoLowerBound_eq_one_of_relevant
+    (dp : DecisionProblem A (Fin n → Bool))
+    (i : Fin n)
+    (hrel : dp.isRelevant i) :
+    cramerRaoLowerBound dp i = 1 := by
+  unfold cramerRaoLowerBound fisherInverseBound
+  rw [fisherScore_relevant dp i hrel]
+  simp
+
+/-- Abstract optimizer-observation statistical model used to state Cramer-Rao
+consequences independently of a concrete estimator implementation. -/
+structure OptimizerObservationModel (A : Type*) (n : ℕ) where
+  variance : OptEstimator A → ENNReal
+  unbiasedFor : Fin n → OptEstimator A → Prop
+
+/-- Cramer-Rao consequence with teeth: under any optimizer-observation model
+satisfying the Cramer-Rao inequality, every unbiased estimator of a non-relevant
+coordinate has unbounded variance. -/
+theorem variance_eq_top_of_irrelevant_under_cramerRao
+    (dp : DecisionProblem A (Fin n → Bool))
+    (M : OptimizerObservationModel A n)
+    (i : Fin n)
+    (est : OptEstimator A)
+    (hirr : dp.isIrrelevant i)
+    (hunb : M.unbiasedFor i est)
+    (hCR : ∀ e : OptEstimator A, M.unbiasedFor i e →
+      cramerRaoLowerBound dp i ≤ M.variance e) :
+    M.variance est = ⊤ := by
+  have hTopLe : (⊤ : ENNReal) ≤ M.variance est := by
+    calc
+      (⊤ : ENNReal) = cramerRaoLowerBound dp i := by
+        symm
+        exact cramerRaoLowerBound_eq_top_of_irrelevant (dp := dp) (i := i) hirr
+      _ ≤ M.variance est := hCR est hunb
+  exact top_le_iff.mp hTopLe
+
+/-- Family-level Cramer-Rao corollary: at every parameter value, non-relevant
+coordinates are non-identifiable from optimal-action observations in the sense
+of unbounded unbiased-estimator variance. -/
+theorem ParametricCanonicalFamily.variance_eq_top_of_nonrelevant
+    (F : ParametricCanonicalFamily Θ A n)
+    (θ : Θ)
+    (M : OptimizerObservationModel A n)
+    (i : Fin n)
+    (est : OptEstimator A)
+    (hirr : (F.problem θ).isIrrelevant i)
+    (hunb : M.unbiasedFor i est)
+    (hCR : ∀ e : OptEstimator A, M.unbiasedFor i e →
+      cramerRaoLowerBound (F.problem θ) i ≤ M.variance e) :
+    M.variance est = ⊤ :=
+  variance_eq_top_of_irrelevant_under_cramerRao
+    (dp := F.problem θ) (M := M) (i := i) (est := est) hirr hunb hCR
 
 end DecisionQuotient.Statistics

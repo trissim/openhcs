@@ -1,6 +1,6 @@
 \section{Finite Basis for the Current Positive Landscape}
 
-We distinguish between \emph{tractable families treated here} and \emph{primitive tractability mechanisms}. A tractable family is any named positive condition included in this inventory. A primitive mechanism is a smaller conceptual source of tractability that may explain several families at once. The positive theory organizes into three roles: six core structural families, four regime lifts, and five degenerate collapses. Projecting those families to primitive mechanisms leaves eight sources of tractability: the six core subcases together with constant-optimizer collapse and finite explicit enumeration. These eight mechanisms are the explicit inventory of the current positive landscape, not a complete classification of all tractability mechanisms for exact relevance certification. The universal theorem is quotient universality for exact correctness; the later no-go shows that no finite structural classifier extends this positive inventory to an exact frontier theorem.
+We distinguish between \emph{tractable families treated here} and \emph{primitive tractability mechanisms}. A tractable family is any named positive condition included in this inventory. A primitive mechanism is a smaller conceptual source of tractability that may explain several families at once. This section records the explicit partition of the fifteen named families and its projection to eight primitive mechanisms. Table~\ref{tab:positive-landscape-partition} summarizes both views in one place. These eight mechanisms are the explicit inventory of the current positive landscape, not a complete classification of all tractability mechanisms for exact relevance certification.
 
 \leanmetapending{\LHrng{FR}{1}{2}}
 \begin{theorem}[Explicit Partition of the Current Positive Landscape]\label{thm:current-landscape-partition}
@@ -44,8 +44,6 @@ together with two degenerate mechanisms:
 \begin{proposition}[Explicit Primitive Basis]\label{prop:explicit-basis}
 The current primitive basis consists exactly of bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, coordinate symmetry, constant-optimizer collapse, and finite explicit enumeration.
 \end{proposition}
-
-The current positive landscape therefore contains fifteen tractable families accounted for by eight primitive mechanisms.
 
 Table~\ref{tab:positive-landscape-partition} summarizes the role partition and the induced primitive basis in one place.
 
@@ -107,15 +105,13 @@ The analysis already contains witness families showing that five core mechanisms
 Each of these families remains tractable by its designated mechanism while failing the corresponding versions of the other independent core mechanisms.
 \end{proposition}
 
-Proposition~\ref{prop:four-core-nondegenerate} settles the independent part of the basis question on the present surface. Every core mechanism that is not merely contained in another is shown to be genuinely needed.
-
-Concretely, the present theory contains five kinds of ``only-by'' witness: low-rank only, separable only, bounded-actions only, bounded-treewidth only, and symmetry only.
+Proposition~\ref{prop:four-core-nondegenerate} settles the independent part of the basis question on the present surface. Every core mechanism that is not merely contained in another is shown to be genuinely needed. Concretely, the present theory contains five kinds of ``only-by'' witness: low-rank-only, separable-only, bounded-actions-only, bounded-treewidth-only, and symmetry-only.
 
 Tree structure is not listed separately here because the strict parent-tree notion sits inside treewidth one by Proposition~\ref{prop:parent-tree-width-one}.
 
 \leanmetapending{\LH{FR114}}
 \begin{proposition}[Weak Tree Ordering Does Not Imply Width One]\label{prop:legacy-tree-gap}
-There exists a dependency presentation satisfying the older monotone tree-order predicate \texttt{TreeStructured} whose dependency graph has real treewidth greater than one. Width-one containment requires the stricter parent-tree condition from Proposition~\ref{prop:parent-tree-width-one}, not merely monotone ordering.
+There exists a dependency presentation satisfying the older monotone tree-order predicate, written \texttt{TreeStructured}, whose dependency graph has real treewidth greater than one. Width-one containment requires the stricter parent-tree condition from Proposition~\ref{prop:parent-tree-width-one}, not merely monotone ordering.
 \end{proposition}
 
 \leanmetapending{\LH{FR115}}

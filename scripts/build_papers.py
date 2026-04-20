@@ -204,6 +204,31 @@ UNICODE_SUPERSCRIPTS = {
     "W": "ᵂ",
 }
 
+# Default metadata conversion macro shims, used as fallback when a paper
+# preamble does not define these aliases explicitly.
+DEFAULT_METADATA_LITERAL_MACROS = {
+    r"\coNP": "coNP",
+    r"\NP": "NP",
+    r"\Pclass": "P",
+    r"\PP": "PP",
+    r"\PSPACE": "PSPACE",
+}
+
+DEFAULT_METADATA_OPERATOR_MACROS = {
+    r"\Opt": "Opt",
+    r"\Adm": "Adm",
+    r"\srank": "srank",
+    r"\lift": "lift",
+    r"\Hull": "Hull",
+    r"\sizefn": "size",
+    r"\rangefn": "range",
+}
+
+DEFAULT_METADATA_PARAM1_MACROS = {
+    r"\SigmaP": r"\Sigma_{#1}^{P}",
+    r"\PiP": r"\Pi_{#1}^{P}",
+}
+
 
 @dataclass(frozen=True)
 class ArxivConfig:
@@ -357,6 +382,9 @@ class PaperBuilder:
         self.papers: Dict[str, PaperMeta] = self._load_papers()
         self._lean_stats_cache: Dict[Path, LeanStats] = {}
         self._lean_file_stats_cache: Dict[Path, Dict[str, LeanFileStats]] = {}
+        self._metadata_macro_cache: Dict[
+            str, Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]
+        ] = {}
 
         # Captured build output for BUILD_LOG.txt
         self._lean_build_output: str = ""
@@ -5495,11 +5523,181 @@ end {module_root}
         text = re.sub(r"\(\s*\)", "", text)
         return text
 
+    def _read_local_preamble_segment(self, path: Path) -> str:
+        """Read only the preamble-relevant segment from a local TeX/STY file."""
+        content = path.read_text(encoding="utf-8", errors="replace")
+        if path.suffix == ".tex":
+            marker = re.search(r"\\begin\{document\}", content)
+            if marker:
+                content = content[: marker.start()]
+        return content
+
+    def _resolve_local_latex_dependency(
+        self, token: str, current_dir: Path, latex_dir: Path, *, style_only: bool
+    ) -> Optional[Path]:
+        """Resolve a local `\\input`/`\\usepackage` dependency path if present."""
+        token = token.strip()
+        if not token:
+            return None
+
+        candidate_names: List[str]
+        if style_only:
+            candidate_names = [
+                token if token.endswith(".sty") else f"{token}.sty",
+            ]
+        else:
+            if token.endswith((".tex", ".sty")):
+                candidate_names = [token]
+            else:
+                candidate_names = [token, f"{token}.tex", f"{token}.sty"]
+
+        candidates: List[Path] = []
+        seen: Set[Path] = set()
+        for name in candidate_names:
+            for base in (current_dir, latex_dir):
+                path = (base / name).resolve()
+                if path in seen:
+                    continue
+                seen.add(path)
+                candidates.append(path)
+
+        for candidate in candidates:
+            if candidate.exists() and candidate.is_file():
+                return candidate
+        return None
+
+    def _collect_local_preamble_files(self, paper_id: str) -> List[Path]:
+        """Collect local preamble files reachable from the paper main TeX file."""
+        meta = self._get_paper_meta(paper_id)
+        latex_dir = self._get_latex_dir(paper_id)
+        main_tex = latex_dir / meta.latex_file
+        if not main_tex.exists():
+            return []
+
+        queue: List[Path] = [main_tex.resolve()]
+        visited: Set[Path] = set()
+        collected: List[Path] = []
+
+        while queue:
+            current = queue.pop(0)
+            if current in visited or not current.exists() or not current.is_file():
+                continue
+            visited.add(current)
+            collected.append(current)
+
+            segment = self._read_local_preamble_segment(current)
+            stripped = self._strip_latex_comments(segment)
+
+            for match in re.finditer(r"\\(?:input|include)\{([^}]+)\}", stripped):
+                dep = self._resolve_local_latex_dependency(
+                    match.group(1), current.parent, latex_dir, style_only=False
+                )
+                if dep and dep not in visited:
+                    queue.append(dep)
+
+            for match in re.finditer(
+                r"\\usepackage(?:\[[^\]]*\])?\{([^}]+)\}", stripped
+            ):
+                for pkg in match.group(1).split(","):
+                    dep = self._resolve_local_latex_dependency(
+                        pkg, current.parent, latex_dir, style_only=True
+                    )
+                    if dep and dep not in visited:
+                        queue.append(dep)
+
+        return collected
+
+    def _extract_metadata_macros_from_text(
+        self,
+        text: str,
+        literal_macros: Dict[str, str],
+        operator_macros: Dict[str, str],
+        param1_macros: Dict[str, str],
+    ) -> None:
+        """Extract simple macro declarations used by metadata conversion."""
+        stripped = self._strip_latex_comments(text)
+
+        for match in re.finditer(
+            r"\\DeclareMathOperator\*?\s*\{(\\[A-Za-z@]+)\}\s*\{([^{}]+)\}",
+            stripped,
+        ):
+            macro = match.group(1).strip()
+            op_name = match.group(2).strip()
+            if macro and op_name:
+                operator_macros[macro] = op_name
+                literal_macros.pop(macro, None)
+                param1_macros.pop(macro, None)
+
+        patterns = [
+            r"\\(?:newcommand|renewcommand|providecommand)\*?\s*\{(\\[A-Za-z@]+)\}\s*(?:\[(\d+)\])?\s*\{((?:[^{}]|\{[^{}]*\})*)\}",
+            r"\\(?:newcommand|renewcommand|providecommand)\*?\s*(\\[A-Za-z@]+)\s*(?:\[(\d+)\])?\s*\{((?:[^{}]|\{[^{}]*\})*)\}",
+        ]
+        for pattern in patterns:
+            for match in re.finditer(pattern, stripped):
+                macro = match.group(1).strip()
+                arity = int(match.group(2) or "0")
+                body = match.group(3).strip()
+                if not macro or not body:
+                    continue
+
+                if arity == 0:
+                    op_match = re.fullmatch(r"\\operatorname\*?\{([^{}]+)\}", body)
+                    if op_match:
+                        operator_macros[macro] = op_match.group(1).strip()
+                        literal_macros.pop(macro, None)
+                        param1_macros.pop(macro, None)
+                    else:
+                        literal_macros[macro] = body
+                        operator_macros.pop(macro, None)
+                        param1_macros.pop(macro, None)
+                elif arity == 1:
+                    param1_macros[macro] = body
+
+    def _metadata_macro_maps(
+        self, paper_id: str
+    ) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
+        """Build per-paper metadata macro maps from local preamble files."""
+        cached = self._metadata_macro_cache.get(paper_id)
+        if cached is not None:
+            return tuple(dict(part) for part in cached)  # defensive copy
+
+        literal_macros = dict(DEFAULT_METADATA_LITERAL_MACROS)
+        operator_macros = dict(DEFAULT_METADATA_OPERATOR_MACROS)
+        param1_macros = dict(DEFAULT_METADATA_PARAM1_MACROS)
+
+        for path in self._collect_local_preamble_files(paper_id):
+            segment = self._read_local_preamble_segment(path)
+            self._extract_metadata_macros_from_text(
+                segment,
+                literal_macros,
+                operator_macros,
+                param1_macros,
+            )
+
+        self._metadata_macro_cache[paper_id] = (
+            dict(literal_macros),
+            dict(operator_macros),
+            dict(param1_macros),
+        )
+        return literal_macros, operator_macros, param1_macros
+
+    def _expand_param1_macro_calls(
+        self, text: str, param1_macros: Dict[str, str]
+    ) -> str:
+        """Expand simple one-argument macro calls in metadata snippets."""
+        expanded = text
+        for macro, template in param1_macros.items():
+            pattern = re.compile(rf"{re.escape(macro)}\{{([^{{}}]+)\}}")
+            expanded = pattern.sub(
+                lambda m, tmpl=template: tmpl.replace("#1", m.group(1)), expanded
+            )
+        return expanded
+
     def _latex_snippet_to_plain(self, latex_input: str, paper_id: str) -> str:
         """Convert a LaTeX snippet into plain UTF-8 text for metadata copy/paste."""
         prepared = self._expand_lean_stat_macros(latex_input, paper_id)
         prepared = self._normalize_claimstamp_for_markdown(prepared)
-        prepared = self._prepend_markdown_macro_prelude(prepared)
+        prepared = self._prepend_markdown_macro_prelude(prepared, paper_id=paper_id)
 
         result = subprocess.run(
             ["pandoc", "-f", "latex", "-t", "plain", "--wrap=none", "--columns=100"],
@@ -5520,7 +5718,7 @@ end {module_root}
         """Convert a LaTeX snippet into markdown text with MathJax-style TeX math."""
         prepared = self._expand_lean_stat_macros(latex_input, paper_id)
         prepared = self._normalize_claimstamp_for_markdown(prepared)
-        prepared = self._prepend_markdown_macro_prelude(prepared)
+        prepared = self._prepend_markdown_macro_prelude(prepared, paper_id=paper_id)
 
         result = subprocess.run(
             [
@@ -5542,15 +5740,15 @@ end {module_root}
             else latex_input
         )
 
-        # Expand common project macros to MathJax-safe forms.
-        mathjax = re.sub(r"\\SigmaP\{([^}]+)\}", r"\\Sigma_{\1}^{P}", mathjax)
-        mathjax = re.sub(r"\\PiP\{([^}]+)\}", r"\\Pi_{\1}^{P}", mathjax)
-        mathjax = mathjax.replace(r"\coNP", "coNP")
-        mathjax = mathjax.replace(r"\NP", "NP")
-        mathjax = mathjax.replace(r"\Pclass", "P")
-        mathjax = mathjax.replace(r"\PP", "PP")
-        mathjax = mathjax.replace(r"\PSPACE", "PSPACE")
-        mathjax = mathjax.replace(r"\Opt", r"\operatorname{Opt}")
+        # Expand metadata macros to MathJax-safe forms.
+        literal_macros, operator_macros, param1_macros = self._metadata_macro_maps(
+            paper_id
+        )
+        mathjax = self._expand_param1_macro_calls(mathjax, param1_macros)
+        for macro, literal in literal_macros.items():
+            mathjax = mathjax.replace(macro, literal)
+        for macro, operator_name in operator_macros.items():
+            mathjax = mathjax.replace(macro, rf"\operatorname{{{operator_name}}}")
         mathjax = re.sub(r"\\LH\{([^}]+)\}", r"\1", mathjax)
         mathjax = re.sub(r"\\claimstamp\{[^}]*\}\{[^}]*\}", "", mathjax)
 
@@ -5685,11 +5883,11 @@ end {module_root}
 
         # Pattern: X_(content) -> X + subscript content
         # Handles both single char like X_a and parenthesized like X_(min)
-        result = re.sub(r"(\w)_\(([^)]+)\)", _convert_sub_paren, text)
+        result = re.sub(r"([^\s])_\(([^)]+)\)", _convert_sub_paren, text)
         result = re.sub(r"(\w)_([a-z0-9])\b", _convert_sub_single, result)
 
         # Pattern: X^(content) -> X + superscript content
-        result = re.sub(r"(\w)\^\(([^)]+)\)", _convert_sup_paren, result)
+        result = re.sub(r"([^\s])\^\(([^)]+)\)", _convert_sup_paren, result)
         result = re.sub(r"(\w)\^([a-z0-9A-Z])\b", _convert_sup_single, result)
 
         return result
@@ -5780,13 +5978,16 @@ end {module_root}
     def _latex_snippet_to_unicode_zenodo(self, latex_input: str, paper_id: str) -> str:
         """Convert LaTeX to Unicode plain text suitable for Zenodo (no markdown markers).
 
-        Uses pylatexenc if available for better Greek letter handling, then applies
-        Unicode subscript/superscript conversion for proper math rendering.
+        Converts through the MathJax-safe path first so project macros are expanded,
+        then converts inline/display math to Unicode and normalizes plain text.
         """
-        # First expand macros and get plain text via pandoc
-        plain = self._latex_snippet_to_plain(latex_input, paper_id)
+        # Convert to MathJax-safe markdown first so custom macros are expanded.
+        mathjax = self._latex_snippet_to_mathjax(latex_input, paper_id)
 
-        # Convert display math blocks ($$...$$) that pandoc couldn't handle
+        # Convert both inline and display math to Unicode/plain markdown.
+        plain = self._mathjax_markdown_to_unicode_markdown(mathjax)
+
+        # Fallback conversion for any remaining display math blocks.
         plain = self._convert_display_math_to_unicode(plain)
 
         # Convert fake subscripts/superscripts to real Unicode
@@ -6049,7 +6250,9 @@ end {module_root}
 
         latex_input = self._expand_lean_stat_macros(latex_input, paper_id)
         latex_input = self._normalize_claimstamp_for_markdown(latex_input)
-        latex_input = self._prepend_markdown_macro_prelude(latex_input)
+        latex_input = self._prepend_markdown_macro_prelude(
+            latex_input, paper_id=paper_id
+        )
         result = subprocess.run(
             ["pandoc", "-f", "latex", "-t", "markdown", "--wrap=none", "--columns=100"],
             input=latex_input,
@@ -6091,7 +6294,9 @@ end {module_root}
 
         return pattern.sub(repl, latex_input)
 
-    def _prepend_markdown_macro_prelude(self, latex_input: str) -> str:
+    def _prepend_markdown_macro_prelude(
+        self, latex_input: str, paper_id: Optional[str] = None
+    ) -> str:
         """Prepend markdown-only macro normalizations for pandoc conversion.
 
         Markdown conversion processes section files directly, without the main
@@ -6100,16 +6305,29 @@ end {module_root}
         ``-complete``. We define plain/math-safe expansions here strictly for
         conversion fidelity.
         """
+        if paper_id is not None:
+            literal_macros, operator_macros, param1_macros = self._metadata_macro_maps(
+                paper_id
+            )
+        else:
+            literal_macros = dict(DEFAULT_METADATA_LITERAL_MACROS)
+            operator_macros = dict(DEFAULT_METADATA_OPERATOR_MACROS)
+            param1_macros = dict(DEFAULT_METADATA_PARAM1_MACROS)
+
         prelude = "\n".join(
             [
-                r"\newcommand{\coNP}{coNP}",
-                r"\newcommand{\NP}{NP}",
-                r"\newcommand{\Pclass}{P}",
-                r"\newcommand{\PP}{PP}",
-                r"\newcommand{\PSPACE}{PSPACE}",
-                r"\newcommand{\SigmaP}[1]{\Sigma_{#1}^{P}}",
-                r"\newcommand{\PiP}[1]{\Pi_{#1}^{P}}",
-                r"\newcommand{\Opt}{\operatorname{Opt}}",
+                *(
+                    rf"\newcommand{{{macro}}}{{{literal}}}"
+                    for macro, literal in literal_macros.items()
+                ),
+                *(
+                    rf"\newcommand{{{macro}}}[1]{{{template}}}"
+                    for macro, template in param1_macros.items()
+                ),
+                *(
+                    rf"\newcommand{{{macro}}}{{\operatorname{{{operator_name}}}}}"
+                    for macro, operator_name in operator_macros.items()
+                ),
                 r"\newcommand{\LH}[1]{#1}",
                 r"\newcommand{\claimstamp}[2]{ [D:#1; R:#2]}",
             ]

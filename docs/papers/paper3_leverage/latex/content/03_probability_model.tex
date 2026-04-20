@@ -29,7 +29,51 @@ The physical no-collapse layer rules out any physically feasible realization of 
 
 The quotient is the coarsest surjective exact abstraction that remains available once decision-relevant erasure is excluded.
 
+\begin{definition}[Progress Toward Admissible Docking]\label{def:docking-progress}
+Fix a decision problem $D$, a surjective state abstraction $\phi$, an optimizer summary $\sigma$, a coordinate set $I$, and a thermodynamic model $M$. Let $D_\sigma$ be the summary-induced decision problem. Progress toward admissible docking is the conjunction:
+\begin{enumerate}
+\item $\phi$ factors through the decision quotient of $D$.
+\item $I$ is sufficient for $D_\sigma$.
+\item $\mathrm{srank}(D_\sigma) \le \mathrm{srank}(D)$.
+\item $M.\mathrm{joulesPerBit}\cdot \mathrm{srank}(D_\sigma) \le \mathrm{energyLowerBound}(M,|I|)$.
+\end{enumerate}
+\end{definition}
+
+\begin{theorem}[Exhaustion of Admissible Docking]\label{thm:admissible-docking-exhaustion}
+\leanmeta{\LH{L394}}
+Let $\phi : S \to T$ be surjective for a decision problem $D$, and suppose every decision-relevant distinction erased by $\phi$ is mapped to a physically feasible collapse at the canonical requirement profile. Let $\sigma$ be any optimizer summary, let $I$ be sufficient for $D$, and let $M$ have positive per-bit conversion constant. Then progress toward admissible docking holds in the sense of Definition~\ref{def:docking-progress}.
+\end{theorem}
+
+\begin{proof}
+The feasible-collapse map hypothesis forces quotient factorization by Theorem~\ref{thm:feasible-collapse-factors}. Summary-level sufficiency inherits from exact sufficiency, structural rank is monotone under optimizer summaries, and the bounded-acquisition thermodynamic theorem gives the structural-rank cost floor for the summary problem.
+\end{proof}
+
+\begin{theorem}[Admissibility Relaxation Gives Monotone Progress]\label{thm:admissibility-progress-monotone}
+\leanmeta{\LH{L395}}
+Let $F$ be a nested quantitative admissibility family and $\Delta \ge 0$. Then
+\[
+\mathrm{srank}(D_{F,\varepsilon+\Delta}) \le \mathrm{srank}(D_{F,\varepsilon}).
+\]
+\end{theorem}
+
+\begin{proof}
+The quantitative collapse identity gives
+\[
+\mathrm{srank}(D_{F,\varepsilon})=
+\mathrm{srank}(D_{F,\varepsilon+\Delta})+
+\mathrm{CollapseCount}_F(D,\varepsilon,\Delta),
+\]
+and collapse counts are nonnegative.
+\end{proof}
+
+Under the no-collapse antecedent, correct docking processes are exactly quotient-factorized admissible-resolution processes with structural-rank-controlled cost. Progress claims are therefore statements inside that admissible class.
+
 \subsection{Fisher Dimension}
+
+The Fisher statements in this section are for the 
+\emph{canonical optimal-action observation geometry} used by the formalization. In that geometry,
+the Fisher matrix is induced by coordinate relevance indicators, so rank/Fisher-identifiability
+claims are exact statements about what optimal-action observations can and cannot resolve.
 
 \begin{theorem}[Total Fisher Information Equals Structural Rank]\label{thm:fisher-sum-srank}
 \leanmeta{\LH{L80}}
@@ -56,7 +100,93 @@ where $I_D$ is the diagonal Fisher information matrix induced by the relevance p
 The Fisher matrix is diagonal with a $1$ on each structurally relevant coordinate and a $0$ on each irrelevant coordinate. Its rank is therefore the number of nonzero diagonal entries, which is exactly the structural rank.
 \end{proof}
 
-Structural rank therefore has three exact readings in the present development: combinatorial irreducible-coordinate count, quotient entropy controller, and Fisher-information dimension.
+\begin{theorem}[Explicit Optimizer-Likelihood Fisher Identification]\label{thm:fisher-likelihood-indicator}
+\leanmeta{\LH{L408}}
+On the canonical binary state space, the Fisher information computed from the explicit optimizer-likelihood model coincides coordinatewise with the relevance indicator:
+\[
+I^{\mathrm{lik}}_D(i)=\mathrm{FisherScore}_D(i)=\mathbf{1}_{\{i\in \mathrm{Rel}(D)\}}.
+\]
+\end{theorem}
+
+\begin{proof}
+The explicit likelihood model has two optimizer-observation outcomes at the reference parameter. The mechanized score definition assigns unit-magnitude score to relevant coordinates and zero score to irrelevant coordinates, so the expected score square is exactly the relevance indicator.
+\end{proof}
+
+\begin{theorem}[Parametric Fisher Identifiable Dimension]\label{thm:parametric-fisher-identifiable-dimension}
+\leanmeta{\LHrng{L}{409}{411}}
+Let $\{D_\theta\}_{\theta\in\Theta}$ be a parametric family of decision problems on the canonical binary state space. For every parameter value $\theta$,
+\[
+\operatorname{rank}(I_{D_\theta})=\mathrm{srank}(D_\theta),
+\]
+and in the canonical coordinate basis,
+\[
+(I_{D_\theta})_{ii}=\mathbf{1}_{\{i\in \mathrm{Rel}(D_\theta)\}}.
+\]
+Hence structural rank is exactly the Fisher-identifiable parameter dimension from optimal-action observations.
+Within this canonical observation geometry, this is an exact equivalence; outside it, channel-specific
+identification hypotheses are handled by Theorem~\ref{thm:fisher-observation-channel-transport}.
+\end{theorem}
+
+\begin{proof}
+The family theorem specializes the Fisher-rank identity pointwise in $\theta$. The diagonal recovery statement is the mechanized equivalence between diagonal Fisher mass and coordinate relevance in the canonical basis.
+\end{proof}
+
+\begin{theorem}[Cram\'er--Rao Non-Identifiability for Irrelevant Coordinates]\label{thm:cramer-rao-nonidentifiable-irrelevant}
+\leanmeta{\LH{L412}}
+Fix $\theta$ and observe only optimal-action outputs. Under the abstract optimizer-observation Cram\'er--Rao inequality used in the formalization, if coordinate $i$ is non-relevant for $D_\theta$, then every unbiased estimator of that coordinate from optimal-action data has unbounded variance:
+\[
+\operatorname{Var}(\widehat{\theta_i})=\infty.
+\]
+\end{theorem}
+
+\begin{proof}
+For non-relevant coordinates the Fisher score is zero, so the optimizer-observation Cram\'er--Rao lower envelope is top (infinite). Any unbiased estimator variance bounded below by that envelope must therefore be infinite.
+\end{proof}
+
+\begin{theorem}[General Observation-Channel Fisher Interface Endpoint]\label{thm:fisher-observation-channel-transport}
+\leanmeta{\LHrng{L}{582}{583}}
+Let $D$ be a finite decision problem and let an observation channel provide Fisher entries $I^{\mathrm{obs}}_D(i)$ with theorem-level identification
+\[
+I^{\mathrm{obs}}_D(i)=\mathrm{FisherScore}_D(i)
+\quad\text{for every coordinate }i.
+\]
+Then:
+\begin{enumerate}
+\item total observed Fisher mass equals structural rank,
+\[
+\sum_i I^{\mathrm{obs}}_D(i)=\mathrm{srank}(D),
+\]
+\item coordinate relevance is recoverable by the same diagonal criterion,
+\[
+i\in \mathrm{Rel}(D) \iff I^{\mathrm{obs}}_D(i)=1.
+\]
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The identification hypothesis replaces each channel Fisher entry by the canonical Fisher score. Summing gives the structural-rank identity, and the coordinatewise claim is exactly the Fisher-score relevance equivalence transported through the same identification.
+\end{proof}
+
+\begin{theorem}[Noisy/Partial Observation-Channel Instantiation]\label{thm:fisher-noisy-partial-channel-example}
+\leanmeta{\LHrng{L}{597}{598}}
+Let a non-canonical observation channel carry explicit partial/noisy readout metadata together with a theorem-level debiasing certificate that identifies each debiased Fisher entry with the canonical relevance Fisher score. Then:
+\begin{enumerate}
+\item total debiased Fisher mass equals structural rank,
+\[
+\sum_i I^{\mathrm{debiased}}_D(i)=\mathrm{srank}(D),
+\]
+\item relevance is recoverable by the same indicator test,
+\[
+i\in\mathrm{Rel}(D)\iff I^{\mathrm{debiased}}_D(i)=1.
+\]
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Package the debiasing certificate as an instance of the general observation-channel Fisher interface and apply Theorem~\ref{thm:fisher-observation-channel-transport}. The two claims are exactly the transported sum and coordinatewise recovery clauses.
+\end{proof}
+
+Structural rank therefore has three exact readings in the present development: combinatorial irreducible-coordinate count, quotient entropy controller, and canonical Fisher-identifiable dimension under optimal-action observations.
 
 \subsection{Canonical Exact-Resolution Encoding}
 
@@ -73,6 +203,413 @@ Write $n = \mathrm{DOF}(A)$. By Definition~\ref{def:canonical-dp}, the state spa
 \end{proof}
 
 The canonical encoding provides the bridge from the abstract exact object to a degree-of-freedom count carried by a declared architecture.
+
+\begin{theorem}[Canonical Initial Object]\label{thm:canonical-initiality}
+\leanmeta{\LH{L413}}
+Fix $n$. In the category of exact finite-resolution objects over the canonical binary state space with decision-preserving abstraction morphisms, the canonical encoding object is initial: for every object $Y$, there is a unique morphism
+\[
+\mathrm{canonicalDP}(n) \longrightarrow Y.
+\]
+\end{theorem}
+
+\begin{proof}
+Each object carries a surjective abstraction witness from the canonical state space. The induced map is the unique morphism commuting with the canonical abstraction interface, which is exactly the mechanized initiality statement.
+\end{proof}
+
+\begin{corollary}[Initiality Package Gives Canonical Rank Identity]\label{thm:canonical-initiality-srank}
+\leanmeta{\LH{L414}}
+The canonical initiality package includes the structural-rank identity
+\[
+\mathrm{srank}(\mathrm{canonicalDP}(n))=n,
+\]
+hence for every architecture $A$,
+\[
+\mathrm{srank}(\mathrm{canonicalDP}(A))=\mathrm{DOF}(A).
+\]
+\end{corollary}
+
+\begin{theorem}[Kernel-Quotient Universality and No-Collapse Canonicity]\label{thm:kernel-quotient-universality-canonicity}
+\leanmeta{\LHrng{L}{490}{494}}
+Fix an operation-equipped carrier with a designated equivalence relation identifying exactly the points that agree under the operation.
+
+In the category of surjective operation-preserving abstractions from that carrier:
+\begin{enumerate}
+\item the identity abstraction is initial;
+\item every abstraction factors uniquely through the induced kernel quotient map;
+\item an abstraction satisfies no-collapse iff there is a unique canonical isomorphism from the identity abstraction object to it.
+\end{enumerate}
+
+Moreover, both the optimizer quotient $s\mapsto \operatorname{Opt}(s)$ and the eventual-germ quotient of trajectories $(\mathbb{N}\to\alpha)/\sim_{\mathrm{eventual}}$ instantiate this same theorem schema.
+\end{theorem}
+
+\begin{proof}
+The operation-kernel schema is mechanized abstractly, with initiality and unique kernel factorization proved once at schema level. The no-collapse clause is proved as an equivalence with unique canonical isomorphism to the identity abstraction object. The decision-quotient and eventual-germ constructions are then provided as concrete schema instances, yielding the two instance-level corollaries directly.
+\end{proof}
+
+\begin{theorem}[Kernel-Completion Categorical Endpoint]\label{thm:kernel-completion-categorical-endpoint}
+\leanmeta{\LHrng{L}{495}{501}}
+For operation-equipped systems $(S,\mathcal O,\operatorname{op})$, kernel completion
+\[
+(S,\mathcal O,\operatorname{op})\mapsto
+\bigl(S,\mathcal O,\operatorname{op},\sim_{\operatorname{op}}\bigr),
+\qquad
+x\sim_{\operatorname{op}}y\iff \operatorname{op}(x)=\operatorname{op}(y),
+\]
+admits the following mechanized endpoint package:
+\begin{enumerate}
+\item object-level equivalence between operation systems and operation-kernel schemas;
+\item hom-level full-faithful equivalence for the kernel-completion embedding;
+\item for each completed schema, initiality of the identity abstraction object, unique factorization of every surjective operation-preserving abstraction through the kernel quotient, and no-collapse iff unique canonical isomorphism to that identity object.
+\end{enumerate}
+Moreover, both the decision-quotient optimizer construction and the eventual-germ trajectory construction are explicit instances of this package; in the eventual-germ instance, schema relation equality is exactly eventual equality.
+\end{theorem}
+
+\begin{proof}
+The mechanization first defines bare operation systems and proves kernel completion/forget are inverse at object level. It then proves the corresponding hom-level equivalence for the completion embedding. The universal factorization and no-collapse canonicity package is proved at schema level and instantiated for decision and eventual-germ systems; the eventual-germ relation identification follows by quotient soundness/exactness.
+\end{proof}
+
+\begin{theorem}[Measure-Theoretic AE and RG Endpoint]\label{thm:ae-rg-kernel-endpoint}
+\leanmeta{\LHrng{L}{502}{507}}
+Fix a measurable state space $(X,\mu)$ and codomain type $Y$. Consider the almost-everywhere germ construction
+\[
+(X\to Y)/{=\!_{\mu\text{-a.e.}}}.
+\]
+Then:
+\begin{enumerate}
+\item the AE-germ relation is exactly the kernel relation of the quotient-map operation and therefore instantiates the same kernel-completion endpoint package (initiality, unique quotient factorization, and no-collapse iff unique canonical isomorphism);
+\item the corresponding operation-system embedding is full-faithful at hom level;
+\item for any operation-preserving renormalization flow on this kernel schema, every induced map on quotient classes is identity at every scale;
+\item if each renormalization scale map is surjective, scale-wise no-collapse is equivalent to unique canonical identification with the exact carrier.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The AE relation is formalized as filter eventual equality under $\mathrm{ae}(\mu)$, and the quotient operation is the canonical class map. Kernel-completion endpoint and hom-level full-faithful results are then instantiated directly from the abstract schema theorems. The renormalization statements are proved in the same schema by requiring operation invariance along scales and, in the surjective branch, reusing the no-collapse/unique-isomorphism theorem at each scale abstraction object.
+\end{proof}
+
+\begin{theorem}[Measure-Kernel Detailed-Balance/Stationarity Transport]\label{thm:measure-kernel-db-stationary-transport}
+\leanmeta{\LHrng{L}{508}{513}}
+Fix source and target measure-kernel semigroup models, each equipped with a detailed-balance layer (detailed balance implies stationarity), and a transport witness consisting of:
+\begin{enumerate}
+\item a measurable state map,
+\item a kernel map,
+\item evolve/pushforward commutation,
+\item detailed-balance preservation along that map.
+\end{enumerate}
+Then:
+\begin{enumerate}
+\item stationarity transports along the witness;
+\item detailed balance transports along the witness;
+\item transported detailed balance implies transported stationarity;
+\item for any scale-indexed source/target kernel flows aligned by the kernel map, scale-wise source detailed balance yields scale-wise transported target stationarity.
+\end{enumerate}
+In particular, the endpoint package gives a single reusable transport interface for measure-kernel dynamics and detailed-balance/stationarity claims.
+\end{theorem}
+
+\begin{proof}
+Stationarity transport is a direct consequence of the evolve/pushforward commutation identity. Detailed-balance transport is the dedicated preservation axiom of the witness. Composing that transported detailed-balance statement with the target detailed-balance-implies-stationarity law gives transported stationarity. The scale-wise theorem is the same argument applied pointwise to aligned flow indices.
+\end{proof}
+
+\begin{corollary}[Deterministic Measurable-Kernel Scale Specialization]\label{thm:deterministic-kernel-scale-stationary}
+\leanmeta{\LHrng{L}{514}{516}}
+For any measurable state space, deterministic measurable endomaps form a measure-kernel semigroup via pushforward evolution. Using measure invariance as the detailed-balance layer, any scale-indexed deterministic flow that preserves a declared measure at each scale is stationary at each scale in the measure-kernel semantics.
+\end{corollary}
+
+\begin{proof}
+The deterministic semigroup is the pushforward-by-map instance. Invariance at a scale is exactly the detailed-balance predicate in that instance, and the general scale theorem (detailed balance implies stationarity at each index) applies directly.
+\end{proof}
+
+\begin{theorem}[Kernel-Power Stationarity and Transport]\label{thm:kernel-power-stationarity-transport}
+\leanmeta{\LHrng{L}{517}{524}}
+In any measure-kernel semigroup:
+\begin{enumerate}
+\item if a measure is stationary for a kernel element $K$, then it is stationary for every semigroup power $K^n$;
+\item if detailed balance holds for $K$, then every $K^n$ is stationary.
+\end{enumerate}
+Moreover, for semigroup-homomorphic transport between source and target kernel semigroups:
+\begin{enumerate}
+\item powers are preserved by transport ($\Phi(K^n)=\Phi(K)^n$);
+\item stationarity of source powers transports to stationarity of target powers;
+\item if detailed balance holds at source for $K$, then all transported powers $\Phi(K)^n$ are stationary in the target model.
+\item for any scale flow $F$, each scale kernel is exactly the corresponding power of the one-step kernel $F_1$;
+\item therefore detailed balance at $F_1$ implies stationarity at every scale.
+\item if a semigroup-homomorphic transport aligns one-step kernels of source and target flows, then source detailed balance at one step implies transported target stationarity at every scale.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Power stationarity is proved by induction using the semigroup evolve-composition law. The detailed-balance clause is immediate from the detailed-balance-implies-stationarity axiom plus the power-stationarity theorem. For transport, the semigroup-homomorphism axioms give power preservation, and the previously proved stationarity transport theorem is applied to each source power; composing with source detailed-balance-to-stationarity gives the transported-power clause. The scale-flow claims follow by proving $F_n=(F_1)^n$ from the additive flow law, then substituting into the power-stationarity theorem. The final clause combines one-step alignment with the same power representation on both flows and applies transported stationarity pointwise in scale.
+\end{proof}
+
+\begin{theorem}[Measure-Kernel Quotient Calculus and RG Endpoint]\label{thm:measure-kernel-quotient-rg-endpoint}
+\leanmeta{\LHrng{L}{550}{557}}
+Fix a source measure-kernel semigroup and a measure-theoretic quotient calculus (surjective measurable quotient map, descended quotient semigroup, and evolution-commutation law). Then stationarity descends from source kernels to quotient kernels.
+
+If the quotient calculus is semigroup-homomorphic, stationarity descends for all kernel powers. If, in addition, detailed balance is preserved by the quotient calculus, then:
+\begin{enumerate}
+\item source detailed balance implies stationarity of all descended quotient powers;
+\item one-step detailed balance on a source scale flow implies all-scale stationarity on every aligned quotient flow.
+\end{enumerate}
+
+For RG dynamics modeled by scale-indexed kernel-semigroup endomorphisms on source and quotient kernels that commute with quotient descent:
+\begin{enumerate}
+\item endomorphisms preserve kernel powers;
+\item RG action commutes with quotient kernel powers at every RG scale and power index;
+\item if source detailed balance is stable under source RG steps, then every RG-renormalized quotient kernel power is stationary under the descended measure.
+\end{enumerate}
+
+These clauses are bundled as a single endpoint package theorem combining quotient descent, kernel-power dynamics, and RG compatibility.
+\end{theorem}
+
+\begin{proof}
+All descent statements are direct instances of the transport theorems once the quotient calculus is reinterpreted as a transport witness (and semigroup-homomorphic/detailed-balance-preserving witness in the stronger layers). The RG-power commutation statement follows from endomorphism preservation of semigroup powers together with quotient-level RG/source RG commutation on one-step kernels. RG-stable detailed balance in the source model is pushed through the detailed-balance quotient calculus, then combined with the quotient power-stationarity theorem and the RG commutation identity to obtain stationarity of RG-renormalized quotient powers.
+\end{proof}
+
+\begin{corollary}[Transport Theorems Recovered as Quotient-Calculus Instances]\label{thm:measure-kernel-transport-quotient-instance-recovery}
+\leanmeta{\LHrng{L}{558}{559}}
+Any surjective semigroup-homomorphic measure-kernel transport witness is an instance of semigroup quotient calculus, and any surjective detailed-balance-preserving semigroup-homomorphic witness is an instance of detailed-balance quotient calculus. Under these identifications, the existing transported kernel-power stationarity theorems are recovered as immediate quotient-calculus instances.
+\end{corollary}
+
+\begin{proof}
+Instantiate quotient state space by the transport codomain and quotient map by the witness state map, with surjectivity as hypothesis. The semigroup and detailed-balance preservation laws of the witness exactly match the quotient-calculus structure fields, so the previously proved quotient-calculus descent theorems reduce definitionally to the original transport theorems.
+\end{proof}
+
+\begin{theorem}[Path-Space Crooks Lift for Kernel Powers and Transport]\label{thm:path-space-crooks-kernel-power-transport}
+\leanmeta{\LHrng{L}{525}{529}, \LHrng{L}{533}{534}}
+Fix a measure-kernel semigroup and a path-space Crooks model assigning a pathwise log-ratio observable.
+
+Then:
+\begin{enumerate}
+\item stationarity of a kernel implies vanishing log ratio on all its powers;
+\item detailed balance of a kernel implies vanishing log ratio on all its powers;
+\item detailed balance at one step of a scale flow implies vanishing log ratio at every scale.
+\end{enumerate}
+
+For semigroup-homomorphic transport between source and target models with path transport preserving log-ratio semantics:
+\begin{enumerate}
+\item kernel-power log ratios transport exactly;
+\item source detailed balance implies vanishing transported target log ratio on all transported kernel powers.
+\item for aligned source/target scale flows under a detailed-balance-preserving semigroup-homomorphic map, one-step source detailed balance implies vanishing target log ratio at every aligned scale (including mapped-source-path specialization).
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+All three source-side vanishing claims are immediate from the Crooks-model axiom ``stationary implies zero log ratio'' combined with the kernel-power and scale-flow stationarity theorems. Transported equality follows by applying the transport preservation law to source kernel powers and rewriting by semigroup-homomorphic power preservation. The transported-vanishing power clause composes this equality with the source detailed-balance-to-zero-power-log-ratio result. For aligned flows, the one-step transport theorem yields target stationarity at each scale, and the same Crooks axiom gives scale-wise target vanishing, with mapped-source-path specialization by direct substitution.
+\end{proof}
+
+\begin{theorem}[Expectation-Level Jarzynski Lift for Kernel Powers and Transport]\label{thm:path-space-jarzynski-kernel-power-transport}
+\leanmeta{\LHrng{L}{537}{541}}
+Fix a measure-kernel semigroup, a path-space Crooks model, and an expectation-level Jarzynski model with the calibration axiom: if pathwise log ratio vanishes identically for a kernel/measure pair, then the corresponding exponential-log-ratio expectation equals $1$.
+
+Then:
+\begin{enumerate}
+\item stationarity of a kernel implies unit Jarzynski expectation for all kernel powers;
+\item detailed balance of a kernel implies unit Jarzynski expectation for all kernel powers;
+\item one-step detailed balance of a scale flow implies unit Jarzynski expectation at every scale.
+\end{enumerate}
+
+For semigroup-homomorphic transport with expectation preservation:
+\begin{enumerate}
+\item kernel-power Jarzynski expectations transport exactly;
+\item source detailed balance implies unit transported target Jarzynski expectation for all transported kernel powers.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Each source-side clause composes the already-proved Crooks log-ratio vanishing theorem with the Jarzynski calibration axiom ``log-ratio zero implies expectation one''. For transport, the semigroup-homomorphism power identity rewrites transported powers into images of source powers, and the expectation-preservation hypothesis gives exact equality. The detailed-balance transport clause then follows by combining that equality with the source detailed-balance-to-unit-power-expectation result.
+\end{proof}
+
+\begin{theorem}[Path-Measure Jarzynski Integral Endpoint]\label{thm:path-measure-jarzynski-integral-transport}
+\leanmeta{\LHrng{L}{543}{548}}
+Fix a measure-kernel semigroup with a path-space Crooks model and an explicit path-measure expectation model whose Jarzynski observable is represented by
+\[
+\mathbb E\bigl[e^{-\Lambda}\bigr]
+=
+\int e^{-\Lambda(p)}\,d\mathbb P_{K,\pi}(p),
+\qquad
+\Lambda(p)=\log\frac{P_{\mathrm f}}{P_{\mathrm r}}(p).
+\]
+Then:
+\begin{enumerate}
+\item if pathwise log ratio vanishes for $(K,\pi)$, the path integral above equals $1$;
+\item stationarity (resp. detailed balance) of $K$ implies unit integral on every kernel power $K^n$;
+\item one-step detailed balance on a scale flow implies unit integral at every scale.
+\end{enumerate}
+For semigroup-homomorphic Jarzynski transport between source and target models:
+\begin{enumerate}
+\item kernel-power path integrals transport exactly;
+\item source detailed balance implies unit transported target path integral on every transported kernel power.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The first clause rewrites the explicit integral by the expectation-identification axiom and applies the Jarzynski calibration law (zero log ratio implies expectation one). The stationarity and detailed-balance power statements then instantiate the already-proved Crooks vanishing theorems before applying that same rewrite. The scale statement is the one-step-to-all-scales Crooks vanishing theorem composed with the explicit integral rewrite. Transported equality follows by rewriting both source and target expectations as their explicit path integrals and inserting the previously proved transported expectation identity on kernel powers. The transported detailed-balance clause composes that equality with the source detailed-balance-to-unit-integral result.
+\end{proof}
+
+\begin{theorem}[Process-Level Path-Measure Transport Endpoint]\label{thm:path-process-transport-endpoint}
+\leanmeta{\LH{L560}, \LHrng{L}{562}{564}}
+Fix source/target measure-kernel semigroups with a semigroup-homomorphic transport map, source/target path-space Crooks models, and explicit path-measure expectation models. Assume a process-level transport witness: mapped paths are measurable, source path measures push forward to target path measures, and the Crooks exponential path integral is preserved under transport.
+
+Then:
+\begin{enumerate}
+\item kernel-power expectation transport is recovered at the Jarzynski level;
+\item kernel-power path-integral transport holds exactly;
+\item source detailed balance implies unit transported target path-integral Jarzynski identity on all transported kernel powers.
+\end{enumerate}
+
+Moreover, for detailed-balance-preserving semigroup transport with aligned source/target scale flows, one-step source detailed balance implies unit target path-integral Jarzynski identity at every aligned scale.
+\end{theorem}
+
+\begin{proof}
+The first three clauses are exactly the process-transport theorems: process-level transport induces the expectation-level transport witness, which yields kernel-power expectation transport; the process witness also gives direct kernel-power path-integral transport; composing that identity with source detailed-balance-to-unit-integral on powers gives the transported unit identity. The aligned-scale clause applies the transported one-step detailed-balance Crooks-vanishing theorem at each scale and then rewrites by the explicit path-integral endpoint theorem ``zero log ratio implies unit integral''.
+\end{proof}
+
+\begin{theorem}[Canonical Finite-Horizon Measurable-Transition Process Endpoint]\label{thm:measurable-transition-finite-horizon-canonical-endpoint}
+\leanmeta{\LHrng{L}{565}{569}}
+For measurable transition kernels, the canonical finite-horizon path-measure constructor is given by:
+\begin{enumerate}
+\item horizon-$0$ path measure equals the initial measure;
+\item horizon-$(n+1)$ path measure is obtained from horizon-$n$ by one bind-extension step with the same transition kernel.
+\end{enumerate}
+
+On this canonical finite-horizon path family:
+\begin{enumerate}
+\item one-step detailed balance implies unit path-integral Jarzynski identity at every scale;
+\item under process-level transport, source detailed balance implies unit transported target path-integral Jarzynski identity on all transported kernel powers;
+\item for detailed-balance-preserving aligned scale-flow transport, one-step source detailed balance implies unit target path-integral Jarzynski identity at every aligned scale.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The first two clauses are exactly the definitional recursion equations of the canonical finite-horizon path-measure constructor (base and successor steps). The remaining clauses are the finite-horizon specializations of the previously established abstract path-integral endpoint theorems, instantiated with the canonical measurable-transition finite-horizon path space and its induced Crooks/Jarzynski structures.
+\end{proof}
+
+\begin{theorem}[Projective-Consistency and Kolmogorov-Extension Interface Endpoint]\label{thm:measurable-transition-projective-kolmogorov-endpoint}
+\leanmeta{\LHrng{L}{570}{575}}
+For canonical finite-horizon measurable-transition path measures, any projective-consistency witness (measurable truncation maps with measure-level consistency) yields:
+\begin{enumerate}
+\item exact marginal compatibility across horizons;
+\item exact specialization of that compatibility to kernel powers;
+\item exact specialization to additive scale-flow kernels.
+\end{enumerate}
+
+For any Kolmogorov-extension interface (infinite-path measure with declared finite-horizon marginal recovery):
+\begin{enumerate}
+\item finite-horizon marginals are exactly the canonical finite-horizon path measures;
+\item one-step detailed balance implies unit Jarzynski path-integral identity for every finite-horizon marginal at every scale;
+\item under detailed-balance-preserving aligned scale-flow transport, one-step source detailed balance implies unit target finite-horizon marginal path-integral identity at every aligned scale.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+The first three clauses are direct restatements of the projective-consistency transport equations and their kernel-power/scale-flow substitutions. The extension clauses are immediate from the declared marginal-recovery identity: each target integral over a projected infinite-path measure rewrites to the corresponding canonical finite-horizon integral, after which the previously proved finite-horizon scale and transported-scale Jarzynski unit-integral theorems apply.
+\end{proof}
+
+\begin{theorem}[Canonical Truncation-Witness Instantiation]\label{thm:measurable-transition-projective-canonical-instance}
+\leanmeta{\LH{L576}}
+If canonical finite-horizon measurable-transition path measures satisfy the explicit truncation-family marginal equations, then the projective-consistency interface is inhabited by that canonical truncation witness.
+\end{theorem}
+
+\begin{proof}
+Instantiate the projective-consistency structure with the canonical truncation maps and the supplied marginal equations. The truncation measurability premise is now fully constructive: the canonical truncation map is explicitly built from horizon transport plus recursive tail-drop maps, and its measurability is proved directly in Lean (\LH{L588}) rather than postulated.
+\end{proof}
+
+\begin{theorem}[Constructive Canonical Truncation Measurability]\label{thm:measurable-transition-constructive-truncation}
+\leanmeta{\LH{L588}}
+For any measurable state space and any horizons $m\le n$, the canonical finite-path truncation map
+\[
+\mathrm{truncate}_{m\leftarrow n}:
+\mathrm{Path}_n\to \mathrm{Path}_m
+\]
+is measurable. The map is constructed explicitly from horizon-index transport together with recursive tail-drop maps.
+\end{theorem}
+
+\begin{proof}
+The canonical truncation map is defined as composition of two measurable pieces: equality-transport between horizon index presentations and recursive tail-drop. Measurability follows by composition.
+\end{proof}
+
+\begin{theorem}[Continuous-Time/Continuous-State Interface Endpoint]\label{thm:continuous-time-continuous-state-interface}
+\leanmeta{\LH{L581}, \LH{L587}}
+For measurable transition kernels on a measurable state space, a continuous-time semigroup interface (real-time kernel family with additive composition law) canonically discretizes to the proved additive \texttt{ScaleFlow} interface at any nonnegative time step $\delta$. In parallel, a continuous-state path extension interface with measurable time-evaluation maps yields measurable finite-time projection maps, including all two-time evaluation pairs.
+\end{theorem}
+
+\begin{proof}
+Discretization sends scale index $n$ to physical time $n\delta$ and uses the additive continuous-time semigroup law to discharge the discrete scale-flow composition law. Two-time measurability is the product measurability of the two declared evaluation maps.
+\end{proof}
+
+\begin{theorem}[Concrete Measurable Transition-Kernel Instantiation]\label{thm:measurable-transition-kernel-concrete-endpoint}
+\leanmeta{\LHrng{L}{530}{532}, \LHrng{L}{535}{536}}
+For any measurable state space $S$, measurable stochastic kernels
+\[
+K:S\to \mathcal M(S)
+\]
+form a concrete measure-kernel semigroup with:
+\begin{enumerate}
+\item identity kernel given by Dirac transition,
+\item composition given by measure bind,
+\item evolution acting on measures by bind.
+\end{enumerate}
+In this concrete semigroup, one-step detailed balance for a scale flow implies all-scale stationarity, and for any path-space Crooks model on the same semigroup, one-step detailed balance implies vanishing pathwise log ratio at all scales.
+
+Moreover, deterministic measurable kernels embed semigroup-homomorphically into this stochastic-kernel semigroup (via Dirac lifting), and stationarity of deterministic kernel powers transports to stationarity of the corresponding lifted stochastic kernel powers.
+\end{theorem}
+
+\begin{proof}
+The semigroup laws are discharged by the Giry monad identities (Dirac left/right unit and bind associativity). The all-scale stationarity statement is the abstract one-step-to-all-scales theorem instantiated on this semigroup. The path-space consequence then applies the abstract Crooks log-ratio vanishing theorem under the same one-step detailed-balance hypothesis. The deterministic embedding is the Dirac lift of measurable endomaps, and semigroup-homomorphic stationarity transport gives the kernel-power preservation clause.
+\end{proof}
+
+\begin{corollary}[Concrete Measurable Transition-Kernel Jarzynski Endpoint]\label{thm:measurable-transition-jarzynski-concrete-endpoint}
+\leanmeta{\LH{L542}}
+In the measurable transition-kernel semigroup on any measurable state space, for any path-space Crooks model and any expectation-level Jarzynski model over that Crooks layer, one-step detailed balance for a scale flow implies unit Jarzynski expectation at every scale.
+\end{corollary}
+
+\begin{proof}
+Instantiate the abstract expectation-level one-step-to-all-scales theorem on the measurable transition-kernel semigroup.
+\end{proof}
+
+\begin{corollary}[Concrete Measurable Transition-Kernel Path-Measure Jarzynski Endpoint]\label{thm:measurable-transition-path-measure-jarzynski-concrete-endpoint}
+\leanmeta{\LH{L549}}
+In the measurable transition-kernel semigroup on any measurable state space, for any path-space Crooks model equipped with a measurable path space and an explicit path-measure expectation model, one-step detailed balance for a scale flow implies
+\[
+\int \exp\bigl(-\Lambda_n(p)\bigr)\,d\mathbb P_n(p)=1
+\]
+at every scale index $n$.
+\end{corollary}
+
+\begin{proof}
+Instantiate the abstract path-measure integral theorem for one-step detailed-balance scale flows on the measurable transition-kernel semigroup.
+\end{proof}
+
+\begin{theorem}[Noncanonical Encoding Transport (Rank and Floor)]\label{thm:encoding-transport-rank-energy}
+\leanmeta{\LHrng{L}{487}{489}}
+Let $D_S$ and $D_T$ be decision problems over coordinate spaces of the same finite coordinate dimension. Suppose there is a state-space equivalence
+\[
+e:S\xrightarrow{\cong}T
+\]
+such that:
+\begin{enumerate}
+\item optimizer fibers are preserved, i.e. $\operatorname{Opt}_{D_T}(e(s))=\operatorname{Opt}_{D_S}(s)$ for all $s$, and
+\item for each tested coordinate $i$, agreement on all coordinates except $i$ is equivalent under transport by $e$.
+\end{enumerate}
+Then for every coordinate $i$,
+\[
+i\text{ is relevant for }D_S\iff i\text{ is relevant for }D_T,
+\]
+hence
+\[
+\mathrm{srank}(D_S)=\mathrm{srank}(D_T),
+\]
+and for every declared linear per-bit thermodynamic model $M$,
+\[
+\mathrm{energyLowerBound}(M,\mathrm{srank}(D_S))
+=
+\mathrm{energyLowerBound}(M,\mathrm{srank}(D_T)).
+\]
+\end{theorem}
+
+\begin{proof}
+The relevance predicate is existential in two ingredients only: coordinate-agreement away from a tested index and optimizer-set inequality. By hypothesis, both are preserved and reflected by the transport equivalence. Therefore relevance is equivalent coordinatewise, so the relevant-coordinate sets have equal cardinality and structural ranks coincide. The linear per-bit floor then transports immediately by substituting equal rank.
+\end{proof}
 
 \begin{corollary}[Rank-One Regime]\label{cor:rank-one}
 \leanmeta{\LH{L51}}
@@ -111,6 +648,51 @@ For the canonical binary decision problem attached to a bounded decision system 
 
 \begin{proof}
 For binary coordinate spaces, the number of distinct optimal-action classes is at most $2^{\mathrm{srank}}$. Apply that theorem to the canonical encoding and substitute \ref{thm:dof-srank}.
+\end{proof}
+
+\begin{theorem}[Optimizer-Class Richness Forces Structural-Rank Floor]\label{thm:optimizer-class-richness-rank-lower-bound}
+\leanmeta{\LHrng{L}{417}{418}}
+Let $D$ be a finite decision problem on a binary coordinate state space. If
+\[
+2^k \le \mathrm{numOptClasses}(D),
+\]
+then
+\[
+k \le \mathrm{srank}(D).
+\]
+Equivalently, for every integer $k>0$ with
+\[
+k \le \mathrm{numOptClasses}(D),
+\]
+one has
+\[
+\frac{\log k}{\log 2} \le \mathrm{srank}(D).
+\]
+\end{theorem}
+
+\begin{proof}
+The binary optimizer-class upper bound gives $\mathrm{numOptClasses}(D) \le 2^{\mathrm{srank}(D)}$. If $2^k \le \mathrm{numOptClasses}(D)$, then $2^k \le 2^{\mathrm{srank}(D)}$, so monotonicity of powers with base $2$ yields $k \le \mathrm{srank}(D)$. The logarithmic form is the same inequality written on the $\log_2$ scale.
+\end{proof}
+
+\begin{theorem}[Nonbinary Optimizer-Richness Interface (Alphabet and VC Form)]\label{thm:optimizer-class-richness-nonbinary-vc}
+\leanmeta{\LHrng{L}{584}{585}}
+Let $D$ be a finite decision problem with an alphabet-size parameter $q>1$ and theorem-level class envelope
+\[
+\mathrm{numOptClasses}(D) \le q^{\mathrm{srank}(D)}.
+\]
+Then every witnessed richness lower bound
+\[
+q^k \le \mathrm{numOptClasses}(D)
+\]
+forces
+\[
+k \le \mathrm{srank}(D).
+\]
+In particular, any VC-style witness encoded as such a $q$-ary growth lower bound transfers directly to the same structural-rank floor.
+\end{theorem}
+
+\begin{proof}
+Compose the declared lower bound $q^k \le \mathrm{numOptClasses}(D)$ with the declared upper envelope $\mathrm{numOptClasses}(D) \le q^{\mathrm{srank}(D)}$. Monotonicity of powers for base $q>1$ yields $k \le \mathrm{srank}(D)$. The VC-style statement is exactly this argument with $k$ instantiated by the chosen growth witness.
 \end{proof}
 
 \begin{theorem}[Decision-Entropy Bound]\label{thm:entropy-bound}

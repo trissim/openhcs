@@ -98,6 +98,19 @@ Any exact physical resolver for a decision problem must read a sufficient coordi
 If the accessed coordinates are not sufficient, two states agree on every read coordinate while disagreeing on the optimal action. Any resolver limited to those coordinates must therefore err on at least one of the two states.
 \end{proof}
 
+\begin{proposition}[Binding as Exact Resolution]\label{prop:binding-as-exact-resolution}
+Let $D_{\mathrm{dock}}$ be a finite docking decision problem induced by an admissible action family and an interaction utility. Any physical process that produces a retained bound/unbound distinction realizes an exact resolver on the induced decision quotient exactly when the read coordinate family is sufficient for $D_{\mathrm{dock}}$.
+\end{proposition}
+\leanmeta{\LHrng{BA}{3}{5}}
+
+\begin{proof}
+A retained bound/unbound outcome is a state distinction in the optimizer quotient of $D_{\mathrm{dock}}$. Theorem~\ref{thm:resolution-sufficient} identifies exact resolution with sufficiency of the read coordinate family. Theorems~\ref{thm:discrete-acquisition} and \ref{thm:one-transition-one-bit} identify the physical distinction interface with finite binary acquisition events.
+\end{proof}
+
+\begin{remark}[Relaxation and Distinction Counting]\label{rem:relaxation-distinction-counting}
+Thermal relaxation and controlled computation share the same counting interface in this framework. A process that leaves a retained bound/unbound distinction has realized finite binary acquisition events regardless of whether the trajectory is externally programmed or spontaneously relaxational.
+\end{remark}
+
 \subsection{Canonical Decision Encoding}
 
 \begin{definition}[Canonical Decision Problem]\label{def:canonical-dp}

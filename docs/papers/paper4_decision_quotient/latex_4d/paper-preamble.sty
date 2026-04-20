@@ -134,15 +134,21 @@
 \DeclareUnicodeCharacter{2082}{\textsubscript{2}}
 \DeclareUnicodeCharacter{03C8}{\ensuremath{\psi}}
 
-% Complexity class macros (used in paper4)
-\newcommand{\coNP}{\textsf{coNP}}
-\newcommand{\NP}{\textsf{NP}}
-\newcommand{\PP}{\textsf{PP}}
-\newcommand{\PSPACE}{\textsf{PSPACE}}
-\newcommand{\SigmaP}[1]{\ensuremath{\Sigma_{#1}^{\textsf{P}}}}
-\newcommand{\PiP}[1]{\ensuremath{\Pi_{#1}^{\textsf{P}}}}
-\newcommand{\Pclass}{\textsf{P}}
+% Complexity class and operator macros (used across paper4 variants)
+\newcommand{\coNP}{\ensuremath{\mathsf{coNP}}}
+\newcommand{\NP}{\ensuremath{\mathsf{NP}}}
+\newcommand{\PP}{\ensuremath{\mathsf{PP}}}
+\newcommand{\PSPACE}{\ensuremath{\mathsf{PSPACE}}}
+\newcommand{\SigmaP}[1]{\ensuremath{\Sigma_{#1}^{\mathsf{P}}}}
+\newcommand{\PiP}[1]{\ensuremath{\Pi_{#1}^{\mathsf{P}}}}
+\newcommand{\Pclass}{\ensuremath{\mathsf{P}}}
 \DeclareMathOperator{\Opt}{Opt}
+\DeclareMathOperator{\Adm}{Adm}
+\DeclareMathOperator{\srank}{srank}
+\DeclareMathOperator{\lift}{lift}
+\DeclareMathOperator{\Hull}{Hull}
+\DeclareMathOperator{\sizefn}{size}
+\DeclareMathOperator{\rangefn}{range}
 
 % Author information - SINGLE SOURCE
 \newcommand{\papertitle}[1]{\title{#1}}

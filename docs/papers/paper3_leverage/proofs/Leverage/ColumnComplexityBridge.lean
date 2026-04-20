@@ -110,8 +110,10 @@ theorem positiveIdentityDebt_iff_exists_large_fiber
     rcases hExists with ⟨cw, hcw⟩
     exact not_lt_of_ge (hAll cw) hcw
 
-/-- Placeholder for the asymptotic column-complexity function `Σ_col`. -/
-axiom ColComplexity (N : ℕ) (Enc : SourceMsg → Codeword) : ℝ → ℝ
+/-- Finite scaffold column-complexity profile:
+scaled log multiplicity of each occupancy level `ρ` in the encoder column ensemble. -/
+noncomputable def ColComplexity (N : ℕ) (Enc : SourceMsg → Codeword) : ℝ → ℝ :=
+  fun ρ => (N : ℝ)⁻¹ * Real.log (ColOccupancyWeight N Enc ρ : ℝ)
 
 /-- The conjectural identity-debt threshold
 `R_id★ = sup {ρ : ColComplexity ρ ≥ 0}` at finite scaffold level. -/

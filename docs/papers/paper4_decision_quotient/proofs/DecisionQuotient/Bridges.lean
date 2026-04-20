@@ -907,7 +907,9 @@ theorem tur_srank_thermodynamic_cost {S : Type*} [Fintype S]
     (mc : Physics.DiscreteMarkovChain S) (π : Physics.StationaryDist mc)
     (J : Physics.Observable S)
     (hJ : Physics.expectedValue π J ≠ 0)
-    (hσ : 0 < Physics.entropyProduction mc π) :
+    (hσ : 0 < Physics.entropyProduction mc π)
+    (hTur : Physics.tur_bound mc π J hJ hσ)
+    (hSecondLaw : Physics.entropyProduction_nonneg mc π) :
     -- Part 1: TUR bound applies (from TUR.lean)
     Physics.variance π J / (Physics.expectedValue π J)^2 ≥
       2 / Physics.entropyProduction mc π ∧
@@ -915,9 +917,9 @@ theorem tur_srank_thermodynamic_cost {S : Type*} [Fintype S]
     0 ≤ Physics.entropyProduction mc π := by
   constructor
   -- Part 1: From TUR.lean
-  · exact Physics.tur_bridge mc π J hJ hσ
+  · exact Physics.tur_bridge mc π J hJ hσ hTur
   -- Part 2: From TUR.lean (Second Law)
-  · exact Physics.entropyProduction_nonneg mc π
+  · exact hSecondLaw
 
 /-! ### QBF + Sigma2PHardness → Complete Σ₂ᴾ Reduction Chain (NON-TRIVIAL)
 
@@ -1654,7 +1656,8 @@ This is a GENUINE cross-cluster composition:
     - Combined: ops_per_region ≤ E_region / (kT ln 2) -/
 theorem locality_thermodynamic_energy_bounds
     (kB T : ℝ) (hkB : 0 < kB) (hT : 0 < T)
-    (E_region : ℝ) (hE : 0 < E_region) :
+    (E_region : ℝ) (hE : 0 < E_region)
+    (hFiniteSignal : Physics.LocalityPhysics.finite_signal_speed) :
     -- Part 1: Landauer energy is positive (from ThermodynamicLift)
     0 < ThermodynamicLift.landauerJoulesPerBit kB T ∧
     -- Part 2: Finite operations bound exists (composition)
@@ -1671,7 +1674,7 @@ theorem locality_thermodynamic_energy_bounds
     · rfl
     · exact div_pos hE (ThermodynamicLift.landauerJoulesPerBit_pos hkB hT)
   -- Part 3: Finite signal speed from EP3
-  · exact Physics.LocalityPhysics.finite_signal_speed
+  · exact hFiniteSignal
 
 /-! ### HeisenbergStrong + Uncertainty → Physics Forces Nontrivial Optimization (NON-TRIVIAL)
 
@@ -1825,7 +1828,8 @@ This is a GENUINE cross-cluster composition:
 theorem locality_srank_spacetime_bounds
     {n : ℕ} {A S : Type*} [CoordinateSpace S n]
     (dp : DecisionProblem A S)
-    (c : ℕ) (p : Physics.LocalityPhysics.SpacetimePoint) :
+    (c : ℕ) (p : Physics.LocalityPhysics.SpacetimePoint)
+    (hFiniteSignal : Physics.LocalityPhysics.finite_signal_speed) :
     -- Part 1: A point is in its own light cone (from LocalityPhysics)
     p ∈ Physics.LocalityPhysics.lightCone c p ∧
     -- Part 2: srank bounds sufficient set size (from StructuralRank)
@@ -1838,7 +1842,7 @@ theorem locality_srank_spacetime_bounds
   -- Part 2: srank bound
   · intro I hSuff; exact srank_le_sufficient_card dp I hSuff
   -- Part 3: Finite signal speed from EP3
-  · exact Physics.LocalityPhysics.finite_signal_speed
+  · exact hFiniteSignal
 
 /-! ### Second Law + Landauer → Thermodynamics from Counting (NON-TRIVIAL)
 
@@ -1910,7 +1914,8 @@ theorem uncertainty_tur_double_constraint
     (mc : Physics.DiscreteMarkovChain S) (π : Physics.StationaryDist mc)
     (J : Physics.Observable S)
     (hJ : Physics.expectedValue π J ≠ 0)
-    (hσ : 0 < Physics.entropyProduction mc π) :
+    (hσ : 0 < Physics.entropyProduction mc π)
+    (hTur : Physics.tur_bound mc π J hJ hσ) :
     -- Part 1: Binary identity has nontrivial Opt (from Uncertainty)
     (Physics.Uncertainty.binaryIdentityProblem.Opt true ≠
      Physics.Uncertainty.binaryIdentityProblem.Opt false) ∧
@@ -1925,7 +1930,7 @@ theorem uncertainty_tur_double_constraint
                Physics.Uncertainty.binaryIdentityProblem_opt_false]
     exact fun h => by simp_all
   -- Part 2: TUR from Physics.TUR
-  · exact Physics.tur_bridge mc π J hJ hσ
+  · exact Physics.tur_bridge mc π J hJ hσ hTur
   -- Part 3: General existence
   · exact Physics.Uncertainty.exists_decision_problem_with_nontrivial_opt
 

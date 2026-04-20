@@ -1,37 +1,20 @@
-Molecular docking lacks a rigorous theory of the exact object its methods target. Exact configuration resolution under constraints supplies that object. The abstract layer is a bounded decision system equipped with sufficient coordinate sets, a decision quotient, structural rank, and decision-quotient entropy. The molecular layer instantiates the same framework through holonomic constraints, cutoff-local interaction structure, sampled action families, and concrete scorer families.
+Continuous exact molecular resolution is physically unrealizable. A continuous binding landscape carries unbounded distinguishable detail, so exact state discrimination requires unbounded acquisition events. Under any positive per-bit dissipation floor, the required erasure work diverges. Finite molecular search therefore cannot target continuous exactness directly.
 
-The theorem package identifies one exact-resolution spine. Surjective abstractions either factor through the decision quotient or erase a decision-relevant distinction, and any physically feasible surjective collapse must therefore factor through the quotient. Structural rank is simultaneously the irreducible coordinate count, the quotient-entropy controller, and the exact Fisher-information dimension. General exact sufficiency certification contains a hardness core, and any sound checker for that core requires witness budget at least $2^{n-1}$. Cutoff locality bounds docking structural rank by active-site and ligand coordinates and therefore isolates a theorem-backed low-rank regime. Continuous-to-grid resolution control yields uniform exact/coarse score approximation and strict-gap winner preservation, while large-cutoff lattice-tail bounds yield direct structural-rank bounds for exact Lennard-Jones, Coulomb, and real-space Ewald docking families. Finite sampled docking admits a canonical uniform discrepancy radius, and bounded action families admit polynomial-time exact sufficiency checking. For sampled docking, exact and coarse winner sets agree under an explicit half-gap hypothesis, an action-side symmetry-broken flat refinement canonically selects a strict sampled winner and yields a uniform positive strict gap whenever at least two sampled actions remain, inside-cutoff coordinates are sufficient under the stated compatibility assumptions, exact top-$k$ survivors are preserved under a certified boundary gap, and near-tie regimes admit a certified ambiguity band. Strict dominance and constant-sign multiplicative separability collapse conformer dependence completely by making every coordinate set sufficient. Finite sampled Lennard-Jones and Coulomb scorer families satisfy theorem-backed exact/coarse invariance criteria under explicit cutoff error and half-gap conditions. The geometric execution layer includes exact phase-space volume preservation for Velocity-Verlet, a closed-form Lennard-Jones gradient, and exponentially decaying Ewald real-space control for long-range Coulomb splitting.
-
-The same exact-resolution spine carries irreducible thermodynamic cost once a positive per-bit lower bound is fixed. Under Landauer calibration, any exact-resolution cycle satisfies
+The physically admissible target is the decision quotient: the coarsest state abstraction that preserves the optimal-action relation. Structural Rank is the irreducible dimension of that quotient. The theorem spine identifies the same quantity as the Fisher-identifiable dimension in a canonical optimal-action observation geometry, and as the controller of quotient entropy. The resulting exact-resolution law is
 \[
-E \geq k_B T\, H_{\mathrm{nats}}(D),
+E \ge \mathrm{srank}(D)\,k_B T\ln 2,
 \]
-where $H_{\mathrm{nats}}(D)$ is the natural-log entropy of the decision quotient. In the canonical binary encoding, this bound sharpens to
+with an equivalent entropy form $E \ge k_B T\,H_{\mathrm{nats}}(D)$.
+
+Approximation enters as quotient-coarsened admissibility---a lawful mechanism that collapses the structural rank. In that regime, admissibility cannot increase Structural Rank and lowers it exactly by the number of erased exact relevant coordinates. Thermodynamic relief is therefore quantized: each erased coordinate removes one per-bit unit from the calibrated floor. This gives a physical criterion for lawful approximation and separates quotient coarsening from utility relaxations that refine, rather than coarsen, the exact decision object.
+
+The molecular transport layer links this information law to chemistry. For exact binding resolution,
 \[
-E \geq \mathrm{DOF}(A)\, k_B T \ln 2,
+\Delta G \ge \mathrm{srank}(D)\,k_B T\ln 2.
 \]
-and the rank-$1$ regime is the unique thermodynamic ground state: every system with more than one degree of freedom lies strictly above the minimum per-cycle resolution cost.
+The framework is physically instantiated by a composed classical force-field interface (architecture and shellwise Lipschitz transport from bonded+Lennard--Jones+Coulomb Hamiltonians), an overdamped Langevin bridge to quotient-MCMC with certified discretization error, and a concrete spin-$\tfrac12$ substrate instantiation recovering the same $k_B T\ln 2$ readout floor.
+This inequality is an irreducible information-theoretic basement, not a full predictor of total empirical dissipation; strict-overhead theorems explicitly place realistic implementations above it when mismatch/residual terms are present. The same rank-indexed framework yields finite-time resolution-speed bounds, allosteric locality bounds on relevant coordinates, fault-tolerant proofreading overhead above logical rank, catalytic rank-reduction regimes, and finite-capacity universal limits, including Bekenstein-type throughput constraints. Molecular search is therefore thermodynamically governed by decision-relevant dimension, not by raw microscopic state count.
 
-The structural part of the argument is finite. Bounded systems admit only finitely many acquisition events. Exact resolution requires a sufficient coordinate set. The associated canonical decision problem records one binary acquisition channel for each degree of freedom, and the number of independent coordinates is identified exactly with the structural rank of the encoded decision problem:
-\[
-\mathrm{DOF}(A) = \mathrm{srank}(\mathrm{canonicalDP}(A)).
-\]
-The decision quotient therefore has at most $2^{\mathrm{DOF}(A)}$ optimal-action classes, so its entropy is controlled by the same coordinate count that governs exact physical resolution.
+The top-level theorem path is constructive: the critical execution route from molecular input to exported ArrayDSL artifact is computable via rational certificates.
 
-For constrained molecular systems with $N$ atoms and $k$ independent holonomic constraints, the exact-resolution floor scales with $3N-k$. Thresholded one-bit readout channels and two-level atomic transition systems instantiate the same binary interface.
-
-For bounded regions this yields the bounded-acquisition inequality
-\[
-\mathrm{DOF}(A) \le \frac{c\tau}{d},
-\]
-and corresponding bounds on decision-class count from spacetime and energy budget.
-
-Theorem-level mismatch and residual witnesses place nonideal implementations strictly above the Landauer floor. An explicit binary mismatch witness and an explicit two-state residual witness each yield at least one additional per-bit lower-bound unit above the Landauer floor and raise the energy--information coefficient above $k_B T$. Finite-capacity substrates therefore have bounded lifetime and bounded cumulative entropy throughput.
-
-The empirical input is the per-bit conversion constant. Landauer furnishes the universal floor. The same calibrated model yields theorem-level mismatch and residual overhead above Landauer, bounded substrate lifetime and cumulative entropy throughput, the finite replication entropy gap,
-\[
-\Delta S_{\min}(k) - \Delta S_{\min}(1) \geq k_B \ln k.
-\]
-and the finite-budget no-collapse theorem.
-
-Keywords: molecular docking, exact resolution, structural rank, decision entropy, Landauer principle
+Keywords: molecular search, molecular docking, decision quotient, structural rank, Landauer bound

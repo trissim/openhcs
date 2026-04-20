@@ -51,11 +51,11 @@ Proposition~\ref{prop:setoid-realizable} is the maximal realizability statement 
 
 \leanmetapending{\LHrng{FR}{39}{40}}
 \begin{proposition}[The Realized Quotient Is Exactly the Label Range]\label{prop:realized-quotient-range}
-For every labeling map $\phi : S \to T$, the decision quotient of the realizing problem is canonically equivalent to the range of $\phi$. In finite settings, the quotient cardinality is therefore exactly $|\operatorname{range}(\phi)|$.
+For every labeling map $\phi : S \to T$, the decision quotient of the realizing problem is canonically equivalent to the range of $\phi$. In finite settings, the quotient cardinality is therefore exactly $|\rangefn(\phi)|$.
 \end{proposition}
 
 \begin{proof}
-By Theorem~\ref{thm:labeling-realizable}, two states lie in the same decision class if and only if they receive the same label under $\phi$. Therefore the quotient class of a state depends only on the value $\phi(s)$, and sending the class of $s$ to $\phi(s)$ defines a well-defined map from the decision quotient to $\operatorname{range}(\phi)$. This map is surjective by definition of the range and injective because equality in the range means equality of labels, hence equality of quotient classes.
+By Theorem~\ref{thm:labeling-realizable}, two states lie in the same decision class if and only if they receive the same label under $\phi$. Therefore the quotient class of a state depends only on the value $\phi(s)$, and sending the class of $s$ to $\phi(s)$ defines a well-defined map from the decision quotient to $\rangefn(\phi)$. This map is surjective by definition of the range and injective because equality in the range means equality of labels, hence equality of quotient classes.
 \end{proof}
 
 Proposition~\ref{prop:realized-quotient-range} strengthens Theorem~\ref{thm:labeling-realizable}. The realizing construction does not merely realize the induced equivalence relation abstractly; it realizes the quotient object itself with exactly the expected image size.

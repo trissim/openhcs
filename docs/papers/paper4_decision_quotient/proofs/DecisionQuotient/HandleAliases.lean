@@ -1300,10 +1300,10 @@ abbrev BC5 := @Foundations.entropy_contraction
 abbrev TUR1 := @Physics.transitionProb_nonneg
 -- TUR2: Transition probabilities sum to 1
 abbrev TUR2 := @Physics.transitionProb_sum_one
--- TUR3: Entropy production is non-negative (Second Law) [axiom]
--- Note: entropyProduction_nonneg is an axiom, handle separately if needed
--- TUR4: The TUR bound itself [axiom]
--- Note: tur_bound is an axiom, handle separately if needed
+-- TUR3: Entropy production non-negativity assumption interface (Second Law)
+abbrev TUR3 := @Physics.entropyProduction_nonneg
+-- TUR4: TUR bound assumption interface
+abbrev TUR4 := @Physics.tur_bound
 -- TUR5: The TUR bridge theorem
 abbrev TUR5 := @Physics.tur_bridge
 -- TUR6: Multiple futures imply positive entropy production

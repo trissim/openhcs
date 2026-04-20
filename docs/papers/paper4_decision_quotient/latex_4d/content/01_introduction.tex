@@ -1,6 +1,6 @@
 \section{Introduction}
 
-Any rigorously specified computational problem already determines a state-indexed admissible-output relation $R$, and the only state distinctions that matter are the admissible-output equivalence classes $s \sim_R s' \iff \mathrm{Adm}_R(s)=\mathrm{Adm}_R(s')$.
+Any rigorously specified computational problem already determines a state-indexed admissible-output relation $R$, and the only state distinctions that matter are the admissible-output equivalence classes $s \sim_R s' \iff \Adm_R(s)=\Adm_R(s')$.
 
 \par\medskip
 \noindent
@@ -61,7 +61,7 @@ Then
 \Opt(10)=\Opt(11)=\{a\}.
 \]
 We write a state $x_0x_1$ as the concatenated bit string for $(x_0,x_1)$, so $10$ means $(x_0=1,x_1=0)$.
-The optimizer quotient therefore has exactly two classes, namely $\{00,01\}$ and $\{10,11\}$. The coordinate set $\{0\}$ is sufficient, coordinate $1$ is irrelevant, and coordinate $0$ is relevant. Only the first coordinate changes what matters.
+The optimizer quotient therefore has exactly two classes, namely $\{00,01\}$ and $\{10,11\}$. Coordinate $0$ alone is sufficient, coordinate $1$ is irrelevant, and coordinate $0$ is relevant. Only the first coordinate changes what matters.
 
 Unrestricted predicates trivialize any impossibility theorem via direct semantic encoding. A finite structural class is therefore needed: polynomial-time checkability, structural extractability, closure-law invariance, and bounded-pattern definability. This class excludes direct semantic encoding while still covering the structural results established here. Closure-law invariance is the clause used in the contradiction (Theorem~\ref{thm:closure-sound-package-no-go}); the remaining clauses restrict the search space to finite, explicitly structural predicates.
 
@@ -83,9 +83,9 @@ The dominant-pair family is the canonical instance, and the same mechanism appli
 \toprule
 \textbf{Notation} & \textbf{Meaning} \\
 \midrule
-$\mathrm{Adm}_R(s)$ & admissible outputs at state $s$ under exact specification $R$ \\
+$\Adm_R(s)$ & admissible outputs at state $s$ under exact specification $R$ \\
 \midrule
-$s \sim_R s'$ & admissible-output equivalence: $\mathrm{Adm}_R(s)=\mathrm{Adm}_R(s')$ \\
+$s \sim_R s'$ & admissible-output equivalence: $\Adm_R(s)=\Adm_R(s')$ \\
 \midrule
 $S/{\sim_R}$ & quotient of states by admissible-output equivalence \\
 \midrule

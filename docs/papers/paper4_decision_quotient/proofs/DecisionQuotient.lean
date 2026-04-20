@@ -8,6 +8,7 @@ import DecisionQuotient.Basic
 import DecisionQuotient.Finite
 import DecisionQuotient.Quotient
 import DecisionQuotient.Sufficiency
+import DecisionQuotient.OptimizerSummary
 import DecisionQuotient.UniverseObjective
 import DecisionQuotient.DecisionGeometry
 import DecisionQuotient.Hardness

@@ -448,6 +448,134 @@ theorem kHopNeighborhood_card_le_of_uniformShell
   have hBase := G.kHopNeighborhood_card_le_of_shellBounds activePocket (fun _ => K) k hShell
   simpa using hBase
 
+/-- Distance-indexed upper profile for per-shell allosteric rank contribution
+(`3` coordinates per shell atom in the current coordinate model). -/
+def allostericDistanceContributionUpper (distanceProfile : ℕ → ℕ) (d : ℕ) : ℕ :=
+  3 * distanceProfile d
+
+/-- If the shell envelope is non-increasing with graph distance, the induced
+allosteric contribution upper profile is also non-increasing. -/
+theorem allostericDistanceContributionUpper_antitone
+    (distanceProfile : ℕ → ℕ)
+    (hDecay : ∀ d : ℕ, distanceProfile (d + 1) ≤ distanceProfile d) :
+    ∀ d : ℕ,
+      allostericDistanceContributionUpper distanceProfile (d + 1) ≤
+        allostericDistanceContributionUpper distanceProfile d := by
+  intro d
+  unfold allostericDistanceContributionUpper
+  exact Nat.mul_le_mul_left 3 (hDecay d)
+
+/-- Qualitative allosteric decay law: under a non-increasing shell envelope,
+the declared per-distance allosteric contribution upper bound is monotone
+non-increasing with graph distance. -/
+theorem allosteric_contribution_decay_law
+    (distanceProfile : ℕ → ℕ)
+    (hDecay : ∀ d : ℕ, distanceProfile (d + 1) ≤ distanceProfile d) :
+    ∀ d : ℕ,
+      allostericDistanceContributionUpper distanceProfile (d + 1) ≤
+        allostericDistanceContributionUpper distanceProfile d :=
+  allostericDistanceContributionUpper_antitone distanceProfile hDecay
+
+/-- Real-valued exponential shell envelope for distance-decay allostery. -/
+noncomputable def allostericExponentialShellEnvelope (C α : ℝ) (d : ℕ) : ℝ :=
+  C * Real.exp (-α * (d : ℝ))
+
+/-- For nonnegative envelope scale and decay rate, the exponential shell envelope
+is non-increasing with graph distance. -/
+theorem allostericExponentialShellEnvelope_antitone
+    {C α : ℝ} (hC : 0 ≤ C) (hα : 0 ≤ α) :
+    ∀ d : ℕ,
+      allostericExponentialShellEnvelope C α (d + 1) ≤
+        allostericExponentialShellEnvelope C α d := by
+  intro d
+  unfold allostericExponentialShellEnvelope
+  have hStep : (d : ℝ) ≤ (((d + 1 : ℕ) : ℝ)) := by
+    exact_mod_cast Nat.le_succ d
+  have hArg : -α * (((d + 1 : ℕ) : ℝ)) ≤ -α * (d : ℝ) := by
+    nlinarith [hStep, hα]
+  have hExp :
+      Real.exp (-α * (((d + 1 : ℕ) : ℝ))) ≤ Real.exp (-α * (d : ℝ)) :=
+    Real.exp_le_exp.mpr hArg
+  exact mul_le_mul_of_nonneg_left hExp hC
+
+/-- Integer shell budget extracted from the exponential real envelope by
+ceiling each shell level. -/
+noncomputable def allostericExponentialDistanceProfile (C α : ℝ) (d : ℕ) : ℕ :=
+  Nat.ceil (allostericExponentialShellEnvelope C α d)
+
+/-- The ceiling-based exponential distance profile is non-increasing whenever
+the underlying real exponential envelope is non-increasing. -/
+theorem allostericExponentialDistanceProfile_antitone
+    {C α : ℝ} (hC : 0 ≤ C) (hα : 0 ≤ α) :
+    ∀ d : ℕ,
+      allostericExponentialDistanceProfile C α (d + 1) ≤
+        allostericExponentialDistanceProfile C α d := by
+  intro d
+  unfold allostericExponentialDistanceProfile
+  exact Nat.ceil_mono (allostericExponentialShellEnvelope_antitone hC hα d)
+
+/-- Exponential distance-decay corollary of the qualitative allosteric decay
+law for the declared integer shell-contribution profile. -/
+theorem allosteric_exponential_contribution_decay_law
+    {C α : ℝ} (hC : 0 ≤ C) (hα : 0 ≤ α) :
+    ∀ d : ℕ,
+      allostericDistanceContributionUpper (allostericExponentialDistanceProfile C α) (d + 1) ≤
+        allostericDistanceContributionUpper (allostericExponentialDistanceProfile C α) d :=
+  allostericDistanceContributionUpper_antitone
+    (allostericExponentialDistanceProfile C α)
+    (allostericExponentialDistanceProfile_antitone hC hα)
+
+/-- Real-valued polynomial shell envelope for distance-decay allostery. -/
+noncomputable def allostericPolynomialShellEnvelope (C : ℝ) (p : ℕ) (d : ℕ) : ℝ :=
+  C / ((d : ℝ) + 1) ^ p
+
+/-- For nonnegative envelope scale, the polynomial shell envelope is
+non-increasing with graph distance. -/
+theorem allostericPolynomialShellEnvelope_antitone
+    {C : ℝ} {p : ℕ} (hC : 0 ≤ C) :
+    ∀ d : ℕ,
+      allostericPolynomialShellEnvelope C p (d + 1) ≤
+        allostericPolynomialShellEnvelope C p d := by
+  intro d
+  unfold allostericPolynomialShellEnvelope
+  have hStep : (d : ℝ) + 1 ≤ (((d + 1 : ℕ) : ℝ) + 1) := by
+    have hNat : (d : ℝ) ≤ ((d + 1 : ℕ) : ℝ) := by
+      exact_mod_cast Nat.le_succ d
+    linarith
+  have hBaseNonneg : 0 ≤ (d : ℝ) + 1 := by positivity
+  have hDenLe :
+      ((d : ℝ) + 1) ^ p ≤ ((((d + 1 : ℕ) : ℝ) + 1) ^ p) :=
+    pow_le_pow_left₀ hBaseNonneg hStep p
+  have hDenPos : 0 < ((d : ℝ) + 1) ^ p := by positivity
+  exact div_le_div_of_nonneg_left hC hDenPos hDenLe
+
+/-- Integer shell budget extracted from the polynomial real envelope by
+ceiling each shell level. -/
+noncomputable def allostericPolynomialDistanceProfile (C : ℝ) (p : ℕ) (d : ℕ) : ℕ :=
+  Nat.ceil (allostericPolynomialShellEnvelope C p d)
+
+/-- The ceiling-based polynomial distance profile is non-increasing whenever
+the underlying real polynomial envelope is non-increasing. -/
+theorem allostericPolynomialDistanceProfile_antitone
+    {C : ℝ} {p : ℕ} (hC : 0 ≤ C) :
+    ∀ d : ℕ,
+      allostericPolynomialDistanceProfile C p (d + 1) ≤
+        allostericPolynomialDistanceProfile C p d := by
+  intro d
+  unfold allostericPolynomialDistanceProfile
+  exact Nat.ceil_mono (allostericPolynomialShellEnvelope_antitone hC d)
+
+/-- Polynomial distance-decay corollary of the qualitative allosteric decay
+law for the declared integer shell-contribution profile. -/
+theorem allosteric_polynomial_contribution_decay_law
+    {C : ℝ} {p : ℕ} (hC : 0 ≤ C) :
+    ∀ d : ℕ,
+      allostericDistanceContributionUpper (allostericPolynomialDistanceProfile C p) (d + 1) ≤
+        allostericDistanceContributionUpper (allostericPolynomialDistanceProfile C p) d :=
+  allostericDistanceContributionUpper_antitone
+    (allostericPolynomialDistanceProfile C p)
+    (allostericPolynomialDistanceProfile_antitone hC)
+
 end ProteinMechanicalGraph
 
 /-- The starting atom of a rigid path belongs to the mechanical neighborhood of any pocket that contains
@@ -586,6 +714,269 @@ theorem allosteric_srank_graph_bound_of_kHopShellBounds
     G activePocket k hCovered
   have hCard := G.kHopNeighborhood_card_le_of_shellBounds activePocket shellBound k hShell
   omega
+
+/-- Distance-decay profile form of the k-hop allosteric theorem: any explicit
+distance-indexed shell envelope yields a finite structural-rank bound. -/
+theorem allosteric_srank_bound_of_distanceDecayProfile
+    (prob : MDBindingProblem)
+    [Fintype MDAction]
+    (hStrictAll : ∀ s, ∃ a, StrictOpt prob.toDecisionProblem a s)
+    (hBounded : OutsideCutoffApproximationBounded prob)
+    (G : ProteinMechanicalGraph prob)
+    (activePocket : Finset (Fin prob.protein.numAtoms))
+    (k : ℕ)
+    (distanceProfile : ℕ → ℕ)
+    (hCovered : relevantAtomPositions prob ⊆ G.kHopNeighborhood activePocket k)
+    (hShell : ∀ m < k,
+      (G.outerContactShell (G.kHopNeighborhood activePocket m)).card ≤ distanceProfile m) :
+    @DecisionProblem.srank MDAction MDState (numMDCoordinates prob)
+      (mdCoordinateSpaceStruct prob) prob.toDecisionProblem ≤
+      3 * activePocket.card + 3 * Finset.sum (Finset.range k) distanceProfile +
+        3 * prob.ligand.numAtoms := by
+  exact allosteric_srank_graph_bound_of_kHopShellBounds prob hStrictAll hBounded
+    G activePocket k distanceProfile hCovered hShell
+
+/-- Explicit exponential-envelope specialization of the distance-profile theorem:
+if each shell is bounded by the ceiling of an exponential decay envelope, then
+the docking structural rank is bounded by the corresponding finite shell sum. -/
+theorem allosteric_srank_bound_of_exponentialDecayProfile
+    (prob : MDBindingProblem)
+    [Fintype MDAction]
+    (hStrictAll : ∀ s, ∃ a, StrictOpt prob.toDecisionProblem a s)
+    (hBounded : OutsideCutoffApproximationBounded prob)
+    (G : ProteinMechanicalGraph prob)
+    (activePocket : Finset (Fin prob.protein.numAtoms))
+    (k : ℕ)
+    (C α : ℝ)
+    (hCovered : relevantAtomPositions prob ⊆ G.kHopNeighborhood activePocket k)
+    (hShell : ∀ m < k,
+      (G.outerContactShell (G.kHopNeighborhood activePocket m)).card ≤
+        ProteinMechanicalGraph.allostericExponentialDistanceProfile C α m) :
+    @DecisionProblem.srank MDAction MDState (numMDCoordinates prob)
+      (mdCoordinateSpaceStruct prob) prob.toDecisionProblem ≤
+      3 * activePocket.card +
+        3 * Finset.sum (Finset.range k)
+          (ProteinMechanicalGraph.allostericExponentialDistanceProfile C α) +
+        3 * prob.ligand.numAtoms := by
+  exact allosteric_srank_bound_of_distanceDecayProfile prob hStrictAll hBounded
+    G activePocket k
+    (ProteinMechanicalGraph.allostericExponentialDistanceProfile C α)
+    hCovered hShell
+
+/-- Explicit polynomial-envelope specialization of the distance-profile theorem:
+if each shell is bounded by the ceiling of a polynomial decay envelope, then
+the docking structural rank is bounded by the corresponding finite shell sum. -/
+theorem allosteric_srank_bound_of_polynomialDecayProfile
+    (prob : MDBindingProblem)
+    [Fintype MDAction]
+    (hStrictAll : ∀ s, ∃ a, StrictOpt prob.toDecisionProblem a s)
+    (hBounded : OutsideCutoffApproximationBounded prob)
+    (G : ProteinMechanicalGraph prob)
+    (activePocket : Finset (Fin prob.protein.numAtoms))
+    (k : ℕ)
+    (C : ℝ) (p : ℕ)
+    (hCovered : relevantAtomPositions prob ⊆ G.kHopNeighborhood activePocket k)
+    (hShell : ∀ m < k,
+      (G.outerContactShell (G.kHopNeighborhood activePocket m)).card ≤
+        ProteinMechanicalGraph.allostericPolynomialDistanceProfile C p m) :
+    @DecisionProblem.srank MDAction MDState (numMDCoordinates prob)
+      (mdCoordinateSpaceStruct prob) prob.toDecisionProblem ≤
+      3 * activePocket.card +
+        3 * Finset.sum (Finset.range k)
+          (ProteinMechanicalGraph.allostericPolynomialDistanceProfile C p) +
+        3 * prob.ligand.numAtoms := by
+  exact allosteric_srank_bound_of_distanceDecayProfile prob hStrictAll hBounded
+    G activePocket k
+    (ProteinMechanicalGraph.allostericPolynomialDistanceProfile C p)
+    hCovered hShell
+
+/-- Real-valued budget corollary for polynomial shell envelopes. If the reciprocal-power
+sum on the first `k` shells is bounded by `Z`, then the polynomial distance-profile
+rank theorem yields an explicit closed-form real bound with affine `k` term and
+`C * Z` envelope term. For `p > 1`, one can instantiate `Z` using any finite
+p-series upper bound. -/
+theorem allosteric_srank_bound_of_polynomialDecayProfile_of_seriesBound
+    (prob : MDBindingProblem)
+    [Fintype MDAction]
+    (hStrictAll : ∀ s, ∃ a, StrictOpt prob.toDecisionProblem a s)
+    (hBounded : OutsideCutoffApproximationBounded prob)
+    (G : ProteinMechanicalGraph prob)
+    (activePocket : Finset (Fin prob.protein.numAtoms))
+    (k : ℕ)
+    (C : ℝ) (p : ℕ)
+    (hC : 0 ≤ C)
+    (hCovered : relevantAtomPositions prob ⊆ G.kHopNeighborhood activePocket k)
+    (hShell : ∀ m < k,
+      (G.outerContactShell (G.kHopNeighborhood activePocket m)).card ≤
+        ProteinMechanicalGraph.allostericPolynomialDistanceProfile C p m)
+    (Z : ℝ)
+    (hSeries : Finset.sum (Finset.range k)
+      (fun d : ℕ => (1 : ℝ) / (((d : ℝ) + 1) ^ p)) ≤ Z) :
+    ((@DecisionProblem.srank MDAction MDState (numMDCoordinates prob)
+      (mdCoordinateSpaceStruct prob) prob.toDecisionProblem : ℕ) : ℝ) ≤
+      3 * (activePocket.card : ℝ) + 3 * (k : ℝ) +
+        3 * C * Z + 3 * (prob.ligand.numAtoms : ℝ) := by
+  let profile := ProteinMechanicalGraph.allostericPolynomialDistanceProfile C p
+  have hNat := allosteric_srank_bound_of_polynomialDecayProfile prob hStrictAll hBounded
+    G activePocket k C p hCovered hShell
+  have hNatR :
+      ((@DecisionProblem.srank MDAction MDState (numMDCoordinates prob)
+        (mdCoordinateSpaceStruct prob) prob.toDecisionProblem : ℕ) : ℝ) ≤
+      (3 * activePocket.card + 3 * Finset.sum (Finset.range k) profile +
+        3 * prob.ligand.numAtoms : ℕ) := by
+    exact_mod_cast hNat
+  have hBase :
+      ((@DecisionProblem.srank MDAction MDState (numMDCoordinates prob)
+        (mdCoordinateSpaceStruct prob) prob.toDecisionProblem : ℕ) : ℝ) ≤
+      3 * (activePocket.card : ℝ) +
+        3 * ((Finset.sum (Finset.range k) profile : ℕ) : ℝ) +
+        3 * (prob.ligand.numAtoms : ℝ) := by
+    simpa [Nat.cast_add, Nat.cast_mul] using hNatR
+  have hTerm : ∀ d : ℕ,
+      ((profile d : ℕ) : ℝ) ≤ C / (((d : ℝ) + 1) ^ p) + 1 := by
+    intro d
+    have hDenPos : 0 < (((d : ℝ) + 1) ^ p) := by positivity
+    have hArgNonneg : 0 ≤ C / (((d : ℝ) + 1) ^ p) :=
+      div_nonneg hC hDenPos.le
+    have hCeil : ((profile d : ℕ) : ℝ) < C / (((d : ℝ) + 1) ^ p) + 1 := by
+      simpa [profile, ProteinMechanicalGraph.allostericPolynomialDistanceProfile,
+        ProteinMechanicalGraph.allostericPolynomialShellEnvelope] using
+        (Nat.ceil_lt_add_one hArgNonneg)
+    exact hCeil.le
+  have hProfileSum :
+      ((Finset.sum (Finset.range k) profile : ℕ) : ℝ) ≤
+        Finset.sum (Finset.range k) (fun d : ℕ => C / (((d : ℝ) + 1) ^ p) + 1) := by
+    calc
+      ((Finset.sum (Finset.range k) profile : ℕ) : ℝ)
+          = Finset.sum (Finset.range k) (fun d : ℕ => ((profile d : ℕ) : ℝ)) := by
+              simp
+      _ ≤ Finset.sum (Finset.range k) (fun d : ℕ => C / (((d : ℝ) + 1) ^ p) + 1) := by
+            exact Finset.sum_le_sum (fun d _ => hTerm d)
+  have hScaledSeries :
+      Finset.sum (Finset.range k) (fun d : ℕ => C / (((d : ℝ) + 1) ^ p)) ≤ C * Z := by
+    have hMulSeries :
+        Finset.sum (Finset.range k) (fun d : ℕ => C / (((d : ℝ) + 1) ^ p)) =
+          C * Finset.sum (Finset.range k) (fun d : ℕ => (1 : ℝ) / (((d : ℝ) + 1) ^ p)) := by
+      calc
+        Finset.sum (Finset.range k) (fun d : ℕ => C / (((d : ℝ) + 1) ^ p))
+            = Finset.sum (Finset.range k)
+                (fun d : ℕ => C * ((1 : ℝ) / (((d : ℝ) + 1) ^ p))) := by
+                  simp [div_eq_mul_inv]
+        _ = C * Finset.sum (Finset.range k) (fun d : ℕ => (1 : ℝ) / (((d : ℝ) + 1) ^ p)) := by
+              simpa using
+                (Finset.mul_sum (s := Finset.range k)
+                  (f := fun d : ℕ => (1 : ℝ) / (((d : ℝ) + 1) ^ p))
+                  (a := C)).symm
+    rw [hMulSeries]
+    exact mul_le_mul_of_nonneg_left hSeries hC
+  have hBudget :
+      ((Finset.sum (Finset.range k) profile : ℕ) : ℝ) ≤ C * Z + k := by
+    have hOneSum :
+        Finset.sum (Finset.range k) (fun _ : ℕ => (1 : ℝ)) = k := by
+      simp
+    have hCombined :
+        Finset.sum (Finset.range k) (fun d : ℕ => C / (((d : ℝ) + 1) ^ p) + 1)
+          = Finset.sum (Finset.range k) (fun d : ℕ => C / (((d : ℝ) + 1) ^ p) ) + k := by
+      calc
+        Finset.sum (Finset.range k) (fun d : ℕ => C / (((d : ℝ) + 1) ^ p) + 1)
+            = Finset.sum (Finset.range k) (fun d : ℕ => C / (((d : ℝ) + 1) ^ p)) +
+                Finset.sum (Finset.range k) (fun _ : ℕ => (1 : ℝ)) := by
+                    simp [Finset.sum_add_distrib]
+        _ = Finset.sum (Finset.range k) (fun d : ℕ => C / (((d : ℝ) + 1) ^ p)) + k := by
+              rw [hOneSum]
+    have hTmp :
+        ((Finset.sum (Finset.range k) profile : ℕ) : ℝ) ≤
+          Finset.sum (Finset.range k) (fun d : ℕ => C / (((d : ℝ) + 1) ^ p)) + k := by
+      exact le_trans hProfileSum (by simpa [hCombined])
+    exact le_trans hTmp (by gcongr)
+  have hScaledProfile :
+      3 * ((Finset.sum (Finset.range k) profile : ℕ) : ℝ) ≤ 3 * (C * Z + k) := by
+    exact mul_le_mul_of_nonneg_left hBudget (by norm_num)
+  have hConclude :
+      ((@DecisionProblem.srank MDAction MDState (numMDCoordinates prob)
+        (mdCoordinateSpaceStruct prob) prob.toDecisionProblem : ℕ) : ℝ) ≤
+      3 * (activePocket.card : ℝ) +
+        3 * (C * Z + k) +
+        3 * (prob.ligand.numAtoms : ℝ) := by
+    linarith [hBase, hScaledProfile]
+  have hRearrange :
+      3 * (activePocket.card : ℝ) + 3 * (C * Z + k) + 3 * (prob.ligand.numAtoms : ℝ) =
+        3 * (activePocket.card : ℝ) + 3 * (k : ℝ) +
+          3 * C * Z + 3 * (prob.ligand.numAtoms : ℝ) := by ring
+  simpa [hRearrange] using hConclude
+
+/-- Elementary finite reciprocal-power upper bound for integer exponents `p ≥ 2`:
+the first `k` terms satisfy
+`∑_{d<k} 1/(d+1)^p ≤ 1 + k/4`.
+This gives an explicit no-parameter series budget for polynomial allosteric profiles. -/
+theorem reciprocalPowerSeriesBound_of_two_le
+    (k p : ℕ) (hp : 2 ≤ p) :
+    Finset.sum (Finset.range k) (fun d : ℕ => (1 : ℝ) / (((d : ℝ) + 1) ^ p)) ≤
+      1 + (k : ℝ) / 4 := by
+  cases k with
+  | zero =>
+      simp
+  | succ k =>
+      have hMain :
+          Finset.sum (Finset.range (k + 1)) (fun d : ℕ => (1 : ℝ) / (((d : ℝ) + 1) ^ p)) ≤
+            1 + ((k + 1 : ℕ) : ℝ) / 4 := by
+        induction k with
+        | zero =>
+            simp
+        | succ k ih =>
+            let f : ℕ → ℝ := fun d => (1 : ℝ) / (((d : ℝ) + 1) ^ p)
+            have hTwoLeBase : (2 : ℝ) ≤ (((k + 1 : ℕ) : ℝ) + 1) := by
+              have hOneLe : (1 : ℝ) ≤ ((k + 1 : ℕ) : ℝ) := by
+                exact_mod_cast Nat.succ_le_succ (Nat.zero_le k)
+              linarith
+            have hPowTwoLe : (2 : ℝ) ^ p ≤ ((((k + 1 : ℕ) : ℝ) + 1) ^ p) :=
+              pow_le_pow_left₀ (by positivity) hTwoLeBase p
+            have hFourLePowTwo : (4 : ℝ) ≤ (2 : ℝ) ^ p := by
+              have hPowMono : (2 : ℝ) ^ 2 ≤ (2 : ℝ) ^ p :=
+                pow_right_mono₀ (by norm_num : (1 : ℝ) ≤ 2) hp
+              have hPowTwoEq : (2 : ℝ) ^ 2 = 4 := by norm_num
+              linarith [hPowMono, hPowTwoEq]
+            have hFourLeDen : (4 : ℝ) ≤ ((((k + 1 : ℕ) : ℝ) + 1) ^ p) :=
+              le_trans hFourLePowTwo hPowTwoLe
+            have hTermLe : f (k + 1) ≤ (1 : ℝ) / 4 := by
+              exact one_div_le_one_div_of_le (by norm_num : (0 : ℝ) < 4) hFourLeDen
+            calc
+              Finset.sum (Finset.range ((k + 1) + 1)) f
+                  = Finset.sum (Finset.range (k + 1)) f + f (k + 1) := by
+                      simpa using (Finset.sum_range_succ (f := f) (k + 1))
+              _ ≤ (1 + ((k + 1 : ℕ) : ℝ) / 4) + (1 / 4 : ℝ) := by
+                    gcongr
+              _ = 1 + ((k + 2 : ℕ) : ℝ) / 4 := by
+                    have hCast : (((k + 2 : ℕ) : ℝ)) = ((k + 1 : ℕ) : ℝ) + 1 := by
+                      exact_mod_cast (by omega : k + 2 = (k + 1) + 1)
+                    nlinarith [hCast]
+      simpa using hMain
+
+/-- Explicit no-parameter polynomial `p`-series instantiation (`p ≥ 2`) of the
+polynomial distance-profile rank theorem. -/
+theorem allosteric_srank_bound_of_polynomialDecayProfile_of_two_le
+    (prob : MDBindingProblem)
+    [Fintype MDAction]
+    (hStrictAll : ∀ s, ∃ a, StrictOpt prob.toDecisionProblem a s)
+    (hBounded : OutsideCutoffApproximationBounded prob)
+    (G : ProteinMechanicalGraph prob)
+    (activePocket : Finset (Fin prob.protein.numAtoms))
+    (k : ℕ)
+    (C : ℝ) (p : ℕ)
+    (hp : 2 ≤ p)
+    (hC : 0 ≤ C)
+    (hCovered : relevantAtomPositions prob ⊆ G.kHopNeighborhood activePocket k)
+    (hShell : ∀ m < k,
+      (G.outerContactShell (G.kHopNeighborhood activePocket m)).card ≤
+        ProteinMechanicalGraph.allostericPolynomialDistanceProfile C p m) :
+    ((@DecisionProblem.srank MDAction MDState (numMDCoordinates prob)
+      (mdCoordinateSpaceStruct prob) prob.toDecisionProblem : ℕ) : ℝ) ≤
+      3 * (activePocket.card : ℝ) + 3 * (k : ℝ) +
+        3 * C * (1 + (k : ℝ) / 4) + 3 * (prob.ligand.numAtoms : ℝ) := by
+  exact allosteric_srank_bound_of_polynomialDecayProfile_of_seriesBound
+    prob hStrictAll hBounded G activePocket k C p hC hCovered hShell
+    (1 + (k : ℝ) / 4)
+    (reciprocalPowerSeriesBound_of_two_le k p hp)
 
 /-- Uniform-shell corollary of the k-hop theorem. If every hop adds at most `K` new outer-shell atoms, then
 the rank grows at most linearly in the hop depth. -/
@@ -739,6 +1130,131 @@ theorem geometric_contact_kHop_srank_bound_of_shellBounds
   exact allosteric_srank_graph_bound_of_kHopShellBounds prob hStrictAll hBounded
     (proteinContactGraph prob contactRadius)
     (activePocketByRadius prob pocketRadius) k shellBound hCovered hShell
+
+/-- Geometry-derived exponential-distance specialization: if each of the first
+`k` contact shells around the radius-defined active pocket is bounded by an
+explicit exponential envelope, the docking structural rank obeys the
+corresponding finite exponential shell-sum bound. -/
+theorem geometric_contact_kHop_srank_bound_of_exponentialDecayProfile
+    (prob : MDBindingProblem)
+    [Fintype MDAction]
+    (hStrictAll : ∀ s, ∃ a, StrictOpt prob.toDecisionProblem a s)
+    (hBounded : OutsideCutoffApproximationBounded prob)
+    (contactRadius pocketRadius : ℝ)
+    (k : ℕ)
+    (C α : ℝ)
+    (hCovered : relevantAtomPositions prob ⊆
+      (proteinContactGraph prob contactRadius).kHopNeighborhood
+        (activePocketByRadius prob pocketRadius) k)
+    (hShell : ∀ m < k,
+      ((proteinContactGraph prob contactRadius).outerContactShell
+        ((proteinContactGraph prob contactRadius).kHopNeighborhood
+          (activePocketByRadius prob pocketRadius) m)).card ≤
+            ProteinMechanicalGraph.allostericExponentialDistanceProfile C α m) :
+    @DecisionProblem.srank MDAction MDState (numMDCoordinates prob)
+      (mdCoordinateSpaceStruct prob) prob.toDecisionProblem ≤
+      3 * (activePocketByRadius prob pocketRadius).card +
+        3 * Finset.sum (Finset.range k)
+          (ProteinMechanicalGraph.allostericExponentialDistanceProfile C α) +
+        3 * prob.ligand.numAtoms := by
+  exact allosteric_srank_bound_of_exponentialDecayProfile prob hStrictAll hBounded
+    (proteinContactGraph prob contactRadius)
+    (activePocketByRadius prob pocketRadius) k C α hCovered hShell
+
+/-- Geometry-derived polynomial-distance specialization: if each of the first
+`k` contact shells around the radius-defined active pocket is bounded by an
+explicit polynomial envelope, the docking structural rank obeys the
+corresponding finite polynomial shell-sum bound. -/
+theorem geometric_contact_kHop_srank_bound_of_polynomialDecayProfile
+    (prob : MDBindingProblem)
+    [Fintype MDAction]
+    (hStrictAll : ∀ s, ∃ a, StrictOpt prob.toDecisionProblem a s)
+    (hBounded : OutsideCutoffApproximationBounded prob)
+    (contactRadius pocketRadius : ℝ)
+    (k : ℕ)
+    (C : ℝ) (p : ℕ)
+    (hCovered : relevantAtomPositions prob ⊆
+      (proteinContactGraph prob contactRadius).kHopNeighborhood
+        (activePocketByRadius prob pocketRadius) k)
+    (hShell : ∀ m < k,
+      ((proteinContactGraph prob contactRadius).outerContactShell
+        ((proteinContactGraph prob contactRadius).kHopNeighborhood
+          (activePocketByRadius prob pocketRadius) m)).card ≤
+            ProteinMechanicalGraph.allostericPolynomialDistanceProfile C p m) :
+    @DecisionProblem.srank MDAction MDState (numMDCoordinates prob)
+      (mdCoordinateSpaceStruct prob) prob.toDecisionProblem ≤
+      3 * (activePocketByRadius prob pocketRadius).card +
+        3 * Finset.sum (Finset.range k)
+          (ProteinMechanicalGraph.allostericPolynomialDistanceProfile C p) +
+        3 * prob.ligand.numAtoms := by
+  exact allosteric_srank_bound_of_polynomialDecayProfile prob hStrictAll hBounded
+    (proteinContactGraph prob contactRadius)
+    (activePocketByRadius prob pocketRadius) k C p hCovered hShell
+
+/-- Geometry-contact specialization of the polynomial series-budget corollary. -/
+theorem geometric_contact_kHop_srank_bound_of_polynomialDecayProfile_of_seriesBound
+    (prob : MDBindingProblem)
+    [Fintype MDAction]
+    (hStrictAll : ∀ s, ∃ a, StrictOpt prob.toDecisionProblem a s)
+    (hBounded : OutsideCutoffApproximationBounded prob)
+    (contactRadius pocketRadius : ℝ)
+    (k : ℕ)
+    (C : ℝ) (p : ℕ)
+    (hC : 0 ≤ C)
+    (hCovered : relevantAtomPositions prob ⊆
+      (proteinContactGraph prob contactRadius).kHopNeighborhood
+        (activePocketByRadius prob pocketRadius) k)
+    (hShell : ∀ m < k,
+      ((proteinContactGraph prob contactRadius).outerContactShell
+        ((proteinContactGraph prob contactRadius).kHopNeighborhood
+          (activePocketByRadius prob pocketRadius) m)).card ≤
+            ProteinMechanicalGraph.allostericPolynomialDistanceProfile C p m)
+    (Z : ℝ)
+    (hSeries : Finset.sum (Finset.range k)
+      (fun d : ℕ => (1 : ℝ) / (((d : ℝ) + 1) ^ p)) ≤ Z) :
+    ((@DecisionProblem.srank MDAction MDState (numMDCoordinates prob)
+      (mdCoordinateSpaceStruct prob) prob.toDecisionProblem : ℕ) : ℝ) ≤
+      3 * ((activePocketByRadius prob pocketRadius).card : ℝ) +
+        3 * (k : ℝ) +
+        3 * C * Z +
+        3 * (prob.ligand.numAtoms : ℝ) := by
+  exact allosteric_srank_bound_of_polynomialDecayProfile_of_seriesBound
+    prob hStrictAll hBounded
+    (proteinContactGraph prob contactRadius)
+    (activePocketByRadius prob pocketRadius)
+    k C p hC hCovered hShell Z hSeries
+
+/-- Explicit no-parameter (`p ≥ 2`) geometry-contact specialization of the
+polynomial distance-profile series budget theorem. -/
+theorem geometric_contact_kHop_srank_bound_of_polynomialDecayProfile_of_two_le
+    (prob : MDBindingProblem)
+    [Fintype MDAction]
+    (hStrictAll : ∀ s, ∃ a, StrictOpt prob.toDecisionProblem a s)
+    (hBounded : OutsideCutoffApproximationBounded prob)
+    (contactRadius pocketRadius : ℝ)
+    (k : ℕ)
+    (C : ℝ) (p : ℕ)
+    (hp : 2 ≤ p)
+    (hC : 0 ≤ C)
+    (hCovered : relevantAtomPositions prob ⊆
+      (proteinContactGraph prob contactRadius).kHopNeighborhood
+        (activePocketByRadius prob pocketRadius) k)
+    (hShell : ∀ m < k,
+      ((proteinContactGraph prob contactRadius).outerContactShell
+        ((proteinContactGraph prob contactRadius).kHopNeighborhood
+          (activePocketByRadius prob pocketRadius) m)).card ≤
+            ProteinMechanicalGraph.allostericPolynomialDistanceProfile C p m) :
+    ((@DecisionProblem.srank MDAction MDState (numMDCoordinates prob)
+      (mdCoordinateSpaceStruct prob) prob.toDecisionProblem : ℕ) : ℝ) ≤
+      3 * ((activePocketByRadius prob pocketRadius).card : ℝ) +
+        3 * (k : ℝ) +
+        3 * C * (1 + (k : ℝ) / 4) +
+        3 * (prob.ligand.numAtoms : ℝ) := by
+  exact allosteric_srank_bound_of_polynomialDecayProfile_of_two_le
+    prob hStrictAll hBounded
+    (proteinContactGraph prob contactRadius)
+    (activePocketByRadius prob pocketRadius)
+    k C p hp hC hCovered hShell
 
 /-- Uniform-shell geometry corollary: if each of the first `k` outer contact shells around the site pocket
 contains at most `K` new atoms, the docking rank grows at most linearly in `k`. -/

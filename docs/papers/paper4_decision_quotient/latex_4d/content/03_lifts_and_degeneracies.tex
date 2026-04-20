@@ -28,7 +28,7 @@ Single-action systems, strict global dominance, constant optimal-set systems, an
 Bounded state space behaves differently. It does not force a constant optimizer. Instead, it makes exact certification feasible by brute-force enumeration over a finite universe. This is polynomial only because the instance family already carries a hard external bound on its search space.
 
 \leanmetapending{\LH{FR1}, \LH{FR6}}
-\begin{proposition}[Degenerate Positive Cases]\label{prop:degenerate-cases}
+\begin{proposition}[Degenerate Tractable Cases]\label{prop:degenerate-cases}
 Every non-core tractable case considered here that is not a regime lift belongs to one of two degenerate buckets:
 \begin{enumerate}
 \item constant-optimizer collapse, or
@@ -36,4 +36,4 @@ Every non-core tractable case considered here that is not a regime lift belongs 
 \end{enumerate}
 \end{proposition}
 
-Taken together with Proposition~\ref{prop:lifts-no-new-primitive}, Proposition~\ref{prop:degenerate-cases} sharpens Theorem~\ref{thm:current-landscape-partition}: every positive result considered here is exactly one of three things, a primitive core case, a lift, or a degenerate collapse.
+Taken together with Proposition~\ref{prop:lifts-no-new-primitive}, Proposition~\ref{prop:degenerate-cases} supplies the classification map promised in Theorem~\ref{thm:current-landscape-partition}: every positive result considered here is exactly one of three things, a primitive core case, a lift, or a degenerate collapse.
