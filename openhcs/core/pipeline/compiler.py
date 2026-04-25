@@ -939,31 +939,29 @@ class PipelineCompiler:
                 "Cannot validate memory contracts in a frozen ProcessingContext."
             )
 
-        # FuncStepContractValidator might need access to input/output_memory_type_hint from plan
-        step_memory_types = FuncStepContractValidator.validate_pipeline(
+        FuncStepContractValidator.validate_pipeline(
             steps=steps_definition,
             pipeline_context=context,  # Pass context so validator can access step plans for memory type overrides
             step_state_map=step_state_map,  # Pass step_state_map for accessing config via ObjectState
             orchestrator=orchestrator,  # Pass orchestrator for dict pattern key validation
         )
 
-        for step_index, memory_types in step_memory_types.items():
-            if (
-                "input_memory_type" not in memory_types
-                or "output_memory_type" not in memory_types
-            ):
-                step_name = context.step_plans[step_index].step_name
+        for step_index, step in enumerate(steps_definition):
+            if not isinstance(step, FunctionStep):
+                continue
+            if step_index not in context.step_plans:
                 raise AssertionError(
-                    f"Memory type validation must set input/output_memory_type for FunctionStep {step_name} (index: {step_index})."
+                    f"Memory validation requires a compiled plan for FunctionStep {step.name} (index: {step_index})."
                 )
-            if step_index in context.step_plans:
-                step_plan = context.step_plans[step_index]
-                step_plan.input_memory_type = memory_types["input_memory_type"]
-                step_plan.output_memory_type = memory_types["output_memory_type"]
-                step_plan.func = memory_types["func"]
-            else:
-                logger.warning(
-                    f"Step index {step_index} found in memory_types but not in context.step_plans. Skipping."
+            step_plan = context.step_plans[step_index]
+            missing_fields = [
+                field_name
+                for field_name in ["input_memory_type", "output_memory_type", "func"]
+                if getattr(step_plan, field_name) is None
+            ]
+            if missing_fields:
+                raise AssertionError(
+                    f"Memory validation must set {missing_fields} for FunctionStep {step_plan.step_name} (index: {step_index})."
                 )
 
         # Apply memory type override: Any step with disk output must use numpy for disk writing
@@ -983,21 +981,15 @@ class PipelineCompiler:
     def assign_gpu_resources_for_context(context: ProcessingContext) -> None:
         """
         Validates GPU memory types from context.step_plans and assigns GPU device IDs.
-        (Unchanged from previous version)
         """
         if context.is_frozen():
             raise AttributeError(
                 "Cannot assign GPU resources in a frozen ProcessingContext."
             )
 
-        gpu_assignments = GPUMemoryTypeValidator.validate_step_plans(context.step_plans)
+        GPUMemoryTypeValidator.validate_step_plans(context.step_plans)
 
-        for (
-            step_index,
-            step_plan_val,
-        ) in (
-            context.step_plans.items()
-        ):  # Renamed step_plan to step_plan_val to avoid conflict
+        for step_index, step_plan_val in context.step_plans.items():
             is_gpu_step = False
             input_type = step_plan_val.input_memory_type
             if input_type in VALID_GPU_MEMORY_TYPES:
@@ -1008,23 +1000,12 @@ class PipelineCompiler:
                 is_gpu_step = True
 
             if is_gpu_step:
-                # Ensure gpu_assignments has an entry for this step_index if it's a GPU step
-                # And that entry contains a 'gpu_id'
-                step_gpu_assignment = gpu_assignments[step_index]
-                if "gpu_id" not in step_gpu_assignment:
+                if step_plan_val.gpu_id is None:
                     step_name = step_plan_val.step_name
                     raise AssertionError(
                         f"GPU validation must assign gpu_id for step {step_name} (index: {step_index}) "
                         f"with GPU memory types."
                     )
-
-        for step_index, gpu_assignment in gpu_assignments.items():
-            if step_index in context.step_plans:
-                context.step_plans[step_index].gpu_id = gpu_assignment["gpu_id"]
-            else:
-                logger.warning(
-                    f"Step index {step_index} found in gpu_assignments but not in context.step_plans. Skipping."
-                )
 
     @staticmethod
     def apply_global_visualizer_override_for_context(

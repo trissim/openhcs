@@ -6,7 +6,6 @@ validating GPU memory types and assigning GPU IDs to steps requiring GPU memory.
 """
 
 import logging
-from typing import Any, Dict
 
 from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES
 from openhcs.core.compiled_step_plan import CompiledStepPlan
@@ -75,8 +74,8 @@ class GPUMemoryTypeValidator:
 
     @staticmethod
     def validate_step_plans(
-        step_plans: Dict[int, CompiledStepPlan]
-    ) -> Dict[int, Dict[str, Any]]:
+        step_plans: dict[int, CompiledStepPlan]
+    ) -> None:
         """
         Validate GPU memory types in step plans and assign GPU IDs.
 
@@ -87,9 +86,6 @@ class GPUMemoryTypeValidator:
         Args:
             step_plans: Dictionary mapping step indices to step plans
 
-        Returns:
-            Dictionary mapping step indices to dictionaries containing GPU assignments
-
         Raises:
             ValueError: If no GPUs are available
         """
@@ -97,7 +93,7 @@ class GPUMemoryTypeValidator:
         requires_gpu = False
         required_libraries = set()
 
-        for step_index, step_plan in step_plans.items():
+        for step_plan in step_plans.values():
             input_memory_type = step_plan.input_memory_type
             output_memory_type = step_plan.output_memory_type
 
@@ -109,9 +105,9 @@ class GPUMemoryTypeValidator:
                 requires_gpu = True
                 required_libraries.add(output_memory_type)
 
-        # If no step requires GPU, return empty assignments
+        # If no step requires GPU, no assignment is needed.
         if not requires_gpu:
-            return {}
+            return
 
         # Validate that required libraries are installed
         _validate_required_libraries(required_libraries)
@@ -139,22 +135,17 @@ class GPUMemoryTypeValidator:
 
         # GPU ID will be assigned to step plans only, not to context
 
-        # Assign GPU ID to step plans
-        gpu_assignments = {}
+        # Assign GPU ID to step plans.
         for step_index, step_plan in step_plans.items():
             input_memory_type = step_plan.input_memory_type
             output_memory_type = step_plan.output_memory_type
 
             if (input_memory_type in VALID_GPU_MEMORY_TYPES or
                 output_memory_type in VALID_GPU_MEMORY_TYPES):
-                # Assign GPU ID to step plan
                 step_plan.gpu_id = gpu_id
-                gpu_assignments[step_index] = {"gpu_id": gpu_id}
 
                 # Log assignment for debugging
                 logger.debug(
                     "Step %s assigned gpu_id %s for memory types: %s/%s",
                     step_index, gpu_id, input_memory_type, output_memory_type
                 )
-
-        return gpu_assignments

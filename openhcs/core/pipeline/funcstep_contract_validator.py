@@ -409,7 +409,7 @@ class FuncStepContractValidator:
         pipeline_context: ProcessingContext | None = None,
         step_state_map: Optional[Dict[int, ObjectState]] = None,
         orchestrator=None,
-    ) -> Dict[str, Dict[str, str]]:
+    ) -> None:
         """
         Validate memory type contracts and function patterns for all FunctionStep instances in a pipeline.
 
@@ -424,9 +424,6 @@ class FuncStepContractValidator:
             step_state_map: Map of step index to ObjectState for accessing config values
             orchestrator: Optional orchestrator for dict pattern key validation
 
-        Returns:
-            Dictionary mapping step UIDs to memory type dictionaries
-
         Raises:
             ValueError: If any FunctionStep violates memory type contracts or dict pattern validation
             AssertionError: If required planners have not run before this validator
@@ -434,7 +431,7 @@ class FuncStepContractValidator:
         # Validate steps
         if not steps:
             logger.warning("No steps provided to FuncStepContractValidator")
-            return {}
+            return
 
         # Verify that required planners have run before this validator
         if pipeline_context is not None:
@@ -458,9 +455,6 @@ class FuncStepContractValidator:
                 "Cannot verify planner execution order. Falling back to attribute checks."
             )
 
-        # Create step memory types dictionary
-        step_memory_types = {}
-
         # Process each step in the pipeline
         for i, step in enumerate(steps):
             # Only validate FunctionStep instances
@@ -478,15 +472,28 @@ class FuncStepContractValidator:
                     ) from e
 
                 step_objectstate = step_state_map.get(i) if step_state_map else None
-                memory_types = FuncStepContractValidator.validate_funcstep(step, orchestrator, step_objectstate)
-                step_memory_types[i] = memory_types  # Use step index instead of step_id
-
-
-
-        return step_memory_types
+                input_type, output_type = FuncStepContractValidator.validate_funcstep(
+                    step,
+                    orchestrator,
+                    step_objectstate,
+                )
+                if pipeline_context is None:
+                    continue
+                if i not in pipeline_context.step_plans:
+                    raise AssertionError(
+                        f"Clause 101 Violation: Step {step.name} (index: {i}) missing from step_plans."
+                    )
+                step_plan = pipeline_context.step_plans[i]
+                step_plan.input_memory_type = input_type
+                step_plan.output_memory_type = output_type
+                step_plan.func = step.func
 
     @staticmethod
-    def validate_funcstep(step: FunctionStep, orchestrator=None, step_objectstate: Optional[ObjectState] = None) -> Dict[str, str]:
+    def validate_funcstep(
+        step: FunctionStep,
+        orchestrator=None,
+        step_objectstate: Optional[ObjectState] = None,
+    ) -> Tuple[str, str]:
         """
         Validate memory type contracts, func_pattern structure, and dict pattern keys for a FunctionStep instance.
 
@@ -496,7 +503,7 @@ class FuncStepContractValidator:
             step_objectstate: ObjectState for accessing config values
 
         Returns:
-            Dictionary of validated memory types
+            Tuple of validated input and output memory types.
 
         Raises:
             ValueError: If FunctionStep violates memory type contracts, structural rules,
@@ -555,12 +562,7 @@ class FuncStepContractValidator:
         input_type, output_type = FuncStepContractValidator.validate_function_pattern(
             func_pattern, step_name)
 
-        # Return the validated memory types and store the func for stateless execution
-        return {
-            'input_memory_type': input_type,
-            'output_memory_type': output_type,
-            'func': func_pattern  # Store the validated func for stateless execution
-        }
+        return input_type, output_type
 
     @staticmethod
     def validate_function_pattern(
