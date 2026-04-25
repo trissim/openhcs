@@ -38,7 +38,7 @@ def _build_analysis_filename(
             memory_paths = filtered_paths
 
     base_filename = Path(memory_paths[0]).stem
-    return f"{base_filename}_{output_key}_step{step_index}.roi.zip"
+    return f"{base_filename}_{output_key}_step{plan.pipeline_position}.roi.zip"
 
 
 def _resolve_materializer_inputs(
