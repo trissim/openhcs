@@ -859,11 +859,11 @@ class PathPlanner:
             curr_in = self.plans[i]['input_dir']  # Use step index i
             prev_out = self.plans[i-1]['output_dir']  # Use step index i-1
             if curr_in != prev_out:
-                has_special = any(
+                has_artifact_bridge = any(
                     inp.source_step_id in [i - 1, 'prev']
                     for inp in self.plans[i].get('artifact_inputs', {}).values()
                 )
-                if not has_special:
+                if not has_artifact_bridge:
                     raise ValueError(f"Disconnect: {prev.name} -> {curr.name}")
 
         # NEW: Materialization path collision validation
@@ -909,12 +909,15 @@ class PathPlanner:
 
         # Recalculate the resolved path using the updated config
         resolved_path = self._build_output_path(step.step_materialization_config)
+        resolved_analysis_results_dir = self._analysis_results_dir_for(resolved_path)
 
         # Update step plans for metadata generation
         if step_plan := self.plans.get(position):  # Use position (step index) instead of step_id
             if 'materialized_output_dir' in step_plan:
                 step_plan['materialized_output_dir'] = str(resolved_path)
                 step_plan['materialized_sub_dir'] = new_sub_dir  # Update stored sub_dir
+                step_plan['materialized_analysis_results_dir'] = str(resolved_analysis_results_dir)
+                step_plan['materialization_config'] = step.step_materialization_config
 
 
 
