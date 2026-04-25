@@ -13,8 +13,13 @@ Doctrinal Clauses:
 - Clause 503 — Cognitive Load Transfer
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Mapping
+
+if TYPE_CHECKING:
+    from openhcs.core.compiled_step_plan import CompiledStepPlan
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +51,16 @@ class StepAttributeStripper:
     """
 
     @staticmethod
-    def strip_step_attributes(steps: List[Any], step_plans: Dict[str, Dict[str, Any]]) -> None:
+    def strip_step_attributes(
+        steps: list[Any],
+        step_plans: Mapping[int, CompiledStepPlan] | None = None,
+    ) -> None:
         """
         Strip all attributes from Step instances after planning.
 
         Args:
             steps: List of Step instances
-            step_plans: Dictionary mapping step UIDs to step plans
+            step_plans: Compiled step plans owned by the processing context.
 
         Raises:
             ValueError: If attribute deletion fails

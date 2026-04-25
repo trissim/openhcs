@@ -5,11 +5,12 @@ This module provides the FuncStepContractValidator class, which is responsible f
 validating memory type declarations for FunctionStep instances in a pipeline.
 """
 
+from __future__ import annotations
+
 import ast
 import importlib
 import inspect
 import logging
-import sys
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
 from openhcs.constants.constants import VALID_MEMORY_TYPES, get_openhcs_config
@@ -19,6 +20,9 @@ from openhcs.core.components.validation import GenericValidator
 
 # Import ObjectState - it's always available
 from objectstate import ObjectState
+
+if TYPE_CHECKING:
+    from openhcs.core.context.processing_context import ProcessingContext
 
 logger = logging.getLogger(__name__)
 
@@ -400,7 +404,12 @@ class FuncStepContractValidator:
                 )) from e
 
     @staticmethod
-    def validate_pipeline(steps: List[Any], pipeline_context: Optional[Dict[str, Any]] = None, step_state_map: Optional[Dict[int, 'ObjectState']] = None, orchestrator=None) -> Dict[str, Dict[str, str]]:
+    def validate_pipeline(
+        steps: List[Any],
+        pipeline_context: ProcessingContext | None = None,
+        step_state_map: Optional[Dict[int, ObjectState]] = None,
+        orchestrator=None,
+    ) -> Dict[str, Dict[str, str]]:
         """
         Validate memory type contracts and function patterns for all FunctionStep instances in a pipeline.
 
@@ -438,7 +447,7 @@ class FuncStepContractValidator:
             # Check that materialization planner has run by verifying read_backend/write_backend exist
             sample_step_index = next(iter(pipeline_context.step_plans.keys()))
             sample_plan = pipeline_context.step_plans[sample_step_index]
-            if 'read_backend' not in sample_plan or 'write_backend' not in sample_plan:
+            if sample_plan.read_backend is None or sample_plan.write_backend is None:
                 raise AssertionError(
                     "Clause 101 Violation: Materialization planner must run before FuncStepContractValidator. "
                     "Step plans missing read_backend/write_backend fields."
@@ -499,7 +508,6 @@ class FuncStepContractValidator:
 
         variable_components = step_objectstate.get_saved_resolved_value('processing_config.variable_components')
         group_by = step_objectstate.get_saved_resolved_value('processing_config.group_by')
-        input_source = step_objectstate.get_saved_resolved_value('processing_config.input_source')
 
         # Extracting function pattern and name from step
         func_pattern = step.func

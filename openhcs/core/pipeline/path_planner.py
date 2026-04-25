@@ -21,6 +21,11 @@ from openhcs.core.function_patterns import (
     inject_kwargs_into_pattern,
     strip_disabled_functions,
 )
+from openhcs.core.compiled_step_plan import (
+    CompiledStepPlan,
+    InputConversionPlan,
+    MaterializedOutputPlan,
+)
 from openhcs.core.pipeline.artifact_planning import (
     ArtifactDeclarations,
     extract_artifact_declarations,
@@ -54,7 +59,7 @@ class PathPlanner:
         # This ensures proper inheritance from global config without needing field-specific code
         self.cfg = pipeline_config.path_planning_config
         self.vfs = pipeline_config.vfs_config
-        self.plans = context.step_plans
+        self.plans: dict[int, CompiledStepPlan] = context.step_plans
         self.declared = {}  # Tracks artifact outputs
         self.orchestrator = orchestrator
         self.step_state_map = step_state_map  # For resolving lazy dataclass attributes via ObjectState
@@ -166,7 +171,7 @@ class PathPlanner:
             grouped[group_key] = per_group
         return grouped
 
-    def plan(self, pipeline: List[AbstractStep]) -> Dict:
+    def plan(self, pipeline: List[AbstractStep]) -> dict[int, CompiledStepPlan]:
         """Plan all paths with zero duplication."""
         self._prime_future_artifact_inputs(pipeline)
         for i, step in enumerate(pipeline):
@@ -342,12 +347,26 @@ class PathPlanner:
 
         return self._build_output_path(materialization_config)
 
-    def _input_conversion_dir_for_step(self, step_index: int) -> Optional[Path]:
-        """Resolve optional compiler-provided or config-provided input conversion path."""
-        if "input_conversion_dir" in self.plans[step_index]:
-            return Path(self.plans[step_index]["input_conversion_dir"])
+    def _input_conversion_plan_for_step(
+        self,
+        step_index: int,
+        input_dir: Path,
+    ) -> Optional[InputConversionPlan]:
+        """Resolve optional compiler-provided or config-provided input conversion."""
+        existing_plan = self.plans[step_index].input_conversion
+        if existing_plan is not None:
+            return existing_plan
 
-        return self._get_optional_path("input_conversion_config", step_index)
+        output_dir = self._get_optional_path("input_conversion_config", step_index)
+        if output_dir is None:
+            return None
+
+        return InputConversionPlan(
+            output_dir=output_dir,
+            backend=self.vfs.materialization_backend.value,
+            uses_virtual_workspace=False,
+            original_subdir=input_dir.name,
+        )
 
     def _update_core_step_plan(
         self,
@@ -367,25 +386,22 @@ class PathPlanner:
             self.cfg,
             is_per_step_materialization=False,
         )
-        self.plans[step_index].update(
-            {
-                "input_dir": str(input_dir),
-                "output_dir": str(output_dir),
-                "output_plate_root": str(main_plate_root),
-                "sub_dir": self.cfg.sub_dir,
-                "analysis_results_dir": str(
-                    self._analysis_results_dir_for(Path(output_dir))
-                ),
-                "pipeline_position": step_index,
-                "input_source": self._get_input_source(step, step_index),
-                "artifact_inputs": artifact_maps.inputs,
-                "artifact_outputs": artifact_maps.outputs,
-                "artifact_inputs_by_group": artifact_maps.inputs_by_group,
-                "artifact_outputs_by_group": artifact_maps.outputs_by_group,
-                "execution_groups": artifact_maps.execution_groups,
-                "function_invocation_plans": function_invocation_plans,
-            }
+        step_plan = self.plans[step_index]
+        step_plan.input_dir = input_dir
+        step_plan.output_dir = output_dir
+        step_plan.output_plate_root = str(main_plate_root)
+        step_plan.sub_dir = self.cfg.sub_dir
+        step_plan.analysis_results_dir = str(
+            self._analysis_results_dir_for(Path(output_dir))
         )
+        step_plan.pipeline_position = step_index
+        step_plan.input_source = self._get_input_source(step, step_index)
+        step_plan.artifact_inputs = artifact_maps.inputs
+        step_plan.artifact_outputs = artifact_maps.outputs
+        step_plan.artifact_inputs_by_group = artifact_maps.inputs_by_group
+        step_plan.artifact_outputs_by_group = artifact_maps.outputs_by_group
+        step_plan.execution_groups = artifact_maps.execution_groups
+        step_plan.function_invocation_plans = dict(function_invocation_plans)
 
     def _apply_materialization_plan(
         self,
@@ -403,34 +419,27 @@ class PathPlanner:
             materialization_config,
             is_per_step_materialization=False,
         )
-        self.plans[step_index].update(
-            {
-                "materialized_output_dir": str(materialized_output_dir),
-                "materialized_plate_root": str(materialized_plate_root),
-                "materialized_sub_dir": materialization_config.sub_dir,
-                "materialized_analysis_results_dir": str(
-                    self._analysis_results_dir_for(materialized_output_dir)
-                ),
-                "materialized_backend": self.vfs.materialization_backend.value,
-                "materialization_config": materialization_config,
-            }
+        self.plans[step_index].materialized_output = MaterializedOutputPlan(
+            output_dir=materialized_output_dir,
+            backend=self.vfs.materialization_backend.value,
+            plate_root=str(materialized_plate_root),
+            sub_dir=materialization_config.sub_dir,
+            analysis_results_dir=str(
+                self._analysis_results_dir_for(materialized_output_dir)
+            ),
         )
+        self.plans[step_index].materialization_config = materialization_config
 
     def _apply_input_conversion_plan(
         self,
         step_index: int,
-        input_conversion_dir: Optional[Path],
+        input_conversion_plan: Optional[InputConversionPlan],
     ) -> None:
         """Attach optional input conversion path fields to a step plan."""
-        if not input_conversion_dir:
+        if input_conversion_plan is None:
             return
 
-        self.plans[step_index].update(
-            {
-                "input_conversion_dir": str(input_conversion_dir),
-                "input_conversion_backend": self.vfs.materialization_backend.value,
-            }
-        )
+        self.plans[step_index].input_conversion = input_conversion_plan
 
     def _plan_step(self, step: AbstractStep, i: int, pipeline: List):
         """Plan one step - no duplicate logic."""
@@ -458,8 +467,7 @@ class PathPlanner:
             step.func = self._inject_metadata(step.func, declarations.inputs)
 
         # Ensure step plan references the normalized function pattern
-        self.plans.setdefault(sid, {})
-        self.plans[sid]['func'] = step.func
+        self.plans[sid].func = step.func
 
         self._update_core_step_plan(
             step,
@@ -479,7 +487,7 @@ class PathPlanner:
         )
         self._apply_input_conversion_plan(
             sid,
-            self._input_conversion_dir_for_step(sid),
+            self._input_conversion_plan_for_step(sid, input_dir),
         )
 
         # PIPELINE_START steps read from original input, not zarr conversion
@@ -491,8 +499,10 @@ class PathPlanner:
         sid = i  # Use step index instead of step_id
 
         # Check overrides (same for input/output)
-        if override := self.plans.get(sid, {}).get(f'{dir_type}_dir'):
-            return Path(override)
+        if sid in self.plans:
+            existing_dir = getattr(self.plans[sid], f"{dir_type}_dir")
+            if existing_dir is not None:
+                return Path(existing_dir)
         if override := getattr(step, f'__{dir_type}_dir__', None):
             return Path(override)
 
@@ -503,7 +513,7 @@ class PathPlanner:
             if i == 0 or input_source == InputSource.PIPELINE_START:
                 return self.initial_input
             prev_step_index = i - 1  # Use previous step index instead of step_id
-            return Path(self.plans[prev_step_index]['output_dir'])
+            return Path(self.plans[prev_step_index].output_dir)
         else:  # output
             # Access input_source from processing_config (new API)
             input_source = getattr(step.processing_config, 'input_source', None) if hasattr(step, 'processing_config') else None
@@ -560,8 +570,8 @@ class PathPlanner:
 
     def _get_optional_path(self, config_key: str, step_index: int) -> Optional[Path]:
         """Get optional path if config exists."""
-        if config_key in self.plans[step_index]:
-            config = self.plans[step_index][config_key]
+        config = getattr(self.plans[step_index], config_key, None)
+        if config is not None:
             return self._build_output_path(config)
         return None
 
@@ -766,12 +776,12 @@ class PathPlanner:
             input_source = getattr(curr.processing_config, 'input_source', None) if hasattr(curr, 'processing_config') else None
             if input_source == InputSource.PIPELINE_START:
                 continue
-            curr_in = self.plans[i]['input_dir']  # Use step index i
-            prev_out = self.plans[i-1]['output_dir']  # Use step index i-1
+            curr_in = self.plans[i].input_dir
+            prev_out = self.plans[i - 1].output_dir
             if curr_in != prev_out:
                 has_artifact_bridge = any(
                     inp.source_step_id in [i - 1, 'prev']
-                    for inp in self.plans[i].get('artifact_inputs', {}).values()
+                    for inp in self.plans[i].artifact_inputs.values()
                 )
                 if not has_artifact_bridge:
                     raise ValueError(f"Disconnect: {prev.name} -> {curr.name}")
@@ -785,7 +795,7 @@ class PathPlanner:
 
         # Collect all materialization steps with their paths and positions
         mat_steps = [
-            (step, self.plans.get(i, {}).get('pipeline_position', 0), self._build_output_path(step.step_materialization_config))
+            (step, self.plans[i].pipeline_position or i, self._build_output_path(step.step_materialization_config))
             for i, step in enumerate(pipeline) if step.step_materialization_config and step.step_materialization_config.enabled
         ]
 
@@ -822,12 +832,16 @@ class PathPlanner:
         resolved_analysis_results_dir = self._analysis_results_dir_for(resolved_path)
 
         # Update step plans for metadata generation
-        if step_plan := self.plans.get(position):  # Use position (step index) instead of step_id
-            if 'materialized_output_dir' in step_plan:
-                step_plan['materialized_output_dir'] = str(resolved_path)
-                step_plan['materialized_sub_dir'] = new_sub_dir  # Update stored sub_dir
-                step_plan['materialized_analysis_results_dir'] = str(resolved_analysis_results_dir)
-                step_plan['materialization_config'] = step.step_materialization_config
+        if step_plan := self.plans.get(position):
+            if step_plan.materialized_output is not None:
+                step_plan.materialized_output = MaterializedOutputPlan(
+                    output_dir=resolved_path,
+                    backend=step_plan.materialized_output.backend,
+                    plate_root=step_plan.materialized_output.plate_root,
+                    sub_dir=new_sub_dir,
+                    analysis_results_dir=str(resolved_analysis_results_dir),
+                )
+                step_plan.materialization_config = step.step_materialization_config
 
 
 

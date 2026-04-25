@@ -40,7 +40,8 @@ WHY:
 - isinstance checks are the only type checking pattern (no hasattr)
 """
 
-import inspect
+from __future__ import annotations
+
 import logging
 import dataclasses
 import time
@@ -51,18 +52,17 @@ from typing import (
     Dict,
     List,
     Optional,
+    TYPE_CHECKING,
     Tuple,
     Union,
     get_args,
     get_origin,
 )
-from collections import OrderedDict
 
 from openhcs.constants.constants import (
     get_multiprocessing_axis,
     OrchestratorState,
     VALID_GPU_MEMORY_TYPES,
-    VariableComponents,
     READ_BACKEND,
     WRITE_BACKEND,
     Backend,
@@ -70,17 +70,15 @@ from openhcs.constants.constants import (
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.config import (
     MaterializationBackend,
-    PathPlanningConfig,
-    ProcessingConfig,
     StreamingConfig,
     VFSConfig,
     WellFilterConfig,
-    WellFilterMode,
 )
 from openhcs.core.pipeline.funcstep_contract_validator import FuncStepContractValidator
 from openhcs.core.pipeline.materialization_flag_planner import (
     MaterializationFlagPlanner,
 )
+from openhcs.core.compiled_step_plan import CompiledStepPlan, InputConversionPlan
 from openhcs.core.pipeline.path_planner import PipelinePathPlanner
 from openhcs.core.pipeline.gpu_memory_validator import GPUMemoryTypeValidator
 from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
@@ -91,7 +89,10 @@ from objectstate.lazy_factory import get_base_type_for_lazy
 from openhcs.core.steps.function_step import FunctionStep  # Used for isinstance check
 from openhcs.core.progress import emit, ProgressPhase, ProgressStatus
 from dataclasses import dataclass
-from python_introspect import Enableable
+
+if TYPE_CHECKING:
+    from openhcs.core.config import GlobalPipelineConfig
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -385,11 +386,12 @@ class PipelineCompiler:
         # Use step index as key instead of step_id for multiprocessing compatibility
         for step_index, step in enumerate(steps_definition):
             if step_index not in context.step_plans:
-                context.step_plans[step_index] = {
-                    "step_name": step.name,
-                    "step_type": step.__class__.__name__,
-                    "axis_id": context.axis_id,
-                }
+                context.step_plans[step_index] = CompiledStepPlan(
+                    step_index=step_index,
+                    step_name=step.name,
+                    step_type=step.__class__.__name__,
+                    axis_id=context.axis_id,
+                )
 
         # Resolve steps here when the caller did not provide a pre-resolved state map.
         if not steps_already_resolved or step_state_map is None:
@@ -507,15 +509,11 @@ class PipelineCompiler:
                     zarr_subdir = "zarr" if uses_virtual_workspace else original_subdir
                     conversion_dir = plate_path / zarr_subdir
 
-                    context.step_plans[0]["input_conversion_dir"] = str(conversion_dir)
-                    context.step_plans[0]["input_conversion_backend"] = (
-                        MaterializationBackend.ZARR.value
-                    )
-                    context.step_plans[0]["input_conversion_uses_virtual_workspace"] = (
-                        uses_virtual_workspace
-                    )
-                    context.step_plans[0]["input_conversion_original_subdir"] = (
-                        original_subdir
+                    context.step_plans[0].input_conversion = InputConversionPlan(
+                        output_dir=conversion_dir,
+                        backend=MaterializationBackend.ZARR.value,
+                        uses_virtual_workspace=uses_virtual_workspace,
+                        original_subdir=original_subdir,
                     )
                     logger.debug(
                         f"Input conversion to zarr enabled for first step: {first_step.name}"
@@ -549,32 +547,23 @@ class PipelineCompiler:
                     f"not found in step_plans after path planning phase."
                 )
                 # Create a minimal error plan
-                context.step_plans[step_index] = {
-                    "step_name": step.name,
-                    "step_type": step.__class__.__name__,
-                    "axis_id": context.axis_id,  # Use context.axis_id
-                    "error": "Missing from path planning phase by PipelinePathPlanner",
-                    "create_openhcs_metadata": metadata_writer,  # Set metadata writer responsibility flag
-                }
+                context.step_plans[step_index] = CompiledStepPlan(
+                    step_index=step_index,
+                    step_name=step.name,
+                    step_type=step.__class__.__name__,
+                    axis_id=context.axis_id,
+                    error="Missing from path planning phase by PipelinePathPlanner",
+                    create_openhcs_metadata=metadata_writer,
+                )
                 continue
 
             current_plan = context.step_plans[step_index]
 
             # Ensure basic metadata (PathPlanner should set most of this)
-            current_plan["step_name"] = step.name
-            current_plan["step_type"] = step.__class__.__name__
-            current_plan["axis_id"] = (
-                context.axis_id
-            )  # Use context.axis_id; PathPlanner should also use context.axis_id
-            current_plan.setdefault("visualize", False)  # Ensure visualize key exists
-            current_plan["create_openhcs_metadata"] = (
-                metadata_writer  # Set metadata writer responsibility flag
-            )
-
-            # Artifact input/output plans are fully handled by PipelinePathPlanner.
-            current_plan.setdefault("artifact_inputs", OrderedDict())
-            current_plan.setdefault("artifact_outputs", OrderedDict())
-            current_plan.setdefault("chainbreaker", False)  # PathPlanner now sets this.
+            current_plan.step_name = step.name
+            current_plan.step_type = step.__class__.__name__
+            current_plan.axis_id = context.axis_id
+            current_plan.create_openhcs_metadata = metadata_writer
 
             # Add step-specific attributes (non-I/O, non-path related)
             # Access via ObjectState get_saved_resolved_value() for saved values with inheritance
@@ -602,10 +591,10 @@ class PipelineCompiler:
                 "processing_config"
             )
 
-            current_plan["variable_components"] = var_comps
-            current_plan["group_by"] = group_by
-            current_plan["input_source"] = input_source
-            current_plan["sequential_processing"] = sequential_processing
+            current_plan.variable_components = var_comps
+            current_plan.group_by = group_by
+            current_plan.input_source = input_source
+            current_plan.sequential_processing = sequential_processing
 
         # === STREAMING CONFIG COLLECTION ===
         # Discover streaming configs attached to each step via dataclass field types.
@@ -701,7 +690,7 @@ class PipelineCompiler:
                     # IMPORTANT: FunctionStep streams by scanning step_plan for StreamingConfig instances.
                     # Inject the reconstructed StreamingConfig instance into the step plan so workers
                     # can execute streaming via filemanager.save_batch(..., backend='napari_stream'/'fiji_stream').
-                    step_plan[field_name] = config_obj
+                    step_plan.streaming_configs[field_name] = config_obj
 
         # Return resolved steps and step_state_map for use by subsequent compiler methods
         return steps_definition, step_state_map
@@ -740,7 +729,7 @@ class PipelineCompiler:
             )
 
             if will_use_zarr:
-                step_plan["zarr_config"] = {
+                step_plan.zarr_config = {
                     "all_wells": all_wells,
                     "needs_initialization": True,
                 }
@@ -748,7 +737,7 @@ class PipelineCompiler:
                     f"Step '{step.name}' will use zarr backend for axis {context.axis_id}"
                 )
             else:
-                step_plan["zarr_config"] = None
+                step_plan.zarr_config = None
 
     @staticmethod
     def plan_materialization_flags_for_context(
@@ -789,9 +778,12 @@ class PipelineCompiler:
 
             plan = context.step_plans[step_index]
             # Check for keys that FunctionStep actually uses during execution
-            required_keys = [READ_BACKEND, WRITE_BACKEND]
-            if not all(k in plan for k in required_keys):
-                missing_keys = [k for k in required_keys if k not in plan]
+            missing_keys = [
+                name
+                for name in [READ_BACKEND, WRITE_BACKEND]
+                if getattr(plan, name) is None
+            ]
+            if missing_keys:
                 logger.error(
                     f"Materialization flag planning incomplete for step {step.name} (index: {step_index}). "
                     f"Missing required keys: {missing_keys}."
@@ -846,8 +838,8 @@ class PipelineCompiler:
     @staticmethod
     def analyze_pipeline_sequential_mode(
         context: ProcessingContext,
-        global_config: "GlobalPipelineConfig",
-        orchestrator: "PipelineOrchestrator",
+        global_config: GlobalPipelineConfig,
+        orchestrator: PipelineOrchestrator,
     ) -> None:
         """
         Configure pipeline-wide sequential processing mode from pipeline-level config.
@@ -916,7 +908,7 @@ class PipelineCompiler:
                 context.pipeline_sequential_mode = False
                 context.pipeline_sequential_combinations = None
                 logger.info(
-                    f"Pipeline sequential mode: DISABLED (all sequential components have ≤1 value)"
+                    "Pipeline sequential mode: DISABLED (all sequential components have ≤1 value)"
                 )
         else:
             # No sequential processing configured
@@ -960,12 +952,15 @@ class PipelineCompiler:
                 "input_memory_type" not in memory_types
                 or "output_memory_type" not in memory_types
             ):
-                step_name = context.step_plans[step_index]["step_name"]
+                step_name = context.step_plans[step_index].step_name
                 raise AssertionError(
                     f"Memory type validation must set input/output_memory_type for FunctionStep {step_name} (index: {step_index})."
                 )
             if step_index in context.step_plans:
-                context.step_plans[step_index].update(memory_types)
+                step_plan = context.step_plans[step_index]
+                step_plan.input_memory_type = memory_types["input_memory_type"]
+                step_plan.output_memory_type = memory_types["output_memory_type"]
+                step_plan.func = memory_types["func"]
             else:
                 logger.warning(
                     f"Step index {step_index} found in memory_types but not in context.step_plans. Skipping."
@@ -976,14 +971,13 @@ class PipelineCompiler:
             if isinstance(step, FunctionStep):
                 if step_index in context.step_plans:
                     step_plan = context.step_plans[step_index]
-                    is_last_step = step_index == len(steps_definition) - 1
-                    write_backend = step_plan["write_backend"]
+                    write_backend = step_plan.write_backend
 
                     if write_backend == "disk":
                         logger.debug(
                             f"Step {step.name} has disk output, overriding output_memory_type to numpy"
                         )
-                        step_plan["output_memory_type"] = "numpy"
+                        step_plan.output_memory_type = "numpy"
 
     @staticmethod
     def assign_gpu_resources_for_context(context: ProcessingContext) -> None:
@@ -1005,11 +999,11 @@ class PipelineCompiler:
             context.step_plans.items()
         ):  # Renamed step_plan to step_plan_val to avoid conflict
             is_gpu_step = False
-            input_type = step_plan_val["input_memory_type"]
+            input_type = step_plan_val.input_memory_type
             if input_type in VALID_GPU_MEMORY_TYPES:
                 is_gpu_step = True
 
-            output_type = step_plan_val["output_memory_type"]
+            output_type = step_plan_val.output_memory_type
             if output_type in VALID_GPU_MEMORY_TYPES:
                 is_gpu_step = True
 
@@ -1018,7 +1012,7 @@ class PipelineCompiler:
                 # And that entry contains a 'gpu_id'
                 step_gpu_assignment = gpu_assignments[step_index]
                 if "gpu_id" not in step_gpu_assignment:
-                    step_name = step_plan_val["step_name"]
+                    step_name = step_plan_val.step_name
                     raise AssertionError(
                         f"GPU validation must assign gpu_id for step {step_name} (index: {step_index}) "
                         f"with GPU memory types."
@@ -1026,7 +1020,7 @@ class PipelineCompiler:
 
         for step_index, gpu_assignment in gpu_assignments.items():
             if step_index in context.step_plans:
-                context.step_plans[step_index].update(gpu_assignment)
+                context.step_plans[step_index].gpu_id = gpu_assignment["gpu_id"]
             else:
                 logger.warning(
                     f"Step index {step_index} found in gpu_assignments but not in context.step_plans. Skipping."
@@ -1049,9 +1043,9 @@ class PipelineCompiler:
             if not context.step_plans:
                 return  # Guard against empty step_plans
             for step_index, plan in context.step_plans.items():
-                plan["visualize"] = True
+                plan.visualize = True
                 logger.info(
-                    f"Global visualizer override: Step '{plan['step_name']}' marked for visualization."
+                    f"Global visualizer override: Step '{plan.step_name}' marked for visualization."
                 )
 
     @staticmethod
@@ -1178,7 +1172,6 @@ class PipelineCompiler:
 
         # Filter out disabled steps at compile time (before any compilation phases)
         # Steps must be registered in ObjectState with proper enabled parameter
-        original_count = len(pipeline_definition)
         enabled_steps = []
         for step in pipeline_definition:
             # Check enabled via ObjectState pattern - steps must be properly registered
@@ -1613,9 +1606,9 @@ class PipelineCompiler:
                 # Check for materialization steps in first context
                 materialization_steps = []
                 for step_id, plan in first_context.step_plans.items():
-                    if "materialized_output_dir" in plan:
-                        step_name = plan.get("step_name", f"step_{step_id}")
-                        mat_path = plan["materialized_output_dir"]
+                    if plan.materialized_output is not None:
+                        step_name = plan.step_name or f"step_{step_id}"
+                        mat_path = plan.materialized_output.output_dir
                         materialization_steps.append((step_name, mat_path))
 
                 for step_name, mat_path in materialization_steps:

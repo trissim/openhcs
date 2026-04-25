@@ -9,6 +9,7 @@ import logging
 from typing import Any, Dict
 
 from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES
+from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.utils import optional_import
 
 # LAZY IMPORT: Import gpu_scheduler only when needed to avoid circular dependency
@@ -74,7 +75,7 @@ class GPUMemoryTypeValidator:
 
     @staticmethod
     def validate_step_plans(
-        step_plans: Dict[int, Dict[str, Any]]
+        step_plans: Dict[int, CompiledStepPlan]
     ) -> Dict[int, Dict[str, Any]]:
         """
         Validate GPU memory types in step plans and assign GPU IDs.
@@ -97,8 +98,8 @@ class GPUMemoryTypeValidator:
         required_libraries = set()
 
         for step_index, step_plan in step_plans.items():
-            input_memory_type = step_plan.get('input_memory_type')
-            output_memory_type = step_plan.get('output_memory_type')
+            input_memory_type = step_plan.input_memory_type
+            output_memory_type = step_plan.output_memory_type
 
             if input_memory_type in VALID_GPU_MEMORY_TYPES:
                 requires_gpu = True
@@ -141,13 +142,13 @@ class GPUMemoryTypeValidator:
         # Assign GPU ID to step plans
         gpu_assignments = {}
         for step_index, step_plan in step_plans.items():
-            input_memory_type = step_plan.get('input_memory_type')
-            output_memory_type = step_plan.get('output_memory_type')
+            input_memory_type = step_plan.input_memory_type
+            output_memory_type = step_plan.output_memory_type
 
             if (input_memory_type in VALID_GPU_MEMORY_TYPES or
                 output_memory_type in VALID_GPU_MEMORY_TYPES):
                 # Assign GPU ID to step plan
-                step_plan['gpu_id'] = gpu_id
+                step_plan.gpu_id = gpu_id
                 gpu_assignments[step_index] = {"gpu_id": gpu_id}
 
                 # Log assignment for debugging

@@ -7,6 +7,7 @@ This module defines the ProcessingContext class, which maintains state during pi
 from typing import Any, Dict, Optional
 
 from openhcs.core.config import GlobalPipelineConfig, VFSConfig, PathPlanningConfig
+from openhcs.core.compiled_step_plan import CompiledStepPlan
 
 
 class ProcessingContext:
@@ -20,7 +21,7 @@ class ProcessingContext:
     All other components must receive a context instance, never create one.
 
     Attributes:
-        step_plans: Dictionary mapping step IDs to execution plans.
+        step_plans: Dictionary mapping step indices to compiled execution plans.
         outputs: Dictionary for step outputs (usage may change with VFS-centric model).
         intermediates: Dictionary for intermediate results (usage may change).
         current_step: Current executing step ID (usage may change).
@@ -36,7 +37,7 @@ class ProcessingContext:
     def __init__(
         self,
         global_config: GlobalPipelineConfig, # Made a required argument
-        step_plans: Optional[Dict[str, Dict[str, Any]]] = None,
+        step_plans: Optional[Dict[int, CompiledStepPlan]] = None,
         axis_id: Optional[str] = None,
         **kwargs
     ):
@@ -45,7 +46,7 @@ class ProcessingContext:
 
         Args:
             global_config: The global pipeline configuration object.
-            step_plans: Dictionary mapping step IDs to execution plans.
+            step_plans: Dictionary mapping step indices to compiled execution plans.
             axis_id: Identifier of the multiprocessing axis value being processed.
             **kwargs: Additional context attributes (e.g., filemanager, microscope_handler).
         """
@@ -87,7 +88,7 @@ class ProcessingContext:
             raise AttributeError(f"Cannot modify attribute '{name}' of a frozen ProcessingContext.")
         super().__setattr__(name, value)
 
-    def inject_plan(self, step_id: str, plan: Dict[str, Any]) -> None:
+    def inject_plan(self, step_id: int, plan: CompiledStepPlan) -> None:
         """
         Inject a step plan into the context.
 
@@ -95,7 +96,7 @@ class ProcessingContext:
         All step configuration must be injected into the context using this method.
 
         Args:
-            step_id: The unique identifier of the step
+            step_id: The step index used as the compiled-plan key.
             plan: The step execution plan
 
         Raises:

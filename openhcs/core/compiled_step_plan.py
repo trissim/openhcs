@@ -1,0 +1,93 @@
+"""Typed compiled step plans used as compiler/runtime source of truth."""
+
+from __future__ import annotations
+
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Mapping, Sequence
+
+from openhcs.constants.constants import VariableComponents
+from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
+from openhcs.core.function_patterns import FunctionInvocationKey, FunctionInvocationPlan
+
+
+ArtifactInputPlans = Mapping[str, ArtifactInputPlan]
+ArtifactOutputPlans = Mapping[str, ArtifactOutputPlan]
+
+
+@dataclass(frozen=True, slots=True)
+class InputConversionPlan:
+    """Typed input-conversion section of a compiled step plan."""
+
+    output_dir: Path
+    backend: str
+    uses_virtual_workspace: bool
+    original_subdir: str
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializedOutputPlan:
+    """Typed materialized-output section of a compiled step plan."""
+
+    output_dir: Path
+    backend: str
+    plate_root: str
+    sub_dir: str
+    analysis_results_dir: str | None
+
+
+@dataclass(slots=True)
+class CompiledStepPlan:
+    """Mutable compile-time plan for one pipeline step.
+
+    This object is intentionally the source of truth. Compiler phases should
+    mutate fields on this dataclass rather than writing string-keyed dicts.
+    """
+
+    step_index: int
+    step_name: str
+    step_type: str
+    axis_id: str
+    func: Any = None
+    input_dir: Path | None = None
+    output_dir: Path | None = None
+    output_plate_root: str | None = None
+    sub_dir: str | None = None
+    analysis_results_dir: str | None = None
+    pipeline_position: int | None = None
+    input_source: Any = None
+    variable_components: Sequence[VariableComponents] | None = None
+    group_by: Any = None
+    sequential_processing: Any = None
+    artifact_inputs: OrderedDict[str, ArtifactInputPlan] = field(
+        default_factory=OrderedDict
+    )
+    artifact_outputs: OrderedDict[str, ArtifactOutputPlan] = field(
+        default_factory=OrderedDict
+    )
+    artifact_inputs_by_group: dict[
+        Any, OrderedDict[str, ArtifactInputPlan]
+    ] = field(default_factory=dict)
+    artifact_outputs_by_group: dict[
+        Any, OrderedDict[str, ArtifactOutputPlan]
+    ] = field(default_factory=dict)
+    execution_groups: list[str | None] = field(default_factory=lambda: [None])
+    function_invocation_plans: dict[
+        FunctionInvocationKey, FunctionInvocationPlan
+    ] = field(default_factory=dict)
+    input_conversion: InputConversionPlan | None = None
+    input_conversion_config: Any = None
+    materialized_output: MaterializedOutputPlan | None = None
+    materialization_config: Any = None
+    read_backend: str | None = None
+    write_backend: str | None = None
+    input_memory_type: str | None = None
+    output_memory_type: str | None = None
+    gpu_id: int | None = None
+    zarr_config: Mapping[str, Any] | None = None
+    streaming_configs: dict[str, Any] = field(default_factory=dict)
+    visualize: bool = False
+    create_openhcs_metadata: bool = False
+    chainbreaker: bool = False
+    error: str | None = None

@@ -356,7 +356,7 @@ def _execute_single_axis_static(
 
     # Execute each step in the pipeline
     for step_index, step in enumerate(pipeline_definition):
-        step_name = frozen_context.step_plans[step_index]["step_name"]
+        step_name = frozen_context.step_plans[step_index].step_name
 
         emit(
             execution_id=execution_id,
@@ -392,9 +392,9 @@ def _execute_single_axis_static(
         # Handle visualization if requested
         if visualizer:
             step_plan = frozen_context.step_plans[step_index]
-            if step_plan["visualize"]:
-                output_dir = step_plan["output_dir"]
-                write_backend = step_plan["write_backend"]
+            if step_plan.visualize:
+                output_dir = step_plan.output_dir
+                write_backend = step_plan.write_backend
                 if output_dir:
                     logger.debug(
                         f"Visualizing output for step {step_index} from path {output_dir} (backend: {write_backend}) for axis {axis_id}"
@@ -1387,9 +1387,12 @@ class PipelineOrchestrator:
                             for ctx_key, ctx in axis_contexts[:1]:  # Just check first context
                                 if hasattr(ctx, 'step_plans'):
                                     for step_idx, plan in list(ctx.step_plans.items())[:2]:  # Just check first 2
-                                        if 'func' in plan:
-                                            func_val = plan['func']
-                                            logger.info(f"DEBUG: context step_plans[{step_idx}]['func'] = {type(func_val).__name__}")
+                                        if plan.func is not None:
+                                            logger.info(
+                                                "DEBUG: context step_plans[%s].func = %s",
+                                                step_idx,
+                                                type(plan.func).__name__,
+                                            )
 
                         try:
                             future = executor.submit(
@@ -1497,7 +1500,7 @@ class PipelineOrchestrator:
                     for axis_id, context in compiled_contexts.items():
                         # Check if context has step plans with artifact outputs
                         for step_plan in context.step_plans.values():
-                            artifact_outputs = step_plan.get("artifact_outputs", {})
+                            artifact_outputs = step_plan.artifact_outputs
                             if artifact_outputs:
                                 # Extract results directory from first artifact output path
                                 first_output = next(iter(artifact_outputs.values()))

@@ -75,7 +75,7 @@ class FunctionStepExecutor:
     @classmethod
     def execute(cls, context: ProcessingContext, step_index: int) -> None:
         step_plan = context.step_plans[step_index]
-        step_name = step_plan.get("step_name", f"step_{step_index}")
+        step_name = step_plan.step_name or f"step_{step_index}"
         try:
             cls(context, step_index).run()
         except Exception as error:
