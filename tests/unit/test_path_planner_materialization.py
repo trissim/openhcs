@@ -1,6 +1,10 @@
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+
+from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, ArtifactSpec
 from openhcs.core.compiled_step_plan import (
     CompiledStepPlan,
     MaterializedOutputPlan,
@@ -18,6 +22,18 @@ class PathConfigStub:
 class StepStub:
     def __init__(self, materialization_config: PathConfigStub):
         self.step_materialization_config = materialization_config
+
+
+def _artifact_planner_stub() -> PathPlanner:
+    planner = PathPlanner.__new__(PathPlanner)
+    planner.plate_path = Path("/data/plate1")
+    planner.cfg = PathConfigStub(sub_dir="images")
+    planner.ctx = SimpleNamespace(
+        axis_id="A01",
+        global_config=SimpleNamespace(materialization_results_path="analysis"),
+    )
+    planner.declared = {}
+    return planner
 
 
 def test_materialization_collision_updates_results_dir_and_config():
@@ -56,3 +72,36 @@ def test_materialization_collision_updates_results_dir_and_config():
         "/data/plate1_processed/images_step3_results"
     )
     assert planner.plans[3].materialization_config.sub_dir == "images_step3"
+
+
+def test_artifact_output_plans_preserve_declared_kind():
+    planner = _artifact_planner_stub()
+
+    outputs = planner._process_artifact_outputs(
+        {"nuclei": ArtifactSpec("nuclei", ArtifactKind.OBJECT_LABELS)},
+        sid=2,
+        output_groups={"nuclei": {None}},
+        step_name="identify",
+    )
+
+    assert outputs["nuclei"].kind is ArtifactKind.OBJECT_LABELS
+    assert planner.declared["nuclei"].kind is ArtifactKind.OBJECT_LABELS
+
+
+def test_artifact_input_plan_rejects_producer_consumer_kind_mismatch():
+    planner = _artifact_planner_stub()
+    planner.declared["nuclei"] = ArtifactOutputPlan(
+        name="nuclei",
+        path="/memory/nuclei.pkl",
+        kind=ArtifactKind.OBJECT_LABELS,
+        producer_step_index=1,
+        producer_step_name="identify",
+    )
+
+    with pytest.raises(ValueError, match="expects measurements"):
+        planner._process_artifact_inputs(
+            {"nuclei": ArtifactSpec("nuclei", ArtifactKind.MEASUREMENTS)},
+            {},
+            sid=2,
+            step_name="measure",
+        )

@@ -8,7 +8,7 @@ import logging
 from collections import defaultdict, OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set
+from typing import Any, Callable, Dict, List, Mapping, Optional, Set
 
 from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, ArtifactSpec
@@ -26,7 +26,7 @@ from openhcs.core.compiled_step_plan import (
     MaterializedOutputPlan,
 )
 from openhcs.core.pipeline.artifact_planning import (
-    ArtifactDeclarations,
+    ArtifactGraph,
     extract_artifact_declarations,
 )
 from openhcs.core.steps.abstract import AbstractStep
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 class ArtifactPlanMaps:
     """Compiled artifact I/O maps for one step."""
 
-    declarations: ArtifactDeclarations
+    declarations: ArtifactGraph
     execution_groups: List[Optional[str]]
     inputs: dict[str, ArtifactInputPlan]
     outputs: dict[str, ArtifactOutputPlan]
@@ -209,17 +209,17 @@ class PathPlanner:
         self,
         step: AbstractStep,
         step_index: int,
-    ) -> tuple[ArtifactDeclarations, List[Optional[str]]]:
+    ) -> tuple[ArtifactGraph, List[Optional[str]]]:
         """Normalize a step's function pattern and collect artifact declarations."""
         if not isinstance(step, FunctionStep):
-            return ArtifactDeclarations.empty(), [None]
+            return ArtifactGraph.empty(), [None]
 
         step.func = self._inject_injectable_params(step.func, step)
         step.func = strip_disabled_functions(step.func)
 
         declarations = extract_artifact_declarations(step.func if step.func else [])
         execution_groups = self._get_execution_groups(step, step_index)
-        self._namespace_grouped_outputs_for_runtime_consumers(
+        declarations = self._namespace_grouped_outputs_for_runtime_consumers(
             step,
             step_index,
             declarations,
@@ -231,48 +231,50 @@ class PathPlanner:
         self,
         step: FunctionStep,
         step_index: int,
-        declarations: ArtifactDeclarations,
+        declarations: ArtifactGraph,
         execution_groups: List[Optional[str]],
-    ) -> None:
+    ) -> ArtifactGraph:
         """Namespace grouped artifact outputs unless a later step consumes them globally."""
         if (
             isinstance(step.func, dict)
             or execution_groups == [None]
             or not declarations.output_names
         ):
-            return
+            return declarations
 
         future_inputs = (
             self.future_artifact_inputs[step_index]
             if hasattr(self, "future_artifact_inputs")
             else set()
         )
-        for output_key in declarations.output_names:
-            declarations.output_groups[output_key] = (
-                {None}
+        output_groups = {
+            output_key: (
+                (None,)
                 if output_key in future_inputs
-                else set(execution_groups)
+                else tuple(self._normalize_group_key(group) for group in execution_groups)
             )
+            for output_key in declarations.output_names
+        }
+        return declarations.with_output_groups(output_groups)
 
     def _compile_artifact_plan_maps(
         self,
         step: AbstractStep,
         step_index: int,
-        declarations: ArtifactDeclarations,
+        declarations: ArtifactGraph,
         execution_groups: List[Optional[str]],
     ) -> ArtifactPlanMaps:
         """Compile artifact declarations into runtime I/O maps."""
         step_name = getattr(step, "name", str(step_index))
         artifact_outputs = self._process_artifact_outputs(
-            declarations.output_names,
-            declarations.materializations,
+            declarations.outputs,
             step_index,
             declarations.output_groups,
             step_name=step_name,
         )
         artifact_inputs = self._process_artifact_inputs(
             declarations.inputs,
-            declarations.output_names,
+            declarations.outputs,
             step_index,
             consumer_groups=execution_groups,
             step_name=step_name,
@@ -576,19 +578,18 @@ class PathPlanner:
 
     def _process_artifact_outputs(
         self,
-        output_names: Iterable[str],
-        materializations: Mapping[str, Any],
+        outputs: Mapping[str, ArtifactSpec],
         sid: int,
         output_groups: Optional[Mapping[str, Set[Optional[str]]]] = None,
         step_name: Optional[str] = None,
     ) -> dict[str, ArtifactOutputPlan]:
         """Compile storage plans for artifacts produced by this step."""
         result: dict[str, ArtifactOutputPlan] = {}
-        if not output_names:
+        if not outputs:
             return result
 
         results_path = self._get_results_path()
-        for key in sorted(output_names):
+        for key, spec in sorted(outputs.items()):
             # Include step index in filename to prevent collisions when multiple steps
             # produce the same artifact output (e.g., two crop_device steps both producing match_results)
             filename = PipelinePathPlanner._build_axis_filename(
@@ -606,7 +607,8 @@ class PathPlanner:
             result[key] = ArtifactOutputPlan(
                 name=key,
                 path=str(path),
-                materialization=materializations.get(key),
+                kind=spec.kind,
+                materialization=spec.materialization,
                 group_keys=tuple(normalized_groups),
                 paths_by_group=paths_by_group,
                 producer_step_index=sid,
@@ -619,7 +621,7 @@ class PathPlanner:
     def _process_artifact_inputs(
         self,
         inputs: Mapping[str, ArtifactSpec],
-        step_output_names: Iterable[str],
+        step_outputs: Mapping[str, ArtifactSpec],
         sid: int,
         consumer_groups: Optional[List[Optional[str]]] = None,
         step_name: Optional[str] = None,
@@ -633,11 +635,22 @@ class PathPlanner:
         normalized_consumers = [
             self._normalize_group_key(g) for g in consumer_groups
         ]
-        self_output_names = set(step_output_names)
 
-        for key in sorted(inputs):
+        for key, input_spec in sorted(inputs.items()):
             if key in self.declared:
                 producer = self.declared[key]
+                if producer.kind != input_spec.kind:
+                    producer_name = (
+                        producer.producer_step_name
+                        or producer.producer_step_index
+                        or "unknown"
+                    )
+                    consumer_name = step_name or sid
+                    raise ValueError(
+                        f"Artifact input '{key}' in step '{consumer_name}' expects "
+                        f"{input_spec.kind.value}, but producer step '{producer_name}' "
+                        f"provides {producer.kind.value}."
+                    )
                 producer_groups = list(producer.group_keys or (None,))
 
                 if producer_groups != [None] and normalized_consumers == [None]:
@@ -690,10 +703,17 @@ class PathPlanner:
                     group_keys=tuple(producer_groups),
                     source_step_id=producer.producer_step_index,
                 )
-            elif key in self_output_names:
+            elif key in step_outputs:
+                output_spec = step_outputs[key]
+                if output_spec.kind != input_spec.kind:
+                    raise ValueError(
+                        f"Artifact '{key}' is produced as {output_spec.kind.value} "
+                        f"but consumed as {input_spec.kind.value} in step '{step_name or sid}'."
+                    )
                 result[key] = ArtifactInputPlan(
                     name=key,
                     path="self",
+                    kind=input_spec.kind,
                     source_step_id=sid,
                 )
             elif key not in METADATA_RESOLVERS:

@@ -1,3 +1,5 @@
+import pytest
+
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
     ArtifactKind,
@@ -18,7 +20,10 @@ from openhcs.core.pipeline.function_contracts import (
     artifact_inputs,
     artifact_outputs,
 )
-from openhcs.core.pipeline.artifact_planning import normalize_pattern
+from openhcs.core.pipeline.artifact_planning import (
+    extract_artifact_declarations,
+    normalize_pattern,
+)
 from openhcs.processing.materialization import csv_only
 
 
@@ -97,6 +102,46 @@ def test_artifact_planning_normalize_pattern_returns_tuple_api():
         ("first", "default", 0),
         ("second", "default", 1),
     ]
+
+
+def test_artifact_graph_tracks_kind_groups_and_invocation_ownership():
+    @artifact_outputs(ArtifactSpec("nuclei", ArtifactKind.OBJECT_LABELS))
+    def identify(image):
+        return image
+
+    graph = extract_artifact_declarations({"DAPI": identify})
+
+    assert graph.outputs["nuclei"].kind is ArtifactKind.OBJECT_LABELS
+    assert graph.output_groups["nuclei"] == {"DAPI"}
+    assert graph.producers[0].invocation_keys == (
+        FunctionInvocationKey("identify", "DAPI", 0),
+    )
+
+
+def test_artifact_graph_rejects_conflicting_producer_kinds():
+    @artifact_outputs(ArtifactSpec("objects", ArtifactKind.OBJECT_LABELS))
+    def identify(image):
+        return image
+
+    @artifact_outputs(ArtifactSpec("objects", ArtifactKind.MEASUREMENTS))
+    def measure(image):
+        return image
+
+    with pytest.raises(ValueError, match="Conflicting producer artifact kind"):
+        extract_artifact_declarations([identify, measure])
+
+
+def test_artifact_graph_rejects_local_consumer_producer_kind_mismatch():
+    @artifact_outputs(ArtifactSpec("objects", ArtifactKind.OBJECT_LABELS))
+    def identify(image):
+        return image
+
+    @artifact_inputs(ArtifactSpec("objects", ArtifactKind.MEASUREMENTS))
+    def measure(image, objects):
+        return image
+
+    with pytest.raises(ValueError, match="produced as object_labels"):
+        extract_artifact_declarations([identify, measure])
 
 
 def test_normalize_function_pattern_is_grouped_source_of_truth():
