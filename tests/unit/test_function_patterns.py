@@ -11,6 +11,7 @@ from openhcs.core.function_patterns import (
     inject_artifact_input_values,
     inject_kwargs_into_pattern,
     iter_enabled_function_invocations,
+    normalize_function_pattern,
     strip_disabled_functions,
 )
 from openhcs.core.pipeline.function_contracts import (
@@ -95,6 +96,26 @@ def test_artifact_planning_normalize_pattern_returns_tuple_api():
     assert normalized == [
         ("first", "default", 0),
         ("second", "default", 1),
+    ]
+
+
+def test_normalize_function_pattern_is_grouped_source_of_truth():
+    normalized = normalize_function_pattern(
+        {
+            "DAPI": [first, (skipped, {"enabled": False}), (second, {"sigma": 2})],
+            "GFP": third,
+        }
+    )
+
+    assert normalized.is_grouped
+    assert [group.group_key for group in normalized.groups] == ["DAPI", "GFP"]
+    assert [
+        (item.key.function_name, item.key.group_key, item.key.position, item.kwargs)
+        for item in normalized.iter_items()
+    ] == [
+        ("first", "DAPI", 0, ()),
+        ("second", "DAPI", 1, (("sigma", 2),)),
+        ("third", "GFP", 0, ()),
     ]
 
 

@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
 from openhcs.core.callable_contract import CallableContract
-from openhcs.formats.func_arg_prep import get_core_callable, iter_pattern_items
+from openhcs.formats.func_arg_prep import get_core_callable
 
 
 DEFAULT_GROUP_KEY = "default"
@@ -57,6 +57,46 @@ class FunctionInvocation:
     def func(self) -> Any:
         """Underlying callable or FunctionReference for compatibility."""
         return self.contract.func
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedFunctionItem:
+    """Compiler-normalized callable item with stable invocation identity."""
+
+    key: FunctionInvocationKey
+    contract: CallableContract
+    kwargs: tuple[tuple[str, Any], ...] = ()
+
+    @property
+    def func(self) -> Any:
+        """Underlying callable or FunctionReference for compatibility."""
+        return self.contract.func
+
+    @property
+    def kwargs_dict(self) -> dict[str, Any]:
+        """Return invocation kwargs as a runtime dict."""
+        return dict(self.kwargs)
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedFunctionGroup:
+    """Compiler-normalized callable chain for one pattern group."""
+
+    group_key: str
+    items: tuple[NormalizedFunctionItem, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedFunctionPattern:
+    """Raw FunctionStep.func syntax lowered into typed compiler input."""
+
+    groups: tuple[NormalizedFunctionGroup, ...]
+    is_grouped: bool
+
+    def iter_items(self) -> Iterator[NormalizedFunctionItem]:
+        """Yield normalized callable items in runtime order."""
+        for group in self.groups:
+            yield from group.items
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,31 +225,33 @@ def iter_enabled_function_invocations(pattern: Any) -> Iterator[FunctionInvocati
     Positions are renumbered after disabled functions are filtered out, matching
     the current runtime behavior for list chains and dict-pattern branches.
     """
-    position_counters: dict[Any, int] = {}
-
-    for func_item, group_key, _original_pos in iter_pattern_items(pattern):
-        if (
-            isinstance(func_item, tuple)
-            and len(func_item) == 2
-            and isinstance(func_item[1], dict)
-            and func_item[1].get("enabled", True) is False
-        ):
-            continue
-
-        core_callable = get_core_callable(func_item)
-        if not core_callable:
-            continue
-        contract = CallableContract.from_callable(core_callable)
-
-        if group_key not in position_counters:
-            position_counters[group_key] = 0
-
-        position = position_counters[group_key]
+    for item in normalize_function_pattern(pattern).iter_items():
         yield FunctionInvocation(
-            contract=contract,
-            key=FunctionInvocationKey.from_contract(contract, group_key, position),
+            contract=item.contract,
+            key=item.key,
         )
-        position_counters[group_key] += 1
+
+
+def normalize_function_pattern(pattern: Any) -> NormalizedFunctionPattern:
+    """Lower raw FunctionStep.func syntax into typed grouped callable items."""
+    if isinstance(pattern, dict):
+        return NormalizedFunctionPattern(
+            groups=tuple(
+                _normalize_function_group(group_key=group_key, pattern=value)
+                for group_key, value in pattern.items()
+            ),
+            is_grouped=True,
+        )
+
+    return NormalizedFunctionPattern(
+        groups=(
+            _normalize_function_group(
+                group_key=DEFAULT_GROUP_KEY,
+                pattern=pattern,
+            ),
+        ),
+        is_grouped=False,
+    )
 
 
 def compile_function_pattern(
@@ -218,28 +260,17 @@ def compile_function_pattern(
     output_plans: Mapping[str, ArtifactOutputPlan],
 ) -> CompiledFunctionPattern:
     """Compile raw FunctionStep.func syntax into the runtime source of truth."""
-    if isinstance(pattern, dict):
-        groups = tuple(
+    normalized = normalize_function_pattern(pattern)
+    return CompiledFunctionPattern(
+        groups=tuple(
             _compile_function_group(
-                group_key=group_key,
-                pattern=value,
+                normalized_group=group,
                 input_plans=input_plans,
                 output_plans=output_plans,
             )
-            for group_key, value in pattern.items()
-        )
-        return CompiledFunctionPattern(groups=groups, is_grouped=True)
-
-    return CompiledFunctionPattern(
-        groups=(
-            _compile_function_group(
-                group_key=DEFAULT_GROUP_KEY,
-                pattern=pattern,
-                input_plans=input_plans,
-                output_plans=output_plans,
-            ),
+            for group in normalized.groups
         ),
-        is_grouped=False,
+        is_grouped=normalized.is_grouped,
     )
 
 
@@ -341,44 +372,76 @@ def _merge_pattern_item_kwargs(pattern: Any, kwargs: Mapping[str, Any]) -> Any:
     return (pattern, dict(kwargs))
 
 
-def _compile_function_group(
+def _normalize_function_group(
     group_key: Any,
     pattern: Any,
+) -> NormalizedFunctionGroup:
+    items = pattern if isinstance(pattern, list) else [pattern]
+    normalized_items: list[NormalizedFunctionItem] = []
+
+    for item in items:
+        if _is_disabled_function_item(item):
+            continue
+        func, kwargs = _split_function_item(item)
+        contract = CallableContract.from_callable(func)
+        position = len(normalized_items)
+        normalized_items.append(
+            NormalizedFunctionItem(
+                key=FunctionInvocationKey.from_contract(
+                    contract,
+                    group_key,
+                    position,
+                ),
+                contract=contract,
+                kwargs=_freeze_runtime_kwargs(kwargs),
+            )
+        )
+
+    return NormalizedFunctionGroup(
+        group_key=str(group_key),
+        items=tuple(normalized_items),
+    )
+
+
+def _compile_function_group(
+    normalized_group: NormalizedFunctionGroup,
     input_plans: Mapping[str, ArtifactInputPlan],
     output_plans: Mapping[str, ArtifactOutputPlan],
 ) -> CompiledFunctionGroup:
-    items = pattern if isinstance(pattern, list) else [pattern]
     invocations = tuple(
         _compile_invocation(
-            func_item=item,
-            group_key=str(group_key),
-            position=position,
+            item=item,
             input_plans=input_plans,
             output_plans=output_plans,
         )
-        for position, item in enumerate(items)
+        for item in normalized_group.items
     )
     return CompiledFunctionGroup(
-        group_key=str(group_key),
+        group_key=normalized_group.group_key,
         invocations=invocations,
     )
 
 
 def _compile_invocation(
-    func_item: Any,
-    group_key: str,
-    position: int,
+    item: NormalizedFunctionItem,
     input_plans: Mapping[str, ArtifactInputPlan],
     output_plans: Mapping[str, ArtifactOutputPlan],
 ) -> CompiledFunctionInvocation:
-    func, kwargs = _split_function_item(func_item)
-    contract = CallableContract.from_callable(func)
     return CompiledFunctionInvocation(
-        key=FunctionInvocationKey.from_contract(contract, group_key, position),
-        contract=contract,
-        kwargs=_freeze_runtime_kwargs(kwargs),
-        artifact_input_keys=contract.select_input_plan_keys(input_plans),
-        artifact_output_keys=contract.select_output_plan_keys(output_plans),
+        key=item.key,
+        contract=item.contract,
+        kwargs=item.kwargs,
+        artifact_input_keys=item.contract.select_input_plan_keys(input_plans),
+        artifact_output_keys=item.contract.select_output_plan_keys(output_plans),
+    )
+
+
+def _is_disabled_function_item(func_item: Any) -> bool:
+    return (
+        isinstance(func_item, tuple)
+        and len(func_item) == 2
+        and isinstance(func_item[1], Mapping)
+        and func_item[1].get("enabled", True) is False
     )
 
 
