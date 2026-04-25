@@ -13,9 +13,11 @@ from openhcs.core.compiled_step_plan import (
     ArtifactInputPlans,
     ArtifactOutputPlans,
     CompiledStepPlan,
+    FunctionInvocationPlans,
     InputConversionPlan,
     MaterializedOutputPlan,
 )
+from openhcs.core.config import StreamingConfig
 from openhcs.core.steps.function_io import create_image_path_getter
 
 
@@ -52,8 +54,8 @@ class FunctionStepExecutionPlan:
     analysis_results_dir: str | None
     input_conversion: InputConversionPlan | None
     materialized_output: MaterializedOutputPlan | None
-    streaming_configs: tuple[Any, ...]
-    function_invocation_plans: Mapping[Any, Any]
+    streaming_configs: tuple[StreamingConfig, ...]
+    function_invocation_plans: FunctionInvocationPlans
     artifact_inputs_by_group: Mapping[Any, ArtifactInputPlans]
     artifact_outputs_by_group: Mapping[Any, ArtifactOutputPlans]
 

@@ -1013,7 +1013,6 @@ class PipelineCompiler:
     ) -> None:
         """
         Applies global visualizer override to all step_plans in the context.
-        (Unchanged from previous version)
         """
         if context.is_frozen():
             raise AttributeError(

@@ -5,15 +5,20 @@ from __future__ import annotations
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from openhcs.constants.constants import VariableComponents
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
 from openhcs.core.function_patterns import FunctionInvocationKey, FunctionInvocationPlan
 
+if TYPE_CHECKING:
+    from openhcs.core.config import StreamingConfig
+else:
+    StreamingConfig = Any
 
 ArtifactInputPlans = Mapping[str, ArtifactInputPlan]
 ArtifactOutputPlans = Mapping[str, ArtifactOutputPlan]
+FunctionInvocationPlans = Mapping[FunctionInvocationKey, FunctionInvocationPlan]
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +91,7 @@ class CompiledStepPlan:
     output_memory_type: str | None = None
     gpu_id: int | None = None
     zarr_config: Mapping[str, Any] | None = None
-    streaming_configs: dict[str, Any] = field(default_factory=dict)
+    streaming_configs: dict[str, StreamingConfig] = field(default_factory=dict)
     visualize: bool = False
     create_openhcs_metadata: bool = False
     chainbreaker: bool = False
