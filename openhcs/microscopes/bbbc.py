@@ -15,12 +15,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, Type
 
 from openhcs.constants.constants import Backend
-from openhcs.io.exceptions import MetadataNotFoundError
-from openhcs.io.filemanager import FileManager
 from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.microscopes.microscope_interfaces import FilenameParser, MetadataHandler
 from openhcs.microscopes.tiff_metadata_mixin import TiffPixelSizeMixin
 from openhcs.microscopes.detect_mixins import MetadataDetectMixin
+from polystore.exceptions import MetadataNotFoundError
+from polystore.filemanager import FileManager
 
 logger = logging.getLogger(__name__)
 

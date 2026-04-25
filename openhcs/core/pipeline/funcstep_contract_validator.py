@@ -505,23 +505,10 @@ class FuncStepContractValidator:
         func_pattern = step.func
         step_name = step.name
 
-        # 1. Check if any function in the pattern uses special contract decorators
-        # _extract_functions_from_pattern will raise ValueError if func_pattern itself is invalid (e.g. None, or bad structure)
-        all_callables = FuncStepContractValidator._extract_functions_from_pattern(func_pattern, step_name)
-        
-        uses_special_contracts = False
-        if all_callables: # Only check attributes if we have actual callables
-            for f_callable in all_callables:
-                if hasattr(f_callable, '__special_inputs__') or \
-                   hasattr(f_callable, '__special_outputs__') or \
-                   hasattr(f_callable, '__chain_breaker__'):
-                    uses_special_contracts = True
-                    break
+        # Validate pattern structure before generic config validation.
+        FuncStepContractValidator._extract_functions_from_pattern(func_pattern, step_name)
 
-        # 2. Special contracts validation is handled by validate_pattern_structure() below
-        # No additional restrictions needed - all valid patterns support special contracts
-
-        # 3. Validate using generic validation system
+        # Validate using generic validation system
         config = get_openhcs_config()
         validator = GenericValidator(config)
 

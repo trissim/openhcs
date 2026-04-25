@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 from openhcs.core.memory import numpy as numpy_func
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import CsvOptions, MaterializationSpec
 
 # Import config classes with TYPE_CHECKING to avoid circular imports
@@ -430,7 +430,7 @@ def consolidate_analysis_results(
 
 
 @numpy_func
-@special_outputs(("consolidated_results", MaterializationSpec(CsvOptions(filename_suffix=".csv"))))
+@artifact_outputs(("consolidated_results", MaterializationSpec(CsvOptions(filename_suffix=".csv"))))
 def consolidate_analysis_results_pipeline(
     image_stack: np.ndarray,
     results_directory: str,

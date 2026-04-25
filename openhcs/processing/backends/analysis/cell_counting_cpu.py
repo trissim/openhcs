@@ -27,7 +27,7 @@ from skimage.measure import label, regionprops, regionprops_table
 
 # OpenHCS imports
 from openhcs.core.memory import numpy as numpy_func
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import (
     MaterializationSpec,
     CsvOptions,
@@ -95,7 +95,7 @@ class MultiChannelResult:
 
 
 @numpy_func
-@special_outputs(
+@artifact_outputs(
     (
         "cell_counts",
         MaterializationSpec(
@@ -219,7 +219,7 @@ def count_cells_single_channel(
 
 
 @numpy_func
-@special_outputs((
+@artifact_outputs((
     "multi_channel_counts",
     MaterializationSpec(
         JsonOptions(filename_suffix=".json", wrap_list=True),

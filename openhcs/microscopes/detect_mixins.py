@@ -3,9 +3,9 @@
 from pathlib import Path
 from typing import Type
 
-from openhcs.io.exceptions import MetadataNotFoundError
-from openhcs.io.filemanager import FileManager
 from openhcs.microscopes.microscope_interfaces import MetadataHandler
+from polystore.exceptions import MetadataNotFoundError
+from polystore.filemanager import FileManager
 
 
 class MetadataDetectMixin:

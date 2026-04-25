@@ -10,7 +10,7 @@ All functions follow OpenHCS contracts:
     - Must return processed image (optionally with metadata dict)
     
 For analysis functions that produce structured outputs (cell counts, measurements, etc.):
-    - Use @special_outputs decorator to declare outputs
+    - Use @artifact_outputs decorator to declare outputs
     - Use materialization functions from openhcs.processing.materialization
     - Return tuple: (processed_image, analysis_result_1, analysis_result_2, ...)
 """
@@ -106,13 +106,13 @@ def my_custom_function(image, scale: float = 1.0, offset: float = 0.0):
 #
 # 1. Import the decorators and materializers:
 #
-#    from openhcs.core.pipeline.function_contracts import special_outputs
+#    from openhcs.core.pipeline.function_contracts import artifact_outputs
 #    from openhcs.processing.materialization import MaterializationSpec, CsvOptions, JsonOptions
 #
-# 2. Declare outputs with @special_outputs:
+# 2. Declare outputs with @artifact_outputs:
 #
 #    @numpy
-#    @special_outputs(("measurements", MaterializationSpec(CsvOptions(
+#    @artifact_outputs(("measurements", MaterializationSpec(CsvOptions(
 #        fields=["slice_index", "mean", "std"],
 #        analysis_type="intensity_stats"
 #    ))))
@@ -310,7 +310,7 @@ def my_custom_function(image, radius: float = 2.0):
 # =============================================================================
 
 NUMPY_ANALYSIS_TEMPLATE = """from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import CsvOptions, MaterializationSpec
 from dataclasses import dataclass
 from typing import List, Tuple
@@ -326,7 +326,7 @@ class AnalysisResult:
 
 
 @numpy
-@special_outputs(("analysis_results", MaterializationSpec(CsvOptions(
+@artifact_outputs(("analysis_results", MaterializationSpec(CsvOptions(
     fields=["slice_index", "measurement", "count"],
     filename_suffix=".csv"
 ))))
@@ -344,7 +344,7 @@ def my_analysis_function(image, threshold: float = 0.5) -> Tuple[np.ndarray, Lis
         - List of AnalysisResult dataclasses (auto-serialized to CSV)
 
     Notes:
-        - @special_outputs declares that this function produces analysis data
+        - @artifact_outputs declares that this function produces analysis data
         - CsvOptions auto-converts AnalysisResult fields to CSV columns
         - Return is ALWAYS a tuple: (image, special_output_1, special_output_2, ...)
     \"\"\"
@@ -371,7 +371,7 @@ def my_analysis_function(image, threshold: float = 0.5) -> Tuple[np.ndarray, Lis
 
 
 NUMPY_DUAL_OUTPUT_TEMPLATE = """from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import CsvOptions, JsonOptions, MaterializationSpec
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Any
@@ -398,7 +398,7 @@ class SliceSummary:
 
 
 @numpy
-@special_outputs(
+@artifact_outputs(
     ("cell_measurements", MaterializationSpec(CsvOptions(filename_suffix="_cells.csv"))),
     ("slice_summaries", MaterializationSpec(
         JsonOptions(filename_suffix=".json", wrap_list=True),
@@ -415,7 +415,7 @@ def analyze_cells(
     Multi-output analysis: cell details + slice summaries.
 
     This demonstrates:
-    - Multiple @special_outputs with different materializers
+    - Multiple @artifact_outputs with different materializers
     - CSV for detailed per-cell data
     - Dual (JSON+CSV) for summary statistics
 

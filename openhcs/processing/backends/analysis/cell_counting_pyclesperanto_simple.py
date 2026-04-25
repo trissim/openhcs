@@ -21,7 +21,7 @@ import pyclesperanto as cle
 
 # OpenHCS imports
 from openhcs.core.memory import pyclesperanto as pyclesperanto_func
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import (
     MaterializationSpec,
     CsvOptions,

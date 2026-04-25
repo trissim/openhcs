@@ -1,107 +1,84 @@
-"""
-Function-level contract decorators for the pipeline compiler.
+"""Function-level artifact contract decorators for the pipeline compiler."""
 
-This module provides decorators for declaring special input and output contracts
-at the function level, enabling compile-time validation of dependencies between
-processing functions in the pipeline.
+from collections import OrderedDict
+from typing import Callable, TypeVar
 
-These decorators complement the class-level @special_in and @special_out decorators
-by allowing more granular contract declarations at the function level.
-
-Doctrinal Clauses:
-- Clause 3 — Declarative Primacy
-- Clause 66 — Immutability After Construction
-- Clause 88 — No Inferred Capabilities
-- Clause 245 — Declarative Enforcement
-- Clause 246 — Statelessness Mandate
-- Clause 251 — Special Output Contract
-"""
-
-from typing import Callable, Any, TypeVar
-
+from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.processing.materialization import MaterializationSpec
 
-F = TypeVar('F', bound=Callable[..., Any])
+F = TypeVar("F", bound=Callable)
 
 
-# Old special_output and special_input decorators are removed.
+def _artifact_spec_from_output_declaration(
+    spec: str | ArtifactSpec | tuple[str, MaterializationSpec],
+) -> ArtifactSpec:
+    """Normalize one output declaration into an ArtifactSpec."""
+    if isinstance(spec, ArtifactSpec):
+        return spec
 
-def special_outputs(*output_specs) -> Callable[[F], F]:
-    """
-    Decorator that marks a function as producing special outputs.
+    if isinstance(spec, str):
+        return ArtifactSpec(spec, ArtifactKind.SPECIAL)
 
-    Args:
-        *output_specs: Either strings or (string, MaterializationSpec) tuples
-                      - String only: "positions" - no materialization
-                      - Tuple: ("cell_counts", MaterializationSpec(CsvOptions(...))) - writer-based materialization
+    if isinstance(spec, tuple) and len(spec) == 2:
+        key, mat_spec = spec
+        if not isinstance(key, str):
+            raise ValueError(f"Artifact output key must be string, got {type(key)}: {key}")
+        if not isinstance(mat_spec, MaterializationSpec):
+            raise ValueError(
+                "Materialization spec must be a MaterializationSpec. "
+                f"Got {type(mat_spec)} for key '{key}'."
+            )
+        return ArtifactSpec(
+            key,
+            ArtifactKind.SPECIAL,
+            materialization=mat_spec,
+        )
 
-    Examples:
-        @special_outputs("positions", "metadata")  # String only
-        def process_image(image):
-            return processed_image, positions, metadata
+    raise ValueError(
+        f"Invalid artifact output spec: {spec}. "
+        "Must be string, ArtifactSpec, or (string, MaterializationSpec) tuple."
+    )
 
-        @special_outputs(("cell_counts", MaterializationSpec(CsvOptions(...))))  # With materialization spec
-        def count_cells(image):
-            return processed_image, cell_count_results
 
-        @special_outputs("positions", ("cell_counts", MaterializationSpec(CsvOptions(...))))  # Mixed
-        def analyze_image(image):
-            return processed_image, positions, cell_count_results
-    """
+def _artifact_spec_from_input_declaration(spec: str | ArtifactSpec) -> ArtifactSpec:
+    """Normalize one input declaration into an ArtifactSpec."""
+    if isinstance(spec, ArtifactSpec):
+        return spec
+    if isinstance(spec, str):
+        return ArtifactSpec(spec, ArtifactKind.SPECIAL)
+    raise ValueError(
+        f"Invalid artifact input spec: {spec}. Must be string or ArtifactSpec."
+    )
+
+
+def artifact_outputs(
+    *output_specs: str | ArtifactSpec | tuple[str, MaterializationSpec],
+) -> Callable[[F], F]:
+    """Declare named artifacts produced by a processing function."""
+
     def decorator(func: F) -> F:
-        materialization_specs = {}
-        output_keys = set()
-
+        artifact_specs = OrderedDict()
         for spec in output_specs:
-            if isinstance(spec, str):
-                # String only - no materialization function
-                output_keys.add(spec)
-            elif isinstance(spec, tuple) and len(spec) == 2:
-                # (key, MaterializationSpec) tuple or registered materializer callable
-                key, mat_spec = spec
-                if not isinstance(key, str):
-                    raise ValueError(f"Special output key must be string, got {type(key)}: {key}")
-                if not isinstance(mat_spec, MaterializationSpec):
-                    raise ValueError(
-                        "Materialization spec must be a MaterializationSpec. "
-                        f"Got {type(mat_spec)} for key '{key}'."
-                    )
-                output_keys.add(key)
-                materialization_specs[key] = mat_spec
-            else:
-                raise ValueError(
-                    f"Invalid special output spec: {spec}. "
-                    "Must be string or (string, MaterializationSpec) tuple."
-                )
+            artifact_spec = _artifact_spec_from_output_declaration(spec)
+            artifact_specs[artifact_spec.name] = artifact_spec
 
-        # Set both attributes for backward compatibility and new functionality
-        func.__special_outputs__ = output_keys  # For path planner (backward compatibility)
-        func.__materialization_specs__ = materialization_specs  # For materialization system
+        func.__artifact_outputs__ = artifact_specs
         return func
+
     return decorator
 
 
-def special_inputs(*input_names: str) -> Callable[[F], F]:
-    """
-    Decorator that marks a function as requiring special inputs.
+def artifact_inputs(*input_specs: str | ArtifactSpec) -> Callable[[F], F]:
+    """Declare named artifacts consumed by a processing function."""
 
-    Args:
-        *input_names: Names of the additional input parameters (excluding the first)
-                     that must be produced by other functions
-
-    Example:
-        @special_inputs("positions", "metadata")
-        def stitch_images(image_stack, positions, metadata):
-            # First parameter is always the input image (3D array)
-            # Additional parameters are special inputs from other functions
-            return stitched_image
-    """
     def decorator(func: F) -> F:
-        # For special_inputs, we store them as a dictionary with True as the value,
-        # similar to the old special_input decorator, for compatibility with
-        # existing logic in PathPlanner that expects a dict.
-        # The 'required' flag is implicitly True for all named inputs here.
-        # If optional special inputs are needed later, this structure can be extended.
-        func.__special_inputs__ = {name: True for name in input_names}
+        func.__artifact_inputs__ = OrderedDict(
+            (artifact_spec.name, artifact_spec)
+            for artifact_spec in (
+                _artifact_spec_from_input_declaration(spec)
+                for spec in input_specs
+            )
+        )
         return func
+
     return decorator

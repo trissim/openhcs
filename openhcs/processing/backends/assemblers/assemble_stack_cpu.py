@@ -7,7 +7,7 @@ import logging
 from typing import TYPE_CHECKING, List, Tuple, Union
 
 from openhcs.core.memory import numpy as numpy_func
-from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.pipeline.function_contracts import artifact_inputs
 
 # For type checking only
 if TYPE_CHECKING:
@@ -156,7 +156,7 @@ def _create_dynamic_blend_mask(
     return mask.astype(np.float32)
 
 
-@special_inputs("positions")
+@artifact_inputs("positions")
 @numpy_func
 def assemble_stack_cpu(
     image_tiles: "np.ndarray",

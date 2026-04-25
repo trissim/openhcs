@@ -23,7 +23,7 @@ except ImportError:
     logging.warning("MTM (Multi-Template-Matching) not available. Install with: pip install Multi-Template-Matching")
 
 from openhcs.core.memory import numpy as numpy_func
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import CsvOptions, MaterializationSpec
 
 
@@ -80,7 +80,7 @@ class TemplateMatchResult:
     error_message: Optional[str] = None
 
 @numpy_func
-@special_outputs((
+@artifact_outputs((
     "match_results",
     MaterializationSpec(
         CsvOptions(filename_suffix="_mtm_matches.csv", fields=["slice_index"], row_unpacker=_mtm_row_unpacker)
@@ -255,7 +255,7 @@ def multi_template_crop_reference_channel(
 
 
 @numpy_func
-@special_outputs((
+@artifact_outputs((
     "match_results",
     MaterializationSpec(
         CsvOptions(filename_suffix="_mtm_matches.csv", fields=["slice_index"], row_unpacker=_mtm_row_unpacker)
@@ -409,7 +409,7 @@ def multi_template_crop_subset(
 
 
 @numpy_func
-@special_outputs((
+@artifact_outputs((
     "match_results",
     MaterializationSpec(
         CsvOptions(filename_suffix="_mtm_matches.csv", fields=["slice_index"], row_unpacker=_mtm_row_unpacker)

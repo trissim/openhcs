@@ -16,7 +16,7 @@ import logging
 
 # OpenHCS imports
 from openhcs.core.memory import numpy as numpy_func
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import MaterializationSpec, CsvOptions, JsonOptions, ROIOptions, TiffStackOptions
 from polystore.roi import ROI
 
@@ -45,7 +45,7 @@ class AnalysisDimension(Enum):
 
 
 
-@special_outputs(
+@artifact_outputs(
     (
         "axon_analysis",
         MaterializationSpec(

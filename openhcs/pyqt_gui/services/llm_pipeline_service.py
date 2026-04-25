@@ -292,9 +292,9 @@ def enhance_contrast(image, clip_limit: float = 0.03):
 ```
 
 === FUNCTION WITH CSV OUTPUT ===
-When you need to save measurements to CSV, use @special_outputs with csv_only() preset.
+When you need to save measurements to CSV, use @artifact_outputs with csv_only() preset.
 
-RETURN SEMANTICS: With N special_outputs, return (image, output1, output2, ..., outputN)
+RETURN SEMANTICS: With N artifact_outputs, return (image, output1, output2, ..., outputN)
 
 ```python
 from dataclasses import dataclass
@@ -302,7 +302,7 @@ from typing import List, Tuple
 import numpy as np
 from skimage.measure import label, regionprops
 from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import csv_only
 
 @dataclass
@@ -313,7 +313,7 @@ class CellMeasurement:
     mean_intensity: float
 
 @numpy
-@special_outputs(("cell_measurements", csv_only()))
+@artifact_outputs(("cell_measurements", csv_only()))
 def count_cells_with_csv(
     image,
     threshold: float = 0.5,
@@ -345,11 +345,11 @@ from typing import List, Tuple
 import numpy as np
 from skimage.measure import label
 from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import roi_zip
 
 @numpy
-@special_outputs(("segmentation_masks", roi_zip()))
+@artifact_outputs(("segmentation_masks", roi_zip()))
 def segment_cells_with_rois(
     image,
     threshold: float = 0.5
@@ -372,11 +372,11 @@ from typing import List, Tuple
 import numpy as np
 from skimage.measure import label
 from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import json_and_csv, roi_zip
 
 @numpy
-@special_outputs(
+@artifact_outputs(
     ("segmentation_masks", roi_zip()),
     ("cell_measurements", json_and_csv()),
 )
@@ -406,7 +406,7 @@ from typing import List, Tuple
 import numpy as np
 import pyclesperanto as cle
 from openhcs.core.memory import pyclesperanto
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import csv_only, roi_zip
 
 @dataclass
@@ -417,7 +417,7 @@ class CellStats:
     mean_intensity: float
 
 @pyclesperanto
-@special_outputs(
+@artifact_outputs(
     ("cell_stats", csv_only()),
     ("segmentation_masks", roi_zip())
 )
@@ -478,7 +478,7 @@ import cupy as cp
 from cucim.skimage.filters import gaussian
 from cucim.skimage.measure import label, regionprops_table
 from openhcs.core.memory import cupy
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import CsvOptions, MaterializationSpec, ROIOptions
 
 @dataclass
@@ -489,7 +489,7 @@ class CellStats:
     mean_intensity: float
 
 @cupy
-@special_outputs(
+@artifact_outputs(
     ("cell_stats", MaterializationSpec(CsvOptions(filename_suffix="_stats.csv"))),
     ("segmentation_masks", MaterializationSpec(ROIOptions()))
 )
@@ -540,10 +540,10 @@ IMPORTANT: Do not convert arrays between backends on return.
 === SPECIAL INPUTS (consume data from previous steps) ===
 ```python
 from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.pipeline.function_contracts import artifact_inputs
 
 @numpy
-@special_inputs("cell_positions")
+@artifact_inputs("cell_positions")
 def analyze_at_positions(image, cell_positions):
     """cell_positions is auto-loaded from a previous step's special_output."""
     return image
@@ -559,7 +559,7 @@ def analyze_at_positions(image, cell_positions):
 from openhcs.core.memory import numpy, pyclesperanto, cupy
 
 # Special outputs/inputs (for analysis functions)
-from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs, artifact_inputs
 
 # Materializers for CSV/JSON and ROI outputs
 from openhcs.processing.materialization import (
@@ -605,16 +605,16 @@ import numpy as np"""
 from openhcs.processing.materialization import json_and_csv, csv_only, json_only, roi_zip
 
 # JSON + CSV (most common for analysis)
-@special_outputs(("results", json_and_csv()))
+@artifact_outputs(("results", json_and_csv()))
 
 # CSV only
-@special_outputs(("measurements", csv_only()))
+@artifact_outputs(("measurements", csv_only()))
 
 # JSON only
-@special_outputs(("metadata", json_only()))
+@artifact_outputs(("metadata", json_only()))
 
 # ROI zip for ImageJ/Fiji
-@special_outputs(("masks", roi_zip()))
+@artifact_outputs(("masks", roi_zip()))
 
 === ADVANCED CUSTOMIZATION (When needed) ===
 CsvOptions{csv_sig}
@@ -627,9 +627,9 @@ Usage: MaterializationSpec(CsvOptions(filename_suffix="_custom.csv", fields=["x"
 from openhcs.processing.materialization import json_and_csv, csv_only, json_only, roi_zip
 
 # Most common patterns - just use these:
-@special_outputs(("results", json_and_csv()))  # JSON + CSV
-@special_outputs(("measurements", csv_only()))  # CSV only
-@special_outputs(("masks", roi_zip()))  # ROIs for ImageJ
+@artifact_outputs(("results", json_and_csv()))  # JSON + CSV
+@artifact_outputs(("measurements", csv_only()))  # CSV only
+@artifact_outputs(("masks", roi_zip()))  # ROIs for ImageJ
 
 === ADVANCED CUSTOMIZATION ===
 MaterializationSpec(CsvOptions(...), JsonOptions(...))"""

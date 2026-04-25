@@ -6,7 +6,7 @@ thresholding methods and size filtering.
 """
 
 from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import MaterializationSpec, CsvOptions, ROIOptions
 
 from enum import Enum
@@ -43,7 +43,7 @@ setattr(_count_cells_simple, "Foreground", Foreground)
 
 
 @numpy
-@special_outputs(
+@artifact_outputs(
     (
         "cell_counts",
         MaterializationSpec(CsvOptions(fields=["slice_index", "cell_count"]))

@@ -9,7 +9,7 @@ Core Components:
     - CustomFunctionManager: Manages custom function lifecycle (register, load, delete)
     - ValidationError: Exception raised for invalid custom function code
     - get_default_template: Returns default numpy template for custom functions
-    - get_analysis_template: Returns template for analysis functions with @special_outputs
+    - get_analysis_template: Returns template for analysis functions with @artifact_outputs
     - CustomFunctionSignals: Qt signals for UI updates when custom functions change
 
 Example (Processing):
@@ -26,7 +26,7 @@ Example (Processing):
 
 Example (Analysis with special outputs):
     >>> from openhcs.processing.custom_functions import get_analysis_template
-    >>> template = get_analysis_template()  # Shows @special_outputs pattern
+    >>> template = get_analysis_template()  # Shows @artifact_outputs pattern
 """
 
 from openhcs.processing.custom_functions.manager import CustomFunctionManager

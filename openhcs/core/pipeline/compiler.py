@@ -56,9 +56,7 @@ from typing import (
     get_args,
     get_origin,
 )
-from collections import (
-    OrderedDict,
-)  # For special_outputs and special_inputs order (used by PathPlanner)
+from collections import OrderedDict
 
 from openhcs.constants.constants import (
     get_multiprocessing_axis,
@@ -98,6 +96,41 @@ from python_introspect import Enableable
 logger = logging.getLogger(__name__)
 
 
+def _register_object_state(
+    object_instance,
+    scope_id: str,
+    parent_state: Optional["ObjectState"],
+) -> "ObjectState":
+    """Create and register an ObjectState with the compiler's snapshot policy."""
+    state = ObjectState(
+        object_instance=object_instance,
+        scope_id=scope_id,
+        parent_state=parent_state,
+    )
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    return state
+
+
+def _get_or_register_object_state(
+    scope_id: str,
+    object_instance,
+    parent_state: Optional["ObjectState"],
+    *,
+    force_fresh: bool = False,
+) -> "ObjectState":
+    """Return an existing ObjectState unless a fresh compiler state is required."""
+    state = None if force_fresh else ObjectStateRegistry.get_by_scope(scope_id)
+    if state is not None:
+        return state
+    return _register_object_state(object_instance, scope_id, parent_state)
+
+
+_FUNCTION_REFERENCE_ATTRIBUTE_FIELDS = {
+    "__name__": "function_name",
+    "__module__": "original_module",
+}
+
+
 @dataclass(frozen=True)
 class FunctionReference:
     """
@@ -107,7 +140,7 @@ class FunctionReference:
     picklability while allowing workers to resolve functions from their registry.
 
     Preserves all dunder attributes from the original function so they can be
-    accessed during compilation (e.g., __special_inputs__, __special_outputs__).
+    accessed during compilation (e.g., __artifact_inputs__, __artifact_outputs__).
     """
 
     function_name: str
@@ -122,13 +155,11 @@ class FunctionReference:
         # Use object.__getattribute__ to avoid infinite recursion
         preserved = object.__getattribute__(self, "preserved_attrs")
 
-        # Handle special case: __name__ maps to function_name
-        if name == "__name__":
-            return object.__getattribute__(self, "function_name")
-
-        # Handle special case: __module__ maps to original_module
-        if name == "__module__":
-            return object.__getattribute__(self, "original_module")
+        if name in _FUNCTION_REFERENCE_ATTRIBUTE_FIELDS:
+            return object.__getattribute__(
+                self,
+                _FUNCTION_REFERENCE_ATTRIBUTE_FIELDS[name],
+            )
 
         if name in preserved:
             return preserved[name]
@@ -240,7 +271,7 @@ def _refresh_function_object(func_value):
 def _get_function_reference(func):
     """Convert a function to a picklable FunctionReference.
 
-    Preserves custom attributes (like __special_inputs__, __special_outputs__)
+    Preserves custom attributes (like __artifact_inputs__, __artifact_outputs__)
     so they can be accessed during compilation without resolving the function.
 
     Compares unwrapped original functions to handle wrapper functions that may be
@@ -270,9 +301,8 @@ def _get_function_reference(func):
         ):
             preserved_attrs = {}
             for attr in [
-                "__special_inputs__",
-                "__special_outputs__",
-                "__materialization_specs__",
+                "__artifact_inputs__",
+                "__artifact_outputs__",
                 "input_memory_type",
                 "output_memory_type",
             ]:
@@ -303,7 +333,7 @@ class PipelineCompiler:
     This class provides static methods that are called sequentially by the
     PipelineOrchestrator for each well's ProcessingContext. Each method
     is responsible for a specific part of the compilation process, such as
-    path planning, special I/O resolution, materialization flag setting,
+    path planning, artifact I/O resolution, materialization flag setting,
     memory contract validation, and GPU resource assignment.
     """
 
@@ -321,7 +351,7 @@ class PipelineCompiler:
     ) -> Tuple[List[AbstractStep], Dict[int, "ObjectState"]]:
         """
         Initializes step_plans by calling PipelinePathPlanner.prepare_pipeline_paths,
-        which handles primary paths, special I/O path planning and linking, and chainbreaker status.
+        which handles primary paths, artifact I/O path planning and linking, and chainbreaker status.
         Then, this method supplements the plans with non-I/O FunctionStep-specific attributes.
 
         Args:
@@ -345,10 +375,7 @@ class PipelineCompiler:
         if not hasattr(context, "step_plans") or context.step_plans is None:
             context.step_plans = {}  # Ensure step_plans dict exists
 
-        # === VISUALIZER CONFIG EXTRACTION ===
-        # visualizer_config is a legacy parameter that's passed to visualizers but never used
-        # The actual display configuration comes from the display_config parameter
-        # Set to None for backward compatibility with orchestrator code
+        # Visualizers read display configuration from display_config, not this field.
         context.visualizer_config = None
 
         # Steps are filtered in compile_pipelines() using ObjectState pattern
@@ -364,8 +391,7 @@ class PipelineCompiler:
                     "axis_id": context.axis_id,
                 }
 
-        # === ONE-TIME STEP RESOLUTION (if not already done) ===
-        # For backward compatibility, support the old behavior when step_state_map is not provided
+        # Resolve steps here when the caller did not provide a pre-resolved state map.
         if not steps_already_resolved or step_state_map is None:
             compilation_id = f"compile_{int(time.time() * 1000)}"
 
@@ -377,29 +403,25 @@ class PipelineCompiler:
             if global_config_state is None:
                 global_config = get_current_global_config(GlobalPipelineConfig)
                 if global_config:
-                    global_config_state = ObjectState(
-                        object_instance=global_config,
-                        scope_id="",
-                        parent_state=None,
-                    )
-                    ObjectStateRegistry.register(
-                        global_config_state, _skip_snapshot=True
+                    global_config_state = _register_object_state(
+                        global_config,
+                        "",
+                        None,
                     )
                     logger.info(
-                        "🔍 IPC: Registered global config at scope '' (initialize_step_plans)"
+                        "Registered global config at scope '' (initialize_step_plans)"
                     )
 
             # Register orchestrator with PipelineConfig as parent for config inheritance
             # The orchestrator provides pipeline-level config (streaming_defaults, etc.)
             orch_scope_id = f"{compilation_id}::orchestrator"
-            orch_state = ObjectState(
-                object_instance=orchestrator,
-                scope_id=orch_scope_id,
-                parent_state=global_config_state,  # Use the registered global config state
+            orch_state = _register_object_state(
+                orchestrator,
+                orch_scope_id,
+                global_config_state,
             )
-            ObjectStateRegistry.register(orch_state, _skip_snapshot=True)
             logger.info(
-                f"🔍 COMPILATION: Registered orchestrator at scope: {orch_scope_id}"
+                f"Registered orchestrator at scope: {orch_scope_id}"
             )
 
             # Register each step with orchestrator as parent
@@ -407,12 +429,11 @@ class PipelineCompiler:
             step_state_map = {}
             for step_index, step in enumerate(steps_definition):
                 step_scope_id = f"{compilation_id}::{context.plate_path or 'plate'}::step_{step_index}"
-                step_state = ObjectState(
-                    object_instance=step,
-                    scope_id=step_scope_id,
-                    parent_state=orch_state,
+                step_state = _register_object_state(
+                    step,
+                    step_scope_id,
+                    orch_state,
                 )
-                ObjectStateRegistry.register(step_state, _skip_snapshot=True)
                 step_state_map[step_index] = step_state
 
             # Now resolve all steps using their ObjectStates
@@ -420,7 +441,7 @@ class PipelineCompiler:
             for step_index, step in enumerate(steps_definition):
                 step_state = step_state_map[step_index]
                 logger.info(
-                    f"🔍 STEP RESOLUTION: Resolving step {step_index} ('{step.name}') from ObjectState..."
+                    f"Resolving step {step_index} ('{step.name}') from ObjectState."
                 )
                 resolved_step = step_state.to_object()
                 resolved_steps.append(resolved_step)
@@ -436,12 +457,12 @@ class PipelineCompiler:
 
             steps_definition = resolved_steps
             logger.info(
-                f"🔍 COMPILATION: All {len(resolved_steps)} steps resolved under scope: {compilation_id}"
+                f"Resolved {len(resolved_steps)} steps under scope: {compilation_id}"
             )
         else:
             # Steps already resolved in compile_pipelines - just use them directly
             logger.debug(
-                f"🔍 COMPILATION: Using pre-resolved steps for context {context.axis_id}"
+                f"Using pre-resolved steps for context {context.axis_id}"
             )
 
         # === INPUT CONVERSION DETECTION ===
@@ -550,12 +571,9 @@ class PipelineCompiler:
                 metadata_writer  # Set metadata writer responsibility flag
             )
 
-            # The special_outputs and special_inputs are now fully handled by PipelinePathPlanner.
-            # The block for planning special_outputs (lines 134-148 in original) is removed.
-            # Ensure these keys exist as OrderedDicts if PathPlanner doesn't guarantee it
-            # (PathPlanner currently creates them as dicts, OrderedDict might not be strictly needed here anymore)
-            current_plan.setdefault("special_inputs", OrderedDict())
-            current_plan.setdefault("special_outputs", OrderedDict())
+            # Artifact input/output plans are fully handled by PipelinePathPlanner.
+            current_plan.setdefault("artifact_inputs", OrderedDict())
+            current_plan.setdefault("artifact_outputs", OrderedDict())
             current_plan.setdefault("chainbreaker", False)  # PathPlanner now sets this.
 
             # Add step-specific attributes (non-I/O, non-path related)
@@ -655,7 +673,7 @@ class PipelineCompiler:
                 enabled = True if defaults_enabled is True else per_stream_enabled
                 if is_zmq_execution:
                     logger.info(
-                        "🔍 STREAMING RESOLUTION: step=%s field=%s defaults_enabled=%r per_stream_enabled=%r effective_enabled=%r",
+                        "Streaming resolution: step=%s field=%s defaults_enabled=%r per_stream_enabled=%r effective_enabled=%r",
                         step_index,
                         field_name,
                         defaults_enabled,
@@ -677,7 +695,7 @@ class PipelineCompiler:
                     if visualizer_info not in context.required_visualizers:
                         context.required_visualizers.append(visualizer_info)
                         logger.info(
-                            f"🔍 STREAMING: Step {step_index} - {field_name} enabled (backend={backend_name})"
+                            f"Streaming enabled for step {step_index}, field {field_name} (backend={backend_name})"
                         )
 
                     # IMPORTANT: FunctionStep streams by scanning step_plan for StreamingConfig instances.
@@ -687,9 +705,6 @@ class PipelineCompiler:
 
         # Return resolved steps and step_state_map for use by subsequent compiler methods
         return steps_definition, step_state_map
-
-    # The resolve_special_input_paths_for_context static method is DELETED (lines 181-238 of original)
-    # as this functionality is now handled by PipelinePathPlanner.prepare_pipeline_paths.
 
     # _prepare_materialization_flags is removed as MaterializationFlagPlanner.prepare_pipeline_flags
     # now modifies context.step_plans in-place and takes context directly.
@@ -1049,7 +1064,7 @@ class PipelineCompiler:
         """
         Resolve all lazy dataclass instances in step plans to their base configurations.
 
-        This method uses ObjectState for resolution instead of legacy config_context.
+        This method uses ObjectState for resolution.
         All configs are already resolved via ObjectState.to_object() during compilation.
         This method now just ensures step plans reference the resolved configs.
 
@@ -1254,55 +1269,46 @@ class PipelineCompiler:
                     GlobalPipelineConfig, use_live=False
                 )
                 if global_config:
-                    global_config_state = ObjectState(
-                        object_instance=global_config,
-                        scope_id="",
-                        parent_state=None,
-                    )
-                    ObjectStateRegistry.register(
-                        global_config_state, _skip_snapshot=True
+                    global_config_state = _register_object_state(
+                        global_config,
+                        "",
+                        None,
                     )
                     logger.debug("Registered global config at scope ''")
 
             # Register the orchestrator's pipeline_config at plate_path scope
             plate_path_str = str(orchestrator.plate_path)
             plate_orch_state = ObjectStateRegistry.get_by_scope(plate_path_str)
-            if (
-                force_fresh_compile_states or plate_orch_state is None
-            ) and orchestrator.pipeline_config:
-                plate_orch_state = ObjectState(
-                    object_instance=orchestrator.pipeline_config,
-                    scope_id=plate_path_str,
-                    parent_state=global_config_state,
+            if orchestrator.pipeline_config:
+                plate_orch_state = _get_or_register_object_state(
+                    plate_path_str,
+                    orchestrator.pipeline_config,
+                    global_config_state,
+                    force_fresh=force_fresh_compile_states,
                 )
-                ObjectStateRegistry.register(plate_orch_state, _skip_snapshot=True)
                 logger.debug(f"Registered pipeline_config at scope '{plate_path_str}'")
 
             # Register orchestrator ObjectState (for delegation pattern)
             # Use proper scope hierarchy: plate_path::orchestrator
             orch_scope_id = f"{plate_path_str}::orchestrator"
-            orch_state = ObjectStateRegistry.get_by_scope(orch_scope_id)
-            if force_fresh_compile_states or orch_state is None:
-                orch_state = ObjectState(
-                    object_instance=orchestrator,
-                    scope_id=orch_scope_id,
-                    parent_state=plate_orch_state,
-                )
-                ObjectStateRegistry.register(orch_state, _skip_snapshot=True)
-                logger.debug(f"Registered orchestrator at scope: {orch_scope_id}")
+            orch_state = _get_or_register_object_state(
+                orch_scope_id,
+                orchestrator,
+                plate_orch_state,
+                force_fresh=force_fresh_compile_states,
+            )
+            logger.debug(f"Registered orchestrator at scope: {orch_scope_id}")
 
             # Register step ObjectStates (persistent for entire compilation)
             step_state_map = {}
             for step_index, step in enumerate(pipeline_definition):
                 step_scope_id = f"{plate_path_str}::step_{step_index}"
-                step_state = ObjectStateRegistry.get_by_scope(step_scope_id)
-                if force_fresh_compile_states or step_state is None:
-                    step_state = ObjectState(
-                        object_instance=step,
-                        scope_id=step_scope_id,
-                        parent_state=orch_state,
-                    )
-                    ObjectStateRegistry.register(step_state, _skip_snapshot=True)
+                step_state = _get_or_register_object_state(
+                    step_scope_id,
+                    step,
+                    orch_state,
+                    force_fresh=force_fresh_compile_states,
+                )
                 step_state_map[step_index] = step_state
 
             # Resolve steps ONCE using their ObjectStates
@@ -1369,23 +1375,21 @@ class PipelineCompiler:
 
             # Register orchestrator for filter resolution
             orch_scope_id = f"{filter_scope_id}::orchestrator"
-            orch_state = ObjectState(
-                object_instance=orchestrator,
-                scope_id=orch_scope_id,
-                parent_state=ObjectStateRegistry.get_by_scope(""),
+            orch_state = _register_object_state(
+                orchestrator,
+                orch_scope_id,
+                ObjectStateRegistry.get_by_scope(""),
             )
-            ObjectStateRegistry.register(orch_state, _skip_snapshot=True)
 
             # Register steps for filter resolution
             filter_step_state_map = {}
             for step_index, step in enumerate(pipeline_definition):
                 step_scope_id = f"{filter_scope_id}::step_{step_index}"
-                step_state = ObjectState(
-                    object_instance=step,
-                    scope_id=step_scope_id,
-                    parent_state=orch_state,
+                step_state = _register_object_state(
+                    step,
+                    step_scope_id,
+                    orch_state,
                 )
-                ObjectStateRegistry.register(step_state, _skip_snapshot=True)
                 filter_step_state_map[step_index] = step_state
 
             # Resolve steps using ObjectState
@@ -1637,16 +1641,15 @@ class PipelineCompiler:
             # Log worker configuration for execution planning
             effective_config = orchestrator.get_effective_config()
             logger.info(
-                f"⚙️  EXECUTION CONFIG: {effective_config.num_workers} workers configured for pipeline execution"
+                f"Execution config: {effective_config.num_workers} workers configured for pipeline execution"
             )
 
             logger.info(
-                f"🏁 COMPILATION COMPLETE: {len(compiled_contexts)} wells compiled successfully"
+                f"Compilation complete: {len(compiled_contexts)} wells compiled successfully"
             )
 
-            # DEBUG: Log what we're returning
             logger.debug(
-                "📦 COMPILER RETURN: Checking pipeline_definition before return"
+                "Checking pipeline_definition before compiler return"
             )
             for i, step in enumerate(pipeline_definition):
                 func_attr = getattr(step, "func", None)

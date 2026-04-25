@@ -16,7 +16,7 @@ from skimage.feature import canny, blob_dog as local_max
 from skimage.filters import median, threshold_li
 from skimage.morphology import skeletonize
 from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import (
     MaterializationSpec,
     CsvOptions,
@@ -342,7 +342,7 @@ def create_visualization_array(
     else:
         raise ValueError(f"Unknown visualization mode: {mode}")
 
-@special_outputs(
+@artifact_outputs(
     (
         "hmm_analysis",
         MaterializationSpec(

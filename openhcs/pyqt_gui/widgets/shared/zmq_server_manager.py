@@ -114,6 +114,13 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         self._progress_timer.timeout.connect(self._update_from_progress)
         self._progress_timer.start(100)  # 100ms for smooth updates
 
+    def __del__(self):
+        try:
+            self._is_cleaning_up
+        except (AttributeError, RuntimeError):
+            return
+        self.cleanup()
+
     def _populate_tree(self, parsed_servers: List[BaseServerInfo]) -> None:
         """Populate tree with servers, avoiding duplicates since tree.clear() is bypassed."""
         scanned_ports = {info.port for info in parsed_servers}
@@ -352,14 +359,40 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
             return f"{plate_leaf} ({exec_id[:8]})"
         return plate_leaf
 
+    def _get_topology_state(self) -> ProgressTopologyState:
+        """Return topology state, tolerating domain-only tests that bypass Qt init."""
+        try:
+            return self._topology_state
+        except (AttributeError, RuntimeError):
+            return ProgressTopologyState()
+
     def _build_progress_tree(self, executions: Dict[str, list]) -> List[ProgressNode]:
+        topology_state = self._get_topology_state()
         return self._progress_tree_builder.build_progress_tree(
             executions=executions,
             worker_assignments=self._worker_assignments,
             known_wells=self._known_wells,
-            step_names=self._topology_state.step_names,
+            step_names=topology_state.step_names,
             get_plate_name=self._get_plate_name,
         )
+
+    def _sync_progress_client_connection(
+        self, parsed_servers: List[BaseServerInfo]
+    ) -> None:
+        """Keep the progress client connected while an execution server is present."""
+        has_execution_server = any(
+            isinstance(server, ExecutionServerInfo) for server in parsed_servers
+        )
+        if has_execution_server:
+            client = getattr(self, "_zmq_client", None)
+            if client is None or not client.is_connected():
+                self._setup_progress_client()
+            return
+
+        client = getattr(self, "_zmq_client", None)
+        if client is not None:
+            client.disconnect()
+            self._zmq_client = None
 
     def _update_execution_server_item(
         self, server_item: QTreeWidgetItem, server_data: dict
@@ -448,69 +481,69 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
                 if existing.percent <= 0.0:
                     existing.info = "0.0%"
 
-            for queued in server_info.queued_execution_entries:
-                plate_id = queued.plate_id
-                execution_id = queued.execution_id
-                queue_suffix = f" (q#{queued.queue_position})"
+        for queued in server_info.queued_execution_entries:
+            plate_id = queued.plate_id
+            execution_id = queued.execution_id
+            queue_suffix = f" (q#{queued.queue_position})"
 
-                # Running state is authoritative: do not regress active rows to queued.
-                if (
-                    execution_id in running_execution_ids
-                    or plate_id in running_plate_ids
-                ):
-                    continue
+            # Running state is authoritative: do not regress active rows to queued.
+            if (
+                execution_id in running_execution_ids
+                or plate_id in running_plate_ids
+            ):
+                continue
 
-                existing = by_plate_id.get(plate_id)
+            existing = by_plate_id.get(plate_id)
 
-                if existing is None:
-                    plate_name = self._get_plate_name(plate_id, execution_id)
-                    node = ProgressNode(
-                        node_id=plate_id,
-                        node_type="plate",
-                        label=f"📋 {plate_name}",
-                        status="⏳ Queued",
-                        info=f"0.0%{queue_suffix}",
-                        execution_id=execution_id,
-                        percent=0.0,
-                        children=[],
-                    )
-                    nodes.append(node)
-                    by_plate_id[plate_id] = node
-                    logger.debug(
-                        f"_merge: created NEW queued node for {plate_id[:30]}..."
-                    )
-                    continue
-
-                # Progress events are authoritative for the SAME execution.
-                # For a NEW queued execution (different execution_id), queued overrides.
-                is_same_execution = existing.execution_id == execution_id
-                has_real_progress = existing.children or existing.percent > 0
-
-                if is_same_execution and has_real_progress:
-                    # Same execution with progress - ping lag, keep progress status
-                    logger.debug(
-                        f"_merge: KEEP progress for {plate_id[:30]}... status={existing.status}"
-                    )
-                    continue
-
-                # Only update to queued if the existing status is not already executing/compiling.
-                # Progress-derived active status should never be overridden by ping.
-                if existing.status in ("⚙️ Executing", "⏳ Compiling"):
-                    logger.debug(
-                        f"_merge: SKIP queued for {plate_id[:30]}... already {existing.status}"
-                    )
-                    continue
-
-                # New queued execution or no progress yet - update to queued
-                logger.debug(
-                    f"_merge: SET queued for {plate_id[:30]}... (same_exec={is_same_execution})"
+            if existing is None:
+                plate_name = self._get_plate_name(plate_id, execution_id)
+                node = ProgressNode(
+                    node_id=plate_id,
+                    node_type="plate",
+                    label=f"📋 {plate_name}",
+                    status="⏳ Queued",
+                    info=f"0.0%{queue_suffix}",
+                    execution_id=execution_id,
+                    percent=0.0,
+                    children=[],
                 )
-                existing.status = "⏳ Queued"
-                existing.execution_id = execution_id
-                existing.percent = 0.0
-                existing.info = f"0.0%{queue_suffix}"
-                if not is_same_execution:
-                    existing.children = []
+                nodes.append(node)
+                by_plate_id[plate_id] = node
+                logger.debug(
+                    f"_merge: created NEW queued node for {plate_id[:30]}..."
+                )
+                continue
+
+            # Progress events are authoritative for the SAME execution.
+            # For a NEW queued execution (different execution_id), queued overrides.
+            is_same_execution = existing.execution_id == execution_id
+            has_real_progress = existing.children or existing.percent > 0
+
+            if is_same_execution and has_real_progress:
+                # Same execution with progress - ping lag, keep progress status
+                logger.debug(
+                    f"_merge: KEEP progress for {plate_id[:30]}... status={existing.status}"
+                )
+                continue
+
+            # Only update to queued if the existing status is not already executing/compiling.
+            # Progress-derived active status should never be overridden by ping.
+            if existing.status in ("⚙️ Executing", "⏳ Compiling"):
+                logger.debug(
+                    f"_merge: SKIP queued for {plate_id[:30]}... already {existing.status}"
+                )
+                continue
+
+            # New queued execution or no progress yet - update to queued
+            logger.debug(
+                f"_merge: SET queued for {plate_id[:30]}... (same_exec={is_same_execution})"
+            )
+            existing.status = "⏳ Queued"
+            existing.execution_id = execution_id
+            existing.percent = 0.0
+            existing.info = f"0.0%{queue_suffix}"
+            if not is_same_execution:
+                existing.children = []
 
         return nodes
 

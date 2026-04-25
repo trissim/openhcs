@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Type, Tuple
 
 from openhcs.constants.constants import Backend
-from openhcs.io.exceptions import MetadataNotFoundError
 from openhcs.microscopes.opera_phenix_xml_parser import OperaPhenixXmlParser
 from polystore.filemanager import FileManager
+from polystore.exceptions import MetadataNotFoundError
 from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.microscopes.detect_mixins import MetadataDetectMixin
 from openhcs.microscopes.microscope_interfaces import (FilenameParser,

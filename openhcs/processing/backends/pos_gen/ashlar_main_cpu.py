@@ -15,7 +15,7 @@ import scipy.spatial.distance
 import sklearn.linear_model
 import pandas as pd
 
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs
 from openhcs.core.memory import numpy as numpy_func
 
 import warnings
@@ -640,8 +640,8 @@ def _convert_ashlar_positions_to_openhcs(ashlar_positions: np.ndarray) -> List[T
     return positions
 
 
-@special_inputs("grid_dimensions")
-@special_outputs("positions")
+@artifact_inputs("grid_dimensions")
+@artifact_outputs("positions")
 @numpy_func
 def ashlar_compute_tile_positions_cpu(
     image_stack: np.ndarray,

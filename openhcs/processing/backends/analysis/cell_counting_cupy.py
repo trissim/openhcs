@@ -41,7 +41,7 @@ cucim_exposure = optional_import("cucim.skimage.exposure")
 
 # OpenHCS imports
 from openhcs.core.memory import cupy as cupy_func
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import (
     MaterializationSpec,
     CsvOptions,
@@ -211,7 +211,7 @@ def count_cells_single_channel(
 
 
 @cupy_func
-@special_outputs((
+@artifact_outputs((
     "multi_channel_counts",
     MaterializationSpec(
         JsonOptions(filename_suffix=".json", wrap_list=True),

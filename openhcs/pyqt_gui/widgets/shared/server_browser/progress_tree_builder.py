@@ -39,7 +39,7 @@ class ProgressNode:
 _NODE_AGGREGATION_POLICY_BY_TYPE: Dict[str, str] = {
     "plate": "mean",
     "worker": "mean",
-    "well": "mean",
+    "well": "explicit",
     "step": "explicit",
     "compilation": "explicit",
 }
@@ -308,37 +308,15 @@ class ProgressTreeBuilder:
             status = f"⚙️ {pipeline_event.step_name}"
             percent = pipeline_event.percent
 
-        # Build step nodes for ALL steps (completed + current + future)
-        # This ensures the mean aggregation calculates overall progress correctly
+        # Pipeline events own well progress. Step children are display detail only.
         children: List[ProgressNode] = []
         if pipeline_event is not None and pipeline_event.total > 0:
             current_step_idx = pipeline_event.completed
             total_steps = pipeline_event.total
 
-            # Add completed steps at 100%
-            for step_idx in range(current_step_idx):
-                step_name = step_names.get(step_idx, f"Step {step_idx + 1}")
-                children.append(
-                    ProgressNode(
-                        node_id=f"{axis_id}_step_{step_idx}",
-                        node_type="step",
-                        label=f"🔧 {step_idx + 1} - {step_name}",
-                        status="✅ Complete",
-                        info="100.0%",
-                        percent=100.0,
-                        aggregation_policy_id="explicit",
-                    )
-                )
-
-            # Add current step with actual progress
             if current_step_idx < total_steps:
-                step_name = step_names.get(
-                    current_step_idx, f"Step {current_step_idx + 1}"
-                )
-                if (
-                    step_event is not None
-                    and step_event.step_name == pipeline_event.step_name
-                ):
+                if step_event is not None:
+                    step_name = step_event.step_name
                     if ProgressTreeBuilder._is_failure_event(step_event):
                         step_status = "❌ Failed"
                         step_percent = step_event.percent
@@ -348,7 +326,9 @@ class ProgressTreeBuilder:
                         )
                         step_percent = step_event.percent
                 else:
-                    # Step event not yet available for current step
+                    step_name = step_names.get(
+                        current_step_idx, f"Step {current_step_idx + 1}"
+                    )
                     step_status = "⏳ Starting"
                     step_percent = 0.0
 
@@ -360,6 +340,20 @@ class ProgressTreeBuilder:
                         status=step_status,
                         info=f"{step_percent:.1f}%",
                         percent=step_percent,
+                        aggregation_policy_id="explicit",
+                    )
+                )
+
+            for step_idx in range(current_step_idx):
+                step_name = step_names.get(step_idx, f"Step {step_idx + 1}")
+                children.append(
+                    ProgressNode(
+                        node_id=f"{axis_id}_step_{step_idx}",
+                        node_type="step",
+                        label=f"🔧 {step_idx + 1} - {step_name}",
+                        status="✅ Complete",
+                        info="100.0%",
+                        percent=100.0,
                         aggregation_policy_id="explicit",
                     )
                 )
@@ -386,7 +380,7 @@ class ProgressTreeBuilder:
             status=status,
             info="",
             percent=percent,
-            aggregation_policy_id="mean",
+            aggregation_policy_id="explicit",
             children=children,
         )
 
@@ -404,10 +398,8 @@ class ProgressTreeBuilder:
                 f"Aggregation policy mismatch for node_type '{node.node_type}': "
                 f"expected '{expected_policy}', got '{node.aggregation_policy_id}'"
             )
-        # When node has children, aggregate only children (ignore explicit percent)
-        # Explicit percent is only used when there are no children
         node.percent = _TREE_AGGREGATION_REGISTRY.aggregate(
-            node.aggregation_policy_id, 0.0, child_values
+            node.aggregation_policy_id, node.percent, child_values
         )
         return node.percent
 

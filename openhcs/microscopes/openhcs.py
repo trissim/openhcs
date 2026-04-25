@@ -628,7 +628,6 @@ class OpenHCSMetadataGenerator:
 
 from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.microscopes.detect_mixins import MetadataDetectMixin
-from openhcs.io.exceptions import MetadataNotFoundError
 from openhcs.microscopes.microscope_interfaces import FilenameParser
 
 

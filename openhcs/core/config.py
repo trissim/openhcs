@@ -147,9 +147,9 @@ class GlobalPipelineConfig:
         default=Path("results"), metadata={"ui_hidden": True}
     )
     """
-    Path for materialized analysis results (CSV, JSON files from special outputs).
+    Path for materialized analysis results (CSV, JSON files from artifacts).
 
-    This is a pipeline-wide setting that controls where all special output materialization
+    This is a pipeline-wide setting that controls where artifact materialization
     functions save their analysis results, regardless of which step produces them.
 
     Can be relative to plate folder or absolute path.

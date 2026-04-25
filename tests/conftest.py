@@ -10,131 +10,6 @@ else:
     pytest_plugins = []
 
 
-def pytest_addoption(parser):
-    """Add command-line options for integration test configuration."""
-    
-    # Helper function to get default from environment variable
-    def env_default(env_var, default_value):
-        return os.getenv(env_var, default_value)
-    
-    parser.addoption(
-        "--it-backends",
-        action="store",
-        default=env_default("IT_BACKENDS", "disk,zarr"),
-        help="Comma-separated list of backends to test (default: disk,zarr). Use 'all' for full coverage."
-    )
-    
-    parser.addoption(
-        "--it-microscopes",
-        action="store",
-        default=env_default("IT_MICROSCOPES", "ImageXpress,OperaPhenix,OpenHCS"),
-        help="Comma-separated list of microscopes to test (default: ImageXpress,OperaPhenix,OpenHCS). Options: ImageXpress,OperaPhenix,OpenHCS,OMERO. Use 'all' for full coverage."
-    )
-    
-    parser.addoption(
-        "--it-dims",
-        action="store", 
-        default=env_default("IT_DIMS", "3d"),
-        help="Comma-separated list of dimensions to test (default: 3d). Options: 2d,3d. Use 'all' for full coverage."
-    )
-    
-    parser.addoption(
-        "--it-exec-mode",
-        action="store",
-        default=env_default("IT_EXEC_MODE", "multiprocessing"),
-        help="Comma-separated list of execution modes (default: multiprocessing). Options: threading,multiprocessing. Use 'all' for full coverage."
-    )
-
-    parser.addoption(
-        "--enable-napari",
-        action="store_true",
-        default=False,
-        help="Enable Napari streaming in tests (default: disabled). DEPRECATED: Use --it-visualizers instead."
-    )
-
-    parser.addoption(
-        "--enable-fiji",
-        action="store_true",
-        default=False,
-        help="Enable Fiji streaming in tests (default: disabled). DEPRECATED: Use --it-visualizers instead."
-    )
-
-    parser.addoption(
-        "--it-visualizers",
-        action="store",
-        default=env_default("IT_VISUALIZERS", "none"),
-        help="Comma-separated list of visualizers to enable (default: none). Options: none,napari,fiji,napari+fiji. Use 'all' for full coverage."
-    )
-
-    parser.addoption(
-        "--it-zmq-mode",
-        action="store",
-        default=env_default("IT_ZMQ_MODE", "direct"),
-        help="Comma-separated list of ZMQ execution modes (default: direct). Options: direct,zmq. Use 'all' for full coverage."
-    )
-
-    parser.addoption(
-        "--it-processing-axis",
-        action="store",
-        default=env_default("IT_PROCESSING_AXIS", "well"),
-        help="Comma-separated list of processing axis components (default: well). Options: well. Use 'all' for full coverage."
-    )
-
-    parser.addoption(
-        "--it-sequential",
-        action="store",
-        default=env_default("IT_SEQUENTIAL", "none"),
-        help="Comma-separated list of sequential processing configurations (default: none). Options: none,valid_1_component,valid_2_components,invalid_overlap,invalid_duplicates. Use 'all' for full coverage."
-    )
-
-
-def pytest_configure(config):
-    """Validate configuration options."""
-
-    # Define valid choices for each option
-    valid_choices = {
-        "backends": ["disk", "zarr"],
-        "microscopes": ["ImageXpress", "OperaPhenix", "OpenHCS", "OMERO"],
-        "dims": ["2d", "3d"],
-        "exec_modes": ["threading", "multiprocessing"],
-        "zmq_modes": ["direct", "zmq"],
-        "processing_axis": ["well"],
-        "sequential": ["none", "valid_1_component", "valid_2_components", "invalid_overlap", "invalid_duplicates"]
-    }
-
-    # Validate each option
-    options_to_validate = [
-        ("--it-backends", "backends"),
-        ("--it-microscopes", "microscopes"),
-        ("--it-dims", "dims"),
-        ("--it-exec-mode", "exec_modes"),
-        ("--it-zmq-mode", "zmq_modes"),
-        ("--it-processing-axis", "processing_axis"),
-        ("--it-sequential", "sequential")
-    ]
-    
-    for option_name, choice_key in options_to_validate:
-        option_value = config.getoption(option_name)
-        if option_value == "all":
-            continue  # "all" is always valid
-            
-        selected_values = [v.strip() for v in option_value.split(",")]
-        valid_values = valid_choices[choice_key]
-        
-        for value in selected_values:
-            if value not in valid_values:
-                raise pytest.UsageError(
-                    f"Invalid value '{value}' for {option_name}. "
-                    f"Valid choices: {', '.join(valid_values)} or 'all'"
-                )
-
-
-# Import constants from fixture_utils for parametrization
-from tests.integration.helpers.fixture_utils import (
-    BACKEND_CONFIGS, MICROSCOPE_CONFIGS, DATA_TYPE_CONFIGS,
-    EXECUTION_MODE_CONFIGS, ZMQ_EXECUTION_MODE_CONFIGS, SEQUENTIAL_CONFIGS
-)
-
 # Visualizer configurations for parametrized testing
 VISUALIZER_CONFIGS = {
     "none": {"enable_napari": False, "enable_fiji": False},
@@ -143,49 +18,60 @@ VISUALIZER_CONFIGS = {
     "napari+fiji": {"enable_napari": True, "enable_fiji": True}
 }
 
-# Extensible configuration mapping for pytest_generate_tests
-INTEGRATION_TEST_CONFIG = {
-    'backend_config': {
-        'option': '--it-backends',
-        'choices': BACKEND_CONFIGS,
-        'value_mapper': lambda x: x  # Return backend name as-is
-    },
-    'microscope_config': {
-        'option': '--it-microscopes',
-        'choices': list(MICROSCOPE_CONFIGS.keys()),
-        'value_mapper': lambda name: MICROSCOPE_CONFIGS[name]  # Map name to config dict
-    },
-    'data_type_config': {
-        'option': '--it-dims',
-        'choices': list(DATA_TYPE_CONFIGS.keys()),
-        'value_mapper': lambda dim: DATA_TYPE_CONFIGS[dim]  # Map dim to config dict
-    },
-    'execution_mode': {
-        'option': '--it-exec-mode',
-        'choices': EXECUTION_MODE_CONFIGS,
-        'value_mapper': lambda x: x  # Return mode name as-is
-    },
-    'zmq_execution_mode': {
-        'option': '--it-zmq-mode',
-        'choices': ZMQ_EXECUTION_MODE_CONFIGS,
-        'value_mapper': lambda x: x  # Return mode name as-is
-    },
-    'processing_axis': {
-        'option': '--it-processing-axis',
-        'choices': ['well'],
-        'value_mapper': lambda x: x  # Return axis name as-is
-    },
-    'visualizer_config': {
-        'option': '--it-visualizers',
-        'choices': list(VISUALIZER_CONFIGS.keys()),
-        'value_mapper': lambda name: VISUALIZER_CONFIGS[name]  # Map name to config dict
-    },
-    'sequential_config': {
-        'option': '--it-sequential',
-        'choices': list(SEQUENTIAL_CONFIGS.keys()),
-        'value_mapper': lambda name: SEQUENTIAL_CONFIGS[name]  # Map name to config dict
+
+def _build_integration_test_config():
+    """Load integration parametrization data only when integration fixtures are used."""
+    from tests.integration.helpers.fixture_utils import (
+        BACKEND_CONFIGS,
+        DATA_TYPE_CONFIGS,
+        EXECUTION_MODE_CONFIGS,
+        MICROSCOPE_CONFIGS,
+        SEQUENTIAL_CONFIGS,
+        ZMQ_EXECUTION_MODE_CONFIGS,
+    )
+
+    return {
+        'backend_config': {
+            'option': '--it-backends',
+            'choices': BACKEND_CONFIGS,
+            'value_mapper': lambda x: x  # Return backend name as-is
+        },
+        'microscope_config': {
+            'option': '--it-microscopes',
+            'choices': list(MICROSCOPE_CONFIGS.keys()),
+            'value_mapper': lambda name: MICROSCOPE_CONFIGS[name]  # Map name to config dict
+        },
+        'data_type_config': {
+            'option': '--it-dims',
+            'choices': list(DATA_TYPE_CONFIGS.keys()),
+            'value_mapper': lambda dim: DATA_TYPE_CONFIGS[dim]  # Map dim to config dict
+        },
+        'execution_mode': {
+            'option': '--it-exec-mode',
+            'choices': EXECUTION_MODE_CONFIGS,
+            'value_mapper': lambda x: x  # Return mode name as-is
+        },
+        'zmq_execution_mode': {
+            'option': '--it-zmq-mode',
+            'choices': ZMQ_EXECUTION_MODE_CONFIGS,
+            'value_mapper': lambda x: x  # Return mode name as-is
+        },
+        'processing_axis': {
+            'option': '--it-processing-axis',
+            'choices': ['well'],
+            'value_mapper': lambda x: x  # Return axis name as-is
+        },
+        'visualizer_config': {
+            'option': '--it-visualizers',
+            'choices': list(VISUALIZER_CONFIGS.keys()),
+            'value_mapper': lambda name: VISUALIZER_CONFIGS[name]  # Map name to config dict
+        },
+        'sequential_config': {
+            'option': '--it-sequential',
+            'choices': list(SEQUENTIAL_CONFIGS.keys()),
+            'value_mapper': lambda name: SEQUENTIAL_CONFIGS[name]  # Map name to config dict
+        }
     }
-}
 
 
 def _get_config_option(config, option_name, all_choices):
@@ -202,7 +88,20 @@ def _get_config_option(config, option_name, all_choices):
 
 def pytest_generate_tests(metafunc):
     """Generate test parameters based on configuration options - fully extensible."""
-    for fixture_name, config in INTEGRATION_TEST_CONFIG.items():
+    integration_fixture_names = {
+        "backend_config",
+        "microscope_config",
+        "data_type_config",
+        "execution_mode",
+        "zmq_execution_mode",
+        "processing_axis",
+        "visualizer_config",
+        "sequential_config",
+    }
+    if not integration_fixture_names.intersection(metafunc.fixturenames):
+        return
+
+    for fixture_name, config in _build_integration_test_config().items():
         if fixture_name in metafunc.fixturenames:
             selected_choices = _get_config_option(metafunc.config, config['option'], config['choices'])
             values = [config['value_mapper'](choice) for choice in selected_choices]

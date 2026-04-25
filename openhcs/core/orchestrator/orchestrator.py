@@ -1495,13 +1495,13 @@ class PipelineOrchestrator:
                     # Get results directory from compiled contexts (path planner already determined it)
                     results_dir = None
                     for axis_id, context in compiled_contexts.items():
-                        # Check if context has step plans with special outputs
+                        # Check if context has step plans with artifact outputs
                         for step_plan in context.step_plans.values():
-                            special_outputs = step_plan.get("special_outputs", {})
-                            if special_outputs:
-                                # Extract results directory from first special output path
-                                first_output = next(iter(special_outputs.values()))
-                                output_path = Path(first_output["path"])
+                            artifact_outputs = step_plan.get("artifact_outputs", {})
+                            if artifact_outputs:
+                                # Extract results directory from first artifact output path
+                                first_output = next(iter(artifact_outputs.values()))
+                                output_path = Path(first_output.path)
                                 potential_results_dir = output_path.parent
 
                                 if potential_results_dir.exists():
