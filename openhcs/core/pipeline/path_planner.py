@@ -14,9 +14,8 @@ from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, ArtifactSpec
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_patterns import (
-    FunctionInvocationKey,
-    FunctionInvocationPlan,
-    build_function_invocation_plans,
+    CompiledFunctionPattern,
+    compile_function_pattern,
     inject_artifact_input_values,
     inject_kwargs_into_pattern,
     strip_disabled_functions,
@@ -297,16 +296,18 @@ class PathPlanner:
         )
 
     @staticmethod
-    def _build_step_function_invocation_plans(
+    def _build_step_compiled_function_pattern(
         step: AbstractStep,
+        artifact_inputs: Mapping[str, ArtifactInputPlan],
         artifact_outputs: Mapping[str, ArtifactOutputPlan],
-    ) -> dict[FunctionInvocationKey, FunctionInvocationPlan]:
-        """Build per-call artifact ownership plans for FunctionStep patterns."""
-        if not isinstance(step, FunctionStep) or not artifact_outputs:
-            return {}
+    ) -> CompiledFunctionPattern | None:
+        """Build the executable function-pattern graph for a FunctionStep."""
+        if not isinstance(step, FunctionStep) or not step.func:
+            return None
 
-        return build_function_invocation_plans(
+        return compile_function_pattern(
             step.func,
+            artifact_inputs,
             artifact_outputs,
         )
 
@@ -375,10 +376,7 @@ class PathPlanner:
         input_dir: Path,
         output_dir: Path,
         artifact_maps: ArtifactPlanMaps,
-        function_invocation_plans: Mapping[
-            FunctionInvocationKey,
-            FunctionInvocationPlan,
-        ],
+        compiled_function_pattern: CompiledFunctionPattern | None,
     ) -> None:
         """Write the always-present path and artifact planning fields."""
         main_plate_root = self.build_output_plate_root(
@@ -401,7 +399,7 @@ class PathPlanner:
         step_plan.artifact_inputs_by_group = artifact_maps.inputs_by_group
         step_plan.artifact_outputs_by_group = artifact_maps.outputs_by_group
         step_plan.execution_groups = artifact_maps.execution_groups
-        step_plan.function_invocation_plans = dict(function_invocation_plans)
+        step_plan.compiled_function_pattern = compiled_function_pattern
 
     def _apply_materialization_plan(
         self,
@@ -475,8 +473,9 @@ class PathPlanner:
             input_dir,
             output_dir,
             artifact_maps,
-            self._build_step_function_invocation_plans(
+            self._build_step_compiled_function_pattern(
                 step,
+                artifact_maps.inputs,
                 artifact_maps.outputs,
             ),
         )

@@ -1,8 +1,12 @@
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, ArtifactSpec
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactKind,
+    ArtifactOutputPlan,
+    ArtifactSpec,
+)
 from openhcs.core.function_patterns import (
     FunctionInvocationKey,
-    build_function_invocation_plans,
-    function_invocation_key,
+    compile_function_pattern,
     inject_artifact_input_values,
     inject_kwargs_into_pattern,
     iter_enabled_function_invocations,
@@ -79,14 +83,6 @@ def test_invocation_positions_are_renumbered_per_dict_group():
     ]
 
 
-def test_function_invocation_key_matches_runtime_identity_contract():
-    assert function_invocation_key(first, "DAPI", 2) == FunctionInvocationKey(
-        "first",
-        "DAPI",
-        2,
-    )
-
-
 def test_artifact_planning_normalize_pattern_returns_tuple_api():
     pattern = [first, (skipped, {"enabled": False}), second]
 
@@ -101,33 +97,49 @@ def test_artifact_planning_normalize_pattern_returns_tuple_api():
     ]
 
 
-def test_invocation_plans_capture_per_call_artifact_output_ownership():
-    artifact_outputs = {
-        "positions": ArtifactOutputPlan("positions", "/tmp/positions.pkl"),
-        "measurements": ArtifactOutputPlan("measurements", "/tmp/measurements.pkl"),
-    }
+def test_compile_function_pattern_builds_invocation_source_of_truth():
+    first.input_memory_type = "numpy"
+    first.output_memory_type = "numpy"
+    second.input_memory_type = "numpy"
+    second.output_memory_type = "numpy"
+    first.__artifact_inputs__ = {"positions": ArtifactSpec("positions")}
 
-    plans = build_function_invocation_plans(
-        {"DAPI": [first, second], "GFP": third},
-        artifact_outputs,
+    compiled = compile_function_pattern(
+        {
+            "DAPI": [
+                (first, {"sigma": 1, "__pyqt_reactive_scope_token__": "ui"}),
+                second,
+            ]
+        },
+        {"positions": ArtifactInputPlan("positions", "/tmp/positions.pkl")},
+        {
+            "positions": ArtifactOutputPlan("positions", "/tmp/positions.pkl"),
+            "measurements": ArtifactOutputPlan("measurements", "/tmp/measurements.pkl"),
+        },
     )
 
-    assert plans[FunctionInvocationKey("first", "DAPI", 0)].artifact_output_keys == (
-        "positions",
+    group = compiled.group_for_component("DAPI")
+    assert compiled.is_grouped
+    assert group is not None
+    assert [invocation.key for invocation in group.invocations] == [
+        FunctionInvocationKey("first", "DAPI", 0),
+        FunctionInvocationKey("second", "DAPI", 1),
+    ]
+    assert group.invocations[0].kwargs == (("sigma", 1),)
+    assert group.invocations[0].artifact_input_keys == ("positions",)
+    assert group.invocations[0].artifact_output_keys == ("positions",)
+    assert group.invocations[1].artifact_output_keys == ("measurements",)
+
+
+def test_compiled_function_pattern_filters_detected_groups_by_compiled_keys():
+    compiled = compile_function_pattern({"1": first}, {}, {})
+
+    grouped = compiled.prepare_grouped_patterns(
+        {1: ["site1"], "2": ["site2"]},
+        default_component="channel",
     )
-    assert plans[FunctionInvocationKey("second", "DAPI", 1)].artifact_output_keys == (
-        "measurements",
-    )
-    assert plans[FunctionInvocationKey("third", "GFP", 0)].artifact_output_keys == (
-        "positions",
-        "measurements",
-    )
-    assert (
-        plans[FunctionInvocationKey("third", "GFP", 0)].select_outputs(
-            artifact_outputs
-        )
-        == artifact_outputs
-    )
+
+    assert grouped == {1: ["site1"]}
 
 
 def test_contract_decorators_declare_artifact_specs():

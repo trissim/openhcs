@@ -7,9 +7,9 @@ gives that unit a named identity for compile-time planning and runtime lookup.
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable, Iterator, Mapping
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
-from openhcs.core.artifacts import ArtifactOutputPlan
+from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
 from openhcs.formats.func_arg_prep import get_core_callable, iter_pattern_items
 
 
@@ -43,23 +43,111 @@ class FunctionInvocation:
     key: FunctionInvocationKey
 
 
-@dataclass(frozen=True)
-class FunctionInvocationPlan:
-    """Compile-time plan for one function-pattern callable invocation."""
+@dataclass(frozen=True, slots=True)
+class CompiledFunctionInvocation:
+    """Executable compiler output for one callable in a function pattern."""
 
     key: FunctionInvocationKey
+    func: Any
+    kwargs: tuple[tuple[str, Any], ...] = ()
+    artifact_input_keys: tuple[str, ...] = ()
     artifact_output_keys: tuple[str, ...] = ()
+    input_memory_type: str | None = None
+    output_memory_type: str | None = None
+
+    @property
+    def kwargs_dict(self) -> dict[str, Any]:
+        """Return invocation kwargs as a runtime dict."""
+        return dict(self.kwargs)
+
+    def select_inputs(
+        self,
+        input_plans: Mapping[str, ArtifactInputPlan],
+    ) -> dict[str, ArtifactInputPlan]:
+        """Select artifact input plans consumed by this invocation."""
+        return {
+            key: input_plans[key]
+            for key in self.artifact_input_keys
+            if key in input_plans
+        }
 
     def select_outputs(
         self,
         output_plans: Mapping[str, ArtifactOutputPlan],
     ) -> dict[str, ArtifactOutputPlan]:
-        """Select the artifact output plan entries owned by this invocation."""
+        """Select artifact output plans produced by this invocation."""
         return {
             key: output_plans[key]
             for key in self.artifact_output_keys
             if key in output_plans
         }
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledFunctionGroup:
+    """Compiled callable chain for one function-pattern group."""
+
+    group_key: str
+    invocations: tuple[CompiledFunctionInvocation, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledFunctionPattern:
+    """Compiled function-pattern graph consumed by FunctionStep runtime."""
+
+    groups: tuple[CompiledFunctionGroup, ...]
+    is_grouped: bool
+
+    @property
+    def default_group(self) -> CompiledFunctionGroup:
+        for group in self.groups:
+            if group.group_key == DEFAULT_GROUP_KEY:
+                return group
+        raise ValueError("Compiled function pattern has no default group.")
+
+    def iter_invocations(self) -> Iterator[CompiledFunctionInvocation]:
+        """Yield all compiled invocations in runtime order."""
+        for group in self.groups:
+            yield from group.invocations
+
+    def group_for_component(self, component_value: Any) -> CompiledFunctionGroup | None:
+        """Return the compiled group selected for a discovered component value."""
+        if not self.is_grouped:
+            return self.default_group
+
+        component_key = str(component_value)
+        for group in self.groups:
+            if group.group_key == component_key:
+                return group
+        return None
+
+    def prepare_grouped_patterns(
+        self,
+        patterns: Any,
+        default_component: Any,
+    ) -> dict[Any, Sequence[Any]]:
+        """Filter detected pattern groups to those with compiled functions."""
+        grouped_patterns = (
+            patterns
+            if isinstance(patterns, dict)
+            else {default_component: patterns}
+        )
+
+        if not self.is_grouped:
+            return grouped_patterns
+
+        filtered = {
+            component_value: pattern_list
+            for component_value, pattern_list in grouped_patterns.items()
+            if self.group_for_component(component_value) is not None
+        }
+        if not filtered:
+            raise ValueError(
+                "No components match between discovered data and compiled function pattern. "
+                f"Discovered components: {list(grouped_patterns.keys())}. "
+                f"Function pattern groups: {[group.group_key for group in self.groups]}."
+            )
+        return filtered
 
 
 def iter_enabled_function_invocations(pattern: Any) -> Iterator[FunctionInvocation]:
@@ -96,38 +184,35 @@ def iter_enabled_function_invocations(pattern: Any) -> Iterator[FunctionInvocati
         position_counters[group_key] += 1
 
 
-def function_invocation_key(
-    func: Callable,
-    group_key: Any,
-    position: int,
-) -> FunctionInvocationKey:
-    """Build the nominal key for one function-pattern callable invocation."""
-    return FunctionInvocationKey.from_callable(func, group_key, position)
-
-
-def build_function_invocation_plans(
+def compile_function_pattern(
     pattern: Any,
+    input_plans: Mapping[str, ArtifactInputPlan],
     output_plans: Mapping[str, ArtifactOutputPlan],
-) -> dict[FunctionInvocationKey, FunctionInvocationPlan]:
-    """Build invocation plans for all enabled callables in a pattern."""
-    plans: dict[FunctionInvocationKey, FunctionInvocationPlan] = {}
+) -> CompiledFunctionPattern:
+    """Compile raw FunctionStep.func syntax into the runtime source of truth."""
+    if isinstance(pattern, dict):
+        groups = tuple(
+            _compile_function_group(
+                group_key=group_key,
+                pattern=value,
+                input_plans=input_plans,
+                output_plans=output_plans,
+            )
+            for group_key, value in pattern.items()
+        )
+        return CompiledFunctionPattern(groups=groups, is_grouped=True)
 
-    for invocation in iter_enabled_function_invocations(pattern):
-        declared_outputs = getattr(
-            invocation.func,
-            "__artifact_outputs__",
-            {},
-        )
-        owned_outputs = tuple(
-            key for key in output_plans if key in declared_outputs
-        )
-        plan = FunctionInvocationPlan(
-            key=invocation.key,
-            artifact_output_keys=owned_outputs,
-        )
-        plans[plan.key] = plan
-
-    return plans
+    return CompiledFunctionPattern(
+        groups=(
+            _compile_function_group(
+                group_key=DEFAULT_GROUP_KEY,
+                pattern=pattern,
+                input_plans=input_plans,
+                output_plans=output_plans,
+            ),
+        ),
+        is_grouped=False,
+    )
 
 
 def strip_disabled_functions(pattern: Any) -> Any:
@@ -226,3 +311,68 @@ def _merge_pattern_item_kwargs(pattern: Any, kwargs: Mapping[str, Any]) -> Any:
         return (func, {**kwargs, **existing_kwargs})
 
     return (pattern, dict(kwargs))
+
+
+def _compile_function_group(
+    group_key: Any,
+    pattern: Any,
+    input_plans: Mapping[str, ArtifactInputPlan],
+    output_plans: Mapping[str, ArtifactOutputPlan],
+) -> CompiledFunctionGroup:
+    items = pattern if isinstance(pattern, list) else [pattern]
+    invocations = tuple(
+        _compile_invocation(
+            func_item=item,
+            group_key=str(group_key),
+            position=position,
+            input_plans=input_plans,
+            output_plans=output_plans,
+        )
+        for position, item in enumerate(items)
+    )
+    return CompiledFunctionGroup(
+        group_key=str(group_key),
+        invocations=invocations,
+    )
+
+
+def _compile_invocation(
+    func_item: Any,
+    group_key: str,
+    position: int,
+    input_plans: Mapping[str, ArtifactInputPlan],
+    output_plans: Mapping[str, ArtifactOutputPlan],
+) -> CompiledFunctionInvocation:
+    func, kwargs = _split_function_item(func_item)
+    declared_inputs = getattr(func, "__artifact_inputs__", {})
+    declared_outputs = getattr(func, "__artifact_outputs__", {})
+    return CompiledFunctionInvocation(
+        key=FunctionInvocationKey.from_callable(func, group_key, position),
+        func=func,
+        kwargs=_freeze_runtime_kwargs(kwargs),
+        artifact_input_keys=tuple(key for key in input_plans if key in declared_inputs),
+        artifact_output_keys=tuple(key for key in output_plans if key in declared_outputs),
+        input_memory_type=getattr(func, "input_memory_type", None),
+        output_memory_type=getattr(func, "output_memory_type", None),
+    )
+
+
+def _split_function_item(func_item: Any) -> tuple[Any, Mapping[str, Any]]:
+    if isinstance(func_item, tuple) and len(func_item) == 2:
+        func, kwargs = func_item
+        if not isinstance(kwargs, Mapping):
+            raise TypeError(f"Function kwargs must be a mapping, got {type(kwargs)}")
+        return func, kwargs
+
+    if get_core_callable(func_item) is not None:
+        return func_item, {}
+
+    raise TypeError(f"Invalid function-pattern item: {func_item}")
+
+
+def _freeze_runtime_kwargs(kwargs: Mapping[str, Any]) -> tuple[tuple[str, Any], ...]:
+    return tuple(
+        (key, value)
+        for key, value in kwargs.items()
+        if key != "__pyqt_reactive_scope_token__"
+    )

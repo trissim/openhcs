@@ -28,7 +28,6 @@ from openhcs.core.steps.function_runtime import (
     PatternGroupExecutionRequest,
     _process_single_pattern_group,
 )
-from openhcs.formats.func_arg_prep import prepare_patterns_and_functions
 
 
 logger = logging.getLogger(__name__)
@@ -105,15 +104,11 @@ class FunctionStepExecutor:
         self._require_patterns(patterns_by_axis)
         self._apply_sequential_filter(patterns_by_axis)
 
-        grouped_patterns, component_functions, component_args = self._prepare_groups(
-            patterns_by_axis
-        )
+        grouped_patterns = self._prepare_groups(patterns_by_axis)
         total_groups = self._count_pattern_groups(grouped_patterns)
         self._preload_inputs_if_needed(grouped_patterns)
         self._execute_pattern_groups(
             grouped_patterns,
-            component_functions,
-            component_args,
             total_groups,
         )
 
@@ -260,9 +255,9 @@ class FunctionStepExecutor:
                 f"'{plan.step_name}' (index: {plan.step_index}). "
                 f"Check input directory: {plan.input_dir}"
             )
-        if plan.func is None:
+        if not tuple(plan.compiled_function_pattern.iter_invocations()):
             raise ValueError(
-                f"Step plan missing 'func' for step: {plan.step_name} "
+                f"Step plan missing compiled function invocations for step: {plan.step_name} "
                 f"(index: {plan.step_index})"
             )
 
@@ -283,13 +278,12 @@ class FunctionStepExecutor:
     def _prepare_groups(
         self,
         patterns_by_axis: Mapping[str, Any],
-    ) -> tuple[Mapping[Any, Sequence[Any]], Mapping[Any, Any], Mapping[Any, Mapping[str, Any]]]:
+    ) -> Mapping[Any, Sequence[Any]]:
         plan = self.plan
-        grouped_patterns, component_functions, component_args = (
-            prepare_patterns_and_functions(
+        grouped_patterns = (
+            plan.compiled_function_pattern.prepare_grouped_patterns(
                 patterns_by_axis[plan.axis_id],
-                plan.func,
-                component=plan.group_by_value,
+                default_component=plan.group_by_value,
             )
         )
         if self._count_pattern_groups(grouped_patterns) == 0:
@@ -297,7 +291,7 @@ class FunctionStepExecutor:
                 f"No pattern groups found for step {plan.step_index} "
                 f"({plan.step_name}) in well {plan.axis_id}"
             )
-        return grouped_patterns, component_functions, component_args
+        return grouped_patterns
 
     @staticmethod
     def _count_pattern_groups(grouped_patterns: Mapping[Any, Sequence[Any]]) -> int:
@@ -355,14 +349,17 @@ class FunctionStepExecutor:
     def _execute_pattern_groups(
         self,
         grouped_patterns: Mapping[Any, Sequence[Any]],
-        component_functions: Mapping[Any, Any],
-        component_args: Mapping[Any, Mapping[str, Any]],
         total_groups: int,
     ) -> None:
         completed_groups = 0
         for component_value, current_pattern_list in grouped_patterns.items():
-            executable = component_functions[component_value]
-            base_args = component_args[component_value]
+            compiled_group = self.plan.compiled_function_pattern.group_for_component(
+                component_value
+            )
+            if compiled_group is None:
+                raise ValueError(
+                    f"No compiled function group for component {component_value!r}."
+                )
 
             for pattern_item in current_pattern_list:
                 _process_single_pattern_group(
@@ -370,8 +367,7 @@ class FunctionStepExecutor:
                         context=self.context,
                         execution_plan=self.plan,
                         pattern_group_info=pattern_item,
-                        executable_func_or_chain=executable,
-                        base_func_args=base_args,
+                        compiled_group=compiled_group,
                         component_value=component_value,
                     )
                 )

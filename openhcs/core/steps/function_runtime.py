@@ -15,10 +15,8 @@ from openhcs.constants.constants import Backend
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, StepResult
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_patterns import (
-    DEFAULT_GROUP_KEY,
-    FunctionInvocationKey,
-    FunctionInvocationPlan,
-    function_invocation_key,
+    CompiledFunctionGroup,
+    CompiledFunctionInvocation,
 )
 from openhcs.core.memory import convert_memory, stack_slices, unstack_slices
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
@@ -28,7 +26,6 @@ logger = logging.getLogger(__name__)
 
 ArtifactInputPlans = Mapping[str, ArtifactInputPlan]
 ArtifactOutputPlans = Mapping[str, ArtifactOutputPlan]
-FunctionInvocationPlans = Mapping[FunctionInvocationKey, FunctionInvocationPlan]
 
 
 @dataclass(frozen=True)
@@ -48,19 +45,17 @@ class FunctionChainExecutionRequest:
     """Nominal request for a chain of callables over one image stack."""
 
     initial_data_stack: Any
-    func_chain: Sequence[Any]
+    invocations: Sequence[CompiledFunctionInvocation]
     context: ProcessingContext
     execution_plan: FunctionStepExecutionPlan
     artifact_inputs: ArtifactInputPlans
     artifact_outputs: ArtifactOutputPlans
-    invocation_group_key: str = DEFAULT_GROUP_KEY
 
 
 @dataclass(frozen=True)
 class ComponentArtifactPlans:
     """Artifact plans selected for one grouped component execution."""
 
-    invocation_group_key: str
     inputs: ArtifactInputPlans
     outputs: ArtifactOutputPlans
 
@@ -72,8 +67,7 @@ class PatternGroupExecutionRequest:
     context: ProcessingContext
     execution_plan: FunctionStepExecutionPlan
     pattern_group_info: Any
-    executable_func_or_chain: Any
-    base_func_args: Mapping[str, Any]
+    compiled_group: CompiledFunctionGroup
     component_value: Any
 
 
@@ -83,22 +77,6 @@ class PatternGroupData:
 
     matching_files: list[str]
     main_data_stack: Any
-
-
-def _select_artifact_outputs_for_invocation(
-    invocation_plans: FunctionInvocationPlans,
-    func: Callable,
-    group_key: str,
-    position: int,
-    artifact_outputs: ArtifactOutputPlans,
-) -> dict[str, ArtifactOutputPlan]:
-    """Select artifact outputs owned by one function-pattern invocation."""
-    execution_key = function_invocation_key(func, group_key, position)
-
-    if execution_key in invocation_plans:
-        return invocation_plans[execution_key].select_outputs(artifact_outputs)
-
-    return {}
 
 
 def _save_artifact_value(
@@ -145,16 +123,10 @@ def _select_artifact_plan_for_component(
 def _select_component_artifact_plans(
     plan: FunctionStepExecutionPlan,
     component_key: Optional[str],
+    compiled_group: CompiledFunctionGroup,
 ) -> ComponentArtifactPlans:
     """Select artifact plans and invocation identity for one component."""
-    invocation_group_key = (
-        component_key
-        if isinstance(plan.func, dict) and component_key is not None
-        else DEFAULT_GROUP_KEY
-    )
-
     return ComponentArtifactPlans(
-        invocation_group_key=invocation_group_key,
         inputs=_select_artifact_plan_for_component(
             plan.artifact_inputs_by_group,
             component_key,
@@ -168,40 +140,15 @@ def _select_component_artifact_plans(
     )
 
 
-def _strip_runtime_metadata_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
-    """Remove UI-only metadata before invoking processing callables."""
-    return {
-        key: value
-        for key, value in kwargs.items()
-        if key != "__pyqt_reactive_scope_token__"
-    }
-
-
-def _resolve_callable_and_kwargs(func_item: Any) -> tuple[Callable, dict[str, Any]]:
-    """Resolve one runtime function-pattern item to a callable and kwargs."""
+def _resolve_invocation_callable(invocation: CompiledFunctionInvocation) -> Callable:
+    """Resolve one compiled invocation to the callable used in this worker."""
     from openhcs.core.pipeline.compiler import FunctionReference
 
-    if isinstance(func_item, FunctionReference):
-        return func_item.resolve(), {}
-
-    if isinstance(func_item, tuple) and len(func_item) == 2:
-        func_or_ref, kwargs = func_item
-        if not isinstance(kwargs, Mapping):
-            raise TypeError(f"Function kwargs must be a mapping, got {type(kwargs)}")
-
-        if isinstance(func_or_ref, FunctionReference):
-            actual_callable = func_or_ref.resolve()
-        elif callable(func_or_ref):
-            actual_callable = func_or_ref
-        else:
-            raise TypeError(f"Invalid function in tuple: {func_or_ref}")
-
-        return actual_callable, _strip_runtime_metadata_kwargs(kwargs)
-
-    if callable(func_item):
-        return func_item, {}
-
-    raise TypeError(f"Invalid function-pattern item: {func_item}")
+    if isinstance(invocation.func, FunctionReference):
+        return invocation.func.resolve()
+    if callable(invocation.func):
+        return invocation.func
+    raise TypeError(f"Invalid compiled invocation function: {invocation.func}")
 
 
 def _is_3d(array: Any) -> bool:
@@ -287,41 +234,39 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
 
 
 def _execute_chain_core(request: FunctionChainExecutionRequest) -> Any:
-    """Execute a list-chain function pattern over one image stack."""
+    """Execute compiled invocations over one image stack."""
     plan = request.execution_plan
     current_stack = request.initial_data_stack
     current_memory_type = plan.input_memory_type
 
-    for i, func_item in enumerate(request.func_chain):
-        actual_callable, base_kwargs_for_item = _resolve_callable_and_kwargs(func_item)
+    for invocation in request.invocations:
+        actual_callable = _resolve_invocation_callable(invocation)
+        invocation_input_type = invocation.input_memory_type
+        invocation_output_type = invocation.output_memory_type
+        if invocation_input_type is None or invocation_output_type is None:
+            raise ValueError(
+                f"Compiled invocation {invocation.key} is missing memory types."
+            )
 
         current_stack = convert_memory(
             data=current_stack,
             source_type=current_memory_type,
-            target_type=actual_callable.input_memory_type,
+            target_type=invocation_input_type,
             gpu_id=plan.device_id,
-        )
-
-        outputs_plan_for_this_call = _select_artifact_outputs_for_invocation(
-            plan.function_invocation_plans,
-            actual_callable,
-            request.invocation_group_key,
-            i,
-            request.artifact_outputs,
         )
 
         current_stack = _execute_function_core(
             FunctionExecutionRequest(
                 func_callable=actual_callable,
                 main_data_arg=current_stack,
-                base_kwargs=base_kwargs_for_item,
+                base_kwargs=invocation.kwargs_dict,
                 context=request.context,
-                artifact_inputs=request.artifact_inputs,
-                artifact_outputs=outputs_plan_for_this_call,
+                artifact_inputs=invocation.select_inputs(request.artifact_inputs),
+                artifact_outputs=invocation.select_outputs(request.artifact_outputs),
             )
         )
 
-        current_memory_type = actual_callable.output_memory_type
+        current_memory_type = invocation_output_type
 
     return current_stack
 
@@ -437,6 +382,7 @@ class PatternGroupRuntime:
         component_artifacts = _select_component_artifact_plans(
             self.plan,
             component_key,
+            request.compiled_group,
         )
 
         logger.debug(
@@ -447,73 +393,25 @@ class PatternGroupRuntime:
 
         return component_artifacts
 
-    def _resolve_executable_pattern(self) -> Any:
-        request = self.request
-        from openhcs.core.pipeline.compiler import FunctionReference
-
-        executable_func_or_chain = request.executable_func_or_chain
-        if isinstance(executable_func_or_chain, FunctionReference):
-            executable_func_or_chain = executable_func_or_chain.resolve()
-        elif (
-            isinstance(executable_func_or_chain, tuple)
-            and len(executable_func_or_chain) == 2
-        ):
-            func_or_ref, kwargs = executable_func_or_chain
-            if isinstance(func_or_ref, FunctionReference):
-                executable_func_or_chain = (func_or_ref.resolve(), kwargs)
-
-        return executable_func_or_chain
-
     def _execute_pattern(self, main_data_stack: Any) -> Any:
         request = self.request
-        final_base_kwargs = dict(request.base_func_args)
         component_artifacts = self._component_artifact_plans()
-        executable_func_or_chain = self._resolve_executable_pattern()
 
-        if isinstance(executable_func_or_chain, list):
-            return _execute_chain_core(
-                FunctionChainExecutionRequest(
-                    initial_data_stack=main_data_stack,
-                    func_chain=executable_func_or_chain,
-                    context=self.context,
-                    execution_plan=self.plan,
-                    artifact_inputs=component_artifacts.inputs,
-                    artifact_outputs=component_artifacts.outputs,
-                    invocation_group_key=component_artifacts.invocation_group_key,
-                )
+        if not request.compiled_group.invocations:
+            raise ValueError(
+                f"Compiled function group {request.compiled_group.group_key} has no invocations."
             )
 
-        elif callable(executable_func_or_chain) or (
-            isinstance(executable_func_or_chain, tuple)
-            and len(executable_func_or_chain) == 2
-        ):
-            actual_func, call_kwargs = _resolve_callable_and_kwargs(
-                executable_func_or_chain
+        return _execute_chain_core(
+            FunctionChainExecutionRequest(
+                initial_data_stack=main_data_stack,
+                invocations=request.compiled_group.invocations,
+                context=self.context,
+                execution_plan=self.plan,
+                artifact_inputs=component_artifacts.inputs,
+                artifact_outputs=component_artifacts.outputs,
             )
-            final_base_kwargs.update(call_kwargs)
-
-            filtered_artifact_outputs = _select_artifact_outputs_for_invocation(
-                self.plan.function_invocation_plans,
-                actual_func,
-                component_artifacts.invocation_group_key,
-                0,
-                component_artifacts.outputs,
-            )
-
-            return _execute_function_core(
-                FunctionExecutionRequest(
-                    func_callable=actual_func,
-                    main_data_arg=main_data_stack,
-                    base_kwargs=final_base_kwargs,
-                    context=self.context,
-                    artifact_inputs=component_artifacts.inputs,
-                    artifact_outputs=filtered_artifact_outputs,
-                )
-            )
-        else:
-            raise TypeError(
-                f"Invalid executable_func_or_chain: {type(executable_func_or_chain)}"
-            )
+        )
 
     def _validate_and_unstack(self, processed_stack: Any) -> list[Any]:
         if not _is_3d(processed_stack):

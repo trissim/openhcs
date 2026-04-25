@@ -13,11 +13,11 @@ from openhcs.core.compiled_step_plan import (
     ArtifactInputPlans,
     ArtifactOutputPlans,
     CompiledStepPlan,
-    FunctionInvocationPlans,
     InputConversionPlan,
     MaterializedOutputPlan,
 )
 from openhcs.core.config import StreamingConfig
+from openhcs.core.function_patterns import CompiledFunctionPattern
 from openhcs.core.steps.function_io import create_image_path_getter
 
 
@@ -38,7 +38,6 @@ class FunctionStepExecutionPlan:
     output_dir: Path
     variable_components: Sequence[VariableComponents]
     group_by: Any
-    func: Any
     artifact_inputs: ArtifactInputPlans
     artifact_outputs: ArtifactOutputPlans
     read_backend: str
@@ -55,7 +54,7 @@ class FunctionStepExecutionPlan:
     input_conversion: InputConversionPlan | None
     materialized_output: MaterializedOutputPlan | None
     streaming_configs: tuple[StreamingConfig, ...]
-    function_invocation_plans: FunctionInvocationPlans
+    compiled_function_pattern: CompiledFunctionPattern
     artifact_inputs_by_group: Mapping[Any, ArtifactInputPlans]
     artifact_outputs_by_group: Mapping[Any, ArtifactOutputPlans]
 
@@ -113,7 +112,6 @@ class FunctionStepExecutionPlan:
             output_dir=output_dir,
             variable_components=variable_components,
             group_by=compiled_plan.group_by,
-            func=compiled_plan.func,
             artifact_inputs=compiled_plan.artifact_inputs,
             artifact_outputs=compiled_plan.artifact_outputs,
             read_backend=_require_value(compiled_plan.read_backend, "read_backend", compiled_plan),
@@ -134,7 +132,11 @@ class FunctionStepExecutionPlan:
             input_conversion=compiled_plan.input_conversion,
             materialized_output=compiled_plan.materialized_output,
             streaming_configs=tuple(compiled_plan.streaming_configs.values()),
-            function_invocation_plans=compiled_plan.function_invocation_plans,
+            compiled_function_pattern=_require_value(
+                compiled_plan.compiled_function_pattern,
+                "compiled_function_pattern",
+                compiled_plan,
+            ),
             artifact_inputs_by_group=compiled_plan.artifact_inputs_by_group,
             artifact_outputs_by_group=compiled_plan.artifact_outputs_by_group,
         )

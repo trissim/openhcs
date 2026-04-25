@@ -6,6 +6,7 @@ from openhcs.core.compiled_step_plan import (
     InputConversionPlan,
     MaterializedOutputPlan,
 )
+from openhcs.core.function_patterns import compile_function_pattern
 from openhcs.core.steps.function_artifact_materialization import _build_analysis_filename
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 
@@ -57,6 +58,7 @@ def _compiled_plan(**overrides):
             sub_dir="images",
             analysis_results_dir="/tmp/materialized_results",
         ),
+        compiled_function_pattern=compile_function_pattern(noop, {}, {}),
     )
     for key, value in overrides.items():
         setattr(plan, key, value)

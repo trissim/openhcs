@@ -472,18 +472,32 @@ class FuncStepContractValidator:
                     ) from e
 
                 step_objectstate = step_state_map.get(i) if step_state_map else None
-                input_type, output_type = FuncStepContractValidator.validate_funcstep(
+                FuncStepContractValidator.validate_funcstep(
                     step,
                     orchestrator,
                     step_objectstate,
                 )
                 if pipeline_context is None:
+                    FuncStepContractValidator.validate_function_pattern(
+                        step.func,
+                        step.name,
+                    )
                     continue
                 if i not in pipeline_context.step_plans:
                     raise AssertionError(
                         f"Clause 101 Violation: Step {step.name} (index: {i}) missing from step_plans."
                     )
                 step_plan = pipeline_context.step_plans[i]
+                if step_plan.compiled_function_pattern is None:
+                    raise AssertionError(
+                        f"Clause 101 Violation: Step {step.name} (index: {i}) missing compiled_function_pattern."
+                    )
+                input_type, output_type = (
+                    FuncStepContractValidator.validate_compiled_function_pattern(
+                        step_plan.compiled_function_pattern,
+                        step.name,
+                    )
+                )
                 step_plan.input_memory_type = input_type
                 step_plan.output_memory_type = output_type
                 step_plan.func = step.func
@@ -493,7 +507,7 @@ class FuncStepContractValidator:
         step: FunctionStep,
         orchestrator=None,
         step_objectstate: Optional[ObjectState] = None,
-    ) -> Tuple[str, str]:
+    ) -> None:
         """
         Validate memory type contracts, func_pattern structure, and dict pattern keys for a FunctionStep instance.
 
@@ -501,9 +515,6 @@ class FuncStepContractValidator:
             step: The FunctionStep to validate
             orchestrator: Optional orchestrator for dict pattern key validation
             step_objectstate: ObjectState for accessing config values
-
-        Returns:
-            Tuple of validated input and output memory types.
 
         Raises:
             ValueError: If FunctionStep violates memory type contracts, structural rules,
@@ -558,11 +569,48 @@ class FuncStepContractValidator:
             if not dict_validation_result.is_valid:
                 raise ValueError(dict_validation_result.error_message)
 
-        # 4. Proceed with existing memory type validation using the original func_pattern
-        input_type, output_type = FuncStepContractValidator.validate_function_pattern(
-            func_pattern, step_name)
+    @staticmethod
+    def validate_compiled_function_pattern(
+        compiled_pattern,
+        step_name: str,
+    ) -> Tuple[str, str]:
+        """Validate memory contracts from the compiled function-pattern graph."""
+        invocations = tuple(compiled_pattern.iter_invocations())
+        if not invocations:
+            raise ValueError(f"No valid functions found in compiled pattern for step {step_name}")
 
-        return input_type, output_type
+        first = invocations[0]
+        FuncStepContractValidator.validate_external_library_installation(
+            first.func,
+            step_name,
+        )
+
+        input_type = first.input_memory_type
+        output_type = first.output_memory_type
+        if input_type not in VALID_MEMORY_TYPES or output_type not in VALID_MEMORY_TYPES:
+            raise ValueError(
+                invalid_memory_type_error(
+                    first.key.function_name,
+                    input_type,
+                    output_type,
+                    ", ".join(sorted(VALID_MEMORY_TYPES)),
+                )
+            )
+
+        for invocation in invocations[1:]:
+            fn_input_type = invocation.input_memory_type
+            fn_output_type = invocation.output_memory_type
+            if fn_input_type not in VALID_MEMORY_TYPES or fn_output_type not in VALID_MEMORY_TYPES:
+                raise ValueError(
+                    invalid_memory_type_error(
+                        invocation.key.function_name,
+                        fn_input_type,
+                        fn_output_type,
+                        ", ".join(sorted(VALID_MEMORY_TYPES)),
+                    )
+                )
+
+        return input_type, invocations[-1].output_memory_type
 
     @staticmethod
     def validate_function_pattern(

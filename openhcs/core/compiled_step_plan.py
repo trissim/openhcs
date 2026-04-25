@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from openhcs.constants.constants import VariableComponents
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
-from openhcs.core.function_patterns import FunctionInvocationKey, FunctionInvocationPlan
+from openhcs.core.function_patterns import CompiledFunctionPattern
 
 if TYPE_CHECKING:
     from openhcs.core.config import StreamingConfig
@@ -18,7 +18,6 @@ else:
 
 ArtifactInputPlans = Mapping[str, ArtifactInputPlan]
 ArtifactOutputPlans = Mapping[str, ArtifactOutputPlan]
-FunctionInvocationPlans = Mapping[FunctionInvocationKey, FunctionInvocationPlan]
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,9 +77,7 @@ class CompiledStepPlan:
         Any, OrderedDict[str, ArtifactOutputPlan]
     ] = field(default_factory=dict)
     execution_groups: list[str | None] = field(default_factory=lambda: [None])
-    function_invocation_plans: dict[
-        FunctionInvocationKey, FunctionInvocationPlan
-    ] = field(default_factory=dict)
+    compiled_function_pattern: CompiledFunctionPattern | None = None
     input_conversion: InputConversionPlan | None = None
     input_conversion_config: Any = None
     materialized_output: MaterializedOutputPlan | None = None
