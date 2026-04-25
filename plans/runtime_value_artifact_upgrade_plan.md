@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-25
 **Branch:** `benchmark-platform`
-**Status:** In progress; Phase 0 compiler contracts and Phase 1A runtime value validation are implemented
+**Status:** In progress; Phase 0 compiler contracts, Phase 1 runtime value validation, and Phase 2A runtime value store are implemented
 **Primary goal:** make OpenHCS runtime state rich enough to support CellProfiler-style named images, object labels, measurements, relationships, and native feature outputs without introducing fake wrapper layers.
 
 ---
@@ -80,11 +80,12 @@ Completed refactor foundation:
 10. `ArtifactOutputPlan.kind` now preserves declared `ArtifactSpec.kind`, and producer/consumer kind mismatches fail during path planning.
 11. `RuntimeValue`, `RuntimeValueSchema`, and `RuntimeStoragePolicy` exist as typed runtime artifact values with validation invariants.
 12. Runtime normalizes and validates `StepResult` and tuple artifact outputs against compiled `ArtifactOutputPlan.kind` before saving to the memory VFS.
-13. Existing tests cover compiled plans, compiled function pattern behavior, artifact graph behavior, runtime artifact validation, `StepResult`, and ZMQ integration smoke.
+13. `RuntimeValueStore` is attached to `ProcessingContext` and records validated runtime values by typed artifact key while preserving raw VFS persistence.
+14. Existing tests cover compiled plans, compiled function pattern behavior, artifact graph behavior, runtime artifact validation, runtime value store behavior, `StepResult`, and ZMQ integration smoke.
 
 Known remaining weaknesses:
 
-1. Runtime validation currently saves raw payloads to memory VFS after validation; no runtime value store is attached yet.
+1. Runtime values are recorded in `RuntimeValueStore`, but raw memory VFS is still the persistence boundary used for artifact inputs and materialization.
 2. `StepResult` still accepts `artifacts: Mapping[str, Any]`; normalization now validates values, but the public return type is still permissive for compatibility.
 3. Materialization is mostly path/materializer driven, not kind/schema driven.
 4. `ProcessingContext` does not yet own named image/object/measurement/relationship runtime state.
@@ -307,7 +308,7 @@ Current progress:
 1. Done: `RuntimeValue`, `RuntimeValueSchema`, `RuntimeStoragePolicy`, `normalize_artifact_value`, and `validate_runtime_value` exist in `openhcs/core/runtime_values.py`.
 2. Done: Runtime validates `StepResult` and tuple artifact values against compiled `ArtifactOutputPlan.kind`.
 3. Done: The memory VFS still receives the raw payload after validation, preserving existing materializer behavior for this phase.
-4. Remaining: explicit runtime value store attachment so validated `RuntimeValue` objects remain discoverable by typed key.
+4. Done: `RuntimeValueStore` records validated values by typed `ArtifactKey`.
 5. Remaining: broader kind mismatch coverage for every `ArtifactKind` path as defaults/materializers are added.
 
 ### Phase 2: Runtime Value Store
@@ -327,6 +328,14 @@ Acceptance criteria:
 1. Artifact values are discoverable by typed key.
 2. Existing artifact inputs still load correctly.
 3. Function execution no longer treats all artifact values as untyped VFS blobs internally.
+
+Current progress:
+
+1. Done: `RuntimeValueStore` is attached to `ProcessingContext`.
+2. Done: `_save_artifact_value` records validated `RuntimeValue` objects before saving raw payloads to memory VFS.
+3. Done: artifact values are discoverable by typed key and by semantic filters such as name, kind, axis, and group.
+4. Remaining: artifact inputs still load from memory VFS; the next slice should read through the store where possible while preserving compatibility.
+5. Remaining: materialization still reads raw VFS payloads; the next materialization slice should consume runtime value metadata and kind defaults.
 
 ### Phase 3: Kind-Aware Materialization
 
