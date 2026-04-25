@@ -17,6 +17,9 @@ from openhcs.core.function_patterns import (
     FunctionInvocationKey,
     FunctionInvocationPlan,
     build_function_invocation_plans,
+    inject_artifact_input_values,
+    inject_kwargs_into_pattern,
+    strip_disabled_functions,
 )
 from openhcs.core.pipeline.artifact_planning import (
     ArtifactDeclarations,
@@ -190,7 +193,7 @@ class PathPlanner:
 
             step = pipeline[i]
             if isinstance(step, FunctionStep):
-                pattern = self._strip_disabled_functions(step.func) if step.func else []
+                pattern = strip_disabled_functions(step.func) if step.func else []
                 declarations = extract_artifact_declarations(pattern)
                 step_inputs = set(declarations.inputs.keys())
             else:
@@ -208,7 +211,7 @@ class PathPlanner:
             return ArtifactDeclarations.empty(), [None]
 
         step.func = self._inject_injectable_params(step.func, step)
-        step.func = self._strip_disabled_functions(step.func)
+        step.func = strip_disabled_functions(step.func)
 
         declarations = extract_artifact_declarations(step.func if step.func else [])
         execution_groups = self._get_execution_groups(step, step_index)
@@ -694,7 +697,7 @@ class PathPlanner:
         for key in inputs:
             if key in METADATA_RESOLVERS and key not in self.declared:
                 value = METADATA_RESOLVERS[key]["resolver"](self.ctx)
-                pattern = self._inject_into_pattern(pattern, key, value)
+                pattern = inject_artifact_input_values(pattern, {key: value})
         return pattern
 
     def _inject_injectable_params(self, pattern: Any, step) -> Any:
@@ -727,100 +730,7 @@ class PathPlanner:
         if not param_kwargs:
             return pattern
 
-        return self._inject_params_into_pattern(pattern, param_kwargs)
-
-    def _inject_into_pattern(self, pattern: Any, key: str, value: Any) -> Any:
-        """Inject value into pattern - only for functions that declare the artifact input.
-
-        FunctionReference objects preserve artifact inputs via __getattr__, so they
-        work the same as regular callables here.
-        """
-        from openhcs.core.pipeline.compiler import FunctionReference
-
-        # Handle FunctionReference and callable objects
-        if isinstance(pattern, FunctionReference) or callable(pattern):
-            # Only inject if THIS specific function needs this metadata
-            if key in getattr(pattern, '__artifact_inputs__', {}):
-                return (pattern, {key: value})
-            return pattern  # Don't modify if function doesn't need it
-
-        if isinstance(pattern, tuple) and len(pattern) == 2:
-            func, kwargs = pattern
-            # Only inject if THIS specific function needs this metadata
-            if (isinstance(func, FunctionReference) or callable(func)) and key in getattr(func, '__artifact_inputs__', {}):
-                return (func, {**kwargs, key: value})
-            return pattern  # Don't modify if function doesn't need it
-
-        if isinstance(pattern, list):
-            # Recursively process each element (selective injection per function)
-            return [self._inject_into_pattern(item, key, value) for item in pattern]
-
-        if isinstance(pattern, dict):
-            # Recursively process each value (selective injection per function)
-            return {k: self._inject_into_pattern(v, key, value) for k, v in pattern.items()}
-
-        raise ValueError(f"Cannot inject into pattern type: {type(pattern)}")
-
-    def _inject_params_into_pattern(self, pattern: Any, resolved_kwargs: Dict[str, Any]) -> Any:
-        """Inject resolved param values into function pattern kwargs.
-
-        Unlike metadata injection, injectable param injection is universal:
-        all registered functions accept dtype_config, enabled, etc.
-
-        Args:
-            pattern: Function pattern (callable, tuple, list, or dict)
-            resolved_kwargs: Dict of resolved param values to inject
-
-        Returns:
-            Modified pattern with params injected into kwargs
-        """
-        from openhcs.core.pipeline.compiler import FunctionReference
-
-        # Handle FunctionReference and callable objects
-        if isinstance(pattern, FunctionReference) or callable(pattern):
-            # Always inject params (all registered functions accept them)
-            return (pattern, resolved_kwargs)
-
-        if isinstance(pattern, tuple) and len(pattern) == 2:
-            func, kwargs = pattern
-            # Merge resolved_kwargs with existing kwargs (existing kwargs take precedence)
-            merged_kwargs = {**resolved_kwargs, **kwargs}
-            return (func, merged_kwargs)
-
-        if isinstance(pattern, list):
-            # Recursively process each element
-            return [self._inject_params_into_pattern(item, resolved_kwargs) for item in pattern]
-
-        if isinstance(pattern, dict):
-            # Recursively process each value
-            return {k: self._inject_params_into_pattern(v, resolved_kwargs) for k, v in pattern.items()}
-
-        return pattern
-
-    def _strip_disabled_functions(self, pattern: Any) -> Any:
-        """
-        Remove disabled functions (enabled=False) from any pattern structure.
-
-        Ensures downstream planning (artifact outputs, invocation plans, materialization)
-        never sees disabled functions.
-        """
-        if isinstance(pattern, tuple) and len(pattern) == 2 and isinstance(pattern[1], dict):
-            if pattern[1].get('enabled', True) is False:
-                return None
-            return pattern
-
-        if isinstance(pattern, list):
-            stripped = [self._strip_disabled_functions(item) for item in pattern]
-            return [item for item in stripped if item not in (None, [], {})]
-
-        if isinstance(pattern, dict):
-            stripped = {k: self._strip_disabled_functions(v) for k, v in pattern.items()}
-            return {
-                k: v for k, v in stripped.items()
-                if v not in (None, [], {})
-            }
-
-        return pattern
+        return inject_kwargs_into_pattern(pattern, param_kwargs)
 
     def _get_input_source(self, step: AbstractStep, i: int) -> str:
         """Get input source string."""

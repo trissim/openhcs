@@ -3,7 +3,10 @@ from openhcs.core.function_patterns import (
     FunctionInvocationKey,
     build_function_invocation_plans,
     function_invocation_key,
+    inject_artifact_input_values,
+    inject_kwargs_into_pattern,
     iter_enabled_function_invocations,
+    strip_disabled_functions,
 )
 from openhcs.core.pipeline.function_contracts import (
     artifact_inputs,
@@ -152,3 +155,37 @@ def test_artifact_decorators_accept_typed_artifact_specs():
 
     assert measure.__artifact_inputs__["nuclei"] == labels
     assert measure.__artifact_outputs__["measurements"] == measurements
+
+
+def test_strip_disabled_functions_removes_empty_pattern_branches():
+    pattern = {
+        "DAPI": [first, (skipped, {"enabled": False})],
+        "GFP": [(skipped, {"enabled": False})],
+    }
+
+    assert strip_disabled_functions(pattern) == {"DAPI": [first]}
+
+
+def test_inject_kwargs_into_pattern_preserves_user_kwargs_precedence():
+    pattern = [first, (second, {"dtype_config": "explicit", "sigma": 2})]
+
+    assert inject_kwargs_into_pattern(pattern, {"dtype_config": "inherited"}) == [
+        (first, {"dtype_config": "inherited"}),
+        (second, {"dtype_config": "explicit", "sigma": 2}),
+    ]
+
+
+def test_inject_artifact_input_values_only_targets_declared_inputs():
+    @artifact_inputs("grid_dimensions")
+    def needs_grid(image, grid_dimensions):
+        return image
+
+    pattern = [first, (needs_grid, {"sigma": 2})]
+
+    assert inject_artifact_input_values(
+        pattern,
+        {"grid_dimensions": (3, 4), "unused": "ignored"},
+    ) == [
+        first,
+        (needs_grid, {"grid_dimensions": (3, 4), "sigma": 2}),
+    ]

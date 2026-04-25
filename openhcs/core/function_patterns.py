@@ -128,3 +128,101 @@ def build_function_invocation_plans(
         plans[plan.key] = plan
 
     return plans
+
+
+def strip_disabled_functions(pattern: Any) -> Any:
+    """Remove disabled function items from any supported function-pattern shape."""
+    if isinstance(pattern, tuple) and len(pattern) == 2 and isinstance(pattern[1], dict):
+        if pattern[1].get("enabled", True) is False:
+            return None
+        return pattern
+
+    if isinstance(pattern, list):
+        stripped = [strip_disabled_functions(item) for item in pattern]
+        return [item for item in stripped if item not in (None, [], {})]
+
+    if isinstance(pattern, dict):
+        stripped = {
+            key: strip_disabled_functions(value)
+            for key, value in pattern.items()
+        }
+        return {
+            key: value
+            for key, value in stripped.items()
+            if value not in (None, [], {})
+        }
+
+    return pattern
+
+
+def inject_kwargs_into_pattern(pattern: Any, kwargs: Mapping[str, Any]) -> Any:
+    """Inject kwargs into every callable item in a function pattern."""
+    if not kwargs:
+        return pattern
+
+    if _is_callable_pattern_item(pattern):
+        return _merge_pattern_item_kwargs(pattern, kwargs)
+
+    if isinstance(pattern, list):
+        return [inject_kwargs_into_pattern(item, kwargs) for item in pattern]
+
+    if isinstance(pattern, dict):
+        return {
+            key: inject_kwargs_into_pattern(value, kwargs)
+            for key, value in pattern.items()
+        }
+
+    return pattern
+
+
+def inject_artifact_input_values(
+    pattern: Any,
+    values_by_key: Mapping[str, Any],
+) -> Any:
+    """Inject artifact input values only into callables that declare those inputs."""
+    if not values_by_key:
+        return pattern
+
+    if _is_callable_pattern_item(pattern):
+        core_callable = get_core_callable(pattern)
+        declared_inputs = getattr(core_callable, "__artifact_inputs__", {})
+        matched_values = {
+            key: value
+            for key, value in values_by_key.items()
+            if key in declared_inputs
+        }
+        if not matched_values:
+            return pattern
+        return _merge_pattern_item_kwargs(pattern, matched_values)
+
+    if isinstance(pattern, list):
+        return [
+            inject_artifact_input_values(item, values_by_key)
+            for item in pattern
+        ]
+
+    if isinstance(pattern, dict):
+        return {
+            key: inject_artifact_input_values(value, values_by_key)
+            for key, value in pattern.items()
+        }
+
+    raise ValueError(f"Cannot inject artifact values into pattern type: {type(pattern)}")
+
+
+def _is_callable_pattern_item(pattern: Any) -> bool:
+    if get_core_callable(pattern) is None:
+        return False
+    return not isinstance(pattern, (list, dict))
+
+
+def _merge_pattern_item_kwargs(pattern: Any, kwargs: Mapping[str, Any]) -> Any:
+    if isinstance(pattern, tuple) and len(pattern) == 2:
+        func, existing_kwargs = pattern
+        if not isinstance(existing_kwargs, Mapping):
+            raise TypeError(
+                f"Function kwargs must be a mapping, got {type(existing_kwargs)}"
+            )
+        return (func, {**kwargs, **existing_kwargs})
+
+    return (pattern, dict(kwargs))
