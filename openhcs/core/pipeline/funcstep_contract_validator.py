@@ -14,6 +14,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
 from openhcs.constants.constants import VALID_MEMORY_TYPES, get_openhcs_config
+from openhcs.core.callable_contract import CallableContract
 from openhcs.core.steps.function_step import FunctionStep
 
 from openhcs.core.components.validation import GenericValidator
@@ -636,44 +637,45 @@ class FuncStepContractValidator:
         if not functions:
             raise ValueError(f"No valid functions found in pattern for step {step_name}")
 
-        # Get memory types from the first function
-        first_fn = functions[0]
+        contracts = [CallableContract.from_callable(fn) for fn in functions]
+        first_contract = contracts[0]
+        first_fn = first_contract.func
 
         # Validate that external libraries are installed (compile-time check)
         # This catches missing dependencies like 'skan' before execution
         FuncStepContractValidator.validate_external_library_installation(first_fn, step_name)
 
         # Validate that the function has explicit memory type declarations
-        try:
-            input_type = first_fn.input_memory_type
-            output_type = first_fn.output_memory_type
-        except AttributeError as exc:
-            raise ValueError(missing_memory_type_error(first_fn.__name__, step_name)) from exc
+        input_type = first_contract.input_memory_type
+        output_type = first_contract.output_memory_type
+        if input_type is None or output_type is None:
+            raise ValueError(
+                missing_memory_type_error(first_contract.function_name, step_name)
+            )
 
         # Validate memory types against known valid types
         if input_type not in VALID_MEMORY_TYPES or output_type not in VALID_MEMORY_TYPES:
             raise ValueError(invalid_memory_type_error(
-                first_fn.__name__, input_type, output_type, ", ".join(sorted(VALID_MEMORY_TYPES))
+                first_contract.function_name, input_type, output_type, ", ".join(sorted(VALID_MEMORY_TYPES))
             ))
 
         # Validate that all functions have valid memory type declarations
-        for fn in functions[1:]:
-            # Validate that the function has explicit memory type declarations
-            try:
-                fn_input_type = fn.input_memory_type
-                fn_output_type = fn.output_memory_type
-            except AttributeError as exc:
-                raise ValueError(missing_memory_type_error(fn.__name__, step_name)) from exc
+        for contract in contracts[1:]:
+            fn_input_type = contract.input_memory_type
+            fn_output_type = contract.output_memory_type
+            if fn_input_type is None or fn_output_type is None:
+                raise ValueError(
+                    missing_memory_type_error(contract.function_name, step_name)
+                )
 
             # Validate memory types against known valid types
             if fn_input_type not in VALID_MEMORY_TYPES or fn_output_type not in VALID_MEMORY_TYPES:
                 raise ValueError(invalid_memory_type_error(
-                    fn.__name__, fn_input_type, fn_output_type, ", ".join(sorted(VALID_MEMORY_TYPES))
+                    contract.function_name, fn_input_type, fn_output_type, ", ".join(sorted(VALID_MEMORY_TYPES))
                 ))
 
         # Return first function's input type and last function's output type
-        last_function = functions[-1]
-        return input_type, last_function.output_memory_type
+        return input_type, contracts[-1].output_memory_type
 
     @staticmethod
     def _validate_required_args(func: Callable, kwargs: Dict[str, Any], step_name: str) -> None:

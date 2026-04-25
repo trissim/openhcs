@@ -41,19 +41,20 @@ def extract_artifact_declarations(pattern: Any) -> ArtifactDeclarations:
     """Extract artifact metadata and per-group ownership from a function pattern."""
     declarations = ArtifactDeclarations()
 
-    for func, group_key, _ in normalize_pattern(pattern):
+    for invocation in iter_enabled_function_invocations(pattern):
+        contract = invocation.contract
+        group_key = invocation.key.group_key
         normalized_key = None if group_key == DEFAULT_GROUP_KEY else group_key
 
-        artifact_outputs = getattr(func, "__artifact_outputs__", {})
-        declarations.output_names.update(artifact_outputs.keys())
-        for output in artifact_outputs:
+        declarations.output_names.update(contract.artifact_output_names)
+        for output in contract.artifact_output_names:
             declarations.output_groups[output].add(normalized_key)
 
-        declarations.inputs.update(getattr(func, "__artifact_inputs__", {}))
+        declarations.inputs.update(contract.artifact_inputs_dict)
         declarations.materializations.update(
             {
                 name: spec.materialization
-                for name, spec in artifact_outputs.items()
+                for name, spec in contract.artifact_outputs
                 if spec.materialization is not None
             }
         )

@@ -4,6 +4,7 @@ from openhcs.core.artifacts import (
     ArtifactOutputPlan,
     ArtifactSpec,
 )
+from openhcs.core.callable_contract import CallableContract
 from openhcs.core.function_patterns import (
     FunctionInvocationKey,
     compile_function_pattern,
@@ -97,6 +98,26 @@ def test_artifact_planning_normalize_pattern_returns_tuple_api():
     ]
 
 
+def test_callable_contract_is_nominal_source_for_callable_metadata():
+    first.input_memory_type = "numpy"
+    first.output_memory_type = "cupy"
+    first.__artifact_inputs__ = {"positions": ArtifactSpec("positions")}
+
+    contract = CallableContract.from_callable(first)
+
+    assert contract.function_name == "first"
+    assert contract.input_memory_type == "numpy"
+    assert contract.output_memory_type == "cupy"
+    assert contract.artifact_input_names == ("positions",)
+    assert contract.artifact_output_names == ("positions",)
+    assert contract.select_input_plan_keys(
+        {
+            "positions": ArtifactInputPlan("positions", "/tmp/positions.pkl"),
+            "other": ArtifactInputPlan("other", "/tmp/other.pkl"),
+        }
+    ) == ("positions",)
+
+
 def test_compile_function_pattern_builds_invocation_source_of_truth():
     first.input_memory_type = "numpy"
     first.output_memory_type = "numpy"
@@ -125,6 +146,7 @@ def test_compile_function_pattern_builds_invocation_source_of_truth():
         FunctionInvocationKey("first", "DAPI", 0),
         FunctionInvocationKey("second", "DAPI", 1),
     ]
+    assert group.invocations[0].contract.function_name == "first"
     assert group.invocations[0].kwargs == (("sigma", 1),)
     assert group.invocations[0].artifact_input_keys == ("positions",)
     assert group.invocations[0].artifact_output_keys == ("positions",)

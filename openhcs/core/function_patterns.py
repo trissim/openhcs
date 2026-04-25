@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
+from openhcs.core.callable_contract import CallableContract
 from openhcs.formats.func_arg_prep import get_core_callable, iter_pattern_items
 
 
@@ -28,8 +29,18 @@ class FunctionInvocationKey:
     def from_callable(
         cls, func: Callable, group_key: Any, position: int
     ) -> "FunctionInvocationKey":
+        return cls.from_contract(
+            CallableContract.from_callable(func),
+            group_key,
+            position,
+        )
+
+    @classmethod
+    def from_contract(
+        cls, contract: CallableContract, group_key: Any, position: int
+    ) -> "FunctionInvocationKey":
         return cls(
-            function_name=getattr(func, "__name__", "unknown"),
+            function_name=contract.function_name,
             group_key=str(group_key),
             position=position,
         )
@@ -39,8 +50,13 @@ class FunctionInvocationKey:
 class FunctionInvocation:
     """One enabled callable extracted from a FunctionStep pattern."""
 
-    func: Callable
+    contract: CallableContract
     key: FunctionInvocationKey
+
+    @property
+    def func(self) -> Any:
+        """Underlying callable or FunctionReference for compatibility."""
+        return self.contract.func
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,12 +64,25 @@ class CompiledFunctionInvocation:
     """Executable compiler output for one callable in a function pattern."""
 
     key: FunctionInvocationKey
-    func: Any
+    contract: CallableContract
     kwargs: tuple[tuple[str, Any], ...] = ()
     artifact_input_keys: tuple[str, ...] = ()
     artifact_output_keys: tuple[str, ...] = ()
-    input_memory_type: str | None = None
-    output_memory_type: str | None = None
+
+    @property
+    def func(self) -> Any:
+        """Underlying callable or FunctionReference resolved at runtime."""
+        return self.contract.func
+
+    @property
+    def input_memory_type(self) -> str | None:
+        """Declared input memory type from the callable contract."""
+        return self.contract.input_memory_type
+
+    @property
+    def output_memory_type(self) -> str | None:
+        """Declared output memory type from the callable contract."""
+        return self.contract.output_memory_type
 
     @property
     def kwargs_dict(self) -> dict[str, Any]:
@@ -170,16 +199,15 @@ def iter_enabled_function_invocations(pattern: Any) -> Iterator[FunctionInvocati
         core_callable = get_core_callable(func_item)
         if not core_callable:
             continue
+        contract = CallableContract.from_callable(core_callable)
 
         if group_key not in position_counters:
             position_counters[group_key] = 0
 
         position = position_counters[group_key]
         yield FunctionInvocation(
-            func=core_callable,
-            key=FunctionInvocationKey.from_callable(
-                core_callable, group_key, position
-            ),
+            contract=contract,
+            key=FunctionInvocationKey.from_contract(contract, group_key, position),
         )
         position_counters[group_key] += 1
 
@@ -270,11 +298,11 @@ def inject_artifact_input_values(
 
     if _is_callable_pattern_item(pattern):
         core_callable = get_core_callable(pattern)
-        declared_inputs = getattr(core_callable, "__artifact_inputs__", {})
+        contract = CallableContract.from_callable(core_callable)
         matched_values = {
             key: value
             for key, value in values_by_key.items()
-            if key in declared_inputs
+            if key in contract.artifact_input_names
         }
         if not matched_values:
             return pattern
@@ -344,16 +372,13 @@ def _compile_invocation(
     output_plans: Mapping[str, ArtifactOutputPlan],
 ) -> CompiledFunctionInvocation:
     func, kwargs = _split_function_item(func_item)
-    declared_inputs = getattr(func, "__artifact_inputs__", {})
-    declared_outputs = getattr(func, "__artifact_outputs__", {})
+    contract = CallableContract.from_callable(func)
     return CompiledFunctionInvocation(
-        key=FunctionInvocationKey.from_callable(func, group_key, position),
-        func=func,
+        key=FunctionInvocationKey.from_contract(contract, group_key, position),
+        contract=contract,
         kwargs=_freeze_runtime_kwargs(kwargs),
-        artifact_input_keys=tuple(key for key in input_plans if key in declared_inputs),
-        artifact_output_keys=tuple(key for key in output_plans if key in declared_outputs),
-        input_memory_type=getattr(func, "input_memory_type", None),
-        output_memory_type=getattr(func, "output_memory_type", None),
+        artifact_input_keys=contract.select_input_plan_keys(input_plans),
+        artifact_output_keys=contract.select_output_plan_keys(output_plans),
     )
 
 

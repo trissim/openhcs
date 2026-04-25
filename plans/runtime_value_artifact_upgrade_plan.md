@@ -236,6 +236,37 @@ Rules:
 
 ## 5. Implementation Phases
 
+### Phase 0: Nominal Compiler Contracts
+
+Goal: make compiler metadata extraction more type-safe before runtime values depend on it.
+
+This phase prevents the runtime-value upgrade from building on scattered callable attribute probes. Compiler phases should read callable memory types and artifact declarations through one typed source of truth.
+
+Source-of-truth types:
+
+1. `CallableContract`: function name, module, memory types, declared artifact inputs, and declared artifact outputs.
+2. `NormalizedFunctionPattern`: grouped callable items with stable invocation identity.
+3. `ArtifactGraph`: producer/consumer edges, artifact names, kinds, group scopes, and materialization intent.
+4. `StepSnapshot`: ObjectState-derived resolved step config used by compiler phases instead of live step attribute probing.
+5. `CompilationSession`: axis-scoped compiler context that owns config, ObjectState map, plan map, and orchestrator access.
+
+Tasks:
+
+1. Add `CallableContract` and route artifact planning plus compiled invocation construction through it.
+2. Extend the compiled pattern model so invocation metadata comes from `CallableContract`.
+3. Replace direct `getattr(func, "__artifact_outputs__", {})` and memory-type probes in compiler phases with contract reads.
+4. Add `NormalizedFunctionPattern` once callable contracts are centralized.
+5. Add `ArtifactGraph` to own artifact producer/consumer validation before runtime execution.
+6. Add `StepSnapshot` so path planning and validation stop reading live step attributes directly.
+7. Add `CompilationSession` to replace loose parameter threading across compiler phases.
+
+Acceptance criteria:
+
+1. Callable memory types and artifact declarations are extracted in exactly one nominal module.
+2. Artifact planning, function-pattern compilation, and memory validation all use the same callable contract.
+3. Artifact kind mismatches can be detected at compile time once runtime values are added.
+4. No new class is a pass-through wrapper over a dict; each type owns an invariant or phase boundary.
+
 ### Phase 1: Runtime Value Contract
 
 Goal: typed value semantics without changing external pipeline behavior.
@@ -516,4 +547,3 @@ This upgrade is complete when:
 5. A generated CellProfiler pipeline can compile to explicit artifact contracts.
 6. A minimal CellProfiler-style object measurement pipeline passes end-to-end without hidden mutable workspace state.
 7. Existing ZMQ/ImageXpress 3D integration smoke still passes.
-
