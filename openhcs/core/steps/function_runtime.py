@@ -108,6 +108,13 @@ def _save_artifact_value(
 
     parent_dir = str(Path(vfs_path).parent)
     context.filemanager.ensure_directory(parent_dir, Backend.MEMORY.value)
+    runtime_value_store = getattr(context, "runtime_value_store", None)
+    if runtime_value_store is not None:
+        runtime_value_store.record(
+            runtime_value,
+            path=vfs_path,
+            backend=Backend.MEMORY.value,
+        )
     context.filemanager.save(runtime_value.data, vfs_path, Backend.MEMORY.value)
 
 

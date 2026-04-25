@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 
 from openhcs.core.config import GlobalPipelineConfig, VFSConfig, PathPlanningConfig
 from openhcs.core.compiled_step_plan import CompiledStepPlan
+from openhcs.core.runtime_stores import RuntimeValueStore
 
 
 class ProcessingContext:
@@ -57,6 +58,7 @@ class ProcessingContext:
         self.step_plans = step_plans or {}
         self.outputs = {}  # Future use TBD, primary data flow via VFS
         self.intermediates = {} # Future use TBD, primary data flow via VFS
+        self.runtime_value_store = RuntimeValueStore()
         self.current_step = None # Future use TBD
         self.axis_id = axis_id
         self.global_config = global_config # Store the global config

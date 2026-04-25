@@ -1,6 +1,7 @@
 import pytest
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, StepResult
+from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.steps.function_runtime import (
     FunctionExecutionRequest,
     _execute_function_core,
@@ -33,6 +34,7 @@ class ContextStub:
     def __init__(self):
         self.axis_id = "A01"
         self.filemanager = FileManagerStub()
+        self.runtime_value_store = RuntimeValueStore()
 
 
 def test_execute_function_core_saves_named_step_result_artifacts():
@@ -64,6 +66,12 @@ def test_execute_function_core_saves_named_step_result_artifacts():
     assert context.filemanager.saved[
         ("/memory/measurements.pkl", "memory")
     ] == [{"count": 2}]
+    stored = context.runtime_value_store.find(
+        name="measurements",
+        axis_id="A01",
+    )
+    assert len(stored) == 1
+    assert stored[0].value.data == [{"count": 2}]
 
 
 def test_execute_function_core_requires_planned_step_result_artifacts():
