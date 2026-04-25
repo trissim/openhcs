@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-25
 **Branch:** `benchmark-platform`
-**Status:** Next implementation plan
+**Status:** In progress; Phase 0 compiler contracts and Phase 1A runtime value validation are implemented
 **Primary goal:** make OpenHCS runtime state rich enough to support CellProfiler-style named images, object labels, measurements, relationships, and native feature outputs without introducing fake wrapper layers.
 
 ---
@@ -74,16 +74,22 @@ Completed refactor foundation:
 4. Function patterns are compiled into `CompiledFunctionPattern`.
 5. Runtime executes `CompiledFunctionInvocation` groups instead of rediscovering callable identity.
 6. Invocation-level artifact input/output keys are known before runtime execution.
-7. Existing tests cover compiled plans, compiled function pattern behavior, `StepResult`, and ZMQ integration smoke.
+7. `CallableContract` centralizes callable name, module, memory type, and artifact declaration extraction.
+8. `NormalizedFunctionPattern` lowers raw `FunctionStep.func` syntax into grouped callable items before compilation.
+9. `ArtifactGraph` owns artifact producer/consumer declarations, grouped output scope, invocation ownership, kind consistency, and materialization intent.
+10. `ArtifactOutputPlan.kind` now preserves declared `ArtifactSpec.kind`, and producer/consumer kind mismatches fail during path planning.
+11. `RuntimeValue`, `RuntimeValueSchema`, and `RuntimeStoragePolicy` exist as typed runtime artifact values with validation invariants.
+12. Runtime normalizes and validates `StepResult` and tuple artifact outputs against compiled `ArtifactOutputPlan.kind` before saving to the memory VFS.
+13. Existing tests cover compiled plans, compiled function pattern behavior, artifact graph behavior, runtime artifact validation, `StepResult`, and ZMQ integration smoke.
 
 Known remaining weaknesses:
 
-1. `ArtifactKind` exists, but runtime does not yet enforce kind-specific value semantics.
-2. `StepResult` carries `artifacts: Mapping[str, Any]`, so payload semantics are still implicit.
-3. Artifacts are stored in memory VFS as generic values, then materialized later.
-4. Materialization is mostly path/materializer driven, not kind/schema driven.
-5. `ProcessingContext` does not yet own named image/object/measurement/relationship runtime state.
-6. Some compiler phases still mutate `FunctionStep.func` while compiling normalized patterns.
+1. Runtime validation currently saves raw payloads to memory VFS after validation; no runtime value store is attached yet.
+2. `StepResult` still accepts `artifacts: Mapping[str, Any]`; normalization now validates values, but the public return type is still permissive for compatibility.
+3. Materialization is mostly path/materializer driven, not kind/schema driven.
+4. `ProcessingContext` does not yet own named image/object/measurement/relationship runtime state.
+5. Some compiler phases still mutate `FunctionStep.func` while preparing normalized patterns.
+6. `StepSnapshot` and `CompilationSession` are not implemented yet.
 7. `zarr_config` and filemanager payloads remain external boundary mappings, which is acceptable for now.
 
 ---
@@ -267,6 +273,14 @@ Acceptance criteria:
 3. Artifact kind mismatches can be detected at compile time once runtime values are added.
 4. No new class is a pass-through wrapper over a dict; each type owns an invariant or phase boundary.
 
+Current progress:
+
+1. Done: `CallableContract` is the single callable metadata extraction boundary for memory types and artifact declarations.
+2. Done: `NormalizedFunctionPattern` is the compiler input for grouped callable chains and stable invocation identity.
+3. Done: `ArtifactGraph` replaced the loose artifact declaration bag and now validates producer/consumer kinds before runtime.
+4. Remaining: `StepSnapshot` for ObjectState-derived step config.
+5. Remaining: `CompilationSession` for axis-scoped compiler state and reduced loose parameter threading.
+
 ### Phase 1: Runtime Value Contract
 
 Goal: typed value semantics without changing external pipeline behavior.
@@ -287,6 +301,14 @@ Acceptance criteria:
 3. Returning an undeclared artifact fails loud.
 4. Missing a declared artifact continues to fail loud.
 5. Current unit tests still pass.
+
+Current progress:
+
+1. Done: `RuntimeValue`, `RuntimeValueSchema`, `RuntimeStoragePolicy`, `normalize_artifact_value`, and `validate_runtime_value` exist in `openhcs/core/runtime_values.py`.
+2. Done: Runtime validates `StepResult` and tuple artifact values against compiled `ArtifactOutputPlan.kind`.
+3. Done: The memory VFS still receives the raw payload after validation, preserving existing materializer behavior for this phase.
+4. Remaining: explicit runtime value store attachment so validated `RuntimeValue` objects remain discoverable by typed key.
+5. Remaining: broader kind mismatch coverage for every `ArtifactKind` path as defaults/materializers are added.
 
 ### Phase 2: Runtime Value Store
 
