@@ -1,6 +1,6 @@
 import pytest
 
-from openhcs.core.artifacts import ArtifactOutputPlan, StepResult
+from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, StepResult
 from openhcs.core.steps.function_runtime import (
     FunctionExecutionRequest,
     _execute_function_core,
@@ -31,6 +31,7 @@ class FileManagerStub:
 
 class ContextStub:
     def __init__(self):
+        self.axis_id = "A01"
         self.filemanager = FileManagerStub()
 
 
@@ -83,6 +84,56 @@ def test_execute_function_core_requires_planned_step_result_artifacts():
                     "measurements": ArtifactOutputPlan(
                         name="measurements",
                         path="/memory/measurements.pkl",
+                    )
+                },
+            )
+        )
+
+
+def test_execute_function_core_validates_step_result_artifact_kind():
+    context = ContextStub()
+
+    def analyze(image):
+        return StepResult(image=image, artifacts={"metadata": ["not", "metadata"]})
+
+    with pytest.raises(TypeError, match="expected metadata mapping"):
+        _execute_function_core(
+            FunctionExecutionRequest(
+                func_callable=analyze,
+                main_data_arg=41,
+                base_kwargs={},
+                context=context,
+                artifact_inputs={},
+                artifact_outputs={
+                    "metadata": ArtifactOutputPlan(
+                        name="metadata",
+                        path="/memory/metadata.pkl",
+                        kind=ArtifactKind.METADATA,
+                    )
+                },
+            )
+        )
+
+
+def test_execute_function_core_validates_tuple_artifact_kind():
+    context = ContextStub()
+
+    def analyze(image):
+        return image, {"not": "labels"}
+
+    with pytest.raises(TypeError, match="expected object_labels payload"):
+        _execute_function_core(
+            FunctionExecutionRequest(
+                func_callable=analyze,
+                main_data_arg=41,
+                base_kwargs={},
+                context=context,
+                artifact_inputs={},
+                artifact_outputs={
+                    "nuclei": ArtifactOutputPlan(
+                        name="nuclei",
+                        path="/memory/nuclei.pkl",
+                        kind=ArtifactKind.OBJECT_LABELS,
                     )
                 },
             )

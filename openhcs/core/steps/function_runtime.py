@@ -19,6 +19,7 @@ from openhcs.core.function_patterns import (
     CompiledFunctionInvocation,
 )
 from openhcs.core.memory import convert_memory, stack_slices, unstack_slices
+from openhcs.core.runtime_values import normalize_artifact_value
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 
 logger = logging.getLogger(__name__)
@@ -84,8 +85,14 @@ def _save_artifact_value(
     output_plan: ArtifactOutputPlan,
     value: Any,
 ) -> None:
-    """Save one planned artifact value to the memory VFS."""
+    """Validate and save one planned artifact value to the memory VFS."""
     vfs_path = output_plan.path
+    axis_id = _require_axis_id(context)
+    runtime_value = normalize_artifact_value(
+        output_plan,
+        value,
+        axis_id=axis_id,
+    )
 
     filemanager_memory_backend = context.filemanager._get_backend(
         Backend.MEMORY.value
@@ -101,7 +108,14 @@ def _save_artifact_value(
 
     parent_dir = str(Path(vfs_path).parent)
     context.filemanager.ensure_directory(parent_dir, Backend.MEMORY.value)
-    context.filemanager.save(value, vfs_path, Backend.MEMORY.value)
+    context.filemanager.save(runtime_value.data, vfs_path, Backend.MEMORY.value)
+
+
+def _require_axis_id(context: ProcessingContext) -> str:
+    axis_id = getattr(context, "axis_id", None)
+    if not axis_id:
+        raise RuntimeError("ProcessingContext.axis_id is required for artifact values.")
+    return str(axis_id)
 
 
 def _select_artifact_plan_for_component(
