@@ -3,10 +3,10 @@ import pytest
 from benchmark.cellprofiler_compat import CellProfilerRuntimeAdapter
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_stores import RuntimeValueStore
-from openhcs.core.runtime_values import FieldSpec
+from openhcs.core.runtime_values import FieldSpec, RuntimeArrayPayload
 
 
-class ArrayLike:
+class ArrayLike(RuntimeArrayPayload):
     shape = (2, 2)
 
 

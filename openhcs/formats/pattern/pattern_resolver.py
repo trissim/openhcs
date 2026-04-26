@@ -14,8 +14,9 @@ Doctrinal Clauses Enforced:
 
 import logging
 import re
+from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Set, Union
+from typing import Any, Dict, List, Optional, Set, Union
 
 from polystore.filemanager import FileManager
 from polystore.base import StorageBackend
@@ -23,9 +24,10 @@ from polystore.base import StorageBackend
 logger = logging.getLogger(__name__)
 
 
-class PatternDetector(Protocol):
-    """Protocol compatible with MicroscopeHandler and PatternDiscoveryEngine."""
+class PatternDetector(ABC):
+    """Nominal interface compatible with microscope pattern detectors."""
 
+    @abstractmethod
     def auto_detect_patterns(
         self,
         directory: Union[str, Path],
@@ -39,8 +41,10 @@ class PatternDetector(Protocol):
         ...
 
 
-class PathListProvider(Protocol):
-    """Protocol for objects that can list paths from a pattern."""
+class PathListProvider(ABC):
+    """Nominal interface for objects that can list paths from a pattern."""
+
+    @abstractmethod
     def path_list_from_pattern(
         self,
         directory: Union[str, Path],
@@ -51,8 +55,10 @@ class PathListProvider(Protocol):
         ...
 
 
-class DirectoryLister(Protocol):
-    """Protocol for objects that can list files in a directory."""
+class DirectoryLister(ABC):
+    """Nominal interface for objects that can list files in a directory."""
+
+    @abstractmethod
     def list_files(
         self,
         directory: Union[str, Path],
@@ -64,34 +70,30 @@ class DirectoryLister(Protocol):
         """List files in a directory."""
         ...
 
+    @abstractmethod
     def is_dir(self, path: Union[str, Path], backend: str) -> bool:
         """Check if a path is a directory."""
         ...
 
 
-class ManualRecursivePatternDetector(Protocol):
+class ManualRecursivePatternDetector(PatternDetector, ABC):
     """
-    Protocol for detectors supporting manual recursive scanning.
+    Nominal interface for detectors supporting manual recursive scanning.
 
-    This protocol defines the interface for pattern detectors that support
+    This interface defines the contract for pattern detectors that support
     manual recursive scanning of directories. It extends the PatternDetector
     interface with additional attributes for path listing and file management.
     """
-    parser: PathListProvider
-    filemanager: DirectoryLister
 
-    def auto_detect_patterns(
-        self,
-        directory: Union[str, Path],
-        variable_components: List[str],
-        backend: str,
-        group_by: Optional[str] = None,
-        recursive: bool = False,
-        **kwargs  # Dynamic filter parameters (e.g., well_filter, site_filter)
-    ) -> Dict[str, Any]:
-        """Detect patterns in the given directory."""
+    @property
+    @abstractmethod
+    def parser(self) -> PathListProvider:
         ...
 
+    @property
+    @abstractmethod
+    def filemanager(self) -> DirectoryLister:
+        ...
 
 def _validate_filename_pattern(filename_pattern: str) -> None:
     """

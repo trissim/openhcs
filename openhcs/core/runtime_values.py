@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Protocol, Self, runtime_checkable
+from typing import Any, Self, TypeVar
 
 from openhcs.core.artifacts import (
     ArtifactKey,
@@ -25,31 +25,90 @@ from openhcs.core.runtime_semantics import (
 )
 
 
-@runtime_checkable
-class ColumnarRows(Protocol):
-    """Runtime contract for table-like payloads exposing named columns."""
+_TPayload = TypeVar("_TPayload", bound=type[Any])
+
+
+class RuntimeArrayPayload(ABC):
+    """Nominal ABC for array payload types accepted by runtime artifacts."""
 
     @property
-    def columns(self) -> Any:
-        ...
-
-
-@runtime_checkable
-class ShapedArray(Protocol):
-    """Runtime contract for array payloads exposing shape metadata."""
-
-    @property
+    @abstractmethod
     def shape(self) -> Any:
         ...
 
 
-@runtime_checkable
-class DimensionalArray(Protocol):
-    """Runtime contract for array payloads exposing dimensional metadata."""
+class ColumnarRows(ABC):
+    """Nominal ABC for table payloads exposing named columns."""
 
     @property
-    def ndim(self) -> Any:
+    @abstractmethod
+    def columns(self) -> Any:
         ...
+
+
+def register_array_payload_type(payload_type: _TPayload) -> _TPayload:
+    """Declare an external type as a runtime array payload."""
+    RuntimeArrayPayload.register(payload_type)
+    return payload_type
+
+
+def register_columnar_rows_type(payload_type: _TPayload) -> _TPayload:
+    """Declare an external type as a columnar rows payload."""
+    ColumnarRows.register(payload_type)
+    return payload_type
+
+
+@dataclass(frozen=True, slots=True)
+class _PayloadTypeIdentity:
+    module: str
+    qualname: str
+
+    @classmethod
+    def from_type(cls, payload_type: type[Any]) -> Self:
+        return cls(payload_type.__module__, payload_type.__qualname__)
+
+
+@dataclass(frozen=True, slots=True)
+class _ExternalPayloadType:
+    identity: _PayloadTypeIdentity
+    register: Callable[[type[Any]], type[Any]]
+
+
+def _external_payload_type_by_identity(
+    rows: tuple[_ExternalPayloadType, ...],
+) -> Mapping[_PayloadTypeIdentity, _ExternalPayloadType]:
+    return MappingProxyType({row.identity: row for row in rows})
+
+
+_EXTERNAL_PAYLOAD_TYPES_BY_IDENTITY = _external_payload_type_by_identity(
+    (
+        _ExternalPayloadType(
+            _PayloadTypeIdentity("numpy", "ndarray"),
+            register_array_payload_type,
+        ),
+        _ExternalPayloadType(
+            _PayloadTypeIdentity("cupy._core.core", "ndarray"),
+            register_array_payload_type,
+        ),
+        _ExternalPayloadType(
+            _PayloadTypeIdentity("torch", "Tensor"),
+            register_array_payload_type,
+        ),
+        _ExternalPayloadType(
+            _PayloadTypeIdentity("pandas.core.frame", "DataFrame"),
+            register_columnar_rows_type,
+        ),
+    )
+)
+
+
+def _claim_external_payload_type(data: Any) -> None:
+    for payload_type in type(data).__mro__:
+        payload_row = _EXTERNAL_PAYLOAD_TYPES_BY_IDENTITY.get(
+            _PayloadTypeIdentity.from_type(payload_type)
+        )
+        if payload_row is not None:
+            payload_row.register(payload_type)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -487,6 +546,7 @@ def _payload_shape_for(
 
 
 def _is_table_like(data: Any) -> bool:
+    _claim_external_payload_type(data)
     return (
         isinstance(data, ColumnarRows)
         or isinstance(data, Mapping)
@@ -498,7 +558,8 @@ def _is_table_like(data: Any) -> bool:
 
 
 def _is_array_like(data: Any) -> bool:
-    return isinstance(data, ShapedArray) or isinstance(data, DimensionalArray)
+    _claim_external_payload_type(data)
+    return isinstance(data, RuntimeArrayPayload)
 
 
 def _is_mapping_like(data: Any) -> bool:
@@ -609,6 +670,7 @@ def _measurement_source_image_name(value: MeasurementTable) -> str | None:
 
 
 def _infer_fields(rows: Any) -> tuple[FieldSpec, ...]:
+    _claim_external_payload_type(rows)
     if isinstance(rows, ColumnarRows):
         return tuple(FieldSpec(str(column)) for column in rows.columns)
     if isinstance(rows, Mapping):

@@ -5,7 +5,7 @@ import pytest
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_stores import RuntimeValueStore
-from openhcs.core.runtime_values import normalize_artifact_value
+from openhcs.core.runtime_values import RuntimeArrayPayload, normalize_artifact_value
 from openhcs.core.steps.function_artifact_materialization import (
     materialize_artifact_outputs,
 )
@@ -25,6 +25,10 @@ class FileManagerStub:
 
     def load(self, path, backend):
         return self.memory[path]
+
+
+class ArrayLike(RuntimeArrayPayload):
+    shape = (2, 2)
 
 
 def _plan(output_plan):
@@ -223,7 +227,7 @@ def test_materialize_artifact_outputs_fails_for_semantic_kind_without_default():
         path="/memory/labels.pkl",
         kind=ArtifactKind.OBJECT_LABELS,
     )
-    array_like = SimpleNamespace(shape=(2, 2))
+    array_like = ArrayLike()
     filemanager = FileManagerStub()
     filemanager.memory[output_plan.path] = array_like
     context = _context(filemanager)

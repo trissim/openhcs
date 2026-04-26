@@ -11,12 +11,13 @@ from openhcs.core.runtime_values import (
     ObjectLabelRepresentation,
     RelationshipEndpoint,
     ObjectRelationship,
+    RuntimeArrayPayload,
     RuntimeStoragePolicy,
     normalize_artifact_value,
 )
 
 
-class ArrayLike:
+class ArrayLike(RuntimeArrayPayload):
     shape = (3, 3)
 
 
