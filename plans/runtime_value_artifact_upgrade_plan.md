@@ -525,6 +525,13 @@ Acceptance criteria:
 2. Error messages identify the callable, invocation key, and declared contract field.
 3. Advisor `funcstep_contract_validator.py` attribute-probe findings reduce.
 
+Current progress:
+
+1. Done: compiled validation path requires a compiled `ProcessingContext` and no longer falls back to `__input_dir__` / `__output_dir__` probing.
+2. Done: compiled step validation consumes `CompiledStepPlan.func`, `CompiledStepPlan.group_by`, and `CompiledStepPlan.variable_components` rather than re-reading ObjectState for the normal compiler path.
+3. Done: memory validation consumes each `CompiledFunctionInvocation.contract` and reports invalid memory types with invocation identity.
+4. Remaining: legacy raw-pattern validation helpers remain for pre-planning callers and can be narrowed further once all call sites move to compiled/session validation.
+
 ### Pass 4: Default ArtifactKind Materialization Policy
 
 Status: implemented for table-like/metadata artifacts in `1fede4ba`; remaining label/image defaults are intentionally deferred to Pass 5 native schemas.

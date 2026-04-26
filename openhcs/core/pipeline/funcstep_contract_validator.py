@@ -434,56 +434,32 @@ class FuncStepContractValidator:
             logger.warning("No steps provided to FuncStepContractValidator")
             return
 
-        # Verify that required planners have run before this validator
-        if pipeline_context is not None:
-            # Check that step plans exist and have required fields from planners
-            if not pipeline_context.step_plans:
-                raise AssertionError(
-                    "Clause 101 Violation: Step plans must be initialized before FuncStepContractValidator."
-                )
+        if pipeline_context is None:
+            raise ValueError(
+                "FuncStepContractValidator requires a compiled ProcessingContext. "
+                "Validate raw patterns with validate_function_pattern(...) before "
+                "compiler planning, or validate compiled step plans here."
+            )
 
-            # Check that materialization planner has run by verifying read_backend/write_backend exist
-            sample_step_index = next(iter(pipeline_context.step_plans.keys()))
-            sample_plan = pipeline_context.step_plans[sample_step_index]
-            if sample_plan.read_backend is None or sample_plan.write_backend is None:
-                raise AssertionError(
-                    "Clause 101 Violation: Materialization planner must run before FuncStepContractValidator. "
-                    "Step plans missing read_backend/write_backend fields."
-                )
-        else:
-            logger.warning(
-                "No pipeline_context provided to FuncStepContractValidator. "
-                "Cannot verify planner execution order. Falling back to attribute checks."
+        if not pipeline_context.step_plans:
+            raise AssertionError(
+                "Clause 101 Violation: Step plans must be initialized before "
+                "FuncStepContractValidator."
+            )
+
+        sample_step_index = next(iter(pipeline_context.step_plans.keys()))
+        sample_plan = pipeline_context.step_plans[sample_step_index]
+        if sample_plan.read_backend is None or sample_plan.write_backend is None:
+            raise AssertionError(
+                "Clause 101 Violation: Materialization planner must run before "
+                "FuncStepContractValidator. Step plans missing "
+                "read_backend/write_backend fields."
             )
 
         # Process each step in the pipeline
         for i, step in enumerate(steps):
             # Only validate FunctionStep instances
             if isinstance(step, FunctionStep):
-                # Verify that other planners have run before this validator by checking attributes
-                # This is a fallback verification when pipeline_context is not provided
-                try:
-                    # Check for path planner fields (using dunder names)
-                    _ = step.__input_dir__
-                    _ = step.__output_dir__
-                except AttributeError as e:
-                    raise AssertionError(
-                        f"Clause 101 Violation: Required planners must run before FuncStepContractValidator. "
-                        f"Missing attribute: {e}. Path planner must run first."
-                    ) from e
-
-                step_objectstate = step_state_map.get(i) if step_state_map else None
-                FuncStepContractValidator.validate_funcstep(
-                    step,
-                    orchestrator,
-                    step_objectstate,
-                )
-                if pipeline_context is None:
-                    FuncStepContractValidator.validate_function_pattern(
-                        step.func,
-                        step.name,
-                    )
-                    continue
                 if i not in pipeline_context.step_plans:
                     raise AssertionError(
                         f"Clause 101 Violation: Step {step.name} (index: {i}) missing from step_plans."
@@ -493,15 +469,62 @@ class FuncStepContractValidator:
                     raise AssertionError(
                         f"Clause 101 Violation: Step {step.name} (index: {i}) missing compiled_function_pattern."
                     )
+                FuncStepContractValidator.validate_compiled_step_plan(
+                    step_plan,
+                    orchestrator,
+                )
                 input_type, output_type = (
                     FuncStepContractValidator.validate_compiled_function_pattern(
                         step_plan.compiled_function_pattern,
-                        step.name,
+                        step_plan.step_name,
                     )
                 )
                 step_plan.input_memory_type = input_type
                 step_plan.output_memory_type = output_type
-                step_plan.func = step.func
+
+    @staticmethod
+    def validate_compiled_step_plan(step_plan, orchestrator=None) -> None:
+        """Validate FunctionStep structure from the compiled plan SSOT."""
+        func_pattern = step_plan.func
+        step_name = step_plan.step_name
+        FuncStepContractValidator._extract_functions_from_pattern(
+            func_pattern,
+            step_name,
+        )
+
+        config = get_openhcs_config()
+        validator = GenericValidator(config)
+        group_by = step_plan.group_by
+        variable_components = step_plan.variable_components or ()
+
+        if group_by and group_by.value in [vc.value for vc in variable_components]:
+            from openhcs.constants import GroupBy
+            logger.warning(
+                f"Step '{step_name}': Auto-resolved group_by conflict. "
+                f"Set group_by to GroupBy.NONE due to conflict with "
+                f"variable_components {[vc.value for vc in variable_components]}. "
+                f"Original group_by was {group_by.value}."
+            )
+            group_by = GroupBy.NONE
+
+        validation_result = validator.validate_step(
+            variable_components,
+            group_by,
+            func_pattern,
+            step_name,
+        )
+        if not validation_result.is_valid:
+            raise ValueError(validation_result.error_message)
+
+        if orchestrator is not None and isinstance(func_pattern, dict) and group_by is not None:
+            dict_validation_result = validator.validate_dict_pattern_keys(
+                func_pattern,
+                group_by,
+                step_name,
+                orchestrator,
+            )
+            if not dict_validation_result.is_valid:
+                raise ValueError(dict_validation_result.error_message)
 
     @staticmethod
     def validate_funcstep(
@@ -581,37 +604,49 @@ class FuncStepContractValidator:
             raise ValueError(f"No valid functions found in compiled pattern for step {step_name}")
 
         first = invocations[0]
+        input_type, output_type = (
+            FuncStepContractValidator._validate_invocation_contract(
+                first,
+                step_name,
+            )
+        )
+
+        for invocation in invocations[1:]:
+            FuncStepContractValidator._validate_invocation_contract(
+                invocation,
+                step_name,
+            )
+
+        return input_type, invocations[-1].output_memory_type
+
+    @staticmethod
+    def _validate_invocation_contract(invocation, step_name: str) -> Tuple[str, str]:
+        """Validate one compiled invocation's callable contract."""
+        contract = invocation.contract
         FuncStepContractValidator.validate_external_library_installation(
-            first.func,
+            contract.func,
             step_name,
         )
 
-        input_type = first.input_memory_type
-        output_type = first.output_memory_type
+        input_type = contract.input_memory_type
+        output_type = contract.output_memory_type
+        if input_type is None or output_type is None:
+            raise ValueError(
+                missing_memory_type_error(contract.function_name, step_name)
+            )
         if input_type not in VALID_MEMORY_TYPES or output_type not in VALID_MEMORY_TYPES:
             raise ValueError(
                 invalid_memory_type_error(
-                    first.key.function_name,
+                    (
+                        f"{contract.function_name}"
+                        f"[{invocation.key.group_key}:{invocation.key.position}]"
+                    ),
                     input_type,
                     output_type,
                     ", ".join(sorted(VALID_MEMORY_TYPES)),
                 )
             )
-
-        for invocation in invocations[1:]:
-            fn_input_type = invocation.input_memory_type
-            fn_output_type = invocation.output_memory_type
-            if fn_input_type not in VALID_MEMORY_TYPES or fn_output_type not in VALID_MEMORY_TYPES:
-                raise ValueError(
-                    invalid_memory_type_error(
-                        invocation.key.function_name,
-                        fn_input_type,
-                        fn_output_type,
-                        ", ".join(sorted(VALID_MEMORY_TYPES)),
-                    )
-                )
-
-        return input_type, invocations[-1].output_memory_type
+        return input_type, output_type
 
     @staticmethod
     def validate_function_pattern(
