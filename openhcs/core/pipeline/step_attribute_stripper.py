@@ -16,6 +16,7 @@ Doctrinal Clauses:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
 if TYPE_CHECKING:
@@ -33,6 +34,38 @@ ERROR_RESERVED_ATTRIBUTE = (
     "Clause 245 Violation: Step '{0}' has reserved attribute '{1}' that cannot be deleted. "
     "This indicates a design flaw in the step implementation."
 )
+
+
+@dataclass(frozen=True, slots=True)
+class StepStripIdentity:
+    """Stable identity captured before the step is made stateless."""
+
+    step_id: str
+    step_name: str
+
+    @classmethod
+    def from_step(cls, step: Any) -> "StepStripIdentity":
+        return cls(step_id=str(id(step)), step_name=str(step.name))
+
+
+def _class_defines_attribute(step_type: type, attr: str) -> bool:
+    """Return true when the attribute is declared on the class hierarchy."""
+    return any(attr in vars(cls) for cls in step_type.__mro__)
+
+
+def _slot_names(step_type: type) -> frozenset[str]:
+    """Collect slots declared on a class hierarchy without runtime probing."""
+    slots: set[str] = set()
+    for cls in step_type.__mro__:
+        class_vars = vars(cls)
+        if "__slots__" not in class_vars:
+            continue
+        raw_slots = class_vars["__slots__"]
+        if isinstance(raw_slots, str):
+            slots.add(raw_slots)
+        else:
+            slots.update(str(slot) for slot in raw_slots)
+    return frozenset(slots)
 
 
 class StepAttributeStripper:
@@ -73,8 +106,10 @@ class StepAttributeStripper:
         # Process each step
         for step in steps:
             # Get step identifier for error messages
-            step_id = getattr(step, "step_id", str(id(step)))
-            step_name = getattr(step, "name", f"Step {step_id}")
+            identity = StepStripIdentity.from_step(step)
+            step_name = identity.step_name
+            step_type = type(step)
+            slot_names = _slot_names(step_type)
 
             # Get all attributes
             attributes = set(vars(step).keys())
@@ -88,16 +123,15 @@ class StepAttributeStripper:
                     delattr(step, attr)
                 except (AttributeError, TypeError) as e:
                     # Check if this is a reserved attribute that cannot be deleted
-                    if hasattr(type(step), attr) and not hasattr(type(step), "__slots__"):
+                    if _class_defines_attribute(step_type, attr) and not slot_names:
                         # This is likely a class attribute or method, not an instance attribute
                         logger.debug(f"Skipping class attribute/method '{attr}' on step '{step_name}'")
                         continue
 
                     # If deletion failed for other reasons, raise an error
-                    if hasattr(type(step), "__slots__") and attr in getattr(type(step), "__slots__", []):
+                    if attr in slot_names:
                         raise RuntimeError(ERROR_RESERVED_ATTRIBUTE.format(step_name, attr)) from e
-                    else:
-                        raise ValueError(ERROR_ATTRIBUTE_DELETION_FAILED.format(attr, step_name)) from e
+                    raise ValueError(ERROR_ATTRIBUTE_DELETION_FAILED.format(attr, step_name)) from e
 
             # Verify that all attributes have been stripped
             remaining_attrs = set(vars(step).keys())

@@ -63,6 +63,8 @@ class ProcessingContext:
         self.axis_id = axis_id
         self.global_config = global_config # Store the global config
         self.filemanager = None # Expected to be set by Orchestrator via kwargs or direct assignment
+        self.required_visualizers: list[Any] = []
+        self.step_axis_filters: dict[int, dict[str, Any]] = {}
 
         # Execution tracking fields (set at execution time)
         self.execution_id = None  # Set by worker before execution

@@ -6,6 +6,8 @@ validating GPU memory types and assigning GPU IDs to steps requiring GPU memory.
 """
 
 import logging
+from dataclasses import dataclass
+from types import MappingProxyType
 
 from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES
 from openhcs.core.compiled_step_plan import CompiledStepPlan
@@ -17,7 +19,31 @@ from openhcs.core.utils import optional_import
 logger = logging.getLogger(__name__)
 
 
-def _validate_required_libraries(required_libraries: set) -> None:
+@dataclass(frozen=True, slots=True)
+class GPULibraryRequirement:
+    """Closed compiler rule linking a GPU memory type to its import contract."""
+
+    memory_type: str
+    module_name: str
+
+    def is_available(self) -> bool:
+        return optional_import(self.module_name) is not None
+
+
+GPU_LIBRARY_REQUIREMENTS = MappingProxyType(
+    {
+        requirement.memory_type: requirement
+        for requirement in (
+            GPULibraryRequirement("cupy", "cupy"),
+            GPULibraryRequirement("torch", "torch"),
+            GPULibraryRequirement("tensorflow", "tensorflow"),
+            GPULibraryRequirement("jax", "jax"),
+        )
+    }
+)
+
+
+def _validate_required_libraries(required_libraries: set[str]) -> None:
     """
     Validate that required GPU libraries are installed.
 
@@ -27,25 +53,12 @@ def _validate_required_libraries(required_libraries: set) -> None:
     Raises:
         ValueError: If any required library is not installed
     """
-    missing_libraries = []
-
-    for memory_type in required_libraries:
-        if memory_type == "cupy":
-            cupy = optional_import("cupy")
-            if cupy is None:
-                missing_libraries.append("cupy")
-        elif memory_type == "torch":
-            torch = optional_import("torch")
-            if torch is None:
-                missing_libraries.append("torch")
-        elif memory_type == "tensorflow":
-            tensorflow = optional_import("tensorflow")
-            if tensorflow is None:
-                missing_libraries.append("tensorflow")
-        elif memory_type == "jax":
-            jax = optional_import("jax")
-            if jax is None:
-                missing_libraries.append("jax")
+    missing_libraries = [
+        requirement.module_name
+        for memory_type in sorted(required_libraries)
+        if (requirement := GPU_LIBRARY_REQUIREMENTS.get(memory_type)) is not None
+        and not requirement.is_available()
+    ]
 
     if missing_libraries:
         raise ValueError(

@@ -7,8 +7,10 @@ This version ACTUALLY eliminates duplication instead of adding abstraction theat
 import logging
 from collections import defaultdict, OrderedDict
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Set
+from types import MappingProxyType
+from typing import Any, Callable, Dict, Generic, List, Mapping, Optional, Set, TypeVar
 
 from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, ArtifactSpec
@@ -37,6 +39,8 @@ from openhcs.core.steps.abstract import AbstractStep
 
 logger = logging.getLogger(__name__)
 
+PlanValue = TypeVar("PlanValue")
+
 
 @dataclass(frozen=True)
 class ArtifactPlanMaps:
@@ -48,6 +52,50 @@ class ArtifactPlanMaps:
     outputs: dict[str, ArtifactOutputPlan]
     inputs_by_group: dict[Optional[str], OrderedDict]
     outputs_by_group: dict[Optional[str], OrderedDict]
+
+
+class StepDirectoryKind(str, Enum):
+    """Closed set of path directions owned by compiled step plans."""
+
+    INPUT = "input"
+    OUTPUT = "output"
+
+
+class OptionalPlanPathKind(str, Enum):
+    """Closed set of optional path configs that can materialize directories."""
+
+    INPUT_CONVERSION = "input_conversion_config"
+
+
+@dataclass(frozen=True, slots=True)
+class PlanFieldReader(Generic[PlanValue]):
+    """Typed field reader for symmetric CompiledStepPlan access."""
+
+    field_name: str
+    read: Callable[[CompiledStepPlan], PlanValue]
+
+
+STEP_DIRECTORY_READERS = MappingProxyType(
+    {
+        StepDirectoryKind.INPUT: PlanFieldReader(
+            "input_dir",
+            lambda plan: plan.input_dir,
+        ),
+        StepDirectoryKind.OUTPUT: PlanFieldReader(
+            "output_dir",
+            lambda plan: plan.output_dir,
+        ),
+    }
+)
+
+OPTIONAL_PATH_CONFIG_READERS = MappingProxyType(
+    {
+        OptionalPlanPathKind.INPUT_CONVERSION: PlanFieldReader(
+            "input_conversion_config",
+            lambda plan: plan.input_conversion_config,
+        ),
+    }
+)
 
 
 # ===== PATH PLANNING (NO duplication) =====
@@ -74,6 +122,9 @@ class PathPlanner:
         self.snapshots_by_index = {
             snapshot.index: snapshot for snapshot in self.step_snapshots
         }
+        self.future_artifact_inputs: List[Set[str]] = [
+            set() for _ in self.step_snapshots
+        ]
 
         # Initial input determination (once)
         self.initial_input = Path(context.input_dir)
@@ -87,8 +138,6 @@ class PathPlanner:
 
     def _get_execution_groups(self, snapshot: StepSnapshot) -> List[Optional[str]]:
         """Determine which component groups this step will execute for."""
-        from openhcs.constants import GroupBy
-
         if not snapshot.is_function_step:
             return [None]
 
@@ -105,7 +154,7 @@ class PathPlanner:
             group_by,
         )
 
-        if not group_by or group_by == GroupBy.NONE or getattr(group_by, "value", None) is None:
+        if not self._group_by_requires_component_keys(group_by):
             logger.debug("No group_by configured; using a single ungrouped execution.")
             return [None]
 
@@ -123,6 +172,19 @@ class PathPlanner:
         except Exception as e:
             logger.warning(f"PathPlanner: failed to resolve component keys for {group_by}: {e}")
             return [None]
+
+    @staticmethod
+    def _group_by_requires_component_keys(group_by: Any) -> bool:
+        from openhcs.constants import GroupBy
+
+        if group_by is None or group_by == GroupBy.NONE:
+            return False
+        try:
+            return group_by.value is not None
+        except AttributeError as exc:
+            raise TypeError(
+                f"group_by must be a GroupBy value or None, got {type(group_by).__name__}."
+            ) from exc
 
     @staticmethod
     def _build_paths_by_group(base_path: str, group_keys: List[Optional[str]]) -> Dict[Optional[str], str]:
@@ -196,9 +258,7 @@ class PathPlanner:
     def _prime_future_artifact_inputs(self) -> None:
         """Precompute artifact input keys used by later steps for each step index."""
         future_inputs: Set[str] = set()
-        self.future_artifact_inputs: List[Set[str]] = [
-            set() for _ in self.step_snapshots
-        ]
+        self.future_artifact_inputs = [set() for _ in self.step_snapshots]
 
         for i in range(len(self.step_snapshots) - 1, -1, -1):
             self.future_artifact_inputs[i] = set(future_inputs)
@@ -253,11 +313,7 @@ class PathPlanner:
         ):
             return declarations
 
-        future_inputs = (
-            self.future_artifact_inputs[snapshot.index]
-            if hasattr(self, "future_artifact_inputs")
-            else set()
-        )
+        future_inputs = self.future_artifact_inputs[snapshot.index]
         output_groups = {
             output_key: (
                 (None,)
@@ -339,7 +395,7 @@ class PathPlanner:
         if not materialization_config or not materialization_config.enabled:
             return None
 
-        step_axis_filters = getattr(self.ctx, "step_axis_filters", {}).get(
+        step_axis_filters = self.ctx.step_axis_filters.get(
             snapshot.index,
             {},
         )
@@ -371,7 +427,10 @@ class PathPlanner:
         if existing_plan is not None:
             return existing_plan
 
-        output_dir = self._get_optional_path("input_conversion_config", step_index)
+        output_dir = self._get_optional_path(
+            OptionalPlanPathKind.INPUT_CONVERSION,
+            step_index,
+        )
         if output_dir is None:
             return None
 
@@ -457,8 +516,14 @@ class PathPlanner:
         sid = i  # Use step index instead of step_id
 
         # Get paths with unified logic
-        input_dir = self._get_dir(snapshot, i, pipeline, 'input')
-        output_dir = self._get_dir(snapshot, i, pipeline, 'output', input_dir)
+        input_dir = self._get_dir(snapshot, i, pipeline, StepDirectoryKind.INPUT)
+        output_dir = self._get_dir(
+            snapshot,
+            i,
+            pipeline,
+            StepDirectoryKind.OUTPUT,
+            input_dir,
+        )
 
         declarations, execution_groups, func_pattern = self._prepare_step_declarations(
             snapshot,
@@ -506,17 +571,17 @@ class PathPlanner:
         # (zarr conversion only applies to normal pipeline flow, not PIPELINE_START jumps)
 
     def _get_dir(self, snapshot: StepSnapshot, i: int, pipeline: List,
-                 dir_type: str, fallback: Path = None) -> Path:
+                 dir_kind: StepDirectoryKind, fallback: Path | None = None) -> Path:
         """Unified directory resolution - no duplication."""
         sid = i  # Use step index instead of step_id
 
         # Check overrides (same for input/output)
         if sid in self.plans:
-            existing_dir = getattr(self.plans[sid], f"{dir_type}_dir")
+            existing_dir = STEP_DIRECTORY_READERS[dir_kind].read(self.plans[sid])
             if existing_dir is not None:
                 return Path(existing_dir)
         # Type-specific logic
-        if dir_type == 'input':
+        if dir_kind is StepDirectoryKind.INPUT:
             if i == 0 or snapshot.input_source == InputSource.PIPELINE_START:
                 return self.initial_input
             prev_step_index = i - 1  # Use previous step index instead of step_id
@@ -573,9 +638,9 @@ class PathPlanner:
         plate_root = self.build_output_plate_root(self.plate_path, config, is_per_step_materialization=False)
         return plate_root / config.sub_dir
 
-    def _get_optional_path(self, config_key: str, step_index: int) -> Optional[Path]:
+    def _get_optional_path(self, config_key: OptionalPlanPathKind, step_index: int) -> Optional[Path]:
         """Get optional path if config exists."""
-        config = getattr(self.plans[step_index], config_key, None)
+        config = OPTIONAL_PATH_CONFIG_READERS[config_key].read(self.plans[step_index])
         if config is not None:
             return self._build_output_path(config)
         return None
@@ -781,17 +846,13 @@ class PathPlanner:
         This ensures metadata coherence - analysis results are saved alongside the
         processed images they were created from.
         """
-        try:
-            # Access materialization_results_path from global config, not path planning config
-            path = self.ctx.global_config.materialization_results_path
+        # Access materialization_results_path from global config, not path planning config.
+        path = self.ctx.global_config.materialization_results_path
 
-            # Build output plate root to ensure results go to output plate
-            output_plate_root = self.build_output_plate_root(self.plate_path, self.cfg, is_per_step_materialization=False)
+        # Build output plate root to ensure results go to output plate.
+        output_plate_root = self.build_output_plate_root(self.plate_path, self.cfg, is_per_step_materialization=False)
 
-            return Path(path) if Path(path).is_absolute() else output_plate_root / path
-        except AttributeError as e:
-            # Fallback with clear error message if global config is unavailable
-            raise RuntimeError(f"Cannot access global config for materialization_results_path: {e}") from e
+        return Path(path) if Path(path).is_absolute() else output_plate_root / path
 
     def _validate(self, pipeline: List):
         """Validate connectivity and materialization paths - no duplication."""

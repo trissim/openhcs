@@ -92,7 +92,7 @@ class StepSnapshot:
             step_type=step.__class__.__name__,
             enabled=bool(_saved_value(step_state, "enabled", index)),
             is_function_step=isinstance(step, FunctionStep),
-            func=getattr(step, "func", None) if isinstance(step, FunctionStep) else None,
+            func=step.func if isinstance(step, FunctionStep) else None,
             processing=processing,
             materialization_config=_saved_value(
                 step_state,
@@ -132,7 +132,7 @@ def build_step_snapshots(
         except KeyError as exc:
             raise ValueError(
                 f"Missing ObjectState for resolved step {index} "
-                f"({getattr(step, 'name', 'unknown')})."
+                f"({step.name})."
             ) from exc
         snapshots.append(
             StepSnapshot.from_resolved_step(
@@ -149,7 +149,7 @@ def _build_well_filter_snapshots(
     step_index: int,
 ) -> tuple[StepWellFilterSnapshot, ...]:
     roots: list[str] = []
-    for path, value_type in getattr(step_state, "_path_to_type", {}).items():
+    for path, value_type in _path_to_type_map(step_state, step_index).items():
         if "." in path:
             continue
         if isinstance(value_type, type) and issubclass(value_type, WellFilterConfig):
@@ -176,6 +176,22 @@ def _build_well_filter_snapshots(
             )
         )
     return tuple(snapshots)
+
+
+def _path_to_type_map(step_state: Any, step_index: int) -> Mapping[str, Any]:
+    try:
+        path_to_type = step_state._path_to_type
+    except AttributeError as exc:
+        raise ValueError(
+            f"Step {step_index} ObjectState is missing '_path_to_type'. "
+            "StepSnapshot requires registered ObjectState metadata."
+        ) from exc
+    if not isinstance(path_to_type, Mapping):
+        raise TypeError(
+            f"Step {step_index} ObjectState _path_to_type must be a mapping, "
+            f"got {type(path_to_type).__name__}."
+        )
+    return path_to_type
 
 
 def _saved_value(step_state: Any, path: str, step_index: int) -> Any:

@@ -1,4 +1,3 @@
-from typing import List, Dict
 """
 Pipeline module for the OpenHCS pipeline architecture.
 
@@ -25,6 +24,13 @@ from openhcs.core.pipeline.compiler import PipelineCompiler
 # Removed import of GPUMemoryTypeValidator to break circular dependency
 from openhcs.core.pipeline.step_attribute_stripper import \
     StepAttributeStripper
+
+PipelinePublicBinding = tuple[str, object]
+
+
+def build_all(bindings: tuple[PipelinePublicBinding, ...]) -> list[str]:
+    """Build the module export list from the public binding schema."""
+    return [name for name, _binding in bindings]
 
 
 # Define Pipeline class
@@ -138,29 +144,23 @@ class Pipeline(list):
         step_summary = f"{len(self)} step{'s' if len(self) != 1 else ''}"
         return f"{self.name} ({step_summary})"
 
-__all__ = [
-    # Constants from backends
-    'Backend',
-    'DEFAULT_BACKEND',
-    'REQUIRES_DISK_READ',
-    'REQUIRES_DISK_WRITE',
-    'FORCE_DISK_WRITE',
-    'READ_BACKEND',
-    'WRITE_BACKEND',
+PIPELINE_PUBLIC_BINDINGS: tuple[PipelinePublicBinding, ...] = (
+    ("Backend", Backend),
+    ("DEFAULT_BACKEND", DEFAULT_BACKEND),
+    ("REQUIRES_DISK_READ", REQUIRES_DISK_READ),
+    ("REQUIRES_DISK_WRITE", REQUIRES_DISK_WRITE),
+    ("FORCE_DISK_WRITE", FORCE_DISK_WRITE),
+    ("READ_BACKEND", READ_BACKEND),
+    ("WRITE_BACKEND", WRITE_BACKEND),
+    ("MemoryType", MemoryType),
+    ("VALID_MEMORY_TYPES", VALID_MEMORY_TYPES),
+    ("VALID_GPU_MEMORY_TYPES", VALID_GPU_MEMORY_TYPES),
+    ("Pipeline", Pipeline),
+    ("PipelineCompiler", PipelineCompiler),
+    ("PipelinePathPlanner", PipelinePathPlanner),
+    ("MaterializationFlagPlanner", MaterializationFlagPlanner),
+    ("FuncStepContractValidator", FuncStepContractValidator),
+    ("StepAttributeStripper", StepAttributeStripper),
+)
 
-    # Constants from memory
-    'MemoryType',
-    'VALID_MEMORY_TYPES',
-    'VALID_GPU_MEMORY_TYPES',
-
-    # Core components
-    'Pipeline',
-    'PipelineCompiler',
-
-    # Planner components
-    'PipelinePathPlanner',
-    'MaterializationFlagPlanner',
-    'FuncStepContractValidator',
-    # Removed GPUMemoryTypeValidator to break circular dependency
-    'StepAttributeStripper'
-]
+__all__ = build_all(PIPELINE_PUBLIC_BINDINGS)
