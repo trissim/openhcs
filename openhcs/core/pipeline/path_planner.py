@@ -5,13 +5,14 @@ This version ACTUALLY eliminates duplication instead of adding abstraction theat
 """
 
 import logging
+from abc import ABC, abstractmethod
 from collections import defaultdict, OrderedDict
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from types import MappingProxyType
-from typing import Any, Callable, Dict, List, Mapping, Optional, Set
+from typing import Any, Callable, ClassVar, Dict, List, Mapping, Optional, Set
 
+from metaclass_registry import AutoRegisterMeta
 from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, ArtifactSpec
 from openhcs.core.context.processing_context import ProcessingContext
@@ -59,12 +60,87 @@ class StepDirectoryKind(str, Enum):
     OUTPUT = "output"
 
 
-STEP_DIRECTORY_READERS = MappingProxyType(
-    {
-        StepDirectoryKind.INPUT: lambda plan: plan.input_dir,
-        StepDirectoryKind.OUTPUT: lambda plan: plan.output_dir,
-    }
-)
+class StepDirectoryPolicy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal directory resolver for one compiled-plan direction."""
+
+    __registry_key__ = "kind"
+    __skip_if_no_key__ = True
+
+    kind: ClassVar[StepDirectoryKind]
+
+    @classmethod
+    def for_kind(cls, kind: StepDirectoryKind) -> "StepDirectoryPolicy":
+        try:
+            policy_type = cls.__registry__[kind]
+        except KeyError as exc:
+            raise ValueError(f"No step directory policy registered for {kind!r}.") from exc
+        return policy_type()
+
+    def resolve(
+        self,
+        planner: "PathPlanner",
+        snapshot: StepSnapshot,
+        step_index: int,
+        fallback: Path | None = None,
+    ) -> Path:
+        if step_index in planner.plans:
+            existing_dir = self.existing_dir(planner.plans[step_index])
+            if existing_dir is not None:
+                return Path(existing_dir)
+        return self.default_dir(planner, snapshot, step_index, fallback)
+
+    @abstractmethod
+    def existing_dir(self, plan: CompiledStepPlan) -> str | Path | None:
+        """Return an already-planned directory override for this direction."""
+
+    @abstractmethod
+    def default_dir(
+        self,
+        planner: "PathPlanner",
+        snapshot: StepSnapshot,
+        step_index: int,
+        fallback: Path | None,
+    ) -> Path:
+        """Resolve the direction-specific default directory."""
+
+
+class InputStepDirectoryPolicy(StepDirectoryPolicy):
+    kind = StepDirectoryKind.INPUT
+
+    def existing_dir(self, plan: CompiledStepPlan) -> str | Path | None:
+        return plan.input_dir
+
+    def default_dir(
+        self,
+        planner: "PathPlanner",
+        snapshot: StepSnapshot,
+        step_index: int,
+        fallback: Path | None,
+    ) -> Path:
+        del fallback
+        if step_index == 0 or snapshot.input_source == InputSource.PIPELINE_START:
+            return planner.initial_input
+        return Path(planner.plans[step_index - 1].output_dir)
+
+
+class OutputStepDirectoryPolicy(StepDirectoryPolicy):
+    kind = StepDirectoryKind.OUTPUT
+
+    def existing_dir(self, plan: CompiledStepPlan) -> str | Path | None:
+        return plan.output_dir
+
+    def default_dir(
+        self,
+        planner: "PathPlanner",
+        snapshot: StepSnapshot,
+        step_index: int,
+        fallback: Path | None,
+    ) -> Path:
+        if step_index == 0 or snapshot.input_source == InputSource.PIPELINE_START:
+            return planner._build_output_path()
+        if fallback is None:
+            raise ValueError("Output directory fallback is required for work-in-place steps.")
+        return fallback
 
 
 # ===== PATH PLANNING (NO duplication) =====
@@ -206,7 +282,7 @@ class PathPlanner:
 
         self._prime_future_artifact_inputs()
         for i, snapshot in enumerate(self.step_snapshots):
-            self._plan_step(snapshot, i, pipeline)
+            self._plan_step(snapshot, i)
 
         self._validate(pipeline)
 
@@ -472,17 +548,20 @@ class PathPlanner:
 
         self.plans[step_index].input_conversion = input_conversion_plan
 
-    def _plan_step(self, snapshot: StepSnapshot, i: int, pipeline: List):
+    def _plan_step(self, snapshot: StepSnapshot, i: int):
         """Plan one step - no duplicate logic."""
         sid = i  # Use step index instead of step_id
 
         # Get paths with unified logic
-        input_dir = self._get_dir(snapshot, i, pipeline, StepDirectoryKind.INPUT)
-        output_dir = self._get_dir(
+        input_dir = StepDirectoryPolicy.for_kind(StepDirectoryKind.INPUT).resolve(
+            self,
             snapshot,
             i,
-            pipeline,
-            StepDirectoryKind.OUTPUT,
+        )
+        output_dir = StepDirectoryPolicy.for_kind(StepDirectoryKind.OUTPUT).resolve(
+            self,
+            snapshot,
+            i,
             input_dir,
         )
 
@@ -530,27 +609,6 @@ class PathPlanner:
 
         # PIPELINE_START steps read from original input, not zarr conversion
         # (zarr conversion only applies to normal pipeline flow, not PIPELINE_START jumps)
-
-    def _get_dir(self, snapshot: StepSnapshot, i: int, pipeline: List,
-                 dir_kind: StepDirectoryKind, fallback: Path | None = None) -> Path:
-        """Unified directory resolution - no duplication."""
-        sid = i  # Use step index instead of step_id
-
-        # Check overrides (same for input/output)
-        if sid in self.plans:
-            existing_dir = STEP_DIRECTORY_READERS[dir_kind](self.plans[sid])
-            if existing_dir is not None:
-                return Path(existing_dir)
-        # Type-specific logic
-        if dir_kind is StepDirectoryKind.INPUT:
-            if i == 0 or snapshot.input_source == InputSource.PIPELINE_START:
-                return self.initial_input
-            prev_step_index = i - 1  # Use previous step index instead of step_id
-            return Path(self.plans[prev_step_index].output_dir)
-        else:  # output
-            if i == 0 or snapshot.input_source == InputSource.PIPELINE_START:
-                return self._build_output_path()
-            return fallback  # Work in place
 
     @staticmethod
     def build_output_plate_root(plate_path: Path, path_config, is_per_step_materialization: bool = False) -> Path:
