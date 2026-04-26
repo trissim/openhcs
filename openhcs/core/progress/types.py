@@ -44,13 +44,30 @@ class ProgressPhase(Enum):
         return self.value
 
 
+class ProgressChannelRole(Enum):
+    """Nominal role for semantic progress channels."""
+
+    CONTROL = "control"
+    EXECUTION = "execution"
+
+
 class ProgressChannel(Enum):
     """Semantic channel for phase-specific progress streams."""
 
-    INIT = "init"
-    COMPILE = "compile"
-    PIPELINE = "pipeline"
-    STEP = "step"
+    def __new__(cls, value: str, role: ProgressChannelRole):
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj._role = role
+        return obj
+
+    INIT = ("init", ProgressChannelRole.CONTROL)
+    COMPILE = ("compile", ProgressChannelRole.CONTROL)
+    PIPELINE = ("pipeline", ProgressChannelRole.EXECUTION)
+    STEP = ("step", ProgressChannelRole.EXECUTION)
+
+    @property
+    def role(self) -> ProgressChannelRole:
+        return self._role
 
     def __str__(self):
         return self.value
@@ -143,7 +160,7 @@ class ProgressSemantics(ProgressSemanticsABC):
 
     def is_execution_phase(self, phase: ProgressPhase) -> bool:
         channel = self.channel_for_phase(phase)
-        return channel in {ProgressChannel.PIPELINE, ProgressChannel.STEP}
+        return channel.role is ProgressChannelRole.EXECUTION
 
 
 _PROGRESS_SEMANTICS = ProgressSemantics()

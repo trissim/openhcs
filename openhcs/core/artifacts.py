@@ -5,9 +5,9 @@ invocations. They cover current side-channel I/O and provide the extension point
 objects, measurements, relationships, and other richer runtime state.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, ClassVar, Mapping, Self, cast
 
 
 class ArtifactPayloadShape(str, Enum):
@@ -104,71 +104,87 @@ class ArtifactKey:
 
 
 @dataclass(frozen=True)
-class ArtifactOutputPlan:
-    """Compiled storage plan for one produced artifact."""
+class ArtifactPlan:
+    """Compiled storage plan shared by produced and consumed artifacts."""
 
     name: str
     path: str
     kind: ArtifactKind = ArtifactKind.SPECIAL
-    materialization: Any = None
     group_keys: tuple[str | None, ...] = (None,)
     paths_by_group: Mapping[str | None, str] | None = None
+
+    _missing_group_uses_default_path: ClassVar[bool] = False
+
+    @property
+    def single_group_key(self) -> str | None:
+        group_keys = self.group_keys or (None,)
+        if len(group_keys) == 1:
+            return group_keys[0]
+        return None
+
+    def artifact_key(self, *, axis_id: str) -> ArtifactKey:
+        return ArtifactKey(
+            name=self.name,
+            kind=self.kind,
+            scope=ArtifactScope(
+                axis_id=axis_id,
+                group_key=self.single_group_key,
+            ),
+        )
+
+    def _path_for_group(self, group_key: str | None) -> str | None:
+        if not self.paths_by_group:
+            return self.path
+        if group_key in self.paths_by_group:
+            return self.paths_by_group[group_key]
+        if None in self.paths_by_group:
+            return self.paths_by_group[None]
+        if self._missing_group_uses_default_path:
+            return self.path
+        return None
+
+    def _plan_for_group(self, group_key: str | None) -> Self | None:
+        group_path = self._path_for_group(group_key)
+        if group_path is None:
+            return None
+        return cast(
+            Self,
+            replace(
+                self,
+                path=group_path,
+                group_keys=(group_key,),
+                paths_by_group={group_key: group_path},
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ArtifactOutputPlan(ArtifactPlan):
+    """Compiled storage plan for one produced artifact."""
+
+    _missing_group_uses_default_path: ClassVar[bool] = True
+
+    materialization: Any = None
     producer_step_index: int | str | None = None
     producer_step_name: str | None = None
 
     def for_group(self, group_key: str | None) -> "ArtifactOutputPlan":
         """Return a group-specific output plan with the finalized path."""
-        paths_by_group = self.paths_by_group or {None: self.path}
-        if group_key in paths_by_group:
-            group_path = paths_by_group[group_key]
-        elif None in paths_by_group:
-            group_path = paths_by_group[None]
-        else:
-            group_path = self.path
-
-        return ArtifactOutputPlan(
-            name=self.name,
-            path=group_path,
-            kind=self.kind,
-            materialization=self.materialization,
-            group_keys=(group_key,),
-            paths_by_group={group_key: group_path},
-            producer_step_index=self.producer_step_index,
-            producer_step_name=self.producer_step_name,
-        )
+        plan = self._plan_for_group(group_key)
+        if plan is None:
+            raise RuntimeError("ArtifactOutputPlan group resolution must be total.")
+        return plan
 
 
 @dataclass(frozen=True)
-class ArtifactInputPlan:
+class ArtifactInputPlan(ArtifactPlan):
     """Compiled storage plan for one consumed artifact."""
 
-    name: str
-    path: str
-    kind: ArtifactKind = ArtifactKind.SPECIAL
-    paths_by_group: Mapping[str | None, str] | None = None
-    group_keys: tuple[str | None, ...] = (None,)
     source_step_id: int | str | None = None
 
     def for_group(self, group_key: str | None) -> "ArtifactInputPlan | None":
         """Return a group-specific input plan, or None if not available."""
-        if self.paths_by_group:
-            if group_key in self.paths_by_group:
-                path = self.paths_by_group[group_key]
-            elif None in self.paths_by_group:
-                path = self.paths_by_group[None]
-            else:
-                return None
-        else:
-            path = self.path
-
-        return ArtifactInputPlan(
-            name=self.name,
-            path=path,
-            kind=self.kind,
-            paths_by_group={group_key: path},
-            group_keys=(group_key,),
-            source_step_id=self.source_step_id,
-        )
+        return self._plan_for_group(group_key)
 
 
 @dataclass(frozen=True)

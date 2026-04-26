@@ -11,7 +11,9 @@ import ast
 import importlib
 import inspect
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
 
 from openhcs.constants.constants import VALID_MEMORY_TYPES, get_openhcs_config
 from openhcs.core.callable_contract import CallableContract
@@ -26,6 +28,34 @@ if TYPE_CHECKING:
     from openhcs.core.context.processing_context import ProcessingContext
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ParameterKindPolicy:
+    """Validation policy for an inspect.Parameter kind."""
+
+    kind: inspect._ParameterKind
+    required_in_kwargs: bool
+
+
+def _parameter_kind_policy_by_kind(
+    rows: tuple[ParameterKindPolicy, ...],
+) -> Mapping[inspect._ParameterKind, ParameterKindPolicy]:
+    by_kind = {row.kind: row for row in rows}
+    if set(by_kind) != set(inspect._ParameterKind):
+        raise TypeError("Incomplete inspect.Parameter kind policy table.")
+    return MappingProxyType(by_kind)
+
+
+_PARAMETER_KIND_POLICY_BY_KIND = _parameter_kind_policy_by_kind(
+    (
+        ParameterKindPolicy(inspect.Parameter.POSITIONAL_ONLY, True),
+        ParameterKindPolicy(inspect.Parameter.POSITIONAL_OR_KEYWORD, True),
+        ParameterKindPolicy(inspect.Parameter.VAR_POSITIONAL, False),
+        ParameterKindPolicy(inspect.Parameter.KEYWORD_ONLY, False),
+        ParameterKindPolicy(inspect.Parameter.VAR_KEYWORD, False),
+    )
+)
 
 # ===== DECLARATIVE DEFAULT VALUES =====
 # These declarations control defaults and may be moved to configuration in the future
@@ -734,8 +764,8 @@ class FuncStepContractValidator:
         # Collect names of required positional arguments
         required_args = []
         for name, param in sig.parameters.items():
-            # Check if parameter is positional (POSITIONAL_ONLY or POSITIONAL_OR_KEYWORD)
-            if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            policy = _PARAMETER_KIND_POLICY_BY_KIND[param.kind]
+            if policy.required_in_kwargs:
                 # Check if parameter has no default value
                 if param.default is inspect.Parameter.empty:
                     required_args.append(name)

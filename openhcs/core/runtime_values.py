@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Protocol, Self, runtime_checkable
 
 from openhcs.core.artifacts import (
     ArtifactKey,
     ArtifactKind,
     ArtifactOutputPlan,
     ArtifactPayloadShape,
-    ArtifactScope,
 )
 from openhcs.core.runtime_semantics import (
     FieldSpec,
@@ -25,21 +25,59 @@ from openhcs.core.runtime_semantics import (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class RuntimeValueSchema:
+@runtime_checkable
+class ColumnarRows(Protocol):
+    """Runtime contract for table-like payloads exposing named columns."""
+
+    @property
+    def columns(self) -> Any:
+        ...
+
+
+@runtime_checkable
+class ShapedArray(Protocol):
+    """Runtime contract for array payloads exposing shape metadata."""
+
+    @property
+    def shape(self) -> Any:
+        ...
+
+
+@runtime_checkable
+class DimensionalArray(Protocol):
+    """Runtime contract for array payloads exposing dimensional metadata."""
+
+    @property
+    def ndim(self) -> Any:
+        ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceImageContext:
+    """Shared source-image semantic context for values and schemas."""
+
+    dimensions: tuple[str, ...] = ()
+    source_image_name: str | None = None
+
+    def _validate_source_image_context(self, owner_name: str) -> None:
+        if self.source_image_name == "":
+            raise ValueError(f"{owner_name}.source_image_name cannot be empty.")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RuntimeValueSchema(SourceImageContext):
     """Semantic schema attached to a runtime artifact value."""
 
     kind: ArtifactKind
     fields: tuple[FieldSpec, ...] = ()
-    dimensions: tuple[str, ...] = ()
     label_representation: ObjectLabelRepresentation | None = None
     measurement_subject: MeasurementSubject | None = None
     relationship: RelationshipSemantics | None = None
     object_name: str | None = None
-    source_image_name: str | None = None
     object_id_field: str | None = None
 
     def __post_init__(self) -> None:
+        self._validate_source_image_context("RuntimeValueSchema")
         object.__setattr__(
             self,
             "kind",
@@ -54,11 +92,9 @@ class RuntimeValueSchema:
                     self.label_representation,
                     "RuntimeValueSchema.label_representation",
                 ),
-            )
+        )
         if self.object_name == "":
             raise ValueError("RuntimeValueSchema.object_name cannot be empty.")
-        if self.source_image_name == "":
-            raise ValueError("RuntimeValueSchema.source_image_name cannot be empty.")
         if self.object_id_field == "":
             raise ValueError("RuntimeValueSchema.object_id_field cannot be empty.")
         if (
@@ -94,6 +130,14 @@ class RuntimeStoragePolicy:
     path: str | None = None
     materialize: bool = False
 
+    @classmethod
+    def from_output_plan(cls, output_plan: ArtifactOutputPlan) -> Self:
+        return cls(
+            backend="memory",
+            path=output_plan.path,
+            materialize=output_plan.materialization is not None,
+        )
+
     def __post_init__(self) -> None:
         if self.path and not self.backend:
             raise ValueError("RuntimeStoragePolicy.path requires a backend.")
@@ -107,6 +151,22 @@ class RuntimeValue:
     data: Any
     schema: RuntimeValueSchema
     storage: RuntimeStoragePolicy | None = None
+
+    @classmethod
+    def from_output_plan(
+        cls,
+        output_plan: ArtifactOutputPlan,
+        data: Any,
+        *,
+        axis_id: str,
+        schema: RuntimeValueSchema,
+    ) -> Self:
+        return cls(
+            key=output_plan.artifact_key(axis_id=axis_id),
+            data=data,
+            schema=schema,
+            storage=RuntimeStoragePolicy.from_output_plan(output_plan),
+        )
 
     def __post_init__(self) -> None:
         if self.key.kind is not self.schema.kind:
@@ -124,46 +184,87 @@ class RuntimeValue:
         return self.key.kind
 
 
-@dataclass(frozen=True, slots=True)
-class NamedImage:
-    """Native OpenHCS named image value."""
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NativeRuntimeValue(ABC):
+    """Native OpenHCS value that can become a validated RuntimeValue."""
 
     name: str
-    data: Any
-    dimensions: tuple[str, ...] = ()
-    source_image_name: str | None = None
 
     def __post_init__(self) -> None:
-        _require_name(self.name, "NamedImage.name")
-        if self.source_image_name == "":
-            raise ValueError("NamedImage.source_image_name cannot be empty.")
+        _require_name(self.name, f"{type(self).__name__}.name")
+
+    @abstractmethod
+    def runtime_payload(self) -> Any:
+        """Return the payload stored under the compiled artifact key."""
+
+    @abstractmethod
+    def runtime_schema(self, payload: Any) -> RuntimeValueSchema:
+        """Return the schema that validates the stored payload."""
+
+    def to_runtime_value(
+        self,
+        output_plan: ArtifactOutputPlan,
+        *,
+        axis_id: str,
+    ) -> RuntimeValue:
+        payload = self.runtime_payload()
+        return RuntimeValue.from_output_plan(
+            output_plan,
+            payload,
+            axis_id=axis_id,
+            schema=self.runtime_schema(payload),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SourceImageRuntimeValue(SourceImageContext, NativeRuntimeValue, ABC):
+    """Native value derived from a source image coordinate system."""
+
+    def __post_init__(self) -> None:
+        NativeRuntimeValue.__post_init__(self)
+        self._validate_source_image_context(type(self).__name__)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NamedImage(SourceImageRuntimeValue):
+    """Native OpenHCS named image value."""
+
+    data: Any
+
+    def __post_init__(self) -> None:
+        SourceImageRuntimeValue.__post_init__(self)
         if not _is_array_like(self.data):
             raise TypeError(
                 f"NamedImage '{self.name}' requires array-like data with "
                 f"shape/ndim, got {type(self.data).__name__}."
             )
 
+    def runtime_payload(self) -> Any:
+        return self.data
 
-@dataclass(frozen=True, slots=True)
-class ObjectLabelSet:
+    def runtime_schema(self, payload: Any) -> RuntimeValueSchema:
+        return RuntimeValueSchema(
+            kind=ArtifactKind.IMAGE,
+            dimensions=self.dimensions,
+            source_image_name=self.source_image_name,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ObjectLabelSet(SourceImageRuntimeValue):
     """Native OpenHCS object-label value."""
 
-    name: str
     labels: Any
-    source_image_name: str | None = None
-    dimensions: tuple[str, ...] = ()
     representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS
 
     def __post_init__(self) -> None:
-        _require_name(self.name, "ObjectLabelSet.name")
+        SourceImageRuntimeValue.__post_init__(self)
         representation = coerce_enum(
             ObjectLabelRepresentation,
             self.representation,
             "ObjectLabelSet.representation",
         )
         object.__setattr__(self, "representation", representation)
-        if self.source_image_name == "":
-            raise ValueError("ObjectLabelSet.source_image_name cannot be empty.")
         validator = _PAYLOAD_VALIDATORS[representation.payload_shape]
         if validator is not None and not validator(self.labels):
             raise TypeError(
@@ -172,12 +273,23 @@ class ObjectLabelSet:
                 f"{type(self.labels).__name__}."
             )
 
+    def runtime_payload(self) -> Any:
+        return self.labels
 
-@dataclass(frozen=True, slots=True)
-class MeasurementTable:
+    def runtime_schema(self, payload: Any) -> RuntimeValueSchema:
+        return RuntimeValueSchema(
+            kind=ArtifactKind.OBJECT_LABELS,
+            dimensions=self.dimensions,
+            label_representation=self.representation,
+            object_name=self.name,
+            source_image_name=self.source_image_name,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MeasurementTable(NativeRuntimeValue):
     """Native OpenHCS measurement table value."""
 
-    name: str
     rows: Any
     object_name: str | None = None
     fields: tuple[FieldSpec, ...] = ()
@@ -186,7 +298,7 @@ class MeasurementTable:
     subject: MeasurementSubject | None = None
 
     def __post_init__(self) -> None:
-        _require_name(self.name, "MeasurementTable.name")
+        NativeRuntimeValue.__post_init__(self)
         if self.object_name == "":
             raise ValueError("MeasurementTable.object_name cannot be empty.")
         if self.object_id_field == "":
@@ -207,12 +319,24 @@ class MeasurementTable:
                 f"got {type(self.rows).__name__}."
             )
 
+    def runtime_payload(self) -> Any:
+        return self.rows
 
-@dataclass(frozen=True, slots=True)
-class ObjectRelationship:
+    def runtime_schema(self, payload: Any) -> RuntimeValueSchema:
+        return RuntimeValueSchema(
+            kind=ArtifactKind.MEASUREMENTS,
+            fields=self.fields or _infer_fields(payload),
+            measurement_subject=self.subject,
+            object_name=_measurement_object_name(self),
+            source_image_name=_measurement_source_image_name(self),
+            object_id_field=_measurement_object_id_field(self),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ObjectRelationship(NativeRuntimeValue):
     """Native OpenHCS directed object relationship value."""
 
-    name: str
     source: RelationshipEndpoint
     target: RelationshipEndpoint
     source_ids: Any
@@ -220,7 +344,7 @@ class ObjectRelationship:
     relationship_type: str = "related"
 
     def __post_init__(self) -> None:
-        _require_name(self.name, "ObjectRelationship.name")
+        NativeRuntimeValue.__post_init__(self)
         if not isinstance(self.source, RelationshipEndpoint):
             raise TypeError(
                 "ObjectRelationship.source must be RelationshipEndpoint, "
@@ -254,6 +378,16 @@ class ObjectRelationship:
             self.target.id_field: self.target_ids,
         }
 
+    def runtime_payload(self) -> Any:
+        return self.as_table()
+
+    def runtime_schema(self, payload: Any) -> RuntimeValueSchema:
+        return RuntimeValueSchema(
+            kind=ArtifactKind.RELATIONSHIPS,
+            fields=_infer_fields(payload),
+            relationship=self.semantics,
+        )
+
 
 def normalize_artifact_value(
     output_plan: ArtifactOutputPlan,
@@ -269,22 +403,11 @@ def normalize_artifact_value(
     if native_value is not None:
         return validate_runtime_value(native_value, output_plan, axis_id=axis_id)
 
-    runtime_value = RuntimeValue(
-        key=ArtifactKey(
-            name=output_plan.name,
-            kind=output_plan.kind,
-            scope=ArtifactScope(
-                axis_id=axis_id,
-                group_key=_single_group_key(output_plan),
-            ),
-        ),
-        data=value,
+    runtime_value = RuntimeValue.from_output_plan(
+        output_plan,
+        value,
+        axis_id=axis_id,
         schema=RuntimeValueSchema(kind=output_plan.kind),
-        storage=RuntimeStoragePolicy(
-            backend="memory",
-            path=output_plan.path,
-            materialize=output_plan.materialization is not None,
-        ),
     )
     return validate_runtime_value(runtime_value, output_plan, axis_id=axis_id)
 
@@ -295,87 +418,10 @@ def _normalize_native_value(
     *,
     axis_id: str,
 ) -> RuntimeValue | None:
-    if isinstance(value, NamedImage):
+    if isinstance(value, NativeRuntimeValue):
         _validate_native_name(output_plan, value.name)
-        return _runtime_value(
-            output_plan,
-            value.data,
-            axis_id=axis_id,
-            schema=RuntimeValueSchema(
-                kind=ArtifactKind.IMAGE,
-                dimensions=value.dimensions,
-                source_image_name=value.source_image_name,
-            ),
-        )
-    if isinstance(value, ObjectLabelSet):
-        _validate_native_name(output_plan, value.name)
-        return _runtime_value(
-            output_plan,
-            value.labels,
-            axis_id=axis_id,
-            schema=RuntimeValueSchema(
-                kind=ArtifactKind.OBJECT_LABELS,
-                dimensions=value.dimensions,
-                label_representation=value.representation,
-                object_name=value.name,
-                source_image_name=value.source_image_name,
-            ),
-        )
-    if isinstance(value, MeasurementTable):
-        _validate_native_name(output_plan, value.name)
-        return _runtime_value(
-            output_plan,
-            value.rows,
-            axis_id=axis_id,
-            schema=RuntimeValueSchema(
-                kind=ArtifactKind.MEASUREMENTS,
-                fields=value.fields or _infer_fields(value.rows),
-                measurement_subject=value.subject,
-                object_name=_measurement_object_name(value),
-                source_image_name=_measurement_source_image_name(value),
-                object_id_field=_measurement_object_id_field(value),
-            ),
-        )
-    if isinstance(value, ObjectRelationship):
-        _validate_native_name(output_plan, value.name)
-        table = value.as_table()
-        return _runtime_value(
-            output_plan,
-            table,
-            axis_id=axis_id,
-            schema=RuntimeValueSchema(
-                kind=ArtifactKind.RELATIONSHIPS,
-                fields=_infer_fields(table),
-                relationship=value.semantics,
-            ),
-        )
+        return value.to_runtime_value(output_plan, axis_id=axis_id)
     return None
-
-
-def _runtime_value(
-    output_plan: ArtifactOutputPlan,
-    data: Any,
-    *,
-    axis_id: str,
-    schema: RuntimeValueSchema,
-) -> RuntimeValue:
-    return RuntimeValue(
-        key=ArtifactKey(
-            name=output_plan.name,
-            kind=output_plan.kind,
-            scope=ArtifactScope(
-                axis_id=axis_id,
-                group_key=_single_group_key(output_plan),
-            ),
-        ),
-        data=data,
-        schema=schema,
-        storage=RuntimeStoragePolicy(
-            backend="memory",
-            path=output_plan.path,
-            materialize=output_plan.materialization is not None,
-        ),
-    )
 
 
 def validate_runtime_value(
@@ -442,7 +488,7 @@ def _payload_shape_for(
 
 def _is_table_like(data: Any) -> bool:
     return (
-        hasattr(data, "columns")
+        isinstance(data, ColumnarRows)
         or isinstance(data, Mapping)
         or (
             isinstance(data, Sequence)
@@ -452,7 +498,7 @@ def _is_table_like(data: Any) -> bool:
 
 
 def _is_array_like(data: Any) -> bool:
-    return hasattr(data, "shape") or hasattr(data, "ndim")
+    return isinstance(data, ShapedArray) or isinstance(data, DimensionalArray)
 
 
 def _is_mapping_like(data: Any) -> bool:
@@ -563,9 +609,8 @@ def _measurement_source_image_name(value: MeasurementTable) -> str | None:
 
 
 def _infer_fields(rows: Any) -> tuple[FieldSpec, ...]:
-    columns = getattr(rows, "columns", None)
-    if columns is not None:
-        return tuple(FieldSpec(str(column)) for column in columns)
+    if isinstance(rows, ColumnarRows):
+        return tuple(FieldSpec(str(column)) for column in rows.columns)
     if isinstance(rows, Mapping):
         return tuple(FieldSpec(str(column)) for column in rows)
     if (
@@ -588,10 +633,3 @@ def _validate_relationship_ids(source_ids: Any, target_ids: Any, name: str) -> N
                 f"ObjectRelationship '{name}' source_ids and target_ids must "
                 f"have equal length, got {len(source_ids)} and {len(target_ids)}."
             )
-
-
-def _single_group_key(output_plan: ArtifactOutputPlan) -> str | None:
-    group_keys = output_plan.group_keys or (None,)
-    if len(group_keys) == 1:
-        return group_keys[0]
-    return None
