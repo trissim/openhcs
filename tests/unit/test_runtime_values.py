@@ -253,10 +253,8 @@ def test_normalize_object_relationship_materializes_table_columns():
         "child_id": [1, 2],
     }
     assert value.schema.relationship is not None
-    assert value.schema.relationship.source_name == "Cells"
-    assert value.schema.relationship.target_name == "Nuclei"
-    assert value.schema.parent_object_name == "Cells"
-    assert value.schema.child_object_name == "Nuclei"
+    assert value.schema.relationship.source.name == "Cells"
+    assert value.schema.relationship.target.name == "Nuclei"
 
 
 def test_native_runtime_value_name_must_match_output_plan():

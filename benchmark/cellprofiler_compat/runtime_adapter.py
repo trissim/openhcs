@@ -247,19 +247,19 @@ class CellProfilerRuntimeAdapter:
                 name=name,
                 source=relationship.source,
                 target=relationship.target,
-                source_ids=data[relationship.source_id_field],
-                target_ids=data[relationship.target_id_field],
+                source_ids=data[relationship.source.id_field],
+                target_ids=data[relationship.target.id_field],
                 relationship_type=relationship.relationship_type,
             )
         return ObjectRelationship(
             name=name,
             source=RelationshipEndpoint(
-                schema.parent_object_name or data["source_object"],
+                data["source_object"],
                 role="source",
                 id_field="source_id",
             ),
             target=RelationshipEndpoint(
-                schema.child_object_name or data["target_object"],
+                data["target_object"],
                 role="target",
                 id_field="target_id",
             ),

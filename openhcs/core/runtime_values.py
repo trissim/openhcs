@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 from openhcs.core.artifacts import (
     ArtifactKey,
     ArtifactKind,
     ArtifactOutputPlan,
+    ArtifactPayloadShape,
     ArtifactScope,
 )
 from openhcs.core.runtime_semantics import (
@@ -35,8 +37,6 @@ class RuntimeValueSchema:
     relationship: RelationshipSemantics | None = None
     object_name: str | None = None
     source_image_name: str | None = None
-    parent_object_name: str | None = None
-    child_object_name: str | None = None
     object_id_field: str | None = None
 
     def __post_init__(self) -> None:
@@ -59,10 +59,6 @@ class RuntimeValueSchema:
             raise ValueError("RuntimeValueSchema.object_name cannot be empty.")
         if self.source_image_name == "":
             raise ValueError("RuntimeValueSchema.source_image_name cannot be empty.")
-        if self.parent_object_name == "":
-            raise ValueError("RuntimeValueSchema.parent_object_name cannot be empty.")
-        if self.child_object_name == "":
-            raise ValueError("RuntimeValueSchema.child_object_name cannot be empty.")
         if self.object_id_field == "":
             raise ValueError("RuntimeValueSchema.object_id_field cannot be empty.")
         if (
@@ -168,7 +164,8 @@ class ObjectLabelSet:
         object.__setattr__(self, "representation", representation)
         if self.source_image_name == "":
             raise ValueError("ObjectLabelSet.source_image_name cannot be empty.")
-        if not _is_object_label_payload(self.labels, representation):
+        validator = _PAYLOAD_VALIDATORS[representation.payload_shape]
+        if validator is not None and not validator(self.labels):
             raise TypeError(
                 f"ObjectLabelSet '{self.name}' requires "
                 f"{representation.value} payload, got "
@@ -245,56 +242,16 @@ class ObjectRelationship:
             relationship_type=self.relationship_type,
         )
 
-    @property
-    def source_object_name(self) -> str:
-        return self.source.name
-
-    @property
-    def target_object_name(self) -> str:
-        return self.target.name
-
-    @property
-    def source_role(self) -> str:
-        return self.source.role
-
-    @property
-    def target_role(self) -> str:
-        return self.target.role
-
-    @property
-    def source_id_field(self) -> str:
-        return self.source.id_field
-
-    @property
-    def target_id_field(self) -> str:
-        return self.target.id_field
-
-    @property
-    def parent_object_name(self) -> str:
-        return self.source_object_name
-
-    @property
-    def child_object_name(self) -> str:
-        return self.target_object_name
-
-    @property
-    def parent_ids(self) -> Any:
-        return self.source_ids
-
-    @property
-    def child_ids(self) -> Any:
-        return self.target_ids
-
     def as_table(self) -> dict[str, Any]:
         """Return table-like relationship columns for materialization."""
         return {
             "relationship_type": self.relationship_type,
-            "source_role": self.source_role,
-            "target_role": self.target_role,
-            "source_object": self.source_object_name,
-            "target_object": self.target_object_name,
-            self.source_id_field: self.source_ids,
-            self.target_id_field: self.target_ids,
+            "source_role": self.source.role,
+            "target_role": self.target.role,
+            "source_object": self.source.name,
+            "target_object": self.target.name,
+            self.source.id_field: self.source_ids,
+            self.target.id_field: self.target_ids,
         }
 
 
@@ -390,8 +347,6 @@ def _normalize_native_value(
                 kind=ArtifactKind.RELATIONSHIPS,
                 fields=_infer_fields(table),
                 relationship=value.semantics,
-                parent_object_name=value.source_object_name,
-                child_object_name=value.target_object_name,
             ),
         )
     return None
@@ -461,42 +416,28 @@ def _validate_payload_kind(
     data: Any,
     schema: RuntimeValueSchema,
 ) -> None:
-    if kind is ArtifactKind.SPECIAL:
+    payload_shape = _payload_shape_for(kind, schema)
+    validator = _PAYLOAD_VALIDATORS[payload_shape]
+    if validator is None:
         return
-    if kind is ArtifactKind.IMAGE:
-        if not _is_array_like(data):
-            raise TypeError(
-                f"Artifact '{name}' expected {kind.value} payload with array-like "
-                f"shape/ndim, got {type(data).__name__}."
-            )
+    if validator(data):
         return
-    if kind is ArtifactKind.OBJECT_LABELS:
+    raise TypeError(
+        f"Artifact '{name}' expected {kind.payload_description}, "
+        f"got {type(data).__name__}."
+    )
+
+
+def _payload_shape_for(
+    kind: ArtifactKind,
+    schema: RuntimeValueSchema,
+) -> ArtifactPayloadShape:
+    if kind.uses_label_representation_payload_shape:
         representation = (
             schema.label_representation or ObjectLabelRepresentation.DENSE_LABELS
         )
-        if not _is_object_label_payload(data, representation):
-            raise TypeError(
-                f"Artifact '{name}' expected object_labels payload with "
-                f"{representation.value} representation, got "
-                f"{type(data).__name__}."
-            )
-        return
-    if kind is ArtifactKind.METADATA:
-        if not isinstance(data, Mapping):
-            raise TypeError(
-                f"Artifact '{name}' expected metadata mapping, got {type(data).__name__}."
-            )
-        return
-    if kind in {
-        ArtifactKind.MEASUREMENTS,
-        ArtifactKind.RELATIONSHIPS,
-        ArtifactKind.TABLE,
-    }:
-        if not _is_table_like(data):
-            raise TypeError(
-                f"Artifact '{name}' expected table-like {kind.value} payload, "
-                f"got {type(data).__name__}."
-            )
+        return representation.payload_shape
+    return kind.payload_shape
 
 
 def _is_table_like(data: Any) -> bool:
@@ -514,15 +455,33 @@ def _is_array_like(data: Any) -> bool:
     return hasattr(data, "shape") or hasattr(data, "ndim")
 
 
-def _is_object_label_payload(
-    data: Any,
-    representation: ObjectLabelRepresentation,
-) -> bool:
-    if representation is ObjectLabelRepresentation.DENSE_LABELS:
-        return _is_array_like(data)
-    if representation is ObjectLabelRepresentation.SPARSE_IJV:
-        return _is_table_like(data)
-    return False
+def _is_mapping_like(data: Any) -> bool:
+    return isinstance(data, Mapping)
+
+
+@dataclass(frozen=True, slots=True)
+class _PayloadValidator:
+    shape: ArtifactPayloadShape
+    predicate: Callable[[Any], bool] | None
+
+
+def _payload_validators(
+    rows: tuple[_PayloadValidator, ...],
+) -> Mapping[ArtifactPayloadShape, Callable[[Any], bool] | None]:
+    validators = {row.shape: row.predicate for row in rows}
+    if set(validators) != set(ArtifactPayloadShape):
+        raise TypeError("Incomplete runtime payload validator table.")
+    return MappingProxyType(validators)
+
+
+_PAYLOAD_VALIDATORS = _payload_validators(
+    (
+        _PayloadValidator(ArtifactPayloadShape.ANY, None),
+        _PayloadValidator(ArtifactPayloadShape.ARRAY, _is_array_like),
+        _PayloadValidator(ArtifactPayloadShape.TABLE, _is_table_like),
+        _PayloadValidator(ArtifactPayloadShape.MAPPING, _is_mapping_like),
+    )
+)
 
 
 def _require_name(value: str, field_name: str) -> None:

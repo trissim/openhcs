@@ -10,16 +10,66 @@ from enum import Enum
 from typing import Any, Mapping
 
 
+class ArtifactPayloadShape(str, Enum):
+    """Generic runtime payload shape required by an artifact kind."""
+
+    ANY = "any"
+    ARRAY = "array"
+    TABLE = "table"
+    MAPPING = "mapping"
+
+
 class ArtifactKind(str, Enum):
     """Closed family of runtime artifact categories."""
 
-    SPECIAL = "special"
-    IMAGE = "image"
-    OBJECT_LABELS = "object_labels"
-    MEASUREMENTS = "measurements"
-    RELATIONSHIPS = "relationships"
-    TABLE = "table"
-    METADATA = "metadata"
+    def __new__(
+        cls,
+        value: str,
+        payload_shape: "ArtifactPayloadShape",
+        options: Mapping[str, bool] | None = None,
+    ):
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj._payload_shape = payload_shape
+        obj._uses_label_representation_payload_shape = (
+            bool((options or {}).get("uses_label_representation_payload_shape"))
+        )
+        obj._payload_description = (options or {}).get(
+            "payload_description",
+            f"{payload_shape} {value} payload",
+        )
+        return obj
+
+    SPECIAL = ("special", ArtifactPayloadShape.ANY)
+    IMAGE = ("image", ArtifactPayloadShape.ARRAY)
+    OBJECT_LABELS = (
+        "object_labels",
+        ArtifactPayloadShape.ARRAY,
+        {
+            "payload_description": "object_labels payload",
+            "uses_label_representation_payload_shape": True,
+        },
+    )
+    MEASUREMENTS = ("measurements", ArtifactPayloadShape.TABLE)
+    RELATIONSHIPS = ("relationships", ArtifactPayloadShape.TABLE)
+    TABLE = ("table", ArtifactPayloadShape.TABLE)
+    METADATA = (
+        "metadata",
+        ArtifactPayloadShape.MAPPING,
+        {"payload_description": "metadata mapping"},
+    )
+
+    @property
+    def payload_shape(self) -> "ArtifactPayloadShape":
+        return ArtifactPayloadShape(self._payload_shape)
+
+    @property
+    def uses_label_representation_payload_shape(self) -> bool:
+        return self._uses_label_representation_payload_shape
+
+    @property
+    def payload_description(self) -> str:
+        return self._payload_description
 
 
 @dataclass(frozen=True)

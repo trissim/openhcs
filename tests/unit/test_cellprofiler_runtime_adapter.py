@@ -102,10 +102,10 @@ def test_cellprofiler_adapter_adds_relationships_after_objects_exist():
     )
     relationship = adapter.get_relationship("ParentChild")
 
-    assert relationship.parent_object_name == "Cells"
-    assert relationship.child_object_name == "Nuclei"
-    assert relationship.parent_ids == [10, 11]
-    assert relationship.child_ids == [1, 2]
+    assert relationship.source.name == "Cells"
+    assert relationship.target.name == "Nuclei"
+    assert relationship.source_ids == [10, 11]
+    assert relationship.target_ids == [1, 2]
 
 
 def test_cellprofiler_adapter_write_requires_compiled_output_plan():

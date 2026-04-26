@@ -618,8 +618,10 @@ Current progress:
 5. Done: object-label values now carry an explicit generic representation (`dense_labels` or `sparse_ijv`) instead of assuming every object artifact is a dense CellProfiler-style label image.
 6. Done: measurement values now carry a generic `MeasurementSubject` (`artifact`, `image`, `object`, `relationship`, or `experiment`) while preserving object/image convenience fields for current callers.
 7. Done: relationship values now normalize through directed source/target `RelationshipEndpoint` pairs inside `RelationshipSemantics`; parent/child is one compatibility profile, not the core relationship model.
-8. Remaining: add cross-artifact validation that measurements and relationships reference object/image names produced earlier in the compiled/runtime graph.
-9. Remaining: decide label/image default materialization once label/image writers are explicit.
+8. Done: enum subset policies were moved into type-owned metadata: `MeasurementScope` owns subject-name requirements, and `ArtifactKind` / `ObjectLabelRepresentation` own payload-shape requirements validated through an exhaustive policy table.
+9. Done: flattened source/target compatibility properties were removed from relationship semantics so callers use endpoint records directly.
+10. Remaining: add cross-artifact validation that measurements and relationships reference object/image names produced earlier in the compiled/runtime graph.
+11. Remaining: decide label/image default materialization once label/image writers are explicit.
 
 ### Pass 6: CellProfiler Symbol Table Compiler
 
