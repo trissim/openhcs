@@ -606,6 +606,15 @@ Acceptance criteria:
 2. A measurement function can consume object labels and produce object measurements without hidden workspace state.
 3. The runtime can reject inconsistent object/measurement/relationship contracts before adapter work.
 
+Current progress:
+
+1. Done: added native `NamedImage`, `ObjectLabelSet`, `MeasurementTable`, and `ObjectRelationship` value types.
+2. Done: native values normalize into `RuntimeValue` schemas while VFS payloads remain raw arrays/tables.
+3. Done: schemas now carry object names, source image names, relationship endpoints, object id fields, dimensions, and table fields.
+4. Done: relationship id length mismatches and native-name/output-plan mismatches fail loudly.
+5. Remaining: add cross-artifact validation that measurements and relationships reference object/image names produced earlier in the compiled/runtime graph.
+6. Remaining: decide label/image default materialization once label/image writers are explicit.
+
 ### Pass 6: CellProfiler Symbol Table Compiler
 
 Primary compatibility pressure:
