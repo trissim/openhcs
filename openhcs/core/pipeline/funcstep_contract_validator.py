@@ -79,14 +79,6 @@ def missing_external_library_error(func_name, step_name, module_name, install_co
     return error_msg
 
 
-def _callable_module_name(func: Callable) -> str | None:
-    return func.__module__
-
-
-def _module_file_path(module: Any) -> str | None:
-    return module.__file__
-
-
 class ImportStatementExtractor(ast.NodeVisitor):
     """
     AST visitor to extract import statements from a function's source code.
@@ -267,14 +259,14 @@ def extract_import_statements(func: Callable) -> Set[str]:
         Set of top-level module names that are explicitly imported
     """
     # Get the module name from the function
-    module_name = _callable_module_name(func)
+    module_name = func.__module__
     if module_name is None:
         return set()
 
     try:
         # Get the module's source file
         module = importlib.import_module(module_name)
-        module_file = _module_file_path(module)
+        module_file = module.__file__
         if module_file is None:
             return set()
 
@@ -344,7 +336,7 @@ class FuncStepContractValidator:
             ValueError: If the external library required by the function is not installed
         """
         # Get the module name from the function
-        module_name = _callable_module_name(func)
+        module_name = func.__module__
         if module_name is None:
             # No module info, skip validation (e.g., built-in or dynamically created)
             return

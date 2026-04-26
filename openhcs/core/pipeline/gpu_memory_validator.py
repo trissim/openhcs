@@ -6,7 +6,6 @@ validating GPU memory types and assigning GPU IDs to steps requiring GPU memory.
 """
 
 import logging
-from dataclasses import dataclass
 from types import MappingProxyType
 
 from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES
@@ -19,26 +18,10 @@ from openhcs.core.utils import optional_import
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class GPULibraryRequirement:
-    """Closed compiler rule linking a GPU memory type to its import contract."""
-
-    memory_type: str
-    module_name: str
-
-    def is_available(self) -> bool:
-        return optional_import(self.module_name) is not None
-
-
 GPU_LIBRARY_REQUIREMENTS = MappingProxyType(
     {
-        requirement.memory_type: requirement
-        for requirement in (
-            GPULibraryRequirement("cupy", "cupy"),
-            GPULibraryRequirement("torch", "torch"),
-            GPULibraryRequirement("tensorflow", "tensorflow"),
-            GPULibraryRequirement("jax", "jax"),
-        )
+        memory_type: memory_type
+        for memory_type in ("cupy", "torch", "tensorflow", "jax")
     }
 )
 
@@ -54,10 +37,10 @@ def _validate_required_libraries(required_libraries: set[str]) -> None:
         ValueError: If any required library is not installed
     """
     missing_libraries = [
-        requirement.module_name
+        module_name
         for memory_type in sorted(required_libraries)
-        if (requirement := GPU_LIBRARY_REQUIREMENTS.get(memory_type)) is not None
-        and not requirement.is_available()
+        if (module_name := GPU_LIBRARY_REQUIREMENTS.get(memory_type)) is not None
+        and optional_import(module_name) is None
     ]
 
     if missing_libraries:

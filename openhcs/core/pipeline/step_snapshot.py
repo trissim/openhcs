@@ -179,13 +179,7 @@ def _build_well_filter_snapshots(
 
 
 def _path_to_type_map(step_state: Any, step_index: int) -> Mapping[str, Any]:
-    try:
-        path_to_type = step_state._path_to_type
-    except AttributeError as exc:
-        raise ValueError(
-            f"Step {step_index} ObjectState is missing '_path_to_type'. "
-            "StepSnapshot requires registered ObjectState metadata."
-        ) from exc
+    path_to_type = step_state._path_to_type
     if not isinstance(path_to_type, Mapping):
         raise TypeError(
             f"Step {step_index} ObjectState _path_to_type must be a mapping, "

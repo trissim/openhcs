@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, Dict, Generic, List, Mapping, Optional, Set, TypeVar
+from typing import Any, Callable, Dict, List, Mapping, Optional, Set
 
 from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, ArtifactSpec
@@ -39,8 +39,6 @@ from openhcs.core.steps.abstract import AbstractStep
 
 logger = logging.getLogger(__name__)
 
-PlanValue = TypeVar("PlanValue")
-
 
 @dataclass(frozen=True)
 class ArtifactPlanMaps:
@@ -61,39 +59,10 @@ class StepDirectoryKind(str, Enum):
     OUTPUT = "output"
 
 
-class OptionalPlanPathKind(str, Enum):
-    """Closed set of optional path configs that can materialize directories."""
-
-    INPUT_CONVERSION = "input_conversion_config"
-
-
-@dataclass(frozen=True, slots=True)
-class PlanFieldReader(Generic[PlanValue]):
-    """Typed field reader for symmetric CompiledStepPlan access."""
-
-    field_name: str
-    read: Callable[[CompiledStepPlan], PlanValue]
-
-
 STEP_DIRECTORY_READERS = MappingProxyType(
     {
-        StepDirectoryKind.INPUT: PlanFieldReader(
-            "input_dir",
-            lambda plan: plan.input_dir,
-        ),
-        StepDirectoryKind.OUTPUT: PlanFieldReader(
-            "output_dir",
-            lambda plan: plan.output_dir,
-        ),
-    }
-)
-
-OPTIONAL_PATH_CONFIG_READERS = MappingProxyType(
-    {
-        OptionalPlanPathKind.INPUT_CONVERSION: PlanFieldReader(
-            "input_conversion_config",
-            lambda plan: plan.input_conversion_config,
-        ),
+        StepDirectoryKind.INPUT: lambda plan: plan.input_dir,
+        StepDirectoryKind.OUTPUT: lambda plan: plan.output_dir,
     }
 )
 
@@ -179,12 +148,7 @@ class PathPlanner:
 
         if group_by is None or group_by == GroupBy.NONE:
             return False
-        try:
-            return group_by.value is not None
-        except AttributeError as exc:
-            raise TypeError(
-                f"group_by must be a GroupBy value or None, got {type(group_by).__name__}."
-            ) from exc
+        return group_by.value is not None
 
     @staticmethod
     def _build_paths_by_group(base_path: str, group_keys: List[Optional[str]]) -> Dict[Optional[str], str]:
@@ -427,10 +391,7 @@ class PathPlanner:
         if existing_plan is not None:
             return existing_plan
 
-        output_dir = self._get_optional_path(
-            OptionalPlanPathKind.INPUT_CONVERSION,
-            step_index,
-        )
+        output_dir = self._input_conversion_output_path(step_index)
         if output_dir is None:
             return None
 
@@ -577,7 +538,7 @@ class PathPlanner:
 
         # Check overrides (same for input/output)
         if sid in self.plans:
-            existing_dir = STEP_DIRECTORY_READERS[dir_kind].read(self.plans[sid])
+            existing_dir = STEP_DIRECTORY_READERS[dir_kind](self.plans[sid])
             if existing_dir is not None:
                 return Path(existing_dir)
         # Type-specific logic
@@ -638,9 +599,9 @@ class PathPlanner:
         plate_root = self.build_output_plate_root(self.plate_path, config, is_per_step_materialization=False)
         return plate_root / config.sub_dir
 
-    def _get_optional_path(self, config_key: OptionalPlanPathKind, step_index: int) -> Optional[Path]:
-        """Get optional path if config exists."""
-        config = OPTIONAL_PATH_CONFIG_READERS[config_key].read(self.plans[step_index])
+    def _input_conversion_output_path(self, step_index: int) -> Optional[Path]:
+        """Get input conversion output path if config exists."""
+        config = self.plans[step_index].input_conversion_config
         if config is not None:
             return self._build_output_path(config)
         return None

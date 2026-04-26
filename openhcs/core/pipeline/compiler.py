@@ -148,43 +148,16 @@ _FUNCTION_REFERENCE_PRESERVED_ATTRS = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class PlanFieldRequirement:
-    """A required CompiledStepPlan field expressed as a typed accessor."""
-
-    name: str
-    read: Callable[[CompiledStepPlan], object | None]
-
-
 MATERIALIZATION_PLAN_REQUIREMENTS = (
-    PlanFieldRequirement(READ_BACKEND, lambda plan: plan.read_backend),
-    PlanFieldRequirement(WRITE_BACKEND, lambda plan: plan.write_backend),
+    (READ_BACKEND, lambda plan: plan.read_backend),
+    (WRITE_BACKEND, lambda plan: plan.write_backend),
 )
 
 FUNCTION_MEMORY_PLAN_REQUIREMENTS = (
-    PlanFieldRequirement("input_memory_type", lambda plan: plan.input_memory_type),
-    PlanFieldRequirement("output_memory_type", lambda plan: plan.output_memory_type),
-    PlanFieldRequirement("func", lambda plan: plan.func),
+    ("input_memory_type", lambda plan: plan.input_memory_type),
+    ("output_memory_type", lambda plan: plan.output_memory_type),
+    ("func", lambda plan: plan.func),
 )
-
-
-@dataclass(frozen=True, slots=True)
-class PipelineObjectStateBundle:
-    """Persistent ObjectState graph for one compile_pipelines invocation."""
-
-    plate_path_str: str
-    orchestrator_scope_id: str
-    pipeline_config_state: "ObjectState"
-    step_state_map: Dict[int, "ObjectState"]
-    snapshots: tuple[StepSnapshot, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class CapturedPipelineConfig:
-    """Pickle-safe pipeline config values captured once before axis compilation."""
-
-    analysis_consolidation_config: Any
-    auto_add_output_plate: Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,21 +210,6 @@ class ResolvedStepPlanInputs:
         )
 
 
-@dataclass(slots=True)
-class AxisCompilationProgress:
-    """Progress counter for compile-time axis fanout."""
-
-    total: int
-    completed: int = 0
-
-    def advance(self) -> None:
-        self.completed += 1
-
-    @property
-    def percent(self) -> float:
-        return (self.completed / self.total) * 100.0
-
-
 @dataclass(frozen=True, slots=True)
 class AxisCompilationRequest:
     """Authoritative context record for axis-level compilation fanout."""
@@ -260,7 +218,8 @@ class AxisCompilationRequest:
     pipeline_definition: List[AbstractStep]
     step_state_map: Mapping[int, "ObjectState"]
     step_snapshots: tuple[StepSnapshot, ...]
-    captured_config: CapturedPipelineConfig
+    analysis_consolidation_config: Any
+    auto_add_output_plate: Any
     global_step_axis_filters: dict[int, dict[str, Any]]
     enable_visualizer_override: bool
     is_zmq_execution: bool
@@ -269,10 +228,10 @@ class AxisCompilationRequest:
         context = self.orchestrator.create_context(axis_id)
         context.step_axis_filters = self.global_step_axis_filters
         context.analysis_consolidation_config = (
-            self.captured_config.analysis_consolidation_config
+            self.analysis_consolidation_config
         )
         context.auto_add_output_plate_to_plate_manager = (
-            self.captured_config.auto_add_output_plate
+            self.auto_add_output_plate
         )
         return context
 
@@ -334,12 +293,12 @@ class FunctionReference:
 
 def _missing_plan_fields(
     plan: CompiledStepPlan,
-    requirements: Sequence[PlanFieldRequirement],
+    requirements: Sequence[tuple[str, Callable[[CompiledStepPlan], object | None]]],
 ) -> list[str]:
     return [
-        requirement.name
-        for requirement in requirements
-        if requirement.read(plan) is None
+        name
+        for name, read_field in requirements
+        if read_field(plan) is None
     ]
 
 
@@ -1429,7 +1388,7 @@ class PipelineCompiler:
         pipeline_definition: List[AbstractStep],
         *,
         is_zmq_execution: bool,
-    ) -> PipelineObjectStateBundle:
+    ) -> tuple["ObjectState", ResolvedStepPlanInputs]:
         force_fresh = bool(is_zmq_execution)
         global_config_state = PipelineCompiler._compile_global_config_state(
             force_fresh=force_fresh
@@ -1475,12 +1434,13 @@ class PipelineCompiler:
             raise RuntimeError(
                 "Missing ObjectState for plate; cannot resolve pipeline config."
             )
-        return PipelineObjectStateBundle(
-            plate_path_str=plate_path_str,
-            orchestrator_scope_id=orchestrator_scope_id,
-            pipeline_config_state=pipeline_config_state,
-            step_state_map=step_state_map,
-            snapshots=snapshots,
+        return (
+            pipeline_config_state,
+            ResolvedStepPlanInputs(
+                steps=pipeline_definition,
+                step_state_map=step_state_map,
+                snapshots=snapshots,
+            ),
         )
 
     @staticmethod
@@ -1582,7 +1542,7 @@ class PipelineCompiler:
     @staticmethod
     def _capture_pipeline_config(
         pipeline_config_state: "ObjectState",
-    ) -> CapturedPipelineConfig:
+    ) -> tuple[Any, Any]:
         from objectstate.lazy_factory import LazyDataclass
 
         lazy_analysis_config = pipeline_config_state.get_saved_resolved_value(
@@ -1593,10 +1553,10 @@ class PipelineCompiler:
             if isinstance(lazy_analysis_config, LazyDataclass)
             else lazy_analysis_config
         )
-        return CapturedPipelineConfig(
-            analysis_consolidation_config=analysis_consolidation_config,
-            auto_add_output_plate=pipeline_config_state.get_saved_resolved_value(
-                "auto_add_output_plate_to_plate_manager"
+        return (
+            analysis_consolidation_config,
+            pipeline_config_state.get_saved_resolved_value(
+                "auto_add_output_plate_to_plate_manager",
             ),
         )
 
@@ -1616,8 +1576,8 @@ class PipelineCompiler:
     ) -> Dict[str, ProcessingContext]:
         compiled_contexts: Dict[str, ProcessingContext] = {}
         responsible_axis_value = sorted(axis_values)[0]
-        progress = AxisCompilationProgress(total=len(axis_values))
-        for axis_id in axis_values:
+        total_axis_values = len(axis_values)
+        for completed, axis_id in enumerate(axis_values, start=1):
             compiled_contexts.update(
                 PipelineCompiler._compile_axis_value(
                     request=request,
@@ -1625,11 +1585,11 @@ class PipelineCompiler:
                     metadata_writer=axis_id == responsible_axis_value,
                 )
             )
-            progress.advance()
             PipelineCompiler._emit_axis_compile_progress(
                 request.orchestrator,
                 axis_id,
-                progress,
+                completed,
+                total_axis_values,
             )
         return compiled_contexts
 
@@ -1718,7 +1678,9 @@ class PipelineCompiler:
                 context,
                 metadata_writer,
             )
-            PipelineCompiler._run_context_compile_stages(
+            PipelineCompiler.declare_zarr_stores_for_session(session)
+            PipelineCompiler.plan_materialization_flags_for_session(session)
+            PipelineCompiler._run_post_plan_compile_stages(
                 session,
                 enable_visualizer_override=request.enable_visualizer_override,
             )
@@ -1755,19 +1717,6 @@ class PipelineCompiler:
         return context
 
     @staticmethod
-    def _run_context_compile_stages(
-        session: CompilationSession,
-        *,
-        enable_visualizer_override: bool,
-    ) -> None:
-        PipelineCompiler.declare_zarr_stores_for_session(session)
-        PipelineCompiler.plan_materialization_flags_for_session(session)
-        PipelineCompiler._run_post_plan_compile_stages(
-            session,
-            enable_visualizer_override=enable_visualizer_override,
-        )
-
-    @staticmethod
     def _run_post_plan_compile_stages(
         session: CompilationSession,
         *,
@@ -1798,7 +1747,8 @@ class PipelineCompiler:
     def _emit_axis_compile_progress(
         orchestrator,
         axis_id: str,
-        progress: AxisCompilationProgress,
+        completed: int,
+        total: int,
     ) -> None:
         emit(
             execution_id=orchestrator.execution_id,
@@ -1807,9 +1757,9 @@ class PipelineCompiler:
             step_name="compilation",
             phase=ProgressPhase.COMPILE,
             status=ProgressStatus.RUNNING,
-            completed=progress.completed,
-            total=progress.total,
-            percent=progress.percent,
+            completed=completed,
+            total=total,
+            percent=(completed / total) * 100.0,
         )
 
     @staticmethod
@@ -1913,10 +1863,12 @@ class PipelineCompiler:
                 f"Starting compilation for axis values: {', '.join(axis_values_to_process)}"
             )
 
-            pipeline_state = PipelineCompiler._register_and_resolve_pipeline_once(
-                orchestrator,
-                pipeline_definition,
-                is_zmq_execution=is_zmq_execution,
+            pipeline_config_state, pipeline_inputs = (
+                PipelineCompiler._register_and_resolve_pipeline_once(
+                    orchestrator,
+                    pipeline_definition,
+                    is_zmq_execution=is_zmq_execution,
+                )
             )
             if not pipeline_definition:
                 logger.warning(
@@ -1927,20 +1879,21 @@ class PipelineCompiler:
                     "pipeline_definition": pipeline_definition,
                     "compiled_contexts": {},
                 }
-            captured_config = PipelineCompiler._capture_pipeline_config(
-                pipeline_state.pipeline_config_state
+            analysis_config, auto_add_output_plate = PipelineCompiler._capture_pipeline_config(
+                pipeline_config_state
             )
             PipelineCompiler.validate_backend_compatibility(orchestrator)
             global_step_axis_filters = PipelineCompiler._resolve_global_step_axis_filters(
                 orchestrator,
-                pipeline_state.snapshots,
+                pipeline_inputs.snapshots,
             )
             axis_request = AxisCompilationRequest(
                 orchestrator=orchestrator,
                 pipeline_definition=pipeline_definition,
-                step_state_map=pipeline_state.step_state_map,
-                step_snapshots=pipeline_state.snapshots,
-                captured_config=captured_config,
+                step_state_map=pipeline_inputs.step_state_map,
+                step_snapshots=pipeline_inputs.snapshots,
+                analysis_consolidation_config=analysis_config,
+                auto_add_output_plate=auto_add_output_plate,
                 global_step_axis_filters=global_step_axis_filters,
                 enable_visualizer_override=enable_visualizer_override,
                 is_zmq_execution=is_zmq_execution,
@@ -1962,12 +1915,6 @@ class PipelineCompiler:
             orchestrator._state = OrchestratorState.COMPILE_FAILED
             logger.error(f"Failed to compile pipelines: {e}")
             raise
-
-
-# The monolithic compile() method is removed.
-# Orchestrator will call the static methods above in sequence.
-# _strip_step_attributes is also removed as StepAttributeStripper is called by Orchestrator.
-
 
 def _resolve_step_axis_filters(
     step_snapshots: tuple[StepSnapshot, ...],

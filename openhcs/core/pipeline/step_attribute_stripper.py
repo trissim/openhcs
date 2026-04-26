@@ -16,7 +16,6 @@ Doctrinal Clauses:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
 if TYPE_CHECKING:
@@ -34,18 +33,6 @@ ERROR_RESERVED_ATTRIBUTE = (
     "Clause 245 Violation: Step '{0}' has reserved attribute '{1}' that cannot be deleted. "
     "This indicates a design flaw in the step implementation."
 )
-
-
-@dataclass(frozen=True, slots=True)
-class StepStripIdentity:
-    """Stable identity captured before the step is made stateless."""
-
-    step_id: str
-    step_name: str
-
-    @classmethod
-    def from_step(cls, step: Any) -> "StepStripIdentity":
-        return cls(step_id=str(id(step)), step_name=str(step.name))
 
 
 def _class_defines_attribute(step_type: type, attr: str) -> bool:
@@ -106,8 +93,7 @@ class StepAttributeStripper:
         # Process each step
         for step in steps:
             # Get step identifier for error messages
-            identity = StepStripIdentity.from_step(step)
-            step_name = identity.step_name
+            step_name = str(step.name)
             step_type = type(step)
             slot_names = _slot_names(step_type)
 
