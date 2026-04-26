@@ -85,6 +85,19 @@ class RuntimeValueStore:
             records.append(record)
         return tuple(records)
 
+    def find_by_location(
+        self,
+        *,
+        path: str,
+        backend: str,
+    ) -> tuple[StoredRuntimeValue, ...]:
+        """Find stored values persisted at a VFS location."""
+        return tuple(
+            record
+            for record in self._records_by_key.values()
+            if record.path == path and record.backend == backend
+        )
+
     def keys(self) -> tuple[ArtifactKey, ...]:
         """Return stored keys in insertion order."""
         return tuple(self._records_by_key.keys())

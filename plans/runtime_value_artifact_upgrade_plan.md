@@ -334,8 +334,8 @@ Current progress:
 1. Done: `RuntimeValueStore` is attached to `ProcessingContext`.
 2. Done: `_save_artifact_value` records validated `RuntimeValue` objects before saving raw payloads to memory VFS.
 3. Done: artifact values are discoverable by typed key and by semantic filters such as name, kind, axis, and group.
-4. Remaining: artifact inputs still load from memory VFS; the next slice should read through the store where possible while preserving compatibility.
-5. Remaining: materialization still reads raw VFS payloads; the next materialization slice should consume runtime value metadata and kind defaults.
+4. Done: artifact inputs load from VFS through the typed `RuntimeValueStore` record; missing or ambiguous records fail loudly instead of falling back to direct VFS reads.
+5. Remaining: materialization still reads raw VFS payloads; the next materialization slice should require typed store metadata for planned artifacts and fail loudly if it is missing.
 
 ### Phase 3: Kind-Aware Materialization
 

@@ -125,6 +125,81 @@ def _require_axis_id(context: ProcessingContext) -> str:
     return str(axis_id)
 
 
+def _load_artifact_input_value(
+    context: ProcessingContext,
+    input_plan: ArtifactInputPlan,
+) -> Any:
+    """Load an artifact input from VFS through its typed runtime store record."""
+    store = getattr(context, "runtime_value_store", None)
+    if store is None:
+        raise RuntimeError(
+            f"RuntimeValueStore is required for planned artifact input "
+            f"'{input_plan.name}'. Direct VFS fallback is disabled."
+        )
+
+    axis_id = _require_axis_id(context)
+    records = _find_artifact_input_records(
+        store,
+        input_plan=input_plan,
+        axis_id=axis_id,
+    )
+    if not records:
+        raise RuntimeError(
+            f"Missing RuntimeValueStore record for planned artifact input "
+            f"'{input_plan.name}' at '{input_plan.path}' ({Backend.MEMORY.value}). "
+            "Refusing direct VFS fallback because this indicates a lost typed "
+            "runtime contract or an artifact not produced through the runtime."
+        )
+    if len(records) > 1:
+        raise RuntimeError(
+            f"Ambiguous RuntimeValueStore records for planned artifact input "
+            f"'{input_plan.name}' at '{input_plan.path}': {records!r}."
+        )
+
+    record = records[0]
+    if record.value.kind is not input_plan.kind:
+        raise RuntimeError(
+            f"RuntimeValueStore record for artifact input '{input_plan.name}' has "
+            f"kind {record.value.kind.value}, expected {input_plan.kind.value}."
+        )
+
+    return context.filemanager.load(record.path, record.backend)
+
+
+def _find_artifact_input_records(
+    store: Any,
+    *,
+    input_plan: ArtifactInputPlan,
+    axis_id: str,
+) -> tuple[Any, ...]:
+    if input_plan.path != "self":
+        return tuple(
+            record
+            for record in store.find_by_location(
+                path=input_plan.path,
+                backend=Backend.MEMORY.value,
+            )
+            if record.key.name == input_plan.name
+            and record.key.kind is input_plan.kind
+            and record.key.scope.axis_id == axis_id
+        )
+
+    group_key = _single_input_group_key(input_plan)
+    return store.find(
+        name=input_plan.name,
+        kind=input_plan.kind,
+        axis_id=axis_id,
+        group_key=group_key,
+    )
+
+
+def _single_input_group_key(input_plan: ArtifactInputPlan) -> str | None:
+    group_keys = input_plan.group_keys or (None,)
+    if len(group_keys) == 1:
+        return group_keys[0]
+    return None
+
+
 def _select_artifact_plan_for_component(
     plan_by_group: Optional[Mapping[Any, ArtifactOutputPlans | ArtifactInputPlans]],
     component_key: Optional[str],
@@ -193,8 +268,9 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                 f"Loading artifact input '{arg_name}' from path '{input_plan.path}' (memory backend)"
             )
             try:
-                final_kwargs[arg_name] = context.filemanager.load(
-                    input_plan.path, Backend.MEMORY.value
+                final_kwargs[arg_name] = _load_artifact_input_value(
+                    context,
+                    input_plan,
                 )
             except Exception as e:
                 logger.error(

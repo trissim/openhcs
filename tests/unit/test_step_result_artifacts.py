@@ -1,6 +1,11 @@
 import pytest
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, StepResult
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactKind,
+    ArtifactOutputPlan,
+    StepResult,
+)
 from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.steps.function_runtime import (
     FunctionExecutionRequest,
@@ -28,6 +33,9 @@ class FileManagerStub:
     def save(self, value, path, backend):
         self.saved[(path, backend)] = value
         self.memory._memory_store[path] = value
+
+    def load(self, path, backend):
+        return self.memory._memory_store[path]
 
 
 class ContextStub:
@@ -72,6 +80,83 @@ def test_execute_function_core_saves_named_step_result_artifacts():
     )
     assert len(stored) == 1
     assert stored[0].value.data == [{"count": 2}]
+
+
+def test_execute_function_core_loads_artifact_input_from_vfs_via_store_record():
+    context = ContextStub()
+
+    def produce(image):
+        return StepResult(image=image, artifacts={"positions": {"x": 1}})
+
+    _execute_function_core(
+        FunctionExecutionRequest(
+            func_callable=produce,
+            main_data_arg=41,
+            base_kwargs={},
+            context=context,
+            artifact_inputs={},
+            artifact_outputs={
+                "positions": ArtifactOutputPlan(
+                    name="positions",
+                    path="/memory/positions.pkl",
+                )
+            },
+        )
+    )
+
+    context.filemanager.memory._memory_store["/memory/positions.pkl"] = {
+        "x": "from-vfs"
+    }
+
+    loaded_inputs = []
+
+    def consume(image, positions):
+        loaded_inputs.append(positions)
+        return image
+
+    result = _execute_function_core(
+        FunctionExecutionRequest(
+            func_callable=consume,
+            main_data_arg=41,
+            base_kwargs={},
+            context=context,
+            artifact_inputs={
+                "positions": ArtifactInputPlan(
+                    name="positions",
+                    path="/memory/positions.pkl",
+                )
+            },
+            artifact_outputs={},
+        )
+    )
+
+    assert result == 41
+    assert loaded_inputs == [{"x": "from-vfs"}]
+
+
+def test_execute_function_core_refuses_direct_vfs_artifact_input_fallback():
+    context = ContextStub()
+    context.filemanager.memory._memory_store["/memory/positions.pkl"] = {"x": 1}
+
+    def consume(image, positions):
+        return image
+
+    with pytest.raises(RuntimeError, match="Refusing direct VFS fallback"):
+        _execute_function_core(
+            FunctionExecutionRequest(
+                func_callable=consume,
+                main_data_arg=41,
+                base_kwargs={},
+                context=context,
+                artifact_inputs={
+                    "positions": ArtifactInputPlan(
+                        name="positions",
+                        path="/memory/positions.pkl",
+                    )
+                },
+                artifact_outputs={},
+            )
+        )
 
 
 def test_execute_function_core_requires_planned_step_result_artifacts():

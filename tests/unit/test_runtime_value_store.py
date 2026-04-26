@@ -36,6 +36,10 @@ def test_runtime_value_store_records_and_finds_by_typed_identity():
         axis_id="A01",
         group_key="DAPI",
     ) == (record,)
+    assert store.find_by_location(
+        path="/memory/measurements.pkl",
+        backend="memory",
+    ) == (record,)
     assert store.find(group_key="GFP") == ()
 
 
