@@ -168,3 +168,11 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
     assert '"runtime_artifact_inputs": (ArtifactSpec(\'Nuclei\'' in generated.code
     assert "identify_primary_objects_1 = get_function" in generated.code
     assert "identify_secondary_objects_2 = get_function" in generated.code
+    assert "CellProfilerModuleExecutor" in generated.code
+    assert "cellprofiler_runtime_adapter_factory" in generated.code
+    assert "@artifact_outputs(*CELLPROFILER_ARTIFACT_CONTRACTS[1]" in generated.code
+    assert "@artifact_inputs(*CELLPROFILER_ARTIFACT_CONTRACTS[2]" in generated.code
+    assert "@runtime_adapter(\"cellprofiler_runtime\"" in generated.code
+    assert "identify_primary_objects_1_runtime.input_memory_type" in generated.code
+    assert "func=identify_primary_objects_1_runtime" in generated.code
+    assert "func=identify_secondary_objects_2_runtime" in generated.code

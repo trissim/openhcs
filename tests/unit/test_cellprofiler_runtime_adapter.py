@@ -1,7 +1,10 @@
 import pytest
 
-from benchmark.cellprofiler_compat import CellProfilerRuntimeAdapter
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from benchmark.cellprofiler_compat import (
+    CellProfilerModuleExecutor,
+    CellProfilerRuntimeAdapter,
+)
+from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, ArtifactSpec
 from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_values import FieldSpec, RuntimeArrayPayload
 
@@ -151,3 +154,114 @@ def test_cellprofiler_adapter_measurements_require_object_reference():
             [{"object_id": 1}],
             object_name="Nuclei",
         )
+
+
+def test_cellprofiler_module_executor_records_object_output_through_adapter():
+    adapter, _filemanager = _adapter(
+        {"Nuclei": _plan("Nuclei", ArtifactKind.OBJECT_LABELS)}
+    )
+    image = ArrayLike()
+    labels = ArrayLike()
+    executor = CellProfilerModuleExecutor(
+        {
+            "module_name": "IdentifyPrimaryObjects",
+            "runtime_artifact_inputs": (),
+            "external_image_inputs": ("DNA",),
+            "outputs": (ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),),
+        }
+    )
+
+    def identify(image_arg, *, min_diameter):
+        assert image_arg is image
+        assert min_diameter == 8
+        return image_arg, {"object_count": 1}, labels
+
+    result = executor.run(
+        identify,
+        image,
+        cellprofiler_runtime=adapter,
+        min_diameter=8,
+    )
+
+    assert result is image
+    assert adapter.get_objects("Nuclei").labels is labels
+
+
+def test_cellprofiler_module_executor_reads_objects_for_measurements():
+    adapter, _filemanager = _adapter(
+        {
+            "Nuclei": _plan("Nuclei", ArtifactKind.OBJECT_LABELS),
+            "NucleiMeasurements": _plan(
+                "NucleiMeasurements",
+                ArtifactKind.MEASUREMENTS,
+            ),
+        }
+    )
+    image = ArrayLike()
+    labels = ArrayLike()
+    rows = [{"object_id": 1, "area": 12.0}]
+    adapter.add_objects("Nuclei", labels)
+    executor = CellProfilerModuleExecutor(
+        {
+            "module_name": "MeasureObjectSizeShape",
+            "runtime_artifact_inputs": (
+                ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
+            ),
+            "external_image_inputs": ("DNA",),
+            "outputs": (
+                ArtifactSpec("NucleiMeasurements", ArtifactKind.MEASUREMENTS),
+            ),
+        }
+    )
+
+    def measure(image_arg, *, labels):
+        assert image_arg is image
+        assert labels is adapter.get_objects("Nuclei").labels
+        return image_arg, rows
+
+    executor.run(measure, image, cellprofiler_runtime=adapter)
+    measurements = adapter.get_measurements("NucleiMeasurements")
+
+    assert measurements.rows is rows
+    assert measurements.object_name == "Nuclei"
+    assert measurements.source_image_name == "DNA"
+
+
+def test_cellprofiler_module_executor_combines_multi_object_measurements():
+    adapter, _filemanager = _adapter(
+        {
+            "Nuclei": _plan("Nuclei", ArtifactKind.OBJECT_LABELS),
+            "Cells": _plan("Cells", ArtifactKind.OBJECT_LABELS),
+            "Measurements": _plan("Measurements", ArtifactKind.MEASUREMENTS),
+        }
+    )
+    image = ArrayLike()
+    nuclei = ArrayLike()
+    cells = ArrayLike()
+    adapter.add_objects("Nuclei", nuclei)
+    adapter.add_objects("Cells", cells)
+    executor = CellProfilerModuleExecutor(
+        {
+            "module_name": "MeasureObjectIntensity",
+            "runtime_artifact_inputs": (
+                ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("Cells", ArtifactKind.OBJECT_LABELS),
+            ),
+            "external_image_inputs": ("DNA",),
+            "outputs": (ArtifactSpec("Measurements", ArtifactKind.MEASUREMENTS),),
+        }
+    )
+
+    def measure(image_arg, *, labels):
+        if labels is nuclei:
+            return image_arg, [{"object": "Nuclei"}]
+        if labels is cells:
+            return image_arg, [{"object": "Cells"}]
+        raise AssertionError("unexpected labels")
+
+    executor.run(measure, image, cellprofiler_runtime=adapter)
+    measurements = adapter.get_measurements("Measurements")
+
+    assert measurements.rows == [{"object": "Nuclei"}, {"object": "Cells"}]
+    assert measurements.object_name is None
+    assert measurements.source_image_name == "DNA"

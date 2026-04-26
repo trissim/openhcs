@@ -24,6 +24,7 @@ from openhcs.core.runtime_stores import (
     RuntimeArtifactQuery,
     require_runtime_value_store,
 )
+from openhcs.core.runtime_adapters import RuntimeAdapterRequest, RuntimeAdapterSpec
 from openhcs.core.runtime_values import normalize_artifact_value
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 
@@ -44,6 +45,7 @@ class FunctionExecutionRequest:
     context: ProcessingContext
     artifact_inputs: ArtifactInputPlans
     artifact_outputs: ArtifactOutputPlans
+    runtime_adapter: RuntimeAdapterSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -273,6 +275,20 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
     if "context" in sig.parameters:
         final_kwargs["context"] = context
 
+    if request.runtime_adapter is not None:
+        adapter_parameter = request.runtime_adapter.parameter_name
+        if adapter_parameter not in sig.parameters:
+            raise TypeError(
+                f"{func_callable.__name__} declares runtime adapter parameter "
+                f"'{adapter_parameter}', but its signature does not accept it."
+            )
+        final_kwargs[adapter_parameter] = request.runtime_adapter.factory(
+            RuntimeAdapterRequest(
+                context=context,
+                artifact_outputs=artifact_outputs,
+            )
+        )
+
     logger.info(f"Executing function: {func_callable.__name__}")
     raw_function_output = func_callable(request.main_data_arg, **final_kwargs)
 
@@ -350,6 +366,7 @@ def _execute_chain_core(request: FunctionChainExecutionRequest) -> Any:
                 context=request.context,
                 artifact_inputs=invocation.select_inputs(request.artifact_inputs),
                 artifact_outputs=invocation.select_outputs(request.artifact_outputs),
+                runtime_adapter=invocation.contract.runtime_adapter,
             )
         )
 

@@ -185,28 +185,50 @@ from openhcs.constants.constants import VariableComponents, GroupBy
         contracts_by_module = symbol_table.contracts_by_module_num
 
         # Add registry imports for available modules
-        function_bindings: dict[int, str] = {}
+        raw_function_bindings: dict[int, str] = {}
+        runtime_function_bindings: dict[int, str] = {}
         if registry_modules:
             imports += "# Absorbed CellProfiler functions (dynamically loaded)\n"
             imports += "from benchmark.cellprofiler_library import get_function\n\n"
+            imports += (
+                "from benchmark.cellprofiler_compat import (\n"
+                "    CellProfilerModuleExecutor,\n"
+                "    cellprofiler_runtime_adapter_factory,\n"
+                ")\n"
+                "from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs\n"
+                "from openhcs.core.runtime_adapters import runtime_adapter\n\n"
+            )
 
             # Generate function assignments
             func_assignments = []
             for module in registry_modules:
                 func_name = self._registry[module.name]["function_name"]
                 binding_name = self._function_binding_name(module, func_name)
-                function_bindings[module.module_num] = binding_name
+                raw_function_bindings[module.module_num] = binding_name
+                contract = contracts_by_module[module.module_num]
+                if contract.inputs or contract.outputs:
+                    runtime_function_bindings[module.module_num] = (
+                        self._runtime_binding_name(module, func_name)
+                    )
+                else:
+                    runtime_function_bindings[module.module_num] = binding_name
                 func_assignments.append(
                     f'{binding_name} = get_function("{module.name}")'
                 )
             imports += "\n".join(func_assignments) + "\n\n"
 
         imports += self._generate_artifact_contracts(symbol_table, registry_modules)
+        imports += self._generate_runtime_wrappers(
+            registry_modules,
+            raw_function_bindings,
+            runtime_function_bindings,
+            contracts_by_module,
+        )
 
         # Generate steps with bound settings
         steps = self._generate_steps_from_registry(
             registry_modules,
-            function_bindings,
+            runtime_function_bindings,
             contracts_by_module,
         )
 
@@ -349,6 +371,60 @@ from openhcs.constants.constants import VariableComponents, GroupBy
         lines.append("")
         return "\n".join(lines) + "\n"
 
+    def _generate_runtime_wrappers(
+        self,
+        modules: List[ModuleBlock],
+        raw_function_bindings: dict[int, str],
+        runtime_function_bindings: dict[int, str],
+        artifact_contracts: dict[int, ModuleArtifactContracts],
+    ) -> str:
+        """Emit adapter-aware wrappers around absorbed CellProfiler functions."""
+        if not modules:
+            return ""
+
+        lines = [
+            "# Adapter-aware CellProfiler execution wrappers",
+        ]
+        for module in modules:
+            contract = artifact_contracts[module.module_num]
+            if not contract.inputs and not contract.outputs:
+                continue
+            raw_binding = raw_function_bindings[module.module_num]
+            runtime_binding = runtime_function_bindings[module.module_num]
+            executor_name = self._executor_binding_name(module)
+
+            lines.append(
+                f"{executor_name} = "
+                f"CellProfilerModuleExecutor(CELLPROFILER_ARTIFACT_CONTRACTS[{module.module_num}])"
+            )
+            lines.append(
+                f"@artifact_inputs(*CELLPROFILER_ARTIFACT_CONTRACTS[{module.module_num}][\"runtime_artifact_inputs\"])"
+            )
+            lines.append(
+                f"@artifact_outputs(*CELLPROFILER_ARTIFACT_CONTRACTS[{module.module_num}][\"outputs\"])"
+            )
+            lines.append(
+                "@runtime_adapter(\"cellprofiler_runtime\", "
+                "cellprofiler_runtime_adapter_factory)"
+            )
+            lines.append(
+                f"def {runtime_binding}(image, *, cellprofiler_runtime, **kwargs):"
+            )
+            lines.append(
+                f"    return {executor_name}.run("
+                f"{raw_binding}, image, "
+                "cellprofiler_runtime=cellprofiler_runtime, **kwargs)"
+            )
+            lines.append(
+                f"{runtime_binding}.input_memory_type = {raw_binding}.input_memory_type"
+            )
+            lines.append(
+                f"{runtime_binding}.output_memory_type = {raw_binding}.output_memory_type"
+            )
+            lines.append("")
+
+        return "\n".join(lines) + "\n"
+
     def _artifact_contract_comments(
         self,
         contract: ModuleArtifactContracts,
@@ -382,6 +458,14 @@ from openhcs.constants.constants import VariableComponents, GroupBy
     def _function_binding_name(self, module: ModuleBlock, func_name: str) -> str:
         """Return a per-module binding name so repeated modules do not alias."""
         return f"{func_name}_{module.module_num}"
+
+    def _runtime_binding_name(self, module: ModuleBlock, func_name: str) -> str:
+        """Return the generated adapter-aware function binding name."""
+        return f"{self._function_binding_name(module, func_name)}_runtime"
+
+    def _executor_binding_name(self, module: ModuleBlock) -> str:
+        """Return the generated executor binding name for one module."""
+        return f"_CELLPROFILER_EXECUTOR_{module.module_num}"
 
     def _module_to_function_name(self, module_name: str) -> str:
         """Convert module name to function name (snake_case)."""
