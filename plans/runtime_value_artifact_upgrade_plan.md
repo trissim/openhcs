@@ -366,6 +366,252 @@ Current progress:
 2. Done: materialization no longer silently skips planned artifacts with missing typed runtime metadata.
 3. Remaining: add the default materializer registry keyed by `ArtifactKind`.
 
+---
+
+## 5A. Next Refactor Passes
+
+This section is the planned series of cleanup passes before adding broad CellProfiler compatibility. The goal is to keep increasing type safety, modularity, SSOT ownership, and structural symmetry without introducing low-value wrappers.
+
+### Pass 1: StepSnapshot as Compiler Input SSOT
+
+Primary advisor pressure:
+
+1. `path_planner.py` still probes live step/config attributes.
+2. `compiler.py` still contains attribute-probe recovery paths.
+3. `funcstep_contract_validator.py` still has fallback-style `getattr` access.
+
+Goal:
+
+Make ObjectState-resolved step facts a typed compiler input instead of repeatedly reading live `FunctionStep` and nested config attributes.
+
+Source-of-truth type:
+
+```python
+@dataclass(frozen=True, slots=True)
+class StepSnapshot:
+    index: int
+    name: str
+    step_type: str
+    func: Any
+    processing: StepProcessingSnapshot
+    materialization: StepMaterializationSnapshot | None
+    input_conversion: StepInputConversionSnapshot | None
+```
+
+Tasks:
+
+1. Add `StepSnapshot.from_step(...)` with ObjectState-aware resolved values.
+2. Move `group_by`, `input_source`, materialization config, input conversion config, injectable config values, and step name/type into snapshot fields.
+3. Route `PathPlanner._get_execution_groups`, `_get_dir`, `_materialized_output_dir_for_step`, `_get_input_source`, and injectable parameter extraction through snapshots.
+4. Fail loudly when a required resolved field is missing instead of falling back to live probing.
+5. Keep `FunctionStep.func` mutation cleanup visible: snapshot owns compiler input, compiled plan owns runtime output.
+
+Acceptance criteria:
+
+1. Path planning no longer directly probes `step.processing_config` for core compiler facts.
+2. ObjectState-derived values have one typed carrier.
+3. Existing path planning and ZMQ smoke tests still pass.
+4. Advisor findings in `path_planner.py` for config/attribute probing decrease materially.
+
+### Pass 2: CompilationSession as Axis-Scoped Compiler Boundary
+
+Primary advisor pressure:
+
+1. `compiler.py` is still an oversized orchestration hub.
+2. Compiler phases thread loose `context`, `pipeline_config`, `orchestrator`, and `step_state_map` values.
+3. Provenance of compiler facts is still hard to inspect.
+
+Goal:
+
+Introduce a nominal session object that owns one axis compilation context and exposes typed access to plans, snapshots, config, and orchestrator services.
+
+Source-of-truth type:
+
+```python
+@dataclass(slots=True)
+class CompilationSession:
+    context: ProcessingContext
+    pipeline_config: Any
+    orchestrator: Any
+    step_state_map: Mapping[int, Any]
+    snapshots: tuple[StepSnapshot, ...]
+    plans: MutableMapping[int, CompiledStepPlan]
+```
+
+Tasks:
+
+1. Build `CompilationSession` after step plans are initialized.
+2. Route path planning, validation, GPU assignment, and function-pattern compilation through the session.
+3. Move repeated setup/teardown and plan lookup helpers out of `PipelineCompiler`.
+4. Split compiler orchestration into named stages that accept a session:
+   - initialize plans
+   - snapshot steps
+   - validate contracts
+   - plan paths/artifacts
+   - validate memory/GPU
+   - freeze executable plans
+5. Keep stages procedural at first; do not introduce ABCs until the stage interface has real variants.
+
+Acceptance criteria:
+
+1. `PipelineCompiler` reads as orchestration over stages, not a control hub.
+2. Compiler phases use session/snapshot/plan objects rather than loose dicts and repeated attribute probes.
+3. Advisor oversized-hub findings in `compiler.py` reduce.
+
+### Pass 3: Contract Validation Cleanup
+
+Primary advisor pressure:
+
+1. `funcstep_contract_validator.py` still has semantic-role recovery via `getattr`.
+2. Memory and artifact validation overlap with `CallableContract`, `NormalizedFunctionPattern`, and `ArtifactGraph`.
+
+Goal:
+
+Make validation consume the same compiler contracts as compilation.
+
+Tasks:
+
+1. Route all function memory validation through `CallableContract`.
+2. Route pattern traversal through `NormalizedFunctionPattern`.
+3. Route artifact producer/consumer validation through `ArtifactGraph`.
+4. Replace fallback attribute handling with explicit invalid-contract errors.
+5. Add tests for invalid callable metadata, invalid artifact declaration kinds, and missing memory type contracts.
+
+Acceptance criteria:
+
+1. Validator does not rediscover callable metadata differently from the compiler.
+2. Error messages identify the callable, invocation key, and declared contract field.
+3. Advisor `funcstep_contract_validator.py` attribute-probe findings reduce.
+
+### Pass 4: Default ArtifactKind Materialization Registry
+
+Primary runtime pressure:
+
+1. Explicit materializers now use typed store records, but default materialization still does not exist.
+2. CellProfiler-style outputs need default behavior for measurements, relationships, metadata, tables, and labels.
+
+Goal:
+
+Make materialization dispatch by `ArtifactKind` when no explicit `MaterializationSpec` is declared.
+
+Source-of-truth type:
+
+```python
+@dataclass(frozen=True, slots=True)
+class ArtifactMaterializationRule:
+    kind: ArtifactKind
+    spec_factory: Callable[[RuntimeValueSchema], MaterializationSpec]
+```
+
+Tasks:
+
+1. Add an `ArtifactKind` materialization registry.
+2. Preserve explicit `ArtifactOutputPlan.materialization` precedence.
+3. Add defaults:
+   - `MEASUREMENTS`: CSV
+   - `RELATIONSHIPS`: CSV
+   - `TABLE`: CSV initially
+   - `METADATA`: JSON
+   - `OBJECT_LABELS`: fail loud until label writer is defined, or add an explicit label-image writer if scope is clear
+   - `IMAGE`: fail loud unless image materialization policy is explicit
+4. Route `materialize_artifact_outputs` through `RuntimeValue` schema plus registry.
+5. Add tests that missing default for a kind fails loudly.
+
+Acceptance criteria:
+
+1. No path-only or materializer-only artifact dispatch remains for planned artifacts.
+2. Measurement metadata can materialize without per-function glue.
+3. Unsupported kinds fail with artifact name, kind, and invocation/step context.
+
+### Pass 5: Native Runtime Value Schemas
+
+Primary CellProfiler pressure:
+
+1. `RuntimeValueSchema` is still shallow.
+2. Object labels, measurements, and relationships need named semantics before any adapter is justified.
+
+Goal:
+
+Add native value contracts for the CellProfiler concepts OpenHCS must own.
+
+Types:
+
+1. `ObjectLabelSet`
+2. `MeasurementTable`
+3. `ObjectRelationship`
+4. `NamedImage`
+
+Tasks:
+
+1. Add typed schema fields for object name, source image name, dimensions, feature names, object id columns, and relationship endpoints.
+2. Add `RuntimeValue` normalization for these native values.
+3. Add validation that measurements reference declared object/image names.
+4. Add validation that relationships reference declared parent/child object names.
+5. Add producer/consumer unit tests without any CellProfiler adapter.
+
+Acceptance criteria:
+
+1. `OBJECT_LABELS`, `MEASUREMENTS`, and `RELATIONSHIPS` are native OpenHCS runtime semantics.
+2. A measurement function can consume object labels and produce object measurements without hidden workspace state.
+3. The runtime can reject inconsistent object/measurement/relationship contracts before adapter work.
+
+### Pass 6: CellProfiler Symbol Table Compiler
+
+Primary compatibility pressure:
+
+1. `.cppipe` names must become compile-time artifact contracts.
+2. Adapter-owned mutable state must not become the source of truth.
+
+Goal:
+
+Build a converter-level symbol table that maps CellProfiler names to OpenHCS artifacts.
+
+Tasks:
+
+1. Map image names to channels or image artifacts.
+2. Map object names to `OBJECT_LABELS` artifacts.
+3. Map measurement features to `MEASUREMENTS` artifacts.
+4. Map parent/child references to `RELATIONSHIPS` artifacts.
+5. Generate `ArtifactSpec` inputs/outputs from the symbol table.
+6. Fail at conversion time for unresolved names or incompatible symbol kinds.
+
+Acceptance criteria:
+
+1. `get_objects("Nuclei")` compiles to an artifact input.
+2. `add_objects(..., "Nuclei")` compiles to an `OBJECT_LABELS` artifact output.
+3. Measurement writes compile to `MEASUREMENTS` artifact outputs.
+4. Generated OpenHCS pipelines do not require a mutable CellProfiler workspace for data routing.
+
+### Pass 7: Thin Compatibility Adapter
+
+Primary rule:
+
+Only after passes 1-6 should a CellProfiler adapter exist.
+
+Goal:
+
+Expose CellProfiler-like APIs as views over OpenHCS-owned runtime state.
+
+Tasks:
+
+1. Implement adapter reads/writes by delegating to typed runtime stores.
+2. Prohibit adapter-only hidden object sets, image sets, or measurements.
+3. Add parity tests against minimal CellProfiler modules.
+
+Acceptance criteria:
+
+1. Removing the adapter does not remove runtime semantics.
+2. All values produced through the adapter are visible as OpenHCS `RuntimeValue`s.
+3. Adapter state is inspectable through OpenHCS artifacts and schemas.
+
+### Deferred Low-Value Advisor Items
+
+These should not be prioritized unless they become blockers:
+
+1. `function_runtime.py` shared request-field ABC: currently saves only a few lines and risks abstraction theater.
+2. `pipeline/__init__.py` export-map builder: cleanup-only, no CellProfiler/runtime leverage.
+3. `gpu_memory_validator.py` string dispatch: small enough to batch with a memory-contract pass.
+
 ### Phase 4: Native Object and Measurement Concepts
 
 Goal: support CellProfiler semantics as OpenHCS-native runtime concepts.
