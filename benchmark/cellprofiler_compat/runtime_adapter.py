@@ -17,6 +17,8 @@ from openhcs.core.runtime_values import (
     MeasurementTable,
     NamedImage,
     ObjectLabelSet,
+    ObjectLabelRepresentation,
+    RelationshipEndpoint,
     ObjectRelationship,
     normalize_artifact_value,
 )
@@ -104,6 +106,9 @@ class CellProfilerRuntimeAdapter:
         *,
         source_image_name: str | None = None,
         dimensions: tuple[str, ...] = (),
+        representation: ObjectLabelRepresentation = (
+            ObjectLabelRepresentation.DENSE_LABELS
+        ),
     ) -> StoredRuntimeValue:
         return self._record_native_value(
             name,
@@ -113,6 +118,7 @@ class CellProfilerRuntimeAdapter:
                 labels=labels,
                 source_image_name=source_image_name,
                 dimensions=dimensions,
+                representation=representation,
             ),
         )
 
@@ -133,6 +139,10 @@ class CellProfilerRuntimeAdapter:
             labels=record.value.data,
             source_image_name=schema.source_image_name,
             dimensions=schema.dimensions,
+            representation=(
+                schema.label_representation
+                or ObjectLabelRepresentation.DENSE_LABELS
+            ),
         )
 
     def add_measurements(
@@ -197,10 +207,19 @@ class CellProfilerRuntimeAdapter:
             ArtifactKind.RELATIONSHIPS,
             ObjectRelationship(
                 name=name,
-                parent_object_name=parent_object_name,
-                child_object_name=child_object_name,
-                parent_ids=parent_ids,
-                child_ids=child_ids,
+                source=RelationshipEndpoint(
+                    parent_object_name,
+                    role="parent",
+                    id_field="parent_id",
+                ),
+                target=RelationshipEndpoint(
+                    child_object_name,
+                    role="child",
+                    id_field="child_id",
+                ),
+                source_ids=parent_ids,
+                target_ids=child_ids,
+                relationship_type="parent_child",
             ),
         )
 
@@ -222,12 +241,30 @@ class CellProfilerRuntimeAdapter:
                 f"got {type(data).__name__}."
             )
         schema = record.value.schema
+        relationship = schema.relationship
+        if relationship is not None:
+            return ObjectRelationship(
+                name=name,
+                source=relationship.source,
+                target=relationship.target,
+                source_ids=data[relationship.source_id_field],
+                target_ids=data[relationship.target_id_field],
+                relationship_type=relationship.relationship_type,
+            )
         return ObjectRelationship(
             name=name,
-            parent_object_name=schema.parent_object_name or data["parent_object"],
-            child_object_name=schema.child_object_name or data["child_object"],
-            parent_ids=data["parent_id"],
-            child_ids=data["child_id"],
+            source=RelationshipEndpoint(
+                schema.parent_object_name or data["source_object"],
+                role="source",
+                id_field="source_id",
+            ),
+            target=RelationshipEndpoint(
+                schema.child_object_name or data["target_object"],
+                role="target",
+                id_field="target_id",
+            ),
+            source_ids=data["source_id"],
+            target_ids=data["target_id"],
         )
 
     def _record_native_value(

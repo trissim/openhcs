@@ -615,8 +615,11 @@ Current progress:
 2. Done: native values normalize into `RuntimeValue` schemas while VFS payloads remain raw arrays/tables.
 3. Done: schemas now carry object names, source image names, relationship endpoints, object id fields, dimensions, and table fields.
 4. Done: relationship id length mismatches and native-name/output-plan mismatches fail loudly.
-5. Remaining: add cross-artifact validation that measurements and relationships reference object/image names produced earlier in the compiled/runtime graph.
-6. Remaining: decide label/image default materialization once label/image writers are explicit.
+5. Done: object-label values now carry an explicit generic representation (`dense_labels` or `sparse_ijv`) instead of assuming every object artifact is a dense CellProfiler-style label image.
+6. Done: measurement values now carry a generic `MeasurementSubject` (`artifact`, `image`, `object`, `relationship`, or `experiment`) while preserving object/image convenience fields for current callers.
+7. Done: relationship values now normalize through directed source/target `RelationshipEndpoint` pairs inside `RelationshipSemantics`; parent/child is one compatibility profile, not the core relationship model.
+8. Remaining: add cross-artifact validation that measurements and relationships reference object/image names produced earlier in the compiled/runtime graph.
+9. Remaining: decide label/image default materialization once label/image writers are explicit.
 
 ### Pass 6: CellProfiler Symbol Table Compiler
 

@@ -12,19 +12,15 @@ from openhcs.core.artifacts import (
     ArtifactOutputPlan,
     ArtifactScope,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class FieldSpec:
-    """One named field expected in a tabular runtime value."""
-
-    name: str
-    dtype: str | None = None
-    required: bool = True
-
-    def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("Runtime value field name cannot be empty.")
+from openhcs.core.runtime_semantics import (
+    FieldSpec,
+    MeasurementScope,
+    MeasurementSubject,
+    ObjectLabelRepresentation,
+    RelationshipEndpoint,
+    RelationshipSemantics,
+    coerce_enum,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +30,9 @@ class RuntimeValueSchema:
     kind: ArtifactKind
     fields: tuple[FieldSpec, ...] = ()
     dimensions: tuple[str, ...] = ()
+    label_representation: ObjectLabelRepresentation | None = None
+    measurement_subject: MeasurementSubject | None = None
+    relationship: RelationshipSemantics | None = None
     object_name: str | None = None
     source_image_name: str | None = None
     parent_object_name: str | None = None
@@ -41,6 +40,21 @@ class RuntimeValueSchema:
     object_id_field: str | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "kind",
+            coerce_enum(ArtifactKind, self.kind, "RuntimeValueSchema.kind"),
+        )
+        if self.label_representation is not None:
+            object.__setattr__(
+                self,
+                "label_representation",
+                coerce_enum(
+                    ObjectLabelRepresentation,
+                    self.label_representation,
+                    "RuntimeValueSchema.label_representation",
+                ),
+            )
         if self.object_name == "":
             raise ValueError("RuntimeValueSchema.object_name cannot be empty.")
         if self.source_image_name == "":
@@ -51,6 +65,29 @@ class RuntimeValueSchema:
             raise ValueError("RuntimeValueSchema.child_object_name cannot be empty.")
         if self.object_id_field == "":
             raise ValueError("RuntimeValueSchema.object_id_field cannot be empty.")
+        if (
+            self.label_representation is not None
+            and self.kind is not ArtifactKind.OBJECT_LABELS
+        ):
+            raise ValueError(
+                "RuntimeValueSchema.label_representation requires "
+                "OBJECT_LABELS kind."
+            )
+        if (
+            self.measurement_subject is not None
+            and self.kind is not ArtifactKind.MEASUREMENTS
+        ):
+            raise ValueError(
+                "RuntimeValueSchema.measurement_subject requires "
+                "MEASUREMENTS kind."
+            )
+        if (
+            self.relationship is not None
+            and self.kind is not ArtifactKind.RELATIONSHIPS
+        ):
+            raise ValueError(
+                "RuntimeValueSchema.relationship requires RELATIONSHIPS kind."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,15 +156,23 @@ class ObjectLabelSet:
     labels: Any
     source_image_name: str | None = None
     dimensions: tuple[str, ...] = ()
+    representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS
 
     def __post_init__(self) -> None:
         _require_name(self.name, "ObjectLabelSet.name")
+        representation = coerce_enum(
+            ObjectLabelRepresentation,
+            self.representation,
+            "ObjectLabelSet.representation",
+        )
+        object.__setattr__(self, "representation", representation)
         if self.source_image_name == "":
             raise ValueError("ObjectLabelSet.source_image_name cannot be empty.")
-        if not _is_array_like(self.labels):
+        if not _is_object_label_payload(self.labels, representation):
             raise TypeError(
-                f"ObjectLabelSet '{self.name}' requires array-like labels with "
-                f"shape/ndim, got {type(self.labels).__name__}."
+                f"ObjectLabelSet '{self.name}' requires "
+                f"{representation.value} payload, got "
+                f"{type(self.labels).__name__}."
             )
 
 
@@ -141,6 +186,7 @@ class MeasurementTable:
     fields: tuple[FieldSpec, ...] = ()
     object_id_field: str | None = None
     source_image_name: str | None = None
+    subject: MeasurementSubject | None = None
 
     def __post_init__(self) -> None:
         _require_name(self.name, "MeasurementTable.name")
@@ -150,6 +196,14 @@ class MeasurementTable:
             raise ValueError("MeasurementTable.object_id_field cannot be empty.")
         if self.source_image_name == "":
             raise ValueError("MeasurementTable.source_image_name cannot be empty.")
+        subject = _resolve_measurement_subject(
+            self.subject,
+            artifact_name=self.name,
+            object_name=self.object_name,
+            object_id_field=self.object_id_field,
+            source_image_name=self.source_image_name,
+        )
+        object.__setattr__(self, "subject", subject)
         if not _is_table_like(self.rows):
             raise TypeError(
                 f"MeasurementTable '{self.name}' requires table-like rows, "
@@ -159,33 +213,88 @@ class MeasurementTable:
 
 @dataclass(frozen=True, slots=True)
 class ObjectRelationship:
-    """Native OpenHCS parent-child object relationship value."""
+    """Native OpenHCS directed object relationship value."""
 
     name: str
-    parent_object_name: str
-    child_object_name: str
-    parent_ids: Any
-    child_ids: Any
+    source: RelationshipEndpoint
+    target: RelationshipEndpoint
+    source_ids: Any
+    target_ids: Any
+    relationship_type: str = "related"
 
     def __post_init__(self) -> None:
         _require_name(self.name, "ObjectRelationship.name")
-        _require_name(
-            self.parent_object_name,
-            "ObjectRelationship.parent_object_name",
+        if not isinstance(self.source, RelationshipEndpoint):
+            raise TypeError(
+                "ObjectRelationship.source must be RelationshipEndpoint, "
+                f"got {type(self.source).__name__}."
+            )
+        if not isinstance(self.target, RelationshipEndpoint):
+            raise TypeError(
+                "ObjectRelationship.target must be RelationshipEndpoint, "
+                f"got {type(self.target).__name__}."
+            )
+        _require_name(self.relationship_type, "ObjectRelationship.relationship_type")
+        _validate_relationship_ids(self.source_ids, self.target_ids, self.name)
+
+    @property
+    def semantics(self) -> RelationshipSemantics:
+        return RelationshipSemantics(
+            source=self.source,
+            target=self.target,
+            relationship_type=self.relationship_type,
         )
-        _require_name(
-            self.child_object_name,
-            "ObjectRelationship.child_object_name",
-        )
-        _validate_relationship_ids(self.parent_ids, self.child_ids, self.name)
+
+    @property
+    def source_object_name(self) -> str:
+        return self.source.name
+
+    @property
+    def target_object_name(self) -> str:
+        return self.target.name
+
+    @property
+    def source_role(self) -> str:
+        return self.source.role
+
+    @property
+    def target_role(self) -> str:
+        return self.target.role
+
+    @property
+    def source_id_field(self) -> str:
+        return self.source.id_field
+
+    @property
+    def target_id_field(self) -> str:
+        return self.target.id_field
+
+    @property
+    def parent_object_name(self) -> str:
+        return self.source_object_name
+
+    @property
+    def child_object_name(self) -> str:
+        return self.target_object_name
+
+    @property
+    def parent_ids(self) -> Any:
+        return self.source_ids
+
+    @property
+    def child_ids(self) -> Any:
+        return self.target_ids
 
     def as_table(self) -> dict[str, Any]:
         """Return table-like relationship columns for materialization."""
         return {
-            "parent_object": self.parent_object_name,
-            "child_object": self.child_object_name,
-            "parent_id": self.parent_ids,
-            "child_id": self.child_ids,
+            "relationship_type": self.relationship_type,
+            "source_role": self.source_role,
+            "target_role": self.target_role,
+            "source_object": self.source_object_name,
+            "target_object": self.target_object_name,
+            self.source_id_field: self.source_ids,
+            self.target_id_field: self.target_ids,
         }
 
 
@@ -250,6 +359,7 @@ def _normalize_native_value(
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
                 dimensions=value.dimensions,
+                label_representation=value.representation,
                 object_name=value.name,
                 source_image_name=value.source_image_name,
             ),
@@ -263,27 +373,25 @@ def _normalize_native_value(
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.MEASUREMENTS,
                 fields=value.fields or _infer_fields(value.rows),
-                object_name=value.object_name,
-                source_image_name=value.source_image_name,
-                object_id_field=value.object_id_field,
+                measurement_subject=value.subject,
+                object_name=_measurement_object_name(value),
+                source_image_name=_measurement_source_image_name(value),
+                object_id_field=_measurement_object_id_field(value),
             ),
         )
     if isinstance(value, ObjectRelationship):
         _validate_native_name(output_plan, value.name)
+        table = value.as_table()
         return _runtime_value(
             output_plan,
-            value.as_table(),
+            table,
             axis_id=axis_id,
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.RELATIONSHIPS,
-                fields=(
-                    FieldSpec("parent_object"),
-                    FieldSpec("child_object"),
-                    FieldSpec("parent_id"),
-                    FieldSpec("child_id"),
-                ),
-                parent_object_name=value.parent_object_name,
-                child_object_name=value.child_object_name,
+                fields=_infer_fields(table),
+                relationship=value.semantics,
+                parent_object_name=value.source_object_name,
+                child_object_name=value.target_object_name,
             ),
         )
     return None
@@ -343,18 +451,34 @@ def validate_runtime_value(
             f"'{value.key.scope.axis_id}', not '{axis_id}'."
         )
 
-    _validate_payload_kind(output_plan.name, value.kind, value.data)
+    _validate_payload_kind(output_plan.name, value.kind, value.data, value.schema)
     return value
 
 
-def _validate_payload_kind(name: str, kind: ArtifactKind, data: Any) -> None:
+def _validate_payload_kind(
+    name: str,
+    kind: ArtifactKind,
+    data: Any,
+    schema: RuntimeValueSchema,
+) -> None:
     if kind is ArtifactKind.SPECIAL:
         return
-    if kind in {ArtifactKind.IMAGE, ArtifactKind.OBJECT_LABELS}:
+    if kind is ArtifactKind.IMAGE:
         if not _is_array_like(data):
             raise TypeError(
                 f"Artifact '{name}' expected {kind.value} payload with array-like "
                 f"shape/ndim, got {type(data).__name__}."
+            )
+        return
+    if kind is ArtifactKind.OBJECT_LABELS:
+        representation = (
+            schema.label_representation or ObjectLabelRepresentation.DENSE_LABELS
+        )
+        if not _is_object_label_payload(data, representation):
+            raise TypeError(
+                f"Artifact '{name}' expected object_labels payload with "
+                f"{representation.value} representation, got "
+                f"{type(data).__name__}."
             )
         return
     if kind is ArtifactKind.METADATA:
@@ -390,6 +514,17 @@ def _is_array_like(data: Any) -> bool:
     return hasattr(data, "shape") or hasattr(data, "ndim")
 
 
+def _is_object_label_payload(
+    data: Any,
+    representation: ObjectLabelRepresentation,
+) -> bool:
+    if representation is ObjectLabelRepresentation.DENSE_LABELS:
+        return _is_array_like(data)
+    if representation is ObjectLabelRepresentation.SPARSE_IJV:
+        return _is_table_like(data)
+    return False
+
+
 def _require_name(value: str, field_name: str) -> None:
     if not value:
         raise ValueError(f"{field_name} cannot be empty.")
@@ -401,6 +536,71 @@ def _validate_native_name(output_plan: ArtifactOutputPlan, name: str) -> None:
             f"Native runtime value '{name}' does not match planned artifact "
             f"'{output_plan.name}'."
         )
+
+
+def _resolve_measurement_subject(
+    subject: MeasurementSubject | None,
+    *,
+    artifact_name: str,
+    object_name: str | None,
+    object_id_field: str | None,
+    source_image_name: str | None,
+) -> MeasurementSubject:
+    if subject is None:
+        if object_name is not None:
+            return MeasurementSubject(
+                MeasurementScope.OBJECT,
+                object_name,
+                object_id_field,
+            )
+        if source_image_name is not None:
+            return MeasurementSubject(MeasurementScope.IMAGE, source_image_name)
+        return MeasurementSubject(MeasurementScope.ARTIFACT, artifact_name)
+
+    if object_name is not None and (
+        subject.scope is not MeasurementScope.OBJECT or subject.name != object_name
+    ):
+        raise ValueError(
+            "MeasurementTable.object_name conflicts with "
+            "MeasurementTable.subject."
+        )
+    if object_id_field is not None and subject.id_field != object_id_field:
+        raise ValueError(
+            "MeasurementTable.object_id_field conflicts with "
+            "MeasurementTable.subject."
+        )
+    if source_image_name is not None and (
+        subject.scope is not MeasurementScope.IMAGE or subject.name != source_image_name
+    ):
+        raise ValueError(
+            "MeasurementTable.source_image_name conflicts with "
+            "MeasurementTable.subject."
+        )
+    return subject
+
+
+def _measurement_object_name(value: MeasurementTable) -> str | None:
+    if value.object_name is not None:
+        return value.object_name
+    if value.subject and value.subject.scope is MeasurementScope.OBJECT:
+        return value.subject.name
+    return None
+
+
+def _measurement_object_id_field(value: MeasurementTable) -> str | None:
+    if value.object_id_field is not None:
+        return value.object_id_field
+    if value.subject and value.subject.scope is MeasurementScope.OBJECT:
+        return value.subject.id_field
+    return None
+
+
+def _measurement_source_image_name(value: MeasurementTable) -> str | None:
+    if value.source_image_name is not None:
+        return value.source_image_name
+    if value.subject and value.subject.scope is MeasurementScope.IMAGE:
+        return value.subject.name
+    return None
 
 
 def _infer_fields(rows: Any) -> tuple[FieldSpec, ...]:
@@ -418,16 +618,16 @@ def _infer_fields(rows: Any) -> tuple[FieldSpec, ...]:
     return ()
 
 
-def _validate_relationship_ids(parent_ids: Any, child_ids: Any, name: str) -> None:
-    if isinstance(parent_ids, Sequence) and isinstance(child_ids, Sequence):
+def _validate_relationship_ids(source_ids: Any, target_ids: Any, name: str) -> None:
+    if isinstance(source_ids, Sequence) and isinstance(target_ids, Sequence):
         if (
-            not isinstance(parent_ids, (str, bytes, bytearray))
-            and not isinstance(child_ids, (str, bytes, bytearray))
-            and len(parent_ids) != len(child_ids)
+            not isinstance(source_ids, (str, bytes, bytearray))
+            and not isinstance(target_ids, (str, bytes, bytearray))
+            and len(source_ids) != len(target_ids)
         ):
             raise ValueError(
-                f"ObjectRelationship '{name}' parent_ids and child_ids must "
-                f"have equal length, got {len(parent_ids)} and {len(child_ids)}."
+                f"ObjectRelationship '{name}' source_ids and target_ids must "
+                f"have equal length, got {len(source_ids)} and {len(target_ids)}."
             )
 
 

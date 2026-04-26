@@ -4,8 +4,12 @@ from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_values import (
     FieldSpec,
     MeasurementTable,
+    MeasurementScope,
+    MeasurementSubject,
     NamedImage,
     ObjectLabelSet,
+    ObjectLabelRepresentation,
+    RelationshipEndpoint,
     ObjectRelationship,
     RuntimeStoragePolicy,
     normalize_artifact_value,
@@ -124,6 +128,29 @@ def test_normalize_object_label_set_adds_object_schema():
     assert value.schema.object_name == "Nuclei"
     assert value.schema.source_image_name == "DNA"
     assert value.schema.dimensions == ("y", "x")
+    assert value.schema.label_representation is ObjectLabelRepresentation.DENSE_LABELS
+
+
+def test_normalize_object_label_set_accepts_sparse_ijv_representation():
+    output_plan = ArtifactOutputPlan(
+        name="Nuclei",
+        path="/memory/Nuclei.pkl",
+        kind=ArtifactKind.OBJECT_LABELS,
+    )
+    labels = [{"i": 0, "j": 1, "label": 7}]
+
+    value = normalize_artifact_value(
+        output_plan,
+        ObjectLabelSet(
+            name="Nuclei",
+            labels=labels,
+            representation=ObjectLabelRepresentation.SPARSE_IJV,
+        ),
+        axis_id="A01",
+    )
+
+    assert value.data is labels
+    assert value.schema.label_representation is ObjectLabelRepresentation.SPARSE_IJV
 
 
 def test_normalize_measurement_table_infers_fields_and_object_schema():
@@ -148,7 +175,44 @@ def test_normalize_measurement_table_infers_fields_and_object_schema():
     assert value.data is rows
     assert value.schema.object_name == "Nuclei"
     assert value.schema.object_id_field == "object_id"
+    assert value.schema.measurement_subject == MeasurementSubject(
+        MeasurementScope.OBJECT,
+        "Nuclei",
+        "object_id",
+    )
     assert value.schema.fields == (FieldSpec("object_id"), FieldSpec("area"))
+
+
+def test_normalize_measurement_table_accepts_generic_subject():
+    output_plan = ArtifactOutputPlan(
+        name="ImageMeasurements",
+        path="/memory/ImageMeasurements.pkl",
+        kind=ArtifactKind.MEASUREMENTS,
+    )
+    rows = [{"mean_intensity": 12.0}]
+
+    value = normalize_artifact_value(
+        output_plan,
+        MeasurementTable(
+            name="ImageMeasurements",
+            rows=rows,
+            subject=MeasurementSubject(MeasurementScope.IMAGE, "DNA"),
+        ),
+        axis_id="A01",
+    )
+
+    assert value.schema.measurement_subject == MeasurementSubject(
+        MeasurementScope.IMAGE,
+        "DNA",
+    )
+    assert value.schema.source_image_name == "DNA"
+    assert value.schema.object_name is None
+
+
+def test_object_measurement_subject_allows_implicit_object_ids():
+    subject = MeasurementSubject(MeasurementScope.OBJECT, "Nuclei")
+
+    assert subject.id_field is None
 
 
 def test_normalize_object_relationship_materializes_table_columns():
@@ -162,20 +226,35 @@ def test_normalize_object_relationship_materializes_table_columns():
         output_plan,
         ObjectRelationship(
             name="ParentChild",
-            parent_object_name="Cells",
-            child_object_name="Nuclei",
-            parent_ids=[10, 11],
-            child_ids=[1, 2],
+            source=RelationshipEndpoint(
+                "Cells",
+                role="parent",
+                id_field="parent_id",
+            ),
+            target=RelationshipEndpoint(
+                "Nuclei",
+                role="child",
+                id_field="child_id",
+            ),
+            source_ids=[10, 11],
+            target_ids=[1, 2],
+            relationship_type="parent_child",
         ),
         axis_id="A01",
     )
 
     assert value.data == {
-        "parent_object": "Cells",
-        "child_object": "Nuclei",
+        "relationship_type": "parent_child",
+        "source_role": "parent",
+        "target_role": "child",
+        "source_object": "Cells",
+        "target_object": "Nuclei",
         "parent_id": [10, 11],
         "child_id": [1, 2],
     }
+    assert value.schema.relationship is not None
+    assert value.schema.relationship.source_name == "Cells"
+    assert value.schema.relationship.target_name == "Nuclei"
     assert value.schema.parent_object_name == "Cells"
     assert value.schema.child_object_name == "Nuclei"
 
@@ -199,8 +278,16 @@ def test_object_relationship_rejects_mismatched_id_lengths():
     with pytest.raises(ValueError, match="equal length"):
         ObjectRelationship(
             name="ParentChild",
-            parent_object_name="Cells",
-            child_object_name="Nuclei",
-            parent_ids=[1],
-            child_ids=[1, 2],
+            source=RelationshipEndpoint(
+                "Cells",
+                role="parent",
+                id_field="parent_id",
+            ),
+            target=RelationshipEndpoint(
+                "Nuclei",
+                role="child",
+                id_field="child_id",
+            ),
+            source_ids=[1],
+            target_ids=[1, 2],
         )
