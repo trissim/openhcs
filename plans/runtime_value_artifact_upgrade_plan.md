@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-25
 **Branch:** `benchmark-platform`
-**Status:** In progress; Phase 0 compiler contracts, Phase 1 runtime value validation, and Phase 2 runtime value store/VFS access are implemented
+**Status:** In progress; Phase 0 compiler contracts, Phase 1 runtime value validation, Phase 2 runtime value store/VFS access, and Phase 3 kind-aware materialization defaults are implemented
 **Primary goal:** make OpenHCS runtime state rich enough to support CellProfiler-style named images, object labels, measurements, relationships, and native feature outputs without introducing fake wrapper layers.
 
 ---
@@ -82,14 +82,15 @@ Completed refactor foundation:
 12. Runtime normalizes and validates `StepResult` and tuple artifact outputs against compiled `ArtifactOutputPlan.kind` before saving to the memory VFS.
 13. `RuntimeValueStore` is attached to `ProcessingContext` and records validated runtime values by typed artifact key while preserving VFS as the payload storage boundary.
 14. `RuntimeArtifactLocation` and `RuntimeArtifactQuery` are the SSOT for VFS-backed runtime artifact lookup.
-15. Artifact inputs and explicit artifact materialization resolve through typed store records before loading VFS payloads; missing or ambiguous records fail loudly.
-16. Existing tests cover compiled plans, compiled function pattern behavior, artifact graph behavior, runtime artifact validation, runtime value store behavior, materialization store lookup, `StepResult`, and ZMQ integration smoke.
+15. Artifact inputs and artifact materialization resolve through typed store records before loading VFS payloads; missing or ambiguous records fail loudly.
+16. Default semantic materialization is selected by `ArtifactKind` using existing writer-backed `MaterializationSpec` presets.
+17. Existing tests cover compiled plans, compiled function pattern behavior, artifact graph behavior, runtime artifact validation, runtime value store behavior, materialization store lookup, `StepResult`, and ZMQ integration smoke.
 
 Known remaining weaknesses:
 
 1. VFS is intentionally still the payload persistence boundary, but artifact reads now require typed runtime-store records.
 2. `StepResult` still accepts `artifacts: Mapping[str, Any]`; normalization now validates values, but the public return type is still permissive for compatibility.
-3. Materialization now requires typed store metadata for explicit materializers, but default materialization is not yet selected by `ArtifactKind`.
+3. Default materialization exists for `MEASUREMENTS`, `RELATIONSHIPS`, `TABLE`, and `METADATA`; `OBJECT_LABELS` and `IMAGE` intentionally fail loud until native schemas define their storage/materialization semantics.
 4. `ProcessingContext` does not yet own named image/object/measurement/relationship runtime state.
 5. Some compiler phases still mutate `FunctionStep.func` while preparing normalized patterns.
 6. `StepSnapshot` and `CompilationSession` are not implemented yet.
@@ -391,6 +392,21 @@ Goal:
 
 Make ObjectState-resolved step facts a typed compiler input instead of repeatedly reading live `FunctionStep` and nested config attributes.
 
+Important constraint:
+
+1. The normal compiler path already converts ObjectState to resolved step objects once near the beginning of compilation.
+2. `StepSnapshot` must not introduce repeated `ObjectState.to_object()` conversion.
+3. The intended flow is:
+
+```text
+ObjectState registration
+    -> one to_object pass for pipeline steps
+    -> one StepSnapshot tuple from resolved steps plus saved ObjectState values
+    -> per-axis CompilationSession reuses snapshots
+```
+
+The snapshot is not a wrapper around ObjectState. It owns the resolved compiler facts needed by downstream phases.
+
 Source-of-truth type:
 
 ```python
@@ -407,18 +423,20 @@ class StepSnapshot:
 
 Tasks:
 
-1. Add `StepSnapshot.from_step(...)` with ObjectState-aware resolved values.
+1. Add `StepSnapshot.from_resolved_step(...)` with ObjectState-aware saved values.
 2. Move `group_by`, `input_source`, materialization config, input conversion config, injectable config values, and step name/type into snapshot fields.
 3. Route `PathPlanner._get_execution_groups`, `_get_dir`, `_materialized_output_dir_for_step`, `_get_input_source`, and injectable parameter extraction through snapshots.
 4. Fail loudly when a required resolved field is missing instead of falling back to live probing.
-5. Keep `FunctionStep.func` mutation cleanup visible: snapshot owns compiler input, compiled plan owns runtime output.
+5. Remove the extra temporary ObjectState/to_object pass used for axis-filter resolution.
+6. Keep `FunctionStep.func` mutation cleanup visible: snapshot owns compiler input, compiled plan owns runtime output.
 
 Acceptance criteria:
 
 1. Path planning no longer directly probes `step.processing_config` for core compiler facts.
 2. ObjectState-derived values have one typed carrier.
 3. Existing path planning and ZMQ smoke tests still pass.
-4. Advisor findings in `path_planner.py` for config/attribute probing decrease materially.
+4. Axis-filter resolution reuses snapshots and saved ObjectState values instead of creating another resolved step list.
+5. Advisor findings in `path_planner.py` for config/attribute probing decrease materially.
 
 ### Pass 2: CompilationSession as Axis-Scoped Compiler Boundary
 
@@ -490,12 +508,14 @@ Acceptance criteria:
 2. Error messages identify the callable, invocation key, and declared contract field.
 3. Advisor `funcstep_contract_validator.py` attribute-probe findings reduce.
 
-### Pass 4: Default ArtifactKind Materialization Registry
+### Pass 4: Default ArtifactKind Materialization Policy
+
+Status: implemented for table-like/metadata artifacts in `1fede4ba`; remaining label/image defaults are intentionally deferred to Pass 5 native schemas.
 
 Primary runtime pressure:
 
-1. Explicit materializers now use typed store records, but default materialization still does not exist.
-2. CellProfiler-style outputs need default behavior for measurements, relationships, metadata, tables, and labels.
+1. Explicit materializers and default materializers now use typed store records.
+2. CellProfiler-style outputs still need default behavior for object labels and images once native schemas define their semantics.
 
 Goal:
 
@@ -512,17 +532,17 @@ class ArtifactMaterializationRule:
 
 Tasks:
 
-1. Add an `ArtifactKind` materialization policy.
-2. Preserve explicit `ArtifactOutputPlan.materialization` precedence.
-3. Add defaults:
+1. Done: add an `ArtifactKind` materialization policy.
+2. Done: preserve explicit `ArtifactOutputPlan.materialization` precedence.
+3. Done: add defaults:
    - `MEASUREMENTS`: existing `csv_only(...)`
    - `RELATIONSHIPS`: existing `csv_only(...)`
    - `TABLE`: existing `csv_only(...)`
    - `METADATA`: existing `json_only(...)`
-   - `OBJECT_LABELS`: fail loud until label writer is defined, or add an explicit label-image writer if scope is clear
-   - `IMAGE`: fail loud unless image materialization policy is explicit
-4. Route `materialize_artifact_outputs` through `RuntimeValue` schema plus registry.
-5. Add tests that missing default for a kind fails loudly.
+4. Done: `OBJECT_LABELS` fails loud until label writer/native label schema is defined.
+5. Done: `IMAGE` fails loud unless image materialization policy is explicit.
+6. Done: route `materialize_artifact_outputs` through `RuntimeValue` schema plus policy.
+7. Done: add tests that missing default for a semantic kind fails loudly.
 
 Acceptance criteria:
 
