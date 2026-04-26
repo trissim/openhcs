@@ -15,13 +15,19 @@ Takes parsed .cppipe modules and generates a complete pipeline file with:
 import json
 import logging
 import re
-import inspect
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
+from openhcs.core.artifacts import ArtifactSpec
+
 from .parser import ModuleBlock
 from .settings_binder import SettingsBinder
+from .symbol_table import (
+    CellProfilerSymbolTable,
+    ModuleArtifactContracts,
+    artifact_contract_literal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +41,7 @@ class GeneratedPipeline:
     source_cppipe: str
     converted_modules: List[str]
     failed_modules: List[str]
+    artifact_contracts: tuple[ModuleArtifactContracts, ...] = ()
     
     def save(self, output_path: Path) -> None:
         """Save pipeline to file."""
@@ -174,7 +181,11 @@ from openhcs.constants.constants import VariableComponents, GroupBy
                 "Re-run absorption with --force to regenerate."
             )
 
+        symbol_table = CellProfilerSymbolTable.compile(registry_modules)
+        contracts_by_module = symbol_table.contracts_by_module_num
+
         # Add registry imports for available modules
+        function_bindings: dict[int, str] = {}
         if registry_modules:
             imports += "# Absorbed CellProfiler functions (dynamically loaded)\n"
             imports += "from benchmark.cellprofiler_library import get_function\n\n"
@@ -183,11 +194,21 @@ from openhcs.constants.constants import VariableComponents, GroupBy
             func_assignments = []
             for module in registry_modules:
                 func_name = self._registry[module.name]["function_name"]
-                func_assignments.append(f'{func_name} = get_function("{module.name}")')
+                binding_name = self._function_binding_name(module, func_name)
+                function_bindings[module.module_num] = binding_name
+                func_assignments.append(
+                    f'{binding_name} = get_function("{module.name}")'
+                )
             imports += "\n".join(func_assignments) + "\n\n"
 
+        imports += self._generate_artifact_contracts(symbol_table, registry_modules)
+
         # Generate steps with bound settings
-        steps = self._generate_steps_from_registry(registry_modules)
+        steps = self._generate_steps_from_registry(
+            registry_modules,
+            function_bindings,
+            contracts_by_module,
+        )
 
         # Combine
         code = imports + steps
@@ -198,6 +219,7 @@ from openhcs.constants.constants import VariableComponents, GroupBy
             source_cppipe=str(source_cppipe),
             converted_modules=[m.name for m in registry_modules],
             failed_modules=[m.name for m in missing_modules],
+            artifact_contracts=symbol_table.module_contracts,
         )
 
     # Category → variable_components mapping
@@ -207,7 +229,12 @@ from openhcs.constants.constants import VariableComponents, GroupBy
         "channel_operation": "VariableComponents.CHANNEL",
     }
 
-    def _generate_steps_from_registry(self, modules: List[ModuleBlock]) -> str:
+    def _generate_steps_from_registry(
+        self,
+        modules: List[ModuleBlock],
+        function_bindings: dict[int, str],
+        artifact_contracts: dict[int, ModuleArtifactContracts],
+    ) -> str:
         """Generate pipeline_steps using registry functions with bound settings."""
         lines = [
             "# Pipeline Steps",
@@ -219,8 +246,10 @@ from openhcs.constants.constants import VariableComponents, GroupBy
         for module in modules:
             meta = self._registry[module.name]
             func_name = meta["function_name"]
+            binding_name = function_bindings[module.module_num]
             category = meta.get("category", "image_operation")
             step_name = module.name
+            artifact_contract = artifact_contracts[module.module_num]
 
             # Map category to variable_components
             var_comp = self.CATEGORY_TO_VARIABLE_COMPONENTS.get(
@@ -268,27 +297,91 @@ from openhcs.constants.constants import VariableComponents, GroupBy
                 kwargs_lines.append("        }")
                 kwargs_str = "\n".join(kwargs_lines)
 
-                lines.append(f"    FunctionStep(")
-                lines.append(f"        func=({func_name}, {kwargs_str}),")
+                lines.append("    FunctionStep(")
+                lines.extend(self._artifact_contract_comments(artifact_contract))
+                lines.append(f"        func=({binding_name}, {kwargs_str}),")
             else:
-                lines.append(f"    FunctionStep(")
-                lines.append(f"        func={func_name},")
+                lines.append("    FunctionStep(")
+                lines.extend(self._artifact_contract_comments(artifact_contract))
+                lines.append(f"        func={binding_name},")
 
             lines.append(f'        name="{step_name}",')
-            lines.append(f"        processing_config=LazyProcessingConfig(")
+            lines.append("        processing_config=LazyProcessingConfig(")
             lines.append(f"            variable_components=[{var_comp}]")
-            lines.append(f"        ),")
+            lines.append("        ),")
 
             # Add unmapped settings as comments (for debugging)
             if unmapped_kwargs:
-                lines.append(f"        # Unmapped settings:")
+                lines.append("        # Unmapped settings:")
                 for k, v in list(unmapped_kwargs.items())[:3]:
                     lines.append(f"        # {k}={repr(v)}")
 
-            lines.append(f"    ),")
+            lines.append("    ),")
 
         lines.append("]")
         return "\n".join(lines)
+
+    def _generate_artifact_contracts(
+        self,
+        symbol_table: CellProfilerSymbolTable,
+        modules: List[ModuleBlock],
+    ) -> str:
+        """Emit converter-owned artifact contracts into generated pipeline code."""
+        contracts = []
+        for module in modules:
+            contract = symbol_table.contract_for(module)
+            if contract.inputs or contract.outputs:
+                contracts.append(contract)
+        if not contracts:
+            return ""
+
+        lines = [
+            "# CellProfiler name-to-artifact contracts compiled from .cppipe",
+            "from openhcs.core.artifacts import ArtifactKind, ArtifactSpec",
+            "",
+            "CELLPROFILER_ARTIFACT_CONTRACTS = {",
+        ]
+        for contract in contracts:
+            lines.append(
+                f"    {contract.module_num}: {artifact_contract_literal(contract)},"
+            )
+        lines.append("}")
+        lines.append("")
+        return "\n".join(lines) + "\n"
+
+    def _artifact_contract_comments(
+        self,
+        contract: ModuleArtifactContracts,
+    ) -> list[str]:
+        lines: list[str] = []
+        if contract.inputs:
+            lines.append(
+                "        # CellProfiler artifact inputs: "
+                + self._format_artifact_specs(contract.inputs)
+            )
+        if contract.external_image_inputs:
+            lines.append(
+                "        # External image inputs: "
+                + ", ".join(contract.external_image_inputs)
+            )
+        if contract.runtime_artifact_inputs:
+            lines.append(
+                "        # Runtime artifact inputs: "
+                + self._format_artifact_specs(contract.runtime_artifact_inputs)
+            )
+        if contract.outputs:
+            lines.append(
+                "        # CellProfiler artifact outputs: "
+                + self._format_artifact_specs(contract.outputs)
+            )
+        return lines
+
+    def _format_artifact_specs(self, specs: tuple[ArtifactSpec, ...]) -> str:
+        return ", ".join(f"{spec.kind.value}:{spec.name}" for spec in specs)
+
+    def _function_binding_name(self, module: ModuleBlock, func_name: str) -> str:
+        """Return a per-module binding name so repeated modules do not alias."""
+        return f"{func_name}_{module.module_num}"
 
     def _module_to_function_name(self, module_name: str) -> str:
         """Convert module name to function name (snake_case)."""
@@ -406,4 +499,3 @@ from openhcs.constants.constants import VariableComponents, GroupBy
         except Exception as e:
             logger.warning(f"Could not parse parameter mapping for {func_name}: {e}")
             return {}
-

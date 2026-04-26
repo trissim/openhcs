@@ -19,6 +19,12 @@ from .pipeline_generator import PipelineGenerator
 from .library_absorber import LibraryAbsorber
 from .contract_inference import ContractInference, infer_contract
 from .settings_binder import SettingsBinder, bind_settings
+from .symbol_table import (
+    CellProfilerSymbol,
+    CellProfilerSymbolKind,
+    CellProfilerSymbolTable,
+    ModuleArtifactContracts,
+)
 
 __all__ = [
     # Core
@@ -36,5 +42,8 @@ __all__ = [
     'infer_contract',
     'SettingsBinder',
     'bind_settings',
+    'CellProfilerSymbol',
+    'CellProfilerSymbolKind',
+    'CellProfilerSymbolTable',
+    'ModuleArtifactContracts',
 ]
-

@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-25
 **Branch:** `benchmark-platform`
-**Status:** In progress; Phase 0 compiler contracts, Phase 1 runtime value validation, Phase 2 runtime value store/VFS access, and Phase 3 kind-aware materialization defaults are implemented
+**Status:** In progress; compiler contracts, runtime value validation, runtime value store/VFS access, kind-aware materialization defaults, compiler snapshots/sessions, native runtime values, and the CellProfiler symbol-table compiler are implemented
 **Primary goal:** make OpenHCS runtime state rich enough to support CellProfiler-style named images, object labels, measurements, relationships, and native feature outputs without introducing fake wrapper layers.
 
 ---
@@ -85,6 +85,9 @@ Completed refactor foundation:
 15. Artifact inputs and artifact materialization resolve through typed store records before loading VFS payloads; missing or ambiguous records fail loudly.
 16. Default semantic materialization is selected by `ArtifactKind` using existing writer-backed `MaterializationSpec` presets.
 17. Existing tests cover compiled plans, compiled function pattern behavior, artifact graph behavior, runtime artifact validation, runtime value store behavior, materialization store lookup, `StepResult`, and ZMQ integration smoke.
+18. `StepSnapshot` carries ObjectState-resolved compiler facts from the one-time resolved step pass.
+19. `CompilationSession` owns axis-scoped compiler state for snapshots, plans, context, ObjectState map, and orchestrator access.
+20. The converter now compiles CellProfiler `.cppipe` names into typed `ArtifactSpec` contracts before generated pipeline code is emitted.
 
 Known remaining weaknesses:
 
@@ -92,8 +95,8 @@ Known remaining weaknesses:
 2. `StepResult` still accepts `artifacts: Mapping[str, Any]`; normalization now validates values, but the public return type is still permissive for compatibility.
 3. Default materialization exists for `MEASUREMENTS`, `RELATIONSHIPS`, `TABLE`, and `METADATA`; `OBJECT_LABELS` and `IMAGE` intentionally fail loud until native schemas define their storage/materialization semantics.
 4. `ProcessingContext` does not yet own named image/object/measurement/relationship runtime state.
-5. Some compiler phases still mutate `FunctionStep.func` while preparing normalized patterns.
-6. `StepSnapshot` and `CompilationSession` are not implemented yet.
+5. Some compiler orchestration still lives in large top-level methods even though later phases can use `CompilationSession`.
+6. CellProfiler-generated functions do not yet consume the emitted artifact contracts at runtime; Pass 7 adds the thin runtime-state adapter boundary.
 7. `zarr_config` and filemanager payloads remain external boundary mappings, which is acceptable for now.
 
 ---
@@ -641,6 +644,15 @@ Acceptance criteria:
 2. `add_objects(..., "Nuclei")` compiles to an `OBJECT_LABELS` artifact output.
 3. Measurement writes compile to `MEASUREMENTS` artifact outputs.
 4. Generated OpenHCS pipelines do not require a mutable CellProfiler workspace for data routing.
+
+Current progress:
+
+1. Done: added `CellProfilerSymbolTable`, `CellProfilerSymbol`, and `ModuleArtifactContracts` as the converter SSOT for `.cppipe` name resolution.
+2. Done: source images with no producer are represented as external image inputs, while produced images/objects/measurements/relationships become runtime artifact contracts.
+3. Done: unresolved object inputs, duplicate producers, and incompatible symbol kinds fail at conversion time.
+4. Done: `PipelineGenerator` compiles the symbol table before emitting steps and writes a `CELLPROFILER_ARTIFACT_CONTRACTS` block into generated pipelines.
+5. Done: generated function bindings are module-instance-specific so repeated CellProfiler modules cannot alias one cached callable binding by accident.
+6. Remaining: runtime execution still needs a thin adapter/view so CellProfiler-style reads and writes delegate to OpenHCS runtime state instead of a mutable workspace.
 
 ### Pass 7: Thin Compatibility Adapter
 
