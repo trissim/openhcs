@@ -459,8 +459,7 @@ class PathPlanner:
         """Plan one step - no duplicate logic."""
         sid = i  # Use step index instead of step_id
 
-        input_dir = self._input_dir_for_step(snapshot, i)
-        output_dir = self._output_dir_for_step(snapshot, i, input_dir)
+        input_dir, output_dir = self._step_io_dirs(snapshot, i)
 
         declarations, execution_groups, func_pattern = self._prepare_step_declarations(
             snapshot,
@@ -504,29 +503,29 @@ class PathPlanner:
             self._input_conversion_plan_for_step(sid, input_dir),
         )
 
-        # PIPELINE_START steps read from original input, not zarr conversion
-        # (zarr conversion only applies to normal pipeline flow, not PIPELINE_START jumps)
+    def _step_io_dirs(self, snapshot: StepSnapshot, step_index: int) -> tuple[Path, Path]:
+        """Resolve read/write directories for one step."""
+        plan = self.plans.get(step_index)
+        starts_from_input = (
+            step_index == 0 or snapshot.input_source == InputSource.PIPELINE_START
+        )
 
-    def _input_dir_for_step(self, snapshot: StepSnapshot, step_index: int) -> Path:
-        """Resolve where this step reads from."""
-        if step_index in self.plans and self.plans[step_index].input_dir is not None:
-            return Path(self.plans[step_index].input_dir)
-        if step_index == 0 or snapshot.input_source == InputSource.PIPELINE_START:
-            return self.initial_input
-        return Path(self.plans[step_index - 1].output_dir)
+        if plan is not None and plan.input_dir is not None:
+            input_dir = Path(plan.input_dir)
+        elif starts_from_input:
+            # PIPELINE_START steps read from original input, not zarr conversion.
+            input_dir = self.initial_input
+        else:
+            input_dir = Path(self.plans[step_index - 1].output_dir)
 
-    def _output_dir_for_step(
-        self,
-        snapshot: StepSnapshot,
-        step_index: int,
-        work_in_place_dir: Path,
-    ) -> Path:
-        """Resolve where this step writes to."""
-        if step_index in self.plans and self.plans[step_index].output_dir is not None:
-            return Path(self.plans[step_index].output_dir)
-        if step_index == 0 or snapshot.input_source == InputSource.PIPELINE_START:
-            return self._build_output_path()
-        return work_in_place_dir
+        if plan is not None and plan.output_dir is not None:
+            output_dir = Path(plan.output_dir)
+        elif starts_from_input:
+            output_dir = self._build_output_path()
+        else:
+            output_dir = input_dir
+
+        return input_dir, output_dir
 
     @staticmethod
     def build_output_plate_root(plate_path: Path, path_config, is_per_step_materialization: bool = False) -> Path:
