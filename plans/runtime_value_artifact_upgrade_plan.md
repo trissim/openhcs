@@ -492,6 +492,14 @@ Acceptance criteria:
 2. Compiler phases use session/snapshot/plan objects rather than loose dicts and repeated attribute probes.
 3. Advisor oversized-hub findings in `compiler.py` reduce.
 
+Current progress:
+
+1. Done: added `CompilationSession` as the axis-scoped boundary tying together context, resolved steps, step snapshots, ObjectState map, orchestrator, and compiled plans.
+2. Done: zarr-store declaration, materialization flag planning, memory validation, and lazy-dataclass resolution can run through session-based entrypoints.
+3. Done: per-axis and per-sequential-combination compilation now constructs a session after step-plan initialization and routes later stages through it.
+4. Remaining: split `PipelineCompiler.compile_pipelines` into named stage functions so top-level orchestration stops owning every phase inline.
+5. Remaining: move step registration/resolution and enabled filtering into session/stage construction helpers.
+
 ### Pass 3: Contract Validation Cleanup
 
 Primary advisor pressure:

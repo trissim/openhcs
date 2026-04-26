@@ -51,7 +51,9 @@ from typing import (
     Callable,
     Dict,
     List,
+    Mapping,
     Optional,
+    Sequence,
     TYPE_CHECKING,
     Tuple,
     Union,
@@ -74,6 +76,7 @@ from openhcs.core.config import (
     VFSConfig,
 )
 from openhcs.core.pipeline.funcstep_contract_validator import FuncStepContractValidator
+from openhcs.core.pipeline.compilation_session import CompilationSession
 from openhcs.core.pipeline.materialization_flag_planner import (
     MaterializationFlagPlanner,
 )
@@ -698,31 +701,18 @@ class PipelineCompiler:
         context: ProcessingContext, steps_definition: List[AbstractStep], orchestrator
     ) -> None:
         """
-        Declare zarr store creation functions for runtime execution.
-
-        This method runs after path planning but before materialization flag planning
-        to declare which steps need zarr stores and provide the metadata needed
-        for runtime store creation.
-
-        Args:
-            context: ProcessingContext for current well
-            steps_definition: List of AbstractStep objects
-            orchestrator: Orchestrator instance for accessing all wells
+        Compatibility wrapper for callers that have not yet adopted
+        CompilationSession.
         """
-
         all_wells = orchestrator.get_component_keys(get_multiprocessing_axis())
-
-        # Access config from merged config (pipeline + global) for proper inheritance
         vfs_config = orchestrator.get_effective_config().vfs_config
 
         for step_index, step in enumerate(steps_definition):
             step_plan = context.step_plans[step_index]
-
             will_use_zarr = (
                 vfs_config.materialization_backend == MaterializationBackend.ZARR
                 and step_index == len(steps_definition) - 1
             )
-
             if will_use_zarr:
                 step_plan.zarr_config = {
                     "all_wells": all_wells,
@@ -735,8 +725,73 @@ class PipelineCompiler:
                 step_plan.zarr_config = None
 
     @staticmethod
+    def declare_zarr_stores_for_session(session: CompilationSession) -> None:
+        """
+        Declare zarr store creation functions for runtime execution.
+
+        This method runs after path planning but before materialization flag planning
+        to declare which steps need zarr stores and provide the metadata needed
+        for runtime store creation.
+
+        Args:
+            session: Axis-scoped compiler session.
+        """
+
+        context = session.context
+        orchestrator = session.orchestrator
+        all_wells = orchestrator.get_component_keys(get_multiprocessing_axis())
+
+        # Access config from merged config (pipeline + global) for proper inheritance
+        vfs_config = orchestrator.get_effective_config().vfs_config
+
+        for step_index, snapshot in enumerate(session.snapshots):
+            step_plan = session.plan(step_index)
+
+            will_use_zarr = (
+                vfs_config.materialization_backend == MaterializationBackend.ZARR
+                and step_index == len(session.steps) - 1
+            )
+
+            if will_use_zarr:
+                step_plan.zarr_config = {
+                    "all_wells": all_wells,
+                    "needs_initialization": True,
+                }
+                logger.debug(
+                    f"Step '{snapshot.name}' will use zarr backend for axis {context.axis_id}"
+                )
+            else:
+                step_plan.zarr_config = None
+
+    @staticmethod
     def plan_materialization_flags_for_context(
         context: ProcessingContext, steps_definition: List[AbstractStep], orchestrator
+    ) -> None:
+        PipelineCompiler._plan_materialization_flags(
+            context,
+            steps_definition,
+            orchestrator,
+            step_names=[step.name for step in steps_definition],
+        )
+
+    @staticmethod
+    def plan_materialization_flags_for_session(
+        session: CompilationSession,
+    ) -> None:
+        PipelineCompiler._plan_materialization_flags(
+            session.context,
+            session.steps,
+            session.orchestrator,
+            step_names=[snapshot.name for snapshot in session.snapshots],
+        )
+
+    @staticmethod
+    def _plan_materialization_flags(
+        context: ProcessingContext,
+        steps_definition: Sequence[AbstractStep],
+        orchestrator,
+        *,
+        step_names: Sequence[str],
     ) -> None:
         """
         Plans and injects materialization flags into context.step_plans
@@ -763,11 +818,11 @@ class PipelineCompiler:
         )
 
         # Post-check (optional, but good for ensuring contracts are met by the planner)
-        for step_index, step in enumerate(steps_definition):
+        for step_index, step_name in enumerate(step_names):
             if step_index not in context.step_plans:
                 # This should not happen if prepare_pipeline_flags guarantees plans for all steps
                 logger.error(
-                    f"Step {step.name} (index: {step_index}) missing from step_plans after materialization planning."
+                    f"Step {step_name} (index: {step_index}) missing from step_plans after materialization planning."
                 )
                 continue
 
@@ -780,7 +835,7 @@ class PipelineCompiler:
             ]
             if missing_keys:
                 logger.error(
-                    f"Materialization flag planning incomplete for step {step.name} (index: {step_index}). "
+                    f"Materialization flag planning incomplete for step {step_name} (index: {step_index}). "
                     f"Missing required keys: {missing_keys}."
                 )
 
@@ -920,6 +975,35 @@ class PipelineCompiler:
         step_state_map: Dict[int, "ObjectState"],
         orchestrator=None,
     ) -> None:
+        PipelineCompiler._validate_memory_contracts(
+            context=context,
+            steps_definition=steps_definition,
+            step_state_map=step_state_map,
+            orchestrator=orchestrator,
+            step_names=[step.name for step in steps_definition],
+        )
+
+    @staticmethod
+    def validate_memory_contracts_for_session(
+        session: CompilationSession,
+    ) -> None:
+        PipelineCompiler._validate_memory_contracts(
+            context=session.context,
+            steps_definition=session.steps,
+            step_state_map=session.step_state_map,
+            orchestrator=session.orchestrator,
+            step_names=[snapshot.name for snapshot in session.snapshots],
+        )
+
+    @staticmethod
+    def _validate_memory_contracts(
+        *,
+        context: ProcessingContext,
+        steps_definition: Sequence[AbstractStep],
+        step_state_map: Mapping[int, "ObjectState"],
+        orchestrator=None,
+        step_names: Sequence[str],
+    ) -> None:
         """
         Validates FunctionStep memory contracts, dict patterns, and adds memory type info to context.step_plans.
 
@@ -946,7 +1030,7 @@ class PipelineCompiler:
                 continue
             if step_index not in context.step_plans:
                 raise AssertionError(
-                    f"Memory validation requires a compiled plan for FunctionStep {step.name} (index: {step_index})."
+                    f"Memory validation requires a compiled plan for FunctionStep {step_names[step_index]} (index: {step_index})."
                 )
             step_plan = context.step_plans[step_index]
             missing_fields = [
@@ -968,7 +1052,7 @@ class PipelineCompiler:
 
                     if write_backend == "disk":
                         logger.debug(
-                            f"Step {step.name} has disk output, overriding output_memory_type to numpy"
+                            f"Step {step_names[step_index]} has disk output, overriding output_memory_type to numpy"
                         )
                         step_plan.output_memory_type = "numpy"
 
@@ -1030,6 +1114,17 @@ class PipelineCompiler:
         steps_definition: List[AbstractStep],
         step_state_map: Dict[int, "ObjectState"] = None,
     ) -> None:
+        step_count = len(steps_definition)
+        PipelineCompiler._resolve_lazy_dataclasses(step_count)
+
+    @staticmethod
+    def resolve_lazy_dataclasses_for_session(
+        session: CompilationSession,
+    ) -> None:
+        PipelineCompiler._resolve_lazy_dataclasses(len(session.steps))
+
+    @staticmethod
+    def _resolve_lazy_dataclasses(step_count: int) -> None:
         """
         Resolve all lazy dataclass instances in step plans to their base configurations.
 
@@ -1046,7 +1141,7 @@ class PipelineCompiler:
         # Configs are already resolved via ObjectState.to_object() in initialize_step_plans_for_context
         # No additional resolution needed - step plans already contain resolved configs
         logger.debug(
-            f"Step plans already resolved via ObjectState for {len(steps_definition)} steps"
+            f"Step plans already resolved via ObjectState for {step_count} steps"
         )
 
     @staticmethod
@@ -1391,12 +1486,23 @@ class PipelineCompiler:
                         is_zmq_execution=is_zmq_execution,
                     )
                 )
+                temp_session = CompilationSession.from_context(
+                    context=temp_context,
+                    steps=resolved_steps,
+                    orchestrator=orchestrator,
+                    step_state_map=step_state_map,
+                    snapshots=step_snapshots,
+                    metadata_writer=is_responsible,
+                    plate_path=orchestrator.plate_path,
+                )
 
                 # Validate sequential components compatibility BEFORE analyzing sequential mode
                 seq_config = temp_context.global_config.sequential_processing_config
                 if seq_config and seq_config.sequential_components:
                     PipelineCompiler.validate_sequential_components_compatibility(
-                        resolved_steps, seq_config.sequential_components, step_state_map
+                        temp_session.steps,
+                        seq_config.sequential_components,
+                        temp_session.step_state_map,
                     )
 
                 # Analyze sequential mode to get combinations (doesn't freeze context)
@@ -1443,14 +1549,23 @@ class PipelineCompiler:
                                 is_zmq_execution=is_zmq_execution,
                             )
                         )
-                        PipelineCompiler.declare_zarr_stores_for_context(
-                            context, resolved_steps, orchestrator
+                        session = CompilationSession.from_context(
+                            context=context,
+                            steps=resolved_steps,
+                            orchestrator=orchestrator,
+                            step_state_map=step_state_map,
+                            snapshots=step_snapshots,
+                            metadata_writer=is_responsible,
+                            plate_path=orchestrator.plate_path,
                         )
-                        PipelineCompiler.plan_materialization_flags_for_context(
-                            context, resolved_steps, orchestrator
+                        PipelineCompiler.declare_zarr_stores_for_session(
+                            session
                         )
-                        PipelineCompiler.validate_memory_contracts_for_context(
-                            context, resolved_steps, step_state_map, orchestrator
+                        PipelineCompiler.plan_materialization_flags_for_session(
+                            session
+                        )
+                        PipelineCompiler.validate_memory_contracts_for_session(
+                            session
                         )
                         PipelineCompiler.assign_gpu_resources_for_context(context)
 
@@ -1459,8 +1574,8 @@ class PipelineCompiler:
                                 context, True
                             )
 
-                        PipelineCompiler.resolve_lazy_dataclasses_for_context(
-                            context, orchestrator, resolved_steps, step_state_map
+                        PipelineCompiler.resolve_lazy_dataclasses_for_session(
+                            session
                         )
 
                         context.freeze()
@@ -1494,27 +1609,36 @@ class PipelineCompiler:
                             is_zmq_execution=is_zmq_execution,
                         )
                     )
-                    PipelineCompiler.declare_zarr_stores_for_context(
-                        context, resolved_steps, orchestrator
+                    session = CompilationSession.from_context(
+                        context=context,
+                        steps=resolved_steps,
+                        orchestrator=orchestrator,
+                        step_state_map=step_state_map,
+                        snapshots=step_snapshots,
+                        metadata_writer=is_responsible,
+                        plate_path=orchestrator.plate_path,
                     )
-                    PipelineCompiler.plan_materialization_flags_for_context(
-                        context, resolved_steps, orchestrator
+                    PipelineCompiler.declare_zarr_stores_for_session(
+                        session
+                    )
+                    PipelineCompiler.plan_materialization_flags_for_session(
+                        session
                     )
 
                     # Validate sequential components compatibility BEFORE analyzing sequential mode
                     seq_config = context.global_config.sequential_processing_config
                     if seq_config and seq_config.sequential_components:
                         PipelineCompiler.validate_sequential_components_compatibility(
-                            pipeline_definition,
+                            session.steps,
                             seq_config.sequential_components,
-                            step_state_map,
+                            session.step_state_map,
                         )
 
                     PipelineCompiler.analyze_pipeline_sequential_mode(
                         context, context.global_config, orchestrator
                     )
-                    PipelineCompiler.validate_memory_contracts_for_context(
-                        context, resolved_steps, step_state_map, orchestrator
+                    PipelineCompiler.validate_memory_contracts_for_session(
+                        session
                     )
                     PipelineCompiler.assign_gpu_resources_for_context(context)
 
@@ -1523,8 +1647,8 @@ class PipelineCompiler:
                             context, True
                         )
 
-                    PipelineCompiler.resolve_lazy_dataclasses_for_context(
-                        context, orchestrator, resolved_steps, step_state_map
+                    PipelineCompiler.resolve_lazy_dataclasses_for_session(
+                        session
                     )
 
                     context.freeze()
