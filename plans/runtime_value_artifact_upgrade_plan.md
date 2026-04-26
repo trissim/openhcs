@@ -238,8 +238,9 @@ Initial mapping:
 Rules:
 
 1. Explicit `MaterializationSpec` still wins.
-2. If no explicit materializer exists, choose by `ArtifactKind`.
-3. If no default exists for a kind, fail loud with the artifact name and invocation key.
+2. If no explicit materializer exists for a semantic kind, choose an existing writer-backed `MaterializationSpec` by `ArtifactKind`.
+3. If no default exists for a semantic kind, fail loud with the artifact name and invocation key.
+4. `SPECIAL` remains explicit-only for legacy side-channel artifacts.
 
 ---
 
@@ -339,19 +340,21 @@ Current progress:
 4. Done: artifact inputs load from VFS through the typed `RuntimeValueStore` record; missing or ambiguous records fail loudly instead of falling back to direct VFS reads.
 5. Done: explicit artifact materialization loads VFS payloads through typed `RuntimeValueStore` records and fails loudly when typed metadata or VFS payloads are missing.
 6. Done: `RuntimeArtifactLocation` and `RuntimeArtifactQuery` collapse repeated path/backend/name/kind/axis matching into the store.
-7. Remaining: default materialization still needs an `ArtifactKind` registry.
+7. Done: default semantic materialization reuses existing `MaterializationSpec`, `CsvOptions`, `JsonOptions`, and presets instead of creating new writer infrastructure.
+8. Remaining: extend default policy only after native schemas clarify `OBJECT_LABELS` and `IMAGE` semantics.
 
 ### Phase 3: Kind-Aware Materialization
 
-Goal: materialization follows artifact kind and schema rather than only ad hoc materializer options.
+Goal: materialization follows artifact kind and schema by selecting existing writer-backed `MaterializationSpec` presets, rather than creating parallel materialization infrastructure.
 
 Tasks:
 
-1. Add a default materializer registry keyed by `ArtifactKind`.
-2. Route `materialize_artifact_outputs` through the registry when `ArtifactOutputPlan.materialization` is absent.
-3. Add default CSV materialization for `MEASUREMENTS`, `RELATIONSHIPS`, and `TABLE`.
-4. Add default JSON materialization for `METADATA`.
+1. Add a default materialization policy keyed by `ArtifactKind`.
+2. Route `materialize_artifact_outputs` through the policy when `ArtifactOutputPlan.materialization` is absent.
+3. Reuse existing `csv_only(...)` for `MEASUREMENTS`, `RELATIONSHIPS`, and `TABLE`.
+4. Reuse existing `json_only(...)` for `METADATA`.
 5. Preserve existing explicit `MaterializationSpec` behavior.
+6. Keep `SPECIAL` explicit-only.
 
 Acceptance criteria:
 
@@ -364,7 +367,11 @@ Current progress:
 
 1. Done: explicit `MaterializationSpec` outputs are resolved through typed runtime-store records before loading VFS payloads.
 2. Done: materialization no longer silently skips planned artifacts with missing typed runtime metadata.
-3. Remaining: add the default materializer registry keyed by `ArtifactKind`.
+3. Done: added a thin `ArtifactKind` policy layer over existing materialization presets.
+4. Done: `MEASUREMENTS`, `RELATIONSHIPS`, and `TABLE` default to existing CSV materialization.
+5. Done: `METADATA` defaults to existing JSON materialization.
+6. Done: `SPECIAL` remains explicit-only.
+7. Remaining: decide `OBJECT_LABELS` and `IMAGE` defaults after native runtime schemas define label/image semantics.
 
 ---
 
@@ -492,7 +499,7 @@ Primary runtime pressure:
 
 Goal:
 
-Make materialization dispatch by `ArtifactKind` when no explicit `MaterializationSpec` is declared.
+Make materialization dispatch by `ArtifactKind` when no explicit `MaterializationSpec` is declared, by selecting existing writer-backed presets rather than creating another materialization stack.
 
 Source-of-truth type:
 
@@ -505,13 +512,13 @@ class ArtifactMaterializationRule:
 
 Tasks:
 
-1. Add an `ArtifactKind` materialization registry.
+1. Add an `ArtifactKind` materialization policy.
 2. Preserve explicit `ArtifactOutputPlan.materialization` precedence.
 3. Add defaults:
-   - `MEASUREMENTS`: CSV
-   - `RELATIONSHIPS`: CSV
-   - `TABLE`: CSV initially
-   - `METADATA`: JSON
+   - `MEASUREMENTS`: existing `csv_only(...)`
+   - `RELATIONSHIPS`: existing `csv_only(...)`
+   - `TABLE`: existing `csv_only(...)`
+   - `METADATA`: existing `json_only(...)`
    - `OBJECT_LABELS`: fail loud until label writer is defined, or add an explicit label-image writer if scope is clear
    - `IMAGE`: fail loud unless image materialization policy is explicit
 4. Route `materialize_artifact_outputs` through `RuntimeValue` schema plus registry.

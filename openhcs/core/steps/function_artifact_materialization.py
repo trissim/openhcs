@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from openhcs.constants.constants import Backend
-from openhcs.core.artifacts import ArtifactOutputPlan
+from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.artifact_materialization_policy import (
+    resolve_artifact_materialization_spec,
+)
 from openhcs.core.runtime_stores import (
     RuntimeArtifactLocation,
     RuntimeArtifactQuery,
@@ -228,8 +231,7 @@ def materialize_artifact_outputs(
     filemanager._materialization_context = {"images_dir": images_dir}
 
     for output_key, output_plan in plan.artifact_outputs.items():
-        mat_spec = output_plan.materialization
-        if not mat_spec:
+        if output_plan.materialization is None and output_plan.kind is ArtifactKind.SPECIAL:
             continue
 
         group_keys = output_plan.group_keys or [None]
@@ -246,6 +248,12 @@ def materialize_artifact_outputs(
                 Path(record.path).parent, record.backend
             )
             data = filemanager.load(record.path, record.backend)
+            mat_spec = resolve_artifact_materialization_spec(
+                output_plan,
+                record.value,
+            )
+            if mat_spec is None:
+                continue
 
             filename = _build_analysis_filename(
                 output_key, plan, dict_key, context

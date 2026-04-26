@@ -3,12 +3,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from openhcs.core.artifacts import ArtifactOutputPlan
+from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_values import normalize_artifact_value
 from openhcs.core.steps.function_artifact_materialization import (
     materialize_artifact_outputs,
 )
+from openhcs.processing.materialization import CsvOptions, JsonOptions
 
 
 class FileManagerStub:
@@ -113,4 +114,124 @@ def test_materialize_artifact_outputs_requires_vfs_payload_for_store_record():
     )
 
     with pytest.raises(RuntimeError, match="VFS payload is missing"):
+        materialize_artifact_outputs(filemanager, _plan(output_plan), "disk", context)
+
+
+def test_materialize_artifact_outputs_defaults_measurements_to_existing_csv_spec(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="measurements",
+        path="/memory/measurements.pkl",
+        kind=ArtifactKind.MEASUREMENTS,
+    )
+    filemanager = FileManagerStub()
+    filemanager.memory[output_plan.path] = [{"object_id": 1, "area": 42}]
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(
+            output_plan,
+            [{"object_id": 1, "area": 42}],
+            axis_id="A01",
+        ),
+        path=output_plan.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(spec, data, path, *_args, **_kwargs):
+        materialized.append((spec, data, path))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(filemanager, _plan(output_plan), "disk", context)
+
+    spec, data, path = materialized[0]
+    assert isinstance(spec.outputs[0], CsvOptions)
+    assert spec.outputs[0].filename_suffix == ".csv"
+    assert data == [{"object_id": 1, "area": 42}]
+    assert path == "/analysis/A01_measurements_step7.roi.zip"
+
+
+def test_materialize_artifact_outputs_defaults_metadata_to_existing_json_spec(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="metadata",
+        path="/memory/metadata.pkl",
+        kind=ArtifactKind.METADATA,
+    )
+    filemanager = FileManagerStub()
+    filemanager.memory[output_plan.path] = {"plate": "A"}
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(output_plan, {"plate": "A"}, axis_id="A01"),
+        path=output_plan.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(spec, data, path, *_args, **_kwargs):
+        materialized.append((spec, data, path))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(filemanager, _plan(output_plan), "disk", context)
+
+    spec, data, _path = materialized[0]
+    assert isinstance(spec.outputs[0], JsonOptions)
+    assert data == {"plate": "A"}
+
+
+def test_materialize_artifact_outputs_skips_special_without_explicit_spec(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="positions",
+        path="/memory/positions.pkl",
+        kind=ArtifactKind.SPECIAL,
+    )
+    filemanager = FileManagerStub()
+    filemanager.memory[output_plan.path] = {"x": 1}
+    context = _context(filemanager)
+    materialized = []
+
+    def fake_materialize(*args, **kwargs):
+        materialized.append((args, kwargs))
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(filemanager, _plan(output_plan), "disk", context)
+
+    assert materialized == []
+
+
+def test_materialize_artifact_outputs_fails_for_semantic_kind_without_default():
+    output_plan = ArtifactOutputPlan(
+        name="labels",
+        path="/memory/labels.pkl",
+        kind=ArtifactKind.OBJECT_LABELS,
+    )
+    array_like = SimpleNamespace(shape=(2, 2))
+    filemanager = FileManagerStub()
+    filemanager.memory[output_plan.path] = array_like
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(output_plan, array_like, axis_id="A01"),
+        path=output_plan.path,
+        backend="memory",
+    )
+
+    with pytest.raises(ValueError, match="No default materialization registered"):
         materialize_artifact_outputs(filemanager, _plan(output_plan), "disk", context)
