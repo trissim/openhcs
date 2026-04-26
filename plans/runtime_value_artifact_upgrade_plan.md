@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-25
 **Branch:** `benchmark-platform`
-**Status:** In progress; Phase 0 compiler contracts, Phase 1 runtime value validation, and Phase 2A runtime value store are implemented
+**Status:** In progress; Phase 0 compiler contracts, Phase 1 runtime value validation, and Phase 2 runtime value store/VFS access are implemented
 **Primary goal:** make OpenHCS runtime state rich enough to support CellProfiler-style named images, object labels, measurements, relationships, and native feature outputs without introducing fake wrapper layers.
 
 ---
@@ -80,14 +80,16 @@ Completed refactor foundation:
 10. `ArtifactOutputPlan.kind` now preserves declared `ArtifactSpec.kind`, and producer/consumer kind mismatches fail during path planning.
 11. `RuntimeValue`, `RuntimeValueSchema`, and `RuntimeStoragePolicy` exist as typed runtime artifact values with validation invariants.
 12. Runtime normalizes and validates `StepResult` and tuple artifact outputs against compiled `ArtifactOutputPlan.kind` before saving to the memory VFS.
-13. `RuntimeValueStore` is attached to `ProcessingContext` and records validated runtime values by typed artifact key while preserving raw VFS persistence.
-14. Existing tests cover compiled plans, compiled function pattern behavior, artifact graph behavior, runtime artifact validation, runtime value store behavior, `StepResult`, and ZMQ integration smoke.
+13. `RuntimeValueStore` is attached to `ProcessingContext` and records validated runtime values by typed artifact key while preserving VFS as the payload storage boundary.
+14. `RuntimeArtifactLocation` and `RuntimeArtifactQuery` are the SSOT for VFS-backed runtime artifact lookup.
+15. Artifact inputs and explicit artifact materialization resolve through typed store records before loading VFS payloads; missing or ambiguous records fail loudly.
+16. Existing tests cover compiled plans, compiled function pattern behavior, artifact graph behavior, runtime artifact validation, runtime value store behavior, materialization store lookup, `StepResult`, and ZMQ integration smoke.
 
 Known remaining weaknesses:
 
-1. Runtime values are recorded in `RuntimeValueStore`, but raw memory VFS is still the persistence boundary used for artifact inputs and materialization.
+1. VFS is intentionally still the payload persistence boundary, but artifact reads now require typed runtime-store records.
 2. `StepResult` still accepts `artifacts: Mapping[str, Any]`; normalization now validates values, but the public return type is still permissive for compatibility.
-3. Materialization is mostly path/materializer driven, not kind/schema driven.
+3. Materialization now requires typed store metadata for explicit materializers, but default materialization is not yet selected by `ArtifactKind`.
 4. `ProcessingContext` does not yet own named image/object/measurement/relationship runtime state.
 5. Some compiler phases still mutate `FunctionStep.func` while preparing normalized patterns.
 6. `StepSnapshot` and `CompilationSession` are not implemented yet.
@@ -335,7 +337,9 @@ Current progress:
 2. Done: `_save_artifact_value` records validated `RuntimeValue` objects before saving raw payloads to memory VFS.
 3. Done: artifact values are discoverable by typed key and by semantic filters such as name, kind, axis, and group.
 4. Done: artifact inputs load from VFS through the typed `RuntimeValueStore` record; missing or ambiguous records fail loudly instead of falling back to direct VFS reads.
-5. Remaining: materialization still reads raw VFS payloads; the next materialization slice should require typed store metadata for planned artifacts and fail loudly if it is missing.
+5. Done: explicit artifact materialization loads VFS payloads through typed `RuntimeValueStore` records and fails loudly when typed metadata or VFS payloads are missing.
+6. Done: `RuntimeArtifactLocation` and `RuntimeArtifactQuery` collapse repeated path/backend/name/kind/axis matching into the store.
+7. Remaining: default materialization still needs an `ArtifactKind` registry.
 
 ### Phase 3: Kind-Aware Materialization
 
@@ -355,6 +359,12 @@ Acceptance criteria:
 2. Relationship artifacts materialize to table output.
 3. Metadata artifacts materialize to JSON.
 4. Existing ROI/materializer tests still pass.
+
+Current progress:
+
+1. Done: explicit `MaterializationSpec` outputs are resolved through typed runtime-store records before loading VFS payloads.
+2. Done: materialization no longer silently skips planned artifacts with missing typed runtime metadata.
+3. Remaining: add the default materializer registry keyed by `ArtifactKind`.
 
 ### Phase 4: Native Object and Measurement Concepts
 

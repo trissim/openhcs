@@ -8,6 +8,12 @@ from typing import Any, Mapping
 
 from openhcs.constants.constants import Backend
 from openhcs.core.artifacts import ArtifactOutputPlan
+from openhcs.core.runtime_stores import (
+    RuntimeArtifactLocation,
+    RuntimeArtifactQuery,
+    StoredRuntimeValue,
+    require_runtime_value_store,
+)
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 
 
@@ -162,6 +168,40 @@ def _resolve_group_artifact_path(
     return PipelinePathPlanner.build_dict_pattern_path(output_plan.path, dict_key)
 
 
+def _resolve_materialization_record(
+    *,
+    context: Any,
+    plan: FunctionStepExecutionPlan,
+    output_plan: ArtifactOutputPlan,
+    dict_key: str | None,
+) -> StoredRuntimeValue:
+    """Resolve the typed runtime record for one planned artifact materialization."""
+    channel_path = _resolve_group_artifact_path(output_plan, dict_key)
+    store = require_runtime_value_store(
+        context,
+        owner_name="context",
+    )
+    query = RuntimeArtifactQuery.by_location(
+        name=output_plan.name,
+        kind=output_plan.kind,
+        axis_id=plan.axis_id,
+        location=RuntimeArtifactLocation(
+            path=channel_path,
+            backend=Backend.MEMORY.value,
+        ),
+    )
+    record = store.resolve(
+        query,
+        purpose="planned artifact materialization",
+    )
+    if not context.filemanager.exists(record.path, record.backend):
+        raise RuntimeError(
+            f"RuntimeValueStore has record for artifact '{output_plan.name}' at "
+            f"'{record.path}' ({record.backend}), but the VFS payload is missing."
+        )
+    return record
+
+
 def materialize_artifact_outputs(
     filemanager: Any,
     plan: FunctionStepExecutionPlan,
@@ -195,20 +235,17 @@ def materialize_artifact_outputs(
         group_keys = output_plan.group_keys or [None]
 
         for dict_key in group_keys:
-            channel_path = _resolve_group_artifact_path(output_plan, dict_key)
-            if not filemanager.exists(channel_path, Backend.MEMORY.value):
-                logger.info(
-                    "Skipping artifact output '%s' for group '%s' - no data saved at %s",
-                    output_key,
-                    dict_key,
-                    channel_path,
-                )
-                continue
+            record = _resolve_materialization_record(
+                context=context,
+                plan=plan,
+                output_plan=output_plan,
+                dict_key=dict_key,
+            )
 
             filemanager.ensure_directory(
-                Path(channel_path).parent, Backend.MEMORY.value
+                Path(record.path).parent, record.backend
             )
-            data = filemanager.load(channel_path, Backend.MEMORY.value)
+            data = filemanager.load(record.path, record.backend)
 
             filename = _build_analysis_filename(
                 output_key, plan, dict_key, context

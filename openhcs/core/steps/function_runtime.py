@@ -19,6 +19,11 @@ from openhcs.core.function_patterns import (
     CompiledFunctionInvocation,
 )
 from openhcs.core.memory import convert_memory, stack_slices, unstack_slices
+from openhcs.core.runtime_stores import (
+    RuntimeArtifactLocation,
+    RuntimeArtifactQuery,
+    require_runtime_value_store,
+)
 from openhcs.core.runtime_values import normalize_artifact_value
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 
@@ -108,13 +113,15 @@ def _save_artifact_value(
 
     parent_dir = str(Path(vfs_path).parent)
     context.filemanager.ensure_directory(parent_dir, Backend.MEMORY.value)
-    runtime_value_store = getattr(context, "runtime_value_store", None)
-    if runtime_value_store is not None:
-        runtime_value_store.record(
-            runtime_value,
-            path=vfs_path,
-            backend=Backend.MEMORY.value,
-        )
+    runtime_value_store = require_runtime_value_store(
+        context,
+        owner_name="ProcessingContext",
+    )
+    runtime_value_store.record(
+        runtime_value,
+        path=vfs_path,
+        backend=Backend.MEMORY.value,
+    )
     context.filemanager.save(runtime_value.data, vfs_path, Backend.MEMORY.value)
 
 
@@ -130,66 +137,49 @@ def _load_artifact_input_value(
     input_plan: ArtifactInputPlan,
 ) -> Any:
     """Load an artifact input from VFS through its typed runtime store record."""
-    store = getattr(context, "runtime_value_store", None)
-    if store is None:
-        raise RuntimeError(
-            f"RuntimeValueStore is required for planned artifact input "
-            f"'{input_plan.name}'. Direct VFS fallback is disabled."
-        )
-
+    store = require_runtime_value_store(
+        context,
+        owner_name="ProcessingContext",
+    )
     axis_id = _require_axis_id(context)
-    records = _find_artifact_input_records(
-        store,
+    query = _artifact_input_query(
         input_plan=input_plan,
         axis_id=axis_id,
     )
-    if not records:
-        raise RuntimeError(
-            f"Missing RuntimeValueStore record for planned artifact input "
-            f"'{input_plan.name}' at '{input_plan.path}' ({Backend.MEMORY.value}). "
-            "Refusing direct VFS fallback because this indicates a lost typed "
-            "runtime contract or an artifact not produced through the runtime."
+    try:
+        record = store.resolve(
+            query,
+            purpose="planned artifact input",
         )
-    if len(records) > 1:
+    except RuntimeError as exc:
         raise RuntimeError(
-            f"Ambiguous RuntimeValueStore records for planned artifact input "
-            f"'{input_plan.name}' at '{input_plan.path}': {records!r}."
-        )
-
-    record = records[0]
-    if record.value.kind is not input_plan.kind:
-        raise RuntimeError(
-            f"RuntimeValueStore record for artifact input '{input_plan.name}' has "
-            f"kind {record.value.kind.value}, expected {input_plan.kind.value}."
-        )
-
+            f"{exc} Refusing direct VFS fallback because this indicates a lost "
+            "typed runtime contract or an artifact not produced through the runtime."
+        ) from exc
     return context.filemanager.load(record.path, record.backend)
 
 
-def _find_artifact_input_records(
-    store: Any,
+def _artifact_input_query(
     *,
     input_plan: ArtifactInputPlan,
     axis_id: str,
-) -> tuple[Any, ...]:
+) -> RuntimeArtifactQuery:
     if input_plan.path != "self":
-        return tuple(
-            record
-            for record in store.find_by_location(
+        return RuntimeArtifactQuery.by_location(
+            name=input_plan.name,
+            kind=input_plan.kind,
+            axis_id=axis_id,
+            location=RuntimeArtifactLocation(
                 path=input_plan.path,
                 backend=Backend.MEMORY.value,
-            )
-            if record.key.name == input_plan.name
-            and record.key.kind is input_plan.kind
-            and record.key.scope.axis_id == axis_id
+            ),
         )
 
-    group_key = _single_input_group_key(input_plan)
-    return store.find(
+    return RuntimeArtifactQuery.by_group(
         name=input_plan.name,
         kind=input_plan.kind,
         axis_id=axis_id,
-        group_key=group_key,
+        group_key=_single_input_group_key(input_plan),
     )
 
 

@@ -4,13 +4,109 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any
 
 from openhcs.core.artifacts import ArtifactKey, ArtifactKind
 from openhcs.core.runtime_values import RuntimeValue
 
 
-_UNSET = object()
+def require_runtime_value_store(
+    owner: object,
+    *,
+    owner_name: str,
+) -> "RuntimeValueStore":
+    """Return the runtime value store attached to an execution owner."""
+    store = getattr(owner, "runtime_value_store", None)
+    if store is None:
+        raise RuntimeError(f"{owner_name}.runtime_value_store is required.")
+    if not isinstance(store, RuntimeValueStore):
+        raise TypeError(
+            f"{owner_name}.runtime_value_store must be RuntimeValueStore, "
+            f"got {type(store).__name__}."
+        )
+    return store
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArtifactLocation:
+    """VFS location for one persisted runtime artifact payload."""
+
+    path: str
+    backend: str
+
+    def __post_init__(self) -> None:
+        if not self.path:
+            raise ValueError("RuntimeArtifactLocation.path cannot be empty.")
+        if not self.backend:
+            raise ValueError("RuntimeArtifactLocation.backend cannot be empty.")
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArtifactQuery:
+    """Typed lookup for one planned runtime artifact record."""
+
+    name: str
+    kind: ArtifactKind
+    axis_id: str
+    location: RuntimeArtifactLocation | None = None
+    group_key: str | None = None
+    match_group: bool = False
+
+    @classmethod
+    def by_location(
+        cls,
+        *,
+        name: str,
+        kind: ArtifactKind,
+        axis_id: str,
+        location: RuntimeArtifactLocation,
+    ) -> "RuntimeArtifactQuery":
+        return cls(
+            name=name,
+            kind=kind,
+            axis_id=axis_id,
+            location=location,
+        )
+
+    @classmethod
+    def by_group(
+        cls,
+        *,
+        name: str,
+        kind: ArtifactKind,
+        axis_id: str,
+        group_key: str | None,
+    ) -> "RuntimeArtifactQuery":
+        return cls(
+            name=name,
+            kind=kind,
+            axis_id=axis_id,
+            group_key=group_key,
+            match_group=True,
+        )
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("RuntimeArtifactQuery.name cannot be empty.")
+        if not self.axis_id:
+            raise ValueError("RuntimeArtifactQuery.axis_id cannot be empty.")
+        if self.location is None and not self.match_group:
+            raise ValueError(
+                "RuntimeArtifactQuery must specify a location or an exact group."
+            )
+
+    def matches(self, record: "StoredRuntimeValue") -> bool:
+        key = record.key
+        if key.name != self.name:
+            return False
+        if key.kind is not self.kind:
+            return False
+        if key.scope.axis_id != self.axis_id:
+            return False
+        if self.location is not None and record.location != self.location:
+            return False
+        if self.match_group and key.scope.group_key != self.group_key:
+            return False
+        return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,18 +114,19 @@ class StoredRuntimeValue:
     """A validated runtime value with its persistence boundary."""
 
     value: RuntimeValue
-    path: str
-    backend: str
-
-    def __post_init__(self) -> None:
-        if not self.path:
-            raise ValueError("StoredRuntimeValue.path cannot be empty.")
-        if not self.backend:
-            raise ValueError("StoredRuntimeValue.backend cannot be empty.")
+    location: RuntimeArtifactLocation
 
     @property
     def key(self) -> ArtifactKey:
         return self.value.key
+
+    @property
+    def path(self) -> str:
+        return self.location.path
+
+    @property
+    def backend(self) -> str:
+        return self.location.backend
 
 
 class RuntimeValueStore:
@@ -48,12 +145,38 @@ class RuntimeValueStore:
         backend: str,
     ) -> StoredRuntimeValue:
         """Record a validated value and its persistence location."""
-        record = StoredRuntimeValue(value=value, path=path, backend=backend)
+        record = StoredRuntimeValue(
+            value=value,
+            location=RuntimeArtifactLocation(path=path, backend=backend),
+        )
         existing = self._records_by_key.get(value.key)
         if existing is not None:
             _validate_overwrite(existing, record)
         self._records_by_key[value.key] = record
         return record
+
+    def resolve(
+        self,
+        query: RuntimeArtifactQuery,
+        *,
+        purpose: str,
+    ) -> StoredRuntimeValue:
+        """Resolve exactly one runtime artifact record for a planned operation."""
+        records = tuple(
+            record for record in self._records_by_key.values() if query.matches(record)
+        )
+        if not records:
+            raise RuntimeError(
+                f"Missing RuntimeValueStore record for {purpose} "
+                f"'{query.name}' ({query.kind.value}) on axis '{query.axis_id}'."
+            )
+        if len(records) > 1:
+            raise RuntimeError(
+                f"Ambiguous RuntimeValueStore records for {purpose} "
+                f"'{query.name}' ({query.kind.value}) on axis '{query.axis_id}': "
+                f"{records!r}."
+            )
+        return records[0]
 
     def get(self, key: ArtifactKey) -> StoredRuntimeValue:
         """Return one stored value by exact typed artifact key."""
@@ -68,7 +191,8 @@ class RuntimeValueStore:
         name: str | None = None,
         kind: ArtifactKind | None = None,
         axis_id: str | None = None,
-        group_key: Any = _UNSET,
+        group_key: str | None = None,
+        match_group: bool = False,
     ) -> tuple[StoredRuntimeValue, ...]:
         """Find stored values by semantic identity fields."""
         records: list[StoredRuntimeValue] = []
@@ -80,7 +204,7 @@ class RuntimeValueStore:
                 continue
             if axis_id is not None and key.scope.axis_id != axis_id:
                 continue
-            if group_key is not _UNSET and key.scope.group_key != group_key:
+            if match_group and key.scope.group_key != group_key:
                 continue
             records.append(record)
         return tuple(records)
@@ -92,10 +216,11 @@ class RuntimeValueStore:
         backend: str,
     ) -> tuple[StoredRuntimeValue, ...]:
         """Find stored values persisted at a VFS location."""
+        location = RuntimeArtifactLocation(path=path, backend=backend)
         return tuple(
             record
             for record in self._records_by_key.values()
-            if record.path == path and record.backend == backend
+            if record.location == location
         )
 
     def keys(self) -> tuple[ArtifactKey, ...]:
@@ -114,13 +239,15 @@ def _validate_overwrite(
     existing: StoredRuntimeValue,
     incoming: StoredRuntimeValue,
 ) -> None:
-    if existing.backend != incoming.backend:
+    if existing.location.backend != incoming.location.backend:
         raise ValueError(
             f"Runtime artifact '{incoming.key.name}' already exists in backend "
-            f"'{existing.backend}', cannot overwrite from '{incoming.backend}'."
+            f"'{existing.location.backend}', cannot overwrite from "
+            f"'{incoming.location.backend}'."
         )
-    if existing.path != incoming.path:
+    if existing.location.path != incoming.location.path:
         raise ValueError(
             f"Runtime artifact '{incoming.key.name}' already exists at "
-            f"'{existing.path}', cannot overwrite at '{incoming.path}'."
+            f"'{existing.location.path}', cannot overwrite at "
+            f"'{incoming.location.path}'."
         )

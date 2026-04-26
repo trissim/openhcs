@@ -35,12 +35,13 @@ def test_runtime_value_store_records_and_finds_by_typed_identity():
         kind=ArtifactKind.MEASUREMENTS,
         axis_id="A01",
         group_key="DAPI",
+        match_group=True,
     ) == (record,)
     assert store.find_by_location(
         path="/memory/measurements.pkl",
         backend="memory",
     ) == (record,)
-    assert store.find(group_key="GFP") == ()
+    assert store.find(group_key="GFP", match_group=True) == ()
 
 
 def test_runtime_value_store_rejects_same_key_different_path():
