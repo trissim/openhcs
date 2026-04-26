@@ -676,6 +676,15 @@ Acceptance criteria:
 2. All values produced through the adapter are visible as OpenHCS `RuntimeValue`s.
 3. Adapter state is inspectable through OpenHCS artifacts and schemas.
 
+Current progress:
+
+1. Done: added `CellProfilerRuntimeAdapter` as a thin view over `RuntimeValueStore`, compiled `ArtifactOutputPlan`s, and the filemanager VFS boundary.
+2. Done: adapter writes require compiled output plans and fail if no filemanager is available, avoiding store-only/VFS-missing artifacts.
+3. Done: adapter reads resolve through `RuntimeValueStore` by artifact name, kind, axis, and optional group.
+4. Done: object, measurement, relationship, and image values use native OpenHCS runtime value types rather than adapter-owned dictionaries.
+5. Done: measurement writes require referenced object labels to exist; relationship writes require parent and child object labels to exist.
+6. Remaining: wire generated CellProfiler module calls to use this adapter during real pipeline execution.
+
 ### Deferred Low-Value Advisor Items
 
 These should not be prioritized unless they become blockers:
