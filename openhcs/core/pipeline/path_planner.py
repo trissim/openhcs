@@ -29,8 +29,11 @@ from openhcs.core.pipeline.artifact_planning import (
     ArtifactGraph,
     extract_artifact_declarations,
 )
+from openhcs.core.pipeline.step_snapshot import (
+    StepSnapshot,
+    build_step_snapshots,
+)
 from openhcs.core.steps.abstract import AbstractStep
-from openhcs.core.steps.function_step import FunctionStep
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +55,13 @@ class ArtifactPlanMaps:
 class PathPlanner:
     """Minimal path planner with zero duplication."""
 
-    def __init__(self, context: ProcessingContext, pipeline_config, orchestrator=None, step_state_map=None):
+    def __init__(
+        self,
+        context: ProcessingContext,
+        pipeline_config,
+        orchestrator=None,
+        step_snapshots: tuple[StepSnapshot, ...] = (),
+    ):
         self.ctx = context
         # CRITICAL: pipeline_config is now the merged config (GlobalPipelineConfig) from context.global_config
         # This ensures proper inheritance from global config without needing field-specific code
@@ -61,7 +70,10 @@ class PathPlanner:
         self.plans: dict[int, CompiledStepPlan] = context.step_plans
         self.declared = {}  # Tracks artifact outputs
         self.orchestrator = orchestrator
-        self.step_state_map = step_state_map  # For resolving lazy dataclass attributes via ObjectState
+        self.step_snapshots = tuple(step_snapshots)
+        self.snapshots_by_index = {
+            snapshot.index: snapshot for snapshot in self.step_snapshots
+        }
 
         # Initial input determination (once)
         self.initial_input = Path(context.input_dir)
@@ -73,37 +85,25 @@ class PathPlanner:
             return None
         return str(key)
 
-    def _get_execution_groups(self, step: AbstractStep, step_index: int) -> List[Optional[str]]:
+    def _get_execution_groups(self, snapshot: StepSnapshot) -> List[Optional[str]]:
         """Determine which component groups this step will execute for."""
         from openhcs.constants import GroupBy
 
-        if not isinstance(step, FunctionStep):
+        if not snapshot.is_function_step:
             return [None]
 
-        func_pattern = step.func
+        func_pattern = snapshot.func
         if isinstance(func_pattern, dict):
             result = [self._normalize_group_key(k) for k in func_pattern.keys()]
             logger.debug("Dict function pattern groups: %s", result)
             return result
 
-        # Resolve group_by via ObjectState to handle lazy dataclasses
-        group_by = None
-        if self.step_state_map and step_index in self.step_state_map:
-            step_state = self.step_state_map[step_index]
-            group_by = step_state.get_saved_resolved_value("processing_config.group_by")
-            logger.debug(
-                "Resolved group_by for step %s via ObjectState: %s",
-                getattr(step, "name", "unknown"),
-                group_by,
-            )
-        else:
-            # Fallback to direct access (shouldn't happen in normal compilation)
-            group_by = getattr(step.processing_config, "group_by", None)
-            logger.warning(
-                "Resolved group_by for step %s directly because no ObjectState was available: %s",
-                getattr(step, "name", "unknown"),
-                group_by,
-            )
+        group_by = snapshot.group_by
+        logger.debug(
+            "Resolved group_by for step %s via StepSnapshot: %s",
+            snapshot.name,
+            group_by,
+        )
 
         if not group_by or group_by == GroupBy.NONE or getattr(group_by, "value", None) is None:
             logger.debug("No group_by configured; using a single ungrouped execution.")
@@ -111,8 +111,8 @@ class PathPlanner:
 
         if self.orchestrator is None:
             logger.warning(
-                "PathPlanner: orchestrator not available; "
-                "cannot resolve group_by component keys for artifact planning."
+                "PathPlanner: orchestrator not available; cannot resolve "
+                "group_by component keys for artifact planning."
             )
             return [None]
 
@@ -172,9 +172,15 @@ class PathPlanner:
 
     def plan(self, pipeline: List[AbstractStep]) -> dict[int, CompiledStepPlan]:
         """Plan all paths with zero duplication."""
-        self._prime_future_artifact_inputs(pipeline)
-        for i, step in enumerate(pipeline):
-            self._plan_step(step, i, pipeline)
+        if len(self.step_snapshots) != len(pipeline):
+            raise ValueError(
+                "PathPlanner requires one StepSnapshot per pipeline step: "
+                f"{len(self.step_snapshots)} snapshots for {len(pipeline)} steps."
+            )
+
+        self._prime_future_artifact_inputs()
+        for i, snapshot in enumerate(self.step_snapshots):
+            self._plan_step(snapshot, i, pipeline)
 
         self._validate(pipeline)
 
@@ -187,17 +193,23 @@ class PathPlanner:
 
         return self.plans
 
-    def _prime_future_artifact_inputs(self, pipeline: List[AbstractStep]) -> None:
+    def _prime_future_artifact_inputs(self) -> None:
         """Precompute artifact input keys used by later steps for each step index."""
         future_inputs: Set[str] = set()
-        self.future_artifact_inputs: List[Set[str]] = [set() for _ in pipeline]
+        self.future_artifact_inputs: List[Set[str]] = [
+            set() for _ in self.step_snapshots
+        ]
 
-        for i in range(len(pipeline) - 1, -1, -1):
+        for i in range(len(self.step_snapshots) - 1, -1, -1):
             self.future_artifact_inputs[i] = set(future_inputs)
 
-            step = pipeline[i]
-            if isinstance(step, FunctionStep):
-                pattern = strip_disabled_functions(step.func) if step.func else []
+            snapshot = self.step_snapshots[i]
+            if snapshot.is_function_step:
+                pattern = (
+                    strip_disabled_functions(snapshot.func)
+                    if snapshot.func
+                    else []
+                )
                 declarations = extract_artifact_declarations(pattern)
                 step_inputs = set(declarations.inputs.keys())
             else:
@@ -207,43 +219,42 @@ class PathPlanner:
 
     def _prepare_step_declarations(
         self,
-        step: AbstractStep,
-        step_index: int,
-    ) -> tuple[ArtifactGraph, List[Optional[str]]]:
+        snapshot: StepSnapshot,
+    ) -> tuple[ArtifactGraph, List[Optional[str]], Any]:
         """Normalize a step's function pattern and collect artifact declarations."""
-        if not isinstance(step, FunctionStep):
-            return ArtifactGraph.empty(), [None]
+        if not snapshot.is_function_step:
+            return ArtifactGraph.empty(), [None], None
 
-        step.func = self._inject_injectable_params(step.func, step)
-        step.func = strip_disabled_functions(step.func)
+        func_pattern = self._inject_injectable_params(snapshot.func, snapshot)
+        func_pattern = strip_disabled_functions(func_pattern)
 
-        declarations = extract_artifact_declarations(step.func if step.func else [])
-        execution_groups = self._get_execution_groups(step, step_index)
+        declarations = extract_artifact_declarations(func_pattern if func_pattern else [])
+        execution_groups = self._get_execution_groups(snapshot)
         declarations = self._namespace_grouped_outputs_for_runtime_consumers(
-            step,
-            step_index,
+            snapshot,
+            func_pattern,
             declarations,
             execution_groups,
         )
-        return declarations, execution_groups
+        return declarations, execution_groups, func_pattern
 
     def _namespace_grouped_outputs_for_runtime_consumers(
         self,
-        step: FunctionStep,
-        step_index: int,
+        snapshot: StepSnapshot,
+        func_pattern: Any,
         declarations: ArtifactGraph,
         execution_groups: List[Optional[str]],
     ) -> ArtifactGraph:
         """Namespace grouped artifact outputs unless a later step consumes them globally."""
         if (
-            isinstance(step.func, dict)
+            isinstance(func_pattern, dict)
             or execution_groups == [None]
             or not declarations.output_names
         ):
             return declarations
 
         future_inputs = (
-            self.future_artifact_inputs[step_index]
+            self.future_artifact_inputs[snapshot.index]
             if hasattr(self, "future_artifact_inputs")
             else set()
         )
@@ -259,13 +270,13 @@ class PathPlanner:
 
     def _compile_artifact_plan_maps(
         self,
-        step: AbstractStep,
+        snapshot: StepSnapshot,
         step_index: int,
         declarations: ArtifactGraph,
         execution_groups: List[Optional[str]],
     ) -> ArtifactPlanMaps:
         """Compile artifact declarations into runtime I/O maps."""
-        step_name = getattr(step, "name", str(step_index))
+        step_name = snapshot.name
         artifact_outputs = self._process_artifact_outputs(
             declarations.outputs,
             step_index,
@@ -299,16 +310,17 @@ class PathPlanner:
 
     @staticmethod
     def _build_step_compiled_function_pattern(
-        step: AbstractStep,
+        is_function_step: bool,
+        func_pattern: Any,
         artifact_inputs: Mapping[str, ArtifactInputPlan],
         artifact_outputs: Mapping[str, ArtifactOutputPlan],
     ) -> CompiledFunctionPattern | None:
         """Build the executable function-pattern graph for a FunctionStep."""
-        if not isinstance(step, FunctionStep) or not step.func:
+        if not is_function_step or not func_pattern:
             return None
 
         return compile_function_pattern(
-            step.func,
+            func_pattern,
             artifact_inputs,
             artifact_outputs,
         )
@@ -320,16 +332,15 @@ class PathPlanner:
 
     def _materialized_output_dir_for_step(
         self,
-        step: AbstractStep,
-        step_index: int,
+        snapshot: StepSnapshot,
     ) -> Optional[Path]:
         """Resolve optional per-step materialization output directory."""
-        materialization_config = step.step_materialization_config
+        materialization_config = snapshot.materialization_config
         if not materialization_config or not materialization_config.enabled:
             return None
 
         step_axis_filters = getattr(self.ctx, "step_axis_filters", {}).get(
-            step_index,
+            snapshot.index,
             {},
         )
         materialization_filter = step_axis_filters.get(
@@ -343,7 +354,7 @@ class PathPlanner:
             if not should_materialize:
                 logger.debug(
                     "Skipping materialization for step %s, axis %s (filtered out)",
-                    step.name,
+                    snapshot.name,
                     self.ctx.axis_id,
                 )
                 return None
@@ -373,7 +384,7 @@ class PathPlanner:
 
     def _update_core_step_plan(
         self,
-        step: AbstractStep,
+        snapshot: StepSnapshot,
         step_index: int,
         input_dir: Path,
         output_dir: Path,
@@ -395,7 +406,7 @@ class PathPlanner:
             self._analysis_results_dir_for(Path(output_dir))
         )
         step_plan.pipeline_position = step_index
-        step_plan.input_source = self._get_input_source(step, step_index)
+        step_plan.input_source = self._get_input_source(snapshot)
         step_plan.artifact_inputs = artifact_maps.inputs
         step_plan.artifact_outputs = artifact_maps.outputs
         step_plan.artifact_inputs_by_group = artifact_maps.inputs_by_group
@@ -405,7 +416,7 @@ class PathPlanner:
 
     def _apply_materialization_plan(
         self,
-        step: AbstractStep,
+        snapshot: StepSnapshot,
         step_index: int,
         materialized_output_dir: Optional[Path],
     ) -> None:
@@ -413,7 +424,7 @@ class PathPlanner:
         if not materialized_output_dir:
             return
 
-        materialization_config = step.step_materialization_config
+        materialization_config = snapshot.materialization_config
         materialized_plate_root = self.build_output_plate_root(
             self.plate_path,
             materialization_config,
@@ -441,50 +452,50 @@ class PathPlanner:
 
         self.plans[step_index].input_conversion = input_conversion_plan
 
-    def _plan_step(self, step: AbstractStep, i: int, pipeline: List):
+    def _plan_step(self, snapshot: StepSnapshot, i: int, pipeline: List):
         """Plan one step - no duplicate logic."""
         sid = i  # Use step index instead of step_id
 
         # Get paths with unified logic
-        input_dir = self._get_dir(step, i, pipeline, 'input')
-        output_dir = self._get_dir(step, i, pipeline, 'output', input_dir)
+        input_dir = self._get_dir(snapshot, i, pipeline, 'input')
+        output_dir = self._get_dir(snapshot, i, pipeline, 'output', input_dir)
 
-        declarations, execution_groups = self._prepare_step_declarations(
-            step,
-            sid,
+        declarations, execution_groups, func_pattern = self._prepare_step_declarations(
+            snapshot,
         )
         artifact_maps = self._compile_artifact_plan_maps(
-            step,
+            snapshot,
             sid,
             declarations,
             execution_groups,
         )
 
         # Handle metadata injection after stripping disabled functions
-        if isinstance(step, FunctionStep) and any(
+        if snapshot.is_function_step and any(
             k in METADATA_RESOLVERS for k in declarations.inputs
         ):
-            step.func = self._inject_metadata(step.func, declarations.inputs)
+            func_pattern = self._inject_metadata(func_pattern, declarations.inputs)
 
         # Ensure step plan references the normalized function pattern
-        self.plans[sid].func = step.func
+        self.plans[sid].func = func_pattern
 
         self._update_core_step_plan(
-            step,
+            snapshot,
             sid,
             input_dir,
             output_dir,
             artifact_maps,
             self._build_step_compiled_function_pattern(
-                step,
+                snapshot.is_function_step,
+                func_pattern,
                 artifact_maps.inputs,
                 artifact_maps.outputs,
             ),
         )
         self._apply_materialization_plan(
-            step,
+            snapshot,
             sid,
-            self._materialized_output_dir_for_step(step, sid),
+            self._materialized_output_dir_for_step(snapshot),
         )
         self._apply_input_conversion_plan(
             sid,
@@ -494,7 +505,7 @@ class PathPlanner:
         # PIPELINE_START steps read from original input, not zarr conversion
         # (zarr conversion only applies to normal pipeline flow, not PIPELINE_START jumps)
 
-    def _get_dir(self, step: AbstractStep, i: int, pipeline: List,
+    def _get_dir(self, snapshot: StepSnapshot, i: int, pipeline: List,
                  dir_type: str, fallback: Path = None) -> Path:
         """Unified directory resolution - no duplication."""
         sid = i  # Use step index instead of step_id
@@ -504,21 +515,14 @@ class PathPlanner:
             existing_dir = getattr(self.plans[sid], f"{dir_type}_dir")
             if existing_dir is not None:
                 return Path(existing_dir)
-        if override := getattr(step, f'__{dir_type}_dir__', None):
-            return Path(override)
-
         # Type-specific logic
         if dir_type == 'input':
-            # Access input_source from processing_config (new API)
-            input_source = getattr(step.processing_config, 'input_source', None) if hasattr(step, 'processing_config') else None
-            if i == 0 or input_source == InputSource.PIPELINE_START:
+            if i == 0 or snapshot.input_source == InputSource.PIPELINE_START:
                 return self.initial_input
             prev_step_index = i - 1  # Use previous step index instead of step_id
             return Path(self.plans[prev_step_index].output_dir)
         else:  # output
-            # Access input_source from processing_config (new API)
-            input_source = getattr(step.processing_config, 'input_source', None) if hasattr(step, 'processing_config') else None
-            if i == 0 or input_source == InputSource.PIPELINE_START:
+            if i == 0 or snapshot.input_source == InputSource.PIPELINE_START:
                 return self._build_output_path()
             return fallback  # Work in place
 
@@ -729,16 +733,20 @@ class PathPlanner:
                 pattern = inject_artifact_input_values(pattern, {key: value})
         return pattern
 
-    def _inject_injectable_params(self, pattern: Any, step) -> Any:
+    def _inject_injectable_params(
+        self,
+        pattern: Any,
+        snapshot: StepSnapshot,
+    ) -> Any:
         """Inject injectable param values into function kwargs.
 
         Injectable params (dtype_config, enabled, etc.) are added to function signatures
         by the unified registry. This method injects those params from the step into the
-        func pattern kwargs. The values will be resolved during Phase 5 (lazy resolution).
+        func pattern kwargs. Values come from the ObjectState-backed StepSnapshot.
 
         Args:
             pattern: Function pattern (callable, tuple, list, or dict)
-            step: FunctionStep instance with config attributes
+            snapshot: ObjectState-resolved compiler facts for the step
 
         Returns:
             Modified pattern with param values injected into kwargs
@@ -748,22 +756,21 @@ class PathPlanner:
         # Get injectable param names from registry (single source of truth)
         param_names = [param_name for param_name, _, _ in LibraryRegistryBase.INJECTABLE_PARAMS]
 
-        # Build kwargs dict from step attributes (keep lazy configs as-is for Phase 5 resolution)
+        # Build kwargs dict from snapshot values, not live step attributes.
         param_kwargs = {}
         for param_name in param_names:
-            if hasattr(step, param_name):
-                value = getattr(step, param_name)
-                if value is not None:
-                    param_kwargs[param_name] = value
+            value = snapshot.injectable_values.get(param_name)
+            if value is not None:
+                param_kwargs[param_name] = value
 
         if not param_kwargs:
             return pattern
 
         return inject_kwargs_into_pattern(pattern, param_kwargs)
 
-    def _get_input_source(self, step: AbstractStep, i: int) -> str:
+    def _get_input_source(self, snapshot: StepSnapshot) -> str:
         """Get input source string."""
-        if step.processing_config.input_source == InputSource.PIPELINE_START:
+        if snapshot.input_source == InputSource.PIPELINE_START:
             return 'PIPELINE_START'
         return 'PREVIOUS_STEP'
 
@@ -789,11 +796,10 @@ class PathPlanner:
     def _validate(self, pipeline: List):
         """Validate connectivity and materialization paths - no duplication."""
         # Existing connectivity validation
-        for i in range(1, len(pipeline)):
-            curr, prev = pipeline[i], pipeline[i-1]
-            # Access input_source from processing_config (new API)
-            input_source = getattr(curr.processing_config, 'input_source', None) if hasattr(curr, 'processing_config') else None
-            if input_source == InputSource.PIPELINE_START:
+        for i in range(1, len(self.step_snapshots)):
+            curr = self.step_snapshots[i]
+            prev = self.step_snapshots[i - 1]
+            if curr.input_source == InputSource.PIPELINE_START:
                 continue
             curr_in = self.plans[i].input_dir
             prev_out = self.plans[i - 1].output_dir
@@ -814,40 +820,50 @@ class PathPlanner:
 
         # Collect all materialization steps with their paths and positions
         mat_steps = [
-            (step, self.plans[i].pipeline_position or i, self._build_output_path(step.step_materialization_config))
-            for i, step in enumerate(pipeline) if step.step_materialization_config and step.step_materialization_config.enabled
+            (
+                snapshot,
+                self.plans[i].pipeline_position or i,
+                self._build_output_path(snapshot.materialization_config),
+            )
+            for i, snapshot in enumerate(self.step_snapshots)
+            if snapshot.materialization_config
+            and snapshot.materialization_config.enabled
         ]
 
         # Group by path for conflict detection
         from collections import defaultdict
         path_groups = defaultdict(list)
-        for step, pos, path in mat_steps:
+        for snapshot, pos, path in mat_steps:
             if path == global_path:
-                self._resolve_and_update_paths(step, pos, path, "main flow")
+                self._resolve_and_update_paths(snapshot, pos, path, "main flow")
             else:
-                path_groups[str(path)].append((step, pos, path))
+                path_groups[str(path)].append((snapshot, pos, path))
 
         # Resolve materialization vs materialization conflicts
         for path_key, step_list in path_groups.items():
             if len(step_list) > 1:
-                for step, pos, path in step_list:
-                    self._resolve_and_update_paths(step, pos, path, f"pos {pos}")
+                for snapshot, pos, path in step_list:
+                    self._resolve_and_update_paths(snapshot, pos, path, f"pos {pos}")
 
-    def _resolve_and_update_paths(self, step: AbstractStep, position: int, original_path: Path, conflict_type: str) -> None:
-        """Resolve path conflict by updating sub_dir configuration directly."""
-        # Lazy configs are already resolved before path collision handling.
-        materialization_config = step.step_materialization_config
+    def _resolve_and_update_paths(
+        self,
+        snapshot: StepSnapshot,
+        position: int,
+        original_path: Path,
+        conflict_type: str,
+    ) -> None:
+        """Resolve path conflict by updating the compiled plan only."""
+        materialization_config = snapshot.materialization_config
 
         # Generate unique sub_dir name instead of calculating from paths
         original_sub_dir = materialization_config.sub_dir
         new_sub_dir = f"{original_sub_dir}_step{position}"
 
-        # Update step materialization config with new sub_dir
         from dataclasses import replace
-        step.step_materialization_config = replace(materialization_config, sub_dir=new_sub_dir)
+        updated_config = replace(materialization_config, sub_dir=new_sub_dir)
 
         # Recalculate the resolved path using the updated config
-        resolved_path = self._build_output_path(step.step_materialization_config)
+        resolved_path = self._build_output_path(updated_config)
         resolved_analysis_results_dir = self._analysis_results_dir_for(resolved_path)
 
         # Update step plans for metadata generation
@@ -860,7 +876,7 @@ class PathPlanner:
                     sub_dir=new_sub_dir,
                     analysis_results_dir=str(resolved_analysis_results_dir),
                 )
-                step_plan.materialization_config = step.step_materialization_config
+                step_plan.materialization_config = updated_config
 
 
 
@@ -874,7 +890,8 @@ class PipelinePathPlanner:
                               pipeline_definition: List[AbstractStep],
                               pipeline_config,
                               orchestrator=None,
-                              step_state_map=None) -> Dict:
+                              step_state_map=None,
+                              step_snapshots: tuple[StepSnapshot, ...] | None = None) -> Dict:
         """
         Prepare pipeline paths.
 
@@ -884,9 +901,25 @@ class PipelinePathPlanner:
             pipeline_config: Merged GlobalPipelineConfig (from context.global_config)
                            NOT the raw PipelineConfig - ensures proper global config inheritance
             orchestrator: Optional orchestrator for component key resolution
-            step_state_map: Optional dict mapping step_index to ObjectState for resolving lazy dataclass attributes
+            step_state_map: Optional dict mapping step_index to ObjectState for building snapshots
+            step_snapshots: Optional prebuilt ObjectState-resolved step snapshots
         """
-        return PathPlanner(context, pipeline_config, orchestrator=orchestrator, step_state_map=step_state_map).plan(pipeline_definition)
+        if step_snapshots is None:
+            if step_state_map is None:
+                raise ValueError(
+                    "PipelinePathPlanner requires StepSnapshot objects or "
+                    "step_state_map to avoid live step/config probing."
+                )
+            step_snapshots = build_step_snapshots(
+                pipeline_definition,
+                step_state_map,
+            )
+        return PathPlanner(
+            context,
+            pipeline_config,
+            orchestrator=orchestrator,
+            step_snapshots=step_snapshots,
+        ).plan(pipeline_definition)
 
     @staticmethod
     def _build_axis_filename(axis_id: str, key: str, extension: str = "pkl", step_index: Optional[int] = None) -> str:

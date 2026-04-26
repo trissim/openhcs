@@ -19,11 +19,6 @@ class PathConfigStub:
     global_output_folder: str | None = None
 
 
-class StepStub:
-    def __init__(self, materialization_config: PathConfigStub):
-        self.step_materialization_config = materialization_config
-
-
 def _artifact_planner_stub() -> PathPlanner:
     planner = PathPlanner.__new__(PathPlanner)
     planner.plate_path = Path("/data/plate1")
@@ -55,16 +50,20 @@ def test_materialization_collision_updates_results_dir_and_config():
             materialization_config=PathConfigStub(sub_dir="images"),
         )
     }
-    step = StepStub(PathConfigStub(sub_dir="images"))
+    snapshot = SimpleNamespace(
+        index=3,
+        name="materialize",
+        materialization_config=PathConfigStub(sub_dir="images"),
+    )
 
     planner._resolve_and_update_paths(
-        step,
+        snapshot,
         3,
         Path("/data/plate1_processed/images"),
         "main flow",
     )
 
-    assert step.step_materialization_config.sub_dir == "images_step3"
+    assert snapshot.materialization_config.sub_dir == "images"
     materialized_output = planner.plans[3].materialized_output
     assert materialized_output.output_dir == Path("/data/plate1_processed/images_step3")
     assert materialized_output.sub_dir == "images_step3"

@@ -438,6 +438,15 @@ Acceptance criteria:
 4. Axis-filter resolution reuses snapshots and saved ObjectState values instead of creating another resolved step list.
 5. Advisor findings in `path_planner.py` for config/attribute probing decrease materially.
 
+Current progress:
+
+1. Done: added `StepSnapshot`, `StepProcessingSnapshot`, and `StepWellFilterSnapshot`.
+2. Done: path planning consumes snapshots for function patterns, `group_by`, `input_source`, injectable values, materialization config, and well-filter facts.
+3. Done: path planning no longer mutates `FunctionStep.func` while preparing declarations or metadata injection.
+4. Done: materialization path collision handling updates the compiled plan rather than mutating the resolved step config.
+5. Done: axis-filter resolution reuses the one-time snapshot tuple instead of registering temporary ObjectStates and calling `to_object()` again.
+6. Remaining: introduce `CompilationSession` so snapshots, plans, context, and orchestrator stop being passed as loose arguments.
+
 ### Pass 2: CompilationSession as Axis-Scoped Compiler Boundary
 
 Primary advisor pressure:
