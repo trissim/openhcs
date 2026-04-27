@@ -52,7 +52,10 @@ def get_function(module_name: str) -> Optional[Callable]:
 
     for file_stem in file_stems_to_try:
         try:
-            module = importlib.import_module(f".functions.{file_stem}", package=__package__)
+            module = importlib.import_module(
+                f".functions.{file_stem}",
+                package=__package__,
+            )
             func = getattr(module, func_name, None)
             if func is not None:
                 _function_cache[module_name] = func

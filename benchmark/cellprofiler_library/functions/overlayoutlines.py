@@ -7,7 +7,7 @@ Supports both 2D and 3D images.
 import numpy as np
 from typing import Tuple
 from enum import Enum
-from openhcs.core.memory.decorators import numpy
+from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs
 
 
@@ -27,7 +27,7 @@ class MaxType(Enum):
     MAX_POSSIBLE = "max_possible"
 
 
-@numpy(contract=ProcessingContract.PURE_2D)
+@numpy
 @special_inputs("labels")
 def overlay_outlines(
     image: np.ndarray,

@@ -4,14 +4,100 @@ Morphological opening operation (erosion followed by dilation)
 """
 
 import numpy as np
-from typing import Literal
-from openhcs.core.memory.decorators import numpy
+from abc import ABC, abstractmethod
+from enum import Enum
+from typing import ClassVar
+
+from metaclass_registry import AutoRegisterMeta
+from openhcs.core.memory import numpy
 
 
-@numpy(contract=ProcessingContract.PURE_2D)
+class StructuringElement(str, Enum):
+    DISK = "disk"
+    SQUARE = "square"
+    DIAMOND = "diamond"
+    OCTAGON = "octagon"
+    STAR = "star"
+
+
+class StructuringElementFactory(ABC, metaclass=AutoRegisterMeta):
+    """Create one skimage structuring element for a closed enum case."""
+
+    __registry_key__ = "structuring_element"
+    __skip_if_no_key__ = True
+    structuring_element: ClassVar[StructuringElement | None] = None
+
+    @classmethod
+    def for_structuring_element(
+        cls,
+        structuring_element: StructuringElement,
+    ) -> "StructuringElementFactory":
+        return cls.__registry__[structuring_element]()
+
+    @abstractmethod
+    def build(self, size: int) -> np.ndarray:
+        """Return the skimage structuring element for one closed case."""
+
+
+class DiskStructuringElementFactory(StructuringElementFactory):
+    structuring_element = StructuringElement.DISK
+
+    def build(self, size: int) -> np.ndarray:
+        from skimage.morphology import disk
+
+        return disk(size)
+
+
+class SquareStructuringElementFactory(StructuringElementFactory):
+    structuring_element = StructuringElement.SQUARE
+
+    def build(self, size: int) -> np.ndarray:
+        from skimage.morphology import square
+
+        return square(size)
+
+
+class DiamondStructuringElementFactory(StructuringElementFactory):
+    structuring_element = StructuringElement.DIAMOND
+
+    def build(self, size: int) -> np.ndarray:
+        from skimage.morphology import diamond
+
+        return diamond(size)
+
+
+class OctagonStructuringElementFactory(StructuringElementFactory):
+    structuring_element = StructuringElement.OCTAGON
+
+    def build(self, size: int) -> np.ndarray:
+        from skimage.morphology import octagon
+
+        return octagon(size, size)
+
+
+class StarStructuringElementFactory(StructuringElementFactory):
+    structuring_element = StructuringElement.STAR
+
+    def build(self, size: int) -> np.ndarray:
+        from skimage.morphology import star
+
+        return star(size)
+
+
+def _coerce_structuring_element(
+    structuring_element: StructuringElement | str,
+) -> StructuringElement:
+    return (
+        structuring_element
+        if isinstance(structuring_element, StructuringElement)
+        else StructuringElement(structuring_element)
+    )
+
+
+@numpy
 def opening(
     image: np.ndarray,
-    structuring_element: Literal["disk", "square", "diamond", "octagon", "star"] = "disk",
+    structuring_element: StructuringElement = StructuringElement.DISK,
     size: int = 3,
 ) -> np.ndarray:
     """
@@ -29,32 +115,11 @@ def opening(
     Returns:
         Opened image with shape (H, W)
     """
-    from skimage.morphology import (
-        opening as skimage_opening,
-        disk,
-        square,
-        diamond,
-        octagon,
-        star,
-    )
-    
-    # Create structuring element based on type
-    if structuring_element == "disk":
-        selem = disk(size)
-    elif structuring_element == "square":
-        selem = square(size)
-    elif structuring_element == "diamond":
-        selem = diamond(size)
-    elif structuring_element == "octagon":
-        # octagon requires two parameters, use size for both
-        selem = octagon(size, size)
-    elif structuring_element == "star":
-        selem = star(size)
-    else:
-        # Default to disk
-        selem = disk(size)
-    
-    # Apply morphological opening
+    from skimage.morphology import opening as skimage_opening
+
+    resolved_structuring_element = _coerce_structuring_element(structuring_element)
+    selem = StructuringElementFactory.for_structuring_element(
+        resolved_structuring_element
+    ).build(size)
     result = skimage_opening(image, selem)
-    
     return result.astype(image.dtype)

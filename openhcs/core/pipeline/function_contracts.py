@@ -82,3 +82,77 @@ def artifact_inputs(*input_specs: str | ArtifactSpec) -> Callable[[F], F]:
         return func
 
     return decorator
+
+
+def _special_parameter_names(
+    parameter_names: tuple[str, ...],
+    *,
+    decorator_name: str,
+) -> tuple[str, ...]:
+    normalized = tuple(name.strip() for name in parameter_names if name.strip())
+    if len(normalized) != len(parameter_names):
+        raise ValueError(f"{decorator_name} parameter names cannot be empty.")
+    return normalized
+
+
+def special_inputs(*parameter_names: str) -> Callable[[F], F]:
+    """Declare runtime-managed non-image parameters for compatibility loaders."""
+
+    normalized = _special_parameter_names(
+        parameter_names,
+        decorator_name="special_inputs",
+    )
+
+    def decorator(func: F) -> F:
+        func.__special_inputs__ = normalized
+        return func
+
+    return decorator
+
+
+def _special_output_specs(output_specs: tuple[object, ...]) -> tuple[object, ...]:
+    normalized: list[object] = []
+    for spec in output_specs:
+        if isinstance(spec, str):
+            if not spec.strip():
+                raise ValueError("special_outputs names cannot be empty.")
+            normalized.append(spec.strip())
+            continue
+        if (
+            isinstance(spec, tuple)
+            and len(spec) == 2
+            and isinstance(spec[0], str)
+            and spec[0].strip()
+        ):
+            normalized.append((spec[0].strip(), spec[1]))
+            continue
+        raise ValueError(
+            "special_outputs specs must be strings or "
+            "(name, materialization_spec) tuples."
+        )
+    return tuple(normalized)
+
+
+def special_outputs(*output_specs: object) -> Callable[[F], F]:
+    """Declare compatibility output names for absorbed CellProfiler functions."""
+
+    normalized = _special_output_specs(output_specs)
+
+    def decorator(func: F) -> F:
+        func.__special_outputs__ = normalized
+        return func
+
+    return decorator
+
+
+def special_input_names_from_callable(func: Callable) -> tuple[str, ...]:
+    """Return declared special-input parameter names for one callable."""
+    try:
+        declared = vars(func).get("__special_inputs__", ())
+    except TypeError:
+        declared = ()
+    if not isinstance(declared, tuple):
+        raise TypeError(
+            f"{func}.__special_inputs__ must be a tuple."
+        )
+    return declared

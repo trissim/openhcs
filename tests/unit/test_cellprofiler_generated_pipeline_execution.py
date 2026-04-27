@@ -21,8 +21,14 @@ from openhcs.core.steps.function_runtime import (
 AXIS_ID = "A01"
 SOURCE_IMAGE = "OrigBlue"
 NUCLEI = "Nuclei"
+NUCLEI_IMAGE = "NucleiImage"
+OPENED_NUCLEI_IMAGE = "OpenedNucleiImage"
+OVERLAY_IMAGE = "OverlayImage"
 IDENTIFY_PRIMARY_OBJECTS = "IdentifyPrimaryObjects"
 MEASURE_OBJECT_SIZE_SHAPE = "MeasureObjectSizeShape"
+CONVERT_OBJECTS_TO_IMAGE = "ConvertObjectsToImage"
+OPENING = "Opening"
+OVERLAY_OUTLINES = "OverlayOutlines"
 
 
 class MemoryBackend:
@@ -63,25 +69,11 @@ def _module(module_num: int, name: str, settings: dict[str, str]) -> ModuleBlock
     return ModuleBlock(name=name, module_num=module_num, settings=settings)
 
 
-def _generated_pipeline() -> GeneratedPipeline:
+def _generated_pipeline(modules: list[ModuleBlock]) -> GeneratedPipeline:
     return PipelineGenerator().generate_from_registry(
         pipeline_name="cellprofiler_generated_runtime_smoke",
         source_cppipe=Path("cellprofiler_generated_runtime_smoke.cppipe"),
-        modules=[
-            _module(
-                1,
-                IDENTIFY_PRIMARY_OBJECTS,
-                {
-                    "Select the input image": SOURCE_IMAGE,
-                    "Name the primary objects to be identified": NUCLEI,
-                },
-            ),
-            _module(
-                2,
-                MEASURE_OBJECT_SIZE_SHAPE,
-                {"Select object sets to measure": NUCLEI},
-            ),
-        ],
+        modules=modules,
     )
 
 
@@ -149,8 +141,65 @@ def _run_generated_step(step, contract, image, context):
     )
 
 
+def _measurement_pipeline_modules() -> list[ModuleBlock]:
+    return [
+        _module(
+            1,
+            IDENTIFY_PRIMARY_OBJECTS,
+            {
+                "Select the input image": SOURCE_IMAGE,
+                "Name the primary objects to be identified": NUCLEI,
+            },
+        ),
+        _module(
+            2,
+            MEASURE_OBJECT_SIZE_SHAPE,
+            {"Select object sets to measure": NUCLEI},
+        ),
+    ]
+
+
+def _image_artifact_pipeline_modules() -> list[ModuleBlock]:
+    return [
+        _module(
+            1,
+            IDENTIFY_PRIMARY_OBJECTS,
+            {
+                "Select the input image": SOURCE_IMAGE,
+                "Name the primary objects to be identified": NUCLEI,
+            },
+        ),
+        _module(
+            2,
+            CONVERT_OBJECTS_TO_IMAGE,
+            {
+                "Select the input objects": NUCLEI,
+                "Name the output image": NUCLEI_IMAGE,
+            },
+        ),
+        _module(
+            3,
+            OPENING,
+            {
+                "Select the input image": NUCLEI_IMAGE,
+                "Name the output image": OPENED_NUCLEI_IMAGE,
+                "Size": "2",
+            },
+        ),
+        _module(
+            4,
+            OVERLAY_OUTLINES,
+            {
+                "Select image on which to display outlines": OPENED_NUCLEI_IMAGE,
+                "Select objects to display": NUCLEI,
+                "Name the output image": OVERLAY_IMAGE,
+            },
+        ),
+    ]
+
+
 def test_generated_cellprofiler_pipeline_executes_runtime_artifact_flow():
-    generated = _generated_pipeline()
+    generated = _generated_pipeline(_measurement_pipeline_modules())
     namespace = _pipeline_namespace(generated)
     context = ContextStub()
     image = _synthetic_nuclei_image()
@@ -180,3 +229,41 @@ def test_generated_cellprofiler_pipeline_executes_runtime_artifact_flow():
     assert measurement_records[0].value.schema.object_name == NUCLEI
     assert len(measurement_records[0].value.data) == 2
     assert context.filemanager.loaded == []
+
+
+def test_generated_cellprofiler_pipeline_executes_runtime_image_artifact_flow():
+    generated = _generated_pipeline(_image_artifact_pipeline_modules())
+    namespace = _pipeline_namespace(generated)
+    context = ContextStub()
+    image = _synthetic_nuclei_image()
+
+    for step, contract in zip(
+        namespace["pipeline_steps"],
+        generated.artifact_contracts,
+        strict=True,
+    ):
+        image = _run_generated_step(step, contract, image, context)
+
+    nuclei_image_records = context.runtime_value_store.find(
+        name=NUCLEI_IMAGE,
+        kind=ArtifactKind.IMAGE,
+        axis_id=AXIS_ID,
+    )
+    opened_image_records = context.runtime_value_store.find(
+        name=OPENED_NUCLEI_IMAGE,
+        kind=ArtifactKind.IMAGE,
+        axis_id=AXIS_ID,
+    )
+    overlay_image_records = context.runtime_value_store.find(
+        name=OVERLAY_IMAGE,
+        kind=ArtifactKind.IMAGE,
+        axis_id=AXIS_ID,
+    )
+
+    assert len(nuclei_image_records) == 1
+    assert nuclei_image_records[0].value.schema.source_image_name == SOURCE_IMAGE
+    assert len(opened_image_records) == 1
+    assert opened_image_records[0].value.schema.source_image_name == SOURCE_IMAGE
+    assert len(overlay_image_records) == 1
+    assert overlay_image_records[0].value.schema.source_image_name == SOURCE_IMAGE
+    assert overlay_image_records[0].value.data.shape[-1] == 3

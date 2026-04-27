@@ -6,9 +6,12 @@ Converts object labels to various image representations (binary, grayscale, colo
 """
 
 import numpy as np
-from typing import Tuple
+from abc import ABC, abstractmethod
 from enum import Enum
-from openhcs.core.memory.decorators import numpy
+from typing import ClassVar
+
+from metaclass_registry import AutoRegisterMeta
+from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs
 
 
@@ -17,6 +20,93 @@ class ImageMode(Enum):
     GRAYSCALE = "grayscale"
     COLOR = "color"
     UINT16 = "uint16"
+
+
+class ImageModeRenderer(ABC, metaclass=AutoRegisterMeta):
+    """Render object labels for one closed ImageMode case."""
+
+    __registry_key__ = "image_mode"
+    __skip_if_no_key__ = True
+    image_mode: ClassVar[ImageMode | None] = None
+
+    @classmethod
+    def for_image_mode(cls, image_mode: ImageMode) -> "ImageModeRenderer":
+        return cls.__registry__[image_mode]()
+
+    @abstractmethod
+    def render(
+        self,
+        labels: np.ndarray,
+        *,
+        colormap_value: str,
+    ) -> np.ndarray:
+        """Return one rendered image payload for the requested ImageMode."""
+
+
+class BinaryImageModeRenderer(ImageModeRenderer):
+    image_mode = ImageMode.BINARY
+
+    def render(
+        self,
+        labels: np.ndarray,
+        *,
+        colormap_value: str,
+    ) -> np.ndarray:
+        del colormap_value
+        return (labels > 0).astype(np.float32)
+
+
+class GrayscaleImageModeRenderer(ImageModeRenderer):
+    image_mode = ImageMode.GRAYSCALE
+
+    def render(
+        self,
+        labels: np.ndarray,
+        *,
+        colormap_value: str,
+    ) -> np.ndarray:
+        del colormap_value
+        max_label = labels.max()
+        if max_label > 0:
+            return labels.astype(np.float32) / max_label
+        return np.zeros(labels.shape, dtype=np.float32)
+
+
+class ColorImageModeRenderer(ImageModeRenderer):
+    image_mode = ImageMode.COLOR
+
+    def render(
+        self,
+        labels: np.ndarray,
+        *,
+        colormap_value: str,
+    ) -> np.ndarray:
+        h, w = labels.shape
+        max_label = labels.max()
+        colors = _get_colormap(colormap_value, max_label)
+        pixel_data = np.zeros((h, w, 3), dtype=np.float32)
+        for label_id in range(1, max_label + 1):
+            mask = labels == label_id
+            if np.any(mask):
+                pixel_data[mask] = colors[label_id]
+        return (
+            0.299 * pixel_data[:, :, 0]
+            + 0.587 * pixel_data[:, :, 1]
+            + 0.114 * pixel_data[:, :, 2]
+        )
+
+
+class Uint16ImageModeRenderer(ImageModeRenderer):
+    image_mode = ImageMode.UINT16
+
+    def render(
+        self,
+        labels: np.ndarray,
+        *,
+        colormap_value: str,
+    ) -> np.ndarray:
+        del colormap_value
+        return labels.astype(np.float32)
 
 
 def _get_colormap(colormap_name: str, num_labels: int) -> np.ndarray:
@@ -35,7 +125,11 @@ def _get_colormap(colormap_name: str, num_labels: int) -> np.ndarray:
     return colors
 
 
-@numpy(contract=ProcessingContract.PURE_2D)
+def _coerce_image_mode(image_mode: ImageMode | str) -> ImageMode:
+    return image_mode if isinstance(image_mode, ImageMode) else ImageMode(image_mode)
+
+
+@numpy
 @special_inputs("labels")
 def convert_objects_to_image(
     image: np.ndarray,
@@ -59,48 +153,10 @@ def convert_objects_to_image(
         - COLOR: (H, W, 3) RGB image with colored objects
         - UINT16: (H, W) integer labels
     """
+    del image
     labels = labels.astype(np.int32)
-    h, w = labels.shape
-    
-    if image_mode == ImageMode.BINARY:
-        # Binary mask: objects are 1, background is 0
-        pixel_data = (labels > 0).astype(np.float32)
-        
-    elif image_mode == ImageMode.GRAYSCALE:
-        # Grayscale: normalize labels to 0-1 range
-        max_label = labels.max()
-        if max_label > 0:
-            pixel_data = labels.astype(np.float32) / max_label
-        else:
-            pixel_data = np.zeros((h, w), dtype=np.float32)
-            
-    elif image_mode == ImageMode.COLOR:
-        # Color: apply colormap to labels
-        max_label = labels.max()
-        colors = _get_colormap(colormap_value, max_label)
-        
-        # Map labels to colors
-        pixel_data = np.zeros((h, w, 3), dtype=np.float32)
-        for label_id in range(1, max_label + 1):
-            mask = labels == label_id
-            if np.any(mask):
-                pixel_data[mask] = colors[label_id]
-        
-        # For 2D output compatibility, we need to return (H, W)
-        # Convert RGB to grayscale luminance for single-channel output
-        # Or we could return the first channel - using luminance for better representation
-        pixel_data = 0.299 * pixel_data[:, :, 0] + 0.587 * pixel_data[:, :, 1] + 0.114 * pixel_data[:, :, 2]
-        
-    elif image_mode == ImageMode.UINT16:
-        # UINT16: return labels as float (will be cast appropriately downstream)
-        pixel_data = labels.astype(np.float32)
-        
-    else:
-        # Default to grayscale
-        max_label = labels.max()
-        if max_label > 0:
-            pixel_data = labels.astype(np.float32) / max_label
-        else:
-            pixel_data = np.zeros((h, w), dtype=np.float32)
-    
-    return pixel_data
+    resolved_image_mode = _coerce_image_mode(image_mode)
+    return ImageModeRenderer.for_image_mode(resolved_image_mode).render(
+        labels,
+        colormap_value=colormap_value,
+    )
