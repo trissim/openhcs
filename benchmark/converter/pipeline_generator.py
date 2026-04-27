@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Any
 
 from openhcs.core.artifacts import ArtifactSpec
 
+from .module_settings_binding import ModuleSettingsBindingStrategy
 from .parser import ModuleBlock
 from .settings_binder import SettingsBinder
 from .symbol_table import (
@@ -312,37 +313,17 @@ from openhcs.constants.constants import AllComponents
                 category, "VariableComponents.SITE"
             )
 
-            # Bind settings to kwargs
-            kwargs = self.settings_binder.bind(module.settings)
-
             # Parse parameter mapping from function docstring
             param_mapping = self._parse_parameter_mapping(func_name)
-
-            # Translate kwargs using mapping
-            translated_kwargs = {}
-            unmapped_kwargs = {}
-
-            for cp_setting, value in kwargs.items():
-                if cp_setting in param_mapping:
-                    py_param = param_mapping[cp_setting]
-
-                    # Skip pipeline-handled settings
-                    if py_param is None:
-                        continue
-
-                    # Handle list of parameters (e.g., min/max from tuple)
-                    if isinstance(py_param, list):
-                        if isinstance(value, tuple) and len(value) == len(py_param):
-                            for i, param_name in enumerate(py_param):
-                                translated_kwargs[param_name] = value[i]
-                        else:
-                            # Can't split - use first param
-                            translated_kwargs[py_param[0]] = value
-                    else:
-                        translated_kwargs[py_param] = value
-                else:
-                    # No mapping found - keep as comment
-                    unmapped_kwargs[cp_setting] = value
+            bound_settings = ModuleSettingsBindingStrategy.for_module(
+                module.name
+            ).bind(
+                module,
+                binder=self.settings_binder,
+                param_mapping=param_mapping,
+            )
+            translated_kwargs = dict(bound_settings.kwargs)
+            unmapped_kwargs = dict(bound_settings.unmapped_kwargs)
 
             # Build func parameter - either just the function or (function, kwargs_dict)
             lines.append("    FunctionStep(")

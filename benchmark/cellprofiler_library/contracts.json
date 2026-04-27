@@ -271,12 +271,12 @@
     "reasoning": "Gaussian filtering is a standard image processing operation that is applied to individual 2D images or sites independently. It does not require access to multiple channels simultaneously or a full Z-stack to perform its core function.",
     "validated": true
   },
-  "GrayToColorRgb": {
-    "function_name": "gray_to_color_rgb",
+  "GrayToColor": {
+    "function_name": "gray_to_color",
     "contract": "pure_2d",
     "category": "channel_operation",
     "confidence": 1.0,
-    "reasoning": "Combines 3 grayscale images into RGB. Expects (3, H, W) with channels stacked. Inherently multichannel operation.",
+    "reasoning": "GrayToColor combines multiple grayscale images into one color or stacked output. The runtime image payload is an ordered multichannel family, so this remains a pure 2D channel operation with module-level scheme dispatch.",
     "validated": true
   },
   "IdentifyDeadWorms": {

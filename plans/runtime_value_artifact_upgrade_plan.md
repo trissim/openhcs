@@ -185,6 +185,10 @@ The branch has already established most of the typed runtime/compiler foundation
     - the parser preserves repeated setup settings needed for match dimensions
     - escaped legacy `.cppipe` match payloads are decoded before literal parsing
     - generated `source_bindings` now carry the match plan all the way into runtime resolution
+20. The `GrayToColor` absorbed-library gap is resolved through one module-level typed dispatcher instead of mode-specific registry hacks:
+    - repeated stack/composite settings are preserved through a dedicated module-settings binding layer
+    - `GrayToColor` source image discovery is now shared SSOT in converter code instead of ad hoc local parsing
+    - BBBC021 now converts successfully with 20 processing modules and no failed absorbed modules
 
 ### 3.2 What Is Still Missing
 
@@ -199,7 +203,8 @@ The biggest unresolved items are now:
 5. The compiled identity record is semantically useful, but its current `step_scope_id` naming still reflects pre-compilation/UI vocabulary more than ideal runtime/compiler terminology.
 6. Real BBBC pipelines are not yet fully accepted end to end.
    - live BBBC021 setup/image schema compilation now succeeds
-   - the current conversion blocker has moved forward to absorbed-library coverage for `GrayToColor`
+   - live BBBC021 conversion now succeeds end to end at code-generation time
+   - the next gap is execution/validation on real BBBC data rather than missing absorbed module coverage
 7. Export and relationship-heavy semantics are not yet fully validated on real pipelines.
 8. Benchmarking is ahead of the remaining CellProfiler semantics and should stay secondary.
 
@@ -804,7 +809,7 @@ The next implementation pass should be:
 
 1. thread the setup-module image schema farther outward so it is not trapped inside converter-local lowering
 2. validate the richer source-binding path on a real BBBC-style multi-image `.cppipe`
-3. close the next absorbed-library acceptance blocker (`GrayToColor`) without reintroducing wrapper or fallback semantics
+3. move from conversion success to execution acceptance on a real BBBC-style dataset
 4. keep replacing hidden sequential assumptions with explicit compiled edge records where that can be done without changing the list-based pipeline/editor model
 
 That keeps the current pass aligned with real CellProfiler semantics while still preparing the compiler/runtime for a later DAG model if it is still justified after acceptance testing.

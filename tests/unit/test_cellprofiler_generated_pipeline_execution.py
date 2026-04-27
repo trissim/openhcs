@@ -38,11 +38,13 @@ NUCLEI = "Nuclei"
 NUCLEI_IMAGE = "NucleiImage"
 OPENED_NUCLEI_IMAGE = "OpenedNucleiImage"
 OVERLAY_IMAGE = "OverlayImage"
+COLOR_IMAGE = "ColorImage"
 IDENTIFY_PRIMARY_OBJECTS = "IdentifyPrimaryObjects"
 MEASURE_OBJECT_SIZE_SHAPE = "MeasureObjectSizeShape"
 CONVERT_OBJECTS_TO_IMAGE = "ConvertObjectsToImage"
 OPENING = "Opening"
 OVERLAY_OUTLINES = "OverlayOutlines"
+GRAY_TO_COLOR = "GrayToColor"
 
 
 class MemoryBackend:
@@ -229,6 +231,41 @@ def _image_artifact_pipeline_modules() -> list[ModuleBlock]:
     ]
 
 
+def _gray_to_color_pipeline_modules() -> list[ModuleBlock]:
+    return [
+        _module(
+            1,
+            IDENTIFY_PRIMARY_OBJECTS,
+            {
+                "Select the input image": SOURCE_IMAGE,
+                "Name the primary objects to be identified": NUCLEI,
+            },
+        ),
+        _module(
+            2,
+            CONVERT_OBJECTS_TO_IMAGE,
+            {
+                "Select the input objects": NUCLEI,
+                "Name the output image": NUCLEI_IMAGE,
+            },
+        ),
+        _module(
+            3,
+            GRAY_TO_COLOR,
+            {
+                "Select a color scheme": "RGB",
+                "Select the image to be colored red": "Leave this black",
+                "Select the image to be colored green": NUCLEI_IMAGE,
+                "Select the image to be colored blue": SOURCE_IMAGE,
+                "Name the output image": COLOR_IMAGE,
+                "Relative weight for the red image": "1.0",
+                "Relative weight for the green image": "1.0",
+                "Relative weight for the blue image": "1.0",
+            },
+        ),
+    ]
+
+
 def test_generated_cellprofiler_pipeline_executes_runtime_artifact_flow():
     generated = _generated_pipeline(_measurement_pipeline_modules())
     namespace = _pipeline_namespace(generated)
@@ -298,6 +335,30 @@ def test_generated_cellprofiler_pipeline_executes_runtime_image_artifact_flow():
     assert len(overlay_image_records) == 1
     assert overlay_image_records[0].value.schema.source_image_name == SOURCE_IMAGE
     assert overlay_image_records[0].value.data.shape[-1] == 3
+
+
+def test_generated_cellprofiler_pipeline_executes_gray_to_color_module():
+    generated = _generated_pipeline(_gray_to_color_pipeline_modules())
+    namespace = _pipeline_namespace(generated)
+    context = ContextStub()
+    image = _synthetic_nuclei_image()
+
+    for step, contract in zip(
+        namespace["pipeline_steps"],
+        generated.artifact_contracts,
+        strict=True,
+    ):
+        image = _run_generated_step(step, contract, image, context)
+
+    color_image_records = context.runtime_value_store.find(
+        name=COLOR_IMAGE,
+        kind=ArtifactKind.IMAGE,
+        axis_id=AXIS_ID,
+    )
+
+    assert len(color_image_records) == 1
+    assert color_image_records[0].value.schema.source_image_name == SOURCE_IMAGE
+    assert color_image_records[0].value.data.shape == (64, 64, 3)
 
 
 def test_runtime_adapter_receives_step_input_source_binding_context():

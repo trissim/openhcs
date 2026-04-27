@@ -8,7 +8,7 @@ Handles type inference, name normalization, and value parsing.
 import re
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Callable
+from typing import Any, Dict, List, Optional
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -190,9 +190,3 @@ class SettingsBinder:
         
         # Return as string
         return value
-
-
-def bind_settings(settings: Dict[str, str], **kwargs) -> Dict[str, Any]:
-    """Convenience function for binding settings."""
-    return SettingsBinder(**kwargs).bind(settings)
-

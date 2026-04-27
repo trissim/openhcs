@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from benchmark.cellprofiler_compat import CellProfilerModuleContract
-from benchmark.converter.parser import ModuleBlock
+from benchmark.converter.parser import ModuleBlock, ModuleSetting
 from benchmark.converter.pipeline_generator import PipelineGenerator
 from benchmark.converter.runtime_pipeline import partition_cppipe_modules
 from benchmark.converter.symbol_table import (
@@ -19,6 +19,20 @@ def _module(
     settings: dict[str, str],
 ) -> ModuleBlock:
     return ModuleBlock(name=name, module_num=module_num, settings=settings)
+
+
+def _module_with_records(
+    module_num: int,
+    name: str,
+    setting_pairs: list[tuple[str, str]],
+) -> ModuleBlock:
+    records = [ModuleSetting(setting_name, value) for setting_name, value in setting_pairs]
+    return ModuleBlock(
+        name=name,
+        module_num=module_num,
+        settings={setting.name: setting.value for setting in records},
+        setting_records=records,
+    )
 
 
 def _identify_primary(module_num: int = 1) -> ModuleBlock:
@@ -288,6 +302,34 @@ def test_cellprofiler_symbol_table_compiles_singular_aliases_and_image_artifacts
         "Nuclei",
     ]
     assert granularity_contract.outputs[0].kind is ArtifactKind.MEASUREMENTS
+
+
+def test_cellprofiler_symbol_table_reads_gray_to_color_stack_inputs_from_records():
+    modules = [
+        _module_with_records(
+            1,
+            "GrayToColor",
+            [
+                ("Select a color scheme", "Stack"),
+                ("Image name", "OrigBlue"),
+                ("Color", "#0000ff"),
+                ("Weight", "1.0"),
+                ("Image name", "OrigGreen"),
+                ("Color", "#00ff00"),
+                ("Weight", "2.0"),
+                ("Name the output image", "StackedColor"),
+            ],
+        )
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[1]
+
+    assert [spec.name for spec in contract.inputs] == ["OrigBlue", "OrigGreen"]
+    assert tuple(
+        binding.alias for binding in contract.source_bindings.groups[0].bindings
+    ) == ("OrigBlue", "OrigGreen")
+    assert [spec.name for spec in contract.outputs] == ["StackedColor"]
 
 
 def test_partition_cppipe_modules_skips_setup_and_export_modules():

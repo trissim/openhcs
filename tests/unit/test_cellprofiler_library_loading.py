@@ -4,6 +4,7 @@ from benchmark.cellprofiler_library import get_function
 def test_active_absorbed_cellprofiler_functions_import_cleanly():
     function_names = (
         "ConvertObjectsToImage",
+        "GrayToColor",
         "Opening",
         "OverlayOutlines",
     )

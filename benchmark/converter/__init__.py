@@ -27,7 +27,7 @@ from .runtime_pipeline import (
     generate_pipeline_from_cppipe,
     prepare_generated_pipeline,
 )
-from .settings_binder import SettingsBinder, bind_settings
+from .settings_binder import SettingsBinder
 from .source_schema import (
     CellProfilerImageSchema,
     GroupingPlan,

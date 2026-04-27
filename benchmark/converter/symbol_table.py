@@ -39,6 +39,7 @@ from openhcs.core.source_bindings import (
     StepSourceBindingsConfig,
 )
 
+from .gray_to_color_settings import GrayToColorInputNameResolver
 from .parser import ModuleBlock
 from .source_schema import CellProfilerImageSchema, compile_image_schema
 
@@ -207,16 +208,6 @@ OUTPUT_IMAGE_SETTING = SettingNameFamily(
 DISPLAY_OBJECTS_SETTING = SettingNameFamily(
     "Select objects to display",
     aliases=("Select object to display",),
-)
-
-_GRAY_TO_COLOR_IMAGE_SETTINGS = (
-    SettingNameFamily("Select the image to be colored red"),
-    SettingNameFamily("Select the image to be colored green"),
-    SettingNameFamily("Select the image to be colored blue"),
-    SettingNameFamily("Select the image to be colored cyan"),
-    SettingNameFamily("Select the image to be colored magenta"),
-    SettingNameFamily("Select the image to be colored yellow"),
-    SettingNameFamily("Select the image that determines brightness"),
 )
 
 
@@ -787,7 +778,7 @@ def _gray_to_color(
 ) -> ModuleArtifactContracts:
     images = [
         builder.require(name, CellProfilerSymbolKind.IMAGE, module)
-        for name in _gray_to_color_input_names(module)
+        for name in GrayToColorInputNameResolver.for_module(module).input_names(module)
     ]
     output = builder.declare(
         _setting(module, OUTPUT_IMAGE_SETTING),
@@ -1000,16 +991,6 @@ def _split_names(value: str) -> tuple[str, ...]:
         for part in value.split(",")
         if part.strip()
     )
-
-
-def _gray_to_color_input_names(module: ModuleBlock) -> tuple[str, ...]:
-    return tuple(
-        name
-        for family in _GRAY_TO_COLOR_IMAGE_SETTINGS
-        if (name := _normalized_setting_symbol(module, family)) is not None
-    )
-
-
 def _normalized_setting_symbol(
     module: ModuleBlock,
     setting: str | SettingNameFamily,
@@ -1017,6 +998,11 @@ def _normalized_setting_symbol(
     value = _optional_setting(module, setting)
     if value is None:
         return None
+    normalized = _normalize_symbol_name(value)
+    return _normalized_optional_symbol_value(normalized)
+
+
+def _normalized_optional_symbol_value(value: str) -> str | None:
     normalized = _normalize_symbol_name(value)
     if normalized.lower() in {"leave this black", "none", "do not use"}:
         return None
