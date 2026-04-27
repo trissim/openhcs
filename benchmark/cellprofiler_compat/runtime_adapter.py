@@ -20,6 +20,10 @@ from openhcs.core.source_bindings import (
     MetadataExtractionRule,
     MetadataSource,
     NamedSourceBinding,
+    SourceBindingMatchDimension,
+    SourceBindingMatchField,
+    SourceBindingMatchMethod,
+    SourceBindingMatchPlan,
     SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
@@ -445,6 +449,15 @@ class SourceBindingResolutionRequest(SourceBindingRequestBase):
 
 
 @dataclass(frozen=True, slots=True)
+class SourceBindingMatchPlanRequest:
+    """Typed request for deriving target metadata from an image-set match plan."""
+
+    alias: str
+    plan: SourceBindingMatchPlan
+    step_input_candidates: tuple["ParsedSourceCandidate", ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SourceFilterMatchRequest:
     """Typed request for one source-filter match evaluation."""
 
@@ -519,9 +532,15 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
                 "selector resolution, but no pipeline-start file universe was "
                 "provided to the runtime adapter."
             )
-        inherit_components = _inherited_scope_components(
+        step_input_candidates = _parse_source_candidates(
             request.adapter.source_binding_context.step_input_files,
             request.adapter,
+        )
+        inherit_components = _inherited_scope_components(step_input_candidates)
+        image_set_metadata = _image_set_match_metadata(
+            request.alias,
+            request.adapter.source_binding_plan.match_plan,
+            step_input_candidates,
         )
         parsed_candidates = _parse_source_candidates(
             pipeline_input_files,
@@ -531,6 +550,7 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
             candidates=parsed_candidates,
             binding=request.binding,
             inherit_components=inherit_components,
+            image_set_metadata=image_set_metadata,
         )
         selected_files = _require_matched_candidates(
             MatchedSourceCandidatesRequest.from_resolution(
@@ -619,6 +639,7 @@ def _match_candidates(
     candidates: tuple[ParsedSourceCandidate, ...],
     binding: NamedSourceBinding,
     inherit_components: Mapping[str, str],
+    image_set_metadata: Mapping[str, str] = MappingProxyType({}),
 ) -> tuple[ParsedSourceCandidate, ...]:
     metadata_fields = {selector.field for selector in binding.selector.metadata}
     if metadata_fields:
@@ -653,6 +674,7 @@ def _match_candidates(
         if _candidate_matches_explicit_components(candidate, component_selectors)
         and _candidate_matches_inherited_scope(candidate, effective_components)
         and _candidate_matches_metadata(candidate, binding.selector.metadata)
+        and _candidate_matches_image_set_metadata(candidate, image_set_metadata)
     )
 
 
@@ -686,6 +708,17 @@ def _candidate_matches_metadata(
         candidate.metadata.get(selector.field) is not None
         and str(candidate.metadata[selector.field]) == selector.value
         for selector in metadata_selectors
+    )
+
+
+def _candidate_matches_image_set_metadata(
+    candidate: ParsedSourceCandidate,
+    image_set_metadata: Mapping[str, str],
+) -> bool:
+    return all(
+        candidate.metadata.get(field_name) is not None
+        and str(candidate.metadata[field_name]) == value
+        for field_name, value in image_set_metadata.items()
     )
 
 
@@ -771,12 +804,8 @@ def _restack_like_payload(
 
 
 def _inherited_scope_components(
-    step_input_files: tuple[str, ...],
-    adapter: CellProfilerRuntimeAdapter,
+    candidates: tuple[ParsedSourceCandidate, ...],
 ) -> Mapping[str, str]:
-    if not step_input_files:
-        return {}
-    candidates = _parse_source_candidates(step_input_files, adapter)
     if not candidates:
         return {}
     shared: dict[str, str] = {}
@@ -792,6 +821,135 @@ def _inherited_scope_components(
         ):
             shared[field_name] = normalized_value
     return MappingProxyType(shared)
+
+
+class SourceBindingMatchPlanResolver(ABC, metaclass=AutoRegisterMeta):
+    """Nominal family for deriving image-set match constraints from current input."""
+
+    __registry_key__ = "method_key"
+    __skip_if_no_key__ = True
+    method: ClassVar[SourceBindingMatchMethod | None] = None
+    method_key: ClassVar[str | None] = None
+
+    @classmethod
+    def for_method(
+        cls,
+        method: SourceBindingMatchMethod,
+    ) -> "SourceBindingMatchPlanResolver":
+        return cls.__registry__[method.value]()
+
+    @abstractmethod
+    def metadata_constraints(
+        self,
+        request: SourceBindingMatchPlanRequest,
+    ) -> Mapping[str, str]:
+        """Return target metadata constraints derived from the current image set."""
+
+
+class MetadataSourceBindingMatchPlanResolver(SourceBindingMatchPlanResolver):
+    method = SourceBindingMatchMethod.METADATA
+    method_key = SourceBindingMatchMethod.METADATA.value
+
+    def metadata_constraints(
+        self,
+        request: SourceBindingMatchPlanRequest,
+    ) -> Mapping[str, str]:
+        constraints: dict[str, str] = {}
+        for dimension in request.plan.dimensions:
+            target_field = dimension.field_for_alias(request.alias)
+            if target_field is None:
+                continue
+            match_value = _dimension_match_value(
+                dimension=dimension,
+                target_alias=request.alias,
+                step_input_candidates=request.step_input_candidates,
+            )
+            if match_value is None:
+                continue
+            existing = constraints.get(target_field)
+            if existing is not None and existing != match_value:
+                raise RuntimeError(
+                    f"Conflicting image-set match values for alias {request.alias!r} "
+                    f"field {target_field!r}: {existing!r} != {match_value!r}."
+                )
+            constraints[target_field] = match_value
+        return MappingProxyType(constraints)
+
+
+class OrderSourceBindingMatchPlanResolver(SourceBindingMatchPlanResolver):
+    method = SourceBindingMatchMethod.ORDER
+    method_key = SourceBindingMatchMethod.ORDER.value
+
+    def metadata_constraints(
+        self,
+        request: SourceBindingMatchPlanRequest,
+    ) -> Mapping[str, str]:
+        raise NotImplementedError(
+            "Order-based source-binding match plans are not implemented yet."
+        )
+
+
+def _image_set_match_metadata(
+    alias: str,
+    match_plan: SourceBindingMatchPlan | None,
+    step_input_candidates: tuple[ParsedSourceCandidate, ...],
+) -> Mapping[str, str]:
+    if match_plan is None or not step_input_candidates:
+        return {}
+    return SourceBindingMatchPlanResolver.for_method(
+        match_plan.method
+    ).metadata_constraints(
+        SourceBindingMatchPlanRequest(
+            alias=alias,
+            plan=match_plan,
+            step_input_candidates=step_input_candidates,
+        )
+    )
+
+
+def _dimension_match_value(
+    *,
+    dimension: SourceBindingMatchDimension,
+    target_alias: str,
+    step_input_candidates: tuple[ParsedSourceCandidate, ...],
+) -> str | None:
+    candidate_values = {
+        value
+        for field in dimension.fields
+        if field.alias != target_alias
+        for value in _shared_candidate_values(
+            field,
+            step_input_candidates,
+        )
+    }
+    if not candidate_values:
+        return None
+    if len(candidate_values) > 1:
+        raise RuntimeError(
+            "Current step input candidates produce conflicting image-set match "
+            f"values for alias {target_alias!r}: {sorted(candidate_values)!r}."
+        )
+    return next(iter(candidate_values))
+
+
+def _shared_candidate_values(
+    field: SourceBindingMatchField,
+    step_input_candidates: tuple[ParsedSourceCandidate, ...],
+) -> tuple[str, ...]:
+    values = tuple(
+        str(candidate.metadata[field.metadata_field])
+        for candidate in step_input_candidates
+        if candidate.metadata.get(field.metadata_field) is not None
+    )
+    if not values:
+        return ()
+    shared_values = set(values)
+    if len(shared_values) != 1:
+        raise RuntimeError(
+            "Current step input candidates do not share a single image-set match "
+            f"value for metadata field {field.metadata_field!r}: {sorted(shared_values)!r}."
+        )
+    return (values[0],)
 
 
 def _require_processing_context(adapter: CellProfilerRuntimeAdapter) -> Any:
@@ -874,16 +1032,17 @@ def _filter_clause_matches(
 class SourceFilterMatcher(ABC, metaclass=AutoRegisterMeta):
     """Nominal family for typed source-filter match behavior."""
 
-    __registry_key__ = "match_type"
+    __registry_key__ = "match_type_key"
     __skip_if_no_key__ = True
     match_type: ClassVar[SourceFilterMatchType | None] = None
+    match_type_key: ClassVar[str | None] = None
 
     @classmethod
     def for_match_type(
         cls,
         match_type: SourceFilterMatchType,
     ) -> "SourceFilterMatcher":
-        return cls.__registry__[match_type]()
+        return cls.__registry__[match_type.value]()
 
     @abstractmethod
     def matches(self, request: SourceFilterMatchRequest) -> bool:
@@ -892,6 +1051,7 @@ class SourceFilterMatcher(ABC, metaclass=AutoRegisterMeta):
 
 class ContainsSourceFilterMatcher(SourceFilterMatcher):
     match_type = SourceFilterMatchType.CONTAINS
+    match_type_key = SourceFilterMatchType.CONTAINS.value
 
     def matches(self, request: SourceFilterMatchRequest) -> bool:
         return _require_filter_value(request.clause) in request.target
@@ -899,6 +1059,7 @@ class ContainsSourceFilterMatcher(SourceFilterMatcher):
 
 class DoesNotContainSourceFilterMatcher(SourceFilterMatcher):
     match_type = SourceFilterMatchType.DOES_NOT_CONTAIN
+    match_type_key = SourceFilterMatchType.DOES_NOT_CONTAIN.value
 
     def matches(self, request: SourceFilterMatchRequest) -> bool:
         return _require_filter_value(request.clause) not in request.target
@@ -906,6 +1067,7 @@ class DoesNotContainSourceFilterMatcher(SourceFilterMatcher):
 
 class ContainsRegexSourceFilterMatcher(SourceFilterMatcher):
     match_type = SourceFilterMatchType.CONTAINS_REGEX
+    match_type_key = SourceFilterMatchType.CONTAINS_REGEX.value
 
     def matches(self, request: SourceFilterMatchRequest) -> bool:
         return re.search(_require_filter_value(request.clause), request.target) is not None
@@ -913,6 +1075,7 @@ class ContainsRegexSourceFilterMatcher(SourceFilterMatcher):
 
 class DoesNotContainRegexSourceFilterMatcher(SourceFilterMatcher):
     match_type = SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX
+    match_type_key = SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX.value
 
     def matches(self, request: SourceFilterMatchRequest) -> bool:
         return re.search(_require_filter_value(request.clause), request.target) is None
@@ -920,6 +1083,7 @@ class DoesNotContainRegexSourceFilterMatcher(SourceFilterMatcher):
 
 class IsImageSourceFilterMatcher(SourceFilterMatcher):
     match_type = SourceFilterMatchType.IS_IMAGE
+    match_type_key = SourceFilterMatchType.IS_IMAGE.value
 
     def matches(self, request: SourceFilterMatchRequest) -> bool:
         return _is_image_path(request.file_path)
@@ -928,16 +1092,17 @@ class IsImageSourceFilterMatcher(SourceFilterMatcher):
 class SourceFilterTargetResolver(ABC, metaclass=AutoRegisterMeta):
     """Nominal family for source-filter target text resolution."""
 
-    __registry_key__ = "subject"
+    __registry_key__ = "subject_key"
     __skip_if_no_key__ = True
     subject: ClassVar[SourceFilterSubject | None] = None
+    subject_key: ClassVar[str | None] = None
 
     @classmethod
     def for_subject(
         cls,
         subject: SourceFilterSubject,
     ) -> "SourceFilterTargetResolver":
-        return cls.__registry__[subject]()
+        return cls.__registry__[subject.value]()
 
     @abstractmethod
     def resolve_text(self, file_path: str) -> str:
@@ -946,6 +1111,7 @@ class SourceFilterTargetResolver(ABC, metaclass=AutoRegisterMeta):
 
 class FileSourceFilterTargetResolver(SourceFilterTargetResolver):
     subject = SourceFilterSubject.FILE
+    subject_key = SourceFilterSubject.FILE.value
 
     def resolve_text(self, file_path: str) -> str:
         return Path(file_path).name
@@ -953,6 +1119,7 @@ class FileSourceFilterTargetResolver(SourceFilterTargetResolver):
 
 class DirectorySourceFilterTargetResolver(SourceFilterTargetResolver):
     subject = SourceFilterSubject.DIRECTORY
+    subject_key = SourceFilterSubject.DIRECTORY.value
 
     def resolve_text(self, file_path: str) -> str:
         return str(Path(file_path).parent)
@@ -960,6 +1127,7 @@ class DirectorySourceFilterTargetResolver(SourceFilterTargetResolver):
 
 class ExtensionSourceFilterTargetResolver(SourceFilterTargetResolver):
     subject = SourceFilterSubject.EXTENSION
+    subject_key = SourceFilterSubject.EXTENSION.value
 
     def resolve_text(self, file_path: str) -> str:
         return Path(file_path).suffix.lower()

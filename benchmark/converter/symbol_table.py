@@ -27,6 +27,10 @@ from openhcs.core.source_bindings import (
     MetadataSource,
     MetadataSelector,
     NamedSourceBinding,
+    SourceBindingMatchDimension,
+    SourceBindingMatchField,
+    SourceBindingMatchMethod,
+    SourceBindingMatchPlan,
     SourceBindingOrigin,
     SourceFilterClause,
     SourceFilterMatchType,
@@ -248,6 +252,7 @@ class _SymbolTableBuilder:
         return StepSourceBindingsConfig(
             groups=(GroupedSourceBindings(bindings=bindings),),
             metadata_rules=self._source_schema.metadata_rules,
+            match_plan=self._source_schema.match_plan,
         )
 
     def external_image(self, name: str) -> CellProfilerSymbol:
@@ -372,6 +377,10 @@ def source_bindings_literal(config: StepSourceBindingsConfig) -> str:
         if len(config.metadata_rules) == 1:
             metadata_rule_literals += ","
         field_literals.append(f"metadata_rules=({metadata_rule_literals})")
+    if config.match_plan is not None:
+        field_literals.append(
+            f"match_plan={_source_binding_match_plan_literal(config.match_plan)}"
+        )
     return f"StepSourceBindingsConfig({', '.join(field_literals)})"
 
 
@@ -463,6 +472,39 @@ def _source_filter_clause_literal(clause: SourceFilterClause) -> str:
     if clause.value is not None:
         field_literals.append(f"value={clause.value!r}")
     return f"SourceFilterClause({', '.join(field_literals)})"
+
+
+def _source_binding_match_plan_literal(plan: SourceBindingMatchPlan) -> str:
+    field_literals = [f"method=SourceBindingMatchMethod.{plan.method.name}"]
+    if plan.dimensions:
+        dimension_literals = ", ".join(
+            _source_binding_match_dimension_literal(dimension)
+            for dimension in plan.dimensions
+        )
+        if len(plan.dimensions) == 1:
+            dimension_literals += ","
+        field_literals.append(f"dimensions=({dimension_literals})")
+    return f"SourceBindingMatchPlan({', '.join(field_literals)})"
+
+
+def _source_binding_match_dimension_literal(
+    dimension: SourceBindingMatchDimension,
+) -> str:
+    field_literals = ", ".join(
+        _source_binding_match_field_literal(field)
+        for field in dimension.fields
+    )
+    if len(dimension.fields) == 1:
+        field_literals += ","
+    return f"SourceBindingMatchDimension(fields=({field_literals}))"
+
+
+def _source_binding_match_field_literal(field: SourceBindingMatchField) -> str:
+    return (
+        "SourceBindingMatchField("
+        f"alias={field.alias!r}, metadata_field={field.metadata_field!r}"
+        ")"
+    )
 
 
 def _artifact_spec_literal(

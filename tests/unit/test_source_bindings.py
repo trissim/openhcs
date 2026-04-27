@@ -11,6 +11,10 @@ from openhcs.core.source_bindings import (
     MetadataSource,
     MetadataSelector,
     NamedSourceBinding,
+    SourceBindingMatchDimension,
+    SourceBindingMatchField,
+    SourceBindingMatchMethod,
+    SourceBindingMatchPlan,
     SourceBindingOrigin,
     SourceFilterClause,
     SourceFilterMatchType,
@@ -97,6 +101,23 @@ def test_compiled_source_binding_plan_preserves_grouped_named_selectors():
                 ),
             ),
         ),
+        match_plan=SourceBindingMatchPlan(
+            method=SourceBindingMatchMethod.METADATA,
+            dimensions=(
+                SourceBindingMatchDimension(
+                    fields=(
+                        SourceBindingMatchField(
+                            alias="OrigBlue",
+                            metadata_field="plate",
+                        ),
+                        SourceBindingMatchField(
+                            alias="IllumBlue",
+                            metadata_field="plate_illum",
+                        ),
+                    ),
+                ),
+            ),
+        ),
     )
 
     plan = CompiledSourceBindingPlan.from_config(config)
@@ -104,6 +125,8 @@ def test_compiled_source_binding_plan_preserves_grouped_named_selectors():
     assert not plan.is_empty
     assert tuple(plan.bindings_by_group) == ("dna",)
     assert plan.metadata_rules[0].source is MetadataSource.FILE_NAME
+    assert plan.match_plan is not None
+    assert plan.match_plan.method is SourceBindingMatchMethod.METADATA
     binding = plan.bindings_by_group["dna"][0]
     assert binding.alias == "OrigBlue"
     assert binding.selector.components[0].component is AllComponents.CHANNEL
@@ -135,6 +158,19 @@ def test_compiled_source_binding_plan_round_trips_through_pickle():
                     pattern=r".*/(?P<plate>PlateA)/.*",
                 ),
             ),
+            match_plan=SourceBindingMatchPlan(
+                method=SourceBindingMatchMethod.METADATA,
+                dimensions=(
+                    SourceBindingMatchDimension(
+                        fields=(
+                            SourceBindingMatchField(
+                                alias="OrigBlue",
+                                metadata_field="plate",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
         )
     )
 
@@ -142,6 +178,7 @@ def test_compiled_source_binding_plan_round_trips_through_pickle():
 
     assert restored == plan
     assert restored.metadata_rules == plan.metadata_rules
+    assert restored.match_plan == plan.match_plan
     assert restored.binding_for_alias("OrigBlue", "dna") == plan.binding_for_alias(
         "OrigBlue",
         "dna",

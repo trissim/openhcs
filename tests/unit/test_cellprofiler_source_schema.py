@@ -9,6 +9,7 @@ from openhcs.core.source_bindings import (
     ComponentSelector,
     MetadataSource,
     MetadataSelector,
+    SourceBindingMatchMethod,
     SourceFilterMatchType,
     SourceBindingOrigin,
     SourceFilterSubject,
@@ -98,6 +99,8 @@ def test_compile_image_schema_lowers_names_and_types_to_typed_selectors():
             ("Select the rule criteria", 'and (metadata does illum "DAPI")'),
             ("Name to assign these images", "DAPIillum"),
             ("Select the image type", "Illumination function"),
+            ("Match metadata", "[{'DAPI': 'folder', 'DAPIillum': 'folder_illum'}]"),
+            ("Image set matching method", "Metadata"),
         ],
     )
     groups_module = _module_with_records(
@@ -126,6 +129,13 @@ def test_compile_image_schema_lowers_names_and_types_to_typed_selectors():
     assert illumination.origin is SourceBindingOrigin.PIPELINE_START
     assert illumination.selector.metadata == (
         MetadataSelector("illum", "DAPI"),
+    )
+    assert schema.match_plan is not None
+    assert schema.match_plan.method is SourceBindingMatchMethod.METADATA
+    assert schema.match_plan.dimensions[0].field_for_alias("DAPI") == "folder"
+    assert (
+        schema.match_plan.dimensions[0].field_for_alias("DAPIillum")
+        == "folder_illum"
     )
 
     assert schema.grouping is not None
@@ -168,6 +178,8 @@ def test_symbol_table_and_codegen_use_compiled_setup_schema():
                 ("Select the rule criteria", 'and (metadata does illum "DAPI")'),
                 ("Name to assign these images", "DAPIillum"),
                 ("Select the image type", "Illumination function"),
+                ("Match metadata", "[{'DAPI': 'folder', 'DAPIillum': 'folder_illum'}]"),
+                ("Image set matching method", "Metadata"),
             ],
         ),
         _module_with_records(
@@ -202,6 +214,7 @@ def test_symbol_table_and_codegen_use_compiled_setup_schema():
     assert bindings[1].selector.metadata == (
         MetadataSelector("illum", "DAPI"),
     )
+    assert contract.source_bindings.match_plan is not None
 
     generated = PipelineGenerator().generate_from_registry(
         pipeline_name="cp_setup_schema",
@@ -213,4 +226,36 @@ def test_symbol_table_and_codegen_use_compiled_setup_schema():
     assert "ComponentSelector(AllComponents.CHANNEL, '1')" in generated.code
     assert "MetadataSelector('illum', 'DAPI')" in generated.code
     assert "MetadataExtractionRule(" in generated.code
+    assert "SourceBindingMatchPlan(" in generated.code
     assert "SourceBindingOrigin.PIPELINE_START" in generated.code
+
+
+def test_compile_image_schema_decodes_legacy_escaped_match_metadata():
+    names_and_types_module = _module_with_records(
+        2,
+        "NamesAndTypes",
+        [
+            ("Assignments count", "2"),
+            ("Select the rule criteria", 'and (metadata does channel "1")'),
+            ("Name to assign these images", "DAPI"),
+            ("Select the image type", "Grayscale image"),
+            ("Select the rule criteria", 'and (metadata does illum "DAPI")'),
+            ("Name to assign these images", "DAPIillum"),
+            ("Select the image type", "Illumination function"),
+            (
+                "Match metadata",
+                "\\x5B{u\\'DAPI\\'\\x3A u\\'folder\\', "
+                "u\\'DAPIillum\\'\\x3A u\\'folder_illum\\'}\\x5D",
+            ),
+            ("Image set matching method", "Metadata"),
+        ],
+    )
+
+    schema = compile_image_schema([names_and_types_module])
+
+    assert schema.match_plan is not None
+    assert schema.match_plan.dimensions[0].field_for_alias("DAPI") == "folder"
+    assert (
+        schema.match_plan.dimensions[0].field_for_alias("DAPIillum")
+        == "folder_illum"
+    )

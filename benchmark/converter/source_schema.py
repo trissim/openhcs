@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
@@ -18,6 +19,10 @@ from openhcs.core.source_bindings import (
     MetadataSource,
     MetadataSelector,
     NamedSourceBinding,
+    SourceBindingMatchDimension,
+    SourceBindingMatchField,
+    SourceBindingMatchMethod,
+    SourceBindingMatchPlan,
     SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
@@ -50,6 +55,12 @@ _FILTER_MATCH_TYPES_BY_LITERAL = MappingProxyType(
         ("containregexp", False): SourceFilterMatchType.CONTAINS_REGEX,
         ("containregexp", True): SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX,
         ("isimage", False): SourceFilterMatchType.IS_IMAGE,
+    }
+)
+_SOURCE_BINDING_MATCH_METHODS_BY_LITERAL = MappingProxyType(
+    {
+        "metadata": SourceBindingMatchMethod.METADATA,
+        "order": SourceBindingMatchMethod.ORDER,
     }
 )
 
@@ -117,6 +128,7 @@ class CellProfilerImageSchema:
     images_rule: ImagesRule | None = None
     metadata_rules: tuple[MetadataExtractionRule, ...] = ()
     assignments_by_alias: Mapping[str, ImageAssignment] = MappingProxyType({})
+    match_plan: SourceBindingMatchPlan | None = None
     grouping: GroupingPlan | None = None
 
     def __post_init__(self) -> None:
@@ -143,6 +155,7 @@ class CellProfilerImageSchema:
             self.images_rule is None
             and not self.metadata_rules
             and not self.assignments_by_alias
+            and self.match_plan is None
             and self.grouping is None
         )
 
@@ -157,6 +170,7 @@ class SetupModuleCompilation:
     images_rule: ImagesRule | None = None
     metadata_rules: tuple[MetadataExtractionRule, ...] = ()
     assignments_by_alias: Mapping[str, ImageAssignment] = MappingProxyType({})
+    match_plan: SourceBindingMatchPlan | None = None
     grouping: GroupingPlan | None = None
 
     def to_schema(self) -> CellProfilerImageSchema:
@@ -164,6 +178,7 @@ class SetupModuleCompilation:
             images_rule=self.images_rule,
             metadata_rules=self.metadata_rules,
             assignments_by_alias=self.assignments_by_alias,
+            match_plan=self.match_plan,
             grouping=self.grouping,
         )
 
@@ -196,6 +211,7 @@ class _SchemaBuilder:
         self.images_rule: ImagesRule | None = None
         self.metadata_rules: list[MetadataExtractionRule] = []
         self.assignments_by_alias: dict[str, ImageAssignment] = {}
+        self.match_plan: SourceBindingMatchPlan | None = None
         self.grouping: GroupingPlan | None = None
 
     def build(self) -> CellProfilerImageSchema:
@@ -203,6 +219,7 @@ class _SchemaBuilder:
             images_rule=self.images_rule,
             metadata_rules=tuple(self.metadata_rules),
             assignments_by_alias=MappingProxyType(dict(self.assignments_by_alias)),
+            match_plan=self.match_plan,
             grouping=self.grouping,
         ).to_schema()
 
@@ -217,6 +234,14 @@ class _SchemaBuilder:
                 "with different setup semantics."
             )
         self.assignments_by_alias[assignment.alias] = assignment
+
+    def declare_match_plan(self, match_plan: SourceBindingMatchPlan) -> None:
+        if self.match_plan is not None and self.match_plan != match_plan:
+            raise ValueError(
+                "CellProfiler image schema already declared a different image-set "
+                "match plan."
+            )
+        self.match_plan = match_plan
 
 
 def compile_image_schema(modules: Iterable[ModuleBlock]) -> CellProfilerImageSchema:
@@ -285,6 +310,9 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
         module: ModuleBlock,
         state: _SchemaBuilder,
     ) -> None:
+        match_plan = _match_plan_from_names_and_types(module)
+        if match_plan is not None:
+            state.declare_match_plan(match_plan)
         for block in _group_repeating_blocks(
             module.iter_settings(),
             start_name="Select the rule criteria",
@@ -460,3 +488,63 @@ def _origin_for_selector(selector: SourceSelector) -> SourceBindingOrigin:
     if selector.metadata:
         return SourceBindingOrigin.PIPELINE_START
     return SourceBindingOrigin.STEP_INPUT
+
+
+def _match_plan_from_names_and_types(
+    module: ModuleBlock,
+) -> SourceBindingMatchPlan | None:
+    method_value = module.get_setting("Image set matching method", "").strip()
+    if not method_value:
+        return None
+    method = _source_binding_match_method(method_value)
+    if method is not SourceBindingMatchMethod.METADATA:
+        raise NotImplementedError(
+            "Only metadata-based NamesAndTypes image-set matching is currently "
+            f"supported, got {method_value!r}."
+        )
+    raw_match_metadata = module.get_setting("Match metadata", "").strip()
+    if not raw_match_metadata:
+        return SourceBindingMatchPlan(method=method)
+    return SourceBindingMatchPlan(
+        method=method,
+        dimensions=_match_dimensions(raw_match_metadata),
+    )
+
+
+def _source_binding_match_method(value: str) -> SourceBindingMatchMethod:
+    normalized = value.strip().lower()
+    try:
+        return _SOURCE_BINDING_MATCH_METHODS_BY_LITERAL[normalized]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported NamesAndTypes image set matching method: {value!r}."
+        ) from exc
+
+
+def _match_dimensions(
+    raw_match_metadata: str,
+) -> tuple[SourceBindingMatchDimension, ...]:
+    try:
+        records = ast.literal_eval(bytes(raw_match_metadata, "utf-8").decode("unicode_escape"))
+    except (SyntaxError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid NamesAndTypes 'Match metadata' value: {raw_match_metadata!r}."
+        ) from exc
+    if not isinstance(records, list):
+        raise TypeError(
+            "NamesAndTypes 'Match metadata' must parse to a list of alias-field maps."
+        )
+    dimensions: list[SourceBindingMatchDimension] = []
+    for record in records:
+        if not isinstance(record, dict):
+            raise TypeError(
+                "NamesAndTypes 'Match metadata' entries must be dictionaries."
+            )
+        fields = tuple(
+            SourceBindingMatchField(alias=str(alias), metadata_field=str(field))
+            for alias, field in record.items()
+            if field is not None
+        )
+        if fields:
+            dimensions.append(SourceBindingMatchDimension(fields=fields))
+    return tuple(dimensions)

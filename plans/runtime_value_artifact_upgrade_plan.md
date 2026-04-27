@@ -181,19 +181,25 @@ The branch has already established most of the typed runtime/compiler foundation
 18. Current-scope inheritance is now opportunistic rather than rigid:
     - inherited scope fields only constrain candidates that actually expose those fields
     - this keeps pipeline-start matches usable for cases like illumination files that share folder identity but not full well/site/channel metadata
+19. Metadata-based `NamesAndTypes` image-set matching now compiles into a typed cross-alias match plan:
+    - the parser preserves repeated setup settings needed for match dimensions
+    - escaped legacy `.cppipe` match payloads are decoded before literal parsing
+    - generated `source_bindings` now carry the match plan all the way into runtime resolution
 
 ### 3.2 What Is Still Missing
 
 The biggest unresolved items are now:
 
 1. Setup-module semantics now exist in the converter, but they are still lowered per-step instead of being exposed as a richer pipeline-level image schema outside conversion.
-2. `NamesAndTypes` image-set matching semantics are still only partially modeled.
-   - the remaining gap is not bare metadata extraction anymore
-   - it is richer cross-alias matching policy for real BBBC-style image-set semantics
+2. `NamesAndTypes` image-set matching semantics are now modeled for the metadata-based path, but other match modes and broader real-pipeline coverage still need work.
+   - `Metadata` matching now lowers into a typed cross-alias plan
+   - unsupported modes should continue to fail loudly until modeled natively
 3. GUI/ObjectState/pycodify do not yet own richer source-binding state as an editable first-class step concept.
 4. The main-input edge is now explicit in compiled plans, but the external execution model is still list-based rather than first-class graph-based.
 5. The compiled identity record is semantically useful, but its current `step_scope_id` naming still reflects pre-compilation/UI vocabulary more than ideal runtime/compiler terminology.
 6. Real BBBC pipelines are not yet fully accepted end to end.
+   - live BBBC021 setup/image schema compilation now succeeds
+   - the current conversion blocker has moved forward to absorbed-library coverage for `GrayToColor`
 7. Export and relationship-heavy semantics are not yet fully validated on real pipelines.
 8. Benchmarking is ahead of the remaining CellProfiler semantics and should stay secondary.
 
@@ -797,8 +803,8 @@ The branch should be considered “architecturally ready for full CellProfiler s
 The next implementation pass should be:
 
 1. thread the setup-module image schema farther outward so it is not trapped inside converter-local lowering
-2. model the remaining `NamesAndTypes` image-set matching semantics explicitly instead of relying only on generic current-scope inheritance
-3. validate the richer source-binding path on a real BBBC-style multi-image `.cppipe`
+2. validate the richer source-binding path on a real BBBC-style multi-image `.cppipe`
+3. close the next absorbed-library acceptance blocker (`GrayToColor`) without reintroducing wrapper or fallback semantics
 4. keep replacing hidden sequential assumptions with explicit compiled edge records where that can be done without changing the list-based pipeline/editor model
 
 That keeps the current pass aligned with real CellProfiler semantics while still preparing the compiler/runtime for a later DAG model if it is still justified after acceptance testing.

@@ -18,6 +18,10 @@ from openhcs.core.source_bindings import (
     MetadataSource,
     MetadataSelector,
     NamedSourceBinding,
+    SourceBindingMatchDimension,
+    SourceBindingMatchField,
+    SourceBindingMatchMethod,
+    SourceBindingMatchPlan,
     SourceBindingOrigin,
     SourceFilterClause,
     SourceFilterMatchType,
@@ -431,16 +435,40 @@ def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules():
         metadata_rules=(
             MetadataExtractionRule(
                 source=MetadataSource.FOLDER_NAME,
-                pattern=r".*/(?P<folder>plate[A-Z])/.+",
+                pattern=r".*/(?P<folder>plate[A-Z])/Images$",
+                filters=(
+                    SourceFilterClause(
+                        subject=SourceFilterSubject.FILE,
+                        match_type=SourceFilterMatchType.CONTAINS_REGEX,
+                        value=r"\.tif$",
+                    ),
+                ),
             ),
             MetadataExtractionRule(
                 source=MetadataSource.FILE_NAME,
-                pattern=r"(?P<folder>plate[A-Z])_Illum(?P<illum>.+)\.mat",
+                pattern=r"(?P<folder_illum>plate[A-Z])_Illum(?P<illum>.+)\.mat",
                 filters=(
                     SourceFilterClause(
                         subject=SourceFilterSubject.FILE,
                         match_type=SourceFilterMatchType.CONTAINS_REGEX,
                         value=r"_Illum.+\.mat$",
+                    ),
+                ),
+            ),
+        ),
+        match_plan=SourceBindingMatchPlan(
+            method=SourceBindingMatchMethod.METADATA,
+            dimensions=(
+                SourceBindingMatchDimension(
+                    fields=(
+                        SourceBindingMatchField(
+                            alias=DNA_IMAGE,
+                            metadata_field="folder",
+                        ),
+                        SourceBindingMatchField(
+                            alias="IllumBlue",
+                            metadata_field="folder_illum",
+                        ),
                     ),
                 ),
             ),
