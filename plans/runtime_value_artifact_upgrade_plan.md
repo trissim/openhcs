@@ -166,20 +166,28 @@ The branch has already established most of the typed runtime/compiler foundation
 10. Minimal `.cppipe -> generate -> import -> orchestrator execute` works.
 11. `.cppipe` parsing now preserves ordered typed setting records instead of only last-write dict values.
 12. Converter setup modules now compile into a typed image/setup schema that lowers `NamesAndTypes` aliases into selector-bearing `source_bindings`.
-13. Compiler/runtime plans now carry explicit step scope identity plus a typed main-input dependency record instead of relying purely on implicit `step_index - 1` assumptions.
+13. Compiler/runtime plans now carry explicit stable step identity plus a typed main-input dependency record instead of relying purely on implicit `step_index - 1` assumptions.
+    - The current field name is `step_scope_id`, but semantically this is just a compiled stable identity string copied forward from the existing step token/scope machinery.
+    - Runtime execution does **not** use `ObjectState`; a later cleanup may rename this to `step_identity` or `step_node_id`.
 14. Artifact input/output plans now also carry scope-based producer/source identity alongside legacy step indexes.
+15. Selector-bearing runtime source resolution is now wired for the native cases OpenHCS can currently express:
+    - `STEP_INPUT` bindings resolve against the current pattern-group file universe and select typed views from the current stack.
+    - `PIPELINE_START` bindings resolve against the original axis file universe with inherited current-scope component constraints.
+    - metadata-only selectors whose fields are not exposed by the native filename parser now fail loudly instead of silently guessing.
 
 ### 3.2 What Is Still Missing
 
 The biggest unresolved items are now:
 
 1. Multiple semantic image names are only compiled into typed selectors; runtime resolution of those selectors is not yet wired.
-2. Setup-module semantics now exist in the converter, but they are not yet threaded into a true pipeline-level image schema visible outside conversion.
-3. GUI/ObjectState/pycodify do not yet own richer source-binding state as an editable first-class step concept.
-4. The main-input edge is now explicit in compiled plans, but the external execution model is still list-based rather than first-class graph-based.
-5. Real BBBC pipelines are not yet fully accepted end to end.
-6. Export and relationship-heavy semantics are not yet fully validated on real pipelines.
-7. Benchmarking is ahead of the remaining CellProfiler semantics and should stay secondary.
+2. Metadata-only `PIPELINE_START` selectors still need a deeper extension of the native parser/source system before aliases such as illumination-image rules can resolve from a true OpenHCS source schema.
+3. Setup-module semantics now exist in the converter, but they are not yet threaded into a true pipeline-level image schema visible outside conversion.
+4. GUI/ObjectState/pycodify do not yet own richer source-binding state as an editable first-class step concept.
+5. The main-input edge is now explicit in compiled plans, but the external execution model is still list-based rather than first-class graph-based.
+6. The compiled identity record is semantically useful, but its current `step_scope_id` naming still reflects pre-compilation/UI vocabulary more than ideal runtime/compiler terminology.
+7. Real BBBC pipelines are not yet fully accepted end to end.
+8. Export and relationship-heavy semantics are not yet fully validated on real pipelines.
+9. Benchmarking is ahead of the remaining CellProfiler semantics and should stay secondary.
 
 ---
 
@@ -617,8 +625,10 @@ Requirements:
 
 Acceptance:
 
-1. A step with multiple external named images can execute without the old fallback path.
-2. External images resolve consistently under both direct and ZMQ execution.
+1. `STEP_INPUT` selectors resolve against the current pattern-group file universe and select typed views from the current stack.
+2. `PIPELINE_START` component selectors resolve against the original axis file universe with inherited current-scope component constraints.
+3. Unsupported metadata-only selectors fail loudly when the native parser/source system cannot express them.
+4. External images resolve consistently under both direct and ZMQ execution.
 
 ### Pass 6: External/Produced Image Symmetry
 
@@ -777,9 +787,9 @@ The branch should be considered “architecturally ready for full CellProfiler s
 
 The next implementation pass should be:
 
-1. resolve selector-bearing `STEP_INPUT` bindings as typed views over the current step input container
-2. resolve selector-bearing `PIPELINE_START` bindings through existing microscope/component-key source resolution
-3. keep replacing hidden sequential assumptions with explicit compiled edge records where that can be done without changing the list-based pipeline/editor model
-4. validate on a real multi-image `.cppipe` before considering a first-class DAG execution/UI refactor
+1. extend the native parser/source system so metadata-only selectors compiled from `Metadata` / `NamesAndTypes` become resolvable instead of fail-loud
+2. thread the setup-module image schema farther outward so it is not trapped inside converter-local lowering
+3. validate the new selector-bearing runtime path on a real multi-image `.cppipe` before considering broader graph/UI work
+4. keep replacing hidden sequential assumptions with explicit compiled edge records where that can be done without changing the list-based pipeline/editor model
 
 That keeps the current pass aligned with real CellProfiler semantics while still preparing the compiler/runtime for a later DAG model if it is still justified after acceptance testing.

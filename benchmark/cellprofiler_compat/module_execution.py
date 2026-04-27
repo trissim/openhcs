@@ -35,7 +35,9 @@ def cellprofiler_runtime_adapter_factory(
         axis_id=str(axis_id),
         artifact_outputs=request.artifact_outputs,
         source_binding_plan=request.source_binding_plan,
+        source_binding_context=request.source_binding_context,
         group_key=request.group_key,
+        processing_context=request.context,
         filemanager=request.context.filemanager,
     )
 
@@ -813,8 +815,20 @@ def _compose_image_payload(
     if len(image_payloads) == 1:
         return image_payloads[0]
 
-    memory_type = detect_memory_type(image_payloads[0])
-    return stack_slices(list(image_payloads), memory_type=memory_type, gpu_id=0)
+    normalized_payloads: list[Any] = []
+    for payload in image_payloads:
+        if hasattr(payload, "ndim") and payload.ndim == 3:
+            if getattr(payload, "shape", (0,))[0] != 1:
+                raise NotImplementedError(
+                    f"{module_name} cannot compose multi-image inputs from "
+                    "payloads that each contain multiple stack slices."
+                )
+            normalized_payloads.append(payload[0])
+            continue
+        normalized_payloads.append(payload)
+
+    memory_type = detect_memory_type(normalized_payloads[0])
+    return stack_slices(normalized_payloads, memory_type=memory_type, gpu_id=0)
 
 
 def _single_source_name(source_names: tuple[str, ...]) -> str | None:

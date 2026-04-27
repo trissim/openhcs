@@ -235,6 +235,33 @@ class CompiledSourceBindingPlan:
         return cls(bindings_by_group=bindings_by_group)
 
 
+@dataclass(frozen=True, slots=True)
+class SourceBindingRuntimeContext:
+    """Execution-local file universe for selector-bearing source bindings."""
+
+    step_input_files: tuple[str, ...] = ()
+    pipeline_input_files: tuple[str, ...] = ()
+    pipeline_input_backend: str | None = None
+
+    @classmethod
+    def empty(cls) -> "SourceBindingRuntimeContext":
+        return cls()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "step_input_files", tuple(self.step_input_files))
+        object.__setattr__(
+            self,
+            "pipeline_input_files",
+            tuple(self.pipeline_input_files),
+        )
+        if self.pipeline_input_backend is not None:
+            object.__setattr__(
+                self,
+                "pipeline_input_backend",
+                str(self.pipeline_input_backend),
+            )
+
+
 EMPTY_SOURCE_BINDINGS = StepSourceBindingsConfig()
 
 

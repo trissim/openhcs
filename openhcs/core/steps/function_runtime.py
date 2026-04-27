@@ -25,7 +25,10 @@ from openhcs.core.runtime_stores import (
     require_runtime_value_store,
 )
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest, RuntimeAdapterSpec
-from openhcs.core.source_bindings import CompiledSourceBindingPlan
+from openhcs.core.source_bindings import (
+    CompiledSourceBindingPlan,
+    SourceBindingRuntimeContext,
+)
 from openhcs.core.runtime_values import normalize_artifact_value
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 
@@ -48,6 +51,9 @@ class FunctionExecutionRequest:
     artifact_outputs: ArtifactOutputPlans
     runtime_adapter: RuntimeAdapterSpec | None = None
     source_binding_plan: CompiledSourceBindingPlan = CompiledSourceBindingPlan.empty()
+    source_binding_context: SourceBindingRuntimeContext = (
+        SourceBindingRuntimeContext.empty()
+    )
     group_key: str | None = None
 
 
@@ -61,6 +67,9 @@ class FunctionChainExecutionRequest:
     execution_plan: FunctionStepExecutionPlan
     artifact_inputs: ArtifactInputPlans
     artifact_outputs: ArtifactOutputPlans
+    source_binding_context: SourceBindingRuntimeContext = (
+        SourceBindingRuntimeContext.empty()
+    )
 
 
 @dataclass(frozen=True)
@@ -88,6 +97,7 @@ class PatternGroupData:
 
     matching_files: list[str]
     main_data_stack: Any
+    source_binding_context: SourceBindingRuntimeContext
 
 
 def _save_artifact_value(
@@ -295,6 +305,7 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                 context=context,
                 artifact_outputs=artifact_outputs,
                 source_binding_plan=request.source_binding_plan,
+                source_binding_context=request.source_binding_context,
                 group_key=request.group_key,
             )
         )
@@ -378,6 +389,7 @@ def _execute_chain_core(request: FunctionChainExecutionRequest) -> Any:
                 artifact_outputs=invocation.select_outputs(request.artifact_outputs),
                 runtime_adapter=invocation.contract.runtime_adapter,
                 source_binding_plan=plan.source_binding_plan,
+                source_binding_context=request.source_binding_context,
                 group_key=invocation.key.group_key,
             )
         )
@@ -410,7 +422,7 @@ class PatternGroupRuntime:
 
         try:
             loaded = self._load_input_stack()
-            processed_stack = self._execute_pattern(loaded.main_data_stack)
+            processed_stack = self._execute_pattern(loaded)
             output_slices = self._validate_and_unstack(processed_stack)
             self._save_outputs(output_slices, loaded.matching_files)
             self._cleanup_collapsed_inputs(output_slices, loaded.matching_files)
@@ -488,6 +500,26 @@ class PatternGroupRuntime:
         return PatternGroupData(
             matching_files=matching_files,
             main_data_stack=main_data_stack,
+            source_binding_context=self._source_binding_context(matching_files),
+        )
+
+    def _source_binding_context(
+        self,
+        matching_files: list[str],
+    ) -> SourceBindingRuntimeContext:
+        if self.plan.source_binding_plan.is_empty:
+            return SourceBindingRuntimeContext.empty()
+
+        source_backend = self.context.microscope_handler.get_primary_backend(
+            self.context.input_dir,
+            self.context.filemanager,
+        )
+        return SourceBindingRuntimeContext(
+            step_input_files=tuple(matching_files),
+            pipeline_input_files=tuple(
+                self.plan.get_paths_for_axis(self.context.input_dir, source_backend)
+            ),
+            pipeline_input_backend=source_backend,
         )
 
     def _component_artifact_plans(self) -> ComponentArtifactPlans:
@@ -509,7 +541,10 @@ class PatternGroupRuntime:
 
         return component_artifacts
 
-    def _execute_pattern(self, main_data_stack: Any) -> Any:
+    def _execute_pattern(
+        self,
+        loaded: PatternGroupData,
+    ) -> Any:
         request = self.request
         component_artifacts = self._component_artifact_plans()
 
@@ -520,12 +555,13 @@ class PatternGroupRuntime:
 
         return _execute_chain_core(
             FunctionChainExecutionRequest(
-                initial_data_stack=main_data_stack,
+                initial_data_stack=loaded.main_data_stack,
                 invocations=request.compiled_group.invocations,
                 context=self.context,
                 execution_plan=self.plan,
                 artifact_inputs=component_artifacts.inputs,
                 artifact_outputs=component_artifacts.outputs,
+                source_binding_context=loaded.source_binding_context,
             )
         )
 

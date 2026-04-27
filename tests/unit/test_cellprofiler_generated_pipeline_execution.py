@@ -1,7 +1,9 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
+from benchmark.cellprofiler_compat import cellprofiler_runtime_adapter_factory
 from benchmark.converter.parser import ModuleBlock
 from benchmark.converter.pipeline_generator import GeneratedPipeline, PipelineGenerator
 from openhcs.core.artifacts import (
@@ -12,11 +14,22 @@ from openhcs.core.artifacts import (
 from openhcs.core.config import DtypeConfig
 from openhcs.core.runtime_adapters import runtime_adapter_spec_from_callable
 from openhcs.core.runtime_stores import RuntimeValueStore
-from openhcs.core.source_bindings import CompiledSourceBindingPlan
+from openhcs.core.source_bindings import (
+    ComponentSelector,
+    CompiledSourceBindingPlan,
+    GroupedSourceBindings,
+    NamedSourceBinding,
+    SourceBindingRuntimeContext,
+    SourceSelector,
+    StepSourceBindingsConfig,
+)
+from openhcs.core.runtime_adapters import runtime_adapter
 from openhcs.core.steps.function_runtime import (
     FunctionExecutionRequest,
     _execute_function_core,
 )
+from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
+from openhcs.constants.constants import AllComponents
 
 
 AXIS_ID = "A01"
@@ -64,6 +77,12 @@ class ContextStub:
         self.axis_id = AXIS_ID
         self.filemanager = FileManagerStub()
         self.runtime_value_store = RuntimeValueStore()
+        self.input_dir = "/plate/Images"
+        self.global_config = SimpleNamespace(zarr_config=None)
+        self.microscope_handler = SimpleNamespace(
+            parser=ImageXpressFilenameParser(),
+            get_primary_backend=lambda plate_path, filemanager: "memory",
+        )
 
 
 def _module(module_num: int, name: str, settings: dict[str, str]) -> ModuleBlock:
@@ -126,7 +145,14 @@ def _step_function_and_kwargs(step) -> tuple:
     return step.func, {}
 
 
-def _run_generated_step(step, contract, image, context):
+def _run_generated_step(
+    step,
+    contract,
+    image,
+    context,
+    *,
+    source_binding_context=SourceBindingRuntimeContext.empty(),
+):
     func, kwargs = _step_function_and_kwargs(step)
     kwargs["dtype_config"] = DtypeConfig()
     return _execute_function_core(
@@ -141,6 +167,7 @@ def _run_generated_step(step, contract, image, context):
             source_binding_plan=CompiledSourceBindingPlan.from_config(
                 step.source_bindings
             ),
+            source_binding_context=source_binding_context,
         )
     )
 
@@ -271,3 +298,64 @@ def test_generated_cellprofiler_pipeline_executes_runtime_image_artifact_flow():
     assert len(overlay_image_records) == 1
     assert overlay_image_records[0].value.schema.source_image_name == SOURCE_IMAGE
     assert overlay_image_records[0].value.data.shape[-1] == 3
+
+
+def test_runtime_adapter_receives_step_input_source_binding_context():
+    @runtime_adapter(
+        "cellprofiler_runtime",
+        cellprofiler_runtime_adapter_factory,
+        manages_artifact_inputs=True,
+    )
+    def select_named_input(image, *, cellprofiler_runtime):
+        return cellprofiler_runtime.resolve_source_image(SOURCE_IMAGE, image)
+
+    context = ContextStub()
+    input_stack = np.stack(
+        [
+            np.full((8, 8), 4.0, dtype=np.float32),
+            np.full((8, 8), 2.0, dtype=np.float32),
+        ]
+    )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=(
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s001_w2_z001_t001.tif",
+        )
+    )
+    source_binding_plan = CompiledSourceBindingPlan.from_config(
+        StepSourceBindingsConfig(
+            groups=(
+                GroupedSourceBindings(
+                    bindings=(
+                        NamedSourceBinding(
+                            alias=SOURCE_IMAGE,
+                            selector=SourceSelector(
+                                components=(
+                                    ComponentSelector(AllComponents.CHANNEL, "1"),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        )
+    )
+    selected_output = _execute_function_core(
+        FunctionExecutionRequest(
+            func_callable=select_named_input,
+            main_data_arg=input_stack,
+            base_kwargs={},
+            context=context,
+            artifact_inputs={},
+            artifact_outputs={},
+            runtime_adapter=runtime_adapter_spec_from_callable(select_named_input),
+            source_binding_plan=source_binding_plan,
+            source_binding_context=source_binding_context,
+        )
+    )
+
+    assert selected_output.shape == (1, 8, 8)
+    np.testing.assert_allclose(
+        selected_output[0],
+        np.full((8, 8), 4.0, dtype=np.float32),
+    )

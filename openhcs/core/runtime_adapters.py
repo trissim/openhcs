@@ -8,7 +8,10 @@ from typing import Any, TypeVar
 from weakref import WeakKeyDictionary
 
 from openhcs.core.artifacts import ArtifactOutputPlan
-from openhcs.core.source_bindings import CompiledSourceBindingPlan
+from openhcs.core.source_bindings import (
+    CompiledSourceBindingPlan,
+    SourceBindingRuntimeContext,
+)
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -24,6 +27,9 @@ class RuntimeAdapterRequest:
     context: Any
     artifact_outputs: Mapping[str, ArtifactOutputPlan]
     source_binding_plan: CompiledSourceBindingPlan = CompiledSourceBindingPlan.empty()
+    source_binding_context: SourceBindingRuntimeContext = (
+        SourceBindingRuntimeContext.empty()
+    )
     group_key: str | None = None
 
 

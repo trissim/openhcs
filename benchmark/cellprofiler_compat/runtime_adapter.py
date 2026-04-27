@@ -11,10 +11,13 @@ from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.constants.constants import Backend
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.memory import detect_memory_type, stack_slices, unstack_slices
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     NamedSourceBinding,
+    SourceBindingRuntimeContext,
     SourceBindingOrigin,
 )
 from openhcs.core.runtime_stores import (
@@ -49,7 +52,11 @@ class CellProfilerRuntimeAdapter:
     source_binding_plan: CompiledSourceBindingPlan = field(
         default_factory=CompiledSourceBindingPlan.empty
     )
+    source_binding_context: SourceBindingRuntimeContext = field(
+        default_factory=SourceBindingRuntimeContext.empty
+    )
     group_key: str | None = None
+    processing_context: Any | None = None
     filemanager: Any | None = None
     backend: str = "memory"
 
@@ -68,6 +75,12 @@ class CellProfilerRuntimeAdapter:
                 "CellProfilerRuntimeAdapter.source_binding_plan must be "
                 "CompiledSourceBindingPlan, got "
                 f"{type(self.source_binding_plan).__name__}."
+            )
+        if not isinstance(self.source_binding_context, SourceBindingRuntimeContext):
+            raise TypeError(
+                "CellProfilerRuntimeAdapter.source_binding_context must be "
+                "SourceBindingRuntimeContext, got "
+                f"{type(self.source_binding_context).__name__}."
             )
 
         outputs = dict(self.artifact_outputs)
@@ -105,19 +118,8 @@ class CellProfilerRuntimeAdapter:
         self,
         aliases: tuple[str, ...],
     ) -> None:
-        if len(aliases) <= 1:
-            return
-        unresolved = tuple(
-            alias
-            for alias in aliases
-            if _binding_requires_selector(self._require_source_binding(alias))
-        )
-        if unresolved:
-            raise NotImplementedError(
-                "Multiple external CellProfiler image bindings still require a "
-                "typed selector-bearing NamesAndTypes/Images plan. Unresolved "
-                f"aliases: {list(unresolved)}."
-            )
+        for alias in aliases:
+            self._require_source_binding(alias)
 
     def has_source_binding(
         self,
@@ -421,11 +423,17 @@ class CellProfilerRuntimeAdapter:
 
 
 @dataclass(frozen=True, slots=True)
-class SourceBindingResolutionRequest:
-    """Source-binding resolution inputs for one external image alias."""
+class SourceBindingRequestBase(ABC):
+    """Shared nominal fields for source-binding request records."""
 
     alias: str
     binding: NamedSourceBinding
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBindingResolutionRequest(SourceBindingRequestBase):
+    """Source-binding resolution inputs for one external image alias."""
+
     adapter: CellProfilerRuntimeAdapter
     fallback_image: Any
 
@@ -452,28 +460,310 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
     origin = SourceBindingOrigin.STEP_INPUT
 
     def resolve_image(self, request: SourceBindingResolutionRequest) -> Any:
-        if _binding_requires_selector(request.binding):
+        if not _binding_requires_selector(request.binding):
+            return request.fallback_image
+        step_input_files = request.adapter.source_binding_context.step_input_files
+        if not step_input_files:
             raise NotImplementedError(
-                f"CellProfiler source alias '{request.alias}' declares selector "
-                "constraints over step input, but selector-based channel/view "
-                "resolution is not wired yet."
+                f"CellProfiler source alias '{request.alias}' needs step-input "
+                "selector resolution, but no step input file universe was "
+                "provided to the runtime adapter."
             )
-        return request.fallback_image
+        parsed_candidates = _parse_source_candidates(
+            step_input_files,
+            request.adapter,
+        )
+        matched = _match_candidates(
+            candidates=parsed_candidates,
+            binding=request.binding,
+            adapter=request.adapter,
+            inherit_components={},
+        )
+        selected_files = _require_matched_candidates(
+            MatchedSourceCandidatesRequest.from_resolution(
+                request,
+                matched=matched,
+                source_description="step input",
+            )
+        )
+        return _select_step_input_stack(
+            request=request,
+            selected_filenames=tuple(candidate.filename for candidate in selected_files),
+        )
 
 
 class PipelineStartSourceBindingResolver(SourceBindingResolver):
-    """Reject pipeline-start bindings until metadata-backed source planning lands."""
+    """Resolve named images from the original pipeline-start source universe."""
 
     origin = SourceBindingOrigin.PIPELINE_START
 
     def resolve_image(self, request: SourceBindingResolutionRequest) -> Any:
-        raise NotImplementedError(
-            f"CellProfiler source alias '{request.alias}' targets pipeline-start "
-            "resolution, but metadata-backed NamesAndTypes/Images planning is not "
-            "wired yet."
+        pipeline_input_files = request.adapter.source_binding_context.pipeline_input_files
+        if not pipeline_input_files:
+            raise NotImplementedError(
+                f"CellProfiler source alias '{request.alias}' needs pipeline-start "
+                "selector resolution, but no pipeline-start file universe was "
+                "provided to the runtime adapter."
+            )
+        inherit_components = _inherited_scope_components(
+            request.adapter.source_binding_context.step_input_files,
+            request.adapter,
+        )
+        parsed_candidates = _parse_source_candidates(
+            pipeline_input_files,
+            request.adapter,
+        )
+        matched = _match_candidates(
+            candidates=parsed_candidates,
+            binding=request.binding,
+            adapter=request.adapter,
+            inherit_components=inherit_components,
+        )
+        selected_files = _require_matched_candidates(
+            MatchedSourceCandidatesRequest.from_resolution(
+                request,
+                matched=matched,
+                source_description="pipeline start",
+            )
+        )
+        return _load_pipeline_start_stack(
+            adapter=request.adapter,
+            selected_paths=tuple(candidate.path for candidate in selected_files),
+            fallback_image=request.fallback_image,
         )
 
 
 def _binding_requires_selector(binding: NamedSourceBinding) -> bool:
     selector = binding.selector
     return bool(selector.components or selector.metadata or not selector.inherit_current_scope)
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedSourceCandidate:
+    """One parsed file candidate used for source-binding selector resolution."""
+
+    path: str
+    filename: str
+    metadata: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class MatchedSourceCandidatesRequest(SourceBindingRequestBase):
+    """Typed request for fail-loud source-candidate selection."""
+
+    matched: tuple[ParsedSourceCandidate, ...]
+    source_description: str
+
+    @classmethod
+    def from_resolution(
+        cls,
+        request: SourceBindingResolutionRequest,
+        *,
+        matched: tuple[ParsedSourceCandidate, ...],
+        source_description: str,
+    ) -> "MatchedSourceCandidatesRequest":
+        return cls(
+            alias=request.alias,
+            binding=request.binding,
+            matched=matched,
+            source_description=source_description,
+        )
+
+
+def _parse_source_candidates(
+    file_paths: tuple[str, ...],
+    adapter: CellProfilerRuntimeAdapter,
+) -> tuple[ParsedSourceCandidate, ...]:
+    parser = _require_processing_context(adapter).microscope_handler.parser
+    candidates: list[ParsedSourceCandidate] = []
+    for file_path in file_paths:
+        filename = Path(file_path).name
+        metadata = parser.parse_filename(filename)
+        if not metadata:
+            continue
+        candidates.append(
+            ParsedSourceCandidate(
+                path=str(file_path),
+                filename=filename,
+                metadata=MappingProxyType(dict(metadata)),
+            )
+        )
+    return tuple(candidates)
+
+
+def _match_candidates(
+    *,
+    candidates: tuple[ParsedSourceCandidate, ...],
+    binding: NamedSourceBinding,
+    adapter: CellProfilerRuntimeAdapter,
+    inherit_components: Mapping[str, str],
+) -> tuple[ParsedSourceCandidate, ...]:
+    metadata_fields = {selector.field for selector in binding.selector.metadata}
+    if metadata_fields:
+        unsupported = tuple(
+            field
+            for field in sorted(metadata_fields)
+            if not any(field in candidate.metadata for candidate in candidates)
+        )
+        if unsupported:
+            raise NotImplementedError(
+                "Source-binding metadata selectors are only supported when the "
+                "native OpenHCS filename parser exposes those fields. Missing "
+                f"fields: {list(unsupported)}."
+            )
+
+    component_selectors = {
+        selector.component.value: selector.value
+        for selector in binding.selector.components
+    }
+    effective_components = (
+        {
+            **inherit_components,
+            **component_selectors,
+        }
+        if binding.selector.inherit_current_scope
+        else component_selectors
+    )
+
+    return tuple(
+        candidate
+        for candidate in candidates
+        if _candidate_matches_components(candidate, effective_components)
+        and _candidate_matches_metadata(candidate, binding.selector.metadata)
+    )
+
+
+def _candidate_matches_components(
+    candidate: ParsedSourceCandidate,
+    expected_components: Mapping[str, str],
+) -> bool:
+    return all(
+        candidate.metadata.get(component_name) is not None
+        and str(candidate.metadata[component_name]) == value
+        for component_name, value in expected_components.items()
+    )
+
+
+def _candidate_matches_metadata(
+    candidate: ParsedSourceCandidate,
+    metadata_selectors: tuple[Any, ...],
+) -> bool:
+    return all(
+        candidate.metadata.get(selector.field) is not None
+        and str(candidate.metadata[selector.field]) == selector.value
+        for selector in metadata_selectors
+    )
+
+
+def _require_matched_candidates(
+    request: MatchedSourceCandidatesRequest,
+) -> tuple[ParsedSourceCandidate, ...]:
+    if request.matched:
+        return request.matched
+    raise RuntimeError(
+        f"CellProfiler source alias '{request.alias}' with selector "
+        f"{request.binding.selector!r} matched no files in the "
+        f"{request.source_description} source universe."
+    )
+
+
+def _select_step_input_stack(
+    *,
+    request: SourceBindingResolutionRequest,
+    selected_filenames: tuple[str, ...],
+) -> Any:
+    step_input_files = request.adapter.source_binding_context.step_input_files
+    indexed_filenames = {filename: index for index, filename in enumerate(step_input_files)}
+    selected_indexes = tuple(
+        indexed_filenames[filename]
+        for filename in step_input_files
+        if filename in selected_filenames
+    )
+    fallback_image = request.fallback_image
+    if not selected_indexes:
+        raise RuntimeError(
+            f"CellProfiler source alias '{request.alias}' selected no step-input "
+            "stack indexes after filename matching."
+        )
+    if len(step_input_files) == 1:
+        return fallback_image
+    slices = _unstack_payload(fallback_image)
+    selected_slices = [slices[index] for index in selected_indexes]
+    return _restack_like_payload(selected_slices, fallback_image)
+
+
+def _load_pipeline_start_stack(
+    *,
+    adapter: CellProfilerRuntimeAdapter,
+    selected_paths: tuple[str, ...],
+    fallback_image: Any,
+) -> Any:
+    if not selected_paths:
+        raise RuntimeError("Pipeline-start source selection cannot load zero paths.")
+    context = _require_processing_context(adapter)
+    backend = adapter.source_binding_context.pipeline_input_backend
+    if backend is None:
+        raise RuntimeError(
+            "Pipeline-start source resolution requires pipeline_input_backend."
+        )
+    load_kwargs: dict[str, Any] = {}
+    if backend == Backend.ZARR.value:
+        load_kwargs["zarr_config"] = context.global_config.zarr_config
+    loaded_images = context.filemanager.load_batch(list(selected_paths), backend, **load_kwargs)
+    if not loaded_images:
+        raise RuntimeError(
+            f"Pipeline-start source resolution loaded no images from {list(selected_paths)}."
+        )
+    return _restack_like_payload(loaded_images, fallback_image)
+
+
+def _unstack_payload(payload: Any) -> list[Any]:
+    if hasattr(payload, "ndim") and payload.ndim == 2:
+        return [payload]
+    memory_type = detect_memory_type(payload)
+    return list(unstack_slices(payload, memory_type, 0, validate_slices=False))
+
+
+def _restack_like_payload(
+    slices: list[Any],
+    reference_payload: Any,
+) -> Any:
+    if not slices:
+        raise ValueError("Cannot restack an empty slice list.")
+    if len(slices) == 1 and hasattr(reference_payload, "ndim") and reference_payload.ndim == 2:
+        return slices[0]
+    memory_type = detect_memory_type(reference_payload)
+    return stack_slices(slices, memory_type=memory_type, gpu_id=0)
+
+
+def _inherited_scope_components(
+    step_input_files: tuple[str, ...],
+    adapter: CellProfilerRuntimeAdapter,
+) -> Mapping[str, str]:
+    if not step_input_files:
+        return {}
+    candidates = _parse_source_candidates(step_input_files, adapter)
+    if not candidates:
+        return {}
+    shared: dict[str, str] = {}
+    first_metadata = candidates[0].metadata
+    for field_name, value in first_metadata.items():
+        if value is None:
+            continue
+        normalized_value = str(value)
+        if all(
+            candidate.metadata.get(field_name) is not None
+            and str(candidate.metadata[field_name]) == normalized_value
+            for candidate in candidates[1:]
+        ):
+            shared[field_name] = normalized_value
+    return MappingProxyType(shared)
+
+
+def _require_processing_context(adapter: CellProfilerRuntimeAdapter) -> Any:
+    if adapter.processing_context is None:
+        raise RuntimeError(
+            "CellProfilerRuntimeAdapter.processing_context is required for "
+            "selector-bearing source resolution."
+        )
+    return adapter.processing_context

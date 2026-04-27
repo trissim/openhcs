@@ -1,5 +1,6 @@
 import pytest
 import numpy as np
+from types import SimpleNamespace
 
 from benchmark.cellprofiler_compat import (
     CellProfilerModuleContract,
@@ -11,12 +12,19 @@ from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, ArtifactSpe
 from openhcs.core.config import DtypeConfig
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
+    ComponentSelector,
     GroupedSourceBindings,
+    MetadataSelector,
     NamedSourceBinding,
+    SourceBindingOrigin,
+    SourceBindingRuntimeContext,
+    SourceSelector,
     StepSourceBindingsConfig,
 )
 from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_values import FieldSpec, RuntimeArrayPayload
+from openhcs.constants.constants import AllComponents
+from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 
 
 AXIS_ID = "A01"
@@ -43,6 +51,7 @@ class FileManagerStub:
     def __init__(self):
         self.saved = {}
         self.directories = []
+        self.loaded_batches = []
 
     def save(self, data, path, backend):
         self.saved[(backend, path)] = data
@@ -50,26 +59,45 @@ class FileManagerStub:
     def ensure_directory(self, path, backend):
         self.directories.append((backend, path))
 
+    def load_batch(self, paths, backend, **kwargs):
+        self.loaded_batches.append((tuple(paths), backend, dict(kwargs)))
+        return [self.saved[(backend, path)] for path in paths]
+
+
+class ContextStub:
+    def __init__(self, filemanager):
+        self.filemanager = filemanager
+        self.input_dir = "/plate/Images"
+        self.global_config = SimpleNamespace(zarr_config=None)
+        self.microscope_handler = SimpleNamespace(
+            parser=ImageXpressFilenameParser(),
+            get_primary_backend=lambda plate_path, filemanager: "memory",
+        )
+
 
 def _plan(name, kind):
     return ArtifactOutputPlan(name=name, path=f"/memory/{name}.pkl", kind=kind)
 
 
-def _adapter(outputs):
+def _adapter(
+    outputs,
+    *,
+    source_bindings=StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(bindings=(NamedSourceBinding(alias=DNA_IMAGE),)),
+        )
+    ),
+    source_binding_context=SourceBindingRuntimeContext.empty(),
+    processing_context=None,
+):
     filemanager = FileManagerStub()
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_id=AXIS_ID,
         artifact_outputs=outputs,
-        source_binding_plan=CompiledSourceBindingPlan.from_config(
-            StepSourceBindingsConfig(
-                groups=(
-                    GroupedSourceBindings(
-                        bindings=(NamedSourceBinding(alias=DNA_IMAGE),)
-                    ),
-                )
-            )
-        ),
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=processing_context,
         filemanager=filemanager,
     )
     return adapter, filemanager
@@ -209,6 +237,174 @@ def test_cellprofiler_adapter_measurements_require_object_reference():
             NUCLEI_MEASUREMENTS,
             [{"object_id": 1}],
             object_name=NUCLEI,
+        )
+
+
+def test_cellprofiler_adapter_resolves_step_input_channel_selector_from_current_stack():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias=DNA_IMAGE,
+                        selector=SourceSelector(
+                            components=(
+                                ComponentSelector(AllComponents.CHANNEL, "1"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=(
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s001_w2_z001_t001.tif",
+        )
+    )
+    filemanager = FileManagerStub()
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+    fallback_stack = np.stack(
+        [
+            np.full((2, 2), 1.0, dtype=np.float32),
+            np.full((2, 2), 2.0, dtype=np.float32),
+        ]
+    )
+
+    resolved = adapter.resolve_source_image(DNA_IMAGE, fallback_stack)
+
+    assert resolved.shape == (1, 2, 2)
+    np.testing.assert_array_equal(resolved[0], fallback_stack[0])
+
+
+def test_cellprofiler_adapter_resolves_pipeline_start_component_selector_with_inherited_scope():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="Actin",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        selector=SourceSelector(
+                            components=(
+                                ComponentSelector(AllComponents.CHANNEL, "2"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=(
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s001_w2_z001_t001.tif",
+        ),
+        pipeline_input_files=(
+            "/plate/Images/A01_s001_w1_z001_t001.tif",
+            "/plate/Images/A01_s001_w2_z001_t001.tif",
+            "/plate/Images/A01_s002_w1_z001_t001.tif",
+            "/plate/Images/A01_s002_w2_z001_t001.tif",
+        ),
+        pipeline_input_backend="memory",
+    )
+    filemanager = FileManagerStub()
+    expected = np.full((2, 2), 12.0, dtype=np.float32)
+    filemanager.saved[("memory", "/plate/Images/A01_s001_w1_z001_t001.tif")] = np.full(
+        (2, 2),
+        11.0,
+        dtype=np.float32,
+    )
+    filemanager.saved[("memory", "/plate/Images/A01_s001_w2_z001_t001.tif")] = expected
+    filemanager.saved[("memory", "/plate/Images/A01_s002_w1_z001_t001.tif")] = np.full(
+        (2, 2),
+        21.0,
+        dtype=np.float32,
+    )
+    filemanager.saved[("memory", "/plate/Images/A01_s002_w2_z001_t001.tif")] = np.full(
+        (2, 2),
+        22.0,
+        dtype=np.float32,
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+    fallback_stack = np.stack(
+        [
+            np.full((2, 2), 1.0, dtype=np.float32),
+            np.full((2, 2), 2.0, dtype=np.float32),
+        ]
+    )
+
+    resolved = adapter.resolve_source_image("Actin", fallback_stack)
+
+    assert resolved.shape == (1, 2, 2)
+    np.testing.assert_array_equal(resolved[0], expected)
+    assert filemanager.loaded_batches == [
+        (
+            ("/plate/Images/A01_s001_w2_z001_t001.tif",),
+            "memory",
+            {},
+        )
+    ]
+
+
+def test_cellprofiler_adapter_rejects_metadata_selector_fields_not_exposed_by_parser():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="IllumBlue",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        selector=SourceSelector(
+                            metadata=(MetadataSelector("illum", "DAPI"),),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=("A01_s001_w1_z001_t001.tif",),
+        pipeline_input_files=("/plate/Images/A01_s001_w1_z001_t001.tif",),
+        pipeline_input_backend="memory",
+    )
+    filemanager = FileManagerStub()
+    filemanager.saved[("memory", "/plate/Images/A01_s001_w1_z001_t001.tif")] = np.full(
+        (2, 2),
+        11.0,
+        dtype=np.float32,
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+
+    with pytest.raises(NotImplementedError, match="filename parser exposes"):
+        adapter.resolve_source_image(
+            "IllumBlue",
+            np.full((2, 2), 1.0, dtype=np.float32),
         )
 
 
