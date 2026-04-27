@@ -1,4 +1,6 @@
 import pytest
+import numpy as np
+import pandas as pd
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_values import (
@@ -78,6 +80,20 @@ def test_normalize_artifact_value_accepts_object_label_arrays():
 
     value = normalize_artifact_value(output_plan, ArrayLike(), axis_id="A01")
 
+    assert value.kind is ArtifactKind.OBJECT_LABELS
+
+
+def test_normalize_artifact_value_accepts_registered_external_arrays():
+    output_plan = ArtifactOutputPlan(
+        name="nuclei",
+        path="/memory/nuclei.pkl",
+        kind=ArtifactKind.OBJECT_LABELS,
+    )
+    labels = np.zeros((3, 3), dtype=np.uint16)
+
+    value = normalize_artifact_value(output_plan, labels, axis_id="A01")
+
+    assert value.data is labels
     assert value.kind is ArtifactKind.OBJECT_LABELS
 
 
@@ -181,6 +197,29 @@ def test_normalize_measurement_table_infers_fields_and_object_schema():
         "Nuclei",
         "object_id",
     )
+    assert value.schema.fields == (FieldSpec("object_id"), FieldSpec("area"))
+
+
+def test_normalize_measurement_table_accepts_registered_columnar_rows():
+    output_plan = ArtifactOutputPlan(
+        name="NucleiMeasurements",
+        path="/memory/NucleiMeasurements.pkl",
+        kind=ArtifactKind.MEASUREMENTS,
+    )
+    rows = pd.DataFrame({"object_id": [1], "area": [12.0]})
+
+    value = normalize_artifact_value(
+        output_plan,
+        MeasurementTable(
+            name="NucleiMeasurements",
+            rows=rows,
+            object_name="Nuclei",
+            object_id_field="object_id",
+        ),
+        axis_id="A01",
+    )
+
+    assert value.data is rows
     assert value.schema.fields == (FieldSpec("object_id"), FieldSpec("area"))
 
 

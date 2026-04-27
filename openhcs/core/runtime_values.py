@@ -58,59 +58,6 @@ def register_columnar_rows_type(payload_type: _TPayload) -> _TPayload:
     return payload_type
 
 
-@dataclass(frozen=True, slots=True)
-class _PayloadTypeIdentity:
-    module: str
-    qualname: str
-
-    @classmethod
-    def from_type(cls, payload_type: type[Any]) -> Self:
-        return cls(payload_type.__module__, payload_type.__qualname__)
-
-
-@dataclass(frozen=True, slots=True)
-class _ExternalPayloadType:
-    identity: _PayloadTypeIdentity
-    register: Callable[[type[Any]], type[Any]]
-
-
-def _external_payload_type_by_identity(
-    rows: tuple[_ExternalPayloadType, ...],
-) -> Mapping[_PayloadTypeIdentity, _ExternalPayloadType]:
-    return MappingProxyType({row.identity: row for row in rows})
-
-
-_EXTERNAL_PAYLOAD_TYPES_BY_IDENTITY = _external_payload_type_by_identity(
-    (
-        _ExternalPayloadType(
-            _PayloadTypeIdentity("numpy", "ndarray"),
-            register_array_payload_type,
-        ),
-        _ExternalPayloadType(
-            _PayloadTypeIdentity("cupy._core.core", "ndarray"),
-            register_array_payload_type,
-        ),
-        _ExternalPayloadType(
-            _PayloadTypeIdentity("torch", "Tensor"),
-            register_array_payload_type,
-        ),
-        _ExternalPayloadType(
-            _PayloadTypeIdentity("pandas.core.frame", "DataFrame"),
-            register_columnar_rows_type,
-        ),
-    )
-)
-
-
-def _claim_external_payload_type(data: Any) -> None:
-    for payload_type in type(data).__mro__:
-        payload_row = _EXTERNAL_PAYLOAD_TYPES_BY_IDENTITY.get(
-            _PayloadTypeIdentity.from_type(payload_type)
-        )
-        if payload_row is not None:
-            payload_row.register(payload_type)
-
-
 @dataclass(frozen=True, kw_only=True)
 class SourceImageContext:
     """Shared source-image semantic context for values and schemas."""
@@ -546,7 +493,7 @@ def _payload_shape_for(
 
 
 def _is_table_like(data: Any) -> bool:
-    _claim_external_payload_type(data)
+    _ensure_runtime_payload_integrations_registered()
     return (
         isinstance(data, ColumnarRows)
         or isinstance(data, Mapping)
@@ -558,7 +505,7 @@ def _is_table_like(data: Any) -> bool:
 
 
 def _is_array_like(data: Any) -> bool:
-    _claim_external_payload_type(data)
+    _ensure_runtime_payload_integrations_registered()
     return isinstance(data, RuntimeArrayPayload)
 
 
@@ -670,7 +617,7 @@ def _measurement_source_image_name(value: MeasurementTable) -> str | None:
 
 
 def _infer_fields(rows: Any) -> tuple[FieldSpec, ...]:
-    _claim_external_payload_type(rows)
+    _ensure_runtime_payload_integrations_registered()
     if isinstance(rows, ColumnarRows):
         return tuple(FieldSpec(str(column)) for column in rows.columns)
     if isinstance(rows, Mapping):
@@ -682,6 +629,15 @@ def _infer_fields(rows: Any) -> tuple[FieldSpec, ...]:
     ):
         return tuple(FieldSpec(str(column)) for column in rows[0])
     return ()
+
+
+def _ensure_runtime_payload_integrations_registered() -> None:
+    """Load optional external payload capability registrations."""
+    from openhcs.core.runtime_payload_integrations import (
+        register_runtime_payload_integrations,
+    )
+
+    register_runtime_payload_integrations()
 
 
 def _validate_relationship_ids(source_ids: Any, target_ids: Any, name: str) -> None:
