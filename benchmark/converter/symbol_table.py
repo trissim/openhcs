@@ -23,9 +23,14 @@ from openhcs.core.source_bindings import (
     ComponentSelector,
     EMPTY_SOURCE_BINDINGS,
     GroupedSourceBindings,
+    MetadataExtractionRule,
+    MetadataSource,
     MetadataSelector,
     NamedSourceBinding,
     SourceBindingOrigin,
+    SourceFilterClause,
+    SourceFilterMatchType,
+    SourceFilterSubject,
     SourceSelector,
     StepSourceBindingsConfig,
 )
@@ -241,7 +246,8 @@ class _SymbolTableBuilder:
             for symbol in external_symbols
         )
         return StepSourceBindingsConfig(
-            groups=(GroupedSourceBindings(bindings=bindings),)
+            groups=(GroupedSourceBindings(bindings=bindings),),
+            metadata_rules=self._source_schema.metadata_rules,
         )
 
     def external_image(self, name: str) -> CellProfilerSymbol:
@@ -349,13 +355,24 @@ def source_bindings_literal(config: StepSourceBindingsConfig) -> str:
     """Render a deterministic Python literal for generated step source bindings."""
     if config.is_empty:
         return "EMPTY_SOURCE_BINDINGS"
-    group_literals = ", ".join(
-        _grouped_source_bindings_literal(group)
-        for group in config.groups
-    )
-    if len(config.groups) == 1:
-        group_literals += ","
-    return f"StepSourceBindingsConfig(groups=({group_literals}))"
+    field_literals: list[str] = []
+    if config.groups:
+        group_literals = ", ".join(
+            _grouped_source_bindings_literal(group)
+            for group in config.groups
+        )
+        if len(config.groups) == 1:
+            group_literals += ","
+        field_literals.append(f"groups=({group_literals})")
+    if config.metadata_rules:
+        metadata_rule_literals = ", ".join(
+            _metadata_extraction_rule_literal(rule)
+            for rule in config.metadata_rules
+        )
+        if len(config.metadata_rules) == 1:
+            metadata_rule_literals += ","
+        field_literals.append(f"metadata_rules=({metadata_rule_literals})")
+    return f"StepSourceBindingsConfig({', '.join(field_literals)})"
 
 
 def _grouped_source_bindings_literal(group: GroupedSourceBindings) -> str:
@@ -420,6 +437,32 @@ def _component_selector_literal(selector: ComponentSelector) -> str:
 
 def _metadata_selector_literal(selector: MetadataSelector) -> str:
     return f"MetadataSelector({selector.field!r}, {selector.value!r})"
+
+
+def _metadata_extraction_rule_literal(rule: MetadataExtractionRule) -> str:
+    field_literals = [
+        f"source=MetadataSource.{rule.source.name}",
+        f"pattern={rule.pattern!r}",
+    ]
+    if rule.filters:
+        filter_literals = ", ".join(
+            _source_filter_clause_literal(clause)
+            for clause in rule.filters
+        )
+        if len(rule.filters) == 1:
+            filter_literals += ","
+        field_literals.append(f"filters=({filter_literals})")
+    return f"MetadataExtractionRule({', '.join(field_literals)})"
+
+
+def _source_filter_clause_literal(clause: SourceFilterClause) -> str:
+    field_literals = [
+        f"subject=SourceFilterSubject.{clause.subject.name}",
+        f"match_type=SourceFilterMatchType.{clause.match_type.name}",
+    ]
+    if clause.value is not None:
+        field_literals.append(f"value={clause.value!r}")
+    return f"SourceFilterClause({', '.join(field_literals)})"
 
 
 def _artifact_spec_literal(

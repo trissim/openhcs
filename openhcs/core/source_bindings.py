@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
@@ -17,6 +18,102 @@ class SourceBindingOrigin(Enum):
 
     STEP_INPUT = "step_input"
     PIPELINE_START = "pipeline_start"
+
+
+class MetadataSource(Enum):
+    """Where metadata extraction rules read source text from."""
+
+    FILE_NAME = "file_name"
+    FOLDER_NAME = "folder_name"
+
+
+class SourceFilterSubject(Enum):
+    """Which part of a source path one filter clause targets."""
+
+    FILE = "file"
+    DIRECTORY = "directory"
+    EXTENSION = "extension"
+
+
+class SourceFilterMatchType(Enum):
+    """How one source filter clause matches its target text."""
+
+    CONTAINS = "contains"
+    CONTAINS_REGEX = "contains_regex"
+    DOES_NOT_CONTAIN = "does_not_contain"
+    DOES_NOT_CONTAIN_REGEX = "does_not_contain_regex"
+    IS_IMAGE = "is_image"
+
+
+@dataclass(frozen=True, slots=True)
+class SourceFilterClause:
+    """Typed filter clause applied before metadata extraction."""
+
+    subject: SourceFilterSubject
+    match_type: SourceFilterMatchType
+    value: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "subject",
+            coerce_enum(
+                SourceFilterSubject,
+                self.subject,
+                "SourceFilterClause.subject",
+            ),
+        )
+        match_type = coerce_enum(
+            SourceFilterMatchType,
+            self.match_type,
+            "SourceFilterClause.match_type",
+        )
+        object.__setattr__(self, "match_type", match_type)
+        normalized_value = None if self.value is None else str(self.value)
+        if match_type is SourceFilterMatchType.IS_IMAGE:
+            object.__setattr__(self, "value", None)
+            return
+        if normalized_value is None:
+            raise ValueError(
+                "SourceFilterClause.value is required unless match_type is IS_IMAGE."
+            )
+        object.__setattr__(self, "value", normalized_value)
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataExtractionRule:
+    """Regex-backed metadata extraction rule for source binding resolution."""
+
+    source: MetadataSource
+    pattern: str
+    filters: tuple[SourceFilterClause, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "source",
+            coerce_enum(
+                MetadataSource,
+                self.source,
+                "MetadataExtractionRule.source",
+            ),
+        )
+        if not self.pattern:
+            raise ValueError("MetadataExtractionRule.pattern cannot be empty.")
+        compiled_pattern = re.compile(str(self.pattern))
+        if not compiled_pattern.groupindex:
+            raise ValueError(
+                "MetadataExtractionRule.pattern must define at least one named "
+                "capture group."
+            )
+        object.__setattr__(self, "pattern", str(self.pattern))
+        object.__setattr__(self, "filters", tuple(self.filters))
+        for clause in self.filters:
+            if not isinstance(clause, SourceFilterClause):
+                raise TypeError(
+                    "MetadataExtractionRule.filters must contain SourceFilterClause "
+                    f"values, got {type(clause).__name__}."
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,9 +233,11 @@ class StepSourceBindingsConfig:
     """First-class FunctionStep field for named semantic input bindings."""
 
     groups: tuple[GroupedSourceBindings, ...] = ()
+    metadata_rules: tuple[MetadataExtractionRule, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "groups", tuple(self.groups))
+        object.__setattr__(self, "metadata_rules", tuple(self.metadata_rules))
         seen_group_keys: set[str | None] = set()
         for group in self.groups:
             if not isinstance(group, GroupedSourceBindings):
@@ -152,10 +251,17 @@ class StepSourceBindingsConfig:
                     f"{group.group_key!r}."
                 )
             seen_group_keys.add(group.group_key)
+        for rule in self.metadata_rules:
+            if not isinstance(rule, MetadataExtractionRule):
+                raise TypeError(
+                    "StepSourceBindingsConfig.metadata_rules must contain "
+                    "MetadataExtractionRule values, got "
+                    f"{type(rule).__name__}."
+                )
 
     @property
     def is_empty(self) -> bool:
-        return not self.groups
+        return not self.groups and not self.metadata_rules
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,10 +269,11 @@ class CompiledSourceBindingPlan:
     """Immutable compile-time source binding plan for one step."""
 
     bindings_by_group: Mapping[str | None, tuple[NamedSourceBinding, ...]]
+    metadata_rules: tuple[MetadataExtractionRule, ...] = ()
 
     @classmethod
     def empty(cls) -> "CompiledSourceBindingPlan":
-        return cls(bindings_by_group=MappingProxyType({}))
+        return cls(bindings_by_group=MappingProxyType({}), metadata_rules=())
 
     @classmethod
     def from_config(
@@ -178,7 +285,8 @@ class CompiledSourceBindingPlan:
         return cls(
             bindings_by_group=MappingProxyType(
                 {group.group_key: group.bindings for group in config.groups}
-            )
+            ),
+            metadata_rules=config.metadata_rules,
         )
 
     def __post_init__(self) -> None:
@@ -199,14 +307,33 @@ class CompiledSourceBindingPlan:
                 )
             normalized[normalized_group_key] = normalized_bindings
         object.__setattr__(self, "bindings_by_group", MappingProxyType(normalized))
+        object.__setattr__(self, "metadata_rules", tuple(self.metadata_rules))
+        for rule in self.metadata_rules:
+            if not isinstance(rule, MetadataExtractionRule):
+                raise TypeError(
+                    "CompiledSourceBindingPlan.metadata_rules must contain "
+                    "MetadataExtractionRule values, got "
+                    f"{type(rule).__name__}."
+                )
 
     @property
     def is_empty(self) -> bool:
-        return not self.bindings_by_group
+        return not self.bindings_by_group and not self.metadata_rules
 
-    def __reduce__(self) -> tuple[object, tuple[dict[str | None, tuple[NamedSourceBinding, ...]]]]:
+    def __reduce__(
+        self,
+    ) -> tuple[
+        object,
+        tuple[
+            dict[str | None, tuple[NamedSourceBinding, ...]],
+            tuple[MetadataExtractionRule, ...],
+        ],
+    ]:
         """Serialize mappingproxy-backed state as a plain dict for multiprocessing."""
-        return (self.__class__._from_pickled_state, (dict(self.bindings_by_group),))
+        return (
+            self.__class__._from_pickled_state,
+            (dict(self.bindings_by_group), self.metadata_rules),
+        )
 
     def bindings_for_group(
         self,
@@ -231,8 +358,12 @@ class CompiledSourceBindingPlan:
     def _from_pickled_state(
         cls,
         bindings_by_group: dict[str | None, tuple[NamedSourceBinding, ...]],
+        metadata_rules: tuple[MetadataExtractionRule, ...],
     ) -> "CompiledSourceBindingPlan":
-        return cls(bindings_by_group=bindings_by_group)
+        return cls(
+            bindings_by_group=bindings_by_group,
+            metadata_rules=metadata_rules,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +371,7 @@ class SourceBindingRuntimeContext:
     """Execution-local file universe for selector-bearing source bindings."""
 
     step_input_files: tuple[str, ...] = ()
+    step_input_dir: str | None = None
     pipeline_input_files: tuple[str, ...] = ()
     pipeline_input_backend: str | None = None
 
@@ -249,6 +381,8 @@ class SourceBindingRuntimeContext:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "step_input_files", tuple(self.step_input_files))
+        if self.step_input_dir is not None:
+            object.__setattr__(self, "step_input_dir", str(self.step_input_dir))
         object.__setattr__(
             self,
             "pipeline_input_files",

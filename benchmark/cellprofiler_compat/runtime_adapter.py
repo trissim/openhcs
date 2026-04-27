@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 from types import MappingProxyType
 from typing import Any, ClassVar
 
@@ -16,7 +17,12 @@ from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.memory import detect_memory_type, stack_slices, unstack_slices
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
+    MetadataExtractionRule,
+    MetadataSource,
     NamedSourceBinding,
+    SourceFilterClause,
+    SourceFilterMatchType,
+    SourceFilterSubject,
     SourceBindingRuntimeContext,
     SourceBindingOrigin,
 )
@@ -438,6 +444,15 @@ class SourceBindingResolutionRequest(SourceBindingRequestBase):
     fallback_image: Any
 
 
+@dataclass(frozen=True, slots=True)
+class SourceFilterMatchRequest:
+    """Typed request for one source-filter match evaluation."""
+
+    file_path: str
+    clause: SourceFilterClause
+    target: str
+
+
 class SourceBindingResolver(ABC, metaclass=AutoRegisterMeta):
     """Nominal family for resolving typed source bindings."""
 
@@ -476,7 +491,6 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
         matched = _match_candidates(
             candidates=parsed_candidates,
             binding=request.binding,
-            adapter=request.adapter,
             inherit_components={},
         )
         selected_files = _require_matched_candidates(
@@ -488,7 +502,7 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
         )
         return _select_step_input_stack(
             request=request,
-            selected_filenames=tuple(candidate.filename for candidate in selected_files),
+            selected_paths=tuple(candidate.path for candidate in selected_files),
         )
 
 
@@ -516,7 +530,6 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
         matched = _match_candidates(
             candidates=parsed_candidates,
             binding=request.binding,
-            adapter=request.adapter,
             inherit_components=inherit_components,
         )
         selected_files = _require_matched_candidates(
@@ -577,8 +590,18 @@ def _parse_source_candidates(
     parser = _require_processing_context(adapter).microscope_handler.parser
     candidates: list[ParsedSourceCandidate] = []
     for file_path in file_paths:
-        filename = Path(file_path).name
-        metadata = parser.parse_filename(filename)
+        resolved_path = _resolved_source_path(file_path, adapter)
+        filename = Path(resolved_path).name
+        metadata = dict(parser.parse_filename(filename) or {})
+        extracted_metadata = _metadata_from_rules(
+            resolved_path,
+            adapter.source_binding_plan.metadata_rules,
+        )
+        _merge_metadata(
+            metadata,
+            extracted_metadata,
+            path=resolved_path,
+        )
         if not metadata:
             continue
         candidates.append(
@@ -595,7 +618,6 @@ def _match_candidates(
     *,
     candidates: tuple[ParsedSourceCandidate, ...],
     binding: NamedSourceBinding,
-    adapter: CellProfilerRuntimeAdapter,
     inherit_components: Mapping[str, str],
 ) -> tuple[ParsedSourceCandidate, ...]:
     metadata_fields = {selector.field for selector in binding.selector.metadata}
@@ -628,12 +650,13 @@ def _match_candidates(
     return tuple(
         candidate
         for candidate in candidates
-        if _candidate_matches_components(candidate, effective_components)
+        if _candidate_matches_explicit_components(candidate, component_selectors)
+        and _candidate_matches_inherited_scope(candidate, effective_components)
         and _candidate_matches_metadata(candidate, binding.selector.metadata)
     )
 
 
-def _candidate_matches_components(
+def _candidate_matches_explicit_components(
     candidate: ParsedSourceCandidate,
     expected_components: Mapping[str, str],
 ) -> bool:
@@ -641,6 +664,17 @@ def _candidate_matches_components(
         candidate.metadata.get(component_name) is not None
         and str(candidate.metadata[component_name]) == value
         for component_name, value in expected_components.items()
+    )
+
+
+def _candidate_matches_inherited_scope(
+    candidate: ParsedSourceCandidate,
+    inherited_scope: Mapping[str, str],
+) -> bool:
+    return all(
+        candidate.metadata.get(field_name) is None
+        or str(candidate.metadata[field_name]) == value
+        for field_name, value in inherited_scope.items()
     )
 
 
@@ -670,14 +704,14 @@ def _require_matched_candidates(
 def _select_step_input_stack(
     *,
     request: SourceBindingResolutionRequest,
-    selected_filenames: tuple[str, ...],
+    selected_paths: tuple[str, ...],
 ) -> Any:
     step_input_files = request.adapter.source_binding_context.step_input_files
-    indexed_filenames = {filename: index for index, filename in enumerate(step_input_files)}
+    indexed_paths = {path: index for index, path in enumerate(step_input_files)}
     selected_indexes = tuple(
-        indexed_filenames[filename]
-        for filename in step_input_files
-        if filename in selected_filenames
+        indexed_paths[path]
+        for path in step_input_files
+        if path in selected_paths
     )
     fallback_image = request.fallback_image
     if not selected_indexes:
@@ -767,3 +801,195 @@ def _require_processing_context(adapter: CellProfilerRuntimeAdapter) -> Any:
             "selector-bearing source resolution."
         )
     return adapter.processing_context
+
+
+def _resolved_source_path(
+    file_path: str,
+    adapter: CellProfilerRuntimeAdapter,
+) -> str:
+    path = Path(file_path)
+    if path.is_absolute():
+        return str(path)
+    step_input_dir = adapter.source_binding_context.step_input_dir
+    if step_input_dir is None:
+        return str(path)
+    return str(Path(step_input_dir) / path)
+
+
+def _metadata_from_rules(
+    file_path: str,
+    metadata_rules: tuple[MetadataExtractionRule, ...],
+) -> dict[str, str]:
+    extracted: dict[str, str] = {}
+    for rule in metadata_rules:
+        if not _rule_filters_match(file_path, rule.filters):
+            continue
+        target = _metadata_source_text(file_path, rule.source)
+        match = re.search(rule.pattern, target)
+        if match is None:
+            continue
+        _merge_metadata(
+            extracted,
+            {
+                key: str(value)
+                for key, value in match.groupdict().items()
+                if value is not None
+            },
+            path=file_path,
+        )
+    return extracted
+
+
+def _metadata_source_text(
+    file_path: str,
+    source: MetadataSource,
+) -> str:
+    path = Path(file_path)
+    if source is MetadataSource.FOLDER_NAME:
+        return str(path.parent)
+    return path.name
+
+
+def _rule_filters_match(
+    file_path: str,
+    filters: tuple[SourceFilterClause, ...],
+) -> bool:
+    return all(_filter_clause_matches(file_path, clause) for clause in filters)
+
+
+def _filter_clause_matches(
+    file_path: str,
+    clause: SourceFilterClause,
+) -> bool:
+    target = SourceFilterTargetResolver.for_subject(clause.subject).resolve_text(file_path)
+    return SourceFilterMatcher.for_match_type(clause.match_type).matches(
+        SourceFilterMatchRequest(
+            file_path=file_path,
+            clause=clause,
+            target=target,
+        )
+    )
+
+
+class SourceFilterMatcher(ABC, metaclass=AutoRegisterMeta):
+    """Nominal family for typed source-filter match behavior."""
+
+    __registry_key__ = "match_type"
+    __skip_if_no_key__ = True
+    match_type: ClassVar[SourceFilterMatchType | None] = None
+
+    @classmethod
+    def for_match_type(
+        cls,
+        match_type: SourceFilterMatchType,
+    ) -> "SourceFilterMatcher":
+        return cls.__registry__[match_type]()
+
+    @abstractmethod
+    def matches(self, request: SourceFilterMatchRequest) -> bool:
+        """Return whether one file path satisfies the filter clause."""
+
+
+class ContainsSourceFilterMatcher(SourceFilterMatcher):
+    match_type = SourceFilterMatchType.CONTAINS
+
+    def matches(self, request: SourceFilterMatchRequest) -> bool:
+        return _require_filter_value(request.clause) in request.target
+
+
+class DoesNotContainSourceFilterMatcher(SourceFilterMatcher):
+    match_type = SourceFilterMatchType.DOES_NOT_CONTAIN
+
+    def matches(self, request: SourceFilterMatchRequest) -> bool:
+        return _require_filter_value(request.clause) not in request.target
+
+
+class ContainsRegexSourceFilterMatcher(SourceFilterMatcher):
+    match_type = SourceFilterMatchType.CONTAINS_REGEX
+
+    def matches(self, request: SourceFilterMatchRequest) -> bool:
+        return re.search(_require_filter_value(request.clause), request.target) is not None
+
+
+class DoesNotContainRegexSourceFilterMatcher(SourceFilterMatcher):
+    match_type = SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX
+
+    def matches(self, request: SourceFilterMatchRequest) -> bool:
+        return re.search(_require_filter_value(request.clause), request.target) is None
+
+
+class IsImageSourceFilterMatcher(SourceFilterMatcher):
+    match_type = SourceFilterMatchType.IS_IMAGE
+
+    def matches(self, request: SourceFilterMatchRequest) -> bool:
+        return _is_image_path(request.file_path)
+
+
+class SourceFilterTargetResolver(ABC, metaclass=AutoRegisterMeta):
+    """Nominal family for source-filter target text resolution."""
+
+    __registry_key__ = "subject"
+    __skip_if_no_key__ = True
+    subject: ClassVar[SourceFilterSubject | None] = None
+
+    @classmethod
+    def for_subject(
+        cls,
+        subject: SourceFilterSubject,
+    ) -> "SourceFilterTargetResolver":
+        return cls.__registry__[subject]()
+
+    @abstractmethod
+    def resolve_text(self, file_path: str) -> str:
+        """Return the subject-specific text inspected by one filter clause."""
+
+
+class FileSourceFilterTargetResolver(SourceFilterTargetResolver):
+    subject = SourceFilterSubject.FILE
+
+    def resolve_text(self, file_path: str) -> str:
+        return Path(file_path).name
+
+
+class DirectorySourceFilterTargetResolver(SourceFilterTargetResolver):
+    subject = SourceFilterSubject.DIRECTORY
+
+    def resolve_text(self, file_path: str) -> str:
+        return str(Path(file_path).parent)
+
+
+class ExtensionSourceFilterTargetResolver(SourceFilterTargetResolver):
+    subject = SourceFilterSubject.EXTENSION
+
+    def resolve_text(self, file_path: str) -> str:
+        return Path(file_path).suffix.lower()
+
+
+def _is_image_path(file_path: str) -> bool:
+    suffix = Path(file_path).suffix.lower()
+    return suffix in {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
+
+
+def _require_filter_value(clause: SourceFilterClause) -> str:
+    if clause.value is None:
+        raise ValueError(
+            "SourceFilterClause.value must be set unless match_type is IS_IMAGE."
+        )
+    return clause.value
+
+
+def _merge_metadata(
+    target: dict[str, Any],
+    additions: Mapping[str, Any],
+    *,
+    path: str,
+) -> None:
+    for key, value in additions.items():
+        existing = target.get(key)
+        normalized_value = str(value)
+        if existing is not None and str(existing) != normalized_value:
+            raise RuntimeError(
+                f"Conflicting metadata field '{key}' while parsing source candidate "
+                f"{path!r}: {existing!r} != {normalized_value!r}."
+            )
+        target[key] = normalized_value

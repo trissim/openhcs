@@ -14,9 +14,14 @@ from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     ComponentSelector,
     GroupedSourceBindings,
+    MetadataExtractionRule,
+    MetadataSource,
     MetadataSelector,
     NamedSourceBinding,
     SourceBindingOrigin,
+    SourceFilterClause,
+    SourceFilterMatchType,
+    SourceFilterSubject,
     SourceBindingRuntimeContext,
     SourceSelector,
     StepSourceBindingsConfig,
@@ -406,6 +411,82 @@ def test_cellprofiler_adapter_rejects_metadata_selector_fields_not_exposed_by_pa
             "IllumBlue",
             np.full((2, 2), 1.0, dtype=np.float32),
         )
+
+
+def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="IllumBlue",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        selector=SourceSelector(
+                            metadata=(MetadataSelector("illum", "DAPI"),),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        metadata_rules=(
+            MetadataExtractionRule(
+                source=MetadataSource.FOLDER_NAME,
+                pattern=r".*/(?P<folder>plate[A-Z])/.+",
+            ),
+            MetadataExtractionRule(
+                source=MetadataSource.FILE_NAME,
+                pattern=r"(?P<folder>plate[A-Z])_Illum(?P<illum>.+)\.mat",
+                filters=(
+                    SourceFilterClause(
+                        subject=SourceFilterSubject.FILE,
+                        match_type=SourceFilterMatchType.CONTAINS_REGEX,
+                        value=r"_Illum.+\.mat$",
+                    ),
+                ),
+            ),
+        ),
+    )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=("A01_s001_w1_z001_t001.tif",),
+        step_input_dir="/plate/plateA/Images",
+        pipeline_input_files=(
+            "/plate/plateA/illum/plateA_IllumDAPI.mat",
+            "/plate/plateB/illum/plateB_IllumDAPI.mat",
+        ),
+        pipeline_input_backend="memory",
+    )
+    filemanager = FileManagerStub()
+    expected = np.full((2, 2), 31.0, dtype=np.float32)
+    filemanager.saved[("memory", "/plate/plateA/illum/plateA_IllumDAPI.mat")] = expected
+    filemanager.saved[("memory", "/plate/plateB/illum/plateB_IllumDAPI.mat")] = np.full(
+        (2, 2),
+        41.0,
+        dtype=np.float32,
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+
+    resolved = adapter.resolve_source_image(
+        "IllumBlue",
+        np.full((2, 2), 1.0, dtype=np.float32),
+    )
+
+    assert resolved.shape == expected.shape
+    np.testing.assert_array_equal(resolved, expected)
+    assert filemanager.loaded_batches == [
+        (
+            ("/plate/plateA/illum/plateA_IllumDAPI.mat",),
+            "memory",
+            {},
+        )
+    ]
 
 
 def test_cellprofiler_module_executor_records_object_output_through_adapter():

@@ -6,7 +6,6 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from enum import Enum
 from types import MappingProxyType
 from typing import Any, ClassVar, Mapping
 
@@ -15,8 +14,13 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.constants.constants import AllComponents
 from openhcs.core.source_bindings import (
     ComponentSelector,
+    MetadataExtractionRule,
+    MetadataSource,
     MetadataSelector,
     NamedSourceBinding,
+    SourceFilterClause,
+    SourceFilterMatchType,
+    SourceFilterSubject,
     SourceBindingOrigin,
     SourceSelector,
 )
@@ -26,23 +30,28 @@ from .parser import ModuleBlock, ModuleSetting
 _METADATA_MATCH_PATTERN = re.compile(
     r"\(metadata does (?P<field>[A-Za-z0-9_]+) \"(?P<value>[^\"]+)\"\)"
 )
-
-
-class MetadataSource(Enum):
-    """Where CellProfiler extracts metadata from."""
-
-    FILE_NAME = "file_name"
-    FOLDER_NAME = "folder_name"
-
-
-@dataclass(frozen=True, slots=True)
-class MetadataExtractionRule:
-    """One Metadata-module extraction rule."""
-
-    source: MetadataSource
-    file_name_regex: str
-    folder_name_regex: str
-    filter_criteria: str
+_FILTER_CLAUSE_PATTERN = re.compile(
+    r"\((?P<subject>file|directory|extension) "
+    r"does(?P<negation>not)? "
+    r"(?P<operator>containregexp|contain|isimage)"
+    r"(?: \"(?P<value>[^\"]*)\")?\)"
+)
+_FILTER_SUBJECTS_BY_LITERAL = MappingProxyType(
+    {
+        "file": SourceFilterSubject.FILE,
+        "directory": SourceFilterSubject.DIRECTORY,
+        "extension": SourceFilterSubject.EXTENSION,
+    }
+)
+_FILTER_MATCH_TYPES_BY_LITERAL = MappingProxyType(
+    {
+        ("contain", False): SourceFilterMatchType.CONTAINS,
+        ("contain", True): SourceFilterMatchType.DOES_NOT_CONTAIN,
+        ("containregexp", False): SourceFilterMatchType.CONTAINS_REGEX,
+        ("containregexp", True): SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX,
+        ("isimage", False): SourceFilterMatchType.IS_IMAGE,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,17 +266,12 @@ class MetadataModuleCompiler(SetupModuleCompiler):
             state.add_metadata_rule(
                 MetadataExtractionRule(
                     source=source,
-                    file_name_regex=_block_value(
-                        block,
-                        "Regular expression to extract from file name",
-                    ),
-                    folder_name_regex=_block_value(
-                        block,
-                        "Regular expression to extract from folder name",
-                    ),
-                    filter_criteria=_block_value(
-                        block,
-                        "Select the filtering criteria",
+                    pattern=_metadata_pattern_for_block(block, source),
+                    filters=_filter_clauses_from_criteria(
+                        _block_value(
+                            block,
+                            "Select the filtering criteria",
+                        )
                     ),
                 )
             )
@@ -360,6 +364,69 @@ def _metadata_source(value: str) -> MetadataSource:
     if normalized == "folder name":
         return MetadataSource.FOLDER_NAME
     return MetadataSource.FILE_NAME
+
+
+def _metadata_pattern_for_block(
+    block: Sequence[ModuleSetting],
+    source: MetadataSource,
+) -> str:
+    if source is MetadataSource.FOLDER_NAME:
+        return _block_value(
+            block,
+            "Regular expression to extract from folder name",
+        )
+    return _block_value(
+        block,
+        "Regular expression to extract from file name",
+    )
+
+
+def _filter_clauses_from_criteria(
+    criteria: str,
+) -> tuple[SourceFilterClause, ...]:
+    stripped = criteria.strip()
+    if not stripped:
+        return ()
+    matches = tuple(_FILTER_CLAUSE_PATTERN.finditer(criteria))
+    if not matches:
+        raise ValueError(
+            "Unsupported CellProfiler source filter criteria: "
+            f"{criteria!r}."
+        )
+    return tuple(
+        SourceFilterClause(
+            subject=_filter_subject(match.group("subject")),
+            match_type=_filter_match_type(
+                operator=match.group("operator"),
+                negated=bool(match.group("negation")),
+            ),
+            value=match.group("value"),
+        )
+        for match in matches
+    )
+
+
+def _filter_subject(value: str) -> SourceFilterSubject:
+    normalized = value.strip().lower()
+    try:
+        return _FILTER_SUBJECTS_BY_LITERAL[normalized]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported source filter subject: {value!r}.") from exc
+
+
+def _filter_match_type(
+    *,
+    operator: str,
+    negated: bool,
+) -> SourceFilterMatchType:
+    normalized_operator = operator.strip().lower()
+    try:
+        return _FILTER_MATCH_TYPES_BY_LITERAL[(normalized_operator, negated)]
+    except KeyError as exc:
+        raise ValueError(
+            "Unsupported source filter operator/negation pair: "
+            f"{operator!r}, negated={negated}."
+        ) from exc
 
 
 def _selector_from_rule_criteria(rule_criteria: str) -> SourceSelector:

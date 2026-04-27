@@ -7,9 +7,14 @@ from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     ComponentSelector,
     GroupedSourceBindings,
+    MetadataExtractionRule,
+    MetadataSource,
     MetadataSelector,
     NamedSourceBinding,
     SourceBindingOrigin,
+    SourceFilterClause,
+    SourceFilterMatchType,
+    SourceFilterSubject,
     SourceSelector,
     StepSourceBindingsConfig,
 )
@@ -78,12 +83,27 @@ def test_compiled_source_binding_plan_preserves_grouped_named_selectors():
                 ),
             ),
         )
+        ,
+        metadata_rules=(
+            MetadataExtractionRule(
+                source=MetadataSource.FILE_NAME,
+                pattern=r".*(?P<plate>PlateA)\.tif",
+                filters=(
+                    SourceFilterClause(
+                        subject=SourceFilterSubject.FILE,
+                        match_type=SourceFilterMatchType.CONTAINS,
+                        value="PlateA",
+                    ),
+                ),
+            ),
+        ),
     )
 
     plan = CompiledSourceBindingPlan.from_config(config)
 
     assert not plan.is_empty
     assert tuple(plan.bindings_by_group) == ("dna",)
+    assert plan.metadata_rules[0].source is MetadataSource.FILE_NAME
     binding = plan.bindings_by_group["dna"][0]
     assert binding.alias == "OrigBlue"
     assert binding.selector.components[0].component is AllComponents.CHANNEL
@@ -109,12 +129,19 @@ def test_compiled_source_binding_plan_round_trips_through_pickle():
                     ),
                 ),
             ),
+            metadata_rules=(
+                MetadataExtractionRule(
+                    source=MetadataSource.FOLDER_NAME,
+                    pattern=r".*/(?P<plate>PlateA)/.*",
+                ),
+            ),
         )
     )
 
     restored = pickle.loads(pickle.dumps(plan))
 
     assert restored == plan
+    assert restored.metadata_rules == plan.metadata_rules
     assert restored.binding_for_alias("OrigBlue", "dna") == plan.binding_for_alias(
         "OrigBlue",
         "dna",

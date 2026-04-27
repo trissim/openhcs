@@ -173,21 +173,29 @@ The branch has already established most of the typed runtime/compiler foundation
 15. Selector-bearing runtime source resolution is now wired for the native cases OpenHCS can currently express:
     - `STEP_INPUT` bindings resolve against the current pattern-group file universe and select typed views from the current stack.
     - `PIPELINE_START` bindings resolve against the original axis file universe with inherited current-scope component constraints.
-    - metadata-only selectors whose fields are not exposed by the native filename parser now fail loudly instead of silently guessing.
+16. Metadata extraction rules are now first-class core source-binding state rather than converter-local strings:
+    - compiled `StepSourceBindingsConfig` / `CompiledSourceBindingPlan` preserve typed regex-backed metadata rules
+    - generated pipelines emit those rules directly
+    - runtime candidate parsing augments native parser metadata from those rules instead of guessing
+17. Metadata-only selectors can now resolve when the binding plan provides enough compiled metadata extraction semantics.
+18. Current-scope inheritance is now opportunistic rather than rigid:
+    - inherited scope fields only constrain candidates that actually expose those fields
+    - this keeps pipeline-start matches usable for cases like illumination files that share folder identity but not full well/site/channel metadata
 
 ### 3.2 What Is Still Missing
 
 The biggest unresolved items are now:
 
-1. Multiple semantic image names are only compiled into typed selectors; runtime resolution of those selectors is not yet wired.
-2. Metadata-only `PIPELINE_START` selectors still need a deeper extension of the native parser/source system before aliases such as illumination-image rules can resolve from a true OpenHCS source schema.
-3. Setup-module semantics now exist in the converter, but they are not yet threaded into a true pipeline-level image schema visible outside conversion.
-4. GUI/ObjectState/pycodify do not yet own richer source-binding state as an editable first-class step concept.
-5. The main-input edge is now explicit in compiled plans, but the external execution model is still list-based rather than first-class graph-based.
-6. The compiled identity record is semantically useful, but its current `step_scope_id` naming still reflects pre-compilation/UI vocabulary more than ideal runtime/compiler terminology.
-7. Real BBBC pipelines are not yet fully accepted end to end.
-8. Export and relationship-heavy semantics are not yet fully validated on real pipelines.
-9. Benchmarking is ahead of the remaining CellProfiler semantics and should stay secondary.
+1. Setup-module semantics now exist in the converter, but they are still lowered per-step instead of being exposed as a richer pipeline-level image schema outside conversion.
+2. `NamesAndTypes` image-set matching semantics are still only partially modeled.
+   - the remaining gap is not bare metadata extraction anymore
+   - it is richer cross-alias matching policy for real BBBC-style image-set semantics
+3. GUI/ObjectState/pycodify do not yet own richer source-binding state as an editable first-class step concept.
+4. The main-input edge is now explicit in compiled plans, but the external execution model is still list-based rather than first-class graph-based.
+5. The compiled identity record is semantically useful, but its current `step_scope_id` naming still reflects pre-compilation/UI vocabulary more than ideal runtime/compiler terminology.
+6. Real BBBC pipelines are not yet fully accepted end to end.
+7. Export and relationship-heavy semantics are not yet fully validated on real pipelines.
+8. Benchmarking is ahead of the remaining CellProfiler semantics and should stay secondary.
 
 ---
 
@@ -627,8 +635,9 @@ Acceptance:
 
 1. `STEP_INPUT` selectors resolve against the current pattern-group file universe and select typed views from the current stack.
 2. `PIPELINE_START` component selectors resolve against the original axis file universe with inherited current-scope component constraints.
-3. Unsupported metadata-only selectors fail loudly when the native parser/source system cannot express them.
-4. External images resolve consistently under both direct and ZMQ execution.
+3. Compiled metadata extraction rules augment native parser metadata during source resolution instead of living only in converter-local lowering.
+4. Unsupported metadata-only selectors fail loudly when the compiled rule set plus native parser/source system still cannot express them.
+5. External images resolve consistently under both direct and ZMQ execution.
 
 ### Pass 6: External/Produced Image Symmetry
 
@@ -787,9 +796,9 @@ The branch should be considered “architecturally ready for full CellProfiler s
 
 The next implementation pass should be:
 
-1. extend the native parser/source system so metadata-only selectors compiled from `Metadata` / `NamesAndTypes` become resolvable instead of fail-loud
-2. thread the setup-module image schema farther outward so it is not trapped inside converter-local lowering
-3. validate the new selector-bearing runtime path on a real multi-image `.cppipe` before considering broader graph/UI work
+1. thread the setup-module image schema farther outward so it is not trapped inside converter-local lowering
+2. model the remaining `NamesAndTypes` image-set matching semantics explicitly instead of relying only on generic current-scope inheritance
+3. validate the richer source-binding path on a real BBBC-style multi-image `.cppipe`
 4. keep replacing hidden sequential assumptions with explicit compiled edge records where that can be done without changing the list-based pipeline/editor model
 
 That keeps the current pass aligned with real CellProfiler semantics while still preparing the compiler/runtime for a later DAG model if it is still justified after acceptance testing.

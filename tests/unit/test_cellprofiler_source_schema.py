@@ -7,8 +7,11 @@ from benchmark.converter.symbol_table import CellProfilerSymbolTable
 from openhcs.constants.constants import AllComponents
 from openhcs.core.source_bindings import (
     ComponentSelector,
+    MetadataSource,
     MetadataSelector,
+    SourceFilterMatchType,
     SourceBindingOrigin,
+    SourceFilterSubject,
 )
 
 
@@ -127,6 +130,12 @@ def test_compile_image_schema_lowers_names_and_types_to_typed_selectors():
 
     assert schema.grouping is not None
     assert schema.grouping.metadata_fields == ("folder", "well")
+    assert schema.metadata_rules[0].source is MetadataSource.FILE_NAME
+    assert schema.metadata_rules[0].filters[0].subject is SourceFilterSubject.FILE
+    assert (
+        schema.metadata_rules[0].filters[0].match_type
+        is SourceFilterMatchType.CONTAINS
+    )
 
 
 def test_symbol_table_and_codegen_use_compiled_setup_schema():
@@ -203,4 +212,5 @@ def test_symbol_table_and_codegen_use_compiled_setup_schema():
 
     assert "ComponentSelector(AllComponents.CHANNEL, '1')" in generated.code
     assert "MetadataSelector('illum', 'DAPI')" in generated.code
+    assert "MetadataExtractionRule(" in generated.code
     assert "SourceBindingOrigin.PIPELINE_START" in generated.code

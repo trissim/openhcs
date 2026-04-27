@@ -516,6 +516,7 @@ class PatternGroupRuntime:
         )
         return SourceBindingRuntimeContext(
             step_input_files=tuple(matching_files),
+            step_input_dir=str(self.plan.input_dir),
             pipeline_input_files=tuple(
                 self.plan.get_paths_for_axis(self.context.input_dir, source_backend)
             ),
