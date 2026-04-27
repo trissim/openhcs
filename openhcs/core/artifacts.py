@@ -166,6 +166,7 @@ class ArtifactOutputPlan(ArtifactPlan):
 
     materialization: Any = None
     producer_step_index: int | str | None = None
+    producer_step_scope_id: str | None = None
     producer_step_name: str | None = None
 
     def for_group(self, group_key: str | None) -> "ArtifactOutputPlan":
@@ -181,6 +182,7 @@ class ArtifactInputPlan(ArtifactPlan):
     """Compiled storage plan for one consumed artifact."""
 
     source_step_id: int | str | None = None
+    source_step_scope_id: str | None = None
 
     def for_group(self, group_key: str | None) -> "ArtifactInputPlan | None":
         """Return a group-specific input plan, or None if not available."""

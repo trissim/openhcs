@@ -33,6 +33,10 @@ from openhcs.core.pipeline.step_snapshot import (
     StepSnapshot,
     build_step_snapshots,
 )
+from openhcs.core.step_dependencies import (
+    StepInputDependency,
+    StepInputDependencyKind,
+)
 from openhcs.core.steps.abstract import AbstractStep
 
 logger = logging.getLogger(__name__)
@@ -389,6 +393,7 @@ class PathPlanner:
         self,
         snapshot: StepSnapshot,
         step_index: int,
+        main_input_dependency: StepInputDependency,
         input_dir: Path,
         output_dir: Path,
         artifact_maps: ArtifactPlanMaps,
@@ -401,6 +406,7 @@ class PathPlanner:
             is_per_step_materialization=False,
         )
         step_plan = self.plans[step_index]
+        step_plan.step_scope_id = snapshot.scope_id
         step_plan.input_dir = input_dir
         step_plan.output_dir = output_dir
         step_plan.output_plate_root = str(main_plate_root)
@@ -410,6 +416,7 @@ class PathPlanner:
         )
         step_plan.pipeline_position = step_index
         step_plan.input_source = self._get_input_source(snapshot)
+        step_plan.main_input_dependency = main_input_dependency
         step_plan.artifact_inputs = artifact_maps.inputs
         step_plan.artifact_outputs = artifact_maps.outputs
         step_plan.artifact_inputs_by_group = artifact_maps.inputs_by_group
@@ -459,7 +466,9 @@ class PathPlanner:
         """Plan one step - no duplicate logic."""
         sid = i  # Use step index instead of step_id
 
-        input_dir, output_dir = self._step_io_dirs(snapshot, i)
+        self.plans[sid].step_scope_id = snapshot.scope_id
+        main_input_dependency = self._main_input_dependency(snapshot, i)
+        input_dir, output_dir = self._step_io_dirs(main_input_dependency, i)
 
         declarations, execution_groups, func_pattern = self._prepare_step_declarations(
             snapshot,
@@ -483,6 +492,7 @@ class PathPlanner:
         self._update_core_step_plan(
             snapshot,
             sid,
+            main_input_dependency,
             input_dir,
             output_dir,
             artifact_maps,
@@ -503,24 +513,56 @@ class PathPlanner:
             self._input_conversion_plan_for_step(sid, input_dir),
         )
 
-    def _step_io_dirs(self, snapshot: StepSnapshot, step_index: int) -> tuple[Path, Path]:
+    def _main_input_dependency(
+        self,
+        snapshot: StepSnapshot,
+        step_index: int,
+    ) -> StepInputDependency:
+        """Resolve the explicit main-input edge for one step."""
+        existing_plan = self.plans.get(step_index)
+        if (
+            existing_plan is not None
+            and existing_plan.main_input_dependency.is_resolved
+        ):
+            return existing_plan.main_input_dependency
+
+        if step_index == 0 or snapshot.input_source == InputSource.PIPELINE_START:
+            return StepInputDependency.pipeline_start()
+
+        producer_index = step_index - 1
+        producer_scope_id = self.snapshots_by_index[producer_index].scope_id
+        return StepInputDependency.step_output(
+            source_step_index=producer_index,
+            source_step_scope_id=producer_scope_id,
+        )
+
+    def _step_io_dirs(
+        self,
+        main_input_dependency: StepInputDependency,
+        step_index: int,
+    ) -> tuple[Path, Path]:
         """Resolve read/write directories for one step."""
         plan = self.plans.get(step_index)
-        starts_from_input = (
-            step_index == 0 or snapshot.input_source == InputSource.PIPELINE_START
+        reads_from_pipeline_start = (
+            main_input_dependency.kind is StepInputDependencyKind.PIPELINE_START
         )
 
         if plan is not None and plan.input_dir is not None:
             input_dir = Path(plan.input_dir)
-        elif starts_from_input:
+        elif reads_from_pipeline_start:
             # PIPELINE_START steps read from original input, not zarr conversion.
             input_dir = self.initial_input
         else:
-            input_dir = Path(self.plans[step_index - 1].output_dir)
+            source_step_index = main_input_dependency.source_step_index
+            if source_step_index is None:
+                raise ValueError(
+                    f"Step {step_index} main input dependency is missing source_step_index."
+                )
+            input_dir = Path(self.plans[source_step_index].output_dir)
 
         if plan is not None and plan.output_dir is not None:
             output_dir = Path(plan.output_dir)
-        elif starts_from_input:
+        elif reads_from_pipeline_start:
             output_dir = self._build_output_path()
         else:
             output_dir = input_dir
@@ -617,6 +659,7 @@ class PathPlanner:
                 group_keys=tuple(normalized_groups),
                 paths_by_group=paths_by_group,
                 producer_step_index=sid,
+                producer_step_scope_id=self.plans[sid].step_scope_id,
                 producer_step_name=step_name,
             )
             self.declared[key] = result[key]
@@ -707,6 +750,7 @@ class PathPlanner:
                     paths_by_group=paths_by_group,
                     group_keys=tuple(producer_groups),
                     source_step_id=producer.producer_step_index,
+                    source_step_scope_id=producer.producer_step_scope_id,
                 )
             elif key in step_outputs:
                 output_spec = step_outputs[key]
@@ -720,6 +764,7 @@ class PathPlanner:
                     path="self",
                     kind=input_spec.kind,
                     source_step_id=sid,
+                    source_step_scope_id=self.plans[sid].step_scope_id,
                 )
             elif key not in METADATA_RESOLVERS:
                 raise ValueError(f"Step {sid} needs '{key}' but it's not available")
@@ -795,18 +840,29 @@ class PathPlanner:
         # Existing connectivity validation
         for i in range(1, len(self.step_snapshots)):
             curr = self.step_snapshots[i]
-            prev = self.step_snapshots[i - 1]
-            if curr.input_source == InputSource.PIPELINE_START:
+            dependency = self.plans[i].main_input_dependency
+            if dependency.kind is StepInputDependencyKind.PIPELINE_START:
                 continue
+            if dependency.kind is not StepInputDependencyKind.STEP_OUTPUT:
+                raise ValueError(
+                    f"Step {curr.name} has unresolved main input dependency."
+                )
+            source_step_index = dependency.source_step_index
+            if source_step_index is None:
+                raise ValueError(
+                    f"Step {curr.name} main input dependency is missing source_step_index."
+                )
             curr_in = self.plans[i].input_dir
-            prev_out = self.plans[i - 1].output_dir
-            if curr_in != prev_out:
+            source_out = self.plans[source_step_index].output_dir
+            if curr_in != source_out:
                 has_artifact_bridge = any(
-                    inp.source_step_id in [i - 1, 'prev']
+                    inp.source_step_id in [source_step_index, "prev"]
+                    or inp.source_step_scope_id == dependency.source_step_scope_id
                     for inp in self.plans[i].artifact_inputs.values()
                 )
                 if not has_artifact_bridge:
-                    raise ValueError(f"Disconnect: {prev.name} -> {curr.name}")
+                    producer_name = self.step_snapshots[source_step_index].name
+                    raise ValueError(f"Disconnect: {producer_name} -> {curr.name}")
 
         # NEW: Materialization path collision validation
         self._validate_materialization_paths(pipeline)

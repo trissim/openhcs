@@ -166,6 +166,8 @@ The branch has already established most of the typed runtime/compiler foundation
 10. Minimal `.cppipe -> generate -> import -> orchestrator execute` works.
 11. `.cppipe` parsing now preserves ordered typed setting records instead of only last-write dict values.
 12. Converter setup modules now compile into a typed image/setup schema that lowers `NamesAndTypes` aliases into selector-bearing `source_bindings`.
+13. Compiler/runtime plans now carry explicit step scope identity plus a typed main-input dependency record instead of relying purely on implicit `step_index - 1` assumptions.
+14. Artifact input/output plans now also carry scope-based producer/source identity alongside legacy step indexes.
 
 ### 3.2 What Is Still Missing
 
@@ -174,9 +176,10 @@ The biggest unresolved items are now:
 1. Multiple semantic image names are only compiled into typed selectors; runtime resolution of those selectors is not yet wired.
 2. Setup-module semantics now exist in the converter, but they are not yet threaded into a true pipeline-level image schema visible outside conversion.
 3. GUI/ObjectState/pycodify do not yet own richer source-binding state as an editable first-class step concept.
-4. Real BBBC pipelines are not yet fully accepted end to end.
-5. Export and relationship-heavy semantics are not yet fully validated on real pipelines.
-6. Benchmarking is ahead of the remaining CellProfiler semantics and should stay secondary.
+4. The main-input edge is now explicit in compiled plans, but the external execution model is still list-based rather than first-class graph-based.
+5. Real BBBC pipelines are not yet fully accepted end to end.
+6. Export and relationship-heavy semantics are not yet fully validated on real pipelines.
+7. Benchmarking is ahead of the remaining CellProfiler semantics and should stay secondary.
 
 ---
 
@@ -774,9 +777,9 @@ The branch should be considered “architecturally ready for full CellProfiler s
 
 The next implementation pass should be:
 
-1. define the typed source-binding domain model
-2. add it as a real `FunctionStep` field
-3. thread it into `StepSnapshot` and compiled plans
-4. only then begin replacing `external_image_inputs` string tuples in the converter/runtime path
+1. resolve selector-bearing `STEP_INPUT` bindings as typed views over the current step input container
+2. resolve selector-bearing `PIPELINE_START` bindings through existing microscope/component-key source resolution
+3. keep replacing hidden sequential assumptions with explicit compiled edge records where that can be done without changing the list-based pipeline/editor model
+4. validate on a real multi-image `.cppipe` before considering a first-class DAG execution/UI refactor
 
-That is the first move that improves the whole system instead of merely patching the current executor behavior.
+That keeps the current pass aligned with real CellProfiler semantics while still preparing the compiler/runtime for a later DAG model if it is still justified after acceptance testing.

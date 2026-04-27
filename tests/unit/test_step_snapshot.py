@@ -23,9 +23,10 @@ def _identity(image):
 
 
 class StateStub:
-    def __init__(self, values, path_to_type=None):
+    def __init__(self, values, path_to_type=None, scope_id="plate::functionstep_0"):
         self.values = values
         self._path_to_type = path_to_type or {}
+        self.scope_id = scope_id
 
     def get_saved_resolved_value(self, path):
         return self.values[path]
@@ -74,6 +75,7 @@ def test_step_snapshot_captures_saved_values_without_object_conversion():
     )
 
     assert snapshot.name == "identity"
+    assert snapshot.scope_id == "plate::functionstep_0"
     assert snapshot.step_type == "FunctionStep"
     assert snapshot.enabled is True
     assert snapshot.is_function_step is True

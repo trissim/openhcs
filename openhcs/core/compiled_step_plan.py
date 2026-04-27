@@ -11,6 +11,7 @@ from openhcs.constants.constants import VariableComponents
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
 from openhcs.core.function_patterns import CompiledFunctionPattern
 from openhcs.core.source_bindings import CompiledSourceBindingPlan
+from openhcs.core.step_dependencies import StepInputDependency
 
 if TYPE_CHECKING:
     from openhcs.core.config import StreamingConfig
@@ -54,6 +55,7 @@ class CompiledStepPlan:
     step_name: str
     step_type: str
     axis_id: str
+    step_scope_id: str | None = None
     func: Any = None
     input_dir: Path | None = None
     output_dir: Path | None = None
@@ -65,6 +67,9 @@ class CompiledStepPlan:
     variable_components: Sequence[VariableComponents] | None = None
     group_by: Any = None
     sequential_processing: Any = None
+    main_input_dependency: StepInputDependency = field(
+        default_factory=StepInputDependency.unresolved
+    )
     source_binding_plan: CompiledSourceBindingPlan = field(
         default_factory=CompiledSourceBindingPlan.empty
     )

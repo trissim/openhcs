@@ -19,6 +19,7 @@ from openhcs.core.compiled_step_plan import (
 from openhcs.core.config import StreamingConfig
 from openhcs.core.function_patterns import CompiledFunctionPattern
 from openhcs.core.source_bindings import CompiledSourceBindingPlan
+from openhcs.core.step_dependencies import StepInputDependency
 from openhcs.core.steps.function_io import create_image_path_getter
 
 
@@ -33,12 +34,14 @@ class FunctionStepExecutionPlan:
     """Typed runtime snapshot of one compiled FunctionStep plan."""
 
     step_index: int
+    step_scope_id: str | None
     step_name: str
     axis_id: str
     input_dir: Path
     output_dir: Path
     variable_components: Sequence[VariableComponents]
     group_by: Any
+    main_input_dependency: StepInputDependency
     source_binding_plan: CompiledSourceBindingPlan
     artifact_inputs: ArtifactInputPlans
     artifact_outputs: ArtifactOutputPlans
@@ -108,12 +111,14 @@ class FunctionStepExecutionPlan:
 
         return cls(
             step_index=step_index,
+            step_scope_id=compiled_plan.step_scope_id,
             step_name=step_name,
             axis_id=axis_id,
             input_dir=input_dir,
             output_dir=output_dir,
             variable_components=variable_components,
             group_by=compiled_plan.group_by,
+            main_input_dependency=compiled_plan.main_input_dependency,
             source_binding_plan=compiled_plan.source_binding_plan,
             artifact_inputs=compiled_plan.artifact_inputs,
             artifact_outputs=compiled_plan.artifact_outputs,

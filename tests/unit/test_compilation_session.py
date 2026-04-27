@@ -16,6 +16,7 @@ def _identity(image):
 def _snapshot(index: int, name: str = "step") -> StepSnapshot:
     return StepSnapshot(
         index=index,
+        scope_id=f"plate::functionstep_{index}",
         name=name,
         step_type="FunctionStep",
         enabled=True,

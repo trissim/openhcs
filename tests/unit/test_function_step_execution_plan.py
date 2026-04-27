@@ -7,6 +7,10 @@ from openhcs.core.compiled_step_plan import (
     MaterializedOutputPlan,
 )
 from openhcs.core.function_patterns import compile_function_pattern
+from openhcs.core.step_dependencies import (
+    StepInputDependency,
+    StepInputDependencyKind,
+)
 from openhcs.core.steps.function_artifact_materialization import _build_analysis_filename
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 
@@ -25,6 +29,7 @@ class ContextStub:
 def _compiled_plan(**overrides):
     plan = CompiledStepPlan(
         step_index=2,
+        step_scope_id="plate::functionstep_2",
         step_name="measure",
         step_type="FunctionStep",
         axis_id="A01",
@@ -33,6 +38,10 @@ def _compiled_plan(**overrides):
         variable_components=None,
         group_by=None,
         func=noop,
+        main_input_dependency=StepInputDependency.step_output(
+            source_step_index=1,
+            source_step_scope_id="plate::functionstep_1",
+        ),
         artifact_inputs={},
         artifact_outputs={},
         read_backend="memory",
@@ -72,8 +81,11 @@ def test_execution_plan_snapshots_compiled_plan_without_raw_backing():
     plan = FunctionStepExecutionPlan.from_context(context, 2)
 
     assert not hasattr(plan, "raw")
+    assert plan.step_scope_id == "plate::functionstep_2"
     assert compiled_plan.variable_components is None
     assert plan.variable_components == [VariableComponents.SITE]
+    assert plan.main_input_dependency.kind is StepInputDependencyKind.STEP_OUTPUT
+    assert plan.main_input_dependency.source_step_scope_id == "plate::functionstep_1"
     assert plan.source_binding_plan.is_empty
     assert plan.device_id is None
     assert plan.has_input_conversion

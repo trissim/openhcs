@@ -47,6 +47,7 @@ class StepSnapshot:
     """
 
     index: int
+    scope_id: str
     name: str
     step_type: str
     enabled: bool
@@ -93,6 +94,7 @@ class StepSnapshot:
 
         return cls(
             index=index,
+            scope_id=step_state.scope_id,
             name=step.name,
             step_type=step.__class__.__name__,
             enabled=bool(_saved_value(step_state, "enabled", index)),

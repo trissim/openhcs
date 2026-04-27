@@ -4,12 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
+from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, ArtifactSpec
 from openhcs.core.compiled_step_plan import (
     CompiledStepPlan,
     MaterializedOutputPlan,
 )
 from openhcs.core.pipeline.path_planner import PathPlanner
+from openhcs.core.step_dependencies import StepInputDependencyKind
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,15 @@ def _artifact_planner_stub() -> PathPlanner:
         axis_id="A01",
         global_config=SimpleNamespace(materialization_results_path="analysis"),
     )
+    planner.plans = {
+        2: CompiledStepPlan(
+            step_index=2,
+            step_scope_id="plate::functionstep_2",
+            step_name="identify",
+            step_type="FunctionStep",
+            axis_id="A01",
+        )
+    }
     planner.declared = {}
     return planner
 
@@ -104,3 +115,71 @@ def test_artifact_input_plan_rejects_producer_consumer_kind_mismatch():
             sid=2,
             step_name="measure",
         )
+
+
+def test_main_input_dependency_uses_scope_identity_for_step_output_edges():
+    planner = PathPlanner.__new__(PathPlanner)
+    planner.plans = {
+        0: CompiledStepPlan(
+            step_index=0,
+            step_scope_id="plate::functionstep_0",
+            step_name="load",
+            step_type="FunctionStep",
+            axis_id="A01",
+            output_dir=Path("/data/plate1_processed/images"),
+        ),
+        1: CompiledStepPlan(
+            step_index=1,
+            step_scope_id="plate::functionstep_1",
+            step_name="measure",
+            step_type="FunctionStep",
+            axis_id="A01",
+        ),
+    }
+    planner.snapshots_by_index = {
+        0: SimpleNamespace(scope_id="plate::functionstep_0"),
+        1: SimpleNamespace(scope_id="plate::functionstep_1"),
+    }
+
+    dependency = planner._main_input_dependency(
+        SimpleNamespace(input_source=None),
+        1,
+    )
+
+    assert dependency.kind is StepInputDependencyKind.STEP_OUTPUT
+    assert dependency.source_step_index == 0
+    assert dependency.source_step_scope_id == "plate::functionstep_0"
+
+    input_dir, output_dir = planner._step_io_dirs(dependency, 1)
+    assert input_dir == Path("/data/plate1_processed/images")
+    assert output_dir == Path("/data/plate1_processed/images")
+
+
+def test_main_input_dependency_preserves_pipeline_start_edges():
+    planner = PathPlanner.__new__(PathPlanner)
+    planner.plans = {
+        1: CompiledStepPlan(
+            step_index=1,
+            step_scope_id="plate::functionstep_1",
+            step_name="qc",
+            step_type="FunctionStep",
+            axis_id="A01",
+        )
+    }
+    planner.initial_input = Path("/data/plate1/images")
+    planner.snapshots_by_index = {
+        1: SimpleNamespace(scope_id="plate::functionstep_1")
+    }
+    planner._build_output_path = lambda *_args, **_kwargs: Path(
+        "/data/plate1_processed/images"
+    )
+
+    dependency = planner._main_input_dependency(
+        SimpleNamespace(input_source=InputSource.PIPELINE_START),
+        1,
+    )
+
+    assert dependency.kind is StepInputDependencyKind.PIPELINE_START
+    input_dir, output_dir = planner._step_io_dirs(dependency, 1)
+    assert input_dir == Path("/data/plate1/images")
+    assert output_dir == Path("/data/plate1_processed/images")

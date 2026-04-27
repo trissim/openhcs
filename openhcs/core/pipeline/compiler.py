@@ -136,6 +136,23 @@ def _get_or_register_object_state(
     return _register_object_state(object_instance, scope_id, parent_state)
 
 
+def _step_scope_token(step: "AbstractStep", step_index: int) -> str:
+    """Return the existing step scope token when available."""
+    token = getattr(step, "_scope_token", None)
+    if isinstance(token, str) and token:
+        return token
+    return f"step_{step_index}"
+
+
+def _compiler_step_scope_id(
+    compilation_scope: str,
+    step: "AbstractStep",
+    step_index: int,
+) -> str:
+    """Build a compiler ObjectState scope id that preserves stable step tokens."""
+    return f"{compilation_scope}::{_step_scope_token(step, step_index)}"
+
+
 _FUNCTION_REFERENCE_ATTRIBUTE_FIELDS = MappingProxyType({
     "__name__": "function_name",
     "__module__": "original_module",
@@ -635,7 +652,11 @@ class PipelineCompiler:
         plate_scope = context.plate_path or "plate"
         step_state_map: Dict[int, "ObjectState"] = {}
         for step_index, step in enumerate(steps_definition):
-            step_scope_id = f"{compilation_id}::{plate_scope}::step_{step_index}"
+            step_scope_id = _compiler_step_scope_id(
+                f"{compilation_id}::{plate_scope}",
+                step,
+                step_index,
+            )
             step_state_map[step_index] = _register_object_state(
                 step,
                 step_scope_id,
@@ -751,6 +772,7 @@ class PipelineCompiler:
                 continue
 
             current_plan = session.plans[step_index]
+            current_plan.step_scope_id = snapshot.scope_id
             current_plan.step_name = snapshot.name
             current_plan.step_type = snapshot.step_type
             current_plan.axis_id = session.axis_id
@@ -1392,7 +1414,11 @@ class PipelineCompiler:
     ) -> Dict[int, "ObjectState"]:
         step_state_map: Dict[int, "ObjectState"] = {}
         for step_index, step in enumerate(pipeline_definition):
-            step_scope_id = f"{plate_path_str}::step_{step_index}"
+            step_scope_id = _compiler_step_scope_id(
+                plate_path_str,
+                step,
+                step_index,
+            )
             step_state_map[step_index] = _get_or_register_object_state(
                 step_scope_id,
                 step,
