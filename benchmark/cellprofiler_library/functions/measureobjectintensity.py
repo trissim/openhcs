@@ -6,9 +6,7 @@ Measures intensity features for identified objects in grayscale images.
 import numpy as np
 from typing import Tuple, List
 from dataclasses import dataclass
-from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
-from openhcs.processing.materialization import csv_materializer
+from openhcs.core.memory import numpy
 
 
 @dataclass
@@ -46,101 +44,12 @@ class ObjectIntensityResults:
 
 def _fixup_scipy_result(result):
     """Convert scipy.ndimage result to proper array format."""
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select images to measure' -> (pipeline-handled)
-        'Select objects to measure' -> (pipeline-handled)
-        'IntegratedIntensity' -> integrated_intensity
-        'MeanIntensity' -> mean_intensity
-        'StdIntensity' -> std_intensity
-        'MaxIntensity' -> max_intensity
-        'MinIntensity' -> min_intensity
-        'IntegratedIntensityEdge' -> integrated_intensity_edge
-        'MeanIntensityEdge' -> mean_intensity_edge
-        'StdIntensityEdge' -> std_intensity_edge
-        'MaxIntensityEdge' -> max_intensity_edge
-        'MinIntensityEdge' -> min_intensity_edge
-        'MassDisplacement' -> mass_displacement
-        'LowerQuartileIntensity' -> lower_quartile_intensity
-        'MedianIntensity' -> median_intensity
-        'MADIntensity' -> mad_intensity
-        'UpperQuartileIntensity' -> upper_quartile_intensity
-        'Location_CenterMassIntensity_X' -> center_mass_intensity_x
-        'Location_CenterMassIntensity_Y' -> center_mass_intensity_y
-        'Location_CenterMassIntensity_Z' -> (pipeline-handled)
-        'Location_MaxIntensity_X' -> max_intensity_x
-        'Location_MaxIntensity_Y' -> max_intensity_y
-        'Location_MaxIntensity_Z' -> (pipeline-handled)
-
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select images to measure' -> (pipeline-handled)
-        'Select objects to measure' -> (pipeline-handled)
-        'IntegratedIntensity' -> integrated_intensity
-        'MeanIntensity' -> mean_intensity
-        'StdIntensity' -> std_intensity
-        'MaxIntensity' -> max_intensity
-        'MinIntensity' -> min_intensity
-        'IntegratedIntensityEdge' -> integrated_intensity_edge
-        'MeanIntensityEdge' -> mean_intensity_edge
-        'StdIntensityEdge' -> std_intensity_edge
-        'MaxIntensityEdge' -> max_intensity_edge
-        'MinIntensityEdge' -> min_intensity_edge
-        'MassDisplacement' -> mass_displacement
-        'LowerQuartileIntensity' -> lower_quartile_intensity
-        'MedianIntensity' -> median_intensity
-        'MADIntensity' -> mad_intensity
-        'UpperQuartileIntensity' -> upper_quartile_intensity
-        'Location_CenterMassIntensity_X' -> center_mass_intensity_x
-        'Location_CenterMassIntensity_Y' -> center_mass_intensity_y
-        'Location_CenterMassIntensity_Z' -> (pipeline-handled)
-        'Location_MaxIntensity_X' -> max_intensity_x
-        'Location_MaxIntensity_Y' -> max_intensity_y
-        'Location_MaxIntensity_Z' -> (pipeline-handled)
-
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select images to measure' -> (pipeline-handled)
-        'Select objects to measure' -> (pipeline-handled)
-        'IntegratedIntensity' -> integrated_intensity
-        'MeanIntensity' -> mean_intensity
-        'StdIntensity' -> std_intensity
-        'MaxIntensity' -> max_intensity
-        'MinIntensity' -> min_intensity
-        'IntegratedIntensityEdge' -> integrated_intensity_edge
-        'MeanIntensityEdge' -> mean_intensity_edge
-        'StdIntensityEdge' -> std_intensity_edge
-        'MaxIntensityEdge' -> max_intensity_edge
-        'MinIntensityEdge' -> min_intensity_edge
-        'MassDisplacement' -> mass_displacement
-        'LowerQuartileIntensity' -> lower_quartile_intensity
-        'MedianIntensity' -> median_intensity
-        'MADIntensity' -> mad_intensity
-        'UpperQuartileIntensity' -> upper_quartile_intensity
-        'Location_CenterMassIntensity_X' -> center_mass_intensity_x
-        'Location_CenterMassIntensity_Y' -> center_mass_intensity_y
-        'Location_CenterMassIntensity_Z' -> (pipeline-handled)
-        'Location_MaxIntensity_X' -> max_intensity_x
-        'Location_MaxIntensity_Y' -> max_intensity_y
-        'Location_MaxIntensity_Z' -> (pipeline-handled)
-
     if np.isscalar(result):
         return np.array([result])
     return np.asarray(result)
 
 
-@numpy(contract=ProcessingContract.PURE_2D)
-@special_inputs("labels")
-@special_outputs(("intensity_measurements", csv_materializer(
-    fields=["object_label", "integrated_intensity", "mean_intensity", "std_intensity",
-            "min_intensity", "max_intensity", "integrated_intensity_edge",
-            "mean_intensity_edge", "std_intensity_edge", "min_intensity_edge",
-            "max_intensity_edge", "mass_displacement", "lower_quartile_intensity",
-            "median_intensity", "mad_intensity", "upper_quartile_intensity",
-            "center_mass_intensity_x", "center_mass_intensity_y",
-            "max_intensity_x", "max_intensity_y"],
-    analysis_type="object_intensity"
-)))
+@numpy
 def measure_object_intensity(
     image: np.ndarray,
     labels: np.ndarray,

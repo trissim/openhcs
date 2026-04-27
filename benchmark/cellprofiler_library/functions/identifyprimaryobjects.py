@@ -7,13 +7,12 @@ thresholding, declumping, and watershed segmentation.
 """
 
 import numpy as np
-from typing import Tuple
+from abc import ABC, abstractmethod
+from typing import ClassVar, Tuple
 from dataclasses import dataclass
 from enum import Enum
-from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
-from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.analysis.cell_counting_cpu import materialize_segmentation_masks
+from metaclass_registry import AutoRegisterMeta
+from openhcs.core.memory import numpy
 
 
 class UnclumpMethod(Enum):
@@ -30,9 +29,59 @@ class WatershedMethod(Enum):
 
 
 class FillHolesOption(Enum):
-    NEVER = "never"
-    AFTER_BOTH = "after_both"
-    AFTER_DECLUMP = "after_declump"
+    NEVER = ("never", False, False)
+    AFTER_BOTH = ("after_both", True, True)
+    AFTER_DECLUMP = ("after_declump", False, True)
+
+    def __new__(
+        cls,
+        value: str,
+        fill_before_declump: bool,
+        fill_after_declump: bool,
+    ):
+        option = object.__new__(cls)
+        option._value_ = value
+        option.fill_before_declump = fill_before_declump
+        option.fill_after_declump = fill_after_declump
+        return option
+
+
+class WatershedImageBuilder(ABC, metaclass=AutoRegisterMeta):
+    """Build the watershed surface for one closed watershed method."""
+
+    __registry_key__ = "method"
+    method: ClassVar[WatershedMethod | None] = None
+
+    @classmethod
+    def for_method(cls, method: WatershedMethod) -> "WatershedImageBuilder":
+        return cls.__registry__[method]()
+
+    @abstractmethod
+    def build(self, image: np.ndarray, binary: np.ndarray) -> np.ndarray:
+        """Return the image used as the watershed surface."""
+
+
+class IntensityWatershedImageBuilder(WatershedImageBuilder):
+    method = WatershedMethod.INTENSITY
+
+    def build(self, image: np.ndarray, binary: np.ndarray) -> np.ndarray:
+        return 1 - image
+
+
+class ShapeWatershedImageBuilder(WatershedImageBuilder):
+    method = WatershedMethod.SHAPE
+
+    def build(self, image: np.ndarray, binary: np.ndarray) -> np.ndarray:
+        from scipy import ndimage as ndi
+
+        return -ndi.distance_transform_edt(binary)
+
+
+class PropagateWatershedImageBuilder(WatershedImageBuilder):
+    method = WatershedMethod.PROPAGATE
+
+    def build(self, image: np.ndarray, binary: np.ndarray) -> np.ndarray:
+        return 1 - image
 
 
 @dataclass
@@ -45,14 +94,7 @@ class PrimaryObjectStats:
     threshold_used: float
 
 
-@numpy(contract=ProcessingContract.PURE_2D)
-@special_outputs(
-    ("object_stats", csv_materializer(
-        fields=["slice_index", "object_count", "mean_area", "median_area", "total_area", "threshold_used"],
-        analysis_type="primary_objects"
-    )),
-    ("labels", materialize_segmentation_masks)
-)
+@numpy
 def identify_primary_objects(
     image: np.ndarray,
     min_diameter: int = 10,
@@ -202,7 +244,7 @@ def identify_primary_objects(
     binary = img > thresh
     
     # Fill holes if requested (before declumping)
-    if fill_holes in (FillHolesOption.AFTER_BOTH,):
+    if fill_holes.fill_before_declump:
         max_hole_size = int(np.pi * (max_diameter ** 2) / 4)
         binary = remove_small_holes(binary, area_threshold=max_hole_size)
     
@@ -251,14 +293,10 @@ def identify_primary_objects(
         for i, (y, x) in enumerate(coordinates, start=1):
             markers[y, x] = i
         
-        # Watershed based on method
-        if watershed_method == WatershedMethod.INTENSITY:
-            watershed_image = 1 - img
-        elif watershed_method == WatershedMethod.SHAPE:
-            distance = ndi.distance_transform_edt(binary)
-            watershed_image = -distance
-        else:  # PROPAGATE or fallback
-            watershed_image = 1 - img
+        watershed_image = WatershedImageBuilder.for_method(watershed_method).build(
+            img,
+            binary,
+        )
         
         # Apply watershed
         if markers.max() > 0:
@@ -271,7 +309,7 @@ def identify_primary_objects(
             object_count = labeled_image.max()
     
     # Fill holes after declumping if requested
-    if fill_holes in (FillHolesOption.AFTER_BOTH, FillHolesOption.AFTER_DECLUMP):
+    if fill_holes.fill_after_declump:
         for obj_id in range(1, object_count + 1):
             obj_mask = labeled_image == obj_id
             filled = ndi.binary_fill_holes(obj_mask)

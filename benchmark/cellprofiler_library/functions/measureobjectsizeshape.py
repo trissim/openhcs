@@ -6,9 +6,7 @@ Original: measureobjectsizeshape
 import numpy as np
 from typing import Tuple, List, Dict, Any, Optional
 from dataclasses import dataclass, field
-from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
-from openhcs.processing.materialization import csv_materializer
+from openhcs.core.memory import numpy
 
 
 @dataclass
@@ -46,30 +44,6 @@ class ObjectSizeShapeResults:
 
 def _get_zernike_indexes(n_max: int) -> List[Tuple[int, int]]:
     """Get Zernike polynomial indexes up to order n_max."""
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select object sets to measure' -> (pipeline-handled)
-        'Calculate the Zernike features?' -> calculate_zernikes
-        'Calculate the advanced features?' -> calculate_advanced
-        'Calculate 3D measurements?' -> volumetric
-        'Object spacing' -> spacing
-
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select object sets to measure' -> (pipeline-handled)
-        'Calculate the Zernike features?' -> calculate_zernikes
-        'Calculate the advanced features?' -> calculate_advanced
-        'Calculate 3D measurements?' -> volumetric
-        'Object spacing' -> spacing
-
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select object sets to measure' -> (pipeline-handled)
-        'Calculate the Zernike features?' -> calculate_zernikes
-        'Calculate the advanced features?' -> calculate_advanced
-        'Calculate 3D measurements?' -> volumetric
-        'Object spacing' -> spacing
-
     indexes = []
     for n in range(n_max + 1):
         for m in range(-n, n + 1, 2):
@@ -126,17 +100,7 @@ def _compute_zernike_moments(image: np.ndarray, n_max: int = 9) -> Dict[str, flo
     return zernike_features
 
 
-@numpy(contract=ProcessingContract.PURE_2D)
-@special_inputs("labels")
-@special_outputs(("size_shape_measurements", csv_materializer(
-    fields=["slice_index", "object_label", "area", "perimeter", 
-            "major_axis_length", "minor_axis_length", "eccentricity",
-            "orientation", "solidity", "extent", "equivalent_diameter",
-            "euler_number", "compactness", "form_factor",
-            "centroid_y", "centroid_x", "bbox_min_row", "bbox_min_col",
-            "bbox_max_row", "bbox_max_col"],
-    analysis_type="object_size_shape"
-)))
+@numpy
 def measure_object_size_shape(
     image: np.ndarray,
     labels: np.ndarray,
@@ -155,7 +119,7 @@ def measure_object_size_shape(
     Returns:
         Tuple of (original image, list of measurements per object)
     """
-    from skimage.measure import regionprops, label as relabel
+    from skimage.measure import regionprops
     
     measurements = []
     
@@ -172,19 +136,19 @@ def measure_object_size_shape(
     for prop in props:
         # Basic measurements
         area = float(prop.area)
-        perimeter = float(prop.perimeter) if hasattr(prop, 'perimeter') else 0.0
+        perimeter = float(prop.perimeter)
         
         # Axis lengths
         major_axis = float(prop.major_axis_length) if prop.major_axis_length else 0.0
         minor_axis = float(prop.minor_axis_length) if prop.minor_axis_length else 0.0
         
         # Shape descriptors
-        eccentricity = float(prop.eccentricity) if hasattr(prop, 'eccentricity') else 0.0
-        orientation = float(prop.orientation) if hasattr(prop, 'orientation') else 0.0
-        solidity = float(prop.solidity) if hasattr(prop, 'solidity') else 0.0
-        extent = float(prop.extent) if hasattr(prop, 'extent') else 0.0
-        equivalent_diameter = float(prop.equivalent_diameter) if hasattr(prop, 'equivalent_diameter') else 0.0
-        euler_number = int(prop.euler_number) if hasattr(prop, 'euler_number') else 0
+        eccentricity = float(prop.eccentricity)
+        orientation = float(prop.orientation)
+        solidity = float(prop.solidity)
+        extent = float(prop.extent)
+        equivalent_diameter = float(prop.equivalent_diameter)
+        euler_number = int(prop.euler_number)
         
         # Derived features
         # Compactness = perimeter^2 / (4 * pi * area)

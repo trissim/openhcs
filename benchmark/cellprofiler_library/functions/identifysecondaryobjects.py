@@ -7,21 +7,26 @@ as seeds, expanding them based on intensity gradients or distance.
 """
 
 import numpy as np
-from typing import Tuple, Optional
+from abc import ABC, abstractmethod
+from typing import ClassVar, Tuple
 from dataclasses import dataclass
 from enum import Enum
-from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
-from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.analysis.cell_counting_cpu import materialize_segmentation_masks
+from metaclass_registry import AutoRegisterMeta
+from openhcs.core.memory import numpy
 
 
 class SecondaryMethod(Enum):
-    PROPAGATION = "propagation"
-    WATERSHED_GRADIENT = "watershed_gradient"
-    WATERSHED_IMAGE = "watershed_image"
-    DISTANCE_N = "distance_n"
-    DISTANCE_B = "distance_b"
+    PROPAGATION = ("propagation", True)
+    WATERSHED_GRADIENT = ("watershed_gradient", True)
+    WATERSHED_IMAGE = ("watershed_image", True)
+    DISTANCE_N = ("distance_n", False)
+    DISTANCE_B = ("distance_b", True)
+
+    def __new__(cls, value: str, requires_threshold: bool):
+        method = object.__new__(cls)
+        method._value_ = value
+        method.requires_threshold = requires_threshold
+        return method
 
 
 class ThresholdMethod(Enum):
@@ -44,60 +49,6 @@ class SecondaryObjectStats:
 
 def _fill_labeled_holes(labels: np.ndarray) -> np.ndarray:
     """Fill holes in labeled objects."""
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select the input objects' -> (pipeline-handled)
-        'Name the objects to be identified' -> (pipeline-handled)
-        'Select the method to identify the secondary objects' -> method
-        'Select the input image' -> (pipeline-handled)
-        'Number of pixels by which to expand the primary objects' -> expansion_distance
-        'Regularization factor' -> regularization
-        'Discard secondary objects touching the border of the image?' -> exclude_border_objects
-        'Discard the associated primary objects?' -> discard_primary
-        'Name the new primary objects' -> (pipeline-handled)
-        'Fill holes in identified objects?' -> fill_holes
-        'Threshold setting version' -> (pipeline-handled)
-        'Threshold strategy' -> threshold_strategy
-        'Thresholding method' -> threshold_method
-        'Threshold smoothing scale' -> threshold_smoothing_scale
-        'Threshold correction factor' -> threshold_correction_factor
-
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select the input objects' -> (pipeline-handled)
-        'Name the objects to be identified' -> (pipeline-handled)
-        'Select the method to identify the secondary objects' -> method
-        'Select the input image' -> (pipeline-handled)
-        'Number of pixels by which to expand the primary objects' -> expansion_distance
-        'Regularization factor' -> regularization
-        'Discard secondary objects touching the border of the image?' -> exclude_border_objects
-        'Discard the associated primary objects?' -> discard_primary
-        'Name the new primary objects' -> (pipeline-handled)
-        'Fill holes in identified objects?' -> fill_holes
-        'Threshold setting version' -> (pipeline-handled)
-        'Threshold strategy' -> threshold_strategy
-        'Thresholding method' -> threshold_method
-        'Threshold smoothing scale' -> threshold_smoothing_scale
-        'Threshold correction factor' -> threshold_correction_factor
-
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select the input objects' -> (pipeline-handled)
-        'Name the objects to be identified' -> (pipeline-handled)
-        'Select the method to identify the secondary objects' -> method
-        'Select the input image' -> (pipeline-handled)
-        'Number of pixels by which to expand the primary objects' -> expansion_distance
-        'Regularization factor' -> regularization
-        'Discard secondary objects touching the border of the image?' -> exclude_border_objects
-        'Discard the associated primary objects?' -> discard_primary
-        'Name the new primary objects' -> (pipeline-handled)
-        'Fill holes in identified objects?' -> fill_holes
-        'Threshold setting version' -> (pipeline-handled)
-        'Threshold strategy' -> threshold_strategy
-        'Thresholding method' -> threshold_method
-        'Threshold smoothing scale' -> threshold_smoothing_scale
-        'Threshold correction factor' -> threshold_correction_factor
-
     from scipy.ndimage import binary_fill_holes
     
     filled = np.zeros_like(labels)
@@ -145,16 +96,329 @@ def _propagate_labels(
     return result
 
 
+@dataclass(frozen=True)
+class SecondaryImageInputs:
+    image: np.ndarray
+    labels: np.ndarray
+
+
+@dataclass(frozen=True)
+class SecondaryThresholdResult:
+    value: float
+    mask: np.ndarray
+
+
+@dataclass(frozen=True)
+class SecondaryThresholdRequest:
+    image: np.ndarray
+    method: SecondaryMethod
+    threshold_method: ThresholdMethod
+    threshold_correction_factor: float
+    threshold_min: float
+    threshold_max: float
+
+
+@dataclass(frozen=True)
+class SecondarySegmentationRequest:
+    image: np.ndarray
+    labels: np.ndarray
+    thresholded: np.ndarray
+    distance_to_dilate: int
+    regularization_factor: float
+
+    @property
+    def has_primary_objects(self) -> bool:
+        return self.labels.max() > 0
+
+    @property
+    def object_mask(self) -> np.ndarray:
+        return self.thresholded | (self.labels > 0)
+
+
+class ThresholdCalculator(ABC, metaclass=AutoRegisterMeta):
+    """Threshold strategy for one closed CellProfiler threshold method."""
+
+    __registry_key__ = "method"
+    method: ClassVar[ThresholdMethod | None] = None
+
+    @classmethod
+    def for_method(cls, method: ThresholdMethod) -> "ThresholdCalculator":
+        return cls.__registry__[method]()
+
+    @abstractmethod
+    def calculate(self, image: np.ndarray) -> float:
+        """Calculate a threshold value for a normalized intensity image."""
+
+
+class OtsuThresholdCalculator(ThresholdCalculator):
+    method = ThresholdMethod.OTSU
+
+    def calculate(self, image: np.ndarray) -> float:
+        from skimage.filters import threshold_otsu
+
+        return float(threshold_otsu(image))
+
+
+class LiThresholdCalculator(ThresholdCalculator):
+    method = ThresholdMethod.LI
+
+    def calculate(self, image: np.ndarray) -> float:
+        from skimage.filters import threshold_li
+
+        return float(threshold_li(image))
+
+
+class MinimumThresholdCalculator(ThresholdCalculator):
+    method = ThresholdMethod.MINIMUM
+
+    def calculate(self, image: np.ndarray) -> float:
+        from skimage.filters import threshold_minimum, threshold_otsu
+
+        try:
+            return float(threshold_minimum(image))
+        except RuntimeError:
+            return float(threshold_otsu(image))
+
+
+class TriangleThresholdCalculator(ThresholdCalculator):
+    method = ThresholdMethod.TRIANGLE
+
+    def calculate(self, image: np.ndarray) -> float:
+        from skimage.filters import threshold_triangle
+
+        return float(threshold_triangle(image))
+
+
+class SecondarySegmentationStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Segmentation strategy for one closed secondary-object method."""
+
+    __registry_key__ = "method"
+    method: ClassVar[SecondaryMethod | None] = None
+
+    @classmethod
+    def for_method(cls, method: SecondaryMethod) -> "SecondarySegmentationStrategy":
+        return cls.__registry__[method]()
+
+    def segment(self, request: SecondarySegmentationRequest) -> np.ndarray:
+        if not request.has_primary_objects:
+            return np.zeros_like(request.labels)
+        return self._segment_non_empty(request)
+
+    @abstractmethod
+    def _segment_non_empty(
+        self,
+        request: SecondarySegmentationRequest,
+    ) -> np.ndarray:
+        """Segment secondary objects when primary labels are present."""
+
+
+class DistanceOnlySegmentationStrategy(SecondarySegmentationStrategy):
+    method = SecondaryMethod.DISTANCE_N
+
+    def _segment_non_empty(
+        self,
+        request: SecondarySegmentationRequest,
+    ) -> np.ndarray:
+        from scipy.ndimage import distance_transform_edt
+
+        distances, indices = distance_transform_edt(
+            request.labels == 0,
+            return_indices=True,
+        )
+        labels_out = np.zeros_like(request.labels)
+        dilate_mask = distances <= request.distance_to_dilate
+        labels_out[dilate_mask] = request.labels[
+            indices[0][dilate_mask],
+            indices[1][dilate_mask],
+        ]
+        return labels_out
+
+
+class DistanceMaskedSegmentationStrategy(SecondarySegmentationStrategy):
+    method = SecondaryMethod.DISTANCE_B
+
+    def _segment_non_empty(
+        self,
+        request: SecondarySegmentationRequest,
+    ) -> np.ndarray:
+        from scipy.ndimage import distance_transform_edt
+
+        labels_out = _propagate_labels(
+            request.image,
+            request.labels,
+            request.object_mask,
+            1.0,
+        )
+        distances = distance_transform_edt(request.labels == 0)
+        labels_out[distances > request.distance_to_dilate] = 0
+        labels_out[request.labels > 0] = request.labels[request.labels > 0]
+        return labels_out
+
+
+class PropagationSegmentationStrategy(SecondarySegmentationStrategy):
+    method = SecondaryMethod.PROPAGATION
+
+    def _segment_non_empty(
+        self,
+        request: SecondarySegmentationRequest,
+    ) -> np.ndarray:
+        return _propagate_labels(
+            request.image,
+            request.labels,
+            request.object_mask,
+            request.regularization_factor,
+        )
+
+
+class GradientWatershedSegmentationStrategy(SecondarySegmentationStrategy):
+    method = SecondaryMethod.WATERSHED_GRADIENT
+
+    def _segment_non_empty(
+        self,
+        request: SecondarySegmentationRequest,
+    ) -> np.ndarray:
+        from scipy.ndimage import sobel
+
+        sobel_image = np.abs(sobel(request.image, axis=0)) + np.abs(
+            sobel(request.image, axis=1)
+        )
+        return _watershed_secondary_labels(request, sobel_image)
+
+
+class ImageWatershedSegmentationStrategy(SecondarySegmentationStrategy):
+    method = SecondaryMethod.WATERSHED_IMAGE
+
+    def _segment_non_empty(
+        self,
+        request: SecondarySegmentationRequest,
+    ) -> np.ndarray:
+        return _watershed_secondary_labels(request, 1.0 - request.image)
+
+
+def _watershed_secondary_labels(
+    request: SecondarySegmentationRequest,
+    watershed_image: np.ndarray,
+) -> np.ndarray:
+    from skimage.segmentation import watershed
+
+    return watershed(
+        watershed_image,
+        markers=request.labels,
+        mask=request.object_mask,
+        connectivity=2,
+    )
+
+
+def _normalize_secondary_inputs(
+    image: np.ndarray,
+    primary_labels: np.ndarray,
+) -> SecondaryImageInputs:
+    if image.ndim == 3 and image.shape[0] == 2:
+        return SecondaryImageInputs(
+            image=image[0].astype(np.float64),
+            labels=image[1].astype(np.int32),
+        )
+    return SecondaryImageInputs(
+        image=image.astype(np.float64),
+        labels=primary_labels.astype(np.int32),
+    )
+
+
+def _normalize_intensity_image(image: np.ndarray) -> np.ndarray:
+    if image.max() > image.min():
+        return (image - image.min()) / (image.max() - image.min())
+    return image
+
+
+def _threshold_secondary_objects(
+    request: SecondaryThresholdRequest,
+) -> SecondaryThresholdResult:
+    if not request.method.requires_threshold:
+        return SecondaryThresholdResult(
+            value=0.0,
+            mask=np.ones_like(request.image, dtype=bool),
+        )
+
+    threshold_value = ThresholdCalculator.for_method(
+        request.threshold_method
+    ).calculate(request.image)
+    threshold_value = threshold_value * request.threshold_correction_factor
+    threshold_value = max(
+        request.threshold_min,
+        min(request.threshold_max, threshold_value),
+    )
+    return SecondaryThresholdResult(
+        value=threshold_value,
+        mask=request.image > threshold_value,
+    )
+
+
+def _postprocess_secondary_labels(
+    labels: np.ndarray,
+    *,
+    fill_holes: bool,
+    discard_edge_objects: bool,
+) -> np.ndarray:
+    labels_out = labels
+    if fill_holes and labels_out.max() > 0:
+        labels_out = _fill_labeled_holes(labels_out)
+    if discard_edge_objects and labels_out.max() > 0:
+        labels_out = _discard_edge_objects(labels_out)
+    return labels_out.astype(np.int32)
+
+
+def _discard_edge_objects(labels: np.ndarray) -> np.ndarray:
+    from skimage.measure import label as relabel
+
+    edge_labels = np.unique(np.concatenate([
+        labels[0, :],
+        labels[-1, :],
+        labels[:, 0],
+        labels[:, -1],
+    ]))
+    labels_out = labels.copy()
+    for edge_label in edge_labels:
+        if edge_label > 0:
+            labels_out[labels_out == edge_label] = 0
+
+    if labels_out.max() == 0:
+        return labels_out
+    return relabel(labels_out > 0).astype(np.int32)
+
+
+def _secondary_object_stats(
+    labels: np.ndarray,
+    *,
+    image_shape: tuple[int, int],
+    threshold_value: float,
+) -> SecondaryObjectStats:
+    from skimage.measure import regionprops
+
+    object_count = int(labels.max())
+    if object_count > 0:
+        areas = [p.area for p in regionprops(labels)]
+        mean_area = float(np.mean(areas))
+        median_area = float(np.median(areas))
+        total_area = int(np.sum(areas))
+    else:
+        mean_area = 0.0
+        median_area = 0.0
+        total_area = 0
+
+    height, width = image_shape
+    area_coverage = 100.0 * total_area / (height * width) if height * width else 0.0
+    return SecondaryObjectStats(
+        slice_index=0,
+        object_count=object_count,
+        mean_area=mean_area,
+        median_area=median_area,
+        total_area=total_area,
+        area_coverage_percent=area_coverage,
+        threshold_value=float(threshold_value),
+    )
+
+
 @numpy
-@special_inputs("primary_labels")
-@special_outputs(
-    ("secondary_stats", csv_materializer(
-        fields=["slice_index", "object_count", "mean_area", "median_area", 
-                "total_area", "area_coverage_percent", "threshold_value"],
-        analysis_type="secondary_objects"
-    )),
-    ("secondary_labels", materialize_segmentation_masks)
-)
 def identify_secondary_objects(
     image: np.ndarray,
     primary_labels: np.ndarray,
@@ -188,177 +452,36 @@ def identify_secondary_objects(
     Returns:
         Tuple of (image, stats, secondary_labels)
     """
-    from scipy.ndimage import distance_transform_edt, sobel, binary_erosion
-    from skimage.segmentation import watershed
-    from skimage.filters import threshold_otsu, threshold_li, threshold_minimum, threshold_triangle
-    from skimage.measure import regionprops, label as relabel
-    
-    # Handle input - image should be intensity image
-    if image.ndim == 3 and image.shape[0] == 2:
-        # Stacked input: [intensity, primary_labels]
-        img = image[0].astype(np.float64)
-        labels_in = image[1].astype(np.int32)
-    else:
-        img = image.astype(np.float64)
-        labels_in = primary_labels.astype(np.int32)
-    
-    # Normalize image to 0-1 range
-    if img.max() > img.min():
-        img = (img - img.min()) / (img.max() - img.min())
-    
-    H, W = img.shape
-    
-    # Calculate threshold for methods that need it
-    threshold_value = 0.0
-    if method != SecondaryMethod.DISTANCE_N:
-        if threshold_method == ThresholdMethod.OTSU:
-            threshold_value = threshold_otsu(img)
-        elif threshold_method == ThresholdMethod.LI:
-            threshold_value = threshold_li(img)
-        elif threshold_method == ThresholdMethod.MINIMUM:
-            try:
-                threshold_value = threshold_minimum(img)
-            except RuntimeError:
-                threshold_value = threshold_otsu(img)
-        elif threshold_method == ThresholdMethod.TRIANGLE:
-            threshold_value = threshold_triangle(img)
-        else:
-            threshold_value = threshold_otsu(img)
-        
-        # Apply correction and bounds
-        threshold_value = threshold_value * threshold_correction_factor
-        threshold_value = max(threshold_min, min(threshold_max, threshold_value))
-        
-        thresholded = img > threshold_value
-    else:
-        thresholded = np.ones_like(img, dtype=bool)
-    
-    # Identify secondary objects based on method
-    if method == SecondaryMethod.DISTANCE_N:
-        # Pure distance expansion - no thresholding
-        if labels_in.max() == 0:
-            labels_out = np.zeros_like(labels_in)
-        else:
-            distances, indices = distance_transform_edt(
-                labels_in == 0, return_indices=True
-            )
-            labels_out = np.zeros_like(labels_in)
-            dilate_mask = distances <= distance_to_dilate
-            labels_out[dilate_mask] = labels_in[
-                indices[0][dilate_mask], 
-                indices[1][dilate_mask]
-            ]
-    
-    elif method == SecondaryMethod.DISTANCE_B:
-        # Distance expansion with threshold masking
-        if labels_in.max() == 0:
-            labels_out = np.zeros_like(labels_in)
-        else:
-            # Create mask from threshold
-            mask = thresholded | (labels_in > 0)
-            
-            # Propagate with distance limit
-            labels_out = _propagate_labels(img, labels_in, mask, 1.0)
-            
-            # Apply distance limit
-            distances = distance_transform_edt(labels_in == 0)
-            labels_out[distances > distance_to_dilate] = 0
-            
-            # Ensure primary objects are preserved
-            labels_out[labels_in > 0] = labels_in[labels_in > 0]
-    
-    elif method == SecondaryMethod.PROPAGATION:
-        # Propagation method - combines distance and intensity
-        if labels_in.max() == 0:
-            labels_out = np.zeros_like(labels_in)
-        else:
-            mask = thresholded | (labels_in > 0)
-            labels_out = _propagate_labels(
-                img, labels_in, mask, regularization_factor
-            )
-    
-    elif method == SecondaryMethod.WATERSHED_GRADIENT:
-        # Watershed on gradient image
-        if labels_in.max() == 0:
-            labels_out = np.zeros_like(labels_in)
-        else:
-            sobel_image = np.abs(sobel(img, axis=0)) + np.abs(sobel(img, axis=1))
-            mask = thresholded | (labels_in > 0)
-            labels_out = watershed(
-                sobel_image,
-                markers=labels_in,
-                mask=mask,
-                connectivity=2
-            )
-    
-    elif method == SecondaryMethod.WATERSHED_IMAGE:
-        # Watershed on inverted intensity image
-        if labels_in.max() == 0:
-            labels_out = np.zeros_like(labels_in)
-        else:
-            inverted = 1.0 - img
-            mask = thresholded | (labels_in > 0)
-            labels_out = watershed(
-                inverted,
-                markers=labels_in,
-                mask=mask,
-                connectivity=2
-            )
-    else:
-        labels_out = labels_in.copy()
-    
-    # Fill holes if requested
-    if fill_holes and labels_out.max() > 0:
-        labels_out = _fill_labeled_holes(labels_out)
-    
-    # Discard edge objects if requested
-    if discard_edge_objects and labels_out.max() > 0:
-        edge_labels = np.unique(np.concatenate([
-            labels_out[0, :],
-            labels_out[-1, :],
-            labels_out[:, 0],
-            labels_out[:, -1]
-        ]))
-        for edge_label in edge_labels:
-            if edge_label > 0:
-                labels_out[labels_out == edge_label] = 0
-        
-        # Relabel to ensure consecutive labels
-        if labels_out.max() > 0:
-            labels_out = relabel(labels_out > 0) * (labels_out > 0).astype(np.int32)
-            # Preserve original label mapping where possible
-            unique_labels = np.unique(labels_out)
-            unique_labels = unique_labels[unique_labels > 0]
-            new_labels = np.zeros_like(labels_out)
-            for i, lbl in enumerate(unique_labels, 1):
-                new_labels[labels_out == lbl] = i
-            labels_out = new_labels
-    
-    # Compute statistics
-    labels_out = labels_out.astype(np.int32)
-    object_count = int(labels_out.max())
-    
-    if object_count > 0:
-        props = regionprops(labels_out)
-        areas = [p.area for p in props]
-        mean_area = float(np.mean(areas))
-        median_area = float(np.median(areas))
-        total_area = int(np.sum(areas))
-    else:
-        mean_area = 0.0
-        median_area = 0.0
-        total_area = 0
-    
-    area_coverage = 100.0 * total_area / (H * W) if (H * W) > 0 else 0.0
-    
-    stats = SecondaryObjectStats(
-        slice_index=0,
-        object_count=object_count,
-        mean_area=mean_area,
-        median_area=median_area,
-        total_area=total_area,
-        area_coverage_percent=area_coverage,
-        threshold_value=float(threshold_value)
+    inputs = _normalize_secondary_inputs(image, primary_labels)
+    img = _normalize_intensity_image(inputs.image)
+    threshold = _threshold_secondary_objects(
+        SecondaryThresholdRequest(
+            image=img,
+            method=method,
+            threshold_method=threshold_method,
+            threshold_correction_factor=threshold_correction_factor,
+            threshold_min=threshold_min,
+            threshold_max=threshold_max,
+        )
+    )
+    labels_out = SecondarySegmentationStrategy.for_method(method).segment(
+        SecondarySegmentationRequest(
+            image=img,
+            labels=inputs.labels,
+            thresholded=threshold.mask,
+            distance_to_dilate=distance_to_dilate,
+            regularization_factor=regularization_factor,
+        )
+    )
+    labels_out = _postprocess_secondary_labels(
+        labels_out,
+        fill_holes=fill_holes,
+        discard_edge_objects=discard_edge_objects,
+    )
+    stats = _secondary_object_stats(
+        labels_out,
+        image_shape=img.shape,
+        threshold_value=threshold.value,
     )
     
     return img.astype(np.float32), stats, labels_out

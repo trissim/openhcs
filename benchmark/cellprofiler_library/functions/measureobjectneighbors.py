@@ -10,12 +10,12 @@ Measures neighbor relationships between objects including:
 """
 
 import numpy as np
-from typing import Tuple, Optional
+from abc import ABC, abstractmethod
+from typing import ClassVar, Tuple
 from dataclasses import dataclass
 from enum import Enum
-from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
-from openhcs.processing.materialization import csv_materializer
+from metaclass_registry import AutoRegisterMeta
+from openhcs.core.memory import numpy
 
 
 class DistanceMethod(Enum):
@@ -38,50 +38,73 @@ class NeighborMeasurements:
     angle_between_neighbors: float
 
 
+@dataclass(frozen=True)
+class NeighborDistancePlan:
+    working_labels: np.ndarray
+    distance: int
+
+
+class NeighborDistancePlanner(ABC, metaclass=AutoRegisterMeta):
+    """Prepare neighbor-distance state for one closed distance method."""
+
+    __registry_key__ = "method"
+    method: ClassVar[DistanceMethod | None] = None
+
+    @classmethod
+    def for_method(cls, method: DistanceMethod) -> "NeighborDistancePlanner":
+        return cls.__registry__[method]()
+
+    @abstractmethod
+    def plan(
+        self,
+        labels: np.ndarray,
+        neighbor_distance: int,
+    ) -> NeighborDistancePlan:
+        """Return working labels and neighborhood distance."""
+
+
+class AdjacentNeighborDistancePlanner(NeighborDistancePlanner):
+    method = DistanceMethod.ADJACENT
+
+    def plan(
+        self,
+        labels: np.ndarray,
+        neighbor_distance: int,
+    ) -> NeighborDistancePlan:
+        return NeighborDistancePlan(labels.copy(), 1)
+
+
+class ExpandedNeighborDistancePlanner(NeighborDistancePlanner):
+    method = DistanceMethod.EXPAND
+
+    def plan(
+        self,
+        labels: np.ndarray,
+        neighbor_distance: int,
+    ) -> NeighborDistancePlan:
+        from scipy.ndimage import distance_transform_edt
+
+        i, j = distance_transform_edt(
+            labels == 0,
+            return_distances=False,
+            return_indices=True,
+        )
+        return NeighborDistancePlan(labels[i, j], 1)
+
+
+class WithinNeighborDistancePlanner(NeighborDistancePlanner):
+    method = DistanceMethod.WITHIN
+
+    def plan(
+        self,
+        labels: np.ndarray,
+        neighbor_distance: int,
+    ) -> NeighborDistancePlan:
+        return NeighborDistancePlan(labels.copy(), neighbor_distance)
+
+
 def _strel_disk(radius: int) -> np.ndarray:
     """Create a disk-shaped structuring element."""
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select objects to measure' -> labels
-        'Select neighboring objects to measure' -> (pipeline-handled)
-        'Method to determine neighbors' -> distance_method
-        'Neighbor distance' -> neighbor_distance
-        'Consider objects discarded for touching image border?' -> neighbors_are_same_objects
-        'Retain the image of objects colored by numbers of neighbors?' -> (pipeline-handled)
-        'Name the output image' -> (pipeline-handled)
-        'Select colormap' -> (pipeline-handled)
-        'Retain the image of objects colored by percent of touching pixels?' -> (pipeline-handled)
-        'Name the output image (percent touching)' -> (pipeline-handled)
-        'Select colormap (percent touching)' -> (pipeline-handled)
-
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select objects to measure' -> labels
-        'Select neighboring objects to measure' -> (pipeline-handled)
-        'Method to determine neighbors' -> distance_method
-        'Neighbor distance' -> neighbor_distance
-        'Consider objects discarded for touching image border?' -> neighbors_are_same_objects
-        'Retain the image of objects colored by numbers of neighbors?' -> (pipeline-handled)
-        'Name the output image' -> (pipeline-handled)
-        'Select colormap' -> (pipeline-handled)
-        'Retain the image of objects colored by percent of touching pixels?' -> (pipeline-handled)
-        'Name the output image (percent touching)' -> (pipeline-handled)
-        'Select colormap (percent touching)' -> (pipeline-handled)
-
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select objects to measure' -> labels
-        'Select neighboring objects to measure' -> (pipeline-handled)
-        'Method to determine neighbors' -> distance_method
-        'Neighbor distance' -> neighbor_distance
-        'Consider objects discarded for touching image border?' -> neighbors_are_same_objects
-        'Retain the image of objects colored by numbers of neighbors?' -> (pipeline-handled)
-        'Name the output image' -> (pipeline-handled)
-        'Select colormap' -> (pipeline-handled)
-        'Retain the image of objects colored by percent of touching pixels?' -> (pipeline-handled)
-        'Name the output image (percent touching)' -> (pipeline-handled)
-        'Select colormap (percent touching)' -> (pipeline-handled)
-
     from skimage.morphology import disk
     return disk(radius)
 
@@ -107,15 +130,7 @@ def _outline(labels: np.ndarray) -> np.ndarray:
     return outline
 
 
-@numpy(contract=ProcessingContract.PURE_2D)
-@special_inputs("labels")
-@special_outputs(("neighbor_measurements", csv_materializer(
-    fields=["slice_index", "object_id", "number_of_neighbors", "percent_touching",
-            "first_closest_object_number", "first_closest_distance",
-            "second_closest_object_number", "second_closest_distance",
-            "angle_between_neighbors"],
-    analysis_type="neighbor_measurements"
-)))
+@numpy
 def measure_object_neighbors(
     image: np.ndarray,
     labels: np.ndarray,
@@ -139,7 +154,7 @@ def measure_object_neighbors(
     Returns:
         Tuple of (image, list of NeighborMeasurements)
     """
-    from scipy.ndimage import distance_transform_edt, binary_dilation, sum as ndi_sum
+    from scipy.ndimage import binary_dilation
     from scipy.signal import fftconvolve
     
     labels = labels.astype(np.int32)
@@ -160,20 +175,12 @@ def measure_object_neighbors(
     angle = np.zeros(nobjects)
     percent_touching = np.zeros(nobjects)
     
-    # Determine distance and prepare labels based on method
-    working_labels = labels.copy()
-    
-    if distance_method == DistanceMethod.EXPAND:
-        # Expand labels to fill all space
-        i, j = distance_transform_edt(
-            labels == 0, return_distances=False, return_indices=True
-        )
-        working_labels = labels[i, j]
-        distance = 1
-    elif distance_method == DistanceMethod.WITHIN:
-        distance = neighbor_distance
-    else:  # ADJACENT
-        distance = 1
+    distance_plan = NeighborDistancePlanner.for_method(distance_method).plan(
+        labels,
+        neighbor_distance,
+    )
+    working_labels = distance_plan.working_labels
+    distance = distance_plan.distance
     
     neighbor_labels = working_labels.copy()
     

@@ -8,10 +8,7 @@ leaving a ring shape.
 import numpy as np
 from typing import Tuple
 from dataclasses import dataclass
-from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
-from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.analysis.cell_counting_cpu import materialize_segmentation_masks
+from openhcs.core.memory import numpy
 
 
 @dataclass
@@ -42,14 +39,6 @@ def _outline(labels: np.ndarray) -> np.ndarray:
 
 
 @numpy
-@special_inputs("primary_labels", "secondary_labels")
-@special_outputs(
-    ("tertiary_stats", csv_materializer(
-        fields=["slice_index", "object_count", "mean_area", "primary_parent_count", "secondary_parent_count"],
-        analysis_type="tertiary_objects"
-    )),
-    ("tertiary_labels", materialize_segmentation_masks)
-)
 def identify_tertiary_objects(
     image: np.ndarray,
     primary_labels: np.ndarray,
