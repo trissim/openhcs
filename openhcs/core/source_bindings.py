@@ -204,6 +204,10 @@ class CompiledSourceBindingPlan:
     def is_empty(self) -> bool:
         return not self.bindings_by_group
 
+    def __reduce__(self) -> tuple[object, tuple[dict[str | None, tuple[NamedSourceBinding, ...]]]]:
+        """Serialize mappingproxy-backed state as a plain dict for multiprocessing."""
+        return (self.__class__._from_pickled_state, (dict(self.bindings_by_group),))
+
     def bindings_for_group(
         self,
         group_key: str | None,
@@ -222,6 +226,13 @@ class CompiledSourceBindingPlan:
             if binding.alias == alias:
                 return binding
         return None
+
+    @classmethod
+    def _from_pickled_state(
+        cls,
+        bindings_by_group: dict[str | None, tuple[NamedSourceBinding, ...]],
+    ) -> "CompiledSourceBindingPlan":
+        return cls(bindings_by_group=bindings_by_group)
 
 
 EMPTY_SOURCE_BINDINGS = StepSourceBindingsConfig()

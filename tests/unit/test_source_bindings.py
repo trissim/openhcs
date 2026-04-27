@@ -1,3 +1,5 @@
+import pickle
+
 import pytest
 
 from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
@@ -88,3 +90,32 @@ def test_compiled_source_binding_plan_preserves_grouped_named_selectors():
     assert binding.selector.metadata[0].field == "stain"
     assert plan.binding_for_alias("OrigBlue", "dna") == binding
     assert plan.binding_for_alias("Missing", "dna") is None
+
+
+def test_compiled_source_binding_plan_round_trips_through_pickle():
+    plan = CompiledSourceBindingPlan.from_config(
+        StepSourceBindingsConfig(
+            groups=(
+                GroupedSourceBindings(
+                    group_key="dna",
+                    bindings=(
+                        NamedSourceBinding(
+                            alias="OrigBlue",
+                            selector=SourceSelector(
+                                components=(ComponentSelector("channel", "1"),),
+                            ),
+                            origin=SourceBindingOrigin.STEP_INPUT,
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+
+    restored = pickle.loads(pickle.dumps(plan))
+
+    assert restored == plan
+    assert restored.binding_for_alias("OrigBlue", "dna") == plan.binding_for_alias(
+        "OrigBlue",
+        "dna",
+    )
