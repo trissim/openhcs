@@ -30,6 +30,7 @@ class RuntimeAdapterSpec:
 
     parameter_name: str
     factory: Callable[[RuntimeAdapterRequest], Any]
+    manages_artifact_inputs: bool = False
 
     def __post_init__(self) -> None:
         if not self.parameter_name:
@@ -41,9 +42,15 @@ class RuntimeAdapterSpec:
 def runtime_adapter(
     parameter_name: str,
     factory: Callable[[RuntimeAdapterRequest], Any],
+    *,
+    manages_artifact_inputs: bool = False,
 ) -> Callable[[_F], _F]:
     """Declare that a callable needs an invocation-scoped runtime adapter."""
-    spec = RuntimeAdapterSpec(parameter_name=parameter_name, factory=factory)
+    spec = RuntimeAdapterSpec(
+        parameter_name=parameter_name,
+        factory=factory,
+        manages_artifact_inputs=manages_artifact_inputs,
+    )
 
     def decorator(func: _F) -> _F:
         _RUNTIME_ADAPTER_SPECS[func] = spec

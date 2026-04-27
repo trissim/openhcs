@@ -251,7 +251,12 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
     artifact_outputs = request.artifact_outputs
     final_kwargs = dict(request.base_kwargs)
 
-    if request.artifact_inputs:
+    adapter_manages_artifact_inputs = (
+        request.runtime_adapter is not None
+        and request.runtime_adapter.manages_artifact_inputs
+    )
+
+    if request.artifact_inputs and not adapter_manages_artifact_inputs:
         logger.info(
             f"Artifact inputs for {func_callable.__name__}: {request.artifact_inputs}"
         )

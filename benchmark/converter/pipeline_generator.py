@@ -405,7 +405,8 @@ from openhcs.constants.constants import VariableComponents, GroupBy
             )
             lines.append(
                 "@runtime_adapter(\"cellprofiler_runtime\", "
-                "cellprofiler_runtime_adapter_factory)"
+                "cellprofiler_runtime_adapter_factory, "
+                "manages_artifact_inputs=True)"
             )
             lines.append(
                 f"def {runtime_binding}(image, *, cellprofiler_runtime, **kwargs):"
