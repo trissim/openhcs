@@ -74,6 +74,7 @@ def test_execution_plan_snapshots_compiled_plan_without_raw_backing():
     assert not hasattr(plan, "raw")
     assert compiled_plan.variable_components is None
     assert plan.variable_components == [VariableComponents.SITE]
+    assert plan.source_binding_plan.is_empty
     assert plan.device_id is None
     assert plan.has_input_conversion
     assert plan.input_conversion_dir == Path("/tmp/converted")

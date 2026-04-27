@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Callable
 
+from openhcs.core.source_bindings import (
+    EMPTY_SOURCE_BINDINGS,
+    StepSourceBindingsConfig,
+)
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_execution import FunctionStepExecutor
 
@@ -23,6 +27,7 @@ class FunctionStep(AbstractStep):
     def __init__(
         self,
         func: FunctionSpec = [],
+        source_bindings: StepSourceBindingsConfig = EMPTY_SOURCE_BINDINGS,
         **kwargs,
     ):
         if "name" not in kwargs or kwargs["name"] is None:
@@ -30,6 +35,12 @@ class FunctionStep(AbstractStep):
 
         super().__init__(**kwargs)
         self.func = func
+        if not isinstance(source_bindings, StepSourceBindingsConfig):
+            raise TypeError(
+                "FunctionStep.source_bindings must be StepSourceBindingsConfig, "
+                f"got {type(source_bindings).__name__}."
+            )
+        self.source_bindings = source_bindings
 
     def process(self, context: "ProcessingContext", step_index: int) -> None:
         FunctionStepExecutor.execute(context, step_index)

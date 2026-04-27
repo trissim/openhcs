@@ -5,6 +5,7 @@ import pytest
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.pipeline.compilation_session import CompilationSession
 from openhcs.core.pipeline.step_snapshot import StepProcessingSnapshot, StepSnapshot
+from openhcs.core.source_bindings import EMPTY_SOURCE_BINDINGS
 from openhcs.core.steps.function_step import FunctionStep
 
 
@@ -20,6 +21,7 @@ def _snapshot(index: int, name: str = "step") -> StepSnapshot:
         enabled=True,
         is_function_step=True,
         func=_identity,
+        source_bindings=EMPTY_SOURCE_BINDINGS,
         processing=StepProcessingSnapshot(
             variable_components=("site",),
             group_by=None,

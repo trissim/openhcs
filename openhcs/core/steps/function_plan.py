@@ -18,6 +18,7 @@ from openhcs.core.compiled_step_plan import (
 )
 from openhcs.core.config import StreamingConfig
 from openhcs.core.function_patterns import CompiledFunctionPattern
+from openhcs.core.source_bindings import CompiledSourceBindingPlan
 from openhcs.core.steps.function_io import create_image_path_getter
 
 
@@ -38,6 +39,7 @@ class FunctionStepExecutionPlan:
     output_dir: Path
     variable_components: Sequence[VariableComponents]
     group_by: Any
+    source_binding_plan: CompiledSourceBindingPlan
     artifact_inputs: ArtifactInputPlans
     artifact_outputs: ArtifactOutputPlans
     read_backend: str
@@ -112,6 +114,7 @@ class FunctionStepExecutionPlan:
             output_dir=output_dir,
             variable_components=variable_components,
             group_by=compiled_plan.group_by,
+            source_binding_plan=compiled_plan.source_binding_plan,
             artifact_inputs=compiled_plan.artifact_inputs,
             artifact_outputs=compiled_plan.artifact_outputs,
             read_backend=_require_value(compiled_plan.read_backend, "read_backend", compiled_plan),

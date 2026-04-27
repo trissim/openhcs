@@ -89,6 +89,7 @@ from openhcs.core.pipeline.step_snapshot import (
     StepSnapshot,
     build_step_snapshots,
 )
+from openhcs.core.source_bindings import CompiledSourceBindingPlan
 from openhcs.core.pipeline.gpu_memory_validator import GPUMemoryTypeValidator
 from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
 from openhcs.core.steps.abstract import AbstractStep
@@ -758,6 +759,9 @@ class PipelineCompiler:
             current_plan.group_by = snapshot.group_by
             current_plan.input_source = snapshot.input_source
             current_plan.sequential_processing = snapshot.processing_config
+            current_plan.source_binding_plan = CompiledSourceBindingPlan.from_config(
+                snapshot.source_bindings
+            )
 
     @staticmethod
     def _collect_streaming_configs(

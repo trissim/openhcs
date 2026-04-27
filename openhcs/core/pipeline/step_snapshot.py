@@ -7,6 +7,10 @@ from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 from openhcs.core.config import WellFilterConfig
+from openhcs.core.source_bindings import (
+    EMPTY_SOURCE_BINDINGS,
+    StepSourceBindingsConfig,
+)
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.lib_registry.unified_registry import (
@@ -48,6 +52,7 @@ class StepSnapshot:
     enabled: bool
     is_function_step: bool
     func: Any
+    source_bindings: StepSourceBindingsConfig
     processing: StepProcessingSnapshot
     materialization_config: Any
     injectable_values: Mapping[str, Any]
@@ -93,6 +98,11 @@ class StepSnapshot:
             enabled=bool(_saved_value(step_state, "enabled", index)),
             is_function_step=isinstance(step, FunctionStep),
             func=step.func if isinstance(step, FunctionStep) else None,
+            source_bindings=(
+                _saved_value(step_state, "source_bindings", index)
+                if isinstance(step, FunctionStep)
+                else EMPTY_SOURCE_BINDINGS
+            ),
             processing=processing,
             materialization_config=_saved_value(
                 step_state,

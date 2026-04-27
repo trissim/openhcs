@@ -8,6 +8,13 @@ from openhcs.core.pipeline.step_snapshot import (
     StepSnapshot,
     build_step_snapshots,
 )
+from openhcs.core.source_bindings import (
+    ComponentSelector,
+    GroupedSourceBindings,
+    NamedSourceBinding,
+    SourceSelector,
+    StepSourceBindingsConfig,
+)
 from openhcs.core.steps.function_step import FunctionStep
 
 
@@ -28,8 +35,23 @@ class StateStub:
 
 
 def _state_values(**overrides):
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="OrigBlue",
+                        selector=SourceSelector(
+                            components=(ComponentSelector("channel", "1"),)
+                        ),
+                    ),
+                )
+            ),
+        )
+    )
     values = {
         "enabled": True,
+        "source_bindings": source_bindings,
         "processing_config.variable_components": ("site",),
         "processing_config.group_by": None,
         "processing_config.input_source": InputSource.PIPELINE_START,
@@ -56,6 +78,7 @@ def test_step_snapshot_captures_saved_values_without_object_conversion():
     assert snapshot.enabled is True
     assert snapshot.is_function_step is True
     assert snapshot.func is _identity
+    assert snapshot.source_bindings == state.values["source_bindings"]
     assert snapshot.input_source is InputSource.PIPELINE_START
     assert snapshot.variable_components == ("site",)
     assert isinstance(snapshot.injectable_values, MappingProxyType)
