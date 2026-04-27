@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, ClassVar
+
+from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.source_bindings import (
+    CompiledSourceBindingPlan,
+    NamedSourceBinding,
+    SourceBindingOrigin,
+)
 from openhcs.core.runtime_stores import (
     RuntimeValueStore,
     StoredRuntimeValue,
@@ -38,6 +46,10 @@ class CellProfilerRuntimeAdapter:
     runtime_value_store: RuntimeValueStore
     axis_id: str
     artifact_outputs: Mapping[str, ArtifactOutputPlan] = field(default_factory=dict)
+    source_binding_plan: CompiledSourceBindingPlan = field(
+        default_factory=CompiledSourceBindingPlan.empty
+    )
+    group_key: str | None = None
     filemanager: Any | None = None
     backend: str = "memory"
 
@@ -51,6 +63,12 @@ class CellProfilerRuntimeAdapter:
             raise ValueError("CellProfilerRuntimeAdapter.axis_id cannot be empty.")
         if not self.backend:
             raise ValueError("CellProfilerRuntimeAdapter.backend cannot be empty.")
+        if not isinstance(self.source_binding_plan, CompiledSourceBindingPlan):
+            raise TypeError(
+                "CellProfilerRuntimeAdapter.source_binding_plan must be "
+                "CompiledSourceBindingPlan, got "
+                f"{type(self.source_binding_plan).__name__}."
+            )
 
         outputs = dict(self.artifact_outputs)
         for name, plan in outputs.items():
@@ -65,6 +83,59 @@ class CellProfilerRuntimeAdapter:
                     f"'{plan.name}'."
                 )
         object.__setattr__(self, "artifact_outputs", MappingProxyType(outputs))
+        if self.group_key is not None:
+            object.__setattr__(self, "group_key", str(self.group_key))
+
+    def resolve_source_image(
+        self,
+        alias: str,
+        fallback_image: Any,
+    ) -> Any:
+        binding = self._require_source_binding(alias)
+        return SourceBindingResolver.for_origin(binding.origin).resolve_image(
+            SourceBindingResolutionRequest(
+                alias=alias,
+                binding=binding,
+                adapter=self,
+                fallback_image=fallback_image,
+            )
+        )
+
+    def require_resolvable_source_aliases(
+        self,
+        aliases: tuple[str, ...],
+    ) -> None:
+        if len(aliases) <= 1:
+            return
+        unresolved = tuple(
+            alias
+            for alias in aliases
+            if _binding_requires_selector(self._require_source_binding(alias))
+        )
+        if unresolved:
+            raise NotImplementedError(
+                "Multiple external CellProfiler image bindings still require a "
+                "typed selector-bearing NamesAndTypes/Images plan. Unresolved "
+                f"aliases: {list(unresolved)}."
+            )
+
+    def has_source_binding(
+        self,
+        alias: str,
+    ) -> bool:
+        return self.source_binding_plan.binding_for_alias(alias, self.group_key) is not None
+
+    def _require_source_binding(
+        self,
+        alias: str,
+    ) -> NamedSourceBinding:
+        binding = self.source_binding_plan.binding_for_alias(alias, self.group_key)
+        if binding is None:
+            raise RuntimeError(
+                f"Missing compiled source binding for CellProfiler image alias "
+                f"'{alias}' on axis '{self.axis_id}' and group {self.group_key!r}."
+            )
+        return binding
 
     def add_image(
         self,
@@ -347,3 +418,62 @@ class CellProfilerRuntimeAdapter:
             ) from exc
         ensure_directory(str(Path(path).parent), self.backend)
         save(data, path, self.backend)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBindingResolutionRequest:
+    """Source-binding resolution inputs for one external image alias."""
+
+    alias: str
+    binding: NamedSourceBinding
+    adapter: CellProfilerRuntimeAdapter
+    fallback_image: Any
+
+
+class SourceBindingResolver(ABC, metaclass=AutoRegisterMeta):
+    """Nominal family for resolving typed source bindings."""
+
+    __registry_key__ = "origin"
+    __skip_if_no_key__ = True
+    origin: ClassVar[SourceBindingOrigin | None] = None
+
+    @classmethod
+    def for_origin(cls, origin: SourceBindingOrigin) -> "SourceBindingResolver":
+        return cls.__registry__[origin]()
+
+    @abstractmethod
+    def resolve_image(self, request: SourceBindingResolutionRequest) -> Any:
+        """Resolve one named source image binding."""
+
+
+class StepInputSourceBindingResolver(SourceBindingResolver):
+    """Resolve named images directly from the current FunctionStep input."""
+
+    origin = SourceBindingOrigin.STEP_INPUT
+
+    def resolve_image(self, request: SourceBindingResolutionRequest) -> Any:
+        if _binding_requires_selector(request.binding):
+            raise NotImplementedError(
+                f"CellProfiler source alias '{request.alias}' declares selector "
+                "constraints over step input, but selector-based channel/view "
+                "resolution is not wired yet."
+            )
+        return request.fallback_image
+
+
+class PipelineStartSourceBindingResolver(SourceBindingResolver):
+    """Reject pipeline-start bindings until metadata-backed source planning lands."""
+
+    origin = SourceBindingOrigin.PIPELINE_START
+
+    def resolve_image(self, request: SourceBindingResolutionRequest) -> Any:
+        raise NotImplementedError(
+            f"CellProfiler source alias '{request.alias}' targets pipeline-start "
+            "resolution, but metadata-backed NamesAndTypes/Images planning is not "
+            "wired yet."
+        )
+
+
+def _binding_requires_selector(binding: NamedSourceBinding) -> bool:
+    selector = binding.selector
+    return bool(selector.components or selector.metadata or not selector.inherit_current_scope)

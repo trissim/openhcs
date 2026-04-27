@@ -2,12 +2,19 @@ import pytest
 import numpy as np
 
 from benchmark.cellprofiler_compat import (
+    CellProfilerModuleContract,
     CellProfilerModuleExecutor,
     CellProfilerRuntimeAdapter,
 )
 from benchmark.cellprofiler_library import get_function
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, ArtifactSpec
 from openhcs.core.config import DtypeConfig
+from openhcs.core.source_bindings import (
+    CompiledSourceBindingPlan,
+    GroupedSourceBindings,
+    NamedSourceBinding,
+    StepSourceBindingsConfig,
+)
 from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_values import FieldSpec, RuntimeArrayPayload
 
@@ -54,6 +61,15 @@ def _adapter(outputs):
         runtime_value_store=RuntimeValueStore(),
         axis_id=AXIS_ID,
         artifact_outputs=outputs,
+        source_binding_plan=CompiledSourceBindingPlan.from_config(
+            StepSourceBindingsConfig(
+                groups=(
+                    GroupedSourceBindings(
+                        bindings=(NamedSourceBinding(alias=DNA_IMAGE),)
+                    ),
+                )
+            )
+        ),
         filemanager=filemanager,
     )
     return adapter, filemanager
@@ -64,15 +80,15 @@ def _executor(
     outputs,
     *,
     runtime_artifact_inputs=(),
-    external_image_inputs=(DNA_IMAGE,),
+    inputs=(ArtifactSpec(DNA_IMAGE, ArtifactKind.IMAGE),),
 ):
     return CellProfilerModuleExecutor(
-        {
-            "module_name": module_name,
-            "runtime_artifact_inputs": runtime_artifact_inputs,
-            "external_image_inputs": external_image_inputs,
-            "outputs": outputs,
-        }
+        CellProfilerModuleContract(
+            module_name=module_name,
+            inputs=inputs,
+            runtime_artifact_inputs=runtime_artifact_inputs,
+            outputs=outputs,
+        )
     )
 
 

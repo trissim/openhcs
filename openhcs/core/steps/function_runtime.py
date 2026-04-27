@@ -25,6 +25,7 @@ from openhcs.core.runtime_stores import (
     require_runtime_value_store,
 )
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest, RuntimeAdapterSpec
+from openhcs.core.source_bindings import CompiledSourceBindingPlan
 from openhcs.core.runtime_values import normalize_artifact_value
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 
@@ -46,6 +47,8 @@ class FunctionExecutionRequest:
     artifact_inputs: ArtifactInputPlans
     artifact_outputs: ArtifactOutputPlans
     runtime_adapter: RuntimeAdapterSpec | None = None
+    source_binding_plan: CompiledSourceBindingPlan = CompiledSourceBindingPlan.empty()
+    group_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -291,6 +294,8 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
             RuntimeAdapterRequest(
                 context=context,
                 artifact_outputs=artifact_outputs,
+                source_binding_plan=request.source_binding_plan,
+                group_key=request.group_key,
             )
         )
 
@@ -372,6 +377,8 @@ def _execute_chain_core(request: FunctionChainExecutionRequest) -> Any:
                 artifact_inputs=invocation.select_inputs(request.artifact_inputs),
                 artifact_outputs=invocation.select_outputs(request.artifact_outputs),
                 runtime_adapter=invocation.contract.runtime_adapter,
+                source_binding_plan=plan.source_binding_plan,
+                group_key=invocation.key.group_key,
             )
         )
 

@@ -15,7 +15,16 @@ from enum import Enum
 from types import MappingProxyType
 from typing import ClassVar, Iterable, Mapping
 
+from metaclass_registry import AutoRegisterMeta
+
+from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.source_bindings import (
+    EMPTY_SOURCE_BINDINGS,
+    GroupedSourceBindings,
+    NamedSourceBinding,
+    StepSourceBindingsConfig,
+)
 
 from .parser import ModuleBlock
 
@@ -96,12 +105,36 @@ class ModuleArtifactContracts:
         )
 
     @property
-    def external_image_inputs(self) -> tuple[str, ...]:
+    def external_source_symbols(self) -> tuple[CellProfilerSymbol, ...]:
         """Source image names this module expects from input metadata/channels."""
         return tuple(
-            symbol.name
+            symbol
             for symbol in self.input_symbols
             if symbol.is_external_source
+        )
+
+    @property
+    def source_bindings(self) -> StepSourceBindingsConfig:
+        if not self.external_source_symbols:
+            return EMPTY_SOURCE_BINDINGS
+        return StepSourceBindingsConfig(
+            groups=(
+                GroupedSourceBindings(
+                    bindings=tuple(
+                        NamedSourceBinding(alias=symbol.name)
+                        for symbol in self.external_source_symbols
+                    )
+                ),
+            )
+        )
+
+    @property
+    def module_contract(self) -> CellProfilerModuleContract:
+        return CellProfilerModuleContract(
+            module_name=self.module_name,
+            inputs=self.inputs,
+            runtime_artifact_inputs=self.runtime_artifact_inputs,
+            outputs=self.outputs,
         )
 
 
@@ -259,7 +292,7 @@ class _SymbolTableBuilder:
         return symbol
 
 
-def artifact_contract_literal(contract: ModuleArtifactContracts) -> str:
+def module_contract_literal(contract: ModuleArtifactContracts) -> str:
     """Render a deterministic Python literal for generated pipeline files."""
     input_specs = ", ".join(_artifact_spec_literal(spec) for spec in contract.inputs)
     output_specs = ", ".join(
@@ -270,24 +303,53 @@ def artifact_contract_literal(contract: ModuleArtifactContracts) -> str:
         _artifact_spec_literal(spec)
         for spec in contract.runtime_artifact_inputs
     )
-    external_images = ", ".join(repr(name) for name in contract.external_image_inputs)
     if len(contract.inputs) == 1:
         input_specs += ","
     if len(contract.outputs) == 1:
         output_specs += ","
     if len(contract.runtime_artifact_inputs) == 1:
         runtime_input_specs += ","
-    if len(contract.external_image_inputs) == 1:
-        external_images += ","
     return (
-        "{"
-        f'"module_name": {contract.module_name!r}, '
-        f'"inputs": ({input_specs}), '
-        f'"runtime_artifact_inputs": ({runtime_input_specs}), '
-        f'"external_image_inputs": ({external_images}), '
-        f'"outputs": ({output_specs})'
-        "}"
+        "CellProfilerModuleContract("
+        f"module_name={contract.module_name!r}, "
+        f"inputs=({input_specs}), "
+        f"runtime_artifact_inputs=({runtime_input_specs}), "
+        f"outputs=({output_specs})"
+        ")"
     )
+
+
+def source_bindings_literal(config: StepSourceBindingsConfig) -> str:
+    """Render a deterministic Python literal for generated step source bindings."""
+    if config.is_empty:
+        return "EMPTY_SOURCE_BINDINGS"
+    group_literals = ", ".join(
+        _grouped_source_bindings_literal(group)
+        for group in config.groups
+    )
+    if len(config.groups) == 1:
+        group_literals += ","
+    return f"StepSourceBindingsConfig(groups=({group_literals}))"
+
+
+def _grouped_source_bindings_literal(group: GroupedSourceBindings) -> str:
+    binding_literals = ", ".join(
+        _named_source_binding_literal(binding)
+        for binding in group.bindings
+    )
+    if len(group.bindings) == 1:
+        binding_literals += ","
+    group_key = "None" if group.group_key is None else repr(group.group_key)
+    return (
+        "GroupedSourceBindings("
+        f"group_key={group_key}, "
+        f"bindings=({binding_literals})"
+        ")"
+    )
+
+
+def _named_source_binding_literal(binding: NamedSourceBinding) -> str:
+    return f"NamedSourceBinding(alias={binding.alias!r})"
 
 
 def _artifact_spec_literal(
@@ -593,17 +655,17 @@ def _relate_objects(
     return _contracts(module, inputs=[parent, child], outputs=[relationship])
 
 
-class ModuleContractBuilder(ABC):
+class ModuleContractBuilder(ABC, metaclass=AutoRegisterMeta):
     """Nominal family for per-module CellProfiler artifact contract compilation."""
+
+    __registry_key__ = "module_name"
+    __skip_if_no_key__ = True
+    module_name: ClassVar[str | None] = None
 
     @classmethod
     def for_module(cls, module_name: str) -> "ModuleContractBuilder":
-        declaration = _FUNCTION_BACKED_MODULE_BUILDERS.get(module_name)
-        if declaration is not None:
-            return FunctionBackedModuleContractBuilder(
-                builder_function=declaration.builder_function,
-            )
-        return UnsupportedModuleContractBuilder()
+        builder_type = cls.__registry__.get(module_name, UnsupportedModuleContractBuilder)
+        return builder_type()
 
     @abstractmethod
     def build(
@@ -614,32 +676,24 @@ class ModuleContractBuilder(ABC):
         """Compile artifact contracts for one parsed CellProfiler module."""
 
 
-@dataclass(frozen=True, slots=True)
-class FunctionBackedModuleContractBuilderDeclaration:
-    """Declarative module-name family for one shared contract builder function."""
-
-    module_names: tuple[str, ...]
-    builder_function: Callable[
-        [_SymbolTableBuilder, ModuleBlock],
-        ModuleArtifactContracts,
-    ]
-
-
-@dataclass(frozen=True, slots=True)
 class FunctionBackedModuleContractBuilder(ModuleContractBuilder):
     """Module builder backed by one shared helper function."""
 
-    builder_function: Callable[
-        [_SymbolTableBuilder, ModuleBlock],
-        ModuleArtifactContracts,
-    ]
+    builder_function: ClassVar[
+        Callable[[_SymbolTableBuilder, ModuleBlock], ModuleArtifactContracts] | None
+    ] = None
 
     def build(
         self,
         builder: _SymbolTableBuilder,
         module: ModuleBlock,
     ) -> ModuleArtifactContracts:
-        return self.builder_function(builder, module)
+        builder_function = type(self).builder_function
+        if builder_function is None:
+            raise TypeError(
+                f"{type(self).__name__} must define builder_function."
+            )
+        return builder_function(builder, module)
 
 
 class UnsupportedModuleContractBuilder(ModuleContractBuilder):
@@ -653,75 +707,56 @@ class UnsupportedModuleContractBuilder(ModuleContractBuilder):
         return ModuleArtifactContracts(module.name, module.module_num)
 
 
-_FUNCTION_BACKED_MODULE_BUILDER_DECLARATIONS = (
-    FunctionBackedModuleContractBuilderDeclaration(
-        module_names=("CorrectIlluminationApply",),
-        builder_function=_correct_illumination_apply,
-    ),
-    FunctionBackedModuleContractBuilderDeclaration(
-        module_names=("Opening",),
-        builder_function=_opening,
-    ),
-    FunctionBackedModuleContractBuilderDeclaration(
-        module_names=("IdentifyPrimaryObjects",),
-        builder_function=_identify_primary_objects,
-    ),
-    FunctionBackedModuleContractBuilderDeclaration(
-        module_names=("IdentifySecondaryObjects",),
-        builder_function=_identify_secondary_objects,
-    ),
-    FunctionBackedModuleContractBuilderDeclaration(
-        module_names=("IdentifyTertiaryObjects",),
-        builder_function=_identify_tertiary_objects,
-    ),
-    FunctionBackedModuleContractBuilderDeclaration(
-        module_names=("ConvertObjectsToImage",),
-        builder_function=_convert_objects_to_image,
-    ),
-    FunctionBackedModuleContractBuilderDeclaration(
-        module_names=("GrayToColor",),
-        builder_function=_gray_to_color,
-    ),
-    FunctionBackedModuleContractBuilderDeclaration(
-        module_names=("OverlayOutlines",),
-        builder_function=_overlay_outlines,
-    ),
-    FunctionBackedModuleContractBuilderDeclaration(
-        module_names=("MeasureObjectSizeShape",),
-        builder_function=_measure_object_size_shape,
-    ),
-    FunctionBackedModuleContractBuilderDeclaration(
-        module_names=(
+_FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
+    tuple[tuple[str, ...], Callable[[_SymbolTableBuilder, ModuleBlock], ModuleArtifactContracts]],
+    ...,
+] = (
+    (("CorrectIlluminationApply",), _correct_illumination_apply),
+    (("Opening",), _opening),
+    (("IdentifyPrimaryObjects",), _identify_primary_objects),
+    (("IdentifySecondaryObjects",), _identify_secondary_objects),
+    (("IdentifyTertiaryObjects",), _identify_tertiary_objects),
+    (("ConvertObjectsToImage",), _convert_objects_to_image),
+    (("GrayToColor",), _gray_to_color),
+    (("OverlayOutlines",), _overlay_outlines),
+    (("MeasureObjectSizeShape",), _measure_object_size_shape),
+    (
+        (
             "MeasureObjectIntensity",
             "MeasureObjectIntensityDistribution",
             "MeasureTexture",
             "MeasureColocalization",
         ),
-        builder_function=_measure_object_intensity,
+        _measure_object_intensity,
     ),
-    FunctionBackedModuleContractBuilderDeclaration(
-        module_names=("MeasureGranularity",),
-        builder_function=_measure_granularity,
-    ),
-    FunctionBackedModuleContractBuilderDeclaration(
-        module_names=("MeasureImageIntensity",),
-        builder_function=_measure_image_intensity,
-    ),
-    FunctionBackedModuleContractBuilderDeclaration(
-        module_names=("MeasureObjectNeighbors",),
-        builder_function=_measure_object_neighbors,
-    ),
-    FunctionBackedModuleContractBuilderDeclaration(
-        module_names=("RelateObjects",),
-        builder_function=_relate_objects,
-    ),
+    (("MeasureGranularity",), _measure_granularity),
+    (("MeasureImageIntensity",), _measure_image_intensity),
+    (("MeasureObjectNeighbors",), _measure_object_neighbors),
+    (("RelateObjects",), _relate_objects),
 )
 
-_FUNCTION_BACKED_MODULE_BUILDERS = {
-    module_name: declaration
-    for declaration in _FUNCTION_BACKED_MODULE_BUILDER_DECLARATIONS
-    for module_name in declaration.module_names
-}
+
+def _declare_function_backed_module_builder(
+    module_name: str,
+    builder_function: Callable[
+        [_SymbolTableBuilder, ModuleBlock],
+        ModuleArtifactContracts,
+    ],
+) -> None:
+    type(
+        f"{module_name}ContractBuilder",
+        (FunctionBackedModuleContractBuilder,),
+        {
+            "__module__": __name__,
+            "module_name": module_name,
+            "builder_function": builder_function,
+        },
+    )
+
+
+for _module_names, _builder_function in _FUNCTION_BACKED_MODULE_BUILDER_SPECS:
+    for _module_name in _module_names:
+        _declare_function_backed_module_builder(_module_name, _builder_function)
 
 
 def _contracts(

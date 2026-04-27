@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from benchmark.cellprofiler_compat import CellProfilerModuleContract
 from benchmark.converter.parser import ModuleBlock
 from benchmark.converter.pipeline_generator import PipelineGenerator
 from benchmark.converter.runtime_pipeline import partition_cppipe_modules
@@ -92,12 +93,19 @@ def test_cellprofiler_symbol_table_compiles_object_measurement_graph():
 
     primary_contract = table.contracts_by_module_num[1]
     assert [spec.kind for spec in primary_contract.inputs] == [ArtifactKind.IMAGE]
-    assert primary_contract.external_image_inputs == ("OrigBlue",)
+    assert tuple(
+        binding.alias
+        for binding in primary_contract.source_bindings.groups[0].bindings
+    ) == ("OrigBlue",)
     assert primary_contract.runtime_artifact_inputs == ()
     assert primary_contract.outputs[0].kind is ArtifactKind.OBJECT_LABELS
+    assert isinstance(primary_contract.module_contract, CellProfilerModuleContract)
 
     measure_contract = table.contracts_by_module_num[4]
-    assert measure_contract.external_image_inputs == ("OrigBlue", "OrigGreen")
+    assert tuple(
+        binding.alias
+        for binding in measure_contract.source_bindings.groups[0].bindings
+    ) == ("OrigBlue", "OrigGreen")
     assert [spec.name for spec in measure_contract.runtime_artifact_inputs] == [
         "Nuclei",
         "Cells",
@@ -164,15 +172,16 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
     )
 
     assert len(generated.artifact_contracts) == 2
-    assert "CELLPROFILER_ARTIFACT_CONTRACTS" in generated.code
-    assert '"external_image_inputs": (\'OrigBlue\',)' in generated.code
-    assert '"runtime_artifact_inputs": (ArtifactSpec(\'Nuclei\'' in generated.code
+    assert "CELLPROFILER_MODULE_CONTRACTS" in generated.code
+    assert "CellProfilerModuleContract(" in generated.code
+    assert "source_bindings=StepSourceBindingsConfig(" in generated.code
+    assert "runtime_artifact_inputs=(ArtifactSpec('Nuclei'" in generated.code
     assert "identify_primary_objects_1 = get_function" in generated.code
     assert "identify_secondary_objects_2 = get_function" in generated.code
     assert "CellProfilerModuleExecutor" in generated.code
     assert "cellprofiler_runtime_adapter_factory" in generated.code
-    assert "@artifact_outputs(*CELLPROFILER_ARTIFACT_CONTRACTS[1]" in generated.code
-    assert "@artifact_inputs(*CELLPROFILER_ARTIFACT_CONTRACTS[2]" in generated.code
+    assert "@artifact_outputs(*CELLPROFILER_MODULE_CONTRACTS[1]" in generated.code
+    assert "@artifact_inputs(*CELLPROFILER_MODULE_CONTRACTS[2]" in generated.code
     assert "@runtime_adapter(\"cellprofiler_runtime\"" in generated.code
     assert "identify_primary_objects_1_runtime.input_memory_type" in generated.code
     assert "func=identify_primary_objects_1_runtime" in generated.code
@@ -247,7 +256,10 @@ def test_cellprofiler_symbol_table_compiles_singular_aliases_and_image_artifacts
     table = CellProfilerSymbolTable.compile(modules)
 
     illumination_contract = table.contracts_by_module_num[2]
-    assert illumination_contract.external_image_inputs == ("OrigBlue", "IllumBlue")
+    assert tuple(
+        binding.alias
+        for binding in illumination_contract.source_bindings.groups[0].bindings
+    ) == ("OrigBlue", "IllumBlue")
     assert [spec.name for spec in illumination_contract.outputs] == ["CorrBlue"]
 
     gray_to_color_contract = table.contracts_by_module_num[5]
@@ -264,7 +276,7 @@ def test_cellprofiler_symbol_table_compiles_singular_aliases_and_image_artifacts
     ]
 
     measure_intensity_contract = table.contracts_by_module_num[7]
-    assert measure_intensity_contract.external_image_inputs == ()
+    assert measure_intensity_contract.source_bindings.is_empty
     assert [spec.name for spec in measure_intensity_contract.runtime_artifact_inputs] == [
         "OpeningBlue",
         "Nuclei",

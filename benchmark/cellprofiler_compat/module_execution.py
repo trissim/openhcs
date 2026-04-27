@@ -14,6 +14,7 @@ from openhcs.core.pipeline.function_contracts import special_input_names_from_ca
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest
 from openhcs.core.runtime_stores import require_runtime_value_store
 
+from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
 from benchmark.cellprofiler_compat.runtime_adapter import CellProfilerRuntimeAdapter
 
 
@@ -33,6 +34,8 @@ def cellprofiler_runtime_adapter_factory(
         ),
         axis_id=str(axis_id),
         artifact_outputs=request.artifact_outputs,
+        source_binding_plan=request.source_binding_plan,
+        group_key=request.group_key,
         filemanager=request.context.filemanager,
     )
 
@@ -41,27 +44,31 @@ def cellprofiler_runtime_adapter_factory(
 class CellProfilerModuleExecutor:
     """Execute one generated CellProfiler module against a typed runtime adapter."""
 
-    contract: Mapping[str, Any]
+    contract: CellProfilerModuleContract
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.contract, CellProfilerModuleContract):
+            raise TypeError(
+                "CellProfilerModuleExecutor.contract must be "
+                "CellProfilerModuleContract, got "
+                f"{type(self.contract).__name__}."
+            )
 
     @property
     def module_name(self) -> str:
-        return str(self.contract["module_name"])
+        return self.contract.module_name
 
     @property
     def inputs(self) -> tuple[ArtifactSpec, ...]:
-        return tuple(self.contract.get("inputs", ()))
+        return self.contract.inputs
 
     @property
     def runtime_artifact_inputs(self) -> tuple[ArtifactSpec, ...]:
-        return tuple(self.contract.get("runtime_artifact_inputs", ()))
-
-    @property
-    def external_image_inputs(self) -> tuple[str, ...]:
-        return tuple(self.contract.get("external_image_inputs", ()))
+        return self.contract.runtime_artifact_inputs
 
     @property
     def outputs(self) -> tuple[ArtifactSpec, ...]:
-        return tuple(self.contract.get("outputs", ()))
+        return self.contract.outputs
 
     def run(
         self,
@@ -232,24 +239,18 @@ class CellProfilerModuleExecutor:
                 ArtifactKind.IMAGE,
             )
         }
-        external_images = _external_image_payloads(
-            self.module_name,
-            self.external_image_inputs,
-            fallback_image,
+        external_image_names = tuple(
+            spec.name
+            for spec in image_inputs
+            if spec.name not in runtime_image_names
         )
+        adapter.require_resolvable_source_aliases(external_image_names)
         payloads = []
         for spec in image_inputs:
             if spec.name in runtime_image_names:
                 payloads.append(adapter.get_image(spec.name).data)
                 continue
-            try:
-                payloads.append(external_images[spec.name])
-            except KeyError as exc:
-                raise NotImplementedError(
-                    f"{self.module_name} declared image input '{spec.name}', but "
-                    "it was neither a runtime image artifact nor a configured "
-                    "external image input."
-                ) from exc
+            payloads.append(adapter.resolve_source_image(spec.name, fallback_image))
         return CellProfilerImageRequest(
             payload=_compose_image_payload(self.module_name, tuple(payloads)),
             source_image_name=self._input_source_image_name(adapter),
@@ -267,7 +268,7 @@ class CellProfilerModuleExecutor:
                 ArtifactKind.IMAGE,
             )
         )
-        external_image_names = frozenset(self.external_image_inputs)
+        external_image_names = frozenset(self._external_source_image_names())
         for spec in self.inputs:
             source_name = _artifact_kind_strategy(spec.kind).source_image_name(
                 CellProfilerArtifactKindRequest(
@@ -297,6 +298,20 @@ class CellProfilerModuleExecutor:
                 **self._runtime_input_kwargs(func, adapter),
             },
             source_image_name=image_request.source_image_name,
+        )
+
+    def _external_source_image_names(self) -> tuple[str, ...]:
+        runtime_image_names = frozenset(
+            spec.name
+            for spec in _specs_of_kind(
+                self.runtime_artifact_inputs,
+                ArtifactKind.IMAGE,
+            )
+        )
+        return tuple(
+            spec.name
+            for spec in _specs_of_kind(self.inputs, ArtifactKind.IMAGE)
+            if spec.name not in runtime_image_names
         )
 
 
@@ -417,20 +432,16 @@ class RelationshipsArtifactKindStrategy(CellProfilerArtifactKindStrategy):
         return None
 
 
-class CellProfilerObjectInputPolicy(ABC):
+class CellProfilerObjectInputPolicy(ABC, metaclass=AutoRegisterMeta):
     """Nominal binding policy for CellProfiler object-label inputs."""
 
-    module_names: ClassVar[tuple[str, ...]] = ()
-    _registry: ClassVar[dict[str, type["CellProfilerObjectInputPolicy"]]] = {}
-
-    def __init_subclass__(cls) -> None:
-        super().__init_subclass__()
-        for module_name in cls.module_names:
-            cls._registry[module_name] = cls
+    __registry_key__ = "module_name"
+    __skip_if_no_key__ = True
+    module_name: ClassVar[str | None] = None
 
     @classmethod
     def for_module(cls, module_name: str) -> "CellProfilerObjectInputPolicy":
-        policy_type = cls._registry.get(module_name, UnsupportedObjectInputPolicy)
+        policy_type = cls.__registry__.get(module_name, UnsupportedObjectInputPolicy)
         return policy_type()
 
     @abstractmethod
@@ -464,7 +475,7 @@ class UnsupportedObjectInputPolicy(CellProfilerObjectInputPolicy):
 class IdentifySecondaryObjectInputPolicy(CellProfilerObjectInputPolicy):
     """Bind primary-object labels for secondary object identification."""
 
-    module_names = ("IdentifySecondaryObjects",)
+    module_name = "IdentifySecondaryObjects"
 
     def bind(
         self,
@@ -479,7 +490,7 @@ class IdentifySecondaryObjectInputPolicy(CellProfilerObjectInputPolicy):
 class IdentifyTertiaryObjectInputPolicy(CellProfilerObjectInputPolicy):
     """Bind smaller/larger labels to the absorbed tertiary-object signature."""
 
-    module_names = ("IdentifyTertiaryObjects",)
+    module_name = "IdentifyTertiaryObjects"
 
     def bind(
         self,
@@ -498,13 +509,7 @@ class IdentifyTertiaryObjectInputPolicy(CellProfilerObjectInputPolicy):
 class SingleLabelMeasurementInputPolicy(CellProfilerObjectInputPolicy):
     """Bind one object-label input to measurement functions."""
 
-    module_names = (
-        "MeasureObjectSizeShape",
-        "MeasureObjectIntensity",
-        "MeasureTexture",
-        "MeasureColocalization",
-        "MeasureObjectNeighbors",
-    )
+    module_name = "MeasureObjectSizeShape"
 
     def bind(
         self,
@@ -514,6 +519,29 @@ class SingleLabelMeasurementInputPolicy(CellProfilerObjectInputPolicy):
     ) -> dict[str, Any]:
         _require_exact_object_count(module_name, object_inputs, 1)
         return {"labels": adapter.get_objects(object_inputs[0].name).labels}
+
+
+_SINGLE_LABEL_MEASUREMENT_POLICY_MODULES = (
+    "MeasureObjectIntensity",
+    "MeasureTexture",
+    "MeasureColocalization",
+    "MeasureObjectNeighbors",
+)
+
+
+def _declare_single_label_measurement_policy(module_name: str) -> None:
+    type(
+        f"{module_name}InputPolicy",
+        (SingleLabelMeasurementInputPolicy,),
+        {
+            "__module__": __name__,
+            "module_name": module_name,
+        },
+    )
+
+
+for _module_name in _SINGLE_LABEL_MEASUREMENT_POLICY_MODULES:
+    _declare_single_label_measurement_policy(_module_name)
 
 
 class CellProfilerPerObjectMeasurementPolicy:
@@ -548,19 +576,16 @@ class CellProfilerOutputRecordRequest:
     source_image_name: str | None
 
 
-class CellProfilerOutputRecorder(ABC):
+class CellProfilerOutputRecorder(ABC, metaclass=AutoRegisterMeta):
     """Nominal output writer selected by artifact kind."""
 
-    kind: ClassVar[ArtifactKind]
-    _registry: ClassVar[dict[ArtifactKind, type["CellProfilerOutputRecorder"]]] = {}
-
-    def __init_subclass__(cls) -> None:
-        super().__init_subclass__()
-        cls._registry[cls.kind] = cls
+    __registry_key__ = "kind"
+    __skip_if_no_key__ = True
+    kind: ClassVar[ArtifactKind | None] = None
 
     @classmethod
     def for_kind(cls, kind: ArtifactKind) -> "CellProfilerOutputRecorder":
-        recorder_type = cls._registry.get(kind)
+        recorder_type = cls.__registry__.get(kind)
         if recorder_type is None:
             raise TypeError(f"Unsupported CellProfiler output kind {kind.value}.")
         return recorder_type()
@@ -777,22 +802,6 @@ def _artifact_kind_strategy(
         raise TypeError(
             f"No CellProfiler artifact kind strategy registered for {kind.value}."
         ) from exc
-
-
-def _external_image_payloads(
-    module_name: str,
-    external_image_inputs: tuple[str, ...],
-    fallback_image: Any,
-) -> dict[str, Any]:
-    if not external_image_inputs:
-        return {}
-    if len(external_image_inputs) > 1:
-        raise NotImplementedError(
-            f"{module_name} requires external images {list(external_image_inputs)}, "
-            "but converted execution still needs a typed NamesAndTypes/Images "
-            "source plan for multi-image external bindings."
-        )
-    return {external_image_inputs[0]: fallback_image}
 
 
 def _compose_image_payload(

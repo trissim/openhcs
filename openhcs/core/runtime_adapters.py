@@ -8,6 +8,7 @@ from typing import Any, TypeVar
 from weakref import WeakKeyDictionary
 
 from openhcs.core.artifacts import ArtifactOutputPlan
+from openhcs.core.source_bindings import CompiledSourceBindingPlan
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -22,6 +23,8 @@ class RuntimeAdapterRequest:
 
     context: Any
     artifact_outputs: Mapping[str, ArtifactOutputPlan]
+    source_binding_plan: CompiledSourceBindingPlan = CompiledSourceBindingPlan.empty()
+    group_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,10 +69,25 @@ def runtime_adapter_spec_from_callable(func: Any) -> RuntimeAdapterSpec | None:
         spec = _RUNTIME_ADAPTER_SPECS.get(func)
         if spec is not None:
             return spec
-    fallback = getattr(func, "__runtime_adapter__", None)
-    if fallback is None or isinstance(fallback, RuntimeAdapterSpec):
+    fallback = _preserved_runtime_adapter_spec(func)
+    if fallback is None:
+        return None
+    if isinstance(fallback, RuntimeAdapterSpec):
         return fallback
     raise TypeError(
-        f"{getattr(func, '__name__', func)}.__runtime_adapter__ must be "
+        f"{type(func).__name__}.__runtime_adapter__ must be "
         f"RuntimeAdapterSpec, got {type(fallback).__name__}."
     )
+
+
+def _preserved_runtime_adapter_spec(func: Any) -> Any:
+    try:
+        preserved_attrs = object.__getattribute__(func, "preserved_attrs")
+    except AttributeError:
+        return None
+    if not isinstance(preserved_attrs, Mapping):
+        raise TypeError(
+            f"{type(func).__name__}.preserved_attrs must be Mapping, got "
+            f"{type(preserved_attrs).__name__}."
+        )
+    return preserved_attrs.get("__runtime_adapter__")

@@ -204,6 +204,25 @@ class CompiledSourceBindingPlan:
     def is_empty(self) -> bool:
         return not self.bindings_by_group
 
+    def bindings_for_group(
+        self,
+        group_key: str | None,
+    ) -> tuple[NamedSourceBinding, ...]:
+        normalized_group_key = None if group_key is None else str(group_key)
+        if normalized_group_key in self.bindings_by_group:
+            return self.bindings_by_group[normalized_group_key]
+        return self.bindings_by_group.get(None, ())
+
+    def binding_for_alias(
+        self,
+        alias: str,
+        group_key: str | None,
+    ) -> NamedSourceBinding | None:
+        for binding in self.bindings_for_group(group_key):
+            if binding.alias == alias:
+                return binding
+        return None
+
 
 EMPTY_SOURCE_BINDINGS = StepSourceBindingsConfig()
 

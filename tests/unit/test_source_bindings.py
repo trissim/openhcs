@@ -86,3 +86,5 @@ def test_compiled_source_binding_plan_preserves_grouped_named_selectors():
     assert binding.alias == "OrigBlue"
     assert binding.selector.components[0].component is AllComponents.CHANNEL
     assert binding.selector.metadata[0].field == "stain"
+    assert plan.binding_for_alias("OrigBlue", "dna") == binding
+    assert plan.binding_for_alias("Missing", "dna") is None

@@ -26,7 +26,8 @@ from .settings_binder import SettingsBinder
 from .symbol_table import (
     CellProfilerSymbolTable,
     ModuleArtifactContracts,
-    artifact_contract_literal,
+    module_contract_literal,
+    source_bindings_literal,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,12 @@ from enum import Enum
 
 # OpenHCS imports
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.core.source_bindings import (
+    EMPTY_SOURCE_BINDINGS,
+    GroupedSourceBindings,
+    NamedSourceBinding,
+    StepSourceBindingsConfig,
+)
 from openhcs.core.config import LazyProcessingConfig
 from openhcs.constants.constants import VariableComponents, GroupBy
 
@@ -192,6 +199,7 @@ from openhcs.constants.constants import VariableComponents, GroupBy
             imports += "from benchmark.cellprofiler_library import get_function\n\n"
             imports += (
                 "from benchmark.cellprofiler_compat import (\n"
+                "    CellProfilerModuleContract,\n"
                 "    CellProfilerModuleExecutor,\n"
                 "    cellprofiler_runtime_adapter_factory,\n"
                 ")\n"
@@ -316,6 +324,8 @@ from openhcs.constants.constants import VariableComponents, GroupBy
                     unmapped_kwargs[cp_setting] = value
 
             # Build func parameter - either just the function or (function, kwargs_dict)
+            lines.append("    FunctionStep(")
+            lines.extend(self._artifact_contract_comments(artifact_contract))
             if translated_kwargs:
                 # Format kwargs dict
                 kwargs_lines = ["{"]
@@ -324,15 +334,16 @@ from openhcs.constants.constants import VariableComponents, GroupBy
                 kwargs_lines.append("        }")
                 kwargs_str = "\n".join(kwargs_lines)
 
-                lines.append("    FunctionStep(")
-                lines.extend(self._artifact_contract_comments(artifact_contract))
                 lines.append(f"        func=({binding_name}, {kwargs_str}),")
             else:
-                lines.append("    FunctionStep(")
-                lines.extend(self._artifact_contract_comments(artifact_contract))
                 lines.append(f"        func={binding_name},")
 
             lines.append(f'        name="{step_name}",')
+            if not artifact_contract.source_bindings.is_empty:
+                lines.append(
+                    "        source_bindings="
+                    f"{source_bindings_literal(artifact_contract.source_bindings)},"
+                )
             lines.append("        processing_config=LazyProcessingConfig(")
             lines.append(f"            variable_components=[{var_comp}]")
             lines.append("        ),")
@@ -367,11 +378,11 @@ from openhcs.constants.constants import VariableComponents, GroupBy
             "from openhcs.core.artifacts import ArtifactKind, ArtifactSpec",
             "from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION",
             "",
-            "CELLPROFILER_ARTIFACT_CONTRACTS = {",
+            "CELLPROFILER_MODULE_CONTRACTS = {",
         ]
         for contract in contracts:
             lines.append(
-                f"    {contract.module_num}: {artifact_contract_literal(contract)},"
+                f"    {contract.module_num}: {module_contract_literal(contract)},"
             )
         lines.append("}")
         lines.append("")
@@ -402,13 +413,13 @@ from openhcs.constants.constants import VariableComponents, GroupBy
 
             lines.append(
                 f"{executor_name} = "
-                f"CellProfilerModuleExecutor(CELLPROFILER_ARTIFACT_CONTRACTS[{module.module_num}])"
+                f"CellProfilerModuleExecutor(CELLPROFILER_MODULE_CONTRACTS[{module.module_num}])"
             )
             lines.append(
-                f"@artifact_inputs(*CELLPROFILER_ARTIFACT_CONTRACTS[{module.module_num}][\"runtime_artifact_inputs\"])"
+                f"@artifact_inputs(*CELLPROFILER_MODULE_CONTRACTS[{module.module_num}].runtime_artifact_inputs)"
             )
             lines.append(
-                f"@artifact_outputs(*CELLPROFILER_ARTIFACT_CONTRACTS[{module.module_num}][\"outputs\"])"
+                f"@artifact_outputs(*CELLPROFILER_MODULE_CONTRACTS[{module.module_num}].outputs)"
             )
             lines.append(
                 "@runtime_adapter(\"cellprofiler_runtime\", "
@@ -463,10 +474,12 @@ from openhcs.constants.constants import VariableComponents, GroupBy
                 "        # CellProfiler artifact inputs: "
                 + self._format_artifact_specs(contract.inputs)
             )
-        if contract.external_image_inputs:
+        if contract.external_source_symbols:
             lines.append(
-                "        # External image inputs: "
-                + ", ".join(contract.external_image_inputs)
+                "        # Source bindings: "
+                + ", ".join(
+                    symbol.name for symbol in contract.external_source_symbols
+                )
             )
         if contract.runtime_artifact_inputs:
             lines.append(

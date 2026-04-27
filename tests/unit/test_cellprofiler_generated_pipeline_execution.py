@@ -12,6 +12,7 @@ from openhcs.core.artifacts import (
 from openhcs.core.config import DtypeConfig
 from openhcs.core.runtime_adapters import runtime_adapter_spec_from_callable
 from openhcs.core.runtime_stores import RuntimeValueStore
+from openhcs.core.source_bindings import CompiledSourceBindingPlan
 from openhcs.core.steps.function_runtime import (
     FunctionExecutionRequest,
     _execute_function_core,
@@ -137,6 +138,9 @@ def _run_generated_step(step, contract, image, context):
             artifact_inputs=_artifact_input_plans(contract),
             artifact_outputs=_artifact_output_plans(contract),
             runtime_adapter=runtime_adapter_spec_from_callable(func),
+            source_binding_plan=CompiledSourceBindingPlan.from_config(
+                step.source_bindings
+            ),
         )
     )
 
