@@ -81,13 +81,18 @@ from enum import Enum
 # OpenHCS imports
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.source_bindings import (
+    ComponentSelector,
     EMPTY_SOURCE_BINDINGS,
     GroupedSourceBindings,
+    MetadataSelector,
     NamedSourceBinding,
+    SourceBindingOrigin,
+    SourceSelector,
     StepSourceBindingsConfig,
 )
 from openhcs.core.config import LazyProcessingConfig
 from openhcs.constants.constants import VariableComponents, GroupBy
+from openhcs.constants.constants import AllComponents
 
 '''
 
@@ -188,8 +193,12 @@ from openhcs.constants.constants import VariableComponents, GroupBy
                 "Re-run absorption with --force to regenerate."
             )
 
-        symbol_table = CellProfilerSymbolTable.compile(registry_modules)
-        contracts_by_module = symbol_table.contracts_by_module_num
+        ordered_modules = [*skipped_modules, *registry_modules]
+        symbol_table = CellProfilerSymbolTable.compile(ordered_modules)
+        contracts_by_module = {
+            module.module_num: symbol_table.contract_for(module)
+            for module in registry_modules
+        }
 
         # Add registry imports for available modules
         raw_function_bindings: dict[int, str] = {}
@@ -254,7 +263,10 @@ from openhcs.constants.constants import VariableComponents, GroupBy
             source_cppipe=str(source_cppipe),
             converted_modules=[m.name for m in registry_modules],
             failed_modules=[m.name for m in missing_modules],
-            artifact_contracts=symbol_table.module_contracts,
+            artifact_contracts=tuple(
+                contracts_by_module[module.module_num]
+                for module in registry_modules
+            ),
         )
 
     # Category → variable_components mapping

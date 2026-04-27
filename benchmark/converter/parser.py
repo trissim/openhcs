@@ -10,23 +10,39 @@ Format example:
         Another Setting:Another Value
 """
 
-import re
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleSetting:
+    """One ordered CellProfiler module setting."""
+
+    name: str
+    value: str
+
+    def __post_init__(self) -> None:
+        normalized_name = self.name.strip()
+        if not normalized_name:
+            raise ValueError("ModuleSetting.name cannot be empty.")
+        object.__setattr__(self, "name", normalized_name)
+        object.__setattr__(self, "value", self.value.strip())
 
 
 @dataclass
 class ModuleBlock:
     """Represents a single CellProfiler module from a .cppipe file."""
-    
+
     name: str  # e.g., "IdentifyPrimaryObjects"
     module_num: int  # Position in pipeline
     enabled: bool = True
     settings: Dict[str, str] = field(default_factory=dict)
+    setting_records: List[ModuleSetting] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     
     @property
@@ -38,6 +54,26 @@ class ModuleBlock:
     def get_setting(self, key: str, default: str = "") -> str:
         """Get a setting value by key."""
         return self.settings.get(key, default)
+
+    def get_setting_values(self, key: str) -> tuple[str, ...]:
+        """Get all values for a setting key in .cppipe order."""
+        normalized_key = key.strip()
+        return tuple(
+            setting.value
+            for setting in self.setting_records
+            if setting.name == normalized_key
+        )
+
+    def iter_settings(self, key: str | None = None) -> tuple[ModuleSetting, ...]:
+        """Iterate ordered typed settings, optionally filtered by key."""
+        if key is None:
+            return tuple(self.setting_records)
+        normalized_key = key.strip()
+        return tuple(
+            setting
+            for setting in self.setting_records
+            if setting.name == normalized_key
+        )
 
 
 class CPPipeParser:
@@ -135,9 +171,12 @@ class CPPipeParser:
             # Check for setting line
             setting_match = self.SETTING_PATTERN.match(line)
             if setting_match and current_module:
-                key = setting_match.group(1).strip()
-                value = setting_match.group(2).strip()
-                current_module.settings[key] = value
+                setting = ModuleSetting(
+                    name=setting_match.group(1),
+                    value=setting_match.group(2),
+                )
+                current_module.setting_records.append(setting)
+                current_module.settings[setting.name] = setting.value
                 continue
             
             # Header line (key:value without module bracket)
@@ -173,4 +212,3 @@ class CPPipeParser:
     def get_enabled_modules(self) -> List[ModuleBlock]:
         """Get only enabled modules."""
         return [m for m in self.modules if m.enabled]
-

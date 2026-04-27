@@ -20,13 +20,18 @@ from metaclass_registry import AutoRegisterMeta
 from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.source_bindings import (
+    ComponentSelector,
     EMPTY_SOURCE_BINDINGS,
     GroupedSourceBindings,
+    MetadataSelector,
     NamedSourceBinding,
+    SourceBindingOrigin,
+    SourceSelector,
     StepSourceBindingsConfig,
 )
 
 from .parser import ModuleBlock
+from .source_schema import CellProfilerImageSchema, compile_image_schema
 
 
 class CellProfilerSymbolKind(str, Enum):
@@ -79,6 +84,14 @@ class ModuleArtifactContracts:
     module_num: int
     input_symbols: tuple[CellProfilerSymbol, ...] = ()
     output_symbols: tuple[CellProfilerSymbol, ...] = ()
+    source_bindings: StepSourceBindingsConfig = EMPTY_SOURCE_BINDINGS
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source_bindings, StepSourceBindingsConfig):
+            raise TypeError(
+                "ModuleArtifactContracts.source_bindings must be "
+                f"StepSourceBindingsConfig, got {type(self.source_bindings).__name__}."
+            )
 
     @property
     def inputs(self) -> tuple[ArtifactSpec, ...]:
@@ -114,21 +127,6 @@ class ModuleArtifactContracts:
         )
 
     @property
-    def source_bindings(self) -> StepSourceBindingsConfig:
-        if not self.external_source_symbols:
-            return EMPTY_SOURCE_BINDINGS
-        return StepSourceBindingsConfig(
-            groups=(
-                GroupedSourceBindings(
-                    bindings=tuple(
-                        NamedSourceBinding(alias=symbol.name)
-                        for symbol in self.external_source_symbols
-                    )
-                ),
-            )
-        )
-
-    @property
     def module_contract(self) -> CellProfilerModuleContract:
         return CellProfilerModuleContract(
             module_name=self.module_name,
@@ -156,6 +154,7 @@ class CellProfilerSymbolTable:
 
     symbols: Mapping[str, CellProfilerSymbol]
     module_contracts: tuple[ModuleArtifactContracts, ...] = ()
+    source_schema: CellProfilerImageSchema = CellProfilerImageSchema.empty()
 
     @property
     def contracts_by_module_num(self) -> dict[int, ModuleArtifactContracts]:
@@ -176,8 +175,9 @@ class CellProfilerSymbolTable:
         cls,
         modules: Iterable[ModuleBlock],
     ) -> "CellProfilerSymbolTable":
-        builder = _SymbolTableBuilder()
-        for module in modules:
+        ordered_modules = tuple(modules)
+        builder = _SymbolTableBuilder(compile_image_schema(ordered_modules))
+        for module in ordered_modules:
             if module.enabled:
                 builder.visit(module)
         return builder.build()
@@ -212,9 +212,10 @@ _GRAY_TO_COLOR_IMAGE_SETTINGS = (
 
 
 class _SymbolTableBuilder:
-    def __init__(self) -> None:
+    def __init__(self, source_schema: CellProfilerImageSchema) -> None:
         self._symbols: dict[str, CellProfilerSymbol] = {}
         self._contracts: list[ModuleArtifactContracts] = []
+        self._source_schema = source_schema
 
     def visit(self, module: ModuleBlock) -> None:
         self._contracts.append(
@@ -225,6 +226,22 @@ class _SymbolTableBuilder:
         return CellProfilerSymbolTable(
             symbols=MappingProxyType(dict(self._symbols)),
             module_contracts=tuple(self._contracts),
+            source_schema=self._source_schema,
+        )
+
+    def source_bindings_for(
+        self,
+        symbols: Iterable[CellProfilerSymbol],
+    ) -> StepSourceBindingsConfig:
+        external_symbols = tuple(symbols)
+        if not external_symbols:
+            return EMPTY_SOURCE_BINDINGS
+        bindings = tuple(
+            self._source_binding_for_symbol(symbol)
+            for symbol in external_symbols
+        )
+        return StepSourceBindingsConfig(
+            groups=(GroupedSourceBindings(bindings=bindings),)
         )
 
     def external_image(self, name: str) -> CellProfilerSymbol:
@@ -291,6 +308,15 @@ class _SymbolTableBuilder:
         self._symbols[normalized_name] = symbol
         return symbol
 
+    def _source_binding_for_symbol(
+        self,
+        symbol: CellProfilerSymbol,
+    ) -> NamedSourceBinding:
+        assignment = self._source_schema.assignment_for_alias(symbol.name)
+        if assignment is None:
+            return NamedSourceBinding(alias=symbol.name)
+        return assignment.to_binding()
+
 
 def module_contract_literal(contract: ModuleArtifactContracts) -> str:
     """Render a deterministic Python literal for generated pipeline files."""
@@ -349,7 +375,51 @@ def _grouped_source_bindings_literal(group: GroupedSourceBindings) -> str:
 
 
 def _named_source_binding_literal(binding: NamedSourceBinding) -> str:
-    return f"NamedSourceBinding(alias={binding.alias!r})"
+    field_literals = [f"alias={binding.alias!r}"]
+    if binding.selector != SourceSelector():
+        field_literals.append(
+            f"selector={_source_selector_literal(binding.selector)}"
+        )
+    if binding.origin is not SourceBindingOrigin.STEP_INPUT:
+        field_literals.append(
+            f"origin=SourceBindingOrigin.{binding.origin.name}"
+        )
+    return f"NamedSourceBinding({', '.join(field_literals)})"
+
+
+def _source_selector_literal(selector: SourceSelector) -> str:
+    field_literals: list[str] = []
+    if selector.components:
+        component_literals = ", ".join(
+            _component_selector_literal(component)
+            for component in selector.components
+        )
+        if len(selector.components) == 1:
+            component_literals += ","
+        field_literals.append(f"components=({component_literals})")
+    if selector.metadata:
+        metadata_literals = ", ".join(
+            _metadata_selector_literal(metadata)
+            for metadata in selector.metadata
+        )
+        if len(selector.metadata) == 1:
+            metadata_literals += ","
+        field_literals.append(f"metadata=({metadata_literals})")
+    if not selector.inherit_current_scope:
+        field_literals.append("inherit_current_scope=False")
+    return f"SourceSelector({', '.join(field_literals)})"
+
+
+def _component_selector_literal(selector: ComponentSelector) -> str:
+    return (
+        "ComponentSelector("
+        f"AllComponents.{selector.component.name}, {selector.value!r}"
+        ")"
+    )
+
+
+def _metadata_selector_literal(selector: MetadataSelector) -> str:
+    return f"MetadataSelector({selector.field!r}, {selector.value!r})"
 
 
 def _artifact_spec_literal(
@@ -379,7 +449,7 @@ def _identify_primary_objects(
         CellProfilerSymbolKind.OBJECTS,
         module,
     )
-    return _contracts(module, inputs=[image], outputs=[objects])
+    return _contracts(module, builder, inputs=[image], outputs=[objects])
 
 
 def _identify_secondary_objects(
@@ -407,7 +477,12 @@ def _identify_secondary_objects(
         outputs.append(
             builder.declare(new_primary, CellProfilerSymbolKind.OBJECTS, module)
         )
-    return _contracts(module, inputs=[input_objects, image], outputs=outputs)
+    return _contracts(
+        module,
+        builder,
+        inputs=[input_objects, image],
+        outputs=outputs,
+    )
 
 
 def _identify_tertiary_objects(
@@ -429,7 +504,7 @@ def _identify_tertiary_objects(
         CellProfilerSymbolKind.OBJECTS,
         module,
     )
-    return _contracts(module, inputs=[larger, smaller], outputs=[output])
+    return _contracts(module, builder, inputs=[larger, smaller], outputs=[output])
 
 
 def _measure_object_size_shape(
@@ -445,7 +520,7 @@ def _measure_object_size_shape(
         CellProfilerSymbolKind.MEASUREMENTS,
         module,
     )
-    return _contracts(module, inputs=objects, outputs=[measurements])
+    return _contracts(module, builder, inputs=objects, outputs=[measurements])
 
 
 def _measure_object_intensity(
@@ -465,7 +540,12 @@ def _measure_object_intensity(
         CellProfilerSymbolKind.MEASUREMENTS,
         module,
     )
-    return _contracts(module, inputs=[*images, *objects], outputs=[measurements])
+    return _contracts(
+        module,
+        builder,
+        inputs=[*images, *objects],
+        outputs=[measurements],
+    )
 
 
 def _measure_image_intensity(
@@ -490,7 +570,12 @@ def _measure_image_intensity(
         CellProfilerSymbolKind.MEASUREMENTS,
         module,
     )
-    return _contracts(module, inputs=[*images, *objects], outputs=[measurements])
+    return _contracts(
+        module,
+        builder,
+        inputs=[*images, *objects],
+        outputs=[measurements],
+    )
 
 
 def _measure_object_neighbors(
@@ -512,7 +597,12 @@ def _measure_object_neighbors(
         CellProfilerSymbolKind.MEASUREMENTS,
         module,
     )
-    return _contracts(module, inputs=[measured, neighbors], outputs=[measurements])
+    return _contracts(
+        module,
+        builder,
+        inputs=[measured, neighbors],
+        outputs=[measurements],
+    )
 
 
 def _measure_granularity(
@@ -537,7 +627,12 @@ def _measure_granularity(
         CellProfilerSymbolKind.MEASUREMENTS,
         module,
     )
-    return _contracts(module, inputs=[*images, *objects], outputs=[measurements])
+    return _contracts(
+        module,
+        builder,
+        inputs=[*images, *objects],
+        outputs=[measurements],
+    )
 
 
 def _correct_illumination_apply(
@@ -559,7 +654,12 @@ def _correct_illumination_apply(
         CellProfilerSymbolKind.IMAGE,
         module,
     )
-    return _contracts(module, inputs=[image, illumination], outputs=[output])
+    return _contracts(
+        module,
+        builder,
+        inputs=[image, illumination],
+        outputs=[output],
+    )
 
 
 def _opening(
@@ -576,7 +676,7 @@ def _opening(
         CellProfilerSymbolKind.IMAGE,
         module,
     )
-    return _contracts(module, inputs=[image], outputs=[output])
+    return _contracts(module, builder, inputs=[image], outputs=[output])
 
 
 def _convert_objects_to_image(
@@ -593,7 +693,7 @@ def _convert_objects_to_image(
         CellProfilerSymbolKind.IMAGE,
         module,
     )
-    return _contracts(module, inputs=[objects], outputs=[output])
+    return _contracts(module, builder, inputs=[objects], outputs=[output])
 
 
 def _gray_to_color(
@@ -609,7 +709,7 @@ def _gray_to_color(
         CellProfilerSymbolKind.IMAGE,
         module,
     )
-    return _contracts(module, inputs=images, outputs=[output])
+    return _contracts(module, builder, inputs=images, outputs=[output])
 
 
 def _overlay_outlines(
@@ -630,7 +730,12 @@ def _overlay_outlines(
         CellProfilerSymbolKind.IMAGE,
         module,
     )
-    return _contracts(module, inputs=[image, *objects], outputs=[output])
+    return _contracts(
+        module,
+        builder,
+        inputs=[image, *objects],
+        outputs=[output],
+    )
 
 
 def _relate_objects(
@@ -652,7 +757,12 @@ def _relate_objects(
         CellProfilerSymbolKind.RELATIONSHIPS,
         module,
     )
-    return _contracts(module, inputs=[parent, child], outputs=[relationship])
+    return _contracts(
+        module,
+        builder,
+        inputs=[parent, child],
+        outputs=[relationship],
+    )
 
 
 class ModuleContractBuilder(ABC, metaclass=AutoRegisterMeta):
@@ -761,15 +871,20 @@ for _module_names, _builder_function in _FUNCTION_BACKED_MODULE_BUILDER_SPECS:
 
 def _contracts(
     module: ModuleBlock,
+    builder: _SymbolTableBuilder,
     *,
     inputs: Iterable[CellProfilerSymbol] = (),
     outputs: Iterable[CellProfilerSymbol] = (),
 ) -> ModuleArtifactContracts:
+    input_symbols = _unique_symbols(inputs)
     return ModuleArtifactContracts(
         module_name=module.name,
         module_num=module.module_num,
-        input_symbols=_unique_symbols(inputs),
+        input_symbols=input_symbols,
         output_symbols=_unique_symbols(outputs),
+        source_bindings=builder.source_bindings_for(
+            symbol for symbol in input_symbols if symbol.is_external_source
+        ),
     )
 
 

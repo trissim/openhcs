@@ -28,6 +28,15 @@ from .runtime_pipeline import (
     prepare_generated_pipeline,
 )
 from .settings_binder import SettingsBinder, bind_settings
+from .source_schema import (
+    CellProfilerImageSchema,
+    GroupingPlan,
+    ImageAssignment,
+    ImagesRule,
+    MetadataExtractionRule,
+    MetadataSource,
+    compile_image_schema,
+)
 from .symbol_table import (
     CellProfilerSymbol,
     CellProfilerSymbolKind,
@@ -35,31 +44,14 @@ from .symbol_table import (
     ModuleArtifactContracts,
 )
 
-__all__ = [
-    # Core
-    'CPPipeParser',
-    'ModuleBlock',
-    'PipelineGenerator',
+def _is_public_api_export(name: str, value: object) -> bool:
+    return not name.startswith("_") and getattr(value, "__module__", __name__).startswith(
+        "benchmark.converter"
+    )
 
-    # Absorption
-    'LibraryAbsorber',
-    'LLMFunctionConverter',
-    'SourceLocator',
 
-    # Utilities
-    'ContractInference',
-    'infer_contract',
-    'CPPipeModulePartition',
-    'GeneratedCPPipePipeline',
-    'PreparedGeneratedPipeline',
-    'DirectPipelineExecution',
-    'generate_pipeline_from_cppipe',
-    'prepare_generated_pipeline',
-    'execute_pipeline_direct',
-    'SettingsBinder',
-    'bind_settings',
-    'CellProfilerSymbol',
-    'CellProfilerSymbolKind',
-    'CellProfilerSymbolTable',
-    'ModuleArtifactContracts',
-]
+__all__ = sorted(
+    name
+    for name, value in globals().items()
+    if _is_public_api_export(name, value)
+)

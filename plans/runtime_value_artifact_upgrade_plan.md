@@ -164,18 +164,19 @@ The branch has already established most of the typed runtime/compiler foundation
    - runtime artifact inputs
    - external image inputs
 10. Minimal `.cppipe -> generate -> import -> orchestrator execute` works.
+11. `.cppipe` parsing now preserves ordered typed setting records instead of only last-write dict values.
+12. Converter setup modules now compile into a typed image/setup schema that lowers `NamesAndTypes` aliases into selector-bearing `source_bindings`.
 
 ### 3.2 What Is Still Missing
 
 The biggest unresolved items are now:
 
-1. `external_image_inputs` are only names, not typed source bindings.
-2. Infrastructure modules (`Images`, `Metadata`, `NamesAndTypes`, `Groups`) are not yet compiled into a first-class source plan.
-3. Multiple semantic image names are not yet compiled into typed selectors over the step input container.
-4. GUI/ObjectState/pycodify do not yet own source-binding state as a typed step concept.
-5. Real BBBC pipelines are not yet fully accepted end to end.
-6. Export and relationship-heavy semantics are not yet fully validated on real pipelines.
-7. Benchmarking is ahead of the remaining CellProfiler semantics and should stay secondary.
+1. Multiple semantic image names are only compiled into typed selectors; runtime resolution of those selectors is not yet wired.
+2. Setup-module semantics now exist in the converter, but they are not yet threaded into a true pipeline-level image schema visible outside conversion.
+3. GUI/ObjectState/pycodify do not yet own richer source-binding state as an editable first-class step concept.
+4. Real BBBC pipelines are not yet fully accepted end to end.
+5. Export and relationship-heavy semantics are not yet fully validated on real pipelines.
+6. Benchmarking is ahead of the remaining CellProfiler semantics and should stay secondary.
 
 ---
 
@@ -205,8 +206,9 @@ CellProfiler requires a third plane:
 Today, that third plane is only partially represented:
 
 1. the symbol table knows such names exist
-2. the executor does not yet have a real typed plan for how they map to the input container or metadata-backed source coordinates
-3. the GUI/codegen layer has no first-class way to represent them
+2. conversion now preserves repeated setup settings and lowers setup modules into typed alias selectors
+3. the executor does not yet have a real typed plan for how selector-bearing bindings map to the input container or metadata-backed source coordinates
+4. the GUI/codegen layer does not yet expose the richer selector-bearing source state as a mature editable concept
 
 That is the core semantic gap.
 
