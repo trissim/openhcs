@@ -196,6 +196,7 @@ from openhcs.constants.constants import VariableComponents, GroupBy
                 "    cellprofiler_runtime_adapter_factory,\n"
                 ")\n"
                 "from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs\n"
+                "from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract\n"
                 "from openhcs.core.runtime_adapters import runtime_adapter\n\n"
             )
 
@@ -214,6 +215,10 @@ from openhcs.constants.constants import VariableComponents, GroupBy
                     runtime_function_bindings[module.module_num] = binding_name
                 func_assignments.append(
                     f'{binding_name} = get_function("{module.name}")'
+                )
+                func_assignments.append(
+                    f'{binding_name}.__cellprofiler_declared_contract__ = '
+                    f'{repr(self._registry[module.name]["contract"])}'
                 )
             imports += "\n".join(func_assignments) + "\n\n"
 
@@ -360,6 +365,7 @@ from openhcs.constants.constants import VariableComponents, GroupBy
         lines = [
             "# CellProfiler name-to-artifact contracts compiled from .cppipe",
             "from openhcs.core.artifacts import ArtifactKind, ArtifactSpec",
+            "from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION",
             "",
             "CELLPROFILER_ARTIFACT_CONTRACTS = {",
         ]
@@ -392,6 +398,7 @@ from openhcs.constants.constants import VariableComponents, GroupBy
             raw_binding = raw_function_bindings[module.module_num]
             runtime_binding = runtime_function_bindings[module.module_num]
             executor_name = self._executor_binding_name(module)
+            processing_contract = self._processing_contract_expression(module.name)
 
             lines.append(
                 f"{executor_name} = "
@@ -409,7 +416,16 @@ from openhcs.constants.constants import VariableComponents, GroupBy
                 "manages_artifact_inputs=True)"
             )
             lines.append(
-                f"def {runtime_binding}(image, *, cellprofiler_runtime, **kwargs):"
+                f"def {runtime_binding}(image, *, cellprofiler_runtime, enabled=True, **kwargs):"
+            )
+            lines.append(
+                "    if not enabled:"
+            )
+            lines.append(
+                "        return image"
+            )
+            lines.append(
+                '    kwargs.pop("slice_by_slice", None)'
             )
             lines.append(
                 f"    return {executor_name}.run("
@@ -421,6 +437,17 @@ from openhcs.constants.constants import VariableComponents, GroupBy
             )
             lines.append(
                 f"{runtime_binding}.output_memory_type = {raw_binding}.output_memory_type"
+            )
+            lines.append(
+                f"{runtime_binding}.__processing_contract__ = "
+                f"{processing_contract}"
+            )
+            lines.append(
+                f"{runtime_binding}.__cellprofiler_declared_contract__ = "
+                f"{repr(self._registry[module.name]['contract'])}"
+            )
+            lines.append(
+                f"{runtime_binding}.__cellprofiler_raw_function__ = {raw_binding}"
             )
             lines.append("")
 
@@ -473,6 +500,13 @@ from openhcs.constants.constants import VariableComponents, GroupBy
         # IdentifyPrimaryObjects -> identify_primary_objects
         name = re.sub(r'([A-Z])', r'_\1', module_name).lower().lstrip('_')
         return name
+
+    def _processing_contract_expression(self, module_name: str) -> str:
+        """Return generated-code expression for the module processing contract."""
+        contract_name = str(self._registry[module_name]["contract"]).upper()
+        if contract_name not in {"PURE_2D", "PURE_3D", "FLEXIBLE", "VOLUMETRIC_TO_SLICE"}:
+            contract_name = "FLEXIBLE"
+        return f"ProcessingContract.{contract_name}"
 
     def _normalize_setting_name(self, setting_name: str) -> str:
         """

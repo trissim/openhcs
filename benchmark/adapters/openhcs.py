@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import logging
 from contextlib import ExitStack
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-from tqdm import tqdm
 from skimage import filters, morphology, measure
+from tqdm import tqdm
 
+from benchmark.converter.runtime_pipeline import (
+    execute_pipeline_direct,
+    prepare_generated_pipeline,
+)
 from benchmark.contracts.tool_adapter import (
     BenchmarkResult,
     ToolAdapter,
@@ -20,6 +25,37 @@ from benchmark.contracts.tool_adapter import (
 from benchmark.contracts.metric import MetricCollector
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class OpenHCSRunRequest:
+    """Authoritative benchmark run request for one OpenHCS execution."""
+
+    dataset_path: Path
+    pipeline_name: str
+    pipeline_params: dict[str, Any]
+    metrics: tuple[MetricCollector, ...]
+    output_dir: Path
+
+    @property
+    def dataset_id(self) -> str:
+        return str(self.pipeline_params.get("dataset_id", self.dataset_path.name))
+
+    @property
+    def microscope_type(self) -> str | None:
+        value = self.pipeline_params.get("microscope_type")
+        if value is None:
+            return None
+        return str(value)
+
+    @property
+    def cppipe_path(self) -> Path | None:
+        cppipe_value = self.pipeline_params.get("cppipe_path") or self.pipeline_params.get(
+            "cppipe_file"
+        )
+        if not cppipe_value:
+            return None
+        return Path(cppipe_value)
 
 
 class OpenHCSAdapter(ToolAdapter):
@@ -119,6 +155,87 @@ class OpenHCSAdapter(ToolAdapter):
                 labels = measure.label(mask)
         return labels.astype(np.uint16)
 
+    def _run_converted_cppipe_pipeline(
+        self,
+        request: OpenHCSRunRequest,
+    ) -> BenchmarkResult:
+        """Execute a converted CellProfiler pipeline through the OpenHCS orchestrator."""
+        from openhcs.config_framework.lazy_factory import ensure_global_config_context
+        from openhcs.core.config import (
+            GlobalPipelineConfig,
+            LazyPathPlanningConfig,
+            MaterializationBackend,
+            PipelineConfig,
+            VFSConfig,
+        )
+        from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+
+        cppipe_path = request.cppipe_path
+        if cppipe_path is None:
+            raise ToolExecutionError(
+                "Converted pipeline execution requires cppipe_path or cppipe_file."
+            )
+
+        if not cppipe_path.exists():
+            raise ToolExecutionError(f".cppipe file not found: {cppipe_path}")
+
+        output_suffix = f"_{request.pipeline_name}_converted_cppipe"
+        output_plate_root = request.output_dir / f"{request.dataset_path.name}{output_suffix}"
+        generated_module_path = request.output_dir / f"{cppipe_path.stem}_openhcs.py"
+
+        global_config = GlobalPipelineConfig(
+            num_workers=1,
+            use_threading=True,
+            materialization_results_path=output_plate_root / "results",
+        )
+        ensure_global_config_context(GlobalPipelineConfig, global_config)
+        pipeline_config = PipelineConfig(
+            path_planning_config=LazyPathPlanningConfig(
+                global_output_folder=request.output_dir,
+                output_dir_suffix=output_suffix,
+            ),
+            vfs_config=VFSConfig(
+                materialization_backend=MaterializationBackend.DISK,
+            ),
+        )
+        orchestrator = PipelineOrchestrator(
+            request.dataset_path,
+            pipeline_config=pipeline_config,
+        )
+        orchestrator.initialize()
+        prepared = prepare_generated_pipeline(
+            cppipe_path,
+            output_path=generated_module_path,
+        )
+
+        with ExitStack() as stack:
+            for metric in request.metrics:
+                stack.enter_context(metric)
+            execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+
+        metric_results: dict[str, Any] = {
+            metric.name: metric.get_result() for metric in request.metrics
+        }
+        output_plate_root.mkdir(parents=True, exist_ok=True)
+
+        return BenchmarkResult(
+            tool_name=self.name,
+            dataset_id=request.dataset_id,
+            pipeline_name=request.pipeline_name,
+            metrics=metric_results,
+            output_path=output_plate_root,
+            success=True,
+            error_message=None,
+            provenance={
+                "openhcs_version": self.version,
+                "microscope_type": request.microscope_type,
+                "pipeline_source": "converted_cppipe",
+                "cppipe_path": str(cppipe_path),
+                "generated_pipeline_module": prepared.module_name,
+                "axis_count": len(execution.execution_results),
+            },
+        )
+
     def run(
         self,
         dataset_path: Path,
@@ -130,59 +247,90 @@ class OpenHCSAdapter(ToolAdapter):
         """Execute OpenHCS pipeline with metrics."""
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        microscope_type = pipeline_params.get("microscope_type")
+        request = OpenHCSRunRequest(
+            dataset_path=dataset_path,
+            pipeline_name=pipeline_name,
+            pipeline_params=pipeline_params,
+            metrics=self._validated_metric_collectors(metrics),
+            output_dir=output_dir,
+        )
+        microscope_type = request.microscope_type
         if microscope_type in (None, "auto"):
-            raise ToolExecutionError("microscope_type must be explicit (e.g., 'bbbc021'); auto-detect is not allowed.")
+            raise ToolExecutionError(
+                "microscope_type must be explicit (e.g., 'bbbc021'); auto-detect is not allowed."
+            )
 
-        # Validate metric collectors
-        for metric in metrics:
-            if not isinstance(metric, MetricCollector):
-                raise ToolExecutionError(f"Metric {metric} does not extend MetricCollector")
+        if request.cppipe_path is not None:
+            return self._run_converted_cppipe_pipeline(request)
 
         filemanager = self._prepare_filemanager()
 
         try:
-            microscope_handler = self._load_microscope(filemanager, dataset_path, microscope_type)
+            microscope_handler = self._load_microscope(
+                filemanager,
+                request.dataset_path,
+                microscope_type,
+            )
         except Exception as exc:
             raise ToolExecutionError(f"Failed to create microscope handler: {exc}") from exc
 
         # Enumerate image files via FileManager (leveraging OpenHCS discovery)
         try:
             from openhcs.constants.constants import Backend
-            image_paths = filemanager.list_image_files(dataset_path, Backend.DISK.value, recursive=True)
+            image_paths = filemanager.list_image_files(
+                request.dataset_path,
+                Backend.DISK.value,
+                recursive=True,
+            )
         except Exception as exc:
             raise ToolExecutionError(f"Failed to list dataset images: {exc}") from exc
 
         if not image_paths:
-            raise ToolExecutionError(f"No image files found in dataset path: {dataset_path}")
+            raise ToolExecutionError(
+                f"No image files found in dataset path: {request.dataset_path}"
+            )
 
         with ExitStack() as stack:
-            for metric in metrics:
+            for metric in request.metrics:
                 stack.enter_context(metric)
 
             for img_path in tqdm(image_paths, desc="OpenHCS pipeline", leave=False):
                 image = filemanager.load(img_path, "disk", content_type="image")
-                labels = self._run_minimal_pipeline(image, pipeline_params)
+                labels = self._run_minimal_pipeline(image, request.pipeline_params)
 
-                output_path = output_dir / f"{Path(img_path).stem}_labels.tif"
+                output_path = request.output_dir / f"{Path(img_path).stem}_labels.tif"
                 filemanager.save(labels, output_path, "disk")
 
         # Collect metrics after contexts have exited
         metric_results: dict[str, Any] = {
-            metric.name: metric.get_result() for metric in metrics
+            metric.name: metric.get_result() for metric in request.metrics
         }
 
         return BenchmarkResult(
             tool_name=self.name,
-            dataset_id=pipeline_params.get("dataset_id", dataset_path.name),
-            pipeline_name=pipeline_name,
+            dataset_id=request.dataset_id,
+            pipeline_name=request.pipeline_name,
             metrics=metric_results,
-            output_path=output_dir,
+            output_path=request.output_dir,
             success=True,
             error_message=None,
             provenance={
-                "openhcs_version": getattr(self, "version", "unknown"),
+                "openhcs_version": self.version,
                 "microscope_type": microscope_handler.microscope_type,
                 "image_count": len(image_paths),
             },
         )
+
+    def _validated_metric_collectors(
+        self,
+        metrics: list[Any],
+    ) -> tuple[MetricCollector, ...]:
+        """Validate metric collectors once and return a typed immutable bundle."""
+        validated_metrics: list[MetricCollector] = []
+        for metric in metrics:
+            if not isinstance(metric, MetricCollector):
+                raise ToolExecutionError(
+                    f"Metric {metric} does not extend MetricCollector"
+                )
+            validated_metrics.append(metric)
+        return tuple(validated_metrics)

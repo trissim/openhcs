@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
@@ -336,9 +337,13 @@ class CellProfilerRuntimeAdapter:
                 "CellProfilerRuntimeAdapter.filemanager is required for writes; "
                 "adapter writes must persist through the OpenHCS VFS boundary."
             )
-        save = getattr(self.filemanager, "save", None)
-        if save is None:
+        try:
+            save = self.filemanager.save
+            ensure_directory = self.filemanager.ensure_directory
+        except AttributeError as exc:
             raise TypeError(
-                "CellProfilerRuntimeAdapter.filemanager must provide save()."
-            )
+                "CellProfilerRuntimeAdapter.filemanager must provide "
+                "save() and ensure_directory()."
+            ) from exc
+        ensure_directory(str(Path(path).parent), self.backend)
         save(data, path, self.backend)

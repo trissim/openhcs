@@ -35,9 +35,13 @@ class ArrayLike(RuntimeArrayPayload):
 class FileManagerStub:
     def __init__(self):
         self.saved = {}
+        self.directories = []
 
     def save(self, data, path, backend):
         self.saved[(backend, path)] = data
+
+    def ensure_directory(self, path, backend):
+        self.directories.append((backend, path))
 
 
 def _plan(name, kind):

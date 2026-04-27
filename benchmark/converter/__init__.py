@@ -18,6 +18,15 @@ from .llm_converter import LLMFunctionConverter
 from .pipeline_generator import PipelineGenerator
 from .library_absorber import LibraryAbsorber
 from .contract_inference import ContractInference, infer_contract
+from .runtime_pipeline import (
+    CPPipeModulePartition,
+    DirectPipelineExecution,
+    GeneratedCPPipePipeline,
+    PreparedGeneratedPipeline,
+    execute_pipeline_direct,
+    generate_pipeline_from_cppipe,
+    prepare_generated_pipeline,
+)
 from .settings_binder import SettingsBinder, bind_settings
 from .symbol_table import (
     CellProfilerSymbol,
@@ -40,6 +49,13 @@ __all__ = [
     # Utilities
     'ContractInference',
     'infer_contract',
+    'CPPipeModulePartition',
+    'GeneratedCPPipePipeline',
+    'PreparedGeneratedPipeline',
+    'DirectPipelineExecution',
+    'generate_pipeline_from_cppipe',
+    'prepare_generated_pipeline',
+    'execute_pipeline_direct',
     'SettingsBinder',
     'bind_settings',
     'CellProfilerSymbol',

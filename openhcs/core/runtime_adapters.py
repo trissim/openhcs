@@ -54,6 +54,7 @@ def runtime_adapter(
 
     def decorator(func: _F) -> _F:
         _RUNTIME_ADAPTER_SPECS[func] = spec
+        setattr(func, "__runtime_adapter__", spec)
         return func
 
     return decorator
@@ -61,6 +62,14 @@ def runtime_adapter(
 
 def runtime_adapter_spec_from_callable(func: Any) -> RuntimeAdapterSpec | None:
     """Return the callable's declared runtime adapter contract, if any."""
-    if not callable(func):
-        return None
-    return _RUNTIME_ADAPTER_SPECS.get(func)
+    if callable(func):
+        spec = _RUNTIME_ADAPTER_SPECS.get(func)
+        if spec is not None:
+            return spec
+    fallback = getattr(func, "__runtime_adapter__", None)
+    if fallback is None or isinstance(fallback, RuntimeAdapterSpec):
+        return fallback
+    raise TypeError(
+        f"{getattr(func, '__name__', func)}.__runtime_adapter__ must be "
+        f"RuntimeAdapterSpec, got {type(fallback).__name__}."
+    )

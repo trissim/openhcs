@@ -17,8 +17,7 @@ import logging
 import sys
 from pathlib import Path
 
-from .parser import CPPipeParser
-from .pipeline_generator import PipelineGenerator
+from .runtime_pipeline import generate_pipeline_from_cppipe
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,62 +55,29 @@ def main():
 
     logger.info(f"Converting: {args.cppipe_file}")
 
-    # Parse .cppipe
-    cppipe_parser = CPPipeParser()
-    modules = cppipe_parser.parse(args.cppipe_file)
-    logger.info(f"Parsed {len(modules)} modules")
+    conversion = generate_pipeline_from_cppipe(args.cppipe_file)
+    logger.info(f"Parsed {len(conversion.modules)} modules")
 
-    for m in modules:
+    for m in conversion.modules:
         logger.info(f"  - {m.name}")
 
-    # Initialize generator (loads absorbed library)
-    generator = PipelineGenerator()
-
-    # Infrastructure modules that don't map to processing steps
-    INFRASTRUCTURE_MODULES = {
-        'LoadData',  # Handled by plate_path + openhcs_metadata.json
-        'ExportToSpreadsheet',  # Handled by @special_outputs(csv_materializer(...))
-    }
-
-    # Separate processing modules from infrastructure
-    processing_modules = [m for m in modules if m.name not in INFRASTRUCTURE_MODULES]
-    infrastructure_modules = [m for m in modules if m.name in INFRASTRUCTURE_MODULES]
-
-    # Check processing modules are absorbed
-    missing = [m for m in processing_modules if not generator.has_module(m.name)]
-    if missing:
-        logger.error("Processing modules not absorbed:")
-        for m in missing:
-            logger.error(f"  - {m.name}")
-        logger.error("")
-        logger.error("Run: python -m benchmark.converter.absorb")
-        sys.exit(1)
-
-    # Log skipped infrastructure modules
-    if infrastructure_modules:
-        logger.info(f"Skipping {len(infrastructure_modules)} infrastructure modules:")
-        for m in infrastructure_modules:
+    if conversion.infrastructure_modules:
+        logger.info(
+            "Skipping %d infrastructure modules:",
+            len(conversion.infrastructure_modules),
+        )
+        for m in conversion.infrastructure_modules:
             logger.info(f"  - {m.name} (handled by OpenHCS infrastructure)")
 
-    # Generate pipeline from registry (instant, no LLM)
-    pipeline = generator.generate_from_registry(
-        pipeline_name=args.cppipe_file.stem,
-        source_cppipe=args.cppipe_file,
-        modules=processing_modules,
-        skipped_modules=infrastructure_modules,
-    )
-
-    # Save
-    pipeline.save(args.output)
+    conversion.generated_pipeline.save(args.output)
 
     # Summary
     logger.info("=" * 50)
-    logger.info(f"Pipeline: {pipeline.name}")
-    logger.info(f"Modules: {len(pipeline.converted_modules)}")
+    logger.info(f"Pipeline: {conversion.generated_pipeline.name}")
+    logger.info(f"Modules: {len(conversion.generated_pipeline.converted_modules)}")
     logger.info(f"Output: {args.output}")
     logger.info("=" * 50)
 
 
 if __name__ == "__main__":
     main()
-

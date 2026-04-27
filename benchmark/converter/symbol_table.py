@@ -8,10 +8,12 @@ are treated as external source images supplied by the plate/input metadata.
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Iterable, Mapping
+from typing import ClassVar, Iterable, Mapping
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 
@@ -104,6 +106,18 @@ class ModuleArtifactContracts:
 
 
 @dataclass(frozen=True, slots=True)
+class SettingNameFamily:
+    """Canonical CellProfiler setting plus accepted schema aliases."""
+
+    canonical: str
+    aliases: tuple[str, ...] = ()
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return (self.canonical, *self.aliases)
+
+
+@dataclass(frozen=True, slots=True)
 class CellProfilerSymbolTable:
     """Compiled CellProfiler symbol table and per-module artifact contracts."""
 
@@ -136,19 +150,43 @@ class CellProfilerSymbolTable:
         return builder.build()
 
 
+IMAGE_MEASUREMENT_SETTING = SettingNameFamily(
+    "Select images to measure",
+    aliases=("Select an image to measure",),
+)
+OBJECT_MEASUREMENT_SETTING = SettingNameFamily(
+    "Select object sets to measure",
+    aliases=("Select objects to measure",),
+)
+OUTPUT_IMAGE_SETTING = SettingNameFamily(
+    "Name the output image",
+    aliases=("Name the output image file",),
+)
+DISPLAY_OBJECTS_SETTING = SettingNameFamily(
+    "Select objects to display",
+    aliases=("Select object to display",),
+)
+
+_GRAY_TO_COLOR_IMAGE_SETTINGS = (
+    SettingNameFamily("Select the image to be colored red"),
+    SettingNameFamily("Select the image to be colored green"),
+    SettingNameFamily("Select the image to be colored blue"),
+    SettingNameFamily("Select the image to be colored cyan"),
+    SettingNameFamily("Select the image to be colored magenta"),
+    SettingNameFamily("Select the image to be colored yellow"),
+    SettingNameFamily("Select the image that determines brightness"),
+)
+
+
 class _SymbolTableBuilder:
     def __init__(self) -> None:
         self._symbols: dict[str, CellProfilerSymbol] = {}
         self._contracts: list[ModuleArtifactContracts] = []
 
     def visit(self, module: ModuleBlock) -> None:
-        handler = _MODULE_HANDLERS.get(module.name)
-        if handler is None:
-            self._contracts.append(
-                ModuleArtifactContracts(module.name, module.module_num)
-            )
-            return
-        self._contracts.append(handler(self, module))
+        self._contracts.append(
+            ModuleContractBuilder.for_module(module.name).build(self, module)
+        )
 
     def build(self) -> CellProfilerSymbolTable:
         return CellProfilerSymbolTable(
@@ -224,7 +262,10 @@ class _SymbolTableBuilder:
 def artifact_contract_literal(contract: ModuleArtifactContracts) -> str:
     """Render a deterministic Python literal for generated pipeline files."""
     input_specs = ", ".join(_artifact_spec_literal(spec) for spec in contract.inputs)
-    output_specs = ", ".join(_artifact_spec_literal(spec) for spec in contract.outputs)
+    output_specs = ", ".join(
+        _artifact_spec_literal(spec, suppress_materialization=True)
+        for spec in contract.outputs
+    )
     runtime_input_specs = ", ".join(
         _artifact_spec_literal(spec)
         for spec in contract.runtime_artifact_inputs
@@ -249,7 +290,16 @@ def artifact_contract_literal(contract: ModuleArtifactContracts) -> str:
     )
 
 
-def _artifact_spec_literal(spec: ArtifactSpec) -> str:
+def _artifact_spec_literal(
+    spec: ArtifactSpec,
+    *,
+    suppress_materialization: bool = False,
+) -> str:
+    if suppress_materialization:
+        return (
+            f"ArtifactSpec({spec.name!r}, ArtifactKind.{spec.kind.name}, "
+            "materialization=NO_ARTIFACT_MATERIALIZATION)"
+        )
     return f"ArtifactSpec({spec.name!r}, ArtifactKind.{spec.kind.name})"
 
 
@@ -326,7 +376,7 @@ def _measure_object_size_shape(
 ) -> ModuleArtifactContracts:
     objects = [
         builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
-        for name in _split_names(_setting(module, "Select object sets to measure"))
+        for name in _split_names(_setting(module, OBJECT_MEASUREMENT_SETTING))
     ]
     measurements = builder.declare(
         _measurement_name(module),
@@ -342,11 +392,11 @@ def _measure_object_intensity(
 ) -> ModuleArtifactContracts:
     images = [
         builder.require(name, CellProfilerSymbolKind.IMAGE, module)
-        for name in _split_names(_setting(module, "Select images to measure"))
+        for name in _split_names(_setting(module, IMAGE_MEASUREMENT_SETTING))
     ]
     objects = [
         builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
-        for name in _split_names(_setting(module, "Select objects to measure"))
+        for name in _split_names(_setting(module, OBJECT_MEASUREMENT_SETTING))
     ]
     measurements = builder.declare(
         _measurement_name(module),
@@ -362,7 +412,7 @@ def _measure_image_intensity(
 ) -> ModuleArtifactContracts:
     images = [
         builder.require(name, CellProfilerSymbolKind.IMAGE, module)
-        for name in _split_names(_setting(module, "Select images to measure"))
+        for name in _split_names(_setting(module, IMAGE_MEASUREMENT_SETTING))
     ]
     object_setting = _optional_setting(module, "Select input object sets")
     objects = (
@@ -386,7 +436,7 @@ def _measure_object_neighbors(
     module: ModuleBlock,
 ) -> ModuleArtifactContracts:
     measured = builder.require(
-        _setting(module, "Select objects to measure"),
+        _setting(module, OBJECT_MEASUREMENT_SETTING),
         CellProfilerSymbolKind.OBJECTS,
         module,
     )
@@ -401,6 +451,124 @@ def _measure_object_neighbors(
         module,
     )
     return _contracts(module, inputs=[measured, neighbors], outputs=[measurements])
+
+
+def _measure_granularity(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    images = [
+        builder.require(name, CellProfilerSymbolKind.IMAGE, module)
+        for name in _split_names(_setting(module, IMAGE_MEASUREMENT_SETTING))
+    ]
+    object_setting = _optional_setting(module, OBJECT_MEASUREMENT_SETTING)
+    objects = (
+        [
+            builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
+            for name in _split_names(object_setting)
+        ]
+        if object_setting is not None
+        else []
+    )
+    measurements = builder.declare(
+        _measurement_name(module),
+        CellProfilerSymbolKind.MEASUREMENTS,
+        module,
+    )
+    return _contracts(module, inputs=[*images, *objects], outputs=[measurements])
+
+
+def _correct_illumination_apply(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    image = builder.require(
+        _setting(module, "Select the input image"),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    illumination = builder.require(
+        _setting(module, "Select the illumination function"),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    output = builder.declare(
+        _setting(module, OUTPUT_IMAGE_SETTING),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    return _contracts(module, inputs=[image, illumination], outputs=[output])
+
+
+def _opening(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    image = builder.require(
+        _setting(module, "Select the input image"),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    output = builder.declare(
+        _setting(module, OUTPUT_IMAGE_SETTING),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    return _contracts(module, inputs=[image], outputs=[output])
+
+
+def _convert_objects_to_image(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    objects = builder.require(
+        _setting(module, "Select the input objects"),
+        CellProfilerSymbolKind.OBJECTS,
+        module,
+    )
+    output = builder.declare(
+        _setting(module, OUTPUT_IMAGE_SETTING),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    return _contracts(module, inputs=[objects], outputs=[output])
+
+
+def _gray_to_color(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    images = [
+        builder.require(name, CellProfilerSymbolKind.IMAGE, module)
+        for name in _gray_to_color_input_names(module)
+    ]
+    output = builder.declare(
+        _setting(module, OUTPUT_IMAGE_SETTING),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    return _contracts(module, inputs=images, outputs=[output])
+
+
+def _overlay_outlines(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    image = builder.require(
+        _setting(module, "Select image on which to display outlines"),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    objects = [
+        builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
+        for name in _split_names(_setting(module, DISPLAY_OBJECTS_SETTING))
+    ]
+    output = builder.declare(
+        _setting(module, OUTPUT_IMAGE_SETTING),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    return _contracts(module, inputs=[image, *objects], outputs=[output])
 
 
 def _relate_objects(
@@ -425,17 +593,134 @@ def _relate_objects(
     return _contracts(module, inputs=[parent, child], outputs=[relationship])
 
 
-_MODULE_HANDLERS = {
-    "IdentifyPrimaryObjects": _identify_primary_objects,
-    "IdentifySecondaryObjects": _identify_secondary_objects,
-    "IdentifyTertiaryObjects": _identify_tertiary_objects,
-    "MeasureObjectSizeShape": _measure_object_size_shape,
-    "MeasureObjectIntensity": _measure_object_intensity,
-    "MeasureTexture": _measure_object_intensity,
-    "MeasureColocalization": _measure_object_intensity,
-    "MeasureImageIntensity": _measure_image_intensity,
-    "MeasureObjectNeighbors": _measure_object_neighbors,
-    "RelateObjects": _relate_objects,
+class ModuleContractBuilder(ABC):
+    """Nominal family for per-module CellProfiler artifact contract compilation."""
+
+    @classmethod
+    def for_module(cls, module_name: str) -> "ModuleContractBuilder":
+        declaration = _FUNCTION_BACKED_MODULE_BUILDERS.get(module_name)
+        if declaration is not None:
+            return FunctionBackedModuleContractBuilder(
+                builder_function=declaration.builder_function,
+            )
+        return UnsupportedModuleContractBuilder()
+
+    @abstractmethod
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
+        """Compile artifact contracts for one parsed CellProfiler module."""
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionBackedModuleContractBuilderDeclaration:
+    """Declarative module-name family for one shared contract builder function."""
+
+    module_names: tuple[str, ...]
+    builder_function: Callable[
+        [_SymbolTableBuilder, ModuleBlock],
+        ModuleArtifactContracts,
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionBackedModuleContractBuilder(ModuleContractBuilder):
+    """Module builder backed by one shared helper function."""
+
+    builder_function: Callable[
+        [_SymbolTableBuilder, ModuleBlock],
+        ModuleArtifactContracts,
+    ]
+
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
+        return self.builder_function(builder, module)
+
+
+class UnsupportedModuleContractBuilder(ModuleContractBuilder):
+    """Default builder for modules whose runtime artifact semantics are not declared."""
+
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
+        return ModuleArtifactContracts(module.name, module.module_num)
+
+
+_FUNCTION_BACKED_MODULE_BUILDER_DECLARATIONS = (
+    FunctionBackedModuleContractBuilderDeclaration(
+        module_names=("CorrectIlluminationApply",),
+        builder_function=_correct_illumination_apply,
+    ),
+    FunctionBackedModuleContractBuilderDeclaration(
+        module_names=("Opening",),
+        builder_function=_opening,
+    ),
+    FunctionBackedModuleContractBuilderDeclaration(
+        module_names=("IdentifyPrimaryObjects",),
+        builder_function=_identify_primary_objects,
+    ),
+    FunctionBackedModuleContractBuilderDeclaration(
+        module_names=("IdentifySecondaryObjects",),
+        builder_function=_identify_secondary_objects,
+    ),
+    FunctionBackedModuleContractBuilderDeclaration(
+        module_names=("IdentifyTertiaryObjects",),
+        builder_function=_identify_tertiary_objects,
+    ),
+    FunctionBackedModuleContractBuilderDeclaration(
+        module_names=("ConvertObjectsToImage",),
+        builder_function=_convert_objects_to_image,
+    ),
+    FunctionBackedModuleContractBuilderDeclaration(
+        module_names=("GrayToColor",),
+        builder_function=_gray_to_color,
+    ),
+    FunctionBackedModuleContractBuilderDeclaration(
+        module_names=("OverlayOutlines",),
+        builder_function=_overlay_outlines,
+    ),
+    FunctionBackedModuleContractBuilderDeclaration(
+        module_names=("MeasureObjectSizeShape",),
+        builder_function=_measure_object_size_shape,
+    ),
+    FunctionBackedModuleContractBuilderDeclaration(
+        module_names=(
+            "MeasureObjectIntensity",
+            "MeasureObjectIntensityDistribution",
+            "MeasureTexture",
+            "MeasureColocalization",
+        ),
+        builder_function=_measure_object_intensity,
+    ),
+    FunctionBackedModuleContractBuilderDeclaration(
+        module_names=("MeasureGranularity",),
+        builder_function=_measure_granularity,
+    ),
+    FunctionBackedModuleContractBuilderDeclaration(
+        module_names=("MeasureImageIntensity",),
+        builder_function=_measure_image_intensity,
+    ),
+    FunctionBackedModuleContractBuilderDeclaration(
+        module_names=("MeasureObjectNeighbors",),
+        builder_function=_measure_object_neighbors,
+    ),
+    FunctionBackedModuleContractBuilderDeclaration(
+        module_names=("RelateObjects",),
+        builder_function=_relate_objects,
+    ),
+)
+
+_FUNCTION_BACKED_MODULE_BUILDERS = {
+    module_name: declaration
+    for declaration in _FUNCTION_BACKED_MODULE_BUILDER_DECLARATIONS
+    for module_name in declaration.module_names
 }
 
 
@@ -453,20 +738,25 @@ def _contracts(
     )
 
 
-def _setting(module: ModuleBlock, name: str) -> str:
+def _setting(module: ModuleBlock, name: str | SettingNameFamily) -> str:
     value = _optional_setting(module, name)
     if value is None:
         raise ValueError(
-            f"Module {module.name}({module.module_num}) missing setting '{name}'."
+            f"Module {module.name}({module.module_num}) missing setting "
+            f"{_setting_names(name)}."
         )
     return value
 
 
-def _optional_setting(module: ModuleBlock, name: str) -> str | None:
-    value = module.settings.get(name)
-    if value is None or not value.strip():
-        return None
-    return value.strip()
+def _optional_setting(
+    module: ModuleBlock,
+    name: str | SettingNameFamily,
+) -> str | None:
+    for setting_name in _setting_name_candidates(name):
+        value = module.settings.get(setting_name)
+        if value is not None and value.strip():
+            return value.strip()
+    return None
 
 
 def _split_names(value: str) -> tuple[str, ...]:
@@ -475,6 +765,39 @@ def _split_names(value: str) -> tuple[str, ...]:
         for part in value.split(",")
         if part.strip()
     )
+
+
+def _gray_to_color_input_names(module: ModuleBlock) -> tuple[str, ...]:
+    return tuple(
+        name
+        for family in _GRAY_TO_COLOR_IMAGE_SETTINGS
+        if (name := _normalized_setting_symbol(module, family)) is not None
+    )
+
+
+def _normalized_setting_symbol(
+    module: ModuleBlock,
+    setting: str | SettingNameFamily,
+) -> str | None:
+    value = _optional_setting(module, setting)
+    if value is None:
+        return None
+    normalized = _normalize_symbol_name(value)
+    if normalized.lower() in {"leave this black", "none", "do not use"}:
+        return None
+    return normalized
+
+
+def _setting_name_candidates(
+    name: str | SettingNameFamily,
+) -> tuple[str, ...]:
+    if isinstance(name, SettingNameFamily):
+        return name.names
+    return (name,)
+
+
+def _setting_names(name: str | SettingNameFamily) -> tuple[str, ...]:
+    return _setting_name_candidates(name)
 
 
 def _normalize_symbol_name(name: str) -> str:

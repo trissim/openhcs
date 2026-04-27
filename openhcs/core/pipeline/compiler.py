@@ -143,6 +143,7 @@ _FUNCTION_REFERENCE_ATTRIBUTE_FIELDS = MappingProxyType({
 _FUNCTION_REFERENCE_PRESERVED_ATTRS = (
     "__artifact_inputs__",
     "__artifact_outputs__",
+    "__runtime_adapter__",
     "input_memory_type",
     "output_memory_type",
 )

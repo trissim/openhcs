@@ -10,6 +10,16 @@ from openhcs.core.runtime_values import RuntimeValue, RuntimeValueSchema
 from openhcs.processing.materialization import MaterializationSpec, csv_only, json_only
 
 
+class _NoArtifactMaterialization:
+    """Explicit opt-out for artifact materialization policy resolution."""
+
+    def __repr__(self) -> str:
+        return "NO_ARTIFACT_MATERIALIZATION"
+
+
+NO_ARTIFACT_MATERIALIZATION = _NoArtifactMaterialization()
+
+
 @dataclass(frozen=True, slots=True)
 class ArtifactMaterializationRule:
     """Default materialization rule for one semantic artifact kind."""
@@ -76,6 +86,9 @@ def resolve_artifact_materialization_spec(
     SPECIAL artifacts remain explicit-only for legacy side-channel compatibility.
     Semantic artifact kinds without defaults fail loudly.
     """
+    if output_plan.materialization is NO_ARTIFACT_MATERIALIZATION:
+        return None
+
     if output_plan.materialization is not None:
         return output_plan.materialization
 
