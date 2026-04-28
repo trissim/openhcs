@@ -33,7 +33,7 @@
   },
   "ColorToGray": {
     "function_name": "color_to_gray",
-    "contract": "unknown",
+    "contract": "flexible",
     "category": "channel_operation",
     "confidence": 1.0,
     "reasoning": "The function 'color_to_gray' explicitly operates on multiple channels (RGB or specific channel indices) to combine or split them. It requires the orchestrator to stack channels into a (C, H, W) array so it can perform operations like weighted sums (contributions) or splitting across the channel dimension.",
@@ -121,7 +121,7 @@
   },
   "DisplayDataOnImage": {
     "function_name": "display_data_on_image",
-    "contract": "unknown",
+    "contract": "flexible",
     "category": "image_operation",
     "confidence": 1.0,
     "reasoning": "The function overlays text or color-coded measurements onto a single image or set of labels. It operates on a per-image/per-site basis and does not require access to multiple channels simultaneously or a full Z-stack to perform its logic.",
@@ -129,7 +129,7 @@
   },
   "DisplayDensityPlot": {
     "function_name": "display_density_plot",
-    "contract": "unknown",
+    "contract": "flexible",
     "category": "image_operation",
     "confidence": 1.0,
     "reasoning": "The function generates a density plot for a single image input. It does not require volumetric z-stacks or multiple channels to perform its core visualization task; it processes a single intensity distribution at a time.",
@@ -329,7 +329,7 @@
   },
   "ImageMath": {
     "function_name": "image_math",
-    "contract": "unknown",
+    "contract": "flexible",
     "category": "image_operation",
     "confidence": 1.0,
     "reasoning": "ImageMath performs pixel-wise arithmetic on an image. It does not require volumetric context (Z-stacks) nor does it inherently require multiple channels to be stacked in the first dimension to function; it operates on the input array provided, typically a single channel per site.",
@@ -337,7 +337,7 @@
   },
   "InvertForPrinting": {
     "function_name": "invert_for_printing",
-    "contract": "unknown",
+    "contract": "flexible",
     "category": "image_operation",
     "confidence": 1.0,
     "reasoning": "The function performs a visual transformation (inverting for printing) that is typically applied to individual images or sites. It does not require a volumetric z-stack (z_projection) nor does it inherently require multiple input channels to be stacked as a single array (channel_operation) to perform its core logic, as it can process single-channel images independently.",
@@ -353,7 +353,7 @@
   },
   "MakeProjection": {
     "function_name": "make_projection",
-    "contract": "unknown",
+    "contract": "volumetric_to_slice",
     "category": "z_projection",
     "confidence": 1.0,
     "reasoning": "The function 'make_projection' is designed to collapse a 3D volumetric stack into a 2D image. It requires the Z-slices to be stacked along the first dimension (Z, H, W) to perform operations like Average or Maximum projection, which aligns perfectly with the z_projection category.",
@@ -361,7 +361,7 @@
   },
   "MaskImage": {
     "function_name": "mask_image",
-    "contract": "unknown",
+    "contract": "flexible",
     "category": "image_operation",
     "confidence": 1.0,
     "reasoning": "The function applies a mask to a single image. It does not require volumetric z-stacks or multiple channels simultaneously to perform its core logic; it operates on a per-image/per-site basis.",
@@ -369,7 +369,7 @@
   },
   "MaskObjects": {
     "function_name": "mask_objects",
-    "contract": "unknown",
+    "contract": "pure_2d",
     "category": "image_operation",
     "confidence": 1.0,
     "reasoning": "The function performs a masking operation on a single image/label set. It does not require a volumetric Z-stack to function, nor does it require multiple distinct color channels simultaneously; it operates on a per-site basis where the image and labels correspond to the same field of view.",
@@ -377,7 +377,7 @@
   },
   "MatchTemplate": {
     "function_name": "match_template",
-    "contract": "unknown",
+    "contract": "flexible",
     "category": "image_operation",
     "confidence": 1.0,
     "reasoning": "The match_template function performs template matching (cross-correlation) on a single image channel. It does not require volumetric Z-stacks or multiple color channels to function; it processes a single 2D image against a template.",
@@ -417,7 +417,7 @@
   },
   "Measureimageoverlap": {
     "function_name": "measureimageoverlap",
-    "contract": "unknown",
+    "contract": "flexible",
     "category": "image_operation",
     "confidence": 1.0,
     "reasoning": "MeasureImageOverlap in CellProfiler typically compares two images (often a ground truth and a test segmentation) or measures the overlap of a single image against itself/a reference. It does not inherently require a 3D Z-stack or a multi-channel composite to function; it operates on individual image planes (sites) to calculate spatial overlap metrics.",
@@ -521,7 +521,7 @@
   },
   "Morphologicalskeleton": {
     "function_name": "morphologicalskeleton",
-    "contract": "unknown",
+    "contract": "pure_3d",
     "category": "z_projection",
     "confidence": 0.95,
     "reasoning": "The function includes a 'volumetric' parameter, indicating it is designed to handle 3D data. In the OpenHCS orchestration model, processing 3D volumes (Z, H, W) requires setting variable_components to Z_INDEX, which corresponds to the 'z_projection' category.",
@@ -561,7 +561,7 @@
   },
   "RelateObjects": {
     "function_name": "relate_objects",
-    "contract": "unknown",
+    "contract": "flexible",
     "category": "image_operation",
     "confidence": 1.0,
     "reasoning": "RelateObjects establishes parent-child relationships between segmented objects (labels). It operates on a per-site basis and does not require volumetric z-stacks or multiple spectral channels simultaneously to perform its core logic.",

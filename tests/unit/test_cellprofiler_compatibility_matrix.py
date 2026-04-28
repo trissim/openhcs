@@ -18,14 +18,10 @@ def test_supported_corpus_has_processing_contract_coverage() -> None:
     assert report.supported_corpus_processing_contract_gaps == ()
 
 
-def test_compatibility_matrix_surfaces_remaining_contract_gaps() -> None:
+def test_compatibility_matrix_has_no_unresolved_processing_contracts() -> None:
     report = build_cellprofiler_compatibility_report()
-    unresolved_names = {
-        module.module_name for module in report.unresolved_processing_contracts
-    }
 
-    assert "ColorToGray" in unresolved_names
-    assert "MaskObjects" in unresolved_names
+    assert report.unresolved_processing_contracts == ()
 
 
 def test_compatibility_matrix_tracks_artifact_and_corpus_coverage() -> None:
