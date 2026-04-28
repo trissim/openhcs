@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
 from benchmark.converter.runtime_pipeline import (
@@ -115,6 +116,59 @@ def test_bbbc021_cppipe_generated_pipeline_executes_named_channel_bindings(
     assert len(composite_records) == 1
 
 
+def test_bbbc021_canonical_illum_cppipe_executes_real_pipeline_shape(
+    tmp_path: Path,
+) -> None:
+    plate_path = _generate_bbbc021_plate(tmp_path / "Week1_22123")
+    _write_bbbc021_image(
+        plate_path / "fields" / "A01_s1_w4F00DBABE-17A7-4AA1-9C50-123456789ABC.tif",
+        seed=3,
+        signal=2400,
+    )
+    cppipe_path = (
+        Path(__file__).resolve().parents[2]
+        / "benchmark"
+        / "cellprofiler_pipelines"
+        / "BBBC021_illum.cppipe"
+    )
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / "generated_bbbc021_illum_pipeline.py",
+    )
+
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=True,
+        microscope=Microscope.BBBC021,
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            output_dir_suffix="_generated_cppipe",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
+    orchestrator.initialize()
+
+    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+
+    assert all(
+        result.is_success()
+        for result in execution.execution_results.values()
+    )
+    generated_images = sorted(
+        (_generated_output_root(plate_path) / "images").glob("*.tif")
+    )
+    assert [path.name for path in generated_images] == [
+        "A01_s1_w1_z001_t001.tif",
+        "A01_s1_w2_z001_t001.tif",
+        "A01_s1_w4_z001_t001.tif",
+    ]
+
+
 def test_examplefly_cppipe_generated_pipeline_executes_real_pipeline_shape(
     tmp_path: Path,
 ) -> None:
@@ -182,6 +236,14 @@ def test_examplefly_cppipe_generated_pipeline_executes_real_pipeline_shape(
     csv_outputs = sorted(_generated_results_dir(plate_path).rglob("*.csv"))
     assert len(csv_outputs) >= 6
     assert all(path.stat().st_size > 0 for path in csv_outputs)
+    headers_by_name = {path.name: _csv_header(path) for path in csv_outputs}
+    assert _matching_header(
+        headers_by_name,
+        "MeasureObjectSizeShape",
+    )[:4] == ["slice_index", "object_label", "area", "perimeter"]
+    assert "contrast" in _matching_header(headers_by_name, "MeasureTexture")
+    assert "manders_m1" in _matching_header(headers_by_name, "MeasureColocalization")
+    assert all("slice_index" in header for header in headers_by_name.values())
 
 
 def test_cppipe_generated_pipeline_materializes_relationship_outputs(
@@ -230,6 +292,32 @@ def test_cppipe_generated_pipeline_materializes_relationship_outputs(
     assert csv_outputs
     assert any("relationships" in path.name for path in csv_outputs)
     assert any("measurements" in path.name for path in csv_outputs)
+    headers_by_name = {path.name: _csv_header(path) for path in csv_outputs}
+    assert _matching_header(
+        headers_by_name,
+        "relationships",
+    ) == [
+        "relationship_type",
+        "source_role",
+        "target_role",
+        "source_object",
+        "target_object",
+        "parent_id",
+        "child_id",
+        "slice_index",
+    ]
+    assert _matching_header(
+        headers_by_name,
+        "measurements",
+    ) == [
+        "slice_index",
+        "parent_object_count",
+        "child_object_count",
+        "children_with_parents_count",
+        "mean_children_per_parent",
+        "mean_centroid_distance",
+        "mean_minimum_distance",
+    ]
 
 
 def _generate_plate(plate_path: Path) -> Path:
@@ -305,6 +393,24 @@ def _generated_output_root(plate_path: Path) -> Path:
 
 def _generated_results_dir(plate_path: Path) -> Path:
     return _generated_output_root(plate_path) / "images_results"
+
+
+def _csv_header(path: Path) -> list[str]:
+    with path.open(newline="") as handle:
+        return next(csv.reader(handle))
+
+
+def _matching_header(
+    headers_by_name: dict[str, list[str]],
+    name_fragment: str,
+) -> list[str]:
+    for filename, header in headers_by_name.items():
+        if name_fragment in filename:
+            return header
+    raise AssertionError(
+        f"No CSV output filename contained {name_fragment!r}: "
+        f"{sorted(headers_by_name)}"
+    )
 
 
 def _write_cppipe(cppipe_path: Path) -> Path:

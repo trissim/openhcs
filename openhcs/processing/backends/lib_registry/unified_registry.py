@@ -26,10 +26,10 @@ import json
 import logging
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass, replace
 from enum import Enum
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Type
 
 
 from openhcs.core.xdg_paths import get_cache_file_path
@@ -38,6 +38,92 @@ from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict
 from openhcs.core.config import LazyDtypeConfig , LazyWellFilterConfig, LazyStepWellFilterConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _pure_2d_slice_results(
+    results: Iterable[Any],
+) -> tuple[list[Any], tuple[list[Any], ...]]:
+    """Split per-slice PURE_2D results into main outputs and auxiliary groups."""
+    collected = list(results)
+    if not collected:
+        raise ValueError("PURE_2D execution cannot aggregate zero slice results.")
+
+    first_result = collected[0]
+    if not isinstance(first_result, tuple):
+        return collected, ()
+
+    tuple_length = len(first_result)
+    if tuple_length == 0:
+        raise ValueError("PURE_2D slice result tuples cannot be empty.")
+
+    main_outputs: list[Any] = []
+    auxiliary_groups = [list() for _ in range(tuple_length - 1)]
+    for result in collected:
+        if not isinstance(result, tuple):
+            raise TypeError(
+                "PURE_2D execution cannot mix tuple and non-tuple slice results."
+            )
+        if len(result) != tuple_length:
+            raise ValueError(
+                "PURE_2D execution requires all tuple slice results to have the "
+                "same arity."
+            )
+        main_outputs.append(result[0])
+        for index, value in enumerate(result[1:]):
+            auxiliary_groups[index].append(value)
+
+    return main_outputs, tuple(auxiliary_groups)
+
+
+def _aggregate_pure_2d_auxiliary_output(
+    values: list[Any],
+    memory_type: str,
+) -> Any:
+    """Aggregate one auxiliary PURE_2D output across slices."""
+    if not values:
+        return []
+    if all(_is_2d_array_like(value) for value in values):
+        return stack_slices(values, memory_type, 0)
+    if all(_is_flat_sequence(value) for value in values):
+        flattened: list[Any] = []
+        for value in values:
+            flattened.extend(value)
+        return flattened
+    return list(values)
+
+
+def _is_2d_array_like(value: Any) -> bool:
+    return hasattr(value, "ndim") and getattr(value, "ndim") == 2
+
+
+def _is_flat_sequence(value: Any) -> bool:
+    return (
+        isinstance(value, (list, tuple))
+        and not hasattr(value, "ndim")
+        and not isinstance(value, (str, bytes))
+    )
+
+
+def _rewrite_slice_index(value: Any, slice_index: int) -> Any:
+    """Project the real slice index into nested slice-local outputs."""
+    if hasattr(value, "ndim"):
+        return value
+    if is_dataclass(value) and not isinstance(value, type):
+        if hasattr(value, "slice_index"):
+            return replace(value, slice_index=slice_index)
+        return value
+    if isinstance(value, dict):
+        if "slice_index" in value:
+            return {**value, "slice_index": slice_index}
+        return {
+            key: _rewrite_slice_index(item, slice_index)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_rewrite_slice_index(item, slice_index) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_rewrite_slice_index(item, slice_index) for item in value)
+    return value
 
 
 # Enums for OpenHCS principle compliance (replace magic strings)
@@ -408,8 +494,19 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         # Get memory type from the decorated function
         memory_type = func.output_memory_type
         slices = unstack_slices(image, memory_type, 0)
-        results = [func(sl, *args, **kwargs) for sl in slices]
-        return stack_slices(results, memory_type, 0)
+        slice_results = [
+            _rewrite_slice_index(func(slice_2d, *args, **kwargs), slice_index)
+            for slice_index, slice_2d in enumerate(slices)
+        ]
+        main_outputs, auxiliary_groups = _pure_2d_slice_results(slice_results)
+        stacked_main_output = stack_slices(main_outputs, memory_type, 0)
+        if not auxiliary_groups:
+            return stacked_main_output
+        aggregated_auxiliary_outputs = tuple(
+            _aggregate_pure_2d_auxiliary_output(values, memory_type)
+            for values in auxiliary_groups
+        )
+        return (stacked_main_output, *aggregated_auxiliary_outputs)
 
     def _execute_flexible(self, func, image, *args, **kwargs):
         """Execute function that handles both 3D→3D and 2D→2D with toggle."""

@@ -206,6 +206,15 @@ The branch has already established most of the typed runtime/compiler foundation
     - `BBBC021_analysis.cppipe` and `BBBC021_illum.cppipe` now prepare successfully as supported corpus members
     - real setup-module lowering for those files is asserted under unit coverage
     - the typed image schema for those files now has explicit acceptance checks for grouping, metadata match dimensions, and selector-bearing assignments
+25. PURE_2D absorbed-function execution now preserves tuple-shaped side outputs generically:
+    - the shared registry slice executor now aggregates `(main_output, side_output...)` returns instead of assuming every per-slice result is a bare 2D array
+    - 2D auxiliary image/label outputs restack correctly
+    - tabular auxiliary outputs aggregate across slices instead of collapsing or failing
+    - per-slice outputs with `slice_index` fields now get the real runtime slice index injected during aggregation
+26. Real acceptance coverage now extends beyond the earlier in-tree subset:
+    - canonical `BBBC021_illum.cppipe` executes through the real orchestrator/runtime path on synthetic BBBC021-shaped data
+    - `ExampleFly.cppipe` CSV assertions now validate semantic headers, not just file existence
+    - generated `RelateObjects` acceptance now validates concrete relationship/measurement CSV schemas
 
 ### 3.2 What Is Still Missing
 
@@ -223,11 +232,12 @@ The biggest unresolved items are now:
    - live BBBC021 conversion now succeeds end to end at code-generation time
    - a BBBC021-style generated pipeline now executes through the OpenHCS orchestrator with typed named-channel bindings
    - canonical in-tree BBBC021 reference snapshots now prepare successfully and preserve typed schema facts under direct test coverage
+   - canonical `BBBC021_illum.cppipe` now executes successfully as a real converted pipeline shape
    - canonical dataset-owned `.cppipe` references can now be resolved through the benchmark adapter instead of only local ad hoc files
    - ExampleFly now executes end to end as a real shipped `.cppipe` shape and materializes measurement CSV outputs on disk
    - a generated `RelateObjects` pipeline now executes through the orchestrator and materializes both relationship and measurement CSV outputs
    - the next gap is broader corpus coverage and dataset-level validation, not basic execution enablement
-7. Export and relationship-heavy semantics now have initial real-output validation, but not broad corpus-level validation.
+7. Export and relationship-heavy semantics now have initial real-output validation with concrete CSV schema assertions, but not broad corpus-level validation.
 9. The broader absorbed-function corpus still needs continued cleanup beyond the currently exercised import/materialization surface.
 8. Benchmarking is no longer ahead of the remaining CellProfiler semantics, but it should still stay secondary to broader semantic validation.
 

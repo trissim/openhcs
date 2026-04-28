@@ -1,6 +1,13 @@
 import importlib
+import numpy as np
 
 from benchmark.cellprofiler_library import get_function
+from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
+    correct_illumination_calculate,
+)
+from openhcs.core.config import DtypeConfig
+from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
 def test_active_absorbed_cellprofiler_functions_import_cleanly():
@@ -40,3 +47,37 @@ def test_export_to_spreadsheet_module_imports_cleanly():
     )
 
     assert module is not None
+
+
+def test_absorbed_processing_contract_metadata_does_not_act_as_validator():
+    image = np.ones((8, 8), dtype=np.float32)
+
+    result, stats = correct_illumination_calculate(image, dtype_config=DtypeConfig())
+
+    assert result.shape == image.shape
+    assert stats.calculation_type == "regular"
+    assert (
+        correct_illumination_calculate.__processing_contract__
+        is ProcessingContract.PURE_2D
+    )
+
+
+def test_pure_2d_contract_wrapper_aggregates_tuple_outputs_per_slice():
+    registry = OpenHCSRegistry()
+    wrapped = registry.apply_contract_wrapper(
+        correct_illumination_calculate,
+        ProcessingContract.PURE_2D,
+    )
+    image = np.stack(
+        (
+            np.full((8, 8), 1.0, dtype=np.float32),
+            np.full((8, 8), 2.0, dtype=np.float32),
+        )
+    )
+
+    result, stats = wrapped(image, dtype_config=DtypeConfig())
+
+    assert result.shape == image.shape
+    assert len(stats) == 2
+    assert [item.slice_index for item in stats] == [0, 1]
+    assert all(item.mean_value > 0 for item in stats)
