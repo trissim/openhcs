@@ -1,0 +1,46 @@
+from benchmark.converter.compatibility_matrix import (
+    ArtifactContractCoverage,
+    ModuleCorpusCoverage,
+    build_cellprofiler_compatibility_report,
+)
+
+
+def test_compatibility_matrix_accounts_for_absorbed_modules() -> None:
+    report = build_cellprofiler_compatibility_report()
+
+    assert len(report.modules) == 88
+    assert all(module.importable for module in report.modules)
+
+
+def test_supported_corpus_has_processing_contract_coverage() -> None:
+    report = build_cellprofiler_compatibility_report()
+
+    assert report.supported_corpus_processing_contract_gaps == ()
+
+
+def test_compatibility_matrix_surfaces_remaining_contract_gaps() -> None:
+    report = build_cellprofiler_compatibility_report()
+    unresolved_names = {
+        module.module_name for module in report.unresolved_processing_contracts
+    }
+
+    assert "ColorToGray" in unresolved_names
+    assert "MaskObjects" in unresolved_names
+
+
+def test_compatibility_matrix_tracks_artifact_and_corpus_coverage() -> None:
+    report = build_cellprofiler_compatibility_report()
+    modules_by_name = {module.module_name: module for module in report.modules}
+
+    assert (
+        modules_by_name["IdentifyPrimaryObjects"].artifact_contract_coverage
+        is ArtifactContractCoverage.DECLARED_BUILDER
+    )
+    assert (
+        modules_by_name["IdentifyPrimaryObjects"].corpus_coverage
+        is ModuleCorpusCoverage.SUPPORTED_CORPUS
+    )
+    assert (
+        modules_by_name["ColorToGray"].artifact_contract_coverage
+        is ArtifactContractCoverage.GENERIC_INFERENCE
+    )
