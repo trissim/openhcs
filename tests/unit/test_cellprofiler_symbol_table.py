@@ -414,8 +414,14 @@ def test_cellprofiler_symbol_table_infers_common_image_transform_contract():
         binding.alias
         for binding in contract.source_bindings.groups[0].bindings
     ) == ("OrigBlue",)
-    assert [spec.name for spec in contract.outputs] == ["IllumBlue"]
-    assert [spec.kind for spec in contract.outputs] == [ArtifactKind.IMAGE]
+    assert [spec.name for spec in contract.outputs] == [
+        "IllumBlue",
+        "CorrectIlluminationCalculate_1_measurements",
+    ]
+    assert [spec.kind for spec in contract.outputs] == [
+        ArtifactKind.IMAGE,
+        ArtifactKind.MEASUREMENTS,
+    ]
 
 
 def test_cellprofiler_symbol_table_infers_common_object_transform_contract():
@@ -438,35 +444,74 @@ def test_cellprofiler_symbol_table_infers_common_object_transform_contract():
     assert [spec.kind for spec in contract.runtime_artifact_inputs] == [
         ArtifactKind.OBJECT_LABELS
     ]
-    assert [spec.name for spec in contract.outputs] == ["DilatedNuclei"]
-    assert [spec.kind for spec in contract.outputs] == [ArtifactKind.OBJECT_LABELS]
+    assert [spec.name for spec in contract.outputs] == [
+        "DilateObjects_2_measurements",
+        "DilatedNuclei",
+    ]
+    assert [spec.kind for spec in contract.outputs] == [
+        ArtifactKind.MEASUREMENTS,
+        ArtifactKind.OBJECT_LABELS,
+    ]
 
 
-def test_cellprofiler_symbol_table_fails_for_unmodeled_module_contract():
-    with pytest.raises(
-        ValueError,
-        match=(
-            r"Module CalculateMath\(1\) has no declared or inferable "
-            r"CellProfiler artifact contract"
-        ),
-    ):
-        CellProfilerSymbolTable.compile(
-            [
-                _module(
-                    1,
-                    "CalculateMath",
-                    {"Operation": "Add"},
-                )
-            ]
+def test_cellprofiler_symbol_table_infers_special_output_only_contract():
+    table = CellProfilerSymbolTable.compile(
+        [
+            _module(
+                1,
+                "CalculateMath",
+                {"Operation": "Add"},
+            )
+        ]
+    )
+    contract = table.contracts_by_module_num[1]
+
+    assert contract.inputs == ()
+    assert [spec.name for spec in contract.outputs] == [
+        "CalculateMath_1_measurements"
+    ]
+    assert [spec.kind for spec in contract.outputs] == [ArtifactKind.MEASUREMENTS]
+
+
+def test_cellprofiler_symbol_table_infers_mask_objects_contract():
+    modules = [
+        _identify_primary(),
+        _module(
+            2,
+            "MaskObjects",
+            {
+                "Select the input objects": "Nuclei",
+                "Select the masking image": "OrigBlue",
+                "Name the output objects": "MaskedNuclei",
+            },
         )
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[2]
+
+    assert [spec.name for spec in contract.inputs] == ["Nuclei", "OrigBlue"]
+    assert [spec.name for spec in contract.runtime_artifact_inputs] == ["Nuclei"]
+    assert tuple(
+        binding.alias
+        for binding in contract.source_bindings.groups[0].bindings
+    ) == ("OrigBlue",)
+    assert [spec.name for spec in contract.outputs] == [
+        "MaskObjects_2_measurements",
+        "MaskedNuclei",
+    ]
+    assert [spec.kind for spec in contract.outputs] == [
+        ArtifactKind.MEASUREMENTS,
+        ArtifactKind.OBJECT_LABELS,
+    ]
 
 
-def test_cellprofiler_symbol_table_rejects_ambiguous_inferred_contract():
+def test_cellprofiler_symbol_table_rejects_unknown_generic_object_input():
     with pytest.raises(
         ValueError,
         match=(
-            r"Module FilterObjects\(1\) has no declared or inferable "
-            r"CellProfiler artifact contract"
+            r"Module FilterObjects\(1\) references unknown objects "
+            r"symbol 'Nuclei'"
         ),
     ):
         CellProfilerSymbolTable.compile(

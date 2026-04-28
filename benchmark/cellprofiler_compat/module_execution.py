@@ -96,6 +96,7 @@ class CellProfilerModuleExecutor:
     ) -> Any:
         """Call the absorbed function and record declared outputs through the adapter."""
         image_request = self._image_request(
+            func,
             image,
             cellprofiler_runtime,
         )
@@ -113,6 +114,7 @@ class CellProfilerModuleExecutor:
             func,
             image_request=image_request,
             adapter=cellprofiler_runtime,
+            fallback_image=image,
             kwargs=kwargs,
         )
         raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
@@ -207,13 +209,10 @@ class CellProfilerModuleExecutor:
         self,
         func: Callable[..., Any],
         adapter: CellProfilerRuntimeAdapter,
+        fallback_image: Any,
     ) -> dict[str, Any]:
-        runtime_non_image_inputs = tuple(
-            spec
-            for spec in self.runtime_artifact_inputs
-            if spec.kind is not ArtifactKind.IMAGE
-        )
-        if not runtime_non_image_inputs:
+        runtime_inputs = self._special_runtime_inputs(func)
+        if not runtime_inputs:
             return {}
 
         special_input_names = special_input_names_from_callable(func)
@@ -221,13 +220,16 @@ class CellProfilerModuleExecutor:
             return _bind_special_runtime_inputs(
                 self.module_name,
                 special_input_names,
-                runtime_non_image_inputs,
+                runtime_inputs,
                 adapter,
+                fallback_image=fallback_image,
+                external_image_names=frozenset(self._external_source_image_names()),
+                runtime_image_names=frozenset(self._runtime_image_names()),
             )
 
         unsupported_non_object_inputs = tuple(
             spec
-            for spec in runtime_non_image_inputs
+            for spec in runtime_inputs
             if spec.kind is not ArtifactKind.OBJECT_LABELS
         )
         if unsupported_non_object_inputs:
@@ -238,13 +240,27 @@ class CellProfilerModuleExecutor:
             )
 
         object_inputs = _specs_of_kind(
-            runtime_non_image_inputs,
+            runtime_inputs,
             ArtifactKind.OBJECT_LABELS,
         )
         return CellProfilerObjectInputPolicy.for_module(self.module_name).bind(
             self.module_name,
             object_inputs,
             adapter,
+        )
+
+    def _special_runtime_inputs(
+        self,
+        func: Callable[..., Any],
+    ) -> tuple[ArtifactSpec, ...]:
+        runtime_non_image_inputs = tuple(
+            spec
+            for spec in self.runtime_artifact_inputs
+            if spec.kind is not ArtifactKind.IMAGE
+        )
+        return (
+            *runtime_non_image_inputs,
+            *self._special_image_inputs(func),
         )
 
     def _record_outputs(
@@ -276,10 +292,11 @@ class CellProfilerModuleExecutor:
 
     def _image_request(
         self,
+        func: Callable[..., Any],
         fallback_image: Any,
         adapter: CellProfilerRuntimeAdapter,
     ) -> "CellProfilerImageRequest":
-        image_inputs = _specs_of_kind(self.inputs, ArtifactKind.IMAGE)
+        image_inputs = self._primary_image_inputs(func)
         if not image_inputs:
             return CellProfilerImageRequest(
                 payload=fallback_image,
@@ -311,6 +328,39 @@ class CellProfilerModuleExecutor:
             source_image_name=self._input_source_image_name(adapter),
             image_count=len(payloads),
         )
+
+    def _primary_image_inputs(
+        self,
+        func: Callable[..., Any],
+    ) -> tuple[ArtifactSpec, ...]:
+        image_inputs = _specs_of_kind(self.inputs, ArtifactKind.IMAGE)
+        special_image_count = len(self._special_image_inputs(func))
+        if special_image_count == 0:
+            return image_inputs
+        return image_inputs[: len(image_inputs) - special_image_count]
+
+    def _special_image_inputs(
+        self,
+        func: Callable[..., Any],
+    ) -> tuple[ArtifactSpec, ...]:
+        image_inputs = _specs_of_kind(self.inputs, ArtifactKind.IMAGE)
+        special_input_count = len(special_input_names_from_callable(func))
+        non_image_count = len(
+            tuple(
+                spec
+                for spec in self.runtime_artifact_inputs
+                if spec.kind is not ArtifactKind.IMAGE
+            )
+        )
+        special_image_count = max(0, special_input_count - non_image_count)
+        if special_image_count == 0:
+            return ()
+        if special_image_count > len(image_inputs):
+            raise NotImplementedError(
+                f"{self.module_name} declares {special_image_count} image special "
+                f"input(s), but only has image inputs {[spec.name for spec in image_inputs]}."
+            )
+        return image_inputs[-special_image_count:]
 
     def _input_source_image_name(
         self,
@@ -345,11 +395,12 @@ class CellProfilerModuleExecutor:
         *,
         image_request: "CellProfilerImageRequest",
         adapter: CellProfilerRuntimeAdapter,
+        fallback_image: Any,
         kwargs: Mapping[str, Any],
     ) -> "CellProfilerInvocationRequest":
         runtime_kwargs = {
             **kwargs,
-            **self._runtime_input_kwargs(func, adapter),
+            **self._runtime_input_kwargs(func, adapter, fallback_image),
         }
         return CellProfilerInvocationRequest(
             image=image_request.payload,
@@ -359,17 +410,20 @@ class CellProfilerModuleExecutor:
         )
 
     def _external_source_image_names(self) -> tuple[str, ...]:
-        runtime_image_names = frozenset(
+        runtime_image_names = frozenset(self._runtime_image_names())
+        return tuple(
+            spec.name
+            for spec in _specs_of_kind(self.inputs, ArtifactKind.IMAGE)
+            if spec.name not in runtime_image_names
+        )
+
+    def _runtime_image_names(self) -> tuple[str, ...]:
+        return tuple(
             spec.name
             for spec in _specs_of_kind(
                 self.runtime_artifact_inputs,
                 ArtifactKind.IMAGE,
             )
-        )
-        return tuple(
-            spec.name
-            for spec in _specs_of_kind(self.inputs, ArtifactKind.IMAGE)
-            if spec.name not in runtime_image_names
         )
 
 
@@ -495,6 +549,7 @@ class CellProfilerArtifactKindRequest:
 
     spec: ArtifactSpec
     adapter: CellProfilerRuntimeAdapter
+    fallback_image: Any | None = None
     external_image_names: frozenset[str] = frozenset()
     runtime_image_names: frozenset[str] = frozenset()
 
@@ -528,6 +583,18 @@ class ImageArtifactKindStrategy(CellProfilerArtifactKindStrategy):
     kind = ArtifactKind.IMAGE
 
     def runtime_input_value(self, request: CellProfilerArtifactKindRequest) -> Any:
+        if request.spec.name in request.runtime_image_names:
+            return request.adapter.get_image(request.spec.name).data
+        if request.spec.name in request.external_image_names:
+            if request.fallback_image is None:
+                raise RuntimeError(
+                    f"External image input '{request.spec.name}' requires a "
+                    "fallback image payload for source-binding resolution."
+                )
+            return request.adapter.resolve_source_image(
+                request.spec.name,
+                request.fallback_image,
+            )
         return request.adapter.get_image(request.spec.name).data
 
     def source_image_name(
@@ -991,6 +1058,10 @@ def _bind_special_runtime_inputs(
     parameter_names: tuple[str, ...],
     runtime_inputs: tuple[ArtifactSpec, ...],
     adapter: CellProfilerRuntimeAdapter,
+    *,
+    fallback_image: Any,
+    external_image_names: frozenset[str],
+    runtime_image_names: frozenset[str],
 ) -> dict[str, Any]:
     if len(parameter_names) != len(runtime_inputs):
         raise NotImplementedError(
@@ -998,7 +1069,13 @@ def _bind_special_runtime_inputs(
             f"compiled runtime inputs are {[spec.name for spec in runtime_inputs]}."
         )
     return {
-        parameter_name: _runtime_input_value(spec, adapter)
+        parameter_name: _runtime_input_value(
+            spec,
+            adapter,
+            fallback_image=fallback_image,
+            external_image_names=external_image_names,
+            runtime_image_names=runtime_image_names,
+        )
         for parameter_name, spec in zip(
             parameter_names,
             runtime_inputs,
@@ -1010,12 +1087,19 @@ def _bind_special_runtime_inputs(
 def _runtime_input_value(
     spec: ArtifactSpec,
     adapter: CellProfilerRuntimeAdapter,
+    *,
+    fallback_image: Any,
+    external_image_names: frozenset[str],
+    runtime_image_names: frozenset[str],
 ) -> Any:
     try:
         return _artifact_kind_strategy(spec.kind).runtime_input_value(
             CellProfilerArtifactKindRequest(
                 spec=spec,
                 adapter=adapter,
+                fallback_image=fallback_image,
+                external_image_names=external_image_names,
+                runtime_image_names=runtime_image_names,
             )
         )
     except KeyError as exc:

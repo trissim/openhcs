@@ -43,6 +43,12 @@ from openhcs.core.source_bindings import (
     StepSourceBindingsConfig,
 )
 
+from .artifact_semantics import (
+    ArtifactSettingSymbol,
+    FunctionSpecialOutput,
+    artifact_setting_symbols,
+    function_special_outputs,
+)
 from .gray_to_color_settings import GrayToColorInputNameResolver
 from .parser import ModuleBlock
 from .setting_names import (
@@ -925,6 +931,7 @@ class InferredModuleContractPattern(ABC, metaclass=AutoRegisterMeta):
     __registry_key__ = "pattern_name"
     __skip_if_no_key__ = True
     pattern_name: ClassVar[str | None] = None
+    priority: ClassVar[int] = 100
 
     @classmethod
     def first_match(
@@ -932,7 +939,10 @@ class InferredModuleContractPattern(ABC, metaclass=AutoRegisterMeta):
         builder: _SymbolTableBuilder,
         module: ModuleBlock,
     ) -> ModuleArtifactContracts | None:
-        for pattern_type in cls.__registry__.values():
+        for pattern_type in sorted(
+            cls.__registry__.values(),
+            key=lambda candidate: candidate.priority,
+        ):
             contract = pattern_type().build_if_matched(builder, module)
             if contract is not None:
                 return contract
@@ -947,9 +957,50 @@ class InferredModuleContractPattern(ABC, metaclass=AutoRegisterMeta):
         """Return a contract when this pattern fully matches the module."""
 
 
+class SemanticSettingsContractPattern(InferredModuleContractPattern):
+    """Infer contracts from typed CellProfiler artifact-setting semantics."""
+
+    pattern_name = "semantic_settings"
+    priority = 10
+
+    def build_if_matched(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts | None:
+        setting_symbols = artifact_setting_symbols(module)
+        special_outputs = function_special_outputs(module.name)
+        if not setting_symbols and not special_outputs:
+            return None
+
+        inputs = [
+            builder.require(
+                symbol.name,
+                _symbol_kind_for_artifact_kind(symbol.role.artifact_kind),
+                module,
+            )
+            for symbol in setting_symbols
+            if symbol.role.is_input
+        ]
+        outputs = _semantic_output_symbols(
+            builder,
+            module,
+            tuple(
+                symbol
+                for symbol in setting_symbols
+                if not symbol.role.is_input
+            ),
+            special_outputs,
+        )
+        if not inputs and not outputs:
+            return None
+        return _contracts(module, builder, inputs=inputs, outputs=outputs)
+
+
 class _SingleInputSingleOutputContractPattern(InferredModuleContractPattern):
     """Base for single-symbol input/output contract inference."""
 
+    priority = 50
     input_setting: ClassVar[str | SettingNameFamily]
     input_kind: ClassVar[CellProfilerSymbolKind]
     output_setting: ClassVar[str | SettingNameFamily]
@@ -1086,6 +1137,105 @@ def _declare_function_backed_module_builder(
 for _module_names, _builder_function in _FUNCTION_BACKED_MODULE_BUILDER_SPECS:
     for _module_name in _module_names:
         _declare_function_backed_module_builder(_module_name, _builder_function)
+
+
+def _semantic_output_symbols(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+    setting_outputs: tuple[ArtifactSettingSymbol, ...],
+    special_outputs: tuple[FunctionSpecialOutput, ...],
+) -> tuple[CellProfilerSymbol, ...]:
+    output_names = _setting_output_names_by_kind(setting_outputs)
+    outputs: list[CellProfilerSymbol] = []
+
+    if special_outputs and output_names.get(ArtifactKind.IMAGE):
+        outputs.extend(
+            _declare_outputs(
+                builder,
+                module,
+                output_names.pop(ArtifactKind.IMAGE),
+                ArtifactKind.IMAGE,
+            )
+        )
+
+    measurement_output_count = sum(
+        special.kind is ArtifactKind.MEASUREMENTS
+        for special in special_outputs
+    )
+    for special in special_outputs:
+        if special.kind is ArtifactKind.IMAGE and any(
+            output.kind is CellProfilerSymbolKind.IMAGE
+            for output in outputs
+        ):
+            continue
+        name = _special_output_name(
+            module,
+            special,
+            output_names,
+            measurement_output_count=measurement_output_count,
+        )
+        outputs.append(
+            builder.declare(
+                name,
+                _symbol_kind_for_artifact_kind(special.kind),
+                module,
+            )
+        )
+
+    for kind, names in output_names.items():
+        outputs.extend(_declare_outputs(builder, module, names, kind))
+    return _unique_symbols(outputs)
+
+
+def _setting_output_names_by_kind(
+    setting_outputs: tuple[ArtifactSettingSymbol, ...],
+) -> dict[ArtifactKind, list[str]]:
+    names_by_kind: dict[ArtifactKind, list[str]] = {}
+    for symbol in setting_outputs:
+        names_by_kind.setdefault(symbol.role.artifact_kind, []).append(symbol.name)
+    return names_by_kind
+
+
+def _declare_outputs(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+    names: Iterable[str],
+    kind: ArtifactKind,
+) -> tuple[CellProfilerSymbol, ...]:
+    symbol_kind = _symbol_kind_for_artifact_kind(kind)
+    return tuple(builder.declare(name, symbol_kind, module) for name in names)
+
+
+def _special_output_name(
+    module: ModuleBlock,
+    special: FunctionSpecialOutput,
+    output_names: dict[ArtifactKind, list[str]],
+    *,
+    measurement_output_count: int,
+) -> str:
+    names = output_names.get(special.kind)
+    if names:
+        return names.pop(0)
+    if special.kind is ArtifactKind.MEASUREMENTS:
+        if measurement_output_count == 1:
+            return _measurement_name(module)
+        return f"{module.name}_{module.module_num}_{special.name}"
+    return special.name
+
+
+def _symbol_kind_for_artifact_kind(kind: ArtifactKind) -> CellProfilerSymbolKind:
+    try:
+        return {
+            ArtifactKind.IMAGE: CellProfilerSymbolKind.IMAGE,
+            ArtifactKind.OBJECT_LABELS: CellProfilerSymbolKind.OBJECTS,
+            ArtifactKind.MEASUREMENTS: CellProfilerSymbolKind.MEASUREMENTS,
+            ArtifactKind.RELATIONSHIPS: CellProfilerSymbolKind.RELATIONSHIPS,
+        }[kind]
+    except KeyError as exc:
+        raise ValueError(
+            f"CellProfiler converter cannot map artifact kind {kind.value!r} "
+            "to a workspace symbol kind."
+        ) from exc
 
 
 def _contracts(

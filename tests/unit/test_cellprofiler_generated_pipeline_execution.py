@@ -49,6 +49,8 @@ OPENING = "Opening"
 OVERLAY_OUTLINES = "OverlayOutlines"
 GRAY_TO_COLOR = "GrayToColor"
 RELATE_OBJECTS = "RelateObjects"
+MASK_OBJECTS = "MaskObjects"
+MASKED_NUCLEI = "MaskedNuclei"
 
 
 class MemoryBackend:
@@ -319,6 +321,31 @@ def _relationship_pipeline_modules() -> list[ModuleBlock]:
     ]
 
 
+def _mask_objects_pipeline_modules() -> list[ModuleBlock]:
+    return [
+        _module(
+            1,
+            IDENTIFY_PRIMARY_OBJECTS,
+            {
+                "Select the input image": SOURCE_IMAGE,
+                "Name the primary objects to be identified": NUCLEI,
+            },
+        ),
+        _module(
+            2,
+            MASK_OBJECTS,
+            {
+                "Select the input objects": NUCLEI,
+                "Select the masking image": SOURCE_IMAGE,
+                "Name the output objects": MASKED_NUCLEI,
+                "Handling of objects that are partially masked": (
+                    "Keep overlapping region"
+                ),
+            },
+        ),
+    ]
+
+
 def _single_channel_source_binding_context() -> SourceBindingRuntimeContext:
     return SourceBindingRuntimeContext(
         step_input_files=("A01_s001_w1_z001_t001.tif",)
@@ -546,4 +573,40 @@ def test_generated_cellprofiler_pipeline_records_relationship_artifacts():
 
     assert len(relationship_records) == 1
     assert relationship_records[0].value.schema.relationship is not None
+    assert len(measurement_records) == 1
+
+
+def test_generated_cellprofiler_pipeline_executes_generic_mask_objects_contract():
+    generated = _generated_pipeline(_mask_objects_pipeline_modules())
+    namespace = _pipeline_namespace(generated)
+    context = ContextStub()
+    image = _synthetic_nuclei_image()
+    source_binding_context = _single_channel_source_binding_context()
+
+    for step, contract in zip(
+        namespace["pipeline_steps"],
+        generated.artifact_contracts,
+        strict=True,
+    ):
+        image = _run_generated_step(
+            step,
+            contract,
+            image,
+            context,
+            source_binding_context=source_binding_context,
+        )
+
+    masked_records = context.runtime_value_store.find(
+        name=MASKED_NUCLEI,
+        kind=ArtifactKind.OBJECT_LABELS,
+        axis_id=AXIS_ID,
+    )
+    measurement_records = context.runtime_value_store.find(
+        name="MaskObjects_2_measurements",
+        kind=ArtifactKind.MEASUREMENTS,
+        axis_id=AXIS_ID,
+    )
+
+    assert len(masked_records) == 1
+    assert masked_records[0].value.data.max() > 0
     assert len(measurement_records) == 1
