@@ -228,6 +228,10 @@ The branch has already established most of the typed runtime/compiler foundation
     - common single image/object input-output shapes infer `ArtifactSpec` inputs/outputs from declared CellProfiler settings
     - unmodeled processing modules now fail loudly with a compatibility diagnostic instead of pretending they have no runtime semantics
     - canonical BBBC021 illumination modules now compile real `CorrectIlluminationCalculate` image inputs/outputs
+30. Converter setting/function resolution cleanup removed two advisor-detected duplication points:
+    - CellProfiler setting-name normalization now has one shared authority used by the binder, pipeline generator, and parameter-mapping tooling
+    - `SettingsBinder` exposes typed public parsing and frozen provenance rows instead of private-method coupling
+    - MeasureTexture/MeasureColocalization raw-function variant selection now shares one nominal scoped-measurement resolver base
 
 ### 3.2 What Is Still Missing
 

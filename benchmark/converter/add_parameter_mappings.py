@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import inspect
 
+from benchmark.converter.settings_binder import normalize_cellprofiler_setting_name
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -64,27 +66,6 @@ class ParameterMappingGenerator:
                         settings.append((key, value))
 
         return settings
-
-    def normalize_setting_name(self, name: str) -> str:
-        """
-        Normalize CellProfiler setting name to snake_case.
-
-        Same logic as SettingsBinder._normalize_name()
-        """
-        # Remove parenthetical content
-        name = re.sub(r'\([^)]*\)', '', name)
-
-        # Remove question marks
-        name = name.replace('?', '')
-
-        # Replace special chars with spaces
-        name = re.sub(r'[^\w\s]', ' ', name)
-
-        # Convert to lowercase and split
-        words = name.lower().split()
-
-        # Join with underscores
-        return '_'.join(words)
 
     def _extract_function_parameters(self, lines: List[str], func_start: int) -> List[str]:
         """Extract parameter names from function signature."""
@@ -205,7 +186,7 @@ class ParameterMappingGenerator:
         ]
 
         for setting_key, setting_value in settings[:15]:  # Limit for readability
-            normalized = self.normalize_setting_name(setting_key)
+            normalized = normalize_cellprofiler_setting_name(setting_key)
 
             # Try to find matching parameter
             matched_param = self._match_parameter(normalized, func_params)
@@ -262,4 +243,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -65,31 +65,12 @@ class DefaultModuleFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
         return ResolvedModuleFunction(function_name=default_function_name)
 
 
-class MeasureTextureFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
-    """Resolve MeasureTexture image-vs-object absorbed variants."""
+class ScopedMeasurementFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
+    """Resolve image-vs-object absorbed variants from a CellProfiler scope setting."""
 
-    module_name = "MeasureTexture"
-
-    def resolve(
-        self,
-        module: ModuleBlock,
-        *,
-        default_function_name: str,
-    ) -> ResolvedModuleFunction:
-        scope = _measurement_target_scope(
-            module.get_setting("Measure whole images or objects?", "Images")
-        )
-        if scope is MeasurementTargetScope.IMAGE:
-            return ResolvedModuleFunction(function_name=default_function_name)
-        return ResolvedModuleFunction(function_name="measure_texture_objects")
-
-
-class MeasureColocalizationFunctionResolutionStrategy(
-    ModuleFunctionResolutionStrategy
-):
-    """Resolve MeasureColocalization image-vs-object absorbed variants."""
-
-    module_name = "MeasureColocalization"
+    scope_setting_name: ClassVar[str | None] = None
+    default_scope_value: ClassVar[str | None] = None
+    object_function_name: ClassVar[str | None] = None
 
     def resolve(
         self,
@@ -99,15 +80,52 @@ class MeasureColocalizationFunctionResolutionStrategy(
     ) -> ResolvedModuleFunction:
         scope = _measurement_target_scope(
             module.get_setting(
-                "Select where to measure correlation",
-                "Across entire image",
+                _required_class_attr(
+                    type(self).scope_setting_name,
+                    "scope_setting_name",
+                ),
+                _required_class_attr(
+                    type(self).default_scope_value,
+                    "default_scope_value",
+                ),
             )
         )
         if scope is MeasurementTargetScope.IMAGE:
             return ResolvedModuleFunction(function_name=default_function_name)
         return ResolvedModuleFunction(
-            function_name="measure_colocalization_objects"
+            function_name=_required_class_attr(
+                type(self).object_function_name,
+                "object_function_name",
+            )
         )
+
+
+class MeasureTextureFunctionResolutionStrategy(
+    ScopedMeasurementFunctionResolutionStrategy
+):
+    """Resolve MeasureTexture image-vs-object absorbed variants."""
+
+    module_name = "MeasureTexture"
+    scope_setting_name = "Measure whole images or objects?"
+    default_scope_value = "Images"
+    object_function_name = "measure_texture_objects"
+
+
+class MeasureColocalizationFunctionResolutionStrategy(
+    ScopedMeasurementFunctionResolutionStrategy
+):
+    """Resolve MeasureColocalization image-vs-object absorbed variants."""
+
+    module_name = "MeasureColocalization"
+    scope_setting_name = "Select where to measure correlation"
+    default_scope_value = "Across entire image"
+    object_function_name = "measure_colocalization_objects"
+
+
+def _required_class_attr(value: str | None, name: str) -> str:
+    if value is None:
+        raise TypeError(f"Measurement resolution strategy must define {name}.")
+    return value
 
 
 def _measurement_target_scope(value: str) -> MeasurementTargetScope:

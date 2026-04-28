@@ -270,4 +270,4 @@ def _typed_setting_value(
     key: str,
     value: str,
 ) -> Any:
-    return binder._parse_value(key, value)
+    return binder.parse_value(key, value)

@@ -30,7 +30,7 @@ from openhcs.core.source_bindings import StepSourceBindingsConfig, SourceBinding
 from .module_function_resolution import ModuleFunctionResolutionStrategy
 from .module_settings_binding import ModuleSettingsBindingStrategy
 from .parser import ModuleBlock
-from .settings_binder import SettingsBinder
+from .settings_binder import SettingsBinder, normalize_cellprofiler_setting_name
 from .symbol_table import (
     CellProfilerSymbolTable,
     ModuleArtifactContracts,
@@ -660,36 +660,6 @@ from openhcs.constants.input_source import InputSource
         """
         return any(spec.kind is not ArtifactKind.IMAGE for spec in contract.outputs)
 
-    def _normalize_setting_name(self, setting_name: str) -> str:
-        """
-        Normalize CellProfiler setting name to match SettingsBinder output.
-
-        This EXACTLY matches the normalization done by SettingsBinder._normalize_name():
-        1. Remove parenthetical content: "(Min,Max)" -> ""
-        2. Remove question marks
-        3. Replace special chars with spaces
-        4. Convert to lowercase and split on whitespace
-        5. Join with underscores
-
-        Example:
-            "Select the input image" -> "select_the_input_image"
-            "Typical diameter of objects, in pixel units (Min,Max)" -> "typical_diameter_of_objects_in_pixel_units"
-        """
-        # Remove parenthetical content (CRITICAL - must match SettingsBinder)
-        name = re.sub(r'\([^)]*\)', '', setting_name)
-
-        # Remove question marks
-        name = name.replace('?', '')
-
-        # Replace special chars with spaces
-        name = re.sub(r'[^\w\s]', ' ', name)
-
-        # Convert to lowercase and split
-        words = name.lower().split()
-
-        # Join with underscores
-        return '_'.join(words)
-
     def _parse_parameter_mapping(self, func_name: str) -> Dict[str, Any]:
         """
         Parse parameter mapping from function docstring.
@@ -749,10 +719,9 @@ from openhcs.constants.input_source import InputSource
                             cp_setting = parts[0].strip().strip("'\"")
                             py_param = parts[1].strip()
 
-                            # Normalize the CellProfiler setting name to match SettingsBinder output
-                            # "Select the input image" -> "select_the_input_image"
-                            # "Typical diameter (Min,Max)" -> "typical_diameter_of_objects_in_pixel_units"
-                            normalized_key = self._normalize_setting_name(cp_setting)
+                            normalized_key = normalize_cellprofiler_setting_name(
+                                cp_setting
+                            )
 
                             # Handle (pipeline-handled) or null
                             if 'pipeline-handled' in py_param or py_param == 'null':
