@@ -78,6 +78,7 @@ class ScopedMeasurementFunctionResolutionStrategy(ModuleFunctionResolutionStrate
 
     scope_setting_name: ClassVar[SettingNameFamily | None] = None
     default_scope_value: ClassVar[str | None] = None
+    object_setting_name: ClassVar[SettingNameFamily] = OBJECT_MEASUREMENT_SETTING
     object_function_name: ClassVar[str | None] = None
 
     def resolve(
@@ -99,7 +100,10 @@ class ScopedMeasurementFunctionResolutionStrategy(ModuleFunctionResolutionStrate
                 ),
             )
         )
-        if scope is MeasurementTargetScope.IMAGE:
+        if scope is MeasurementTargetScope.IMAGE or not _setting_has_symbolic_values(
+            module,
+            type(self).object_setting_name,
+        ):
             return ResolvedModuleFunction(function_name=default_function_name)
         return ResolvedModuleFunction(
             function_name=_required_class_attr(

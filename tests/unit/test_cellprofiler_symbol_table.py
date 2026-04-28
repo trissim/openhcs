@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from benchmark.cellprofiler_compat import CellProfilerModuleContract
-from benchmark.converter.parser import ModuleBlock, ModuleSetting
+from benchmark.converter.parser import CPPipeParser, ModuleBlock, ModuleSetting
 from benchmark.converter.pipeline_generator import PipelineGenerator
 from benchmark.converter.runtime_pipeline import partition_cppipe_modules
 from benchmark.converter.symbol_table import (
@@ -300,6 +300,58 @@ def test_pipeline_generator_canonicalizes_legacy_measure_correlation_module():
         '"MeasureCorrelation", function_name="measure_colocalization_objects")'
     ) in generated.code
     assert "module_name='MeasureColocalization'" in generated.code
+
+
+def test_cppipe_parser_supports_unindented_legacy_pipeline_settings(tmp_path: Path):
+    pipeline_path = tmp_path / "legacy.pipeline"
+    pipeline_path.write_text(
+        "\n".join(
+            (
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "Version:3",
+                "",
+                "MeasureColocalization:[module_num:1|enabled:True]",
+                "Hidden:2",
+                "Select an image to measure:DNA",
+                "Select an image to measure:Cytoplasm",
+            )
+        )
+    )
+
+    modules = CPPipeParser().parse(pipeline_path)
+
+    assert modules[0].get_setting_values("Select an image to measure") == (
+        "DNA",
+        "Cytoplasm",
+    )
+
+
+def test_pipeline_generator_uses_image_variant_without_object_measurement_inputs():
+    generator = PipelineGenerator()
+    modules = [
+        _module(
+            1,
+            "MeasureColocalization",
+            {
+                "Select images to measure": "OrigBlue, OrigGreen",
+                "Select where to measure correlation": "Across entire image",
+                "Select objects to measure": "",
+            },
+        ),
+    ]
+
+    generated = generator.generate_from_registry(
+        pipeline_name="image_colocalization",
+        source_cppipe=Path("source.cppipe"),
+        modules=modules,
+    )
+    contract = generated.artifact_contracts[0]
+
+    assert [spec.name for spec in contract.inputs] == ["OrigBlue", "OrigGreen"]
+    assert (
+        'measure_colocalization_1 = require_function('
+        '"MeasureColocalization", function_name="measure_colocalization")'
+    ) in generated.code
 
 
 def test_pipeline_generator_preserves_default_materialization_for_tabular_outputs():

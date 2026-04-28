@@ -101,6 +101,11 @@ class CPPipeParser:
     SETTING_PATTERN = re.compile(
         r'^    ([^:]+):(.*)$'
     )
+
+    # Older .pipeline resources store module settings without indentation.
+    UNINDENTED_SETTING_PATTERN = re.compile(
+        r'^([^:]+):(.*)$'
+    )
     
     def __init__(self, cppipe_path: Optional[Path] = None):
         """
@@ -168,8 +173,9 @@ class CPPipeParser:
                 )
                 continue
             
-            # Check for setting line
-            setting_match = self.SETTING_PATTERN.match(line)
+            # Check for setting line. Real CellProfiler corpora include both
+            # indented .cppipe settings and unindented legacy .pipeline settings.
+            setting_match = self._setting_match(line, current_module)
             if setting_match and current_module:
                 setting = ModuleSetting(
                     name=setting_match.group(1),
@@ -191,6 +197,22 @@ class CPPipeParser:
         
         logger.info(f"Parsed {len(self.modules)} modules from {path.name}")
         return self.modules
+
+    def _setting_match(
+        self,
+        line: str,
+        current_module: Optional[ModuleBlock],
+    ) -> Optional[re.Match[str]]:
+        if current_module is None:
+            return None
+        setting_match = self.SETTING_PATTERN.match(line)
+        if setting_match is not None:
+            return setting_match
+
+        setting_match = self.UNINDENTED_SETTING_PATTERN.match(line)
+        if setting_match is None or not setting_match.group(1).strip():
+            return None
+        return setting_match
     
     def _parse_metadata(self, metadata_str: str) -> Dict[str, Any]:
         """Parse module metadata from bracket content."""

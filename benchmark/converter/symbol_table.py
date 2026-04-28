@@ -647,6 +647,31 @@ def _measure_object_intensity(
     )
 
 
+def _measure_image_or_object(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    images = [
+        builder.require(name, CellProfilerSymbolKind.IMAGE, module)
+        for name in _setting_symbol_names(module, IMAGE_MEASUREMENT_SETTING)
+    ]
+    objects = [
+        builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
+        for name in _optional_setting_symbol_names(module, OBJECT_MEASUREMENT_SETTING)
+    ]
+    measurements = builder.declare(
+        _measurement_name(module),
+        CellProfilerSymbolKind.MEASUREMENTS,
+        module,
+    )
+    return _contracts(
+        module,
+        builder,
+        inputs=[*images, *objects],
+        outputs=[measurements],
+    )
+
+
 def _measure_image_intensity(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
@@ -1117,11 +1142,10 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
         (
             "MeasureObjectIntensity",
             "MeasureObjectIntensityDistribution",
-            "MeasureTexture",
-            "MeasureColocalization",
         ),
         _measure_object_intensity,
     ),
+    (("MeasureTexture", "MeasureColocalization"), _measure_image_or_object),
     (("MeasureGranularity",), _measure_granularity),
     (("MeasureImageIntensity",), _measure_image_intensity),
     (("MeasureObjectNeighbors",), _measure_object_neighbors),
