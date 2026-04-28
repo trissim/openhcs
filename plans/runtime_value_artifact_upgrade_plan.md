@@ -193,6 +193,11 @@ The branch has already established most of the typed runtime/compiler foundation
     - generated `.cppipe` pipeline objects and prepared runtime pipelines carry the compiled pipeline-level `source_schema`
     - dataset specs can declare canonical reference `.cppipe` URLs
     - the OpenHCS benchmark adapter can resolve converted pipeline runs from either a local `.cppipe` path or a dataset-owned canonical `.cppipe` reference
+22. The absorbed CellProfiler import/materialization surface is now cleaner and exercised on real paths:
+    - `csv_materializer(...)` is a first-class exported materialization preset used by absorbed measurement/export modules
+    - `openhcs.core.memory.decorators` is a real core import surface rather than an implicit missing module
+    - active and ExampleFly-relevant absorbed functions now import cleanly under unit coverage
+    - the benchmark adapter now executes the real shipped `ExampleFly.cppipe` end to end and materializes non-empty CSV outputs
 
 ### 3.2 What Is Still Missing
 
@@ -214,6 +219,7 @@ The biggest unresolved items are now:
    - a generated `RelateObjects` pipeline now executes through the orchestrator and materializes both relationship and measurement CSV outputs
    - the next gap is broader corpus coverage and dataset-level validation, not basic execution enablement
 7. Export and relationship-heavy semantics now have initial real-output validation, but not broad corpus-level validation.
+9. The broader absorbed-function corpus still needs continued cleanup beyond the currently exercised import/materialization surface.
 8. Benchmarking is no longer ahead of the remaining CellProfiler semantics, but it should still stay secondary to broader semantic validation.
 
 ---

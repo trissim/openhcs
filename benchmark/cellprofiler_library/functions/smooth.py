@@ -8,6 +8,7 @@ Smooths (blurs) images using various filtering methods.
 import numpy as np
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
 class SmoothingMethod(Enum):

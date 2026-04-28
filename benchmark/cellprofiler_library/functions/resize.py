@@ -9,6 +9,7 @@ or by specifying desired dimensions in pixels.
 import numpy as np
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
 class ResizeMethod(Enum):

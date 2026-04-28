@@ -6,6 +6,7 @@ Original: closing
 import numpy as np
 from typing import Literal
 from openhcs.core.memory.decorators import numpy
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
 @numpy(contract=ProcessingContract.PURE_2D)

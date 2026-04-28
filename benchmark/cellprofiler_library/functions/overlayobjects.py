@@ -5,6 +5,7 @@ Overlays labeled objects on an image with colored regions.
 
 import numpy as np
 from openhcs.core.memory.decorators import numpy
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs
 
 

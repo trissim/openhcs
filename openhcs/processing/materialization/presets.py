@@ -55,6 +55,37 @@ def csv_only(
     )
 
 
+def csv_materializer(
+    *,
+    fields: Optional[List[str]] = None,
+    analysis_type: Optional[str] = None,
+    source: Optional[str] = None,
+    row_field: Optional[str] = None,
+    row_columns: Optional[Dict[str, str]] = None,
+    row_unpacker: Optional[Callable[[Any], List[Dict[str, Any]]]] = None,
+    suffix: Optional[str] = None,
+    allowed_backends: Optional[List[str]] = None,
+) -> MaterializationSpec:
+    """Compatibility helper for CSV analysis outputs in absorbed functions.
+
+    ``analysis_type`` maps to the historical per-analysis filename convention
+    ``_<analysis_type>.csv``. Callers can still override the suffix directly.
+    """
+
+    resolved_suffix = suffix or (
+        f"_{analysis_type}.csv" if analysis_type else "_details.csv"
+    )
+    return csv_only(
+        source=source,
+        suffix=resolved_suffix,
+        fields=fields,
+        row_field=row_field,
+        row_columns=row_columns,
+        row_unpacker=row_unpacker,
+        allowed_backends=allowed_backends,
+    )
+
+
 def json_and_csv(
     *,
     json_source: Optional[str] = None,
