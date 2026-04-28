@@ -3,6 +3,7 @@ import pickle
 import pytest
 
 from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
+from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     ComponentSelector,
@@ -45,6 +46,14 @@ def test_named_source_binding_normalizes_origin_and_requires_alias():
     )
 
     assert binding.origin is SourceBindingOrigin.PIPELINE_START
+    assert binding.artifact_kind is ArtifactKind.IMAGE
+
+    objects_binding = NamedSourceBinding(
+        alias="Nuclei",
+        artifact_kind="object_labels",
+    )
+
+    assert objects_binding.artifact_kind is ArtifactKind.OBJECT_LABELS
 
     with pytest.raises(ValueError, match="alias cannot be empty"):
         NamedSourceBinding(alias="")

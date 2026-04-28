@@ -14,6 +14,7 @@ from typing import Any, ClassVar, Mapping
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.constants.constants import AllComponents
+from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.pipeline_image_schema import (
     CellProfilerImageSchema,
     GroupingPlan,
@@ -21,6 +22,7 @@ from openhcs.core.pipeline_image_schema import (
     ImportedMetadataJoin,
     ImportedMetadataTable,
     ImagesRule,
+    SourceArtifactAssignment,
 )
 from openhcs.core.source_bindings import (
     ComponentSelector,
@@ -112,6 +114,9 @@ class _SetupModuleCompilation:
     metadata_rules: tuple[MetadataExtractionRule, ...] = ()
     imported_metadata_tables: tuple[ImportedMetadataTable, ...] = ()
     assignments_by_alias: Mapping[str, ImageAssignment] = MappingProxyType({})
+    source_artifacts_by_alias: Mapping[str, SourceArtifactAssignment] = (
+        MappingProxyType({})
+    )
     match_plan: SourceBindingMatchPlan | None = None
     grouping: GroupingPlan | None = None
 
@@ -121,6 +126,7 @@ class _SetupModuleCompilation:
             metadata_rules=self.metadata_rules,
             imported_metadata_tables=self.imported_metadata_tables,
             assignments_by_alias=self.assignments_by_alias,
+            source_artifacts_by_alias=self.source_artifacts_by_alias,
             match_plan=self.match_plan,
             grouping=self.grouping,
         )
@@ -132,6 +138,7 @@ class _SchemaBuilder:
         self.metadata_rules: list[MetadataExtractionRule] = []
         self.imported_metadata_tables: list[ImportedMetadataTable] = []
         self.assignments_by_alias: dict[str, ImageAssignment] = {}
+        self.source_artifacts_by_alias: dict[str, SourceArtifactAssignment] = {}
         self.match_plan: SourceBindingMatchPlan | None = None
         self.grouping: GroupingPlan | None = None
 
@@ -141,6 +148,9 @@ class _SchemaBuilder:
             metadata_rules=tuple(self.metadata_rules),
             imported_metadata_tables=tuple(self.imported_metadata_tables),
             assignments_by_alias=MappingProxyType(dict(self.assignments_by_alias)),
+            source_artifacts_by_alias=MappingProxyType(
+                dict(self.source_artifacts_by_alias)
+            ),
             match_plan=self.match_plan,
             grouping=self.grouping,
         ).to_schema()
@@ -158,7 +168,29 @@ class _SchemaBuilder:
                 f"CellProfiler image alias {assignment.alias!r} is already declared "
                 "with different setup semantics."
             )
+        if assignment.alias in self.source_artifacts_by_alias:
+            raise ValueError(
+                f"CellProfiler alias {assignment.alias!r} is already declared as "
+                "a non-image source artifact."
+            )
         self.assignments_by_alias[assignment.alias] = assignment
+
+    def declare_source_artifact(
+        self,
+        assignment: SourceArtifactAssignment,
+    ) -> None:
+        existing = self.source_artifacts_by_alias.get(assignment.alias)
+        if existing is not None and existing != assignment:
+            raise ValueError(
+                f"CellProfiler source artifact {assignment.alias!r} is already "
+                "declared with different setup semantics."
+            )
+        if assignment.alias in self.assignments_by_alias:
+            raise ValueError(
+                f"CellProfiler alias {assignment.alias!r} is already declared as "
+                "an image assignment."
+            )
+        self.source_artifacts_by_alias[assignment.alias] = assignment
 
     def declare_match_plan(self, match_plan: SourceBindingMatchPlan) -> None:
         if self.match_plan is not None and self.match_plan != match_plan:
@@ -226,20 +258,33 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
         if match_plan is not None:
             state.declare_match_plan(match_plan)
         for block in assignment_blocks:
-            alias = _block_value(block, "Name to assign these images", default="")
+            image_type = _block_value(
+                block,
+                "Select the image type",
+                default="Grayscale image",
+            )
+            artifact_kind = _artifact_kind_for_names_and_types_image_type(image_type)
+            alias = _assignment_alias(block, artifact_kind)
             if not alias:
                 continue
             selector = _selector_from_rule_criteria(
                 _block_value(block, "Select the rule criteria")
             )
+            if artifact_kind is ArtifactKind.OBJECT_LABELS:
+                state.declare_source_artifact(
+                    SourceArtifactAssignment(
+                        alias=alias,
+                        kind=artifact_kind,
+                        selector=selector,
+                        origin=_origin_for_selector(selector),
+                        payload_type=image_type,
+                    )
+                )
+                continue
             state.declare_assignment(
                 ImageAssignment(
                     alias=alias,
-                    image_type=_block_value(
-                        block,
-                        "Select the image type",
-                        default="Grayscale image",
-                    ),
+                    image_type=image_type,
                     selector=selector,
                     origin=_origin_for_selector(selector),
                 )
@@ -405,6 +450,21 @@ def _block_value(
         if setting.name == name:
             return setting.value
     return default
+
+
+def _artifact_kind_for_names_and_types_image_type(image_type: str) -> ArtifactKind:
+    if image_type.strip().lower() == "objects":
+        return ArtifactKind.OBJECT_LABELS
+    return ArtifactKind.IMAGE
+
+
+def _assignment_alias(
+    block: Sequence[ModuleSetting],
+    artifact_kind: ArtifactKind,
+) -> str:
+    if artifact_kind is ArtifactKind.OBJECT_LABELS:
+        return _block_value(block, "Name to assign these objects", default="")
+    return _block_value(block, "Name to assign these images", default="")
 
 
 def _metadata_source(value: str) -> MetadataSource:

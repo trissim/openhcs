@@ -6,6 +6,7 @@ from benchmark.converter.pipeline_generator import PipelineGenerator
 from benchmark.converter.source_schema import compile_image_schema
 from benchmark.converter.symbol_table import CellProfilerSymbolTable
 from openhcs.constants.constants import AllComponents
+from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.pipeline_image_schema import CellProfilerImageSchema
 from openhcs.core.source_bindings import (
     ComponentSelector,
@@ -164,6 +165,33 @@ def test_compile_image_schema_lowers_names_and_types_to_typed_selectors():
         schema.metadata_rules[0].filters[0].match_type
         is SourceFilterMatchType.CONTAINS
     )
+
+
+def test_compile_image_schema_lowers_object_loads_to_source_artifacts():
+    names_and_types_module = _module_with_records(
+        1,
+        "NamesAndTypes",
+        [
+            ("Assignments count", "1"),
+            ("Select the rule criteria", 'and (metadata does channel "3")'),
+            ("Name to assign these images", "IgnoredImageAlias"),
+            ("Name to assign these objects", "LoadedNuclei"),
+            ("Select the image type", "Objects"),
+        ],
+    )
+
+    schema = compile_image_schema([names_and_types_module])
+    source_artifact = schema.resolved_source_artifact_for_alias(
+        "LoadedNuclei",
+        ArtifactKind.OBJECT_LABELS,
+    )
+
+    assert source_artifact is not None
+    assert source_artifact.kind is ArtifactKind.OBJECT_LABELS
+    assert source_artifact.selector.components == (
+        ComponentSelector(AllComponents.CHANNEL, "3"),
+    )
+    assert schema.assignment_for_alias("IgnoredImageAlias") is None
 
 
 def test_compile_image_schema_supports_v5_regex_labels_and_file_filters():

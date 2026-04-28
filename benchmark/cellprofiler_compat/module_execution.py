@@ -141,7 +141,7 @@ class CellProfilerModuleExecutor:
     def _runs_per_object_measurement(self) -> bool:
         return CellProfilerPerObjectMeasurementPolicy.matches(
             self.module_name,
-            self.runtime_artifact_inputs,
+            self._object_input_specs(),
         )
 
     def _produces_image_output(self) -> bool:
@@ -167,10 +167,7 @@ class CellProfilerModuleExecutor:
         source_image_name: str | None,
         **kwargs: Any,
     ) -> Any:
-        object_inputs = _specs_of_kind(
-            self.runtime_artifact_inputs,
-            ArtifactKind.OBJECT_LABELS,
-        )
+        object_inputs = self._object_input_specs()
         measurement_outputs = _specs_of_kind(self.outputs, ArtifactKind.MEASUREMENTS)
         if len(measurement_outputs) != 1:
             raise NotImplementedError(
@@ -180,7 +177,11 @@ class CellProfilerModuleExecutor:
 
         combined_rows: list[Any] = []
         for object_spec in object_inputs:
-            raw_labels = cellprofiler_runtime.get_objects(object_spec.name).labels
+            raw_labels = self._object_labels(
+                object_spec,
+                cellprofiler_runtime,
+                input_image,
+            )
             measurement_labels = _measurement_labels_for_image(
                 measurement_source_image,
                 raw_labels,
@@ -206,6 +207,22 @@ class CellProfilerModuleExecutor:
         )
         return input_image
 
+    def _object_input_specs(self) -> tuple[ArtifactSpec, ...]:
+        return _specs_of_kind(
+            self._declared_input_specs(),
+            ArtifactKind.OBJECT_LABELS,
+        )
+
+    def _object_labels(
+        self,
+        spec: ArtifactSpec,
+        adapter: CellProfilerRuntimeAdapter,
+        fallback_image: Any,
+    ) -> Any:
+        if spec.name in self._external_source_object_names():
+            return adapter.resolve_source_objects(spec.name, fallback_image).labels
+        return adapter.get_objects(spec.name).labels
+
     def _runtime_input_kwargs(
         self,
         func: Callable[..., Any],
@@ -225,6 +242,9 @@ class CellProfilerModuleExecutor:
                 adapter,
                 fallback_image=fallback_image,
                 external_image_names=frozenset(self._external_source_image_names()),
+                external_object_names=frozenset(
+                    self._external_source_object_names()
+                ),
                 runtime_image_names=frozenset(self._runtime_image_names()),
             )
 
@@ -248,19 +268,21 @@ class CellProfilerModuleExecutor:
             self.module_name,
             object_inputs,
             adapter,
+            fallback_image=fallback_image,
+            external_object_names=frozenset(self._external_source_object_names()),
         )
 
     def _special_runtime_inputs(
         self,
         func: Callable[..., Any],
     ) -> tuple[ArtifactSpec, ...]:
-        runtime_non_image_inputs = tuple(
+        non_image_inputs = tuple(
             spec
-            for spec in self.runtime_artifact_inputs
+            for spec in self._declared_input_specs()
             if spec.kind is not ArtifactKind.IMAGE
         )
         return (
-            *runtime_non_image_inputs,
+            *non_image_inputs,
             *self._special_image_inputs(func),
         )
 
@@ -334,7 +356,10 @@ class CellProfilerModuleExecutor:
         self,
         func: Callable[..., Any],
     ) -> tuple[ArtifactSpec, ...]:
-        image_inputs = _specs_of_kind(self.inputs, ArtifactKind.IMAGE)
+        image_inputs = _specs_of_kind(
+            self._declared_input_specs(),
+            ArtifactKind.IMAGE,
+        )
         special_image_count = len(self._special_image_inputs(func))
         if special_image_count == 0:
             return image_inputs
@@ -344,12 +369,15 @@ class CellProfilerModuleExecutor:
         self,
         func: Callable[..., Any],
     ) -> tuple[ArtifactSpec, ...]:
-        image_inputs = _specs_of_kind(self.inputs, ArtifactKind.IMAGE)
+        image_inputs = _specs_of_kind(
+            self._declared_input_specs(),
+            ArtifactKind.IMAGE,
+        )
         special_input_count = len(special_input_names_from_callable(func))
         non_image_count = len(
             tuple(
                 spec
-                for spec in self.runtime_artifact_inputs
+                for spec in self._declared_input_specs()
                 if spec.kind is not ArtifactKind.IMAGE
             )
         )
@@ -376,12 +404,15 @@ class CellProfilerModuleExecutor:
             )
         )
         external_image_names = frozenset(self._external_source_image_names())
-        for spec in self.inputs:
+        for spec in self._declared_input_specs():
             source_name = _artifact_kind_strategy(spec.kind).source_image_name(
                 CellProfilerArtifactKindRequest(
                     spec=spec,
                     adapter=adapter,
                     external_image_names=external_image_names,
+                    external_object_names=frozenset(
+                        self._external_source_object_names()
+                    ),
                     runtime_image_names=runtime_image_names,
                 )
             )
@@ -414,8 +445,25 @@ class CellProfilerModuleExecutor:
         runtime_image_names = frozenset(self._runtime_image_names())
         return tuple(
             spec.name
-            for spec in _specs_of_kind(self.inputs, ArtifactKind.IMAGE)
+            for spec in _specs_of_kind(
+                self._declared_input_specs(),
+                ArtifactKind.IMAGE,
+            )
             if spec.name not in runtime_image_names
+        )
+
+    def _external_source_object_names(self) -> tuple[str, ...]:
+        runtime_object_names = frozenset(
+            spec.name
+            for spec in _specs_of_kind(
+                self.runtime_artifact_inputs,
+                ArtifactKind.OBJECT_LABELS,
+            )
+        )
+        return tuple(
+            spec.name
+            for spec in _specs_of_kind(self.inputs, ArtifactKind.OBJECT_LABELS)
+            if spec.name not in runtime_object_names
         )
 
     def _runtime_image_names(self) -> tuple[str, ...]:
@@ -426,6 +474,9 @@ class CellProfilerModuleExecutor:
                 ArtifactKind.IMAGE,
             )
         )
+
+    def _declared_input_specs(self) -> tuple[ArtifactSpec, ...]:
+        return _unique_specs((*self.inputs, *self.runtime_artifact_inputs))
 
 
 @dataclass(frozen=True, slots=True)
@@ -552,6 +603,7 @@ class CellProfilerArtifactKindRequest:
     adapter: CellProfilerRuntimeAdapter
     fallback_image: Any | None = None
     external_image_names: frozenset[str] = frozenset()
+    external_object_names: frozenset[str] = frozenset()
     runtime_image_names: frozenset[str] = frozenset()
 
 
@@ -615,6 +667,18 @@ class ObjectLabelsArtifactKindStrategy(CellProfilerArtifactKindStrategy):
     kind = ArtifactKind.OBJECT_LABELS
 
     def runtime_input_value(self, request: CellProfilerArtifactKindRequest) -> Any:
+        if request.spec.name in request.external_object_names:
+            if request.fallback_image is None:
+                raise RuntimeError(
+                    f"External object input '{request.spec.name}' requires a "
+                    "fallback image payload for source-binding resolution."
+                )
+            return _collapse_singleton_label_stack(
+                request.adapter.resolve_source_objects(
+                    request.spec.name,
+                    request.fallback_image,
+                ).labels
+            )
         return _collapse_singleton_label_stack(
             request.adapter.get_objects(request.spec.name).labels
         )
@@ -623,6 +687,8 @@ class ObjectLabelsArtifactKindStrategy(CellProfilerArtifactKindStrategy):
         self,
         request: CellProfilerArtifactKindRequest,
     ) -> str | None:
+        if request.spec.name in request.external_object_names:
+            return request.spec.name
         return request.adapter.get_objects(request.spec.name).source_image_name
 
 
@@ -680,6 +746,9 @@ class CellProfilerObjectInputPolicy(ABC, metaclass=AutoRegisterMeta):
         module_name: str,
         object_inputs: tuple[ArtifactSpec, ...],
         adapter: CellProfilerRuntimeAdapter,
+        *,
+        fallback_image: Any,
+        external_object_names: frozenset[str],
     ) -> dict[str, Any]:
         """Return absorbed-function kwargs for object-label runtime inputs."""
 
@@ -692,6 +761,9 @@ class UnsupportedObjectInputPolicy(CellProfilerObjectInputPolicy):
         module_name: str,
         object_inputs: tuple[ArtifactSpec, ...],
         adapter: CellProfilerRuntimeAdapter,
+        *,
+        fallback_image: Any,
+        external_object_names: frozenset[str],
     ) -> dict[str, Any]:
         if not object_inputs:
             return {}
@@ -712,9 +784,19 @@ class IdentifySecondaryObjectInputPolicy(CellProfilerObjectInputPolicy):
         module_name: str,
         object_inputs: tuple[ArtifactSpec, ...],
         adapter: CellProfilerRuntimeAdapter,
+        *,
+        fallback_image: Any,
+        external_object_names: frozenset[str],
     ) -> dict[str, Any]:
         _require_exact_object_count(module_name, object_inputs, 1)
-        return {"primary_labels": adapter.get_objects(object_inputs[0].name).labels}
+        return {
+            "primary_labels": _object_input_labels(
+                object_inputs[0],
+                adapter,
+                fallback_image=fallback_image,
+                external_object_names=external_object_names,
+            )
+        }
 
 
 class IdentifyTertiaryObjectInputPolicy(CellProfilerObjectInputPolicy):
@@ -727,12 +809,25 @@ class IdentifyTertiaryObjectInputPolicy(CellProfilerObjectInputPolicy):
         module_name: str,
         object_inputs: tuple[ArtifactSpec, ...],
         adapter: CellProfilerRuntimeAdapter,
+        *,
+        fallback_image: Any,
+        external_object_names: frozenset[str],
     ) -> dict[str, Any]:
         _require_exact_object_count(module_name, object_inputs, 2)
         larger, smaller = object_inputs
         return {
-            "primary_labels": adapter.get_objects(smaller.name).labels,
-            "secondary_labels": adapter.get_objects(larger.name).labels,
+            "primary_labels": _object_input_labels(
+                smaller,
+                adapter,
+                fallback_image=fallback_image,
+                external_object_names=external_object_names,
+            ),
+            "secondary_labels": _object_input_labels(
+                larger,
+                adapter,
+                fallback_image=fallback_image,
+                external_object_names=external_object_names,
+            ),
         }
 
 
@@ -746,9 +841,19 @@ class SingleLabelMeasurementInputPolicy(CellProfilerObjectInputPolicy):
         module_name: str,
         object_inputs: tuple[ArtifactSpec, ...],
         adapter: CellProfilerRuntimeAdapter,
+        *,
+        fallback_image: Any,
+        external_object_names: frozenset[str],
     ) -> dict[str, Any]:
         _require_exact_object_count(module_name, object_inputs, 1)
-        return {"labels": adapter.get_objects(object_inputs[0].name).labels}
+        return {
+            "labels": _object_input_labels(
+                object_inputs[0],
+                adapter,
+                fallback_image=fallback_image,
+                external_object_names=external_object_names,
+            )
+        }
 
 
 _SINGLE_LABEL_MEASUREMENT_POLICY_MODULES = (
@@ -790,10 +895,10 @@ class CellProfilerPerObjectMeasurementPolicy:
     def matches(
         cls,
         module_name: str,
-        runtime_artifact_inputs: tuple[ArtifactSpec, ...],
+        object_inputs: tuple[ArtifactSpec, ...],
     ) -> bool:
         return canonical_module_name(module_name) in cls.module_names and len(
-            _specs_of_kind(runtime_artifact_inputs, ArtifactKind.OBJECT_LABELS)
+            object_inputs
         ) > 1
 
 
@@ -863,7 +968,7 @@ class MeasurementsOutputRecorder(CellProfilerOutputRecorder):
             request.spec.name,
             _measurement_table_rows(request.value),
             object_name=_measurement_object_name(
-                request.executor.runtime_artifact_inputs
+                request.executor._declared_input_specs()
             ),
             source_image_name=request.source_image_name,
         )
@@ -882,7 +987,7 @@ class RelationshipsOutputRecorder(CellProfilerOutputRecorder):
                 f"got {type(request.value).__name__}."
             )
         object_inputs = _specs_of_kind(
-            request.executor.runtime_artifact_inputs,
+            request.executor._declared_input_specs(),
             ArtifactKind.OBJECT_LABELS,
         )
         if len(object_inputs) != 2:
@@ -1036,6 +1141,20 @@ def _specs_of_kind(
     return tuple(spec for spec in specs if spec.kind is kind)
 
 
+def _unique_specs(specs: Sequence[ArtifactSpec]) -> tuple[ArtifactSpec, ...]:
+    unique: dict[tuple[str, ArtifactKind], ArtifactSpec] = {}
+    for spec in specs:
+        key = (spec.name, spec.kind)
+        existing = unique.get(key)
+        if existing is not None and existing != spec:
+            raise ValueError(
+                f"Conflicting CellProfiler input spec declarations for "
+                f"{spec.kind.value}:{spec.name}."
+            )
+        unique[key] = spec
+    return tuple(unique.values())
+
+
 def _require_exact_object_count(
     module_name: str,
     object_inputs: tuple[ArtifactSpec, ...],
@@ -1048,10 +1167,22 @@ def _require_exact_object_count(
         )
 
 
+def _object_input_labels(
+    spec: ArtifactSpec,
+    adapter: CellProfilerRuntimeAdapter,
+    *,
+    fallback_image: Any,
+    external_object_names: frozenset[str],
+) -> Any:
+    if spec.name in external_object_names:
+        return adapter.resolve_source_objects(spec.name, fallback_image).labels
+    return adapter.get_objects(spec.name).labels
+
+
 def _measurement_object_name(
-    runtime_inputs: tuple[ArtifactSpec, ...],
+    inputs: tuple[ArtifactSpec, ...],
 ) -> str | None:
-    object_inputs = _specs_of_kind(runtime_inputs, ArtifactKind.OBJECT_LABELS)
+    object_inputs = _specs_of_kind(inputs, ArtifactKind.OBJECT_LABELS)
     if len(object_inputs) == 1:
         return object_inputs[0].name
     return None
@@ -1065,6 +1196,7 @@ def _bind_special_runtime_inputs(
     *,
     fallback_image: Any,
     external_image_names: frozenset[str],
+    external_object_names: frozenset[str],
     runtime_image_names: frozenset[str],
 ) -> dict[str, Any]:
     if len(parameter_names) != len(runtime_inputs):
@@ -1078,6 +1210,7 @@ def _bind_special_runtime_inputs(
             adapter,
             fallback_image=fallback_image,
             external_image_names=external_image_names,
+            external_object_names=external_object_names,
             runtime_image_names=runtime_image_names,
         )
         for parameter_name, spec in zip(
@@ -1094,6 +1227,7 @@ def _runtime_input_value(
     *,
     fallback_image: Any,
     external_image_names: frozenset[str],
+    external_object_names: frozenset[str],
     runtime_image_names: frozenset[str],
 ) -> Any:
     try:
@@ -1103,6 +1237,7 @@ def _runtime_input_value(
                 adapter=adapter,
                 fallback_image=fallback_image,
                 external_image_names=external_image_names,
+                external_object_names=external_object_names,
                 runtime_image_names=runtime_image_names,
             )
         )

@@ -89,6 +89,7 @@ class CellProfilerSymbol:
     name: str
     kind: CellProfilerSymbolKind
     producer_module_num: int | None = None
+    source_bound: bool = False
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -99,11 +100,8 @@ class CellProfilerSymbol:
 
     @property
     def is_external_source(self) -> bool:
-        """Whether this symbol is supplied by input metadata rather than a module."""
-        return (
-            self.kind is CellProfilerSymbolKind.IMAGE
-            and self.producer_module_num is None
-        )
+        """Whether this symbol is supplied by source bindings rather than a module."""
+        return self.source_bound and self.producer_module_num is None
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,9 +140,9 @@ class ModuleArtifactContracts:
     def runtime_artifact_inputs(self) -> tuple[ArtifactSpec, ...]:
         """Inputs that should be routed through OpenHCS artifact storage.
 
-        External source images are intentionally excluded: they are normal image
-        inputs from the plate/channel layer, not side-channel artifact reads.
-        Images produced by prior modules remain artifact inputs.
+        Source-bound artifacts are intentionally excluded: they are normal inputs
+        from the source-binding layer, not side-channel artifact reads. Values
+        produced by prior modules remain artifact inputs.
         """
         return tuple(
             symbol.artifact_spec()
@@ -154,7 +152,7 @@ class ModuleArtifactContracts:
 
     @property
     def external_source_symbols(self) -> tuple[CellProfilerSymbol, ...]:
-        """Source image names this module expects from input metadata/channels."""
+        """Source-bound names this module expects from input metadata/channels."""
         return tuple(
             symbol
             for symbol in self.input_symbols
@@ -264,7 +262,19 @@ class _SymbolTableBuilder:
         )
 
     def external_image(self, name: str) -> CellProfilerSymbol:
-        return self._declare(name, CellProfilerSymbolKind.IMAGE, None)
+        return self._declare(
+            name,
+            CellProfilerSymbolKind.IMAGE,
+            None,
+            source_bound=True,
+        )
+
+    def external_source_artifact(
+        self,
+        name: str,
+        kind: CellProfilerSymbolKind,
+    ) -> CellProfilerSymbol:
+        return self._declare(name, kind, None, source_bound=True)
 
     def require(
         self,
@@ -275,6 +285,21 @@ class _SymbolTableBuilder:
         normalized_name = _normalize_symbol_name(name)
         symbol = self._symbols.get(normalized_name)
         if symbol is None:
+            try:
+                source_artifact = (
+                    self._source_schema.resolved_source_artifact_for_alias(
+                        normalized_name,
+                        kind.artifact_kind,
+                    )
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    f"Module {module.name}({module.module_num}) expects "
+                    f"'{normalized_name}' as {kind.value}, but setup declares "
+                    "a different source artifact kind."
+                ) from exc
+            if source_artifact is not None:
+                return self.external_source_artifact(normalized_name, kind)
             if kind is CellProfilerSymbolKind.IMAGE:
                 return self.external_image(normalized_name)
             raise ValueError(
@@ -303,12 +328,15 @@ class _SymbolTableBuilder:
         name: str,
         kind: CellProfilerSymbolKind,
         producer_module_num: int | None,
+        *,
+        source_bound: bool = False,
     ) -> CellProfilerSymbol:
         normalized_name = _normalize_symbol_name(name)
         symbol = CellProfilerSymbol(
             name=normalized_name,
             kind=kind,
             producer_module_num=producer_module_num,
+            source_bound=source_bound,
         )
         existing = self._symbols.get(normalized_name)
         if existing is not None:
@@ -332,9 +360,15 @@ class _SymbolTableBuilder:
         self,
         symbol: CellProfilerSymbol,
     ) -> NamedSourceBinding:
-        assignment = self._source_schema.resolved_assignment_for_alias(symbol.name)
+        assignment = self._source_schema.resolved_source_artifact_for_alias(
+            symbol.name,
+            symbol.kind.artifact_kind,
+        )
         if assignment is None:
-            return NamedSourceBinding(alias=symbol.name)
+            return NamedSourceBinding(
+                alias=symbol.name,
+                artifact_kind=symbol.kind.artifact_kind,
+            )
         return assignment.to_binding()
 
 
@@ -411,6 +445,8 @@ def _grouped_source_bindings_literal(group: GroupedSourceBindings) -> str:
 
 def _named_source_binding_literal(binding: NamedSourceBinding) -> str:
     field_literals = [f"alias={binding.alias!r}"]
+    if binding.artifact_kind is not ArtifactKind.IMAGE:
+        field_literals.append(f"artifact_kind=ArtifactKind.{binding.artifact_kind.name}")
     if binding.selector != SourceSelector():
         field_literals.append(
             f"selector={_source_selector_literal(binding.selector)}"

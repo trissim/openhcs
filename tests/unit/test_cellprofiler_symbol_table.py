@@ -144,6 +144,36 @@ def test_cellprofiler_symbol_table_fails_for_unknown_object_input():
         CellProfilerSymbolTable.compile(modules)
 
 
+def test_cellprofiler_symbol_table_accepts_declared_source_object_inputs():
+    setup_module = _module_with_records(
+        1,
+        "NamesAndTypes",
+        [
+            ("Assignments count", "1"),
+            ("Select the rule criteria", 'and (metadata does channel "3")'),
+            ("Name to assign these images", "IgnoredImageAlias"),
+            ("Name to assign these objects", "LoadedNuclei"),
+            ("Select the image type", "Objects"),
+        ],
+    )
+    measurement_module = _module(
+        2,
+        "MeasureObjectSizeShape",
+        {"Select object sets to measure": "LoadedNuclei"},
+    )
+
+    table = CellProfilerSymbolTable.compile([setup_module, measurement_module])
+    contract = table.contracts_by_module_num[2]
+
+    assert table.symbols["LoadedNuclei"].source_bound is True
+    assert contract.runtime_artifact_inputs == ()
+    assert contract.source_bindings.groups[0].bindings[0].artifact_kind is (
+        ArtifactKind.OBJECT_LABELS
+    )
+    assert [spec.name for spec in contract.inputs] == ["LoadedNuclei"]
+    assert [spec.kind for spec in contract.inputs] == [ArtifactKind.OBJECT_LABELS]
+
+
 def test_cellprofiler_symbol_table_fails_for_kind_conflict():
     modules = [
         _identify_primary(),

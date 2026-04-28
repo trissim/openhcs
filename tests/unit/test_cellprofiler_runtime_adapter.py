@@ -153,6 +153,63 @@ def test_cellprofiler_adapter_adds_and_reads_objects_through_runtime_store():
     assert filemanager.saved[("memory", "/memory/Nuclei.pkl")] is labels
 
 
+def test_cellprofiler_adapter_resolves_source_bound_objects():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias=NUCLEI,
+                        artifact_kind=ArtifactKind.OBJECT_LABELS,
+                    ),
+                )
+            ),
+        )
+    )
+    adapter, _filemanager = _adapter({}, source_bindings=source_bindings)
+    labels = np.ones((3, 3), dtype=np.uint16)
+
+    objects = adapter.resolve_source_objects(NUCLEI, labels)
+
+    assert objects.name == NUCLEI
+    np.testing.assert_array_equal(objects.labels, labels)
+    assert objects.source_image_name == NUCLEI
+
+
+def test_cellprofiler_adapter_allows_measurements_for_source_bound_objects():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias=NUCLEI,
+                        artifact_kind=ArtifactKind.OBJECT_LABELS,
+                    ),
+                )
+            ),
+        )
+    )
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI_MEASUREMENTS: _plan(
+                NUCLEI_MEASUREMENTS,
+                ArtifactKind.MEASUREMENTS,
+            ),
+        },
+        source_bindings=source_bindings,
+    )
+    rows = [{"object_id": 1, "area": 42.0}]
+
+    adapter.add_measurements(
+        NUCLEI_MEASUREMENTS,
+        rows,
+        object_name=NUCLEI,
+    )
+
+    measurements = adapter.get_measurements(NUCLEI_MEASUREMENTS)
+    assert measurements.object_name == NUCLEI
+
+
 def test_cellprofiler_adapter_adds_measurements_after_object_reference_exists():
     adapter, _filemanager = _adapter(
         {

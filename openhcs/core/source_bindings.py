@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from openhcs.constants.constants import AllComponents
+from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.components.validation import convert_enum_by_value
 from openhcs.core.runtime_semantics import coerce_enum
 
@@ -284,6 +285,7 @@ class NamedSourceBinding:
     """Semantic alias mapped to a typed selector over step input space."""
 
     alias: str
+    artifact_kind: ArtifactKind = ArtifactKind.IMAGE
     selector: SourceSelector = SourceSelector()
     origin: SourceBindingOrigin = SourceBindingOrigin.STEP_INPUT
     required: bool = True
@@ -291,6 +293,15 @@ class NamedSourceBinding:
     def __post_init__(self) -> None:
         _require_name(self.alias, "NamedSourceBinding.alias")
         object.__setattr__(self, "alias", str(self.alias))
+        object.__setattr__(
+            self,
+            "artifact_kind",
+            coerce_enum(
+                ArtifactKind,
+                self.artifact_kind,
+                "NamedSourceBinding.artifact_kind",
+            ),
+        )
         if not isinstance(self.selector, SourceSelector):
             raise TypeError(
                 "NamedSourceBinding.selector must be SourceSelector, "

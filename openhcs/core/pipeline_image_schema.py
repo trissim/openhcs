@@ -10,6 +10,7 @@ from typing import ClassVar, Mapping
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.constants.constants import AllComponents
+from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.source_bindings import (
     ComponentSelector,
     MetadataExtractionRule,
@@ -28,37 +29,90 @@ class ImagesRule:
     criteria: str
 
 
-@dataclass(frozen=True, slots=True)
-class ImageAssignment:
-    """One pipeline-level semantic image alias assignment."""
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SourceAssignmentBase(ABC):
+    """Shared source-assignment identity and selector contract."""
 
     alias: str
-    image_type: str
     selector: SourceSelector
     origin: SourceBindingOrigin
 
     def __post_init__(self) -> None:
         normalized_alias = self.alias.strip()
         if not normalized_alias:
-            raise ValueError("ImageAssignment.alias cannot be empty.")
+            raise ValueError(f"{type(self).__name__}.alias cannot be empty.")
         object.__setattr__(self, "alias", normalized_alias)
-        object.__setattr__(self, "image_type", self.image_type.strip())
         if not isinstance(self.selector, SourceSelector):
             raise TypeError(
-                "ImageAssignment.selector must be SourceSelector, "
+                f"{type(self).__name__}.selector must be SourceSelector, "
                 f"got {type(self.selector).__name__}."
             )
         if not isinstance(self.origin, SourceBindingOrigin):
             raise TypeError(
-                "ImageAssignment.origin must be SourceBindingOrigin, "
+                f"{type(self).__name__}.origin must be SourceBindingOrigin, "
                 f"got {type(self.origin).__name__}."
             )
+
+    @property
+    @abstractmethod
+    def artifact_kind(self) -> ArtifactKind:
+        """Artifact kind bound by this source assignment."""
 
     def to_binding(self) -> NamedSourceBinding:
         return NamedSourceBinding(
             alias=self.alias,
+            artifact_kind=self.artifact_kind,
             selector=self.selector,
             origin=self.origin,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ImageAssignment(SourceAssignmentBase):
+    """One pipeline-level semantic image alias assignment."""
+
+    image_type: str
+
+    def __post_init__(self) -> None:
+        SourceAssignmentBase.__post_init__(self)
+        object.__setattr__(self, "image_type", self.image_type.strip())
+
+    @property
+    def artifact_kind(self) -> ArtifactKind:
+        return ArtifactKind.IMAGE
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SourceArtifactAssignment(SourceAssignmentBase):
+    """One pipeline-start or step-input source artifact declaration."""
+
+    kind: ArtifactKind
+    payload_type: str = ""
+
+    def __post_init__(self) -> None:
+        SourceAssignmentBase.__post_init__(self)
+        if not isinstance(self.kind, ArtifactKind):
+            raise TypeError(
+                "SourceArtifactAssignment.kind must be ArtifactKind, "
+                f"got {type(self.kind).__name__}."
+            )
+        object.__setattr__(self, "payload_type", self.payload_type.strip())
+
+    @property
+    def artifact_kind(self) -> ArtifactKind:
+        return self.kind
+
+    @classmethod
+    def from_image_assignment(
+        cls,
+        assignment: ImageAssignment,
+    ) -> "SourceArtifactAssignment":
+        return cls(
+            alias=assignment.alias,
+            kind=ArtifactKind.IMAGE,
+            selector=assignment.selector,
+            origin=assignment.origin,
+            payload_type=assignment.image_type,
         )
 
 
@@ -134,6 +188,9 @@ class CellProfilerImageSchema:
     metadata_rules: tuple[MetadataExtractionRule, ...] = ()
     imported_metadata_tables: tuple[ImportedMetadataTable, ...] = ()
     assignments_by_alias: Mapping[str, ImageAssignment] = MappingProxyType({})
+    source_artifacts_by_alias: Mapping[str, SourceArtifactAssignment] = (
+        MappingProxyType({})
+    )
     match_plan: SourceBindingMatchPlan | None = None
     grouping: GroupingPlan | None = None
 
@@ -149,6 +206,11 @@ class CellProfilerImageSchema:
             "assignments_by_alias",
             MappingProxyType(dict(self.assignments_by_alias)),
         )
+        object.__setattr__(
+            self,
+            "source_artifacts_by_alias",
+            MappingProxyType(dict(self.source_artifacts_by_alias)),
+        )
         for table in self.imported_metadata_tables:
             if not isinstance(table, ImportedMetadataTable):
                 raise TypeError(
@@ -162,6 +224,18 @@ class CellProfilerImageSchema:
                     f"CellProfilerImageSchema alias key {alias!r} does not match "
                     f"assignment alias {assignment.alias!r}."
                 )
+        for alias, assignment in self.source_artifacts_by_alias.items():
+            if not isinstance(assignment, SourceArtifactAssignment):
+                raise TypeError(
+                    "CellProfilerImageSchema.source_artifacts_by_alias values "
+                    "must be SourceArtifactAssignment, got "
+                    f"{type(assignment).__name__}."
+                )
+            if alias != assignment.alias:
+                raise ValueError(
+                    f"CellProfilerImageSchema source-artifact key {alias!r} "
+                    f"does not match assignment alias {assignment.alias!r}."
+                )
 
     @classmethod
     def empty(cls) -> "CellProfilerImageSchema":
@@ -174,6 +248,7 @@ class CellProfilerImageSchema:
             and not self.metadata_rules
             and not self.imported_metadata_tables
             and not self.assignments_by_alias
+            and not self.source_artifacts_by_alias
             and self.match_plan is None
             and self.grouping is None
         )
@@ -186,6 +261,33 @@ class CellProfilerImageSchema:
         if assignment is not None:
             return assignment
         return LegacyImageAssignmentStrategy.resolve(alias)
+
+    def source_artifact_for_alias(
+        self,
+        alias: str,
+    ) -> SourceArtifactAssignment | None:
+        artifact_assignment = self.source_artifacts_by_alias.get(alias)
+        if artifact_assignment is not None:
+            return artifact_assignment
+        image_assignment = self.resolved_assignment_for_alias(alias)
+        if image_assignment is not None:
+            return SourceArtifactAssignment.from_image_assignment(image_assignment)
+        return None
+
+    def resolved_source_artifact_for_alias(
+        self,
+        alias: str,
+        kind: ArtifactKind,
+    ) -> SourceArtifactAssignment | None:
+        artifact_assignment = self.source_artifact_for_alias(alias)
+        if artifact_assignment is None:
+            return None
+        if artifact_assignment.kind is not kind:
+            raise ValueError(
+                f"CellProfiler source artifact {alias!r} is declared as "
+                f"{artifact_assignment.kind.value}, not {kind.value}."
+            )
+        return artifact_assignment
 
 
 class LegacyImageAssignmentStrategy(ABC, metaclass=AutoRegisterMeta):

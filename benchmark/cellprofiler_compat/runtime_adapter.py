@@ -114,14 +114,45 @@ class CellProfilerRuntimeAdapter:
         alias: str,
         fallback_image: Any,
     ) -> Any:
-        binding = self._require_source_binding(alias)
-        return SourceBindingResolver.for_origin(binding.origin).resolve_image(
-            SourceBindingResolutionRequest(
-                alias=alias,
-                binding=binding,
-                adapter=self,
-                fallback_image=fallback_image,
-            )
+        request = self._source_resolution_request(
+            alias,
+            ArtifactKind.IMAGE,
+            fallback_image,
+        )
+        return SourceBindingResolver.for_origin(request.binding.origin).resolve_image(
+            request
+        )
+
+    def resolve_source_objects(
+        self,
+        alias: str,
+        fallback_image: Any,
+    ) -> ObjectLabelSet:
+        request = self._source_resolution_request(
+            alias,
+            ArtifactKind.OBJECT_LABELS,
+            fallback_image,
+        )
+        labels = SourceBindingResolver.for_origin(request.binding.origin).resolve_image(
+            request
+        )
+        return ObjectLabelSet(
+            name=alias,
+            labels=labels,
+            source_image_name=alias,
+        )
+
+    def _source_resolution_request(
+        self,
+        alias: str,
+        kind: ArtifactKind,
+        fallback_image: Any,
+    ) -> "SourceBindingResolutionRequest":
+        return SourceBindingResolutionRequest(
+            alias=alias,
+            binding=self._require_source_binding(alias, kind),
+            adapter=self,
+            fallback_image=fallback_image,
         )
 
     def require_resolvable_source_aliases(
@@ -129,23 +160,34 @@ class CellProfilerRuntimeAdapter:
         aliases: tuple[str, ...],
     ) -> None:
         for alias in aliases:
-            self._require_source_binding(alias)
+            self._require_source_binding(alias, ArtifactKind.IMAGE)
 
     def has_source_binding(
         self,
         alias: str,
+        kind: ArtifactKind | None = None,
     ) -> bool:
-        return self.source_binding_plan.binding_for_alias(alias, self.group_key) is not None
+        binding = self.source_binding_plan.binding_for_alias(alias, self.group_key)
+        return binding is not None and (
+            kind is None or binding.artifact_kind is kind
+        )
 
     def _require_source_binding(
         self,
         alias: str,
+        kind: ArtifactKind,
     ) -> NamedSourceBinding:
         binding = self.source_binding_plan.binding_for_alias(alias, self.group_key)
         if binding is None:
             raise RuntimeError(
-                f"Missing compiled source binding for CellProfiler image alias "
-                f"'{alias}' on axis '{self.axis_id}' and group {self.group_key!r}."
+                f"Missing compiled source binding for CellProfiler "
+                f"{kind.value} alias '{alias}' on axis '{self.axis_id}' and "
+                f"group {self.group_key!r}."
+            )
+        if binding.artifact_kind is not kind:
+            raise RuntimeError(
+                f"CellProfiler source binding '{alias}' is declared as "
+                f"{binding.artifact_kind.value}, not {kind.value}."
             )
         return binding
 
@@ -239,7 +281,10 @@ class CellProfilerRuntimeAdapter:
         object_id_field: str | None = None,
         source_image_name: str | None = None,
     ) -> StoredRuntimeValue:
-        if object_name is not None:
+        if object_name is not None and not self.has_source_binding(
+            object_name,
+            ArtifactKind.OBJECT_LABELS,
+        ):
             self._resolve_one(object_name, ArtifactKind.OBJECT_LABELS)
         return self._record_native_value(
             name,
