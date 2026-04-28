@@ -9,8 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
-from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.analysis.cell_counting_cpu import materialize_segmentation_masks
+from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 
 class CombineMethod(Enum):
@@ -124,7 +123,7 @@ def _segment_objects(labels_x: np.ndarray, labels_y: np.ndarray) -> np.ndarray:
         fields=["slice_index", "method", "input_objects_x", "input_objects_y", "output_objects"],
         analysis_type="combine_objects"
     )),
-    ("labels", materialize_segmentation_masks)
+    ("labels", segmentation_mask_rois())
 )
 def combineobjects(
     image: np.ndarray,

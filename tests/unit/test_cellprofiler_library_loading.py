@@ -1,7 +1,7 @@
 import importlib
 import numpy as np
 
-from benchmark.cellprofiler_library import get_function
+from benchmark.cellprofiler_library import get_contract, get_function, list_modules
 from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
     correct_illumination_calculate,
 )
@@ -9,6 +9,16 @@ from benchmark.cellprofiler_library.functions.opening import opening
 from openhcs.core.config import DtypeConfig
 from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
+
+def test_absorbed_registry_resolves_every_declared_function():
+    unresolved_modules = tuple(
+        module_name
+        for module_name in list_modules()
+        if get_contract(module_name) is not None and get_function(module_name) is None
+    )
+
+    assert unresolved_modules == ()
 
 
 def test_active_absorbed_cellprofiler_functions_import_cleanly():

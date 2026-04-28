@@ -12,8 +12,7 @@ from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
-from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.analysis.cell_counting_cpu import materialize_segmentation_masks
+from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 
 class ShapeChoice(Enum):
@@ -219,7 +218,7 @@ def _filter_labels_by_grid(
         fields=["slice_index", "object_count", "grid_rows", "grid_columns", "shape_type"],
         analysis_type="grid_objects"
     )),
-    ("labels", materialize_segmentation_masks)
+    ("labels", segmentation_mask_rois())
 )
 def identify_objects_in_grid(
     image: np.ndarray,
@@ -308,7 +307,7 @@ def identify_objects_in_grid(
         fields=["slice_index", "object_count", "grid_rows", "grid_columns", "shape_type"],
         analysis_type="grid_objects"
     )),
-    ("labels", materialize_segmentation_masks)
+    ("labels", segmentation_mask_rois())
 )
 def identify_objects_in_grid_with_guides(
     image: np.ndarray,

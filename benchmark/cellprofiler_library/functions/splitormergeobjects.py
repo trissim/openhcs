@@ -14,8 +14,7 @@ from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
-from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.analysis.cell_counting_cpu import materialize_segmentation_masks
+from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 
 class Operation(Enum):
@@ -213,7 +212,7 @@ def _split_objects(labels: np.ndarray) -> np.ndarray:
         fields=["slice_index", "input_object_count", "output_object_count", "operation"],
         analysis_type="split_or_merge"
     )),
-    ("output_labels", materialize_segmentation_masks)
+    ("output_labels", segmentation_mask_rois())
 )
 def split_or_merge_objects(
     image: np.ndarray,

@@ -15,8 +15,7 @@ from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
-from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.analysis.cell_counting_cpu import materialize_segmentation_masks
+from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 
 class RenumberChoice(Enum):
@@ -39,7 +38,7 @@ class EditedObjectStats:
         fields=["slice_index", "original_object_count", "edited_object_count", "objects_removed"],
         analysis_type="object_editing"
     )),
-    ("edited_labels", materialize_segmentation_masks)
+    ("edited_labels", segmentation_mask_rois())
 )
 def edit_objects_manually(
     image: np.ndarray,

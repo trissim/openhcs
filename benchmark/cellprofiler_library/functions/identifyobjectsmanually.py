@@ -16,8 +16,7 @@ from dataclasses import dataclass
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
-from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.analysis.cell_counting_cpu import materialize_segmentation_masks
+from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 
 @dataclass
@@ -36,7 +35,7 @@ class ManualObjectStats:
         fields=["slice_index", "object_count", "mean_area", "mean_centroid_x", "mean_centroid_y"],
         analysis_type="manual_objects"
     )),
-    ("labels", materialize_segmentation_masks)
+    ("labels", segmentation_mask_rois())
 )
 def identify_objects_manually(
     image: np.ndarray,

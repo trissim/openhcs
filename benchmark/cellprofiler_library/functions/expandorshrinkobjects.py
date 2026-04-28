@@ -8,7 +8,7 @@ from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
-from openhcs.processing.materialization import materialize_segmentation_masks
+from openhcs.processing.materialization import segmentation_mask_rois
 
 
 class ExpandShrinkMode(Enum):
@@ -158,7 +158,7 @@ def _skeletonize_labels(labels: np.ndarray) -> np.ndarray:
 
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
-@special_outputs(("labels", materialize_segmentation_masks))
+@special_outputs(("labels", segmentation_mask_rois()))
 def expand_or_shrink_objects(
     image: np.ndarray,
     labels: np.ndarray,

@@ -11,8 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
-from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.analysis.cell_counting_cpu import materialize_segmentation_masks
+from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 
 class MaskChoice(Enum):
@@ -47,7 +46,7 @@ class MaskObjectsStats:
         fields=["slice_index", "original_object_count", "remaining_object_count", "objects_removed"],
         analysis_type="mask_objects"
     )),
-    ("masked_labels", materialize_segmentation_masks)
+    ("masked_labels", segmentation_mask_rois())
 )
 def mask_objects(
     image: np.ndarray,

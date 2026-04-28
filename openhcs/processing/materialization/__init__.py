@@ -23,6 +23,7 @@ from openhcs.processing.materialization.presets import (
     json_and_csv,
     json_only,
     roi_zip,
+    segmentation_mask_rois,
     text_only,
     tiff_stack,
 )
@@ -47,6 +48,7 @@ __all__ = [
     "csv_only",
     "json_and_csv",
     "roi_zip",
+    "segmentation_mask_rois",
     "tiff_stack",
     "text_only",
 ]

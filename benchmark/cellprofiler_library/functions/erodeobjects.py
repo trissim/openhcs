@@ -9,8 +9,7 @@ from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
-from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.analysis.cell_counting_cpu import materialize_segmentation_masks
+from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 from dataclasses import dataclass
 
 
@@ -79,7 +78,7 @@ def _find_object_centers(labels: np.ndarray) -> dict:
         fields=["slice_index", "input_object_count", "output_object_count", "objects_removed"],
         analysis_type="erosion"
     )),
-    ("eroded_labels", materialize_segmentation_masks)
+    ("eroded_labels", segmentation_mask_rois())
 )
 def erode_objects(
     image: np.ndarray,

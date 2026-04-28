@@ -143,6 +143,26 @@ def roi_zip(
     )
 
 
+def segmentation_mask_rois(
+    *,
+    source: Optional[str] = None,
+    min_area: int = 10,
+    extract_contours: bool = True,
+    roi_suffix: str = "_rois.roi.zip",
+    summary_suffix: str = "_segmentation_summary.txt",
+    allowed_backends: Optional[List[str]] = None,
+) -> MaterializationSpec:
+    """Materialize labeled object masks as ImageJ ROI archives."""
+    return roi_zip(
+        source=source,
+        min_area=min_area,
+        extract_contours=extract_contours,
+        roi_suffix=roi_suffix,
+        summary_suffix=summary_suffix,
+        allowed_backends=allowed_backends,
+    )
+
+
 def tiff_stack(
     *,
     source: Optional[str] = None,

@@ -19,8 +19,7 @@ from scipy.sparse import coo_matrix
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
-from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.analysis.cell_counting_cpu import materialize_segmentation_masks
+from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 
 class OverlapStyle(Enum):
@@ -180,7 +179,7 @@ def _trace_skeleton_path(skeleton: np.ndarray) -> np.ndarray:
         fields=["slice_index", "worm_count", "mean_length", "mean_area"],
         analysis_type="worm_analysis"
     )),
-    ("labels", materialize_segmentation_masks)
+    ("labels", segmentation_mask_rois())
 )
 def untangle_worms(
     image: np.ndarray,

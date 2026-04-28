@@ -13,8 +13,7 @@ from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
-from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.analysis.cell_counting_cpu import materialize_segmentation_masks
+from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 
 class ResizeMethod(Enum):
@@ -39,7 +38,7 @@ class ResizeObjectsStats:
         fields=["slice_index", "original_height", "original_width", "new_height", "new_width", "object_count"],
         analysis_type="resize_objects"
     )),
-    ("resized_labels", materialize_segmentation_masks)
+    ("resized_labels", segmentation_mask_rois())
 )
 def resize_objects(
     image: np.ndarray,
@@ -110,7 +109,7 @@ def resize_objects(
                 "new_depth", "new_height", "new_width", "object_count"],
         analysis_type="resize_objects_3d"
     )),
-    ("resized_labels", materialize_segmentation_masks)
+    ("resized_labels", segmentation_mask_rois())
 )
 def resize_objects_3d(
     image: np.ndarray,
