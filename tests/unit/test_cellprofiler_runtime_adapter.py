@@ -1290,4 +1290,9 @@ def test_cellprofiler_module_executor_records_relationship_and_measurement_outpu
     assert relationship.target.name == NUCLEI
     assert relationship.source_ids == (1, 1)
     assert relationship.target_ids == (1, 2)
-    assert measurements.rows == [{"mean_children_per_parent": 2.0}]
+    assert measurements.object_name == CELLS
+    assert measurements.rows == [
+        {"mean_children_per_parent": 2.0},
+        {"object_label": 1, "Children_Nuclei_Count": 2},
+    ]
+    assert adapter.measurement_tables_for_object(CELLS) == (measurements,)

@@ -8,12 +8,13 @@ texture, intensity) or removes objects touching the image border.
 
 import numpy as np
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-import re
 from typing import ClassVar, Optional, Tuple
 
+from benchmark.cellprofiler_compat.measurement_lookup import (
+    measurement_values_for_feature,
+)
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import MeasurementTable
@@ -457,7 +458,7 @@ def _keep_matching_measurement_rules(
     _validate_measurement_rule_lengths(request)
     hits = np.ones(request.num_objects_pre, dtype=bool)
     for index, feature_name in enumerate(request.measurement_features):
-        values = _measurement_values_for_feature(
+        values = measurement_values_for_feature(
             request.measurement_tables,
             feature_name,
             object_count=request.num_objects_pre,
@@ -481,7 +482,7 @@ def _first_measurement_values(request: FilterObjectsSelectionRequest) -> np.ndar
     if request.measurement_values is not None:
         return request.measurement_values
     if request.measurement_features:
-        return _measurement_values_for_feature(
+        return measurement_values_for_feature(
             request.measurement_tables,
             request.measurement_features[0],
             object_count=request.num_objects_pre,
@@ -493,95 +494,6 @@ def _area_measurement_values(labels: np.ndarray) -> np.ndarray:
     from skimage.measure import regionprops
 
     return np.array([prop.area for prop in regionprops(labels)])
-
-
-def _measurement_values_for_feature(
-    measurement_tables: tuple[MeasurementTable, ...],
-    feature_name: str,
-    *,
-    object_count: int,
-) -> np.ndarray:
-    candidates = _measurement_feature_candidates(feature_name)
-    values_by_label: dict[int, float] = {}
-    positional_values: list[float] = []
-    for row in _measurement_rows(measurement_tables):
-        row_mapping = _measurement_row_mapping(row)
-        field_name = _matching_measurement_field(row_mapping, candidates)
-        if field_name is None:
-            continue
-        value = float(row_mapping[field_name])
-        object_label = _measurement_object_label(row_mapping)
-        if object_label is None:
-            positional_values.append(value)
-            continue
-        values_by_label[object_label] = value
-    if values_by_label:
-        return np.array(
-            [values_by_label.get(index, np.nan) for index in range(1, object_count + 1)]
-        )
-    if positional_values:
-        return np.array(positional_values[:object_count])
-    raise ValueError(
-        f"FilterObjects could not resolve measurement feature {feature_name!r}."
-    )
-
-
-def _measurement_rows(
-    measurement_tables: tuple[MeasurementTable, ...],
-) -> tuple[object, ...]:
-    rows: list[object] = []
-    for table in measurement_tables:
-        if isinstance(table.rows, list | tuple):
-            rows.extend(table.rows)
-            continue
-        rows.append(table.rows)
-    return tuple(rows)
-
-
-def _measurement_row_mapping(row: object) -> Mapping[str, object]:
-    if isinstance(row, Mapping):
-        return row
-    try:
-        return vars(row)
-    except TypeError as exc:
-        raise TypeError(
-            f"Unsupported FilterObjects measurement row type {type(row).__name__}."
-        ) from exc
-
-
-def _matching_measurement_field(
-    row: Mapping[str, object],
-    candidates: frozenset[str],
-) -> str | None:
-    for field_name in row:
-        if _normalize_measurement_token(field_name) in candidates:
-            return field_name
-    return None
-
-
-def _measurement_object_label(row: Mapping[str, object]) -> int | None:
-    for key in ("object_label", "object_number", "object_id", "label"):
-        if key in row:
-            return int(row[key])
-    return None
-
-
-def _measurement_feature_candidates(feature_name: str) -> frozenset[str]:
-    normalized = _normalize_measurement_token(feature_name)
-    parts = tuple(part for part in normalized.split("_") if part)
-    candidates = {normalized}
-    if len(parts) >= 2:
-        candidates.add("_".join(parts[1:]))
-        candidates.add(parts[-1])
-    if len(parts) >= 3:
-        candidates.add("_".join(parts[1:-1]))
-    return frozenset(candidates)
-
-
-def _normalize_measurement_token(value: object) -> str:
-    text = str(value)
-    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", text)
-    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
 
 
 def _validate_measurement_rule_lengths(

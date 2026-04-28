@@ -219,10 +219,14 @@ def _select_artifact_plan_for_component(
     if not plan_by_group:
         return default_plan
 
+    global_plan = plan_by_group.get(None, {})
     if component_key in plan_by_group:
-        return plan_by_group[component_key]
-    if None in plan_by_group:
-        return plan_by_group[None]
+        return {
+            **global_plan,
+            **plan_by_group[component_key],
+        }
+    if global_plan:
+        return global_plan
     return default_plan
 
 

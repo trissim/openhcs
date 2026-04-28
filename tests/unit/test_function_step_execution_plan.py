@@ -6,6 +6,7 @@ from openhcs.core.compiled_step_plan import (
     InputConversionPlan,
     MaterializedOutputPlan,
 )
+from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.function_patterns import compile_function_pattern
 from openhcs.core.step_dependencies import (
     StepInputDependency,
@@ -13,6 +14,7 @@ from openhcs.core.step_dependencies import (
 )
 from openhcs.core.steps.function_artifact_materialization import _build_analysis_filename
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
+from openhcs.core.steps.function_runtime import _select_artifact_plan_for_component
 
 
 def noop(image):
@@ -112,3 +114,30 @@ def test_build_analysis_filename_uses_pipeline_position_for_image_derived_name()
         _build_analysis_filename("measurements", plan)
         == "A01_site1_measurements_step7.roi.zip"
     )
+
+
+def test_component_artifact_plan_selection_merges_global_and_group_outputs():
+    global_output = ArtifactOutputPlan(
+        name="objects",
+        path="/tmp/objects",
+        kind=ArtifactKind.OBJECT_LABELS,
+    )
+    grouped_output = ArtifactOutputPlan(
+        name="measurements",
+        path="/tmp/measurements/A01",
+        kind=ArtifactKind.MEASUREMENTS,
+    )
+
+    selected = _select_artifact_plan_for_component(
+        {
+            None: {"objects": global_output},
+            "A01": {"measurements": grouped_output},
+        },
+        "A01",
+        {},
+    )
+
+    assert selected == {
+        "objects": global_output,
+        "measurements": grouped_output,
+    }

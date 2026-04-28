@@ -13,7 +13,9 @@ from benchmark.cellprofiler_library import canonical_module_name
 
 from .align_settings import align_bound_kwargs
 from .area_occupied_settings import area_occupied_bound_kwargs
+from .calculate_math_settings import calculate_math_bound_kwargs
 from .classify_objects_settings import classify_objects_bound_kwargs
+from .display_data_settings import display_data_on_image_bound_kwargs
 from .filter_objects_settings import filter_objects_bound_kwargs
 from .grid_settings import (
     define_grid_bound_kwargs,
@@ -191,6 +193,38 @@ class FilterObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     ) -> BoundModuleSettings:
         del binder, param_mapping
         return BoundModuleSettings(filter_objects_bound_kwargs(module))
+
+
+class DisplayDataOnImageModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind DisplayDataOnImage measurement-selection settings."""
+
+    module_name = "DisplayDataOnImage"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del binder, param_mapping
+        return BoundModuleSettings(display_data_on_image_bound_kwargs(module))
+
+
+class CalculateMathModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind CalculateMath operand and arithmetic settings."""
+
+    module_name = "CalculateMath"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del param_mapping
+        return BoundModuleSettings(calculate_math_bound_kwargs(module, binder))
 
 
 class ClassifyObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):

@@ -436,7 +436,74 @@ def test_cppipe_generated_pipeline_materializes_relationship_outputs(
         "mean_children_per_parent",
         "mean_centroid_distance",
         "mean_minimum_distance",
+        "object_label",
+        "Children_Cells_Count",
     ]
+
+
+def test_percent_positive_cppipe_executes_relationship_measurement_consumers(
+    tmp_path: Path,
+) -> None:
+    source_root = _generate_percent_positive_source_folder(
+        tmp_path / "ExamplePercentPositive"
+    )
+    cppipe_path = _write_percent_positive_cppipe(
+        tmp_path / "percent_positive.cppipe"
+    )
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / "generated_percent_positive_pipeline.py",
+    )
+    workspace = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "percent_positive_openhcs_workspace",
+        prepared.source_schema,
+    )
+
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=True,
+        microscope=Microscope.AUTO,
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            output_dir_suffix="_generated_cppipe",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    orchestrator = PipelineOrchestrator(
+        workspace.workspace_root,
+        pipeline_config=pipeline_config,
+    )
+    orchestrator.initialize()
+
+    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+
+    assert all(
+        result.is_success()
+        for result in execution.execution_results.values()
+    )
+    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
+    assert runtime_store.find(
+        name="PH3PosNuclei",
+        kind=ArtifactKind.OBJECT_LABELS,
+        axis_id="A01",
+    )
+    assert runtime_store.find(
+        name="DisplayImage",
+        kind=ArtifactKind.IMAGE,
+        axis_id="A01",
+    )
+    calculate_math_records = runtime_store.find(
+        name="CalculateMath_11_measurements",
+        kind=ArtifactKind.MEASUREMENTS,
+        axis_id="A01",
+    )
+    assert calculate_math_records
+    assert calculate_math_records[0].value.data[0].output_name == "PercentPositive"
 
 
 def _generate_plate(plate_path: Path) -> Path:
@@ -532,6 +599,22 @@ def _generate_examplehuman_source_folder(source_root: Path) -> Path:
     return source_root
 
 
+def _generate_percent_positive_source_folder(source_root: Path) -> Path:
+    images_dir = source_root / "images"
+    images_dir.mkdir(parents=True)
+    _write_percent_positive_image(
+        images_dir / "PercentPositive_A01_s001_w0d0.tif",
+        seed=37,
+        spots=((32, 32, 12, 46000), (76, 54, 10, 42000), (84, 92, 11, 44000)),
+    )
+    _write_percent_positive_image(
+        images_dir / "PercentPositive_A01_s001_w1d1.tif",
+        seed=41,
+        spots=((32, 32, 7, 52000),),
+    )
+    return source_root
+
+
 def _write_bbbc021_image(path: Path, *, seed: int, signal: int) -> None:
     rng = np.random.default_rng(seed)
     image = rng.normal(900, 40, size=(64, 64)).clip(0, 65535).astype(np.uint16)
@@ -551,6 +634,25 @@ def _write_examplehuman_image(path: Path, *, seed: int, signal: int) -> None:
         x0, x1 = center_x - 8, center_x + 8
         image[y0:y1, x0:x1] = np.clip(
             image[y0:y1, x0:x1].astype(np.int32) + signal,
+            0,
+            65535,
+        ).astype(np.uint16)
+    Image.fromarray(image).save(path)
+
+
+def _write_percent_positive_image(
+    path: Path,
+    *,
+    seed: int,
+    spots: tuple[tuple[int, int, int, int], ...],
+) -> None:
+    rng = np.random.default_rng(seed)
+    image = rng.normal(300, 15, size=(128, 128)).clip(0, 65535).astype(np.uint16)
+    yy, xx = np.ogrid[:128, :128]
+    for center_y, center_x, radius, signal in spots:
+        mask = (yy - center_y) ** 2 + (xx - center_x) ** 2 <= radius**2
+        image[mask] = np.clip(
+            image[mask].astype(np.int32) + signal,
             0,
             65535,
         ).astype(np.uint16)
@@ -770,6 +872,151 @@ def _write_relationship_cppipe(cppipe_path: Path) -> Path:
                 "    Select the child objects:Cells",
                 (
                     "ExportToSpreadsheet:[module_num:5|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Select measurements to export:No",
+                "",
+            )
+        )
+    )
+    return cppipe_path
+
+
+def _write_percent_positive_cppipe(cppipe_path: Path) -> Path:
+    cppipe_path.write_text(
+        "\n".join(
+            (
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "Version:3",
+                "DateRevision:300",
+                "GitHash:",
+                "ModuleCount:12",
+                "HasImagePlaneDetails:False",
+                (
+                    "Images:[module_num:1|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Filter images?:Images only",
+                "    Select the rule criteria:and (extension does isimage)",
+                (
+                    "Metadata:[module_num:2|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Metadata extraction method:Extract from file/folder names",
+                "    Metadata source:File name",
+                (
+                    "    Regular expression to extract from file name:"
+                    "^(?P<Plate>.*)_(?P<Well>[A-P][0-9]{2})_s"
+                    "(?P<Site>[0-9])_w(?P<ChannelNumber>[0-9])"
+                ),
+                "    Select the filtering criteria:and (file does contain \"\")",
+                (
+                    "NamesAndTypes:[module_num:3|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Assign a name to:Images matching rules",
+                "    Select the image type:Grayscale image",
+                "    Name to assign these images:DNA",
+                "    Image set matching method:Order",
+                "    Assignments count:2",
+                "    Single images count:0",
+                "    Process as 3D?:No",
+                "    Select the rule criteria:and (file does contain \"d0.tif\")",
+                "    Name to assign these images:OrigBlue",
+                "    Name to assign these objects:Cell",
+                "    Select the image type:Grayscale image",
+                "    Select the rule criteria:and (file does contain \"d1.tif\")",
+                "    Name to assign these images:OrigGreen",
+                "    Name to assign these objects:Cell",
+                "    Select the image type:Grayscale image",
+                (
+                    "IdentifyPrimaryObjects:[module_num:4|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Select the input image:OrigBlue",
+                "    Name the primary objects to be identified:Nuclei",
+                (
+                    "IdentifyPrimaryObjects:[module_num:5|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Select the input image:OrigGreen",
+                "    Name the primary objects to be identified:PH3",
+                (
+                    "RelateObjects:[module_num:6|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Parent objects:Nuclei",
+                "    Child objects:PH3",
+                (
+                    "FilterObjects:[module_num:7|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Select the objects to filter:Nuclei",
+                "    Name the output objects:PH3PosNuclei",
+                "    Select the filtering mode:Measurements",
+                "    Select the filtering method:Limits",
+                "    Measurement count:1",
+                "    Additional object count:0",
+                "    Select the measurement to filter by:Children_PH3_Count",
+                "    Filter using a minimum measurement value?:Yes",
+                "    Minimum value:1",
+                "    Filter using a maximum measurement value?:No",
+                "    Maximum value:1.0",
+                (
+                    "MeasureObjectIntensity:[module_num:8|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Select images to measure:OrigGreen, OrigBlue",
+                "    Select objects to measure:Nuclei",
+                (
+                    "OverlayOutlines:[module_num:9|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Display outlines on a blank image?:No",
+                "    Select image on which to display outlines:OrigGreen",
+                "    Name the output image:OrigGreenOverlay",
+                "    Outline display mode:Color",
+                "    Select method to determine brightness of outlines:Max of image",
+                "    How to outline:Inner",
+                "    Select outline color:#00FF40",
+                "    Select objects to display:Nuclei",
+                (
+                    "DisplayDataOnImage:[module_num:10|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Display object or image measurements?:Object",
+                "    Select the input objects:Nuclei",
+                "    Measurement to display:Intensity_MaxIntensity_OrigGreen",
+                "    Select the image on which to display the measurements:OrigGreenOverlay",
+                "    Name the output image that has the measurements displayed:DisplayImage",
+                (
+                    "CalculateMath:[module_num:11|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Name the output measurement:PercentPositive",
+                "    Operation:Divide",
+                "    Select the numerator measurement type:Image",
+                "    Select the numerator objects:None",
+                "    Select the numerator measurement:Count_PH3PosNuclei",
+                "    Multiply the above operand by:1.0",
+                "    Raise the power of above operand by:1.0",
+                "    Select the denominator measurement type:Image",
+                "    Select the denominator objects:Nuclei",
+                "    Select the denominator measurement:Count_Nuclei",
+                "    Multiply the above operand by:1.0",
+                "    Raise the power of above operand by:1.0",
+                "    Take log10 of result?:No",
+                "    Multiply the result by:100",
+                "    Raise the power of result by:1.0",
+                "    Add to the result:0.0",
+                "    How should the output value be rounded?:Not rounded",
+                "    Enter how many decimal places the value should be rounded to:0",
+                "    Constrain the result to a lower bound?:No",
+                "    Enter the lower bound:0.0",
+                "    Constrain the result to an upper bound?:No",
+                "    Enter the upper bound:1.0",
+                (
+                    "ExportToSpreadsheet:[module_num:12|svn_version:'Unknown'|"
                     "enabled:True|wants_pause:False]"
                 ),
                 "    Select measurements to export:No",

@@ -50,6 +50,7 @@ from .area_occupied_settings import (
     AreaOccupiedOperand,
     area_occupied_rows,
 )
+from .calculate_math_settings import calculate_math_object_dependencies
 from .artifact_semantics import (
     ArtifactSettingSymbol,
     FunctionSpecialOutput,
@@ -1213,6 +1214,22 @@ def _overlay_outline_symbol_kind(
     return CellProfilerSymbolKind.OBJECTS
 
 
+def _calculate_math(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    objects = [
+        builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
+        for name in calculate_math_object_dependencies(module)
+    ]
+    measurements = builder.declare(
+        _measurement_name(module),
+        CellProfilerSymbolKind.MEASUREMENTS,
+        module,
+    )
+    return _contracts(module, builder, inputs=objects, outputs=[measurements])
+
+
 def _relate_objects(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
@@ -1512,6 +1529,7 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     (("MeasureImageAreaOccupiedBinary",), _measure_image_area_occupied),
     (("MeasureImageIntensity",), _measure_image_intensity),
     (("MeasureObjectNeighbors",), _measure_object_neighbors),
+    (("CalculateMath",), _calculate_math),
     (("RelateObjects",), _relate_objects),
 )
 
