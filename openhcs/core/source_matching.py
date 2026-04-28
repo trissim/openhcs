@@ -44,6 +44,14 @@ def _string_does_not_contain_regex(target: str, value: str) -> bool:
     return re.search(value, target) is None
 
 
+def _string_equals(target: str, value: str) -> bool:
+    return target == value
+
+
+def _string_does_not_equal(target: str, value: str) -> bool:
+    return target != value
+
+
 def _string_starts_with(target: str, value: str) -> bool:
     return target.startswith(value)
 
@@ -141,6 +149,18 @@ class DoesNotContainRegexSourceFilterMatcher(ValuePredicateSourceFilterMatcher):
     match_type = SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX
     match_type_key = SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX.value
     value_predicate = staticmethod(_string_does_not_contain_regex)
+
+
+class EqualsSourceFilterMatcher(ValuePredicateSourceFilterMatcher):
+    match_type = SourceFilterMatchType.EQUALS
+    match_type_key = SourceFilterMatchType.EQUALS.value
+    value_predicate = staticmethod(_string_equals)
+
+
+class DoesNotEqualSourceFilterMatcher(ValuePredicateSourceFilterMatcher):
+    match_type = SourceFilterMatchType.DOES_NOT_EQUAL
+    match_type_key = SourceFilterMatchType.DOES_NOT_EQUAL.value
+    value_predicate = staticmethod(_string_does_not_equal)
 
 
 class StartsWithSourceFilterMatcher(ValuePredicateSourceFilterMatcher):

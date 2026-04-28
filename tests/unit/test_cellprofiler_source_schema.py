@@ -354,6 +354,31 @@ def test_compile_image_schema_supports_v5_regex_labels_and_file_filters():
     assert illum_dna.selector.filters[1].match_type is SourceFilterMatchType.ENDS_WITH
 
 
+def test_compile_image_schema_lowers_cellprofiler_file_equality_filter():
+    names_and_types_module = _module_with_records(
+        1,
+        "NamesAndTypes",
+        [
+            ("Assignments count", "1"),
+            (
+                "Select the rule criteria",
+                'and (file does eq "VitraChannel1ILLUM.npy")',
+            ),
+            ("Name to assign these images", "IllumChannel1"),
+            ("Select the image type", "Illumination function"),
+        ],
+    )
+
+    schema = compile_image_schema([names_and_types_module])
+    illum = schema.source_artifact_for_alias("IllumChannel1")
+
+    assert illum is not None
+    assert len(illum.selector.filters) == 1
+    assert illum.selector.filters[0].subject is SourceFilterSubject.FILE
+    assert illum.selector.filters[0].match_type is SourceFilterMatchType.EQUALS
+    assert illum.selector.filters[0].value == "VitraChannel1ILLUM.npy"
+
+
 def test_symbol_table_and_codegen_use_compiled_setup_schema():
     setup_modules = [
         _module_with_records(

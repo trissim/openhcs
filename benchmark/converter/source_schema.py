@@ -54,7 +54,7 @@ _METADATA_MATCH_PATTERN = re.compile(
 _FILTER_CLAUSE_PATTERN = re.compile(
     r"\((?P<subject>file|directory|extension) "
     r"does\s*(?P<negation>not)?\s*"
-    r"(?P<operator>containregexp|contain|startwith|endwith|isimage|istif)"
+    r"(?P<operator>containregexp|contain|startwith|endwith|isimage|istif|eq)"
     r"(?: \"(?P<value>[^\"]*)\")?\)"
 )
 _SOURCE_FILTER_SUBJECT_PATTERN = re.compile(
@@ -74,6 +74,8 @@ _FILTER_MATCH_TYPES_BY_LITERAL = MappingProxyType(
         ("contain", True): SourceFilterMatchType.DOES_NOT_CONTAIN,
         ("containregexp", False): SourceFilterMatchType.CONTAINS_REGEX,
         ("containregexp", True): SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX,
+        ("eq", False): SourceFilterMatchType.EQUALS,
+        ("eq", True): SourceFilterMatchType.DOES_NOT_EQUAL,
         ("startwith", False): SourceFilterMatchType.STARTS_WITH,
         ("startwith", True): SourceFilterMatchType.DOES_NOT_START_WITH,
         ("endwith", False): SourceFilterMatchType.ENDS_WITH,

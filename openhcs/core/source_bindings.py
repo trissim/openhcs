@@ -50,6 +50,8 @@ class SourceFilterMatchType(Enum):
     CONTAINS_REGEX = ("contains_regex", True)
     DOES_NOT_CONTAIN = ("does_not_contain", True)
     DOES_NOT_CONTAIN_REGEX = ("does_not_contain_regex", True)
+    EQUALS = ("equals", True)
+    DOES_NOT_EQUAL = ("does_not_equal", True)
     STARTS_WITH = ("starts_with", True)
     DOES_NOT_START_WITH = ("does_not_start_with", True)
     ENDS_WITH = ("ends_with", True)
