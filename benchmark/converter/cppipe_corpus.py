@@ -47,10 +47,6 @@ def in_tree_cppipe_corpus() -> tuple[CPPipeCorpusCase, ...]:
         CPPipeCorpusCase(
             name="ExampleHuman",
             cppipe_path=pipelines_dir / "ExampleHuman.cppipe",
-            status=CPPipeCorpusStatus.KNOWN_INVALID,
-            expected_error_substring=(
-                "Module MeasureObjectIntensity(10) references unknown objects "
-                "symbol 'Cytoplasm'. No prior module produces it."
-            ),
+            status=CPPipeCorpusStatus.SUPPORTED,
         ),
     )

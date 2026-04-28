@@ -255,6 +255,10 @@ The branch has already established most of the typed runtime/compiler foundation
     - unknown object references still fail loudly
     - an image reference that collides with an existing object name still fails unless the source schema explicitly declares that image binding
     - `RelateObjects` now accepts both current `Select the parent/child objects` settings and older `Parent objects` / `Child objects` schema aliases through the shared setting-name family path
+36. The in-tree `ExampleHuman.cppipe` fixture now tracks the current official CellProfiler example instead of the stale reduced invalid fixture:
+    - the corpus classifies `ExampleHuman` as supported rather than known-invalid
+    - corpus preparation coverage now exercises the real `Images`, `Metadata`, `NamesAndTypes`, `Groups`, dual `IdentifyPrimaryObjects`, `RelateObjects`, `IdentifySecondaryObjects`, `IdentifyTertiaryObjects`, measurements, `OverlayOutlines`, `SaveImages`, and `ExportToSpreadsheet` structure
+    - the previously intentional `Cytoplasm` producer gap is gone because the real pipeline contains the missing tertiary-object producer
 
 ### 3.2 What Is Still Missing
 
@@ -281,7 +285,7 @@ The biggest unresolved items are now:
    - canonical dataset-owned `.cppipe` references can now be resolved through the benchmark adapter instead of only local ad hoc files
    - ExampleFly now executes end to end as a real shipped `.cppipe` shape and materializes measurement CSV outputs on disk
    - a generated `RelateObjects` pipeline now executes through the orchestrator and materializes both relationship and measurement CSV outputs
-   - the next gap is replacing the stale reduced `ExampleHuman.cppipe` fixture with the current official example and then broadening real-data/corpus validation, not basic execution enablement
+   - the next gap is executing current official examples against real or converted example-image layouts, not basic preparation enablement
 7. Export and relationship-heavy semantics now have initial real-output validation with concrete CSV schema assertions, but not broad corpus-level validation.
 8. Benchmarking is no longer ahead of the remaining CellProfiler semantics, but it should still stay secondary to broader semantic validation.
 9. The broader absorbed-function corpus still needs continued cleanup beyond the currently exercised import/materialization surface.
