@@ -216,7 +216,7 @@ def test_pipeline_generator_resolves_object_measurement_function_variants():
                 "Select images to measure": "OrigBlue",
                 "Select objects to measure": "Nuclei",
                 "Enter how many gray levels to measure the texture at": "256",
-                "Measure whole images or objects?": "Both",
+                "Measure images or objects?": "Objects",
                 "Texture scale to measure": "3",
             },
         ),
@@ -228,6 +228,15 @@ def test_pipeline_generator_resolves_object_measurement_function_variants():
                 "Select where to measure correlation": "Both",
                 "Select objects to measure": "Nuclei",
                 "Set threshold as percentage of maximum intensity for the images": "15.0",
+            },
+        ),
+        _module(
+            4,
+            "MeasureGranularity",
+            {
+                "Select images to measure": "OrigBlue",
+                "Select objects to measure": "Nuclei",
+                "Subsampling factor for granularity measurements": "0.25",
             },
         ),
     ]
@@ -245,6 +254,10 @@ def test_pipeline_generator_resolves_object_measurement_function_variants():
     assert (
         'measure_colocalization_objects_3 = get_function('
         '"MeasureColocalization", function_name="measure_colocalization_objects")'
+    ) in generated.code
+    assert (
+        'measure_granularity_objects_4 = get_function('
+        '"MeasureGranularity", function_name="measure_granularity_objects")'
     ) in generated.code
 
 

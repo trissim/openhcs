@@ -514,13 +514,41 @@ class PatternGroupRuntime:
             self.context.input_dir,
             self.context.filemanager,
         )
+        pipeline_input_files, pipeline_input_backend = (
+            self._pipeline_start_source_universe(source_backend)
+        )
         return SourceBindingRuntimeContext(
             step_input_files=tuple(matching_files),
             step_input_dir=str(self.plan.input_dir),
-            pipeline_input_files=tuple(
-                self.plan.get_paths_for_axis(self.context.input_dir, source_backend)
+            pipeline_input_files=pipeline_input_files,
+            pipeline_input_backend=pipeline_input_backend,
+        )
+
+    def _pipeline_start_source_universe(
+        self,
+        source_backend: str,
+    ) -> tuple[tuple[str, ...], str]:
+        if not self.plan.source_binding_plan.metadata_rules:
+            return (
+                tuple(self.plan.get_paths_for_axis(self.context.input_dir, source_backend)),
+                source_backend,
+            )
+
+        universe_backend = (
+            Backend.DISK.value
+            if source_backend == Backend.VIRTUAL_WORKSPACE.value
+            else source_backend
+        )
+        return (
+            tuple(
+                str(path)
+                for path in self.context.filemanager.list_image_files(
+                    str(self.context.input_dir),
+                    universe_backend,
+                    recursive=True,
+                )
             ),
-            pipeline_input_backend=source_backend,
+            universe_backend,
         )
 
     def _component_artifact_plans(self) -> ComponentArtifactPlans:

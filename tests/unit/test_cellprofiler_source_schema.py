@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from benchmark.converter.parser import CPPipeParser, ModuleBlock, ModuleSetting
@@ -534,6 +535,21 @@ def test_compile_image_schema_for_bbbc021_analysis_preserves_real_matching_plan(
         rule.source is MetadataSource.FILE_NAME and "(?P<channel>" in rule.pattern
         for rule in schema.metadata_rules
     )
+    illum_rule = next(
+        rule for rule in schema.metadata_rules if "(?P<illum>" in rule.pattern
+    )
+    illum_match = re.search(illum_rule.pattern, "fields_IllumDAPI.tif")
+    assert illum_match is not None
+    assert illum_match.groupdict() == {
+        "folder_illum": "fields",
+        "illum": "DAPI",
+    }
+    folder_rule = next(
+        rule for rule in schema.metadata_rules if rule.source is MetadataSource.FOLDER_NAME
+    )
+    folder_match = re.search(folder_rule.pattern, "/tmp/Week1_22123/fields")
+    assert folder_match is not None
+    assert folder_match.group("folder") == "fields"
 
 
 def test_compile_image_schema_for_bbbc021_illumination_pipeline():

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import re
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -414,23 +415,28 @@ def _metadata_pattern_for_block(
     source: MetadataSource,
 ) -> str:
     if source is MetadataSource.FOLDER_NAME:
-        return _block_value(
-            block,
-            "Regular expression to extract from folder name",
+        return _decode_cellprofiler_setting_literal(
+            _block_value(
+                block,
+                "Regular expression to extract from folder name",
+            )
         )
-    return _block_value(
-        block,
-        "Regular expression to extract from file name",
+    return _decode_cellprofiler_setting_literal(
+        _block_value(
+            block,
+            "Regular expression to extract from file name",
+        )
     )
 
 
 def _filter_clauses_from_criteria(
     criteria: str,
 ) -> tuple[SourceFilterClause, ...]:
-    stripped = criteria.strip()
+    decoded_criteria = _decode_cellprofiler_setting_literal(criteria)
+    stripped = decoded_criteria.strip()
     if not stripped:
         return ()
-    matches = tuple(_FILTER_CLAUSE_PATTERN.finditer(criteria))
+    matches = tuple(_FILTER_CLAUSE_PATTERN.finditer(decoded_criteria))
     if not matches:
         raise ValueError(
             "Unsupported CellProfiler source filter criteria: "
@@ -558,7 +564,9 @@ def _match_dimensions(
     raw_match_metadata: str,
 ) -> tuple[SourceBindingMatchDimension, ...]:
     try:
-        records = ast.literal_eval(bytes(raw_match_metadata, "utf-8").decode("unicode_escape"))
+        records = ast.literal_eval(
+            _decode_cellprofiler_setting_literal(raw_match_metadata)
+        )
     except (SyntaxError, ValueError) as exc:
         raise ValueError(
             f"Invalid NamesAndTypes 'Match metadata' value: {raw_match_metadata!r}."
@@ -581,6 +589,17 @@ def _match_dimensions(
         if fields:
             dimensions.append(SourceBindingMatchDimension(fields=fields))
     return tuple(dimensions)
+
+
+def _decode_cellprofiler_setting_literal(value: str) -> str:
+    if "\\x" not in value and "\\\\\\\\" not in value:
+        return value
+    decoded = value
+    for _ in range(2):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            decoded = bytes(decoded, "utf-8").decode("unicode_escape")
+    return decoded
 
 
 def _merge_match_dimensions_from_blocks(

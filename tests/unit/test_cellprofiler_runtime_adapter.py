@@ -434,8 +434,8 @@ def test_cellprofiler_adapter_resolves_pipeline_start_component_selector_with_in
 
     resolved = adapter.resolve_source_image("Actin", fallback_stack)
 
-    assert resolved.shape == (1, 2, 2)
-    np.testing.assert_array_equal(resolved[0], expected)
+    assert resolved.shape == expected.shape
+    np.testing.assert_array_equal(resolved, expected)
     assert filemanager.loaded_batches == [
         (
             ("/plate/Images/A01_s001_w2_z001_t001.tif",),

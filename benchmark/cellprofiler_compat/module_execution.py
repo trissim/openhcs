@@ -12,16 +12,24 @@ from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-from openhcs.core.memory import detect_memory_type, stack_slices
+from openhcs.core.config import DtypeConfig
+from openhcs.core.memory import detect_memory_type, stack_slices, unstack_slices
 from openhcs.core.pipeline.function_contracts import special_input_names_from_callable
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest
 from openhcs.core.runtime_stores import require_runtime_value_store
+from openhcs.processing.backends.lib_registry.unified_registry import (
+    ProcessingContract,
+    _aggregate_pure_2d_auxiliary_output,
+    _pure_2d_slice_results,
+    _rewrite_slice_index,
+)
 
 from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
 from benchmark.cellprofiler_compat.relationship_payload import (
     CellProfilerRelationshipPayload,
 )
 from benchmark.cellprofiler_compat.runtime_adapter import CellProfilerRuntimeAdapter
+from benchmark.converter.contract_inference import InferredContract, infer_contract
 
 
 def cellprofiler_runtime_adapter_factory(
@@ -107,7 +115,12 @@ class CellProfilerModuleExecutor:
             adapter=cellprofiler_runtime,
             kwargs=kwargs,
         )
-        raw_output = func(invocation.image, **invocation.kwargs)
+        raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
+            func,
+            invocation.image,
+            invocation.kwargs,
+            force_full_stack=invocation.image_count > 1,
+        )
         main_output, artifact_values = _split_cellprofiler_output(raw_output)
         self._record_outputs(
             cellprofiler_runtime,
@@ -165,12 +178,19 @@ class CellProfilerModuleExecutor:
         combined_rows: list[Any] = []
         for object_spec in object_inputs:
             raw_labels = cellprofiler_runtime.get_objects(object_spec.name).labels
-            measurement_labels = _measurement_labels(raw_labels)
+            measurement_labels = _measurement_labels_for_image(
+                measurement_source_image,
+                raw_labels,
+            )
             measurement_image = _measurement_image_for_labels(
                 measurement_source_image,
                 measurement_labels,
             )
-            raw_output = func(measurement_image, labels=measurement_labels, **kwargs)
+            raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
+                func,
+                measurement_image,
+                {**kwargs, "labels": measurement_labels},
+            )
             _ignored_main_output, artifact_values = _split_cellprofiler_output(
                 raw_output
             )
@@ -264,6 +284,7 @@ class CellProfilerModuleExecutor:
             return CellProfilerImageRequest(
                 payload=fallback_image,
                 source_image_name=self._input_source_image_name(adapter),
+                image_count=1,
             )
 
         runtime_image_names = {
@@ -288,6 +309,7 @@ class CellProfilerModuleExecutor:
         return CellProfilerImageRequest(
             payload=_compose_image_payload(self.module_name, tuple(payloads)),
             source_image_name=self._input_source_image_name(adapter),
+            image_count=len(payloads),
         )
 
     def _input_source_image_name(
@@ -333,6 +355,7 @@ class CellProfilerModuleExecutor:
             image=image_request.payload,
             kwargs=_coerce_invocation_kwargs(func, runtime_kwargs),
             source_image_name=image_request.source_image_name,
+            image_count=image_request.image_count,
         )
 
     def _external_source_image_names(self) -> tuple[str, ...]:
@@ -351,20 +374,26 @@ class CellProfilerModuleExecutor:
 
 
 @dataclass(frozen=True, slots=True)
-class CellProfilerImageRequest:
-    """Resolved image payload and source metadata for one module invocation."""
+class CellProfilerResolvedInputRequest(ABC):
+    """Shared source provenance for resolved CellProfiler invocation inputs."""
 
-    payload: Any
     source_image_name: str | None
+    image_count: int
 
 
 @dataclass(frozen=True, slots=True)
-class CellProfilerInvocationRequest:
+class CellProfilerImageRequest(CellProfilerResolvedInputRequest):
+    """Resolved image payload and source metadata for one module invocation."""
+
+    payload: Any
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerInvocationRequest(CellProfilerResolvedInputRequest):
     """Resolved invocation inputs for one CellProfiler function call."""
 
     image: Any
     kwargs: Mapping[str, Any]
-    source_image_name: str | None
 
 
 def _coerce_invocation_kwargs(
@@ -402,7 +431,11 @@ def _coerce_enum_argument(
     except ValueError:
         pass
     if isinstance(value, str):
-        normalized_value = _normalize_enum_literal(value)
+        normalized_value = re.sub(
+            r"[^a-z0-9]+",
+            "_",
+            value.strip().lower(),
+        ).strip("_")
         exact_matches = [
             member
             for member in enum_type
@@ -432,11 +465,14 @@ def _coerce_enum_argument(
 def _normalized_member_literals(member: Enum) -> tuple[str, ...]:
     return tuple(
         normalized
-        for normalized in (
-            _normalize_enum_literal(literal)
-            for literal in _member_string_literals(member)
+        for literal in _member_string_literals(member)
+        if (
+            normalized := re.sub(
+                r"[^a-z0-9]+",
+                "_",
+                literal.strip().lower(),
+            ).strip("_")
         )
-        if normalized
     )
 
 
@@ -451,10 +487,6 @@ def _member_string_literals(member: Enum) -> tuple[str, ...]:
             if isinstance(item, str)
         )
     return tuple(literals)
-
-
-def _normalize_enum_literal(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
 
 
 @dataclass(frozen=True, slots=True)
@@ -515,7 +547,9 @@ class ObjectLabelsArtifactKindStrategy(CellProfilerArtifactKindStrategy):
     kind = ArtifactKind.OBJECT_LABELS
 
     def runtime_input_value(self, request: CellProfilerArtifactKindRequest) -> Any:
-        return request.adapter.get_objects(request.spec.name).labels
+        return _collapse_singleton_label_stack(
+            request.adapter.get_objects(request.spec.name).labels
+        )
 
     def source_image_name(
         self,
@@ -650,6 +684,7 @@ _SINGLE_LABEL_MEASUREMENT_POLICY_MODULES = (
     "MeasureObjectIntensity",
     "MeasureTexture",
     "MeasureColocalization",
+    "MeasureGranularity",
     "MeasureObjectNeighbors",
 )
 
@@ -677,6 +712,7 @@ class CellProfilerPerObjectMeasurementPolicy:
         "MeasureObjectIntensity",
         "MeasureTexture",
         "MeasureColocalization",
+        "MeasureGranularity",
     )
 
     @classmethod
@@ -893,6 +929,28 @@ def _measurement_image_for_labels(image: Any, labels: Any) -> Any:
 
 def _measurement_labels(labels: Any) -> Any:
     """Normalize singleton stack labels for absorbed 2D measurement functions."""
+    return _collapse_singleton_label_stack(labels)
+
+
+def _measurement_labels_for_image(image: Any, labels: Any) -> Any:
+    """Align object-label payload rank to the selected measurement image."""
+    labels = _measurement_labels(labels)
+    if not hasattr(image, "ndim") or not hasattr(labels, "ndim"):
+        return labels
+    if labels.ndim == 3 and image.ndim == 2:
+        return labels[0]
+    if (
+        labels.ndim == 3
+        and image.ndim == 3
+        and getattr(image, "shape", (0,))[0] == 1
+        and labels.shape[1:] == image.shape[1:]
+    ):
+        return labels[0]
+    return labels
+
+
+def _collapse_singleton_label_stack(labels: Any) -> Any:
+    """Normalize singleton OpenHCS label stacks to one CellProfiler label plane."""
     if not hasattr(labels, "ndim"):
         return labels
     if labels.ndim == 3 and getattr(labels, "shape", (0,))[0] == 1:
@@ -1016,3 +1074,174 @@ def _payload_slice_count(payload: Any) -> int:
     if hasattr(payload, "shape") and payload.shape:
         return int(payload.shape[0])
     return 1
+
+
+class CellProfilerFunctionContractExecutor:
+    """Apply OpenHCS processing contracts after CellProfiler input resolution."""
+
+    def execute(
+        self,
+        func: Callable[..., Any],
+        image: Any,
+        kwargs: Mapping[str, Any],
+        *,
+        force_full_stack: bool = False,
+    ) -> Any:
+        if force_full_stack:
+            return self._execute_pure_3d(func, image, **dict(kwargs))
+        return CellProfilerFunctionContractMetadata.from_callable(func).resolve(
+            func
+        ).execute(
+            self,
+            func,
+            image,
+            **dict(kwargs),
+        )
+
+    def _execute_pure_3d(
+        self,
+        func: Callable[..., Any],
+        image: Any,
+        **kwargs: Any,
+    ) -> Any:
+        return func(image, **kwargs)
+
+    def _execute_pure_2d(
+        self,
+        func: Callable[..., Any],
+        image: Any,
+        **kwargs: Any,
+    ) -> Any:
+        if not hasattr(image, "ndim") or image.ndim == 2:
+            return func(image, **kwargs)
+
+        memory_type = detect_memory_type(image)
+        slices_2d = unstack_slices(image, memory_type, 0)
+        slice_count = len(slices_2d)
+        slice_results = [
+            _rewrite_slice_index(
+                func(
+                    slice_2d,
+                    **_slice_pure_2d_kwargs(kwargs, slice_index, slice_count),
+                ),
+                slice_index,
+            )
+            for slice_index, slice_2d in enumerate(slices_2d)
+        ]
+        main_outputs, auxiliary_groups = _pure_2d_slice_results(slice_results)
+        stacked_main_output = stack_slices(main_outputs, memory_type, 0)
+        if not auxiliary_groups:
+            return stacked_main_output
+        return (
+            stacked_main_output,
+            *(
+                _aggregate_pure_2d_auxiliary_output(values, memory_type)
+                for values in auxiliary_groups
+            ),
+        )
+
+    def _execute_flexible(
+        self,
+        func: Callable[..., Any],
+        image: Any,
+        **kwargs: Any,
+    ) -> Any:
+        slice_by_slice = bool(kwargs.pop("slice_by_slice", False))
+        if slice_by_slice:
+            return self._execute_pure_2d(func, image, **kwargs)
+        return self._execute_pure_3d(func, image, **kwargs)
+
+    def _execute_volumetric_to_slice(
+        self,
+        func: Callable[..., Any],
+        image: Any,
+        **kwargs: Any,
+    ) -> Any:
+        result_2d = func(image, **kwargs)
+        memory_type = detect_memory_type(result_2d)
+        return stack_slices([result_2d], memory_type, 0)
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerFunctionContractMetadata:
+    """Decorator-declared processing contract metadata for one absorbed callable."""
+
+    explicit: ProcessingContract | None
+    declared: str | None
+
+    @classmethod
+    def from_callable(
+        cls,
+        func: Callable[..., Any],
+    ) -> "CellProfilerFunctionContractMetadata":
+        metadata = _callable_metadata(func)
+        explicit = metadata.get("__processing_contract__")
+        declared = metadata.get("__cellprofiler_declared_contract__")
+        return cls(
+            explicit=explicit if isinstance(explicit, ProcessingContract) else None,
+            declared=declared if isinstance(declared, str) else None,
+        )
+
+    def resolve(self, func: Callable[..., Any]) -> ProcessingContract:
+        if self.explicit is not None:
+            return self.explicit
+        if self.declared == "unknown":
+            inferred = _infer_processing_contract(func)
+            if inferred is not None:
+                return inferred
+        if self.declared is not None:
+            declared = _declared_processing_contract(self.declared)
+            if declared is not None:
+                return declared
+        return ProcessingContract.FLEXIBLE
+
+
+def _callable_metadata(func: Callable[..., Any]) -> Mapping[str, Any]:
+    try:
+        return vars(func)
+    except TypeError:
+        return {}
+
+
+def _infer_processing_contract(
+    func: Callable[..., Any],
+) -> ProcessingContract | None:
+    inferred = infer_contract(func, dtype_config=DtypeConfig()).contract
+    if inferred is InferredContract.UNKNOWN or inferred is InferredContract.ERROR:
+        return None
+    if inferred.name not in ProcessingContract.__members__:
+        return None
+    return ProcessingContract[inferred.name]
+
+
+def _declared_processing_contract(
+    contract_name: str,
+) -> ProcessingContract | None:
+    normalized = contract_name.upper()
+    if normalized not in ProcessingContract.__members__:
+        return None
+    return ProcessingContract[normalized]
+
+
+def _slice_pure_2d_kwargs(
+    kwargs: Mapping[str, Any],
+    slice_index: int,
+    slice_count: int,
+) -> dict[str, Any]:
+    return {
+        name: _slice_pure_2d_value(value, slice_index, slice_count)
+        for name, value in kwargs.items()
+    }
+
+
+def _slice_pure_2d_value(value: Any, slice_index: int, slice_count: int) -> Any:
+    if not hasattr(value, "ndim") or value.ndim != 3:
+        return value
+    if value.shape[0] == slice_count:
+        return value[slice_index]
+    if value.shape[0] == 1:
+        return value[0]
+    return value
+
+
+_CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR = CellProfilerFunctionContractExecutor()

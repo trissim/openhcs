@@ -49,6 +49,17 @@ def _fixup_scipy_result(result):
     return np.asarray(result)
 
 
+def _first_scalar_position(position) -> int:
+    """Return the first scalar index from scipy's nested position shapes."""
+    if np.isscalar(position):
+        return int(position)
+    if isinstance(position, np.ndarray):
+        return _first_scalar_position(position.tolist())
+    if hasattr(position, "__len__") and len(position) > 0:
+        return _first_scalar_position(position[0])
+    raise ValueError(f"Cannot extract scalar position from {position!r}.")
+
+
 @numpy
 def measure_object_intensity(
     image: np.ndarray,
@@ -148,7 +159,7 @@ def measure_object_intensity(
             max_positions = [max_positions]
         for i, pos in enumerate(max_positions):
             if pos is not None and len(pos) > 0:
-                idx = int(pos[0]) if hasattr(pos, '__len__') else int(pos)
+                idx = _first_scalar_position(pos)
                 max_x[i] = lmesh_x[idx]
                 max_y[i] = lmesh_y[idx]
         

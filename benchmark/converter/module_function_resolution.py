@@ -10,6 +10,12 @@ from typing import ClassVar
 from metaclass_registry import AutoRegisterMeta
 
 from .parser import ModuleBlock
+from .setting_names import (
+    OBJECT_MEASUREMENT_SETTING,
+    SettingNameFamily,
+    optional_setting_value,
+    required_setting_value,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +74,7 @@ class DefaultModuleFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
 class ScopedMeasurementFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
     """Resolve image-vs-object absorbed variants from a CellProfiler scope setting."""
 
-    scope_setting_name: ClassVar[str | None] = None
+    scope_setting_name: ClassVar[SettingNameFamily | None] = None
     default_scope_value: ClassVar[str | None] = None
     object_function_name: ClassVar[str | None] = None
 
@@ -79,7 +85,8 @@ class ScopedMeasurementFunctionResolutionStrategy(ModuleFunctionResolutionStrate
         default_function_name: str,
     ) -> ResolvedModuleFunction:
         scope = _measurement_target_scope(
-            module.get_setting(
+            _scope_setting_value(
+                module,
                 _required_class_attr(
                     type(self).scope_setting_name,
                     "scope_setting_name",
@@ -106,7 +113,10 @@ class MeasureTextureFunctionResolutionStrategy(
     """Resolve MeasureTexture image-vs-object absorbed variants."""
 
     module_name = "MeasureTexture"
-    scope_setting_name = "Measure whole images or objects?"
+    scope_setting_name = SettingNameFamily(
+        "Measure images or objects?",
+        aliases=("Measure whole images or objects?",),
+    )
     default_scope_value = "Images"
     object_function_name = "measure_texture_objects"
 
@@ -117,15 +127,75 @@ class MeasureColocalizationFunctionResolutionStrategy(
     """Resolve MeasureColocalization image-vs-object absorbed variants."""
 
     module_name = "MeasureColocalization"
-    scope_setting_name = "Select where to measure correlation"
+    scope_setting_name = SettingNameFamily("Select where to measure correlation")
     default_scope_value = "Across entire image"
     object_function_name = "measure_colocalization_objects"
 
 
-def _required_class_attr(value: str | None, name: str) -> str:
+class ObjectInputMeasurementFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
+    """Resolve object-measurement variants when object inputs are declared."""
+
+    object_setting_name: ClassVar[SettingNameFamily] = OBJECT_MEASUREMENT_SETTING
+    object_function_name: ClassVar[str | None] = None
+
+    def resolve(
+        self,
+        module: ModuleBlock,
+        *,
+        default_function_name: str,
+    ) -> ResolvedModuleFunction:
+        if not _setting_has_symbolic_values(
+            module,
+            type(self).object_setting_name,
+        ):
+            return ResolvedModuleFunction(function_name=default_function_name)
+        return ResolvedModuleFunction(
+            function_name=_required_class_attr(
+                type(self).object_function_name,
+                "object_function_name",
+            )
+        )
+
+
+class MeasureGranularityFunctionResolutionStrategy(
+    ObjectInputMeasurementFunctionResolutionStrategy
+):
+    """Resolve MeasureGranularity image-vs-object absorbed variants."""
+
+    module_name = "MeasureGranularity"
+    object_function_name = "measure_granularity_objects"
+
+
+def _scope_setting_value(
+    module: ModuleBlock,
+    setting: SettingNameFamily,
+    default: str,
+) -> str:
+    try:
+        return required_setting_value(module, setting)
+    except ValueError:
+        return default
+
+
+def _required_class_attr[T](value: T | None, name: str) -> T:
     if value is None:
         raise TypeError(f"Measurement resolution strategy must define {name}.")
     return value
+
+
+def _setting_has_symbolic_values(
+    module: ModuleBlock,
+    setting: SettingNameFamily,
+) -> bool:
+    value = optional_setting_value(module, setting)
+    if value is None:
+        return False
+    return any(_is_meaningful_symbolic_value(part) for part in value.split(","))
+
+
+def _is_meaningful_symbolic_value(value: str) -> bool:
+    normalized = value.strip().lower()
+    return normalized not in {"", "none", "do not use", "leave this black"}
 
 
 def _measurement_target_scope(value: str) -> MeasurementTargetScope:

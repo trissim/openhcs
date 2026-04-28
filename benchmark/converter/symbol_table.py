@@ -45,6 +45,14 @@ from openhcs.core.source_bindings import (
 
 from .gray_to_color_settings import GrayToColorInputNameResolver
 from .parser import ModuleBlock
+from .setting_names import (
+    IMAGE_MEASUREMENT_SETTING,
+    OBJECT_MEASUREMENT_SETTING,
+    SettingNameFamily,
+    optional_setting_value,
+    required_setting_value,
+    setting_names,
+)
 from .source_schema import compile_image_schema
 
 
@@ -151,18 +159,6 @@ class ModuleArtifactContracts:
 
 
 @dataclass(frozen=True, slots=True)
-class SettingNameFamily:
-    """Canonical CellProfiler setting plus accepted schema aliases."""
-
-    canonical: str
-    aliases: tuple[str, ...] = ()
-
-    @property
-    def names(self) -> tuple[str, ...]:
-        return (self.canonical, *self.aliases)
-
-
-@dataclass(frozen=True, slots=True)
 class CellProfilerSymbolTable:
     """Compiled CellProfiler symbol table and per-module artifact contracts."""
 
@@ -197,14 +193,6 @@ class CellProfilerSymbolTable:
         return builder.build()
 
 
-IMAGE_MEASUREMENT_SETTING = SettingNameFamily(
-    "Select images to measure",
-    aliases=("Select an image to measure",),
-)
-OBJECT_MEASUREMENT_SETTING = SettingNameFamily(
-    "Select object sets to measure",
-    aliases=("Select objects to measure",),
-)
 INPUT_IMAGE_SETTING = SettingNameFamily(
     "Select the input image",
     aliases=("Select an input image",),
@@ -1120,24 +1108,14 @@ def _contracts(
 
 
 def _setting(module: ModuleBlock, name: str | SettingNameFamily) -> str:
-    value = _optional_setting(module, name)
-    if value is None:
-        raise ValueError(
-            f"Module {module.name}({module.module_num}) missing setting "
-            f"{_setting_names(name)}."
-        )
-    return value
+    return required_setting_value(module, name)
 
 
 def _optional_setting(
     module: ModuleBlock,
     name: str | SettingNameFamily,
 ) -> str | None:
-    for setting_name in _setting_name_candidates(name):
-        value = module.settings.get(setting_name)
-        if value is not None and value.strip():
-            return value.strip()
-    return None
+    return optional_setting_value(module, name)
 
 
 def _split_names(value: str) -> tuple[str, ...]:
@@ -1164,16 +1142,8 @@ def _normalized_optional_symbol_value(value: str) -> str | None:
     return normalized
 
 
-def _setting_name_candidates(
-    name: str | SettingNameFamily,
-) -> tuple[str, ...]:
-    if isinstance(name, SettingNameFamily):
-        return name.names
-    return (name,)
-
-
 def _setting_names(name: str | SettingNameFamily) -> tuple[str, ...]:
-    return _setting_name_candidates(name)
+    return setting_names(name)
 
 
 def _normalize_symbol_name(name: str) -> str:

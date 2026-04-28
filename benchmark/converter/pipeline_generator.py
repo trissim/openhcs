@@ -22,10 +22,11 @@ from typing import Dict, List, Optional, Any
 from openhcs.core.artifact_materialization_policy import (
     DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
 )
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.artifacts import ArtifactSpec
 from openhcs.constants.constants import AllComponents
 from openhcs.core.pipeline_image_schema import CellProfilerImageSchema
 from openhcs.core.source_bindings import StepSourceBindingsConfig, SourceBindingOrigin
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 from .module_function_resolution import ModuleFunctionResolutionStrategy
 from .module_settings_binding import ModuleSettingsBindingStrategy
@@ -494,8 +495,17 @@ from openhcs.constants.input_source import InputSource
             raw_binding = raw_function_bindings[module.module_num]
             runtime_binding = runtime_function_bindings[module.module_num]
             executor_name = self._executor_binding_name(module)
+            resolved_function = ModuleFunctionResolutionStrategy.for_module(
+                module.name
+            ).resolve(
+                module,
+                default_function_name=self._registry[module.name][
+                    "function_name"
+                ],
+            )
             processing_contract = self._runtime_processing_contract_expression(
                 module.name,
+                resolved_function.function_name,
                 contract,
             )
 
@@ -605,30 +615,50 @@ from openhcs.constants.input_source import InputSource
     def _runtime_processing_contract_expression(
         self,
         module_name: str,
+        function_name: str,
         contract: ModuleArtifactContracts,
     ) -> str:
         """Return the effective runtime contract for one generated wrapper.
 
-        Selector-bearing STEP_INPUT bindings must resolve against the full current
-        stack before alias-specific views are chosen, so those wrappers cannot run
-        slice-by-slice even when the absorbed raw function is nominally PURE_2D.
-
-        Adapter-managed non-image artifacts are also pattern-group scoped rather
-        than per-slice scoped, so wrappers that emit them must execute exactly
-        once per pattern group.
+        Adapter-managed CellProfiler wrappers resolve named source/runtime inputs
+        before calling the absorbed function. They must therefore execute once per
+        pattern group, and the typed CellProfiler executor applies the absorbed
+        function contract after the image payload is resolved.
         """
-        if self._requires_step_input_selector_resolution(contract.source_bindings):
+        if contract.inputs or contract.outputs:
             return "ProcessingContract.FLEXIBLE"
-        if self._requires_pattern_group_runtime(contract):
-            return "ProcessingContract.FLEXIBLE"
-        return self._processing_contract_expression(module_name)
+        return self._processing_contract_expression(module_name, function_name)
 
-    def _processing_contract_expression(self, module_name: str) -> str:
+    def _processing_contract_expression(
+        self,
+        module_name: str,
+        function_name: str,
+    ) -> str:
         """Return generated-code expression for the raw absorbed module contract."""
         contract_name = str(self._registry[module_name]["contract"]).upper()
+        if contract_name == "UNKNOWN":
+            absorbed_contract = self._absorbed_function_processing_contract(
+                module_name,
+                function_name,
+            )
+            if absorbed_contract is not None:
+                return f"ProcessingContract.{absorbed_contract.name}"
         if contract_name not in {"PURE_2D", "PURE_3D", "FLEXIBLE", "VOLUMETRIC_TO_SLICE"}:
             contract_name = "FLEXIBLE"
         return f"ProcessingContract.{contract_name}"
+
+    def _absorbed_function_processing_contract(
+        self,
+        module_name: str,
+        function_name: str,
+    ) -> ProcessingContract | None:
+        from benchmark.cellprofiler_library import get_function
+
+        function = get_function(module_name, function_name=function_name)
+        contract = getattr(function, "__processing_contract__", None)
+        if isinstance(contract, ProcessingContract):
+            return contract
+        return None
 
     def _requires_step_input_selector_resolution(
         self,
@@ -645,20 +675,6 @@ from openhcs.constants.input_source import InputSource
             for group in source_bindings.groups
             for binding in group.bindings
         )
-
-    def _requires_pattern_group_runtime(
-        self,
-        contract: ModuleArtifactContracts,
-    ) -> bool:
-        """Whether wrapper side effects must run once per pattern group.
-
-        OpenHCS PURE_2D wrappers invoke the function once per slice. Generated
-        CellProfiler wrappers record named artifacts through the runtime adapter,
-        and those artifact plans are compiled per pattern group rather than per
-        slice. Non-image artifact outputs therefore cannot be emitted under the
-        outer slice-by-slice contract without duplicating writes.
-        """
-        return any(spec.kind is not ArtifactKind.IMAGE for spec in contract.outputs)
 
     def _parse_parameter_mapping(self, func_name: str) -> Dict[str, Any]:
         """

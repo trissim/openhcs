@@ -28,6 +28,7 @@ from openhcs.core.steps.function_runtime import (
     FunctionExecutionRequest,
     _execute_function_core,
 )
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.constants.constants import AllComponents
 
@@ -116,6 +117,24 @@ def _synthetic_nuclei_image() -> np.ndarray:
     image[18:28, 18:28] = 0.95
     image[40:50, 40:50] = 0.85
     return image
+
+
+def test_generator_uses_absorbed_function_contract_for_unknown_registry_contract():
+    generator = PipelineGenerator()
+
+    assert (
+        generator._processing_contract_expression("Opening", "opening")
+        == f"ProcessingContract.{ProcessingContract.PURE_2D.name}"
+    )
+
+
+def test_generator_scopes_artifact_managed_wrappers_to_pattern_group():
+    generated = _generated_pipeline(_image_artifact_pipeline_modules())
+
+    assert (
+        "opening_3_runtime.__processing_contract__ = ProcessingContract.FLEXIBLE"
+        in generated.code
+    )
 
 
 def _artifact_output_plans(contract) -> dict[str, ArtifactOutputPlan]:
@@ -351,13 +370,20 @@ def test_generated_cellprofiler_pipeline_executes_runtime_image_artifact_flow():
     namespace = _pipeline_namespace(generated)
     context = ContextStub()
     image = _synthetic_nuclei_image()
+    source_binding_context = _single_channel_source_binding_context()
 
     for step, contract in zip(
         namespace["pipeline_steps"],
         generated.artifact_contracts,
         strict=True,
     ):
-        image = _run_generated_step(step, contract, image, context)
+        image = _run_generated_step(
+            step,
+            contract,
+            image,
+            context,
+            source_binding_context=source_binding_context,
+        )
 
     nuclei_image_records = context.runtime_value_store.find(
         name=NUCLEI_IMAGE,
@@ -471,7 +497,7 @@ def test_runtime_adapter_receives_step_input_source_binding_context():
         )
     )
 
-    assert selected_output.shape == (1, 8, 8)
+    assert selected_output.shape == (8, 8)
 
 
 def test_generated_cellprofiler_pipeline_records_relationship_artifacts():

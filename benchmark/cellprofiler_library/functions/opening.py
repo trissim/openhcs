@@ -10,6 +10,7 @@ from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory import numpy
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
 class StructuringElement(str, Enum):
@@ -94,7 +95,7 @@ def _coerce_structuring_element(
     )
 
 
-@numpy
+@numpy(contract=ProcessingContract.PURE_2D)
 def opening(
     image: np.ndarray,
     structuring_element: StructuringElement = StructuringElement.DISK,

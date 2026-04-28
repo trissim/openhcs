@@ -5,6 +5,7 @@ from benchmark.cellprofiler_library import get_function
 from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
     correct_illumination_calculate,
 )
+from benchmark.cellprofiler_library.functions.opening import opening
 from openhcs.core.config import DtypeConfig
 from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -60,6 +61,7 @@ def test_absorbed_processing_contract_metadata_does_not_act_as_validator():
         correct_illumination_calculate.__processing_contract__
         is ProcessingContract.PURE_2D
     )
+    assert opening.__processing_contract__ is ProcessingContract.PURE_2D
 
 
 def test_pure_2d_contract_wrapper_aggregates_tuple_outputs_per_slice():

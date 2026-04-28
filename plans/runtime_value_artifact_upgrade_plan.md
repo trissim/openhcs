@@ -238,6 +238,13 @@ The branch has already established most of the typed runtime/compiler foundation
     - repeated full assignment blocks, repeated rule-row assignments, and single-assignment layouts each have explicit registered strategies
     - canonical BBBC021 analysis now exposes the real alias set (`DAPI`, `Actin`, `Tubulin`, and illumination-function aliases) instead of collapsing to the stale `DNA` preamble alias
     - `benchmark/converter/source_schema.py` reports clean under the nominal refactor advisor after this pass
+33. Canonical BBBC021 analysis now executes end to end through generated OpenHCS runtime plumbing on synthetic BBBC021-shaped data:
+    - legacy escaped `.cppipe` metadata/filter literals decode before setup-schema lowering
+    - `PIPELINE_START` metadata source resolution uses the setup-declared physical source universe when the virtual workspace cannot expose non-native illumination files
+    - absorbed CellProfiler contracts are applied after named image/artifact resolution so module adapters can compose semantic inputs before raw PURE_2D slicing
+    - aligned 3D runtime kwargs, singleton label stacks, and multi-image CellProfiler inputs are normalized through typed runtime execution rules instead of runtime fallbacks
+    - `MeasureTexture` and `MeasureGranularity` object variants now resolve through nominal function-resolution strategies and the shared object-measurement input policy
+    - the real path now reaches successful orchestrator execution across illumination correction, primary/secondary/tertiary objects, object-to-image conversion, RGB composition, overlays, intensity/size/texture/granularity/neighborhood measurements, and CSV materialization
 
 ### 3.2 What Is Still Missing
 
@@ -257,15 +264,15 @@ The biggest unresolved items are now:
    - a BBBC021-style generated pipeline now executes through the OpenHCS orchestrator with typed named-channel bindings
    - canonical BBBC021 illumination now carries explicit inferred image artifact contracts for illumination functions instead of empty contracts
    - canonical in-tree BBBC021 reference snapshots now prepare successfully and preserve typed schema facts under direct test coverage
-   - canonical `BBBC021_analysis.cppipe` now preserves real multi-alias `NamesAndTypes` source assignments, but full orchestrator execution acceptance is still the next compatibility target
+   - canonical `BBBC021_analysis.cppipe` now executes through the orchestrator on synthetic BBBC021-shaped data and validates the core generated runtime path
    - canonical `BBBC021_illum.cppipe` now executes successfully as a real converted pipeline shape
    - canonical dataset-owned `.cppipe` references can now be resolved through the benchmark adapter instead of only local ad hoc files
    - ExampleFly now executes end to end as a real shipped `.cppipe` shape and materializes measurement CSV outputs on disk
    - a generated `RelateObjects` pipeline now executes through the orchestrator and materializes both relationship and measurement CSV outputs
-   - the next gap is broader corpus coverage and dataset-level validation, not basic execution enablement
+   - the next gap is broader corpus coverage, real-data validation, and unexercised CellProfiler modules, not basic execution enablement
 7. Export and relationship-heavy semantics now have initial real-output validation with concrete CSV schema assertions, but not broad corpus-level validation.
-9. The broader absorbed-function corpus still needs continued cleanup beyond the currently exercised import/materialization surface.
 8. Benchmarking is no longer ahead of the remaining CellProfiler semantics, but it should still stay secondary to broader semantic validation.
+9. The broader absorbed-function corpus still needs continued cleanup beyond the currently exercised import/materialization surface.
 
 ---
 

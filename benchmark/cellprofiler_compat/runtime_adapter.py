@@ -767,6 +767,10 @@ def _select_step_input_stack(
 
 
 def _natural_step_input_payload(fallback_image: Any) -> Any:
+    if not hasattr(fallback_image, "ndim"):
+        return fallback_image
+    if fallback_image.ndim == 2:
+        return fallback_image
     return _restack_like_payload(_unstack_payload(fallback_image), fallback_image)
 
 
