@@ -103,7 +103,7 @@ class PathPlanner:
             logger.debug("Dict function pattern groups: %s", result)
             return result
 
-        group_by = snapshot.group_by
+        group_by = self._normalized_group_by(snapshot)
         logger.debug(
             "Resolved group_by for step %s via StepSnapshot: %s",
             snapshot.name,
@@ -136,6 +136,19 @@ class PathPlanner:
         if group_by is None or group_by == GroupBy.NONE:
             return False
         return group_by.value is not None
+
+    @staticmethod
+    def _normalized_group_by(snapshot: StepSnapshot) -> Any:
+        """Use the same group_by normalization as compiled execution plans."""
+        from openhcs.core.pipeline.funcstep_contract_validator import (
+            FuncStepContractValidator,
+        )
+
+        return FuncStepContractValidator.normalized_group_by(
+            snapshot.group_by,
+            snapshot.variable_components,
+            snapshot.name,
+        )
 
     @staticmethod
     def _build_paths_by_group(base_path: str, group_keys: List[Optional[str]]) -> Dict[Optional[str], str]:

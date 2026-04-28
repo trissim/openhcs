@@ -268,7 +268,7 @@ def test_compile_image_schema_lowers_load_images_to_typed_source_schema():
     dna = schema.assignment_for_alias("DNA")
 
     assert dna is not None
-    assert dna.origin is SourceBindingOrigin.STEP_INPUT
+    assert dna.origin is SourceBindingOrigin.PIPELINE_START
     assert dna.selector.filters[0].subject is SourceFilterSubject.FILE
     assert dna.selector.filters[0].match_type is SourceFilterMatchType.CONTAINS
     assert dna.selector.filters[0].value == "Channel2"
@@ -495,7 +495,7 @@ def test_codegen_upgrades_pure_2d_runtime_wrapper_when_step_input_binding_select
     ) in generated.code
 
 
-def test_codegen_uses_channel_stack_for_load_images_filter_bindings():
+def test_codegen_uses_pipeline_start_for_load_images_filter_bindings():
     setup_modules = [
         _module_with_records(
             1,
@@ -535,8 +535,11 @@ def test_codegen_uses_channel_stack_for_load_images_filter_bindings():
 
     assert "SourceFilterClause(" in generated.code
     assert "SourceFilterMatchType.CONTAINS" in generated.code
-    assert "variable_components=[VariableComponents.CHANNEL]," in generated.code
-    assert "group_by=GroupBy.SITE," in generated.code
+    assert "input_source=InputSource.PIPELINE_START," in generated.code
+    assert (
+        "variable_components=[VariableComponents.SITE, "
+        "VariableComponents.CHANNEL],"
+    ) in generated.code
 
 
 def test_compile_image_schema_decodes_legacy_escaped_match_metadata():

@@ -274,7 +274,7 @@ class LoadImagesModuleCompiler(SetupModuleCompiler):
                     alias=alias,
                     image_type="Grayscale image",
                     selector=selector,
-                    origin=SourceBindingOrigin.STEP_INPUT,
+                    origin=_origin_for_selector(selector),
                 )
             )
             _compile_load_images_metadata_rules(block, filters, state)
@@ -851,7 +851,7 @@ def _component_for_metadata_field(field: str) -> AllComponents | None:
 
 
 def _origin_for_selector(selector: SourceSelector) -> SourceBindingOrigin:
-    if selector.metadata:
+    if selector.metadata or selector.filters:
         return SourceBindingOrigin.PIPELINE_START
     return SourceBindingOrigin.STEP_INPUT
 

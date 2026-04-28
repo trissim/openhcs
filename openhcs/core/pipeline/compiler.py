@@ -1315,7 +1315,9 @@ class PipelineCompiler:
         *,
         is_zmq_execution: bool,
     ) -> tuple["ObjectState", ResolvedStepPlanInputs]:
-        force_fresh = bool(is_zmq_execution)
+        # Compile from the submitted pipeline definition, not from any stale UI
+        # ObjectState that may point at post-compile stripped step shells.
+        force_fresh = True
         global_config_state = PipelineCompiler._compile_global_config_state(
             force_fresh=force_fresh
         )

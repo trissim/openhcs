@@ -122,7 +122,7 @@ class CellProfilerModuleExecutor:
             func,
             invocation.image,
             invocation.kwargs,
-            force_full_stack=invocation.image_count > 1,
+            execution_mode=invocation.execution_mode,
         )
         main_output, artifact_values = _split_cellprofiler_output(raw_output)
         self._record_outputs(
@@ -326,6 +326,7 @@ class CellProfilerModuleExecutor:
                 payload=fallback_image,
                 source_image_name=self._input_source_image_name(adapter),
                 image_count=1,
+                execution_mode=CellProfilerImageExecutionMode.NATURAL,
             )
 
         runtime_image_names = {
@@ -347,10 +348,12 @@ class CellProfilerModuleExecutor:
                 payloads.append(adapter.get_image(spec.name).data)
                 continue
             payloads.append(adapter.resolve_source_image(spec.name, fallback_image))
+        composition = _compose_image_payload(self.module_name, tuple(payloads))
         return CellProfilerImageRequest(
-            payload=_compose_image_payload(self.module_name, tuple(payloads)),
+            payload=composition.payload,
             source_image_name=self._input_source_image_name(adapter),
             image_count=len(payloads),
+            execution_mode=composition.execution_mode,
         )
 
     def _primary_image_inputs(
@@ -440,6 +443,7 @@ class CellProfilerModuleExecutor:
             kwargs=_coerce_invocation_kwargs(func, runtime_kwargs),
             source_image_name=image_request.source_image_name,
             image_count=image_request.image_count,
+            execution_mode=image_request.execution_mode,
         )
 
     def _external_source_image_names(self) -> tuple[str, ...]:
@@ -486,6 +490,7 @@ class CellProfilerResolvedInputRequest(ABC):
 
     source_image_name: str | None
     image_count: int
+    execution_mode: "CellProfilerImageExecutionMode"
 
 
 @dataclass(frozen=True, slots=True)
@@ -501,6 +506,34 @@ class CellProfilerInvocationRequest(CellProfilerResolvedInputRequest):
 
     image: Any
     kwargs: Mapping[str, Any]
+
+
+class CellProfilerImageExecutionMode(Enum):
+    """How the CellProfiler executor should interpret the resolved image payload."""
+
+    NATURAL = "natural"
+    FULL_STACK = "full_stack"
+    ALIGNED_MULTI_IMAGE_STACK = "aligned_multi_image_stack"
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerImageComposition:
+    """Resolved image payload plus its executor mode."""
+
+    payload: Any
+    execution_mode: CellProfilerImageExecutionMode
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerAlignedImageStack:
+    """Per-slice CellProfiler multi-image bundles aligned to one OpenHCS stack."""
+
+    slices: tuple[Any, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "slices", tuple(self.slices))
+        if not self.slices:
+            raise ValueError("CellProfilerAlignedImageStack.slices cannot be empty.")
 
 
 def _coerce_invocation_kwargs(
@@ -1335,26 +1368,74 @@ def _artifact_kind_strategy(
 def _compose_image_payload(
     module_name: str,
     image_payloads: tuple[Any, ...],
-) -> Any:
+) -> CellProfilerImageComposition:
     if not image_payloads:
         raise ValueError(f"{module_name} cannot compose an empty image input set.")
     if len(image_payloads) == 1:
-        return image_payloads[0]
+        return CellProfilerImageComposition(
+            payload=image_payloads[0],
+            execution_mode=CellProfilerImageExecutionMode.NATURAL,
+        )
 
-    normalized_payloads: list[Any] = []
-    for payload in image_payloads:
-        if hasattr(payload, "ndim") and payload.ndim == 3:
-            if getattr(payload, "shape", (0,))[0] != 1:
-                raise NotImplementedError(
-                    f"{module_name} cannot compose multi-image inputs from "
-                    "payloads that each contain multiple stack slices."
+    payload_slices = tuple(_payload_slices_for_alignment(payload) for payload in image_payloads)
+    slice_counts = tuple(len(slices) for slices in payload_slices)
+    max_slice_count = max(slice_counts)
+    invalid_counts = tuple(count for count in slice_counts if count not in {1, max_slice_count})
+    if invalid_counts:
+        raise ValueError(
+            f"{module_name} cannot align multi-image inputs with incompatible "
+            f"slice counts {slice_counts!r}."
+        )
+
+    if max_slice_count == 1:
+        return CellProfilerImageComposition(
+            payload=_compose_one_image_bundle(tuple(slices[0] for slices in payload_slices)),
+            execution_mode=CellProfilerImageExecutionMode.FULL_STACK,
+        )
+    return CellProfilerImageComposition(
+        payload=CellProfilerAlignedImageStack(
+            slices=tuple(
+                _compose_one_image_bundle(
+                    tuple(_aligned_payload_slice(slices, slice_index) for slices in payload_slices)
                 )
-            normalized_payloads.append(payload[0])
-            continue
-        normalized_payloads.append(payload)
+                for slice_index in range(max_slice_count)
+            )
+        ),
+        execution_mode=CellProfilerImageExecutionMode.ALIGNED_MULTI_IMAGE_STACK,
+    )
 
-    memory_type = detect_memory_type(normalized_payloads[0])
-    return stack_slices(normalized_payloads, memory_type=memory_type, gpu_id=0)
+
+def _payload_slices_for_alignment(payload: Any) -> tuple[Any, ...]:
+    if hasattr(payload, "ndim") and payload.ndim == 2:
+        return (payload,)
+    if hasattr(payload, "ndim") and payload.ndim == 3:
+        memory_type = detect_memory_type(payload)
+        return tuple(unstack_slices(payload, memory_type, 0))
+    return (payload,)
+
+
+def _aligned_payload_slice(
+    slices: tuple[Any, ...],
+    slice_index: int,
+) -> Any:
+    if len(slices) == 1:
+        return slices[0]
+    return slices[slice_index]
+
+
+def _compose_one_image_bundle(
+    image_payloads: tuple[Any, ...],
+) -> Any:
+    memory_type = detect_memory_type(image_payloads[0])
+    return stack_slices(list(image_payloads), memory_type=memory_type, gpu_id=0)
+
+
+def _collapse_singleton_stack_output(value: Any) -> Any:
+    if hasattr(value, "ndim") and value.ndim == 3 and value.shape[0] == 1:
+        return value[0]
+    if isinstance(value, tuple):
+        return tuple(_collapse_singleton_stack_output(item) for item in value)
+    return value
 
 
 def _single_source_name(source_names: tuple[str, ...]) -> str | None:
@@ -1382,9 +1463,21 @@ class CellProfilerFunctionContractExecutor:
         kwargs: Mapping[str, Any],
         *,
         force_full_stack: bool = False,
+        execution_mode: CellProfilerImageExecutionMode | None = None,
     ) -> Any:
-        if force_full_stack:
+        mode = execution_mode or (
+            CellProfilerImageExecutionMode.FULL_STACK
+            if force_full_stack
+            else CellProfilerImageExecutionMode.NATURAL
+        )
+        if mode is CellProfilerImageExecutionMode.FULL_STACK:
             return self._execute_pure_3d(func, image, **dict(kwargs))
+        if mode is CellProfilerImageExecutionMode.ALIGNED_MULTI_IMAGE_STACK:
+            return self._execute_aligned_multi_image_stack(
+                func,
+                image,
+                **dict(kwargs),
+            )
         return CellProfilerFunctionContractMetadata.from_callable(func).resolve(
             func
         ).execute(
@@ -1401,6 +1494,37 @@ class CellProfilerFunctionContractExecutor:
         **kwargs: Any,
     ) -> Any:
         return func(image, **kwargs)
+
+    def _execute_aligned_multi_image_stack(
+        self,
+        func: Callable[..., Any],
+        image: Any,
+        **kwargs: Any,
+    ) -> Any:
+        if not isinstance(image, CellProfilerAlignedImageStack):
+            raise TypeError(
+                "ALIGNED_MULTI_IMAGE_STACK execution requires "
+                f"CellProfilerAlignedImageStack, got {type(image).__name__}."
+            )
+        slice_results = tuple(
+            _rewrite_slice_index(
+                _collapse_singleton_stack_output(func(slice_payload, **kwargs)),
+                slice_index,
+            )
+            for slice_index, slice_payload in enumerate(image.slices)
+        )
+        main_outputs, auxiliary_groups = _pure_2d_slice_results(slice_results)
+        memory_type = detect_memory_type(main_outputs[0])
+        stacked_main_output = stack_slices(main_outputs, memory_type, 0)
+        if not auxiliary_groups:
+            return stacked_main_output
+        return (
+            stacked_main_output,
+            *(
+                _aggregate_pure_2d_auxiliary_output(values, memory_type)
+                for values in auxiliary_groups
+            ),
+        )
 
     def _execute_pure_2d(
         self,

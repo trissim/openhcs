@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, ArtifactSpec
 from openhcs.core.compiled_step_plan import (
@@ -96,6 +97,24 @@ def test_artifact_output_plans_preserve_declared_kind():
 
     assert outputs["nuclei"].kind is ArtifactKind.OBJECT_LABELS
     assert planner.declared["nuclei"].kind is ArtifactKind.OBJECT_LABELS
+
+
+def test_execution_groups_use_normalized_group_by_for_variable_conflicts():
+    planner = _artifact_planner_stub()
+
+    def fail_component_lookup(_group_by):
+        raise AssertionError("normalized GroupBy.NONE must not query components")
+
+    planner.orchestrator = SimpleNamespace(get_component_keys=fail_component_lookup)
+    snapshot = SimpleNamespace(
+        is_function_step=True,
+        func=lambda image: image,
+        group_by=GroupBy.CHANNEL,
+        variable_components=(VariableComponents.SITE, VariableComponents.CHANNEL),
+        name="source_bound_cellprofiler_step",
+    )
+
+    assert planner._get_execution_groups(snapshot) == [None]
 
 
 def test_artifact_input_plan_rejects_producer_consumer_kind_mismatch():

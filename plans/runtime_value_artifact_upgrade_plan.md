@@ -821,6 +821,30 @@ Acceptance:
 2. benchmarking is no longer ahead of semantic support
 3. benchmark adapter coverage remains a thin consumer of the same converted-pipeline runtime path
 
+### Current Progress: Real Multi-Image Source Compatibility
+
+Implemented in the current pass:
+
+1. `LoadImages` filename/filter selectors now compile as `PIPELINE_START` source bindings instead of pretending filtered external files are current step inputs.
+2. pipeline-start source resolution has a nominal loader family for selected source files, including normal OpenHCS image files and CellProfiler `.mat` illumination payloads.
+3. multi-image CellProfiler calls can align multi-slice source payloads with singleton illumination/source payloads instead of failing on real `CorrectIlluminationApply` style inputs.
+4. generated source-bound steps now request the native OpenHCS components needed to drive source-bound image sets while leaving image/channel selection to typed source bindings.
+5. path planning now uses the same normalized `group_by` semantics as compiled execution, preventing raw default `group_by` from creating artifact plans that execution cannot select.
+6. direct compilation now registers fresh compile-time ObjectStates per compile, so later compiles do not reuse post-compile stripped step shells.
+
+Acceptance observed:
+
+1. focused source-schema/runtime/module/path-planner tests pass.
+2. first two source-bound `ExampleSBS.cppipe` steps execute through normal orchestrator execution for well `A01`.
+3. non-visual ImageXpress and OperaPhenix disk/zarr integration cases pass with Napari/Fiji disabled.
+4. full `ExampleSBS.cppipe` one-well execution no longer fails on the previous `.mat` loader, multi-image composition, or duplicate artifact materialization blockers, but still timed out as an acceptance probe and needs a narrower real-pipeline success target.
+
+Remaining boundary:
+
+1. full real-pipeline execution still needs a fast, deterministic acceptance fixture beyond the first source-bound steps.
+2. OpenHCS-format integration fixture discovery currently reports no wells in the existing main integration matrix and should be handled separately from CellProfiler source compatibility.
+3. advisor still flags broader existing converter/runtime structural issues outside the cleaned core compiler/path-planner surfaces.
+
 ---
 
 ## 9. Decisions and Rejections

@@ -25,6 +25,7 @@ from openhcs.core.source_bindings import (
     SourceBindingOrigin,
 )
 from openhcs.core.source_matching import (
+    is_image_path,
     merge_source_metadata,
     metadata_from_rules,
     source_filters_match,
@@ -619,6 +620,115 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
         )
 
 
+@dataclass(frozen=True, slots=True)
+class PipelineStartSourceLoadRequest:
+    """Typed request for loading pipeline-start source payloads."""
+
+    adapter: CellProfilerRuntimeAdapter
+    selected_paths: tuple[str, ...]
+    backend: str
+
+
+class PipelineStartSourceFileLoader(ABC, metaclass=AutoRegisterMeta):
+    """Nominal family for loading selected pipeline-start source files."""
+
+    __registry_key__ = "loader_key"
+    __skip_if_no_key__ = True
+    loader_key: ClassVar[str | None] = None
+
+    @classmethod
+    def for_paths(
+        cls,
+        selected_paths: tuple[str, ...],
+    ) -> "PipelineStartSourceFileLoader":
+        matching_loaders = tuple(
+            loader
+            for loader in (
+                loader_type() for loader_type in cls.__registry__.values()
+            )
+            if loader.accepts_all(selected_paths)
+        )
+        if len(matching_loaders) == 1:
+            return matching_loaders[0]
+        suffixes = sorted({Path(path).suffix.lower() for path in selected_paths})
+        if not matching_loaders:
+            raise RuntimeError(
+                "Pipeline-start source resolution has no registered loader for "
+                f"selected source suffixes {suffixes!r}."
+            )
+        raise RuntimeError(
+            "Pipeline-start source resolution has ambiguous registered loaders for "
+            f"selected source suffixes {suffixes!r}."
+        )
+
+    def accepts_all(self, selected_paths: tuple[str, ...]) -> bool:
+        return bool(selected_paths) and all(
+            self.accepts_path(path) for path in selected_paths
+        )
+
+    @abstractmethod
+    def accepts_path(self, path: str) -> bool:
+        """Return whether this loader owns one source file path."""
+
+    @abstractmethod
+    def load_slices(self, request: PipelineStartSourceLoadRequest) -> list[Any]:
+        """Load selected source files as stackable image-like payloads."""
+
+
+class OpenHCSImageSourceFileLoader(PipelineStartSourceFileLoader):
+    """Load normal image sources through the OpenHCS VFS filemanager."""
+
+    loader_key = "openhcs_image"
+
+    def accepts_path(self, path: str) -> bool:
+        return is_image_path(path)
+
+    def load_slices(self, request: PipelineStartSourceLoadRequest) -> list[Any]:
+        context = _require_processing_context(request.adapter)
+        load_kwargs: dict[str, Any] = {}
+        if request.backend == Backend.ZARR.value:
+            load_kwargs["zarr_config"] = context.global_config.zarr_config
+        loaded_images = context.filemanager.load_batch(
+            list(request.selected_paths),
+            request.backend,
+            **load_kwargs,
+        )
+        return list(loaded_images)
+
+
+class MatlabMatrixSourceFileLoader(PipelineStartSourceFileLoader):
+    """Load CellProfiler MATLAB matrix image sources such as illumination files."""
+
+    loader_key = "matlab_matrix"
+
+    def accepts_path(self, path: str) -> bool:
+        return Path(path).suffix.lower() == ".mat"
+
+    def load_slices(self, request: PipelineStartSourceLoadRequest) -> list[Any]:
+        return [self._load_matrix(path) for path in request.selected_paths]
+
+    def _load_matrix(self, path: str) -> Any:
+        from scipy.io import loadmat
+
+        payloads = _matlab_numeric_arrays(loadmat(path))
+        if not payloads:
+            raise RuntimeError(
+                f"MATLAB source file {path!r} contains no numeric image arrays."
+            )
+        if len(payloads) == 1:
+            return payloads[0][1]
+        image_payloads = tuple(
+            payload for name, payload in payloads if name.strip().lower() == "image"
+        )
+        if len(image_payloads) == 1:
+            return image_payloads[0]
+        names = tuple(name for name, _payload in payloads)
+        raise RuntimeError(
+            f"MATLAB source file {path!r} contains multiple numeric arrays "
+            f"{names!r}; expected exactly one payload or one 'Image' payload."
+        )
+
+
 def _binding_requires_selector(binding: NamedSourceBinding) -> bool:
     selector = binding.selector
     return bool(
@@ -832,21 +942,46 @@ def _load_pipeline_start_stack(
 ) -> Any:
     if not selected_paths:
         raise RuntimeError("Pipeline-start source selection cannot load zero paths.")
-    context = _require_processing_context(adapter)
     backend = adapter.source_binding_context.pipeline_input_backend
     if backend is None:
         raise RuntimeError(
             "Pipeline-start source resolution requires pipeline_input_backend."
         )
-    load_kwargs: dict[str, Any] = {}
-    if backend == Backend.ZARR.value:
-        load_kwargs["zarr_config"] = context.global_config.zarr_config
-    loaded_images = context.filemanager.load_batch(list(selected_paths), backend, **load_kwargs)
-    if not loaded_images:
-        raise RuntimeError(
-            f"Pipeline-start source resolution loaded no images from {list(selected_paths)}."
+    loaded_payloads = PipelineStartSourceFileLoader.for_paths(
+        selected_paths,
+    ).load_slices(
+        PipelineStartSourceLoadRequest(
+            adapter=adapter,
+            selected_paths=selected_paths,
+            backend=backend,
         )
-    return _restack_like_payload(loaded_images, fallback_image)
+    )
+    if not loaded_payloads:
+        raise RuntimeError(
+            "Pipeline-start source resolution loaded no payloads from "
+            f"{list(selected_paths)}."
+        )
+    return _restack_like_payload(loaded_payloads, fallback_image)
+
+
+def _matlab_numeric_arrays(
+    mat_payload: Mapping[str, Any],
+) -> tuple[tuple[str, Any], ...]:
+    return tuple(
+        (name, payload)
+        for name, payload in mat_payload.items()
+        if not name.startswith("__") and _is_numeric_array_payload(payload)
+    )
+
+
+def _is_numeric_array_payload(payload: Any) -> bool:
+    dtype = getattr(payload, "dtype", None)
+    return (
+        hasattr(payload, "ndim")
+        and dtype is not None
+        and getattr(dtype, "kind", None) in {"b", "u", "i", "f", "c"}
+        and payload.ndim >= 2
+    )
 
 
 def _unstack_payload(payload: Any) -> list[Any]:

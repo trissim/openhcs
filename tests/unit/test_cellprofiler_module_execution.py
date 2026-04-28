@@ -1,9 +1,12 @@
 import numpy as np
 
 from benchmark.cellprofiler_compat.module_execution import (
+    CellProfilerAlignedImageStack,
     CellProfilerFunctionContractMetadata,
     CellProfilerFunctionContractExecutor,
+    CellProfilerImageExecutionMode,
     _coerce_invocation_kwargs,
+    _compose_image_payload,
     _measurement_image_for_labels,
     _measurement_labels,
     _measurement_labels_for_image,
@@ -98,6 +101,66 @@ def test_cellprofiler_contract_executor_preserves_multi_image_stack_payload():
 
     assert calls == [(3, 4, 5)]
     assert result.shape == stack.shape
+
+
+def test_compose_image_payload_aligns_multislice_inputs_with_broadcast():
+    raw_stack = np.stack(
+        (
+            np.full((4, 5), 11, dtype=np.float32),
+            np.full((4, 5), 22, dtype=np.float32),
+        )
+    )
+    illumination = np.full((4, 5), 3, dtype=np.float32)
+
+    composition = _compose_image_payload(
+        "CorrectIlluminationApply",
+        (raw_stack, illumination),
+    )
+
+    assert composition.execution_mode is CellProfilerImageExecutionMode.ALIGNED_MULTI_IMAGE_STACK
+    assert isinstance(composition.payload, CellProfilerAlignedImageStack)
+    assert len(composition.payload.slices) == 2
+    for slice_index, composed_slice in enumerate(composition.payload.slices):
+        assert composed_slice.shape == (2, 4, 5)
+        np.testing.assert_array_equal(composed_slice[0], raw_stack[slice_index])
+        np.testing.assert_array_equal(composed_slice[1], illumination)
+
+
+def test_cellprofiler_contract_executor_applies_aligned_multi_image_stack():
+    calls = []
+
+    def subtract_illumination(image: np.ndarray) -> np.ndarray:
+        calls.append(image.shape)
+        return (image[0] - image[1])[np.newaxis, ...]
+
+    aligned_stack = CellProfilerAlignedImageStack(
+        slices=(
+            np.stack(
+                (
+                    np.full((4, 5), 11, dtype=np.float32),
+                    np.full((4, 5), 3, dtype=np.float32),
+                )
+            ),
+            np.stack(
+                (
+                    np.full((4, 5), 22, dtype=np.float32),
+                    np.full((4, 5), 3, dtype=np.float32),
+                )
+            ),
+        )
+    )
+
+    result = CellProfilerFunctionContractExecutor().execute(
+        subtract_illumination,
+        aligned_stack,
+        {},
+        execution_mode=CellProfilerImageExecutionMode.ALIGNED_MULTI_IMAGE_STACK,
+    )
+
+    assert calls == [(2, 4, 5), (2, 4, 5)]
+    assert result.shape == (2, 4, 5)
+    np.testing.assert_array_equal(result[0], np.full((4, 5), 8, dtype=np.float32))
+    np.testing.assert_array_equal(result[1], np.full((4, 5), 19, dtype=np.float32))
 
 
 def test_cellprofiler_contract_executor_infers_unknown_absorbed_contract():

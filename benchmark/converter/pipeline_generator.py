@@ -417,6 +417,11 @@ from openhcs.constants.input_source import InputSource
         if not source_bindings.is_empty:
             if self._requires_channel_stack_input(source_bindings):
                 return ("VariableComponents.CHANNEL",), "GroupBy.SITE"
+            if self._requires_pipeline_start_source_resolution(source_bindings):
+                return (
+                    "VariableComponents.SITE",
+                    "VariableComponents.CHANNEL",
+                ), None
             return ("VariableComponents.SITE",), None
         if contract.runtime_artifact_inputs:
             return ("VariableComponents.CHANNEL",), "GroupBy.SITE"
@@ -445,6 +450,17 @@ from openhcs.constants.input_source import InputSource
                 ):
                     return True
         return False
+
+    def _requires_pipeline_start_source_resolution(
+        self,
+        source_bindings: StepSourceBindingsConfig,
+    ) -> bool:
+        """Whether source bindings own image/channel selection from pipeline start."""
+        return any(
+            binding.origin is SourceBindingOrigin.PIPELINE_START
+            for group in source_bindings.groups
+            for binding in group.bindings
+        )
 
     def _generate_artifact_contracts(
         self,

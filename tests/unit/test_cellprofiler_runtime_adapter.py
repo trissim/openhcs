@@ -1,5 +1,6 @@
 import pytest
 import numpy as np
+from scipy.io import savemat
 from types import SimpleNamespace
 
 from benchmark.cellprofiler_compat import (
@@ -573,7 +574,7 @@ def test_cellprofiler_adapter_rejects_metadata_selector_fields_not_exposed_by_pa
         )
 
 
-def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules():
+def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules(tmp_path):
     source_bindings = StepSourceBindingsConfig(
         groups=(
             GroupedSourceBindings(
@@ -630,22 +631,20 @@ def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules():
             ),
         ),
     )
+    filemanager = FileManagerStub()
+    expected = np.full((2, 2), 31.0, dtype=np.float32)
+    plate_a = tmp_path / "plateA_IllumDAPI.mat"
+    plate_b = tmp_path / "plateB_IllumDAPI.mat"
+    savemat(plate_a, {"Image": expected})
+    savemat(
+        plate_b,
+        {"Image": np.full((2, 2), 41.0, dtype=np.float32)},
+    )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=("A01_s001_w1_z001_t001.tif",),
         step_input_dir="/plate/plateA/Images",
-        pipeline_input_files=(
-            "/plate/plateA/illum/plateA_IllumDAPI.mat",
-            "/plate/plateB/illum/plateB_IllumDAPI.mat",
-        ),
-        pipeline_input_backend="memory",
-    )
-    filemanager = FileManagerStub()
-    expected = np.full((2, 2), 31.0, dtype=np.float32)
-    filemanager.saved[("memory", "/plate/plateA/illum/plateA_IllumDAPI.mat")] = expected
-    filemanager.saved[("memory", "/plate/plateB/illum/plateB_IllumDAPI.mat")] = np.full(
-        (2, 2),
-        41.0,
-        dtype=np.float32,
+        pipeline_input_files=(str(plate_a), str(plate_b)),
+        pipeline_input_backend="disk",
     )
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
@@ -664,13 +663,7 @@ def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules():
 
     assert resolved.shape == expected.shape
     np.testing.assert_array_equal(resolved, expected)
-    assert filemanager.loaded_batches == [
-        (
-            ("/plate/plateA/illum/plateA_IllumDAPI.mat",),
-            "memory",
-            {},
-        )
-    ]
+    assert filemanager.loaded_batches == []
 
 
 def test_cellprofiler_adapter_resolves_step_input_source_filters_without_metadata():
@@ -723,7 +716,7 @@ def test_cellprofiler_adapter_resolves_step_input_source_filters_without_metadat
     np.testing.assert_array_equal(resolved, channel_1)
 
 
-def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan():
+def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan(tmp_path):
     source_bindings = StepSourceBindingsConfig(
         groups=(
             GroupedSourceBindings(
@@ -769,6 +762,15 @@ def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan():
         ),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
+    filemanager = FileManagerStub()
+    first_mat = tmp_path / "plateA_IllumDAPI_1.mat"
+    second_mat = tmp_path / "plateA_IllumDAPI_2.mat"
+    savemat(
+        first_mat,
+        {"Image": np.full((2, 2), 31.0, dtype=np.float32)},
+    )
+    expected = np.full((2, 2), 41.0, dtype=np.float32)
+    savemat(second_mat, {"Image": expected})
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s002_w1_z001_t001.tif",
@@ -780,19 +782,11 @@ def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan():
             "/plate/Images/A01_s001_w2_z001_t001.tif",
             "/plate/Images/A01_s002_w1_z001_t001.tif",
             "/plate/Images/A01_s002_w2_z001_t001.tif",
-            "/plate/illum/plateA_IllumDAPI_1.mat",
-            "/plate/illum/plateA_IllumDAPI_2.mat",
+            str(first_mat),
+            str(second_mat),
         ),
-        pipeline_input_backend="memory",
+        pipeline_input_backend="disk",
     )
-    filemanager = FileManagerStub()
-    filemanager.saved[("memory", "/plate/illum/plateA_IllumDAPI_1.mat")] = np.full(
-        (2, 2),
-        31.0,
-        dtype=np.float32,
-    )
-    expected = np.full((2, 2), 41.0, dtype=np.float32)
-    filemanager.saved[("memory", "/plate/illum/plateA_IllumDAPI_2.mat")] = expected
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_id=AXIS_ID,
@@ -815,13 +809,7 @@ def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan():
 
     assert resolved.shape == expected.shape
     np.testing.assert_array_equal(resolved, expected)
-    assert filemanager.loaded_batches == [
-        (
-            ("/plate/illum/plateA_IllumDAPI_2.mat",),
-            "memory",
-            {},
-        )
-    ]
+    assert filemanager.loaded_batches == []
 
 
 def test_cellprofiler_module_executor_records_object_output_through_adapter():
