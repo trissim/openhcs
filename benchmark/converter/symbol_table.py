@@ -265,7 +265,8 @@ class _SymbolTableBuilder:
                 return self.external_image(normalized_name)
             raise ValueError(
                 f"Module {module.name}({module.module_num}) references unknown "
-                f"{kind.value} symbol '{normalized_name}'."
+                f"{kind.value} symbol '{normalized_name}'. No prior module "
+                "produces it."
             )
         if symbol.kind is not kind:
             raise ValueError(

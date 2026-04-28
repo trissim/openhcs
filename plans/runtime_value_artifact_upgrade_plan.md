@@ -198,6 +198,10 @@ The branch has already established most of the typed runtime/compiler foundation
     - `openhcs.core.memory.decorators` is a real core import surface rather than an implicit missing module
     - active and ExampleFly-relevant absorbed functions now import cleanly under unit coverage
     - the benchmark adapter now executes the real shipped `ExampleFly.cppipe` end to end and materializes non-empty CSV outputs
+23. The in-tree `.cppipe` corpus is now tracked explicitly instead of implicitly:
+    - shipped fixtures are classified as either supported or structurally invalid
+    - adapter-level preparation failures are wrapped as `ToolExecutionError` with the original compatibility diagnostic preserved
+    - `ExampleHuman.cppipe` is now asserted as a known invalid reduced fixture rather than silently encouraging weaker symbol validation
 
 ### 3.2 What Is Still Missing
 

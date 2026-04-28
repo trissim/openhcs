@@ -204,6 +204,16 @@ class OpenHCSAdapter(ToolAdapter):
         output_suffix = f"_{request.pipeline_name}_converted_cppipe"
         output_plate_root = request.output_dir / f"{request.dataset_path.name}{output_suffix}"
         generated_module_path = request.output_dir / f"{cppipe_path.stem}_openhcs.py"
+        try:
+            prepared = prepare_generated_pipeline(
+                cppipe_path,
+                output_path=generated_module_path,
+            )
+        except ValueError as exc:
+            raise ToolExecutionError(
+                f"Failed to prepare converted .cppipe pipeline {cppipe_path.name}: "
+                f"{exc}"
+            ) from exc
 
         global_config = GlobalPipelineConfig(
             num_workers=1,
@@ -226,10 +236,6 @@ class OpenHCSAdapter(ToolAdapter):
             pipeline_config=pipeline_config,
         )
         orchestrator.initialize()
-        prepared = prepare_generated_pipeline(
-            cppipe_path,
-            output_path=generated_module_path,
-        )
 
         with ExitStack() as stack:
             for metric in request.metrics:

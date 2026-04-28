@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from benchmark.adapters.openhcs import OpenHCSAdapter
 from benchmark.datasets.registry import BBBC021_SINGLE_PLATE
+from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.metrics.time import TimeMetric
 from openhcs.tests.generators.generate_synthetic_data import (
     SyntheticMicroscopyGenerator,
@@ -100,6 +103,39 @@ def test_openhcs_adapter_runs_real_examplefly_cppipe(tmp_path: Path) -> None:
     assert csv_outputs
     assert len(csv_outputs) >= 6
     assert all(path.stat().st_size > 0 for path in csv_outputs)
+
+
+def test_openhcs_adapter_reports_examplehuman_cppipe_inconsistency(
+    tmp_path: Path,
+) -> None:
+    plate_path = tmp_path / "plate"
+    plate_path.mkdir()
+    cppipe_path = (
+        Path(__file__).resolve().parents[2]
+        / "benchmark"
+        / "cellprofiler_pipelines"
+        / "ExampleHuman.cppipe"
+    )
+
+    with pytest.raises(
+        ToolExecutionError,
+        match=(
+            "Failed to prepare converted \\.cppipe pipeline ExampleHuman\\.cppipe: "
+            "Module MeasureObjectIntensity\\(10\\) references unknown objects "
+            "symbol 'Cytoplasm'\\. No prior module produces it\\."
+        ),
+    ):
+        OpenHCSAdapter().run(
+            dataset_path=plate_path,
+            pipeline_name="examplehuman",
+            pipeline_params={
+                "dataset_id": "examplehuman_cppipe",
+                "microscope_type": "imagexpress",
+                "cppipe_path": str(cppipe_path),
+            },
+            metrics=[TimeMetric()],
+            output_dir=tmp_path / "benchmark_outputs",
+        )
 
 
 def _generate_plate(plate_path: Path) -> Path:
