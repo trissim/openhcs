@@ -376,6 +376,33 @@ def test_compile_image_schema_preserves_real_names_and_types_block_order():
     assert schema.match_plan.dimensions[1].field_for_alias("Actin") == "site"
 
 
+def test_compile_image_schema_supports_order_based_matching():
+    names_and_types_module = _module_with_records(
+        3,
+        "NamesAndTypes",
+        [
+            ("Assign a name to", "Images matching rules"),
+            ("Select the image type", "Grayscale image"),
+            ("Name to assign these images", "DNA"),
+            ("Image set matching method", "Order"),
+            ("Select the rule criteria", 'and (metadata does channel "1")'),
+            ("Assign a name to", "Images matching rules"),
+            ("Select the image type", "Grayscale image"),
+            ("Name to assign these images", "Actin"),
+            ("Image set matching method", "Order"),
+            ("Select the rule criteria", 'and (metadata does channel "2")'),
+        ],
+    )
+
+    schema = compile_image_schema([names_and_types_module])
+
+    assert schema.match_plan is not None
+    assert schema.match_plan.method is SourceBindingMatchMethod.ORDER
+    assert schema.match_plan.dimensions == ()
+    assert schema.assignment_for_alias("DNA") is not None
+    assert schema.assignment_for_alias("Actin") is not None
+
+
 def test_cellprofiler_image_schema_resolves_legacy_orig_color_aliases():
     schema = compile_image_schema([])
 

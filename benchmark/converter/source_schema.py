@@ -421,11 +421,8 @@ def _match_plan_from_names_and_types(
         raise ValueError(
             "NamesAndTypes declared conflicting image set matching methods."
         )
-    if method is not SourceBindingMatchMethod.METADATA:
-        raise NotImplementedError(
-            "Only metadata-based NamesAndTypes image-set matching is currently "
-            f"supported, got {method_values[0]!r}."
-        )
+    if method is SourceBindingMatchMethod.ORDER:
+        return SourceBindingMatchPlan(method=method)
     raw_match_metadata_values = tuple(
         value.strip()
         for value in module.get_setting_values("Match metadata")

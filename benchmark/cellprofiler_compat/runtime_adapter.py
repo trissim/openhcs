@@ -455,6 +455,10 @@ class SourceBindingMatchPlanRequest:
     alias: str
     plan: SourceBindingMatchPlan
     step_input_candidates: tuple["ParsedSourceCandidate", ...]
+    target_candidates: tuple["ParsedSourceCandidate", ...]
+    full_pipeline_candidates: tuple["ParsedSourceCandidate", ...]
+    source_binding_plan: CompiledSourceBindingPlan
+    group_key: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -537,20 +541,23 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
             request.adapter,
         )
         inherit_components = _inherited_scope_components(step_input_candidates)
-        image_set_metadata = _image_set_match_metadata(
-            request.alias,
-            request.adapter.source_binding_plan.match_plan,
-            step_input_candidates,
-        )
         parsed_candidates = _parse_source_candidates(
             pipeline_input_files,
             request.adapter,
         )
-        matched = _match_candidates(
+        initially_matched = _match_candidates(
             candidates=parsed_candidates,
             binding=request.binding,
             inherit_components=inherit_components,
-            image_set_metadata=image_set_metadata,
+        )
+        matched = _match_image_set_candidates(
+            request.alias,
+            request.adapter.source_binding_plan.match_plan,
+            step_input_candidates,
+            initially_matched,
+            parsed_candidates,
+            source_binding_plan=request.adapter.source_binding_plan,
+            group_key=request.adapter.group_key,
         )
         selected_files = _require_matched_candidates(
             MatchedSourceCandidatesRequest.from_resolution(
@@ -576,6 +583,7 @@ class ParsedSourceCandidate:
     """One parsed file candidate used for source-binding selector resolution."""
 
     path: str
+    resolved_path: str
     filename: str
     metadata: Mapping[str, Any]
 
@@ -627,6 +635,7 @@ def _parse_source_candidates(
         candidates.append(
             ParsedSourceCandidate(
                 path=str(file_path),
+                resolved_path=str(resolved_path),
                 filename=filename,
                 metadata=MappingProxyType(dict(metadata)),
             )
@@ -639,7 +648,6 @@ def _match_candidates(
     candidates: tuple[ParsedSourceCandidate, ...],
     binding: NamedSourceBinding,
     inherit_components: Mapping[str, str],
-    image_set_metadata: Mapping[str, str] = MappingProxyType({}),
 ) -> tuple[ParsedSourceCandidate, ...]:
     metadata_fields = {selector.field for selector in binding.selector.metadata}
     if metadata_fields:
@@ -674,7 +682,6 @@ def _match_candidates(
         if _candidate_matches_explicit_components(candidate, component_selectors)
         and _candidate_matches_inherited_scope(candidate, effective_components)
         and _candidate_matches_metadata(candidate, binding.selector.metadata)
-        and _candidate_matches_image_set_metadata(candidate, image_set_metadata)
     )
 
 
@@ -828,7 +835,7 @@ def _inherited_scope_components(
 
 
 class SourceBindingMatchPlanResolver(ABC, metaclass=AutoRegisterMeta):
-    """Nominal family for deriving image-set match constraints from current input."""
+    """Nominal family for restricting target candidates to the current image set."""
 
     __registry_key__ = "method_key"
     __skip_if_no_key__ = True
@@ -843,21 +850,21 @@ class SourceBindingMatchPlanResolver(ABC, metaclass=AutoRegisterMeta):
         return cls.__registry__[method.value]()
 
     @abstractmethod
-    def metadata_constraints(
+    def match_candidates(
         self,
         request: SourceBindingMatchPlanRequest,
-    ) -> Mapping[str, str]:
-        """Return target metadata constraints derived from the current image set."""
+    ) -> tuple[ParsedSourceCandidate, ...]:
+        """Return target candidates belonging to the current image set."""
 
 
 class MetadataSourceBindingMatchPlanResolver(SourceBindingMatchPlanResolver):
     method = SourceBindingMatchMethod.METADATA
     method_key = SourceBindingMatchMethod.METADATA.value
 
-    def metadata_constraints(
+    def match_candidates(
         self,
         request: SourceBindingMatchPlanRequest,
-    ) -> Mapping[str, str]:
+    ) -> tuple[ParsedSourceCandidate, ...]:
         constraints: dict[str, str] = {}
         for dimension in request.plan.dimensions:
             target_field = dimension.field_for_alias(request.alias)
@@ -877,36 +884,121 @@ class MetadataSourceBindingMatchPlanResolver(SourceBindingMatchPlanResolver):
                     f"field {target_field!r}: {existing!r} != {match_value!r}."
                 )
             constraints[target_field] = match_value
-        return MappingProxyType(constraints)
+        metadata_constraints = MappingProxyType(constraints)
+        return tuple(
+            candidate
+            for candidate in request.target_candidates
+            if _candidate_matches_image_set_metadata(candidate, metadata_constraints)
+        )
 
 
 class OrderSourceBindingMatchPlanResolver(SourceBindingMatchPlanResolver):
     method = SourceBindingMatchMethod.ORDER
     method_key = SourceBindingMatchMethod.ORDER.value
 
-    def metadata_constraints(
+    def match_candidates(
         self,
         request: SourceBindingMatchPlanRequest,
-    ) -> Mapping[str, str]:
-        raise NotImplementedError(
-            "Order-based source-binding match plans are not implemented yet."
-        )
+    ) -> tuple[ParsedSourceCandidate, ...]:
+        current_index = _order_match_index(request)
+        if current_index is None:
+            return request.target_candidates
+        ordered_target_candidates = _ordered_source_candidates(request.target_candidates)
+        if current_index >= len(ordered_target_candidates):
+            return ()
+        return (ordered_target_candidates[current_index],)
 
 
-def _image_set_match_metadata(
+def _match_image_set_candidates(
     alias: str,
     match_plan: SourceBindingMatchPlan | None,
     step_input_candidates: tuple[ParsedSourceCandidate, ...],
-) -> Mapping[str, str]:
-    if match_plan is None or not step_input_candidates:
-        return {}
+    target_candidates: tuple[ParsedSourceCandidate, ...],
+    full_pipeline_candidates: tuple[ParsedSourceCandidate, ...],
+    *,
+    source_binding_plan: CompiledSourceBindingPlan,
+    group_key: str | None,
+) -> tuple[ParsedSourceCandidate, ...]:
+    if match_plan is None or not step_input_candidates or not target_candidates:
+        return target_candidates
     return SourceBindingMatchPlanResolver.for_method(
         match_plan.method
-    ).metadata_constraints(
+    ).match_candidates(
         SourceBindingMatchPlanRequest(
             alias=alias,
             plan=match_plan,
             step_input_candidates=step_input_candidates,
+            target_candidates=target_candidates,
+            full_pipeline_candidates=full_pipeline_candidates,
+            source_binding_plan=source_binding_plan,
+            group_key=group_key,
+        )
+    )
+
+
+def _ordered_source_candidates(
+    candidates: tuple[ParsedSourceCandidate, ...],
+) -> tuple[ParsedSourceCandidate, ...]:
+    return tuple(sorted(candidates, key=lambda candidate: candidate.resolved_path))
+
+
+def _order_match_index(
+    request: SourceBindingMatchPlanRequest,
+) -> int | None:
+    indexes = {
+        index
+        for candidate in request.step_input_candidates
+        for index in (_source_alias_order_index(candidate=candidate, request=request),)
+        if index is not None
+    }
+    if not indexes:
+        return None
+    if len(indexes) != 1:
+        raise RuntimeError(
+            f"Order-based image-set matching for alias {request.alias!r} found "
+            f"conflicting current image-set indexes: {sorted(indexes)}."
+        )
+    return next(iter(indexes))
+
+
+def _source_alias_order_index(
+    *,
+    candidate: ParsedSourceCandidate,
+    request: SourceBindingMatchPlanRequest,
+) -> int | None:
+    matched_indexes: set[int] = set()
+    for binding in request.source_binding_plan.bindings_for_group(request.group_key):
+        if binding.alias == request.alias:
+            continue
+        for index, ordered_candidate in enumerate(
+            _ordered_binding_candidates(
+                binding=binding,
+                candidates=request.full_pipeline_candidates,
+            )
+        ):
+            if ordered_candidate.resolved_path == candidate.resolved_path:
+                matched_indexes.add(index)
+                break
+    if not matched_indexes:
+        return None
+    if len(matched_indexes) != 1:
+        raise RuntimeError(
+            f"Order-based image-set matching could not uniquely assign source file "
+            f"{candidate.resolved_path!r} to one alias order index."
+        )
+    return next(iter(matched_indexes))
+
+
+def _ordered_binding_candidates(
+    *,
+    binding: NamedSourceBinding,
+    candidates: tuple[ParsedSourceCandidate, ...],
+) -> tuple[ParsedSourceCandidate, ...]:
+    return _ordered_source_candidates(
+        _match_candidates(
+            candidates=candidates,
+            binding=binding,
+            inherit_components={},
         )
     )
 

@@ -589,6 +589,107 @@ def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules():
     ]
 
 
+def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias=DNA_IMAGE,
+                        selector=SourceSelector(
+                            components=(
+                                ComponentSelector(AllComponents.CHANNEL, "1"),
+                            ),
+                        ),
+                    ),
+                    NamedSourceBinding(
+                        alias="Actin",
+                        selector=SourceSelector(
+                            components=(
+                                ComponentSelector(AllComponents.CHANNEL, "2"),
+                            ),
+                        ),
+                    ),
+                    NamedSourceBinding(
+                        alias="IllumBlue",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        selector=SourceSelector(
+                            metadata=(MetadataSelector("illum", "DAPI"),),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        metadata_rules=(
+            MetadataExtractionRule(
+                source=MetadataSource.FILE_NAME,
+                pattern=r"plateA_Illum(?P<illum>.+)_(?P<illum_index>\d+)\.mat",
+                filters=(
+                    SourceFilterClause(
+                        subject=SourceFilterSubject.FILE,
+                        match_type=SourceFilterMatchType.CONTAINS_REGEX,
+                        value=r"_Illum.+\.mat$",
+                    ),
+                ),
+            ),
+        ),
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=(
+            "A01_s002_w1_z001_t001.tif",
+            "A01_s002_w2_z001_t001.tif",
+        ),
+        step_input_dir="/plate/Images",
+        pipeline_input_files=(
+            "/plate/Images/A01_s001_w1_z001_t001.tif",
+            "/plate/Images/A01_s001_w2_z001_t001.tif",
+            "/plate/Images/A01_s002_w1_z001_t001.tif",
+            "/plate/Images/A01_s002_w2_z001_t001.tif",
+            "/plate/illum/plateA_IllumDAPI_1.mat",
+            "/plate/illum/plateA_IllumDAPI_2.mat",
+        ),
+        pipeline_input_backend="memory",
+    )
+    filemanager = FileManagerStub()
+    filemanager.saved[("memory", "/plate/illum/plateA_IllumDAPI_1.mat")] = np.full(
+        (2, 2),
+        31.0,
+        dtype=np.float32,
+    )
+    expected = np.full((2, 2), 41.0, dtype=np.float32)
+    filemanager.saved[("memory", "/plate/illum/plateA_IllumDAPI_2.mat")] = expected
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+
+    resolved = adapter.resolve_source_image(
+        "IllumBlue",
+        np.stack(
+            [
+                np.full((2, 2), 1.0, dtype=np.float32),
+                np.full((2, 2), 2.0, dtype=np.float32),
+            ]
+        ),
+    )
+
+    assert resolved.shape == expected.shape
+    np.testing.assert_array_equal(resolved, expected)
+    assert filemanager.loaded_batches == [
+        (
+            ("/plate/illum/plateA_IllumDAPI_2.mat",),
+            "memory",
+            {},
+        )
+    ]
+
+
 def test_cellprofiler_module_executor_records_object_output_through_adapter():
     adapter, _filemanager = _adapter(
         {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}

@@ -219,15 +219,20 @@ The branch has already established most of the typed runtime/compiler foundation
     - canonical `BBBC021_illum.cppipe` executes through the real orchestrator/runtime path on synthetic BBBC021-shaped data
     - `ExampleFly.cppipe` CSV assertions now validate semantic headers, not just file existence
     - generated `RelateObjects` acceptance now validates concrete relationship/measurement CSV schemas
+28. `NamesAndTypes` order-based image-set matching is now part of the supported semantics:
+    - the setup-module compiler now lowers `Image set matching method:Order` into a typed `SourceBindingMatchPlan(method=ORDER)`
+    - the runtime adapter resolves order-based pipeline-start pairings generically by matching the current step-input image-set index against the ordered target alias candidate list
+    - support is implemented in the nominal core match-plan resolver path rather than as converter- or module-local glue
 
 ### 3.2 What Is Still Missing
 
 The biggest unresolved items are now:
 
 1. Setup-module semantics are now exposed as a core-owned pipeline-level image schema during generated-pipeline preparation and benchmark execution, but they are not yet a broader editable GUI/ObjectState pipeline concept.
-2. `NamesAndTypes` image-set matching semantics are now modeled for the metadata-based path, but other match modes and broader real-pipeline coverage still need work.
-   - `Metadata` matching now lowers into a typed cross-alias plan
-   - unsupported modes should continue to fail loudly until modeled natively
+2. `NamesAndTypes` image-set matching semantics are now modeled for both metadata-based and order-based paths, but broader real-pipeline coverage and any remaining match variants still need work.
+   - `Metadata` matching lowers into a typed cross-alias plan
+   - `Order` matching now resolves through a generic runtime image-set index strategy
+   - unsupported variants should continue to fail loudly until modeled natively
 3. GUI/ObjectState/pycodify do not yet own richer source-binding state as an editable first-class step concept.
 4. The main-input edge is now explicit in compiled plans, but the external execution model is still list-based rather than first-class graph-based.
 5. The compiled identity record is semantically useful, but its current `step_scope_id` naming still reflects pre-compilation/UI vocabulary more than ideal runtime/compiler terminology.
