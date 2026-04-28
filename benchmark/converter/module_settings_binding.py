@@ -9,6 +9,8 @@ from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
+from benchmark.cellprofiler_library import canonical_module_name
+
 from .gray_to_color_settings import (
     GRAY_TO_COLOR_CMYK_IMAGE_SETTINGS,
     GRAY_TO_COLOR_CMYK_WEIGHT_SETTINGS,
@@ -45,7 +47,7 @@ class ModuleSettingsBindingStrategy(ABC, metaclass=AutoRegisterMeta):
     @classmethod
     def for_module(cls, module_name: str) -> "ModuleSettingsBindingStrategy":
         strategy_type = cls.__registry__.get(
-            module_name,
+            canonical_module_name(module_name),
             GenericModuleSettingsBindingStrategy,
         )
         return strategy_type()

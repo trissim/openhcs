@@ -261,6 +261,47 @@ def test_pipeline_generator_resolves_object_measurement_function_variants():
     ) in generated.code
 
 
+def test_pipeline_generator_canonicalizes_legacy_measure_correlation_module():
+    generator = PipelineGenerator()
+    modules = [
+        _identify_primary(),
+        _module_with_records(
+            2,
+            "MeasureCorrelation",
+            [
+                ("Select an image to measure", "OrigBlue"),
+                ("Select an image to measure", "OrigGreen"),
+                ("Select where to measure correlation", "Within objects"),
+                ("Select an object to measure", "Nuclei"),
+                (
+                    "Set threshold as percentage of maximum intensity for the images",
+                    "15.0",
+                ),
+            ],
+        ),
+    ]
+
+    generated = generator.generate_from_registry(
+        pipeline_name="legacy_measure_correlation",
+        source_cppipe=Path("source.cppipe"),
+        modules=modules,
+    )
+    contract = generated.artifact_contracts[1]
+
+    assert generator.has_module("MeasureCorrelation")
+    assert contract.module_name == "MeasureColocalization"
+    assert [spec.name for spec in contract.inputs] == [
+        "OrigBlue",
+        "OrigGreen",
+        "Nuclei",
+    ]
+    assert (
+        'measure_colocalization_objects_2 = require_function('
+        '"MeasureCorrelation", function_name="measure_colocalization_objects")'
+    ) in generated.code
+    assert "module_name='MeasureColocalization'" in generated.code
+
+
 def test_pipeline_generator_preserves_default_materialization_for_tabular_outputs():
     generator = PipelineGenerator()
     modules = [

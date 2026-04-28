@@ -24,6 +24,7 @@ class AbsorbedFunctionMetadata:
     """Validated metadata for one absorbed CellProfiler module."""
 
     module_name: str
+    aliases: tuple[str, ...]
     function_name: str
     contract: str
     category: str
@@ -39,6 +40,7 @@ class AbsorbedFunctionMetadata:
         function_name = _required_string(payload, "function_name", module_name)
         return cls(
             module_name=module_name,
+            aliases=_string_tuple(payload, "aliases", module_name),
             function_name=function_name,
             contract=str(payload.get("contract", "pure_2d")),
             category=str(payload.get("category", "image_operation")),
@@ -48,13 +50,16 @@ class AbsorbedFunctionMetadata:
 
     def to_json(self) -> dict[str, Any]:
         """Return the historical metadata shape consumed by converter code."""
-        return {
+        payload: dict[str, Any] = {
             "function_name": self.function_name,
             "contract": self.contract,
             "category": self.category,
             "confidence": self.confidence,
             "validated": self.validated,
         }
+        if self.aliases:
+            payload["aliases"] = list(self.aliases)
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,8 +75,20 @@ class AbsorbedFunctionLocation:
 
 
 _contracts: Mapping[str, AbsorbedFunctionMetadata] = MappingProxyType({})
+_canonical_module_names: Mapping[str, str] = MappingProxyType({})
 _function_locations: Mapping[str, AbsorbedFunctionLocation] = MappingProxyType({})
 _function_cache: dict[tuple[str, str], Callable[..., Any]] = {}
+
+
+def canonical_module_name(module_name: str) -> str:
+    """Return the canonical absorbed module name for a CellProfiler module name."""
+    normalized = module_name.strip()
+    if not normalized:
+        raise ValueError("CellProfiler module name cannot be empty.")
+    return _canonical_module_names.get(
+        _module_lookup_key(normalized),
+        normalized,
+    )
 
 
 def get_function(
@@ -80,12 +97,13 @@ def get_function(
     function_name: str | None = None,
 ) -> Callable[..., Any] | None:
     """Return the absorbed function for a CellProfiler module, if registered."""
-    metadata = _contracts.get(module_name)
+    canonical_name = canonical_module_name(module_name)
+    metadata = _contracts.get(canonical_name)
     if metadata is None:
         return None
 
     resolved_function_name = function_name or metadata.function_name
-    cache_key = (module_name, resolved_function_name)
+    cache_key = (canonical_name, resolved_function_name)
     cached = _function_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -112,7 +130,8 @@ def require_function(
     if function is not None:
         return function
 
-    metadata = _contracts.get(module_name)
+    canonical_name = canonical_module_name(module_name)
+    metadata = _contracts.get(canonical_name)
     if metadata is None:
         raise KeyError(f"No absorbed CellProfiler module registered: {module_name!r}")
     resolved_function_name = function_name or metadata.function_name
@@ -124,7 +143,7 @@ def require_function(
 
 def get_contract(module_name: str) -> dict[str, Any] | None:
     """Return contract metadata for one absorbed CellProfiler module."""
-    metadata = _contracts.get(module_name)
+    metadata = _contracts.get(canonical_module_name(module_name))
     if metadata is None:
         return None
     return metadata.to_json()
@@ -149,6 +168,37 @@ def _load_contracts() -> Mapping[str, AbsorbedFunctionMetadata]:
         for module_name, payload in raw_registry.items()
     }
     return MappingProxyType(contracts)
+
+
+def _load_canonical_module_names(
+    contracts: Mapping[str, AbsorbedFunctionMetadata],
+) -> Mapping[str, str]:
+    canonical_names: dict[str, str] = {}
+    for module_name, metadata in contracts.items():
+        _register_module_name(canonical_names, module_name, module_name)
+        for alias in metadata.aliases:
+            _register_module_name(canonical_names, alias, module_name)
+    return MappingProxyType(canonical_names)
+
+
+def _register_module_name(
+    canonical_names: dict[str, str],
+    module_name: str,
+    canonical_name: str,
+) -> None:
+    normalized = module_name.strip()
+    if not normalized:
+        raise ValueError(
+            f"Absorbed CellProfiler module {canonical_name!r} declares an empty alias."
+        )
+    key = _module_lookup_key(normalized)
+    existing = canonical_names.get(key)
+    if existing is not None and existing != canonical_name:
+        raise ValueError(
+            f"CellProfiler module name {normalized!r} maps to both "
+            f"{existing!r} and {canonical_name!r}."
+        )
+    canonical_names[key] = canonical_name
 
 
 def _discover_function_locations() -> Mapping[str, AbsorbedFunctionLocation]:
@@ -189,6 +239,33 @@ def _required_string(
     return value
 
 
+def _string_tuple(
+    payload: Mapping[str, Any],
+    key: str,
+    module_name: str,
+) -> tuple[str, ...]:
+    if key not in payload:
+        return ()
+    raw_values = payload[key]
+    if raw_values is None:
+        return ()
+    if not isinstance(raw_values, list):
+        raise TypeError(
+            f"Absorbed CellProfiler module {module_name!r} must declare {key} "
+            "as a list of strings."
+        )
+    values = tuple(str(value).strip() for value in raw_values)
+    if any(not value for value in values):
+        raise ValueError(
+            f"Absorbed CellProfiler module {module_name!r} declares an empty {key}."
+        )
+    return values
+
+
+def _module_lookup_key(module_name: str) -> str:
+    return module_name.strip().casefold()
+
+
 def _is_public_api_export(name: str, value: object) -> bool:
     return (
         not name.startswith("_")
@@ -198,6 +275,7 @@ def _is_public_api_export(name: str, value: object) -> bool:
 
 
 _contracts = _load_contracts()
+_canonical_module_names = _load_canonical_module_names(_contracts)
 _function_locations = _discover_function_locations()
 __all__ = tuple(
     name

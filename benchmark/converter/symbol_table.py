@@ -17,6 +17,7 @@ from typing import ClassVar, Iterable, Mapping
 
 from metaclass_registry import AutoRegisterMeta
 
+from benchmark.cellprofiler_library import canonical_module_name
 from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
 from openhcs.core.artifact_materialization_policy import (
     DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
@@ -58,6 +59,7 @@ from .setting_names import (
     optional_setting_value,
     required_setting_value,
     setting_names,
+    setting_values,
 )
 from .source_schema import compile_image_schema
 
@@ -115,6 +117,11 @@ class ModuleArtifactContracts:
     source_bindings: StepSourceBindingsConfig = EMPTY_SOURCE_BINDINGS
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "module_name",
+            canonical_module_name(self.module_name),
+        )
         if not isinstance(self.source_bindings, StepSourceBindingsConfig):
             raise TypeError(
                 "ModuleArtifactContracts.source_bindings must be "
@@ -605,7 +612,7 @@ def _measure_object_size_shape(
 ) -> ModuleArtifactContracts:
     objects = [
         builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
-        for name in _split_names(_setting(module, OBJECT_MEASUREMENT_SETTING))
+        for name in _setting_symbol_names(module, OBJECT_MEASUREMENT_SETTING)
     ]
     measurements = builder.declare(
         _measurement_name(module),
@@ -621,11 +628,11 @@ def _measure_object_intensity(
 ) -> ModuleArtifactContracts:
     images = [
         builder.require(name, CellProfilerSymbolKind.IMAGE, module)
-        for name in _split_names(_setting(module, IMAGE_MEASUREMENT_SETTING))
+        for name in _setting_symbol_names(module, IMAGE_MEASUREMENT_SETTING)
     ]
     objects = [
         builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
-        for name in _split_names(_setting(module, OBJECT_MEASUREMENT_SETTING))
+        for name in _setting_symbol_names(module, OBJECT_MEASUREMENT_SETTING)
     ]
     measurements = builder.declare(
         _measurement_name(module),
@@ -646,7 +653,7 @@ def _measure_image_intensity(
 ) -> ModuleArtifactContracts:
     images = [
         builder.require(name, CellProfilerSymbolKind.IMAGE, module)
-        for name in _split_names(_setting(module, IMAGE_MEASUREMENT_SETTING))
+        for name in _setting_symbol_names(module, IMAGE_MEASUREMENT_SETTING)
     ]
     object_setting = _optional_setting(module, "Select input object sets")
     objects = (
@@ -703,17 +710,12 @@ def _measure_granularity(
 ) -> ModuleArtifactContracts:
     images = [
         builder.require(name, CellProfilerSymbolKind.IMAGE, module)
-        for name in _split_names(_setting(module, IMAGE_MEASUREMENT_SETTING))
+        for name in _setting_symbol_names(module, IMAGE_MEASUREMENT_SETTING)
     ]
-    object_setting = _optional_setting(module, OBJECT_MEASUREMENT_SETTING)
-    objects = (
-        [
-            builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
-            for name in _split_names(object_setting)
-        ]
-        if object_setting is not None
-        else []
-    )
+    objects = [
+        builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
+        for name in _optional_setting_symbol_names(module, OBJECT_MEASUREMENT_SETTING)
+    ]
     measurements = builder.declare(
         _measurement_name(module),
         CellProfilerSymbolKind.MEASUREMENTS,
@@ -880,7 +882,10 @@ class ModuleContractBuilder(ABC, metaclass=AutoRegisterMeta):
 
     @classmethod
     def for_module(cls, module_name: str) -> "ModuleContractBuilder":
-        builder_type = cls.__registry__.get(module_name, UnsupportedModuleContractBuilder)
+        builder_type = cls.__registry__.get(
+            canonical_module_name(module_name),
+            UnsupportedModuleContractBuilder,
+        )
         return builder_type()
 
     @abstractmethod
@@ -1267,6 +1272,30 @@ def _contracts(
 
 def _setting(module: ModuleBlock, name: str | SettingNameFamily) -> str:
     return required_setting_value(module, name)
+
+
+def _setting_symbol_names(
+    module: ModuleBlock,
+    name: str | SettingNameFamily,
+) -> tuple[str, ...]:
+    symbols = _optional_setting_symbol_names(module, name)
+    if not symbols:
+        raise ValueError(
+            f"Module {module.name}({module.module_num}) missing setting "
+            f"{setting_names(name)}."
+        )
+    return symbols
+
+
+def _optional_setting_symbol_names(
+    module: ModuleBlock,
+    name: str | SettingNameFamily,
+) -> tuple[str, ...]:
+    return tuple(
+        symbol
+        for value in setting_values(module, name)
+        for symbol in _split_names(value)
+    )
 
 
 def _optional_setting(

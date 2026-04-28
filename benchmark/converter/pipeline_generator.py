@@ -27,6 +27,8 @@ from openhcs.constants.constants import AllComponents
 from openhcs.core.pipeline_image_schema import CellProfilerImageSchema
 from openhcs.core.source_bindings import StepSourceBindingsConfig, SourceBindingOrigin
 
+from benchmark.cellprofiler_library import canonical_module_name
+
 from .module_function_resolution import ModuleFunctionResolutionStrategy
 from .module_settings_binding import ModuleSettingsBindingStrategy
 from .parser import ModuleBlock
@@ -156,7 +158,11 @@ from openhcs.constants.input_source import InputSource
 
     def has_module(self, module_name: str) -> bool:
         """Check if module exists in absorbed library."""
-        return module_name in self._registry
+        return canonical_module_name(module_name) in self._registry
+
+    def _module_metadata(self, module_name: str) -> dict[str, Any]:
+        """Return absorbed metadata for a module after canonical name resolution."""
+        return self._registry[canonical_module_name(module_name)]
     
     def generate_from_registry(
         self,
@@ -184,7 +190,7 @@ from openhcs.constants.input_source import InputSource
         missing_modules = []
 
         for module in modules:
-            if module.name in self._registry:
+            if self.has_module(module.name):
                 registry_modules.append(module)
             else:
                 missing_modules.append(module)
@@ -244,7 +250,7 @@ from openhcs.constants.input_source import InputSource
                     module.name
                 ).resolve(
                     module,
-                    default_function_name=self._registry[module.name][
+                    default_function_name=self._module_metadata(module.name)[
                         "function_name"
                     ],
                 )
@@ -264,7 +270,7 @@ from openhcs.constants.input_source import InputSource
                 )
                 func_assignments.append(
                     f'{binding_name}.__cellprofiler_declared_contract__ = '
-                    f'{repr(self._registry[module.name]["contract"])}'
+                    f'{repr(self._module_metadata(module.name)["contract"])}'
                 )
             imports += "\n".join(func_assignments) + "\n\n"
 
@@ -321,7 +327,7 @@ from openhcs.constants.input_source import InputSource
         ]
 
         for module in modules:
-            meta = self._registry[module.name]
+            meta = self._module_metadata(module.name)
             resolved_function = ModuleFunctionResolutionStrategy.for_module(
                 module.name
             ).resolve(
@@ -499,7 +505,7 @@ from openhcs.constants.input_source import InputSource
                 module.name
             ).resolve(
                 module,
-                default_function_name=self._registry[module.name][
+                default_function_name=self._module_metadata(module.name)[
                     "function_name"
                 ],
             )
@@ -553,7 +559,7 @@ from openhcs.constants.input_source import InputSource
             )
             lines.append(
                 f"{runtime_binding}.__cellprofiler_declared_contract__ = "
-                f"{repr(self._registry[module.name]['contract'])}"
+                f"{repr(self._module_metadata(module.name)['contract'])}"
             )
             lines.append(
                 f"{runtime_binding}.__cellprofiler_raw_function__ = {raw_binding}"
@@ -638,7 +644,7 @@ from openhcs.constants.input_source import InputSource
         resolved_contract = resolve_processing_contract(
             module_name,
             function_name,
-            str(self._registry[module_name]["contract"]),
+            str(self._module_metadata(module_name)["contract"]),
         )
         return f"ProcessingContract.{resolved_contract.contract.name}"
 
@@ -652,6 +658,7 @@ from openhcs.constants.input_source import InputSource
             and (
                 binding.selector.components
                 or binding.selector.metadata
+                or binding.selector.filters
                 or not binding.selector.inherit_current_scope
             )
             for group in source_bindings.groups

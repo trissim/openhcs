@@ -24,6 +24,7 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
     _rewrite_slice_index,
 )
 
+from benchmark.cellprofiler_library import canonical_module_name
 from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
 from benchmark.cellprofiler_compat.relationship_payload import (
     CellProfilerRelationshipPayload,
@@ -667,7 +668,10 @@ class CellProfilerObjectInputPolicy(ABC, metaclass=AutoRegisterMeta):
 
     @classmethod
     def for_module(cls, module_name: str) -> "CellProfilerObjectInputPolicy":
-        policy_type = cls.__registry__.get(module_name, UnsupportedObjectInputPolicy)
+        policy_type = cls.__registry__.get(
+            canonical_module_name(module_name),
+            UnsupportedObjectInputPolicy,
+        )
         return policy_type()
 
     @abstractmethod
@@ -788,7 +792,7 @@ class CellProfilerPerObjectMeasurementPolicy:
         module_name: str,
         runtime_artifact_inputs: tuple[ArtifactSpec, ...],
     ) -> bool:
-        return module_name in cls.module_names and len(
+        return canonical_module_name(module_name) in cls.module_names and len(
             _specs_of_kind(runtime_artifact_inputs, ArtifactKind.OBJECT_LABELS)
         ) > 1
 

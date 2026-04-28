@@ -1,7 +1,12 @@
 import importlib
 import numpy as np
 
-from benchmark.cellprofiler_library import get_contract, get_function, list_modules
+from benchmark.cellprofiler_library import (
+    canonical_module_name,
+    get_contract,
+    get_function,
+    list_modules,
+)
 from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
     correct_illumination_calculate,
 )
@@ -50,6 +55,12 @@ def test_examplefly_absorbed_functions_import_cleanly():
     loaded_functions = {name: get_function(name) for name in function_names}
 
     assert all(func is not None for func in loaded_functions.values())
+
+
+def test_legacy_cellprofiler_module_aliases_resolve_to_canonical_functions():
+    assert canonical_module_name("MeasureCorrelation") == "MeasureColocalization"
+    assert get_contract("MeasureCorrelation") == get_contract("MeasureColocalization")
+    assert get_function("MeasureCorrelation") is get_function("MeasureColocalization")
 
 
 def test_export_to_spreadsheet_module_imports_cleanly():

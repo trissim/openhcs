@@ -384,6 +384,9 @@
     "validated": true
   },
   "MeasureColocalization": {
+    "aliases": [
+      "MeasureCorrelation"
+    ],
     "function_name": "measure_colocalization",
     "contract": "pure_2d",
     "category": "channel_operation",

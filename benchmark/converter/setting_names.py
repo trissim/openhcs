@@ -25,7 +25,7 @@ IMAGE_MEASUREMENT_SETTING = SettingNameFamily(
 )
 OBJECT_MEASUREMENT_SETTING = SettingNameFamily(
     "Select object sets to measure",
-    aliases=("Select objects to measure",),
+    aliases=("Select objects to measure", "Select an object to measure"),
 )
 
 
@@ -53,6 +53,27 @@ def required_setting_value(
             f"{setting_names(name)}."
         )
     return value
+
+
+def setting_values(
+    module: ModuleBlock,
+    name: str | SettingNameFamily,
+) -> tuple[str, ...]:
+    """Return all non-empty ordered values matching a setting name family."""
+    values: list[str] = []
+    for setting_name in setting_names(name):
+        record_values = tuple(
+            value.strip()
+            for value in module.get_setting_values(setting_name)
+            if value.strip()
+        )
+        if record_values:
+            values.extend(record_values)
+            continue
+        value = module.settings.get(setting_name)
+        if value is not None and value.strip():
+            values.append(value.strip())
+    return tuple(values)
 
 
 def setting_names(name: str | SettingNameFamily) -> tuple[str, ...]:

@@ -9,12 +9,14 @@ from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
+from benchmark.cellprofiler_library import canonical_module_name
+
 from .parser import ModuleBlock
 from .setting_names import (
     OBJECT_MEASUREMENT_SETTING,
     SettingNameFamily,
-    optional_setting_value,
     required_setting_value,
+    setting_values,
 )
 
 
@@ -43,7 +45,7 @@ class ModuleFunctionResolutionStrategy(ABC, metaclass=AutoRegisterMeta):
     @classmethod
     def for_module(cls, module_name: str) -> "ModuleFunctionResolutionStrategy":
         strategy_type = cls.__registry__.get(
-            module_name,
+            canonical_module_name(module_name),
             DefaultModuleFunctionResolutionStrategy,
         )
         return strategy_type()
@@ -187,10 +189,11 @@ def _setting_has_symbolic_values(
     module: ModuleBlock,
     setting: SettingNameFamily,
 ) -> bool:
-    value = optional_setting_value(module, setting)
-    if value is None:
-        return False
-    return any(_is_meaningful_symbolic_value(part) for part in value.split(","))
+    return any(
+        _is_meaningful_symbolic_value(part)
+        for value in setting_values(module, setting)
+        for part in value.split(",")
+    )
 
 
 def _is_meaningful_symbolic_value(value: str) -> bool:

@@ -8,6 +8,7 @@ from enum import Enum
 from pathlib import Path
 
 from benchmark.cellprofiler_library import (
+    canonical_module_name,
     get_contract,
     list_modules,
     require_function,
@@ -146,7 +147,7 @@ def _module_importable(module_name: str) -> bool:
 
 
 def _artifact_contract_coverage(module_name: str) -> ArtifactContractCoverage:
-    if module_name in ModuleContractBuilder.__registry__:
+    if canonical_module_name(module_name) in ModuleContractBuilder.__registry__:
         return ArtifactContractCoverage.DECLARED_BUILDER
     return ArtifactContractCoverage.GENERIC_INFERENCE
 
@@ -175,7 +176,10 @@ def _cppipe_module_names(
     parser: CPPipeParser,
     cppipe_path: Path,
 ) -> Sequence[str]:
-    return tuple(module.name for module in parser.parse(cppipe_path))
+    return tuple(
+        canonical_module_name(module.name)
+        for module in parser.parse(cppipe_path)
+    )
 
 
 def _merged_corpus_coverage(
