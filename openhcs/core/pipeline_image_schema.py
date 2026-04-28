@@ -77,11 +77,62 @@ class GroupingPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class ImportedMetadataJoin:
+    """One join key between image metadata and an imported metadata table."""
+
+    image_metadata_field: str
+    imported_metadata_field: str
+
+    def __post_init__(self) -> None:
+        if not self.image_metadata_field.strip():
+            raise ValueError(
+                "ImportedMetadataJoin.image_metadata_field cannot be empty."
+            )
+        if not self.imported_metadata_field.strip():
+            raise ValueError(
+                "ImportedMetadataJoin.imported_metadata_field cannot be empty."
+            )
+        object.__setattr__(
+            self,
+            "image_metadata_field",
+            self.image_metadata_field.strip(),
+        )
+        object.__setattr__(
+            self,
+            "imported_metadata_field",
+            self.imported_metadata_field.strip(),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ImportedMetadataTable:
+    """Pipeline-level metadata imported from an external CellProfiler table."""
+
+    location: str | None = None
+    joins: tuple[ImportedMetadataJoin, ...] = ()
+
+    def __post_init__(self) -> None:
+        normalized_location = (
+            None if self.location is None else self.location.strip() or None
+        )
+        object.__setattr__(self, "location", normalized_location)
+        object.__setattr__(self, "joins", tuple(self.joins))
+        for join in self.joins:
+            if not isinstance(join, ImportedMetadataJoin):
+                raise TypeError(
+                    "ImportedMetadataTable.joins must contain "
+                    "ImportedMetadataJoin values, got "
+                    f"{type(join).__name__}."
+                )
+
+
+@dataclass(frozen=True, slots=True)
 class CellProfilerImageSchema:
     """Pipeline-level image schema lowered from setup modules."""
 
     images_rule: ImagesRule | None = None
     metadata_rules: tuple[MetadataExtractionRule, ...] = ()
+    imported_metadata_tables: tuple[ImportedMetadataTable, ...] = ()
     assignments_by_alias: Mapping[str, ImageAssignment] = MappingProxyType({})
     match_plan: SourceBindingMatchPlan | None = None
     grouping: GroupingPlan | None = None
@@ -90,9 +141,21 @@ class CellProfilerImageSchema:
         object.__setattr__(self, "metadata_rules", tuple(self.metadata_rules))
         object.__setattr__(
             self,
+            "imported_metadata_tables",
+            tuple(self.imported_metadata_tables),
+        )
+        object.__setattr__(
+            self,
             "assignments_by_alias",
             MappingProxyType(dict(self.assignments_by_alias)),
         )
+        for table in self.imported_metadata_tables:
+            if not isinstance(table, ImportedMetadataTable):
+                raise TypeError(
+                    "CellProfilerImageSchema.imported_metadata_tables must "
+                    "contain ImportedMetadataTable values, got "
+                    f"{type(table).__name__}."
+                )
         for alias, assignment in self.assignments_by_alias.items():
             if alias != assignment.alias:
                 raise ValueError(
@@ -109,6 +172,7 @@ class CellProfilerImageSchema:
         return (
             self.images_rule is None
             and not self.metadata_rules
+            and not self.imported_metadata_tables
             and not self.assignments_by_alias
             and self.match_plan is None
             and self.grouping is None
@@ -182,11 +246,14 @@ class OrigColorLegacyImageAssignmentStrategy(LegacyImageAssignmentStrategy):
         )
 
 
-__all__ = [
-    "CellProfilerImageSchema",
-    "GroupingPlan",
-    "ImageAssignment",
-    "ImagesRule",
-    "LegacyImageAssignmentStrategy",
-    "OrigColorLegacyImageAssignmentStrategy",
-]
+def _is_public_export(name: str, value: object) -> bool:
+    return (
+        isinstance(value, type)
+        and value.__module__ == __name__
+        and not name.startswith("_")
+    )
+
+
+__all__ = tuple(
+    name for name, value in globals().items() if _is_public_export(name, value)
+)

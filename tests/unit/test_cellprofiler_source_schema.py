@@ -166,6 +166,76 @@ def test_compile_image_schema_lowers_names_and_types_to_typed_selectors():
     )
 
 
+def test_compile_image_schema_supports_v5_regex_labels_and_file_filters():
+    metadata_module = _module_with_records(
+        1,
+        "Metadata",
+        [
+            ("Metadata extraction method", "Extract from file/folder names"),
+            ("Metadata source", "File name"),
+            ("Regular expression", r".*-(?P<ImageNumber>\d*)-(?P<WellRow>.*)"),
+            ("Regular expression", r"(?P<Date>[0-9]{4}_[0-9]{2}_[0-9]{2})$"),
+            ("Select the filtering criteria", 'and (file does contain "Channel1-")'),
+            ("Metadata extraction method", "Import from file"),
+            ("Metadata source", "File name"),
+            ("Metadata file location", "Default Input Folder|metadata.csv"),
+            (
+                "Match file and image metadata",
+                "[{'Image Metadata': 'WellRow', 'CSV Metadata': 'Row'}]",
+            ),
+        ],
+    )
+    names_and_types_module = _module_with_records(
+        2,
+        "NamesAndTypes",
+        [
+            ("Assignments count", "2"),
+            (
+                "Select the rule criteria",
+                'and (file does contain "Channel1-") (extension does istif)',
+            ),
+            ("Name to assign these images", "rawGFP"),
+            ("Select the image type", "Grayscale image"),
+            (
+                "Select the rule criteria",
+                'and (file does contain "Channel1") (file does endwith ".mat")',
+            ),
+            ("Name to assign these images", "IllumDNA"),
+            ("Select the image type", "Illumination function"),
+        ],
+    )
+
+    schema = compile_image_schema([metadata_module, names_and_types_module])
+
+    assert len(schema.metadata_rules) == 1
+    assert (
+        schema.metadata_rules[0].pattern
+        == r".*-(?P<ImageNumber>\d*)-(?P<WellRow>.*)"
+    )
+    assert (
+        schema.metadata_rules[0].filters[0].match_type
+        is SourceFilterMatchType.CONTAINS
+    )
+    assert len(schema.imported_metadata_tables) == 1
+    assert (
+        schema.imported_metadata_tables[0].joins[0].image_metadata_field
+        == "WellRow"
+    )
+    assert (
+        schema.imported_metadata_tables[0].joins[0].imported_metadata_field
+        == "Row"
+    )
+
+    raw_gfp = schema.assignment_for_alias("rawGFP")
+    illum_dna = schema.assignment_for_alias("IllumDNA")
+    assert raw_gfp is not None
+    assert raw_gfp.selector.filters[0].match_type is SourceFilterMatchType.CONTAINS
+    assert raw_gfp.selector.filters[1].match_type is SourceFilterMatchType.IS_TIF
+    assert illum_dna is not None
+    assert illum_dna.selector.filters[0].match_type is SourceFilterMatchType.CONTAINS
+    assert illum_dna.selector.filters[1].match_type is SourceFilterMatchType.ENDS_WITH
+
+
 def test_symbol_table_and_codegen_use_compiled_setup_schema():
     setup_modules = [
         _module_with_records(

@@ -589,6 +589,56 @@ def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules():
     ]
 
 
+def test_cellprofiler_adapter_resolves_step_input_source_filters_without_metadata():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="rawGFP",
+                        selector=SourceSelector(
+                            filters=(
+                                SourceFilterClause(
+                                    subject=SourceFilterSubject.FILE,
+                                    match_type=SourceFilterMatchType.CONTAINS,
+                                    value="Channel1-",
+                                ),
+                                SourceFilterClause(
+                                    subject=SourceFilterSubject.EXTENSION,
+                                    match_type=SourceFilterMatchType.IS_TIF,
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=(
+            "plate-Channel1-A01.tif",
+            "plate-Channel2-A01.tif",
+        ),
+        step_input_dir="/plate/Images",
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(FileManagerStub()),
+        filemanager=FileManagerStub(),
+    )
+    channel_1 = np.full((2, 2), 11.0, dtype=np.float32)
+    channel_2 = np.full((2, 2), 22.0, dtype=np.float32)
+    image_stack = np.stack((channel_1, channel_2), axis=0)
+
+    resolved = adapter.resolve_source_image("rawGFP", image_stack)
+
+    np.testing.assert_array_equal(resolved, channel_1)
+
+
 def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan():
     source_bindings = StepSourceBindingsConfig(
         groups=(

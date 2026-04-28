@@ -433,6 +433,14 @@ def _source_selector_literal(selector: SourceSelector) -> str:
         if len(selector.metadata) == 1:
             metadata_literals += ","
         field_literals.append(f"metadata=({metadata_literals})")
+    if selector.filters:
+        filter_literals = ", ".join(
+            _source_filter_clause_literal(clause)
+            for clause in selector.filters
+        )
+        if len(selector.filters) == 1:
+            filter_literals += ","
+        field_literals.append(f"filters=({filter_literals})")
     if not selector.inherit_current_scope:
         field_literals.append("inherit_current_scope=False")
     return f"SourceSelector({', '.join(field_literals)})"

@@ -575,7 +575,12 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
 
 def _binding_requires_selector(binding: NamedSourceBinding) -> bool:
     selector = binding.selector
-    return bool(selector.components or selector.metadata or not selector.inherit_current_scope)
+    return bool(
+        selector.components
+        or selector.metadata
+        or selector.filters
+        or not selector.inherit_current_scope
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -630,8 +635,6 @@ def _parse_source_candidates(
             extracted_metadata,
             path=resolved_path,
         )
-        if not metadata:
-            continue
         candidates.append(
             ParsedSourceCandidate(
                 path=str(file_path),
@@ -682,6 +685,7 @@ def _match_candidates(
         if _candidate_matches_explicit_components(candidate, component_selectors)
         and _candidate_matches_inherited_scope(candidate, effective_components)
         and _candidate_matches_metadata(candidate, binding.selector.metadata)
+        and _source_filters_match(candidate.resolved_path, binding.selector.filters)
     )
 
 
@@ -1112,6 +1116,13 @@ def _rule_filters_match(
     file_path: str,
     filters: tuple[SourceFilterClause, ...],
 ) -> bool:
+    return _source_filters_match(file_path, filters)
+
+
+def _source_filters_match(
+    file_path: str,
+    filters: tuple[SourceFilterClause, ...],
+) -> bool:
     return all(_filter_clause_matches(file_path, clause) for clause in filters)
 
 
@@ -1181,12 +1192,52 @@ class DoesNotContainRegexSourceFilterMatcher(SourceFilterMatcher):
         return re.search(_require_filter_value(request.clause), request.target) is None
 
 
+class StartsWithSourceFilterMatcher(SourceFilterMatcher):
+    match_type = SourceFilterMatchType.STARTS_WITH
+    match_type_key = SourceFilterMatchType.STARTS_WITH.value
+
+    def matches(self, request: SourceFilterMatchRequest) -> bool:
+        return request.target.startswith(_require_filter_value(request.clause))
+
+
+class DoesNotStartWithSourceFilterMatcher(SourceFilterMatcher):
+    match_type = SourceFilterMatchType.DOES_NOT_START_WITH
+    match_type_key = SourceFilterMatchType.DOES_NOT_START_WITH.value
+
+    def matches(self, request: SourceFilterMatchRequest) -> bool:
+        return not request.target.startswith(_require_filter_value(request.clause))
+
+
+class EndsWithSourceFilterMatcher(SourceFilterMatcher):
+    match_type = SourceFilterMatchType.ENDS_WITH
+    match_type_key = SourceFilterMatchType.ENDS_WITH.value
+
+    def matches(self, request: SourceFilterMatchRequest) -> bool:
+        return request.target.endswith(_require_filter_value(request.clause))
+
+
+class DoesNotEndWithSourceFilterMatcher(SourceFilterMatcher):
+    match_type = SourceFilterMatchType.DOES_NOT_END_WITH
+    match_type_key = SourceFilterMatchType.DOES_NOT_END_WITH.value
+
+    def matches(self, request: SourceFilterMatchRequest) -> bool:
+        return not request.target.endswith(_require_filter_value(request.clause))
+
+
 class IsImageSourceFilterMatcher(SourceFilterMatcher):
     match_type = SourceFilterMatchType.IS_IMAGE
     match_type_key = SourceFilterMatchType.IS_IMAGE.value
 
     def matches(self, request: SourceFilterMatchRequest) -> bool:
         return _is_image_path(request.file_path)
+
+
+class IsTifSourceFilterMatcher(SourceFilterMatcher):
+    match_type = SourceFilterMatchType.IS_TIF
+    match_type_key = SourceFilterMatchType.IS_TIF.value
+
+    def matches(self, request: SourceFilterMatchRequest) -> bool:
+        return Path(request.file_path).suffix.lower() in {".tif", ".tiff"}
 
 
 class SourceFilterTargetResolver(ABC, metaclass=AutoRegisterMeta):

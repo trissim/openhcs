@@ -18,6 +18,8 @@ from openhcs.core.pipeline_image_schema import (
     CellProfilerImageSchema,
     GroupingPlan,
     ImageAssignment,
+    ImportedMetadataJoin,
+    ImportedMetadataTable,
     ImagesRule,
 )
 from openhcs.core.source_bindings import (
@@ -43,9 +45,13 @@ _METADATA_MATCH_PATTERN = re.compile(
 )
 _FILTER_CLAUSE_PATTERN = re.compile(
     r"\((?P<subject>file|directory|extension) "
-    r"does(?P<negation>not)? "
-    r"(?P<operator>containregexp|contain|isimage)"
+    r"does\s*(?P<negation>not)?\s*"
+    r"(?P<operator>containregexp|contain|startwith|endwith|isimage|istif)"
     r"(?: \"(?P<value>[^\"]*)\")?\)"
+)
+_SOURCE_FILTER_SUBJECT_PATTERN = re.compile(
+    r"\((file|directory|extension) does",
+    re.IGNORECASE,
 )
 _FILTER_SUBJECTS_BY_LITERAL = MappingProxyType(
     {
@@ -60,7 +66,12 @@ _FILTER_MATCH_TYPES_BY_LITERAL = MappingProxyType(
         ("contain", True): SourceFilterMatchType.DOES_NOT_CONTAIN,
         ("containregexp", False): SourceFilterMatchType.CONTAINS_REGEX,
         ("containregexp", True): SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX,
+        ("startwith", False): SourceFilterMatchType.STARTS_WITH,
+        ("startwith", True): SourceFilterMatchType.DOES_NOT_START_WITH,
+        ("endwith", False): SourceFilterMatchType.ENDS_WITH,
+        ("endwith", True): SourceFilterMatchType.DOES_NOT_END_WITH,
         ("isimage", False): SourceFilterMatchType.IS_IMAGE,
+        ("istif", False): SourceFilterMatchType.IS_TIF,
     }
 )
 _SOURCE_BINDING_MATCH_METHODS_BY_LITERAL = MappingProxyType(
@@ -99,6 +110,7 @@ class _SetupModuleCompilation:
 
     images_rule: ImagesRule | None = None
     metadata_rules: tuple[MetadataExtractionRule, ...] = ()
+    imported_metadata_tables: tuple[ImportedMetadataTable, ...] = ()
     assignments_by_alias: Mapping[str, ImageAssignment] = MappingProxyType({})
     match_plan: SourceBindingMatchPlan | None = None
     grouping: GroupingPlan | None = None
@@ -107,6 +119,7 @@ class _SetupModuleCompilation:
         return CellProfilerImageSchema(
             images_rule=self.images_rule,
             metadata_rules=self.metadata_rules,
+            imported_metadata_tables=self.imported_metadata_tables,
             assignments_by_alias=self.assignments_by_alias,
             match_plan=self.match_plan,
             grouping=self.grouping,
@@ -117,6 +130,7 @@ class _SchemaBuilder:
     def __init__(self) -> None:
         self.images_rule: ImagesRule | None = None
         self.metadata_rules: list[MetadataExtractionRule] = []
+        self.imported_metadata_tables: list[ImportedMetadataTable] = []
         self.assignments_by_alias: dict[str, ImageAssignment] = {}
         self.match_plan: SourceBindingMatchPlan | None = None
         self.grouping: GroupingPlan | None = None
@@ -125,6 +139,7 @@ class _SchemaBuilder:
         return _SetupModuleCompilation(
             images_rule=self.images_rule,
             metadata_rules=tuple(self.metadata_rules),
+            imported_metadata_tables=tuple(self.imported_metadata_tables),
             assignments_by_alias=MappingProxyType(dict(self.assignments_by_alias)),
             match_plan=self.match_plan,
             grouping=self.grouping,
@@ -132,6 +147,9 @@ class _SchemaBuilder:
 
     def add_metadata_rule(self, rule: MetadataExtractionRule) -> None:
         self.metadata_rules.append(rule)
+
+    def add_imported_metadata_table(self, table: ImportedMetadataTable) -> None:
+        self.imported_metadata_tables.append(table)
 
     def declare_assignment(self, assignment: ImageAssignment) -> None:
         existing = self.assignments_by_alias.get(assignment.alias)
@@ -192,21 +210,7 @@ class MetadataModuleCompiler(SetupModuleCompiler):
             module.iter_settings(),
             start_name="Metadata extraction method",
         ):
-            source = _metadata_source(
-                _block_value(block, "Metadata source", default="File name")
-            )
-            state.add_metadata_rule(
-                MetadataExtractionRule(
-                    source=source,
-                    pattern=_metadata_pattern_for_block(block, source),
-                    filters=_filter_clauses_from_criteria(
-                        _block_value(
-                            block,
-                            "Select the filtering criteria",
-                        )
-                    ),
-                )
-            )
+            _compile_metadata_block(block, state)
 
 
 class NamesAndTypesModuleCompiler(SetupModuleCompiler):
@@ -410,23 +414,139 @@ def _metadata_source(value: str) -> MetadataSource:
     return MetadataSource.FILE_NAME
 
 
+def _compile_metadata_block(
+    block: Sequence[ModuleSetting],
+    state: _SchemaBuilder,
+) -> None:
+    method = _block_value(block, "Metadata extraction method")
+    if _is_imported_metadata_method(method):
+        state.add_imported_metadata_table(_imported_metadata_table(block))
+        return
+    if not _is_path_metadata_extraction_method(method):
+        raise ValueError(f"Unsupported CellProfiler metadata extraction method: {method!r}.")
+
+    source = _metadata_source(_block_value(block, "Metadata source", default="File name"))
+    state.add_metadata_rule(
+        MetadataExtractionRule(
+            source=source,
+            pattern=_required_metadata_pattern_for_block(block, source),
+            filters=_filter_clauses_from_criteria(
+                _block_value(
+                    block,
+                    "Select the filtering criteria",
+                )
+            ),
+        )
+    )
+
+
+def _is_path_metadata_extraction_method(value: str) -> bool:
+    normalized = value.strip().lower()
+    return "extract" in normalized and (
+        "file/folder" in normalized
+        or "file" in normalized
+        or "folder" in normalized
+    )
+
+
+def _is_imported_metadata_method(value: str) -> bool:
+    normalized = value.strip().lower()
+    return "import" in normalized and "file" in normalized
+
+
+def _imported_metadata_table(block: Sequence[ModuleSetting]) -> ImportedMetadataTable:
+    return ImportedMetadataTable(
+        location=_block_value(block, "Metadata file location", default="") or None,
+        joins=_imported_metadata_joins(block),
+    )
+
+
+def _imported_metadata_joins(
+    block: Sequence[ModuleSetting],
+) -> tuple[ImportedMetadataJoin, ...]:
+    raw_match_metadata = _block_value(block, "Match file and image metadata")
+    if not raw_match_metadata:
+        return ()
+    try:
+        records = ast.literal_eval(
+            _decode_cellprofiler_setting_literal(raw_match_metadata)
+        )
+    except (SyntaxError, ValueError) as exc:
+        raise ValueError(
+            "Invalid Metadata 'Match file and image metadata' value: "
+            f"{raw_match_metadata!r}."
+        ) from exc
+    if not isinstance(records, list):
+        raise TypeError(
+            "Metadata 'Match file and image metadata' must parse to a list "
+            "of join records."
+        )
+    joins: list[ImportedMetadataJoin] = []
+    for record in records:
+        if not isinstance(record, Mapping):
+            raise TypeError(
+                "Metadata imported-table join records must be mappings."
+            )
+        image_field = record.get("Image Metadata")
+        imported_field = record.get("CSV Metadata")
+        if image_field is None or imported_field is None:
+            continue
+        joins.append(
+            ImportedMetadataJoin(
+                image_metadata_field=str(image_field),
+                imported_metadata_field=str(imported_field),
+            )
+        )
+    return tuple(joins)
+
+
+def _required_metadata_pattern_for_block(
+    block: Sequence[ModuleSetting],
+    source: MetadataSource,
+) -> str:
+    pattern = _metadata_pattern_for_block(block, source)
+    if not pattern:
+        raise ValueError(
+            "CellProfiler path metadata extraction requires a non-empty "
+            f"{source.value} regular expression."
+        )
+    return pattern
+
+
 def _metadata_pattern_for_block(
     block: Sequence[ModuleSetting],
     source: MetadataSource,
 ) -> str:
     if source is MetadataSource.FOLDER_NAME:
-        return _decode_cellprofiler_setting_literal(
-            _block_value(
-                block,
-                "Regular expression to extract from folder name",
-            )
-        )
-    return _decode_cellprofiler_setting_literal(
-        _block_value(
+        folder_pattern = _block_value(
             block,
-            "Regular expression to extract from file name",
+            "Regular expression to extract from folder name",
         )
+        return _decode_cellprofiler_setting_literal(
+            folder_pattern or _legacy_regex_value(block, index=1)
+        )
+    file_pattern = _block_value(
+        block,
+        "Regular expression to extract from file name",
     )
+    return _decode_cellprofiler_setting_literal(
+        file_pattern or _legacy_regex_value(block, index=0)
+    )
+
+
+def _legacy_regex_value(
+    block: Sequence[ModuleSetting],
+    *,
+    index: int,
+) -> str:
+    values = tuple(
+        setting.value
+        for setting in block
+        if setting.name == "Regular expression"
+    )
+    if index < len(values):
+        return values[index]
+    return ""
 
 
 def _filter_clauses_from_criteria(
@@ -438,6 +558,8 @@ def _filter_clauses_from_criteria(
         return ()
     matches = tuple(_FILTER_CLAUSE_PATTERN.finditer(decoded_criteria))
     if not matches:
+        if not _SOURCE_FILTER_SUBJECT_PATTERN.search(decoded_criteria):
+            return ()
         raise ValueError(
             "Unsupported CellProfiler source filter criteria: "
             f"{criteria!r}."
@@ -492,6 +614,7 @@ def _selector_from_rule_criteria(rule_criteria: str) -> SourceSelector:
     return SourceSelector(
         components=tuple(component_selectors),
         metadata=tuple(metadata_selectors),
+        filters=_filter_clauses_from_criteria(rule_criteria),
     )
 
 

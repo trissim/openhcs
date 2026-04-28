@@ -39,11 +39,26 @@ class SourceFilterSubject(Enum):
 class SourceFilterMatchType(Enum):
     """How one source filter clause matches its target text."""
 
-    CONTAINS = "contains"
-    CONTAINS_REGEX = "contains_regex"
-    DOES_NOT_CONTAIN = "does_not_contain"
-    DOES_NOT_CONTAIN_REGEX = "does_not_contain_regex"
-    IS_IMAGE = "is_image"
+    def __new__(cls, value: str, requires_value: bool = True):
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj._requires_value = requires_value
+        return obj
+
+    CONTAINS = ("contains", True)
+    CONTAINS_REGEX = ("contains_regex", True)
+    DOES_NOT_CONTAIN = ("does_not_contain", True)
+    DOES_NOT_CONTAIN_REGEX = ("does_not_contain_regex", True)
+    STARTS_WITH = ("starts_with", True)
+    DOES_NOT_START_WITH = ("does_not_start_with", True)
+    ENDS_WITH = ("ends_with", True)
+    DOES_NOT_END_WITH = ("does_not_end_with", True)
+    IS_IMAGE = ("is_image", False)
+    IS_TIF = ("is_tif", False)
+
+    @property
+    def requires_value(self) -> bool:
+        return self._requires_value
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +86,7 @@ class SourceFilterClause:
         )
         object.__setattr__(self, "match_type", match_type)
         normalized_value = None if self.value is None else str(self.value)
-        if match_type is SourceFilterMatchType.IS_IMAGE:
+        if not match_type.requires_value:
             object.__setattr__(self, "value", None)
             return
         if normalized_value is None:
@@ -237,11 +252,13 @@ class SourceSelector:
 
     components: tuple[ComponentSelector, ...] = ()
     metadata: tuple[MetadataSelector, ...] = ()
+    filters: tuple[SourceFilterClause, ...] = ()
     inherit_current_scope: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "components", tuple(self.components))
         object.__setattr__(self, "metadata", tuple(self.metadata))
+        object.__setattr__(self, "filters", tuple(self.filters))
         for selector in self.components:
             if not isinstance(selector, ComponentSelector):
                 raise TypeError(
@@ -253,6 +270,12 @@ class SourceSelector:
                 raise TypeError(
                     "SourceSelector.metadata must contain MetadataSelector values, "
                     f"got {type(selector).__name__}."
+                )
+        for clause in self.filters:
+            if not isinstance(clause, SourceFilterClause):
+                raise TypeError(
+                    "SourceSelector.filters must contain SourceFilterClause values, "
+                    f"got {type(clause).__name__}."
                 )
 
 
