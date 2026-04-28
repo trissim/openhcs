@@ -24,13 +24,13 @@ from openhcs.core.artifact_materialization_policy import (
 )
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.constants.constants import AllComponents
+from openhcs.core.pipeline_image_schema import CellProfilerImageSchema
 from openhcs.core.source_bindings import StepSourceBindingsConfig, SourceBindingOrigin
 
 from .module_function_resolution import ModuleFunctionResolutionStrategy
 from .module_settings_binding import ModuleSettingsBindingStrategy
 from .parser import ModuleBlock
 from .settings_binder import SettingsBinder
-from .source_schema import CellProfilerImageSchema
 from .symbol_table import (
     CellProfilerSymbolTable,
     ModuleArtifactContracts,

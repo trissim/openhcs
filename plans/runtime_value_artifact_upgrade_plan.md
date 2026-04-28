@@ -193,25 +193,29 @@ The branch has already established most of the typed runtime/compiler foundation
     - generated `.cppipe` pipeline objects and prepared runtime pipelines carry the compiled pipeline-level `source_schema`
     - dataset specs can declare canonical reference `.cppipe` URLs
     - the OpenHCS benchmark adapter can resolve converted pipeline runs from either a local `.cppipe` path or a dataset-owned canonical `.cppipe` reference
-22. The absorbed CellProfiler import/materialization surface is now cleaner and exercised on real paths:
+22. Pipeline-level image schema ownership now lives in core OpenHCS concepts instead of converter-local dataclasses:
+    - [openhcs/core/pipeline_image_schema.py](/home/ts/code/projects/openhcs-benchmark-platform/openhcs/core/pipeline_image_schema.py:1) now owns `CellProfilerImageSchema`, `ImageAssignment`, `GroupingPlan`, `ImagesRule`, and legacy alias strategies
+    - [benchmark/converter/source_schema.py](/home/ts/code/projects/openhcs-benchmark-platform/benchmark/converter/source_schema.py:1) now acts as a lowering module that compiles setup modules into those core schema types
+    - generated/prepared pipeline objects, symbol-table compilation, and benchmark/runtime wiring now import the schema from core directly
+23. The absorbed CellProfiler import/materialization surface is now cleaner and exercised on real paths:
     - `csv_materializer(...)` is a first-class exported materialization preset used by absorbed measurement/export modules
     - `openhcs.core.memory.decorators` is a real core import surface rather than an implicit missing module
     - active and ExampleFly-relevant absorbed functions now import cleanly under unit coverage
     - the benchmark adapter now executes the real shipped `ExampleFly.cppipe` end to end and materializes non-empty CSV outputs
-23. The in-tree `.cppipe` corpus is now tracked explicitly instead of implicitly:
+24. The in-tree `.cppipe` corpus is now tracked explicitly instead of implicitly:
     - shipped fixtures are classified as either supported or structurally invalid
     - adapter-level preparation failures are wrapped as `ToolExecutionError` with the original compatibility diagnostic preserved
     - `ExampleHuman.cppipe` is now asserted as a known invalid reduced fixture rather than silently encouraging weaker symbol validation
-24. The accepted corpus now includes canonical BBBC021 reference pipeline snapshots in-tree:
+25. The accepted corpus now includes canonical BBBC021 reference pipeline snapshots in-tree:
     - `BBBC021_analysis.cppipe` and `BBBC021_illum.cppipe` now prepare successfully as supported corpus members
     - real setup-module lowering for those files is asserted under unit coverage
     - the typed image schema for those files now has explicit acceptance checks for grouping, metadata match dimensions, and selector-bearing assignments
-25. PURE_2D absorbed-function execution now preserves tuple-shaped side outputs generically:
+26. PURE_2D absorbed-function execution now preserves tuple-shaped side outputs generically:
     - the shared registry slice executor now aggregates `(main_output, side_output...)` returns instead of assuming every per-slice result is a bare 2D array
     - 2D auxiliary image/label outputs restack correctly
     - tabular auxiliary outputs aggregate across slices instead of collapsing or failing
     - per-slice outputs with `slice_index` fields now get the real runtime slice index injected during aggregation
-26. Real acceptance coverage now extends beyond the earlier in-tree subset:
+27. Real acceptance coverage now extends beyond the earlier in-tree subset:
     - canonical `BBBC021_illum.cppipe` executes through the real orchestrator/runtime path on synthetic BBBC021-shaped data
     - `ExampleFly.cppipe` CSV assertions now validate semantic headers, not just file existence
     - generated `RelateObjects` acceptance now validates concrete relationship/measurement CSV schemas
@@ -220,7 +224,7 @@ The branch has already established most of the typed runtime/compiler foundation
 
 The biggest unresolved items are now:
 
-1. Setup-module semantics are now exposed as a pipeline-level image schema during generated-pipeline preparation and benchmark execution, but they are still mostly converter-owned rather than a broader core OpenHCS pipeline concept.
+1. Setup-module semantics are now exposed as a core-owned pipeline-level image schema during generated-pipeline preparation and benchmark execution, but they are not yet a broader editable GUI/ObjectState pipeline concept.
 2. `NamesAndTypes` image-set matching semantics are now modeled for the metadata-based path, but other match modes and broader real-pipeline coverage still need work.
    - `Metadata` matching now lowers into a typed cross-alias plan
    - unsupported modes should continue to fail loudly until modeled natively

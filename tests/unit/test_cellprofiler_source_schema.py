@@ -5,6 +5,7 @@ from benchmark.converter.pipeline_generator import PipelineGenerator
 from benchmark.converter.source_schema import compile_image_schema
 from benchmark.converter.symbol_table import CellProfilerSymbolTable
 from openhcs.constants.constants import AllComponents
+from openhcs.core.pipeline_image_schema import CellProfilerImageSchema
 from openhcs.core.source_bindings import (
     ComponentSelector,
     MetadataSource,
@@ -407,6 +408,7 @@ def test_generated_pipeline_exposes_pipeline_level_source_schema():
         ],
     )
 
+    assert isinstance(generated.source_schema, CellProfilerImageSchema)
     assignment = generated.source_schema.resolved_assignment_for_alias("OrigBlue")
 
     assert assignment is not None

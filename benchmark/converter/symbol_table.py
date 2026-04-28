@@ -22,6 +22,7 @@ from openhcs.core.artifact_materialization_policy import (
     DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
 )
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.pipeline_image_schema import CellProfilerImageSchema
 from openhcs.core.source_bindings import (
     ComponentSelector,
     EMPTY_SOURCE_BINDINGS,
@@ -44,7 +45,7 @@ from openhcs.core.source_bindings import (
 
 from .gray_to_color_settings import GrayToColorInputNameResolver
 from .parser import ModuleBlock
-from .source_schema import CellProfilerImageSchema, compile_image_schema
+from .source_schema import compile_image_schema
 
 
 class CellProfilerSymbolKind(str, Enum):

@@ -21,6 +21,7 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.constants import MULTIPROCESSING_AXIS
 from openhcs.core.config import DtypeConfig
 from openhcs.core.pipeline import Pipeline
+from openhcs.core.pipeline_image_schema import CellProfilerImageSchema
 from openhcs.core.progress import set_progress_queue
 from openhcs.processing.backends.lib_registry.openhcs_registry import (
     OpenHCSRegistry,
@@ -37,7 +38,6 @@ from openhcs.processing.func_registry import register_function
 from .contract_inference import InferredContract, infer_contract
 from .parser import CPPipeParser, ModuleBlock
 from .pipeline_generator import GeneratedPipeline, PipelineGenerator
-from .source_schema import CellProfilerImageSchema
 
 INFRASTRUCTURE_MODULE_NAMES = frozenset(
     {

@@ -29,13 +29,17 @@ from .runtime_pipeline import (
 )
 from .settings_binder import SettingsBinder
 from .source_schema import (
+    compile_image_schema,
+)
+from openhcs.core.pipeline_image_schema import (
     CellProfilerImageSchema,
     GroupingPlan,
     ImageAssignment,
     ImagesRule,
+)
+from openhcs.core.source_bindings import (
     MetadataExtractionRule,
     MetadataSource,
-    compile_image_schema,
 )
 from .symbol_table import (
     CellProfilerSymbol,
@@ -44,10 +48,24 @@ from .symbol_table import (
     ModuleArtifactContracts,
 )
 
+
 def _is_public_api_export(name: str, value: object) -> bool:
-    return not name.startswith("_") and getattr(value, "__module__", __name__).startswith(
-        "benchmark.converter"
+    return not name.startswith("_") and (
+        getattr(value, "__module__", __name__).startswith("benchmark.converter")
+        or name in _CORE_SCHEMA_EXPORTS
     )
+
+
+_CORE_SCHEMA_EXPORTS = frozenset(
+    {
+        "CellProfilerImageSchema",
+        "GroupingPlan",
+        "ImageAssignment",
+        "ImagesRule",
+        "MetadataExtractionRule",
+        "MetadataSource",
+    }
+)
 
 
 __all__ = sorted(
