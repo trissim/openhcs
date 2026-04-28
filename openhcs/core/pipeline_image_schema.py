@@ -189,6 +189,11 @@ for _image_type_role_spec in (
         ImageStackSourceRole,
     ),
     ImageTypeSourceRoleSpec(
+        "BinaryMaskImageTypeSourceRole",
+        "binary mask",
+        ImageStackSourceRole,
+    ),
+    ImageTypeSourceRoleSpec(
         "MaskImageTypeSourceRole",
         "mask",
         ImageStackSourceRole,

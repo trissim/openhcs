@@ -152,6 +152,7 @@ class OutputObjectsSettingClassifier(ArtifactSettingClassifier):
         if any(
             phrase in name
             for phrase in (
+                "masked_objects",
                 "output_objects",
                 "objects_to_be_identified",
                 "primary_objects_to_be_identified",
@@ -160,6 +161,8 @@ class OutputObjectsSettingClassifier(ArtifactSettingClassifier):
                 "new_primary_objects",
             )
         ):
+            return ArtifactSettingRole.OUTPUT_OBJECTS
+        if name.startswith("name_the_output"):
             return ArtifactSettingRole.OUTPUT_OBJECTS
         return None
 
@@ -202,7 +205,10 @@ class InputObjectsSettingClassifier(ArtifactSettingClassifier):
             return None
         if not name.startswith("select_"):
             return None
-        if _contains_any(name, ("method", "module", "measurement")):
+        if _contains_any(
+            name,
+            ("location", "method", "module", "measurement", "shape"),
+        ):
             return None
         return ArtifactSettingRole.INPUT_OBJECTS
 

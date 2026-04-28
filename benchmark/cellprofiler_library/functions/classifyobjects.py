@@ -15,6 +15,7 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer
+from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 
 
 class ClassificationMethod(Enum):
@@ -85,6 +86,8 @@ def classify_objects_single_measurement(
     """
     import json
     from skimage.measure import regionprops
+
+    bin_choice = _coerce_function_enum(BinChoice, bin_choice)
     
     # Get unique object labels (excluding background)
     unique_labels = np.unique(labels)
@@ -217,6 +220,9 @@ def classify_objects_two_measurements(
     """
     import json
     from skimage.measure import regionprops
+
+    threshold1_method = _coerce_function_enum(ThresholdMethod, threshold1_method)
+    threshold2_method = _coerce_function_enum(ThresholdMethod, threshold2_method)
     
     unique_labels = np.unique(labels)
     unique_labels = unique_labels[unique_labels > 0]

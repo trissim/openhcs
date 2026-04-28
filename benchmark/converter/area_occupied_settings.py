@@ -8,14 +8,21 @@ from enum import Enum
 from typing import Any
 
 from .parser import ModuleBlock, ModuleSetting
-from .setting_names import block_setting_value, repeating_setting_blocks
+from .setting_names import SettingNameFamily, block_setting_value, repeating_setting_blocks
 
 
-AREA_OCCUPIED_MODE_SETTING = (
-    "Measure the area occupied in a binary image, or in objects?"
+AREA_OCCUPIED_MODE_SETTING = SettingNameFamily(
+    "Measure the area occupied in a binary image, or in objects?",
+    aliases=("Measure the area occupied by",),
 )
-AREA_OCCUPIED_BINARY_IMAGE_SETTING = "Select a binary image to measure"
-AREA_OCCUPIED_OBJECTS_SETTING = "Select objects to measure"
+AREA_OCCUPIED_BINARY_IMAGE_SETTING = SettingNameFamily(
+    "Select a binary image to measure",
+    aliases=("Select binary images to measure",),
+)
+AREA_OCCUPIED_OBJECTS_SETTING = SettingNameFamily(
+    "Select objects to measure",
+    aliases=("Select object sets to measure",),
+)
 AREA_OCCUPIED_RETAIN_IMAGE_SETTING = (
     "Retain a binary image of the object regions?"
 )
@@ -95,13 +102,25 @@ class AreaOccupiedMeasurementRow:
 
 def area_occupied_rows(module: ModuleBlock) -> tuple[AreaOccupiedMeasurementRow, ...]:
     """Return ordered MeasureImageAreaOccupied rows from a parsed module."""
-    return tuple(
-        AreaOccupiedMeasurementRow.from_block(module, block)
-        for block in repeating_setting_blocks(
-            module.iter_settings(),
-            start_name=AREA_OCCUPIED_MODE_SETTING,
+    rows: list[AreaOccupiedMeasurementRow] = []
+    for block in repeating_setting_blocks(
+        module.iter_settings(),
+        start_name=AREA_OCCUPIED_MODE_SETTING,
+    ):
+        row = AreaOccupiedMeasurementRow.from_block(module, block)
+        rows.extend(
+            _expanded_area_occupied_rows(
+                module,
+                row,
+                binary_image_names=_split_symbol_values(
+                    block_setting_value(block, AREA_OCCUPIED_BINARY_IMAGE_SETTING)
+                ),
+                object_names=_split_symbol_values(
+                    block_setting_value(block, AREA_OCCUPIED_OBJECTS_SETTING)
+                ),
+            )
         )
-    )
+    return tuple(rows)
 
 
 def area_occupied_bound_kwargs(module: ModuleBlock) -> dict[str, Any]:
@@ -132,3 +151,62 @@ def _optional_symbol_value(value: str) -> str | None:
     if normalized.lower() in {"leave this black", "none", "do not use"}:
         return None
     return normalized
+
+
+def _expanded_area_occupied_rows(
+    module: ModuleBlock,
+    row: AreaOccupiedMeasurementRow,
+    *,
+    binary_image_names: tuple[str, ...],
+    object_names: tuple[str, ...],
+) -> tuple[AreaOccupiedMeasurementRow, ...]:
+    if row.operand is AreaOccupiedOperand.BINARY_IMAGE:
+        names = binary_image_names or _required_single_name(
+            module,
+            row.binary_image_name,
+            "binary image",
+        )
+        return tuple(
+            AreaOccupiedMeasurementRow(
+                operand=row.operand,
+                binary_image_name=name,
+                objects_name=None,
+                retained_image_name=row.retained_image_name,
+            )
+            for name in names
+        )
+    names = object_names or _required_single_name(
+        module,
+        row.objects_name,
+        "object",
+    )
+    return tuple(
+        AreaOccupiedMeasurementRow(
+            operand=row.operand,
+            binary_image_name=None,
+            objects_name=name,
+            retained_image_name=row.retained_image_name,
+        )
+        for name in names
+    )
+
+
+def _split_symbol_values(value: str) -> tuple[str, ...]:
+    return tuple(
+        symbol
+        for part in value.split(",")
+        if (symbol := _optional_symbol_value(part)) is not None
+    )
+
+
+def _required_single_name(
+    module: ModuleBlock,
+    value: str | None,
+    role: str,
+) -> tuple[str, ...]:
+    if value is None:
+        raise ValueError(
+            f"Module {module.name}({module.module_num}) has an area-occupied "
+            f"row with no {role} input."
+        )
+    return (value,)

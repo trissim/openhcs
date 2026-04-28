@@ -908,6 +908,83 @@ def _measure_image_area_occupied(
     )
 
 
+def _classify_objects(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    objects = [
+        builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
+        for name in _setting_symbol_names(
+            module,
+            SettingNameFamily("Select the object to be classified"),
+        )
+    ]
+    retained_images = _retained_output_image(
+        builder,
+        module,
+        retain_setting="Retain an image of the classified objects?",
+        output_setting=OUTPUT_IMAGE_SETTING,
+    )
+    measurements = builder.declare(
+        _measurement_name(module),
+        CellProfilerSymbolKind.MEASUREMENTS,
+        module,
+    )
+    return _contracts(
+        module,
+        builder,
+        inputs=objects,
+        outputs=[*retained_images, measurements],
+    )
+
+
+def _define_grid(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    images = [
+        builder.require(name, CellProfilerSymbolKind.IMAGE, module)
+        for name in (
+            _normalized_setting_symbol(
+                module,
+                "Select the image on which to display the grid",
+            ),
+            _normalized_setting_symbol(
+                module,
+                "Select the image to display when drawing",
+            ),
+        )
+        if name is not None
+    ]
+    objects = [
+        builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
+        for name in (
+            _normalized_setting_symbol(
+                module,
+                "Select the previously identified objects",
+            ),
+        )
+        if name is not None
+    ]
+    retained_images = _retained_output_image(
+        builder,
+        module,
+        retain_setting="Retain an image of the grid?",
+        output_setting=OUTPUT_IMAGE_SETTING,
+    )
+    measurements = builder.declare(
+        _measurement_name(module),
+        CellProfilerSymbolKind.MEASUREMENTS,
+        module,
+    )
+    return _contracts(
+        module,
+        builder,
+        inputs=[*images, *objects],
+        outputs=[*retained_images, measurements],
+    )
+
+
 def _filter_objects(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
@@ -1417,6 +1494,8 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     (("IdentifyTertiaryObjects",), _identify_tertiary_objects),
     (("ConvertObjectsToImage",), _convert_objects_to_image),
     (("FilterObjects",), _filter_objects),
+    (("ClassifyObjectsSingleMeasurement",), _classify_objects),
+    (("DefineGridManual",), _define_grid),
     (("GrayToColor",), _gray_to_color),
     (("UnmixColors",), _unmix_colors),
     (("OverlayOutlines",), _overlay_outlines),
@@ -1515,6 +1594,31 @@ def _setting_output_names_by_kind(
     for symbol in setting_outputs:
         names_by_kind.setdefault(symbol.role.artifact_kind, []).append(symbol.name)
     return names_by_kind
+
+
+def _retained_output_image(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+    *,
+    retain_setting: str,
+    output_setting: str | SettingNameFamily,
+) -> tuple[CellProfilerSymbol, ...]:
+    if not _any_truthy_setting_value(module, retain_setting):
+        return ()
+    output_name = _normalized_setting_symbol(module, output_setting)
+    if output_name is None:
+        return ()
+    return (builder.declare(output_name, CellProfilerSymbolKind.IMAGE, module),)
+
+
+def _any_truthy_setting_value(
+    module: ModuleBlock,
+    setting: str | SettingNameFamily,
+) -> bool:
+    return any(
+        value.strip().lower() in {"yes", "true", "1", "on"}
+        for value in setting_values(module, setting)
+    )
 
 
 def _declare_outputs(

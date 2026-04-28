@@ -13,6 +13,7 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
+from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 
 
 class ShapeChoice(Enum):
@@ -253,6 +254,10 @@ def identify_objects_in_grid(
     Returns:
         Tuple of (image, stats, labels)
     """
+    shape_choice = _coerce_function_enum(ShapeChoice, shape_choice)
+    diameter_choice = _coerce_function_enum(DiameterChoice, diameter_choice)
+    del diameter_choice
+
     height, width = image.shape
     
     # Build grid definition
@@ -344,6 +349,9 @@ def identify_objects_in_grid_with_guides(
     Returns:
         Tuple of (image, stats, labels)
     """
+    shape_choice = _coerce_function_enum(ShapeChoice, shape_choice)
+    diameter_choice = _coerce_function_enum(DiameterChoice, diameter_choice)
+
     height, width = image.shape
     
     # Build grid definition

@@ -13,6 +13,7 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
 from openhcs.processing.materialization import csv_materializer
+from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 
 
 class GridOrigin(Enum):
@@ -90,6 +91,10 @@ def define_grid_manual(
     Returns:
         Tuple of (image, GridInfo)
     """
+    origin = _coerce_function_enum(GridOrigin, origin)
+    ordering = _coerce_function_enum(GridOrdering, ordering)
+    del ordering
+
     # Convert to canonical row/column (0-indexed from top-left)
     def canonical_row_col(row, col):
         if origin in (GridOrigin.BOTTOM_LEFT, GridOrigin.BOTTOM_RIGHT):
@@ -174,6 +179,11 @@ def define_grid_automatic(
         Tuple of (image, GridInfo)
     """
     from scipy.ndimage import center_of_mass, find_objects
+
+    del center_of_mass, find_objects
+    origin = _coerce_function_enum(GridOrigin, origin)
+    ordering = _coerce_function_enum(GridOrdering, ordering)
+    del ordering
     
     # Find centroids of all labeled objects
     unique_labels = np.unique(labels)

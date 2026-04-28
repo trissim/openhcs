@@ -11,6 +11,8 @@ from metaclass_registry import AutoRegisterMeta
 
 from benchmark.cellprofiler_library import canonical_module_name
 
+from .classify_objects_settings import ClassifyObjectsVariant
+from .grid_settings import DefineGridVariant, IdentifyObjectsInGridVariant
 from .parser import ModuleBlock
 from .setting_names import (
     OBJECT_MEASUREMENT_SETTING,
@@ -170,6 +172,61 @@ class MeasureGranularityFunctionResolutionStrategy(
 
     module_name = "MeasureGranularity"
     object_function_name = "measure_granularity_objects"
+
+
+class ClassifyObjectsFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
+    """Resolve absorbed ClassifyObjects variants from typed module settings."""
+
+    module_name = "ClassifyObjectsSingleMeasurement"
+
+    def resolve(
+        self,
+        module: ModuleBlock,
+        *,
+        default_function_name: str,
+    ) -> ResolvedModuleFunction:
+        del default_function_name
+        return ResolvedModuleFunction(
+            function_name=ClassifyObjectsVariant.from_module(module).function_name
+        )
+
+
+class DefineGridFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
+    """Resolve absorbed DefineGrid variants from typed module settings."""
+
+    module_name = "DefineGridManual"
+
+    def resolve(
+        self,
+        module: ModuleBlock,
+        *,
+        default_function_name: str,
+    ) -> ResolvedModuleFunction:
+        del default_function_name
+        return ResolvedModuleFunction(
+            function_name=DefineGridVariant.from_module(module).function_name
+        )
+
+
+class IdentifyObjectsInGridFunctionResolutionStrategy(
+    ModuleFunctionResolutionStrategy
+):
+    """Resolve grid-object identification with or without guiding labels."""
+
+    module_name = "IdentifyObjectsInGrid"
+
+    def resolve(
+        self,
+        module: ModuleBlock,
+        *,
+        default_function_name: str,
+    ) -> ResolvedModuleFunction:
+        del default_function_name
+        return ResolvedModuleFunction(
+            function_name=IdentifyObjectsInGridVariant.from_module(
+                module
+            ).function_name
+        )
 
 
 def _scope_setting_value(

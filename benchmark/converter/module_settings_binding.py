@@ -13,7 +13,12 @@ from benchmark.cellprofiler_library import canonical_module_name
 
 from .align_settings import align_bound_kwargs
 from .area_occupied_settings import area_occupied_bound_kwargs
+from .classify_objects_settings import classify_objects_bound_kwargs
 from .filter_objects_settings import filter_objects_bound_kwargs
+from .grid_settings import (
+    define_grid_bound_kwargs,
+    identify_objects_in_grid_bound_kwargs,
+)
 from .gray_to_color_settings import (
     GRAY_TO_COLOR_CMYK_IMAGE_SETTINGS,
     GRAY_TO_COLOR_CMYK_WEIGHT_SETTINGS,
@@ -186,6 +191,58 @@ class FilterObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     ) -> BoundModuleSettings:
         del binder, param_mapping
         return BoundModuleSettings(filter_objects_bound_kwargs(module))
+
+
+class ClassifyObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind ClassifyObjects settings into absorbed classification kwargs."""
+
+    module_name = "ClassifyObjectsSingleMeasurement"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del param_mapping
+        return BoundModuleSettings(classify_objects_bound_kwargs(module, binder))
+
+
+class DefineGridModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind DefineGrid settings into absorbed grid-definition kwargs."""
+
+    module_name = "DefineGridManual"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del param_mapping
+        return BoundModuleSettings(define_grid_bound_kwargs(module, binder))
+
+
+class IdentifyObjectsInGridModuleSettingsBindingStrategy(
+    ModuleSettingsBindingStrategy
+):
+    """Bind IdentifyObjectsInGrid settings into absorbed grid-object kwargs."""
+
+    module_name = "IdentifyObjectsInGrid"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del param_mapping
+        return BoundModuleSettings(
+            identify_objects_in_grid_bound_kwargs(module, binder)
+        )
 
 
 class GrayToColorSchemeBindingStrategy(ABC, metaclass=AutoRegisterMeta):

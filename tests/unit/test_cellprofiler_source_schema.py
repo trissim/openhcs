@@ -230,6 +230,28 @@ def test_compile_image_schema_lowers_object_loads_to_source_artifacts():
     assert schema.assignment_for_alias("IgnoredImageAlias") is None
 
 
+def test_compile_image_schema_treats_binary_masks_as_stack_images():
+    names_and_types_module = _module_with_records(
+        1,
+        "NamesAndTypes",
+        [
+            ("Assignments count", "1"),
+            ("Select the rule criteria", 'and (metadata does channel "mask")'),
+            ("Name to assign these images", "BinaryMask"),
+            ("Select the image type", "Binary mask"),
+        ],
+    )
+
+    schema = compile_image_schema([names_and_types_module])
+    assignment = schema.assignment_for_alias("BinaryMask")
+
+    assert assignment is not None
+    assert assignment.origin is SourceBindingOrigin.STEP_INPUT
+    assert assignment.selector.components == (
+        ComponentSelector(AllComponents.CHANNEL, "mask"),
+    )
+
+
 def test_compile_image_schema_lowers_load_images_to_typed_source_schema():
     load_images_module = _module_with_records(
         1,

@@ -24,6 +24,9 @@
     "validated": true
   },
   "ClassifyObjectsSingleMeasurement": {
+    "aliases": [
+      "ClassifyObjects"
+    ],
     "function_name": "classify_objects_single_measurement",
     "contract": "pure_2d",
     "category": "image_operation",
@@ -104,6 +107,9 @@
     "validated": true
   },
   "DefineGridManual": {
+    "aliases": [
+      "DefineGrid"
+    ],
     "function_name": "define_grid_manual",
     "contract": "pure_2d",
     "category": "image_operation",

@@ -1166,6 +1166,154 @@ def test_cellprofiler_symbol_table_reads_gray_to_color_stack_inputs_from_records
     assert [spec.name for spec in contract.outputs] == ["StackedColor"]
 
 
+def test_classifyobjects_alias_compiles_variant_contract_and_settings():
+    modules = [
+        _identify_primary(),
+        _module_with_records(
+            2,
+            "ClassifyObjects",
+            [
+                (
+                    "Make each classification decision on how many measurements?",
+                    "Single measurement",
+                ),
+                ("Select the object to be classified", "Nuclei"),
+                ("Select bin spacing", "Custom-defined bins"),
+                (
+                    "Enter the custom thresholds separating the values between bins",
+                    "0.25,0.75",
+                ),
+                ("Give each bin a name?", "Yes"),
+                ("Enter the bin names separated by commas", "Low,High"),
+                ("Retain an image of the classified objects?", "No"),
+                ("Name the output image", "IgnoredClassifiedImage"),
+            ],
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[2]
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="classify",
+        source_cppipe=Path("source.cppipe"),
+        modules=modules,
+    )
+
+    assert PipelineGenerator().has_module("ClassifyObjects")
+    assert contract.module_name == "ClassifyObjectsSingleMeasurement"
+    assert [spec.name for spec in contract.inputs] == ["Nuclei"]
+    assert [spec.name for spec in contract.outputs] == [
+        "ClassifyObjects_2_measurements"
+    ]
+    assert (
+        'classify_objects_single_measurement_2 = require_function('
+        '"ClassifyObjects", function_name="classify_objects_single_measurement")'
+    ) in generated.code
+    assert "'bin_choice': 'custom'" in generated.code
+    assert "'custom_thresholds': '0.25,0.75'" in generated.code
+
+
+def test_grid_variants_do_not_treat_shape_choices_as_object_symbols():
+    modules = [
+        _identify_primary(),
+        _module_with_records(
+            2,
+            "DefineGrid",
+            [
+                ("Name the grid", "Grid"),
+                ("Number of rows", "8"),
+                ("Number of columns", "12"),
+                ("Select the method to define the grid", "Automatic"),
+                ("Select the previously identified objects", "Nuclei"),
+                ("Retain an image of the grid?", "No"),
+                ("Name the output image", "IgnoredGridImage"),
+                ("Select the image on which to display the grid", "OrigBlue"),
+            ],
+        ),
+        _module_with_records(
+            3,
+            "IdentifyObjectsInGrid",
+            [
+                ("Select the defined grid", "Grid"),
+                ("Name the objects to be identified", "GridObjects"),
+                ("Select object shapes and locations", "Natural Shape and Location"),
+                ("Specify the circle diameter automatically?", "Automatic"),
+                ("Circle diameter", "20"),
+                ("Select the guiding objects", "Nuclei"),
+            ],
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    define_grid = table.contracts_by_module_num[2]
+    identify_grid = table.contracts_by_module_num[3]
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="grid",
+        source_cppipe=Path("source.cppipe"),
+        modules=modules,
+    )
+
+    assert [spec.name for spec in define_grid.inputs] == ["OrigBlue", "Nuclei"]
+    assert [spec.name for spec in define_grid.outputs] == [
+        "DefineGrid_2_measurements"
+    ]
+    assert [spec.name for spec in identify_grid.inputs] == ["Nuclei"]
+    assert [spec.name for spec in identify_grid.outputs] == [
+        "IdentifyObjectsInGrid_3_measurements",
+        "GridObjects",
+    ]
+    assert (
+        'define_grid_automatic_2 = require_function('
+        '"DefineGrid", function_name="define_grid_automatic")'
+    ) in generated.code
+    assert (
+        'identify_objects_in_grid_with_guides_3 = require_function('
+        '"IdentifyObjectsInGrid", '
+        'function_name="identify_objects_in_grid_with_guides")'
+    ) in generated.code
+    assert "Natural Shape and Location" not in [
+        spec.name for spec in identify_grid.inputs
+    ]
+
+
+def test_mask_and_worm_output_object_names_are_declared_generically():
+    modules = [
+        _identify_primary(),
+        _module(
+            2,
+            "MaskObjects",
+            {
+                "Select objects to be masked": "Nuclei",
+                "Select the masking object": "Nuclei",
+                "Name the masked objects": "MaskedNuclei",
+            },
+        ),
+        _module(
+            3,
+            "UntangleWorms",
+            {
+                "Select the input image": "OrigBlue",
+                "Name the output overlapping worm objects": "OverlappingWorms",
+                "Name the output non-overlapping worm objects": (
+                    "NonOverlappingWorms"
+                ),
+            },
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+
+    assert [spec.name for spec in table.contracts_by_module_num[2].outputs] == [
+        "MaskObjects_2_measurements",
+        "MaskedNuclei",
+    ]
+    assert [spec.name for spec in table.contracts_by_module_num[3].outputs] == [
+        "UntangleWorms_3_measurements",
+        "OverlappingWorms",
+        "NonOverlappingWorms",
+    ]
+
+
 def test_partition_cppipe_modules_skips_setup_and_export_modules():
     modules = (
         _module(0, "LoadImages", {}),
