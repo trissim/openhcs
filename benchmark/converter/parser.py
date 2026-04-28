@@ -206,13 +206,19 @@ class CPPipeParser:
         if current_module is None:
             return None
         setting_match = self.SETTING_PATTERN.match(line)
-        if setting_match is not None:
+        if self._has_setting_name(setting_match):
             return setting_match
 
         setting_match = self.UNINDENTED_SETTING_PATTERN.match(line)
-        if setting_match is None or not setting_match.group(1).strip():
-            return None
-        return setting_match
+        if self._has_setting_name(setting_match):
+            return setting_match
+        return None
+
+    def _has_setting_name(
+        self,
+        setting_match: Optional[re.Match[str]],
+    ) -> bool:
+        return setting_match is not None and bool(setting_match.group(1).strip())
     
     def _parse_metadata(self, metadata_str: str) -> Dict[str, Any]:
         """Parse module metadata from bracket content."""
