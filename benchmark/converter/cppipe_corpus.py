@@ -30,6 +30,16 @@ def in_tree_cppipe_corpus() -> tuple[CPPipeCorpusCase, ...]:
     pipelines_dir = Path(__file__).resolve().parents[1] / "cellprofiler_pipelines"
     return (
         CPPipeCorpusCase(
+            name="BBBC021Analysis",
+            cppipe_path=pipelines_dir / "BBBC021_analysis.cppipe",
+            status=CPPipeCorpusStatus.SUPPORTED,
+        ),
+        CPPipeCorpusCase(
+            name="BBBC021Illumination",
+            cppipe_path=pipelines_dir / "BBBC021_illum.cppipe",
+            status=CPPipeCorpusStatus.SUPPORTED,
+        ),
+        CPPipeCorpusCase(
             name="ExampleFly",
             cppipe_path=pipelines_dir / "ExampleFly.cppipe",
             status=CPPipeCorpusStatus.SUPPORTED,

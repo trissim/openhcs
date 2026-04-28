@@ -33,6 +33,22 @@ def _module_with_records(
     )
 
 
+def _schema_from_in_tree_cppipe(cppipe_name: str):
+    cppipe_path = (
+        Path(__file__).resolve().parents[2]
+        / "benchmark"
+        / "cellprofiler_pipelines"
+        / cppipe_name
+    )
+    modules = CPPipeParser().parse(cppipe_path)
+    setup_modules = [
+        module
+        for module in modules
+        if module.name in {"Images", "Metadata", "NamesAndTypes", "Groups"}
+    ]
+    return compile_image_schema(setup_modules)
+
+
 def test_cppipe_parser_preserves_repeated_settings_in_order(tmp_path: Path):
     cppipe_path = tmp_path / "repeated.cppipe"
     cppipe_path.write_text(
@@ -440,3 +456,58 @@ def test_generated_runtime_wrappers_with_non_image_artifacts_are_flexible():
     assert "name=\"IdentifyTertiaryObjects\"," in generated.code
     assert "variable_components=[VariableComponents.CHANNEL]," in generated.code
     assert "group_by=GroupBy.SITE," in generated.code
+
+
+def test_compile_image_schema_for_bbbc021_analysis_preserves_real_matching_plan():
+    schema = _schema_from_in_tree_cppipe("BBBC021_analysis.cppipe")
+
+    dna = schema.assignment_for_alias("DNA")
+    assert dna is not None
+    assert dna.origin is SourceBindingOrigin.STEP_INPUT
+    assert dna.selector.components == (
+        ComponentSelector(AllComponents.CHANNEL, "1"),
+    )
+
+    assert schema.grouping is not None
+    assert schema.grouping.metadata_fields == ("folder", "well")
+    assert schema.match_plan is not None
+    assert schema.match_plan.method is SourceBindingMatchMethod.METADATA
+    assert schema.match_plan.dimensions[0].field_for_alias("DAPI") == "folder"
+    assert schema.match_plan.dimensions[0].field_for_alias("ActinIllum") == (
+        "folder_illum"
+    )
+    assert schema.match_plan.dimensions[1].field_for_alias("Actin") == "well"
+    assert schema.match_plan.dimensions[2].field_for_alias("Tubulin") == "site"
+    assert len(schema.metadata_rules) == 3
+    assert any(
+        rule.source is MetadataSource.FOLDER_NAME for rule in schema.metadata_rules
+    )
+    assert any(
+        rule.source is MetadataSource.FILE_NAME and "(?P<channel>" in rule.pattern
+        for rule in schema.metadata_rules
+    )
+
+
+def test_compile_image_schema_for_bbbc021_illumination_pipeline():
+    schema = _schema_from_in_tree_cppipe("BBBC021_illum.cppipe")
+
+    dna = schema.assignment_for_alias("DNA")
+    assert dna is not None
+    assert dna.origin is SourceBindingOrigin.STEP_INPUT
+    assert dna.selector.components == (
+        ComponentSelector(AllComponents.CHANNEL, "1"),
+    )
+
+    assert schema.grouping is not None
+    assert schema.grouping.metadata_fields == ("folder",)
+    assert schema.match_plan is not None
+    assert schema.match_plan.method is SourceBindingMatchMethod.METADATA
+    assert schema.match_plan.dimensions[0].field_for_alias("DAPI") == "folder"
+    assert schema.match_plan.dimensions[1].field_for_alias("Actin") == "well"
+    assert schema.match_plan.dimensions[2].field_for_alias("Tubulin") == "site"
+    assert schema.match_plan.dimensions[0].field_for_alias("ActinIllum") is None
+    assert len(schema.metadata_rules) == 2
+    assert {rule.source for rule in schema.metadata_rules} == {
+        MetadataSource.FILE_NAME,
+        MetadataSource.FOLDER_NAME,
+    }

@@ -202,6 +202,10 @@ The branch has already established most of the typed runtime/compiler foundation
     - shipped fixtures are classified as either supported or structurally invalid
     - adapter-level preparation failures are wrapped as `ToolExecutionError` with the original compatibility diagnostic preserved
     - `ExampleHuman.cppipe` is now asserted as a known invalid reduced fixture rather than silently encouraging weaker symbol validation
+24. The accepted corpus now includes canonical BBBC021 reference pipeline snapshots in-tree:
+    - `BBBC021_analysis.cppipe` and `BBBC021_illum.cppipe` now prepare successfully as supported corpus members
+    - real setup-module lowering for those files is asserted under unit coverage
+    - the typed image schema for those files now has explicit acceptance checks for grouping, metadata match dimensions, and selector-bearing assignments
 
 ### 3.2 What Is Still Missing
 
@@ -218,6 +222,7 @@ The biggest unresolved items are now:
    - live BBBC021 setup/image schema compilation now succeeds
    - live BBBC021 conversion now succeeds end to end at code-generation time
    - a BBBC021-style generated pipeline now executes through the OpenHCS orchestrator with typed named-channel bindings
+   - canonical in-tree BBBC021 reference snapshots now prepare successfully and preserve typed schema facts under direct test coverage
    - canonical dataset-owned `.cppipe` references can now be resolved through the benchmark adapter instead of only local ad hoc files
    - ExampleFly now executes end to end as a real shipped `.cppipe` shape and materializes measurement CSV outputs on disk
    - a generated `RelateObjects` pipeline now executes through the orchestrator and materializes both relationship and measurement CSV outputs
