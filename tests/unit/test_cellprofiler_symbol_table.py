@@ -469,6 +469,40 @@ def test_measure_image_area_occupied_compiles_mixed_rows():
     assert "'input_names': ('DNA', 'Nuclei')" in generated.code
 
 
+def test_align_compiles_two_image_contract():
+    module = _module(
+        1,
+        "Align",
+        {
+            "Select the alignment method": "Mutual Information",
+            "Crop mode": "Keep size",
+            "Select the first input image": "Image1",
+            "Name the first output image": "AlignedImage1",
+            "Select the second input image": "Image2",
+            "Name the second output image": "AlignedImage2",
+        },
+    )
+
+    table = CellProfilerSymbolTable.compile([module])
+    contract = table.contracts_by_module_num[1]
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="align",
+        source_cppipe=Path("source.pipeline"),
+        modules=[module],
+    )
+
+    assert [spec.name for spec in contract.inputs] == ["Image1", "Image2"]
+    assert [spec.name for spec in contract.outputs] == [
+        "AlignedImage1",
+        "AlignedImage2",
+    ]
+    assert (
+        'align_1 = require_function("Align", function_name="align")'
+        in generated.code
+    )
+    assert "'crop_mode': 'Keep size'" in generated.code
+
+
 def test_unmix_colors_compiles_escaped_multi_output_rows():
     module = _module_with_records(
         1,

@@ -1,4 +1,12 @@
 {
+  "Align": {
+    "function_name": "align",
+    "contract": "flexible",
+    "category": "channel_operation",
+    "confidence": 1.0,
+    "reasoning": "Align consumes two named image planes together and returns two aligned image outputs, so the converter must preserve the resolved two-image stack instead of slicing it as independent images.",
+    "validated": true
+  },
   "CalculateMath": {
     "function_name": "calculate_math",
     "contract": "unknown",

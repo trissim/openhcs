@@ -8,7 +8,7 @@ from benchmark.converter.compatibility_matrix import (
 def test_compatibility_matrix_accounts_for_absorbed_modules() -> None:
     report = build_cellprofiler_compatibility_report()
 
-    assert len(report.modules) == 88
+    assert len(report.modules) == 89
     assert all(module.importable for module in report.modules)
 
 
@@ -39,4 +39,8 @@ def test_compatibility_matrix_tracks_artifact_and_corpus_coverage() -> None:
     assert (
         modules_by_name["ColorToGray"].artifact_contract_coverage
         is ArtifactContractCoverage.GENERIC_INFERENCE
+    )
+    assert (
+        modules_by_name["Align"].artifact_contract_coverage
+        is ArtifactContractCoverage.DECLARED_BUILDER
     )

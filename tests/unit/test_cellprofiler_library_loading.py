@@ -7,6 +7,7 @@ from benchmark.cellprofiler_library import (
     get_function,
     list_modules,
 )
+from benchmark.cellprofiler_library.functions.align import align
 from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
     correct_illumination_calculate,
 )
@@ -151,3 +152,20 @@ def test_measure_image_area_occupied_runs_mixed_rows():
     assert measure_image_area_occupied.__processing_contract__ is (
         ProcessingContract.FLEXIBLE
     )
+
+
+def test_align_returns_two_registered_images():
+    first = np.zeros((8, 8), dtype=np.float32)
+    first[2:5, 2:5] = 1.0
+    second = np.zeros_like(first)
+    second[3:6, 2:5] = 1.0
+
+    aligned_first, aligned_second = align(
+        np.stack((first, second)),
+        crop_mode="Keep size",
+        dtype_config=DtypeConfig(),
+    )
+
+    assert aligned_first.shape == first.shape
+    assert aligned_second.shape == second.shape
+    assert align.__processing_contract__ is ProcessingContract.FLEXIBLE

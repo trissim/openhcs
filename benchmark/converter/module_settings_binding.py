@@ -11,6 +11,7 @@ from metaclass_registry import AutoRegisterMeta
 
 from benchmark.cellprofiler_library import canonical_module_name
 
+from .align_settings import align_bound_kwargs
 from .area_occupied_settings import area_occupied_bound_kwargs
 from .gray_to_color_settings import (
     GRAY_TO_COLOR_CMYK_IMAGE_SETTINGS,
@@ -135,6 +136,22 @@ class MeasureImageAreaOccupiedModuleSettingsBindingStrategy(
     ) -> BoundModuleSettings:
         del binder, param_mapping
         return BoundModuleSettings(area_occupied_bound_kwargs(module))
+
+
+class AlignModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind legacy Align settings into the absorbed registration function."""
+
+    module_name = "Align"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del binder, param_mapping
+        return BoundModuleSettings(align_bound_kwargs(module))
 
 
 class GrayToColorSchemeBindingStrategy(ABC, metaclass=AutoRegisterMeta):

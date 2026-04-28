@@ -45,6 +45,7 @@ from openhcs.core.source_bindings import (
     StepSourceBindingsConfig,
 )
 
+from .align_settings import align_image_plan
 from .area_occupied_settings import (
     AreaOccupiedOperand,
     area_occupied_rows,
@@ -881,6 +882,22 @@ def _correct_illumination_apply(
     )
 
 
+def _align(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    image_plan = align_image_plan(module)
+    inputs = [
+        builder.require(name, CellProfilerSymbolKind.IMAGE, module)
+        for name in image_plan.input_names
+    ]
+    outputs = [
+        builder.declare(name, CellProfilerSymbolKind.IMAGE, module)
+        for name in image_plan.output_names
+    ]
+    return _contracts(module, builder, inputs=inputs, outputs=outputs)
+
+
 def _opening(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
@@ -1231,6 +1248,7 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
         _infrastructure_module_contract,
     ),
     (("CorrectIlluminationApply",), _correct_illumination_apply),
+    (("Align",), _align),
     (("Opening",), _opening),
     (("IdentifyPrimaryObjects",), _identify_primary_objects),
     (("IdentifySecondaryObjects",), _identify_secondary_objects),
