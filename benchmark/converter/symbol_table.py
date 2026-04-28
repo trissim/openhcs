@@ -9,7 +9,7 @@ are treated as external source images supplied by the plate/input metadata.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
@@ -51,12 +51,13 @@ from .artifact_semantics import (
     function_special_outputs,
 )
 from .gray_to_color_settings import GrayToColorInputNameResolver
-from .parser import ModuleBlock
+from .parser import ModuleBlock, ModuleSetting
 from .setting_names import (
     IMAGE_MEASUREMENT_SETTING,
     OBJECT_MEASUREMENT_SETTING,
     SettingNameFamily,
     optional_setting_value,
+    repeating_setting_blocks,
     required_setting_value,
     setting_names,
     setting_values,
@@ -224,6 +225,15 @@ DISPLAY_OBJECTS_SETTING = SettingNameFamily(
     "Select objects to display",
     aliases=("Select object to display",),
 )
+AREA_OCCUPIED_MODE_SETTING = (
+    "Measure the area occupied in a binary image, or in objects?"
+)
+AREA_OCCUPIED_BINARY_IMAGE_SETTING = "Select a binary image to measure"
+AREA_OCCUPIED_OBJECTS_SETTING = "Select objects to measure"
+AREA_OCCUPIED_RETAIN_IMAGE_SETTING = (
+    "Retain a binary image of the object regions?"
+)
+AREA_OCCUPIED_OUTPUT_IMAGE_SETTING = "Name the output binary image"
 
 
 class _SymbolTableBuilder:
@@ -790,6 +800,117 @@ def _measure_granularity(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _AreaOccupiedMeasurementRow:
+    """One repeated MeasureImageAreaOccupied row lowered from ordered settings."""
+
+    mode: str
+    binary_image_name: str | None
+    objects_name: str | None
+    retained_image_name: str | None
+
+    @classmethod
+    def from_block(
+        cls,
+        module: ModuleBlock,
+        block: Sequence[ModuleSetting],
+    ) -> "_AreaOccupiedMeasurementRow":
+        mode = _block_value(block, AREA_OCCUPIED_MODE_SETTING)
+        binary_image_name = _optional_symbol_value(
+            _block_value(block, AREA_OCCUPIED_BINARY_IMAGE_SETTING)
+        )
+        objects_name = _optional_symbol_value(
+            _block_value(block, AREA_OCCUPIED_OBJECTS_SETTING)
+        )
+        retained_image_name = _retained_area_occupied_image_name(block)
+        row = cls(
+            mode=mode,
+            binary_image_name=binary_image_name,
+            objects_name=objects_name,
+            retained_image_name=retained_image_name,
+        )
+        row._validate(module)
+        return row
+
+    @property
+    def is_binary_image(self) -> bool:
+        return "binary" in self.mode.strip().lower()
+
+    @property
+    def is_objects(self) -> bool:
+        return "object" in self.mode.strip().lower()
+
+    def _validate(self, module: ModuleBlock) -> None:
+        if self.is_binary_image:
+            if self.binary_image_name is None:
+                raise ValueError(
+                    f"Module {module.name}({module.module_num}) has a binary "
+                    "area-occupied row with no binary image input."
+                )
+            return
+        if self.is_objects:
+            if self.objects_name is None:
+                raise ValueError(
+                    f"Module {module.name}({module.module_num}) has an object "
+                    "area-occupied row with no object input."
+                )
+            return
+        raise ValueError(
+            f"Unsupported MeasureImageAreaOccupied mode {self.mode!r} in "
+            f"module {module.name}({module.module_num})."
+        )
+
+
+def _measure_image_area_occupied(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    rows = _area_occupied_rows(module)
+    if not rows:
+        raise ValueError(
+            f"Module {module.name}({module.module_num}) declares no "
+            "MeasureImageAreaOccupied measurement rows."
+        )
+    if _has_mixed_area_occupied_modes(rows):
+        raise ValueError(
+            f"Module {module.name}({module.module_num}) mixes binary-image and "
+            "object area-occupied rows. Split mixed rows into typed generated "
+            "steps before conversion."
+        )
+    inputs = [
+        *(
+            builder.require(row.binary_image_name, CellProfilerSymbolKind.IMAGE, module)
+            for row in rows
+            if row.binary_image_name is not None
+        ),
+        *(
+            builder.require(row.objects_name, CellProfilerSymbolKind.OBJECTS, module)
+            for row in rows
+            if row.objects_name is not None
+        ),
+    ]
+    retained_images = [
+        builder.declare(
+            row.retained_image_name,
+            CellProfilerSymbolKind.IMAGE,
+            module,
+        )
+        for row in rows
+        if row.retained_image_name is not None
+    ]
+    measurements = builder.declare(
+        _measurement_name(module),
+        CellProfilerSymbolKind.MEASUREMENTS,
+        module,
+    )
+    return _contracts(
+        module,
+        builder,
+        inputs=inputs,
+        outputs=[*retained_images, measurements],
+    )
+
+
 def _correct_illumination_apply(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
@@ -1184,6 +1305,7 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     ),
     (("MeasureTexture", "MeasureColocalization"), _measure_image_or_object),
     (("MeasureGranularity",), _measure_granularity),
+    (("MeasureImageAreaOccupiedBinary",), _measure_image_area_occupied),
     (("MeasureImageIntensity",), _measure_image_intensity),
     (("MeasureObjectNeighbors",), _measure_object_neighbors),
     (("RelateObjects",), _relate_objects),
@@ -1366,6 +1488,53 @@ def _optional_setting(
     return optional_setting_value(module, name)
 
 
+def _area_occupied_rows(
+    module: ModuleBlock,
+) -> tuple[_AreaOccupiedMeasurementRow, ...]:
+    return tuple(
+        _AreaOccupiedMeasurementRow.from_block(module, block)
+        for block in repeating_setting_blocks(
+            module.iter_settings(),
+            start_name=AREA_OCCUPIED_MODE_SETTING,
+        )
+    )
+
+
+def _has_mixed_area_occupied_modes(
+    rows: tuple[_AreaOccupiedMeasurementRow, ...],
+) -> bool:
+    return any(row.is_binary_image for row in rows) and any(
+        row.is_objects for row in rows
+    )
+
+
+def _retained_area_occupied_image_name(
+    block: Sequence[ModuleSetting],
+) -> str | None:
+    retain = _block_value(block, AREA_OCCUPIED_RETAIN_IMAGE_SETTING)
+    if retain.strip().lower() != "yes":
+        return None
+    return _optional_symbol_value(_block_value(block, AREA_OCCUPIED_OUTPUT_IMAGE_SETTING))
+
+
+def _block_value(
+    block: Sequence[ModuleSetting],
+    name: str,
+    *,
+    default: str = "",
+) -> str:
+    for setting in block:
+        if setting.name == name:
+            return setting.value
+    return default
+
+
+def _optional_symbol_value(value: str) -> str | None:
+    if not value.strip():
+        return None
+    return _normalized_optional_symbol_value(value)
+
+
 def _split_names(value: str) -> tuple[str, ...]:
     return tuple(
         _normalize_symbol_name(part)
@@ -1384,6 +1553,8 @@ def _normalized_setting_symbol(
 
 
 def _normalized_optional_symbol_value(value: str) -> str | None:
+    if not value.strip():
+        return None
     normalized = _normalize_symbol_name(value)
     if normalized.lower() in {"leave this black", "none", "do not use"}:
         return None

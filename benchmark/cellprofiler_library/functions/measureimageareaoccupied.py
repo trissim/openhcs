@@ -26,6 +26,34 @@ class AreaOccupiedMeasurement:
     perimeter: float
     total_area: float
 
+    @classmethod
+    def from_area(
+        cls,
+        *,
+        area_occupied: float,
+        perimeter: float,
+        total_area: float,
+        slice_index: int = 0,
+    ) -> "AreaOccupiedMeasurement":
+        return cls(
+            slice_index=slice_index,
+            area_occupied=area_occupied,
+            perimeter=perimeter,
+            total_area=total_area,
+        )
+
+
+def _area_occupied_measurement(
+    area_occupied: float,
+    perimeter_value: float,
+    total_area: float,
+) -> AreaOccupiedMeasurement:
+    return AreaOccupiedMeasurement.from_area(
+        area_occupied=area_occupied,
+        perimeter=perimeter_value,
+        total_area=total_area,
+    )
+
 
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_outputs(("area_measurements", csv_materializer(
@@ -59,11 +87,10 @@ def measure_image_area_occupied_binary(
     # Total area is the total number of pixels
     total_area = float(np.prod(image.shape))
     
-    measurement = AreaOccupiedMeasurement(
-        slice_index=0,
-        area_occupied=area_occupied,
-        perimeter=perimeter_value,
-        total_area=total_area
+    measurement = _area_occupied_measurement(
+        area_occupied,
+        perimeter_value,
+        total_area,
     )
     
     return image, measurement
@@ -108,14 +135,14 @@ def measure_image_area_occupied_objects(
     # Total area is the total number of pixels
     total_area = float(np.prod(labels.shape))
     
-    measurement = AreaOccupiedMeasurement(
-        slice_index=0,
-        area_occupied=area_occupied,
-        perimeter=perimeter_value,
-        total_area=total_area
+    measurement = _area_occupied_measurement(
+        area_occupied,
+        perimeter_value,
+        total_area,
     )
     
-    return image, measurement
+    object_region_mask = (labels > 0).astype(getattr(image, "dtype", labels.dtype))
+    return object_region_mask, measurement
 
 
 @dataclass
@@ -124,6 +151,32 @@ class VolumeOccupiedMeasurement:
     volume_occupied: float
     surface_area: float
     total_volume: float
+
+    @classmethod
+    def from_volume(
+        cls,
+        *,
+        volume_occupied: float,
+        surface_area: float,
+        total_volume: float,
+    ) -> "VolumeOccupiedMeasurement":
+        return cls(
+            volume_occupied=volume_occupied,
+            surface_area=surface_area,
+            total_volume=total_volume,
+        )
+
+
+def _volume_occupied_measurement(
+    volume_occupied: float,
+    surface_area_value: float,
+    total_volume: float,
+) -> VolumeOccupiedMeasurement:
+    return VolumeOccupiedMeasurement.from_volume(
+        volume_occupied=volume_occupied,
+        surface_area=surface_area_value,
+        total_volume=total_volume,
+    )
 
 
 def _compute_surface_area(label_image: np.ndarray, spacing: Optional[Tuple[float, ...]] = None) -> float:
@@ -197,10 +250,10 @@ def measure_image_volume_occupied_binary(
     # Total volume is the total number of voxels
     total_volume = float(np.prod(image.shape))
     
-    measurement = VolumeOccupiedMeasurement(
-        volume_occupied=volume_occupied,
-        surface_area=surface_area_value,
-        total_volume=total_volume
+    measurement = _volume_occupied_measurement(
+        volume_occupied,
+        surface_area_value,
+        total_volume,
     )
     
     return image, measurement
@@ -247,10 +300,10 @@ def measure_image_volume_occupied_objects(
     # Total volume is the total number of voxels
     total_volume = float(np.prod(labels.shape))
     
-    measurement = VolumeOccupiedMeasurement(
-        volume_occupied=volume_occupied,
-        surface_area=surface_area_value,
-        total_volume=total_volume
+    measurement = _volume_occupied_measurement(
+        volume_occupied,
+        surface_area_value,
+        total_volume,
     )
     
     return image, measurement

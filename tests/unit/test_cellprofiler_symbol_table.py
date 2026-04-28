@@ -332,6 +332,118 @@ def test_pipeline_generator_canonicalizes_legacy_measure_correlation_module():
     assert "module_name='MeasureColocalization'" in generated.code
 
 
+def test_measure_image_area_occupied_alias_compiles_binary_contract():
+    module = _module_with_records(
+        1,
+        "MeasureImageAreaOccupied",
+        [
+            (
+                "Measure the area occupied in a binary image, or in objects?",
+                "Binary Image",
+            ),
+            ("Select objects to measure", "None"),
+            ("Retain a binary image of the object regions?", "Yes"),
+            ("Name the output binary image", "Foreground"),
+            ("Select a binary image to measure", "DNA"),
+        ],
+    )
+
+    table = CellProfilerSymbolTable.compile([module])
+    contract = table.contracts_by_module_num[1]
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="area_occupied_binary",
+        source_cppipe=Path("source.pipeline"),
+        modules=[module],
+    )
+
+    assert PipelineGenerator().has_module("MeasureImageAreaOccupied")
+    assert [spec.name for spec in contract.inputs] == ["DNA"]
+    assert [spec.kind for spec in contract.outputs] == [
+        ArtifactKind.IMAGE,
+        ArtifactKind.MEASUREMENTS,
+    ]
+    assert [spec.name for spec in contract.outputs] == [
+        "Foreground",
+        "MeasureImageAreaOccupied_1_measurements",
+    ]
+    assert (
+        'measure_image_area_occupied_binary_1 = require_function('
+        '"MeasureImageAreaOccupied", '
+        'function_name="measure_image_area_occupied_binary")'
+    ) in generated.code
+
+
+def test_measure_image_area_occupied_resolves_object_variant():
+    modules = [
+        _identify_primary(),
+        _module_with_records(
+            2,
+            "MeasureImageAreaOccupied",
+            [
+                (
+                    "Measure the area occupied in a binary image, or in objects?",
+                    "Objects",
+                ),
+                ("Select objects to measure", "Nuclei"),
+                ("Retain a binary image of the object regions?", "Yes"),
+                ("Name the output binary image", "OccupiedNuclei"),
+                ("Select a binary image to measure", "None"),
+            ],
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[2]
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="area_occupied_objects",
+        source_cppipe=Path("source.pipeline"),
+        modules=modules,
+    )
+
+    assert [spec.name for spec in contract.inputs] == ["Nuclei"]
+    assert [spec.kind for spec in contract.outputs] == [
+        ArtifactKind.IMAGE,
+        ArtifactKind.MEASUREMENTS,
+    ]
+    assert [spec.name for spec in contract.outputs] == [
+        "OccupiedNuclei",
+        "MeasureImageAreaOccupied_2_measurements",
+    ]
+    assert (
+        'measure_image_area_occupied_objects_2 = require_function('
+        '"MeasureImageAreaOccupied", '
+        'function_name="measure_image_area_occupied_objects")'
+    ) in generated.code
+
+
+def test_measure_image_area_occupied_rejects_mixed_rows_until_split():
+    module = _module_with_records(
+        1,
+        "MeasureImageAreaOccupied",
+        [
+            (
+                "Measure the area occupied in a binary image, or in objects?",
+                "Binary Image",
+            ),
+            ("Select objects to measure", "None"),
+            ("Retain a binary image of the object regions?", "No"),
+            ("Name the output binary image", "Ignored"),
+            ("Select a binary image to measure", "DNA"),
+            (
+                "Measure the area occupied in a binary image, or in objects?",
+                "Objects",
+            ),
+            ("Select objects to measure", "Nuclei"),
+            ("Retain a binary image of the object regions?", "No"),
+            ("Name the output binary image", "Ignored"),
+            ("Select a binary image to measure", "None"),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="mixes binary-image and object"):
+        CellProfilerSymbolTable.compile([module])
+
+
 def test_cppipe_parser_supports_unindented_legacy_pipeline_settings(tmp_path: Path):
     pipeline_path = tmp_path / "legacy.pipeline"
     pipeline_path.write_text(

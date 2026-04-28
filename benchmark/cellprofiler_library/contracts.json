@@ -403,6 +403,9 @@
     "validated": true
   },
   "MeasureImageAreaOccupiedBinary": {
+    "aliases": [
+      "MeasureImageAreaOccupied"
+    ],
     "function_name": "measure_image_area_occupied_binary",
     "contract": "pure_2d",
     "category": "image_operation",

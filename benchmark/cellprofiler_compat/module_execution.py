@@ -857,6 +857,7 @@ class SingleLabelMeasurementInputPolicy(CellProfilerObjectInputPolicy):
 
 
 _SINGLE_LABEL_MEASUREMENT_POLICY_MODULES = (
+    "MeasureImageAreaOccupiedBinary",
     "MeasureObjectIntensity",
     "MeasureTexture",
     "MeasureColocalization",
@@ -886,6 +887,7 @@ class CellProfilerPerObjectMeasurementPolicy:
     module_names: ClassVar[tuple[str, ...]] = (
         "MeasureObjectSizeShape",
         "MeasureObjectIntensity",
+        "MeasureImageAreaOccupiedBinary",
         "MeasureTexture",
         "MeasureColocalization",
         "MeasureGranularity",

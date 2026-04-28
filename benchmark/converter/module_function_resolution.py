@@ -172,6 +172,16 @@ class MeasureGranularityFunctionResolutionStrategy(
     object_function_name = "measure_granularity_objects"
 
 
+class MeasureImageAreaOccupiedFunctionResolutionStrategy(
+    ObjectInputMeasurementFunctionResolutionStrategy
+):
+    """Resolve MeasureImageAreaOccupied binary-vs-object absorbed variants."""
+
+    module_name = "MeasureImageAreaOccupiedBinary"
+    object_setting_name = SettingNameFamily("Select objects to measure")
+    object_function_name = "measure_image_area_occupied_objects"
+
+
 def _scope_setting_value(
     module: ModuleBlock,
     setting: SettingNameFamily,

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from .parser import ModuleBlock
+from .parser import ModuleBlock, ModuleSetting
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,3 +82,25 @@ def setting_names(name: str | SettingNameFamily) -> tuple[str, ...]:
     if isinstance(name, SettingNameFamily):
         return name.names
     return (name,)
+
+
+def repeating_setting_blocks(
+    settings: Sequence[ModuleSetting],
+    *,
+    start_name: str,
+) -> tuple[tuple[ModuleSetting, ...], ...]:
+    """Group ordered CellProfiler settings into repeated semantic blocks."""
+    blocks: list[list[ModuleSetting]] = []
+    current_block: list[ModuleSetting] = []
+    started = False
+    for setting in settings:
+        if setting.name == start_name:
+            if started and current_block:
+                blocks.append(current_block)
+                current_block = []
+            started = True
+        if started:
+            current_block.append(setting)
+    if current_block:
+        blocks.append(current_block)
+    return tuple(tuple(block) for block in blocks)

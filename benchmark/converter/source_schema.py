@@ -41,6 +41,7 @@ from openhcs.core.source_bindings import (
 )
 
 from .parser import ModuleBlock, ModuleSetting
+from .setting_names import repeating_setting_blocks
 
 _METADATA_MATCH_PATTERN = re.compile(
     r"\(metadata does (?P<field>[A-Za-z0-9_]+) \"(?P<value>[^\"]+)\"\)"
@@ -282,7 +283,7 @@ class MetadataModuleCompiler(SetupModuleCompiler):
         module: ModuleBlock,
         state: _SchemaBuilder,
     ) -> None:
-        for block in _group_repeating_blocks(
+        for block in repeating_setting_blocks(
             module.iter_settings(),
             start_name="Metadata extraction method",
         ):
@@ -359,6 +360,10 @@ class NamesAndTypesAssignmentBlockStrategy(ABC, metaclass=AutoRegisterMeta):
     __skip_if_no_key__ = True
     strategy_name: ClassVar[str | None] = None
     priority: ClassVar[int] = 100
+    match_setting: ClassVar[str | None] = None
+    block_start_name: ClassVar[str | None] = None
+    exact_count: ClassVar[int | None] = None
+    minimum_count: ClassVar[int | None] = None
 
     @classmethod
     def blocks_for(
@@ -374,16 +379,34 @@ class NamesAndTypesAssignmentBlockStrategy(ABC, metaclass=AutoRegisterMeta):
                 return strategy.blocks(settings)
         return ()
 
-    @abstractmethod
     def matches(self, settings: Sequence[ModuleSetting]) -> bool:
         """Whether this layout applies to the ordered NamesAndTypes settings."""
+        count = _setting_count(
+            settings,
+            _required_strategy_attr(type(self).match_setting, "match_setting"),
+        )
+        exact_count = type(self).exact_count
+        if exact_count is not None:
+            return count == exact_count
+        minimum_count = type(self).minimum_count
+        if minimum_count is not None:
+            return count >= minimum_count
+        raise TypeError(
+            f"{type(self).__name__} must define exact_count or minimum_count."
+        )
 
-    @abstractmethod
     def blocks(
         self,
         settings: Sequence[ModuleSetting],
     ) -> tuple[tuple[ModuleSetting, ...], ...]:
         """Return ordered assignment blocks for this layout."""
+        return repeating_setting_blocks(
+            settings,
+            start_name=_required_strategy_attr(
+                type(self).block_start_name,
+                "block_start_name",
+            ),
+        )
 
 
 class RepeatedAssignmentBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
@@ -391,15 +414,9 @@ class RepeatedAssignmentBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
 
     strategy_name = "repeated_assignment"
     priority = 10
-
-    def matches(self, settings: Sequence[ModuleSetting]) -> bool:
-        return _setting_count(settings, "Assign a name to") > 1
-
-    def blocks(
-        self,
-        settings: Sequence[ModuleSetting],
-    ) -> tuple[tuple[ModuleSetting, ...], ...]:
-        return _group_repeating_blocks(settings, start_name="Assign a name to")
+    match_setting = "Assign a name to"
+    block_start_name = "Assign a name to"
+    minimum_count = 2
 
 
 class RepeatedRuleCriteriaBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
@@ -407,15 +424,9 @@ class RepeatedRuleCriteriaBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
 
     strategy_name = "repeated_rule_criteria"
     priority = 20
-
-    def matches(self, settings: Sequence[ModuleSetting]) -> bool:
-        return _setting_count(settings, "Select the rule criteria") > 1
-
-    def blocks(
-        self,
-        settings: Sequence[ModuleSetting],
-    ) -> tuple[tuple[ModuleSetting, ...], ...]:
-        return _group_repeating_blocks(settings, start_name="Select the rule criteria")
+    match_setting = "Select the rule criteria"
+    block_start_name = "Select the rule criteria"
+    minimum_count = 2
 
 
 class SingleAssignmentBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
@@ -423,15 +434,9 @@ class SingleAssignmentBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
 
     strategy_name = "single_assignment"
     priority = 30
-
-    def matches(self, settings: Sequence[ModuleSetting]) -> bool:
-        return _setting_count(settings, "Assign a name to") == 1
-
-    def blocks(
-        self,
-        settings: Sequence[ModuleSetting],
-    ) -> tuple[tuple[ModuleSetting, ...], ...]:
-        return _group_repeating_blocks(settings, start_name="Assign a name to")
+    match_setting = "Assign a name to"
+    block_start_name = "Assign a name to"
+    exact_count = 1
 
 
 class SingleRuleCriteriaBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
@@ -439,15 +444,9 @@ class SingleRuleCriteriaBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
 
     strategy_name = "single_rule_criteria"
     priority = 40
-
-    def matches(self, settings: Sequence[ModuleSetting]) -> bool:
-        return _setting_count(settings, "Select the rule criteria") == 1
-
-    def blocks(
-        self,
-        settings: Sequence[ModuleSetting],
-    ) -> tuple[tuple[ModuleSetting, ...], ...]:
-        return _group_repeating_blocks(settings, start_name="Select the rule criteria")
+    match_setting = "Select the rule criteria"
+    block_start_name = "Select the rule criteria"
+    exact_count = 1
 
 
 def _names_and_types_blocks(
@@ -463,31 +462,16 @@ def _setting_count(
     return sum(1 for setting in settings if setting.name == name)
 
 
-def _group_repeating_blocks(
-    settings: Sequence[ModuleSetting],
-    *,
-    start_name: str,
-) -> tuple[tuple[ModuleSetting, ...], ...]:
-    blocks: list[list[ModuleSetting]] = []
-    current_block: list[ModuleSetting] = []
-    started = False
-    for setting in settings:
-        if setting.name == start_name:
-            if started and current_block:
-                blocks.append(current_block)
-                current_block = []
-            started = True
-        if started:
-            current_block.append(setting)
-    if current_block:
-        blocks.append(current_block)
-    return tuple(tuple(block) for block in blocks)
+def _required_strategy_attr[T](value: T | None, name: str) -> T:
+    if value is None:
+        raise TypeError(f"NamesAndTypes assignment strategy must define {name}.")
+    return value
 
 
 def _load_images_blocks(
     settings: Sequence[ModuleSetting],
 ) -> tuple[tuple[ModuleSetting, ...], ...]:
-    return _group_repeating_blocks(
+    return repeating_setting_blocks(
         settings,
         start_name=_LOAD_IMAGES_MATCH_TEXT_SETTING,
     )
