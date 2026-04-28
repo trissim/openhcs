@@ -7,6 +7,8 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
 import numpy as np
 from skimage import filters, morphology, measure
@@ -16,6 +18,7 @@ from benchmark.converter.runtime_pipeline import (
     execute_pipeline_direct,
     prepare_generated_pipeline,
 )
+from benchmark.datasets.registry import get_dataset_spec
 from benchmark.contracts.tool_adapter import (
     BenchmarkResult,
     ToolAdapter,
@@ -62,6 +65,20 @@ class OpenHCSRunRequest:
         if not cppipe_value:
             return None
         return Path(cppipe_value)
+
+    @property
+    def cppipe_reference_url(self) -> str | None:
+        value = self.pipeline_params.get("cppipe_reference_url")
+        if value is None:
+            return None
+        return str(value)
+
+    @property
+    def cppipe_reference_index(self) -> int | None:
+        value = self.pipeline_params.get("cppipe_reference_index")
+        if value is None:
+            return None
+        return int(value)
 
 
 class OpenHCSAdapter(ToolAdapter):
@@ -176,14 +193,13 @@ class OpenHCSAdapter(ToolAdapter):
         )
         from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 
-        cppipe_path = request.cppipe_path
-        if cppipe_path is None:
-            raise ToolExecutionError(
-                "Converted pipeline execution requires cppipe_path or cppipe_file."
+        reference_url = request.cppipe_reference_url
+        if reference_url is None and request.cppipe_reference_index is not None:
+            reference_url = self._dataset_reference_cppipe_url(
+                request.dataset_id,
+                request.cppipe_reference_index,
             )
-
-        if not cppipe_path.exists():
-            raise ToolExecutionError(f".cppipe file not found: {cppipe_path}")
+        cppipe_path = self._resolve_cppipe_path(request)
 
         output_suffix = f"_{request.pipeline_name}_converted_cppipe"
         output_plate_root = request.output_dir / f"{request.dataset_path.name}{output_suffix}"
@@ -225,6 +241,17 @@ class OpenHCSAdapter(ToolAdapter):
         }
         output_plate_root.mkdir(parents=True, exist_ok=True)
 
+        provenance = {
+            "openhcs_version": self.version,
+            "microscope_type": request.microscope_type,
+            "pipeline_source": "converted_cppipe",
+            "cppipe_path": str(cppipe_path),
+            "generated_pipeline_module": prepared.module_name,
+            "axis_count": len(execution.execution_results),
+        }
+        if reference_url is not None:
+            provenance["cppipe_reference_url"] = reference_url
+
         return BenchmarkResult(
             tool_name=self.name,
             dataset_id=request.dataset_id,
@@ -233,14 +260,7 @@ class OpenHCSAdapter(ToolAdapter):
             output_path=output_plate_root,
             success=True,
             error_message=None,
-            provenance={
-                "openhcs_version": self.version,
-                "microscope_type": request.microscope_type,
-                "pipeline_source": "converted_cppipe",
-                "cppipe_path": str(cppipe_path),
-                "generated_pipeline_module": prepared.module_name,
-                "axis_count": len(execution.execution_results),
-            },
+            provenance=provenance,
         )
 
     def _configured_microscope(
@@ -257,6 +277,68 @@ class OpenHCSAdapter(ToolAdapter):
             raise ToolExecutionError(
                 f"Unsupported OpenHCS microscope_type {microscope_type!r}."
             ) from exc
+
+    def _resolve_cppipe_path(self, request: OpenHCSRunRequest) -> Path:
+        """Resolve either a local or dataset-owned canonical .cppipe path."""
+        cppipe_path = request.cppipe_path
+        if cppipe_path is not None:
+            if not cppipe_path.exists():
+                raise ToolExecutionError(f".cppipe file not found: {cppipe_path}")
+            return cppipe_path
+
+        reference_url = request.cppipe_reference_url
+        if reference_url is None and request.cppipe_reference_index is not None:
+            reference_url = self._dataset_reference_cppipe_url(
+                request.dataset_id,
+                request.cppipe_reference_index,
+            )
+        if reference_url is None:
+            raise ToolExecutionError(
+                "Converted pipeline execution requires cppipe_path, cppipe_file, "
+                "cppipe_reference_url, or cppipe_reference_index."
+            )
+
+        return self._materialize_cppipe_reference(
+            reference_url,
+            request.output_dir / "cppipe_references",
+        )
+
+    def _dataset_reference_cppipe_url(
+        self,
+        dataset_id: str,
+        reference_index: int,
+    ) -> str:
+        """Resolve one canonical .cppipe URL from the dataset registry."""
+        try:
+            dataset_spec = get_dataset_spec(dataset_id)
+        except KeyError as exc:
+            raise ToolExecutionError(
+                f"Unknown dataset id {dataset_id!r} for cppipe reference lookup."
+            ) from exc
+        try:
+            return dataset_spec.reference_cppipe_urls[reference_index]
+        except IndexError as exc:
+            raise ToolExecutionError(
+                f"Dataset {dataset_id!r} exposes "
+                f"{len(dataset_spec.reference_cppipe_urls)} cppipe references; "
+                f"index {reference_index} is out of range."
+            ) from exc
+
+    def _materialize_cppipe_reference(
+        self,
+        reference_url: str,
+        target_dir: Path,
+    ) -> Path:
+        """Download one canonical .cppipe file into a stable local path."""
+        target_dir.mkdir(parents=True, exist_ok=True)
+        parsed = urlparse(reference_url)
+        filename = Path(parsed.path).name or "reference.cppipe"
+        target_path = target_dir / filename
+        if target_path.exists():
+            return target_path
+        with urlopen(reference_url) as response:  # noqa: S310
+            target_path.write_bytes(response.read())
+        return target_path
 
     def run(
         self,
@@ -282,7 +364,11 @@ class OpenHCSAdapter(ToolAdapter):
                 "microscope_type must be explicit (e.g., 'bbbc021'); auto-detect is not allowed."
             )
 
-        if request.cppipe_path is not None:
+        if (
+            request.cppipe_path is not None
+            or request.cppipe_reference_url is not None
+            or request.cppipe_reference_index is not None
+        ):
             return self._run_converted_cppipe_pipeline(request)
 
         filemanager = self._prepare_filemanager()

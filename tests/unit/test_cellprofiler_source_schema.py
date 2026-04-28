@@ -357,3 +357,86 @@ def test_compile_image_schema_preserves_real_names_and_types_block_order():
     assert schema.match_plan.dimensions[0].field_for_alias("Actin") == "well"
     assert schema.match_plan.dimensions[1].field_for_alias("DNA") == "site"
     assert schema.match_plan.dimensions[1].field_for_alias("Actin") == "site"
+
+
+def test_cellprofiler_image_schema_resolves_legacy_orig_color_aliases():
+    schema = compile_image_schema([])
+
+    blue = schema.resolved_assignment_for_alias("OrigBlue")
+    green = schema.resolved_assignment_for_alias("OrigGreen")
+
+    assert blue is not None
+    assert blue.selector.components == (
+        ComponentSelector(AllComponents.CHANNEL, "1"),
+    )
+    assert green is not None
+    assert green.selector.components == (
+        ComponentSelector(AllComponents.CHANNEL, "2"),
+    )
+
+
+def test_generated_pipeline_exposes_pipeline_level_source_schema():
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_legacy_aliases",
+        source_cppipe=Path("source.cppipe"),
+        modules=[
+            ModuleBlock(
+                name="IdentifyPrimaryObjects",
+                module_num=1,
+                settings={
+                    "Select the input image": "OrigBlue",
+                    "Name the primary objects to be identified": "Nuclei",
+                },
+            )
+        ],
+    )
+
+    assignment = generated.source_schema.resolved_assignment_for_alias("OrigBlue")
+
+    assert assignment is not None
+    assert assignment.selector.components == (
+        ComponentSelector(AllComponents.CHANNEL, "1"),
+    )
+
+
+def test_generated_runtime_wrappers_with_non_image_artifacts_are_flexible():
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_runtime_artifact_only",
+        source_cppipe=Path("source.cppipe"),
+        modules=[
+            ModuleBlock(
+                name="IdentifyPrimaryObjects",
+                module_num=1,
+                settings={
+                    "Select the input image": "OrigBlue",
+                    "Name the primary objects to be identified": "Nuclei",
+                },
+            ),
+            ModuleBlock(
+                name="IdentifySecondaryObjects",
+                module_num=2,
+                settings={
+                    "Select the input objects": "Nuclei",
+                    "Select the input image": "OrigGreen",
+                    "Name the objects to be identified": "Cells",
+                },
+            ),
+            ModuleBlock(
+                name="IdentifyTertiaryObjects",
+                module_num=3,
+                settings={
+                    "Select the larger identified objects": "Cells",
+                    "Select the smaller identified objects": "Nuclei",
+                    "Name the tertiary objects to be identified": "Cytoplasm",
+                },
+            ),
+        ],
+    )
+
+    assert (
+        "identify_tertiary_objects_3_runtime.__processing_contract__ = "
+        "ProcessingContract.FLEXIBLE"
+    ) in generated.code
+    assert "name=\"IdentifyTertiaryObjects\"," in generated.code
+    assert "variable_components=[VariableComponents.CHANNEL]," in generated.code
+    assert "group_by=GroupBy.SITE," in generated.code

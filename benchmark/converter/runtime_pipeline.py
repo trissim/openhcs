@@ -37,6 +37,7 @@ from openhcs.processing.func_registry import register_function
 from .contract_inference import InferredContract, infer_contract
 from .parser import CPPipeParser, ModuleBlock
 from .pipeline_generator import GeneratedPipeline, PipelineGenerator
+from .source_schema import CellProfilerImageSchema
 
 INFRASTRUCTURE_MODULE_NAMES = frozenset(
     {
@@ -68,6 +69,7 @@ class GeneratedCPPipePipeline:
     modules: tuple[ModuleBlock, ...]
     processing_modules: tuple[ModuleBlock, ...]
     infrastructure_modules: tuple[ModuleBlock, ...]
+    source_schema: CellProfilerImageSchema
     generated_pipeline: GeneratedPipeline
 
 
@@ -82,6 +84,7 @@ class PreparedGeneratedPipeline:
     pipeline: Pipeline
     processing_modules: tuple[ModuleBlock, ...]
     infrastructure_modules: tuple[ModuleBlock, ...]
+    source_schema: CellProfilerImageSchema
     generated_pipeline: GeneratedPipeline
     registered_functions: tuple[str, ...]
 
@@ -205,6 +208,7 @@ def generate_pipeline_from_cppipe(
         modules=partition.modules,
         processing_modules=partition.processing_modules,
         infrastructure_modules=partition.infrastructure_modules,
+        source_schema=generated_pipeline.source_schema,
         generated_pipeline=generated_pipeline,
     )
 
@@ -244,6 +248,7 @@ def prepare_generated_pipeline(
         pipeline=pipeline,
         processing_modules=converted.processing_modules,
         infrastructure_modules=converted.infrastructure_modules,
+        source_schema=converted.source_schema,
         generated_pipeline=converted.generated_pipeline,
         registered_functions=registered_functions,
     )

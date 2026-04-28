@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from benchmark.adapters.openhcs import OpenHCSAdapter
+from benchmark.datasets.registry import BBBC021_SINGLE_PLATE
 from benchmark.metrics.time import TimeMetric
 from openhcs.tests.generators.generate_synthetic_data import (
     SyntheticMicroscopyGenerator,
@@ -29,6 +30,45 @@ def test_openhcs_adapter_runs_converted_cppipe_pipeline(tmp_path: Path) -> None:
     assert result.metrics["execution_time_seconds"] >= 0.0
     assert result.provenance["pipeline_source"] == "converted_cppipe"
     assert result.provenance["axis_count"] == 1
+
+
+def test_openhcs_adapter_resolves_dataset_reference_cppipe(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    plate_path = _generate_plate(tmp_path / "plate")
+    cppipe_path = _write_cppipe(tmp_path / "identify_primary_objects.cppipe")
+
+    def _materialize_reference(self, reference_url: str, target_dir: Path) -> Path:
+        assert reference_url == BBBC021_SINGLE_PLATE.reference_cppipe_urls[0]
+        assert target_dir == (tmp_path / "benchmark_outputs" / "cppipe_references")
+        return cppipe_path
+
+    monkeypatch.setattr(
+        OpenHCSAdapter,
+        "_materialize_cppipe_reference",
+        _materialize_reference,
+    )
+
+    result = OpenHCSAdapter().run(
+        dataset_path=plate_path,
+        pipeline_name="converted_cppipe_reference",
+        pipeline_params={
+            "dataset_id": BBBC021_SINGLE_PLATE.id,
+            "microscope_type": "imagexpress",
+            "cppipe_reference_index": 0,
+        },
+        metrics=[TimeMetric()],
+        output_dir=tmp_path / "benchmark_outputs",
+    )
+
+    assert result.success is True
+    assert result.provenance["pipeline_source"] == "converted_cppipe"
+    assert result.provenance["cppipe_path"] == str(cppipe_path)
+    assert (
+        result.provenance["cppipe_reference_url"]
+        == BBBC021_SINGLE_PLATE.reference_cppipe_urls[0]
+    )
 
 
 def _generate_plate(plate_path: Path) -> Path:

@@ -30,6 +30,9 @@ class DatasetSpec:
     validation_rule: str
     """How to validate: 'count' or 'manifest'"""
 
+    reference_cppipe_urls: tuple[str, ...] = ()
+    """Canonical CellProfiler pipelines associated with the dataset, if any."""
+
     expected_count: int | None = None
     """Expected number of image files (for 'count' validation)"""
 

@@ -189,12 +189,16 @@ The branch has already established most of the typed runtime/compiler foundation
     - repeated stack/composite settings are preserved through a dedicated module-settings binding layer
     - `GrayToColor` source image discovery is now shared SSOT in converter code instead of ad hoc local parsing
     - BBBC021 now converts successfully with 20 processing modules and no failed absorbed modules
+21. The setup/image schema is now exposed beyond the immediate converter internals:
+    - generated `.cppipe` pipeline objects and prepared runtime pipelines carry the compiled pipeline-level `source_schema`
+    - dataset specs can declare canonical reference `.cppipe` URLs
+    - the OpenHCS benchmark adapter can resolve converted pipeline runs from either a local `.cppipe` path or a dataset-owned canonical `.cppipe` reference
 
 ### 3.2 What Is Still Missing
 
 The biggest unresolved items are now:
 
-1. Setup-module semantics now exist in the converter, but they are still lowered per-step instead of being exposed as a richer pipeline-level image schema outside conversion.
+1. Setup-module semantics are now exposed as a pipeline-level image schema during generated-pipeline preparation and benchmark execution, but they are still mostly converter-owned rather than a broader core OpenHCS pipeline concept.
 2. `NamesAndTypes` image-set matching semantics are now modeled for the metadata-based path, but other match modes and broader real-pipeline coverage still need work.
    - `Metadata` matching now lowers into a typed cross-alias plan
    - unsupported modes should continue to fail loudly until modeled natively
@@ -205,6 +209,7 @@ The biggest unresolved items are now:
    - live BBBC021 setup/image schema compilation now succeeds
    - live BBBC021 conversion now succeeds end to end at code-generation time
    - a BBBC021-style generated pipeline now executes through the OpenHCS orchestrator with typed named-channel bindings
+   - canonical dataset-owned `.cppipe` references can now be resolved through the benchmark adapter instead of only local ad hoc files
    - ExampleFly now executes end to end as a real shipped `.cppipe` shape and materializes measurement CSV outputs on disk
    - a generated `RelateObjects` pipeline now executes through the orchestrator and materializes both relationship and measurement CSV outputs
    - the next gap is broader corpus coverage and dataset-level validation, not basic execution enablement
@@ -240,8 +245,9 @@ Today, that third plane is only partially represented:
 
 1. the symbol table knows such names exist
 2. conversion now preserves repeated setup settings and lowers setup modules into typed alias selectors
-3. the executor does not yet have a real typed plan for how selector-bearing bindings map to the input container or metadata-backed source coordinates
+3. generated-pipeline preparation now carries a pipeline-level image schema and the benchmark adapter can target canonical dataset-owned `.cppipe` references
 4. the GUI/codegen layer does not yet expose the richer selector-bearing source state as a mature editable concept
+5. broader corpus-level validation still needs to prove that the compiled source plane is correct on real dataset layouts beyond the currently accepted pipelines
 
 That is the core semantic gap.
 

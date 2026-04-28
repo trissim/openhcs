@@ -10,6 +10,10 @@ BBBC021_SINGLE_PLATE = DatasetSpec(
     archive_format="zip",
     microscope_type="bbbc021",
     validation_rule="count",
+    reference_cppipe_urls=(
+        "https://data.broadinstitute.org/bbbc/BBBC021/analysis.cppipe",
+        "https://data.broadinstitute.org/bbbc/BBBC021/illum.cppipe",
+    ),
     expected_count=720,  # ~96 wells × 2.5 FOVs × 3 channels
 )
 

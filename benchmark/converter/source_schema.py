@@ -162,6 +162,12 @@ class CellProfilerImageSchema:
     def assignment_for_alias(self, alias: str) -> ImageAssignment | None:
         return self.assignments_by_alias.get(alias)
 
+    def resolved_assignment_for_alias(self, alias: str) -> ImageAssignment | None:
+        assignment = self.assignment_for_alias(alias)
+        if assignment is not None:
+            return assignment
+        return LegacyImageAssignmentStrategy.resolve(alias)
+
 
 @dataclass(frozen=True, slots=True)
 class SetupModuleCompilation:
@@ -204,6 +210,69 @@ class SetupModuleCompiler(ABC, metaclass=AutoRegisterMeta):
         state: _SchemaBuilder,
     ) -> None:
         """Lower one setup module into schema state."""
+
+
+class LegacyImageAssignmentStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal fallback family for real CellProfiler alias conventions.
+
+    These strategies are only consulted when setup modules did not declare an
+    explicit alias assignment. They belong at the pipeline-level image schema
+    layer, not in per-module symbol table glue.
+    """
+
+    __registry_key__ = "strategy_name"
+    __skip_if_no_key__ = True
+    strategy_name: ClassVar[str | None] = None
+
+    @classmethod
+    def resolve(cls, alias: str) -> ImageAssignment | None:
+        for strategy_type in cls.__registry__.values():
+            strategy = strategy_type()
+            if strategy.matches(alias):
+                return strategy.assignment(alias)
+        return None
+
+    @abstractmethod
+    def matches(self, alias: str) -> bool:
+        """Whether this strategy applies to the alias."""
+
+    @abstractmethod
+    def assignment(self, alias: str) -> ImageAssignment:
+        """Return the typed fallback assignment for the alias."""
+
+
+class OrigColorLegacyImageAssignmentStrategy(LegacyImageAssignmentStrategy):
+    """Map legacy Orig<Color> aliases onto native channel selectors."""
+
+    strategy_name = "orig_color"
+    _CHANNELS_BY_COLOR = MappingProxyType(
+        {
+            "blue": "1",
+            "green": "2",
+            "red": "3",
+        }
+    )
+
+    def matches(self, alias: str) -> bool:
+        normalized = alias.strip().lower()
+        return normalized.startswith("orig") and normalized[4:] in self._CHANNELS_BY_COLOR
+
+    def assignment(self, alias: str) -> ImageAssignment:
+        normalized = alias.strip().lower()
+        color = normalized[4:]
+        return ImageAssignment(
+            alias=alias,
+            image_type="Grayscale image",
+            selector=SourceSelector(
+                components=(
+                    ComponentSelector(
+                        AllComponents.CHANNEL,
+                        self._CHANNELS_BY_COLOR[color],
+                    ),
+                ),
+            ),
+            origin=SourceBindingOrigin.STEP_INPUT,
+        )
 
 
 class _SchemaBuilder:
