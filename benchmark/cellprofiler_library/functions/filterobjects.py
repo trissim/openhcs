@@ -8,12 +8,15 @@ texture, intensity) or removes objects touching the image border.
 
 import numpy as np
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import ClassVar, Optional, Self, Tuple
+import re
+from typing import ClassVar, Optional, Tuple
 
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import MeasurementTable
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
@@ -63,32 +66,56 @@ class FilterObjectsSelectionRequest:
     num_objects_pre: int
     filter_method: FilterMethod
     measurement_values: np.ndarray | None
+    measurement_features: tuple[str, ...]
+    measurement_min_values: tuple[float | None, ...]
+    measurement_max_values: tuple[float | None, ...]
+    measurement_use_minimum: tuple[bool, ...]
+    measurement_use_maximum: tuple[bool, ...]
+    measurement_tables: tuple[MeasurementTable, ...]
     min_value: float | None
     max_value: float | None
     use_minimum: bool
     use_maximum: bool
 
 
-class FilterObjectsRegisteredStrategy(ABC, metaclass=AutoRegisterMeta):
-    """Shared registry lookup for nominal FilterObjects strategy families."""
+@dataclass(frozen=True, slots=True)
+class FilterSelectionKey:
+    """Nominal retained-object selection identity."""
 
+    mode: FilterMode
+    method: FilterMethod | None = None
+
+    @property
+    def label(self) -> str:
+        if self.method is None:
+            return self.mode.value
+        return f"{self.mode.value}:{self.method.value}"
+
+    def lookup_candidates(self) -> tuple["FilterSelectionKey", ...]:
+        return (self, FilterSelectionKey(self.mode))
+
+
+class FilterSelectionStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal retained-object selection for each FilterObjects behavior."""
+
+    __registry_key__ = "selection_key"
     __skip_if_no_key__ = True
+    selection_key: ClassVar[FilterSelectionKey | None] = None
 
     @classmethod
-    def for_key(cls, key: Enum) -> Self:
-        strategy_type = cls.__registry__.get(key)
-        if strategy_type is None:
-            raise ValueError(
-                f"Unsupported {cls.__name__} key {getattr(key, 'value', key)!r}."
-            )
-        return strategy_type()
-
-
-class FilterModeStrategy(FilterObjectsRegisteredStrategy):
-    """Nominal retained-object selection for each FilterObjects mode."""
-
-    __registry_key__ = "mode"
-    mode: ClassVar[FilterMode | None] = None
+    def for_mode_and_method(
+        cls,
+        mode: FilterMode,
+        method: FilterMethod,
+    ) -> "FilterSelectionStrategy":
+        requested_key = FilterSelectionKey(mode, method)
+        for key in requested_key.lookup_candidates():
+            strategy_type = cls.__registry__.get(key)
+            if strategy_type is not None:
+                return strategy_type()
+        raise ValueError(
+            f"Unsupported FilterObjects selection {requested_key.label!r}."
+        )
 
     @abstractmethod
     def indexes_to_keep(
@@ -98,10 +125,10 @@ class FilterModeStrategy(FilterObjectsRegisteredStrategy):
         """Return one-indexed primary object labels to retain."""
 
 
-class BorderFilterModeStrategy(FilterModeStrategy):
+class BorderFilterSelectionStrategy(FilterSelectionStrategy):
     """Remove primary objects touching the image border."""
 
-    mode = FilterMode.BORDER
+    selection_key = FilterSelectionKey(FilterMode.BORDER)
 
     def indexes_to_keep(
         self,
@@ -110,54 +137,20 @@ class BorderFilterModeStrategy(FilterModeStrategy):
         return _discard_border_objects(request.labels)
 
 
-class MeasurementFilterModeStrategy(FilterModeStrategy):
-    """Filter primary objects from per-object measurement values."""
-
-    mode = FilterMode.MEASUREMENTS
-
-    def indexes_to_keep(
-        self,
-        request: FilterObjectsSelectionRequest,
-    ) -> list[int]:
-        from skimage.measure import regionprops
-
-        measurement_values = request.measurement_values
-        if measurement_values is None:
-            props = regionprops(request.labels)
-            measurement_values = np.array([p.area for p in props])
-        return FilterMethodStrategy.for_key(
-            request.filter_method
-        ).indexes_to_keep(
-            measurement_values,
-            request,
-        )
-
-
-class FilterMethodStrategy(FilterObjectsRegisteredStrategy):
-    """Nominal measurement-filter behavior for each FilterObjects method."""
-
-    __registry_key__ = "method"
-    method: ClassVar[FilterMethod | None] = None
-
-    @abstractmethod
-    def indexes_to_keep(
-        self,
-        values: np.ndarray,
-        request: FilterObjectsSelectionRequest,
-    ) -> list[int]:
-        """Return one-indexed primary object labels retained by this method."""
-
-
-class LimitsFilterMethodStrategy(FilterMethodStrategy):
+class LimitsFilterSelectionStrategy(FilterSelectionStrategy):
     """Keep objects whose measurement falls within configured limits."""
 
-    method = FilterMethod.LIMITS
+    selection_key = FilterSelectionKey(FilterMode.MEASUREMENTS, FilterMethod.LIMITS)
 
     def indexes_to_keep(
         self,
-        values: np.ndarray,
         request: FilterObjectsSelectionRequest,
     ) -> list[int]:
+        if request.measurement_features:
+            return _keep_matching_measurement_rules(request)
+        values = request.measurement_values
+        if values is None:
+            values = _area_measurement_values(request.labels)
         return _keep_within_limits(
             values,
             request.min_value,
@@ -167,64 +160,73 @@ class LimitsFilterMethodStrategy(FilterMethodStrategy):
         )
 
 
-class MinimalFilterMethodStrategy(FilterMethodStrategy):
+class ExtremumFilterSelectionStrategy(FilterSelectionStrategy):
+    """Keep one object selected by a measurement extremum."""
+
+    keep_max: ClassVar[bool | None] = None
+
+    def indexes_to_keep(
+        self,
+        request: FilterObjectsSelectionRequest,
+    ) -> list[int]:
+        keep_max = type(self).keep_max
+        if keep_max is None:
+            raise TypeError("ExtremumFilterSelectionStrategy must define keep_max.")
+        values = request.measurement_values
+        if values is None:
+            values = _first_measurement_values(request)
+        return _keep_one(values, keep_max=keep_max)
+
+
+class MinimalFilterSelectionStrategy(ExtremumFilterSelectionStrategy):
     """Keep the object with the minimum measurement value."""
 
-    method = FilterMethod.MINIMAL
-
-    def indexes_to_keep(
-        self,
-        values: np.ndarray,
-        request: FilterObjectsSelectionRequest,
-    ) -> list[int]:
-        del request
-        return _keep_one(values, keep_max=False)
+    selection_key = FilterSelectionKey(FilterMode.MEASUREMENTS, FilterMethod.MINIMAL)
+    keep_max = False
 
 
-class MaximalFilterMethodStrategy(FilterMethodStrategy):
+class MaximalFilterSelectionStrategy(ExtremumFilterSelectionStrategy):
     """Keep the object with the maximum measurement value."""
 
-    method = FilterMethod.MAXIMAL
+    selection_key = FilterSelectionKey(FilterMode.MEASUREMENTS, FilterMethod.MAXIMAL)
+    keep_max = True
+
+
+class PerObjectFilterSelectionStrategy(FilterSelectionStrategy):
+    """Reject per-object filtering until parent-object measurements are modeled."""
+
+    selection_key: ClassVar[FilterSelectionKey | None] = None
 
     def indexes_to_keep(
         self,
-        values: np.ndarray,
         request: FilterObjectsSelectionRequest,
     ) -> list[int]:
         del request
-        return _keep_one(values, keep_max=True)
-
-
-class PerObjectFilterMethodStrategy(FilterMethodStrategy):
-    """Reject per-object filtering until parent-object measurements are modeled."""
-
-    method: ClassVar[FilterMethod | None] = None
-
-    def indexes_to_keep(
-        self,
-        values: np.ndarray,
-        request: FilterObjectsSelectionRequest,
-    ) -> list[int]:
-        del values, request
-        method = type(self).method
-        if method is None:
-            raise TypeError("PerObjectFilterMethodStrategy must define method.")
+        selection_key = type(self).selection_key
+        if selection_key is None or selection_key.method is None:
+            raise TypeError("PerObjectFilterSelectionStrategy must define method.")
         raise NotImplementedError(
-            f"FilterObjects method {method.value!r} requires "
+            f"FilterObjects method {selection_key.method.value!r} requires "
             "parent-object assignment semantics."
         )
 
 
-class MinimalPerObjectFilterMethodStrategy(PerObjectFilterMethodStrategy):
+class MinimalPerObjectFilterSelectionStrategy(PerObjectFilterSelectionStrategy):
     """Fail loudly for minimal-per-parent filtering until relationships exist."""
 
-    method = FilterMethod.MINIMAL_PER_OBJECT
+    selection_key = FilterSelectionKey(
+        FilterMode.MEASUREMENTS,
+        FilterMethod.MINIMAL_PER_OBJECT,
+    )
 
 
-class MaximalPerObjectFilterMethodStrategy(PerObjectFilterMethodStrategy):
+class MaximalPerObjectFilterSelectionStrategy(PerObjectFilterSelectionStrategy):
     """Fail loudly for maximal-per-parent filtering until relationships exist."""
 
-    method = FilterMethod.MAXIMAL_PER_OBJECT
+    selection_key = FilterSelectionKey(
+        FilterMode.MEASUREMENTS,
+        FilterMethod.MAXIMAL_PER_OBJECT,
+    )
 
 
 @numpy(contract=ProcessingContract.FLEXIBLE)
@@ -241,6 +243,12 @@ def filter_objects(
     filter_method: FilterMethod = FilterMethod.LIMITS,
     object_labels: tuple[np.ndarray, ...] = (),
     measurement_values: Optional[np.ndarray] = None,
+    measurement_features: tuple[str, ...] = (),
+    measurement_min_values: tuple[float | None, ...] = (),
+    measurement_max_values: tuple[float | None, ...] = (),
+    measurement_use_minimum: tuple[bool, ...] = (),
+    measurement_use_maximum: tuple[bool, ...] = (),
+    measurement_tables: tuple[MeasurementTable, ...] = (),
     min_value: Optional[float] = None,
     max_value: Optional[float] = None,
     use_minimum: bool = True,
@@ -258,6 +266,8 @@ def filter_objects(
         mode: Filtering mode - MEASUREMENTS or BORDER
         filter_method: Method for measurement-based filtering
         measurement_values: Array of measurement values per object (indexed by label-1)
+        measurement_features: CellProfiler feature names used for limits filtering.
+        measurement_tables: Prior object measurement tables from the runtime adapter.
         min_value: Minimum threshold for LIMITS method
         max_value: Maximum threshold for LIMITS method
         use_minimum: Whether to apply minimum threshold
@@ -300,12 +310,21 @@ def filter_objects(
     unique_labels = unique_labels[unique_labels > 0]
     num_objects_pre = len(unique_labels)
 
-    indexes_to_keep = FilterModeStrategy.for_key(mode).indexes_to_keep(
+    indexes_to_keep = FilterSelectionStrategy.for_mode_and_method(
+        mode,
+        filter_method,
+    ).indexes_to_keep(
         FilterObjectsSelectionRequest(
             labels=labels,
             num_objects_pre=num_objects_pre,
             filter_method=filter_method,
             measurement_values=measurement_values,
+            measurement_features=measurement_features,
+            measurement_min_values=measurement_min_values,
+            measurement_max_values=measurement_max_values,
+            measurement_use_minimum=measurement_use_minimum,
+            measurement_use_maximum=measurement_use_maximum,
+            measurement_tables=measurement_tables,
             min_value=min_value,
             max_value=max_value,
             use_minimum=use_minimum,
@@ -397,6 +416,7 @@ def _keep_within_limits(
         return []
     
     hits = np.ones(len(values), dtype=bool)
+    hits[~np.isfinite(values)] = False
     
     if use_minimum and min_value is not None:
         hits[values < min_value] = False
@@ -429,6 +449,154 @@ def _keep_one(values: np.ndarray, keep_max: bool = True) -> list[int]:
         best_idx = np.argmin(values) + 1
     
     return [int(best_idx)]
+
+
+def _keep_matching_measurement_rules(
+    request: FilterObjectsSelectionRequest,
+) -> list[int]:
+    _validate_measurement_rule_lengths(request)
+    hits = np.ones(request.num_objects_pre, dtype=bool)
+    for index, feature_name in enumerate(request.measurement_features):
+        values = _measurement_values_for_feature(
+            request.measurement_tables,
+            feature_name,
+            object_count=request.num_objects_pre,
+        )
+        keep_indexes = _keep_within_limits(
+            values,
+            request.measurement_min_values[index],
+            request.measurement_max_values[index],
+            request.measurement_use_minimum[index],
+            request.measurement_use_maximum[index],
+        )
+        rule_hits = np.zeros(request.num_objects_pre, dtype=bool)
+        for keep_index in keep_indexes:
+            if 1 <= keep_index <= request.num_objects_pre:
+                rule_hits[keep_index - 1] = True
+        hits &= rule_hits
+    return (np.argwhere(hits).flatten() + 1).tolist()
+
+
+def _first_measurement_values(request: FilterObjectsSelectionRequest) -> np.ndarray:
+    if request.measurement_values is not None:
+        return request.measurement_values
+    if request.measurement_features:
+        return _measurement_values_for_feature(
+            request.measurement_tables,
+            request.measurement_features[0],
+            object_count=request.num_objects_pre,
+        )
+    return _area_measurement_values(request.labels)
+
+
+def _area_measurement_values(labels: np.ndarray) -> np.ndarray:
+    from skimage.measure import regionprops
+
+    return np.array([prop.area for prop in regionprops(labels)])
+
+
+def _measurement_values_for_feature(
+    measurement_tables: tuple[MeasurementTable, ...],
+    feature_name: str,
+    *,
+    object_count: int,
+) -> np.ndarray:
+    candidates = _measurement_feature_candidates(feature_name)
+    values_by_label: dict[int, float] = {}
+    positional_values: list[float] = []
+    for row in _measurement_rows(measurement_tables):
+        row_mapping = _measurement_row_mapping(row)
+        field_name = _matching_measurement_field(row_mapping, candidates)
+        if field_name is None:
+            continue
+        value = float(row_mapping[field_name])
+        object_label = _measurement_object_label(row_mapping)
+        if object_label is None:
+            positional_values.append(value)
+            continue
+        values_by_label[object_label] = value
+    if values_by_label:
+        return np.array(
+            [values_by_label.get(index, np.nan) for index in range(1, object_count + 1)]
+        )
+    if positional_values:
+        return np.array(positional_values[:object_count])
+    raise ValueError(
+        f"FilterObjects could not resolve measurement feature {feature_name!r}."
+    )
+
+
+def _measurement_rows(
+    measurement_tables: tuple[MeasurementTable, ...],
+) -> tuple[object, ...]:
+    rows: list[object] = []
+    for table in measurement_tables:
+        if isinstance(table.rows, list | tuple):
+            rows.extend(table.rows)
+            continue
+        rows.append(table.rows)
+    return tuple(rows)
+
+
+def _measurement_row_mapping(row: object) -> Mapping[str, object]:
+    if isinstance(row, Mapping):
+        return row
+    try:
+        return vars(row)
+    except TypeError as exc:
+        raise TypeError(
+            f"Unsupported FilterObjects measurement row type {type(row).__name__}."
+        ) from exc
+
+
+def _matching_measurement_field(
+    row: Mapping[str, object],
+    candidates: frozenset[str],
+) -> str | None:
+    for field_name in row:
+        if _normalize_measurement_token(field_name) in candidates:
+            return field_name
+    return None
+
+
+def _measurement_object_label(row: Mapping[str, object]) -> int | None:
+    for key in ("object_label", "object_number", "object_id", "label"):
+        if key in row:
+            return int(row[key])
+    return None
+
+
+def _measurement_feature_candidates(feature_name: str) -> frozenset[str]:
+    normalized = _normalize_measurement_token(feature_name)
+    parts = tuple(part for part in normalized.split("_") if part)
+    candidates = {normalized}
+    if len(parts) >= 2:
+        candidates.add("_".join(parts[1:]))
+        candidates.add(parts[-1])
+    if len(parts) >= 3:
+        candidates.add("_".join(parts[1:-1]))
+    return frozenset(candidates)
+
+
+def _normalize_measurement_token(value: object) -> str:
+    text = str(value)
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", text)
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+
+
+def _validate_measurement_rule_lengths(
+    request: FilterObjectsSelectionRequest,
+) -> None:
+    expected = len(request.measurement_features)
+    lengths = {
+        len(request.measurement_min_values),
+        len(request.measurement_max_values),
+        len(request.measurement_use_minimum),
+        len(request.measurement_use_maximum),
+    }
+    if lengths == {expected}:
+        return
+    raise ValueError("FilterObjects measurement rule kwargs must align by row.")
 
 
 def _label_plane(labels: np.ndarray) -> np.ndarray:

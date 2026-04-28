@@ -10,6 +10,7 @@ from benchmark.cellprofiler_compat.module_execution import (
     _measurement_table_rows,
 )
 from benchmark.cellprofiler_library.functions.filterobjects import (
+    FilterMethod,
     FilterMode,
     filter_objects,
 )
@@ -20,6 +21,7 @@ from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
     identify_primary_objects,
 )
 from openhcs.core.config import DtypeConfig
+from openhcs.core.runtime_values import MeasurementTable
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
@@ -187,3 +189,37 @@ def test_filterobjects_relabels_additional_object_inputs_by_primary_retention() 
     assert filtered_cells[0, 0] == 0
     assert primary_outline.max() == 1
     assert cells_outline.max() == 1
+
+
+def test_filterobjects_uses_named_measurement_feature_rules() -> None:
+    image = np.zeros((5, 5), dtype=np.float32)
+    primary = np.zeros((5, 5), dtype=np.int32)
+    primary[1:3, 1:3] = 1
+    primary[3:5, 3:5] = 2
+    measurement_rows = [
+        {"object_label": 1, "lower_quartile_intensity": 0.1},
+        {"object_label": 2, "lower_quartile_intensity": 0.8},
+    ]
+
+    result = filter_objects(
+        image,
+        mode=FilterMode.MEASUREMENTS,
+        filter_method=FilterMethod.LIMITS,
+        object_labels=(primary,),
+        measurement_features=("Intensity_LowerQuartileIntensity_DNA",),
+        measurement_min_values=(0.2,),
+        measurement_max_values=(None,),
+        measurement_use_minimum=(True,),
+        measurement_use_maximum=(False,),
+        measurement_tables=(
+            MeasurementTable(name="NucleiMeasurements", rows=measurement_rows),
+        ),
+        dtype_config=DtypeConfig(),
+    )
+
+    _output_image, stats, filtered_primary = result
+
+    assert stats.objects_pre_filter == 2
+    assert stats.objects_post_filter == 1
+    assert filtered_primary[1, 1] == 0
+    assert filtered_primary[3, 3] == 1

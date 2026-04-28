@@ -238,6 +238,33 @@ def test_cellprofiler_adapter_adds_measurements_after_object_reference_exists():
     assert measurements.fields == (FieldSpec("object_id"), FieldSpec("area"))
 
 
+def test_cellprofiler_adapter_lists_measurement_tables_for_object_subject():
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            NUCLEI_MEASUREMENTS: _plan(
+                NUCLEI_MEASUREMENTS,
+                ArtifactKind.MEASUREMENTS,
+            ),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    adapter.add_objects(NUCLEI, ArrayLike())
+    rows = [{"object_id": 1, "area": 42.0}]
+    adapter.add_measurements(
+        NUCLEI_MEASUREMENTS,
+        rows,
+        object_name=NUCLEI,
+    )
+    adapter.add_measurements(MEASUREMENTS, [{"image_area": 100.0}])
+
+    tables = adapter.measurement_tables_for_object(NUCLEI)
+
+    assert [table.name for table in tables] == [NUCLEI_MEASUREMENTS]
+    assert tables[0].rows is rows
+    assert tables[0].object_name == NUCLEI
+
+
 def test_cellprofiler_adapter_adds_relationships_after_objects_exist():
     adapter, _filemanager = _adapter(
         {

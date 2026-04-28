@@ -29,6 +29,7 @@ FILTER_OBJECTS_MODE_SETTING = SettingNameFamily(
     aliases=("Select the filtering mode",),
 )
 FILTER_OBJECTS_METHOD_SETTING = "Select the filtering method"
+FILTER_OBJECTS_MEASUREMENT_SETTING = "Select the measurement to filter by"
 FILTER_OBJECTS_USE_MINIMUM_SETTING = "Filter using a minimum measurement value?"
 FILTER_OBJECTS_MINIMUM_SETTING = "Minimum value"
 FILTER_OBJECTS_USE_MAXIMUM_SETTING = "Filter using a maximum measurement value?"
@@ -113,6 +114,55 @@ class FilterObjectsAdditionalObjectRow(FilterObjectsObjectPair):
                 "additional FilterObjects outline without an outline image name."
             )
         return self
+
+
+@dataclass(frozen=True, slots=True)
+class FilterObjectsMeasurementRule:
+    """One measurement limit rule used by FilterObjects."""
+
+    feature_name: str
+    use_minimum: bool
+    min_value: float | None
+    use_maximum: bool
+    max_value: float | None
+
+    @classmethod
+    def from_block(
+        cls,
+        module: ModuleBlock,
+        block: Sequence[ModuleSetting],
+    ) -> "FilterObjectsMeasurementRule":
+        return cls(
+            feature_name=block_setting_value(block, FILTER_OBJECTS_MEASUREMENT_SETTING),
+            use_minimum=_setting_bool(
+                block_setting_value(
+                    block,
+                    FILTER_OBJECTS_USE_MINIMUM_SETTING,
+                    default="No",
+                )
+            ),
+            min_value=_optional_float_literal(
+                block_setting_value(block, FILTER_OBJECTS_MINIMUM_SETTING)
+            ),
+            use_maximum=_setting_bool(
+                block_setting_value(
+                    block,
+                    FILTER_OBJECTS_USE_MAXIMUM_SETTING,
+                    default="No",
+                )
+            ),
+            max_value=_optional_float_literal(
+                block_setting_value(block, FILTER_OBJECTS_MAXIMUM_SETTING)
+            ),
+        ).validated(module)
+
+    def validated(self, module: ModuleBlock) -> "FilterObjectsMeasurementRule":
+        if self.feature_name.strip():
+            return self
+        raise ValueError(
+            f"Module {module.name}({module.module_num}) has an empty "
+            "FilterObjects measurement rule."
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +298,7 @@ def filter_objects_additional_rows(
 def filter_objects_bound_kwargs(module: ModuleBlock) -> dict[str, Any]:
     """Return absorbed-function kwargs for a typed FilterObjects plan."""
     plan = filter_objects_plan(module)
+    measurement_rules = filter_objects_measurement_rules(module)
     return {
         "mode": _filter_mode_value(module),
         "filter_method": optional_setting_value(
@@ -255,19 +306,59 @@ def filter_objects_bound_kwargs(module: ModuleBlock) -> dict[str, Any]:
             FILTER_OBJECTS_METHOD_SETTING,
         )
         or "Limits",
-        "min_value": _optional_float_setting(module, FILTER_OBJECTS_MINIMUM_SETTING),
-        "max_value": _optional_float_setting(module, FILTER_OBJECTS_MAXIMUM_SETTING),
-        "use_minimum": _setting_bool(
-            optional_setting_value(module, FILTER_OBJECTS_USE_MINIMUM_SETTING)
-            or "No"
+        "measurement_features": tuple(rule.feature_name for rule in measurement_rules),
+        "measurement_min_values": tuple(rule.min_value for rule in measurement_rules),
+        "measurement_max_values": tuple(rule.max_value for rule in measurement_rules),
+        "measurement_use_minimum": tuple(
+            rule.use_minimum for rule in measurement_rules
         ),
-        "use_maximum": _setting_bool(
-            optional_setting_value(module, FILTER_OBJECTS_USE_MAXIMUM_SETTING)
-            or "No"
+        "measurement_use_maximum": tuple(
+            rule.use_maximum for rule in measurement_rules
         ),
         "additional_object_count": len(plan.additional_rows),
         "outline_object_indices": plan.outline_object_indices,
     }
+
+
+def filter_objects_measurement_rules(
+    module: ModuleBlock,
+) -> tuple[FilterObjectsMeasurementRule, ...]:
+    """Return ordered measurement limit rules from parsed FilterObjects settings."""
+    if module.iter_settings():
+        blocks = repeating_setting_blocks(
+            module.iter_settings(),
+            start_name=FILTER_OBJECTS_MEASUREMENT_SETTING,
+        )
+        return tuple(
+            FilterObjectsMeasurementRule.from_block(module, block)
+            for block in blocks
+        )
+    return _mapping_measurement_rules(module)
+
+
+def _mapping_measurement_rules(
+    module: ModuleBlock,
+) -> tuple[FilterObjectsMeasurementRule, ...]:
+    feature_names = setting_values(module, FILTER_OBJECTS_MEASUREMENT_SETTING)
+    use_minimum = setting_values(module, FILTER_OBJECTS_USE_MINIMUM_SETTING)
+    min_values = setting_values(module, FILTER_OBJECTS_MINIMUM_SETTING)
+    use_maximum = setting_values(module, FILTER_OBJECTS_USE_MAXIMUM_SETTING)
+    max_values = setting_values(module, FILTER_OBJECTS_MAXIMUM_SETTING)
+    row_count = len(feature_names)
+    return tuple(
+        FilterObjectsMeasurementRule(
+            feature_name=_indexed_value(feature_names, index),
+            use_minimum=_setting_bool(
+                _indexed_value(use_minimum, index, default="No")
+            ),
+            min_value=_optional_float_literal(_indexed_value(min_values, index)),
+            use_maximum=_setting_bool(
+                _indexed_value(use_maximum, index, default="No")
+            ),
+            max_value=_optional_float_literal(_indexed_value(max_values, index)),
+        ).validated(module)
+        for index in range(row_count)
+    )
 
 
 def _mapping_additional_rows(
@@ -309,14 +400,13 @@ def _filter_mode_value(module: ModuleBlock) -> str:
     return value
 
 
-def _optional_float_setting(
-    module: ModuleBlock,
-    setting_name: str | SettingNameFamily,
-) -> float | None:
-    value = optional_setting_value(module, setting_name)
+def _optional_float_literal(value: str | None) -> float | None:
     if value is None:
         return None
-    return float(value)
+    stripped = value.strip()
+    if not stripped:
+        return None
+    return float(stripped)
 
 
 def _setting_bool(value: str) -> bool:

@@ -303,6 +303,24 @@ class MeasurementTable(NativeRuntimeValue):
     source_image_name: str | None = None
     subject: MeasurementSubject | None = None
 
+    @classmethod
+    def from_runtime_value(cls, value: RuntimeValue) -> Self:
+        """Reconstruct the native measurement view from a stored runtime value."""
+        if value.kind is not ArtifactKind.MEASUREMENTS:
+            raise TypeError(
+                "MeasurementTable.from_runtime_value requires a MEASUREMENTS "
+                f"runtime value, got {value.kind.value}."
+            )
+        return cls(
+            name=value.name,
+            rows=value.data,
+            object_name=value.schema.object_name,
+            fields=value.schema.fields,
+            object_id_field=value.schema.object_id_field,
+            source_image_name=value.schema.source_image_name,
+            subject=value.schema.measurement_subject,
+        )
+
     def __post_init__(self) -> None:
         NativeRuntimeValue.__post_init__(self)
         if self.object_name == "":
@@ -582,8 +600,10 @@ def _resolve_measurement_subject(
             "MeasurementTable.object_id_field conflicts with "
             "MeasurementTable.subject."
         )
-    if source_image_name is not None and (
-        subject.scope is not MeasurementScope.IMAGE or subject.name != source_image_name
+    if (
+        source_image_name is not None
+        and subject.scope is MeasurementScope.IMAGE
+        and subject.name != source_image_name
     ):
         raise ValueError(
             "MeasurementTable.source_image_name conflicts with "

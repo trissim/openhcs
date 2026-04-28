@@ -203,6 +203,7 @@ class CellProfilerModuleExecutor:
         cellprofiler_runtime.add_measurements(
             measurement_outputs[0].name,
             combined_rows,
+            object_name=object_inputs[0].name if len(object_inputs) == 1 else None,
             source_image_name=source_image_name,
         )
         return input_image
@@ -880,34 +881,6 @@ for _module_name in _SINGLE_LABEL_MEASUREMENT_POLICY_MODULES:
     _declare_single_label_measurement_policy(_module_name)
 
 
-class MeasureImageAreaOccupiedInputPolicy(CellProfilerObjectInputPolicy):
-    """Bind ordered object rows for the generic area-occupied runner."""
-
-    module_name = "MeasureImageAreaOccupiedBinary"
-
-    def bind(
-        self,
-        module_name: str,
-        object_inputs: tuple[ArtifactSpec, ...],
-        adapter: CellProfilerRuntimeAdapter,
-        *,
-        fallback_image: Any,
-        external_object_names: frozenset[str],
-    ) -> dict[str, Any]:
-        del module_name
-        return {
-            "object_labels": tuple(
-                _object_input_labels(
-                    spec,
-                    adapter,
-                    fallback_image=fallback_image,
-                    external_object_names=external_object_names,
-                )
-                for spec in object_inputs
-            )
-        }
-
-
 class OverlayOutlinesInputPolicy(CellProfilerObjectInputPolicy):
     """Bind ordered object outline rows for the generic overlay runner."""
 
@@ -936,10 +909,8 @@ class OverlayOutlinesInputPolicy(CellProfilerObjectInputPolicy):
         }
 
 
-class FilterObjectsInputPolicy(CellProfilerObjectInputPolicy):
-    """Bind ordered primary/additional object rows for FilterObjects."""
-
-    module_name = "FilterObjects"
+class ObjectRowsWithMeasurementsInputPolicy(CellProfilerObjectInputPolicy):
+    """Bind ordered object rows plus prior measurements for the primary object."""
 
     def bind(
         self,
@@ -951,6 +922,9 @@ class FilterObjectsInputPolicy(CellProfilerObjectInputPolicy):
         external_object_names: frozenset[str],
     ) -> dict[str, Any]:
         del module_name
+        if not object_inputs:
+            return {"object_labels": (), "measurement_tables": ()}
+        primary_object = object_inputs[0]
         return {
             "object_labels": tuple(
                 _object_input_labels(
@@ -960,8 +934,23 @@ class FilterObjectsInputPolicy(CellProfilerObjectInputPolicy):
                     external_object_names=external_object_names,
                 )
                 for spec in object_inputs
-            )
+            ),
+            "measurement_tables": adapter.measurement_tables_for_object(
+                primary_object.name
+            ),
         }
+
+
+class MeasureImageAreaOccupiedInputPolicy(ObjectRowsWithMeasurementsInputPolicy):
+    """Bind ordered object rows for the generic area-occupied runner."""
+
+    module_name = "MeasureImageAreaOccupiedBinary"
+
+
+class FilterObjectsInputPolicy(ObjectRowsWithMeasurementsInputPolicy):
+    """Bind ordered primary/additional object rows for FilterObjects."""
+
+    module_name = "FilterObjects"
 
 
 class CellProfilerPerObjectMeasurementPolicy:

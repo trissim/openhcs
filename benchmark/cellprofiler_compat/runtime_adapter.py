@@ -310,14 +310,25 @@ class CellProfilerRuntimeAdapter:
             ArtifactKind.MEASUREMENTS,
             group_key=group_key,
         )
-        schema = record.value.schema
-        return MeasurementTable(
-            name=name,
-            rows=record.value.data,
-            object_name=schema.object_name,
-            fields=schema.fields,
-            object_id_field=schema.object_id_field,
-            source_image_name=schema.source_image_name,
+        return MeasurementTable.from_runtime_value(record.value)
+
+    def measurement_tables_for_object(
+        self,
+        object_name: str,
+        *,
+        group_key: str | None = None,
+    ) -> tuple[MeasurementTable, ...]:
+        """Return prior measurement tables whose subject is an object set."""
+        records = self.runtime_value_store.find(
+            kind=ArtifactKind.MEASUREMENTS,
+            axis_id=self.axis_id,
+            group_key=group_key,
+            match_group=group_key is not None,
+        )
+        return tuple(
+            MeasurementTable.from_runtime_value(record.value)
+            for record in records
+            if record.value.schema.object_name == object_name
         )
 
     def add_relationship(
