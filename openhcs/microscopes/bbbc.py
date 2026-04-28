@@ -53,10 +53,10 @@ class BBBC021FilenameParser(FilenameParser):
     _pattern = re.compile(
         r'^.*?'                  # Optional prefix (non-greedy)
         r'([A-P][0-9]{2})'       # Well: letter A-P + two digits
-        r'_s(\d+)'               # Site: _s + digits
-        r'_w(\d)'                # Channel: _w + single digit
-        r'(?:_z(\d+))?'          # Optional z
-        r'(?:_t(\d+))?'          # Optional timepoint
+        r'_s(\d+|\{[^\}]*\})'    # Site: _s + digits or placeholder
+        r'_w(\d|\{[^\}]*\})'     # Channel: _w + single digit or placeholder
+        r'(?:_z(\d+|\{[^\}]*\}))?'  # Optional z
+        r'(?:_t(\d+|\{[^\}]*\}))?'  # Optional timepoint
         r'([A-F0-9-]*)'          # Optional UUID
         r'(\.\w+)$',             # Extension
         re.IGNORECASE
@@ -93,17 +93,17 @@ class BBBC021FilenameParser(FilenameParser):
 
         well, site_str, channel_str, z_str, t_str, uuid, ext = match.groups()
 
-        # Parse z_index and timepoint if present (virtual workspace files)
-        # Otherwise None (original files)
-        z_index = int(z_str) if z_str else None
-        timepoint = int(t_str) if t_str else None
+        def parse_component(value: str | None) -> int | None:
+            if not value or "{" in value:
+                return None
+            return int(value)
 
         return {
             'well': well,
-            'site': int(site_str),
-            'channel': int(channel_str),
-            'z_index': z_index,
-            'timepoint': timepoint,
+            'site': parse_component(site_str),
+            'channel': parse_component(channel_str),
+            'z_index': parse_component(z_str),
+            'timepoint': parse_component(t_str),
             'extension': ext,
         }
 

@@ -778,7 +778,11 @@ class PipelineCompiler:
             current_plan.axis_id = session.axis_id
             current_plan.create_openhcs_metadata = session.metadata_writer
             current_plan.variable_components = snapshot.variable_components
-            current_plan.group_by = snapshot.group_by
+            current_plan.group_by = FuncStepContractValidator.normalized_group_by(
+                snapshot.group_by,
+                snapshot.variable_components,
+                snapshot.name,
+            )
             current_plan.input_source = snapshot.input_source
             current_plan.sequential_processing = snapshot.processing_config
             current_plan.source_binding_plan = CompiledSourceBindingPlan.from_config(

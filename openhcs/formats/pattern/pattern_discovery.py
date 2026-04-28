@@ -90,10 +90,9 @@ class PatternDiscoveryEngine:
         logger.debug("Using pattern template: %s", pattern_str)
 
         # Parse pattern template to get expected structure
-        pattern_template = pattern_str.replace(self.PLACEHOLDER_PATTERN, '001')
-        pattern_metadata = self.parser.parse_filename(pattern_template)
+        pattern_metadata = self.parser.parse_filename(pattern_str)
         if not pattern_metadata:
-            logger.error("Failed to parse pattern template: %s", pattern_template)
+            logger.error("Failed to parse pattern template: %s", pattern_str)
             return []
 
         # Get all image files in directory using FileManager
@@ -188,8 +187,7 @@ class PatternDiscoveryEngine:
             # The has_placeholders() check is only relevant when using patterns as concrete filenames
             # For pattern discovery and grouping, we WANT patterns with placeholders
 
-            pattern_template = pattern_str.replace(self.PLACEHOLDER_PATTERN, '001')
-            metadata = self.parser.parse_filename(pattern_template)
+            metadata = self.parser.parse_filename(pattern_str)
 
             if not metadata or component not in metadata or metadata[component] is None:
                 raise ValueError(
@@ -222,8 +220,7 @@ class PatternDiscoveryEngine:
 
         subdivided = defaultdict(list)
         for pattern in patterns:
-            pattern_template = str(pattern).replace(self.PLACEHOLDER_PATTERN, '001')
-            metadata = self.parser.parse_filename(pattern_template)
+            metadata = self.parser.parse_filename(str(pattern))
             if not metadata:
                 raise ValueError(f"Failed to parse pattern: {pattern}")
             key = tuple(str(metadata[comp]) for comp in components if comp in metadata and metadata[comp] is not None)
@@ -424,9 +421,10 @@ class PatternDiscoveryEngine:
             )
 
             # Validate that the pattern can be instantiated
-            test_instance = pattern_str.replace(self.PLACEHOLDER_PATTERN, '001')
-            if not self.parser.parse_filename(test_instance):
-                raise ValueError(f"Clause 93 Violation: Pattern template '{pattern_str}' cannot be instantiated")
+            if not self.parser.parse_filename(pattern_str):
+                raise ValueError(
+                    f"Clause 93 Violation: Pattern template '{pattern_str}' cannot be instantiated"
+                )
 
             patterns.append(pattern_str)
 

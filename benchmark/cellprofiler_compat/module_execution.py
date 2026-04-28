@@ -108,6 +108,11 @@ class CellProfilerModuleExecutor:
             artifact_values,
             source_image_name=invocation.source_image_name,
         )
+        if not self._replaces_main_flow(
+            input_image=image,
+            output_image=main_output,
+        ):
+            return image
         return main_output
 
     def _runs_per_object_measurement(self) -> bool:
@@ -115,6 +120,19 @@ class CellProfilerModuleExecutor:
             self.module_name,
             self.runtime_artifact_inputs,
         )
+
+    def _produces_image_output(self) -> bool:
+        return any(spec.kind is ArtifactKind.IMAGE for spec in self.outputs)
+
+    def _replaces_main_flow(
+        self,
+        *,
+        input_image: Any,
+        output_image: Any,
+    ) -> bool:
+        if not self._produces_image_output():
+            return False
+        return _payload_slice_count(output_image) == _payload_slice_count(input_image)
 
     def _run_per_object_measurement(
         self,
@@ -836,3 +854,11 @@ def _single_source_name(source_names: tuple[str, ...]) -> str | None:
     if len(unique_names) == 1:
         return unique_names[0]
     return None
+
+
+def _payload_slice_count(payload: Any) -> int:
+    if hasattr(payload, "ndim") and payload.ndim == 2:
+        return 1
+    if hasattr(payload, "shape") and payload.shape:
+        return int(payload.shape[0])
+    return 1

@@ -23,8 +23,14 @@ from benchmark.contracts.tool_adapter import (
     ToolNotInstalledError,
 )
 from benchmark.contracts.metric import MetricCollector
+from openhcs.constants.constants import Microscope
 
 logger = logging.getLogger(__name__)
+
+
+_MICROSCOPES_BY_NORMALIZED_LITERAL = {
+    member.value.lower(): member for member in Microscope
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +193,7 @@ class OpenHCSAdapter(ToolAdapter):
             num_workers=1,
             use_threading=True,
             materialization_results_path=output_plate_root / "results",
+            microscope=self._configured_microscope(request.microscope_type),
         )
         ensure_global_config_context(GlobalPipelineConfig, global_config)
         pipeline_config = PipelineConfig(
@@ -235,6 +242,21 @@ class OpenHCSAdapter(ToolAdapter):
                 "axis_count": len(execution.execution_results),
             },
         )
+
+    def _configured_microscope(
+        self,
+        microscope_type: str | None,
+    ) -> Microscope:
+        """Normalize benchmark microscope literals onto the OpenHCS enum SSOT."""
+        if microscope_type is None:
+            return Microscope.AUTO
+        normalized = microscope_type.strip().lower()
+        try:
+            return _MICROSCOPES_BY_NORMALIZED_LITERAL[normalized]
+        except KeyError as exc:
+            raise ToolExecutionError(
+                f"Unsupported OpenHCS microscope_type {microscope_type!r}."
+            ) from exc
 
     def run(
         self,

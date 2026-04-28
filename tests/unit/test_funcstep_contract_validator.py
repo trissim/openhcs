@@ -1,5 +1,6 @@
 import pytest
 
+from openhcs.constants import GroupBy, VariableComponents
 from openhcs.core.function_patterns import compile_function_pattern
 from openhcs.core.pipeline.funcstep_contract_validator import (
     FuncStepContractValidator,
@@ -50,3 +51,14 @@ def test_validate_compiled_function_pattern_reports_invocation_identity():
             _compiled_pattern(func),
             "step",
         )
+
+
+def test_normalized_group_by_resolves_variable_component_conflict_to_none():
+    assert (
+        FuncStepContractValidator.normalized_group_by(
+            GroupBy.CHANNEL,
+            (VariableComponents.CHANNEL,),
+            "step",
+        )
+        is GroupBy.NONE
+    )

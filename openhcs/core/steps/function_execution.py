@@ -45,10 +45,7 @@ def _filter_patterns_by_component(
     def filter_pattern_list(pattern_list: list[Any]) -> list[Any]:
         filtered = []
         for pattern in pattern_list:
-            pattern_template = str(pattern).replace(
-                PatternDiscoveryEngine.PLACEHOLDER_PATTERN, "001"
-            )
-            metadata = microscope_handler.parser.parse_filename(pattern_template)
+            metadata = microscope_handler.parser.parse_filename(str(pattern))
             if metadata and str(metadata.get(component)) == str(target_value):
                 filtered.append(pattern)
         return filtered

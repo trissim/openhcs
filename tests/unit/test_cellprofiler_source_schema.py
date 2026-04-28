@@ -228,6 +228,65 @@ def test_symbol_table_and_codegen_use_compiled_setup_schema():
     assert "MetadataExtractionRule(" in generated.code
     assert "SourceBindingMatchPlan(" in generated.code
     assert "SourceBindingOrigin.PIPELINE_START" in generated.code
+    assert "input_source=InputSource.PIPELINE_START" in generated.code
+    assert "variable_components=[VariableComponents.CHANNEL]" in generated.code
+    assert "group_by=GroupBy.SITE" in generated.code
+
+
+def test_codegen_upgrades_pure_2d_runtime_wrapper_when_step_input_binding_selects_stack():
+    setup_modules = [
+        _module_with_records(
+            1,
+            "Metadata",
+            [
+                ("Metadata extraction method", "Extract from file/folder names"),
+                ("Metadata source", "File name"),
+                (
+                    "Regular expression to extract from file name",
+                    r".*(?P<well>[A-Z]\d+)_s(?P<site>\d+)_w(?P<channel>\d)",
+                ),
+            ],
+        ),
+        _module_with_records(
+            2,
+            "NamesAndTypes",
+            [
+                ("Assign a name to", "Images matching rules"),
+                ("Select the image type", "Grayscale image"),
+                ("Name to assign these images", "DNA"),
+                ("Match metadata", "[{'DNA': 'well'}, {'DNA': 'site'}]"),
+                ("Image set matching method", "Metadata"),
+                ("Select the rule criteria", 'and (metadata does channel "1")'),
+                ("Assign a name to", "Images matching rules"),
+                ("Select the image type", "Grayscale image"),
+                ("Name to assign these images", "Actin"),
+                ("Match metadata", "[{'Actin': 'well'}, {'Actin': 'site'}]"),
+                ("Image set matching method", "Metadata"),
+                ("Select the rule criteria", 'and (metadata does channel "2")'),
+            ],
+        ),
+    ]
+    processing_module = ModuleBlock(
+        name="GrayToColor",
+        module_num=3,
+        settings={
+            "Select the image to be colored red": "Actin",
+            "Select the image to be colored blue": "DNA",
+            "Name the output image": "Composite",
+        },
+    )
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_gray_to_color",
+        source_cppipe=Path("source.cppipe"),
+        modules=[processing_module],
+        skipped_modules=setup_modules,
+    )
+
+    assert (
+        "gray_to_color_3_runtime.__processing_contract__ = "
+        "ProcessingContract.FLEXIBLE"
+    ) in generated.code
 
 
 def test_compile_image_schema_decodes_legacy_escaped_match_metadata():
@@ -259,3 +318,42 @@ def test_compile_image_schema_decodes_legacy_escaped_match_metadata():
         schema.match_plan.dimensions[0].field_for_alias("DAPIillum")
         == "folder_illum"
     )
+
+
+def test_compile_image_schema_preserves_real_names_and_types_block_order():
+    names_and_types_module = _module_with_records(
+        3,
+        "NamesAndTypes",
+        [
+            ("Assign a name to", "Images matching rules"),
+            ("Select the image type", "Grayscale image"),
+            ("Name to assign these images", "DNA"),
+            ("Match metadata", "[{'DNA': 'well'}, {'DNA': 'site'}]"),
+            ("Image set matching method", "Metadata"),
+            ("Select the rule criteria", 'and (metadata does channel "1")'),
+            ("Assign a name to", "Images matching rules"),
+            ("Select the image type", "Grayscale image"),
+            ("Name to assign these images", "Actin"),
+            ("Match metadata", "[{'Actin': 'well'}, {'Actin': 'site'}]"),
+            ("Image set matching method", "Metadata"),
+            ("Select the rule criteria", 'and (metadata does channel "2")'),
+        ],
+    )
+
+    schema = compile_image_schema([names_and_types_module])
+
+    dna = schema.assignment_for_alias("DNA")
+    actin = schema.assignment_for_alias("Actin")
+    assert dna is not None
+    assert actin is not None
+    assert dna.selector.components == (
+        ComponentSelector(AllComponents.CHANNEL, "1"),
+    )
+    assert actin.selector.components == (
+        ComponentSelector(AllComponents.CHANNEL, "2"),
+    )
+    assert schema.match_plan is not None
+    assert schema.match_plan.dimensions[0].field_for_alias("DNA") == "well"
+    assert schema.match_plan.dimensions[0].field_for_alias("Actin") == "well"
+    assert schema.match_plan.dimensions[1].field_for_alias("DNA") == "site"
+    assert schema.match_plan.dimensions[1].field_for_alias("Actin") == "site"

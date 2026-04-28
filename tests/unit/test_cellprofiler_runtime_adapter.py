@@ -291,8 +291,77 @@ def test_cellprofiler_adapter_resolves_step_input_channel_selector_from_current_
 
     resolved = adapter.resolve_source_image(DNA_IMAGE, fallback_stack)
 
-    assert resolved.shape == (1, 2, 2)
-    np.testing.assert_array_equal(resolved[0], fallback_stack[0])
+    assert resolved.shape == (2, 2)
+    np.testing.assert_array_equal(resolved, fallback_stack[0])
+
+
+def test_cellprofiler_adapter_resolves_singleton_step_input_selector_to_natural_2d_view():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias=DNA_IMAGE,
+                        selector=SourceSelector(
+                            components=(
+                                ComponentSelector(AllComponents.CHANNEL, "1"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=("A01_s001_w1_z001_t001.tif",)
+    )
+    filemanager = FileManagerStub()
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+    fallback_stack = np.stack(
+        [np.full((2, 2), 1.0, dtype=np.float32)]
+    )
+
+    resolved = adapter.resolve_source_image(DNA_IMAGE, fallback_stack)
+
+    assert resolved.shape == (2, 2)
+    np.testing.assert_array_equal(resolved, fallback_stack[0])
+
+
+def test_cellprofiler_adapter_resolves_singleton_alias_only_step_input_to_natural_2d_view():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(bindings=(NamedSourceBinding(alias=DNA_IMAGE),)),
+        )
+    )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=("A01_s001_w1_z001_t001.tif",)
+    )
+    filemanager = FileManagerStub()
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+    fallback_stack = np.stack(
+        [np.full((2, 2), 1.0, dtype=np.float32)]
+    )
+
+    resolved = adapter.resolve_source_image(DNA_IMAGE, fallback_stack)
+
+    assert resolved.shape == (2, 2)
+    np.testing.assert_array_equal(resolved, fallback_stack[0])
 
 
 def test_cellprofiler_adapter_resolves_pipeline_start_component_selector_with_inherited_scope():

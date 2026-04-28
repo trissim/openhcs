@@ -23,6 +23,8 @@ class Microscope(Enum):
     OPENHCS = "openhcs"  # Added for the OpenHCS pre-processed format
     IMAGEXPRESS = "ImageXpress"
     OPERAPHENIX = "OperaPhenix"
+    BBBC021 = "bbbc021"
+    BBBC038 = "bbbc038"
     OMERO = "omero"  # Added for OMERO virtual filesystem backend
 
 class LiteralDtype(Enum):

@@ -435,6 +435,25 @@ class FuncStepContractValidator:
                 )) from e
 
     @staticmethod
+    def normalized_group_by(
+        group_by,
+        variable_components,
+        step_name: str,
+    ):
+        """Return compiled grouping semantics after conflict normalization."""
+        if group_by and group_by.value in [vc.value for vc in variable_components]:
+            from openhcs.constants import GroupBy
+
+            logger.warning(
+                f"Step '{step_name}': Auto-resolved group_by conflict. "
+                f"Set group_by to GroupBy.NONE due to conflict with "
+                f"variable_components {[vc.value for vc in variable_components]}. "
+                f"Original group_by was {group_by.value}."
+            )
+            return GroupBy.NONE
+        return group_by
+
+    @staticmethod
     def validate_pipeline(
         steps: List[Any],
         pipeline_context: ProcessingContext | None = None,
@@ -527,15 +546,11 @@ class FuncStepContractValidator:
         group_by = step_plan.group_by
         variable_components = step_plan.variable_components or ()
 
-        if group_by and group_by.value in [vc.value for vc in variable_components]:
-            from openhcs.constants import GroupBy
-            logger.warning(
-                f"Step '{step_name}': Auto-resolved group_by conflict. "
-                f"Set group_by to GroupBy.NONE due to conflict with "
-                f"variable_components {[vc.value for vc in variable_components]}. "
-                f"Original group_by was {group_by.value}."
-            )
-            group_by = GroupBy.NONE
+        group_by = FuncStepContractValidator.normalized_group_by(
+            group_by,
+            variable_components,
+            step_name,
+        )
 
         validation_result = validator.validate_step(
             variable_components,
@@ -593,18 +608,11 @@ class FuncStepContractValidator:
         validator = GenericValidator(config)
 
         # Check for constraint violation: group_by ∈ variable_components
-        if group_by and group_by.value in [vc.value for vc in variable_components]:
-            # Auto-resolve constraint violation by setting group_by to NONE
-            # Use GroupBy.NONE (explicit "no grouping") instead of None (which means "inherit")
-            from openhcs.constants import GroupBy
-            logger.warning(
-                f"Step '{step_name}': Auto-resolved group_by conflict. "
-                f"Set group_by to GroupBy.NONE due to conflict with variable_components {[vc.value for vc in variable_components]}. "
-                f"Original group_by was {group_by.value}."
-            )
-            # Update group_by to GroupBy.NONE (explicit no-grouping)
-            # Note: We don't mutate the step itself, just use the resolved value
-            group_by = GroupBy.NONE
+        group_by = FuncStepContractValidator.normalized_group_by(
+            group_by,
+            variable_components,
+            step_name,
+        )
 
         # Sequential processing validation removed - it's now pipeline-level, not per-step
 

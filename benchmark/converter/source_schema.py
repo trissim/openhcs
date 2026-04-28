@@ -310,13 +310,11 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
         module: ModuleBlock,
         state: _SchemaBuilder,
     ) -> None:
-        match_plan = _match_plan_from_names_and_types(module)
+        assignment_blocks = _names_and_types_blocks(module.iter_settings())
+        match_plan = _match_plan_from_names_and_types(module, assignment_blocks)
         if match_plan is not None:
             state.declare_match_plan(match_plan)
-        for block in _group_repeating_blocks(
-            module.iter_settings(),
-            start_name="Select the rule criteria",
-        ):
+        for block in assignment_blocks:
             alias = _block_value(block, "Name to assign these images", default="")
             if not alias:
                 continue
@@ -352,6 +350,14 @@ class GroupsModuleCompiler(SetupModuleCompiler):
             for setting in module.iter_settings("Metadata category")
         )
         state.grouping = GroupingPlan(metadata_fields=metadata_fields)
+
+
+def _names_and_types_blocks(
+    settings: Sequence[ModuleSetting],
+) -> tuple[tuple[ModuleSetting, ...], ...]:
+    if any(setting.name == "Assign a name to" for setting in settings):
+        return _group_repeating_blocks(settings, start_name="Assign a name to")
+    return _group_repeating_blocks(settings, start_name="Select the rule criteria")
 
 
 def _group_repeating_blocks(
@@ -492,22 +498,43 @@ def _origin_for_selector(selector: SourceSelector) -> SourceBindingOrigin:
 
 def _match_plan_from_names_and_types(
     module: ModuleBlock,
+    blocks: Sequence[Sequence[ModuleSetting]],
 ) -> SourceBindingMatchPlan | None:
-    method_value = module.get_setting("Image set matching method", "").strip()
-    if not method_value:
+    method_values = tuple(
+        value.strip()
+        for value in module.get_setting_values("Image set matching method")
+        if value.strip()
+    )
+    if not method_values:
         return None
-    method = _source_binding_match_method(method_value)
+    method = _source_binding_match_method(method_values[0])
+    if any(
+        _source_binding_match_method(value) is not method
+        for value in method_values[1:]
+    ):
+        raise ValueError(
+            "NamesAndTypes declared conflicting image set matching methods."
+        )
     if method is not SourceBindingMatchMethod.METADATA:
         raise NotImplementedError(
             "Only metadata-based NamesAndTypes image-set matching is currently "
-            f"supported, got {method_value!r}."
+            f"supported, got {method_values[0]!r}."
         )
-    raw_match_metadata = module.get_setting("Match metadata", "").strip()
-    if not raw_match_metadata:
+    raw_match_metadata_values = tuple(
+        value.strip()
+        for value in module.get_setting_values("Match metadata")
+        if value.strip()
+    )
+    if not raw_match_metadata_values:
         return SourceBindingMatchPlan(method=method)
+    if len(raw_match_metadata_values) == 1:
+        return SourceBindingMatchPlan(
+            method=method,
+            dimensions=_match_dimensions(raw_match_metadata_values[0]),
+        )
     return SourceBindingMatchPlan(
         method=method,
-        dimensions=_match_dimensions(raw_match_metadata),
+        dimensions=_merge_match_dimensions_from_blocks(blocks),
     )
 
 
@@ -548,3 +575,28 @@ def _match_dimensions(
         if fields:
             dimensions.append(SourceBindingMatchDimension(fields=fields))
     return tuple(dimensions)
+
+
+def _merge_match_dimensions_from_blocks(
+    blocks: Sequence[Sequence[ModuleSetting]],
+) -> tuple[SourceBindingMatchDimension, ...]:
+    merged_dimensions: list[list[SourceBindingMatchField]] = []
+    for block in blocks:
+        raw_match_metadata = _block_value(block, "Match metadata").strip()
+        if not raw_match_metadata:
+            continue
+        block_dimensions = _match_dimensions(raw_match_metadata)
+        if not merged_dimensions:
+            merged_dimensions = [[] for _ in block_dimensions]
+        if len(merged_dimensions) != len(block_dimensions):
+            raise ValueError(
+                "NamesAndTypes declared incompatible image-set match dimensions "
+                "across repeated image assignments."
+            )
+        for index, dimension in enumerate(block_dimensions):
+            merged_dimensions[index].extend(dimension.fields)
+    return tuple(
+        SourceBindingMatchDimension(fields=tuple(fields))
+        for fields in merged_dimensions
+        if fields
+    )

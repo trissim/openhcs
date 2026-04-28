@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 from openhcs.core.artifacts import ArtifactSpec
+from openhcs.constants.constants import AllComponents
+from openhcs.core.source_bindings import StepSourceBindingsConfig, SourceBindingOrigin
 
 from .module_settings_binding import ModuleSettingsBindingStrategy
 from .parser import ModuleBlock
@@ -103,6 +105,7 @@ from openhcs.core.source_bindings import (
 from openhcs.core.config import LazyProcessingConfig
 from openhcs.constants.constants import VariableComponents, GroupBy
 from openhcs.constants.constants import AllComponents
+from openhcs.constants.input_source import InputSource
 
 '''
 
@@ -281,9 +284,9 @@ from openhcs.constants.constants import AllComponents
 
     # Category → variable_components mapping
     CATEGORY_TO_VARIABLE_COMPONENTS = {
-        "image_operation": "VariableComponents.SITE",
-        "z_projection": "VariableComponents.Z_INDEX",
-        "channel_operation": "VariableComponents.CHANNEL",
+        "image_operation": ("VariableComponents.SITE",),
+        "z_projection": ("VariableComponents.Z_INDEX",),
+        "channel_operation": ("VariableComponents.CHANNEL",),
     }
 
     def _generate_steps_from_registry(
@@ -309,8 +312,14 @@ from openhcs.constants.constants import AllComponents
             artifact_contract = artifact_contracts[module.module_num]
 
             # Map category to variable_components
-            var_comp = self.CATEGORY_TO_VARIABLE_COMPONENTS.get(
-                category, "VariableComponents.SITE"
+            variable_components, group_by_literal = self._processing_components_for(
+                category,
+                artifact_contract.source_bindings,
+            )
+            input_source_literal = (
+                "InputSource.PIPELINE_START"
+                if artifact_contract.external_source_symbols
+                else None
             )
 
             # Parse parameter mapping from function docstring
@@ -347,7 +356,15 @@ from openhcs.constants.constants import AllComponents
                     f"{source_bindings_literal(artifact_contract.source_bindings)},"
                 )
             lines.append("        processing_config=LazyProcessingConfig(")
-            lines.append(f"            variable_components=[{var_comp}]")
+            lines.append(
+                "            variable_components=["
+                + ", ".join(variable_components)
+                + "],"
+            )
+            if group_by_literal is not None:
+                lines.append(f"            group_by={group_by_literal},")
+            if input_source_literal is not None:
+                lines.append(f"            input_source={input_source_literal},")
             lines.append("        ),")
 
             # Add unmapped settings as comments (for debugging)
@@ -360,6 +377,40 @@ from openhcs.constants.constants import AllComponents
 
         lines.append("]")
         return "\n".join(lines)
+
+    def _processing_components_for(
+        self,
+        category: str,
+        source_bindings: StepSourceBindingsConfig,
+    ) -> tuple[tuple[str, ...], str | None]:
+        """Derive native stack/group semantics for one converted step."""
+        if not source_bindings.is_empty:
+            if self._requires_channel_stack_input(source_bindings):
+                return ("VariableComponents.CHANNEL",), "GroupBy.SITE"
+            return ("VariableComponents.SITE",), None
+        variable_components = list(
+            self.CATEGORY_TO_VARIABLE_COMPONENTS.get(
+                category,
+                ("VariableComponents.SITE",),
+            )
+        )
+        return tuple(variable_components), None
+
+    def _requires_channel_stack_input(
+        self,
+        source_bindings: StepSourceBindingsConfig,
+    ) -> bool:
+        """Whether one step-input source binding needs channel-varying stack input."""
+        for group in source_bindings.groups:
+            for binding in group.bindings:
+                if binding.origin is not SourceBindingOrigin.STEP_INPUT:
+                    continue
+                if any(
+                    selector.component is AllComponents.CHANNEL
+                    for selector in binding.selector.components
+                ):
+                    return True
+        return False
 
     def _generate_artifact_contracts(
         self,
@@ -411,7 +462,10 @@ from openhcs.constants.constants import AllComponents
             raw_binding = raw_function_bindings[module.module_num]
             runtime_binding = runtime_function_bindings[module.module_num]
             executor_name = self._executor_binding_name(module)
-            processing_contract = self._processing_contract_expression(module.name)
+            processing_contract = self._runtime_processing_contract_expression(
+                module.name,
+                contract.source_bindings,
+            )
 
             lines.append(
                 f"{executor_name} = "
@@ -516,12 +570,43 @@ from openhcs.constants.constants import AllComponents
         name = re.sub(r'([A-Z])', r'_\1', module_name).lower().lstrip('_')
         return name
 
+    def _runtime_processing_contract_expression(
+        self,
+        module_name: str,
+        source_bindings: StepSourceBindingsConfig,
+    ) -> str:
+        """Return the effective runtime contract for one generated wrapper.
+
+        Selector-bearing STEP_INPUT bindings must resolve against the full current
+        stack before alias-specific views are chosen, so those wrappers cannot run
+        slice-by-slice even when the absorbed raw function is nominally PURE_2D.
+        """
+        if self._requires_step_input_selector_resolution(source_bindings):
+            return "ProcessingContract.FLEXIBLE"
+        return self._processing_contract_expression(module_name)
+
     def _processing_contract_expression(self, module_name: str) -> str:
-        """Return generated-code expression for the module processing contract."""
+        """Return generated-code expression for the raw absorbed module contract."""
         contract_name = str(self._registry[module_name]["contract"]).upper()
         if contract_name not in {"PURE_2D", "PURE_3D", "FLEXIBLE", "VOLUMETRIC_TO_SLICE"}:
             contract_name = "FLEXIBLE"
         return f"ProcessingContract.{contract_name}"
+
+    def _requires_step_input_selector_resolution(
+        self,
+        source_bindings: StepSourceBindingsConfig,
+    ) -> bool:
+        """Whether runtime alias resolution needs the unsliced current stack."""
+        return any(
+            binding.origin is SourceBindingOrigin.STEP_INPUT
+            and (
+                binding.selector.components
+                or binding.selector.metadata
+                or not binding.selector.inherit_current_scope
+            )
+            for group in source_bindings.groups
+            for binding in group.bindings
+        )
 
     def _normalize_setting_name(self, setting_name: str) -> str:
         """

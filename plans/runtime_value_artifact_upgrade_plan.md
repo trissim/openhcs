@@ -201,12 +201,13 @@ The biggest unresolved items are now:
 3. GUI/ObjectState/pycodify do not yet own richer source-binding state as an editable first-class step concept.
 4. The main-input edge is now explicit in compiled plans, but the external execution model is still list-based rather than first-class graph-based.
 5. The compiled identity record is semantically useful, but its current `step_scope_id` naming still reflects pre-compilation/UI vocabulary more than ideal runtime/compiler terminology.
-6. Real BBBC pipelines are not yet fully accepted end to end.
+6. Real BBBC pipelines are only partially accepted end to end.
    - live BBBC021 setup/image schema compilation now succeeds
    - live BBBC021 conversion now succeeds end to end at code-generation time
-   - the next gap is execution/validation on real BBBC data rather than missing absorbed module coverage
+   - a BBBC021-style generated pipeline now executes through the OpenHCS orchestrator with typed named-channel bindings
+   - the next gap is broader real-data validation and semantic coverage, not basic execution enablement
 7. Export and relationship-heavy semantics are not yet fully validated on real pipelines.
-8. Benchmarking is ahead of the remaining CellProfiler semantics and should stay secondary.
+8. Benchmarking is no longer ahead of the remaining CellProfiler semantics, but it should still stay secondary to broader semantic validation.
 
 ---
 
@@ -714,6 +715,7 @@ Acceptance targets:
 2. `ExampleFly.cppipe` end-to-end execution remains clean
 3. `ExampleHuman.cppipe` either executes or fails only on clearly unsupported absorbed-module semantics
 4. BBBC021 analytical core converts and executes through OpenHCS
+5. benchmark adapter execution of a converted `.cppipe` uses the same path and stays green
 
 Scope notes:
 
@@ -750,6 +752,7 @@ Acceptance:
 
 1. benchmark path uses the same production conversion/runtime path as the integration tests
 2. benchmarking is no longer ahead of semantic support
+3. benchmark adapter coverage remains a thin consumer of the same converted-pipeline runtime path
 
 ---
 
@@ -807,9 +810,9 @@ The branch should be considered “architecturally ready for full CellProfiler s
 
 The next implementation pass should be:
 
-1. thread the setup-module image schema farther outward so it is not trapped inside converter-local lowering
-2. validate the richer source-binding path on a real BBBC-style multi-image `.cppipe`
-3. move from conversion success to execution acceptance on a real BBBC-style dataset
+1. widen acceptance from the current BBBC021-style generated execution path to more real-pipeline and real-data validation
+2. validate relationship-heavy and export-heavy converted pipelines on real outputs
+3. thread the setup-module image schema farther outward so it is not trapped inside converter-local lowering
 4. keep replacing hidden sequential assumptions with explicit compiled edge records where that can be done without changing the list-based pipeline/editor model
 
 That keeps the current pass aligned with real CellProfiler semantics while still preparing the compiler/runtime for a later DAG model if it is still justified after acceptance testing.

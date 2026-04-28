@@ -419,10 +419,6 @@ def _processing_contract_for(func: Callable[..., Any]) -> ProcessingContract:
     contract = metadata.get("__processing_contract__")
     declared_contract = metadata.get("__cellprofiler_declared_contract__")
     if isinstance(contract, ProcessingContract):
-        if declared_contract == "unknown":
-            inferred = _infer_unknown_processing_contract(func)
-            if inferred is not None:
-                return inferred
         return contract
     if declared_contract == "unknown":
         inferred = _infer_unknown_processing_contract(func)

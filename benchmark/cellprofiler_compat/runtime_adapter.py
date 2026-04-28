@@ -489,7 +489,7 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
 
     def resolve_image(self, request: SourceBindingResolutionRequest) -> Any:
         if not _binding_requires_selector(request.binding):
-            return request.fallback_image
+            return _natural_step_input_payload(request.fallback_image)
         step_input_files = request.adapter.source_binding_context.step_input_files
         if not step_input_files:
             raise NotImplementedError(
@@ -753,10 +753,14 @@ def _select_step_input_stack(
             "stack indexes after filename matching."
         )
     if len(step_input_files) == 1:
-        return fallback_image
+        return _natural_step_input_payload(fallback_image)
     slices = _unstack_payload(fallback_image)
     selected_slices = [slices[index] for index in selected_indexes]
     return _restack_like_payload(selected_slices, fallback_image)
+
+
+def _natural_step_input_payload(fallback_image: Any) -> Any:
+    return _restack_like_payload(_unstack_payload(fallback_image), fallback_image)
 
 
 def _load_pipeline_start_stack(
@@ -797,7 +801,7 @@ def _restack_like_payload(
 ) -> Any:
     if not slices:
         raise ValueError("Cannot restack an empty slice list.")
-    if len(slices) == 1 and hasattr(reference_payload, "ndim") and reference_payload.ndim == 2:
+    if len(slices) == 1:
         return slices[0]
     memory_type = detect_memory_type(reference_payload)
     return stack_slices(slices, memory_type=memory_type, gpu_id=0)

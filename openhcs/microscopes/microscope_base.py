@@ -516,11 +516,6 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
         if not filemanager.exists(str(folder_path), backend):
             raise ValueError(f"Folder path does not exist: {folder_path}")
 
-        # Set default GroupBy if none provided
-        if group_by is None:
-            from openhcs.constants.constants import GroupBy
-            group_by = GroupBy.CHANNEL
-
         # Create pattern engine on demand with the provided filemanager
         from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
         pattern_engine = PatternDiscoveryEngine(self.parser, filemanager)

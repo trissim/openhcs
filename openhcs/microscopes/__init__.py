@@ -9,6 +9,32 @@ following OpenHCS generic solution principles. All handlers are automatically
 discovered and registered via metaclass during discovery - no hardcoded imports needed.
 """
 
+from importlib import import_module
+from pkgutil import iter_modules
+
+
+_DISCOVERY_EXCLUDED_MODULES = frozenset(
+    {
+        "handler_registry_service",
+        "microscope_base",
+        "microscope_interfaces",
+        "detect_mixins",
+        "tiff_metadata_mixin",
+    }
+)
+
+
+def _load_microscope_modules() -> None:
+    """Import microscope modules so nominal handler classes self-register."""
+    for module_info in iter_modules(__path__):
+        module_name = module_info.name
+        if module_name.startswith("_") or module_name in _DISCOVERY_EXCLUDED_MODULES:
+            continue
+        import_module(f"{__name__}.{module_name}")
+
+
+_load_microscope_modules()
+
 # Import base components and factory function
 from openhcs.microscopes.microscope_base import create_microscope_handler
 
