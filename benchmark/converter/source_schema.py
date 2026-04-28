@@ -82,6 +82,22 @@ _SOURCE_BINDING_MATCH_METHODS_BY_LITERAL = MappingProxyType(
         "order": SourceBindingMatchMethod.ORDER,
     }
 )
+_LOAD_IMAGES_MATCH_TEXT_SETTING = (
+    "Type the text that these images have in common (case-sensitive)"
+)
+_LOAD_IMAGES_ALIAS_SETTING = (
+    "What do you want to call this image in CellProfiler?"
+)
+_LOAD_IMAGES_METADATA_MODE_SETTING = (
+    "Do you want to extract metadata from the file name, "
+    "the subfolder path or both?"
+)
+_LOAD_IMAGES_FILE_PATTERN_SETTING_PREFIX = (
+    "Type the regular expression that finds metadata in the file name"
+)
+_LOAD_IMAGES_FOLDER_PATTERN_SETTING_PREFIX = (
+    "Type the regular expression that finds metadata in the subfolder path"
+)
 
 
 class SetupModuleCompiler(ABC, metaclass=AutoRegisterMeta):
@@ -156,7 +172,8 @@ class _SchemaBuilder:
         ).to_schema()
 
     def add_metadata_rule(self, rule: MetadataExtractionRule) -> None:
-        self.metadata_rules.append(rule)
+        if rule not in self.metadata_rules:
+            self.metadata_rules.append(rule)
 
     def add_imported_metadata_table(self, table: ImportedMetadataTable) -> None:
         self.imported_metadata_tables.append(table)
@@ -228,6 +245,33 @@ class ImagesModuleCompiler(SetupModuleCompiler):
                 filtering_mode=filtering_mode,
                 criteria=criteria,
             )
+
+
+class LoadImagesModuleCompiler(SetupModuleCompiler):
+    module_name = "LoadImages"
+
+    def compile(
+        self,
+        module: ModuleBlock,
+        state: _SchemaBuilder,
+    ) -> None:
+        _require_legacy_load_images_source_type(module)
+        _declare_load_images_grouping(module, state)
+        for block in _load_images_blocks(module.iter_settings()):
+            alias = _block_value(block, _LOAD_IMAGES_ALIAS_SETTING)
+            if not alias:
+                continue
+            filters = _load_images_source_filters(module, block)
+            selector = SourceSelector(filters=filters)
+            state.declare_assignment(
+                ImageAssignment(
+                    alias=alias,
+                    image_type="Grayscale image",
+                    selector=selector,
+                    origin=SourceBindingOrigin.STEP_INPUT,
+                )
+            )
+            _compile_load_images_metadata_rules(block, filters, state)
 
 
 class MetadataModuleCompiler(SetupModuleCompiler):
@@ -440,6 +484,137 @@ def _group_repeating_blocks(
     return tuple(tuple(block) for block in blocks)
 
 
+def _load_images_blocks(
+    settings: Sequence[ModuleSetting],
+) -> tuple[tuple[ModuleSetting, ...], ...]:
+    return _group_repeating_blocks(
+        settings,
+        start_name=_LOAD_IMAGES_MATCH_TEXT_SETTING,
+    )
+
+
+def _require_legacy_load_images_source_type(module: ModuleBlock) -> None:
+    file_type = module.get_setting("What type of files are you loading?", "")
+    if file_type and "individual" not in file_type.strip().lower():
+        raise ValueError(
+            "LoadImages setup lowering only supports individual-image source "
+            f"declarations, got {file_type!r}."
+        )
+
+
+def _declare_load_images_grouping(
+    module: ModuleBlock,
+    state: _SchemaBuilder,
+) -> None:
+    if module.get_setting("Do you want to group image sets by metadata?", "") != "Yes":
+        return
+    fields = tuple(
+        field.strip()
+        for field in re.split(
+            r"[,;]",
+            module.get_setting("What metadata fields do you want to group by?", ""),
+        )
+        if field.strip()
+    )
+    if fields:
+        state.grouping = GroupingPlan(metadata_fields=fields)
+
+
+def _load_images_source_filters(
+    module: ModuleBlock,
+    block: Sequence[ModuleSetting],
+) -> tuple[SourceFilterClause, ...]:
+    filters: list[SourceFilterClause] = []
+    match_text = _block_value(block, _LOAD_IMAGES_MATCH_TEXT_SETTING)
+    if match_text:
+        filters.append(
+            SourceFilterClause(
+                subject=SourceFilterSubject.FILE,
+                match_type=_load_images_match_type(module),
+                value=_decode_cellprofiler_setting_literal(match_text),
+            )
+        )
+    if module.get_setting("Do you want to exclude certain files?", "") == "Yes":
+        exclusion_text = module.get_setting(
+            "Type the text that the excluded images have in common",
+            "",
+        )
+        if exclusion_text:
+            filters.append(
+                SourceFilterClause(
+                    subject=SourceFilterSubject.FILE,
+                    match_type=SourceFilterMatchType.DOES_NOT_CONTAIN,
+                    value=_decode_cellprofiler_setting_literal(exclusion_text),
+                )
+            )
+    return tuple(filters)
+
+
+def _load_images_match_type(module: ModuleBlock) -> SourceFilterMatchType:
+    mode = module.get_setting("How do you want to load these files?", "")
+    normalized = mode.strip().lower()
+    if not normalized or "exact" in normalized:
+        return SourceFilterMatchType.CONTAINS
+    if "regular" in normalized or "regex" in normalized:
+        return SourceFilterMatchType.CONTAINS_REGEX
+    raise ValueError(f"Unsupported LoadImages matching mode: {mode!r}.")
+
+
+def _compile_load_images_metadata_rules(
+    block: Sequence[ModuleSetting],
+    filters: tuple[SourceFilterClause, ...],
+    state: _SchemaBuilder,
+) -> None:
+    mode = _block_value(block, _LOAD_IMAGES_METADATA_MODE_SETTING)
+    for source in _load_images_metadata_sources(mode):
+        state.add_metadata_rule(
+            MetadataExtractionRule(
+                source=source,
+                pattern=_required_load_images_metadata_pattern(block, source),
+                filters=filters,
+            )
+        )
+
+
+def _load_images_metadata_sources(mode: str) -> tuple[MetadataSource, ...]:
+    normalized = mode.strip().lower()
+    if not normalized or normalized == "none":
+        return ()
+    sources: list[MetadataSource] = []
+    if "file" in normalized or "both" in normalized:
+        sources.append(MetadataSource.FILE_NAME)
+    if (
+        "folder" in normalized
+        or "subfolder" in normalized
+        or "path" in normalized
+        or "both" in normalized
+    ):
+        sources.append(MetadataSource.FOLDER_NAME)
+    if sources:
+        return tuple(dict.fromkeys(sources))
+    raise ValueError(f"Unsupported LoadImages metadata extraction mode: {mode!r}.")
+
+
+def _required_load_images_metadata_pattern(
+    block: Sequence[ModuleSetting],
+    source: MetadataSource,
+) -> str:
+    prefix = (
+        _LOAD_IMAGES_FOLDER_PATTERN_SETTING_PREFIX
+        if source is MetadataSource.FOLDER_NAME
+        else _LOAD_IMAGES_FILE_PATTERN_SETTING_PREFIX
+    )
+    pattern = _decode_cellprofiler_setting_literal(
+        _block_value_by_prefix(block, prefix)
+    )
+    if not pattern or pattern.strip().lower() == "none":
+        raise ValueError(
+            "LoadImages metadata extraction requires a non-empty "
+            f"{source.value} regular expression."
+        )
+    return pattern
+
+
 def _block_value(
     block: Sequence[ModuleSetting],
     name: str,
@@ -448,6 +623,18 @@ def _block_value(
 ) -> str:
     for setting in block:
         if setting.name == name:
+            return setting.value
+    return default
+
+
+def _block_value_by_prefix(
+    block: Sequence[ModuleSetting],
+    name_prefix: str,
+    *,
+    default: str = "",
+) -> str:
+    for setting in block:
+        if setting.name.startswith(name_prefix):
             return setting.value
     return default
 

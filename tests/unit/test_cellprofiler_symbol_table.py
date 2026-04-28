@@ -682,6 +682,7 @@ def test_cellprofiler_symbol_table_reads_gray_to_color_stack_inputs_from_records
 
 def test_partition_cppipe_modules_skips_setup_and_export_modules():
     modules = (
+        _module(0, "LoadImages", {}),
         _module(1, "Images", {}),
         _module(2, "Metadata", {}),
         _module(3, "NamesAndTypes", {}),
@@ -694,6 +695,7 @@ def test_partition_cppipe_modules_skips_setup_and_export_modules():
     partition = partition_cppipe_modules(modules)
 
     assert [module.name for module in partition.infrastructure_modules] == [
+        "LoadImages",
         "Images",
         "Metadata",
         "NamesAndTypes",

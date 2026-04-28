@@ -1156,6 +1156,7 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     (
         (
             "LoadData",
+            "LoadImages",
             "Images",
             "Metadata",
             "NamesAndTypes",

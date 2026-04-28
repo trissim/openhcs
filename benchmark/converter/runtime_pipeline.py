@@ -42,6 +42,7 @@ from .pipeline_generator import GeneratedPipeline, PipelineGenerator
 INFRASTRUCTURE_MODULE_NAMES = frozenset(
     {
         "LoadData",
+        "LoadImages",
         "Images",
         "Metadata",
         "NamesAndTypes",

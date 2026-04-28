@@ -44,10 +44,17 @@ def _schema_from_in_tree_cppipe(cppipe_name: str):
         / cppipe_name
     )
     modules = CPPipeParser().parse(cppipe_path)
+    setup_module_names = {
+        "LoadImages",
+        "Images",
+        "Metadata",
+        "NamesAndTypes",
+        "Groups",
+    }
     setup_modules = [
         module
         for module in modules
-        if module.name in {"Images", "Metadata", "NamesAndTypes", "Groups"}
+        if module.name in setup_module_names
     ]
     return compile_image_schema(setup_modules)
 
@@ -86,6 +93,35 @@ def test_cppipe_parser_preserves_repeated_settings_in_order(tmp_path: Path):
     ) == (
         'and (metadata does channel "1")',
         'and (metadata does channel "2")',
+    )
+
+
+def test_cppipe_parser_supports_indented_legacy_pipeline_modules(tmp_path: Path):
+    pipeline_path = tmp_path / "legacy_indented.pipeline"
+    pipeline_path.write_text(
+        "\n".join(
+            [
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "        Version:1",
+                "",
+                "        LoadImages:[module_num:1|enabled:True]",
+                "            What type of files are you loading?:individual images",
+                "            Type the text that these images have in common "
+                "(case-sensitive):Channel2",
+                "            What do you want to call this image in CellProfiler?:DNA",
+            ]
+        )
+    )
+
+    modules = CPPipeParser().parse(pipeline_path)
+
+    assert len(modules) == 1
+    assert modules[0].name == "LoadImages"
+    assert (
+        modules[0].get_setting(
+            "What do you want to call this image in CellProfiler?"
+        )
+        == "DNA"
     )
 
 
@@ -192,6 +228,60 @@ def test_compile_image_schema_lowers_object_loads_to_source_artifacts():
         ComponentSelector(AllComponents.CHANNEL, "3"),
     )
     assert schema.assignment_for_alias("IgnoredImageAlias") is None
+
+
+def test_compile_image_schema_lowers_load_images_to_typed_source_schema():
+    load_images_module = _module_with_records(
+        1,
+        "LoadImages",
+        [
+            ("What type of files are you loading?", "individual images"),
+            ("How do you want to load these files?", "Text-Exact match"),
+            ("Do you want to exclude certain files?", "Yes"),
+            ("Type the text that the excluded images have in common", "ILLUM"),
+            ("Do you want to group image sets by metadata?", "Yes"),
+            ("What metadata fields do you want to group by?", "WellRow,WellCol"),
+            (
+                "Type the text that these images have in common (case-sensitive)",
+                "Channel2",
+            ),
+            ("What do you want to call this image in CellProfiler?", "DNA"),
+            ("What is the position of this image in each group?", "1"),
+            (
+                "Do you want to extract metadata from the file name, "
+                "the subfolder path or both?",
+                "File name",
+            ),
+            (
+                "Type the regular expression that finds metadata in the file name\\x3A",
+                r"^.*-(?P<WellRow>.+)-(?P<WellCol>\x5B0-9\x5D{2})",
+            ),
+            (
+                "Type the regular expression that finds metadata in the "
+                "subfolder path\\x3A",
+                "None",
+            ),
+        ],
+    )
+
+    schema = compile_image_schema([load_images_module])
+    dna = schema.assignment_for_alias("DNA")
+
+    assert dna is not None
+    assert dna.origin is SourceBindingOrigin.STEP_INPUT
+    assert dna.selector.filters[0].subject is SourceFilterSubject.FILE
+    assert dna.selector.filters[0].match_type is SourceFilterMatchType.CONTAINS
+    assert dna.selector.filters[0].value == "Channel2"
+    assert dna.selector.filters[1].match_type is SourceFilterMatchType.DOES_NOT_CONTAIN
+    assert dna.selector.filters[1].value == "ILLUM"
+    assert len(schema.metadata_rules) == 1
+    assert schema.metadata_rules[0].source is MetadataSource.FILE_NAME
+    assert schema.metadata_rules[0].pattern == (
+        r"^.*-(?P<WellRow>.+)-(?P<WellCol>[0-9]{2})"
+    )
+    assert schema.metadata_rules[0].filters == dna.selector.filters
+    assert schema.grouping is not None
+    assert schema.grouping.metadata_fields == ("WellRow", "WellCol")
 
 
 def test_compile_image_schema_supports_v5_regex_labels_and_file_filters():
@@ -403,6 +493,50 @@ def test_codegen_upgrades_pure_2d_runtime_wrapper_when_step_input_binding_select
         "gray_to_color_3_runtime.__processing_contract__ = "
         "ProcessingContract.FLEXIBLE"
     ) in generated.code
+
+
+def test_codegen_uses_channel_stack_for_load_images_filter_bindings():
+    setup_modules = [
+        _module_with_records(
+            1,
+            "LoadImages",
+            [
+                ("What type of files are you loading?", "individual images"),
+                ("How do you want to load these files?", "Text-Exact match"),
+                (
+                    "Type the text that these images have in common (case-sensitive)",
+                    "Channel2",
+                ),
+                ("What do you want to call this image in CellProfiler?", "DNA"),
+                ("What is the position of this image in each group?", "1"),
+                (
+                    "Do you want to extract metadata from the file name, "
+                    "the subfolder path or both?",
+                    "None",
+                ),
+            ],
+        )
+    ]
+    processing_module = ModuleBlock(
+        name="IdentifyPrimaryObjects",
+        module_num=2,
+        settings={
+            "Select the input image": "DNA",
+            "Name the primary objects to be identified": "Nuclei",
+        },
+    )
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_load_images",
+        source_cppipe=Path("source.pipeline"),
+        modules=[processing_module],
+        skipped_modules=setup_modules,
+    )
+
+    assert "SourceFilterClause(" in generated.code
+    assert "SourceFilterMatchType.CONTAINS" in generated.code
+    assert "variable_components=[VariableComponents.CHANNEL]," in generated.code
+    assert "group_by=GroupBy.SITE," in generated.code
 
 
 def test_compile_image_schema_decodes_legacy_escaped_match_metadata():

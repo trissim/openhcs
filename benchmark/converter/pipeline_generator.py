@@ -437,6 +437,8 @@ from openhcs.constants.input_source import InputSource
             for binding in group.bindings:
                 if binding.origin is not SourceBindingOrigin.STEP_INPUT:
                     continue
+                if binding.selector.filters or binding.selector.metadata:
+                    return True
                 if any(
                     selector.component is AllComponents.CHANNEL
                     for selector in binding.selector.components

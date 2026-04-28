@@ -89,7 +89,7 @@ class CPPipeParser:
     # Pattern for module header line: ModuleName:[metadata]
     # The metadata can contain nested brackets like array([], dtype=uint8)
     MODULE_HEADER_PATTERN = re.compile(
-        r'^(\w+):\[(.+)\]$'
+        r'^\s*(\w+):\[(.+)\]$'
     )
     
     # Pattern for module metadata parsing
