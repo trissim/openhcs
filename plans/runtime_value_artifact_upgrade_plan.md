@@ -245,6 +245,11 @@ The branch has already established most of the typed runtime/compiler foundation
     - aligned 3D runtime kwargs, singleton label stacks, and multi-image CellProfiler inputs are normalized through typed runtime execution rules instead of runtime fallbacks
     - `MeasureTexture` and `MeasureGranularity` object variants now resolve through nominal function-resolution strategies and the shared object-measurement input policy
     - the real path now reaches successful orchestrator execution across illumination correction, primary/secondary/tertiary objects, object-to-image conversion, RGB composition, overlays, intensity/size/texture/granularity/neighborhood measurements, and CSV materialization
+34. Pipeline-start source resolution now covers non-native CellProfiler sidecar source files without weakening virtual-workspace validation:
+    - virtual workspaces still require real `workspace_mapping` metadata before pipeline-start source resolution can run
+    - once that invariant is satisfied, the source universe also includes physical plate-root files so selector-bearing bindings can resolve `.mat` illumination matrices and similar sidecar source payloads
+    - generated pipeline-start source-bound steps now emit `GroupBy.NONE` explicitly when executing over site/channel source universes, avoiding runtime auto-resolution noise
+    - a new fast integration fixture compiles and executes a real `LoadImages + CorrectIlluminationApply` `.cppipe` that resolves both the raw image and a MATLAB illumination matrix through `SourceBindingOrigin.PIPELINE_START`
 
 ### 3.2 What Is Still Missing
 
@@ -266,6 +271,7 @@ The biggest unresolved items are now:
    - canonical in-tree BBBC021 reference snapshots now prepare successfully and preserve typed schema facts under direct test coverage
    - canonical `BBBC021_analysis.cppipe` now executes through the orchestrator on synthetic BBBC021-shaped data and validates the core generated runtime path
    - canonical `BBBC021_illum.cppipe` now executes successfully as a real converted pipeline shape
+   - LoadImages-style `.mat` illumination sidecar binding now executes through the real generated pipeline/orchestrator path
    - canonical dataset-owned `.cppipe` references can now be resolved through the benchmark adapter instead of only local ad hoc files
    - ExampleFly now executes end to end as a real shipped `.cppipe` shape and materializes measurement CSV outputs on disk
    - a generated `RelateObjects` pipeline now executes through the orchestrator and materializes both relationship and measurement CSV outputs

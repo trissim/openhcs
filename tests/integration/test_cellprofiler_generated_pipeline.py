@@ -20,11 +20,12 @@ from openhcs.core.config import (
     VFSConfig,
 )
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-from openhcs.core.source_bindings import ComponentSelector
+from openhcs.core.source_bindings import ComponentSelector, SourceBindingOrigin
 from openhcs.tests.generators.generate_synthetic_data import (
     SyntheticMicroscopyGenerator,
 )
 from PIL import Image
+from scipy.io import savemat
 
 
 def test_cppipe_generated_pipeline_executes_through_orchestrator(
@@ -167,6 +168,61 @@ def test_bbbc021_canonical_illum_cppipe_executes_real_pipeline_shape(
         "A01_s1_w2_z001_t001.tif",
         "A01_s1_w4_z001_t001.tif",
     ]
+
+
+def test_loadimages_cppipe_executes_pipeline_start_mat_illumination_binding(
+    tmp_path: Path,
+) -> None:
+    plate_path = _generate_loadimages_mat_illum_plate(tmp_path / "mat_illum_plate")
+    cppipe_path = _write_loadimages_mat_illum_cppipe(
+        tmp_path / "loadimages_mat_illum.cppipe"
+    )
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / "generated_loadimages_mat_illum_pipeline.py",
+    )
+
+    raw_assignment = prepared.source_schema.resolved_assignment_for_alias("Raw")
+    illum_assignment = prepared.source_schema.resolved_assignment_for_alias("Illum")
+    assert raw_assignment is not None
+    assert raw_assignment.origin is SourceBindingOrigin.PIPELINE_START
+    assert illum_assignment is not None
+    assert illum_assignment.origin is SourceBindingOrigin.PIPELINE_START
+
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=True,
+        microscope=Microscope.IMAGEXPRESS,
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            output_dir_suffix="_generated_cppipe",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
+    orchestrator.initialize()
+
+    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+
+    assert all(
+        result.is_success()
+        for result in execution.execution_results.values()
+    )
+    corrected_records = execution.compiled_contexts["A01"].runtime_value_store.find(
+        name="CorrectedRaw",
+        kind=ArtifactKind.IMAGE,
+        axis_id="A01",
+    )
+    assert len(corrected_records) == 1
+    assert np.asarray(corrected_records[0].value.data).shape[-2:] == (64, 64)
+    assert sorted(
+        path.name
+        for path in (_generated_output_root(plate_path) / "images").glob("*.tif")
+    ) == ["A01_s001_w1_z001_t001.tif"]
 
 
 def test_examplefly_cppipe_generated_pipeline_executes_real_pipeline_shape(
@@ -376,6 +432,30 @@ def _generate_bbbc021_plate(plate_path: Path) -> Path:
     return plate_path
 
 
+def _generate_loadimages_mat_illum_plate(plate_path: Path) -> Path:
+    generator = SyntheticMicroscopyGenerator(
+        output_dir=str(plate_path),
+        grid_size=(1, 1),
+        tile_size=(64, 64),
+        wavelengths=1,
+        z_stack_levels=1,
+        num_cells=4,
+        cell_size_range=(6, 8),
+        cell_intensity_range=(28000, 42000),
+        background_intensity=200,
+        noise_level=10,
+        wells=["A01"],
+        format="ImageXpress",
+        random_seed=17,
+    )
+    generator.generate_dataset()
+    savemat(
+        plate_path / "illum_Channel2.mat",
+        {"Image": np.full((64, 64), 2.0, dtype=np.float32)},
+    )
+    return plate_path
+
+
 def _write_bbbc021_image(path: Path, *, seed: int, signal: int) -> None:
     rng = np.random.default_rng(seed)
     image = rng.normal(900, 40, size=(64, 64)).clip(0, 65535).astype(np.uint16)
@@ -506,6 +586,55 @@ def _write_bbbc021_cppipe(cppipe_path: Path) -> Path:
                     "enabled:True|wants_pause:False]"
                 ),
                 "    Select measurements to export:No",
+                "",
+            )
+        )
+    )
+    return cppipe_path
+
+
+def _write_loadimages_mat_illum_cppipe(cppipe_path: Path) -> Path:
+    cppipe_path.write_text(
+        "\n".join(
+            (
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "Version:3",
+                "DateRevision:300",
+                "GitHash:",
+                "ModuleCount:2",
+                "HasImagePlaneDetails:False",
+                (
+                    "LoadImages:[module_num:1|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    What type of files are you loading?:individual images",
+                "    How do you want to load these files?:Text-Exact match",
+                "    Do you want to exclude certain files?:No",
+                "    Type the text that these images have in common (case-sensitive):w1",
+                "    What do you want to call this image in CellProfiler?:Raw",
+                "    What is the position of this image in each group?:1",
+                (
+                    "    Do you want to extract metadata from the file name, "
+                    "the subfolder path or both?:None"
+                ),
+                (
+                    "    Type the text that these images have in common "
+                    "(case-sensitive):illum_Channel2"
+                ),
+                "    What do you want to call this image in CellProfiler?:Illum",
+                "    What is the position of this image in each group?:2",
+                (
+                    "    Do you want to extract metadata from the file name, "
+                    "the subfolder path or both?:None"
+                ),
+                (
+                    "CorrectIlluminationApply:[module_num:2|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Select the input image:Raw",
+                "    Name the output image:CorrectedRaw",
+                "    Select the illumination function:Illum",
+                "    Select how the illumination function is applied:Divide",
                 "",
             )
         )

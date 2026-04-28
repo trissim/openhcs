@@ -540,6 +540,7 @@ def test_codegen_uses_pipeline_start_for_load_images_filter_bindings():
         "variable_components=[VariableComponents.SITE, "
         "VariableComponents.CHANNEL],"
     ) in generated.code
+    assert "group_by=GroupBy.NONE," in generated.code
 
 
 def test_compile_image_schema_decodes_legacy_escaped_match_metadata():

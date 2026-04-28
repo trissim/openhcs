@@ -578,17 +578,40 @@ class PatternGroupRuntime:
         metadata_handler = OpenHCSMetadataHandler(self.context.filemanager)
         metadata = metadata_handler._load_metadata_dict(self.context.plate_path)
         subdirectories = metadata.get(FIELDS.SUBDIRECTORIES, {})
-        source_files = dict.fromkeys(
+        workspace_source_files = tuple(
             str(Path(self.context.plate_path) / real_relative)
             for subdirectory in subdirectories.values()
             for real_relative in subdirectory.get("workspace_mapping", {}).values()
         )
-        if not source_files:
+        if not workspace_source_files:
             raise RuntimeError(
                 "virtual_workspace pipeline-start source resolution requires "
                 "workspace_mapping entries in OpenHCS metadata."
             )
+        source_files = dict.fromkeys(
+            (
+                *workspace_source_files,
+                *self._physical_plate_source_files(
+                    excluded_names=(OpenHCSMetadataHandler.METADATA_FILENAME,)
+                ),
+            )
+        )
         return tuple(source_files)
+
+    def _physical_plate_source_files(
+        self,
+        *,
+        excluded_names: tuple[str, ...] = (),
+    ) -> tuple[str, ...]:
+        return tuple(
+            str(path)
+            for path in self.context.filemanager.list_files(
+                str(self.context.plate_path),
+                Backend.DISK.value,
+                recursive=True,
+            )
+            if Path(path).name not in excluded_names
+        )
 
     def _component_artifact_plans(self) -> ComponentArtifactPlans:
         request = self.request

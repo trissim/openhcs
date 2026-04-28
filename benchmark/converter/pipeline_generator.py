@@ -421,7 +421,7 @@ from openhcs.constants.input_source import InputSource
                 return (
                     "VariableComponents.SITE",
                     "VariableComponents.CHANNEL",
-                ), None
+                ), "GroupBy.NONE"
             return ("VariableComponents.SITE",), None
         if contract.runtime_artifact_inputs:
             return ("VariableComponents.CHANNEL",), "GroupBy.SITE"
