@@ -15,6 +15,7 @@ from benchmark.cellprofiler_library.functions.measureimageareaoccupied import (
     measure_image_area_occupied,
 )
 from benchmark.cellprofiler_library.functions.opening import opening
+from benchmark.cellprofiler_library.functions.overlayoutlines import overlay_outlines
 from benchmark.cellprofiler_library.functions.unmixcolors import unmix_colors
 from openhcs.core.config import DtypeConfig
 from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
@@ -169,3 +170,24 @@ def test_align_returns_two_registered_images():
     assert aligned_first.shape == first.shape
     assert aligned_second.shape == second.shape
     assert align.__processing_contract__ is ProcessingContract.FLEXIBLE
+
+
+def test_overlay_outlines_runs_mixed_image_and_object_rows():
+    base = np.zeros((8, 8), dtype=np.float32)
+    outline_image = np.zeros_like(base)
+    outline_image[1:6, 1] = 1.0
+    labels = np.zeros((8, 8), dtype=np.int32)
+    labels[3:6, 3:6] = 1
+
+    output = overlay_outlines(
+        np.stack((base, outline_image)),
+        outline_source_kinds=("image", "objects"),
+        outline_colors=("Red", "Green"),
+        object_labels=(labels,),
+        dtype_config=DtypeConfig(),
+    )
+
+    assert output.shape == (8, 8, 3)
+    assert output[..., 0].max() > 0
+    assert output[..., 1].max() > 0
+    assert overlay_outlines.__processing_contract__ is ProcessingContract.FLEXIBLE

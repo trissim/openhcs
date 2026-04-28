@@ -1,141 +1,363 @@
-"""Converted from CellProfiler: OverlayOutlines
+"""Converted from CellProfiler: OverlayOutlines."""
 
-Places outlines of objects over a desired image.
-Supports both 2D and 3D images.
-"""
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any
 
 import numpy as np
-from typing import Tuple
-from enum import Enum
-from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs
+import skimage.color
+import skimage.segmentation
+from skimage import img_as_float
+
+from openhcs.core.memory.decorators import numpy
+from openhcs.processing.backends.lib_registry.unified_registry import (
+    ProcessingContract,
+)
 
 
 class LineMode(Enum):
-    INNER = "inner"
-    OUTER = "outer"
-    THICK = "thick"
+    """Closed CellProfiler outline boundary modes."""
+
+    INNER = ("inner", "Inner")
+    OUTER = ("outer", "Outer")
+    THICK = ("thick", "Thick")
+
+    @property
+    def skimage_mode(self) -> str:
+        return self.value[0]
 
 
 class OutlineDisplayMode(Enum):
-    COLOR = "color"
-    GRAYSCALE = "grayscale"
+    """Closed CellProfiler outline display modes."""
+
+    COLOR = ("color", "Color")
+    GRAYSCALE = ("grayscale", "Grayscale")
 
 
 class MaxType(Enum):
-    MAX_IMAGE = "max_image"
-    MAX_POSSIBLE = "max_possible"
+    """Closed CellProfiler grayscale outline intensity modes."""
+
+    MAX_IMAGE = ("max_image", "Max of image")
+    MAX_POSSIBLE = ("max_possible", "Max possible")
 
 
-@numpy
-@special_inputs("labels")
+class OutlineSourceKind(str, Enum):
+    """Runtime source kind for one OverlayOutlines row."""
+
+    IMAGE = "image"
+    OBJECTS = "objects"
+
+
+@dataclass(frozen=True, slots=True)
+class OverlayOutlineRuntimeRow:
+    """One runtime OverlayOutlines row after compiler lowering."""
+
+    source_kind: OutlineSourceKind
+    color: tuple[float, float, float]
+
+    @classmethod
+    def from_literals(
+        cls,
+        source_kind: OutlineSourceKind | str,
+        color: str | Sequence[float],
+    ) -> "OverlayOutlineRuntimeRow":
+        return cls(
+            source_kind=_coerce_source_kind(source_kind),
+            color=_coerce_color(color),
+        )
+
+
+@numpy(contract=ProcessingContract.FLEXIBLE)
 def overlay_outlines(
     image: np.ndarray,
-    labels: np.ndarray,
+    *,
     blank_image: bool = False,
-    display_mode: OutlineDisplayMode = OutlineDisplayMode.COLOR,
-    line_mode: LineMode = LineMode.INNER,
-    max_type: MaxType = MaxType.MAX_IMAGE,
-    outline_color: Tuple[float, float, float] = (1.0, 0.0, 0.0),
+    display_mode: OutlineDisplayMode | str = OutlineDisplayMode.COLOR,
+    line_mode: LineMode | str = LineMode.INNER,
+    max_type: MaxType | str = MaxType.MAX_IMAGE,
+    outline_source_kinds: Sequence[OutlineSourceKind | str] = (
+        OutlineSourceKind.OBJECTS,
+    ),
+    outline_colors: Sequence[str | Sequence[float]] = ("Red",),
+    object_labels: Sequence[np.ndarray] = (),
+    dtype_config: Any | None = None,
 ) -> np.ndarray:
-    """
-    Overlay outlines of segmented objects on an image.
-    
-    Args:
-        image: Input image (H, W), grayscale or will be converted
-        labels: Label image from segmentation (H, W)
-        blank_image: If True, draw outlines on black background
-        display_mode: COLOR for colored outlines, GRAYSCALE for intensity outlines
-        line_mode: INNER, OUTER, or THICK boundary mode
-        max_type: For grayscale mode, MAX_IMAGE uses image max, MAX_POSSIBLE uses 1.0
-        outline_color: RGB tuple (0-1 range) for outline color in color mode
-    
-    Returns:
-        Image with outlines overlaid (H, W, 3) for color or (H, W) for grayscale
-    """
-    import skimage.segmentation
-    import skimage.color
-    from skimage import img_as_float
-    
-    # Ensure image is float
-    image = img_as_float(image)
-    
-    # Create base image
+    """Overlay object-derived or image-derived outlines onto one output image."""
+    del dtype_config
+    display_mode = _coerce_enum(OutlineDisplayMode, display_mode)
+    line_mode = _coerce_enum(LineMode, line_mode)
+    max_type = _coerce_enum(MaxType, max_type)
+    rows = _runtime_rows(outline_source_kinds, outline_colors)
+    image_sources = _image_sources_from_payload(
+        image,
+        blank_image=blank_image,
+        image_row_count=sum(row.source_kind is OutlineSourceKind.IMAGE for row in rows),
+    )
+    if len(object_labels) != sum(
+        row.source_kind is OutlineSourceKind.OBJECTS for row in rows
+    ):
+        raise ValueError("OverlayOutlines object_labels count must match object rows.")
+
+    output = _base_image(
+        image_sources=image_sources,
+        object_labels=object_labels,
+        blank_image=blank_image,
+        display_mode=display_mode,
+    )
+    outline_intensity = _outline_intensity(output, blank_image, max_type)
+    image_index = 0 if blank_image else 1
+    object_index = 0
+    for row in rows:
+        if row.source_kind is OutlineSourceKind.IMAGE:
+            output = _draw_outline_image(
+                output,
+                image_sources[image_index],
+                row.color,
+                outline_intensity=outline_intensity,
+                display_mode=display_mode,
+            )
+            image_index += 1
+            continue
+        output = _draw_object_labels(
+            output,
+            _collapse_singleton_label_stack(object_labels[object_index]),
+            row.color,
+            outline_intensity=outline_intensity,
+            display_mode=display_mode,
+            line_mode=line_mode,
+        )
+        object_index += 1
+    if display_mode is OutlineDisplayMode.GRAYSCALE and output.ndim == 3:
+        return skimage.color.rgb2gray(output).astype(np.float32)
+    return output.astype(np.float32)
+
+
+def _runtime_rows(
+    source_kinds: Sequence[OutlineSourceKind | str],
+    colors: Sequence[str | Sequence[float]],
+) -> tuple[OverlayOutlineRuntimeRow, ...]:
+    if not source_kinds:
+        raise ValueError("OverlayOutlines requires at least one outline row.")
+    return tuple(
+        OverlayOutlineRuntimeRow.from_literals(
+            source_kind,
+            _indexed_value(colors, index, default="Red"),
+        )
+        for index, source_kind in enumerate(source_kinds)
+    )
+
+
+def _image_sources_from_payload(
+    image: np.ndarray,
+    *,
+    blank_image: bool,
+    image_row_count: int,
+) -> tuple[np.ndarray, ...]:
+    expected_count = image_row_count if blank_image else image_row_count + 1
+    if expected_count == 0:
+        return ()
+    if expected_count == 1:
+        return (image,)
+    if image.ndim < 3 or image.shape[0] != expected_count:
+        raise ValueError(
+            "OverlayOutlines expected a stack whose first axis contains the "
+            f"base image plus outline images; expected {expected_count} planes, "
+            f"got shape {getattr(image, 'shape', None)}."
+        )
+    return tuple(image[index] for index in range(expected_count))
+
+
+def _base_image(
+    *,
+    image_sources: tuple[np.ndarray, ...],
+    object_labels: Sequence[np.ndarray],
+    blank_image: bool,
+    display_mode: OutlineDisplayMode,
+) -> np.ndarray:
     if blank_image:
-        # Black background
-        if display_mode == OutlineDisplayMode.COLOR:
-            base_image = np.zeros(image.shape + (3,), dtype=np.float32)
-        else:
-            base_image = np.zeros(image.shape, dtype=np.float32)
+        shape = _blank_shape(image_sources, object_labels)
+        if display_mode is OutlineDisplayMode.COLOR:
+            return np.zeros((*shape, 3), dtype=np.float32)
+        return np.zeros(shape, dtype=np.float32)
+
+    if not image_sources:
+        raise ValueError("OverlayOutlines requires a base image outside blank mode.")
+    base = img_as_float(image_sources[0])
+    if display_mode is OutlineDisplayMode.COLOR:
+        if base.ndim == 2:
+            return skimage.color.gray2rgb(base).astype(np.float32)
+        return base.astype(np.float32)
+    if base.ndim == 3:
+        return skimage.color.rgb2gray(base).astype(np.float32)
+    return base.astype(np.float32)
+
+
+def _blank_shape(
+    image_sources: tuple[np.ndarray, ...],
+    object_labels: Sequence[np.ndarray],
+) -> tuple[int, ...]:
+    if object_labels:
+        return tuple(_collapse_singleton_label_stack(object_labels[0]).shape)
+    if image_sources:
+        return tuple(image_sources[0].shape[:2])
+    raise ValueError("OverlayOutlines blank mode requires an outline source.")
+
+
+def _outline_intensity(
+    output: np.ndarray,
+    blank_image: bool,
+    max_type: MaxType,
+) -> float:
+    if blank_image or max_type is MaxType.MAX_POSSIBLE:
+        return 1.0
+    return float(np.max(output))
+
+
+def _draw_object_labels(
+    output: np.ndarray,
+    labels: np.ndarray,
+    color: tuple[float, float, float],
+    *,
+    outline_intensity: float,
+    display_mode: OutlineDisplayMode,
+    line_mode: LineMode,
+) -> np.ndarray:
+    labels_2d = _resize_labels(labels.astype(np.int32), output.shape[:2])
+    outline_color: tuple[float, float, float] | float
+    if display_mode is OutlineDisplayMode.COLOR:
+        outline_color = color
     else:
-        # Use input image as background
-        if display_mode == OutlineDisplayMode.COLOR:
-            # Convert grayscale to RGB if needed
-            if image.ndim == 2:
-                base_image = skimage.color.gray2rgb(image).astype(np.float32)
-            else:
-                base_image = image.astype(np.float32)
-        else:
-            if image.ndim == 3:
-                base_image = skimage.color.rgb2gray(image).astype(np.float32)
-            else:
-                base_image = image.astype(np.float32)
-    
-    # Ensure labels match image shape
-    labels_2d = labels.astype(np.int32)
-    if labels_2d.shape != base_image.shape[:2]:
-        # Resize labels to match image if needed
-        from skimage.transform import resize
-        labels_2d = resize(
-            labels_2d, 
-            base_image.shape[:2], 
-            order=0, 
-            preserve_range=True,
-            anti_aliasing=False
-        ).astype(np.int32)
-    
-    # Determine outline color
-    if display_mode == OutlineDisplayMode.COLOR:
-        color = outline_color
-    else:
-        if blank_image or max_type == MaxType.MAX_POSSIBLE:
-            color = 1.0
-        else:
-            color = float(np.max(base_image))
-    
-    # Get line mode string for skimage
-    mode_str = line_mode.value
-    
-    # Draw outlines
-    if display_mode == OutlineDisplayMode.COLOR:
-        # Ensure base_image is RGB for mark_boundaries
-        if base_image.ndim == 2:
-            base_image = skimage.color.gray2rgb(base_image)
-        
-        result = skimage.segmentation.mark_boundaries(
-            base_image,
-            labels_2d,
-            color=color,
-            mode=mode_str,
+        outline_color = (
+            outline_intensity,
+            outline_intensity,
+            outline_intensity,
         )
-        return result.astype(np.float32)
+    if output.ndim == 2:
+        output = skimage.color.gray2rgb(output)
+    return skimage.segmentation.mark_boundaries(
+        output,
+        labels_2d,
+        color=outline_color,
+        mode=line_mode.skimage_mode,
+    )
+
+
+def _draw_outline_image(
+    output: np.ndarray,
+    outline_image: np.ndarray,
+    color: tuple[float, float, float],
+    *,
+    outline_intensity: float,
+    display_mode: OutlineDisplayMode,
+) -> np.ndarray:
+    mask = _resize_mask(np.asarray(outline_image) > 0, output.shape[:2])
+    if display_mode is OutlineDisplayMode.COLOR:
+        if output.ndim == 2:
+            output = skimage.color.gray2rgb(output)
+        output[mask] = color
+        return output
+    output[mask] = outline_intensity
+    return output
+
+
+def _resize_labels(labels: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    if labels.shape == shape:
+        return labels
+    return _resize_nearest(labels, shape).astype(np.int32)
+
+
+def _resize_mask(mask: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    if mask.shape == shape:
+        return mask
+    return _resize_nearest(mask.astype(np.uint8), shape).astype(bool)
+
+
+def _resize_nearest(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    from skimage.transform import resize
+
+    return resize(
+        image,
+        shape,
+        order=0,
+        preserve_range=True,
+        anti_aliasing=False,
+    )
+
+
+def _collapse_singleton_label_stack(labels: np.ndarray) -> np.ndarray:
+    if labels.ndim == 3 and labels.shape[0] == 1:
+        return labels[0]
+    return labels
+
+
+def _coerce_source_kind(value: OutlineSourceKind | str) -> OutlineSourceKind:
+    if isinstance(value, OutlineSourceKind):
+        return value
+    normalized = str(value).strip().lower()
+    return OutlineSourceKind(normalized)
+
+
+def _coerce_enum(enum_type: type[Enum], value: Enum | str) -> Enum:
+    if isinstance(value, enum_type):
+        return value
+    normalized = str(value).strip().lower().replace(" ", "_")
+    for member in enum_type:
+        if normalized in _enum_member_literals(member):
+            return member
+    raise ValueError(f"{enum_type.__name__} does not support {value!r}.")
+
+
+def _enum_member_literals(member: Enum) -> frozenset[str]:
+    literals = [member.name]
+    if isinstance(member.value, tuple):
+        literals.extend(str(value) for value in member.value)
     else:
-        # For grayscale, we need to work with RGB then convert back
-        if base_image.ndim == 2:
-            rgb_image = skimage.color.gray2rgb(base_image)
-        else:
-            rgb_image = base_image
-        
-        # Use white color for marking, then convert to grayscale
-        gray_color = (color, color, color) if isinstance(color, float) else color
-        
-        result = skimage.segmentation.mark_boundaries(
-            rgb_image,
-            labels_2d,
-            color=gray_color,
-            mode=mode_str,
-        )
-        
-        # Convert back to grayscale
-        result_gray = skimage.color.rgb2gray(result)
-        return result_gray.astype(np.float32)
+        literals.append(str(member.value))
+    return frozenset(
+        str(literal).strip().lower().replace(" ", "_")
+        for literal in literals
+    )
+
+
+def _coerce_color(value: str | Sequence[float]) -> tuple[float, float, float]:
+    if isinstance(value, str):
+        normalized = value.strip()
+        named = _COLOR_BY_NAME.get(normalized.lower())
+        if named is not None:
+            return named
+        parts = tuple(float(part.strip()) for part in normalized.split(","))
+        return _normalize_color_tuple(parts)
+    return _normalize_color_tuple(tuple(float(part) for part in value))
+
+
+def _normalize_color_tuple(parts: tuple[float, ...]) -> tuple[float, float, float]:
+    if len(parts) != 3:
+        raise ValueError(f"Outline color must have three channels, got {parts!r}.")
+    scale = 255.0 if max(parts) > 1.0 else 1.0
+    return parts[0] / scale, parts[1] / scale, parts[2] / scale
+
+
+def _indexed_value(
+    values: Sequence[Any],
+    index: int,
+    *,
+    default: Any,
+) -> Any:
+    if not values:
+        return default
+    if index < len(values):
+        return values[index]
+    return values[-1]
+
+
+_COLOR_BY_NAME = {
+    "white": (1.0, 1.0, 1.0),
+    "black": (0.0, 0.0, 0.0),
+    "red": (1.0, 0.0, 0.0),
+    "green": (0.0, 1.0, 0.0),
+    "blue": (0.0, 0.0, 1.0),
+    "yellow": (1.0, 1.0, 0.0),
+}

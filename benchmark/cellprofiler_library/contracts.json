@@ -559,10 +559,10 @@
   },
   "OverlayOutlines": {
     "function_name": "overlay_outlines",
-    "contract": "pure_2d",
+    "contract": "flexible",
     "category": "image_operation",
     "confidence": 1.0,
-    "reasoning": "The function overlays outlines onto a single image. It does not require a volumetric Z-stack to function, nor does it inherently require multiple input channels to be stacked together; it processes a single image and its corresponding label map per site.",
+    "reasoning": "The function overlays one or more image/object outline rows onto a base or blank image; the resolved OpenHCS payload can contain the base image plus outline-image rows as a stack.",
     "validated": true
   },
   "Reducenoise": {

@@ -57,6 +57,12 @@ from .artifact_semantics import (
     function_special_outputs,
 )
 from .gray_to_color_settings import GrayToColorInputNameResolver
+from .overlay_outlines_settings import (
+    OverlayOutlineSourceKind,
+    overlay_outline_rows,
+    overlay_outlines_base_image_name,
+    overlay_outlines_output_image_name,
+)
 from .parser import ModuleBlock
 from .setting_names import (
     IMAGE_MEASUREMENT_SETTING,
@@ -952,26 +958,43 @@ def _overlay_outlines(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
 ) -> ModuleArtifactContracts:
-    image = builder.require(
-        _setting(module, "Select image on which to display outlines"),
-        CellProfilerSymbolKind.IMAGE,
-        module,
-    )
-    objects = [
-        builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
-        for name in _split_names(_setting(module, DISPLAY_OBJECTS_SETTING))
-    ]
+    inputs: list[CellProfilerSymbol] = []
+    base_image_name = overlay_outlines_base_image_name(module)
+    if base_image_name is not None:
+        inputs.append(
+            builder.require(
+                base_image_name,
+                CellProfilerSymbolKind.IMAGE,
+                module,
+            )
+        )
+    for row in overlay_outline_rows(module):
+        inputs.append(
+            builder.require(
+                row.input_name,
+                _overlay_outline_symbol_kind(row.source_kind),
+                module,
+            )
+        )
     output = builder.declare(
-        _setting(module, OUTPUT_IMAGE_SETTING),
+        overlay_outlines_output_image_name(module),
         CellProfilerSymbolKind.IMAGE,
         module,
     )
     return _contracts(
         module,
         builder,
-        inputs=[image, *objects],
+        inputs=inputs,
         outputs=[output],
     )
+
+
+def _overlay_outline_symbol_kind(
+    source_kind: OverlayOutlineSourceKind,
+) -> CellProfilerSymbolKind:
+    if source_kind is OverlayOutlineSourceKind.IMAGE:
+        return CellProfilerSymbolKind.IMAGE
+    return CellProfilerSymbolKind.OBJECTS
 
 
 def _relate_objects(

@@ -733,6 +733,74 @@ def test_cellprofiler_symbol_table_compiles_singular_aliases_and_image_artifacts
     assert granularity_contract.outputs[0].kind is ArtifactKind.MEASUREMENTS
 
 
+def test_overlay_outlines_accepts_image_outline_rows() -> None:
+    module = _module_with_records(
+        1,
+        "OverlayOutlines",
+        [
+            ("Display outlines on a blank image?", "No"),
+            ("Select image on which to display outlines", "DNA"),
+            ("Name the output image\\x3A", "Overlay"),
+            ("Select outline display mode\\x3A", "Color"),
+            ("Select method to determine brightness of outlines\\x3A", "Max of image"),
+            ("Line width\\x3A", "1.5"),
+            ("Select outlines to display\\x3A", "PrimaryOutlines"),
+            ("Select outline color\\x3A", "Red"),
+            ("Select outlines to display\\x3A", "SecondaryOutlines"),
+            ("Select outline color\\x3A", "Green"),
+        ],
+    )
+
+    table = CellProfilerSymbolTable.compile([module])
+    contract = table.contracts_by_module_num[1]
+
+    assert [(spec.name, spec.kind) for spec in contract.inputs] == [
+        ("DNA", ArtifactKind.IMAGE),
+        ("PrimaryOutlines", ArtifactKind.IMAGE),
+        ("SecondaryOutlines", ArtifactKind.IMAGE),
+    ]
+    assert contract.runtime_artifact_inputs == ()
+    assert [spec.name for spec in contract.outputs] == ["Overlay"]
+
+
+def test_overlay_outlines_accepts_mixed_image_and_object_rows() -> None:
+    modules = [
+        _identify_primary(),
+        _module_with_records(
+            2,
+            "OverlayOutlines",
+            [
+                ("Display outlines on a blank image?", "No"),
+                ("Select image on which to display outlines", "DNA"),
+                ("Name the output image", "Overlay"),
+                ("Outline display mode", "Color"),
+                ("Select method to determine brightness of outlines", "Max of image"),
+                ("Width of outlines", "1.5"),
+                ("Select outlines to display", "PrimaryOutlines"),
+                ("Select outline color", "Red"),
+                ("Load outlines from an image or objects?", "Image"),
+                ("Select objects to display", "Nuclei"),
+                ("Select outlines to display\\x3A", "SecondaryOutlines"),
+                ("Select outline color\\x3A", "Green"),
+                ("Load outlines from an image or objects?", "Objects"),
+                ("Select objects to display", "Nuclei"),
+            ],
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[2]
+
+    assert [(spec.name, spec.kind) for spec in contract.inputs] == [
+        ("DNA", ArtifactKind.IMAGE),
+        ("PrimaryOutlines", ArtifactKind.IMAGE),
+        ("Nuclei", ArtifactKind.OBJECT_LABELS),
+    ]
+    assert [(spec.name, spec.kind) for spec in contract.runtime_artifact_inputs] == [
+        ("Nuclei", ArtifactKind.OBJECT_LABELS),
+    ]
+
+
 def test_cellprofiler_symbol_table_infers_common_image_transform_contract():
     modules = [
         _module(

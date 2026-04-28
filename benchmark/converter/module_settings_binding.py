@@ -23,6 +23,7 @@ from .gray_to_color_settings import (
     gray_to_color_stack_channels,
     is_blank_gray_to_color_source,
 )
+from .overlay_outlines_settings import overlay_outlines_bound_kwargs
 from .parser import ModuleBlock
 from .settings_binder import SettingsBinder
 from .unmix_colors_settings import unmix_colors_bound_kwargs
@@ -152,6 +153,22 @@ class AlignModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     ) -> BoundModuleSettings:
         del binder, param_mapping
         return BoundModuleSettings(align_bound_kwargs(module))
+
+
+class OverlayOutlinesModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind ordered OverlayOutlines rows into one generic overlay call."""
+
+    module_name = "OverlayOutlines"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del binder, param_mapping
+        return BoundModuleSettings(overlay_outlines_bound_kwargs(module))
 
 
 class GrayToColorSchemeBindingStrategy(ABC, metaclass=AutoRegisterMeta):
