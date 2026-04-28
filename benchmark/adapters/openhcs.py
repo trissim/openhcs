@@ -27,6 +27,7 @@ from benchmark.contracts.tool_adapter import (
 )
 from benchmark.contracts.metric import MetricCollector
 from openhcs.constants.constants import Microscope
+from openhcs.core.source_schema_workspace import materialize_source_schema_workspace
 
 logger = logging.getLogger(__name__)
 
@@ -214,12 +215,33 @@ class OpenHCSAdapter(ToolAdapter):
                 f"Failed to prepare converted .cppipe pipeline {cppipe_path.name}: "
                 f"{exc}"
             ) from exc
+        source_workspace = None
+        execution_plate_path = request.dataset_path
+        execution_microscope = self._configured_microscope(request.microscope_type)
+        if not prepared.source_schema.is_empty:
+            source_workspace_path = (
+                request.output_dir
+                / f"{request.dataset_path.name}_{cppipe_path.stem}_source_workspace"
+            )
+            try:
+                source_workspace = materialize_source_schema_workspace(
+                    request.dataset_path,
+                    source_workspace_path,
+                    prepared.source_schema,
+                )
+            except Exception as exc:
+                raise ToolExecutionError(
+                    f"Failed to materialize CellProfiler source schema for "
+                    f"{cppipe_path.name}: {exc}"
+                ) from exc
+            execution_plate_path = source_workspace.workspace_root
+            execution_microscope = Microscope.AUTO
 
         global_config = GlobalPipelineConfig(
             num_workers=1,
             use_threading=True,
             materialization_results_path=output_plate_root / "results",
-            microscope=self._configured_microscope(request.microscope_type),
+            microscope=execution_microscope,
         )
         ensure_global_config_context(GlobalPipelineConfig, global_config)
         pipeline_config = PipelineConfig(
@@ -232,7 +254,7 @@ class OpenHCSAdapter(ToolAdapter):
             ),
         )
         orchestrator = PipelineOrchestrator(
-            request.dataset_path,
+            execution_plate_path,
             pipeline_config=pipeline_config,
         )
         orchestrator.initialize()
@@ -255,6 +277,8 @@ class OpenHCSAdapter(ToolAdapter):
             "generated_pipeline_module": prepared.module_name,
             "axis_count": len(execution.execution_results),
         }
+        if source_workspace is not None:
+            provenance["source_workspace"] = str(source_workspace.workspace_root)
         if reference_url is not None:
             provenance["cppipe_reference_url"] = reference_url
 

@@ -179,7 +179,7 @@ def test_compile_image_schema_lowers_names_and_types_to_typed_selectors():
         ComponentSelector(AllComponents.CHANNEL, "1"),
     )
 
-    illumination = schema.assignment_for_alias("DAPIillum")
+    illumination = schema.source_artifact_for_alias("DAPIillum")
     assert illumination is not None
     assert illumination.origin is SourceBindingOrigin.PIPELINE_START
     assert illumination.selector.metadata == (
@@ -345,7 +345,7 @@ def test_compile_image_schema_supports_v5_regex_labels_and_file_filters():
     )
 
     raw_gfp = schema.assignment_for_alias("rawGFP")
-    illum_dna = schema.assignment_for_alias("IllumDNA")
+    illum_dna = schema.source_artifact_for_alias("IllumDNA")
     assert raw_gfp is not None
     assert raw_gfp.selector.filters[0].match_type is SourceFilterMatchType.CONTAINS
     assert raw_gfp.selector.filters[1].match_type is SourceFilterMatchType.IS_TIF
@@ -723,17 +723,15 @@ def test_generated_runtime_wrappers_with_non_image_artifacts_are_flexible():
 def test_compile_image_schema_for_bbbc021_analysis_preserves_real_matching_plan():
     schema = _schema_from_in_tree_cppipe("BBBC021_analysis.cppipe")
 
-    assert set(schema.assignments_by_alias) == {
-        "DAPI",
-        "Actin",
-        "Tubulin",
+    assert set(schema.assignments_by_alias) == {"DAPI", "Actin", "Tubulin"}
+    assert set(schema.source_artifacts_by_alias) == {
         "ActinIllum",
         "DAPIillum",
         "TubIllum",
     }
     dapi = schema.assignment_for_alias("DAPI")
     tubulin = schema.assignment_for_alias("Tubulin")
-    actin_illum = schema.assignment_for_alias("ActinIllum")
+    actin_illum = schema.source_artifact_for_alias("ActinIllum")
     assert dapi is not None
     assert tubulin is not None
     assert actin_illum is not None

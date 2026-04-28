@@ -116,6 +116,104 @@ class SourceArtifactAssignment(SourceAssignmentBase):
         )
 
 
+class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
+    """Nominal role for CellProfiler image-type source semantics."""
+
+    __registry_key__ = "image_type_key"
+    __skip_if_no_key__ = True
+    image_type_key: ClassVar[str | None] = None
+    PARTICIPATES_IN_IMAGE_STACK: ClassVar[bool]
+
+    @classmethod
+    def for_image_type(cls, image_type: str) -> "ImageTypeSourceRole":
+        key = image_type_source_role_key(image_type)
+        role_type = cls.__registry__.get(key)
+        if role_type is None:
+            raise ValueError(
+                f"Unsupported CellProfiler source image type {image_type!r}."
+            )
+        return role_type()
+
+    @property
+    def participates_in_image_stack(self) -> bool:
+        """Whether this image type should become an OpenHCS channel."""
+
+        return type(self).PARTICIPATES_IN_IMAGE_STACK
+
+
+class ImageStackSourceRole(ImageTypeSourceRole):
+    """CellProfiler image type that projects into the OpenHCS channel stack."""
+
+    PARTICIPATES_IN_IMAGE_STACK = True
+
+
+class SourceArtifactImageTypeSourceRole(ImageTypeSourceRole):
+    """CellProfiler image type that remains an external source artifact."""
+
+    PARTICIPATES_IN_IMAGE_STACK = False
+
+
+@dataclass(frozen=True, slots=True)
+class ImageTypeSourceRoleSpec:
+    """Typed declaration for one CellProfiler image-type role class."""
+
+    class_name: str
+    image_type_key: str
+    base_type: type[ImageTypeSourceRole]
+
+    def declare(self) -> type[ImageTypeSourceRole]:
+        return type(
+            self.class_name,
+            (self.base_type,),
+            {
+                "__module__": __name__,
+                "image_type_key": self.image_type_key,
+            },
+        )
+
+
+for _image_type_role_spec in (
+    ImageTypeSourceRoleSpec(
+        "GrayscaleImageTypeSourceRole",
+        "grayscale image",
+        ImageStackSourceRole,
+    ),
+    ImageTypeSourceRoleSpec(
+        "ColorImageTypeSourceRole",
+        "color image",
+        ImageStackSourceRole,
+    ),
+    ImageTypeSourceRoleSpec(
+        "BinaryImageTypeSourceRole",
+        "binary image",
+        ImageStackSourceRole,
+    ),
+    ImageTypeSourceRoleSpec(
+        "MaskImageTypeSourceRole",
+        "mask",
+        ImageStackSourceRole,
+    ),
+    ImageTypeSourceRoleSpec(
+        "IlluminationFunctionImageTypeSourceRole",
+        "illumination function",
+        SourceArtifactImageTypeSourceRole,
+    ),
+):
+    globals()[_image_type_role_spec.class_name] = _image_type_role_spec.declare()
+
+
+def image_type_participates_in_image_stack(image_type: str) -> bool:
+    """Return whether a CellProfiler source image type is a native stack channel."""
+
+    return ImageTypeSourceRole.for_image_type(image_type).participates_in_image_stack
+
+
+def image_type_source_role_key(image_type: str) -> str:
+    """Normalize CellProfiler image-type labels for role lookup."""
+
+    return image_type.strip().lower()
+
+
 @dataclass(frozen=True, slots=True)
 class GroupingPlan:
     """Typed metadata grouping declaration for one pipeline image schema."""

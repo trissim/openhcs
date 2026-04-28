@@ -22,6 +22,7 @@ from openhcs.core.pipeline_image_schema import (
     ImportedMetadataTable,
     ImagesRule,
     SourceArtifactAssignment,
+    image_type_participates_in_image_stack,
 )
 from openhcs.core.source_bindings import (
     ComponentSelector,
@@ -319,13 +320,20 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
             selector = _selector_from_rule_criteria(
                 block_setting_value(block, "Select the rule criteria")
             )
-            if artifact_kind is ArtifactKind.OBJECT_LABELS:
+            if (
+                artifact_kind is ArtifactKind.OBJECT_LABELS
+                or not image_type_participates_in_image_stack(image_type)
+            ):
                 state.declare_source_artifact(
                     SourceArtifactAssignment(
                         alias=alias,
                         kind=artifact_kind,
                         selector=selector,
-                        origin=_origin_for_selector(selector),
+                        origin=_origin_for_source_artifact(
+                            artifact_kind,
+                            image_type,
+                            selector,
+                        ),
                         payload_type=image_type,
                     )
                 )
@@ -846,6 +854,19 @@ def _origin_for_selector(selector: SourceSelector) -> SourceBindingOrigin:
     if selector.metadata:
         return SourceBindingOrigin.PIPELINE_START
     return SourceBindingOrigin.STEP_INPUT
+
+
+def _origin_for_source_artifact(
+    artifact_kind: ArtifactKind,
+    image_type: str,
+    selector: SourceSelector,
+) -> SourceBindingOrigin:
+    if (
+        artifact_kind is ArtifactKind.IMAGE
+        and not image_type_participates_in_image_stack(image_type)
+    ):
+        return SourceBindingOrigin.PIPELINE_START
+    return _origin_for_selector(selector)
 
 
 def _match_plan_from_names_and_types(

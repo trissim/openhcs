@@ -27,12 +27,15 @@ from openhcs.core.runtime_stores import (
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest, RuntimeAdapterSpec
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
+    SourceBindingOrigin,
     SourceBindingRuntimeContext,
 )
 from openhcs.core.runtime_values import normalize_artifact_value
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 
 logger = logging.getLogger(__name__)
+
+PROCESSING_CONTEXT_OWNER_NAME = ProcessingContext.__name__
 
 
 ArtifactInputPlans = Mapping[str, ArtifactInputPlan]
@@ -130,7 +133,7 @@ def _save_artifact_value(
     context.filemanager.ensure_directory(parent_dir, Backend.MEMORY.value)
     runtime_value_store = require_runtime_value_store(
         context,
-        owner_name="ProcessingContext",
+        owner_name=PROCESSING_CONTEXT_OWNER_NAME,
     )
     runtime_value_store.record(
         runtime_value,
@@ -143,7 +146,9 @@ def _save_artifact_value(
 def _require_axis_id(context: ProcessingContext) -> str:
     axis_id = getattr(context, "axis_id", None)
     if not axis_id:
-        raise RuntimeError("ProcessingContext.axis_id is required for artifact values.")
+        raise RuntimeError(
+            f"{PROCESSING_CONTEXT_OWNER_NAME}.axis_id is required for artifact values."
+        )
     return str(axis_id)
 
 
@@ -154,7 +159,7 @@ def _load_artifact_input_value(
     """Load an artifact input from VFS through its typed runtime store record."""
     store = require_runtime_value_store(
         context,
-        owner_name="ProcessingContext",
+        owner_name=PROCESSING_CONTEXT_OWNER_NAME,
     )
     axis_id = _require_axis_id(context)
     query = _artifact_input_query(
@@ -528,10 +533,16 @@ class PatternGroupRuntime:
         self,
         source_backend: str,
     ) -> tuple[tuple[str, ...], str]:
-        if not self.plan.source_binding_plan.metadata_rules:
+        if not self._requires_full_pipeline_source_universe():
             return (
                 tuple(self.plan.get_paths_for_axis(self.context.input_dir, source_backend)),
                 source_backend,
+            )
+
+        if source_backend == Backend.VIRTUAL_WORKSPACE.value:
+            return (
+                self._virtual_workspace_real_source_files(),
+                Backend.DISK.value,
             )
 
         universe_backend = (
@@ -542,7 +553,7 @@ class PatternGroupRuntime:
         return (
             tuple(
                 str(path)
-                for path in self.context.filemanager.list_image_files(
+                for path in self.context.filemanager.list_files(
                     str(self.context.input_dir),
                     universe_backend,
                     recursive=True,
@@ -550,6 +561,34 @@ class PatternGroupRuntime:
             ),
             universe_backend,
         )
+
+    def _requires_full_pipeline_source_universe(self) -> bool:
+        plan = self.plan.source_binding_plan
+        if plan.metadata_rules:
+            return True
+        return any(
+            binding.origin is SourceBindingOrigin.PIPELINE_START
+            for bindings in plan.bindings_by_group.values()
+            for binding in bindings
+        )
+
+    def _virtual_workspace_real_source_files(self) -> tuple[str, ...]:
+        from openhcs.microscopes.openhcs import FIELDS, OpenHCSMetadataHandler
+
+        metadata_handler = OpenHCSMetadataHandler(self.context.filemanager)
+        metadata = metadata_handler._load_metadata_dict(self.context.plate_path)
+        subdirectories = metadata.get(FIELDS.SUBDIRECTORIES, {})
+        source_files = dict.fromkeys(
+            str(Path(self.context.plate_path) / real_relative)
+            for subdirectory in subdirectories.values()
+            for real_relative in subdirectory.get("workspace_mapping", {}).values()
+        )
+        if not source_files:
+            raise RuntimeError(
+                "virtual_workspace pipeline-start source resolution requires "
+                "workspace_mapping entries in OpenHCS metadata."
+            )
+        return tuple(source_files)
 
     def _component_artifact_plans(self) -> ComponentArtifactPlans:
         request = self.request
