@@ -857,7 +857,6 @@ class SingleLabelMeasurementInputPolicy(CellProfilerObjectInputPolicy):
 
 
 _SINGLE_LABEL_MEASUREMENT_POLICY_MODULES = (
-    "MeasureImageAreaOccupiedBinary",
     "MeasureObjectIntensity",
     "MeasureTexture",
     "MeasureColocalization",
@@ -881,13 +880,40 @@ for _module_name in _SINGLE_LABEL_MEASUREMENT_POLICY_MODULES:
     _declare_single_label_measurement_policy(_module_name)
 
 
+class MeasureImageAreaOccupiedInputPolicy(CellProfilerObjectInputPolicy):
+    """Bind ordered object rows for the generic area-occupied runner."""
+
+    module_name = "MeasureImageAreaOccupiedBinary"
+
+    def bind(
+        self,
+        module_name: str,
+        object_inputs: tuple[ArtifactSpec, ...],
+        adapter: CellProfilerRuntimeAdapter,
+        *,
+        fallback_image: Any,
+        external_object_names: frozenset[str],
+    ) -> dict[str, Any]:
+        del module_name
+        return {
+            "object_labels": tuple(
+                _object_input_labels(
+                    spec,
+                    adapter,
+                    fallback_image=fallback_image,
+                    external_object_names=external_object_names,
+                )
+                for spec in object_inputs
+            )
+        }
+
+
 class CellProfilerPerObjectMeasurementPolicy:
     """Predicate for modules that need one absorbed call per object set."""
 
     module_names: ClassVar[tuple[str, ...]] = (
         "MeasureObjectSizeShape",
         "MeasureObjectIntensity",
-        "MeasureImageAreaOccupiedBinary",
         "MeasureTexture",
         "MeasureColocalization",
         "MeasureGranularity",

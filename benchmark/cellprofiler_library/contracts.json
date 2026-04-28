@@ -406,11 +406,11 @@
     "aliases": [
       "MeasureImageAreaOccupied"
     ],
-    "function_name": "measure_image_area_occupied_binary",
-    "contract": "pure_2d",
+    "function_name": "measure_image_area_occupied",
+    "contract": "flexible",
     "category": "image_operation",
-    "confidence": 0.0,
-    "reasoning": "Could not load function source code",
+    "confidence": 1.0,
+    "reasoning": "Generic row runner preserves CellProfiler's ordered binary-image/object row semantics and handles multi-image payloads after source/artifact resolution.",
     "validated": true
   },
   "MeasureImageIntensity": {

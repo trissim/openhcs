@@ -376,9 +376,9 @@ def test_measure_image_area_occupied_alias_compiles_binary_contract():
         "MeasureImageAreaOccupied_1_measurements",
     ]
     assert (
-        'measure_image_area_occupied_binary_1 = require_function('
+        'measure_image_area_occupied_1 = require_function('
         '"MeasureImageAreaOccupied", '
-        'function_name="measure_image_area_occupied_binary")'
+        'function_name="measure_image_area_occupied")'
     ) in generated.code
 
 
@@ -419,38 +419,54 @@ def test_measure_image_area_occupied_resolves_object_variant():
         "MeasureImageAreaOccupied_2_measurements",
     ]
     assert (
-        'measure_image_area_occupied_objects_2 = require_function('
+        'measure_image_area_occupied_2 = require_function('
         '"MeasureImageAreaOccupied", '
-        'function_name="measure_image_area_occupied_objects")'
+        'function_name="measure_image_area_occupied")'
     ) in generated.code
 
 
-def test_measure_image_area_occupied_rejects_mixed_rows_until_split():
-    module = _module_with_records(
-        1,
-        "MeasureImageAreaOccupied",
-        [
-            (
-                "Measure the area occupied in a binary image, or in objects?",
-                "Binary Image",
-            ),
-            ("Select objects to measure", "None"),
-            ("Retain a binary image of the object regions?", "No"),
-            ("Name the output binary image", "Ignored"),
-            ("Select a binary image to measure", "DNA"),
-            (
-                "Measure the area occupied in a binary image, or in objects?",
-                "Objects",
-            ),
-            ("Select objects to measure", "Nuclei"),
-            ("Retain a binary image of the object regions?", "No"),
-            ("Name the output binary image", "Ignored"),
-            ("Select a binary image to measure", "None"),
-        ],
+def test_measure_image_area_occupied_compiles_mixed_rows():
+    modules = [
+        _identify_primary(),
+        _module_with_records(
+            2,
+            "MeasureImageAreaOccupied",
+            [
+                (
+                    "Measure the area occupied in a binary image, or in objects?",
+                    "Binary Image",
+                ),
+                ("Select objects to measure", "None"),
+                ("Retain a binary image of the object regions?", "No"),
+                ("Name the output binary image", "Ignored"),
+                ("Select a binary image to measure", "DNA"),
+                (
+                    "Measure the area occupied in a binary image, or in objects?",
+                    "Objects",
+                ),
+                ("Select objects to measure", "Nuclei"),
+                ("Retain a binary image of the object regions?", "Yes"),
+                ("Name the output binary image", "OccupiedNuclei"),
+                ("Select a binary image to measure", "None"),
+            ],
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[2]
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="area_occupied_mixed",
+        source_cppipe=Path("source.pipeline"),
+        modules=modules,
     )
 
-    with pytest.raises(ValueError, match="mixes binary-image and object"):
-        CellProfilerSymbolTable.compile([module])
+    assert [spec.name for spec in contract.inputs] == ["DNA", "Nuclei"]
+    assert [spec.name for spec in contract.outputs] == [
+        "OccupiedNuclei",
+        "MeasureImageAreaOccupied_2_measurements",
+    ]
+    assert "'operand_choices': ('binary_image', 'objects')" in generated.code
+    assert "'input_names': ('DNA', 'Nuclei')" in generated.code
 
 
 def test_unmix_colors_compiles_escaped_multi_output_rows():

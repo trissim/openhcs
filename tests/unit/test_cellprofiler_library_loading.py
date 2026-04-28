@@ -10,6 +10,9 @@ from benchmark.cellprofiler_library import (
 from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
     correct_illumination_calculate,
 )
+from benchmark.cellprofiler_library.functions.measureimageareaoccupied import (
+    measure_image_area_occupied,
+)
 from benchmark.cellprofiler_library.functions.opening import opening
 from benchmark.cellprofiler_library.functions.unmixcolors import unmix_colors
 from openhcs.core.config import DtypeConfig
@@ -125,3 +128,26 @@ def test_unmix_colors_returns_one_output_per_stain_row():
     assert [output.shape for output in outputs] == [(8, 9), (8, 9), (8, 9)]
     assert all(output.dtype == np.float32 for output in outputs)
     assert unmix_colors.__processing_contract__ is ProcessingContract.FLEXIBLE
+
+
+def test_measure_image_area_occupied_runs_mixed_rows():
+    binary = np.zeros((5, 6), dtype=np.float32)
+    binary[1:3, 1:4] = 1.0
+    labels = np.zeros((5, 6), dtype=np.int32)
+    labels[2:4, 2:5] = 1
+
+    retained, measurements = measure_image_area_occupied(
+        binary,
+        operand_choices=("binary_image", "objects"),
+        input_names=("DNA", "Nuclei"),
+        retained_image_names=(None, "OccupiedNuclei"),
+        object_labels=(labels,),
+        dtype_config=DtypeConfig(),
+    )
+
+    assert retained.shape == labels.shape
+    assert [measurement.slice_index for measurement in measurements] == [0, 1]
+    assert all(measurement.area_occupied == 6.0 for measurement in measurements)
+    assert measure_image_area_occupied.__processing_contract__ is (
+        ProcessingContract.FLEXIBLE
+    )

@@ -11,6 +11,7 @@ from metaclass_registry import AutoRegisterMeta
 
 from benchmark.cellprofiler_library import canonical_module_name
 
+from .area_occupied_settings import area_occupied_bound_kwargs
 from .gray_to_color_settings import (
     GRAY_TO_COLOR_CMYK_IMAGE_SETTINGS,
     GRAY_TO_COLOR_CMYK_WEIGHT_SETTINGS,
@@ -116,6 +117,24 @@ class UnmixColorsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     ) -> BoundModuleSettings:
         del binder, param_mapping
         return BoundModuleSettings(unmix_colors_bound_kwargs(module))
+
+
+class MeasureImageAreaOccupiedModuleSettingsBindingStrategy(
+    ModuleSettingsBindingStrategy
+):
+    """Bind ordered area-occupied rows into one generic multi-row call."""
+
+    module_name = "MeasureImageAreaOccupiedBinary"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del binder, param_mapping
+        return BoundModuleSettings(area_occupied_bound_kwargs(module))
 
 
 class GrayToColorSchemeBindingStrategy(ABC, metaclass=AutoRegisterMeta):
