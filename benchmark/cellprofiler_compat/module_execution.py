@@ -105,7 +105,8 @@ class CellProfilerModuleExecutor:
             return self._run_per_object_measurement(
                 func,
                 input_image=image,
-                measurement_source_image=image_request.payload,
+                fallback_image=image,
+                image_request=image_request,
                 cellprofiler_runtime=cellprofiler_runtime,
                 source_image_name=image_request.source_image_name,
                 **kwargs,
@@ -162,7 +163,8 @@ class CellProfilerModuleExecutor:
         func: Callable[..., Any],
         *,
         input_image: Any,
-        measurement_source_image: Any,
+        fallback_image: Any,
+        image_request: "CellProfilerImageRequest",
         cellprofiler_runtime: CellProfilerRuntimeAdapter,
         source_image_name: str | None,
         **kwargs: Any,
@@ -176,37 +178,109 @@ class CellProfilerModuleExecutor:
             )
 
         combined_rows: list[Any] = []
-        for object_spec in object_inputs:
-            raw_labels = self._object_labels(
-                object_spec,
-                cellprofiler_runtime,
-                input_image,
-            )
-            measurement_labels = _measurement_labels_for_image(
-                measurement_source_image,
-                raw_labels,
-            )
-            measurement_image = _measurement_image_for_labels(
-                measurement_source_image,
-                measurement_labels,
-            )
-            raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
-                func,
-                measurement_image,
-                {**kwargs, "labels": measurement_labels},
-            )
-            _ignored_main_output, artifact_values = _split_cellprofiler_output(
-                raw_output
-            )
-            combined_rows.extend(_measurement_rows_from_output(artifact_values))
+        measurement_images = self._measurement_image_inputs(
+            func,
+            cellprofiler_runtime,
+            fallback_image,
+            image_request,
+        )
+        for measurement_image in measurement_images:
+            for object_spec in object_inputs:
+                raw_labels = self._object_labels(
+                    object_spec,
+                    cellprofiler_runtime,
+                    input_image,
+                )
+                measurement_labels = _measurement_labels_for_image(
+                    measurement_image.payload,
+                    raw_labels,
+                )
+                aligned_image = (
+                    _measurement_image_for_labels(
+                        measurement_image.payload,
+                        measurement_labels,
+                    )
+                    if measurement_image.align_to_labels
+                    else measurement_image.payload
+                )
+                raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
+                    func,
+                    aligned_image,
+                    {**kwargs, "labels": measurement_labels},
+                    execution_mode=measurement_image.execution_mode,
+                )
+                _ignored_main_output, artifact_values = _split_cellprofiler_output(
+                    raw_output
+                )
+                combined_rows.extend(_measurement_rows_from_output(artifact_values))
+
+        source_image_names = tuple(
+            image.source_image_name
+            for image in measurement_images
+            if image.source_image_name is not None
+        )
+        combined_source_image_name = (
+            source_image_name
+            if not source_image_names
+            else _single_source_name(source_image_names)
+        )
 
         cellprofiler_runtime.add_measurements(
             measurement_outputs[0].name,
             combined_rows,
             object_name=object_inputs[0].name if len(object_inputs) == 1 else None,
-            source_image_name=source_image_name,
+            source_image_name=combined_source_image_name,
         )
         return input_image
+
+    def _measurement_image_inputs(
+        self,
+        func: Callable[..., Any],
+        adapter: CellProfilerRuntimeAdapter,
+        fallback_image: Any,
+        image_request: "CellProfilerImageRequest",
+    ) -> tuple["CellProfilerMeasurementImage", ...]:
+        image_inputs = self._primary_image_inputs(func)
+        if not image_inputs:
+            return (
+                CellProfilerMeasurementImage.natural(
+                    source_image_name=self._input_source_image_name(adapter),
+                    payload=_object_only_reference_image(fallback_image),
+                ),
+            )
+
+        if not CellProfilerPerObjectMeasurementPolicy.measures_images_independently(
+            self.module_name
+        ):
+            return (
+                CellProfilerMeasurementImage.composed(image_request),
+            )
+
+        runtime_image_names = frozenset(
+            spec.name
+            for spec in _specs_of_kind(
+                self.runtime_artifact_inputs,
+                ArtifactKind.IMAGE,
+            )
+        )
+        resolved_images: list[CellProfilerMeasurementImage] = []
+        for spec in image_inputs:
+            if spec.name in runtime_image_names:
+                runtime_image = adapter.get_image(spec.name)
+                resolved_images.append(
+                    CellProfilerMeasurementImage.natural(
+                        source_image_name=runtime_image.source_image_name or spec.name,
+                        payload=runtime_image.data,
+                    )
+                )
+                continue
+            resolved_images.append(
+                CellProfilerMeasurementImage.natural(
+                    source_image_name=spec.name,
+                    payload=adapter.resolve_source_image(spec.name, fallback_image),
+                )
+            )
+        return tuple(resolved_images)
 
     def _object_input_specs(self) -> tuple[ArtifactSpec, ...]:
         return _specs_of_kind(
@@ -322,8 +396,13 @@ class CellProfilerModuleExecutor:
     ) -> "CellProfilerImageRequest":
         image_inputs = self._primary_image_inputs(func)
         if not image_inputs:
+            payload = (
+                _object_only_reference_image(fallback_image)
+                if self._object_input_specs()
+                else fallback_image
+            )
             return CellProfilerImageRequest(
-                payload=fallback_image,
+                payload=payload,
                 source_image_name=self._input_source_image_name(adapter),
                 image_count=1,
                 execution_mode=CellProfilerImageExecutionMode.NATURAL,
@@ -534,6 +613,120 @@ class CellProfilerAlignedImageStack:
         object.__setattr__(self, "slices", tuple(self.slices))
         if not self.slices:
             raise ValueError("CellProfilerAlignedImageStack.slices cannot be empty.")
+
+
+class CellProfilerImageExecutionStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal executor mode family for CellProfiler image payload semantics."""
+
+    __registry_key__ = "mode"
+    __skip_if_no_key__ = True
+    mode: ClassVar[CellProfilerImageExecutionMode | None] = None
+
+    @classmethod
+    def for_mode(
+        cls,
+        mode: CellProfilerImageExecutionMode,
+    ) -> "CellProfilerImageExecutionStrategy":
+        return cls.__registry__[mode]()
+
+    @abstractmethod
+    def execute(
+        self,
+        executor: "CellProfilerFunctionContractExecutor",
+        func: Callable[..., Any],
+        image: Any,
+        kwargs: Mapping[str, Any],
+    ) -> Any:
+        """Execute one resolved image payload according to its nominal mode."""
+
+
+class NaturalImageExecutionStrategy(CellProfilerImageExecutionStrategy):
+    """Delegate natural payloads through the callable processing contract."""
+
+    mode = CellProfilerImageExecutionMode.NATURAL
+
+    def execute(
+        self,
+        executor: "CellProfilerFunctionContractExecutor",
+        func: Callable[..., Any],
+        image: Any,
+        kwargs: Mapping[str, Any],
+    ) -> Any:
+        return CellProfilerFunctionContractMetadata.from_callable(func).resolve(
+            func
+        ).execute(
+            executor,
+            func,
+            image,
+            **dict(kwargs),
+        )
+
+
+class FullStackImageExecutionStrategy(CellProfilerImageExecutionStrategy):
+    """Execute an already-volumetric payload without per-slice rewriting."""
+
+    mode = CellProfilerImageExecutionMode.FULL_STACK
+
+    def execute(
+        self,
+        executor: "CellProfilerFunctionContractExecutor",
+        func: Callable[..., Any],
+        image: Any,
+        kwargs: Mapping[str, Any],
+    ) -> Any:
+        return executor._execute_pure_3d(func, image, **dict(kwargs))
+
+
+class AlignedMultiImageStackExecutionStrategy(CellProfilerImageExecutionStrategy):
+    """Execute aligned multi-image bundles slice-by-slice as a single payload."""
+
+    mode = CellProfilerImageExecutionMode.ALIGNED_MULTI_IMAGE_STACK
+
+    def execute(
+        self,
+        executor: "CellProfilerFunctionContractExecutor",
+        func: Callable[..., Any],
+        image: Any,
+        kwargs: Mapping[str, Any],
+    ) -> Any:
+        return executor._execute_aligned_multi_image_stack(
+            func,
+            image,
+            **dict(kwargs),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerMeasurementImage:
+    """One resolved image payload used by object measurement modules."""
+
+    source_image_name: str | None
+    payload: Any
+    align_to_labels: bool = True
+    execution_mode: CellProfilerImageExecutionMode = (
+        CellProfilerImageExecutionMode.NATURAL
+    )
+
+    @classmethod
+    def natural(
+        cls,
+        *,
+        source_image_name: str | None,
+        payload: Any,
+    ) -> "CellProfilerMeasurementImage":
+        return cls(source_image_name=source_image_name, payload=payload)
+
+    @classmethod
+    def composed(
+        cls,
+        request: CellProfilerImageRequest,
+    ) -> "CellProfilerMeasurementImage":
+        return cls(
+            source_image_name=request.source_image_name,
+            payload=request.payload,
+            align_to_labels=False,
+            execution_mode=request.execution_mode,
+        )
 
 
 def _coerce_invocation_kwargs(
@@ -865,10 +1058,18 @@ class IdentifyTertiaryObjectInputPolicy(CellProfilerObjectInputPolicy):
         }
 
 
+_MEASURE_OBJECT_SIZE_SHAPE_MODULE = "MeasureObjectSizeShape"
+_MEASURE_OBJECT_INTENSITY_MODULE = "MeasureObjectIntensity"
+_MEASURE_TEXTURE_MODULE = "MeasureTexture"
+_MEASURE_COLOCALIZATION_MODULE = "MeasureColocalization"
+_MEASURE_GRANULARITY_MODULE = "MeasureGranularity"
+_MEASURE_OBJECT_NEIGHBORS_MODULE = "MeasureObjectNeighbors"
+
+
 class SingleLabelMeasurementInputPolicy(CellProfilerObjectInputPolicy):
     """Bind one object-label input to measurement functions."""
 
-    module_name = "MeasureObjectSizeShape"
+    module_name = _MEASURE_OBJECT_SIZE_SHAPE_MODULE
 
     def bind(
         self,
@@ -891,11 +1092,11 @@ class SingleLabelMeasurementInputPolicy(CellProfilerObjectInputPolicy):
 
 
 _SINGLE_LABEL_MEASUREMENT_POLICY_MODULES = (
-    "MeasureObjectIntensity",
-    "MeasureTexture",
-    "MeasureColocalization",
-    "MeasureGranularity",
-    "MeasureObjectNeighbors",
+    _MEASURE_OBJECT_INTENSITY_MODULE,
+    _MEASURE_TEXTURE_MODULE,
+    _MEASURE_COLOCALIZATION_MODULE,
+    _MEASURE_GRANULARITY_MODULE,
+    _MEASURE_OBJECT_NEIGHBORS_MODULE,
 )
 
 
@@ -990,11 +1191,16 @@ class CellProfilerPerObjectMeasurementPolicy:
     """Predicate for modules that need one absorbed call per object set."""
 
     module_names: ClassVar[tuple[str, ...]] = (
-        "MeasureObjectSizeShape",
-        "MeasureObjectIntensity",
-        "MeasureTexture",
-        "MeasureColocalization",
-        "MeasureGranularity",
+        _MEASURE_OBJECT_SIZE_SHAPE_MODULE,
+        _MEASURE_OBJECT_INTENSITY_MODULE,
+        _MEASURE_TEXTURE_MODULE,
+        _MEASURE_COLOCALIZATION_MODULE,
+        _MEASURE_GRANULARITY_MODULE,
+    )
+    independent_image_modules: ClassVar[tuple[str, ...]] = (
+        _MEASURE_OBJECT_INTENSITY_MODULE,
+        _MEASURE_TEXTURE_MODULE,
+        _MEASURE_GRANULARITY_MODULE,
     )
 
     @classmethod
@@ -1003,9 +1209,13 @@ class CellProfilerPerObjectMeasurementPolicy:
         module_name: str,
         object_inputs: tuple[ArtifactSpec, ...],
     ) -> bool:
-        return canonical_module_name(module_name) in cls.module_names and len(
+        return canonical_module_name(module_name) in cls.module_names and bool(
             object_inputs
-        ) > 1
+        )
+
+    @classmethod
+    def measures_images_independently(cls, module_name: str) -> bool:
+        return canonical_module_name(module_name) in cls.independent_image_modules
 
 
 @dataclass(frozen=True, slots=True)
@@ -1189,6 +1399,19 @@ def _measurement_table_rows(rows: Any) -> list[Any]:
     if isinstance(rows, tuple):
         return list(rows)
     return [rows]
+
+
+def _object_only_reference_image(image: Any) -> Any:
+    """Use one plane to drive object-only CellProfiler modules once.
+
+    Object-only modules consume runtime object artifacts; the image argument is a
+    carrier required by the absorbed function signature, not the semantic domain
+    to iterate over. Running them over every channel slice duplicates object
+    artifacts and corrupts downstream measurement alignment.
+    """
+    if hasattr(image, "ndim") and image.ndim == 3 and image.shape[0] >= 1:
+        return image[0]
+    return image
 
 
 def _measurement_image_for_labels(image: Any, labels: Any) -> Any:
@@ -1453,6 +1676,18 @@ def _payload_slice_count(payload: Any) -> int:
     return 1
 
 
+def _requested_image_execution_mode(
+    *,
+    force_full_stack: bool,
+    execution_mode: CellProfilerImageExecutionMode | None,
+) -> CellProfilerImageExecutionMode:
+    if execution_mode is not None:
+        return execution_mode
+    if force_full_stack:
+        return CellProfilerImageExecutionMode.FULL_STACK
+    return CellProfilerImageExecutionMode.NATURAL
+
+
 class CellProfilerFunctionContractExecutor:
     """Apply OpenHCS processing contracts after CellProfiler input resolution."""
 
@@ -1465,26 +1700,15 @@ class CellProfilerFunctionContractExecutor:
         force_full_stack: bool = False,
         execution_mode: CellProfilerImageExecutionMode | None = None,
     ) -> Any:
-        mode = execution_mode or (
-            CellProfilerImageExecutionMode.FULL_STACK
-            if force_full_stack
-            else CellProfilerImageExecutionMode.NATURAL
+        mode = _requested_image_execution_mode(
+            force_full_stack=force_full_stack,
+            execution_mode=execution_mode,
         )
-        if mode is CellProfilerImageExecutionMode.FULL_STACK:
-            return self._execute_pure_3d(func, image, **dict(kwargs))
-        if mode is CellProfilerImageExecutionMode.ALIGNED_MULTI_IMAGE_STACK:
-            return self._execute_aligned_multi_image_stack(
-                func,
-                image,
-                **dict(kwargs),
-            )
-        return CellProfilerFunctionContractMetadata.from_callable(func).resolve(
-            func
-        ).execute(
+        return CellProfilerImageExecutionStrategy.for_mode(mode).execute(
             self,
             func,
             image,
-            **dict(kwargs),
+            kwargs,
         )
 
     def _execute_pure_3d(

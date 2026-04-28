@@ -21,6 +21,7 @@ from openhcs.core.config import (
 )
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.source_bindings import ComponentSelector, SourceBindingOrigin
+from openhcs.core.source_schema_workspace import materialize_source_schema_workspace
 from openhcs.tests.generators.generate_synthetic_data import (
     SyntheticMicroscopyGenerator,
 )
@@ -302,6 +303,68 @@ def test_examplefly_cppipe_generated_pipeline_executes_real_pipeline_shape(
     assert all("slice_index" in header for header in headers_by_name.values())
 
 
+def test_examplehuman_cppipe_executes_via_source_schema_workspace(
+    tmp_path: Path,
+) -> None:
+    source_root = _generate_examplehuman_source_folder(tmp_path / "ExampleHuman")
+    cppipe_path = (
+        Path(__file__).resolve().parents[2]
+        / "benchmark"
+        / "cellprofiler_pipelines"
+        / "ExampleHuman.cppipe"
+    )
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / "generated_examplehuman_cellprofiler_pipeline.py",
+    )
+    workspace = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "examplehuman_openhcs_workspace",
+        prepared.source_schema,
+    )
+
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=True,
+        microscope=Microscope.AUTO,
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            output_dir_suffix="_generated_cppipe",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    orchestrator = PipelineOrchestrator(
+        workspace.workspace_root,
+        pipeline_config=pipeline_config,
+    )
+    orchestrator.initialize()
+
+    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+
+    assert all(
+        result.is_success()
+        for result in execution.execution_results.values()
+    )
+    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
+    cytoplasm_records = runtime_store.find(
+        name="Cytoplasm",
+        kind=ArtifactKind.OBJECT_LABELS,
+        axis_id="A01",
+    )
+    measurement_records = runtime_store.find(
+        name="MeasureObjectIntensity_10_measurements",
+        kind=ArtifactKind.MEASUREMENTS,
+        axis_id="A01",
+    )
+    assert len(cytoplasm_records) == 1
+    assert cytoplasm_records[0].value.data.ndim == 2
+    assert measurement_records
+
+
 def test_cppipe_generated_pipeline_materializes_relationship_outputs(
     tmp_path: Path,
 ) -> None:
@@ -456,6 +519,19 @@ def _generate_loadimages_mat_illum_plate(plate_path: Path) -> Path:
     return plate_path
 
 
+def _generate_examplehuman_source_folder(source_root: Path) -> Path:
+    images_dir = source_root / "images"
+    images_dir.mkdir(parents=True)
+    base_name = "AS_09125_050116030001_D03f00d"
+    for channel, seed in enumerate((23, 29, 31)):
+        _write_examplehuman_image(
+            images_dir / f"{base_name}{channel}.tif",
+            seed=seed,
+            signal=2200 + channel * 400,
+        )
+    return source_root
+
+
 def _write_bbbc021_image(path: Path, *, seed: int, signal: int) -> None:
     rng = np.random.default_rng(seed)
     image = rng.normal(900, 40, size=(64, 64)).clip(0, 65535).astype(np.uint16)
@@ -464,6 +540,20 @@ def _write_bbbc021_image(path: Path, *, seed: int, signal: int) -> None:
         0,
         65535,
     ).astype(np.uint16)
+    Image.fromarray(image).save(path)
+
+
+def _write_examplehuman_image(path: Path, *, seed: int, signal: int) -> None:
+    rng = np.random.default_rng(seed)
+    image = rng.normal(650, 35, size=(128, 128)).clip(0, 65535).astype(np.uint16)
+    for center_y, center_x in ((40, 44), (84, 86), (46, 92)):
+        y0, y1 = center_y - 8, center_y + 8
+        x0, x1 = center_x - 8, center_x + 8
+        image[y0:y1, x0:x1] = np.clip(
+            image[y0:y1, x0:x1].astype(np.int32) + signal,
+            0,
+            65535,
+        ).astype(np.uint16)
     Image.fromarray(image).save(path)
 
 

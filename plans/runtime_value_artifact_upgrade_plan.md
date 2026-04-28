@@ -1,6 +1,6 @@
 # Runtime Value, Source Binding, and CellProfiler System Plan
 
-**Date:** 2026-04-27
+**Date:** 2026-04-28
 **Branch:** `benchmark-platform`
 **Status:** In progress
 **Supersedes:** the narrower runtime-artifact-only framing from earlier passes
@@ -259,6 +259,17 @@ The branch has already established most of the typed runtime/compiler foundation
     - the corpus classifies `ExampleHuman` as supported rather than known-invalid
     - corpus preparation coverage now exercises the real `Images`, `Metadata`, `NamesAndTypes`, `Groups`, dual `IdentifyPrimaryObjects`, `RelateObjects`, `IdentifySecondaryObjects`, `IdentifyTertiaryObjects`, measurements, `OverlayOutlines`, `SaveImages`, and `ExportToSpreadsheet` structure
     - the previously intentional `Cytoplasm` producer gap is gone because the real pipeline contains the missing tertiary-object producer
+37. Current official `ExampleHuman.cppipe` now executes through the real generated OpenHCS runtime path when its setup schema is materialized into an OpenHCS virtual workspace:
+    - `Images` / `Metadata` / `NamesAndTypes` / `Groups` compile into source schema and source bindings instead of being treated as unabsorbed runtime modules
+    - the materialized workspace preserves the three named source images (`DNA`, `PH3`, `cellbody`) as OpenHCS-addressable views
+    - object-only CellProfiler modules such as `IdentifyTertiaryObjects` no longer iterate over a fake 3-plane image stack when their true semantic inputs are object labels
+    - per-object measurement modules now resolve each declared image input independently and measure each declared image/object pair instead of using one composed source image
+    - coupled image-pair measurements such as `MeasureColocalization` keep the composed multi-image payload as one semantic input while still running through the same object-measurement path
+    - acceptance asserts that `Cytoplasm` remains a single 2D object-label artifact and that intensity measurements are materialized
+38. CellProfiler image execution mode dispatch is now nominal and advisor-clean:
+    - `CellProfilerImageExecutionStrategy` is an auto-registered ABC family keyed by `CellProfilerImageExecutionMode`
+    - natural, full-stack, and aligned multi-image-stack execution modes are separate typed strategies
+    - `benchmark/cellprofiler_compat/module_execution.py` reports zero findings under the nominal refactor advisor after this pass
 
 ### 3.2 What Is Still Missing
 
@@ -284,9 +295,10 @@ The biggest unresolved items are now:
    - symbol-table semantics now support real pipelines that reuse the same lexical alias for an image and an object in different CellProfiler workspaces
    - canonical dataset-owned `.cppipe` references can now be resolved through the benchmark adapter instead of only local ad hoc files
    - ExampleFly now executes end to end as a real shipped `.cppipe` shape and materializes measurement CSV outputs on disk
+   - current official ExampleHuman now executes end to end through the generated orchestrator path on synthetic official-shaped data
    - a generated `RelateObjects` pipeline now executes through the orchestrator and materializes both relationship and measurement CSV outputs
-   - the next gap is executing current official examples against real or converted example-image layouts, not basic preparation enablement
-7. Export and relationship-heavy semantics now have initial real-output validation with concrete CSV schema assertions, but not broad corpus-level validation.
+   - the next gap is broadening accepted real-pipeline coverage beyond BBBC021 / ExampleFly / ExampleHuman and validating against more real downloaded dataset layouts
+7. Export and relationship-heavy semantics now have initial real-output validation with concrete CSV schema assertions, but not broad corpus-level validation across many real converted pipelines.
 8. Benchmarking is no longer ahead of the remaining CellProfiler semantics, but it should still stay secondary to broader semantic validation.
 9. The broader absorbed-function corpus still needs continued cleanup beyond the currently exercised import/materialization surface.
 

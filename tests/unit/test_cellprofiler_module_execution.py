@@ -11,6 +11,7 @@ from benchmark.cellprofiler_compat.module_execution import (
     _measurement_labels,
     _measurement_labels_for_image,
     _measurement_table_rows,
+    _object_only_reference_image,
 )
 from benchmark.cellprofiler_library.functions.filterobjects import (
     FilterMethod,
@@ -206,6 +207,15 @@ def test_measurement_labels_align_to_single_channel_image_stack() -> None:
 
     assert measurement_labels.shape == (4, 5)
     np.testing.assert_array_equal(measurement_labels, labels[0])
+
+
+def test_object_only_reference_image_uses_one_stack_plane() -> None:
+    image = np.arange(3 * 4 * 5, dtype=np.uint16).reshape(3, 4, 5)
+
+    reference_image = _object_only_reference_image(image)
+
+    assert reference_image.shape == (4, 5)
+    np.testing.assert_array_equal(reference_image, image[0])
 
 
 def test_measurement_table_rows_wrap_scalar_measurement() -> None:

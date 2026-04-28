@@ -37,6 +37,7 @@ from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_values import FieldSpec, RuntimeArrayPayload
 from openhcs.constants.constants import AllComponents
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
 AXIS_ID = "A01"
@@ -52,6 +53,7 @@ IDENTIFY_TERTIARY_OBJECTS = "IdentifyTertiaryObjects"
 MEASURE_OBJECT_INTENSITY = "MeasureObjectIntensity"
 MEASURE_OBJECT_NEIGHBORS = "MeasureObjectNeighbors"
 MEASURE_OBJECT_SIZE_SHAPE = "MeasureObjectSizeShape"
+MEASURE_COLOCALIZATION = "MeasureColocalization"
 MEASURE_IMAGE_INTENSITY = "MeasureImageIntensity"
 RELATE_OBJECTS = "RelateObjects"
 
@@ -114,6 +116,55 @@ def _adapter(
         filemanager=filemanager,
     )
     return adapter, filemanager
+
+
+def _pipeline_start_contains_binding(alias):
+    return NamedSourceBinding(
+        alias=alias,
+        selector=SourceSelector(
+            filters=(
+                SourceFilterClause(
+                    SourceFilterSubject.FILE,
+                    SourceFilterMatchType.CONTAINS,
+                    alias,
+                ),
+            )
+        ),
+        origin=SourceBindingOrigin.PIPELINE_START,
+    )
+
+
+def _source_bound_image_adapter(outputs, images):
+    filemanager = FileManagerStub()
+    paths = tuple(f"/src/{alias}.tif" for alias in images)
+    for alias, image in images.items():
+        filemanager.saved[("memory", f"/src/{alias}.tif")] = image
+    context = ContextStub(filemanager)
+    return CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs=outputs,
+        source_binding_plan=CompiledSourceBindingPlan.from_config(
+            StepSourceBindingsConfig(
+                groups=(
+                    GroupedSourceBindings(
+                        bindings=tuple(
+                            _pipeline_start_contains_binding(alias)
+                            for alias in images
+                        )
+                    ),
+                )
+            )
+        ),
+        source_binding_context=SourceBindingRuntimeContext(
+            step_input_files=paths,
+            step_input_dir="/src",
+            pipeline_input_files=paths,
+            pipeline_input_backend="memory",
+        ),
+        processing_context=context,
+        filemanager=filemanager,
+    )
 
 
 def _executor(
@@ -919,9 +970,100 @@ def test_cellprofiler_module_executor_reads_objects_for_measurements():
     executor.run(measure, image, cellprofiler_runtime=adapter)
     measurements = adapter.get_measurements(NUCLEI_MEASUREMENTS)
 
-    assert measurements.rows is rows
+    assert measurements.rows == rows
     assert measurements.object_name == NUCLEI
     assert measurements.source_image_name == DNA_IMAGE
+
+
+def test_cellprofiler_module_executor_measures_each_declared_image_for_single_object():
+    dna = np.full((4, 5), 3.0, dtype=np.float32)
+    ph3 = np.full((4, 5), 9.0, dtype=np.float32)
+    nuclei = np.ones((4, 5), dtype=np.int32)
+    adapter = _source_bound_image_adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        },
+        {DNA_IMAGE: dna, "PH3": ph3},
+    )
+    adapter.add_objects(NUCLEI, nuclei)
+    executor = _executor(
+        MEASURE_OBJECT_INTENSITY,
+        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        inputs=(
+            ArtifactSpec(DNA_IMAGE, ArtifactKind.IMAGE),
+            ArtifactSpec("PH3", ArtifactKind.IMAGE),
+            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+        ),
+        runtime_artifact_inputs=(
+            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+        ),
+    )
+    seen = []
+
+    def measure(image_arg, *, labels):
+        seen.append((float(image_arg.mean()), int(labels.max())))
+        return image_arg, [{"mean": float(image_arg.mean()), "label": int(labels.max())}]
+
+    result = executor.run(
+        measure,
+        np.stack((dna, ph3)),
+        cellprofiler_runtime=adapter,
+    )
+    measurements = adapter.get_measurements(MEASUREMENTS)
+
+    np.testing.assert_array_equal(result, np.stack((dna, ph3)))
+    assert seen == [(3.0, 1), (9.0, 1)]
+    assert measurements.rows == [
+        {"mean": 3.0, "label": 1},
+        {"mean": 9.0, "label": 1},
+    ]
+    assert measurements.object_name == NUCLEI
+    assert measurements.source_image_name is None
+
+
+def test_cellprofiler_module_executor_keeps_coupled_measurement_images_composed():
+    dna = np.full((4, 5), 3.0, dtype=np.float32)
+    ph3 = np.full((4, 5), 9.0, dtype=np.float32)
+    nuclei = np.ones((4, 5), dtype=np.int32)
+    adapter = _source_bound_image_adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        },
+        {DNA_IMAGE: dna, "PH3": ph3},
+    )
+    adapter.add_objects(NUCLEI, nuclei)
+    executor = _executor(
+        MEASURE_COLOCALIZATION,
+        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        inputs=(
+            ArtifactSpec(DNA_IMAGE, ArtifactKind.IMAGE),
+            ArtifactSpec("PH3", ArtifactKind.IMAGE),
+            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+        ),
+        runtime_artifact_inputs=(
+            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+        ),
+    )
+    seen = []
+
+    def measure(image_arg, *, labels):
+        seen.append((image_arg.shape, labels.shape))
+        return image_arg[0], [{"object_count": int(labels.max())}]
+
+    result = executor.run(
+        measure,
+        np.stack((dna, ph3)),
+        cellprofiler_runtime=adapter,
+    )
+    measurements = adapter.get_measurements(MEASUREMENTS)
+
+    np.testing.assert_array_equal(result, np.stack((dna, ph3)))
+    assert seen == [((2, 4, 5), (4, 5))]
+    assert measurements.rows == [{"object_count": 1}]
+    assert measurements.object_name == NUCLEI
+    assert measurements.source_image_name is None
 
 
 def test_cellprofiler_module_executor_combines_multi_object_measurements():
@@ -1001,6 +1143,103 @@ def test_cellprofiler_module_executor_preserves_main_stack_for_measurements():
         assert measurement_image.shape == measurement_labels.shape == (4, 5)
     np.testing.assert_array_equal(result, image)
     assert measurements.rows == [{"object_count": 1}, {"object_count": 2}]
+
+
+def test_cellprofiler_module_executor_measures_each_declared_image_and_object():
+    dna = np.full((4, 5), 3.0, dtype=np.float32)
+    ph3 = np.full((4, 5), 9.0, dtype=np.float32)
+    nuclei = np.ones((4, 5), dtype=np.int32)
+    cells = np.full((4, 5), 2, dtype=np.int32)
+    adapter = _source_bound_image_adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        },
+        {DNA_IMAGE: dna, "PH3": ph3},
+    )
+    adapter.add_objects(NUCLEI, nuclei)
+    adapter.add_objects(CELLS, cells)
+    executor = _executor(
+        MEASURE_OBJECT_INTENSITY,
+        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        inputs=(
+            ArtifactSpec(DNA_IMAGE, ArtifactKind.IMAGE),
+            ArtifactSpec("PH3", ArtifactKind.IMAGE),
+            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec(CELLS, ArtifactKind.OBJECT_LABELS),
+        ),
+        runtime_artifact_inputs=(
+            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec(CELLS, ArtifactKind.OBJECT_LABELS),
+        ),
+    )
+    seen = []
+
+    def measure(image_arg, *, labels):
+        seen.append((float(image_arg.mean()), int(labels.max())))
+        return image_arg, [{"mean": float(image_arg.mean()), "label": int(labels.max())}]
+
+    result = executor.run(
+        measure,
+        np.stack((dna, ph3)),
+        cellprofiler_runtime=adapter,
+    )
+    measurements = adapter.get_measurements(MEASUREMENTS)
+
+    np.testing.assert_array_equal(result, np.stack((dna, ph3)))
+    assert seen == [(3.0, 1), (3.0, 2), (9.0, 1), (9.0, 2)]
+    assert measurements.rows == [
+        {"mean": 3.0, "label": 1},
+        {"mean": 3.0, "label": 2},
+        {"mean": 9.0, "label": 1},
+        {"mean": 9.0, "label": 2},
+    ]
+    assert measurements.source_image_name is None
+
+
+def test_cellprofiler_object_only_executor_does_not_iterate_image_stack():
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
+            "Cytoplasm": _plan("Cytoplasm", ArtifactKind.OBJECT_LABELS),
+        }
+    )
+    nuclei = np.ones((4, 5), dtype=np.int32)
+    cells = np.full((4, 5), 2, dtype=np.int32)
+    adapter.add_objects(NUCLEI, nuclei)
+    adapter.add_objects(CELLS, cells)
+    executor = _executor(
+        IDENTIFY_TERTIARY_OBJECTS,
+        (ArtifactSpec("Cytoplasm", ArtifactKind.OBJECT_LABELS),),
+        inputs=(
+            ArtifactSpec(CELLS, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+        ),
+        runtime_artifact_inputs=(
+            ArtifactSpec(CELLS, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+        ),
+    )
+    seen_images = []
+
+    def identify_tertiary(image_arg, *, primary_labels, secondary_labels):
+        seen_images.append(image_arg.shape)
+        return image_arg, secondary_labels - primary_labels
+
+    identify_tertiary.__processing_contract__ = ProcessingContract.PURE_2D
+
+    result = executor.run(
+        identify_tertiary,
+        np.zeros((3, 4, 5), dtype=np.float32),
+        cellprofiler_runtime=adapter,
+    )
+    cytoplasm = adapter.get_objects("Cytoplasm")
+
+    assert seen_images == [(4, 5)]
+    assert result.shape == (3, 4, 5)
+    assert cytoplasm.labels.shape == (4, 5)
 
 
 def test_cellprofiler_module_executor_records_relationship_and_measurement_outputs():
