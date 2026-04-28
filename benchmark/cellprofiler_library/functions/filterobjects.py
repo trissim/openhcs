@@ -7,9 +7,12 @@ texture, intensity) or removes objects touching the image border.
 """
 
 import numpy as np
-from typing import Tuple, Optional, List
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
+from typing import ClassVar, Optional, Self, Tuple
+
+from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
@@ -36,9 +39,195 @@ class FilterObjectsStats:
     objects_post_filter: int
     objects_removed: int
 
+    @classmethod
+    def from_counts(
+        cls,
+        *,
+        objects_pre_filter: int,
+        objects_post_filter: int,
+        slice_index: int = 0,
+    ) -> "FilterObjectsStats":
+        return cls(
+            slice_index=slice_index,
+            objects_pre_filter=objects_pre_filter,
+            objects_post_filter=objects_post_filter,
+            objects_removed=objects_pre_filter - objects_post_filter,
+        )
 
-@numpy(contract=ProcessingContract.PURE_2D)
-@special_inputs("labels")
+
+@dataclass(frozen=True, slots=True)
+class FilterObjectsSelectionRequest:
+    """Inputs needed to choose retained primary object labels."""
+
+    labels: np.ndarray
+    num_objects_pre: int
+    filter_method: FilterMethod
+    measurement_values: np.ndarray | None
+    min_value: float | None
+    max_value: float | None
+    use_minimum: bool
+    use_maximum: bool
+
+
+class FilterObjectsRegisteredStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Shared registry lookup for nominal FilterObjects strategy families."""
+
+    __skip_if_no_key__ = True
+
+    @classmethod
+    def for_key(cls, key: Enum) -> Self:
+        strategy_type = cls.__registry__.get(key)
+        if strategy_type is None:
+            raise ValueError(
+                f"Unsupported {cls.__name__} key {getattr(key, 'value', key)!r}."
+            )
+        return strategy_type()
+
+
+class FilterModeStrategy(FilterObjectsRegisteredStrategy):
+    """Nominal retained-object selection for each FilterObjects mode."""
+
+    __registry_key__ = "mode"
+    mode: ClassVar[FilterMode | None] = None
+
+    @abstractmethod
+    def indexes_to_keep(
+        self,
+        request: FilterObjectsSelectionRequest,
+    ) -> list[int]:
+        """Return one-indexed primary object labels to retain."""
+
+
+class BorderFilterModeStrategy(FilterModeStrategy):
+    """Remove primary objects touching the image border."""
+
+    mode = FilterMode.BORDER
+
+    def indexes_to_keep(
+        self,
+        request: FilterObjectsSelectionRequest,
+    ) -> list[int]:
+        return _discard_border_objects(request.labels)
+
+
+class MeasurementFilterModeStrategy(FilterModeStrategy):
+    """Filter primary objects from per-object measurement values."""
+
+    mode = FilterMode.MEASUREMENTS
+
+    def indexes_to_keep(
+        self,
+        request: FilterObjectsSelectionRequest,
+    ) -> list[int]:
+        from skimage.measure import regionprops
+
+        measurement_values = request.measurement_values
+        if measurement_values is None:
+            props = regionprops(request.labels)
+            measurement_values = np.array([p.area for p in props])
+        return FilterMethodStrategy.for_key(
+            request.filter_method
+        ).indexes_to_keep(
+            measurement_values,
+            request,
+        )
+
+
+class FilterMethodStrategy(FilterObjectsRegisteredStrategy):
+    """Nominal measurement-filter behavior for each FilterObjects method."""
+
+    __registry_key__ = "method"
+    method: ClassVar[FilterMethod | None] = None
+
+    @abstractmethod
+    def indexes_to_keep(
+        self,
+        values: np.ndarray,
+        request: FilterObjectsSelectionRequest,
+    ) -> list[int]:
+        """Return one-indexed primary object labels retained by this method."""
+
+
+class LimitsFilterMethodStrategy(FilterMethodStrategy):
+    """Keep objects whose measurement falls within configured limits."""
+
+    method = FilterMethod.LIMITS
+
+    def indexes_to_keep(
+        self,
+        values: np.ndarray,
+        request: FilterObjectsSelectionRequest,
+    ) -> list[int]:
+        return _keep_within_limits(
+            values,
+            request.min_value,
+            request.max_value,
+            request.use_minimum,
+            request.use_maximum,
+        )
+
+
+class MinimalFilterMethodStrategy(FilterMethodStrategy):
+    """Keep the object with the minimum measurement value."""
+
+    method = FilterMethod.MINIMAL
+
+    def indexes_to_keep(
+        self,
+        values: np.ndarray,
+        request: FilterObjectsSelectionRequest,
+    ) -> list[int]:
+        del request
+        return _keep_one(values, keep_max=False)
+
+
+class MaximalFilterMethodStrategy(FilterMethodStrategy):
+    """Keep the object with the maximum measurement value."""
+
+    method = FilterMethod.MAXIMAL
+
+    def indexes_to_keep(
+        self,
+        values: np.ndarray,
+        request: FilterObjectsSelectionRequest,
+    ) -> list[int]:
+        del request
+        return _keep_one(values, keep_max=True)
+
+
+class PerObjectFilterMethodStrategy(FilterMethodStrategy):
+    """Reject per-object filtering until parent-object measurements are modeled."""
+
+    method: ClassVar[FilterMethod | None] = None
+
+    def indexes_to_keep(
+        self,
+        values: np.ndarray,
+        request: FilterObjectsSelectionRequest,
+    ) -> list[int]:
+        del values, request
+        method = type(self).method
+        if method is None:
+            raise TypeError("PerObjectFilterMethodStrategy must define method.")
+        raise NotImplementedError(
+            f"FilterObjects method {method.value!r} requires "
+            "parent-object assignment semantics."
+        )
+
+
+class MinimalPerObjectFilterMethodStrategy(PerObjectFilterMethodStrategy):
+    """Fail loudly for minimal-per-parent filtering until relationships exist."""
+
+    method = FilterMethod.MINIMAL_PER_OBJECT
+
+
+class MaximalPerObjectFilterMethodStrategy(PerObjectFilterMethodStrategy):
+    """Fail loudly for maximal-per-parent filtering until relationships exist."""
+
+    method = FilterMethod.MAXIMAL_PER_OBJECT
+
+
+@numpy(contract=ProcessingContract.FLEXIBLE)
 @special_outputs(
     ("filter_stats", csv_materializer(
         fields=["slice_index", "objects_pre_filter", "objects_post_filter", "objects_removed"],
@@ -48,21 +237,24 @@ class FilterObjectsStats:
 )
 def filter_objects(
     image: np.ndarray,
-    labels: np.ndarray,
     mode: FilterMode = FilterMode.MEASUREMENTS,
     filter_method: FilterMethod = FilterMethod.LIMITS,
+    object_labels: tuple[np.ndarray, ...] = (),
     measurement_values: Optional[np.ndarray] = None,
     min_value: Optional[float] = None,
     max_value: Optional[float] = None,
     use_minimum: bool = True,
     use_maximum: bool = True,
-) -> Tuple[np.ndarray, FilterObjectsStats, np.ndarray]:
+    additional_object_count: int = 0,
+    outline_object_indices: tuple[int, ...] = (),
+) -> tuple[np.ndarray, FilterObjectsStats, np.ndarray, ...]:
     """
     Filter objects based on measurements or border touching.
     
     Args:
         image: Input intensity image (H, W)
-        labels: Label image with segmented objects (H, W)
+        object_labels: Primary labels followed by additional label sets to
+            relabel using the retained primary-object mask.
         mode: Filtering mode - MEASUREMENTS or BORDER
         filter_method: Method for measurement-based filtering
         measurement_values: Array of measurement values per object (indexed by label-1)
@@ -72,55 +264,54 @@ def filter_objects(
         use_maximum: Whether to apply maximum threshold
     
     Returns:
-        Tuple of (image, stats, filtered_labels)
+        Tuple of (image, stats, filtered primary labels, additional relabeled
+        objects, outline images).
     """
-    from scipy import ndimage as ndi
-    from skimage.measure import regionprops
-    
+    if not object_labels:
+        raise ValueError("FilterObjects requires at least one object label input.")
+    if additional_object_count != len(object_labels) - 1:
+        raise ValueError(
+            "FilterObjects additional_object_count must match additional object "
+            "label inputs."
+        )
+    labels = _label_plane(object_labels[0])
     labels = labels.astype(np.int32)
     max_label = labels.max()
     
     if max_label == 0:
         # No objects to filter
-        stats = FilterObjectsStats(
-            slice_index=0,
+        stats = FilterObjectsStats.from_counts(
             objects_pre_filter=0,
             objects_post_filter=0,
-            objects_removed=0
         )
-        return image, stats, labels
+        relabeled_objects = (
+            labels,
+            *(_label_plane(value) for value in object_labels[1:]),
+        )
+        return (
+            image,
+            stats,
+            *relabeled_objects,
+            *_outline_images(relabeled_objects, outline_object_indices),
+        )
     
     # Get all unique labels (excluding background)
     unique_labels = np.unique(labels)
     unique_labels = unique_labels[unique_labels > 0]
     num_objects_pre = len(unique_labels)
-    
-    if mode == FilterMode.BORDER:
-        # Remove objects touching the border
-        indexes_to_keep = _discard_border_objects(labels)
-    elif mode == FilterMode.MEASUREMENTS:
-        if measurement_values is None:
-            # If no measurements provided, compute area as default
-            props = regionprops(labels)
-            measurement_values = np.array([p.area for p in props])
-        
-        if filter_method == FilterMethod.LIMITS:
-            indexes_to_keep = _keep_within_limits(
-                measurement_values, 
-                min_value, 
-                max_value,
-                use_minimum,
-                use_maximum
-            )
-        elif filter_method == FilterMethod.MINIMAL:
-            indexes_to_keep = _keep_one(measurement_values, keep_max=False)
-        elif filter_method == FilterMethod.MAXIMAL:
-            indexes_to_keep = _keep_one(measurement_values, keep_max=True)
-        else:
-            # Default to keeping all
-            indexes_to_keep = list(range(1, num_objects_pre + 1))
-    else:
-        indexes_to_keep = list(range(1, num_objects_pre + 1))
+
+    indexes_to_keep = FilterModeStrategy.for_key(mode).indexes_to_keep(
+        FilterObjectsSelectionRequest(
+            labels=labels,
+            num_objects_pre=num_objects_pre,
+            filter_method=filter_method,
+            measurement_values=measurement_values,
+            min_value=min_value,
+            max_value=max_value,
+            use_minimum=use_minimum,
+            use_maximum=use_maximum,
+        )
+    )
     
     # Create new label image with only kept objects
     new_object_count = len(indexes_to_keep)
@@ -130,18 +321,28 @@ def filter_objects(
             label_mapping[old_idx] = new_idx
     
     filtered_labels = label_mapping[labels]
-    
-    stats = FilterObjectsStats(
-        slice_index=0,
-        objects_pre_filter=num_objects_pre,
-        objects_post_filter=new_object_count,
-        objects_removed=num_objects_pre - new_object_count
+    relabeled_objects = (
+        filtered_labels,
+        *(
+            _relabel_overlapping_objects(_label_plane(additional), filtered_labels)
+            for additional in object_labels[1:]
+        ),
     )
     
-    return image, stats, filtered_labels
+    stats = FilterObjectsStats.from_counts(
+        objects_pre_filter=num_objects_pre,
+        objects_post_filter=new_object_count,
+    )
+    
+    return (
+        image,
+        stats,
+        *relabeled_objects,
+        *_outline_images(relabeled_objects, outline_object_indices),
+    )
 
 
-def _discard_border_objects(labels: np.ndarray) -> List[int]:
+def _discard_border_objects(labels: np.ndarray) -> list[int]:
     """
     Return indices of objects not touching the image border.
     
@@ -178,7 +379,7 @@ def _keep_within_limits(
     max_value: Optional[float],
     use_minimum: bool,
     use_maximum: bool
-) -> List[int]:
+) -> list[int]:
     """
     Keep objects whose measurements fall within specified limits.
     
@@ -208,7 +409,7 @@ def _keep_within_limits(
     return indexes.tolist()
 
 
-def _keep_one(values: np.ndarray, keep_max: bool = True) -> List[int]:
+def _keep_one(values: np.ndarray, keep_max: bool = True) -> list[int]:
     """
     Keep only the object with the maximum or minimum measurement value.
     
@@ -228,6 +429,57 @@ def _keep_one(values: np.ndarray, keep_max: bool = True) -> List[int]:
         best_idx = np.argmin(values) + 1
     
     return [int(best_idx)]
+
+
+def _label_plane(labels: np.ndarray) -> np.ndarray:
+    """Return the label plane FilterObjects should operate on."""
+    if labels.ndim == 3 and labels.shape[0] == 1:
+        return labels[0]
+    return labels
+
+
+def _relabel_overlapping_objects(
+    labels: np.ndarray,
+    filtered_primary_labels: np.ndarray,
+) -> np.ndarray:
+    """Relabel additional objects by overlap with retained primary objects."""
+    labels = labels.astype(np.int32)
+    retained_mask = filtered_primary_labels > 0
+    if labels.shape != retained_mask.shape:
+        raise ValueError(
+            "FilterObjects additional object labels must match primary labels."
+        )
+    retained_source_labels = np.unique(labels[retained_mask])
+    retained_source_labels = retained_source_labels[retained_source_labels > 0]
+    if retained_source_labels.size == 0:
+        return np.zeros_like(labels, dtype=np.int32)
+    mapping = np.zeros(labels.max() + 1, dtype=np.int32)
+    for new_idx, old_idx in enumerate(retained_source_labels, start=1):
+        mapping[int(old_idx)] = new_idx
+    return mapping[labels]
+
+
+def _outline_images(
+    relabeled_objects: tuple[np.ndarray, ...],
+    outline_object_indices: tuple[int, ...],
+) -> tuple[np.ndarray, ...]:
+    return tuple(
+        _outline_image(relabeled_objects[index])
+        for index in outline_object_indices
+    )
+
+
+def _outline_image(labels: np.ndarray) -> np.ndarray:
+    labels = labels.astype(np.int32)
+    if labels.ndim != 2:
+        raise ValueError("FilterObjects outline images require 2D labels.")
+    boundary = np.zeros(labels.shape, dtype=bool)
+    boundary[:-1, :] |= labels[:-1, :] != labels[1:, :]
+    boundary[1:, :] |= labels[:-1, :] != labels[1:, :]
+    boundary[:, :-1] |= labels[:, :-1] != labels[:, 1:]
+    boundary[:, 1:] |= labels[:, :-1] != labels[:, 1:]
+    boundary &= labels > 0
+    return boundary.astype(np.uint8)
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -269,11 +521,9 @@ def filter_objects_by_size(
     max_label = labels.max()
     
     if max_label == 0:
-        stats = FilterObjectsStats(
-            slice_index=0,
+        stats = FilterObjectsStats.from_counts(
             objects_pre_filter=0,
             objects_post_filter=0,
-            objects_removed=0
         )
         return image, stats, labels
     
@@ -300,11 +550,9 @@ def filter_objects_by_size(
     
     filtered_labels = label_mapping[labels]
     
-    stats = FilterObjectsStats(
-        slice_index=0,
+    stats = FilterObjectsStats.from_counts(
         objects_pre_filter=num_objects_pre,
         objects_post_filter=new_object_count,
-        objects_removed=num_objects_pre - new_object_count
     )
     
     return image, stats, filtered_labels
@@ -337,11 +585,9 @@ def filter_border_objects(
     max_label = labels.max()
     
     if max_label == 0:
-        stats = FilterObjectsStats(
-            slice_index=0,
+        stats = FilterObjectsStats.from_counts(
             objects_pre_filter=0,
             objects_post_filter=0,
-            objects_removed=0
         )
         return image, stats, labels
     
@@ -360,11 +606,9 @@ def filter_border_objects(
     
     filtered_labels = label_mapping[labels]
     
-    stats = FilterObjectsStats(
-        slice_index=0,
+    stats = FilterObjectsStats.from_counts(
         objects_pre_filter=num_objects_pre,
         objects_post_filter=new_object_count,
-        objects_removed=num_objects_pre - new_object_count
     )
     
     return image, stats, filtered_labels

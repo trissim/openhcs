@@ -51,6 +51,9 @@ GRAY_TO_COLOR = "GrayToColor"
 RELATE_OBJECTS = "RelateObjects"
 MASK_OBJECTS = "MaskObjects"
 MASKED_NUCLEI = "MaskedNuclei"
+FILTER_OBJECTS = "FilterObjects"
+FILTERED_NUCLEI = "FilteredNuclei"
+FILTERED_CELLS = "FilteredCells"
 
 
 class MemoryBackend:
@@ -346,6 +349,42 @@ def _mask_objects_pipeline_modules() -> list[ModuleBlock]:
     ]
 
 
+def _filter_objects_pipeline_modules() -> list[ModuleBlock]:
+    return [
+        _module(
+            1,
+            IDENTIFY_PRIMARY_OBJECTS,
+            {
+                "Select the input image": SOURCE_IMAGE,
+                "Name the primary objects to be identified": NUCLEI,
+            },
+        ),
+        _module(
+            2,
+            IDENTIFY_PRIMARY_OBJECTS,
+            {
+                "Select the input image": SOURCE_IMAGE,
+                "Name the primary objects to be identified": CELLS,
+            },
+        ),
+        _module(
+            3,
+            FILTER_OBJECTS,
+            {
+                "Name the output objects": FILTERED_NUCLEI,
+                "Select the object to filter": NUCLEI,
+                "Filter using classifier rules or measurements?": "Measurements",
+                "Select the filtering method": "Limits",
+                "Filter using a minimum measurement value?": "No",
+                "Filter using a maximum measurement value?": "No",
+                "Select additional object to relabel": CELLS,
+                "Name the relabeled objects": FILTERED_CELLS,
+                "Save outlines of relabeled objects?": "No",
+            },
+        ),
+    ]
+
+
 def _single_channel_source_binding_context() -> SourceBindingRuntimeContext:
     return SourceBindingRuntimeContext(
         step_input_files=("A01_s001_w1_z001_t001.tif",)
@@ -609,4 +648,47 @@ def test_generated_cellprofiler_pipeline_executes_generic_mask_objects_contract(
 
     assert len(masked_records) == 1
     assert masked_records[0].value.data.max() > 0
+    assert len(measurement_records) == 1
+
+
+def test_generated_cellprofiler_pipeline_executes_filterobjects_relabel_outputs():
+    generated = _generated_pipeline(_filter_objects_pipeline_modules())
+    namespace = _pipeline_namespace(generated)
+    context = ContextStub()
+    image = _synthetic_nuclei_image()
+    source_binding_context = _single_channel_source_binding_context()
+
+    for step, contract in zip(
+        namespace["pipeline_steps"],
+        generated.artifact_contracts,
+        strict=True,
+    ):
+        image = _run_generated_step(
+            step,
+            contract,
+            image,
+            context,
+            source_binding_context=source_binding_context,
+        )
+
+    filtered_nuclei_records = context.runtime_value_store.find(
+        name=FILTERED_NUCLEI,
+        kind=ArtifactKind.OBJECT_LABELS,
+        axis_id=AXIS_ID,
+    )
+    filtered_cells_records = context.runtime_value_store.find(
+        name=FILTERED_CELLS,
+        kind=ArtifactKind.OBJECT_LABELS,
+        axis_id=AXIS_ID,
+    )
+    measurement_records = context.runtime_value_store.find(
+        name="FilterObjects_3_measurements",
+        kind=ArtifactKind.MEASUREMENTS,
+        axis_id=AXIS_ID,
+    )
+
+    assert len(filtered_nuclei_records) == 1
+    assert filtered_nuclei_records[0].value.data.max() > 0
+    assert len(filtered_cells_records) == 1
+    assert filtered_cells_records[0].value.data.max() > 0
     assert len(measurement_records) == 1

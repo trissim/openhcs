@@ -56,6 +56,10 @@ from .artifact_semantics import (
     artifact_setting_symbols,
     function_special_outputs,
 )
+from .filter_objects_settings import (
+    FilterObjectsOutputRole,
+    filter_objects_plan,
+)
 from .gray_to_color_settings import GrayToColorInputNameResolver
 from .overlay_outlines_settings import (
     OverlayOutlineSourceKind,
@@ -845,6 +849,82 @@ def _measure_image_area_occupied(
     )
 
 
+def _filter_objects(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    plan = filter_objects_plan(module)
+    inputs = [
+        builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
+        for name in plan.input_object_names
+    ]
+    outputs: list[CellProfilerSymbol] = []
+    for output in plan.outputs:
+        if output.role is FilterObjectsOutputRole.MEASUREMENTS:
+            outputs.append(
+                builder.declare(
+                    _measurement_name(module),
+                    CellProfilerSymbolKind.MEASUREMENTS,
+                    module,
+                )
+            )
+            continue
+        outputs.append(
+            builder.declare(
+                output.name,
+                FilterObjectsOutputSymbolKindStrategy.for_role(
+                    output.role
+                ).symbol_kind(),
+                module,
+            )
+        )
+    return _contracts(module, builder, inputs=inputs, outputs=outputs)
+
+
+class FilterObjectsOutputSymbolKindStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal symbol-kind mapping for FilterObjects output roles."""
+
+    __registry_key__ = "role"
+    __skip_if_no_key__ = True
+    role: ClassVar[FilterObjectsOutputRole | None] = None
+
+    @classmethod
+    def for_role(
+        cls,
+        role: FilterObjectsOutputRole,
+    ) -> "FilterObjectsOutputSymbolKindStrategy":
+        strategy_type = cls.__registry__.get(role)
+        if strategy_type is None:
+            raise ValueError(f"Unsupported FilterObjects output role {role.value!r}.")
+        return strategy_type()
+
+    @abstractmethod
+    def symbol_kind(self) -> CellProfilerSymbolKind:
+        """Return the OpenHCS symbol kind for this output role."""
+
+
+class FilterObjectsFilteredObjectOutputStrategy(
+    FilterObjectsOutputSymbolKindStrategy
+):
+    """Map relabeled FilterObjects outputs to object-label artifacts."""
+
+    role = FilterObjectsOutputRole.FILTERED_OBJECTS
+
+    def symbol_kind(self) -> CellProfilerSymbolKind:
+        return CellProfilerSymbolKind.OBJECTS
+
+
+class FilterObjectsOutlineImageOutputStrategy(
+    FilterObjectsOutputSymbolKindStrategy
+):
+    """Map retained FilterObjects outlines to image artifacts."""
+
+    role = FilterObjectsOutputRole.OUTLINE_IMAGE
+
+    def symbol_kind(self) -> CellProfilerSymbolKind:
+        return CellProfilerSymbolKind.IMAGE
+
+
 def _unmix_colors(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
@@ -1277,6 +1357,7 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     (("IdentifySecondaryObjects",), _identify_secondary_objects),
     (("IdentifyTertiaryObjects",), _identify_tertiary_objects),
     (("ConvertObjectsToImage",), _convert_objects_to_image),
+    (("FilterObjects",), _filter_objects),
     (("GrayToColor",), _gray_to_color),
     (("UnmixColors",), _unmix_colors),
     (("OverlayOutlines",), _overlay_outlines),

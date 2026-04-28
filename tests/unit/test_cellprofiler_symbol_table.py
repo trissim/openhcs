@@ -174,6 +174,127 @@ def test_cellprofiler_symbol_table_accepts_declared_source_object_inputs():
     assert [spec.kind for spec in contract.inputs] == [ArtifactKind.OBJECT_LABELS]
 
 
+def test_cellprofiler_symbol_table_compiles_filterobjects_relabel_rows():
+    modules = [
+        _module(
+            1,
+            "IdentifyPrimaryObjects",
+            {
+                "Select the input image": "OrigBlue",
+                "Name the primary objects to be identified": "MyObjects",
+            },
+        ),
+        _module(
+            2,
+            "IdentifyPrimaryObjects",
+            {
+                "Select the input image": "OrigBlue",
+                "Name the primary objects to be identified": "Cells",
+            },
+        ),
+        _module(
+            3,
+            "IdentifyPrimaryObjects",
+            {
+                "Select the input image": "OrigBlue",
+                "Name the primary objects to be identified": "Cytoplasm",
+            },
+        ),
+        _module_with_records(
+            4,
+            "FilterObjects",
+            [
+                ("Name the output objects", "MyFilteredObjects"),
+                ("Select the object to filter", "MyObjects"),
+                ("Filter using classifier rules or measurements?", "Measurements"),
+                ("Select the filtering method", "Limits"),
+                ("Select additional object to relabel", "Cells"),
+                ("Name the relabeled objects", "FilteredCells"),
+                ("Save outlines of relabeled objects?", "No"),
+                ("Name the outline image", "OutlinesFilteredCells"),
+                ("Select additional object to relabel", "Cytoplasm"),
+                ("Name the relabeled objects", "FilteredCytoplasm"),
+                ("Save outlines of relabeled objects?", "No"),
+                ("Name the outline image", "OutlinesFilteredCytoplasm"),
+            ],
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[4]
+
+    assert [spec.name for spec in contract.inputs] == [
+        "MyObjects",
+        "Cells",
+        "Cytoplasm",
+    ]
+    assert [spec.name for spec in contract.outputs] == [
+        "FilterObjects_4_measurements",
+        "MyFilteredObjects",
+        "FilteredCells",
+        "FilteredCytoplasm",
+    ]
+    assert [spec.kind for spec in contract.outputs] == [
+        ArtifactKind.MEASUREMENTS,
+        ArtifactKind.OBJECT_LABELS,
+        ArtifactKind.OBJECT_LABELS,
+        ArtifactKind.OBJECT_LABELS,
+    ]
+
+
+def test_cellprofiler_symbol_table_compiles_filterobjects_outline_outputs():
+    modules = [
+        _module(
+            1,
+            "IdentifyPrimaryObjects",
+            {
+                "Select the input image": "OrigBlue",
+                "Name the primary objects to be identified": "MyObjects",
+            },
+        ),
+        _module(
+            2,
+            "IdentifyPrimaryObjects",
+            {
+                "Select the input image": "OrigBlue",
+                "Name the primary objects to be identified": "Cells",
+            },
+        ),
+        _module_with_records(
+            3,
+            "FilterObjects",
+            [
+                ("Name the output objects", "MyFilteredObjects"),
+                ("Select the object to filter", "MyObjects"),
+                ("Retain the outlines of filtered objects for use later in the pipeline (for example, in SaveImages)?", "Yes"),
+                ("Name the outline image", "FilteredObjects"),
+                ("Select additional object to relabel", "Cells"),
+                ("Name the relabeled objects", "FilteredCells"),
+                ("Save outlines of relabeled objects?", "Yes"),
+                ("Name the outline image", "OutlinesFilteredCells"),
+            ],
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[3]
+
+    assert [spec.name for spec in contract.outputs] == [
+        "FilterObjects_3_measurements",
+        "MyFilteredObjects",
+        "FilteredCells",
+        "FilteredObjects",
+        "OutlinesFilteredCells",
+    ]
+    assert [spec.kind for spec in contract.outputs] == [
+        ArtifactKind.MEASUREMENTS,
+        ArtifactKind.OBJECT_LABELS,
+        ArtifactKind.OBJECT_LABELS,
+        ArtifactKind.IMAGE,
+        ArtifactKind.IMAGE,
+    ]
+
+
 def test_cellprofiler_symbol_table_fails_for_kind_conflict():
     modules = [
         _identify_primary(),

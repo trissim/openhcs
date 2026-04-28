@@ -13,6 +13,7 @@ from benchmark.cellprofiler_library import canonical_module_name
 
 from .align_settings import align_bound_kwargs
 from .area_occupied_settings import area_occupied_bound_kwargs
+from .filter_objects_settings import filter_objects_bound_kwargs
 from .gray_to_color_settings import (
     GRAY_TO_COLOR_CMYK_IMAGE_SETTINGS,
     GRAY_TO_COLOR_CMYK_WEIGHT_SETTINGS,
@@ -169,6 +170,22 @@ class OverlayOutlinesModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy
     ) -> BoundModuleSettings:
         del binder, param_mapping
         return BoundModuleSettings(overlay_outlines_bound_kwargs(module))
+
+
+class FilterObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind FilterObjects rows into one generic multi-output object filter."""
+
+    module_name = "FilterObjects"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del binder, param_mapping
+        return BoundModuleSettings(filter_objects_bound_kwargs(module))
 
 
 class GrayToColorSchemeBindingStrategy(ABC, metaclass=AutoRegisterMeta):

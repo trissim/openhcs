@@ -936,6 +936,34 @@ class OverlayOutlinesInputPolicy(CellProfilerObjectInputPolicy):
         }
 
 
+class FilterObjectsInputPolicy(CellProfilerObjectInputPolicy):
+    """Bind ordered primary/additional object rows for FilterObjects."""
+
+    module_name = "FilterObjects"
+
+    def bind(
+        self,
+        module_name: str,
+        object_inputs: tuple[ArtifactSpec, ...],
+        adapter: CellProfilerRuntimeAdapter,
+        *,
+        fallback_image: Any,
+        external_object_names: frozenset[str],
+    ) -> dict[str, Any]:
+        del module_name
+        return {
+            "object_labels": tuple(
+                _object_input_labels(
+                    spec,
+                    adapter,
+                    fallback_image=fallback_image,
+                    external_object_names=external_object_names,
+                )
+                for spec in object_inputs
+            )
+        }
+
+
 class CellProfilerPerObjectMeasurementPolicy:
     """Predicate for modules that need one absorbed call per object set."""
 

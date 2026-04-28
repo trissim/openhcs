@@ -9,12 +9,17 @@ from benchmark.cellprofiler_compat.module_execution import (
     _measurement_labels_for_image,
     _measurement_table_rows,
 )
+from benchmark.cellprofiler_library.functions.filterobjects import (
+    FilterMode,
+    filter_objects,
+)
 from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
     ExcessObjectHandling,
     FillHolesOption,
     UnclumpMethod,
     identify_primary_objects,
 )
+from openhcs.core.config import DtypeConfig
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
@@ -144,3 +149,41 @@ def test_measurement_table_rows_wrap_scalar_measurement() -> None:
     measurement_rows = _measurement_table_rows(row)
 
     assert measurement_rows == [row]
+
+
+def test_filterobjects_relabels_additional_object_inputs_by_primary_retention() -> None:
+    image = np.zeros((6, 6), dtype=np.float32)
+    primary = np.zeros((6, 6), dtype=np.int32)
+    primary[0:2, 0:2] = 1
+    primary[2:5, 2:5] = 2
+    cells = np.zeros_like(primary)
+    cells[0:2, 0:2] = 10
+    cells[2:5, 2:5] = 11
+
+    result = filter_objects(
+        image,
+        mode=FilterMode.BORDER,
+        object_labels=(primary, cells),
+        additional_object_count=1,
+        outline_object_indices=(0, 1),
+        dtype_config=DtypeConfig(),
+    )
+
+    (
+        _output_image,
+        stats,
+        filtered_primary,
+        filtered_cells,
+        primary_outline,
+        cells_outline,
+    ) = result
+
+    assert stats.objects_pre_filter == 2
+    assert stats.objects_post_filter == 1
+    assert filtered_primary.max() == 1
+    assert filtered_primary[3, 3] == 1
+    assert filtered_cells.max() == 1
+    assert filtered_cells[3, 3] == 1
+    assert filtered_cells[0, 0] == 0
+    assert primary_outline.max() == 1
+    assert cells_outline.max() == 1
