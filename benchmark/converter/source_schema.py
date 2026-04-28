@@ -258,12 +258,115 @@ class GroupsModuleCompiler(SetupModuleCompiler):
         state.grouping = GroupingPlan(metadata_fields=metadata_fields)
 
 
+class NamesAndTypesAssignmentBlockStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal family for CellProfiler NamesAndTypes assignment layouts."""
+
+    __registry_key__ = "strategy_name"
+    __skip_if_no_key__ = True
+    strategy_name: ClassVar[str | None] = None
+    priority: ClassVar[int] = 100
+
+    @classmethod
+    def blocks_for(
+        cls,
+        settings: Sequence[ModuleSetting],
+    ) -> tuple[tuple[ModuleSetting, ...], ...]:
+        for strategy_type in sorted(
+            cls.__registry__.values(),
+            key=lambda candidate: candidate.priority,
+        ):
+            strategy = strategy_type()
+            if strategy.matches(settings):
+                return strategy.blocks(settings)
+        return ()
+
+    @abstractmethod
+    def matches(self, settings: Sequence[ModuleSetting]) -> bool:
+        """Whether this layout applies to the ordered NamesAndTypes settings."""
+
+    @abstractmethod
+    def blocks(
+        self,
+        settings: Sequence[ModuleSetting],
+    ) -> tuple[tuple[ModuleSetting, ...], ...]:
+        """Return ordered assignment blocks for this layout."""
+
+
+class RepeatedAssignmentBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
+    """NamesAndTypes stores each assignment as a full repeated setting block."""
+
+    strategy_name = "repeated_assignment"
+    priority = 10
+
+    def matches(self, settings: Sequence[ModuleSetting]) -> bool:
+        return _setting_count(settings, "Assign a name to") > 1
+
+    def blocks(
+        self,
+        settings: Sequence[ModuleSetting],
+    ) -> tuple[tuple[ModuleSetting, ...], ...]:
+        return _group_repeating_blocks(settings, start_name="Assign a name to")
+
+
+class RepeatedRuleCriteriaBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
+    """NamesAndTypes stores a global preamble followed by repeated rule rows."""
+
+    strategy_name = "repeated_rule_criteria"
+    priority = 20
+
+    def matches(self, settings: Sequence[ModuleSetting]) -> bool:
+        return _setting_count(settings, "Select the rule criteria") > 1
+
+    def blocks(
+        self,
+        settings: Sequence[ModuleSetting],
+    ) -> tuple[tuple[ModuleSetting, ...], ...]:
+        return _group_repeating_blocks(settings, start_name="Select the rule criteria")
+
+
+class SingleAssignmentBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
+    """NamesAndTypes stores one full assignment block."""
+
+    strategy_name = "single_assignment"
+    priority = 30
+
+    def matches(self, settings: Sequence[ModuleSetting]) -> bool:
+        return _setting_count(settings, "Assign a name to") == 1
+
+    def blocks(
+        self,
+        settings: Sequence[ModuleSetting],
+    ) -> tuple[tuple[ModuleSetting, ...], ...]:
+        return _group_repeating_blocks(settings, start_name="Assign a name to")
+
+
+class SingleRuleCriteriaBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
+    """NamesAndTypes stores one assignment row starting at rule criteria."""
+
+    strategy_name = "single_rule_criteria"
+    priority = 40
+
+    def matches(self, settings: Sequence[ModuleSetting]) -> bool:
+        return _setting_count(settings, "Select the rule criteria") == 1
+
+    def blocks(
+        self,
+        settings: Sequence[ModuleSetting],
+    ) -> tuple[tuple[ModuleSetting, ...], ...]:
+        return _group_repeating_blocks(settings, start_name="Select the rule criteria")
+
+
 def _names_and_types_blocks(
     settings: Sequence[ModuleSetting],
 ) -> tuple[tuple[ModuleSetting, ...], ...]:
-    if any(setting.name == "Assign a name to" for setting in settings):
-        return _group_repeating_blocks(settings, start_name="Assign a name to")
-    return _group_repeating_blocks(settings, start_name="Select the rule criteria")
+    return NamesAndTypesAssignmentBlockStrategy.blocks_for(settings)
+
+
+def _setting_count(
+    settings: Sequence[ModuleSetting],
+    name: str,
+) -> int:
+    return sum(1 for setting in settings if setting.name == name)
 
 
 def _group_repeating_blocks(

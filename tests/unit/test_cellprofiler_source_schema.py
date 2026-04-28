@@ -490,11 +490,30 @@ def test_generated_runtime_wrappers_with_non_image_artifacts_are_flexible():
 def test_compile_image_schema_for_bbbc021_analysis_preserves_real_matching_plan():
     schema = _schema_from_in_tree_cppipe("BBBC021_analysis.cppipe")
 
-    dna = schema.assignment_for_alias("DNA")
-    assert dna is not None
-    assert dna.origin is SourceBindingOrigin.STEP_INPUT
-    assert dna.selector.components == (
+    assert set(schema.assignments_by_alias) == {
+        "DAPI",
+        "Actin",
+        "Tubulin",
+        "ActinIllum",
+        "DAPIillum",
+        "TubIllum",
+    }
+    dapi = schema.assignment_for_alias("DAPI")
+    tubulin = schema.assignment_for_alias("Tubulin")
+    actin_illum = schema.assignment_for_alias("ActinIllum")
+    assert dapi is not None
+    assert tubulin is not None
+    assert actin_illum is not None
+    assert dapi.origin is SourceBindingOrigin.STEP_INPUT
+    assert dapi.selector.components == (
         ComponentSelector(AllComponents.CHANNEL, "1"),
+    )
+    assert tubulin.selector.components == (
+        ComponentSelector(AllComponents.CHANNEL, "4"),
+    )
+    assert actin_illum.origin is SourceBindingOrigin.PIPELINE_START
+    assert actin_illum.selector.metadata == (
+        MetadataSelector("illum", "Actin"),
     )
 
     assert schema.grouping is not None
@@ -520,11 +539,17 @@ def test_compile_image_schema_for_bbbc021_analysis_preserves_real_matching_plan(
 def test_compile_image_schema_for_bbbc021_illumination_pipeline():
     schema = _schema_from_in_tree_cppipe("BBBC021_illum.cppipe")
 
-    dna = schema.assignment_for_alias("DNA")
-    assert dna is not None
-    assert dna.origin is SourceBindingOrigin.STEP_INPUT
-    assert dna.selector.components == (
+    assert set(schema.assignments_by_alias) == {"DAPI", "Actin", "Tubulin"}
+    dapi = schema.assignment_for_alias("DAPI")
+    tubulin = schema.assignment_for_alias("Tubulin")
+    assert dapi is not None
+    assert tubulin is not None
+    assert dapi.origin is SourceBindingOrigin.STEP_INPUT
+    assert dapi.selector.components == (
         ComponentSelector(AllComponents.CHANNEL, "1"),
+    )
+    assert tubulin.selector.components == (
+        ComponentSelector(AllComponents.CHANNEL, "4"),
     )
 
     assert schema.grouping is not None

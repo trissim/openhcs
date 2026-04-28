@@ -234,6 +234,10 @@ The branch has already established most of the typed runtime/compiler foundation
     - MeasureTexture/MeasureColocalization raw-function variant selection now shares one nominal scoped-measurement resolver base
 31. Generated/prepared `.cppipe` runtime records now share one nominal base for common generated-pipeline context:
     - `cppipe_path`, processing/infrastructure modules, `source_schema`, and generated code state are no longer duplicated across sibling dataclasses
+32. Real `NamesAndTypes` assignment layouts now compile through a nominal strategy family instead of an incidental string split:
+    - repeated full assignment blocks, repeated rule-row assignments, and single-assignment layouts each have explicit registered strategies
+    - canonical BBBC021 analysis now exposes the real alias set (`DAPI`, `Actin`, `Tubulin`, and illumination-function aliases) instead of collapsing to the stale `DNA` preamble alias
+    - `benchmark/converter/source_schema.py` reports clean under the nominal refactor advisor after this pass
 
 ### 3.2 What Is Still Missing
 
@@ -253,6 +257,7 @@ The biggest unresolved items are now:
    - a BBBC021-style generated pipeline now executes through the OpenHCS orchestrator with typed named-channel bindings
    - canonical BBBC021 illumination now carries explicit inferred image artifact contracts for illumination functions instead of empty contracts
    - canonical in-tree BBBC021 reference snapshots now prepare successfully and preserve typed schema facts under direct test coverage
+   - canonical `BBBC021_analysis.cppipe` now preserves real multi-alias `NamesAndTypes` source assignments, but full orchestrator execution acceptance is still the next compatibility target
    - canonical `BBBC021_illum.cppipe` now executes successfully as a real converted pipeline shape
    - canonical dataset-owned `.cppipe` references can now be resolved through the benchmark adapter instead of only local ad hoc files
    - ExampleFly now executes end to end as a real shipped `.cppipe` shape and materializes measurement CSV outputs on disk
