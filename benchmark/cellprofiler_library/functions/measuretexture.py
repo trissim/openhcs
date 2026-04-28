@@ -11,7 +11,7 @@ import numpy as np
 from typing import Tuple, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
-from openhcs.core.memory.decorators import numpy
+from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer
 
@@ -232,7 +232,7 @@ def _compute_haralick_features(glcm: np.ndarray) -> np.ndarray:
     ])
 
 
-@numpy(contract=ProcessingContract.PURE_2D)
+@numpy
 @special_outputs(("texture_measurements", csv_materializer(
     fields=["slice_index", "scale", "direction", "gray_levels",
             "angular_second_moment", "contrast", "correlation", "variance",
@@ -336,7 +336,7 @@ def measure_texture(
     return image, measurements
 
 
-@numpy(contract=ProcessingContract.PURE_2D)
+@numpy
 @special_inputs("labels")
 @special_outputs(("object_texture_measurements", csv_materializer(
     fields=["slice_index", "object_label", "scale", "direction", "gray_levels",

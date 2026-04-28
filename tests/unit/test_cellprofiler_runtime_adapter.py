@@ -5,11 +5,13 @@ from types import SimpleNamespace
 from benchmark.cellprofiler_compat import (
     CellProfilerModuleContract,
     CellProfilerModuleExecutor,
+    CellProfilerRelationshipPayload,
     CellProfilerRuntimeAdapter,
 )
 from benchmark.cellprofiler_library import get_function
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, ArtifactSpec
 from openhcs.core.config import DtypeConfig
+from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     ComponentSelector,
@@ -50,6 +52,7 @@ MEASURE_OBJECT_INTENSITY = "MeasureObjectIntensity"
 MEASURE_OBJECT_NEIGHBORS = "MeasureObjectNeighbors"
 MEASURE_OBJECT_SIZE_SHAPE = "MeasureObjectSizeShape"
 MEASURE_IMAGE_INTENSITY = "MeasureImageIntensity"
+RELATE_OBJECTS = "RelateObjects"
 
 
 class ArrayLike(RuntimeArrayPayload):
@@ -733,3 +736,96 @@ def test_cellprofiler_module_executor_combines_multi_object_measurements():
     assert measurements.rows == [{"object": NUCLEI}, {"object": CELLS}]
     assert measurements.object_name is None
     assert measurements.source_image_name == DNA_IMAGE
+
+
+def test_cellprofiler_module_executor_preserves_main_stack_for_measurements():
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    image = np.stack(
+        [
+            np.full((4, 5), 3.0, dtype=np.float32),
+            np.full((4, 5), 9.0, dtype=np.float32),
+        ]
+    )
+    nuclei = np.ones((4, 5), dtype=np.int32)
+    cells = np.full((4, 5), 2, dtype=np.int32)
+    adapter.add_objects(NUCLEI, nuclei)
+    adapter.add_objects(CELLS, cells)
+    executor = _executor(
+        MEASURE_OBJECT_INTENSITY,
+        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        runtime_artifact_inputs=(
+            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec(CELLS, ArtifactKind.OBJECT_LABELS),
+        ),
+    )
+    seen_images = []
+
+    def measure(image_arg, *, labels):
+        seen_images.append((image_arg.copy(), labels.copy()))
+        return image_arg, [{"object_count": int(labels.max())}]
+
+    result = executor.run(measure, image, cellprofiler_runtime=adapter)
+    measurements = adapter.get_measurements(MEASUREMENTS)
+
+    assert len(seen_images) == 2
+    for measurement_image, measurement_labels in seen_images:
+        assert measurement_image.shape == measurement_labels.shape == (4, 5)
+    np.testing.assert_array_equal(result, image)
+    assert measurements.rows == [{"object_count": 1}, {"object_count": 2}]
+
+
+def test_cellprofiler_module_executor_records_relationship_and_measurement_outputs():
+    adapter, _filemanager = _adapter(
+        {
+            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            PARENT_CHILD: _plan(PARENT_CHILD, ArtifactKind.RELATIONSHIPS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        },
+        source_bindings=StepSourceBindingsConfig(),
+    )
+    image = ArrayLike()
+    cells = np.array([[1, 1], [0, 0]], dtype=np.int32)
+    nuclei = np.array([[1, 0], [2, 0]], dtype=np.int32)
+    adapter.add_objects(CELLS, cells)
+    adapter.add_objects(NUCLEI, nuclei)
+    executor = _executor(
+        RELATE_OBJECTS,
+        (
+            ArtifactSpec(PARENT_CHILD, ArtifactKind.RELATIONSHIPS),
+            ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        ),
+        runtime_artifact_inputs=(
+            ArtifactSpec(CELLS, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+        ),
+        inputs=(),
+    )
+
+    @special_inputs("parent_labels", "child_labels")
+    def relate(image_arg, *, parent_labels, child_labels):
+        assert image_arg is image
+        assert parent_labels is cells
+        assert child_labels is nuclei
+        return (
+            image_arg,
+            CellProfilerRelationshipPayload(parent_ids=(1, 1), child_ids=(1, 2)),
+            {"mean_children_per_parent": 2.0},
+        )
+
+    result = executor.run(relate, image, cellprofiler_runtime=adapter)
+    relationship = adapter.get_relationship(PARENT_CHILD)
+    measurements = adapter.get_measurements(MEASUREMENTS)
+
+    assert result is image
+    assert relationship.source.name == CELLS
+    assert relationship.target.name == NUCLEI
+    assert relationship.source_ids == (1, 1)
+    assert relationship.target_ids == (1, 2)
+    assert measurements.rows == [{"mean_children_per_parent": 2.0}]

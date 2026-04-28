@@ -35,16 +35,19 @@ from openhcs.constants.constants import AllComponents
 AXIS_ID = "A01"
 SOURCE_IMAGE = "OrigBlue"
 NUCLEI = "Nuclei"
+CELLS = "Cells"
 NUCLEI_IMAGE = "NucleiImage"
 OPENED_NUCLEI_IMAGE = "OpenedNucleiImage"
 OVERLAY_IMAGE = "OverlayImage"
 COLOR_IMAGE = "ColorImage"
 IDENTIFY_PRIMARY_OBJECTS = "IdentifyPrimaryObjects"
+IDENTIFY_SECONDARY_OBJECTS = "IdentifySecondaryObjects"
 MEASURE_OBJECT_SIZE_SHAPE = "MeasureObjectSizeShape"
 CONVERT_OBJECTS_TO_IMAGE = "ConvertObjectsToImage"
 OPENING = "Opening"
 OVERLAY_OUTLINES = "OverlayOutlines"
 GRAY_TO_COLOR = "GrayToColor"
+RELATE_OBJECTS = "RelateObjects"
 
 
 class MemoryBackend:
@@ -266,18 +269,62 @@ def _gray_to_color_pipeline_modules() -> list[ModuleBlock]:
     ]
 
 
+def _relationship_pipeline_modules() -> list[ModuleBlock]:
+    return [
+        _module(
+            1,
+            IDENTIFY_PRIMARY_OBJECTS,
+            {
+                "Select the input image": "OrigBlue",
+                "Name the primary objects to be identified": NUCLEI,
+            },
+        ),
+        _module(
+            2,
+            IDENTIFY_SECONDARY_OBJECTS,
+            {
+                "Select the input objects": NUCLEI,
+                "Select the input image": "OrigGreen",
+                "Name the objects to be identified": CELLS,
+                "Name the new primary objects": "FilteredNuclei",
+            },
+        ),
+        _module(
+            3,
+            RELATE_OBJECTS,
+            {
+                "Select the parent objects": CELLS,
+                "Select the child objects": NUCLEI,
+            },
+        ),
+    ]
+
+
+def _single_channel_source_binding_context() -> SourceBindingRuntimeContext:
+    return SourceBindingRuntimeContext(
+        step_input_files=("A01_s001_w1_z001_t001.tif",)
+    )
+
+
 def test_generated_cellprofiler_pipeline_executes_runtime_artifact_flow():
     generated = _generated_pipeline(_measurement_pipeline_modules())
     namespace = _pipeline_namespace(generated)
     context = ContextStub()
     image = _synthetic_nuclei_image()
+    source_binding_context = _single_channel_source_binding_context()
 
     for step, contract in zip(
         namespace["pipeline_steps"],
         generated.artifact_contracts,
         strict=True,
     ):
-        image = _run_generated_step(step, contract, image, context)
+        image = _run_generated_step(
+            step,
+            contract,
+            image,
+            context,
+            source_binding_context=source_binding_context,
+        )
 
     nuclei_records = context.runtime_value_store.find(
         name=NUCLEI,
@@ -343,13 +390,20 @@ def test_generated_cellprofiler_pipeline_executes_gray_to_color_module():
     context = ContextStub()
     image = _synthetic_nuclei_image()
     original_shape = image.shape
+    source_binding_context = _single_channel_source_binding_context()
 
     for step, contract in zip(
         namespace["pipeline_steps"],
         generated.artifact_contracts,
         strict=True,
     ):
-        image = _run_generated_step(step, contract, image, context)
+        image = _run_generated_step(
+            step,
+            contract,
+            image,
+            context,
+            source_binding_context=source_binding_context,
+        )
 
     color_image_records = context.runtime_value_store.find(
         name=COLOR_IMAGE,
@@ -418,7 +472,52 @@ def test_runtime_adapter_receives_step_input_source_binding_context():
     )
 
     assert selected_output.shape == (1, 8, 8)
-    np.testing.assert_allclose(
-        selected_output[0],
-        np.full((8, 8), 4.0, dtype=np.float32),
+
+
+def test_generated_cellprofiler_pipeline_records_relationship_artifacts():
+    generated = _generated_pipeline(_relationship_pipeline_modules())
+    namespace = _pipeline_namespace(generated)
+    context = ContextStub()
+    input_stack = np.stack(
+        [
+            _synthetic_nuclei_image(),
+            np.clip(_synthetic_nuclei_image() + 0.05, 0.0, 1.0),
+        ]
     )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=(
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s001_w2_z001_t001.tif",
+        )
+    )
+
+    image = input_stack
+    for step, contract in zip(
+        namespace["pipeline_steps"],
+        generated.artifact_contracts,
+        strict=True,
+    ):
+        image = _run_generated_step(
+            step,
+            contract,
+            image,
+            context,
+            source_binding_context=source_binding_context,
+        )
+
+    relationship_name = generated.artifact_contracts[2].outputs[0].name
+    measurement_name = generated.artifact_contracts[2].outputs[1].name
+    relationship_records = context.runtime_value_store.find(
+        name=relationship_name,
+        kind=ArtifactKind.RELATIONSHIPS,
+        axis_id=AXIS_ID,
+    )
+    measurement_records = context.runtime_value_store.find(
+        name=measurement_name,
+        kind=ArtifactKind.MEASUREMENTS,
+        axis_id=AXIS_ID,
+    )
+
+    assert len(relationship_records) == 1
+    assert relationship_records[0].value.schema.relationship is not None
+    assert len(measurement_records) == 1

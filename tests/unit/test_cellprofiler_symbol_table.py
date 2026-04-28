@@ -115,6 +115,9 @@ def test_cellprofiler_symbol_table_compiles_object_measurement_graph():
     assert primary_contract.outputs[0].kind is ArtifactKind.OBJECT_LABELS
     assert isinstance(primary_contract.module_contract, CellProfilerModuleContract)
 
+    secondary_contract = table.contracts_by_module_num[2]
+    assert [spec.name for spec in secondary_contract.outputs] == ["Cells"]
+
     measure_contract = table.contracts_by_module_num[4]
     assert tuple(
         binding.alias
@@ -200,6 +203,79 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
     assert "identify_primary_objects_1_runtime.input_memory_type" in generated.code
     assert "func=identify_primary_objects_1_runtime" in generated.code
     assert "func=identify_secondary_objects_2_runtime" in generated.code
+
+
+def test_pipeline_generator_resolves_object_measurement_function_variants():
+    generator = PipelineGenerator()
+    modules = [
+        _identify_primary(),
+        _module(
+            2,
+            "MeasureTexture",
+            {
+                "Select images to measure": "OrigBlue",
+                "Select objects to measure": "Nuclei",
+                "Enter how many gray levels to measure the texture at": "256",
+                "Measure whole images or objects?": "Both",
+                "Texture scale to measure": "3",
+            },
+        ),
+        _module(
+            3,
+            "MeasureColocalization",
+            {
+                "Select images to measure": "OrigBlue, OrigGreen",
+                "Select where to measure correlation": "Both",
+                "Select objects to measure": "Nuclei",
+                "Set threshold as percentage of maximum intensity for the images": "15.0",
+            },
+        ),
+    ]
+
+    generated = generator.generate_from_registry(
+        pipeline_name="cp_measurement_variants",
+        source_cppipe=Path("source.cppipe"),
+        modules=modules,
+    )
+
+    assert (
+        'measure_texture_objects_2 = get_function("MeasureTexture", '
+        'function_name="measure_texture_objects")'
+    ) in generated.code
+    assert (
+        'measure_colocalization_objects_3 = get_function('
+        '"MeasureColocalization", function_name="measure_colocalization_objects")'
+    ) in generated.code
+
+
+def test_pipeline_generator_preserves_default_materialization_for_tabular_outputs():
+    generator = PipelineGenerator()
+    modules = [
+        _identify_primary(),
+        _module(
+            2,
+            "MeasureImageIntensity",
+            {
+                "Select images to measure": "OrigBlue",
+                "Select input object sets": "",
+            },
+        ),
+    ]
+
+    generated = generator.generate_from_registry(
+        pipeline_name="cp_materialization_defaults",
+        source_cppipe=Path("source.cppipe"),
+        modules=modules,
+    )
+
+    assert (
+        "ArtifactSpec('Nuclei', ArtifactKind.OBJECT_LABELS, "
+        "materialization=NO_ARTIFACT_MATERIALIZATION)"
+    ) in generated.code
+    assert (
+        "ArtifactSpec('MeasureImageIntensity_2_measurements', "
+        "ArtifactKind.MEASUREMENTS)"
+    ) in generated.code
 
 
 def test_cellprofiler_symbol_table_compiles_singular_aliases_and_image_artifacts():

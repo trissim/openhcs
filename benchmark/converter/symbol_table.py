@@ -18,6 +18,9 @@ from typing import ClassVar, Iterable, Mapping
 from metaclass_registry import AutoRegisterMeta
 
 from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
+from openhcs.core.artifact_materialization_policy import (
+    DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
+)
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.source_bindings import (
     ComponentSelector,
@@ -314,7 +317,7 @@ class _SymbolTableBuilder:
         self,
         symbol: CellProfilerSymbol,
     ) -> NamedSourceBinding:
-        assignment = self._source_schema.assignment_for_alias(symbol.name)
+        assignment = self._source_schema.resolved_assignment_for_alias(symbol.name)
         if assignment is None:
             return NamedSourceBinding(alias=symbol.name)
         return assignment.to_binding()
@@ -324,7 +327,7 @@ def module_contract_literal(contract: ModuleArtifactContracts) -> str:
     """Render a deterministic Python literal for generated pipeline files."""
     input_specs = ", ".join(_artifact_spec_literal(spec) for spec in contract.inputs)
     output_specs = ", ".join(
-        _artifact_spec_literal(spec, suppress_materialization=True)
+        _artifact_spec_literal(spec, preserve_default_materialization=True)
         for spec in contract.outputs
     )
     runtime_input_specs = ", ".join(
@@ -501,9 +504,12 @@ def _source_binding_match_field_literal(field: SourceBindingMatchField) -> str:
 def _artifact_spec_literal(
     spec: ArtifactSpec,
     *,
-    suppress_materialization: bool = False,
+    preserve_default_materialization: bool = False,
 ) -> str:
-    if suppress_materialization:
+    if (
+        preserve_default_materialization
+        and spec.kind not in DEFAULT_ARTIFACT_MATERIALIZATION_RULES
+    ):
         return (
             f"ArtifactSpec({spec.name!r}, ArtifactKind.{spec.kind.name}, "
             "materialization=NO_ARTIFACT_MATERIALIZATION)"
@@ -547,17 +553,11 @@ def _identify_secondary_objects(
         CellProfilerSymbolKind.OBJECTS,
         module,
     )
-    outputs = [output_objects]
-    new_primary = _optional_setting(module, "Name the new primary objects")
-    if new_primary and new_primary.lower() != "do not use":
-        outputs.append(
-            builder.declare(new_primary, CellProfilerSymbolKind.OBJECTS, module)
-        )
     return _contracts(
         module,
         builder,
         inputs=[input_objects, image],
-        outputs=outputs,
+        outputs=[output_objects],
     )
 
 
@@ -833,11 +833,16 @@ def _relate_objects(
         CellProfilerSymbolKind.RELATIONSHIPS,
         module,
     )
+    measurements = builder.declare(
+        _measurement_name(module),
+        CellProfilerSymbolKind.MEASUREMENTS,
+        module,
+    )
     return _contracts(
         module,
         builder,
         inputs=[parent, child],
-        outputs=[relationship],
+        outputs=[relationship, measurements],
     )
 
 

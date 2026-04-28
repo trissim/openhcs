@@ -19,13 +19,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from openhcs.core.artifacts import ArtifactSpec
+from openhcs.core.artifact_materialization_policy import (
+    DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
+)
+from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.constants.constants import AllComponents
 from openhcs.core.source_bindings import StepSourceBindingsConfig, SourceBindingOrigin
 
+from .module_function_resolution import ModuleFunctionResolutionStrategy
 from .module_settings_binding import ModuleSettingsBindingStrategy
 from .parser import ModuleBlock
 from .settings_binder import SettingsBinder
+from .source_schema import CellProfilerImageSchema
 from .symbol_table import (
     CellProfilerSymbolTable,
     ModuleArtifactContracts,
@@ -46,6 +51,7 @@ class GeneratedPipeline:
     converted_modules: List[str]
     failed_modules: List[str]
     artifact_contracts: tuple[ModuleArtifactContracts, ...] = ()
+    source_schema: CellProfilerImageSchema = CellProfilerImageSchema.empty()
     
     def save(self, output_path: Path) -> None:
         """Save pipeline to file."""
@@ -233,7 +239,15 @@ from openhcs.constants.input_source import InputSource
             # Generate function assignments
             func_assignments = []
             for module in registry_modules:
-                func_name = self._registry[module.name]["function_name"]
+                resolved_function = ModuleFunctionResolutionStrategy.for_module(
+                    module.name
+                ).resolve(
+                    module,
+                    default_function_name=self._registry[module.name][
+                        "function_name"
+                    ],
+                )
+                func_name = resolved_function.function_name
                 binding_name = self._function_binding_name(module, func_name)
                 raw_function_bindings[module.module_num] = binding_name
                 contract = contracts_by_module[module.module_num]
@@ -244,7 +258,8 @@ from openhcs.constants.input_source import InputSource
                 else:
                     runtime_function_bindings[module.module_num] = binding_name
                 func_assignments.append(
-                    f'{binding_name} = get_function("{module.name}")'
+                    f'{binding_name} = get_function("{module.name}", '
+                    f'function_name="{func_name}")'
                 )
                 func_assignments.append(
                     f'{binding_name}.__cellprofiler_declared_contract__ = '
@@ -280,6 +295,7 @@ from openhcs.constants.input_source import InputSource
                 contracts_by_module[module.module_num]
                 for module in registry_modules
             ),
+            source_schema=symbol_table.source_schema,
         )
 
     # Category → variable_components mapping
@@ -305,7 +321,13 @@ from openhcs.constants.input_source import InputSource
 
         for module in modules:
             meta = self._registry[module.name]
-            func_name = meta["function_name"]
+            resolved_function = ModuleFunctionResolutionStrategy.for_module(
+                module.name
+            ).resolve(
+                module,
+                default_function_name=meta["function_name"],
+            )
+            func_name = resolved_function.function_name
             binding_name = function_bindings[module.module_num]
             category = meta.get("category", "image_operation")
             step_name = module.name
@@ -314,7 +336,7 @@ from openhcs.constants.input_source import InputSource
             # Map category to variable_components
             variable_components, group_by_literal = self._processing_components_for(
                 category,
-                artifact_contract.source_bindings,
+                artifact_contract,
             )
             input_source_literal = (
                 "InputSource.PIPELINE_START"
@@ -381,13 +403,16 @@ from openhcs.constants.input_source import InputSource
     def _processing_components_for(
         self,
         category: str,
-        source_bindings: StepSourceBindingsConfig,
+        contract: ModuleArtifactContracts,
     ) -> tuple[tuple[str, ...], str | None]:
         """Derive native stack/group semantics for one converted step."""
+        source_bindings = contract.source_bindings
         if not source_bindings.is_empty:
             if self._requires_channel_stack_input(source_bindings):
                 return ("VariableComponents.CHANNEL",), "GroupBy.SITE"
             return ("VariableComponents.SITE",), None
+        if contract.runtime_artifact_inputs:
+            return ("VariableComponents.CHANNEL",), "GroupBy.SITE"
         variable_components = list(
             self.CATEGORY_TO_VARIABLE_COMPONENTS.get(
                 category,
@@ -426,13 +451,20 @@ from openhcs.constants.input_source import InputSource
         if not contracts:
             return ""
 
+        requires_no_materialization_import = any(
+            spec.kind not in DEFAULT_ARTIFACT_MATERIALIZATION_RULES
+            for contract in contracts
+            for spec in contract.outputs
+        )
         lines = [
             "# CellProfiler name-to-artifact contracts compiled from .cppipe",
             "from openhcs.core.artifacts import ArtifactKind, ArtifactSpec",
-            "from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION",
-            "",
-            "CELLPROFILER_MODULE_CONTRACTS = {",
         ]
+        if requires_no_materialization_import:
+            lines.append(
+                "from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION"
+            )
+        lines.extend(("", "CELLPROFILER_MODULE_CONTRACTS = {"))
         for contract in contracts:
             lines.append(
                 f"    {contract.module_num}: {module_contract_literal(contract)},"
@@ -464,7 +496,7 @@ from openhcs.constants.input_source import InputSource
             executor_name = self._executor_binding_name(module)
             processing_contract = self._runtime_processing_contract_expression(
                 module.name,
-                contract.source_bindings,
+                contract,
             )
 
             lines.append(
@@ -573,15 +605,21 @@ from openhcs.constants.input_source import InputSource
     def _runtime_processing_contract_expression(
         self,
         module_name: str,
-        source_bindings: StepSourceBindingsConfig,
+        contract: ModuleArtifactContracts,
     ) -> str:
         """Return the effective runtime contract for one generated wrapper.
 
         Selector-bearing STEP_INPUT bindings must resolve against the full current
         stack before alias-specific views are chosen, so those wrappers cannot run
         slice-by-slice even when the absorbed raw function is nominally PURE_2D.
+
+        Adapter-managed non-image artifacts are also pattern-group scoped rather
+        than per-slice scoped, so wrappers that emit them must execute exactly
+        once per pattern group.
         """
-        if self._requires_step_input_selector_resolution(source_bindings):
+        if self._requires_step_input_selector_resolution(contract.source_bindings):
+            return "ProcessingContract.FLEXIBLE"
+        if self._requires_pattern_group_runtime(contract):
             return "ProcessingContract.FLEXIBLE"
         return self._processing_contract_expression(module_name)
 
@@ -607,6 +645,20 @@ from openhcs.constants.input_source import InputSource
             for group in source_bindings.groups
             for binding in group.bindings
         )
+
+    def _requires_pattern_group_runtime(
+        self,
+        contract: ModuleArtifactContracts,
+    ) -> bool:
+        """Whether wrapper side effects must run once per pattern group.
+
+        OpenHCS PURE_2D wrappers invoke the function once per slice. Generated
+        CellProfiler wrappers record named artifacts through the runtime adapter,
+        and those artifact plans are compiled per pattern group rather than per
+        slice. Non-image artifact outputs therefore cannot be emitted under the
+        outer slice-by-slice contract without duplicating writes.
+        """
+        return any(spec.kind is not ArtifactKind.IMAGE for spec in contract.outputs)
 
     def _normalize_setting_name(self, setting_name: str) -> str:
         """

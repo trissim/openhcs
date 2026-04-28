@@ -9,6 +9,7 @@ from benchmark.converter.runtime_pipeline import (
 import numpy as np
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.constants import Microscope
+from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.config import (
     GlobalPipelineConfig,
@@ -18,6 +19,7 @@ from openhcs.core.config import (
     VFSConfig,
 )
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.core.source_bindings import ComponentSelector
 from openhcs.tests.generators.generate_synthetic_data import (
     SyntheticMicroscopyGenerator,
 )
@@ -113,6 +115,123 @@ def test_bbbc021_cppipe_generated_pipeline_executes_named_channel_bindings(
     assert len(composite_records) == 1
 
 
+def test_examplefly_cppipe_generated_pipeline_executes_real_pipeline_shape(
+    tmp_path: Path,
+) -> None:
+    plate_path = _generate_two_channel_plate(tmp_path / "examplefly_plate")
+    cppipe_path = (
+        Path(__file__).resolve().parents[2]
+        / "benchmark"
+        / "cellprofiler_pipelines"
+        / "ExampleFly.cppipe"
+    )
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / "generated_examplefly_cellprofiler_pipeline.py",
+    )
+
+    blue_assignment = prepared.source_schema.resolved_assignment_for_alias("OrigBlue")
+    green_assignment = prepared.source_schema.resolved_assignment_for_alias("OrigGreen")
+    assert blue_assignment is not None
+    assert blue_assignment.selector.components == (
+        ComponentSelector(AllComponents.CHANNEL, "1"),
+    )
+    assert green_assignment is not None
+    assert green_assignment.selector.components == (
+        ComponentSelector(AllComponents.CHANNEL, "2"),
+    )
+    assert any(
+        module.name == "ExportToSpreadsheet"
+        for module in prepared.infrastructure_modules
+    )
+
+    global_config = GlobalPipelineConfig(num_workers=1, use_threading=True)
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            output_dir_suffix="_generated_cppipe",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
+    orchestrator.initialize()
+
+    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+
+    assert all(
+        result.is_success()
+        for result in execution.execution_results.values()
+    )
+    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
+    assert runtime_store.find(
+        name="Cells",
+        kind=ArtifactKind.OBJECT_LABELS,
+        axis_id="A01",
+    )
+    assert runtime_store.find(
+        name="Cytoplasm",
+        kind=ArtifactKind.OBJECT_LABELS,
+        axis_id="A01",
+    )
+    assert runtime_store.find(
+        kind=ArtifactKind.MEASUREMENTS,
+        axis_id="A01",
+    )
+    csv_outputs = sorted(_generated_results_dir(plate_path).rglob("*.csv"))
+    assert len(csv_outputs) >= 6
+    assert all(path.stat().st_size > 0 for path in csv_outputs)
+
+
+def test_cppipe_generated_pipeline_materializes_relationship_outputs(
+    tmp_path: Path,
+) -> None:
+    plate_path = _generate_plate(tmp_path / "relationship_plate")
+    cppipe_path = _write_relationship_cppipe(tmp_path / "relate_objects.cppipe")
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / "generated_relationship_pipeline.py",
+    )
+
+    global_config = GlobalPipelineConfig(num_workers=1, use_threading=True)
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            output_dir_suffix="_generated_cppipe",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
+    orchestrator.initialize()
+
+    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+
+    assert all(
+        result.is_success()
+        for result in execution.execution_results.values()
+    )
+
+    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
+    relationship_records = runtime_store.find(
+        kind=ArtifactKind.RELATIONSHIPS,
+        axis_id="A01",
+    )
+    measurement_records = runtime_store.find(
+        kind=ArtifactKind.MEASUREMENTS,
+        axis_id="A01",
+    )
+    assert relationship_records
+    assert measurement_records
+
+    csv_outputs = sorted(_generated_results_dir(plate_path).rglob("*.csv"))
+    assert csv_outputs
+    assert any("relationships" in path.name for path in csv_outputs)
+    assert any("measurements" in path.name for path in csv_outputs)
+
+
 def _generate_plate(plate_path: Path) -> Path:
     generator = SyntheticMicroscopyGenerator(
         output_dir=str(plate_path),
@@ -128,6 +247,26 @@ def _generate_plate(plate_path: Path) -> Path:
         wells=["A01"],
         format="ImageXpress",
         random_seed=7,
+    )
+    generator.generate_dataset()
+    return plate_path
+
+
+def _generate_two_channel_plate(plate_path: Path) -> Path:
+    generator = SyntheticMicroscopyGenerator(
+        output_dir=str(plate_path),
+        grid_size=(1, 1),
+        tile_size=(128, 128),
+        wavelengths=2,
+        z_stack_levels=1,
+        num_cells=12,
+        cell_size_range=(8, 12),
+        cell_intensity_range=(28000, 42000),
+        background_intensity=200,
+        noise_level=10,
+        wells=["A01"],
+        format="ImageXpress",
+        random_seed=11,
     )
     generator.generate_dataset()
     return plate_path
@@ -158,6 +297,14 @@ def _write_bbbc021_image(path: Path, *, seed: int, signal: int) -> None:
         65535,
     ).astype(np.uint16)
     Image.fromarray(image).save(path)
+
+
+def _generated_output_root(plate_path: Path) -> Path:
+    return plate_path.parent / f"{plate_path.name}_generated_cppipe"
+
+
+def _generated_results_dir(plate_path: Path) -> Path:
+    return _generated_output_root(plate_path) / "images_results"
 
 
 def _write_cppipe(cppipe_path: Path) -> Path:
@@ -250,6 +397,54 @@ def _write_bbbc021_cppipe(cppipe_path: Path) -> Path:
                 "    Name the output image:Composite",
                 (
                     "ExportToSpreadsheet:[module_num:6|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Select measurements to export:No",
+                "",
+            )
+        )
+    )
+    return cppipe_path
+
+
+def _write_relationship_cppipe(cppipe_path: Path) -> Path:
+    cppipe_path.write_text(
+        "\n".join(
+            (
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "Version:3",
+                "DateRevision:300",
+                "GitHash:",
+                "ModuleCount:5",
+                "HasImagePlaneDetails:False",
+                (
+                    "LoadData:[module_num:1|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Input data file location:Elsewhere...",
+                (
+                    "IdentifyPrimaryObjects:[module_num:2|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Select the input image:OrigBlue",
+                "    Name the primary objects to be identified:Nuclei",
+                (
+                    "IdentifySecondaryObjects:[module_num:3|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Select the input objects:Nuclei",
+                "    Name the objects to be identified:Cells",
+                "    Select the method to identify the secondary objects:Propagation",
+                "    Select the input image:OrigBlue",
+                "    Name the new primary objects:FilteredNuclei",
+                (
+                    "RelateObjects:[module_num:4|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Select the parent objects:Nuclei",
+                "    Select the child objects:Cells",
+                (
+                    "ExportToSpreadsheet:[module_num:5|svn_version:'Unknown'|"
                     "enabled:True|wants_pause:False]"
                 ),
                 "    Select measurements to export:No",

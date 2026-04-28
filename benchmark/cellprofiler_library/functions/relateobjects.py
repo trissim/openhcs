@@ -12,6 +12,9 @@ from dataclasses import dataclass
 from enum import Enum
 import scipy.ndimage
 import skimage.segmentation
+from benchmark.cellprofiler_compat.relationship_payload import (
+    CellProfilerRelationshipPayload,
+)
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer
@@ -37,6 +40,7 @@ class RelationshipMeasurements:
 
 
 @numpy
+@special_inputs("parent_labels", "child_labels")
 @special_outputs(
     ("relationship_measurements", csv_materializer(
         fields=["slice_index", "parent_object_count", "child_object_count",
@@ -47,16 +51,23 @@ class RelationshipMeasurements:
 )
 def relate_objects(
     image: np.ndarray,
+    parent_labels: np.ndarray,
+    child_labels: np.ndarray,
     calculate_distances: DistanceMethod = DistanceMethod.BOTH,
     calculate_per_parent_means: bool = False,
     save_children_with_parents: bool = False,
-) -> Tuple[np.ndarray, RelationshipMeasurements]:
+) -> Tuple[
+    np.ndarray,
+    CellProfilerRelationshipPayload,
+    RelationshipMeasurements,
+]:
     """
     Relate child objects to parent objects based on spatial overlap.
     
     Args:
-        image: Shape (2, H, W) - parent labels stacked with child labels
-               image[0] = parent_labels, image[1] = child_labels
+        image: Main OpenHCS image payload (passed through unchanged for flow).
+        parent_labels: Parent object labels (H, W)
+        child_labels: Child object labels (H, W)
         calculate_distances: Method for calculating child-parent distances
         calculate_per_parent_means: Whether to calculate mean measurements per parent
         save_children_with_parents: Whether to output only children that have parents
@@ -66,8 +77,8 @@ def relate_objects(
         - child_labels with parent assignments encoded (H, W)
         - RelationshipMeasurements dataclass
     """
-    parent_labels = image[0].astype(np.int32)
-    child_labels = image[1].astype(np.int32)
+    parent_labels = parent_labels.astype(np.int32)
+    child_labels = child_labels.astype(np.int32)
     
     # Get object counts
     parent_count = int(parent_labels.max()) if parent_labels.max() > 0 else 0
@@ -123,8 +134,26 @@ def relate_objects(
         mean_centroid_distance=mean_centroid_dist,
         mean_minimum_distance=mean_minimum_dist
     )
-    
-    return output_labels.astype(np.float32), measurements
+
+    related_child_ids = tuple(
+        child_idx
+        for child_idx, parent_idx in enumerate(parents_of, start=1)
+        if parent_idx > 0
+    )
+    related_parent_ids = tuple(
+        int(parent_idx)
+        for parent_idx in parents_of
+        if parent_idx > 0
+    )
+
+    return (
+        output_labels.astype(np.float32),
+        CellProfilerRelationshipPayload(
+            parent_ids=related_parent_ids,
+            child_ids=related_child_ids,
+        ),
+        measurements,
+    )
 
 
 def _relate_children_to_parents(

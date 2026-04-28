@@ -18,23 +18,27 @@ if _CONTRACTS_PATH.exists():
     _contracts = json.loads(_CONTRACTS_PATH.read_text())
 
 # Dynamic function loader
-_function_cache: Dict[str, Callable] = {}
+_function_cache: Dict[tuple[str, str], Callable] = {}
 
 
-def get_function(module_name: str) -> Optional[Callable]:
+def get_function(
+    module_name: str,
+    *,
+    function_name: str | None = None,
+) -> Optional[Callable]:
     """Get an OpenHCS function by its CellProfiler module name.
 
     Dynamically loads the function from the appropriate module file.
     Returns None if the module is not found.
     """
-    if module_name in _function_cache:
-        return _function_cache[module_name]
-
     if module_name not in _contracts:
         return None
 
     meta = _contracts[module_name]
-    func_name = meta["function_name"]
+    func_name = function_name or meta["function_name"]
+    cache_key = (module_name, func_name)
+    if cache_key in _function_cache:
+        return _function_cache[cache_key]
 
     # Try multiple file name patterns
     # 1. Remove underscores from function name
@@ -58,7 +62,7 @@ def get_function(module_name: str) -> Optional[Callable]:
             )
             func = getattr(module, func_name, None)
             if func is not None:
-                _function_cache[module_name] = func
+                _function_cache[cache_key] = func
                 return func
         except (ImportError, AttributeError):
             continue

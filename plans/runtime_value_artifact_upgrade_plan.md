@@ -205,8 +205,10 @@ The biggest unresolved items are now:
    - live BBBC021 setup/image schema compilation now succeeds
    - live BBBC021 conversion now succeeds end to end at code-generation time
    - a BBBC021-style generated pipeline now executes through the OpenHCS orchestrator with typed named-channel bindings
-   - the next gap is broader real-data validation and semantic coverage, not basic execution enablement
-7. Export and relationship-heavy semantics are not yet fully validated on real pipelines.
+   - ExampleFly now executes end to end as a real shipped `.cppipe` shape and materializes measurement CSV outputs on disk
+   - a generated `RelateObjects` pipeline now executes through the orchestrator and materializes both relationship and measurement CSV outputs
+   - the next gap is broader corpus coverage and dataset-level validation, not basic execution enablement
+7. Export and relationship-heavy semantics now have initial real-output validation, but not broad corpus-level validation.
 8. Benchmarking is no longer ahead of the remaining CellProfiler semantics, but it should still stay secondary to broader semantic validation.
 
 ---
@@ -737,6 +739,7 @@ Acceptance:
 
 1. relationship outputs are typed and materializable
 2. measurement exports from converted pipelines match expected schema/semantics
+3. at least one real shipped `.cppipe` and one generated relationship pipeline leave CSV outputs on disk through normal OpenHCS execution
 
 ### Pass 10: Benchmarking Last
 
@@ -811,8 +814,8 @@ The branch should be considered “architecturally ready for full CellProfiler s
 The next implementation pass should be:
 
 1. widen acceptance from the current BBBC021-style generated execution path to more real-pipeline and real-data validation
-2. validate relationship-heavy and export-heavy converted pipelines on real outputs
-3. thread the setup-module image schema farther outward so it is not trapped inside converter-local lowering
+2. thread the setup-module image schema farther outward so it is not trapped inside converter-local lowering
+3. validate broader corpus coverage beyond the current BBBC021 / ExampleFly / generated-relationship cases
 4. keep replacing hidden sequential assumptions with explicit compiled edge records where that can be done without changing the list-based pipeline/editor model
 
 That keeps the current pass aligned with real CellProfiler semantics while still preparing the compiler/runtime for a later DAG model if it is still justified after acceptance testing.

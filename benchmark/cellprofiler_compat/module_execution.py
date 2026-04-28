@@ -5,6 +5,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import Enum
+from inspect import signature
+import re
 from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
@@ -15,6 +18,9 @@ from openhcs.core.runtime_adapters import RuntimeAdapterRequest
 from openhcs.core.runtime_stores import require_runtime_value_store
 
 from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
+from benchmark.cellprofiler_compat.relationship_payload import (
+    CellProfilerRelationshipPayload,
+)
 from benchmark.cellprofiler_compat.runtime_adapter import CellProfilerRuntimeAdapter
 
 
@@ -88,7 +94,8 @@ class CellProfilerModuleExecutor:
         if self._runs_per_object_measurement():
             return self._run_per_object_measurement(
                 func,
-                image_request.payload,
+                input_image=image,
+                measurement_source_image=image_request.payload,
                 cellprofiler_runtime=cellprofiler_runtime,
                 source_image_name=image_request.source_image_name,
                 **kwargs,
@@ -137,8 +144,9 @@ class CellProfilerModuleExecutor:
     def _run_per_object_measurement(
         self,
         func: Callable[..., Any],
-        image: Any,
         *,
+        input_image: Any,
+        measurement_source_image: Any,
         cellprofiler_runtime: CellProfilerRuntimeAdapter,
         source_image_name: str | None,
         **kwargs: Any,
@@ -154,12 +162,18 @@ class CellProfilerModuleExecutor:
                 "measurement output."
             )
 
-        main_output = image
         combined_rows: list[Any] = []
         for object_spec in object_inputs:
-            labels = cellprofiler_runtime.get_objects(object_spec.name).labels
-            raw_output = func(image, labels=labels, **kwargs)
-            main_output, artifact_values = _split_cellprofiler_output(raw_output)
+            raw_labels = cellprofiler_runtime.get_objects(object_spec.name).labels
+            measurement_labels = _measurement_labels(raw_labels)
+            measurement_image = _measurement_image_for_labels(
+                measurement_source_image,
+                measurement_labels,
+            )
+            raw_output = func(measurement_image, labels=measurement_labels, **kwargs)
+            _ignored_main_output, artifact_values = _split_cellprofiler_output(
+                raw_output
+            )
             combined_rows.extend(_measurement_rows_from_output(artifact_values))
 
         cellprofiler_runtime.add_measurements(
@@ -167,7 +181,7 @@ class CellProfilerModuleExecutor:
             combined_rows,
             source_image_name=source_image_name,
         )
-        return main_output
+        return input_image
 
     def _runtime_input_kwargs(
         self,
@@ -311,12 +325,13 @@ class CellProfilerModuleExecutor:
         adapter: CellProfilerRuntimeAdapter,
         kwargs: Mapping[str, Any],
     ) -> "CellProfilerInvocationRequest":
+        runtime_kwargs = {
+            **kwargs,
+            **self._runtime_input_kwargs(func, adapter),
+        }
         return CellProfilerInvocationRequest(
             image=image_request.payload,
-            kwargs={
-                **kwargs,
-                **self._runtime_input_kwargs(func, adapter),
-            },
+            kwargs=_coerce_invocation_kwargs(func, runtime_kwargs),
             source_image_name=image_request.source_image_name,
         )
 
@@ -350,6 +365,96 @@ class CellProfilerInvocationRequest:
     image: Any
     kwargs: Mapping[str, Any]
     source_image_name: str | None
+
+
+def _coerce_invocation_kwargs(
+    func: Callable[..., Any],
+    kwargs: Mapping[str, Any],
+) -> dict[str, Any]:
+    coerced_kwargs = dict(kwargs)
+    parameters = signature(func).parameters
+    for name, value in tuple(coerced_kwargs.items()):
+        enum_type = _enum_annotation_type(parameters.get(name))
+        if enum_type is None:
+            continue
+        coerced_kwargs[name] = _coerce_enum_argument(enum_type, value, name)
+    return coerced_kwargs
+
+
+def _enum_annotation_type(parameter: Any) -> type[Enum] | None:
+    if parameter is None:
+        return None
+    annotation = parameter.annotation
+    if isinstance(annotation, type) and issubclass(annotation, Enum):
+        return annotation
+    return None
+
+
+def _coerce_enum_argument(
+    enum_type: type[Enum],
+    value: Any,
+    parameter_name: str,
+) -> Enum:
+    if isinstance(value, enum_type):
+        return value
+    try:
+        return enum_type(value)
+    except ValueError:
+        pass
+    if isinstance(value, str):
+        normalized_value = _normalize_enum_literal(value)
+        exact_matches = [
+            member
+            for member in enum_type
+            if normalized_value in _normalized_member_literals(member)
+        ]
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+
+        prefix_matches = [
+            member
+            for member in enum_type
+            if any(
+                normalized_value.startswith(candidate)
+                or candidate.startswith(normalized_value)
+                for candidate in _normalized_member_literals(member)
+            )
+        ]
+        if len(prefix_matches) == 1:
+            return prefix_matches[0]
+
+    raise ValueError(
+        f"{parameter_name} must be coercible to {enum_type.__name__}; "
+        f"got {value!r}."
+    )
+
+
+def _normalized_member_literals(member: Enum) -> tuple[str, ...]:
+    return tuple(
+        normalized
+        for normalized in (
+            _normalize_enum_literal(literal)
+            for literal in _member_string_literals(member)
+        )
+        if normalized
+    )
+
+
+def _member_string_literals(member: Enum) -> tuple[str, ...]:
+    literals = [member.name]
+    if isinstance(member.value, str):
+        literals.append(member.value)
+    elif isinstance(member.value, tuple):
+        literals.extend(
+            item
+            for item in member.value
+            if isinstance(item, str)
+        )
+    return tuple(literals)
+
+
+def _normalize_enum_literal(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
 
 
 @dataclass(frozen=True, slots=True)
@@ -649,7 +754,7 @@ class MeasurementsOutputRecorder(CellProfilerOutputRecorder):
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
         request.adapter.add_measurements(
             request.spec.name,
-            request.value,
+            _measurement_table_rows(request.value),
             object_name=_measurement_object_name(
                 request.executor.runtime_artifact_inputs
             ),
@@ -658,16 +763,34 @@ class MeasurementsOutputRecorder(CellProfilerOutputRecorder):
 
 
 class RelationshipsOutputRecorder(CellProfilerOutputRecorder):
-    """Reject relationship outputs until the generated module exposes ids."""
+    """Record parent-child relationship artifacts."""
 
     kind = ArtifactKind.RELATIONSHIPS
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
-        raise NotImplementedError(
-            f"{request.executor.module_name} declares relationship output "
-            f"'{request.spec.name}', but generated relationship execution needs "
-            "explicit parent/child id vectors before it can record RuntimeValue "
-            "relationships."
+        if not isinstance(request.value, CellProfilerRelationshipPayload):
+            raise TypeError(
+                f"{request.executor.module_name} relationship output "
+                f"'{request.spec.name}' must be CellProfilerRelationshipPayload, "
+                f"got {type(request.value).__name__}."
+            )
+        object_inputs = _specs_of_kind(
+            request.executor.runtime_artifact_inputs,
+            ArtifactKind.OBJECT_LABELS,
+        )
+        if len(object_inputs) != 2:
+            raise NotImplementedError(
+                f"{request.executor.module_name} relationship output "
+                f"'{request.spec.name}' requires exactly two object runtime "
+                f"inputs, got {[spec.name for spec in object_inputs]}."
+            )
+        parent_spec, child_spec = object_inputs
+        request.adapter.add_relationship(
+            request.spec.name,
+            parent_object_name=parent_spec.name,
+            child_object_name=child_spec.name,
+            parent_ids=request.value.parent_ids,
+            child_ids=request.value.child_ids,
         )
 
 
@@ -739,11 +862,42 @@ def _measurement_rows_from_output(artifact_values: tuple[Any, ...]) -> list[Any]
     if not artifact_values:
         return []
     rows = artifact_values[0]
+    return _measurement_table_rows(rows)
+
+
+def _measurement_table_rows(rows: Any) -> list[Any]:
     if isinstance(rows, list):
         return rows
     if isinstance(rows, tuple):
         return list(rows)
     return [rows]
+
+
+def _measurement_image_for_labels(image: Any, labels: Any) -> Any:
+    """Align a measurement reference image to one object-label payload.
+
+    Many absorbed CellProfiler measurement functions expect a 2D intensity image
+    paired with one 2D object-label set. When the OpenHCS main flow is carrying a
+    higher-level stack for the whole image set, use a single reference slice
+    instead of handing the raw multi-slice stack to functions that require shape
+    parity with the labels.
+    """
+    if not hasattr(image, "ndim") or not hasattr(labels, "ndim"):
+        return image
+    if image.ndim == labels.ndim:
+        return image
+    if image.ndim == labels.ndim + 1 and getattr(image, "shape", (0,))[0] >= 1:
+        return image[0]
+    return image
+
+
+def _measurement_labels(labels: Any) -> Any:
+    """Normalize singleton stack labels for absorbed 2D measurement functions."""
+    if not hasattr(labels, "ndim"):
+        return labels
+    if labels.ndim == 3 and getattr(labels, "shape", (0,))[0] == 1:
+        return labels[0]
+    return labels
 
 
 def _specs_of_kind(
