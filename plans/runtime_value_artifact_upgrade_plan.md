@@ -232,6 +232,8 @@ The branch has already established most of the typed runtime/compiler foundation
     - CellProfiler setting-name normalization now has one shared authority used by the binder, pipeline generator, and parameter-mapping tooling
     - `SettingsBinder` exposes typed public parsing and frozen provenance rows instead of private-method coupling
     - MeasureTexture/MeasureColocalization raw-function variant selection now shares one nominal scoped-measurement resolver base
+31. Generated/prepared `.cppipe` runtime records now share one nominal base for common generated-pipeline context:
+    - `cppipe_path`, processing/infrastructure modules, `source_schema`, and generated code state are no longer duplicated across sibling dataclasses
 
 ### 3.2 What Is Still Missing
 

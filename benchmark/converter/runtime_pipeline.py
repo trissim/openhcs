@@ -62,11 +62,10 @@ class CPPipeModulePartition:
 
 
 @dataclass(frozen=True, slots=True)
-class GeneratedCPPipePipeline:
-    """Generated OpenHCS pipeline plus its parsed CellProfiler context."""
+class CPPipePipelineArtifact(ABC):
+    """Shared generated-pipeline context projected from a parsed .cppipe."""
 
     cppipe_path: Path
-    modules: tuple[ModuleBlock, ...]
     processing_modules: tuple[ModuleBlock, ...]
     infrastructure_modules: tuple[ModuleBlock, ...]
     source_schema: CellProfilerImageSchema
@@ -74,18 +73,20 @@ class GeneratedCPPipePipeline:
 
 
 @dataclass(frozen=True, slots=True)
-class PreparedGeneratedPipeline:
+class GeneratedCPPipePipeline(CPPipePipelineArtifact):
+    """Generated OpenHCS pipeline plus its parsed CellProfiler context."""
+
+    modules: tuple[ModuleBlock, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedGeneratedPipeline(CPPipePipelineArtifact):
     """Imported and registry-visible generated pipeline ready for execution."""
 
-    cppipe_path: Path
     module_name: str
     module_path: Path
     module: ModuleType
     pipeline: Pipeline
-    processing_modules: tuple[ModuleBlock, ...]
-    infrastructure_modules: tuple[ModuleBlock, ...]
-    source_schema: CellProfilerImageSchema
-    generated_pipeline: GeneratedPipeline
     registered_functions: tuple[str, ...]
 
 
