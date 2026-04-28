@@ -444,6 +444,52 @@ def test_measure_image_area_occupied_rejects_mixed_rows_until_split():
         CellProfilerSymbolTable.compile([module])
 
 
+def test_unmix_colors_compiles_escaped_multi_output_rows():
+    module = _module_with_records(
+        1,
+        "UnmixColors",
+        [
+            ("Stain count", "3"),
+            ("Color image\\x3A", "Color"),
+            ("Image name\\x3A", "Hematoxylin"),
+            ("Stain", "Hematoxylin"),
+            ("Red absorbance\\x3A", "0.5"),
+            ("Green absorbance\\x3A", "0.5"),
+            ("Blue absorbance\\x3A", "0.5"),
+            ("Image name\\x3A", "Eosin"),
+            ("Stain", "Eosin"),
+            ("Red absorbance\\x3A", "0.5"),
+            ("Green absorbance\\x3A", "0.5"),
+            ("Blue absorbance\\x3A", "0.5"),
+            ("Image name\\x3A", "CustomStain"),
+            ("Stain", "Custom"),
+            ("Red absorbance\\x3A", "0.1"),
+            ("Green absorbance\\x3A", "0.2"),
+            ("Blue absorbance\\x3A", "0.3"),
+        ],
+    )
+
+    table = CellProfilerSymbolTable.compile([module])
+    contract = table.contracts_by_module_num[1]
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="unmix_colors",
+        source_cppipe=Path("source.pipeline"),
+        modules=[module],
+    )
+
+    assert [spec.name for spec in contract.inputs] == ["Color"]
+    assert [spec.name for spec in contract.outputs] == [
+        "Hematoxylin",
+        "Eosin",
+        "CustomStain",
+    ]
+    assert "'stain_names': ('Hematoxylin', 'Eosin', 'Custom')" in generated.code
+    assert (
+        "'custom_absorbances': ((0.5, 0.5, 0.5), "
+        "(0.5, 0.5, 0.5), (0.1, 0.2, 0.3))"
+    ) in generated.code
+
+
 def test_cppipe_parser_supports_unindented_legacy_pipeline_settings(tmp_path: Path):
     pipeline_path = tmp_path / "legacy.pipeline"
     pipeline_path.write_text(

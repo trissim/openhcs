@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -35,9 +36,14 @@ def optional_setting_value(
     name: str | SettingNameFamily,
 ) -> str | None:
     """Return the first non-empty module setting matching a name family."""
-    for setting_name in setting_names(name):
-        value = module.settings.get(setting_name)
-        if value is not None and value.strip():
+    setting_records = module.iter_settings()
+    for setting in setting_records:
+        if setting_name_matches(setting.name, name) and setting.value.strip():
+            return setting.value.strip()
+    if setting_records:
+        return None
+    for setting_name, value in module.settings.items():
+        if setting_name_matches(setting_name, name) and value.strip():
             return value.strip()
     return None
 
@@ -61,20 +67,18 @@ def setting_values(
     name: str | SettingNameFamily,
 ) -> tuple[str, ...]:
     """Return all non-empty ordered values matching a setting name family."""
-    values: list[str] = []
-    for setting_name in setting_names(name):
-        record_values = tuple(
+    setting_records = module.iter_settings()
+    if not setting_records:
+        return tuple(
             value.strip()
-            for value in module.get_setting_values(setting_name)
-            if value.strip()
+            for setting_name, value in module.settings.items()
+            if setting_name_matches(setting_name, name) and value.strip()
         )
-        if record_values:
-            values.extend(record_values)
-            continue
-        value = module.settings.get(setting_name)
-        if value is not None and value.strip():
-            values.append(value.strip())
-    return tuple(values)
+    return tuple(
+        setting.value.strip()
+        for setting in setting_records
+        if setting_name_matches(setting.name, name) and setting.value.strip()
+    )
 
 
 def setting_names(name: str | SettingNameFamily) -> tuple[str, ...]:
@@ -84,17 +88,71 @@ def setting_names(name: str | SettingNameFamily) -> tuple[str, ...]:
     return (name,)
 
 
+def setting_name_matches(
+    actual: str,
+    expected: str | SettingNameFamily,
+) -> bool:
+    """Return whether a parsed CellProfiler setting label matches a family."""
+    decoded_actual = (
+        decode_cellprofiler_setting_literal(actual).strip().rstrip(":").strip()
+    )
+    return any(
+        decoded_actual
+        == decode_cellprofiler_setting_literal(name).strip().rstrip(":").strip()
+        for name in setting_names(expected)
+    )
+
+
+def setting_name_startswith(actual: str, prefix: str | SettingNameFamily) -> bool:
+    """Return whether a parsed CellProfiler setting label starts with a family."""
+    decoded_actual = (
+        decode_cellprofiler_setting_literal(actual).strip().rstrip(":").strip()
+    )
+    return any(
+        decoded_actual.startswith(
+            decode_cellprofiler_setting_literal(name).strip().rstrip(":").strip()
+        )
+        for name in setting_names(prefix)
+    )
+
+
+def block_setting_value(
+    block: Sequence[ModuleSetting],
+    name: str | SettingNameFamily,
+    *,
+    default: str = "",
+) -> str:
+    """Return a setting value from an ordered repeated setting block."""
+    for setting in block:
+        if setting_name_matches(setting.name, name):
+            return setting.value
+    return default
+
+
+def block_setting_value_by_prefix(
+    block: Sequence[ModuleSetting],
+    prefix: str | SettingNameFamily,
+    *,
+    default: str = "",
+) -> str:
+    """Return a setting value by decoded CellProfiler label prefix."""
+    for setting in block:
+        if setting_name_startswith(setting.name, prefix):
+            return setting.value
+    return default
+
+
 def repeating_setting_blocks(
     settings: Sequence[ModuleSetting],
     *,
-    start_name: str,
+    start_name: str | SettingNameFamily,
 ) -> tuple[tuple[ModuleSetting, ...], ...]:
     """Group ordered CellProfiler settings into repeated semantic blocks."""
     blocks: list[list[ModuleSetting]] = []
     current_block: list[ModuleSetting] = []
     started = False
     for setting in settings:
-        if setting.name == start_name:
+        if setting_name_matches(setting.name, start_name):
             if started and current_block:
                 blocks.append(current_block)
                 current_block = []
@@ -104,3 +162,15 @@ def repeating_setting_blocks(
     if current_block:
         blocks.append(current_block)
     return tuple(tuple(block) for block in blocks)
+
+
+def decode_cellprofiler_setting_literal(value: str) -> str:
+    """Decode CellProfiler's escaped setting-name/value literals."""
+    if "\\x" not in value and "\\\\\\\\" not in value:
+        return value
+    decoded = value
+    for _ in range(2):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            decoded = bytes(decoded, "utf-8").decode("unicode_escape")
+    return decoded

@@ -56,6 +56,7 @@ from .setting_names import (
     IMAGE_MEASUREMENT_SETTING,
     OBJECT_MEASUREMENT_SETTING,
     SettingNameFamily,
+    block_setting_value,
     optional_setting_value,
     repeating_setting_blocks,
     required_setting_value,
@@ -63,6 +64,10 @@ from .setting_names import (
     setting_values,
 )
 from .source_schema import compile_image_schema
+from .unmix_colors_settings import (
+    unmix_colors_input_name,
+    unmix_colors_output_rows,
+)
 
 
 class CellProfilerSymbolKind(str, Enum):
@@ -815,12 +820,12 @@ class _AreaOccupiedMeasurementRow:
         module: ModuleBlock,
         block: Sequence[ModuleSetting],
     ) -> "_AreaOccupiedMeasurementRow":
-        mode = _block_value(block, AREA_OCCUPIED_MODE_SETTING)
+        mode = block_setting_value(block, AREA_OCCUPIED_MODE_SETTING)
         binary_image_name = _optional_symbol_value(
-            _block_value(block, AREA_OCCUPIED_BINARY_IMAGE_SETTING)
+            block_setting_value(block, AREA_OCCUPIED_BINARY_IMAGE_SETTING)
         )
         objects_name = _optional_symbol_value(
-            _block_value(block, AREA_OCCUPIED_OBJECTS_SETTING)
+            block_setting_value(block, AREA_OCCUPIED_OBJECTS_SETTING)
         )
         retained_image_name = _retained_area_occupied_image_name(block)
         row = cls(
@@ -909,6 +914,22 @@ def _measure_image_area_occupied(
         inputs=inputs,
         outputs=[*retained_images, measurements],
     )
+
+
+def _unmix_colors(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    image = builder.require(
+        unmix_colors_input_name(module),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    outputs = [
+        builder.declare(row.image_name, CellProfilerSymbolKind.IMAGE, module)
+        for row in unmix_colors_output_rows(module)
+    ]
+    return _contracts(module, builder, inputs=[image], outputs=outputs)
 
 
 def _correct_illumination_apply(
@@ -1294,6 +1315,7 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     (("IdentifyTertiaryObjects",), _identify_tertiary_objects),
     (("ConvertObjectsToImage",), _convert_objects_to_image),
     (("GrayToColor",), _gray_to_color),
+    (("UnmixColors",), _unmix_colors),
     (("OverlayOutlines",), _overlay_outlines),
     (("MeasureObjectSizeShape",), _measure_object_size_shape),
     (
@@ -1511,22 +1533,12 @@ def _has_mixed_area_occupied_modes(
 def _retained_area_occupied_image_name(
     block: Sequence[ModuleSetting],
 ) -> str | None:
-    retain = _block_value(block, AREA_OCCUPIED_RETAIN_IMAGE_SETTING)
+    retain = block_setting_value(block, AREA_OCCUPIED_RETAIN_IMAGE_SETTING)
     if retain.strip().lower() != "yes":
         return None
-    return _optional_symbol_value(_block_value(block, AREA_OCCUPIED_OUTPUT_IMAGE_SETTING))
-
-
-def _block_value(
-    block: Sequence[ModuleSetting],
-    name: str,
-    *,
-    default: str = "",
-) -> str:
-    for setting in block:
-        if setting.name == name:
-            return setting.value
-    return default
+    return _optional_symbol_value(
+        block_setting_value(block, AREA_OCCUPIED_OUTPUT_IMAGE_SETTING)
+    )
 
 
 def _optional_symbol_value(value: str) -> str | None:

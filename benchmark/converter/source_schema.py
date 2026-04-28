@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import re
-import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -41,7 +40,12 @@ from openhcs.core.source_bindings import (
 )
 
 from .parser import ModuleBlock, ModuleSetting
-from .setting_names import repeating_setting_blocks
+from .setting_names import (
+    block_setting_value,
+    block_setting_value_by_prefix,
+    decode_cellprofiler_setting_literal,
+    repeating_setting_blocks,
+)
 
 _METADATA_MATCH_PATTERN = re.compile(
     r"\(metadata does (?P<field>[A-Za-z0-9_]+) \"(?P<value>[^\"]+)\"\)"
@@ -259,7 +263,7 @@ class LoadImagesModuleCompiler(SetupModuleCompiler):
         _require_legacy_load_images_source_type(module)
         _declare_load_images_grouping(module, state)
         for block in _load_images_blocks(module.iter_settings()):
-            alias = _block_value(block, _LOAD_IMAGES_ALIAS_SETTING)
+            alias = block_setting_value(block, _LOAD_IMAGES_ALIAS_SETTING)
             if not alias:
                 continue
             filters = _load_images_source_filters(module, block)
@@ -303,7 +307,7 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
         if match_plan is not None:
             state.declare_match_plan(match_plan)
         for block in assignment_blocks:
-            image_type = _block_value(
+            image_type = block_setting_value(
                 block,
                 "Select the image type",
                 default="Grayscale image",
@@ -313,7 +317,7 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
             if not alias:
                 continue
             selector = _selector_from_rule_criteria(
-                _block_value(block, "Select the rule criteria")
+                block_setting_value(block, "Select the rule criteria")
             )
             if artifact_kind is ArtifactKind.OBJECT_LABELS:
                 state.declare_source_artifact(
@@ -509,13 +513,13 @@ def _load_images_source_filters(
     block: Sequence[ModuleSetting],
 ) -> tuple[SourceFilterClause, ...]:
     filters: list[SourceFilterClause] = []
-    match_text = _block_value(block, _LOAD_IMAGES_MATCH_TEXT_SETTING)
+    match_text = block_setting_value(block, _LOAD_IMAGES_MATCH_TEXT_SETTING)
     if match_text:
         filters.append(
             SourceFilterClause(
                 subject=SourceFilterSubject.FILE,
                 match_type=_load_images_match_type(module),
-                value=_decode_cellprofiler_setting_literal(match_text),
+                value=decode_cellprofiler_setting_literal(match_text),
             )
         )
     if module.get_setting("Do you want to exclude certain files?", "") == "Yes":
@@ -528,7 +532,7 @@ def _load_images_source_filters(
                 SourceFilterClause(
                     subject=SourceFilterSubject.FILE,
                     match_type=SourceFilterMatchType.DOES_NOT_CONTAIN,
-                    value=_decode_cellprofiler_setting_literal(exclusion_text),
+                    value=decode_cellprofiler_setting_literal(exclusion_text),
                 )
             )
     return tuple(filters)
@@ -549,7 +553,7 @@ def _compile_load_images_metadata_rules(
     filters: tuple[SourceFilterClause, ...],
     state: _SchemaBuilder,
 ) -> None:
-    mode = _block_value(block, _LOAD_IMAGES_METADATA_MODE_SETTING)
+    mode = block_setting_value(block, _LOAD_IMAGES_METADATA_MODE_SETTING)
     for source in _load_images_metadata_sources(mode):
         state.add_metadata_rule(
             MetadataExtractionRule(
@@ -588,8 +592,8 @@ def _required_load_images_metadata_pattern(
         if source is MetadataSource.FOLDER_NAME
         else _LOAD_IMAGES_FILE_PATTERN_SETTING_PREFIX
     )
-    pattern = _decode_cellprofiler_setting_literal(
-        _block_value_by_prefix(block, prefix)
+    pattern = decode_cellprofiler_setting_literal(
+        block_setting_value_by_prefix(block, prefix)
     )
     if not pattern or pattern.strip().lower() == "none":
         raise ValueError(
@@ -597,30 +601,6 @@ def _required_load_images_metadata_pattern(
             f"{source.value} regular expression."
         )
     return pattern
-
-
-def _block_value(
-    block: Sequence[ModuleSetting],
-    name: str,
-    *,
-    default: str = "",
-) -> str:
-    for setting in block:
-        if setting.name == name:
-            return setting.value
-    return default
-
-
-def _block_value_by_prefix(
-    block: Sequence[ModuleSetting],
-    name_prefix: str,
-    *,
-    default: str = "",
-) -> str:
-    for setting in block:
-        if setting.name.startswith(name_prefix):
-            return setting.value
-    return default
 
 
 def _artifact_kind_for_names_and_types_image_type(image_type: str) -> ArtifactKind:
@@ -634,8 +614,8 @@ def _assignment_alias(
     artifact_kind: ArtifactKind,
 ) -> str:
     if artifact_kind is ArtifactKind.OBJECT_LABELS:
-        return _block_value(block, "Name to assign these objects", default="")
-    return _block_value(block, "Name to assign these images", default="")
+        return block_setting_value(block, "Name to assign these objects", default="")
+    return block_setting_value(block, "Name to assign these images", default="")
 
 
 def _metadata_source(value: str) -> MetadataSource:
@@ -649,20 +629,22 @@ def _compile_metadata_block(
     block: Sequence[ModuleSetting],
     state: _SchemaBuilder,
 ) -> None:
-    method = _block_value(block, "Metadata extraction method")
+    method = block_setting_value(block, "Metadata extraction method")
     if _is_imported_metadata_method(method):
         state.add_imported_metadata_table(_imported_metadata_table(block))
         return
     if not _is_path_metadata_extraction_method(method):
         raise ValueError(f"Unsupported CellProfiler metadata extraction method: {method!r}.")
 
-    source = _metadata_source(_block_value(block, "Metadata source", default="File name"))
+    source = _metadata_source(
+        block_setting_value(block, "Metadata source", default="File name")
+    )
     state.add_metadata_rule(
         MetadataExtractionRule(
             source=source,
             pattern=_required_metadata_pattern_for_block(block, source),
             filters=_filter_clauses_from_criteria(
-                _block_value(
+                block_setting_value(
                     block,
                     "Select the filtering criteria",
                 )
@@ -687,7 +669,8 @@ def _is_imported_metadata_method(value: str) -> bool:
 
 def _imported_metadata_table(block: Sequence[ModuleSetting]) -> ImportedMetadataTable:
     return ImportedMetadataTable(
-        location=_block_value(block, "Metadata file location", default="") or None,
+        location=block_setting_value(block, "Metadata file location", default="")
+        or None,
         joins=_imported_metadata_joins(block),
     )
 
@@ -695,12 +678,12 @@ def _imported_metadata_table(block: Sequence[ModuleSetting]) -> ImportedMetadata
 def _imported_metadata_joins(
     block: Sequence[ModuleSetting],
 ) -> tuple[ImportedMetadataJoin, ...]:
-    raw_match_metadata = _block_value(block, "Match file and image metadata")
+    raw_match_metadata = block_setting_value(block, "Match file and image metadata")
     if not raw_match_metadata:
         return ()
     try:
         records = ast.literal_eval(
-            _decode_cellprofiler_setting_literal(raw_match_metadata)
+            decode_cellprofiler_setting_literal(raw_match_metadata)
         )
     except (SyntaxError, ValueError) as exc:
         raise ValueError(
@@ -749,18 +732,18 @@ def _metadata_pattern_for_block(
     source: MetadataSource,
 ) -> str:
     if source is MetadataSource.FOLDER_NAME:
-        folder_pattern = _block_value(
+        folder_pattern = block_setting_value(
             block,
             "Regular expression to extract from folder name",
         )
-        return _decode_cellprofiler_setting_literal(
+        return decode_cellprofiler_setting_literal(
             folder_pattern or _legacy_regex_value(block, index=1)
         )
-    file_pattern = _block_value(
+    file_pattern = block_setting_value(
         block,
         "Regular expression to extract from file name",
     )
-    return _decode_cellprofiler_setting_literal(
+    return decode_cellprofiler_setting_literal(
         file_pattern or _legacy_regex_value(block, index=0)
     )
 
@@ -783,7 +766,7 @@ def _legacy_regex_value(
 def _filter_clauses_from_criteria(
     criteria: str,
 ) -> tuple[SourceFilterClause, ...]:
-    decoded_criteria = _decode_cellprofiler_setting_literal(criteria)
+    decoded_criteria = decode_cellprofiler_setting_literal(criteria)
     stripped = decoded_criteria.strip()
     if not stripped:
         return ()
@@ -919,7 +902,7 @@ def _match_dimensions(
 ) -> tuple[SourceBindingMatchDimension, ...]:
     try:
         records = ast.literal_eval(
-            _decode_cellprofiler_setting_literal(raw_match_metadata)
+            decode_cellprofiler_setting_literal(raw_match_metadata)
         )
     except (SyntaxError, ValueError) as exc:
         raise ValueError(
@@ -945,23 +928,12 @@ def _match_dimensions(
     return tuple(dimensions)
 
 
-def _decode_cellprofiler_setting_literal(value: str) -> str:
-    if "\\x" not in value and "\\\\\\\\" not in value:
-        return value
-    decoded = value
-    for _ in range(2):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            decoded = bytes(decoded, "utf-8").decode("unicode_escape")
-    return decoded
-
-
 def _merge_match_dimensions_from_blocks(
     blocks: Sequence[Sequence[ModuleSetting]],
 ) -> tuple[SourceBindingMatchDimension, ...]:
     merged_dimensions: list[list[SourceBindingMatchField]] = []
     for block in blocks:
-        raw_match_metadata = _block_value(block, "Match metadata").strip()
+        raw_match_metadata = block_setting_value(block, "Match metadata").strip()
         if not raw_match_metadata:
             continue
         block_dimensions = _match_dimensions(raw_match_metadata)

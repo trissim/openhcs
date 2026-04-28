@@ -687,10 +687,10 @@
   },
   "UnmixColors": {
     "function_name": "unmix_colors",
-    "contract": "pure_2d",
+    "contract": "flexible",
     "category": "image_operation",
     "confidence": 1.0,
-    "reasoning": "PURE_2D contract means function receives (H, W) and processes each site independently. Cannot be channel_operation because PURE_2D unstacks dimension 0.",
+    "reasoning": "FLEXIBLE preserves CellProfiler RGB payload semantics; PURE_2D would slice H,W,3 color images along the wrong axis.",
     "validated": true
   },
   "UntangleWorms": {

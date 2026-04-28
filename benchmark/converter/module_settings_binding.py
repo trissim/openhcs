@@ -23,6 +23,7 @@ from .gray_to_color_settings import (
 )
 from .parser import ModuleBlock
 from .settings_binder import SettingsBinder
+from .unmix_colors_settings import unmix_colors_bound_kwargs
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +100,22 @@ class GrayToColorModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
             module,
             binder=binder,
         )
+
+
+class UnmixColorsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind UnmixColors repeated output rows into one multi-output call."""
+
+    module_name = "UnmixColors"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del binder, param_mapping
+        return BoundModuleSettings(unmix_colors_bound_kwargs(module))
 
 
 class GrayToColorSchemeBindingStrategy(ABC, metaclass=AutoRegisterMeta):
