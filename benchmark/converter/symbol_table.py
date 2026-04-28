@@ -103,6 +103,20 @@ class CellProfilerSymbolKind(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class CellProfilerSymbolKey:
+    """Typed CellProfiler workspace identity."""
+
+    name: str
+    kind: CellProfilerSymbolKind
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", _normalize_symbol_name(self.name))
+        object.__setattr__(self, "kind", CellProfilerSymbolKind(self.kind))
+        if not self.name:
+            raise ValueError("CellProfilerSymbolKey.name cannot be empty.")
+
+
+@dataclass(frozen=True, slots=True)
 class CellProfilerSymbol:
     """One named CellProfiler workspace value known at conversion time."""
 
@@ -112,8 +126,15 @@ class CellProfilerSymbol:
     source_bound: bool = False
 
     def __post_init__(self) -> None:
-        if not self.name.strip():
+        normalized_name = _normalize_symbol_name(self.name)
+        if not normalized_name:
             raise ValueError("CellProfilerSymbol.name cannot be empty.")
+        object.__setattr__(self, "name", normalized_name)
+        object.__setattr__(self, "kind", CellProfilerSymbolKind(self.kind))
+
+    @property
+    def key(self) -> CellProfilerSymbolKey:
+        return CellProfilerSymbolKey(self.name, self.kind)
 
     def artifact_spec(self) -> ArtifactSpec:
         return ArtifactSpec(self.name, self.kind.artifact_kind)
@@ -193,7 +214,7 @@ class ModuleArtifactContracts:
 class CellProfilerSymbolTable:
     """Compiled CellProfiler symbol table and per-module artifact contracts."""
 
-    symbols: Mapping[str, CellProfilerSymbol]
+    symbols: Mapping[CellProfilerSymbolKey, CellProfilerSymbol]
     module_contracts: tuple[ModuleArtifactContracts, ...] = ()
     source_schema: CellProfilerImageSchema = CellProfilerImageSchema.empty()
 
@@ -209,6 +230,20 @@ class CellProfilerSymbolTable:
             raise KeyError(
                 f"No CellProfiler artifact contract compiled for "
                 f"{module.name}({module.module_num})."
+            ) from exc
+
+    def symbol_for(
+        self,
+        name: str,
+        kind: CellProfilerSymbolKind,
+    ) -> CellProfilerSymbol:
+        """Return the symbol for one typed CellProfiler workspace identity."""
+        key = CellProfilerSymbolKey(name, kind)
+        try:
+            return self.symbols[key]
+        except KeyError as exc:
+            raise KeyError(
+                f"No CellProfiler {key.kind.value} symbol named {key.name!r}."
             ) from exc
 
     @classmethod
@@ -244,9 +279,19 @@ DISPLAY_OBJECTS_SETTING = SettingNameFamily(
     "Select objects to display",
     aliases=("Select object to display",),
 )
+PARENT_OBJECTS_SETTING = SettingNameFamily(
+    "Select the parent objects",
+    aliases=("Parent objects",),
+)
+CHILD_OBJECTS_SETTING = SettingNameFamily(
+    "Select the child objects",
+    aliases=("Child objects",),
+)
+
+
 class _SymbolTableBuilder:
     def __init__(self, source_schema: CellProfilerImageSchema) -> None:
-        self._symbols: dict[str, CellProfilerSymbol] = {}
+        self._symbols: dict[CellProfilerSymbolKey, CellProfilerSymbol] = {}
         self._contracts: list[ModuleArtifactContracts] = []
         self._source_schema = source_schema
 
@@ -301,7 +346,7 @@ class _SymbolTableBuilder:
         module: ModuleBlock,
     ) -> CellProfilerSymbol:
         normalized_name = _normalize_symbol_name(name)
-        symbol = self._symbols.get(normalized_name)
+        symbol = self._symbols.get(CellProfilerSymbolKey(normalized_name, kind))
         if symbol is None:
             try:
                 source_artifact = (
@@ -319,17 +364,16 @@ class _SymbolTableBuilder:
             if source_artifact is not None:
                 return self.external_source_artifact(normalized_name, kind)
             if kind is CellProfilerSymbolKind.IMAGE:
+                self._raise_if_name_is_known_as_other_kind(
+                    normalized_name,
+                    kind,
+                    module,
+                )
                 return self.external_image(normalized_name)
             raise ValueError(
                 f"Module {module.name}({module.module_num}) references unknown "
                 f"{kind.value} symbol '{normalized_name}'. No prior module "
                 "produces it."
-            )
-        if symbol.kind is not kind:
-            raise ValueError(
-                f"Module {module.name}({module.module_num}) expects "
-                f"'{normalized_name}' as {kind.value}, but it is already "
-                f"registered as {symbol.kind.value}."
             )
         return symbol
 
@@ -356,18 +400,33 @@ class _SymbolTableBuilder:
             producer_module_num=producer_module_num,
             source_bound=source_bound,
         )
-        existing = self._symbols.get(normalized_name)
+        existing = self._symbols.get(symbol.key)
         if existing is not None:
-            if existing.kind is not kind:
-                raise ValueError(
-                    f"CellProfiler symbol '{normalized_name}' is already "
-                    f"registered as {existing.kind.value}, cannot also register "
-                    f"as {kind.value}."
-                )
             if existing == symbol:
                 return existing
-        self._symbols[normalized_name] = symbol
+        self._symbols[symbol.key] = symbol
         return symbol
+
+    def _raise_if_name_is_known_as_other_kind(
+        self,
+        name: str,
+        expected_kind: CellProfilerSymbolKind,
+        module: ModuleBlock,
+    ) -> None:
+        conflicting_kinds = tuple(
+            key.kind
+            for key in self._symbols
+            if key.name == name and key.kind is not expected_kind
+        )
+        if not conflicting_kinds:
+            return
+        existing = conflicting_kinds[0]
+        raise ValueError(
+            f"Module {module.name}({module.module_num}) expects "
+            f"'{name}' as {expected_kind.value}, but it is already "
+            f"registered as {existing.value} and no source schema declares "
+            f"a {expected_kind.value} binding for that name."
+        )
 
     def _source_binding_for_symbol(
         self,
@@ -1082,12 +1141,12 @@ def _relate_objects(
     module: ModuleBlock,
 ) -> ModuleArtifactContracts:
     parent = builder.require(
-        _setting(module, "Select the parent objects"),
+        _setting(module, PARENT_OBJECTS_SETTING),
         CellProfilerSymbolKind.OBJECTS,
         module,
     )
     child = builder.require(
-        _setting(module, "Select the child objects"),
+        _setting(module, CHILD_OBJECTS_SETTING),
         CellProfilerSymbolKind.OBJECTS,
         module,
     )

@@ -250,6 +250,11 @@ The branch has already established most of the typed runtime/compiler foundation
     - once that invariant is satisfied, the source universe also includes physical plate-root files so selector-bearing bindings can resolve `.mat` illumination matrices and similar sidecar source payloads
     - generated pipeline-start source-bound steps now emit `GroupBy.NONE` explicitly when executing over site/channel source universes, avoiding runtime auto-resolution noise
     - a new fast integration fixture compiles and executes a real `LoadImages + CorrectIlluminationApply` `.cppipe` that resolves both the raw image and a MATLAB illumination matrix through `SourceBindingOrigin.PIPELINE_START`
+35. The CellProfiler symbol table now models workspace identity as `(name, kind)` instead of plain string name:
+    - image/object name overlap is allowed when the image binding is declared by setup schema, matching real CellProfiler pipelines such as current official `ExampleHuman.cppipe`
+    - unknown object references still fail loudly
+    - an image reference that collides with an existing object name still fails unless the source schema explicitly declares that image binding
+    - `RelateObjects` now accepts both current `Select the parent/child objects` settings and older `Parent objects` / `Child objects` schema aliases through the shared setting-name family path
 
 ### 3.2 What Is Still Missing
 
@@ -272,10 +277,11 @@ The biggest unresolved items are now:
    - canonical `BBBC021_analysis.cppipe` now executes through the orchestrator on synthetic BBBC021-shaped data and validates the core generated runtime path
    - canonical `BBBC021_illum.cppipe` now executes successfully as a real converted pipeline shape
    - LoadImages-style `.mat` illumination sidecar binding now executes through the real generated pipeline/orchestrator path
+   - symbol-table semantics now support real pipelines that reuse the same lexical alias for an image and an object in different CellProfiler workspaces
    - canonical dataset-owned `.cppipe` references can now be resolved through the benchmark adapter instead of only local ad hoc files
    - ExampleFly now executes end to end as a real shipped `.cppipe` shape and materializes measurement CSV outputs on disk
    - a generated `RelateObjects` pipeline now executes through the orchestrator and materializes both relationship and measurement CSV outputs
-   - the next gap is broader corpus coverage, real-data validation, and unexercised CellProfiler modules, not basic execution enablement
+   - the next gap is replacing the stale reduced `ExampleHuman.cppipe` fixture with the current official example and then broadening real-data/corpus validation, not basic execution enablement
 7. Export and relationship-heavy semantics now have initial real-output validation with concrete CSV schema assertions, but not broad corpus-level validation.
 8. Benchmarking is no longer ahead of the remaining CellProfiler semantics, but it should still stay secondary to broader semantic validation.
 9. The broader absorbed-function corpus still needs continued cleanup beyond the currently exercised import/materialization surface.

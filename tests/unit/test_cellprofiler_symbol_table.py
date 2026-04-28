@@ -96,12 +96,27 @@ def test_cellprofiler_symbol_table_compiles_object_measurement_graph():
 
     table = CellProfilerSymbolTable.compile(modules)
 
-    assert table.symbols["OrigBlue"].kind is CellProfilerSymbolKind.IMAGE
-    assert table.symbols["OrigBlue"].producer_module_num is None
-    assert table.symbols["Nuclei"].kind is CellProfilerSymbolKind.OBJECTS
-    assert table.symbols["Nuclei"].producer_module_num == 1
-    assert table.symbols["Cytoplasm"].kind is CellProfilerSymbolKind.OBJECTS
-    assert table.symbols["MeasureObjectIntensity_4_measurements"].kind is (
+    assert table.symbol_for("OrigBlue", CellProfilerSymbolKind.IMAGE).kind is (
+        CellProfilerSymbolKind.IMAGE
+    )
+    assert (
+        table.symbol_for("OrigBlue", CellProfilerSymbolKind.IMAGE).producer_module_num
+        is None
+    )
+    assert table.symbol_for("Nuclei", CellProfilerSymbolKind.OBJECTS).kind is (
+        CellProfilerSymbolKind.OBJECTS
+    )
+    assert (
+        table.symbol_for("Nuclei", CellProfilerSymbolKind.OBJECTS).producer_module_num
+        == 1
+    )
+    assert table.symbol_for("Cytoplasm", CellProfilerSymbolKind.OBJECTS).kind is (
+        CellProfilerSymbolKind.OBJECTS
+    )
+    assert table.symbol_for(
+        "MeasureObjectIntensity_4_measurements",
+        CellProfilerSymbolKind.MEASUREMENTS,
+    ).kind is (
         CellProfilerSymbolKind.MEASUREMENTS
     )
 
@@ -165,7 +180,10 @@ def test_cellprofiler_symbol_table_accepts_declared_source_object_inputs():
     table = CellProfilerSymbolTable.compile([setup_module, measurement_module])
     contract = table.contracts_by_module_num[2]
 
-    assert table.symbols["LoadedNuclei"].source_bound is True
+    assert table.symbol_for(
+        "LoadedNuclei",
+        CellProfilerSymbolKind.OBJECTS,
+    ).source_bound is True
     assert contract.runtime_artifact_inputs == ()
     assert contract.source_bindings.groups[0].bindings[0].artifact_kind is (
         ArtifactKind.OBJECT_LABELS
@@ -332,10 +350,72 @@ def test_cellprofiler_symbol_table_updates_current_binding_for_reused_names():
 
     table = CellProfilerSymbolTable.compile(modules)
 
-    assert table.symbols["Nuclei"].producer_module_num == 2
+    assert table.symbol_for("Nuclei", CellProfilerSymbolKind.OBJECTS).producer_module_num == 2
     assert table.contracts_by_module_num[1].output_symbols[0].producer_module_num == 1
     assert table.contracts_by_module_num[2].output_symbols[0].producer_module_num == 2
     assert table.contracts_by_module_num[3].input_symbols[0].producer_module_num == 2
+
+
+def test_cellprofiler_symbol_table_allows_declared_image_object_name_overlap():
+    setup_module = _module_with_records(
+        1,
+        "NamesAndTypes",
+        [
+            ("Assignments count", "1"),
+            ("Assign a name to", "Images matching rules"),
+            ("Select the image type", "Grayscale image"),
+            ("Name to assign these images", "PH3"),
+            ("Name to assign these objects", "Cell"),
+            ("Image set matching method", "Order"),
+            ("Select the rule criteria", 'and (file does contain "d1.tif")'),
+        ],
+    )
+    identify_module = _module(
+        2,
+        "IdentifyPrimaryObjects",
+        {
+            "Select the input image": "PH3",
+            "Name the primary objects to be identified": "PH3",
+        },
+    )
+
+    table = CellProfilerSymbolTable.compile([setup_module, identify_module])
+
+    image_symbol = table.symbol_for("PH3", CellProfilerSymbolKind.IMAGE)
+    object_symbol = table.symbol_for("PH3", CellProfilerSymbolKind.OBJECTS)
+    assert image_symbol.source_bound is True
+    assert object_symbol.producer_module_num == 2
+
+
+def test_cellprofiler_symbol_table_accepts_relate_objects_schema_aliases():
+    modules = [
+        _identify_primary(),
+        _module(
+            2,
+            "IdentifyPrimaryObjects",
+            {
+                "Select the input image": "OrigGreen",
+                "Name the primary objects to be identified": "PH3",
+            },
+        ),
+        _module(
+            3,
+            "RelateObjects",
+            {
+                "Parent objects": "Nuclei",
+                "Child objects": "PH3",
+            },
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[3]
+
+    assert [symbol.name for symbol in contract.input_symbols] == ["Nuclei", "PH3"]
+    assert [spec.kind for spec in contract.outputs] == [
+        ArtifactKind.RELATIONSHIPS,
+        ArtifactKind.MEASUREMENTS,
+    ]
 
 
 def test_pipeline_generator_emits_compiled_artifact_contracts():
