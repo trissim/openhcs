@@ -2,8 +2,9 @@
 
 The converter needs one place where CellProfiler's string workspace names become
 typed OpenHCS artifact contracts.  This module owns that conversion boundary:
-names are unique, kind conflicts fail loudly, and image names with no producer
-are treated as external source images supplied by the plate/input metadata.
+same-kind declarations update the current workspace binding, kind conflicts fail
+loudly, and image names with no producer are treated as external source images
+supplied by the plate/input metadata.
 """
 
 from __future__ import annotations
@@ -361,13 +362,8 @@ class _SymbolTableBuilder:
                     f"registered as {existing.kind.value}, cannot also register "
                     f"as {kind.value}."
                 )
-            if existing != symbol:
-                raise ValueError(
-                    f"CellProfiler symbol '{normalized_name}' ({kind.value}) "
-                    f"already produced by module {existing.producer_module_num}, "
-                    f"cannot also produce from module {producer_module_num}."
-                )
-            return existing
+            if existing == symbol:
+                return existing
         self._symbols[normalized_name] = symbol
         return symbol
 

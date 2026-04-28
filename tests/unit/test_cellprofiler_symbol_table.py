@@ -191,7 +191,7 @@ def test_cellprofiler_symbol_table_fails_for_kind_conflict():
         CellProfilerSymbolTable.compile(modules)
 
 
-def test_cellprofiler_symbol_table_fails_for_duplicate_producer():
+def test_cellprofiler_symbol_table_updates_current_binding_for_reused_names():
     modules = [
         _identify_primary(),
         _module(
@@ -202,10 +202,19 @@ def test_cellprofiler_symbol_table_fails_for_duplicate_producer():
                 "Name the primary objects to be identified": "Nuclei",
             },
         ),
+        _module(
+            3,
+            "MeasureObjectSizeShape",
+            {"Select object sets to measure": "Nuclei"},
+        ),
     ]
 
-    with pytest.raises(ValueError, match="already produced by module 1"):
-        CellProfilerSymbolTable.compile(modules)
+    table = CellProfilerSymbolTable.compile(modules)
+
+    assert table.symbols["Nuclei"].producer_module_num == 2
+    assert table.contracts_by_module_num[1].output_symbols[0].producer_module_num == 1
+    assert table.contracts_by_module_num[2].output_symbols[0].producer_module_num == 2
+    assert table.contracts_by_module_num[3].input_symbols[0].producer_module_num == 2
 
 
 def test_pipeline_generator_emits_compiled_artifact_contracts():
