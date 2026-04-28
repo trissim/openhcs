@@ -223,6 +223,11 @@ The branch has already established most of the typed runtime/compiler foundation
     - the setup-module compiler now lowers `Image set matching method:Order` into a typed `SourceBindingMatchPlan(method=ORDER)`
     - the runtime adapter resolves order-based pipeline-start pairings generically by matching the current step-input image-set index against the ordered target alias candidate list
     - support is implemented in the nominal core match-plan resolver path rather than as converter- or module-local glue
+29. Common CellProfiler processing-module artifact contracts can now be inferred through a nominal typed pattern family instead of silently defaulting to empty contracts:
+    - infrastructure modules now have an explicit no-artifact contract builder
+    - common single image/object input-output shapes infer `ArtifactSpec` inputs/outputs from declared CellProfiler settings
+    - unmodeled processing modules now fail loudly with a compatibility diagnostic instead of pretending they have no runtime semantics
+    - canonical BBBC021 illumination modules now compile real `CorrectIlluminationCalculate` image inputs/outputs
 
 ### 3.2 What Is Still Missing
 
@@ -240,6 +245,7 @@ The biggest unresolved items are now:
    - live BBBC021 setup/image schema compilation now succeeds
    - live BBBC021 conversion now succeeds end to end at code-generation time
    - a BBBC021-style generated pipeline now executes through the OpenHCS orchestrator with typed named-channel bindings
+   - canonical BBBC021 illumination now carries explicit inferred image artifact contracts for illumination functions instead of empty contracts
    - canonical in-tree BBBC021 reference snapshots now prepare successfully and preserve typed schema facts under direct test coverage
    - canonical `BBBC021_illum.cppipe` now executes successfully as a real converted pipeline shape
    - canonical dataset-owned `.cppipe` references can now be resolved through the benchmark adapter instead of only local ad hoc files

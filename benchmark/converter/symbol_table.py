@@ -205,9 +205,21 @@ OBJECT_MEASUREMENT_SETTING = SettingNameFamily(
     "Select object sets to measure",
     aliases=("Select objects to measure",),
 )
+INPUT_IMAGE_SETTING = SettingNameFamily(
+    "Select the input image",
+    aliases=("Select an input image",),
+)
+INPUT_OBJECTS_SETTING = SettingNameFamily(
+    "Select the input objects",
+    aliases=("Select input objects",),
+)
 OUTPUT_IMAGE_SETTING = SettingNameFamily(
     "Name the output image",
     aliases=("Name the output image file",),
+)
+OUTPUT_OBJECTS_SETTING = SettingNameFamily(
+    "Name the output objects",
+    aliases=("Name the objects to be identified",),
 )
 DISPLAY_OBJECTS_SETTING = SettingNameFamily(
     "Select objects to display",
@@ -848,6 +860,15 @@ def _relate_objects(
     )
 
 
+def _infrastructure_module_contract(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    """Compile setup/export modules as explicit no-artifact contract nodes."""
+    del builder
+    return ModuleArtifactContracts(module.name, module.module_num)
+
+
 class ModuleContractBuilder(ABC, metaclass=AutoRegisterMeta):
     """Nominal family for per-module CellProfiler artifact contract compilation."""
 
@@ -890,20 +911,147 @@ class FunctionBackedModuleContractBuilder(ModuleContractBuilder):
 
 
 class UnsupportedModuleContractBuilder(ModuleContractBuilder):
-    """Default builder for modules whose runtime artifact semantics are not declared."""
+    """Fail loudly for modules without declared or inferable artifact semantics."""
 
     def build(
         self,
         builder: _SymbolTableBuilder,
         module: ModuleBlock,
     ) -> ModuleArtifactContracts:
-        return ModuleArtifactContracts(module.name, module.module_num)
+        inferred_contract = InferredModuleContractPattern.first_match(
+            builder,
+            module,
+        )
+        if inferred_contract is not None:
+            return inferred_contract
+        raise ValueError(
+            f"Module {module.name}({module.module_num}) has no declared or "
+            "inferable CellProfiler artifact contract. Add a nominal contract "
+            "builder or an inference pattern before converting this module."
+        )
+
+
+class InferredModuleContractPattern(ABC, metaclass=AutoRegisterMeta):
+    """Nominal family for deriving common CellProfiler artifact contracts."""
+
+    __registry_key__ = "pattern_name"
+    __skip_if_no_key__ = True
+    pattern_name: ClassVar[str | None] = None
+
+    @classmethod
+    def first_match(
+        cls,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts | None:
+        for pattern_type in cls.__registry__.values():
+            contract = pattern_type().build_if_matched(builder, module)
+            if contract is not None:
+                return contract
+        return None
+
+    @abstractmethod
+    def build_if_matched(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts | None:
+        """Return a contract when this pattern fully matches the module."""
+
+
+class _SingleInputSingleOutputContractPattern(InferredModuleContractPattern):
+    """Base for single-symbol input/output contract inference."""
+
+    input_setting: ClassVar[str | SettingNameFamily]
+    input_kind: ClassVar[CellProfilerSymbolKind]
+    output_setting: ClassVar[str | SettingNameFamily]
+    output_kind: ClassVar[CellProfilerSymbolKind]
+    excluded_settings: ClassVar[tuple[str | SettingNameFamily, ...]] = ()
+
+    def build_if_matched(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts | None:
+        if any(
+            _optional_setting(module, setting) is not None
+            for setting in type(self).excluded_settings
+        ):
+            return None
+        input_name = _normalized_setting_symbol(module, type(self).input_setting)
+        output_name = _normalized_setting_symbol(module, type(self).output_setting)
+        if input_name is None or output_name is None:
+            return None
+        input_symbol = builder.require(input_name, type(self).input_kind, module)
+        output_symbol = builder.declare(output_name, type(self).output_kind, module)
+        return _contracts(
+            module,
+            builder,
+            inputs=[input_symbol],
+            outputs=[output_symbol],
+        )
+
+
+class SingleImageToImageContractPattern(_SingleInputSingleOutputContractPattern):
+    """Infer common image-transform modules."""
+
+    pattern_name = "single_image_to_image"
+    input_setting = INPUT_IMAGE_SETTING
+    input_kind = CellProfilerSymbolKind.IMAGE
+    output_setting = OUTPUT_IMAGE_SETTING
+    output_kind = CellProfilerSymbolKind.IMAGE
+    excluded_settings = (OUTPUT_OBJECTS_SETTING,)
+
+
+class SingleImageToObjectContractPattern(_SingleInputSingleOutputContractPattern):
+    """Infer common image-segmentation modules."""
+
+    pattern_name = "single_image_to_object"
+    input_setting = INPUT_IMAGE_SETTING
+    input_kind = CellProfilerSymbolKind.IMAGE
+    output_setting = OUTPUT_OBJECTS_SETTING
+    output_kind = CellProfilerSymbolKind.OBJECTS
+    excluded_settings = (OUTPUT_IMAGE_SETTING,)
+
+
+class SingleObjectToImageContractPattern(_SingleInputSingleOutputContractPattern):
+    """Infer common object-rendering modules."""
+
+    pattern_name = "single_object_to_image"
+    input_setting = INPUT_OBJECTS_SETTING
+    input_kind = CellProfilerSymbolKind.OBJECTS
+    output_setting = OUTPUT_IMAGE_SETTING
+    output_kind = CellProfilerSymbolKind.IMAGE
+    excluded_settings = (OUTPUT_OBJECTS_SETTING,)
+
+
+class SingleObjectToObjectContractPattern(_SingleInputSingleOutputContractPattern):
+    """Infer common object-transform modules."""
+
+    pattern_name = "single_object_to_object"
+    input_setting = INPUT_OBJECTS_SETTING
+    input_kind = CellProfilerSymbolKind.OBJECTS
+    output_setting = OUTPUT_OBJECTS_SETTING
+    output_kind = CellProfilerSymbolKind.OBJECTS
+    excluded_settings = (OUTPUT_IMAGE_SETTING,)
 
 
 _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     tuple[tuple[str, ...], Callable[[_SymbolTableBuilder, ModuleBlock], ModuleArtifactContracts]],
     ...,
 ] = (
+    (
+        (
+            "LoadData",
+            "Images",
+            "Metadata",
+            "NamesAndTypes",
+            "Groups",
+            "SaveImages",
+            "ExportToSpreadsheet",
+        ),
+        _infrastructure_module_contract,
+    ),
     (("CorrectIlluminationApply",), _correct_illumination_apply),
     (("Opening",), _opening),
     (("IdentifyPrimaryObjects",), _identify_primary_objects),
