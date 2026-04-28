@@ -225,7 +225,7 @@ from openhcs.constants.input_source import InputSource
         runtime_function_bindings: dict[int, str] = {}
         if registry_modules:
             imports += "# Absorbed CellProfiler functions (dynamically loaded)\n"
-            imports += "from benchmark.cellprofiler_library import get_function\n\n"
+            imports += "from benchmark.cellprofiler_library import require_function\n\n"
             imports += (
                 "from benchmark.cellprofiler_compat import (\n"
                 "    CellProfilerModuleContract,\n"
@@ -259,7 +259,7 @@ from openhcs.constants.input_source import InputSource
                 else:
                     runtime_function_bindings[module.module_num] = binding_name
                 func_assignments.append(
-                    f'{binding_name} = get_function("{module.name}", '
+                    f'{binding_name} = require_function("{module.name}", '
                     f'function_name="{func_name}")'
                 )
                 func_assignments.append(
@@ -652,9 +652,9 @@ from openhcs.constants.input_source import InputSource
         module_name: str,
         function_name: str,
     ) -> ProcessingContract | None:
-        from benchmark.cellprofiler_library import get_function
+        from benchmark.cellprofiler_library import require_function
 
-        function = get_function(module_name, function_name=function_name)
+        function = require_function(module_name, function_name=function_name)
         contract = getattr(function, "__processing_contract__", None)
         if isinstance(contract, ProcessingContract):
             return contract

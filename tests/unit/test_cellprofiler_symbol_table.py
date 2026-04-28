@@ -193,8 +193,8 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
     assert "CellProfilerModuleContract(" in generated.code
     assert "source_bindings=StepSourceBindingsConfig(" in generated.code
     assert "runtime_artifact_inputs=(ArtifactSpec('Nuclei'" in generated.code
-    assert "identify_primary_objects_1 = get_function" in generated.code
-    assert "identify_secondary_objects_2 = get_function" in generated.code
+    assert "identify_primary_objects_1 = require_function" in generated.code
+    assert "identify_secondary_objects_2 = require_function" in generated.code
     assert "CellProfilerModuleExecutor" in generated.code
     assert "cellprofiler_runtime_adapter_factory" in generated.code
     assert "@artifact_outputs(*CELLPROFILER_MODULE_CONTRACTS[1]" in generated.code
@@ -248,15 +248,15 @@ def test_pipeline_generator_resolves_object_measurement_function_variants():
     )
 
     assert (
-        'measure_texture_objects_2 = get_function("MeasureTexture", '
+        'measure_texture_objects_2 = require_function("MeasureTexture", '
         'function_name="measure_texture_objects")'
     ) in generated.code
     assert (
-        'measure_colocalization_objects_3 = get_function('
+        'measure_colocalization_objects_3 = require_function('
         '"MeasureColocalization", function_name="measure_colocalization_objects")'
     ) in generated.code
     assert (
-        'measure_granularity_objects_4 = get_function('
+        'measure_granularity_objects_4 = require_function('
         '"MeasureGranularity", function_name="measure_granularity_objects")'
     ) in generated.code
 
