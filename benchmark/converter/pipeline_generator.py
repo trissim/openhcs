@@ -26,11 +26,11 @@ from openhcs.core.artifacts import ArtifactSpec
 from openhcs.constants.constants import AllComponents
 from openhcs.core.pipeline_image_schema import CellProfilerImageSchema
 from openhcs.core.source_bindings import StepSourceBindingsConfig, SourceBindingOrigin
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 from .module_function_resolution import ModuleFunctionResolutionStrategy
 from .module_settings_binding import ModuleSettingsBindingStrategy
 from .parser import ModuleBlock
+from .processing_contract_resolution import resolve_processing_contract
 from .settings_binder import SettingsBinder, normalize_cellprofiler_setting_name
 from .symbol_table import (
     CellProfilerSymbolTable,
@@ -635,30 +635,12 @@ from openhcs.constants.input_source import InputSource
         function_name: str,
     ) -> str:
         """Return generated-code expression for the raw absorbed module contract."""
-        contract_name = str(self._registry[module_name]["contract"]).upper()
-        if contract_name == "UNKNOWN":
-            absorbed_contract = self._absorbed_function_processing_contract(
-                module_name,
-                function_name,
-            )
-            if absorbed_contract is not None:
-                return f"ProcessingContract.{absorbed_contract.name}"
-        if contract_name not in {"PURE_2D", "PURE_3D", "FLEXIBLE", "VOLUMETRIC_TO_SLICE"}:
-            contract_name = "FLEXIBLE"
-        return f"ProcessingContract.{contract_name}"
-
-    def _absorbed_function_processing_contract(
-        self,
-        module_name: str,
-        function_name: str,
-    ) -> ProcessingContract | None:
-        from benchmark.cellprofiler_library import require_function
-
-        function = require_function(module_name, function_name=function_name)
-        contract = getattr(function, "__processing_contract__", None)
-        if isinstance(contract, ProcessingContract):
-            return contract
-        return None
+        resolved_contract = resolve_processing_contract(
+            module_name,
+            function_name,
+            str(self._registry[module_name]["contract"]),
+        )
+        return f"ProcessingContract.{resolved_contract.contract.name}"
 
     def _requires_step_input_selector_resolution(
         self,

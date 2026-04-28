@@ -65,7 +65,7 @@
   },
   "CorrectIlluminationApply": {
     "function_name": "correct_illumination_apply",
-    "contract": "unknown",
+    "contract": "pure_2d",
     "category": "image_operation",
     "confidence": 1.0,
     "reasoning": "Illumination correction is a single-channel operation applied to individual images to correct for spatial intensity variations. It does not require access to multiple z-slices or multiple channels simultaneously to perform its calculation.",
@@ -305,7 +305,7 @@
   },
   "IdentifyPrimaryObjects": {
     "function_name": "identify_primary_objects",
-    "contract": "unknown",
+    "contract": "pure_2d",
     "category": "image_operation",
     "confidence": 1.0,
     "reasoning": "IdentifyPrimaryObjects is a classic single-channel segmentation function. It processes an individual grayscale image (typically a nuclear stain like DAPI) to detect objects. It does not require volumetric Z-stacks or multiple color channels simultaneously to perform its core logic.",
@@ -449,7 +449,7 @@
   },
   "MeasureObjectIntensityDistribution": {
     "function_name": "measure_object_intensity_distribution",
-    "contract": "unknown",
+    "contract": "pure_2d",
     "category": "image_operation",
     "confidence": 1.0,
     "reasoning": "MeasureObjectIntensityDistribution calculates spatial distribution of intensities for a single image channel relative to a set of labels. It does not require multiple channels simultaneously nor does it require a 3D z-stack to perform its calculations; it processes a single 2D image/site at a time.",
@@ -545,7 +545,7 @@
   },
   "OverlayOutlines": {
     "function_name": "overlay_outlines",
-    "contract": "unknown",
+    "contract": "pure_2d",
     "category": "image_operation",
     "confidence": 1.0,
     "reasoning": "The function overlays outlines onto a single image. It does not require a volumetric Z-stack to function, nor does it inherently require multiple input channels to be stacked together; it processes a single image and its corresponding label map per site.",
