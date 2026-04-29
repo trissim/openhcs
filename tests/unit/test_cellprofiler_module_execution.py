@@ -6,6 +6,7 @@ from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
     ImagePayloadExecutionMode,
     compose_aligned_image_payload,
+    compose_one_image_bundle,
     payload_slice_count,
     payload_slices_for_alignment,
 )
@@ -35,6 +36,7 @@ from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
     UnclumpMethod,
     identify_primary_objects,
 )
+from benchmark.cellprofiler_library.functions.tile import tile
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.config import DtypeConfig
 from openhcs.core.runtime_values import MeasurementTable
@@ -396,6 +398,32 @@ def test_compose_image_payload_aligns_multislice_inputs_with_broadcast():
         assert composed_slice.shape == (2, 4, 5)
         np.testing.assert_array_equal(composed_slice[0], raw_stack[slice_index])
         np.testing.assert_array_equal(composed_slice[1], illumination)
+
+
+def test_compose_image_bundle_promotes_grayscale_into_color_bundle():
+    color = np.zeros((4, 5, 3), dtype=np.float32)
+    color[:, :, 0] = 1
+    grayscale = np.full((4, 5), 7, dtype=np.float32)
+
+    bundle = compose_one_image_bundle((color, grayscale))
+
+    assert bundle.shape == (2, 4, 5, 3)
+    np.testing.assert_array_equal(bundle[0], color)
+    np.testing.assert_array_equal(bundle[1, :, :, 0], grayscale)
+    np.testing.assert_array_equal(bundle[1, :, :, 1], grayscale)
+    np.testing.assert_array_equal(bundle[1, :, :, 2], grayscale)
+
+
+def test_tile_preserves_color_stack_output_shape():
+    image = np.zeros((2, 3, 4, 3), dtype=np.float32)
+    image[0, :, :, 0] = 1
+    image[1, :, :, 1] = 2
+
+    output = tile(image, rows=1, columns=2, dtype_config=DtypeConfig())
+
+    assert output.shape == (1, 3, 8, 3)
+    np.testing.assert_array_equal(output[0, :, :4, 0], np.ones((3, 4)))
+    np.testing.assert_array_equal(output[0, :, 4:, 1], np.full((3, 4), 2))
 
 
 def test_cellprofiler_contract_executor_applies_aligned_multi_image_stack():

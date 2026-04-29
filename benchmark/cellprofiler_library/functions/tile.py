@@ -3,9 +3,10 @@ Converted from CellProfiler: Tile
 Original: Tile module for creating montage images
 """
 
-import numpy as np
-from typing import Tuple, Optional
+from dataclasses import dataclass
 from enum import Enum
+
+import numpy as np
 from openhcs.core.memory.decorators import numpy
 
 
@@ -20,50 +21,78 @@ class PlaceFirst(Enum):
     TOP_RIGHT = "top_right"
     BOTTOM_RIGHT = "bottom_right"
 
+    @property
+    def row_from_bottom(self) -> bool:
+        return self.value.startswith("bottom_")
+
+    @property
+    def column_from_right(self) -> bool:
+        return self.value.endswith("_right")
+
 
 class TileStyle(Enum):
     ROW = "row"
     COLUMN = "column"
 
 
-def _get_tile_ij(
-    image_index: int,
-    rows: int,
-    columns: int,
-    tile_style: TileStyle,
-    place_first: PlaceFirst,
+@dataclass(frozen=True, slots=True)
+class TileSettings:
+    rows: int
+    columns: int
+    place_first: PlaceFirst
+    tile_style: TileStyle
     meander: bool
-) -> Tuple[int, int]:
-    """Get the I/J coordinates for an image in the grid.
-    
-    Args:
-        image_index: Index of the image (0-based)
-        rows: Number of rows in the grid
-        columns: Number of columns in the grid
-        tile_style: Whether to tile by row or column first
-        place_first: Which corner to start from
-        meander: Whether to reverse direction on alternate rows/columns
-    
-    Returns:
-        Tuple of (row_index, column_index)
-    """
-    if tile_style == TileStyle.ROW:
-        tile_i = int(image_index / columns)
-        tile_j = image_index % columns
-        if meander and tile_i % 2 == 1:
-            tile_j = columns - tile_j - 1
-    else:
-        tile_i = image_index % rows
-        tile_j = int(image_index / rows)
-        if meander and tile_j % 2 == 1:
-            tile_i = rows - tile_i - 1
-    
-    if place_first in (PlaceFirst.BOTTOM_LEFT, PlaceFirst.BOTTOM_RIGHT):
-        tile_i = rows - tile_i - 1
-    if place_first in (PlaceFirst.TOP_RIGHT, PlaceFirst.BOTTOM_RIGHT):
-        tile_j = columns - tile_j - 1
-    
-    return tile_i, tile_j
+    auto_rows: bool
+    auto_columns: bool
+
+    def geometry(self, image_count: int) -> "TileGeometry":
+        grid_rows, grid_columns = _get_grid_dimensions(
+            image_count,
+            self.rows,
+            self.columns,
+            self.auto_rows,
+            self.auto_columns,
+        )
+        return TileGeometry(
+            rows=grid_rows,
+            columns=grid_columns,
+            tile_style=self.tile_style,
+            place_first=self.place_first,
+            meander=self.meander,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TileGeometry:
+    rows: int
+    columns: int
+    tile_style: TileStyle
+    place_first: PlaceFirst
+    meander: bool
+
+    @property
+    def tile_count(self) -> int:
+        return self.rows * self.columns
+
+    def coordinates(self, image_index: int) -> tuple[int, int]:
+        """Return row/column coordinates for one tile index."""
+        if self.tile_style == TileStyle.ROW:
+            tile_i = int(image_index / self.columns)
+            tile_j = image_index % self.columns
+            if self.meander and tile_i % 2 == 1:
+                tile_j = self.columns - tile_j - 1
+        else:
+            tile_i = image_index % self.rows
+            tile_j = int(image_index / self.rows)
+            if self.meander and tile_j % 2 == 1:
+                tile_i = self.rows - tile_i - 1
+
+        if self.place_first.row_from_bottom:
+            tile_i = self.rows - tile_i - 1
+        if self.place_first.column_from_right:
+            tile_j = self.columns - tile_j - 1
+
+        return tile_i, tile_j
 
 
 def _get_grid_dimensions(
@@ -72,7 +101,7 @@ def _get_grid_dimensions(
     columns: int,
     auto_rows: bool,
     auto_columns: bool
-) -> Tuple[int, int]:
+) -> tuple[int, int]:
     """Calculate grid dimensions based on settings.
     
     Args:
@@ -107,11 +136,7 @@ def _put_tile(
     pixels: np.ndarray,
     output_pixels: np.ndarray,
     image_index: int,
-    rows: int,
-    columns: int,
-    tile_style: TileStyle,
-    place_first: PlaceFirst,
-    meander: bool
+    geometry: TileGeometry,
 ) -> None:
     """Place a single tile into the output image.
     
@@ -125,10 +150,10 @@ def _put_tile(
         place_first: Starting corner
         meander: Whether to meander
     """
-    tile_height = int(output_pixels.shape[0] / rows)
-    tile_width = int(output_pixels.shape[1] / columns)
-    
-    tile_i, tile_j = _get_tile_ij(image_index, rows, columns, tile_style, place_first, meander)
+    tile_height = int(output_pixels.shape[0] / geometry.rows)
+    tile_width = int(output_pixels.shape[1] / geometry.columns)
+
+    tile_i, tile_j = geometry.coordinates(image_index)
     
     tile_i *= tile_height
     tile_j *= tile_width
@@ -185,26 +210,41 @@ def tile(
     if num_images == 0:
         raise ValueError("No images provided for tiling")
     
-    # Calculate grid dimensions
-    grid_rows, grid_cols = _get_grid_dimensions(
-        num_images, rows, columns, auto_rows, auto_columns
+    settings = TileSettings(
+        rows=rows,
+        columns=columns,
+        place_first=place_first,
+        tile_style=tile_style,
+        meander=meander,
+        auto_rows=auto_rows,
+        auto_columns=auto_columns,
     )
-    
+    geometry = settings.geometry(num_images)
+
     # Validate grid can hold all images
-    if grid_rows * grid_cols < num_images:
+    if geometry.tile_count < num_images:
         raise ValueError(
-            f"Grid size ({grid_rows}x{grid_cols}={grid_rows*grid_cols}) "
+            f"Grid size ({geometry.rows}x{geometry.columns}={geometry.tile_count}) "
             f"is too small for {num_images} images"
         )
     
+    if image.ndim not in {3, 4}:
+        raise ValueError(
+            "Tile expects an image stack shaped (N, H, W) or (N, H, W, C), "
+            f"got {image.shape!r}."
+        )
+
     # Determine tile dimensions (use max across all images)
     tile_height = image.shape[1]
     tile_width = image.shape[2]
     
     # Create output array
-    output_height = tile_height * grid_rows
-    output_width = tile_width * grid_cols
-    output_pixels = np.zeros((output_height, output_width), dtype=image.dtype)
+    output_height = tile_height * geometry.rows
+    output_width = tile_width * geometry.columns
+    output_pixels = np.zeros(
+        _tile_output_shape(image, output_height, output_width),
+        dtype=image.dtype,
+    )
     
     # Place each tile
     for i in range(num_images):
@@ -212,12 +252,18 @@ def tile(
             image[i],
             output_pixels,
             i,
-            grid_rows,
-            grid_cols,
-            tile_style,
-            place_first,
-            meander
+            geometry,
         )
     
     # Return with batch dimension
-    return output_pixels[np.newaxis, :, :]
+    return output_pixels[np.newaxis, ...]
+
+
+def _tile_output_shape(
+    image: np.ndarray,
+    output_height: int,
+    output_width: int,
+) -> tuple[int, ...]:
+    if image.ndim == 4:
+        return (output_height, output_width, image.shape[3])
+    return (output_height, output_width)

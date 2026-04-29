@@ -1138,6 +1138,19 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
             (".tif",),
             id="imaging-flow-cytometry-grid",
         ),
+        pytest.param(
+            "ExampleTrackObjects",
+            "ExampleTrackObjects",
+            (
+                ("TrackedCells", ArtifactKind.IMAGE),
+                ("TrackObjects_9_measurements", ArtifactKind.MEASUREMENTS),
+                ("OutlineImage", ArtifactKind.IMAGE),
+                ("AdjacentImage", ArtifactKind.IMAGE),
+            ),
+            ("TrackObjects",),
+            (".tif",),
+            id="track-objects",
+        ),
     ),
 )
 def test_official_cellprofiler3_additional_representative_pipelines_execute(

@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, ClassVar, Mapping
+
+from metaclass_registry import AutoRegisterMeta
+import numpy as np
 
 from openhcs.core.image_shapes import (
     is_color_image_slice,
     is_color_image_stack,
+    is_grayscale_image_slice,
     is_grayscale_image_stack,
 )
 from openhcs.core.image_stack_layout import ImageStackLayout
-from openhcs.core.memory import detect_memory_type
+from openhcs.core.memory import MEMORY_TYPE_NUMPY, convert_memory, detect_memory_type
 
 
 class ImagePayloadExecutionMode(Enum):
@@ -41,6 +47,91 @@ class AlignedImageStack:
         object.__setattr__(self, "slices", tuple(self.slices))
         if not self.slices:
             raise ValueError("AlignedImageStack.slices cannot be empty.")
+
+
+class ImageBundleLayout(ABC, metaclass=AutoRegisterMeta):
+    """Nominal layout for heterogeneous same-slice runtime image bundles."""
+
+    __registry_key__ = "layout_key"
+    __skip_if_no_key__ = True
+    layout_key: ClassVar[str | None] = None
+
+    @classmethod
+    def for_slices(cls, slices: Sequence[Any]) -> "ImageBundleLayout":
+        for layout_type in cls.__registry__.values():
+            if layout_type.matches(slices):
+                return layout_type()
+        raise ValueError(
+            "OpenHCS image bundles require 2D grayscale or HWC color slices; "
+            f"got shapes {[getattr(slice_data, 'shape', None) for slice_data in slices]!r}."
+        )
+
+    @classmethod
+    @abstractmethod
+    def matches(cls, slices: Sequence[Any]) -> bool:
+        """Return whether this layout can compose the supplied slices."""
+
+    @abstractmethod
+    def stack(
+        self,
+        *,
+        slices: Sequence[Any],
+        memory_type: str,
+        gpu_id: int,
+    ) -> Any:
+        """Stack same-slice runtime images into one callable input bundle."""
+
+
+class MixedColorImageBundleLayout(ImageBundleLayout):
+    """Promote grayscale slices when a bundle mixes grayscale and color images."""
+
+    layout_key = "mixed_color"
+
+    @classmethod
+    def matches(cls, slices: Sequence[Any]) -> bool:
+        return (
+            all(_is_bundle_image_slice(slice_data) for slice_data in slices)
+            and any(is_color_image_slice(slice_data) for slice_data in slices)
+            and any(is_grayscale_image_slice(slice_data) for slice_data in slices)
+        )
+
+    def stack(
+        self,
+        *,
+        slices: Sequence[Any],
+        memory_type: str,
+        gpu_id: int,
+    ) -> Any:
+        numpy_slices = tuple(
+            _as_numpy_slice(slice_data, gpu_id)
+            for slice_data in slices
+        )
+        spatial_shapes = {tuple(slice_data.shape[:2]) for slice_data in numpy_slices}
+        if len(spatial_shapes) != 1:
+            raise ValueError(
+                "OpenHCS mixed color image bundles require stable spatial shape; "
+                f"got {[slice_data.shape for slice_data in numpy_slices]!r}."
+            )
+        channel_counts = {
+            int(slice_data.shape[-1])
+            for slice_data in numpy_slices
+            if is_color_image_slice(slice_data)
+        }
+        if len(channel_counts) != 1:
+            raise ValueError(
+                "OpenHCS mixed color image bundles require stable color channel "
+                f"count; got {sorted(channel_counts)!r}."
+            )
+        channel_count = next(iter(channel_counts))
+        stacked = np.stack(
+            tuple(
+                _promote_slice_to_color(slice_data, channel_count)
+                for slice_data in numpy_slices
+            )
+        )
+        if memory_type == MEMORY_TYPE_NUMPY:
+            return stacked
+        return _convert_payload(stacked, MEMORY_TYPE_NUMPY, memory_type, gpu_id)
 
 
 def compose_aligned_image_payload(
@@ -157,7 +248,13 @@ def compose_one_image_bundle(
 ) -> Any:
     """Stack same-slice image payloads into one multi-image bundle."""
     memory_type = detect_memory_type(image_payloads[0])
-    return ImageStackLayout.for_slices(image_payloads).stack(
+    if _is_homogeneous_image_bundle(image_payloads):
+        return ImageStackLayout.for_slices(image_payloads).stack(
+            slices=image_payloads,
+            memory_type=memory_type,
+            gpu_id=0,
+        )
+    return ImageBundleLayout.for_slices(image_payloads).stack(
         slices=image_payloads,
         memory_type=memory_type,
         gpu_id=0,
@@ -167,3 +264,41 @@ def compose_one_image_bundle(
 def payload_slice_count(payload: Any) -> int:
     """Return the number of aligned slices represented by one payload."""
     return len(payload_slices_for_alignment(payload))
+
+
+def _is_bundle_image_slice(value: Any) -> bool:
+    return is_grayscale_image_slice(value) or is_color_image_slice(value)
+
+
+def _is_homogeneous_image_bundle(slices: Sequence[Any]) -> bool:
+    return (
+        all(is_grayscale_image_slice(slice_data) for slice_data in slices)
+        or all(is_color_image_slice(slice_data) for slice_data in slices)
+    )
+
+
+def _as_numpy_slice(slice_data: Any, gpu_id: int) -> np.ndarray:
+    source_type = detect_memory_type(slice_data)
+    if source_type == MEMORY_TYPE_NUMPY:
+        return slice_data
+    return _convert_payload(slice_data, source_type, MEMORY_TYPE_NUMPY, gpu_id)
+
+
+def _promote_slice_to_color(slice_data: np.ndarray, channel_count: int) -> np.ndarray:
+    if is_color_image_slice(slice_data):
+        return slice_data
+    return np.repeat(slice_data[:, :, np.newaxis], channel_count, axis=2)
+
+
+def _convert_payload(
+    data: Any,
+    source_type: str,
+    target_type: str,
+    gpu_id: int,
+) -> Any:
+    return convert_memory(
+        data=data,
+        source_type=source_type,
+        target_type=target_type,
+        gpu_id=gpu_id,
+    )
