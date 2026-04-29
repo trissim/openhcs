@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from types import MappingProxyType
 
 
 class CPPipeModuleRole(str, Enum):
@@ -25,6 +26,9 @@ INFRASTRUCTURE_MODULE_NAMES = frozenset(
         "ExportToSpreadsheet",
     }
 )
+INFRASTRUCTURE_MODULE_NAMES_BY_KEY = MappingProxyType(
+    {module_name.casefold(): module_name for module_name in INFRASTRUCTURE_MODULE_NAMES}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,12 +49,15 @@ def cppipe_module_role(module_name: str) -> CPPipeModuleRoleSpec:
     normalized_name = module_name.strip()
     if not normalized_name:
         raise ValueError("CellProfiler module name cannot be empty.")
+    canonical_infrastructure_name = INFRASTRUCTURE_MODULE_NAMES_BY_KEY.get(
+        normalized_name.casefold()
+    )
     role = (
         CPPipeModuleRole.INFRASTRUCTURE
-        if normalized_name in INFRASTRUCTURE_MODULE_NAMES
+        if canonical_infrastructure_name is not None
         else CPPipeModuleRole.PROCESSING
     )
     return CPPipeModuleRoleSpec(
-        module_name=normalized_name,
+        module_name=canonical_infrastructure_name or normalized_name,
         role=role,
     )

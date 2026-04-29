@@ -54,6 +54,14 @@ class CPPipeModuleAbsorptionCoverage(str, Enum):
     MISSING_PROCESSING = "missing_processing"
 
 
+class SourceModuleCoverage(str, Enum):
+    """How one checked-in CellProfiler source module is covered."""
+
+    ABSORBED = "absorbed"
+    INFRASTRUCTURE = "infrastructure"
+    MISSING = "missing"
+
+
 @dataclass(frozen=True, slots=True)
 class ModuleCompatibilityCoverage:
     """Compatibility coverage for one absorbed CellProfiler module."""
@@ -89,11 +97,24 @@ class CPPipeModuleCompatibilityCoverage:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceModuleCompatibilityCoverage:
+    """Compatibility coverage for one checked-in CellProfiler source module."""
+
+    module_name: str
+    coverage: SourceModuleCoverage
+
+    @property
+    def is_missing(self) -> bool:
+        return self.coverage is SourceModuleCoverage.MISSING
+
+
+@dataclass(frozen=True, slots=True)
 class CellProfilerCompatibilityReport:
     """Typed compatibility matrix over absorbed modules and real pipelines."""
 
     modules: tuple[ModuleCompatibilityCoverage, ...]
     cppipe_modules: tuple[CPPipeModuleCompatibilityCoverage, ...]
+    source_modules: tuple[SourceModuleCompatibilityCoverage, ...]
 
     @property
     def unresolved_processing_contracts(
@@ -123,11 +144,22 @@ class CellProfilerCompatibilityReport:
             if module.is_missing_processing_module
         )
 
+    @property
+    def missing_source_modules(
+        self,
+    ) -> tuple[SourceModuleCompatibilityCoverage, ...]:
+        return tuple(
+            module
+            for module in self.source_modules
+            if module.is_missing
+        )
+
 
 def build_cellprofiler_compatibility_report(
     *,
     parser: CPPipeParser | None = None,
     corpus_cases: Sequence[CPPipeCorpusCase] | None = None,
+    source_modules_root: Path | None = None,
 ) -> CellProfilerCompatibilityReport:
     """Build the current CellProfiler compatibility coverage matrix."""
     absorbed_modules = frozenset(list_modules())
@@ -150,6 +182,14 @@ def build_cellprofiler_compatibility_report(
     return CellProfilerCompatibilityReport(
         modules=modules,
         cppipe_modules=cppipe_modules,
+        source_modules=tuple(
+            _source_module_compatibility_coverage(
+                module_name,
+            )
+            for module_name in _cellprofiler_source_module_names(
+                source_modules_root,
+            )
+        ),
     )
 
 
@@ -218,6 +258,36 @@ def _cppipe_module_absorption_coverage(
     if cppipe_module_role(module_name).role is CPPipeModuleRole.INFRASTRUCTURE:
         return CPPipeModuleAbsorptionCoverage.INFRASTRUCTURE
     return CPPipeModuleAbsorptionCoverage.MISSING_PROCESSING
+
+
+def _source_module_compatibility_coverage(
+    module_name: str,
+) -> SourceModuleCompatibilityCoverage:
+    if get_contract(module_name) is not None:
+        coverage = SourceModuleCoverage.ABSORBED
+    elif cppipe_module_role(module_name).role is CPPipeModuleRole.INFRASTRUCTURE:
+        coverage = SourceModuleCoverage.INFRASTRUCTURE
+    else:
+        coverage = SourceModuleCoverage.MISSING
+    return SourceModuleCompatibilityCoverage(
+        module_name=module_name,
+        coverage=coverage,
+    )
+
+
+def _cellprofiler_source_module_names(
+    source_modules_root: Path | None,
+) -> tuple[str, ...]:
+    root = source_modules_root or (
+        Path(__file__).resolve().parents[1] / "cellprofiler_source" / "modules"
+    )
+    if not root.exists():
+        return ()
+    return tuple(
+        path.stem
+        for path in sorted(root.glob("*.py"))
+        if path.stem != "__init__" and not path.stem.startswith("_")
+    )
 
 
 def _module_importable(module_name: str) -> bool:

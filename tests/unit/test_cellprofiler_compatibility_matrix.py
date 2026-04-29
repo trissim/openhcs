@@ -5,6 +5,7 @@ from benchmark.converter.compatibility_matrix import (
     ArtifactContractCoverage,
     CPPipeModuleAbsorptionCoverage,
     ModuleCorpusCoverage,
+    SourceModuleCoverage,
     build_cellprofiler_compatibility_report,
 )
 
@@ -21,6 +22,7 @@ def test_supported_corpus_has_processing_contract_coverage() -> None:
 
     assert report.supported_corpus_processing_contract_gaps == ()
     assert report.missing_cppipe_processing_modules == ()
+    assert report.missing_source_modules == ()
 
 
 def test_compatibility_matrix_has_no_unresolved_processing_contracts() -> None:
@@ -121,3 +123,30 @@ def test_compatibility_matrix_distinguishes_infrastructure_from_missing_processi
     assert report.missing_cppipe_processing_modules == (
         cppipe_modules["NotAbsorbedModule"],
     )
+
+
+def test_compatibility_matrix_tracks_checked_in_source_module_coverage(
+    tmp_path: Path,
+) -> None:
+    source_modules_root = tmp_path / "modules"
+    source_modules_root.mkdir()
+    (source_modules_root / "identifyprimaryobjects.py").write_text("")
+    (source_modules_root / "exporttospreadsheet.py").write_text("")
+    (source_modules_root / "notabsorbed.py").write_text("")
+    (source_modules_root / "__init__.py").write_text("")
+
+    report = build_cellprofiler_compatibility_report(
+        corpus_cases=(),
+        source_modules_root=source_modules_root,
+    )
+    source_modules = {module.module_name: module for module in report.source_modules}
+
+    assert (
+        source_modules["identifyprimaryobjects"].coverage
+        is SourceModuleCoverage.ABSORBED
+    )
+    assert (
+        source_modules["exporttospreadsheet"].coverage
+        is SourceModuleCoverage.INFRASTRUCTURE
+    )
+    assert report.missing_source_modules == (source_modules["notabsorbed"],)
