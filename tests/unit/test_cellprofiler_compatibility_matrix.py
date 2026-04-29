@@ -1,3 +1,6 @@
+from pathlib import Path
+
+from benchmark.converter.cppipe_corpus import CPPipeCorpusCase, CPPipeCorpusStatus
 from benchmark.converter.compatibility_matrix import (
     ArtifactContractCoverage,
     ModuleCorpusCoverage,
@@ -43,4 +46,39 @@ def test_compatibility_matrix_tracks_artifact_and_corpus_coverage() -> None:
     assert (
         modules_by_name["Align"].artifact_contract_coverage
         is ArtifactContractCoverage.DECLARED_BUILDER
+    )
+
+
+def test_compatibility_matrix_accepts_explicit_cppipe_corpus(
+    tmp_path: Path,
+) -> None:
+    cppipe_path = tmp_path / "official_trackobjects.cppipe"
+    cppipe_path.write_text(
+        "\n".join(
+            (
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "Version:3",
+                (
+                    "TrackObjects:[module_num:1|svn_version:'Unknown'|"
+                    "enabled:True|wants_pause:False]"
+                ),
+                "    Select the input objects:Cells",
+            )
+        )
+    )
+
+    report = build_cellprofiler_compatibility_report(
+        corpus_cases=(
+            CPPipeCorpusCase(
+                name="OfficialTrackObjects",
+                cppipe_path=cppipe_path,
+                status=CPPipeCorpusStatus.SUPPORTED,
+            ),
+        )
+    )
+    modules_by_name = {module.module_name: module for module in report.modules}
+
+    assert (
+        modules_by_name["TrackObjects"].corpus_coverage
+        is ModuleCorpusCoverage.SUPPORTED_CORPUS
     )

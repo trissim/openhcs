@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import os
 from pathlib import Path
+
+
+CELLPROFILER_EXAMPLES_ROOT_ENV = "CELLPROFILER_EXAMPLES_ROOT"
+DEFAULT_CELLPROFILER_EXAMPLES_ROOT = Path("/tmp/cellprofiler_examples")
 
 
 class CPPipeCorpusStatus(str, Enum):
@@ -49,4 +54,37 @@ def in_tree_cppipe_corpus() -> tuple[CPPipeCorpusCase, ...]:
             cppipe_path=pipelines_dir / "ExampleHuman.cppipe",
             status=CPPipeCorpusStatus.SUPPORTED,
         ),
+    )
+
+
+def official_cellprofiler3_cppipe_corpus(
+    examples_root: Path | None = None,
+) -> tuple[CPPipeCorpusCase, ...]:
+    """Return discovered official CellProfiler3 example pipelines when available."""
+
+    root = examples_root or Path(
+        os.environ.get(
+            CELLPROFILER_EXAMPLES_ROOT_ENV,
+            str(DEFAULT_CELLPROFILER_EXAMPLES_ROOT),
+        )
+    )
+    cppipe_dir = root / "CellProfiler3Pipelines"
+    if not cppipe_dir.exists():
+        return ()
+    return tuple(
+        CPPipeCorpusCase(
+            name=cppipe_path.stem,
+            cppipe_path=cppipe_path,
+            status=CPPipeCorpusStatus.SUPPORTED,
+        )
+        for cppipe_path in sorted(cppipe_dir.glob("*.cppipe"))
+    )
+
+
+def default_cppipe_corpus() -> tuple[CPPipeCorpusCase, ...]:
+    """Return all locally available .cppipe acceptance corpus cases."""
+
+    return (
+        *in_tree_cppipe_corpus(),
+        *official_cellprofiler3_cppipe_corpus(),
     )

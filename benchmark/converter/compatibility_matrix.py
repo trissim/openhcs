@@ -17,7 +17,11 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
 
-from .cppipe_corpus import CPPipeCorpusStatus, in_tree_cppipe_corpus
+from .cppipe_corpus import (
+    CPPipeCorpusCase,
+    CPPipeCorpusStatus,
+    default_cppipe_corpus,
+)
 from .parser import CPPipeParser
 from .processing_contract_resolution import (
     ProcessingContractResolutionSource,
@@ -87,9 +91,13 @@ class CellProfilerCompatibilityReport:
 def build_cellprofiler_compatibility_report(
     *,
     parser: CPPipeParser | None = None,
+    corpus_cases: Sequence[CPPipeCorpusCase] | None = None,
 ) -> CellProfilerCompatibilityReport:
     """Build the current CellProfiler compatibility coverage matrix."""
-    corpus_coverage = _module_corpus_coverage(parser or CPPipeParser())
+    corpus_coverage = _module_corpus_coverage(
+        parser or CPPipeParser(),
+        corpus_cases or default_cppipe_corpus(),
+    )
     modules = tuple(
         _module_compatibility_coverage(module_name, corpus_coverage)
         for module_name in sorted(list_modules())
@@ -154,9 +162,10 @@ def _artifact_contract_coverage(module_name: str) -> ArtifactContractCoverage:
 
 def _module_corpus_coverage(
     parser: CPPipeParser,
+    corpus_cases: Sequence[CPPipeCorpusCase],
 ) -> Mapping[str, ModuleCorpusCoverage]:
     coverage: dict[str, ModuleCorpusCoverage] = {}
-    for case in in_tree_cppipe_corpus():
+    for case in corpus_cases:
         case_coverage = _case_corpus_coverage(case.status)
         for module_name in _cppipe_module_names(parser, case.cppipe_path):
             coverage[module_name] = _merged_corpus_coverage(
