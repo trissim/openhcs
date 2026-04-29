@@ -76,6 +76,7 @@ from .artifact_semantics import (
     artifact_setting_symbols,
     function_special_outputs,
 )
+from .cppipe_module_roles import INFRASTRUCTURE_MODULE_NAMES
 from .filter_objects_settings import (
     FilterObjectsOutputRole,
     filter_objects_plan,
@@ -1707,19 +1708,7 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     tuple[tuple[str, ...], Callable[[_SymbolTableBuilder, ModuleBlock], ModuleArtifactContracts]],
     ...,
 ] = (
-    (
-        (
-            "LoadData",
-            "LoadImages",
-            "Images",
-            "Metadata",
-            "NamesAndTypes",
-            "Groups",
-            "SaveImages",
-            "ExportToSpreadsheet",
-        ),
-        _infrastructure_module_contract,
-    ),
+    (tuple(sorted(INFRASTRUCTURE_MODULE_NAMES)), _infrastructure_module_contract),
     (("CorrectIlluminationApply",), _correct_illumination_apply),
     (("Align",), _align),
     (("Opening",), _opening),

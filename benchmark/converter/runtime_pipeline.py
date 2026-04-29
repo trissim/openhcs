@@ -36,21 +36,9 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 from openhcs.processing.func_registry import register_function
 
 from .contract_inference import InferredContract, infer_contract
+from .cppipe_module_roles import INFRASTRUCTURE_MODULE_NAMES
 from .parser import CPPipeParser, ModuleBlock
 from .pipeline_generator import GeneratedPipeline, PipelineGenerator
-
-INFRASTRUCTURE_MODULE_NAMES = frozenset(
-    {
-        "LoadData",
-        "LoadImages",
-        "Images",
-        "Metadata",
-        "NamesAndTypes",
-        "Groups",
-        "SaveImages",
-        "ExportToSpreadsheet",
-    }
-)
 
 
 @dataclass(frozen=True, slots=True)

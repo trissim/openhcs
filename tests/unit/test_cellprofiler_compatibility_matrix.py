@@ -3,6 +3,7 @@ from pathlib import Path
 from benchmark.converter.cppipe_corpus import CPPipeCorpusCase, CPPipeCorpusStatus
 from benchmark.converter.compatibility_matrix import (
     ArtifactContractCoverage,
+    CPPipeModuleAbsorptionCoverage,
     ModuleCorpusCoverage,
     build_cellprofiler_compatibility_report,
 )
@@ -19,6 +20,7 @@ def test_supported_corpus_has_processing_contract_coverage() -> None:
     report = build_cellprofiler_compatibility_report()
 
     assert report.supported_corpus_processing_contract_gaps == ()
+    assert report.missing_cppipe_processing_modules == ()
 
 
 def test_compatibility_matrix_has_no_unresolved_processing_contracts() -> None:
@@ -81,4 +83,41 @@ def test_compatibility_matrix_accepts_explicit_cppipe_corpus(
     assert (
         modules_by_name["TrackObjects"].corpus_coverage
         is ModuleCorpusCoverage.SUPPORTED_CORPUS
+    )
+
+
+def test_compatibility_matrix_distinguishes_infrastructure_from_missing_processing(
+    tmp_path: Path,
+) -> None:
+    cppipe_path = tmp_path / "module_coverage.cppipe"
+    cppipe_path.write_text(
+        "\n".join(
+            (
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "Version:3",
+                "Images:[module_num:1|enabled:True]",
+                "    Filter images?:Images only",
+                "NotAbsorbedModule:[module_num:2|enabled:True]",
+                "    Setting:Value",
+            )
+        )
+    )
+
+    report = build_cellprofiler_compatibility_report(
+        corpus_cases=(
+            CPPipeCorpusCase(
+                name="ModuleCoverage",
+                cppipe_path=cppipe_path,
+                status=CPPipeCorpusStatus.SUPPORTED,
+            ),
+        )
+    )
+    cppipe_modules = {module.module_name: module for module in report.cppipe_modules}
+
+    assert (
+        cppipe_modules["Images"].absorption_coverage
+        is CPPipeModuleAbsorptionCoverage.INFRASTRUCTURE
+    )
+    assert report.missing_cppipe_processing_modules == (
+        cppipe_modules["NotAbsorbedModule"],
     )

@@ -22,6 +22,7 @@ from .cppipe_corpus import (
     CPPipeCorpusStatus,
     default_cppipe_corpus,
 )
+from .cppipe_module_roles import CPPipeModuleRole, cppipe_module_role
 from .parser import CPPipeParser
 from .processing_contract_resolution import (
     ProcessingContractResolutionSource,
@@ -45,6 +46,14 @@ class ModuleCorpusCoverage(str, Enum):
     NOT_IN_CORPUS = "not_in_corpus"
 
 
+class CPPipeModuleAbsorptionCoverage(str, Enum):
+    """How one real-corpus .cppipe module is handled by conversion."""
+
+    ABSORBED_PROCESSING = "absorbed_processing"
+    INFRASTRUCTURE = "infrastructure"
+    MISSING_PROCESSING = "missing_processing"
+
+
 @dataclass(frozen=True, slots=True)
 class ModuleCompatibilityCoverage:
     """Compatibility coverage for one absorbed CellProfiler module."""
@@ -64,10 +73,27 @@ class ModuleCompatibilityCoverage:
 
 
 @dataclass(frozen=True, slots=True)
+class CPPipeModuleCompatibilityCoverage:
+    """Compatibility coverage for one module observed in accepted .cppipe corpus."""
+
+    module_name: str
+    corpus_coverage: ModuleCorpusCoverage
+    absorption_coverage: CPPipeModuleAbsorptionCoverage
+
+    @property
+    def is_missing_processing_module(self) -> bool:
+        return (
+            self.absorption_coverage
+            is CPPipeModuleAbsorptionCoverage.MISSING_PROCESSING
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CellProfilerCompatibilityReport:
     """Typed compatibility matrix over absorbed modules and real pipelines."""
 
     modules: tuple[ModuleCompatibilityCoverage, ...]
+    cppipe_modules: tuple[CPPipeModuleCompatibilityCoverage, ...]
 
     @property
     def unresolved_processing_contracts(
@@ -87,6 +113,16 @@ class CellProfilerCompatibilityReport:
             if module.corpus_coverage is ModuleCorpusCoverage.SUPPORTED_CORPUS
         )
 
+    @property
+    def missing_cppipe_processing_modules(
+        self,
+    ) -> tuple[CPPipeModuleCompatibilityCoverage, ...]:
+        return tuple(
+            module
+            for module in self.cppipe_modules
+            if module.is_missing_processing_module
+        )
+
 
 def build_cellprofiler_compatibility_report(
     *,
@@ -94,15 +130,27 @@ def build_cellprofiler_compatibility_report(
     corpus_cases: Sequence[CPPipeCorpusCase] | None = None,
 ) -> CellProfilerCompatibilityReport:
     """Build the current CellProfiler compatibility coverage matrix."""
+    absorbed_modules = frozenset(list_modules())
     corpus_coverage = _module_corpus_coverage(
         parser or CPPipeParser(),
         corpus_cases or default_cppipe_corpus(),
     )
     modules = tuple(
         _module_compatibility_coverage(module_name, corpus_coverage)
-        for module_name in sorted(list_modules())
+        for module_name in sorted(absorbed_modules)
     )
-    return CellProfilerCompatibilityReport(modules=modules)
+    cppipe_modules = tuple(
+        _cppipe_module_compatibility_coverage(
+            module_name,
+            coverage,
+            absorbed_modules,
+        )
+        for module_name, coverage in sorted(corpus_coverage.items())
+    )
+    return CellProfilerCompatibilityReport(
+        modules=modules,
+        cppipe_modules=cppipe_modules,
+    )
 
 
 def _module_compatibility_coverage(
@@ -144,6 +192,32 @@ def _module_compatibility_coverage(
             ModuleCorpusCoverage.NOT_IN_CORPUS,
         ),
     )
+
+
+def _cppipe_module_compatibility_coverage(
+    module_name: str,
+    corpus_coverage: ModuleCorpusCoverage,
+    absorbed_modules: frozenset[str],
+) -> CPPipeModuleCompatibilityCoverage:
+    return CPPipeModuleCompatibilityCoverage(
+        module_name=module_name,
+        corpus_coverage=corpus_coverage,
+        absorption_coverage=_cppipe_module_absorption_coverage(
+            module_name,
+            absorbed_modules,
+        ),
+    )
+
+
+def _cppipe_module_absorption_coverage(
+    module_name: str,
+    absorbed_modules: frozenset[str],
+) -> CPPipeModuleAbsorptionCoverage:
+    if module_name in absorbed_modules:
+        return CPPipeModuleAbsorptionCoverage.ABSORBED_PROCESSING
+    if cppipe_module_role(module_name).role is CPPipeModuleRole.INFRASTRUCTURE:
+        return CPPipeModuleAbsorptionCoverage.INFRASTRUCTURE
+    return CPPipeModuleAbsorptionCoverage.MISSING_PROCESSING
 
 
 def _module_importable(module_name: str) -> bool:
