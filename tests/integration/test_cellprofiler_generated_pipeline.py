@@ -774,6 +774,102 @@ def test_official_example_colocalization_cppipe_executes_relationship_exports(
     ]
 
 
+def test_official_example_neighbors_cppipe_executes_neighbor_exports(
+    tmp_path: Path,
+) -> None:
+    examples_root = _official_cellprofiler_examples_root()
+    cppipe_path = (
+        examples_root
+        / "CellProfiler3Pipelines"
+        / "ExampleNeighbors.cppipe"
+    )
+    source_root = examples_root / "ExampleNeighbors"
+    if not cppipe_path.exists() or not source_root.exists():
+        pytest.skip(
+            "Official CellProfiler ExampleNeighbors files are not available. "
+            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
+            f"looked under {examples_root}."
+        )
+
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / "generated_official_neighbors_pipeline.py",
+    )
+    workspace = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "official_neighbors_openhcs_workspace",
+        prepared.source_schema,
+    )
+
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=True,
+        microscope=Microscope.AUTO,
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            output_dir_suffix="_generated_cppipe",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    orchestrator = PipelineOrchestrator(
+        workspace.workspace_root,
+        pipeline_config=pipeline_config,
+    )
+    orchestrator.initialize()
+
+    execution = execute_pipeline_direct(
+        orchestrator,
+        prepared.pipeline,
+        well_filter=["A01"],
+    )
+
+    assert all(
+        result.is_success()
+        for result in execution.execution_results.values()
+    )
+    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
+    cells_records = runtime_store.find(
+        name="Cells",
+        kind=ArtifactKind.OBJECT_LABELS,
+        axis_id="A01",
+    )
+    assert cells_records
+    assert np.asarray(cells_records[0].value.data).max() > 0
+    assert runtime_store.find(
+        name="MeasureObjectNeighbors_10_measurements",
+        kind=ArtifactKind.MEASUREMENTS,
+        axis_id="A01",
+    )
+
+    csv_outputs = sorted(
+        _generated_results_dir(workspace.workspace_root).glob("*.csv")
+    )
+    assert _matching_header(
+        {path.name: _csv_header(path) for path in csv_outputs},
+        "MeasureObjectNeighbors",
+    ) == [
+        "slice_index",
+        "object_id",
+        "number_of_neighbors",
+        "percent_touching",
+        "first_closest_object_number",
+        "first_closest_distance",
+        "second_closest_object_number",
+        "second_closest_distance",
+        "angle_between_neighbors",
+    ]
+    image_outputs = sorted(
+        (_generated_output_root(workspace.workspace_root) / "images").glob("*.JPG")
+    )
+    assert [path.name for path in image_outputs] == [
+        "A01_s001_w1_z001_t001.JPG",
+    ]
+
+
 def test_official_example_illumination_example1_uses_rule_row_binding(
     tmp_path: Path,
 ) -> None:
