@@ -10,7 +10,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
 
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ArtifactKind, ArtifactPayloadShape
 from openhcs.core.runtime_stores import (
     StoredRuntimeValue,
     require_runtime_value_store,
@@ -19,14 +19,6 @@ from openhcs.core.runtime_stores import (
 from benchmark.converter.runtime_pipeline import (
     DirectPipelineExecution,
     PreparedGeneratedPipeline,
-)
-
-CSV_EXPORT_ARTIFACT_KINDS = frozenset(
-    {
-        ArtifactKind.MEASUREMENTS,
-        ArtifactKind.RELATIONSHIPS,
-        ArtifactKind.TABLE,
-    }
 )
 
 
@@ -63,7 +55,10 @@ class CPPipeExecutionExpectation:
         return (
             CPPipeInfrastructureFeature.EXPORT_TO_SPREADSHEET
             in self.infrastructure_features
-            and bool(self.runtime_artifact_kinds & CSV_EXPORT_ARTIFACT_KINDS)
+            and any(
+                _artifact_kind_exports_as_csv(kind)
+                for kind in self.runtime_artifact_kinds
+            )
         )
 
     @property
@@ -271,8 +266,12 @@ def _csv_runtime_records(
     return tuple(
         record
         for record in records
-        if record.key.kind in CSV_EXPORT_ARTIFACT_KINDS
+        if _artifact_kind_exports_as_csv(record.key.kind)
     )
+
+
+def _artifact_kind_exports_as_csv(kind: ArtifactKind) -> bool:
+    return kind.payload_shape is ArtifactPayloadShape.TABLE
 
 
 def _matching_csv_outputs(
