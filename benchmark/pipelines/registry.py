@@ -14,13 +14,7 @@ NUCLEI_SEGMENTATION = PipelineSpec(
     name="nuclei_segmentation",
     description="BBBC021 nuclei segmentation (CellProfiler-equivalent)",
     parameters={
-        # From plan_03_ADDENDUM lines 58-81
-        "opening_radius": 5,
-        "threshold_method": "Otsu",
-        "threshold_scope": "Global",
-        "diameter_range": (15, 115),
-        "declump_method": "Shape",
-        "fill_holes": True,
+        "cppipe_reference_index": 0,
     },
 )
 

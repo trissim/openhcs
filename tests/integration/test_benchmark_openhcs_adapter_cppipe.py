@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from benchmark.adapters.openhcs import OpenHCSAdapter
+from benchmark.contracts.dataset import AcquiredDataset
+from benchmark.contracts.tool_adapter import (
+    BenchmarkResult,
+    ToolAdapter,
+    ToolExecutionError,
+)
 from benchmark.datasets.registry import BBBC021_SINGLE_PLATE
-from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.metrics.time import TimeMetric
+from benchmark.pipelines.registry import NUCLEI_SEGMENTATION
+from benchmark.runner import run_benchmark
 from openhcs.tests.generators.generate_synthetic_data import (
     SyntheticMicroscopyGenerator,
 )
@@ -17,16 +26,14 @@ def test_openhcs_adapter_runs_converted_cppipe_pipeline(tmp_path: Path) -> None:
     plate_path = _generate_plate(tmp_path / "plate")
     cppipe_path = _write_cppipe(tmp_path / "identify_primary_objects.cppipe")
 
-    result = OpenHCSAdapter().run(
-        dataset_path=plate_path,
-        pipeline_name="converted_cppipe_smoke",
-        pipeline_params={
-            "dataset_id": "synthetic_cppipe_smoke",
-            "microscope_type": "imagexpress",
-            "cppipe_path": str(cppipe_path),
-        },
-        metrics=[TimeMetric()],
-        output_dir=tmp_path / "benchmark_outputs",
+    result = _run_openhcs_adapter(
+        OpenHCSAdapterRunCase.local_cppipe(
+            plate_path,
+            "converted_cppipe_smoke",
+            "synthetic_cppipe_smoke",
+            cppipe_path,
+            tmp_path / "benchmark_outputs",
+        )
     )
 
     assert result.success is True
@@ -53,16 +60,14 @@ def test_openhcs_adapter_resolves_dataset_reference_cppipe(
         _materialize_reference,
     )
 
-    result = OpenHCSAdapter().run(
-        dataset_path=plate_path,
-        pipeline_name="converted_cppipe_reference",
-        pipeline_params={
-            "dataset_id": BBBC021_SINGLE_PLATE.id,
-            "microscope_type": "imagexpress",
-            "cppipe_reference_index": 0,
-        },
-        metrics=[TimeMetric()],
-        output_dir=tmp_path / "benchmark_outputs",
+    result = _run_openhcs_adapter(
+        OpenHCSAdapterRunCase(
+            dataset_path=plate_path,
+            pipeline_name="converted_cppipe_reference",
+            dataset_id=BBBC021_SINGLE_PLATE.id,
+            cppipe_reference_index=0,
+            output_dir=tmp_path / "benchmark_outputs",
+        )
     )
 
     assert result.success is True
@@ -74,6 +79,57 @@ def test_openhcs_adapter_resolves_dataset_reference_cppipe(
     )
 
 
+def test_default_benchmark_pipeline_uses_dataset_cppipe_reference(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    adapter = _CapturingAdapter()
+    acquired = AcquiredDataset(
+        id=BBBC021_SINGLE_PLATE.id,
+        path=tmp_path / "plate",
+        microscope_type=BBBC021_SINGLE_PLATE.microscope_type,
+        image_count=0,
+        metadata={},
+    )
+    acquired.path.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("benchmark.runner.acquire_dataset", lambda spec: acquired)
+
+    run_benchmark(
+        BBBC021_SINGLE_PLATE,
+        [adapter],
+        NUCLEI_SEGMENTATION.name,
+        metrics=[],
+    )
+
+    assert adapter.pipeline_params["cppipe_reference_index"] == 0
+    assert adapter.pipeline_params["dataset_id"] == BBBC021_SINGLE_PLATE.id
+    assert adapter.pipeline_params["microscope_type"] == BBBC021_SINGLE_PLATE.microscope_type
+    assert "threshold_method" not in adapter.pipeline_params
+
+
+def test_openhcs_adapter_requires_converted_cppipe_source(
+    tmp_path: Path,
+) -> None:
+    plate_path = _generate_plate(tmp_path / "plate")
+
+    with pytest.raises(
+        ToolExecutionError,
+        match=(
+            "Converted pipeline execution requires cppipe_path, cppipe_file, "
+            "cppipe_reference_url, or cppipe_reference_index\\."
+        ),
+    ):
+        _run_openhcs_adapter(
+            OpenHCSAdapterRunCase(
+                dataset_path=plate_path,
+                pipeline_name="no_cppipe",
+                dataset_id="synthetic_without_cppipe",
+                output_dir=tmp_path / "benchmark_outputs",
+            )
+        )
+
+
 def test_openhcs_adapter_runs_real_examplefly_cppipe(tmp_path: Path) -> None:
     plate_path = _generate_two_channel_plate(tmp_path / "examplefly_plate")
     cppipe_path = (
@@ -83,16 +139,14 @@ def test_openhcs_adapter_runs_real_examplefly_cppipe(tmp_path: Path) -> None:
         / "ExampleFly.cppipe"
     )
 
-    result = OpenHCSAdapter().run(
-        dataset_path=plate_path,
-        pipeline_name="examplefly",
-        pipeline_params={
-            "dataset_id": "examplefly_cppipe",
-            "microscope_type": "imagexpress",
-            "cppipe_path": str(cppipe_path),
-        },
-        metrics=[TimeMetric()],
-        output_dir=tmp_path / "benchmark_outputs",
+    result = _run_openhcs_adapter(
+        OpenHCSAdapterRunCase.local_cppipe(
+            plate_path,
+            "examplefly",
+            "examplefly_cppipe",
+            cppipe_path,
+            tmp_path / "benchmark_outputs",
+        )
     )
 
     csv_outputs = sorted(result.output_path.rglob("*.csv"))
@@ -105,7 +159,7 @@ def test_openhcs_adapter_runs_real_examplefly_cppipe(tmp_path: Path) -> None:
     assert all(path.stat().st_size > 0 for path in csv_outputs)
 
 
-def test_openhcs_adapter_reports_examplehuman_cppipe_inconsistency(
+def test_openhcs_adapter_reports_missing_source_schema_images(
     tmp_path: Path,
 ) -> None:
     plate_path = tmp_path / "plate"
@@ -120,50 +174,128 @@ def test_openhcs_adapter_reports_examplehuman_cppipe_inconsistency(
     with pytest.raises(
         ToolExecutionError,
         match=(
-            "Failed to prepare converted \\.cppipe pipeline ExampleHuman\\.cppipe: "
-            "Module MeasureObjectIntensity\\(10\\) references unknown objects "
-            "symbol 'Cytoplasm'\\. No prior module produces it\\."
+            "Failed to materialize CellProfiler source schema for "
+            "ExampleHuman\\.cppipe: Source schema image alias 'DNA' matched "
+            "no image files\\."
         ),
     ):
-        OpenHCSAdapter().run(
-            dataset_path=plate_path,
-            pipeline_name="examplehuman",
-            pipeline_params={
-                "dataset_id": "examplehuman_cppipe",
-                "microscope_type": "imagexpress",
-                "cppipe_path": str(cppipe_path),
-            },
-            metrics=[TimeMetric()],
-            output_dir=tmp_path / "benchmark_outputs",
+        _run_openhcs_adapter(
+            OpenHCSAdapterRunCase.local_cppipe(
+                plate_path,
+                "examplehuman",
+                "examplehuman_cppipe",
+                cppipe_path,
+                tmp_path / "benchmark_outputs",
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class OpenHCSAdapterRunCase:
+    dataset_path: Path
+    pipeline_name: str
+    dataset_id: str
+    output_dir: Path
+    microscope_type: str = "imagexpress"
+    cppipe_path: Path | None = None
+    cppipe_reference_index: int | None = None
+
+    @classmethod
+    def local_cppipe(
+        cls,
+        dataset_path: Path,
+        pipeline_name: str,
+        dataset_id: str,
+        cppipe_path: Path,
+        output_dir: Path,
+    ) -> OpenHCSAdapterRunCase:
+        return cls(
+            dataset_path=dataset_path,
+            pipeline_name=pipeline_name,
+            dataset_id=dataset_id,
+            cppipe_path=cppipe_path,
+            output_dir=output_dir,
+        )
+
+    @property
+    def pipeline_params(self) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "dataset_id": self.dataset_id,
+            "microscope_type": self.microscope_type,
+        }
+        if self.cppipe_path is not None:
+            params["cppipe_path"] = str(self.cppipe_path)
+        if self.cppipe_reference_index is not None:
+            params["cppipe_reference_index"] = self.cppipe_reference_index
+        return params
+
+
+def _run_openhcs_adapter(run_case: OpenHCSAdapterRunCase) -> BenchmarkResult:
+    return OpenHCSAdapter().run(
+        dataset_path=run_case.dataset_path,
+        pipeline_name=run_case.pipeline_name,
+        pipeline_params=run_case.pipeline_params,
+        metrics=[TimeMetric()],
+        output_dir=run_case.output_dir,
+    )
+
+
+class _CapturingAdapter(ToolAdapter):
+    name = "capture"
+    version = "test"
+
+    def __init__(self) -> None:
+        self.pipeline_params: dict[str, Any] = {}
+
+    def validate_installation(self) -> None:
+        return None
+
+    def run(
+        self,
+        dataset_path: Path,
+        pipeline_name: str,
+        pipeline_params: dict[str, Any],
+        metrics: list[Any],
+        output_dir: Path,
+    ) -> BenchmarkResult:
+        self.pipeline_params = dict(pipeline_params)
+        return BenchmarkResult(
+            tool_name=self.name,
+            dataset_id=str(pipeline_params["dataset_id"]),
+            pipeline_name=pipeline_name,
+            metrics={},
+            output_path=output_dir,
+            success=True,
         )
 
 
 def _generate_plate(plate_path: Path) -> Path:
-    generator = SyntheticMicroscopyGenerator(
-        output_dir=str(plate_path),
-        grid_size=(1, 1),
-        tile_size=(128, 128),
+    return _generate_imagexpress_plate(
+        plate_path,
         wavelengths=1,
-        z_stack_levels=1,
-        num_cells=12,
-        cell_size_range=(8, 12),
-        cell_intensity_range=(28000, 42000),
-        background_intensity=200,
-        noise_level=10,
-        wells=["A01"],
-        format="ImageXpress",
         random_seed=7,
     )
-    generator.generate_dataset()
-    return plate_path
 
 
 def _generate_two_channel_plate(plate_path: Path) -> Path:
+    return _generate_imagexpress_plate(
+        plate_path,
+        wavelengths=2,
+        random_seed=11,
+    )
+
+
+def _generate_imagexpress_plate(
+    plate_path: Path,
+    *,
+    wavelengths: int,
+    random_seed: int,
+) -> Path:
     generator = SyntheticMicroscopyGenerator(
         output_dir=str(plate_path),
         grid_size=(1, 1),
         tile_size=(128, 128),
-        wavelengths=2,
+        wavelengths=wavelengths,
         z_stack_levels=1,
         num_cells=12,
         cell_size_range=(8, 12),
@@ -172,7 +304,7 @@ def _generate_two_channel_plate(plate_path: Path) -> Path:
         noise_level=10,
         wells=["A01"],
         format="ImageXpress",
-        random_seed=11,
+        random_seed=random_seed,
     )
     generator.generate_dataset()
     return plate_path
