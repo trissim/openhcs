@@ -21,6 +21,7 @@ from openhcs.core.pipeline_image_schema import (
     PipelineImageSchema,
     PipelineImageSchemaBuilder,
     SourceArtifactAssignment,
+    image_type_artifact_kind,
     image_type_participates_in_image_stack,
 )
 from openhcs.core.source_bindings import (
@@ -220,7 +221,7 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
                 "Select the image type",
                 default="Grayscale image",
             )
-            artifact_kind = _artifact_kind_for_names_and_types_image_type(image_type)
+            artifact_kind = image_type_artifact_kind(image_type)
             alias = _assignment_alias(block, artifact_kind)
             if not alias:
                 continue
@@ -540,12 +541,6 @@ def _required_load_images_metadata_pattern(
             f"{source.value} regular expression."
         )
     return pattern
-
-
-def _artifact_kind_for_names_and_types_image_type(image_type: str) -> ArtifactKind:
-    if image_type.strip().lower() == "objects":
-        return ArtifactKind.OBJECT_LABELS
-    return ArtifactKind.IMAGE
 
 
 def _assignment_alias(

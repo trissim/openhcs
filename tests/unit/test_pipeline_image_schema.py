@@ -5,6 +5,8 @@ from openhcs.core.pipeline_image_schema import (
     ImageAssignment,
     PipelineImageSchemaBuilder,
     SourceArtifactAssignment,
+    image_type_artifact_kind,
+    image_type_participates_in_image_stack,
 )
 from openhcs.core.source_bindings import (
     MetadataExtractionRule,
@@ -47,3 +49,20 @@ def test_pipeline_image_schema_builder_rejects_alias_kind_conflicts():
                 origin=SourceBindingOrigin.PIPELINE_START,
             )
         )
+
+
+@pytest.mark.parametrize(
+    ("image_type", "artifact_kind", "participates_in_stack"),
+    (
+        ("Grayscale image", ArtifactKind.IMAGE, True),
+        ("Illumination function", ArtifactKind.IMAGE, False),
+        ("Objects", ArtifactKind.OBJECT_LABELS, False),
+    ),
+)
+def test_image_type_roles_define_artifact_kind_and_stack_participation(
+    image_type: str,
+    artifact_kind: ArtifactKind,
+    participates_in_stack: bool,
+):
+    assert image_type_artifact_kind(image_type) is artifact_kind
+    assert image_type_participates_in_image_stack(image_type) is participates_in_stack

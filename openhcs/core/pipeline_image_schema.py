@@ -123,6 +123,7 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
     __skip_if_no_key__ = True
     image_type_key: ClassVar[str | None] = None
     PARTICIPATES_IN_IMAGE_STACK: ClassVar[bool]
+    ARTIFACT_KIND: ClassVar[ArtifactKind] = ArtifactKind.IMAGE
 
     @classmethod
     def for_image_type(cls, image_type: str) -> "ImageTypeSourceRole":
@@ -140,6 +141,12 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
 
         return type(self).PARTICIPATES_IN_IMAGE_STACK
 
+    @property
+    def artifact_kind(self) -> ArtifactKind:
+        """Artifact kind represented by this source image type."""
+
+        return type(self).ARTIFACT_KIND
+
 
 class ImageStackSourceRole(ImageTypeSourceRole):
     """Image type that projects into the OpenHCS channel stack."""
@@ -151,6 +158,12 @@ class SourceArtifactImageTypeSourceRole(ImageTypeSourceRole):
     """Image type that remains an external source artifact."""
 
     PARTICIPATES_IN_IMAGE_STACK = False
+
+
+class ObjectLabelsImageTypeSourceRole(SourceArtifactImageTypeSourceRole):
+    """Image type representing externally supplied object labels."""
+
+    ARTIFACT_KIND = ArtifactKind.OBJECT_LABELS
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +216,11 @@ for _image_type_role_spec in (
         "illumination function",
         SourceArtifactImageTypeSourceRole,
     ),
+    ImageTypeSourceRoleSpec(
+        "ObjectsImageTypeSourceRole",
+        "objects",
+        ObjectLabelsImageTypeSourceRole,
+    ),
 ):
     globals()[_image_type_role_spec.class_name] = _image_type_role_spec.declare()
 
@@ -211,6 +229,12 @@ def image_type_participates_in_image_stack(image_type: str) -> bool:
     """Return whether a source image type is a native stack channel."""
 
     return ImageTypeSourceRole.for_image_type(image_type).participates_in_image_stack
+
+
+def image_type_artifact_kind(image_type: str) -> ArtifactKind:
+    """Return the artifact kind represented by a source image type."""
+
+    return ImageTypeSourceRole.for_image_type(image_type).artifact_kind
 
 
 def image_type_source_role_key(image_type: str) -> str:
