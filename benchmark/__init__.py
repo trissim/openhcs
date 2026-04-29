@@ -24,7 +24,11 @@ from benchmark.pipelines.registry import (
 )
 from benchmark.adapters.openhcs import OpenHCSAdapter
 from benchmark.adapters.cellprofiler import CellProfilerAdapter
-from benchmark.runner import run_benchmark
+from benchmark.runner import (
+    CellProfilerCompatibilityResult,
+    run_benchmark,
+    run_cellprofiler_compatibility_benchmark,
+)
 
 __all__ = [
     # Contracts
@@ -55,5 +59,7 @@ __all__ = [
     "CellProfilerAdapter",
     "OpenHCSAdapter",
     # Runner
+    "CellProfilerCompatibilityResult",
     "run_benchmark",
+    "run_cellprofiler_compatibility_benchmark",
 ]
