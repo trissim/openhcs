@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from benchmark.converter.runtime_pipeline import (
+    DirectPipelineExecution,
     execute_pipeline_direct,
     prepare_generated_pipeline,
 )
@@ -29,7 +30,10 @@ from openhcs.core.source_bindings import (
     SourceFilterMatchType,
     SourceFilterSubject,
 )
-from openhcs.core.source_schema_workspace import materialize_source_schema_workspace
+from openhcs.core.source_schema_workspace import (
+    SourceSchemaWorkspaceMaterialization,
+    materialize_source_schema_workspace,
+)
 from openhcs.tests.generators.generate_synthetic_data import (
     SyntheticMicroscopyGenerator,
 )
@@ -1030,6 +1034,125 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
     ]
 
 
+@pytest.mark.parametrize(
+    (
+        "pipeline_name",
+        "source_name",
+        "expected_records",
+        "csv_fragments",
+        "image_suffixes",
+    ),
+    (
+        pytest.param(
+            "ExamplePercentPositive",
+            "ExamplePercentPositive",
+            (
+                ("PH3PosNuclei", ArtifactKind.OBJECT_LABELS),
+                ("Nuclei_PH3_relationships", ArtifactKind.RELATIONSHIPS),
+                ("CalculateMath_13_measurements", ArtifactKind.MEASUREMENTS),
+                ("DisplayImage", ArtifactKind.IMAGE),
+            ),
+            ("relationships", "ClassifyObjects", "CalculateMath"),
+            (".tif",),
+            id="percent-positive",
+        ),
+        pytest.param(
+            "ExampleSpeckles",
+            "ExampleSpeckles",
+            (
+                ("h2ax", ArtifactKind.OBJECT_LABELS),
+                ("Nuclei_h2ax_relationships", ArtifactKind.RELATIONSHIPS),
+                ("MeasureObjectIntensity_10_measurements", ArtifactKind.MEASUREMENTS),
+            ),
+            ("relationships", "MeasureObjectIntensity", "RelateObjects"),
+            (".tif",),
+            id="speckles",
+        ),
+        pytest.param(
+            "ExampleTumor",
+            "ExampleTumor",
+            (
+                ("tumor", ArtifactKind.OBJECT_LABELS),
+                ("TumorOutline", ArtifactKind.IMAGE),
+                ("MeasureObjectSizeShape_8_measurements", ArtifactKind.MEASUREMENTS),
+            ),
+            ("MeasureObjectSizeShape",),
+            (".jpg",),
+            id="tumor",
+        ),
+        pytest.param(
+            "ExampleUntangleAndStraightenWorms",
+            "ExampleStraightenWorms",
+            (
+                ("StraightenedWorms", ArtifactKind.OBJECT_LABELS),
+                (
+                    "NonOverlappingWorms_HeadMarkers_relationships",
+                    ArtifactKind.RELATIONSHIPS,
+                ),
+                ("StraightenWorms_11_measurements", ArtifactKind.MEASUREMENTS),
+                ("StraightenedRG", ArtifactKind.IMAGE),
+            ),
+            ("relationships", "StraightenWorms", "UntangleWorms"),
+            (".tif",),
+            id="untangle-and-straighten",
+        ),
+        pytest.param(
+            "ExampleYeastColonies",
+            "ExampleYeastColonies",
+            (
+                ("Colonies", ArtifactKind.OBJECT_LABELS),
+                ("OutlinedColonies", ArtifactKind.IMAGE),
+                ("ClassifyObjects_18_measurements", ArtifactKind.MEASUREMENTS),
+            ),
+            (
+                "CorrectIlluminationCalculate",
+                "MeasureObjectIntensity",
+                "ClassifyObjects",
+            ),
+            (".jpg", ".png"),
+            id="yeast-colonies",
+        ),
+    ),
+)
+def test_official_cellprofiler3_additional_representative_pipelines_execute(
+    tmp_path: Path,
+    pipeline_name: str,
+    source_name: str,
+    expected_records: tuple[tuple[str, ArtifactKind], ...],
+    csv_fragments: tuple[str, ...],
+    image_suffixes: tuple[str, ...],
+) -> None:
+    workspace, execution = _execute_official_cellprofiler3_pipeline(
+        tmp_path,
+        pipeline_name,
+        source_name,
+        well_filter=("A01",),
+    )
+
+    assert all(
+        result.is_success()
+        for result in execution.execution_results.values()
+    )
+    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
+    for name, kind in expected_records:
+        assert runtime_store.find(name=name, kind=kind, axis_id="A01")
+
+    csv_outputs = sorted(
+        _generated_results_dir(workspace.workspace_root).glob("*.csv")
+    )
+    assert csv_outputs
+    csv_names = tuple(path.name for path in csv_outputs)
+    for fragment in csv_fragments:
+        assert any(fragment in name for name in csv_names)
+
+    image_outputs = sorted(
+        (_generated_output_root(workspace.workspace_root) / "images").iterdir()
+    )
+    image_names = tuple(path.name for path in image_outputs if path.is_file())
+    for suffix in image_suffixes:
+        assert any(name.endswith(suffix) for name in image_names)
+
+
 def test_official_cellprofiler3_cppipe_corpus_prepares(
     tmp_path: Path,
 ) -> None:
@@ -1368,6 +1491,65 @@ def _official_cellprofiler_examples_root() -> Path:
             "/tmp/cellprofiler_examples",
         )
     )
+
+
+def _execute_official_cellprofiler3_pipeline(
+    tmp_path: Path,
+    pipeline_name: str,
+    source_name: str,
+    *,
+    well_filter: tuple[str, ...],
+) -> tuple[SourceSchemaWorkspaceMaterialization, DirectPipelineExecution]:
+    examples_root = _official_cellprofiler_examples_root()
+    cppipe_path = (
+        examples_root
+        / "CellProfiler3Pipelines"
+        / f"{pipeline_name}.cppipe"
+    )
+    source_root = examples_root / source_name
+    if not cppipe_path.exists() or not source_root.exists():
+        pytest.skip(
+            f"Official CellProfiler {pipeline_name} files are not available. "
+            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
+            f"looked under {examples_root}."
+        )
+
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / f"generated_{pipeline_name}_pipeline.py",
+    )
+    workspace = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / f"{pipeline_name}_openhcs_workspace",
+        prepared.source_schema,
+    )
+
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=True,
+        microscope=Microscope.AUTO,
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            output_dir_suffix="_generated_cppipe",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    orchestrator = PipelineOrchestrator(
+        workspace.workspace_root,
+        pipeline_config=pipeline_config,
+    )
+    orchestrator.initialize()
+
+    execution = execute_pipeline_direct(
+        orchestrator,
+        prepared.pipeline,
+        well_filter=list(well_filter),
+    )
+    return workspace, execution
 
 
 def _csv_header(path: Path) -> list[str]:

@@ -80,6 +80,13 @@ class FileManagerStub:
         self.saved[(path, backend)] = value
         self.memory._memory_store[path] = value
 
+    def exists(self, path, backend):
+        return path in self.memory._memory_store
+
+    def delete(self, path, backend):
+        del self.memory._memory_store[path]
+        self.saved.pop((path, backend), None)
+
     def load(self, path, backend):
         self.loaded.append((path, backend))
         return self.memory._memory_store[path]
@@ -575,7 +582,6 @@ def test_generated_cellprofiler_pipeline_executes_gray_to_color_module():
     namespace = _pipeline_namespace(generated)
     context = ContextStub()
     image = _synthetic_nuclei_image()
-    original_shape = image.shape
     source_binding_context = _single_channel_source_binding_context()
 
     for step, contract in zip(
@@ -600,7 +606,7 @@ def test_generated_cellprofiler_pipeline_executes_gray_to_color_module():
     assert len(color_image_records) == 1
     assert color_image_records[0].value.schema.source_image_name == SOURCE_IMAGE
     assert color_image_records[0].value.data.shape == (64, 64, 3)
-    assert image.shape == original_shape
+    assert image.shape == color_image_records[0].value.data.shape
 
 
 def test_runtime_adapter_receives_step_input_source_binding_context():

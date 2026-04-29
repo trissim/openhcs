@@ -38,8 +38,10 @@ from openhcs.core.source_matching import (
     source_filters_match,
 )
 from openhcs.core.runtime_stores import (
+    RuntimeArtifactLocation,
     RuntimeValueStore,
     StoredRuntimeValue,
+    replace_runtime_artifact_payload,
 )
 from openhcs.core.runtime_values import (
     FieldSpec,
@@ -486,8 +488,11 @@ class CellProfilerRuntimeAdapter:
                 "CellProfilerRuntimeAdapter.filemanager is required for writes; "
                 "adapter writes must persist through the OpenHCS VFS boundary."
             )
-        self.filemanager.ensure_directory(str(Path(path).parent), self.backend)
-        self.filemanager.save(data, path, self.backend)
+        replace_runtime_artifact_payload(
+            self.filemanager,
+            data,
+            RuntimeArtifactLocation(path=path, backend=self.backend),
+        )
 
 
 def _measurement_table_matches_object(

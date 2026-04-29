@@ -26,6 +26,7 @@ from openhcs.core.runtime_stores import (
     RuntimeArtifactLocation,
     RuntimeArtifactQuery,
     require_runtime_value_store,
+    replace_runtime_artifact_payload,
 )
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest, RuntimeAdapterSpec
 from openhcs.core.source_bindings import (
@@ -120,30 +121,24 @@ def _save_artifact_value(
         axis_id=axis_id,
     )
 
-    filemanager_memory_backend = context.filemanager._get_backend(
-        Backend.MEMORY.value
+    location = RuntimeArtifactLocation(
+        path=vfs_path,
+        backend=Backend.MEMORY.value,
     )
-    filemanager_existing_keys = list(
-        filemanager_memory_backend._memory_store.keys()
-    )
-
-    if vfs_path in filemanager_existing_keys:
-        logger.warning(
-            f"Artifact '{output_plan.name}' already exists in memory VFS at '{vfs_path}'."
-        )
-
-    parent_dir = str(Path(vfs_path).parent)
-    context.filemanager.ensure_directory(parent_dir, Backend.MEMORY.value)
     runtime_value_store = require_runtime_value_store(
         context,
         owner_name=PROCESSING_CONTEXT_OWNER_NAME,
     )
     runtime_value_store.replace(
         runtime_value,
-        path=vfs_path,
-        backend=Backend.MEMORY.value,
+        path=location.path,
+        backend=location.backend,
     )
-    context.filemanager.save(runtime_value.data, vfs_path, Backend.MEMORY.value)
+    replace_runtime_artifact_payload(
+        context.filemanager,
+        runtime_value.data,
+        location,
+    )
 
 
 def _require_axis_id(context: ProcessingContext) -> str:

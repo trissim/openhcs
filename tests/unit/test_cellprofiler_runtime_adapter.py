@@ -74,9 +74,17 @@ class FileManagerStub:
         self.saved = {}
         self.directories = []
         self.loaded_batches = []
+        self.deleted = []
 
     def save(self, data, path, backend):
         self.saved[(backend, path)] = data
+
+    def exists(self, path, backend):
+        return (backend, path) in self.saved
+
+    def delete(self, path, backend):
+        self.deleted.append((backend, path))
+        self.saved.pop((backend, path))
 
     def ensure_directory(self, path, backend):
         self.directories.append((backend, path))
@@ -210,6 +218,21 @@ def test_cellprofiler_adapter_adds_and_reads_objects_through_runtime_store():
     assert objects.source_image_name == DNA_IMAGE
     assert objects.dimensions == ("y", "x")
     assert filemanager.saved[("memory", "/memory/Nuclei.pkl")] is labels
+
+
+def test_cellprofiler_adapter_replaces_existing_payload_with_latest_binding():
+    adapter, filemanager = _adapter(
+        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
+    )
+    first = np.ones((2, 2), dtype=np.uint16)
+    second = np.full((2, 2), 2, dtype=np.uint16)
+
+    adapter.add_objects(NUCLEI, first)
+    record = adapter.add_objects(NUCLEI, second)
+
+    assert record.value.data is second
+    assert filemanager.deleted == [("memory", "/memory/Nuclei.pkl")]
+    assert filemanager.saved[("memory", "/memory/Nuclei.pkl")] is second
 
 
 def test_cellprofiler_adapter_resolves_source_bound_objects():

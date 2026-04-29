@@ -38,6 +38,13 @@ class FileManagerStub:
         self.saved[(path, backend)] = value
         self.memory._memory_store[path] = value
 
+    def exists(self, path, backend):
+        return path in self.memory._memory_store
+
+    def delete(self, path, backend):
+        del self.memory._memory_store[path]
+        self.saved.pop((path, backend), None)
+
     def load(self, path, backend):
         return self.memory._memory_store[path]
 

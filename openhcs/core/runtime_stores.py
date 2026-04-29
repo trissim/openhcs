@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 from openhcs.core.artifacts import ArtifactKey, ArtifactKind
 from openhcs.core.runtime_values import RuntimeValue
@@ -38,6 +40,18 @@ class RuntimeArtifactLocation:
             raise ValueError("RuntimeArtifactLocation.path cannot be empty.")
         if not self.backend:
             raise ValueError("RuntimeArtifactLocation.backend cannot be empty.")
+
+
+def replace_runtime_artifact_payload(
+    filemanager: Any,
+    data: Any,
+    location: RuntimeArtifactLocation,
+) -> None:
+    """Persist the current payload for a latest-binding runtime artifact."""
+    filemanager.ensure_directory(str(Path(location.path).parent), location.backend)
+    if filemanager.exists(location.path, location.backend):
+        filemanager.delete(location.path, location.backend)
+    filemanager.save(data, location.path, location.backend)
 
 
 @dataclass(frozen=True, slots=True)
