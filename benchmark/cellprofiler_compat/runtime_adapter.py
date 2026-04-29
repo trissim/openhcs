@@ -121,12 +121,12 @@ class CellProfilerRuntimeAdapter:
     def resolve_source_image(
         self,
         alias: str,
-        fallback_image: Any,
+        current_image: Any,
     ) -> Any:
         request = self._source_resolution_request(
             alias,
             ArtifactKind.IMAGE,
-            fallback_image,
+            current_image,
         )
         return SourceBindingResolver.for_origin(request.binding.origin).resolve_image(
             request
@@ -135,12 +135,12 @@ class CellProfilerRuntimeAdapter:
     def resolve_source_objects(
         self,
         alias: str,
-        fallback_image: Any,
+        current_image: Any,
     ) -> ObjectLabelSet:
         request = self._source_resolution_request(
             alias,
             ArtifactKind.OBJECT_LABELS,
-            fallback_image,
+            current_image,
         )
         labels = SourceBindingResolver.for_origin(request.binding.origin).resolve_image(
             request
@@ -155,13 +155,13 @@ class CellProfilerRuntimeAdapter:
         self,
         alias: str,
         kind: ArtifactKind,
-        fallback_image: Any,
+        current_image: Any,
     ) -> "SourceBindingResolutionRequest":
         return SourceBindingResolutionRequest(
             alias=alias,
             binding=self._require_source_binding(alias, kind),
             adapter=self,
-            fallback_image=fallback_image,
+            current_image=current_image,
         )
 
     def require_resolvable_source_aliases(
@@ -522,7 +522,7 @@ class SourceBindingResolutionRequest(SourceBindingRequestBase):
     """Source-binding resolution inputs for one external image alias."""
 
     adapter: CellProfilerRuntimeAdapter
-    fallback_image: Any
+    current_image: Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -561,7 +561,7 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
 
     def resolve_image(self, request: SourceBindingResolutionRequest) -> Any:
         if not _binding_requires_selector(request.binding):
-            return _natural_step_input_payload(request.fallback_image)
+            return _natural_step_input_payload(request.current_image)
         step_input_files = request.adapter.source_binding_context.step_input_files
         if not step_input_files:
             raise NotImplementedError(
@@ -640,7 +640,7 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
         return _load_pipeline_start_stack(
             adapter=request.adapter,
             selected_paths=tuple(candidate.path for candidate in selected_files),
-            fallback_image=request.fallback_image,
+            current_image=request.current_image,
         )
 
 
@@ -1028,32 +1028,32 @@ def _select_step_input_stack(
         for path in step_input_files
         if path in selected_paths
     )
-    fallback_image = request.fallback_image
+    current_image = request.current_image
     if not selected_indexes:
         raise RuntimeError(
             f"CellProfiler source alias '{request.alias}' selected no step-input "
             "stack indexes after filename matching."
         )
     if len(step_input_files) == 1:
-        return _natural_step_input_payload(fallback_image)
-    slices = _unstack_payload(fallback_image)
+        return _natural_step_input_payload(current_image)
+    slices = _unstack_payload(current_image)
     selected_slices = [slices[index] for index in selected_indexes]
-    return _restack_like_payload(selected_slices, fallback_image)
+    return _restack_like_payload(selected_slices, current_image)
 
 
-def _natural_step_input_payload(fallback_image: Any) -> Any:
-    if not hasattr(fallback_image, "ndim"):
-        return fallback_image
-    if fallback_image.ndim == 2:
-        return fallback_image
-    return _restack_like_payload(_unstack_payload(fallback_image), fallback_image)
+def _natural_step_input_payload(current_image: Any) -> Any:
+    if not hasattr(current_image, "ndim"):
+        return current_image
+    if current_image.ndim == 2:
+        return current_image
+    return _restack_like_payload(_unstack_payload(current_image), current_image)
 
 
 def _load_pipeline_start_stack(
     *,
     adapter: CellProfilerRuntimeAdapter,
     selected_paths: tuple[str, ...],
-    fallback_image: Any,
+    current_image: Any,
 ) -> Any:
     if not selected_paths:
         raise RuntimeError("Pipeline-start source selection cannot load zero paths.")
@@ -1076,7 +1076,7 @@ def _load_pipeline_start_stack(
             "Pipeline-start source resolution loaded no payloads from "
             f"{list(selected_paths)}."
         )
-    return _restack_like_payload(loaded_payloads, fallback_image)
+    return _restack_like_payload(loaded_payloads, current_image)
 
 
 def _matlab_numeric_arrays(
