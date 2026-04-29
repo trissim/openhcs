@@ -11,9 +11,12 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from benchmark.converter.runtime_pipeline import (
-    DirectPipelineExecution,
     execute_pipeline_direct,
     prepare_generated_pipeline,
+)
+from benchmark.converter.execution_validation import (
+    CPPipeExecutionValidationError,
+    validate_cppipe_execution,
 )
 from benchmark.datasets.registry import get_dataset_spec
 from benchmark.contracts.tool_adapter import (
@@ -180,7 +183,14 @@ class OpenHCSAdapter(ToolAdapter):
             for metric in request.metrics:
                 stack.enter_context(metric)
             execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
-        self._ensure_successful_execution(execution)
+        try:
+            validation = validate_cppipe_execution(
+                prepared,
+                execution,
+                output_plate_root,
+            )
+        except CPPipeExecutionValidationError as exc:
+            raise ToolExecutionError(str(exc)) from exc
 
         metric_results: dict[str, Any] = {
             metric.name: metric.get_result() for metric in request.metrics
@@ -194,6 +204,8 @@ class OpenHCSAdapter(ToolAdapter):
             "cppipe_path": str(cppipe_path),
             "generated_pipeline_module": prepared.module_name,
             "axis_count": len(execution.execution_results),
+            "csv_output_count": len(validation.observation.csv_outputs),
+            "image_output_count": len(validation.observation.image_outputs),
         }
         if source_workspace is not None:
             provenance["source_workspace"] = str(source_workspace.workspace_root)
@@ -210,21 +222,6 @@ class OpenHCSAdapter(ToolAdapter):
             error_message=None,
             provenance=provenance,
         )
-
-    def _ensure_successful_execution(
-        self,
-        execution: DirectPipelineExecution,
-    ) -> None:
-        unsuccessful_results = {
-            axis: result
-            for axis, result in execution.execution_results.items()
-            if not result.is_success()
-        }
-        if unsuccessful_results:
-            raise ToolExecutionError(
-                "Converted OpenHCS pipeline produced unsuccessful execution "
-                f"results: {unsuccessful_results!r}"
-            )
 
     def _configured_microscope(
         self,

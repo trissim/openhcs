@@ -715,8 +715,10 @@ class PipelineCompiler:
         if Backend.ZARR in available_backends:
             return
 
-        from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
-        from polystore.metadata_writer import get_subdirectory_name
+        from openhcs.microscopes.openhcs import (
+            OpenHCSMetadataHandler,
+            get_subdirectory_name,
+        )
 
         openhcs_metadata_handler = OpenHCSMetadataHandler(context.filemanager)
         metadata = openhcs_metadata_handler._load_metadata_dict(plate_path)

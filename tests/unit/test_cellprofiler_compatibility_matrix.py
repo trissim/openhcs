@@ -37,7 +37,7 @@ def test_compatibility_matrix_tracks_artifact_and_corpus_coverage() -> None:
         is ModuleCorpusCoverage.SUPPORTED_CORPUS
     )
     assert (
-        modules_by_name["ColorToGray"].artifact_contract_coverage
+        modules_by_name["GaussianFilter"].artifact_contract_coverage
         is ArtifactContractCoverage.GENERIC_INFERENCE
     )
     assert (

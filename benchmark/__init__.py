@@ -1,5 +1,7 @@
 """Public API for the benchmark platform."""
 
+import openhcs as _openhcs_dependency_bootstrap
+
 from benchmark.contracts.dataset import DatasetSpec, AcquiredDataset
 from benchmark.contracts.metric import MetricCollector
 from benchmark.contracts.tool_adapter import (

@@ -1,5 +1,10 @@
 """Global pytest configuration for OpenHCS integration tests."""
 import os
+
+from openhcs._source_dependencies import ensure_source_checkout_external_paths
+
+ensure_source_checkout_external_paths()
+
 import pytest
 
 # Conditionally import pytest-qt only when not in CPU-only mode

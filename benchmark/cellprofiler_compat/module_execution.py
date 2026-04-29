@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as dataclass_fields, is_dataclass
 from enum import Enum
-from inspect import Parameter, signature
+from inspect import Parameter, signature, unwrap
 import re
 from types import MappingProxyType
-from typing import Any, ClassVar, get_type_hints
+from typing import Any, ClassVar, get_args, get_origin, get_type_hints
 
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
@@ -37,6 +37,7 @@ from openhcs.core.image_shapes import (
 from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.pipeline.function_contracts import special_input_names_from_callable
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest
+from openhcs.core.runtime_semantics import FieldSpec
 from openhcs.core.runtime_stores import require_runtime_value_store
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
@@ -65,8 +66,6 @@ _INVOCATION_CONTROL_KWARGS = frozenset(("dtype_config", "slice_by_slice"))
 
 def _cellprofiler_image_payload(payload: Any) -> Any:
     """Return payload in CellProfiler's float image intensity domain."""
-    if not hasattr(payload, "dtype"):
-        return payload
     array = np.asarray(payload)
     if np.issubdtype(array.dtype, np.bool_):
         return array.astype(np.float32)
@@ -183,6 +182,7 @@ class CellProfilerModuleExecutor:
         )
         main_output, artifact_values = _split_cellprofiler_output(raw_output)
         self._record_outputs(
+            func,
             cellprofiler_runtime,
             main_output,
             artifact_values,
@@ -296,9 +296,11 @@ class CellProfilerModuleExecutor:
             else _single_source_name(source_image_names)
         )
 
-        cellprofiler_runtime.add_measurements(
+        _record_measurements(
+            cellprofiler_runtime,
             measurement_outputs[0].name,
             combined_rows,
+            fields=_measurement_record_fields(combined_rows, func),
             object_name=object_inputs[0].name if len(object_inputs) == 1 else None,
             source_image_name=combined_source_image_name,
         )
@@ -353,9 +355,11 @@ class CellProfilerModuleExecutor:
             for image in measurement_images
             if image.source_image_name is not None
         )
-        cellprofiler_runtime.add_measurements(
+        _record_measurements(
+            cellprofiler_runtime,
             measurement_outputs[0].name,
             combined_rows,
+            fields=_measurement_record_fields(combined_rows, func),
             source_image_name=_single_source_name(source_image_names),
         )
         return input_image
@@ -563,6 +567,7 @@ class CellProfilerModuleExecutor:
 
     def _record_outputs(
         self,
+        func: Callable[..., Any],
         adapter: CellProfilerRuntimeAdapter,
         main_output: Any,
         artifact_values: tuple[Any, ...],
@@ -586,6 +591,7 @@ class CellProfilerModuleExecutor:
                     value=output_values[spec.name],
                     output_values=output_values,
                     source_image_name=source_image_name,
+                    func=func,
                 )
             )
 
@@ -1509,6 +1515,7 @@ class CellProfilerOutputRecordRequest:
     value: Any
     output_values: Mapping[str, Any]
     source_image_name: str | None
+    func: Callable[..., Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1517,6 +1524,7 @@ class CellProfilerMeasurementRecord:
 
     rows: list[Any]
     object_name: str | None
+    fields: tuple[FieldSpec, ...] = ()
 
 
 class CellProfilerMeasurementRecordBuilder(ABC, metaclass=AutoRegisterMeta):
@@ -1552,11 +1560,13 @@ class DefaultMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
         self,
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
+        rows = _measurement_table_rows(request.value)
         return CellProfilerMeasurementRecord(
-            rows=_measurement_table_rows(request.value),
+            rows=rows,
             object_name=_measurement_object_name(
                 request.executor._declared_input_specs()
             ),
+            fields=_measurement_record_fields(rows, request.func),
         )
 
 
@@ -1638,9 +1648,11 @@ class MeasurementsOutputRecorder(CellProfilerOutputRecorder):
         measurement_record = CellProfilerMeasurementRecordBuilder.for_module(
             request.executor.module_name
         ).build(request)
-        request.adapter.add_measurements(
+        _record_measurements(
+            request.adapter,
             request.spec.name,
             measurement_record.rows,
+            fields=measurement_record.fields,
             object_name=measurement_record.object_name,
             source_image_name=request.source_image_name,
         )
@@ -1745,6 +1757,77 @@ def _measurement_table_rows(rows: Any) -> list[Any]:
     if isinstance(rows, tuple):
         return list(rows)
     return [rows]
+
+
+_MISSING_MEASUREMENT_OBJECT_NAME = object()
+
+
+def _record_measurements(
+    adapter: CellProfilerRuntimeAdapter,
+    name: str,
+    rows: Sequence[Any],
+    *,
+    fields: tuple[FieldSpec, ...] = (),
+    object_name: str | None | object = _MISSING_MEASUREMENT_OBJECT_NAME,
+    source_image_name: str | None = None,
+) -> None:
+    kwargs: dict[str, Any] = {
+        "source_image_name": source_image_name,
+    }
+    if object_name is not _MISSING_MEASUREMENT_OBJECT_NAME:
+        kwargs["object_name"] = object_name
+    if fields:
+        kwargs["fields"] = fields
+    adapter.add_measurements(name, rows, **kwargs)
+
+
+def _measurement_record_fields(
+    rows: Sequence[Any],
+    func: Callable[..., Any],
+) -> tuple[FieldSpec, ...]:
+    if _rows_have_inferable_fields(rows):
+        return ()
+    return _measurement_fields_from_callable(func)
+
+
+def _rows_have_inferable_fields(rows: Sequence[Any]) -> bool:
+    if not rows:
+        return False
+    row = rows[0]
+    return bool(is_dataclass(row) or (isinstance(row, Mapping) and row))
+
+
+def _measurement_fields_from_callable(
+    func: Callable[..., Any],
+) -> tuple[FieldSpec, ...]:
+    return_type = _callable_type_hints(unwrap(func)).get("return")
+    row_type = _measurement_row_type_from_annotation(return_type)
+    if row_type is None:
+        return ()
+    return tuple(FieldSpec(field.name) for field in dataclass_fields(row_type))
+
+
+def _measurement_row_type_from_annotation(annotation: Any) -> type[Any] | None:
+    if isinstance(annotation, type) and is_dataclass(annotation):
+        return annotation
+
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if origin in (list, tuple):
+        return _measurement_row_type_from_sequence_args(args)
+    return None
+
+
+def _measurement_row_type_from_sequence_args(
+    args: tuple[Any, ...],
+) -> type[Any] | None:
+    for arg in args:
+        if arg is Ellipsis:
+            continue
+        row_type = _measurement_row_type_from_annotation(arg)
+        if row_type is not None:
+            return row_type
+    return None
 
 
 def _object_only_reference_image(image: Any) -> Any:
@@ -2406,7 +2489,7 @@ def _unstack_cellprofiler_image_slices(image: Any, memory_type: str) -> tuple[An
 
 
 def _is_grayscale_slice_output(output: Any) -> bool:
-    return hasattr(output, "ndim") and output.ndim == 2
+    return np.asarray(output).ndim == 2
 
 
 def _as_numpy_payload(payload: Any) -> np.ndarray:
@@ -2700,27 +2783,13 @@ def _slice_pure_2d_value(value: Any, slice_index: int, slice_count: int) -> Any:
 
 
 def _slice_aligned_stack_view(value: Any) -> Any | None:
-    if hasattr(value, "ndim"):
-        return value if value.ndim == 3 else None
-    if not _is_sequence_payload(value):
-        if not _is_array_convertible_payload(value):
-            return None
-    stack = np.asarray(value)
+    if isinstance(value, (str, bytes, bytearray, Mapping)):
+        return None
+    try:
+        stack = np.asarray(value)
+    except (TypeError, ValueError):
+        return None
     return stack if stack.ndim == 3 else None
-
-
-def _is_sequence_payload(value: Any) -> bool:
-    if isinstance(value, (str, bytes, bytearray, Mapping)):
-        return False
-    if not isinstance(value, Sequence):
-        return False
-    return len(value) > 0
-
-
-def _is_array_convertible_payload(value: Any) -> bool:
-    if isinstance(value, (str, bytes, bytearray, Mapping)):
-        return False
-    return hasattr(value, "shape") or hasattr(value, "__array__")
 
 
 _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR = CellProfilerFunctionContractExecutor()

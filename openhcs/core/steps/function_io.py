@@ -230,8 +230,11 @@ def update_metadata_for_zarr_conversion(
     context: ProcessingContext,
 ) -> None:
     """Update OpenHCS metadata after a Zarr input conversion."""
-    from openhcs.microscopes.openhcs import OpenHCSMetadataGenerator
-    from polystore.metadata_writer import AtomicMetadataWriter, get_metadata_path
+    from openhcs.microscopes.openhcs import (
+        AtomicMetadataWriter,
+        OpenHCSMetadataGenerator,
+        get_metadata_path,
+    )
 
     metadata_path = get_metadata_path(plate_root)
     writer = AtomicMetadataWriter()

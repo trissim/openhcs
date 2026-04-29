@@ -877,7 +877,7 @@ class ImageBrowserWidget(QWidget):
             plate_path = self.orchestrator.plate_path
 
             # Load metadata JSON directly
-            from polystore.metadata_writer import get_metadata_path
+            from openhcs.microscopes.openhcs import get_metadata_path
             import json
 
             metadata_path = get_metadata_path(plate_path)

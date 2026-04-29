@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional, Union, Set
 
 from openhcs.constants.constants import (
     Backend,
-    DEFAULT_IMAGE_EXTENSIONS,
+    LOADABLE_IMAGE_EXTENSIONS,
     GroupBy,
     OrchestratorState,
     get_openhcs_config,
@@ -344,7 +344,7 @@ def _execute_single_axis_static(
 
     # Execute each step in the pipeline
     for step_index, step in enumerate(pipeline_definition):
-        step_name = frozen_context.step_plans[step_index]["step_name"]
+        step_name = frozen_context.step_plans[step_index].step_name
 
         emit(
             execution_id=execution_id,
@@ -908,7 +908,10 @@ class PipelineOrchestrator:
         Skips OMERO and other non-disk-based microscope handlers since they don't have
         real disk directories.
         """
-        from openhcs.microscopes.openhcs import OpenHCSMetadataGenerator
+        from openhcs.microscopes.openhcs import (
+            OpenHCSMetadataGenerator,
+            get_subdirectory_name,
+        )
 
         # Skip metadata creation for OMERO and other non-disk-based handlers
         # OMERO uses virtual paths like /omero/plate_1 which are not real directories
@@ -920,8 +923,6 @@ class PipelineOrchestrator:
 
         # For plates with virtual workspace, metadata is already created by _build_virtual_mapping()
         # We just need to add the component metadata to the existing "." subdirectory
-        from polystore.metadata_writer import get_subdirectory_name
-
         subdir_name = get_subdirectory_name(self.input_dir, self.plate_path)
 
         # Create context using SAME logic as create_context() to get full metadata
@@ -1658,12 +1659,12 @@ class PipelineOrchestrator:
             )
 
             filenames = self.filemanager.list_files(
-                str(self.input_dir), backend_to_use, extensions=DEFAULT_IMAGE_EXTENSIONS
+                str(self.input_dir), backend_to_use, extensions=LOADABLE_IMAGE_EXTENSIONS
             )
             logger.info(
                 "Component key discovery: listed %d files (extensions=%s)",
                 len(filenames),
-                DEFAULT_IMAGE_EXTENSIONS,
+                LOADABLE_IMAGE_EXTENSIONS,
             )
             if filenames:
                 preview = [str(p) for p in filenames[:10]]

@@ -219,9 +219,12 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
             plate_path: Path to plate directory
             workspace_mapping: Dict mapping virtual paths to real paths
         """
-        from polystore.metadata_writer import AtomicMetadataWriter
+        from openhcs.microscopes.openhcs import (
+            AtomicMetadataWriter,
+            get_metadata_path,
+        )
 
-        metadata_path = plate_path / "openhcs_metadata.json"
+        metadata_path = get_metadata_path(plate_path)
         writer = AtomicMetadataWriter()
 
         # Build metadata dict with all available fields
@@ -328,9 +331,11 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
             logger.info("📁 SKIPPING PREPARATION: Virtual mapping already built")
             # When skipping, we need to determine image_dir from metadata
             # Read metadata to get the subdirectory key
-            from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
+            from openhcs.microscopes.openhcs import (
+                OpenHCSMetadataHandler,
+                resolve_subdirectory_path,
+            )
             from polystore.exceptions import MetadataNotFoundError
-            from polystore.metadata_writer import resolve_subdirectory_path
 
             openhcs_metadata_handler = OpenHCSMetadataHandler(filemanager)
             metadata = openhcs_metadata_handler._load_metadata_dict(plate_path)

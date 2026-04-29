@@ -8,16 +8,135 @@ The metadata for such plates is defined in an 'openhcs_metadata.json' file.
 
 import json
 import logging
+import os
+from abc import ABC
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union, Type
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Type
 
 from openhcs.constants.constants import Backend, GroupBy, AllComponents
+from polystore.atomic import LOCK_CONFIG, FileLockError, atomic_update_json
 from polystore.exceptions import MetadataNotFoundError
 from polystore.filemanager import FileManager
-from polystore.metadata_writer import AtomicMetadataWriter, MetadataWriteError, get_metadata_path, METADATA_CONFIG
 from openhcs.microscopes.microscope_interfaces import MetadataHandler
 logger = logging.getLogger(__name__)
+
+
+def get_subdirectory_name(input_dir: Union[str, Path], plate_path: Union[str, Path]) -> str:
+    """Return the OpenHCS metadata subdirectory key for an input directory."""
+    input_path = Path(input_dir)
+    root_path = Path(plate_path)
+    return "." if input_path == root_path else input_path.name
+
+
+def resolve_subdirectory_path(subdir_name: str, plate_path: Union[str, Path]) -> Path:
+    """Resolve an OpenHCS metadata subdirectory key against a plate root."""
+    root_path = Path(plate_path)
+    return root_path if subdir_name == "." else root_path / subdir_name
+
+
+@dataclass(frozen=True)
+class MetadataConfig:
+    """Configuration constants for OpenHCS metadata operations."""
+
+    METADATA_FILENAME: str = os.getenv(
+        "OPENHCS_METADATA_FILENAME",
+        "openhcs_metadata.json",
+    )
+    SUBDIRECTORIES_KEY: str = "subdirectories"
+    AVAILABLE_BACKENDS_KEY: str = "available_backends"
+    DEFAULT_TIMEOUT: float = LOCK_CONFIG.DEFAULT_TIMEOUT
+
+
+METADATA_CONFIG = MetadataConfig()
+
+
+class MetadataWriteError(Exception):
+    """Raised when OpenHCS metadata writes fail."""
+
+
+class AtomicMetadataWriter:
+    """Atomic writer for OpenHCS subdirectory-keyed metadata."""
+
+    def __init__(self, timeout: float = METADATA_CONFIG.DEFAULT_TIMEOUT):
+        self.timeout = timeout
+        self.logger = logging.getLogger(__name__)
+
+    def update_available_backends(
+        self,
+        metadata_path: Union[str, Path],
+        available_backends: Dict[str, bool],
+    ) -> None:
+        """Atomically update the top-level available backend map."""
+
+        def update_func(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+            if data is None:
+                raise MetadataWriteError(
+                    "Cannot update backends: metadata file does not exist"
+                )
+            data[METADATA_CONFIG.AVAILABLE_BACKENDS_KEY] = available_backends
+            return data
+
+        self._execute_update(metadata_path, update_func)
+        self.logger.debug("Updated available backends in %s", metadata_path)
+
+    def merge_subdirectory_metadata(
+        self,
+        metadata_path: Union[str, Path],
+        subdirectory_updates: Dict[str, Dict[str, Any]],
+    ) -> None:
+        """Atomically deep-merge subdirectory metadata updates."""
+
+        def update_func(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+            data = self._ensure_subdirectories_structure(data)
+            subdirs = data[METADATA_CONFIG.SUBDIRECTORIES_KEY]
+            for subdir_name, updates in subdirectory_updates.items():
+                subdir = subdirs.setdefault(subdir_name, {})
+                for key, value in updates.items():
+                    if (
+                        key == METADATA_CONFIG.AVAILABLE_BACKENDS_KEY
+                        and isinstance(value, dict)
+                    ):
+                        existing_backends = subdir.get(key, {})
+                        subdir[key] = {**existing_backends, **value}
+                    else:
+                        subdir[key] = value
+            return data
+
+        self._execute_update(
+            metadata_path,
+            update_func,
+            {METADATA_CONFIG.SUBDIRECTORIES_KEY: {}},
+        )
+        self.logger.debug(
+            "Merged %d subdirectories in %s",
+            len(subdirectory_updates),
+            metadata_path,
+        )
+
+    def _execute_update(
+        self,
+        metadata_path: Union[str, Path],
+        update_func: Callable[[Optional[Dict[str, Any]]], Dict[str, Any]],
+        default_data: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        try:
+            atomic_update_json(metadata_path, update_func, self.timeout, default_data)
+        except FileLockError as exc:
+            raise MetadataWriteError(f"Failed to update metadata: {exc}") from exc
+
+    @staticmethod
+    def _ensure_subdirectories_structure(
+        data: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        data = data or {}
+        data.setdefault(METADATA_CONFIG.SUBDIRECTORIES_KEY, {})
+        return data
+
+
+def get_metadata_path(plate_root: Union[str, Path]) -> Path:
+    """Return the standard OpenHCS metadata path for a plate root."""
+    return Path(plate_root) / METADATA_CONFIG.METADATA_FILENAME
 
 
 @dataclass(frozen=True)
@@ -74,7 +193,15 @@ def _get_available_filename_parsers():
     }
 
 
-class OpenHCSMetadataHandler(MetadataHandler):
+class OpenHCSMetadataBase(ABC):
+    """Shared OpenHCS metadata I/O authorities."""
+
+    def __init__(self, filemanager: FileManager):
+        self.filemanager = filemanager
+        self.atomic_writer = AtomicMetadataWriter()
+
+
+class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
     """
     Metadata handler for the OpenHCS pre-processed format.
 
@@ -90,9 +217,8 @@ class OpenHCSMetadataHandler(MetadataHandler):
         Args:
             filemanager: FileManager instance for file operations.
         """
-        super().__init__()
-        self.filemanager = filemanager
-        self.atomic_writer = AtomicMetadataWriter()
+        MetadataHandler.__init__(self)
+        OpenHCSMetadataBase.__init__(self, filemanager)
         self._metadata_cache: Optional[Dict[str, Any]] = None
         self._plate_path_cache: Optional[Path] = None
 
@@ -416,7 +542,7 @@ class SubdirectoryKeyedMetadata:
         return cls.from_single_metadata(default_sub_dir, OpenHCSMetadata(**legacy_dict))
 
 
-class OpenHCSMetadataGenerator:
+class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
     """
     Generator for OpenHCS metadata files.
 
@@ -434,8 +560,7 @@ class OpenHCSMetadataGenerator:
         Args:
             filemanager: FileManager instance for file operations
         """
-        self.filemanager = filemanager
-        self.atomic_writer = AtomicMetadataWriter()
+        super().__init__(filemanager)
         self.logger = logging.getLogger(__name__)
 
     def create_metadata(

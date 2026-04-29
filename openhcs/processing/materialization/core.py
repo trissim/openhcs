@@ -48,10 +48,6 @@ def _resolve_source(value: Any, source: Optional[str]) -> Any:
     return cur
 
 
-def _output_path(ctx: "MaterializationContext", options: FileOutputOptions) -> str:
-    return ctx.paths(options).with_suffix(options.filename_suffix)
-
-
 def _select_payload(data: Any, options: Any) -> Any:
     return _resolve_source(data, getattr(options, "source", None))
 
@@ -265,6 +261,8 @@ def _render_csv(data: Any, options: CsvOptions) -> str:
             return data.to_csv(index=False)
 
         rows = _build_tabular_rows(data, options)
+        if not rows and options.fields:
+            return pd.DataFrame(columns=options.fields).to_csv(index=False)
         return pd.DataFrame(rows).to_csv(index=False)
     except ImportError:
         raise ImportError("CSV materialization requires pandas")
@@ -302,7 +300,12 @@ def _single_file_writer(
         payload = _select_payload(data, options)
         if validate_payload is not None:
             validate_payload(payload, options)
-        return [Output(path=_output_path(ctx, options), content=render(payload, options))]
+        return [
+            Output(
+                path=ctx.paths(options).with_suffix(options.filename_suffix),
+                content=render(payload, options),
+            )
+        ]
 
     return write
 

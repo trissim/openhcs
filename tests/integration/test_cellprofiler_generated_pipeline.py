@@ -9,6 +9,7 @@ from benchmark.converter.runtime_pipeline import (
     execute_pipeline_direct,
     prepare_generated_pipeline,
 )
+from benchmark.converter.execution_validation import validate_cppipe_execution
 import numpy as np
 import pytest
 import tifffile
@@ -1704,6 +1705,11 @@ def _execute_official_cellprofiler3_pipeline(
         orchestrator,
         prepared.pipeline,
         well_filter=list(well_filter),
+    )
+    validate_cppipe_execution(
+        prepared,
+        execution,
+        _generated_output_root(workspace.workspace_root),
     )
     return workspace, execution
 
