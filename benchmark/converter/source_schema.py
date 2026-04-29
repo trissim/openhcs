@@ -15,12 +15,12 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.pipeline_image_schema import (
-    CellProfilerImageSchema,
     GroupingPlan,
     ImageAssignment,
     ImportedMetadataJoin,
     ImportedMetadataTable,
     ImagesRule,
+    PipelineImageSchema,
     SourceArtifactAssignment,
     image_type_participates_in_image_stack,
 )
@@ -144,8 +144,8 @@ class _SetupModuleCompilation:
     match_plan: SourceBindingMatchPlan | None = None
     grouping: GroupingPlan | None = None
 
-    def to_schema(self) -> CellProfilerImageSchema:
-        return CellProfilerImageSchema(
+    def to_schema(self) -> PipelineImageSchema:
+        return PipelineImageSchema(
             images_rule=self.images_rule,
             metadata_rules=self.metadata_rules,
             imported_metadata_tables=self.imported_metadata_tables,
@@ -166,7 +166,7 @@ class _SchemaBuilder:
         self.match_plan: SourceBindingMatchPlan | None = None
         self.grouping: GroupingPlan | None = None
 
-    def build(self) -> CellProfilerImageSchema:
+    def build(self) -> PipelineImageSchema:
         return _SetupModuleCompilation(
             images_rule=self.images_rule,
             metadata_rules=tuple(self.metadata_rules),
@@ -190,12 +190,12 @@ class _SchemaBuilder:
         existing = self.assignments_by_alias.get(assignment.alias)
         if existing is not None and existing != assignment:
             raise ValueError(
-                f"CellProfiler image alias {assignment.alias!r} is already declared "
+                f"Pipeline image alias {assignment.alias!r} is already declared "
                 "with different setup semantics."
             )
         if assignment.alias in self.source_artifacts_by_alias:
             raise ValueError(
-                f"CellProfiler alias {assignment.alias!r} is already declared as "
+                f"Pipeline alias {assignment.alias!r} is already declared as "
                 "a non-image source artifact."
             )
         self.assignments_by_alias[assignment.alias] = assignment
@@ -207,12 +207,12 @@ class _SchemaBuilder:
         existing = self.source_artifacts_by_alias.get(assignment.alias)
         if existing is not None and existing != assignment:
             raise ValueError(
-                f"CellProfiler source artifact {assignment.alias!r} is already "
+                f"Pipeline source artifact {assignment.alias!r} is already "
                 "declared with different setup semantics."
             )
         if assignment.alias in self.assignments_by_alias:
             raise ValueError(
-                f"CellProfiler alias {assignment.alias!r} is already declared as "
+                f"Pipeline alias {assignment.alias!r} is already declared as "
                 "an image assignment."
             )
         self.source_artifacts_by_alias[assignment.alias] = assignment
@@ -220,14 +220,14 @@ class _SchemaBuilder:
     def declare_match_plan(self, match_plan: SourceBindingMatchPlan) -> None:
         if self.match_plan is not None and self.match_plan != match_plan:
             raise ValueError(
-                "CellProfiler image schema already declared a different image-set "
+                "Pipeline image schema already declared a different image-set "
                 "match plan."
             )
         self.match_plan = match_plan
 
 
-def compile_image_schema(modules: Iterable[ModuleBlock]) -> CellProfilerImageSchema:
-    """Compile setup modules into a typed pipeline-level CellProfiler image schema."""
+def compile_image_schema(modules: Iterable[ModuleBlock]) -> PipelineImageSchema:
+    """Compile setup modules into a typed pipeline-level image schema."""
     builder = _SchemaBuilder()
     for module in modules:
         if not module.enabled:

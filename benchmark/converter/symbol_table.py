@@ -31,7 +31,7 @@ from openhcs.core.artifacts import (
     ArtifactSpec,
 )
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
-from openhcs.core.pipeline_image_schema import CellProfilerImageSchema
+from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.source_bindings import (
     ComponentSelector,
     EMPTY_SOURCE_BINDINGS,
@@ -243,7 +243,7 @@ class CellProfilerSymbolTable:
 
     symbols: Mapping[CellProfilerSymbolKey, CellProfilerSymbol]
     module_contracts: tuple[ModuleArtifactContracts, ...] = ()
-    source_schema: CellProfilerImageSchema = CellProfilerImageSchema.empty()
+    source_schema: PipelineImageSchema = PipelineImageSchema.empty()
 
     @property
     def contracts_by_module_num(self) -> dict[int, ModuleArtifactContracts]:
@@ -321,7 +321,7 @@ CHILD_OBJECTS_SETTING = SettingNameFamily(
 
 
 class _SymbolTableBuilder:
-    def __init__(self, source_schema: CellProfilerImageSchema) -> None:
+    def __init__(self, source_schema: PipelineImageSchema) -> None:
         self._symbols: dict[CellProfilerSymbolKey, CellProfilerSymbol] = {}
         self._contracts: list[ModuleArtifactContracts] = []
         self._source_schema = source_schema

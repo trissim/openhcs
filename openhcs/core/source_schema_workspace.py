@@ -15,9 +15,9 @@ from metaclass_registry import AutoRegisterMeta
 
 from openhcs.constants.constants import AllComponents, Backend
 from openhcs.core.pipeline_image_schema import (
-    CellProfilerImageSchema,
     ImageAssignment,
     ImageTypeSourceRole,
+    PipelineImageSchema,
     SourceAssignmentBase,
 )
 from openhcs.core.source_bindings import (
@@ -250,7 +250,7 @@ class ImageSetAssembler(ABC, metaclass=AutoRegisterMeta):
     @classmethod
     def for_schema(
         cls,
-        schema: CellProfilerImageSchema,
+        schema: PipelineImageSchema,
     ) -> "ImageSetAssembler":
         method = (
             SourceBindingMatchMethod.ORDER
@@ -262,7 +262,7 @@ class ImageSetAssembler(ABC, metaclass=AutoRegisterMeta):
     @abstractmethod
     def image_sets(
         self,
-        schema: CellProfilerImageSchema,
+        schema: PipelineImageSchema,
         candidates_by_alias: Mapping[str, tuple[SourceSchemaCandidate, ...]],
     ) -> tuple[ImageSetRecord, ...]:
         """Assemble candidate groups for projection into OpenHCS files."""
@@ -274,7 +274,7 @@ class MetadataImageSetAssembler(ImageSetAssembler):
 
     def image_sets(
         self,
-        schema: CellProfilerImageSchema,
+        schema: PipelineImageSchema,
         candidates_by_alias: Mapping[str, tuple[SourceSchemaCandidate, ...]],
     ) -> tuple[ImageSetRecord, ...]:
         if schema.match_plan is None:
@@ -323,7 +323,7 @@ class OrderImageSetAssembler(ImageSetAssembler):
 
     def image_sets(
         self,
-        schema: CellProfilerImageSchema,
+        schema: PipelineImageSchema,
         candidates_by_alias: Mapping[str, tuple[SourceSchemaCandidate, ...]],
     ) -> tuple[ImageSetRecord, ...]:
         aliases = tuple(candidates_by_alias)
@@ -352,7 +352,7 @@ class OrderImageSetAssembler(ImageSetAssembler):
 def materialize_source_schema_workspace(
     source_root: Path,
     workspace_root: Path,
-    schema: CellProfilerImageSchema,
+    schema: PipelineImageSchema,
 ) -> SourceSchemaWorkspaceMaterialization:
     """Create an OpenHCS virtual workspace from typed source-schema semantics."""
 
@@ -407,7 +407,7 @@ def materialize_source_schema_workspace(
 
 
 def _partition_assignments(
-    schema: CellProfilerImageSchema,
+    schema: PipelineImageSchema,
 ) -> tuple[tuple[ImageAssignment, ...], tuple[SourceAssignmentBase, ...]]:
     stack_assignments: list[ImageAssignment] = []
     auxiliary_assignments: list[SourceAssignmentBase] = []
@@ -436,7 +436,7 @@ def _source_files(source_root: Path) -> tuple[Path, ...]:
 def _source_candidates(
     source_root: Path,
     source_files: tuple[Path, ...],
-    schema: CellProfilerImageSchema,
+    schema: PipelineImageSchema,
 ) -> tuple[SourceSchemaCandidate, ...]:
     candidates: list[SourceSchemaCandidate] = []
     for path in source_files:

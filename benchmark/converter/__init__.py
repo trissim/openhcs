@@ -32,10 +32,10 @@ from .source_schema import (
     compile_image_schema,
 )
 from openhcs.core.pipeline_image_schema import (
-    CellProfilerImageSchema,
     GroupingPlan,
     ImageAssignment,
     ImagesRule,
+    PipelineImageSchema,
 )
 from openhcs.core.source_bindings import (
     MetadataExtractionRule,
@@ -58,12 +58,12 @@ def _is_public_api_export(name: str, value: object) -> bool:
 
 _CORE_SCHEMA_EXPORTS = frozenset(
     {
-        "CellProfilerImageSchema",
         "GroupingPlan",
         "ImageAssignment",
         "ImagesRule",
         "MetadataExtractionRule",
         "MetadataSource",
+        "PipelineImageSchema",
     }
 )
 

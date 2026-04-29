@@ -7,8 +7,8 @@ import numpy as np
 from PIL import Image
 
 from openhcs.core.pipeline_image_schema import (
-    CellProfilerImageSchema,
     ImageAssignment,
+    PipelineImageSchema,
 )
 from openhcs.core.source_bindings import (
     MetadataExtractionRule,
@@ -90,12 +90,12 @@ def test_materialize_source_schema_workspace_derives_well_match_field(
     assert primary["wells"] == {"A01": None}
 
 
-def _example_sbs_source_schema() -> CellProfilerImageSchema:
+def _example_sbs_source_schema() -> PipelineImageSchema:
     metadata_rule = MetadataExtractionRule(
         source=MetadataSource.FILE_NAME,
         pattern=r".*-(?P<ImageNumber>\d*)-(?P<WellRow>.*)-(?P<WellColumn>\d*)",
     )
-    return CellProfilerImageSchema(
+    return PipelineImageSchema(
         metadata_rules=(metadata_rule,),
         assignments_by_alias={
             "rawGFP": ImageAssignment(
@@ -161,7 +161,7 @@ def _example_sbs_source_schema() -> CellProfilerImageSchema:
     )
 
 
-def _well_row_column_match_source_schema() -> CellProfilerImageSchema:
+def _well_row_column_match_source_schema() -> PipelineImageSchema:
     metadata_rule = MetadataExtractionRule(
         source=MetadataSource.FILE_NAME,
         pattern=(
@@ -169,7 +169,7 @@ def _well_row_column_match_source_schema() -> CellProfilerImageSchema:
             r"(?P<WellRow>[A-P])-(?P<WellCol>[0-9]{2})"
         ),
     )
-    return CellProfilerImageSchema(
+    return PipelineImageSchema(
         metadata_rules=(metadata_rule,),
         assignments_by_alias={
             "OrigProtein": ImageAssignment(

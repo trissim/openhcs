@@ -24,7 +24,7 @@ from openhcs.core.artifact_materialization_policy import (
 )
 from openhcs.core.artifacts import ArtifactSpec
 from openhcs.constants.constants import AllComponents
-from openhcs.core.pipeline_image_schema import CellProfilerImageSchema
+from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.source_bindings import StepSourceBindingsConfig, SourceBindingOrigin
 
 from benchmark.cellprofiler_library import canonical_module_name
@@ -54,7 +54,7 @@ class GeneratedPipeline:
     converted_modules: List[str]
     failed_modules: List[str]
     artifact_contracts: tuple[ModuleArtifactContracts, ...] = ()
-    source_schema: CellProfilerImageSchema = CellProfilerImageSchema.empty()
+    source_schema: PipelineImageSchema = PipelineImageSchema.empty()
     
     def save(self, output_path: Path) -> None:
         """Save pipeline to file."""

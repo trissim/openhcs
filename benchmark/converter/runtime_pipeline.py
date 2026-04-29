@@ -21,7 +21,7 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.constants import MULTIPROCESSING_AXIS
 from openhcs.core.config import DtypeConfig
 from openhcs.core.pipeline import Pipeline
-from openhcs.core.pipeline_image_schema import CellProfilerImageSchema
+from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.progress import set_progress_queue
 from openhcs.processing.backends.lib_registry.openhcs_registry import (
     OpenHCSRegistry,
@@ -57,7 +57,7 @@ class CPPipePipelineArtifact(ABC):
     cppipe_path: Path
     processing_modules: tuple[ModuleBlock, ...]
     infrastructure_modules: tuple[ModuleBlock, ...]
-    source_schema: CellProfilerImageSchema
+    source_schema: PipelineImageSchema
     generated_pipeline: GeneratedPipeline
 
 

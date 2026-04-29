@@ -117,7 +117,7 @@ class SourceArtifactAssignment(SourceAssignmentBase):
 
 
 class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
-    """Nominal role for CellProfiler image-type source semantics."""
+    """Nominal role for pipeline image-type source semantics."""
 
     __registry_key__ = "image_type_key"
     __skip_if_no_key__ = True
@@ -130,7 +130,7 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
         role_type = cls.__registry__.get(key)
         if role_type is None:
             raise ValueError(
-                f"Unsupported CellProfiler source image type {image_type!r}."
+                f"Unsupported pipeline source image type {image_type!r}."
             )
         return role_type()
 
@@ -142,20 +142,20 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
 
 
 class ImageStackSourceRole(ImageTypeSourceRole):
-    """CellProfiler image type that projects into the OpenHCS channel stack."""
+    """Image type that projects into the OpenHCS channel stack."""
 
     PARTICIPATES_IN_IMAGE_STACK = True
 
 
 class SourceArtifactImageTypeSourceRole(ImageTypeSourceRole):
-    """CellProfiler image type that remains an external source artifact."""
+    """Image type that remains an external source artifact."""
 
     PARTICIPATES_IN_IMAGE_STACK = False
 
 
 @dataclass(frozen=True, slots=True)
 class ImageTypeSourceRoleSpec:
-    """Typed declaration for one CellProfiler image-type role class."""
+    """Typed declaration for one pipeline image-type role class."""
 
     class_name: str
     image_type_key: str
@@ -208,13 +208,13 @@ for _image_type_role_spec in (
 
 
 def image_type_participates_in_image_stack(image_type: str) -> bool:
-    """Return whether a CellProfiler source image type is a native stack channel."""
+    """Return whether a source image type is a native stack channel."""
 
     return ImageTypeSourceRole.for_image_type(image_type).participates_in_image_stack
 
 
 def image_type_source_role_key(image_type: str) -> str:
-    """Normalize CellProfiler image-type labels for role lookup."""
+    """Normalize image-type labels for role lookup."""
 
     return image_type.strip().lower()
 
@@ -263,7 +263,7 @@ class ImportedMetadataJoin:
 
 @dataclass(frozen=True, slots=True)
 class ImportedMetadataTable:
-    """Pipeline-level metadata imported from an external CellProfiler table."""
+    """Pipeline-level metadata imported from an external table."""
 
     location: str | None = None
     joins: tuple[ImportedMetadataJoin, ...] = ()
@@ -284,7 +284,7 @@ class ImportedMetadataTable:
 
 
 @dataclass(frozen=True, slots=True)
-class CellProfilerImageSchema:
+class PipelineImageSchema:
     """Pipeline-level image schema lowered from setup modules."""
 
     images_rule: ImagesRule | None = None
@@ -317,31 +317,31 @@ class CellProfilerImageSchema:
         for table in self.imported_metadata_tables:
             if not isinstance(table, ImportedMetadataTable):
                 raise TypeError(
-                    "CellProfilerImageSchema.imported_metadata_tables must "
+                    "PipelineImageSchema.imported_metadata_tables must "
                     "contain ImportedMetadataTable values, got "
                     f"{type(table).__name__}."
                 )
         for alias, assignment in self.assignments_by_alias.items():
             if alias != assignment.alias:
                 raise ValueError(
-                    f"CellProfilerImageSchema alias key {alias!r} does not match "
+                    f"PipelineImageSchema alias key {alias!r} does not match "
                     f"assignment alias {assignment.alias!r}."
                 )
         for alias, assignment in self.source_artifacts_by_alias.items():
             if not isinstance(assignment, SourceArtifactAssignment):
                 raise TypeError(
-                    "CellProfilerImageSchema.source_artifacts_by_alias values "
+                    "PipelineImageSchema.source_artifacts_by_alias values "
                     "must be SourceArtifactAssignment, got "
                     f"{type(assignment).__name__}."
                 )
             if alias != assignment.alias:
                 raise ValueError(
-                    f"CellProfilerImageSchema source-artifact key {alias!r} "
+                    f"PipelineImageSchema source-artifact key {alias!r} "
                     f"does not match assignment alias {assignment.alias!r}."
                 )
 
     @classmethod
-    def empty(cls) -> "CellProfilerImageSchema":
+    def empty(cls) -> "PipelineImageSchema":
         return cls()
 
     @property
@@ -387,7 +387,7 @@ class CellProfilerImageSchema:
             return None
         if artifact_assignment.kind is not kind:
             raise ValueError(
-                f"CellProfiler source artifact {alias!r} is declared as "
+                f"Pipeline source artifact {alias!r} is declared as "
                 f"{artifact_assignment.kind.value}, not {kind.value}."
             )
         return artifact_assignment
