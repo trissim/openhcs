@@ -1,4 +1,4 @@
-"""Typed CellProfiler processing-contract resolution."""
+"""Resolve absorbed function contract declarations to OpenHCS contracts."""
 
 from __future__ import annotations
 
@@ -12,38 +12,7 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
 
-
-class CellProfilerProcessingContractName(str, Enum):
-    """Processing-contract names accepted from the absorbed registry."""
-
-    PURE_2D = "pure_2d"
-    PURE_3D = "pure_3d"
-    FLEXIBLE = "flexible"
-    VOLUMETRIC_TO_SLICE = "volumetric_to_slice"
-    UNKNOWN = "unknown"
-
-    @classmethod
-    def from_registry_value(
-        cls,
-        value: str,
-        *,
-        module_name: str,
-    ) -> "CellProfilerProcessingContractName":
-        try:
-            return cls(value.strip().lower())
-        except ValueError as error:
-            raise ValueError(
-                f"Module {module_name} declares unsupported processing contract "
-                f"{value!r}."
-            ) from error
-
-    def to_openhcs_contract(self) -> ProcessingContract:
-        if self is CellProfilerProcessingContractName.UNKNOWN:
-            raise ValueError("Unknown CellProfiler contracts are not executable.")
-        contract = ProcessingContract.from_declared_name(self.name)
-        if contract is None:
-            raise ValueError(f"Unsupported OpenHCS contract {self.name!r}.")
-        return contract
+UNKNOWN_PROCESSING_CONTRACT_NAME = "unknown"
 
 
 class ProcessingContractResolutionSource(str, Enum):
@@ -67,13 +36,16 @@ def resolve_processing_contract(
     declared_contract: str,
 ) -> ResolvedProcessingContract:
     """Resolve one absorbed module to an executable OpenHCS contract."""
-    registry_contract = CellProfilerProcessingContractName.from_registry_value(
-        declared_contract,
-        module_name=module_name,
-    )
-    if registry_contract is not CellProfilerProcessingContractName.UNKNOWN:
+    normalized_contract = declared_contract.strip().lower()
+    if normalized_contract != UNKNOWN_PROCESSING_CONTRACT_NAME:
+        registry_contract = ProcessingContract.from_declared_name(normalized_contract)
+        if registry_contract is None:
+            raise ValueError(
+                f"Module {module_name} declares unsupported processing contract "
+                f"{declared_contract!r}."
+            )
         return ResolvedProcessingContract(
-            contract=registry_contract.to_openhcs_contract(),
+            contract=registry_contract,
             source=ProcessingContractResolutionSource.REGISTRY,
         )
 
