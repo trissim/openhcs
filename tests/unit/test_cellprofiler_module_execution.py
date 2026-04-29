@@ -26,6 +26,7 @@ from benchmark.cellprofiler_library.functions.colortogray import color_to_gray
 from benchmark.cellprofiler_library.functions.filterobjects import (
     FilterMethod,
     FilterMode,
+    PerObjectAssignment,
     filter_objects,
 )
 from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
@@ -783,3 +784,46 @@ def test_filterobjects_uses_named_measurement_feature_rules() -> None:
     assert stats.objects_post_filter == 1
     assert filtered_primary[1, 1] == 0
     assert filtered_primary[3, 3] == 1
+
+
+def test_filterobjects_keeps_maximal_child_per_enclosing_object() -> None:
+    image = np.zeros((6, 6), dtype=np.float32)
+    children = np.zeros((6, 6), dtype=np.int32)
+    children[0:2, 0:2] = 1
+    children[0:2, 3:5] = 2
+    children[3:5, 0:2] = 3
+    children[3:5, 3:5] = 4
+    parents = np.zeros_like(children)
+    parents[0:2, :] = 1
+    parents[3:5, :] = 2
+
+    result = filter_objects(
+        image,
+        mode=FilterMode.MEASUREMENTS,
+        filter_method=FilterMethod.MAXIMAL_PER_OBJECT,
+        object_labels=(children,),
+        enclosing_object_labels=parents,
+        per_object_assignment=PerObjectAssignment.BOTH_PARENTS,
+        measurement_features=("AreaShape_Area",),
+        measurement_tables=(
+            MeasurementTable(
+                name="ChildMeasurements",
+                rows=[
+                    {"object_label": 1, "AreaShape_Area": 10.0},
+                    {"object_label": 2, "AreaShape_Area": 20.0},
+                    {"object_label": 3, "AreaShape_Area": 40.0},
+                    {"object_label": 4, "AreaShape_Area": 30.0},
+                ],
+            ),
+        ),
+        dtype_config=DtypeConfig(),
+    )
+
+    _output_image, stats, filtered_children = result
+
+    assert stats.objects_pre_filter == 4
+    assert stats.objects_post_filter == 2
+    assert filtered_children[0, 0] == 0
+    assert filtered_children[0, 3] == 1
+    assert filtered_children[3, 0] == 2
+    assert filtered_children[3, 3] == 0

@@ -36,6 +36,11 @@ class FilterMode(Enum):
     BORDER = "border"
 
 
+class PerObjectAssignment(Enum):
+    BOTH_PARENTS = "both_parents"
+    PARENT_WITH_MOST_OVERLAP = "parent_with_most_overlap"
+
+
 @dataclass
 class FilterObjectsStats:
     slice_index: int
@@ -73,6 +78,8 @@ class FilterObjectsSelectionRequest:
     measurement_use_minimum: tuple[bool, ...]
     measurement_use_maximum: tuple[bool, ...]
     measurement_tables: tuple[MeasurementTable, ...]
+    enclosing_labels: np.ndarray | None
+    per_object_assignment: PerObjectAssignment
     min_value: float | None
     max_value: float | None
     use_minimum: bool
@@ -194,7 +201,7 @@ class MaximalFilterSelectionStrategy(ExtremumFilterSelectionStrategy):
 
 
 class PerObjectFilterSelectionStrategy(FilterSelectionStrategy):
-    """Reject per-object filtering until parent-object measurements are modeled."""
+    """Keep one child object per enclosing parent object."""
 
     selection_key: ClassVar[FilterSelectionKey | None] = None
 
@@ -202,13 +209,20 @@ class PerObjectFilterSelectionStrategy(FilterSelectionStrategy):
         self,
         request: FilterObjectsSelectionRequest,
     ) -> list[int]:
-        del request
         selection_key = type(self).selection_key
         if selection_key is None or selection_key.method is None:
             raise TypeError("PerObjectFilterSelectionStrategy must define method.")
-        raise NotImplementedError(
-            f"FilterObjects method {selection_key.method.value!r} requires "
-            "parent-object assignment semantics."
+        values = _first_measurement_values(request)
+        return PerObjectAssignmentStrategy.for_assignment(
+            request.per_object_assignment,
+        ).indexes_to_keep(
+            PerObjectAssignmentRequest(
+                child_labels=request.labels,
+                enclosing_labels=_require_enclosing_labels(request),
+                measurement_values=values,
+                child_count=request.num_objects_pre,
+                keep_max=selection_key.method is FilterMethod.MAXIMAL_PER_OBJECT,
+            )
         )
 
 
@@ -228,6 +242,100 @@ class MaximalPerObjectFilterSelectionStrategy(PerObjectFilterSelectionStrategy):
         FilterMode.MEASUREMENTS,
         FilterMethod.MAXIMAL_PER_OBJECT,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class PerObjectAssignmentRequest:
+    """Inputs for assigning candidate child objects to enclosing parents."""
+
+    child_labels: np.ndarray
+    enclosing_labels: np.ndarray
+    measurement_values: np.ndarray
+    child_count: int
+    keep_max: bool
+
+    def __post_init__(self) -> None:
+        if self.child_labels.shape != self.enclosing_labels.shape:
+            raise ValueError(
+                "FilterObjects per-object child and enclosing labels must have "
+                f"matching shape, got {self.child_labels.shape} and "
+                f"{self.enclosing_labels.shape}."
+            )
+
+
+class PerObjectAssignmentStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal parent-assignment strategy for per-object filtering."""
+
+    __registry_key__ = "assignment"
+    __skip_if_no_key__ = True
+    assignment: ClassVar[PerObjectAssignment | None] = None
+
+    @classmethod
+    def for_assignment(
+        cls,
+        assignment: PerObjectAssignment,
+    ) -> "PerObjectAssignmentStrategy":
+        strategy_type = cls.__registry__.get(assignment)
+        if strategy_type is None:
+            raise ValueError(
+                f"Unsupported FilterObjects per-object assignment "
+                f"{assignment.value!r}."
+            )
+        return strategy_type()
+
+    def indexes_to_keep(self, request: PerObjectAssignmentRequest) -> list[int]:
+        parent_children = self.parent_children(request)
+        return _best_child_indexes_by_parent(
+            parent_children,
+            request.measurement_values,
+            request.keep_max,
+        )
+
+    @abstractmethod
+    def parent_children(
+        self,
+        request: PerObjectAssignmentRequest,
+    ) -> dict[int, set[int]]:
+        """Return child labels eligible for each enclosing parent label."""
+
+
+class BothParentsAssignmentStrategy(PerObjectAssignmentStrategy):
+    """Assign an overlapping child as a candidate for every touched parent."""
+
+    assignment = PerObjectAssignment.BOTH_PARENTS
+
+    def parent_children(
+        self,
+        request: PerObjectAssignmentRequest,
+    ) -> dict[int, set[int]]:
+        parent_children: dict[int, set[int]] = {}
+        for child_id, parent_id in _overlap_label_pairs(request):
+            parent_children.setdefault(parent_id, set()).add(child_id)
+        return parent_children
+
+
+class ParentWithMostOverlapAssignmentStrategy(PerObjectAssignmentStrategy):
+    """Assign each child only to its most-overlapped enclosing parent."""
+
+    assignment = PerObjectAssignment.PARENT_WITH_MOST_OVERLAP
+
+    def parent_children(
+        self,
+        request: PerObjectAssignmentRequest,
+    ) -> dict[int, set[int]]:
+        counts_by_child: dict[int, dict[int, int]] = {}
+        for child_id, parent_id in _overlap_label_pairs(request):
+            parent_counts = counts_by_child.setdefault(child_id, {})
+            parent_counts[parent_id] = parent_counts.get(parent_id, 0) + 1
+
+        parent_children: dict[int, set[int]] = {}
+        for child_id, parent_counts in counts_by_child.items():
+            parent_id = min(
+                parent_counts,
+                key=lambda candidate: (-parent_counts[candidate], candidate),
+            )
+            parent_children.setdefault(parent_id, set()).add(child_id)
+        return parent_children
 
 
 @numpy(contract=ProcessingContract.FLEXIBLE)
@@ -250,6 +358,8 @@ def filter_objects(
     measurement_use_minimum: tuple[bool, ...] = (),
     measurement_use_maximum: tuple[bool, ...] = (),
     measurement_tables: tuple[MeasurementTable, ...] = (),
+    enclosing_object_labels: Optional[np.ndarray] = None,
+    per_object_assignment: PerObjectAssignment = PerObjectAssignment.BOTH_PARENTS,
     min_value: Optional[float] = None,
     max_value: Optional[float] = None,
     use_minimum: bool = True,
@@ -326,6 +436,12 @@ def filter_objects(
             measurement_use_minimum=measurement_use_minimum,
             measurement_use_maximum=measurement_use_maximum,
             measurement_tables=measurement_tables,
+            enclosing_labels=(
+                None
+                if enclosing_object_labels is None
+                else _label_plane(enclosing_object_labels).astype(np.int32)
+            ),
+            per_object_assignment=per_object_assignment,
             min_value=min_value,
             max_value=max_value,
             use_minimum=use_minimum,
@@ -450,6 +566,69 @@ def _keep_one(values: np.ndarray, keep_max: bool = True) -> list[int]:
         best_idx = np.argmin(values) + 1
     
     return [int(best_idx)]
+
+
+def _require_enclosing_labels(
+    request: FilterObjectsSelectionRequest,
+) -> np.ndarray:
+    if request.enclosing_labels is not None:
+        return request.enclosing_labels
+    raise ValueError(
+        "FilterObjects per-object filtering requires enclosing object labels."
+    )
+
+
+def _overlap_label_pairs(
+    request: PerObjectAssignmentRequest,
+) -> tuple[tuple[int, int], ...]:
+    overlap_mask = (request.child_labels > 0) & (request.enclosing_labels > 0)
+    child_ids = request.child_labels[overlap_mask].astype(np.int64, copy=False)
+    parent_ids = request.enclosing_labels[overlap_mask].astype(np.int64, copy=False)
+    return tuple(
+        (int(child_id), int(parent_id))
+        for child_id, parent_id in zip(child_ids, parent_ids, strict=True)
+    )
+
+
+def _best_child_indexes_by_parent(
+    parent_children: dict[int, set[int]],
+    measurement_values: np.ndarray,
+    keep_max: bool,
+) -> list[int]:
+    selected: set[int] = set()
+    for child_ids in parent_children.values():
+        child_values = tuple(
+            (child_id, _measurement_value_for_child(measurement_values, child_id))
+            for child_id in child_ids
+        )
+        finite_child_values = tuple(
+            (child_id, value)
+            for child_id, value in child_values
+            if np.isfinite(value)
+        )
+        if not finite_child_values:
+            continue
+        selected.add(
+            min(
+                finite_child_values,
+                key=(
+                    (lambda item: (-item[1], item[0]))
+                    if keep_max
+                    else (lambda item: (item[1], item[0]))
+                ),
+            )[0]
+        )
+    return sorted(selected)
+
+
+def _measurement_value_for_child(
+    measurement_values: np.ndarray,
+    child_id: int,
+) -> float:
+    value_index = child_id - 1
+    if value_index < 0 or value_index >= len(measurement_values):
+        return float("nan")
+    return float(measurement_values[value_index])
 
 
 def _keep_matching_measurement_rules(

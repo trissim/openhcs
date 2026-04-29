@@ -313,6 +313,49 @@ def test_cellprofiler_symbol_table_compiles_filterobjects_outline_outputs():
     ]
 
 
+def test_cellprofiler_symbol_table_compiles_filterobjects_enclosing_input():
+    modules = [
+        _module(
+            1,
+            "IdentifyPrimaryObjects",
+            {
+                "Select the input image": "OrigBlue",
+                "Name the primary objects to be identified": "Cells",
+            },
+        ),
+        _module(
+            2,
+            "IdentifyPrimaryObjects",
+            {
+                "Select the input image": "OrigBlue",
+                "Name the primary objects to be identified": "Tiles",
+            },
+        ),
+        _module(
+            3,
+            "FilterObjects",
+            {
+                "Select the objects to filter": "Cells",
+                "Name the output objects": "OneCellPerTile",
+                "Select the filtering mode": "Measurements",
+                "Select the filtering method": "Maximal per object",
+                "Select the objects that contain the filtered objects": "Tiles",
+                "Assign overlapping child to": "Both parents",
+                "Select the measurement to filter by": "AreaShape_Area",
+            },
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[3]
+
+    assert [spec.name for spec in contract.runtime_artifact_inputs] == [
+        "Cells",
+        "Tiles",
+    ]
+    assert [spec.name for spec in contract.inputs] == ["Cells", "Tiles"]
+
+
 def test_cellprofiler_symbol_table_fails_for_kind_conflict():
     modules = [
         _identify_primary(),

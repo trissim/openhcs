@@ -510,12 +510,14 @@ class CellProfilerModuleExecutor:
             ArtifactKind.OBJECT_LABELS,
         )
         return CellProfilerObjectInputPolicy.for_module(self.module_name).bind(
-            self.module_name,
-            object_inputs,
-            adapter,
-            kwargs=kwargs,
-            fallback_image=fallback_image,
-            external_object_names=frozenset(self._external_source_object_names()),
+            CellProfilerObjectInputBindingRequest(
+                module_name=self.module_name,
+                object_inputs=object_inputs,
+                adapter=adapter,
+                kwargs=kwargs,
+                fallback_image=fallback_image,
+                external_object_names=frozenset(self._external_source_object_names()),
+            )
         )
 
     def _special_runtime_inputs(
@@ -1136,6 +1138,73 @@ class RelationshipsArtifactKindStrategy(CellProfilerArtifactKindStrategy):
         return None
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CellProfilerInputBindingRequestBase(ABC):
+    """Shared runtime context for CellProfiler runtime-input binding."""
+
+    module_name: str
+    adapter: CellProfilerRuntimeAdapter
+    kwargs: Mapping[str, Any]
+    fallback_image: Any
+    external_object_names: frozenset[str]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "kwargs", MappingProxyType(dict(self.kwargs)))
+        object.__setattr__(
+            self,
+            "external_object_names",
+            frozenset(self.external_object_names),
+        )
+
+    def labels_for(self, spec: ArtifactSpec) -> Any:
+        return _object_input_labels(
+            spec,
+            self.adapter,
+            fallback_image=self.fallback_image,
+            external_object_names=self.external_object_names,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CellProfilerObjectInputBindingRequest(CellProfilerInputBindingRequestBase):
+    """Authoritative runtime context for binding CellProfiler object-label inputs."""
+
+    object_inputs: tuple[ArtifactSpec, ...]
+
+    def __post_init__(self) -> None:
+        CellProfilerInputBindingRequestBase.__post_init__(self)
+        object.__setattr__(self, "object_inputs", tuple(self.object_inputs))
+
+    def with_object_inputs(
+        self,
+        object_inputs: tuple[ArtifactSpec, ...],
+    ) -> "CellProfilerObjectInputBindingRequest":
+        return type(self)(
+            module_name=self.module_name,
+            object_inputs=object_inputs,
+            adapter=self.adapter,
+            kwargs=self.kwargs,
+            fallback_image=self.fallback_image,
+            external_object_names=self.external_object_names,
+        )
+
+    def require_exact_object_count(self, expected_count: int) -> None:
+        _require_exact_object_count(
+            self.module_name,
+            self.object_inputs,
+            expected_count,
+        )
+
+    def labels_for_inputs(self) -> tuple[Any, ...]:
+        return tuple(self.labels_for(spec) for spec in self.object_inputs)
+
+    def measurement_tables_for_primary_object(self) -> tuple[Any, ...]:
+        primary_object = self.object_inputs[0] if self.object_inputs else None
+        if primary_object is None:
+            return ()
+        return self.adapter.measurement_tables_for_object(primary_object.name)
+
+
 class CellProfilerObjectInputPolicy(ABC, metaclass=AutoRegisterMeta):
     """Nominal binding policy for CellProfiler object-label inputs."""
 
@@ -1154,13 +1223,7 @@ class CellProfilerObjectInputPolicy(ABC, metaclass=AutoRegisterMeta):
     @abstractmethod
     def bind(
         self,
-        module_name: str,
-        object_inputs: tuple[ArtifactSpec, ...],
-        adapter: CellProfilerRuntimeAdapter,
-        *,
-        kwargs: Mapping[str, Any],
-        fallback_image: Any,
-        external_object_names: frozenset[str],
+        request: CellProfilerObjectInputBindingRequest,
     ) -> dict[str, Any]:
         """Return absorbed-function kwargs for object-label runtime inputs."""
 
@@ -1170,21 +1233,14 @@ class UnsupportedObjectInputPolicy(CellProfilerObjectInputPolicy):
 
     def bind(
         self,
-        module_name: str,
-        object_inputs: tuple[ArtifactSpec, ...],
-        adapter: CellProfilerRuntimeAdapter,
-        *,
-        kwargs: Mapping[str, Any],
-        fallback_image: Any,
-        external_object_names: frozenset[str],
+        request: CellProfilerObjectInputBindingRequest,
     ) -> dict[str, Any]:
-        del kwargs, fallback_image, external_object_names
-        if not object_inputs:
+        if not request.object_inputs:
             return {}
         raise NotImplementedError(
-            f"{module_name} has object runtime inputs "
-            f"{[spec.name for spec in object_inputs]}, but no nominal input binding "
-            "policy has been declared for this CellProfiler module."
+            f"{request.module_name} has object runtime inputs "
+            f"{[spec.name for spec in request.object_inputs]}, but no nominal input "
+            "binding policy has been declared for this CellProfiler module."
         )
 
 
@@ -1195,23 +1251,11 @@ class SingleObjectLabelInputPolicy(CellProfilerObjectInputPolicy):
 
     def bind(
         self,
-        module_name: str,
-        object_inputs: tuple[ArtifactSpec, ...],
-        adapter: CellProfilerRuntimeAdapter,
-        *,
-        kwargs: Mapping[str, Any],
-        fallback_image: Any,
-        external_object_names: frozenset[str],
+        request: CellProfilerObjectInputBindingRequest,
     ) -> dict[str, Any]:
-        del kwargs
-        _require_exact_object_count(module_name, object_inputs, 1)
+        request.require_exact_object_count(1)
         return {
-            self.label_kwarg: _object_input_labels(
-                object_inputs[0],
-                adapter,
-                fallback_image=fallback_image,
-                external_object_names=external_object_names,
-            )
+            self.label_kwarg: request.labels_for(request.object_inputs[0])
         }
 
 
@@ -1230,30 +1274,13 @@ class IdentifyTertiaryObjectInputPolicy(CellProfilerObjectInputPolicy):
 
     def bind(
         self,
-        module_name: str,
-        object_inputs: tuple[ArtifactSpec, ...],
-        adapter: CellProfilerRuntimeAdapter,
-        *,
-        kwargs: Mapping[str, Any],
-        fallback_image: Any,
-        external_object_names: frozenset[str],
+        request: CellProfilerObjectInputBindingRequest,
     ) -> dict[str, Any]:
-        del kwargs
-        _require_exact_object_count(module_name, object_inputs, 2)
-        larger, smaller = object_inputs
+        request.require_exact_object_count(2)
+        larger, smaller = request.object_inputs
         return {
-            "primary_labels": _object_input_labels(
-                smaller,
-                adapter,
-                fallback_image=fallback_image,
-                external_object_names=external_object_names,
-            ),
-            "secondary_labels": _object_input_labels(
-                larger,
-                adapter,
-                fallback_image=fallback_image,
-                external_object_names=external_object_names,
-            ),
+            "primary_labels": request.labels_for(smaller),
+            "secondary_labels": request.labels_for(larger),
         }
 
 
@@ -1306,26 +1333,9 @@ class OverlayOutlinesInputPolicy(CellProfilerObjectInputPolicy):
 
     def bind(
         self,
-        module_name: str,
-        object_inputs: tuple[ArtifactSpec, ...],
-        adapter: CellProfilerRuntimeAdapter,
-        *,
-        kwargs: Mapping[str, Any],
-        fallback_image: Any,
-        external_object_names: frozenset[str],
+        request: CellProfilerObjectInputBindingRequest,
     ) -> dict[str, Any]:
-        del module_name, kwargs
-        return {
-            "object_labels": tuple(
-                _object_input_labels(
-                    spec,
-                    adapter,
-                    fallback_image=fallback_image,
-                    external_object_names=external_object_names,
-                )
-                for spec in object_inputs
-            )
-        }
+        return {"object_labels": request.labels_for_inputs()}
 
 
 class ObjectRowsInputPolicy(CellProfilerObjectInputPolicy):
@@ -1333,26 +1343,9 @@ class ObjectRowsInputPolicy(CellProfilerObjectInputPolicy):
 
     def bind(
         self,
-        module_name: str,
-        object_inputs: tuple[ArtifactSpec, ...],
-        adapter: CellProfilerRuntimeAdapter,
-        *,
-        kwargs: Mapping[str, Any],
-        fallback_image: Any,
-        external_object_names: frozenset[str],
+        request: CellProfilerObjectInputBindingRequest,
     ) -> dict[str, Any]:
-        del module_name, kwargs
-        return {
-            "object_labels": tuple(
-                _object_input_labels(
-                    spec,
-                    adapter,
-                    fallback_image=fallback_image,
-                    external_object_names=external_object_names,
-                )
-                for spec in object_inputs
-            ),
-        }
+        return {"object_labels": request.labels_for_inputs()}
 
 
 class ObjectRowsWithMeasurementsInputPolicy(ObjectRowsInputPolicy):
@@ -1360,29 +1353,38 @@ class ObjectRowsWithMeasurementsInputPolicy(ObjectRowsInputPolicy):
 
     def bind(
         self,
-        module_name: str,
-        object_inputs: tuple[ArtifactSpec, ...],
-        adapter: CellProfilerRuntimeAdapter,
-        *,
-        kwargs: Mapping[str, Any],
-        fallback_image: Any,
-        external_object_names: frozenset[str],
+        request: CellProfilerObjectInputBindingRequest,
     ) -> dict[str, Any]:
-        bound = super().bind(
-            module_name,
-            object_inputs,
-            adapter,
-            kwargs=kwargs,
-            fallback_image=fallback_image,
-            external_object_names=external_object_names,
-        )
-        primary_object = object_inputs[0] if object_inputs else None
-        bound["measurement_tables"] = (
-            adapter.measurement_tables_for_object(primary_object.name)
-            if primary_object is not None
-            else ()
-        )
+        bound = super().bind(request)
+        bound["measurement_tables"] = request.measurement_tables_for_primary_object()
         return bound
+
+
+@dataclass(frozen=True, slots=True)
+class FilterObjectsRuntimeInputPlan:
+    """Runtime object-label partition for one FilterObjects invocation."""
+
+    object_specs: tuple[ArtifactSpec, ...]
+    enclosing_spec: ArtifactSpec | None
+
+    @classmethod
+    def from_inputs(
+        cls,
+        object_inputs: tuple[ArtifactSpec, ...],
+        kwargs: Mapping[str, Any],
+    ) -> "FilterObjectsRuntimeInputPlan":
+        object_count = int(kwargs.get("additional_object_count", 0)) + 1
+        enclosing_name = kwargs.get("enclosing_object_name")
+        object_specs = object_inputs[:object_count]
+        enclosing_spec = None
+        if enclosing_name is not None:
+            enclosing_spec = _spec_by_name(object_inputs, str(enclosing_name))
+            if enclosing_spec is None:
+                raise RuntimeError(
+                    "FilterObjects enclosing object input "
+                    f"{enclosing_name!r} was not declared in the runtime contract."
+                )
+        return cls(object_specs=object_specs, enclosing_spec=enclosing_spec)
 
 
 class MeasureImageAreaOccupiedInputPolicy(ObjectRowsInputPolicy):
@@ -1396,6 +1398,19 @@ class FilterObjectsInputPolicy(ObjectRowsWithMeasurementsInputPolicy):
 
     module_name = "FilterObjects"
 
+    def bind(
+        self,
+        request: CellProfilerObjectInputBindingRequest,
+    ) -> dict[str, Any]:
+        plan = FilterObjectsRuntimeInputPlan.from_inputs(
+            request.object_inputs,
+            request.kwargs,
+        )
+        bound = super().bind(request.with_object_inputs(plan.object_specs))
+        if plan.enclosing_spec is not None:
+            bound["enclosing_object_labels"] = request.labels_for(plan.enclosing_spec)
+        return bound
+
 
 class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
     """Bind CalculateMath operands from runtime measurement/object state."""
@@ -1404,25 +1419,18 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
 
     def bind(
         self,
-        module_name: str,
-        object_inputs: tuple[ArtifactSpec, ...],
-        adapter: CellProfilerRuntimeAdapter,
-        *,
-        kwargs: Mapping[str, Any],
-        fallback_image: Any,
-        external_object_names: frozenset[str],
+        request: CellProfilerObjectInputBindingRequest,
     ) -> dict[str, Any]:
-        del module_name, object_inputs, fallback_image, external_object_names
         return {
             "operand1_value": _calculate_math_operand_value(
-                adapter,
-                kwargs,
+                request.adapter,
+                request.kwargs,
                 feature_kwarg="operand1_feature",
                 object_kwarg="operand1_object_name",
             ),
             "operand2_value": _calculate_math_operand_value(
-                adapter,
-                kwargs,
+                request.adapter,
+                request.kwargs,
                 feature_kwarg="operand2_feature",
                 object_kwarg="operand2_object_name",
             ),
@@ -1820,6 +1828,16 @@ def _specs_of_kind(
     return tuple(spec for spec in specs if spec.kind is kind)
 
 
+def _spec_by_name(
+    specs: Sequence[ArtifactSpec],
+    name: str,
+) -> ArtifactSpec | None:
+    for spec in specs:
+        if spec.name == name:
+            return spec
+    return None
+
+
 def _unique_specs(specs: Sequence[ArtifactSpec]) -> tuple[ArtifactSpec, ...]:
     unique: dict[tuple[str, ArtifactKind], ArtifactSpec] = {}
     for spec in specs:
@@ -1942,32 +1960,22 @@ def _slice_aligned_measurement_values(
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class CellProfilerSpecialInputBindingRequest:
+class CellProfilerSpecialInputBindingRequest(CellProfilerInputBindingRequestBase):
     """Authoritative runtime context for binding CellProfiler special_inputs."""
 
-    module_name: str
     parameter_names: tuple[str, ...]
     runtime_inputs: tuple[ArtifactSpec, ...]
-    adapter: CellProfilerRuntimeAdapter
-    kwargs: Mapping[str, Any]
-    fallback_image: Any
     external_image_names: frozenset[str]
-    external_object_names: frozenset[str]
     runtime_image_names: frozenset[str]
 
     def __post_init__(self) -> None:
+        CellProfilerInputBindingRequestBase.__post_init__(self)
         object.__setattr__(self, "parameter_names", tuple(self.parameter_names))
         object.__setattr__(self, "runtime_inputs", tuple(self.runtime_inputs))
-        object.__setattr__(self, "kwargs", MappingProxyType(dict(self.kwargs)))
         object.__setattr__(
             self,
             "external_image_names",
             frozenset(self.external_image_names),
-        )
-        object.__setattr__(
-            self,
-            "external_object_names",
-            frozenset(self.external_object_names),
         )
         object.__setattr__(
             self,
@@ -2047,12 +2055,7 @@ class DisplayDataOnImageSpecialInputPolicy(CellProfilerSpecialInputPolicy):
         object_inputs = request.object_inputs
         _require_exact_object_count(request.module_name, object_inputs, 1)
         object_spec = object_inputs[0]
-        labels = _object_input_labels(
-            object_spec,
-            request.adapter,
-            fallback_image=request.fallback_image,
-            external_object_names=request.external_object_names,
-        )
+        labels = request.labels_for(object_spec)
         feature_name = _required_string_kwarg(
             request.kwargs,
             "measurement_feature",
@@ -2096,12 +2099,7 @@ class ClassifyObjectsMeasurementInputPolicy(CellProfilerSpecialInputPolicy):
         object_inputs = request.object_inputs
         _require_exact_object_count(request.module_name, object_inputs, 1)
         object_spec = object_inputs[0]
-        labels = _object_input_labels(
-            object_spec,
-            request.adapter,
-            fallback_image=request.fallback_image,
-            external_object_names=request.external_object_names,
-        )
+        labels = request.labels_for(object_spec)
         return {
             "labels": labels,
             **{

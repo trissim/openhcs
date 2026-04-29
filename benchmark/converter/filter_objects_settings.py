@@ -42,6 +42,10 @@ FILTER_OBJECTS_OUTLINE_IMAGE_SETTING = "Name the outline image"
 FILTER_OBJECTS_ADDITIONAL_INPUT_SETTING = "Select additional object to relabel"
 FILTER_OBJECTS_ADDITIONAL_OUTPUT_SETTING = "Name the relabeled objects"
 FILTER_OBJECTS_ADDITIONAL_OUTLINE_SETTING = "Save outlines of relabeled objects?"
+FILTER_OBJECTS_ENCLOSING_OBJECT_SETTING = (
+    "Select the objects that contain the filtered objects"
+)
+FILTER_OBJECTS_PER_OBJECT_ASSIGNMENT_SETTING = "Assign overlapping child to"
 
 
 class FilterObjectsOutputRole(str, Enum):
@@ -180,13 +184,21 @@ class FilterObjectsPlan(FilterObjectsObjectPair):
     retain_outline: bool
     outline_image_name: str | None
     additional_rows: tuple[FilterObjectsAdditionalObjectRow, ...]
+    enclosing_object_name: str | None
+    per_object_assignment: str
 
     @property
     def input_object_names(self) -> tuple[str, ...]:
-        return (
+        ordered_names = (
             self.input_object_name,
             *(row.input_object_name for row in self.additional_rows),
+            *(
+                ()
+                if self.enclosing_object_name is None
+                else (self.enclosing_object_name,)
+            ),
         )
+        return tuple(dict.fromkeys(ordered_names))
 
     @property
     def outputs(self) -> tuple[FilterObjectsOutput, ...]:
@@ -260,6 +272,14 @@ def filter_objects_plan(module: ModuleBlock) -> FilterObjectsPlan:
         ),
         outline_image_name=_main_outline_image_name(module),
         additional_rows=filter_objects_additional_rows(module),
+        enclosing_object_name=_optional_symbol_value(
+            optional_setting_value(module, FILTER_OBJECTS_ENCLOSING_OBJECT_SETTING)
+            or ""
+        ),
+        per_object_assignment=(
+            optional_setting_value(module, FILTER_OBJECTS_PER_OBJECT_ASSIGNMENT_SETTING)
+            or "Both parents"
+        ),
     )
     _require_symbol_value(
         plan.input_object_name,
@@ -317,6 +337,8 @@ def filter_objects_bound_kwargs(module: ModuleBlock) -> dict[str, Any]:
         ),
         "additional_object_count": len(plan.additional_rows),
         "outline_object_indices": plan.outline_object_indices,
+        "enclosing_object_name": plan.enclosing_object_name,
+        "per_object_assignment": plan.per_object_assignment,
     }
 
 

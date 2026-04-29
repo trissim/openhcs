@@ -1112,6 +1112,32 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
             (".jpg", ".png"),
             id="yeast-colonies",
         ),
+        pytest.param(
+            "ExampleImagingFlowCytometryObjectsInGrid",
+            "ExampleImagingFlowCytometryObjectsInGrid",
+            (
+                ("BF_cells_on_grid", ArtifactKind.OBJECT_LABELS),
+                (
+                    "Non_empty_tile_FilteredBF_relationships",
+                    ArtifactKind.RELATIONSHIPS,
+                ),
+                ("MeasureGranularity_24_measurements", ArtifactKind.MEASUREMENTS),
+                ("MeasureTexture_25_measurements", ArtifactKind.MEASUREMENTS),
+                (
+                    "MeasureObjectIntensityDistribution_30_measurements",
+                    ArtifactKind.MEASUREMENTS,
+                ),
+            ),
+            (
+                "relationships",
+                "FilterObjects_19",
+                "MeasureGranularity",
+                "MeasureTexture",
+                "MeasureObjectIntensityDistribution",
+            ),
+            (".tif",),
+            id="imaging-flow-cytometry-grid",
+        ),
     ),
 )
 def test_official_cellprofiler3_additional_representative_pipelines_execute(
