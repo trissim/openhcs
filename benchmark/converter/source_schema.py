@@ -11,7 +11,6 @@ from typing import Any, ClassVar, Mapping
 
 from metaclass_registry import AutoRegisterMeta
 
-from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.pipeline_image_schema import (
     GroupingPlan,
@@ -39,6 +38,7 @@ from openhcs.core.source_bindings import (
     SourceBindingOrigin,
     SourceSelector,
 )
+from openhcs.core.source_matching import source_metadata_component
 
 from .parser import ModuleBlock, ModuleSetting
 from .setting_names import (
@@ -759,7 +759,7 @@ def _selector_from_rule_criteria(rule_criteria: str) -> SourceSelector:
     for match in _METADATA_MATCH_PATTERN.finditer(rule_criteria):
         field = match.group("field")
         value = match.group("value")
-        component = _component_for_metadata_field(field)
+        component = source_metadata_component(field)
         if component is not None:
             component_selectors.append(ComponentSelector(component, value))
         else:
@@ -769,16 +769,6 @@ def _selector_from_rule_criteria(rule_criteria: str) -> SourceSelector:
         metadata=tuple(metadata_selectors),
         filters=_filter_clauses_from_criteria(rule_criteria),
     )
-
-
-def _component_for_metadata_field(field: str) -> AllComponents | None:
-    normalized = field.strip().lower()
-    for component in AllComponents:
-        if component.value == normalized:
-            return component
-    if normalized == "channelnumber":
-        return AllComponents.CHANNEL
-    return None
 
 
 def _origin_for_selector(selector: SourceSelector) -> SourceBindingOrigin:

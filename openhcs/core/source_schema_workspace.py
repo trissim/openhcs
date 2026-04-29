@@ -28,8 +28,8 @@ from openhcs.core.source_matching import (
     is_image_path,
     merge_source_metadata,
     metadata_from_rules,
-    normalize_source_metadata_key,
     source_filters_match,
+    source_metadata_component,
     source_metadata_value,
 )
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
@@ -757,18 +757,10 @@ def _image_set_match_value(
     value = source_metadata_value(metadata, field)
     if value is not None:
         return value
-    component = _component_for_match_field(field)
+    component = source_metadata_component(field)
     if component is None:
         return None
     return ComponentProjection.resolve_from_metadata(component, metadata)
-
-
-def _component_for_match_field(field: str) -> AllComponents | None:
-    normalized = normalize_source_metadata_key(field)
-    for component in AllComponents:
-        if normalize_source_metadata_key(component.value) == normalized:
-            return component
-    return None
 
 
 def _first_metadata_value(

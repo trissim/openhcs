@@ -1,11 +1,15 @@
 import pytest
 
+from openhcs.constants.constants import AllComponents
 from openhcs.core.source_bindings import (
     SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
 )
-from openhcs.core.source_matching import source_filters_match
+from openhcs.core.source_matching import (
+    source_filters_match,
+    source_metadata_component,
+)
 
 
 @pytest.mark.parametrize(
@@ -51,3 +55,18 @@ def test_file_source_filters_match_exact_file_names(
         )
         is expected
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "component"),
+    (
+        ("well", AllComponents.WELL),
+        ("Metadata_Site", AllComponents.SITE),
+        ("ChannelNumber", AllComponents.CHANNEL),
+    ),
+)
+def test_source_metadata_component_matches_semantic_component_names(
+    field: str,
+    component: AllComponents,
+):
+    assert source_metadata_component(field) is component

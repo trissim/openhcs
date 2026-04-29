@@ -10,7 +10,7 @@ from typing import Any, Callable, ClassVar, Mapping
 
 from metaclass_registry import AutoRegisterMeta
 
-from openhcs.constants.constants import LOADABLE_IMAGE_EXTENSIONS
+from openhcs.constants.constants import AllComponents, LOADABLE_IMAGE_EXTENSIONS
 from openhcs.core.source_bindings import (
     MetadataExtractionRule,
     MetadataSource,
@@ -352,6 +352,21 @@ def normalize_source_metadata_key(key: str) -> str:
     """Normalize metadata keys across parser, regex, and setup-module spellings."""
 
     return "".join(character for character in key.lower() if character.isalnum())
+
+
+def source_metadata_component(field: str) -> AllComponents | None:
+    """Return the OpenHCS component identified by a metadata field name."""
+
+    normalized = normalize_source_metadata_key(field)
+    candidate_keys = (normalized,)
+    if normalized.startswith("metadata"):
+        candidate_keys = (*candidate_keys, normalized.removeprefix("metadata"))
+    for component in AllComponents:
+        if normalize_source_metadata_key(component.value) in candidate_keys:
+            return component
+    if "channelnumber" in candidate_keys:
+        return AllComponents.CHANNEL
+    return None
 
 
 def _require_filter_value(clause: SourceFilterClause) -> str:
