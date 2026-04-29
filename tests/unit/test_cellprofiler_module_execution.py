@@ -13,6 +13,7 @@ from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleCont
 from benchmark.cellprofiler_compat.module_execution import (
     CellProfilerFunctionContractMetadata,
     CellProfilerFunctionContractExecutor,
+    CellProfilerMeasurementImageDomain,
     CellProfilerModuleExecutor,
     _coerce_invocation_kwargs,
     _measurement_image_for_labels,
@@ -256,6 +257,90 @@ def test_cellprofiler_contract_executor_broadcasts_2d_image_to_stacked_kwargs():
     assert calls == [((4, 5), (4, 5)), ((4, 5), (4, 5))]
     assert result.shape == labels.shape
     np.testing.assert_array_equal(result, labels + 1)
+
+
+def test_cellprofiler_contract_executor_slices_plane_sequence_kwargs():
+    calls = []
+
+    def keep_labels(image: np.ndarray, *, labels: np.ndarray):
+        calls.append((image.shape, labels.shape, int(labels[0, 0])))
+        return labels
+
+    keep_labels.__processing_contract__ = ProcessingContract.PURE_2D
+    image = np.zeros((4, 5), dtype=np.uint16)
+    labels = (
+        np.full((4, 5), 1, dtype=np.int32),
+        np.full((4, 5), 2, dtype=np.int32),
+    )
+
+    result = CellProfilerFunctionContractExecutor().execute(
+        keep_labels,
+        image,
+        {"labels": labels},
+    )
+
+    assert calls == [((4, 5), (4, 5), 1), ((4, 5), (4, 5), 2)]
+    assert result.shape == (2, 4, 5)
+    np.testing.assert_array_equal(result, np.asarray(labels))
+
+
+def test_cellprofiler_contract_executor_slices_array_convertible_kwargs():
+    class ArrayConvertible:
+        def __init__(self, data: np.ndarray) -> None:
+            self.shape = data.shape
+            self._data = data
+
+        def __array__(self) -> np.ndarray:
+            return self._data
+
+    calls = []
+
+    def keep_labels(image: np.ndarray, *, labels: np.ndarray):
+        calls.append((image.shape, labels.shape, int(labels[0, 0])))
+        return labels
+
+    keep_labels.__processing_contract__ = ProcessingContract.PURE_2D
+    image = np.zeros((4, 5), dtype=np.uint16)
+    labels = np.stack(
+        (
+            np.full((4, 5), 1, dtype=np.int32),
+            np.full((4, 5), 2, dtype=np.int32),
+        )
+    )
+
+    result = CellProfilerFunctionContractExecutor().execute(
+        keep_labels,
+        image,
+        {"labels": ArrayConvertible(labels)},
+    )
+
+    assert calls == [((4, 5), (4, 5), 1), ((4, 5), (4, 5), 2)]
+    assert result.shape == labels.shape
+    np.testing.assert_array_equal(result, labels)
+
+
+def test_cellprofiler_contract_executor_slices_nested_sequence_kwargs():
+    calls = []
+
+    def keep_labels(image: np.ndarray, *, labels: np.ndarray):
+        calls.append((image.shape, labels.shape, int(labels[0, 0])))
+        return labels
+
+    keep_labels.__processing_contract__ = ProcessingContract.PURE_2D
+    image = np.zeros((2, 2), dtype=np.uint16)
+    labels = [
+        [[1, 1], [1, 1]],
+        [[2, 2], [2, 2]],
+    ]
+
+    result = CellProfilerFunctionContractExecutor().execute(
+        keep_labels,
+        image,
+        {"labels": labels},
+    )
+
+    assert calls == [((2, 2), (2, 2), 1), ((2, 2), (2, 2), 2)]
+    np.testing.assert_array_equal(result, np.asarray(labels))
 
 
 def test_cellprofiler_contract_executor_preserves_multi_image_stack_payload():
@@ -566,6 +651,30 @@ def test_measurement_image_for_labels_reduces_stack_to_reference_slice() -> None
 
     assert measurement_image.shape == labels.shape
     np.testing.assert_array_equal(measurement_image, image[0])
+
+
+def test_measurement_image_for_labels_uses_object_domain_reference_shape() -> None:
+    image = np.ones((10, 12), dtype=np.float32)
+    labels = np.ones((4, 5), dtype=np.int32)
+
+    measurement_image = _measurement_image_for_labels(
+        image,
+        labels,
+        reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
+    )
+
+    assert measurement_image.shape == labels.shape
+    assert measurement_image.dtype == image.dtype
+    np.testing.assert_array_equal(measurement_image, np.zeros_like(labels, dtype=image.dtype))
+
+
+def test_measurement_image_for_labels_keeps_source_domain_shape_mismatch() -> None:
+    image = np.ones((10, 12), dtype=np.float32)
+    labels = np.ones((4, 5), dtype=np.int32)
+
+    measurement_image = _measurement_image_for_labels(image, labels)
+
+    assert measurement_image is image
 
 
 def test_measurement_labels_collapse_singleton_label_stack() -> None:

@@ -799,26 +799,95 @@ def _parse_source_candidates(
     candidates: list[ParsedSourceCandidate] = []
     for file_path in file_paths:
         resolved_path = _resolved_source_path(file_path, adapter)
-        filename = Path(resolved_path).name
-        metadata = dict(parser.parse_filename(filename) or {})
-        extracted_metadata = metadata_from_rules(
+        metadata = _candidate_metadata(
+            file_path,
             resolved_path,
-            adapter.source_binding_plan.metadata_rules,
-        )
-        merge_source_metadata(
-            metadata,
-            extracted_metadata,
-            path=resolved_path,
+            adapter,
+            parser,
         )
         candidates.append(
             ParsedSourceCandidate(
                 path=str(file_path),
                 resolved_path=str(resolved_path),
-                filename=filename,
+                filename=Path(resolved_path).name,
                 metadata=MappingProxyType(dict(metadata)),
             )
         )
     return tuple(candidates)
+
+
+def _candidate_metadata(
+    file_path: str,
+    resolved_path: str,
+    adapter: CellProfilerRuntimeAdapter,
+    parser: Any,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    context = adapter.source_binding_context
+    _merge_candidate_path_metadata(
+        metadata,
+        resolved_path,
+        adapter,
+        parser,
+        strict=True,
+    )
+    if Path(file_path) != Path(resolved_path):
+        _merge_candidate_path_metadata(
+            metadata,
+            file_path,
+            adapter,
+            parser,
+            strict=_step_input_source_path(file_path, context) is None,
+        )
+    virtual_path = _virtual_workspace_path_for_source(resolved_path, context)
+    if virtual_path is not None and virtual_path not in {file_path, resolved_path}:
+        _merge_candidate_path_metadata(
+            metadata,
+            virtual_path,
+            adapter,
+            parser,
+            strict=False,
+        )
+    return metadata
+
+
+def _merge_candidate_path_metadata(
+    metadata: dict[str, Any],
+    metadata_path: str,
+    adapter: CellProfilerRuntimeAdapter,
+    parser: Any,
+    *,
+    strict: bool,
+) -> None:
+    parsed_metadata = parser.parse_filename(Path(metadata_path).name) or {}
+    extracted_metadata = metadata_from_rules(
+        metadata_path,
+        adapter.source_binding_plan.metadata_rules,
+    )
+    if strict:
+        merge_source_metadata(metadata, parsed_metadata, path=metadata_path)
+        merge_source_metadata(metadata, extracted_metadata, path=metadata_path)
+        return
+    _merge_missing_source_metadata(metadata, parsed_metadata)
+    _merge_missing_source_metadata(metadata, extracted_metadata)
+
+
+def _merge_missing_source_metadata(
+    metadata: dict[str, Any],
+    additions: Mapping[str, Any],
+) -> None:
+    for key, value in additions.items():
+        metadata.setdefault(key, str(value))
+
+
+def _virtual_workspace_path_for_source(
+    resolved_path: str,
+    context: SourceBindingRuntimeContext,
+) -> str | None:
+    for virtual_path, source_path in context.step_input_source_paths.items():
+        if Path(source_path) == Path(resolved_path):
+            return virtual_path
+    return None
 
 
 def _match_candidates(
@@ -1129,7 +1198,11 @@ class OrderSourceBindingMatchPlanResolver(SourceBindingMatchPlanResolver):
     ) -> tuple[ParsedSourceCandidate, ...]:
         current_index = _order_match_index(request)
         if current_index is None:
-            return request.target_candidates
+            scoped_candidates = _target_candidates_in_current_scope(
+                request.step_input_candidates,
+                request.target_candidates,
+            )
+            return scoped_candidates or request.target_candidates
         ordered_target_candidates = _ordered_source_candidates(request.target_candidates)
         if current_index >= len(ordered_target_candidates):
             return ()
@@ -1167,6 +1240,20 @@ def _ordered_source_candidates(
     candidates: tuple[ParsedSourceCandidate, ...],
 ) -> tuple[ParsedSourceCandidate, ...]:
     return tuple(sorted(candidates, key=lambda candidate: candidate.resolved_path))
+
+
+def _target_candidates_in_current_scope(
+    step_input_candidates: tuple[ParsedSourceCandidate, ...],
+    target_candidates: tuple[ParsedSourceCandidate, ...],
+) -> tuple[ParsedSourceCandidate, ...]:
+    current_scope = _inherited_scope_components(step_input_candidates)
+    if not current_scope:
+        return ()
+    return tuple(
+        candidate
+        for candidate in target_candidates
+        if _candidate_matches_inherited_scope(candidate, current_scope)
+    )
 
 
 def _order_match_index(

@@ -249,6 +249,7 @@ class CellProfilerModuleExecutor:
                     _measurement_image_for_labels(
                         measurement_image.payload,
                         measurement_labels,
+                        reference_domain=measurement_image.reference_domain,
                     )
                     if measurement_image.align_to_labels
                     else measurement_image.payload
@@ -352,9 +353,10 @@ class CellProfilerModuleExecutor:
         image_inputs = self._primary_image_inputs(func)
         if not image_inputs:
             return (
-                CellProfilerMeasurementImage.natural(
-                    source_image_name=self._input_source_image_name(adapter),
-                    payload=_object_only_reference_image(fallback_image),
+                self._measurement_carrier_image(
+                    adapter,
+                    fallback_image,
+                    reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
                 ),
             )
 
@@ -362,34 +364,10 @@ class CellProfilerModuleExecutor:
             self.module_name
         ):
             return (
-                CellProfilerMeasurementImage.composed(image_request),
+                self._composed_measurement_image(image_request),
             )
 
-        runtime_image_names = frozenset(
-            spec.name
-            for spec in _specs_of_kind(
-                self.runtime_artifact_inputs,
-                ArtifactKind.IMAGE,
-            )
-        )
-        resolved_images: list[CellProfilerMeasurementImage] = []
-        for spec in image_inputs:
-            if spec.name in runtime_image_names:
-                runtime_image = adapter.get_image(spec.name)
-                resolved_images.append(
-                    CellProfilerMeasurementImage.natural(
-                        source_image_name=runtime_image.source_image_name or spec.name,
-                        payload=runtime_image.data,
-                    )
-                )
-                continue
-            resolved_images.append(
-                CellProfilerMeasurementImage.natural(
-                    source_image_name=spec.name,
-                    payload=adapter.resolve_source_image(spec.name, fallback_image),
-                )
-            )
-        return tuple(resolved_images)
+        return self._resolved_measurement_images(image_inputs, adapter, fallback_image)
 
     def _independent_measurement_image_inputs(
         self,
@@ -400,37 +378,75 @@ class CellProfilerModuleExecutor:
         image_inputs = self._primary_image_inputs(func)
         if not image_inputs:
             return (
-                CellProfilerMeasurementImage.natural(
-                    source_image_name=self._input_source_image_name(adapter),
-                    payload=_object_only_reference_image(fallback_image),
+                self._measurement_carrier_image(
+                    adapter,
+                    fallback_image,
+                    reference_domain=CellProfilerMeasurementImageDomain.SOURCE_IMAGE,
                 ),
             )
 
-        runtime_image_names = frozenset(
-            spec.name
-            for spec in _specs_of_kind(
-                self.runtime_artifact_inputs,
-                ArtifactKind.IMAGE,
-            )
+        return self._resolved_measurement_images(image_inputs, adapter, fallback_image)
+
+    def _measurement_carrier_image(
+        self,
+        adapter: CellProfilerRuntimeAdapter,
+        fallback_image: Any,
+        *,
+        reference_domain: "CellProfilerMeasurementImageDomain",
+    ) -> "CellProfilerMeasurementImage":
+        return CellProfilerMeasurementImage(
+            source_image_name=self._input_source_image_name(adapter),
+            payload=_object_only_reference_image(fallback_image),
+            reference_domain=reference_domain,
         )
+
+    def _composed_measurement_image(
+        self,
+        image_request: "CellProfilerImageRequest",
+    ) -> "CellProfilerMeasurementImage":
+        return CellProfilerMeasurementImage(
+            source_image_name=image_request.source_image_name,
+            payload=image_request.payload,
+            align_to_labels=False,
+            execution_mode=image_request.execution_mode,
+        )
+
+    def _resolved_measurement_images(
+        self,
+        image_inputs: tuple[ArtifactSpec, ...],
+        adapter: CellProfilerRuntimeAdapter,
+        fallback_image: Any,
+    ) -> tuple["CellProfilerMeasurementImage", ...]:
+        runtime_image_names = frozenset(self._runtime_image_names())
         resolved_images: list[CellProfilerMeasurementImage] = []
         for spec in image_inputs:
-            if spec.name in runtime_image_names:
-                runtime_image = adapter.get_image(spec.name)
-                resolved_images.append(
-                    CellProfilerMeasurementImage.natural(
-                        source_image_name=runtime_image.source_image_name or spec.name,
-                        payload=runtime_image.data,
-                    )
-                )
-                continue
             resolved_images.append(
-                CellProfilerMeasurementImage.natural(
-                    source_image_name=spec.name,
-                    payload=adapter.resolve_source_image(spec.name, fallback_image),
+                self._resolved_measurement_image(
+                    spec,
+                    adapter,
+                    fallback_image,
+                    runtime_image_names,
                 )
             )
         return tuple(resolved_images)
+
+    def _resolved_measurement_image(
+        self,
+        spec: ArtifactSpec,
+        adapter: CellProfilerRuntimeAdapter,
+        fallback_image: Any,
+        runtime_image_names: frozenset[str],
+    ) -> "CellProfilerMeasurementImage":
+        if spec.name in runtime_image_names:
+            runtime_image = adapter.get_image(spec.name)
+            return CellProfilerMeasurementImage(
+                source_image_name=runtime_image.source_image_name or spec.name,
+                payload=runtime_image.data,
+            )
+        return CellProfilerMeasurementImage(
+            source_image_name=spec.name,
+            payload=adapter.resolve_source_image(spec.name, fallback_image),
+        )
 
     def _object_input_specs(self) -> tuple[ArtifactSpec, ...]:
         return _specs_of_kind(
@@ -821,34 +837,30 @@ class AlignedMultiImageStackExecutionStrategy(CellProfilerImageExecutionStrategy
         )
 
 
+class CellProfilerMeasurementImageDomain(Enum):
+    """Semantic domain represented by a measurement image argument."""
+
+    SOURCE_IMAGE = "source_image"
+    OBJECT_LABELS = "object_labels"
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CellProfilerMeasurementImage(CellProfilerImageExecutionContext):
     """One resolved image payload used by object measurement modules."""
 
     payload: Any
     align_to_labels: bool = True
+    reference_domain: CellProfilerMeasurementImageDomain = (
+        CellProfilerMeasurementImageDomain.SOURCE_IMAGE
+    )
 
-    @classmethod
-    def natural(
-        cls,
-        *,
-        source_image_name: str | None,
-        payload: Any,
-    ) -> "CellProfilerMeasurementImage":
-        return cls(source_image_name=source_image_name, payload=payload)
-
-    @classmethod
-    def composed(
-        cls,
-        request: CellProfilerImageRequest,
-    ) -> "CellProfilerMeasurementImage":
-        return cls(
-            source_image_name=request.source_image_name,
-            payload=request.payload,
-            align_to_labels=False,
-            execution_mode=request.execution_mode,
-        )
-
+    def __post_init__(self) -> None:
+        if not isinstance(self.reference_domain, CellProfilerMeasurementImageDomain):
+            raise TypeError(
+                "CellProfilerMeasurementImage.reference_domain must be "
+                "CellProfilerMeasurementImageDomain, got "
+                f"{type(self.reference_domain).__name__}."
+            )
 
 @dataclass(frozen=True, slots=True)
 class CellProfilerSliceAlignedValues:
@@ -1713,7 +1725,14 @@ def _object_only_reference_image(image: Any) -> Any:
     return image
 
 
-def _measurement_image_for_labels(image: Any, labels: Any) -> Any:
+def _measurement_image_for_labels(
+    image: Any,
+    labels: Any,
+    *,
+    reference_domain: CellProfilerMeasurementImageDomain = (
+        CellProfilerMeasurementImageDomain.SOURCE_IMAGE
+    ),
+) -> Any:
     """Align a measurement reference image to one object-label payload.
 
     Many absorbed CellProfiler measurement functions expect a 2D intensity image
@@ -1722,20 +1741,45 @@ def _measurement_image_for_labels(image: Any, labels: Any) -> Any:
     instead of handing the raw multi-slice stack to functions that require shape
     parity with the labels.
     """
+    if not isinstance(reference_domain, CellProfilerMeasurementImageDomain):
+        raise TypeError(
+            "_measurement_image_for_labels.reference_domain must be "
+            "CellProfilerMeasurementImageDomain, got "
+            f"{type(reference_domain).__name__}."
+        )
     if not hasattr(image, "ndim") or not hasattr(labels, "ndim"):
         return image
+    aligned_image = image
     if is_color_image_stack(image):
         if labels.ndim == 3:
-            return image[..., 0]
-        if labels.ndim == 2:
-            return image[0, :, :, 0]
-    if is_color_image_slice(image) and labels.ndim == 2:
-        return image[:, :, 0]
-    if image.ndim == labels.ndim:
+            aligned_image = image[..., 0]
+        elif labels.ndim == 2:
+            aligned_image = image[0, :, :, 0]
+    elif is_color_image_slice(image) and labels.ndim == 2:
+        aligned_image = image[:, :, 0]
+    elif image.ndim == labels.ndim:
+        aligned_image = image
+    elif image.ndim == labels.ndim + 1 and getattr(image, "shape", (0,))[0] >= 1:
+        aligned_image = image[0]
+
+    if (
+        reference_domain is CellProfilerMeasurementImageDomain.OBJECT_LABELS
+        and _measurement_image_shape_mismatches_labels(aligned_image, labels)
+    ):
+        return _object_label_domain_reference_image(aligned_image, labels)
+    return aligned_image
+
+
+def _measurement_image_shape_mismatches_labels(image: Any, labels: Any) -> bool:
+    if not hasattr(image, "shape") or not hasattr(labels, "shape"):
+        return False
+    return tuple(image.shape) != tuple(labels.shape)
+
+
+def _object_label_domain_reference_image(image: Any, labels: Any) -> Any:
+    if not hasattr(labels, "shape"):
         return image
-    if image.ndim == labels.ndim + 1 and getattr(image, "shape", (0,))[0] >= 1:
-        return image[0]
-    return image
+    return np.zeros(tuple(labels.shape), dtype=getattr(image, "dtype", np.float32))
 
 
 def _measurement_labels(labels: Any) -> Any:
@@ -2587,9 +2631,10 @@ def _slice_count_from_pure_2d_kwargs(
     kwargs: Mapping[str, Any],
 ) -> int | None:
     slice_counts = {
-        value.shape[0]
+        stack.shape[0]
         for value in kwargs.values()
-        if hasattr(value, "ndim") and value.ndim == 3 and value.shape[0] > 1
+        if (stack := _slice_aligned_stack_view(value)) is not None
+        and stack.shape[0] > 1
     }
     slice_counts.update(
         value.slice_count
@@ -2604,7 +2649,8 @@ def _slice_count_from_pure_2d_kwargs(
     if slice_counts:
         return next(iter(slice_counts))
     if any(
-        hasattr(value, "ndim") and value.ndim == 3 and value.shape[0] == 1
+        (stack := _slice_aligned_stack_view(value)) is not None
+        and stack.shape[0] == 1
         for value in kwargs.values()
     ):
         return 1
@@ -2614,13 +2660,38 @@ def _slice_count_from_pure_2d_kwargs(
 def _slice_pure_2d_value(value: Any, slice_index: int, slice_count: int) -> Any:
     if isinstance(value, CellProfilerSliceAlignedValues):
         return value.value_for_slice(slice_index)
-    if not hasattr(value, "ndim") or value.ndim != 3:
+    stack = _slice_aligned_stack_view(value)
+    if stack is None:
         return value
-    if value.shape[0] == slice_count:
-        return value[slice_index]
-    if value.shape[0] == 1:
-        return value[0]
+    if stack.shape[0] == slice_count:
+        return stack[slice_index]
+    if stack.shape[0] == 1:
+        return stack[0]
     return value
+
+
+def _slice_aligned_stack_view(value: Any) -> Any | None:
+    if hasattr(value, "ndim"):
+        return value if value.ndim == 3 else None
+    if not _is_sequence_payload(value):
+        if not _is_array_convertible_payload(value):
+            return None
+    stack = np.asarray(value)
+    return stack if stack.ndim == 3 else None
+
+
+def _is_sequence_payload(value: Any) -> bool:
+    if isinstance(value, (str, bytes, bytearray, Mapping)):
+        return False
+    if not isinstance(value, Sequence):
+        return False
+    return len(value) > 0
+
+
+def _is_array_convertible_payload(value: Any) -> bool:
+    if isinstance(value, (str, bytes, bytearray, Mapping)):
+        return False
+    return hasattr(value, "shape") or hasattr(value, "__array__")
 
 
 _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR = CellProfilerFunctionContractExecutor()

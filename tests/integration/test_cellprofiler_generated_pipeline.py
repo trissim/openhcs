@@ -447,7 +447,9 @@ def test_official_example_untangleworms_cppipe_executes_via_source_schema_worksp
         axis_id="A01",
     )
     assert len(overlay_records) == 1
-    assert np.asarray(overlay_records[0].value.data).ndim == 4
+    overlay = np.asarray(overlay_records[0].value.data)
+    assert overlay.ndim == 3
+    assert overlay.shape[-1] == 3
     assert runtime_store.find(
         name="MeasureObjectIntensity_17_measurements",
         kind=ArtifactKind.MEASUREMENTS,

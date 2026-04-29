@@ -1003,6 +1003,70 @@ def test_cellprofiler_adapter_uses_virtual_workspace_source_provenance_for_order
     ]
 
 
+def test_cellprofiler_adapter_resolves_single_alias_order_source_from_current_scope():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="RawData",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        selector=SourceSelector(
+                            filters=(
+                                SourceFilterClause(
+                                    SourceFilterSubject.FILE,
+                                    SourceFilterMatchType.CONTAINS,
+                                    ".png",
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+    filemanager = FileManagerStub()
+    expected_source = "/real/fat_orig.png"
+    other_source = "/real/WT_orig.png"
+    expected = np.full((2, 2), 31.0, dtype=np.float32)
+    filemanager.saved[("memory", expected_source)] = expected
+    filemanager.saved[("memory", other_source)] = np.full(
+        (2, 2),
+        41.0,
+        dtype=np.float32,
+    )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=("A01_s001_w1_z001_t001.png",),
+        step_input_dir="/workspace",
+        step_input_source_paths={
+            "A01_s001_w1_z001_t001.png": expected_source,
+            "A02_s001_w1_z001_t001.png": other_source,
+        },
+        pipeline_input_files=(expected_source, other_source),
+        pipeline_input_backend="memory",
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+
+    resolved = adapter.resolve_source_image(
+        "RawData",
+        np.full((2, 2), 1.0, dtype=np.float32),
+    )
+
+    np.testing.assert_array_equal(resolved, expected)
+    assert filemanager.loaded_batches == [
+        ((expected_source,), "memory", {}),
+    ]
+
+
 def test_cellprofiler_module_executor_records_object_output_through_adapter():
     adapter, _filemanager = _adapter(
         {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
@@ -1115,6 +1179,48 @@ def test_cellprofiler_module_executor_reads_objects_for_measurements():
     ]
     assert measurements.object_name == NUCLEI
     assert measurements.source_image_name == DNA_IMAGE
+
+
+def test_cellprofiler_object_only_measurement_uses_label_domain_reference_image():
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            NUCLEI_MEASUREMENTS: _plan(
+                NUCLEI_MEASUREMENTS,
+                ArtifactKind.MEASUREMENTS,
+            ),
+        }
+    )
+    image = np.zeros((1006, 1000), dtype=np.float32)
+    labels = np.ones((199, 199), dtype=np.int32)
+    rows = [{"object_id": 1, "area": float(labels.size)}]
+    seen = []
+    adapter.add_objects(NUCLEI, labels)
+    executor = _executor(
+        MEASURE_OBJECT_SIZE_SHAPE,
+        (ArtifactSpec(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        runtime_artifact_inputs=(
+            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+        ),
+    )
+
+    def measure(image_arg, *, labels):
+        seen.append((image_arg.copy(), labels.copy()))
+        return image_arg, rows
+
+    executor.run(measure, image, cellprofiler_runtime=adapter)
+    measurements = adapter.get_measurements(NUCLEI_MEASUREMENTS)
+
+    assert len(seen) == 1
+    measurement_image, measurement_labels = seen[0]
+    assert measurement_image.shape == labels.shape
+    assert measurement_image.dtype == image.dtype
+    np.testing.assert_array_equal(measurement_image, np.zeros_like(labels, dtype=image.dtype))
+    np.testing.assert_array_equal(measurement_labels, labels)
+    assert measurements.rows == [
+        {"object_id": 1, "area": float(labels.size), "object_name": NUCLEI},
+    ]
 
 
 def test_cellprofiler_module_executor_measures_each_declared_image_for_single_object():
