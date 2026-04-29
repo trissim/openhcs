@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from .cellprofiler_literals import decode_cellprofiler_setting_literal
 from .parser import ModuleBlock, ModuleSetting
 
 
@@ -23,7 +23,7 @@ class SettingNameFamily:
 
 IMAGE_MEASUREMENT_SETTING = SettingNameFamily(
     "Select images to measure",
-    aliases=("Select an image to measure",),
+    aliases=("Select an image to measure", "Select the image to measure"),
 )
 OBJECT_MEASUREMENT_SETTING = SettingNameFamily(
     "Select object sets to measure",
@@ -81,6 +81,34 @@ def setting_values(
     )
 
 
+def split_symbol_names(value: str) -> tuple[str, ...]:
+    """Split a CellProfiler symbol setting while dropping blank sentinels."""
+    return tuple(
+        normalized
+        for part in value.split(",")
+        if (normalized := normalized_symbol_name(part)) is not None
+    )
+
+
+def normalized_symbol_name(value: str) -> str | None:
+    """Normalize one CellProfiler artifact symbol value."""
+    normalized = value.strip()
+    if not normalized or is_blank_symbol_name(normalized):
+        return None
+    return normalized
+
+
+def is_blank_symbol_name(value: str) -> bool:
+    """Return whether a CellProfiler setting value means no artifact symbol."""
+    return _normalized_setting_literal(value) in {
+        "leave_this_black",
+        "none",
+        "do_not_use",
+        "no",
+        "not_using",
+    }
+
+
 def setting_names(name: str | SettingNameFamily) -> tuple[str, ...]:
     """Return the concrete setting labels accepted by this lookup."""
     if isinstance(name, SettingNameFamily):
@@ -93,25 +121,19 @@ def setting_name_matches(
     expected: str | SettingNameFamily,
 ) -> bool:
     """Return whether a parsed CellProfiler setting label matches a family."""
-    decoded_actual = (
-        decode_cellprofiler_setting_literal(actual).strip().rstrip(":").strip()
-    )
+    decoded_actual = _normalized_setting_label(actual)
     return any(
         decoded_actual
-        == decode_cellprofiler_setting_literal(name).strip().rstrip(":").strip()
+        == _normalized_setting_label(name)
         for name in setting_names(expected)
     )
 
 
 def setting_name_startswith(actual: str, prefix: str | SettingNameFamily) -> bool:
     """Return whether a parsed CellProfiler setting label starts with a family."""
-    decoded_actual = (
-        decode_cellprofiler_setting_literal(actual).strip().rstrip(":").strip()
-    )
+    decoded_actual = _normalized_setting_label(actual)
     return any(
-        decoded_actual.startswith(
-            decode_cellprofiler_setting_literal(name).strip().rstrip(":").strip()
-        )
+        decoded_actual.startswith(_normalized_setting_label(name))
         for name in setting_names(prefix)
     )
 
@@ -164,13 +186,11 @@ def repeating_setting_blocks(
     return tuple(tuple(block) for block in blocks)
 
 
-def decode_cellprofiler_setting_literal(value: str) -> str:
-    """Decode CellProfiler's escaped setting-name/value literals."""
-    if "\\x" not in value and "\\\\\\\\" not in value:
-        return value
-    decoded = value
-    for _ in range(2):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            decoded = bytes(decoded, "utf-8").decode("unicode_escape")
-    return decoded
+def _normalized_setting_label(value: str) -> str:
+    return decode_cellprofiler_setting_literal(value).strip().rstrip(":").strip()
+
+
+def _normalized_setting_literal(value: str) -> str:
+    return "_".join(
+        decode_cellprofiler_setting_literal(value).strip().lower().split()
+    )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -521,6 +521,9 @@ class SourceBindingRuntimeContext:
 
     step_input_files: tuple[str, ...] = ()
     step_input_dir: str | None = None
+    step_input_source_paths: Mapping[str, str] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     pipeline_input_files: tuple[str, ...] = ()
     pipeline_input_backend: str | None = None
 
@@ -534,6 +537,13 @@ class SourceBindingRuntimeContext:
             object.__setattr__(self, "step_input_dir", str(self.step_input_dir))
         object.__setattr__(
             self,
+            "step_input_source_paths",
+            MappingProxyType(
+                {str(path): str(source) for path, source in self.step_input_source_paths.items()}
+            ),
+        )
+        object.__setattr__(
+            self,
             "pipeline_input_files",
             tuple(self.pipeline_input_files),
         )
@@ -543,6 +553,30 @@ class SourceBindingRuntimeContext:
                 "pipeline_input_backend",
                 str(self.pipeline_input_backend),
             )
+
+    def __reduce__(
+        self,
+    ) -> tuple[
+        object,
+        tuple[
+            tuple[str, ...],
+            str | None,
+            dict[str, str],
+            tuple[str, ...],
+            str | None,
+        ],
+    ]:
+        """Serialize mappingproxy-backed provenance as a plain dict."""
+        return (
+            self.__class__,
+            (
+                self.step_input_files,
+                self.step_input_dir,
+                dict(self.step_input_source_paths),
+                self.pipeline_input_files,
+                self.pipeline_input_backend,
+            ),
+        )
 
 
 EMPTY_SOURCE_BINDINGS = StepSourceBindingsConfig()

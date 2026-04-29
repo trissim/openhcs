@@ -13,6 +13,7 @@ import skimage.segmentation
 from skimage import img_as_float
 
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
@@ -101,6 +102,70 @@ def overlay_outlines(
     ):
         raise ValueError("OverlayOutlines object_labels count must match object rows.")
 
+    if _requires_plane_stack_execution(image_sources, object_labels):
+        return _overlay_plane_stack(
+            rows=rows,
+            image_sources=image_sources,
+            object_labels=object_labels,
+            blank_image=blank_image,
+            display_mode=display_mode,
+            line_mode=line_mode,
+            max_type=max_type,
+        )
+    return _overlay_single_plane(
+        rows=rows,
+        image_sources=image_sources,
+        object_labels=object_labels,
+        blank_image=blank_image,
+        display_mode=display_mode,
+        line_mode=line_mode,
+        max_type=max_type,
+    )
+
+
+def _overlay_plane_stack(
+    *,
+    rows: tuple[OverlayOutlineRuntimeRow, ...],
+    image_sources: tuple[np.ndarray, ...],
+    object_labels: Sequence[np.ndarray],
+    blank_image: bool,
+    display_mode: OutlineDisplayMode,
+    line_mode: LineMode,
+    max_type: MaxType,
+) -> np.ndarray:
+    slice_count = _aligned_plane_slice_count((*image_sources, *object_labels))
+    return np.stack(
+        tuple(
+            _overlay_single_plane(
+                rows=rows,
+                image_sources=tuple(
+                    _plane_payload_slice(source, slice_index)
+                    for source in image_sources
+                ),
+                object_labels=tuple(
+                    _plane_payload_slice(labels, slice_index)
+                    for labels in object_labels
+                ),
+                blank_image=blank_image,
+                display_mode=display_mode,
+                line_mode=line_mode,
+                max_type=max_type,
+            )
+            for slice_index in range(slice_count)
+        )
+    ).astype(np.float32)
+
+
+def _overlay_single_plane(
+    *,
+    rows: tuple[OverlayOutlineRuntimeRow, ...],
+    image_sources: tuple[np.ndarray, ...],
+    object_labels: Sequence[np.ndarray],
+    blank_image: bool,
+    display_mode: OutlineDisplayMode,
+    line_mode: LineMode,
+    max_type: MaxType,
+) -> np.ndarray:
     output = _base_image(
         image_sources=image_sources,
         object_labels=object_labels,
@@ -170,6 +235,43 @@ def _image_sources_from_payload(
     return tuple(image[index] for index in range(expected_count))
 
 
+def _requires_plane_stack_execution(
+    image_sources: tuple[np.ndarray, ...],
+    object_labels: Sequence[np.ndarray],
+) -> bool:
+    return any(_is_plane_stack_payload(payload) for payload in (*image_sources, *object_labels))
+
+
+def _aligned_plane_slice_count(payloads: Sequence[np.ndarray]) -> int:
+    slice_counts = frozenset(
+        _plane_slice_count(payload)
+        for payload in payloads
+        if _is_plane_stack_payload(payload)
+    )
+    if not slice_counts:
+        return 1
+    if len(slice_counts) != 1:
+        raise ValueError(
+            "OverlayOutlines plane-stack inputs must have aligned slice counts; "
+            f"got {sorted(slice_counts)!r}."
+        )
+    return next(iter(slice_counts))
+
+
+def _plane_payload_slice(payload: np.ndarray, slice_index: int) -> np.ndarray:
+    if _is_plane_stack_payload(payload):
+        return payload[slice_index]
+    return payload
+
+
+def _plane_slice_count(payload: np.ndarray) -> int:
+    return int(payload.shape[0])
+
+
+def _is_plane_stack_payload(payload: np.ndarray) -> bool:
+    return payload.ndim == 3 and not is_color_image_slice(payload)
+
+
 def _base_image(
     *,
     image_sources: tuple[np.ndarray, ...],
@@ -228,21 +330,20 @@ def _draw_object_labels(
     labels_2d = _resize_labels(labels.astype(np.int32), output.shape[:2])
     outline_color: tuple[float, float, float] | float
     if display_mode is OutlineDisplayMode.COLOR:
+        if output.ndim == 2:
+            output = skimage.color.gray2rgb(output)
         outline_color = color
     else:
-        outline_color = (
-            outline_intensity,
-            outline_intensity,
-            outline_intensity,
-        )
-    if output.ndim == 2:
-        output = skimage.color.gray2rgb(output)
-    return skimage.segmentation.mark_boundaries(
-        output,
+        outline_color = outline_intensity
+    boundaries = skimage.segmentation.find_boundaries(
         labels_2d,
-        color=outline_color,
         mode=line_mode.skimage_mode,
     )
+    if not np.any(boundaries):
+        return output
+    marked = np.array(output, copy=True)
+    marked[boundaries] = outline_color
+    return marked
 
 
 def _draw_outline_image(
@@ -253,7 +354,8 @@ def _draw_outline_image(
     outline_intensity: float,
     display_mode: OutlineDisplayMode,
 ) -> np.ndarray:
-    mask = _resize_mask(np.asarray(outline_image) > 0, output.shape[:2])
+    mask = _outline_image_mask(outline_image)
+    mask = _resize_mask(mask, output.shape[:2])
     if display_mode is OutlineDisplayMode.COLOR:
         if output.ndim == 2:
             output = skimage.color.gray2rgb(output)
@@ -261,6 +363,13 @@ def _draw_outline_image(
         return output
     output[mask] = outline_intensity
     return output
+
+
+def _outline_image_mask(outline_image: np.ndarray) -> np.ndarray:
+    mask = np.asarray(outline_image) > 0
+    if is_color_image_slice(mask):
+        return np.any(mask, axis=-1)
+    return mask
 
 
 def _resize_labels(labels: np.ndarray, shape: tuple[int, int]) -> np.ndarray:

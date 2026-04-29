@@ -67,6 +67,10 @@ def test_legacy_cellprofiler_module_aliases_resolve_to_canonical_functions():
     assert canonical_module_name("MeasureCorrelation") == "MeasureColocalization"
     assert get_contract("MeasureCorrelation") == get_contract("MeasureColocalization")
     assert get_function("MeasureCorrelation") is get_function("MeasureColocalization")
+    assert canonical_module_name("Erosion") == "ErodeImage"
+    assert canonical_module_name("Dilation") == "DilateImage"
+    assert get_contract("Erosion") == get_contract("ErodeImage")
+    assert get_function("Erosion") is get_function("ErodeImage")
 
 
 def test_export_to_spreadsheet_module_imports_cleanly():
@@ -213,3 +217,36 @@ def test_overlay_outlines_runs_mixed_image_and_object_rows():
     assert output[..., 0].max() > 0
     assert output[..., 1].max() > 0
     assert overlay_outlines.__processing_contract__ is ProcessingContract.FLEXIBLE
+
+
+def test_overlay_outlines_runs_plane_stack_object_rows():
+    image = np.zeros((2, 8, 8), dtype=np.float32)
+    labels = np.zeros_like(image, dtype=np.int32)
+    labels[0, 2:5, 2:5] = 1
+    labels[1, 3:6, 3:6] = 1
+
+    output = overlay_outlines(
+        image,
+        outline_source_kinds=("objects",),
+        outline_colors=("Green",),
+        object_labels=(labels,),
+        dtype_config=DtypeConfig(),
+    )
+
+    assert output.shape == (2, 8, 8, 3)
+    assert output[..., 1].max() > 0
+
+
+def test_overlay_outlines_ignores_empty_label_planes():
+    image = np.zeros((2, 8, 8), dtype=np.float32)
+    labels = np.zeros_like(image, dtype=np.int32)
+
+    output = overlay_outlines(
+        image,
+        outline_source_kinds=("objects",),
+        object_labels=(labels,),
+        dtype_config=DtypeConfig(),
+    )
+
+    assert output.shape == (2, 8, 8, 3)
+    assert float(output.max()) == 0.0

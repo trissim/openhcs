@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .cellprofiler_literals import decode_cellprofiler_setting_literal
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,11 +29,15 @@ class ModuleSetting:
     value: str
 
     def __post_init__(self) -> None:
-        normalized_name = self.name.strip()
+        normalized_name = decode_cellprofiler_setting_literal(self.name).strip()
         if not normalized_name:
             raise ValueError("ModuleSetting.name cannot be empty.")
         object.__setattr__(self, "name", normalized_name)
-        object.__setattr__(self, "value", self.value.strip())
+        object.__setattr__(
+            self,
+            "value",
+            decode_cellprofiler_setting_literal(self.value).strip(),
+        )
 
 
 @dataclass

@@ -8,6 +8,7 @@ associating all of a worm's pieces together.
 """
 
 import numpy as np
+import re
 from typing import Tuple, Optional, List
 from dataclasses import dataclass
 from enum import Enum
@@ -22,10 +23,29 @@ from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 
-class OverlapStyle(Enum):
+class OverlapStyle(str, Enum):
     WITH_OVERLAP = "with_overlap"
     WITHOUT_OVERLAP = "without_overlap"
     BOTH = "both"
+
+
+def coerce_overlap_style(value: str | OverlapStyle) -> OverlapStyle:
+    """Normalize CellProfiler overlap-style literals into the typed enum."""
+    if isinstance(value, OverlapStyle):
+        return value
+    normalized = re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
+    for style in OverlapStyle:
+        literals = (
+            style.name.lower(),
+            style.value,
+            style.value.replace("_", ""),
+        )
+        if normalized in literals:
+            return style
+    raise ValueError(
+        "overlap_style must be one of "
+        f"{', '.join(style.value for style in OverlapStyle)}; got {value!r}."
+    )
 
 
 @dataclass
@@ -179,11 +199,12 @@ def _trace_skeleton_path(skeleton: np.ndarray) -> np.ndarray:
         fields=["slice_index", "worm_count", "mean_length", "mean_area"],
         analysis_type="worm_analysis"
     )),
-    ("labels", segmentation_mask_rois())
+    ("overlapping_labels", segmentation_mask_rois()),
+    ("nonoverlapping_labels", segmentation_mask_rois()),
 )
 def untangle_worms(
     image: np.ndarray,
-    overlap_style: str = "without_overlap",
+    overlap_style: OverlapStyle = OverlapStyle.WITHOUT_OVERLAP,
     min_worm_area: float = 100.0,
     max_worm_area: float = 5000.0,
     num_control_points: int = 21,
@@ -192,7 +213,7 @@ def untangle_worms(
     max_path_length: float = 500.0,
     overlap_weight: float = 5.0,
     leftover_weight: float = 10.0,
-) -> Tuple[np.ndarray, WormMeasurement, np.ndarray]:
+) -> Tuple[np.ndarray, WormMeasurement, np.ndarray, np.ndarray]:
     """
     Untangle overlapping worms in a binary image.
     
@@ -216,8 +237,10 @@ def untangle_worms(
         leftover_weight: Penalty weight for uncovered foreground
     
     Returns:
-        Tuple of (original_image, measurements, labels)
+        Tuple of (original_image, measurements, overlapping_labels, nonoverlapping_labels)
     """
+    overlap_style = coerce_overlap_style(overlap_style)
+
     # Ensure binary
     binary = image > 0
     
@@ -228,7 +251,7 @@ def untangle_worms(
         empty_labels = np.zeros_like(image, dtype=np.int32)
         return image, WormMeasurement(
             slice_index=0, worm_count=0, mean_length=0.0, mean_area=0.0
-        ), empty_labels
+        ), empty_labels, empty_labels
     
     # Skeletonize
     skeleton = _skeletonize(binary)
@@ -291,11 +314,11 @@ def untangle_worms(
                 all_lengths.append(0.0)
             all_areas.append(component_area)
     
-    # Handle overlap style
-    if overlap_style == "without_overlap":
-        # Find overlapping regions (where multiple worms would overlap)
-        # In this simplified version, we already have non-overlapping labels
-        pass
+    output_labels = output_labels.astype(np.int32)
+    overlapping_labels, nonoverlapping_labels = _worm_label_outputs(
+        output_labels,
+        overlap_style,
+    )
     
     # Calculate measurements
     worm_count = worm_index
@@ -309,4 +332,16 @@ def untangle_worms(
         mean_area=mean_area
     )
     
-    return image, measurements, output_labels.astype(np.int32)
+    return image, measurements, overlapping_labels, nonoverlapping_labels
+
+
+def _worm_label_outputs(
+    labels: np.ndarray,
+    overlap_style: OverlapStyle,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return both CellProfiler worm object views for a simplified label model."""
+    if overlap_style is OverlapStyle.WITH_OVERLAP:
+        return labels, labels.copy()
+    if overlap_style is OverlapStyle.WITHOUT_OVERLAP:
+        return labels.copy(), labels
+    return labels, labels.copy()

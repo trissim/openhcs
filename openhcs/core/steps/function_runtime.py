@@ -18,7 +18,10 @@ from openhcs.core.function_patterns import (
     CompiledFunctionGroup,
     CompiledFunctionInvocation,
 )
-from openhcs.core.memory import convert_memory, stack_slices, unstack_slices
+from openhcs.core.image_stack_layout import ImageStackLayout
+from openhcs.core.memory import (
+    convert_memory,
+)
 from openhcs.core.runtime_stores import (
     RuntimeArtifactLocation,
     RuntimeArtifactQuery,
@@ -261,11 +264,6 @@ def _resolve_invocation_callable(invocation: CompiledFunctionInvocation) -> Call
     raise TypeError(f"Invalid compiled invocation function: {invocation.func}")
 
 
-def _is_3d(array: Any) -> bool:
-    """Check if an array is 3D."""
-    return hasattr(array, "ndim") and array.ndim == 3
-
-
 def _execute_function_core(request: FunctionExecutionRequest) -> Any:
     """Execute one callable and route declared artifact I/O."""
     func_callable = request.func_callable
@@ -500,7 +498,7 @@ class PatternGroupRuntime:
                 f"Check file integrity and format compatibility."
             )
 
-        main_data_stack = stack_slices(
+        main_data_stack = ImageStackLayout.for_slices(raw_slices).stack(
             slices=raw_slices,
             memory_type=self.plan.input_memory_type,
             gpu_id=self.plan.device_id,
@@ -523,12 +521,21 @@ class PatternGroupRuntime:
             self.context.input_dir,
             self.context.filemanager,
         )
+        step_input_source_paths = (
+            self._virtual_workspace_source_paths_by_virtual_path()
+            if source_backend == Backend.VIRTUAL_WORKSPACE.value
+            else {}
+        )
         pipeline_input_files, pipeline_input_backend = (
-            self._pipeline_start_source_universe(source_backend)
+            self._pipeline_start_source_universe(
+                source_backend,
+                step_input_source_paths=step_input_source_paths,
+            )
         )
         return SourceBindingRuntimeContext(
             step_input_files=tuple(matching_files),
             step_input_dir=str(self.plan.input_dir),
+            step_input_source_paths=step_input_source_paths,
             pipeline_input_files=pipeline_input_files,
             pipeline_input_backend=pipeline_input_backend,
         )
@@ -536,6 +543,8 @@ class PatternGroupRuntime:
     def _pipeline_start_source_universe(
         self,
         source_backend: str,
+        *,
+        step_input_source_paths: Mapping[str, str],
     ) -> tuple[tuple[str, ...], str]:
         if not self._requires_full_pipeline_source_universe():
             return (
@@ -545,7 +554,7 @@ class PatternGroupRuntime:
 
         if source_backend == Backend.VIRTUAL_WORKSPACE.value:
             return (
-                self._virtual_workspace_real_source_files(),
+                self._virtual_workspace_real_source_files(step_input_source_paths),
                 Backend.DISK.value,
             )
 
@@ -576,17 +585,34 @@ class PatternGroupRuntime:
             for binding in bindings
         )
 
-    def _virtual_workspace_real_source_files(self) -> tuple[str, ...]:
+    def _virtual_workspace_source_paths_by_virtual_path(self) -> Mapping[str, str]:
         from openhcs.microscopes.openhcs import FIELDS, OpenHCSMetadataHandler
 
         metadata_handler = OpenHCSMetadataHandler(self.context.filemanager)
         metadata = metadata_handler._load_metadata_dict(self.context.plate_path)
         subdirectories = metadata.get(FIELDS.SUBDIRECTORIES, {})
-        workspace_source_files = tuple(
-            str(Path(self.context.plate_path) / real_relative)
+        workspace_source_paths = {
+            virtual_relative: str(Path(self.context.plate_path) / real_relative)
             for subdirectory in subdirectories.values()
-            for real_relative in subdirectory.get("workspace_mapping", {}).values()
-        )
+            for virtual_relative, real_relative in subdirectory.get(
+                "workspace_mapping",
+                {},
+            ).items()
+        }
+        if not workspace_source_paths:
+            raise RuntimeError(
+                "virtual_workspace source binding resolution requires "
+                "workspace_mapping entries in OpenHCS metadata."
+            )
+        return workspace_source_paths
+
+    def _virtual_workspace_real_source_files(
+        self,
+        step_input_source_paths: Mapping[str, str],
+    ) -> tuple[str, ...]:
+        from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
+
+        workspace_source_files = tuple(step_input_source_paths.values())
         if not workspace_source_files:
             raise RuntimeError(
                 "virtual_workspace pipeline-start source resolution requires "
@@ -661,8 +687,10 @@ class PatternGroupRuntime:
         )
 
     def _validate_and_unstack(self, processed_stack: Any) -> list[Any]:
-        if not _is_3d(processed_stack):
-            logger.error("Function output is not a 3D stack.")
+        try:
+            layout = ImageStackLayout.for_stack(processed_stack)
+        except ValueError as exc:
+            logger.error("Function output is not an OpenHCS image stack.")
             logger.error(f"Output type: {type(processed_stack)}")
             logger.error(
                 f"Output shape: {getattr(processed_stack, 'shape', 'no shape attr')}"
@@ -673,14 +701,15 @@ class PatternGroupRuntime:
             if hasattr(processed_stack, "ndim"):
                 logger.error(f"Output ndim: {processed_stack.ndim}")
             raise ValueError(
-                f"Main processing must result in a 3D array, got {getattr(processed_stack, 'shape', 'unknown')}"
-            )
+                "Main processing must result in an image stack shaped "
+                f"(N, H, W) or (N, H, W, C), got "
+                f"{getattr(processed_stack, 'shape', 'unknown')}"
+            ) from exc
 
-        return unstack_slices(
+        return layout.unstack(
             array=processed_stack,
             memory_type=self.plan.output_memory_type,
             gpu_id=self.plan.device_id,
-            validate_slices=True,
         )
 
     def _save_outputs(self, output_slices: list[Any], matching_files: list[str]) -> None:

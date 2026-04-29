@@ -15,6 +15,7 @@ from .align_settings import align_bound_kwargs
 from .area_occupied_settings import area_occupied_bound_kwargs
 from .calculate_math_settings import calculate_math_bound_kwargs
 from .classify_objects_settings import classify_objects_bound_kwargs
+from .crop_settings import crop_bound_kwargs
 from .display_data_settings import display_data_on_image_bound_kwargs
 from .filter_objects_settings import filter_objects_bound_kwargs
 from .grid_settings import (
@@ -34,6 +35,8 @@ from .gray_to_color_settings import (
 from .overlay_outlines_settings import overlay_outlines_bound_kwargs
 from .parser import ModuleBlock
 from .settings_binder import SettingsBinder
+from .structuring_element_settings import structuring_element_bound_kwargs
+from .untangle_worms_settings import untangle_worms_bound_kwargs
 from .unmix_colors_settings import unmix_colors_bound_kwargs
 
 
@@ -243,6 +246,60 @@ class ClassifyObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy
         return BoundModuleSettings(classify_objects_bound_kwargs(module, binder))
 
 
+class CropModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind Crop's coordinate/mask mode settings into absorbed Crop kwargs."""
+
+    module_name = "Crop"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del param_mapping
+        return BoundModuleSettings(crop_bound_kwargs(module, binder))
+
+
+class StructuringElementModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind shared morphology structuring-element settings."""
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del param_mapping
+        return BoundModuleSettings(structuring_element_bound_kwargs(module, binder))
+
+
+class OpeningModuleSettingsBindingStrategy(
+    StructuringElementModuleSettingsBindingStrategy
+):
+    module_name = "Opening"
+
+
+class ClosingModuleSettingsBindingStrategy(
+    StructuringElementModuleSettingsBindingStrategy
+):
+    module_name = "Closing"
+
+
+class ErodeImageModuleSettingsBindingStrategy(
+    StructuringElementModuleSettingsBindingStrategy
+):
+    module_name = "ErodeImage"
+
+
+class DilateImageModuleSettingsBindingStrategy(
+    StructuringElementModuleSettingsBindingStrategy
+):
+    module_name = "DilateImage"
+
+
 class DefineGridModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     """Bind DefineGrid settings into absorbed grid-definition kwargs."""
 
@@ -277,6 +334,22 @@ class IdentifyObjectsInGridModuleSettingsBindingStrategy(
         return BoundModuleSettings(
             identify_objects_in_grid_bound_kwargs(module, binder)
         )
+
+
+class UntangleWormsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind UntangleWorms output-mode settings into typed runtime kwargs."""
+
+    module_name = "UntangleWorms"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del binder, param_mapping
+        return BoundModuleSettings(untangle_worms_bound_kwargs(module))
 
 
 class GrayToColorSchemeBindingStrategy(ABC, metaclass=AutoRegisterMeta):

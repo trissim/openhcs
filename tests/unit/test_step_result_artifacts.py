@@ -1,4 +1,5 @@
 import pytest
+import numpy as np
 
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
@@ -7,6 +8,8 @@ from openhcs.core.artifacts import (
     StepResult,
 )
 from openhcs.core.runtime_stores import RuntimeValueStore
+from openhcs.core.image_shapes import is_image_stack
+from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.steps.function_runtime import (
     FunctionExecutionRequest,
     _execute_function_core,
@@ -229,5 +232,28 @@ def test_execute_function_core_validates_tuple_artifact_kind():
                         kind=ArtifactKind.OBJECT_LABELS,
                     )
                 },
-            )
         )
+    )
+
+
+def test_function_runtime_stacks_and_unstacks_color_image_slices():
+    slices = [
+        np.zeros((4, 5, 3), dtype=np.float32),
+        np.ones((4, 5, 3), dtype=np.float32),
+    ]
+
+    stack = ImageStackLayout.for_slices(slices).stack(
+        slices=slices,
+        memory_type="numpy",
+        gpu_id=0,
+    )
+    unstacked = ImageStackLayout.for_stack(stack).unstack(
+        array=stack,
+        memory_type="numpy",
+        gpu_id=0,
+    )
+
+    assert is_image_stack(stack)
+    assert stack.shape == (2, 4, 5, 3)
+    assert [slice_data.shape for slice_data in unstacked] == [(4, 5, 3), (4, 5, 3)]
+    np.testing.assert_array_equal(unstacked[1], slices[1])

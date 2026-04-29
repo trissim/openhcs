@@ -1,18 +1,16 @@
-"""
-Converted from CellProfiler: Closing
-Original: closing
-"""
+"""Converted from CellProfiler: Closing."""
 
 import numpy as np
-from typing import Literal
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
+from .structuring_elements import StructuringElement, build_structuring_element
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
 def closing(
     image: np.ndarray,
-    structuring_element: Literal["disk", "square", "diamond", "octagon", "star"] = "disk",
+    structuring_element: StructuringElement = StructuringElement.DISK,
     size: int = 3,
 ) -> np.ndarray:
     """
@@ -30,32 +28,10 @@ def closing(
     Returns:
         Morphologically closed image with shape (H, W)
     """
-    from skimage.morphology import (
-        closing as skimage_closing,
-        disk,
-        square,
-        diamond,
-        octagon,
-        star,
+    from skimage.morphology import closing as skimage_closing
+
+    result = skimage_closing(
+        image,
+        build_structuring_element(structuring_element, size),
     )
-    
-    # Create structuring element based on type
-    if structuring_element == "disk":
-        selem = disk(size)
-    elif structuring_element == "square":
-        selem = square(size)
-    elif structuring_element == "diamond":
-        selem = diamond(size)
-    elif structuring_element == "octagon":
-        # octagon requires two parameters, use size for both
-        selem = octagon(size, size)
-    elif structuring_element == "star":
-        selem = star(size)
-    else:
-        # Default to disk if unknown
-        selem = disk(size)
-    
-    # Apply morphological closing
-    result = skimage_closing(image, selem)
-    
     return result.astype(image.dtype)

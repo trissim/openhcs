@@ -118,6 +118,9 @@
     "validated": true
   },
   "DilateImage": {
+    "aliases": [
+      "Dilation"
+    ],
     "function_name": "dilate_image",
     "contract": "unknown",
     "category": "image_operation",
@@ -198,6 +201,9 @@
     "validated": true
   },
   "ErodeImage": {
+    "aliases": [
+      "Erosion"
+    ],
     "function_name": "erode_image",
     "contract": "unknown",
     "category": "image_operation",

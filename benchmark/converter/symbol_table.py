@@ -20,6 +20,10 @@ from metaclass_registry import AutoRegisterMeta
 
 from benchmark.cellprofiler_library import canonical_module_name
 from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
+from benchmark.cellprofiler_semantics.crop import (
+    CropShape,
+    cellprofiler_crop_mask_artifact_name,
+)
 from openhcs.core.artifact_materialization_policy import (
     DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
 )
@@ -51,6 +55,14 @@ from .area_occupied_settings import (
     area_occupied_rows,
 )
 from .calculate_math_settings import calculate_math_object_dependencies
+from .crop_settings import (
+    crop_input_image_name,
+    crop_mask_image_name,
+    crop_objects_name,
+    crop_output_image_name,
+    crop_previous_mask_artifact_name,
+    crop_shape,
+)
 from .artifact_semantics import (
     ArtifactSettingSymbol,
     FunctionSpecialOutput,
@@ -77,6 +89,7 @@ from .setting_names import (
     required_setting_value,
     setting_names,
     setting_values,
+    split_symbol_names,
 )
 from .source_schema import compile_image_schema
 from .unmix_colors_settings import (
@@ -262,7 +275,7 @@ class CellProfilerSymbolTable:
 
 INPUT_IMAGE_SETTING = SettingNameFamily(
     "Select the input image",
-    aliases=("Select an input image",),
+    aliases=("Select an input image", "Input"),
 )
 INPUT_OBJECTS_SETTING = SettingNameFamily(
     "Select the input objects",
@@ -274,7 +287,11 @@ OUTPUT_IMAGE_SETTING = SettingNameFamily(
 )
 OUTPUT_OBJECTS_SETTING = SettingNameFamily(
     "Name the output objects",
-    aliases=("Name the objects to be identified",),
+    aliases=("Name the objects to be identified", "Object"),
+)
+IDENTIFY_PRIMARY_OUTPUT_OBJECTS_SETTING = SettingNameFamily(
+    "Name the primary objects to be identified",
+    aliases=("Object",),
 )
 DISPLAY_OBJECTS_SETTING = SettingNameFamily(
     "Select objects to display",
@@ -654,12 +671,12 @@ def _identify_primary_objects(
     module: ModuleBlock,
 ) -> ModuleArtifactContracts:
     image = builder.require(
-        _setting(module, "Select the input image"),
+        _setting(module, INPUT_IMAGE_SETTING),
         CellProfilerSymbolKind.IMAGE,
         module,
     )
     objects = builder.declare(
-        _setting(module, "Name the primary objects to be identified"),
+        _setting(module, IDENTIFY_PRIMARY_OUTPUT_OBJECTS_SETTING),
         CellProfilerSymbolKind.OBJECTS,
         module,
     )
@@ -713,6 +730,90 @@ def _identify_tertiary_objects(
         module,
     )
     return _contracts(module, builder, inputs=[larger, smaller], outputs=[output])
+
+
+def _crop(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    """Compile Crop's image plus crop-mask sidecar semantics."""
+    image = builder.require(
+        crop_input_image_name(module),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    output_name = crop_output_image_name(module)
+    cropped_image = builder.declare(
+        output_name,
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    crop_mask = builder.declare(
+        cellprofiler_crop_mask_artifact_name(output_name),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    measurements = builder.declare(
+        _measurement_name(module),
+        CellProfilerSymbolKind.MEASUREMENTS,
+        module,
+    )
+    return _contracts(
+        module,
+        builder,
+        inputs=[image, *_crop_mask_inputs(builder, module)],
+        outputs=[cropped_image, crop_mask, measurements],
+    )
+
+
+def _crop_mask_inputs(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> tuple[CellProfilerSymbol, ...]:
+    shape = crop_shape(module)
+    if shape is CropShape.CROPPING:
+        mask_artifact_name = crop_previous_mask_artifact_name(module)
+        if mask_artifact_name is None:
+            raise ValueError(
+                f"Crop({module.module_num}) uses previous cropping but does "
+                "not declare an image with a cropping mask."
+            )
+        return (
+            builder.require(
+                mask_artifact_name,
+                CellProfilerSymbolKind.IMAGE,
+                module,
+            ),
+        )
+    if shape is CropShape.IMAGE:
+        mask_image_name = crop_mask_image_name(module)
+        if mask_image_name is None:
+            raise ValueError(
+                f"Crop({module.module_num}) uses image-mask cropping but does "
+                "not declare a masking image."
+            )
+        return (
+            builder.require(
+                mask_image_name,
+                CellProfilerSymbolKind.IMAGE,
+                module,
+            ),
+        )
+    if shape is CropShape.OBJECTS:
+        object_name = crop_objects_name(module)
+        if object_name is None:
+            raise ValueError(
+                f"Crop({module.module_num}) uses object-mask cropping but does "
+                "not declare masking objects."
+            )
+        return (
+            builder.require(
+                object_name,
+                CellProfilerSymbolKind.OBJECTS,
+                module,
+            ),
+        )
+    return ()
 
 
 def _measure_object_size_shape(
@@ -1506,6 +1607,7 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     (("CorrectIlluminationApply",), _correct_illumination_apply),
     (("Align",), _align),
     (("Opening",), _opening),
+    (("Crop",), _crop),
     (("IdentifyPrimaryObjects",), _identify_primary_objects),
     (("IdentifySecondaryObjects",), _identify_secondary_objects),
     (("IdentifyTertiaryObjects",), _identify_tertiary_objects),
@@ -1736,11 +1838,7 @@ def _optional_setting(
 
 
 def _split_names(value: str) -> tuple[str, ...]:
-    return tuple(
-        _normalize_symbol_name(part)
-        for part in value.split(",")
-        if part.strip()
-    )
+    return tuple(_normalize_symbol_name(part) for part in split_symbol_names(value))
 
 
 def _normalized_setting_symbol(

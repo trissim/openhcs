@@ -1,10 +1,14 @@
+from dataclasses import dataclass
+
 import numpy as np
 
+from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
 from benchmark.cellprofiler_compat.module_execution import (
     CellProfilerAlignedImageStack,
     CellProfilerFunctionContractMetadata,
     CellProfilerFunctionContractExecutor,
     CellProfilerImageExecutionMode,
+    CellProfilerModuleExecutor,
     _coerce_invocation_kwargs,
     _compose_image_payload,
     _measurement_image_for_labels,
@@ -24,9 +28,51 @@ from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
     UnclumpMethod,
     identify_primary_objects,
 )
+from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.config import DtypeConfig
 from openhcs.core.runtime_values import MeasurementTable
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeRuntimeImage:
+    data: np.ndarray
+    source_image_name: str | None = None
+
+
+class _FakeCellProfilerRuntime:
+    def __init__(self, images: dict[str, _FakeRuntimeImage]) -> None:
+        self.images = images
+        self.measurements: list[tuple[str, list[object], dict[str, object]]] = []
+        self.objects: list[tuple[str, np.ndarray, dict[str, object]]] = []
+
+    def require_resolvable_source_aliases(self, aliases: tuple[str, ...]) -> None:
+        missing = tuple(alias for alias in aliases if alias not in self.images)
+        if missing:
+            raise AssertionError(f"Unexpected missing image aliases: {missing!r}")
+
+    def resolve_source_image(self, alias: str, fallback_image: object) -> np.ndarray:
+        del fallback_image
+        return self.images[alias].data
+
+    def get_image(self, name: str) -> _FakeRuntimeImage:
+        return self.images[name]
+
+    def add_measurements(
+        self,
+        name: str,
+        rows: object,
+        **kwargs: object,
+    ) -> None:
+        self.measurements.append((name, _measurement_table_rows(rows), kwargs))
+
+    def add_objects(
+        self,
+        name: str,
+        labels: object,
+        **kwargs: object,
+    ) -> None:
+        self.objects.append((name, labels, kwargs))
 
 
 def test_coerce_invocation_kwargs_uses_function_enum_annotations() -> None:
@@ -59,6 +105,22 @@ def test_cellprofiler_contract_executor_applies_pure_2d_after_input_resolution()
     assert calls == [(4, 5), (4, 5)]
     assert result.shape == stack.shape
     np.testing.assert_array_equal(result, np.ones_like(stack))
+
+
+def test_cellprofiler_contract_executor_stacks_color_slice_outputs():
+    calls = []
+
+    def colorize(image: np.ndarray) -> np.ndarray:
+        calls.append(image.shape)
+        return np.stack((image, image, image), axis=-1)
+
+    colorize.__processing_contract__ = ProcessingContract.PURE_2D
+    stack = np.zeros((2, 4, 5), dtype=np.float32)
+
+    result = CellProfilerFunctionContractExecutor().execute(colorize, stack, {})
+
+    assert calls == [(4, 5), (4, 5)]
+    assert result.shape == (2, 4, 5, 3)
 
 
 def test_cellprofiler_contract_executor_slices_aligned_runtime_kwargs():
@@ -131,6 +193,16 @@ def test_cellprofiler_contract_executor_preserves_multi_image_stack_payload():
     assert result.shape == stack.shape
 
 
+def test_object_only_reference_image_reduces_color_stacks_to_one_intensity_plane():
+    color_stack = np.zeros((2, 4, 5, 3), dtype=np.float32)
+    color_stack[0, :, :, 1] = 7
+
+    reference = _object_only_reference_image(color_stack)
+
+    assert reference.shape == (4, 5)
+    np.testing.assert_array_equal(reference, color_stack[0, :, :, 0])
+
+
 def test_compose_image_payload_aligns_multislice_inputs_with_broadcast():
     raw_stack = np.stack(
         (
@@ -189,6 +261,199 @@ def test_cellprofiler_contract_executor_applies_aligned_multi_image_stack():
     assert result.shape == (2, 4, 5)
     np.testing.assert_array_equal(result[0], np.full((4, 5), 8, dtype=np.float32))
     np.testing.assert_array_equal(result[1], np.full((4, 5), 19, dtype=np.float32))
+
+
+def test_aligned_multi_image_stack_slices_runtime_array_kwargs() -> None:
+    calls = []
+
+    def keep_labels(image: np.ndarray, *, labels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        calls.append((image.shape, labels.shape))
+        return image[0], labels
+
+    aligned_stack = CellProfilerAlignedImageStack(
+        slices=(
+            np.stack(
+                (
+                    np.full((4, 5), 11, dtype=np.float32),
+                    np.full((4, 5), 3, dtype=np.float32),
+                )
+            ),
+            np.stack(
+                (
+                    np.full((4, 5), 22, dtype=np.float32),
+                    np.full((4, 5), 7, dtype=np.float32),
+                )
+            ),
+        )
+    )
+    labels = np.stack(
+        (
+            np.full((4, 5), 1, dtype=np.int32),
+            np.full((4, 5), 2, dtype=np.int32),
+        )
+    )
+
+    result_image, result_labels = CellProfilerFunctionContractExecutor().execute(
+        keep_labels,
+        aligned_stack,
+        {"labels": labels},
+        execution_mode=CellProfilerImageExecutionMode.ALIGNED_MULTI_IMAGE_STACK,
+    )
+
+    assert calls == [((2, 4, 5), (4, 5)), ((2, 4, 5), (4, 5))]
+    assert result_image.shape == (2, 4, 5)
+    assert result_labels.shape == labels.shape
+    np.testing.assert_array_equal(result_labels, labels)
+
+
+def test_module_executor_runs_image_measurements_per_declared_image() -> None:
+    calls = []
+
+    def measure_image(image: np.ndarray) -> tuple[np.ndarray, dict[str, float]]:
+        calls.append(float(image[0, 0]))
+        return image, {"mean": float(np.mean(image))}
+
+    measure_image.__processing_contract__ = ProcessingContract.PURE_2D
+    fallback = np.zeros((4, 5), dtype=np.float32)
+    runtime = _FakeCellProfilerRuntime(
+        {
+            "OrigBlue": _FakeRuntimeImage(
+                np.ones((4, 5), dtype=np.float32),
+                source_image_name="OrigBlue",
+            ),
+            "OrigGreen": _FakeRuntimeImage(
+                np.full((4, 5), 2, dtype=np.float32),
+                source_image_name="OrigGreen",
+            ),
+        }
+    )
+    executor = CellProfilerModuleExecutor(
+        CellProfilerModuleContract(
+            module_name="MeasureImageQuality",
+            inputs=(
+                ArtifactSpec("OrigBlue", ArtifactKind.IMAGE),
+                ArtifactSpec("OrigGreen", ArtifactKind.IMAGE),
+            ),
+            outputs=(ArtifactSpec("ImageQuality", ArtifactKind.MEASUREMENTS),),
+        )
+    )
+
+    result = executor.run(
+        measure_image,
+        fallback,
+        cellprofiler_runtime=runtime,
+    )
+
+    assert result is fallback
+    assert calls == [1.0, 2.0]
+    assert runtime.measurements == [
+        (
+            "ImageQuality",
+            [{"mean": 1.0}, {"mean": 2.0}],
+            {"source_image_name": None},
+        )
+    ]
+
+
+def test_module_executor_preserves_composed_image_measurements() -> None:
+    calls = []
+
+    def measure_pair(
+        image: np.ndarray,
+        channel_1: int = 0,
+        channel_2: int = 1,
+    ) -> tuple[np.ndarray, dict[str, float]]:
+        calls.append(image.shape)
+        return image[channel_1], {
+            "delta": float(np.mean(image[channel_2] - image[channel_1]))
+        }
+
+    fallback = np.zeros((4, 5), dtype=np.float32)
+    runtime = _FakeCellProfilerRuntime(
+        {
+            "OrigBlue": _FakeRuntimeImage(np.ones((4, 5), dtype=np.float32)),
+            "OrigGreen": _FakeRuntimeImage(np.full((4, 5), 3, dtype=np.float32)),
+        }
+    )
+    executor = CellProfilerModuleExecutor(
+        CellProfilerModuleContract(
+            module_name="MeasureColocalization",
+            inputs=(
+                ArtifactSpec("OrigBlue", ArtifactKind.IMAGE),
+                ArtifactSpec("OrigGreen", ArtifactKind.IMAGE),
+            ),
+            outputs=(ArtifactSpec("Colocalization", ArtifactKind.MEASUREMENTS),),
+        )
+    )
+
+    result = executor.run(
+        measure_pair,
+        fallback,
+        cellprofiler_runtime=runtime,
+    )
+
+    assert result is fallback
+    assert calls == [(2, 4, 5)]
+    assert runtime.measurements == [
+        (
+            "Colocalization",
+            [{"delta": 2.0}],
+            {"object_name": None, "source_image_name": None},
+        )
+    ]
+
+
+def test_module_executor_records_multiple_declared_object_outputs() -> None:
+    labels_without_overlap = np.ones((4, 5), dtype=np.int32)
+    labels_with_overlap = np.full((4, 5), 2, dtype=np.int32)
+
+    def untangle_like(
+        image: np.ndarray,
+    ) -> tuple[np.ndarray, dict[str, float], np.ndarray, np.ndarray]:
+        return image, {"worm_count": 1.0}, labels_with_overlap, labels_without_overlap
+
+    untangle_like.__processing_contract__ = ProcessingContract.PURE_2D
+    fallback = np.zeros((4, 5), dtype=np.float32)
+    runtime = _FakeCellProfilerRuntime(
+        {
+            "WormBinary": _FakeRuntimeImage(
+                fallback,
+                source_image_name="WormBinary",
+            ),
+        }
+    )
+    executor = CellProfilerModuleExecutor(
+        CellProfilerModuleContract(
+            module_name="UntangleWorms",
+            inputs=(ArtifactSpec("WormBinary", ArtifactKind.IMAGE),),
+            outputs=(
+                ArtifactSpec("UntangleWorms_3_measurements", ArtifactKind.MEASUREMENTS),
+                ArtifactSpec("OverlappingWorms", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("NonOverlappingWorms", ArtifactKind.OBJECT_LABELS),
+            ),
+        )
+    )
+
+    result = executor.run(
+        untangle_like,
+        fallback,
+        cellprofiler_runtime=runtime,
+    )
+
+    assert result is fallback
+    assert runtime.measurements == [
+        (
+            "UntangleWorms_3_measurements",
+            [{"worm_count": 1.0}],
+            {"object_name": None, "source_image_name": "WormBinary"},
+        )
+    ]
+    assert [name for name, _labels, _kwargs in runtime.objects] == [
+        "OverlappingWorms",
+        "NonOverlappingWorms",
+    ]
+    np.testing.assert_array_equal(runtime.objects[0][1], labels_with_overlap)
+    np.testing.assert_array_equal(runtime.objects[1][1], labels_without_overlap)
 
 
 def test_cellprofiler_contract_executor_infers_unknown_absorbed_contract():

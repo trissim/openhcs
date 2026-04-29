@@ -20,6 +20,7 @@ from openhcs.core.source_bindings import (
     SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
+    SourceBindingRuntimeContext,
     SourceSelector,
     StepSourceBindingsConfig,
 )
@@ -192,3 +193,22 @@ def test_compiled_source_binding_plan_round_trips_through_pickle():
         "OrigBlue",
         "dna",
     )
+
+
+def test_source_binding_runtime_context_preserves_source_provenance_through_pickle():
+    context = SourceBindingRuntimeContext(
+        step_input_files=("A01_s001_w1_z001_t001.tif",),
+        step_input_dir="/workspace",
+        step_input_source_paths={
+            "A01_s001_w1_z001_t001.tif": "/real/source_C20_w1.tif",
+        },
+        pipeline_input_files=("/real/source_C20_w1.tif",),
+        pipeline_input_backend="disk",
+    )
+
+    restored = pickle.loads(pickle.dumps(context))
+
+    assert restored == context
+    assert dict(restored.step_input_source_paths) == {
+        "A01_s001_w1_z001_t001.tif": "/real/source_C20_w1.tif",
+    }

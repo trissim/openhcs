@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import os
 from pathlib import Path
 
 from benchmark.converter.runtime_pipeline import (
@@ -8,6 +9,7 @@ from benchmark.converter.runtime_pipeline import (
     prepare_generated_pipeline,
 )
 import numpy as np
+import pytest
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.constants import Microscope
 from openhcs.constants.constants import AllComponents
@@ -365,6 +367,88 @@ def test_examplehuman_cppipe_executes_via_source_schema_workspace(
     assert measurement_records
 
 
+def test_official_example_untangleworms_cppipe_executes_via_source_schema_workspace(
+    tmp_path: Path,
+) -> None:
+    examples_root = _official_cellprofiler_examples_root()
+    cppipe_path = (
+        examples_root
+        / "CellProfiler3Pipelines"
+        / "ExampleUntangleWorms.cppipe"
+    )
+    source_root = examples_root / "ExampleUntangleWorms"
+    if not cppipe_path.exists() or not source_root.exists():
+        pytest.skip(
+            "Official CellProfiler ExampleUntangleWorms files are not available. "
+            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
+            f"looked under {examples_root}."
+        )
+
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / "generated_official_untangleworms_pipeline.py",
+    )
+    workspace = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "official_untangleworms_openhcs_workspace",
+        prepared.source_schema,
+    )
+
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=True,
+        microscope=Microscope.AUTO,
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            output_dir_suffix="_generated_cppipe",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    orchestrator = PipelineOrchestrator(
+        workspace.workspace_root,
+        pipeline_config=pipeline_config,
+    )
+    orchestrator.initialize()
+
+    execution = execute_pipeline_direct(
+        orchestrator,
+        prepared.pipeline,
+        well_filter=["A01"],
+    )
+
+    assert all(
+        result.is_success()
+        for result in execution.execution_results.values()
+    )
+    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
+    assert runtime_store.find(
+        name="OverlappingWorms",
+        kind=ArtifactKind.OBJECT_LABELS,
+        axis_id="A01",
+    )
+    assert runtime_store.find(
+        name="NonOverlappingWorms",
+        kind=ArtifactKind.OBJECT_LABELS,
+        axis_id="A01",
+    )
+    overlay_records = runtime_store.find(
+        name="OrigOverlay",
+        kind=ArtifactKind.IMAGE,
+        axis_id="A01",
+    )
+    assert len(overlay_records) == 1
+    assert np.asarray(overlay_records[0].value.data).ndim == 4
+    assert runtime_store.find(
+        name="MeasureObjectIntensity_17_measurements",
+        kind=ArtifactKind.MEASUREMENTS,
+        axis_id="A01",
+    )
+
+
 def test_cppipe_generated_pipeline_materializes_relationship_outputs(
     tmp_path: Path,
 ) -> None:
@@ -665,6 +749,15 @@ def _generated_output_root(plate_path: Path) -> Path:
 
 def _generated_results_dir(plate_path: Path) -> Path:
     return _generated_output_root(plate_path) / "images_results"
+
+
+def _official_cellprofiler_examples_root() -> Path:
+    return Path(
+        os.environ.get(
+            "CELLPROFILER_EXAMPLES_ROOT",
+            "/tmp/cellprofiler_examples",
+        )
+    )
 
 
 def _csv_header(path: Path) -> list[str]:

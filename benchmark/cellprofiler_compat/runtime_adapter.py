@@ -476,16 +476,8 @@ class CellProfilerRuntimeAdapter:
                 "CellProfilerRuntimeAdapter.filemanager is required for writes; "
                 "adapter writes must persist through the OpenHCS VFS boundary."
             )
-        try:
-            save = self.filemanager.save
-            ensure_directory = self.filemanager.ensure_directory
-        except AttributeError as exc:
-            raise TypeError(
-                "CellProfilerRuntimeAdapter.filemanager must provide "
-                "save() and ensure_directory()."
-            ) from exc
-        ensure_directory(str(Path(path).parent), self.backend)
-        save(data, path, self.backend)
+        self.filemanager.ensure_directory(str(Path(path).parent), self.backend)
+        self.filemanager.save(data, path, self.backend)
 
 
 @dataclass(frozen=True, slots=True)
@@ -587,7 +579,10 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
             request.adapter.source_binding_context.step_input_files,
             request.adapter,
         )
-        inherit_components = _inherited_scope_components(step_input_candidates)
+        inherit_components = _pipeline_start_inherited_components(
+            request.adapter.source_binding_plan,
+            step_input_candidates,
+        )
         parsed_candidates = _parse_source_candidates(
             pipeline_input_files,
             request.adapter,
@@ -979,7 +974,7 @@ def _is_numeric_array_payload(payload: Any) -> bool:
     return (
         hasattr(payload, "ndim")
         and dtype is not None
-        and getattr(dtype, "kind", None) in {"b", "u", "i", "f", "c"}
+        and dtype.kind in {"b", "u", "i", "f", "c"}
         and payload.ndim >= 2
     )
 
@@ -1021,6 +1016,15 @@ def _inherited_scope_components(
         ):
             shared[field_name] = normalized_value
     return MappingProxyType(shared)
+
+
+def _pipeline_start_inherited_components(
+    source_binding_plan: CompiledSourceBindingPlan,
+    step_input_candidates: tuple[ParsedSourceCandidate, ...],
+) -> Mapping[str, str]:
+    if source_binding_plan.match_plan is not None:
+        return MappingProxyType({})
+    return _inherited_scope_components(step_input_candidates)
 
 
 class SourceBindingMatchPlanResolver(ABC, metaclass=AutoRegisterMeta):
@@ -1250,6 +1254,9 @@ def _resolved_source_path(
     file_path: str,
     adapter: CellProfilerRuntimeAdapter,
 ) -> str:
+    source_path = _step_input_source_path(file_path, adapter.source_binding_context)
+    if source_path is not None:
+        return source_path
     path = Path(file_path)
     if path.is_absolute():
         return str(path)
@@ -1257,3 +1264,30 @@ def _resolved_source_path(
     if step_input_dir is None:
         return str(path)
     return str(Path(step_input_dir) / path)
+
+
+def _step_input_source_path(
+    file_path: str,
+    context: SourceBindingRuntimeContext,
+) -> str | None:
+    for key in _source_path_lookup_keys(file_path, context.step_input_dir):
+        source_path = context.step_input_source_paths.get(key)
+        if source_path is not None:
+            return source_path
+    return None
+
+
+def _source_path_lookup_keys(
+    file_path: str,
+    step_input_dir: str | None,
+) -> tuple[str, ...]:
+    path = Path(file_path)
+    keys = dict.fromkeys((str(file_path), path.as_posix()))
+    if path.is_absolute() and step_input_dir is not None:
+        try:
+            relative_path = path.relative_to(step_input_dir)
+        except ValueError:
+            pass
+        else:
+            keys[relative_path.as_posix()] = None
+    return tuple(keys)

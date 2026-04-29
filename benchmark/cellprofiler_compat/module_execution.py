@@ -8,12 +8,23 @@ from dataclasses import dataclass
 from enum import Enum
 from inspect import signature
 import re
-from typing import Any, ClassVar
+from typing import Any, ClassVar, get_type_hints
 
 from metaclass_registry import AutoRegisterMeta
+import numpy as np
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.config import DtypeConfig
-from openhcs.core.memory import detect_memory_type, stack_slices, unstack_slices
+from openhcs.core.memory import (
+    MEMORY_TYPE_NUMPY,
+    convert_memory,
+    detect_memory_type,
+    stack_slices,
+    unstack_slices,
+)
+from openhcs.core.image_shapes import (
+    is_color_image_slice,
+    is_color_image_stack,
+)
 from openhcs.core.pipeline.function_contracts import special_input_names_from_callable
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest
 from openhcs.core.runtime_stores import require_runtime_value_store
@@ -102,6 +113,15 @@ class CellProfilerModuleExecutor:
         **kwargs: Any,
     ) -> Any:
         """Call the absorbed function and record declared outputs through the adapter."""
+        if self._runs_per_image_measurement(func):
+            return self._run_per_image_measurement(
+                func,
+                input_image=image,
+                fallback_image=image,
+                cellprofiler_runtime=cellprofiler_runtime,
+                **kwargs,
+            )
+
         image_request = self._image_request(
             func,
             image,
@@ -149,6 +169,17 @@ class CellProfilerModuleExecutor:
         return CellProfilerPerObjectMeasurementPolicy.matches(
             self.module_name,
             self._object_input_specs(),
+        )
+
+    def _runs_per_image_measurement(self, func: Callable[..., Any]) -> bool:
+        return CellProfilerPerImageMeasurementPolicy.matches(
+            CellProfilerPerImageMeasurementRequest(
+                module_name=self.module_name,
+                func=func,
+                image_inputs=self._primary_image_inputs(func),
+                object_inputs=self._object_input_specs(),
+                outputs=self.outputs,
+            )
         )
 
     def _produces_image_output(self) -> bool:
@@ -239,6 +270,62 @@ class CellProfilerModuleExecutor:
         )
         return input_image
 
+    def _run_per_image_measurement(
+        self,
+        func: Callable[..., Any],
+        *,
+        input_image: Any,
+        fallback_image: Any,
+        cellprofiler_runtime: CellProfilerRuntimeAdapter,
+        **kwargs: Any,
+    ) -> Any:
+        measurement_outputs = _specs_of_kind(self.outputs, ArtifactKind.MEASUREMENTS)
+        if len(measurement_outputs) != 1:
+            raise NotImplementedError(
+                f"{self.module_name} per-image execution requires exactly one "
+                "measurement output."
+            )
+
+        combined_rows: list[Any] = []
+        measurement_images = self._independent_measurement_image_inputs(
+            func,
+            cellprofiler_runtime,
+            fallback_image,
+        )
+        runtime_kwargs = {
+            **kwargs,
+            **self._runtime_input_kwargs(
+                func,
+                cellprofiler_runtime,
+                fallback_image,
+                kwargs,
+            ),
+        }
+        coerced_kwargs = _coerce_invocation_kwargs(func, runtime_kwargs)
+        for measurement_image in measurement_images:
+            raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
+                func,
+                measurement_image.payload,
+                coerced_kwargs,
+                execution_mode=measurement_image.execution_mode,
+            )
+            _ignored_main_output, artifact_values = _split_cellprofiler_output(
+                raw_output
+            )
+            combined_rows.extend(_measurement_rows_from_output(artifact_values))
+
+        source_image_names = tuple(
+            image.source_image_name
+            for image in measurement_images
+            if image.source_image_name is not None
+        )
+        cellprofiler_runtime.add_measurements(
+            measurement_outputs[0].name,
+            combined_rows,
+            source_image_name=_single_source_name(source_image_names),
+        )
+        return input_image
+
     def _measurement_image_inputs(
         self,
         func: Callable[..., Any],
@@ -260,6 +347,47 @@ class CellProfilerModuleExecutor:
         ):
             return (
                 CellProfilerMeasurementImage.composed(image_request),
+            )
+
+        runtime_image_names = frozenset(
+            spec.name
+            for spec in _specs_of_kind(
+                self.runtime_artifact_inputs,
+                ArtifactKind.IMAGE,
+            )
+        )
+        resolved_images: list[CellProfilerMeasurementImage] = []
+        for spec in image_inputs:
+            if spec.name in runtime_image_names:
+                runtime_image = adapter.get_image(spec.name)
+                resolved_images.append(
+                    CellProfilerMeasurementImage.natural(
+                        source_image_name=runtime_image.source_image_name or spec.name,
+                        payload=runtime_image.data,
+                    )
+                )
+                continue
+            resolved_images.append(
+                CellProfilerMeasurementImage.natural(
+                    source_image_name=spec.name,
+                    payload=adapter.resolve_source_image(spec.name, fallback_image),
+                )
+            )
+        return tuple(resolved_images)
+
+    def _independent_measurement_image_inputs(
+        self,
+        func: Callable[..., Any],
+        adapter: CellProfilerRuntimeAdapter,
+        fallback_image: Any,
+    ) -> tuple["CellProfilerMeasurementImage", ...]:
+        image_inputs = self._primary_image_inputs(func)
+        if not image_inputs:
+            return (
+                CellProfilerMeasurementImage.natural(
+                    source_image_name=self._input_source_image_name(adapter),
+                    payload=_object_only_reference_image(fallback_image),
+                ),
             )
 
         runtime_image_names = frozenset(
@@ -736,18 +864,36 @@ def _coerce_invocation_kwargs(
 ) -> dict[str, Any]:
     coerced_kwargs = dict(kwargs)
     parameters = signature(func).parameters
+    annotations = _callable_type_hints(func)
     for name, value in tuple(coerced_kwargs.items()):
-        enum_type = _enum_annotation_type(parameters.get(name))
+        enum_type = _enum_annotation_type(
+            parameters.get(name),
+            annotations.get(name),
+        )
         if enum_type is None:
             continue
         coerced_kwargs[name] = _coerce_enum_argument(enum_type, value, name)
     return coerced_kwargs
 
 
-def _enum_annotation_type(parameter: Any) -> type[Enum] | None:
+def _callable_type_hints(func: Callable[..., Any]) -> Mapping[str, Any]:
+    try:
+        return get_type_hints(func)
+    except (NameError, TypeError):
+        return {}
+
+
+def _enum_annotation_type(
+    parameter: Any,
+    resolved_annotation: Any = None,
+) -> type[Enum] | None:
     if parameter is None:
         return None
-    annotation = parameter.annotation
+    annotation = (
+        resolved_annotation
+        if resolved_annotation is not None
+        else parameter.annotation
+    )
     if isinstance(annotation, type) and issubclass(annotation, Enum):
         return annotation
     return None
@@ -1032,11 +1178,12 @@ class SingleObjectLabelInputPolicy(CellProfilerObjectInputPolicy):
         }
 
 
-class IdentifySecondaryObjectInputPolicy(SingleObjectLabelInputPolicy):
-    """Bind primary-object labels for secondary object identification."""
+@dataclass(frozen=True, slots=True)
+class SingleObjectLabelInputPolicySpec:
+    """Declarative leaf spec for one object-label binding policy."""
 
-    module_name = "IdentifySecondaryObjects"
-    label_kwarg = "primary_labels"
+    module_name: str
+    label_kwarg: str
 
 
 class IdentifyTertiaryObjectInputPolicy(CellProfilerObjectInputPolicy):
@@ -1081,35 +1228,38 @@ _MEASURE_GRANULARITY_MODULE = "MeasureGranularity"
 _MEASURE_OBJECT_NEIGHBORS_MODULE = "MeasureObjectNeighbors"
 
 
-class SingleLabelMeasurementInputPolicy(SingleObjectLabelInputPolicy):
-    """Bind one object-label input to measurement functions."""
-
-    module_name = _MEASURE_OBJECT_SIZE_SHAPE_MODULE
-    label_kwarg = "labels"
-
-
-_SINGLE_LABEL_MEASUREMENT_POLICY_MODULES = (
-    _MEASURE_OBJECT_INTENSITY_MODULE,
-    _MEASURE_TEXTURE_MODULE,
-    _MEASURE_COLOCALIZATION_MODULE,
-    _MEASURE_GRANULARITY_MODULE,
-    _MEASURE_OBJECT_NEIGHBORS_MODULE,
+_SINGLE_OBJECT_LABEL_INPUT_POLICY_SPECS = (
+    SingleObjectLabelInputPolicySpec("IdentifySecondaryObjects", "primary_labels"),
+    SingleObjectLabelInputPolicySpec("Crop", "cropping_labels"),
+    SingleObjectLabelInputPolicySpec(_MEASURE_OBJECT_SIZE_SHAPE_MODULE, "labels"),
+    SingleObjectLabelInputPolicySpec(_MEASURE_OBJECT_INTENSITY_MODULE, "labels"),
+    SingleObjectLabelInputPolicySpec(_MEASURE_TEXTURE_MODULE, "labels"),
+    SingleObjectLabelInputPolicySpec(_MEASURE_COLOCALIZATION_MODULE, "labels"),
+    SingleObjectLabelInputPolicySpec(_MEASURE_GRANULARITY_MODULE, "labels"),
+    SingleObjectLabelInputPolicySpec(_MEASURE_OBJECT_NEIGHBORS_MODULE, "labels"),
 )
 
 
-def _declare_single_label_measurement_policy(module_name: str) -> None:
+class DeclaredSingleObjectLabelInputPolicy(SingleObjectLabelInputPolicy):
+    """Generated base for modules with one declared label input."""
+
+
+def _declare_single_object_label_input_policy(
+    spec: SingleObjectLabelInputPolicySpec,
+) -> None:
     type(
-        f"{module_name}InputPolicy",
-        (SingleLabelMeasurementInputPolicy,),
+        f"{spec.module_name}InputPolicy",
+        (DeclaredSingleObjectLabelInputPolicy,),
         {
             "__module__": __name__,
-            "module_name": module_name,
+            "module_name": spec.module_name,
+            "label_kwarg": spec.label_kwarg,
         },
     )
 
 
-for _module_name in _SINGLE_LABEL_MEASUREMENT_POLICY_MODULES:
-    _declare_single_label_measurement_policy(_module_name)
+for _policy_spec in _SINGLE_OBJECT_LABEL_INPUT_POLICY_SPECS:
+    _declare_single_object_label_input_policy(_policy_spec)
 
 
 class OverlayOutlinesInputPolicy(CellProfilerObjectInputPolicy):
@@ -1529,6 +1679,10 @@ def _object_only_reference_image(image: Any) -> Any:
     to iterate over. Running them over every channel slice duplicates object
     artifacts and corrupts downstream measurement alignment.
     """
+    if is_color_image_stack(image):
+        return image[0, :, :, 0]
+    if is_color_image_slice(image):
+        return image[:, :, 0]
     if hasattr(image, "ndim") and image.ndim == 3 and image.shape[0] >= 1:
         return image[0]
     return image
@@ -1545,6 +1699,13 @@ def _measurement_image_for_labels(image: Any, labels: Any) -> Any:
     """
     if not hasattr(image, "ndim") or not hasattr(labels, "ndim"):
         return image
+    if is_color_image_stack(image):
+        if labels.ndim == 3:
+            return image[..., 0]
+        if labels.ndim == 2:
+            return image[0, :, :, 0]
+    if is_color_image_slice(image) and labels.ndim == 2:
+        return image[:, :, 0]
     if image.ndim == labels.ndim:
         return image
     if image.ndim == labels.ndim + 1 and getattr(image, "shape", (0,))[0] >= 1:
@@ -1904,6 +2065,55 @@ def _calculate_math_operand_value(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class CellProfilerPerImageMeasurementRequest:
+    """Contract shape used to decide image-measurement invocation cardinality."""
+
+    module_name: str
+    func: Callable[..., Any]
+    image_inputs: tuple[ArtifactSpec, ...]
+    object_inputs: tuple[ArtifactSpec, ...]
+    outputs: tuple[ArtifactSpec, ...]
+
+
+class CellProfilerPerImageMeasurementPolicy:
+    """Predicate for image measurements that execute once per named image."""
+
+    @classmethod
+    def matches(cls, request: CellProfilerPerImageMeasurementRequest) -> bool:
+        if request.object_inputs or not request.image_inputs:
+            return False
+        measurement_outputs = _specs_of_kind(
+            request.outputs,
+            ArtifactKind.MEASUREMENTS,
+        )
+        if len(measurement_outputs) != 1:
+            return False
+        if len(request.outputs) != len(measurement_outputs):
+            return False
+        return not _callable_accepts_composed_image_payload(request.func)
+
+
+_COMPOSED_IMAGE_PAYLOAD_PARAMETERS = frozenset(
+    (
+        "channel_1",
+        "channel_2",
+        "input_names",
+        "operand_choices",
+        "retained_image_names",
+    )
+)
+
+
+def _callable_accepts_composed_image_payload(func: Callable[..., Any]) -> bool:
+    """Return whether callable parameters describe a multi-image bundle contract."""
+    parameters = signature(func).parameters
+    return any(
+        parameter_name in parameters
+        for parameter_name in _COMPOSED_IMAGE_PAYLOAD_PARAMETERS
+    )
+
+
 def _bind_special_runtime_inputs(
     module_name: str,
     parameter_names: tuple[str, ...],
@@ -2033,6 +2243,32 @@ def _aligned_payload_slice(
     return slices[slice_index]
 
 
+def _aligned_multi_image_stack_kwargs(
+    kwargs: Mapping[str, Any],
+    slice_index: int,
+    slice_count: int,
+) -> dict[str, Any]:
+    return {
+        name: _aligned_multi_image_stack_kwarg(value, slice_index, slice_count)
+        for name, value in kwargs.items()
+    }
+
+
+def _aligned_multi_image_stack_kwarg(
+    value: Any,
+    slice_index: int,
+    slice_count: int,
+) -> Any:
+    if not hasattr(value, "ndim"):
+        return value
+    slices = _payload_slices_for_alignment(value)
+    if len(slices) == slice_count:
+        return slices[slice_index]
+    if len(slices) == 1:
+        return slices[0]
+    return value
+
+
 def _compose_one_image_bundle(
     image_payloads: tuple[Any, ...],
 ) -> Any:
@@ -2061,6 +2297,64 @@ def _payload_slice_count(payload: Any) -> int:
     if hasattr(payload, "shape") and payload.shape:
         return int(payload.shape[0])
     return 1
+
+
+def _stack_cellprofiler_slice_outputs(
+    slice_outputs: Sequence[Any],
+    memory_type: str,
+) -> Any:
+    if all(_is_grayscale_slice_output(output) for output in slice_outputs):
+        return stack_slices(list(slice_outputs), memory_type, 0)
+    if all(is_color_image_slice(output) for output in slice_outputs):
+        stacked = np.stack(
+            tuple(
+                _as_numpy_payload(output)
+                for output in slice_outputs
+            )
+        )
+        if memory_type == MEMORY_TYPE_NUMPY:
+            return stacked
+        return _convert_memory(stacked, MEMORY_TYPE_NUMPY, memory_type)
+    raise ValueError(
+        "CellProfiler slice outputs must be uniformly 2D grayscale or HWC "
+        "color images; got shapes "
+        f"{[getattr(output, 'shape', None) for output in slice_outputs]!r}."
+    )
+
+
+def _unstack_cellprofiler_image_slices(image: Any, memory_type: str) -> tuple[Any, ...]:
+    if is_color_image_slice(image):
+        return (image,)
+    if is_color_image_stack(image):
+        source_type = detect_memory_type(image)
+        if source_type != memory_type:
+            image = _convert_memory(image, source_type, memory_type)
+        return tuple(image[index] for index in range(image.shape[0]))
+    return tuple(unstack_slices(image, memory_type, 0))
+
+
+def _is_grayscale_slice_output(output: Any) -> bool:
+    return hasattr(output, "ndim") and output.ndim == 2
+
+
+def _as_numpy_payload(payload: Any) -> np.ndarray:
+    source_type = detect_memory_type(payload)
+    if source_type == MEMORY_TYPE_NUMPY:
+        return payload
+    return _convert_memory(payload, source_type, MEMORY_TYPE_NUMPY)
+
+
+def _convert_memory(
+    data: Any,
+    source_type: str,
+    target_type: str,
+) -> Any:
+    return convert_memory(
+        data=data,
+        source_type=source_type,
+        target_type=target_type,
+        gpu_id=0,
+    )
 
 
 def _requested_image_execution_mode(
@@ -2119,14 +2413,26 @@ class CellProfilerFunctionContractExecutor:
             )
         slice_results = tuple(
             _rewrite_slice_index(
-                _collapse_singleton_stack_output(func(slice_payload, **kwargs)),
+                _collapse_singleton_stack_output(
+                    func(
+                        slice_payload,
+                        **_aligned_multi_image_stack_kwargs(
+                            kwargs,
+                            slice_index,
+                            len(image.slices),
+                        ),
+                    )
+                ),
                 slice_index,
             )
             for slice_index, slice_payload in enumerate(image.slices)
         )
         main_outputs, auxiliary_groups = _pure_2d_slice_results(slice_results)
         memory_type = detect_memory_type(main_outputs[0])
-        stacked_main_output = stack_slices(main_outputs, memory_type, 0)
+        stacked_main_output = _stack_cellprofiler_slice_outputs(
+            main_outputs,
+            memory_type,
+        )
         if not auxiliary_groups:
             return stacked_main_output
         return (
@@ -2152,8 +2458,11 @@ class CellProfilerFunctionContractExecutor:
             if slice_count is None:
                 return func(image, **kwargs)
             slices_2d = tuple(image for _ in range(slice_count))
+        elif is_color_image_slice(image):
+            slice_count = _slice_count_from_pure_2d_kwargs(kwargs)
+            slices_2d = tuple(image for _ in range(slice_count or 1))
         else:
-            slices_2d = unstack_slices(image, memory_type, 0)
+            slices_2d = _unstack_cellprofiler_image_slices(image, memory_type)
 
         slice_count = len(slices_2d)
         slice_results = [
@@ -2167,7 +2476,10 @@ class CellProfilerFunctionContractExecutor:
             for slice_index, slice_2d in enumerate(slices_2d)
         ]
         main_outputs, auxiliary_groups = _pure_2d_slice_results(slice_results)
-        stacked_main_output = stack_slices(main_outputs, memory_type, 0)
+        stacked_main_output = _stack_cellprofiler_slice_outputs(
+            main_outputs,
+            memory_type,
+        )
         if not auxiliary_groups:
             return stacked_main_output
         return (

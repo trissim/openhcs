@@ -863,6 +863,92 @@ def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan(tmp
     assert filemanager.loaded_batches == []
 
 
+def test_cellprofiler_adapter_uses_virtual_workspace_source_provenance_for_order_matching():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="Sytox",
+                        selector=SourceSelector(
+                            filters=(
+                                SourceFilterClause(
+                                    SourceFilterSubject.FILE,
+                                    SourceFilterMatchType.CONTAINS,
+                                    "_w1",
+                                ),
+                            ),
+                        ),
+                    ),
+                    NamedSourceBinding(
+                        alias="BrightFieldImage",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        selector=SourceSelector(
+                            filters=(
+                                SourceFilterClause(
+                                    SourceFilterSubject.FILE,
+                                    SourceFilterMatchType.CONTAINS,
+                                    "_w2",
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        metadata_rules=(
+            MetadataExtractionRule(
+                source=MetadataSource.FILE_NAME,
+                pattern=r"plate_(?P<well>C\d{2})_w(?P<channel>\d)\.tif",
+            ),
+        ),
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+    filemanager = FileManagerStub()
+    first_brightfield = "/real/plate_C01_w2.tif"
+    expected_brightfield = "/real/plate_C20_w2.tif"
+    filemanager.saved[("memory", first_brightfield)] = np.full(
+        (2, 2),
+        12.0,
+        dtype=np.float32,
+    )
+    expected = np.full((2, 2), 22.0, dtype=np.float32)
+    filemanager.saved[("memory", expected_brightfield)] = expected
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=("A01_s001_w1_z001_t001.tif",),
+        step_input_dir="/workspace",
+        step_input_source_paths={
+            "A01_s001_w1_z001_t001.tif": "/real/plate_C20_w1.tif",
+        },
+        pipeline_input_files=(
+            "/real/plate_C01_w1.tif",
+            first_brightfield,
+            "/real/plate_C20_w1.tif",
+            expected_brightfield,
+        ),
+        pipeline_input_backend="memory",
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+
+    resolved = adapter.resolve_source_image(
+        "BrightFieldImage",
+        np.full((2, 2), 1.0, dtype=np.float32),
+    )
+
+    np.testing.assert_array_equal(resolved, expected)
+    assert filemanager.loaded_batches == [
+        ((expected_brightfield,), "memory", {}),
+    ]
+
+
 def test_cellprofiler_module_executor_records_object_output_through_adapter():
     adapter, _filemanager = _adapter(
         {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}

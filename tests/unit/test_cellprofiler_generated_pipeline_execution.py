@@ -46,6 +46,7 @@ IDENTIFY_SECONDARY_OBJECTS = "IdentifySecondaryObjects"
 MEASURE_OBJECT_SIZE_SHAPE = "MeasureObjectSizeShape"
 CONVERT_OBJECTS_TO_IMAGE = "ConvertObjectsToImage"
 OPENING = "Opening"
+EROSION = "Erosion"
 OVERLAY_OUTLINES = "OverlayOutlines"
 GRAY_TO_COLOR = "GrayToColor"
 RELATE_OBJECTS = "RelateObjects"
@@ -54,6 +55,7 @@ MASKED_NUCLEI = "MaskedNuclei"
 FILTER_OBJECTS = "FilterObjects"
 FILTERED_NUCLEI = "FilteredNuclei"
 FILTERED_CELLS = "FilteredCells"
+UNTANGLE_WORMS = "UntangleWorms"
 
 
 class MemoryBackend:
@@ -140,6 +142,65 @@ def test_generator_scopes_artifact_managed_wrappers_to_pattern_group():
         "opening_3_runtime.__processing_contract__ = ProcessingContract.FLEXIBLE"
         in generated.code
     )
+
+
+def test_generator_binds_canonical_morphology_alias_structuring_element():
+    generated = _generated_pipeline(
+        [
+            _module(
+                1,
+                IDENTIFY_PRIMARY_OBJECTS,
+                {
+                    "Select the input image": SOURCE_IMAGE,
+                    "Name the primary objects to be identified": NUCLEI,
+                },
+            ),
+            _module(
+                2,
+                CONVERT_OBJECTS_TO_IMAGE,
+                {
+                    "Select the input objects": NUCLEI,
+                    "Name the output image": NUCLEI_IMAGE,
+                },
+            ),
+            _module(
+                3,
+                EROSION,
+                {
+                    "Select the input image": NUCLEI_IMAGE,
+                    "Name the output image": "ErodedNucleiImage",
+                    "Structuring element": "disk,5",
+                },
+            ),
+        ]
+    )
+
+    assert 'erode_image_3 = require_function("Erosion", function_name="erode_image")' in (
+        generated.code
+    )
+    assert "'structuring_element': 'disk'" in generated.code
+    assert "'size': 5" in generated.code
+
+
+def test_generator_binds_untangle_worms_overlap_style():
+    generated = _generated_pipeline(
+        [
+            _module(
+                1,
+                UNTANGLE_WORMS,
+                {
+                    "Select the input binary image": SOURCE_IMAGE,
+                    "Overlap style": "Both",
+                    "Name the output overlapping worm objects": "OverlappingWorms",
+                    "Name the output non-overlapping worm objects": (
+                        "NonOverlappingWorms"
+                    ),
+                },
+            ),
+        ]
+    )
+
+    assert "'overlap_style': 'both'" in generated.code
 
 
 def _artifact_output_plans(contract) -> dict[str, ArtifactOutputPlan]:
