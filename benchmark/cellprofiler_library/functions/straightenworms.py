@@ -4,7 +4,7 @@ Straightens untangled worms using control points and training parameters.
 """
 
 import numpy as np
-from typing import Tuple, Optional
+from typing import Any
 from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
@@ -13,11 +13,18 @@ from openhcs.processing.materialization import csv_materializer
 from scipy.interpolate import interp1d
 import scipy.ndimage
 
+from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from benchmark.cellprofiler_library.functions.worm_geometry import (
+    calculate_cumulative_lengths,
+    control_points_for_label_image,
+)
+
 
 class FlipMode(Enum):
-    NONE = "none"
+    NONE = "do_not_align"
     TOP = "top_brightest"
     BOTTOM = "bottom_brightest"
+    MANUAL = "flip_manually"
 
 
 @dataclass
@@ -30,8 +37,20 @@ class WormMeasurement:
     std_intensity: float
 
 
+@dataclass(frozen=True, slots=True)
+class StraightenWormsSliceRequest:
+    image: np.ndarray
+    labels: np.ndarray
+    control_points: np.ndarray
+    worm_width: int
+    num_control_points: int
+    flip_mode: FlipMode
+    measure_intensity: bool
+    slice_index: int
+
+
 @numpy
-@special_inputs("worm_labels", "control_points")
+@special_inputs("worm_labels")
 @special_outputs(
     ("straightened_labels", None),
     ("worm_measurements", csv_materializer(
@@ -42,14 +61,14 @@ class WormMeasurement:
 def straighten_worms(
     image: np.ndarray,
     worm_labels: np.ndarray,
-    control_points: np.ndarray,
+    control_points: np.ndarray | None = None,
     worm_width: int = 20,
     num_control_points: int = 21,
     flip_mode: FlipMode = FlipMode.NONE,
     number_of_segments: int = 4,
     number_of_stripes: int = 3,
     measure_intensity: bool = True,
-) -> Tuple[np.ndarray, np.ndarray, list]:
+) -> tuple[Any, ...]:
     """
     Straighten worms using control points from UntangleWorms.
     
@@ -67,10 +86,12 @@ def straighten_worms(
     Returns:
         Tuple of (straightened_image, straightened_labels, measurements)
     """
-    # Handle 2D vs 3D input
+    flip_mode = _coerce_function_enum(FlipMode, flip_mode)
+    if flip_mode is FlipMode.MANUAL:
+        raise NotImplementedError("StraightenWorms manual flipping is interactive.")
+
     if image.ndim == 2:
         image = image[np.newaxis, :, :]
-    
     if worm_labels.ndim == 2:
         worm_labels = worm_labels[np.newaxis, :, :]
     
@@ -83,48 +104,49 @@ def straighten_worms(
         labels_slice = worm_labels[d] if d < worm_labels.shape[0] else worm_labels[0]
         
         straightened_img, straightened_lbl, measurements = _straighten_single_slice(
-            img_slice,
-            labels_slice,
-            control_points,
-            worm_width,
-            num_control_points,
-            flip_mode,
-            number_of_segments,
-            number_of_stripes,
-            measure_intensity,
-            d
+            StraightenWormsSliceRequest(
+                image=img_slice,
+                labels=labels_slice,
+                control_points=_control_points_for_slice(
+                    control_points,
+                    labels_slice,
+                    num_control_points,
+                ),
+                worm_width=worm_width,
+                num_control_points=num_control_points,
+                flip_mode=flip_mode,
+                measure_intensity=measure_intensity,
+                slice_index=d,
+            )
         )
         results.append(straightened_img)
         all_labels.append(straightened_lbl)
         all_measurements.extend(measurements)
     
-    straightened_image = np.stack(results, axis=0)
+    straightened_images = np.stack(results, axis=0)
     straightened_labels = np.stack(all_labels, axis=0)
-    
-    return straightened_image, straightened_labels, all_measurements
+
+    return (
+        *tuple(straightened_images[index] for index in range(straightened_images.shape[0])),
+        straightened_labels,
+        all_measurements,
+    )
 
 
 def _straighten_single_slice(
-    image: np.ndarray,
-    labels: np.ndarray,
-    control_points: np.ndarray,
-    worm_width: int,
-    num_control_points: int,
-    flip_mode: FlipMode,
-    number_of_segments: int,
-    number_of_stripes: int,
-    measure_intensity: bool,
-    slice_index: int
-) -> Tuple[np.ndarray, np.ndarray, list]:
+    request: StraightenWormsSliceRequest,
+) -> tuple[np.ndarray, np.ndarray, list[WormMeasurement]]:
     """Straighten worms in a single 2D slice."""
-    
+    image = request.image
+    labels = request.labels
+    control_points = request.control_points
+    half_width = request.worm_width // 2
+    width = 2 * half_width + 1
+
     unique_labels = np.unique(labels)
     unique_labels = unique_labels[unique_labels > 0]
     nworms = len(unique_labels)
-    
-    half_width = worm_width // 2
-    width = 2 * half_width + 1
-    
+
     if nworms == 0:
         shape = (width, width)
         return np.zeros(shape, dtype=image.dtype), np.zeros(shape, dtype=np.int32), []
@@ -133,8 +155,7 @@ def _straighten_single_slice(
     lengths = []
     for i in range(min(nworms, control_points.shape[0])):
         cp = control_points[i]  # (2, ncontrolpoints)
-        diffs = np.diff(cp, axis=1)
-        length = np.sum(np.sqrt(diffs[0]**2 + diffs[1]**2))
+        length = calculate_cumulative_lengths(cp.T)[-1]
         lengths.append(int(np.ceil(length)))
     
     if len(lengths) == 0:
@@ -164,7 +185,7 @@ def _straighten_single_slice(
         length = lengths[i]
         
         # Interpolate control points
-        t_orig = np.linspace(0, length, num_control_points)
+        t_orig = np.linspace(0, length, request.num_control_points)
         t_new = np.arange(0, length + 1)
         
         si = interp1d(t_orig, ii, kind='linear', fill_value='extrapolate')
@@ -208,7 +229,7 @@ def _straighten_single_slice(
         jx[islice, jslice] = cj_ext[iii] + nj_ext[iii] * jjj
         
         # Handle flipping
-        if flip_mode != FlipMode.NONE:
+        if request.flip_mode != FlipMode.NONE:
             ixs = ix[islice, jslice]
             jxs = jx[islice, jslice]
             
@@ -226,8 +247,14 @@ def _straighten_single_slice(
                 bottom_intensity = np.sum(simage[halfway:, :]) / area_bottom
                 
                 should_flip = (
-                    (flip_mode == FlipMode.TOP and top_intensity < bottom_intensity) or
-                    (flip_mode == FlipMode.BOTTOM and bottom_intensity < top_intensity)
+                    (
+                        request.flip_mode == FlipMode.TOP
+                        and top_intensity < bottom_intensity
+                    )
+                    or (
+                        request.flip_mode == FlipMode.BOTTOM
+                        and bottom_intensity < top_intensity
+                    )
                 )
                 
                 if should_flip:
@@ -248,7 +275,7 @@ def _straighten_single_slice(
     straightened_image = scipy.ndimage.map_coordinates(image, [ix, jx], order=1, mode='constant')
     
     # Measure intensity if requested
-    if measure_intensity:
+    if request.measure_intensity:
         for i, obj_num in enumerate(unique_labels):
             mask = straightened_labels == obj_num
             if np.sum(mask) > 0:
@@ -256,7 +283,7 @@ def _straighten_single_slice(
                 center_y, center_x = scipy.ndimage.center_of_mass(mask.astype(float))
                 
                 measurements.append(WormMeasurement(
-                    slice_index=slice_index,
+                    slice_index=request.slice_index,
                     object_number=int(obj_num),
                     center_x=float(center_x) if not np.isnan(center_x) else 0.0,
                     center_y=float(center_y) if not np.isnan(center_y) else 0.0,
@@ -265,3 +292,40 @@ def _straighten_single_slice(
                 ))
     
     return straightened_image, straightened_labels, measurements
+
+
+def _control_points_for_slice(
+    control_points: np.ndarray | None,
+    labels: np.ndarray,
+    num_control_points: int,
+) -> np.ndarray:
+    if control_points is None:
+        return control_points_for_label_image(labels, num_control_points)
+    return _normalized_control_points(control_points, num_control_points)
+
+
+def _normalized_control_points(
+    control_points: np.ndarray,
+    num_control_points: int,
+) -> np.ndarray:
+    points = np.asarray(control_points, dtype=float)
+    if points.ndim != 3:
+        raise ValueError(
+            "StraightenWorms control_points must have shape "
+            "(objects, 2, control_points) or (2, control_points, objects)."
+        )
+    if points.shape[1] == 2:
+        normalized = points
+    elif points.shape[0] == 2:
+        normalized = points.transpose(2, 0, 1)
+    else:
+        raise ValueError(
+            "StraightenWorms control_points must include one coordinate axis "
+            "of length 2."
+        )
+    if normalized.shape[2] != num_control_points:
+        raise ValueError(
+            f"StraightenWorms expected {num_control_points} control points; "
+            f"got {normalized.shape[2]}."
+        )
+    return normalized

@@ -40,6 +40,7 @@ from .illumination_settings import (
 from .overlay_outlines_settings import overlay_outlines_bound_kwargs
 from .parser import ModuleBlock
 from .settings_binder import SettingsBinder
+from .straighten_worms_settings import straighten_worms_bound_kwargs
 from .structuring_element_settings import structuring_element_bound_kwargs
 from .untangle_worms_settings import untangle_worms_bound_kwargs
 from .unmix_colors_settings import unmix_colors_bound_kwargs
@@ -420,6 +421,22 @@ class UntangleWormsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     ) -> BoundModuleSettings:
         del binder, param_mapping
         return BoundModuleSettings(untangle_worms_bound_kwargs(module))
+
+
+class StraightenWormsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind StraightenWorms geometry and measurement settings."""
+
+    module_name = "StraightenWorms"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del binder, param_mapping
+        return BoundModuleSettings(straighten_worms_bound_kwargs(module))
 
 
 class GrayToColorSchemeBindingStrategy(ABC, metaclass=AutoRegisterMeta):

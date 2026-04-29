@@ -99,6 +99,11 @@ from .setting_names import (
     split_symbol_names,
 )
 from .source_schema import compile_image_schema
+from .straighten_worms_settings import (
+    straighten_worms_image_bindings,
+    straighten_worms_input_objects_name,
+    straighten_worms_output_objects_name,
+)
 from .unmix_colors_settings import (
     unmix_colors_input_name,
     unmix_colors_output_rows,
@@ -777,50 +782,102 @@ def _crop_mask_inputs(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
 ) -> tuple[CellProfilerSymbol, ...]:
-    shape = crop_shape(module)
-    if shape is CropShape.CROPPING:
-        mask_artifact_name = crop_previous_mask_artifact_name(module)
-        if mask_artifact_name is None:
+    request = CropMaskInputRequest(builder=builder, module=module)
+    return CropMaskInputStrategy.for_shape(crop_shape(module)).inputs(request)
+
+
+@dataclass(frozen=True, slots=True)
+class CropMaskInputRequest:
+    builder: _SymbolTableBuilder
+    module: ModuleBlock
+
+
+class CropMaskInputStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal Crop side-input semantics for one closed crop shape."""
+
+    __registry_key__ = "shape"
+    __skip_if_no_key__ = True
+    shape: ClassVar[str | None] = None
+
+    @classmethod
+    def for_shape(cls, shape: CropShape) -> "CropMaskInputStrategy":
+        return cls.__registry__[shape.value]()
+
+    @abstractmethod
+    def inputs(self, request: CropMaskInputRequest) -> tuple[CellProfilerSymbol, ...]:
+        """Return artifact inputs needed by this crop shape."""
+
+
+class ResolvedCropMaskInputStrategy(CropMaskInputStrategy):
+    """Template method for crop shapes that consume one masking artifact."""
+
+    symbol_kind: ClassVar[CellProfilerSymbolKind | None] = None
+    missing_input_description: ClassVar[str | None] = None
+    artifact_name_resolver: ClassVar[Callable[[ModuleBlock], str | None] | None] = None
+
+    def inputs(self, request: CropMaskInputRequest) -> tuple[CellProfilerSymbol, ...]:
+        artifact_name = self._artifact_name(request.module)
+        if artifact_name is None:
             raise ValueError(
-                f"Crop({module.module_num}) uses previous cropping but does "
-                "not declare an image with a cropping mask."
+                f"Crop({request.module.module_num}) uses "
+                f"{self.missing_input_description} but does not declare "
+                "the required masking artifact."
             )
+        symbol_kind = type(self).symbol_kind
+        if symbol_kind is None:
+            raise TypeError(f"{type(self).__name__}.symbol_kind must be set.")
         return (
-            builder.require(
-                mask_artifact_name,
-                CellProfilerSymbolKind.IMAGE,
-                module,
+            request.builder.require(
+                artifact_name,
+                symbol_kind,
+                request.module,
             ),
         )
-    if shape is CropShape.IMAGE:
-        mask_image_name = crop_mask_image_name(module)
-        if mask_image_name is None:
-            raise ValueError(
-                f"Crop({module.module_num}) uses image-mask cropping but does "
-                "not declare a masking image."
+
+    def _artifact_name(self, module: ModuleBlock) -> str | None:
+        resolver = type(self).artifact_name_resolver
+        if resolver is None:
+            raise TypeError(
+                f"{type(self).__name__}.artifact_name_resolver must be set."
             )
-        return (
-            builder.require(
-                mask_image_name,
-                CellProfilerSymbolKind.IMAGE,
-                module,
-            ),
-        )
-    if shape is CropShape.OBJECTS:
-        object_name = crop_objects_name(module)
-        if object_name is None:
-            raise ValueError(
-                f"Crop({module.module_num}) uses object-mask cropping but does "
-                "not declare masking objects."
-            )
-        return (
-            builder.require(
-                object_name,
-                CellProfilerSymbolKind.OBJECTS,
-                module,
-            ),
-        )
-    return ()
+        return resolver(module)
+
+
+class PreviousCropMaskInputStrategy(ResolvedCropMaskInputStrategy):
+    shape = CropShape.CROPPING.value
+    symbol_kind = CellProfilerSymbolKind.IMAGE
+    missing_input_description = "previous cropping"
+    artifact_name_resolver = staticmethod(crop_previous_mask_artifact_name)
+
+
+class ImageCropMaskInputStrategy(ResolvedCropMaskInputStrategy):
+    shape = CropShape.IMAGE.value
+    symbol_kind = CellProfilerSymbolKind.IMAGE
+    missing_input_description = "image-mask cropping"
+    artifact_name_resolver = staticmethod(crop_mask_image_name)
+
+
+class ObjectsCropMaskInputStrategy(ResolvedCropMaskInputStrategy):
+    shape = CropShape.OBJECTS.value
+    symbol_kind = CellProfilerSymbolKind.OBJECTS
+    missing_input_description = "object-mask cropping"
+    artifact_name_resolver = staticmethod(crop_objects_name)
+
+
+class RectangleCropMaskInputStrategy(CropMaskInputStrategy):
+    shape = CropShape.RECTANGLE.value
+
+    def inputs(self, request: CropMaskInputRequest) -> tuple[CellProfilerSymbol, ...]:
+        del request
+        return ()
+
+
+class EllipseCropMaskInputStrategy(CropMaskInputStrategy):
+    shape = CropShape.ELLIPSE.value
+
+    def inputs(self, request: CropMaskInputRequest) -> tuple[CellProfilerSymbol, ...]:
+        del request
+        return ()
 
 
 def _measure_object_size_shape(
@@ -1386,6 +1443,42 @@ def _relate_objects(
     )
 
 
+def _straighten_worms(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    input_objects = builder.require(
+        straighten_worms_input_objects_name(module),
+        CellProfilerSymbolKind.OBJECTS,
+        module,
+    )
+    image_bindings = straighten_worms_image_bindings(module)
+    image_inputs = [
+        builder.require(binding.input_image_name, CellProfilerSymbolKind.IMAGE, module)
+        for binding in image_bindings
+    ]
+    image_outputs = [
+        builder.declare(binding.output_image_name, CellProfilerSymbolKind.IMAGE, module)
+        for binding in image_bindings
+    ]
+    output_objects = builder.declare(
+        straighten_worms_output_objects_name(module),
+        CellProfilerSymbolKind.OBJECTS,
+        module,
+    )
+    measurements = builder.declare(
+        _measurement_name(module),
+        CellProfilerSymbolKind.MEASUREMENTS,
+        module,
+    )
+    return _contracts(
+        module,
+        builder,
+        inputs=[input_objects, *image_inputs],
+        outputs=[*image_outputs, output_objects, measurements],
+    )
+
+
 def _infrastructure_module_contract(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
@@ -1657,6 +1750,7 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     (("MeasureObjectNeighbors",), _measure_object_neighbors),
     (("CalculateMath",), _calculate_math),
     (("RelateObjects",), _relate_objects),
+    (("StraightenWorms",), _straighten_worms),
 )
 
 

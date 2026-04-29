@@ -1466,6 +1466,66 @@ def test_mask_and_worm_output_object_names_are_declared_generically():
     ]
 
 
+def test_straightenworms_compiles_repeated_image_outputs_and_settings():
+    modules = [
+        _module(
+            1,
+            "UntangleWorms",
+            {
+                "Select the input image": "WormsBinary",
+                "Overlap style": "Both",
+                "Name the output overlapping worm objects": "OverlappingWorms",
+                "Name the output non-overlapping worm objects": "NonOverlappingWorms",
+            },
+        ),
+        _module_with_records(
+            2,
+            "StraightenWorms",
+            [
+                ("Select the input untangled worm objects", "NonOverlappingWorms"),
+                ("Name the output straightened worm objects", "StraightenedWorms"),
+                ("Worm width", "20"),
+                ("Measure intensity distribution?", "Yes"),
+                ("Number of transverse segments", "5"),
+                ("Number of longitudinal stripes", "1"),
+                ("Align worms?", "Top brightest"),
+                ("Select an input image to straighten", "mCherry"),
+                ("Name the output straightened image", "Straightened_mCherry"),
+                ("Select an input image to straighten", "GFP"),
+                ("Name the output straightened image", "Straightened_GFP"),
+            ],
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[2]
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_straighten_worms",
+        source_cppipe=Path("source.cppipe"),
+        modules=modules,
+    )
+
+    assert [spec.name for spec in contract.inputs] == [
+        "NonOverlappingWorms",
+        "mCherry",
+        "GFP",
+    ]
+    assert [spec.name for spec in contract.runtime_artifact_inputs] == [
+        "NonOverlappingWorms",
+    ]
+    assert [spec.name for spec in contract.outputs] == [
+        "Straightened_mCherry",
+        "Straightened_GFP",
+        "StraightenedWorms",
+        "StraightenWorms_2_measurements",
+    ]
+    assert "'worm_width': 20" in generated.code
+    assert "'measure_intensity': True" in generated.code
+    assert "'number_of_segments': 5" in generated.code
+    assert "'number_of_stripes': 1" in generated.code
+    assert "'flip_mode': 'top_brightest'" in generated.code
+
+
 def test_partition_cppipe_modules_skips_setup_and_export_modules():
     modules = (
         _module(0, "LoadImages", {}),

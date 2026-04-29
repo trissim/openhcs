@@ -108,7 +108,7 @@ def test_illumination_functions_accept_cellprofiler_enum_literals():
         image,
         intensity_choice="Regular",
         rescale_option="No",
-        smoothing_method="None",
+        smoothing_method="No smoothing",
         dtype_config=DtypeConfig(),
     )
     corrected = correct_illumination_apply(

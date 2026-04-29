@@ -9,18 +9,25 @@ associating all of a worm's pieces together.
 
 import numpy as np
 import re
-from typing import Tuple, Optional, List
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-import xml.dom.minidom as DOM
-from scipy.interpolate import interp1d
-from scipy.ndimage import label, binary_erosion, binary_dilation, distance_transform_edt
-from scipy.sparse import coo_matrix
+from typing import ClassVar
+
+from metaclass_registry import AutoRegisterMeta
+from scipy.ndimage import binary_erosion, label
 
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
+
+from benchmark.cellprofiler_library.functions.worm_geometry import (
+    calculate_cumulative_lengths,
+    eight_connectivity,
+    skeletonize_worm_mask,
+    trace_skeleton_path,
+)
 
 
 class OverlapStyle(str, Enum):
@@ -57,80 +64,46 @@ class WormMeasurement:
     mean_area: float
 
 
-def _eight_connect():
-    """Return 8-connectivity structuring element"""
-    return np.ones((3, 3), bool)
+@dataclass(frozen=True, slots=True)
+class WormLabelOutputRequest:
+    labels: np.ndarray
 
 
-def _skeletonize(binary_image: np.ndarray) -> np.ndarray:
-    """Skeletonize a binary image using morphological thinning"""
-    from skimage.morphology import skeletonize
-    return skeletonize(binary_image > 0)
+class WormLabelOutputStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal output view for one UntangleWorms overlap style."""
+
+    __registry_key__ = "overlap_style"
+    __skip_if_no_key__ = True
+    overlap_style: ClassVar[str | None] = None
+
+    @classmethod
+    def for_style(cls, overlap_style: OverlapStyle) -> "WormLabelOutputStrategy":
+        return cls.__registry__[overlap_style.value]()
+
+    @abstractmethod
+    def outputs(self, request: WormLabelOutputRequest) -> tuple[np.ndarray, np.ndarray]:
+        """Return overlapping and non-overlapping object label views."""
 
 
-def _branchpoints(skeleton: np.ndarray) -> np.ndarray:
-    """Find branchpoints in a skeleton"""
-    from scipy.ndimage import convolve
-    kernel = np.array([[1, 1, 1], [1, 10, 1], [1, 1, 1]])
-    neighbors = convolve(skeleton.astype(int), kernel, mode='constant')
-    # Branchpoints have more than 2 neighbors
-    return skeleton & (neighbors - 10 > 2)
+class WithOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
+    overlap_style = OverlapStyle.WITH_OVERLAP.value
+
+    def outputs(self, request: WormLabelOutputRequest) -> tuple[np.ndarray, np.ndarray]:
+        return request.labels, request.labels.copy()
 
 
-def _endpoints(skeleton: np.ndarray) -> np.ndarray:
-    """Find endpoints in a skeleton"""
-    from scipy.ndimage import convolve
-    kernel = np.array([[1, 1, 1], [1, 10, 1], [1, 1, 1]])
-    neighbors = convolve(skeleton.astype(int), kernel, mode='constant')
-    # Endpoints have exactly 1 neighbor
-    return skeleton & ((neighbors - 10) == 1)
+class WithoutOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
+    overlap_style = OverlapStyle.WITHOUT_OVERLAP.value
+
+    def outputs(self, request: WormLabelOutputRequest) -> tuple[np.ndarray, np.ndarray]:
+        return request.labels.copy(), request.labels
 
 
-def _calculate_cumulative_lengths(path_coords: np.ndarray) -> np.ndarray:
-    """Return cumulative length vector given Nx2 path coordinates"""
-    if len(path_coords) < 2:
-        return np.array([0] * len(path_coords))
-    diffs = path_coords[1:] - path_coords[:-1]
-    segment_lengths = np.sqrt(np.sum(diffs ** 2, axis=1))
-    return np.hstack(([0], np.cumsum(segment_lengths)))
+class BothWormLabelOutputStrategy(WormLabelOutputStrategy):
+    overlap_style = OverlapStyle.BOTH.value
 
-
-def _sample_control_points(path_coords: np.ndarray, cumul_lengths: np.ndarray, 
-                           num_control_points: int) -> np.ndarray:
-    """Sample equally-spaced control points from path coordinates"""
-    if num_control_points <= 2 or len(path_coords) < 2:
-        return path_coords
-    
-    path_coords = path_coords.astype(float)
-    cumul_lengths = cumul_lengths.astype(float)
-    
-    # Remove zero-length segments
-    mask = np.hstack(([True], cumul_lengths[1:] != cumul_lengths[:-1]))
-    path_coords = path_coords[mask]
-    cumul_lengths = cumul_lengths[mask]
-    
-    if len(path_coords) < 2:
-        return path_coords
-    
-    ncoords = len(path_coords)
-    f = interp1d(cumul_lengths, np.linspace(0.0, float(ncoords - 1), ncoords),
-                 bounds_error=False, fill_value=(0, ncoords-1))
-    
-    first = float(cumul_lengths[-1]) / float(num_control_points - 1)
-    last = float(cumul_lengths[-1]) - first
-    
-    if first >= last:
-        return path_coords
-    
-    findices = f(np.linspace(first, last, num_control_points - 2))
-    indices = findices.astype(int)
-    indices = np.clip(indices, 0, ncoords - 2)
-    fracs = findices - indices
-    
-    sampled = (path_coords[indices, :] * (1 - fracs[:, np.newaxis]) +
-               path_coords[indices + 1, :] * fracs[:, np.newaxis])
-    
-    return np.vstack((path_coords[:1, :], sampled, path_coords[-1:, :]))
+    def outputs(self, request: WormLabelOutputRequest) -> tuple[np.ndarray, np.ndarray]:
+        return request.labels, request.labels.copy()
 
 
 def _get_angles(control_coords: np.ndarray) -> np.ndarray:
@@ -146,51 +119,6 @@ def _get_angles(control_coords: np.ndarray) -> np.ndarray:
     angles[angles > np.pi] -= 2 * np.pi
     angles[angles < -np.pi] += 2 * np.pi
     return angles
-
-
-def _trace_skeleton_path(skeleton: np.ndarray) -> np.ndarray:
-    """Trace the longest path through a skeleton"""
-    if not np.any(skeleton):
-        return np.zeros((0, 2), dtype=int)
-    
-    # Find endpoints
-    endpoints = _endpoints(skeleton)
-    endpoint_coords = np.argwhere(endpoints)
-    
-    if len(endpoint_coords) == 0:
-        # Closed loop - pick arbitrary start
-        start = np.argwhere(skeleton)[0]
-    else:
-        start = endpoint_coords[0]
-    
-    # Trace path using simple neighbor following
-    path = [tuple(start)]
-    visited = set(path)
-    current = start
-    
-    while True:
-        # Find unvisited neighbors
-        neighbors = []
-        for di in [-1, 0, 1]:
-            for dj in [-1, 0, 1]:
-                if di == 0 and dj == 0:
-                    continue
-                ni, nj = current[0] + di, current[1] + dj
-                if (0 <= ni < skeleton.shape[0] and 
-                    0 <= nj < skeleton.shape[1] and
-                    skeleton[ni, nj] and 
-                    (ni, nj) not in visited):
-                    neighbors.append((ni, nj))
-        
-        if not neighbors:
-            break
-        
-        # Pick first unvisited neighbor
-        current = np.array(neighbors[0])
-        path.append(tuple(current))
-        visited.add(tuple(current))
-    
-    return np.array(path)
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -213,7 +141,7 @@ def untangle_worms(
     max_path_length: float = 500.0,
     overlap_weight: float = 5.0,
     leftover_weight: float = 10.0,
-) -> Tuple[np.ndarray, WormMeasurement, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, WormMeasurement, np.ndarray, np.ndarray]:
     """
     Untangle overlapping worms in a binary image.
     
@@ -245,7 +173,7 @@ def untangle_worms(
     binary = image > 0
     
     # Label connected components
-    labels, count = label(binary, structure=_eight_connect())
+    labels, count = label(binary, structure=eight_connectivity())
     
     if count == 0:
         empty_labels = np.zeros_like(image, dtype=np.int32)
@@ -254,11 +182,11 @@ def untangle_worms(
         ), empty_labels, empty_labels
     
     # Skeletonize
-    skeleton = _skeletonize(binary)
+    skeleton = skeletonize_worm_mask(binary)
     
     # Remove skeleton points at image edges
-    eroded = binary_erosion(binary, structure=_eight_connect())
-    skeleton = _skeletonize(skeleton & eroded)
+    eroded = binary_erosion(binary, structure=eight_connectivity())
+    skeleton = skeletonize_worm_mask(skeleton & eroded)
     
     # Process each connected component
     areas = np.bincount(labels.ravel())
@@ -282,12 +210,12 @@ def untangle_worms(
         
         if component_area <= max_worm_area:
             # Single worm - trace skeleton path
-            path_coords = _trace_skeleton_path(component_skeleton)
+            path_coords = trace_skeleton_path(component_skeleton)
             
             if len(path_coords) < 2:
                 continue
             
-            cumul_lengths = _calculate_cumulative_lengths(path_coords)
+            cumul_lengths = calculate_cumulative_lengths(path_coords)
             total_length = cumul_lengths[-1]
             
             if total_length < min_path_length or total_length > max_path_length:
@@ -306,18 +234,19 @@ def untangle_worms(
             output_labels[mask] = worm_index
             
             # Estimate length from skeleton
-            path_coords = _trace_skeleton_path(component_skeleton)
+            path_coords = trace_skeleton_path(component_skeleton)
             if len(path_coords) >= 2:
-                cumul_lengths = _calculate_cumulative_lengths(path_coords)
+                cumul_lengths = calculate_cumulative_lengths(path_coords)
                 all_lengths.append(cumul_lengths[-1])
             else:
                 all_lengths.append(0.0)
             all_areas.append(component_area)
     
     output_labels = output_labels.astype(np.int32)
-    overlapping_labels, nonoverlapping_labels = _worm_label_outputs(
-        output_labels,
-        overlap_style,
+    overlapping_labels, nonoverlapping_labels = (
+        WormLabelOutputStrategy.for_style(overlap_style).outputs(
+            WormLabelOutputRequest(output_labels)
+        )
     )
     
     # Calculate measurements
@@ -333,15 +262,3 @@ def untangle_worms(
     )
     
     return image, measurements, overlapping_labels, nonoverlapping_labels
-
-
-def _worm_label_outputs(
-    labels: np.ndarray,
-    overlap_style: OverlapStyle,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return both CellProfiler worm object views for a simplified label model."""
-    if overlap_style is OverlapStyle.WITH_OVERLAP:
-        return labels, labels.copy()
-    if overlap_style is OverlapStyle.WITHOUT_OVERLAP:
-        return labels.copy(), labels
-    return labels, labels.copy()
