@@ -262,6 +262,37 @@ def test_cellprofiler_contract_executor_broadcasts_2d_image_to_stacked_kwargs():
     np.testing.assert_array_equal(result, labels + 1)
 
 
+def test_cellprofiler_module_executor_normalizes_integer_image_inputs() -> None:
+    source_image = "DNA"
+    raw = np.full((4, 5), 255, dtype=np.uint8)
+    runtime = _FakeCellProfilerRuntime(
+        {source_image: _FakeRuntimeImage(raw, source_image_name=source_image)}
+    )
+    seen: list[np.ndarray] = []
+
+    def capture(image: np.ndarray) -> np.ndarray:
+        seen.append(image)
+        return image
+
+    executor = CellProfilerModuleExecutor(
+        CellProfilerModuleContract(
+            module_name="Opening",
+            inputs=(ArtifactSpec(source_image, ArtifactKind.IMAGE),),
+            outputs=(ArtifactSpec("Normalized", ArtifactKind.IMAGE),),
+        )
+    )
+
+    result = executor.run(capture, raw, cellprofiler_runtime=runtime)
+
+    assert seen[0].dtype == np.float32
+    np.testing.assert_array_equal(seen[0], np.ones_like(raw, dtype=np.float32))
+    assert result.dtype == np.float32
+    np.testing.assert_array_equal(
+        runtime.images["Normalized"].data,
+        np.ones_like(raw, dtype=np.float32),
+    )
+
+
 def test_cellprofiler_contract_executor_slices_plane_sequence_kwargs():
     calls = []
 

@@ -33,6 +33,10 @@ from .gray_to_color_settings import (
     gray_to_color_stack_channels,
     is_blank_gray_to_color_source,
 )
+from .illumination_settings import (
+    correct_illumination_apply_bound_kwargs,
+    correct_illumination_calculate_bound_kwargs,
+)
 from .overlay_outlines_settings import overlay_outlines_bound_kwargs
 from .parser import ModuleBlock
 from .settings_binder import SettingsBinder
@@ -279,6 +283,42 @@ class CropModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         return BoundModuleSettings(crop_bound_kwargs(module, binder))
 
 
+class CorrectIlluminationCalculateModuleSettingsBindingStrategy(
+    ModuleSettingsBindingStrategy
+):
+    """Bind illumination-function calculation settings without bool/enum loss."""
+
+    module_name = "CorrectIlluminationCalculate"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del binder, param_mapping
+        return BoundModuleSettings(correct_illumination_calculate_bound_kwargs(module))
+
+
+class CorrectIlluminationApplyModuleSettingsBindingStrategy(
+    ModuleSettingsBindingStrategy
+):
+    """Bind illumination application settings for image+function pairs."""
+
+    module_name = "CorrectIlluminationApply"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del binder, param_mapping
+        return BoundModuleSettings(correct_illumination_apply_bound_kwargs(module))
+
+
 class StructuringElementModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     """Bind shared morphology structuring-element settings."""
 
@@ -293,28 +333,41 @@ class StructuringElementModuleSettingsBindingStrategy(ModuleSettingsBindingStrat
         return BoundModuleSettings(structuring_element_bound_kwargs(module, binder))
 
 
-class OpeningModuleSettingsBindingStrategy(
-    StructuringElementModuleSettingsBindingStrategy
-):
-    module_name = "Opening"
+STRUCTURING_ELEMENT_MODULE_NAMES = (
+    "Opening",
+    "Closing",
+    "ErodeImage",
+    "DilateImage",
+)
 
 
-class ClosingModuleSettingsBindingStrategy(
-    StructuringElementModuleSettingsBindingStrategy
-):
-    module_name = "Closing"
+def _declare_module_settings_binding_strategy(
+    module_name: str,
+    base: type[ModuleSettingsBindingStrategy],
+) -> type[ModuleSettingsBindingStrategy]:
+    class_name = f"{module_name}ModuleSettingsBindingStrategy"
+    return type(base)(
+        class_name,
+        (base,),
+        {
+            "__module__": __name__,
+            "__qualname__": class_name,
+            "module_name": module_name,
+        },
+    )
 
 
-class ErodeImageModuleSettingsBindingStrategy(
-    StructuringElementModuleSettingsBindingStrategy
-):
-    module_name = "ErodeImage"
-
-
-class DilateImageModuleSettingsBindingStrategy(
-    StructuringElementModuleSettingsBindingStrategy
-):
-    module_name = "DilateImage"
+globals().update(
+    {
+        f"{module_name}ModuleSettingsBindingStrategy": (
+            _declare_module_settings_binding_strategy(
+                module_name,
+                StructuringElementModuleSettingsBindingStrategy,
+            )
+        )
+        for module_name in STRUCTURING_ELEMENT_MODULE_NAMES
+    }
+)
 
 
 class DefineGridModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):

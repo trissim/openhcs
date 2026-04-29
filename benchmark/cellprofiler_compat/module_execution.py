@@ -63,6 +63,23 @@ _MODULE_NAME_REGISTRY_KEY = "module_name"
 _INVOCATION_CONTROL_KWARGS = frozenset(("dtype_config", "slice_by_slice"))
 
 
+def _cellprofiler_image_payload(payload: Any) -> Any:
+    """Return payload in CellProfiler's float image intensity domain."""
+    if not hasattr(payload, "dtype"):
+        return payload
+    array = np.asarray(payload)
+    if np.issubdtype(array.dtype, np.bool_):
+        return array.astype(np.float32)
+    if np.issubdtype(array.dtype, np.integer):
+        max_value = np.iinfo(array.dtype).max
+        if max_value <= 1:
+            return array.astype(np.float32)
+        return array.astype(np.float32) / float(max_value)
+    if np.issubdtype(array.dtype, np.floating):
+        return array.astype(np.float32, copy=False)
+    return payload
+
+
 def cellprofiler_runtime_adapter_factory(
     request: RuntimeAdapterRequest,
 ) -> CellProfilerRuntimeAdapter:
@@ -441,11 +458,13 @@ class CellProfilerModuleExecutor:
             runtime_image = adapter.get_image(spec.name)
             return CellProfilerMeasurementImage(
                 source_image_name=runtime_image.source_image_name or spec.name,
-                payload=runtime_image.data,
+                payload=_cellprofiler_image_payload(runtime_image.data),
             )
         return CellProfilerMeasurementImage(
             source_image_name=spec.name,
-            payload=adapter.resolve_source_image(spec.name, fallback_image),
+            payload=_cellprofiler_image_payload(
+                adapter.resolve_source_image(spec.name, fallback_image)
+            ),
         )
 
     def _object_input_specs(self) -> tuple[ArtifactSpec, ...]:
@@ -581,7 +600,7 @@ class CellProfilerModuleExecutor:
             payload = (
                 _object_only_reference_image(fallback_image)
                 if self._object_input_specs()
-                else fallback_image
+                else _cellprofiler_image_payload(fallback_image)
             )
             return CellProfilerImageRequest(
                 payload=payload,
@@ -606,9 +625,15 @@ class CellProfilerModuleExecutor:
         payloads = []
         for spec in image_inputs:
             if spec.name in runtime_image_names:
-                payloads.append(adapter.get_image(spec.name).data)
+                payloads.append(
+                    _cellprofiler_image_payload(adapter.get_image(spec.name).data)
+                )
                 continue
-            payloads.append(adapter.resolve_source_image(spec.name, fallback_image))
+            payloads.append(
+                _cellprofiler_image_payload(
+                    adapter.resolve_source_image(spec.name, fallback_image)
+                )
+            )
         composition = compose_aligned_image_payload(self.module_name, tuple(payloads))
         return CellProfilerImageRequest(
             payload=composition.payload,
@@ -1050,18 +1075,24 @@ class ImageArtifactKindStrategy(CellProfilerArtifactKindStrategy):
 
     def runtime_input_value(self, request: CellProfilerArtifactKindRequest) -> Any:
         if request.spec.name in request.runtime_image_names:
-            return request.adapter.get_image(request.spec.name).data
+            return _cellprofiler_image_payload(
+                request.adapter.get_image(request.spec.name).data
+            )
         if request.spec.name in request.external_image_names:
             if request.fallback_image is None:
                 raise RuntimeError(
                     f"External image input '{request.spec.name}' requires a "
                     "fallback image payload for source-binding resolution."
                 )
-            return request.adapter.resolve_source_image(
-                request.spec.name,
-                request.fallback_image,
+            return _cellprofiler_image_payload(
+                request.adapter.resolve_source_image(
+                    request.spec.name,
+                    request.fallback_image,
+                )
             )
-        return request.adapter.get_image(request.spec.name).data
+        return _cellprofiler_image_payload(
+            request.adapter.get_image(request.spec.name).data
+        )
 
     def source_image_name(
         self,

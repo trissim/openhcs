@@ -1113,6 +1113,26 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
             id="yeast-colonies",
         ),
         pytest.param(
+            "ExampleYeastPatches",
+            "ExampleYeastPatches",
+            (
+                ("Prespots", ArtifactKind.OBJECT_LABELS),
+                ("FilterObjects", ArtifactKind.OBJECT_LABELS),
+                ("NaturalSpots", ArtifactKind.OBJECT_LABELS),
+                ("ForcedSpots", ArtifactKind.OBJECT_LABELS),
+                ("DefineGrid_15_measurements", ArtifactKind.MEASUREMENTS),
+                ("MeasureObjectIntensity_18_measurements", ArtifactKind.MEASUREMENTS),
+            ),
+            (
+                "CorrectIlluminationCalculate",
+                "FilterObjects",
+                "DefineGrid",
+                "IdentifyObjectsInGrid",
+            ),
+            (".JPG",),
+            id="yeast-patches-grid-illumination",
+        ),
+        pytest.param(
             "ExampleImagingFlowCytometryObjectsInGrid",
             "ExampleImagingFlowCytometryObjectsInGrid",
             (

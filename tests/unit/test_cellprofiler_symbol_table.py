@@ -875,6 +875,52 @@ def test_pipeline_generator_preserves_default_materialization_for_tabular_output
     ) in generated.code
 
 
+def test_pipeline_generator_binds_correct_illumination_settings_as_literals():
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_illumination_settings",
+        source_cppipe=Path("source.cppipe"),
+        modules=[
+            _module(
+                1,
+                "CorrectIlluminationCalculate",
+                {
+                    "Select the input image": "CropGray",
+                    "Name the output image": "Illumgray",
+                    "Select how the illumination function is calculated": "Background",
+                    "Block size": "40",
+                    "Rescale the illumination function?": "No",
+                    "Smoothing method": "Convex Hull",
+                    "Method to calculate smoothing filter size": "Manually",
+                    "Smoothing filter size": "10",
+                    "Automatically calculate spline parameters?": "Yes",
+                },
+            ),
+            _module(
+                2,
+                "CorrectIlluminationApply",
+                {
+                    "Select the input image": "CropGray",
+                    "Name the output image": "CorrectedGray",
+                    "Select the illumination function": "Illumgray",
+                    "Select how the illumination function is applied": "Subtract",
+                    "Set output image values less than 0 equal to 0?": "No",
+                    "Set output image values greater than 1 equal to 1?": "Yes",
+                },
+            ),
+        ],
+    )
+
+    assert "'intensity_choice': 'background'" in generated.code
+    assert "'block_size': 40" in generated.code
+    assert "'rescale_option': 'no'" in generated.code
+    assert "'smoothing_method': 'convex_hull'" in generated.code
+    assert "'filter_size_method': 'manually'" in generated.code
+    assert "'manual_filter_size': 10" in generated.code
+    assert "'method': 'subtract'" in generated.code
+    assert "'truncate_low': False" in generated.code
+    assert "'truncate_high': True" in generated.code
+
+
 def test_cellprofiler_symbol_table_compiles_singular_aliases_and_image_artifacts():
     modules = [
         _identify_primary(),

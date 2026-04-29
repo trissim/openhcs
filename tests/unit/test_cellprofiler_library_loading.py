@@ -8,6 +8,9 @@ from benchmark.cellprofiler_library import (
     list_modules,
 )
 from benchmark.cellprofiler_library.functions.align import align
+from benchmark.cellprofiler_library.functions.correctilluminationapply import (
+    correct_illumination_apply,
+)
 from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
     correct_illumination_calculate,
 )
@@ -96,6 +99,33 @@ def test_absorbed_processing_contract_metadata_does_not_act_as_validator():
         is ProcessingContract.PURE_2D
     )
     assert opening.__processing_contract__ is ProcessingContract.PURE_2D
+
+
+def test_illumination_functions_accept_cellprofiler_enum_literals():
+    image = np.ones((8, 8), dtype=np.float32)
+
+    illumination, stats = correct_illumination_calculate(
+        image,
+        intensity_choice="Regular",
+        rescale_option="No",
+        smoothing_method="None",
+        dtype_config=DtypeConfig(),
+    )
+    corrected = correct_illumination_apply(
+        np.stack((image, np.full_like(image, 0.25))),
+        method="Subtract",
+        truncate_low=False,
+        truncate_high=False,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert illumination.shape == image.shape
+    assert stats.calculation_type == "regular"
+    assert stats.smoothing_method == "none"
+    np.testing.assert_array_equal(
+        corrected,
+        np.full((1, 8, 8), 0.75, dtype=np.float32),
+    )
 
 
 def test_pure_2d_contract_wrapper_aggregates_tuple_outputs_per_slice():

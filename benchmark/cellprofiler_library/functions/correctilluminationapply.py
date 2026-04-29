@@ -3,10 +3,17 @@ Converted from CellProfiler: CorrectIlluminationApply
 Original: correct_illumination_apply
 """
 
-import numpy as np
-from typing import Tuple
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from enum import Enum
+from typing import ClassVar
+
+import numpy as np
+from metaclass_registry import AutoRegisterMeta
+
 from openhcs.core.memory.decorators import numpy
+
+from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 
 
 class IlluminationCorrectionMethod(Enum):
@@ -14,10 +21,54 @@ class IlluminationCorrectionMethod(Enum):
     SUBTRACT = "subtract"
 
 
+@dataclass(frozen=True, slots=True)
+class IlluminationCorrectionRequest:
+    image_pixels: np.ndarray
+    illumination_function: np.ndarray
+
+
+class IlluminationCorrectionStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal correction implementation for one CellProfiler method."""
+
+    __registry_key__ = "method"
+    __skip_if_no_key__ = True
+    method: ClassVar[IlluminationCorrectionMethod | None] = None
+
+    @classmethod
+    def for_method(
+        cls,
+        method: IlluminationCorrectionMethod,
+    ) -> "IlluminationCorrectionStrategy":
+        return cls.__registry__[method]()
+
+    @abstractmethod
+    def apply(self, request: IlluminationCorrectionRequest) -> np.ndarray:
+        """Apply the correction method."""
+
+
+class DivideIlluminationCorrectionStrategy(IlluminationCorrectionStrategy):
+    method = IlluminationCorrectionMethod.DIVIDE
+
+    def apply(self, request: IlluminationCorrectionRequest) -> np.ndarray:
+        safe_illumination = np.where(
+            request.illumination_function == 0,
+            1e-10,
+            request.illumination_function,
+        )
+        return request.image_pixels / safe_illumination
+
+
+class SubtractIlluminationCorrectionStrategy(IlluminationCorrectionStrategy):
+    method = IlluminationCorrectionMethod.SUBTRACT
+
+    def apply(self, request: IlluminationCorrectionRequest) -> np.ndarray:
+        return request.image_pixels - request.illumination_function
+
+
 @numpy
 def correct_illumination_apply(
     image: np.ndarray,
-    method: IlluminationCorrectionMethod = IlluminationCorrectionMethod.DIVIDE,
+    method: IlluminationCorrectionMethod | str = IlluminationCorrectionMethod.DIVIDE,
     truncate_low: bool = True,
     truncate_high: bool = True,
 ) -> np.ndarray:
@@ -38,25 +89,22 @@ def correct_illumination_apply(
     Returns:
         Corrected image with shape (1, H, W)
     """
-    # Unstack inputs from dimension 0
-    image_pixels = image[0]  # (H, W) - image to correct
-    illum_function = image[1]  # (H, W) - illumination function
-    
-    # Validate shapes match
-    assert image_pixels.shape == illum_function.shape, \
-        f"Input image shape {image_pixels.shape} and illumination function shape {illum_function.shape} must be equal"
-    
-    # Apply illumination correction
-    if method == IlluminationCorrectionMethod.DIVIDE:
-        # Avoid division by zero
-        # Add small epsilon where illumination function is zero
-        safe_illum = np.where(illum_function == 0, 1e-10, illum_function)
-        output_pixels = image_pixels / safe_illum
-    elif method == IlluminationCorrectionMethod.SUBTRACT:
-        output_pixels = image_pixels - illum_function
-    else:
-        raise ValueError(f"Unhandled option for divide or subtract: {method.value}")
-    
+    method = _coerce_function_enum(IlluminationCorrectionMethod, method)
+
+    image_pixels = image[0]
+    illumination_function = image[1]
+    assert image_pixels.shape == illumination_function.shape, (
+        f"Input image shape {image_pixels.shape} and illumination function shape "
+        f"{illumination_function.shape} must be equal"
+    )
+
+    output_pixels = IlluminationCorrectionStrategy.for_method(method).apply(
+        IlluminationCorrectionRequest(
+            image_pixels=image_pixels,
+            illumination_function=illumination_function,
+        )
+    )
+
     # Optionally clip values
     if truncate_low:
         output_pixels = np.maximum(output_pixels, 0.0)
