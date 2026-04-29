@@ -23,6 +23,7 @@ from benchmark.pipelines.registry import (
     PIPELINE_REGISTRY,
 )
 from benchmark.adapters.openhcs import OpenHCSAdapter
+from benchmark.adapters.cellprofiler import CellProfilerAdapter
 from benchmark.runner import run_benchmark
 
 __all__ = [
@@ -51,6 +52,7 @@ __all__ = [
     "TimeMetric",
     "MemoryMetric",
     # Adapters
+    "CellProfilerAdapter",
     "OpenHCSAdapter",
     # Runner
     "run_benchmark",

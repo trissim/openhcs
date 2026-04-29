@@ -41,6 +41,24 @@ def test_openhcs_adapter_runs_converted_cppipe_pipeline(tmp_path: Path) -> None:
     assert result.provenance["pipeline_source"] == "converted_cppipe"
     assert result.provenance["axis_count"] == 1
 
+    parity_result = _run_openhcs_adapter(
+        OpenHCSAdapterRunCase.local_cppipe(
+            plate_path,
+            "converted_cppipe_parity",
+            "synthetic_cppipe_smoke",
+            cppipe_path,
+            tmp_path / "benchmark_outputs",
+            equivalence_reference_output_dir=result.output_path,
+        )
+    )
+
+    assert parity_result.success is True
+    assert (
+        parity_result.provenance["equivalence_reference_output_dir"]
+        == str(result.output_path)
+    )
+    assert parity_result.provenance["equivalence_difference_count"] == 0
+
 
 def test_openhcs_adapter_resolves_dataset_reference_cppipe(
     tmp_path: Path,
@@ -77,6 +95,32 @@ def test_openhcs_adapter_resolves_dataset_reference_cppipe(
         result.provenance["cppipe_reference_url"]
         == BBBC021_SINGLE_PLATE.reference_cppipe_urls[0]
     )
+
+
+def test_openhcs_adapter_rejects_reference_output_mismatch(tmp_path: Path) -> None:
+    plate_path = _generate_plate(tmp_path / "plate")
+    cppipe_path = _write_cppipe(tmp_path / "identify_primary_objects.cppipe")
+    reference_output = tmp_path / "native_reference"
+    reference_output.mkdir()
+    (reference_output / "wrong.csv").write_text(
+        "not_a_generated_schema\n1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ToolExecutionError,
+        match="Converted CellProfiler output did not match semantic reference output",
+    ):
+        _run_openhcs_adapter(
+            OpenHCSAdapterRunCase.local_cppipe(
+                plate_path,
+                "converted_cppipe_mismatch",
+                "synthetic_cppipe_smoke",
+                cppipe_path,
+                tmp_path / "benchmark_outputs",
+                equivalence_reference_output_dir=reference_output,
+            )
+        )
 
 
 def test_default_benchmark_pipeline_uses_dataset_cppipe_reference(
@@ -116,7 +160,7 @@ def test_openhcs_adapter_requires_converted_cppipe_source(
     with pytest.raises(
         ToolExecutionError,
         match=(
-            "Converted pipeline execution requires cppipe_path, cppipe_file, "
+            "CellProfiler pipeline execution requires cppipe_path, cppipe_file, "
             "cppipe_reference_url, or cppipe_reference_index\\."
         ),
     ):
@@ -199,6 +243,7 @@ class OpenHCSAdapterRunCase:
     microscope_type: str = "imagexpress"
     cppipe_path: Path | None = None
     cppipe_reference_index: int | None = None
+    equivalence_reference_output_dir: Path | None = None
 
     @classmethod
     def local_cppipe(
@@ -208,6 +253,7 @@ class OpenHCSAdapterRunCase:
         dataset_id: str,
         cppipe_path: Path,
         output_dir: Path,
+        equivalence_reference_output_dir: Path | None = None,
     ) -> OpenHCSAdapterRunCase:
         return cls(
             dataset_path=dataset_path,
@@ -215,6 +261,7 @@ class OpenHCSAdapterRunCase:
             dataset_id=dataset_id,
             cppipe_path=cppipe_path,
             output_dir=output_dir,
+            equivalence_reference_output_dir=equivalence_reference_output_dir,
         )
 
     @property
@@ -227,6 +274,10 @@ class OpenHCSAdapterRunCase:
             params["cppipe_path"] = str(self.cppipe_path)
         if self.cppipe_reference_index is not None:
             params["cppipe_reference_index"] = self.cppipe_reference_index
+        if self.equivalence_reference_output_dir is not None:
+            params["equivalence_reference_output_dir"] = str(
+                self.equivalence_reference_output_dir
+            )
         return params
 
 
