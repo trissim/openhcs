@@ -1261,6 +1261,63 @@ def test_official_cellprofiler3_cppipe_corpus_prepares(
     assert not failures
 
 
+def test_official_cellprofiler3_cppipe_corpus_executes_when_enabled(
+    tmp_path: Path,
+) -> None:
+    exhaustive_execution_env = (
+        "OPENHCS_RUN_OFFICIAL_CELLPROFILER3_CORPUS_EXECUTION"
+    )
+    if os.environ.get(exhaustive_execution_env) != "1":
+        pytest.skip(
+            "Official corpus execution is intentionally opt-in because it runs "
+            f"every discovered CellProfiler3 .cppipe. Set "
+            f"{exhaustive_execution_env}=1 to enable it."
+        )
+
+    examples_root = _official_cellprofiler_examples_root()
+    cppipe_dir = examples_root / "CellProfiler3Pipelines"
+    if not cppipe_dir.exists():
+        pytest.skip(
+            "Official CellProfiler3 pipeline corpus is not available. "
+            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
+            f"looked under {examples_root}."
+        )
+
+    failures: list[str] = []
+    cppipe_paths = tuple(sorted(cppipe_dir.glob("*.cppipe")))
+    assert cppipe_paths
+    for cppipe_path in cppipe_paths:
+        pipeline_name = cppipe_path.stem
+        try:
+            workspace, execution = _execute_official_cellprofiler3_pipeline(
+                tmp_path,
+                pipeline_name,
+                _official_cellprofiler3_source_name_for_pipeline(
+                    examples_root,
+                    pipeline_name,
+                ),
+                well_filter=("A01",),
+            )
+        except Exception as exc:  # pragma: no cover - assertion includes details
+            failures.append(
+                f"{pipeline_name}: {type(exc).__name__}: {exc}"
+            )
+            continue
+
+        unsuccessful_results = {
+            axis: result
+            for axis, result in execution.execution_results.items()
+            if not result.is_success()
+        }
+        if unsuccessful_results:
+            failures.append(
+                f"{pipeline_name}: unsuccessful execution results: "
+                f"{unsuccessful_results!r} in {workspace.workspace_root}"
+            )
+
+    assert not failures
+
+
 def test_cppipe_generated_pipeline_materializes_relationship_outputs(
     tmp_path: Path,
 ) -> None:
@@ -1569,6 +1626,26 @@ def _official_cellprofiler_examples_root() -> Path:
             "CELLPROFILER_EXAMPLES_ROOT",
             "/tmp/cellprofiler_examples",
         )
+    )
+
+
+def _official_cellprofiler3_source_name_for_pipeline(
+    examples_root: Path,
+    pipeline_name: str,
+) -> str:
+    candidate_names = (
+        pipeline_name,
+        pipeline_name.removesuffix("URL"),
+        pipeline_name.split("_", maxsplit=1)[0],
+        f"{pipeline_name}Images",
+        pipeline_name.replace("ExampleUntangleAnd", "Example"),
+    )
+    for candidate_name in candidate_names:
+        if candidate_name and (examples_root / candidate_name).exists():
+            return candidate_name
+    raise FileNotFoundError(
+        f"No source directory found for official pipeline {pipeline_name!r} "
+        f"under {examples_root}."
     )
 
 
