@@ -502,7 +502,7 @@ class CellProfilerModuleExecutor:
         special_input_names = special_input_names_from_callable(func)
         if special_input_names:
             return CellProfilerSpecialInputPolicy.for_module(self.module_name).bind(
-                CellProfilerSpecialInputBindingRequest(
+                SpecialInputBindingRequest(
                     module_name=self.module_name,
                     parameter_names=special_input_names,
                     runtime_inputs=runtime_inputs,
@@ -534,7 +534,7 @@ class CellProfilerModuleExecutor:
             ArtifactKind.OBJECT_LABELS,
         )
         return CellProfilerObjectInputPolicy.for_module(self.module_name).bind(
-            CellProfilerObjectInputBindingRequest(
+            ObjectInputBindingRequest(
                 module_name=self.module_name,
                 object_inputs=object_inputs,
                 adapter=adapter,
@@ -686,7 +686,7 @@ class CellProfilerModuleExecutor:
         external_image_names = frozenset(self._external_source_image_names())
         for spec in self._declared_input_specs():
             source_name = _artifact_kind_strategy(spec.kind).source_image_name(
-                CellProfilerArtifactKindRequest(
+                RuntimeArtifactInputRequest(
                     spec=spec,
                     adapter=adapter,
                     external_image_names=external_image_names,
@@ -1039,7 +1039,7 @@ def _member_string_literals(member: Enum) -> tuple[str, ...]:
 
 
 @dataclass(frozen=True, slots=True)
-class CellProfilerArtifactKindRequest:
+class RuntimeArtifactInputRequest:
     """One artifact-spec request dispatched through a nominal kind strategy."""
 
     spec: ArtifactSpec
@@ -1050,7 +1050,7 @@ class CellProfilerArtifactKindRequest:
     runtime_image_names: frozenset[str] = frozenset()
 
 
-class CellProfilerArtifactKindStrategy(ABC, metaclass=AutoRegisterMeta):
+class RuntimeArtifactKindStrategy(ABC, metaclass=AutoRegisterMeta):
     """Nominal strategy family for ArtifactKind-specific runtime semantics."""
 
     __registry_key__ = "kind"
@@ -1058,27 +1058,27 @@ class CellProfilerArtifactKindStrategy(ABC, metaclass=AutoRegisterMeta):
     kind: ClassVar[ArtifactKind | None] = None
 
     @classmethod
-    def for_kind(cls, kind: ArtifactKind) -> "CellProfilerArtifactKindStrategy":
+    def for_kind(cls, kind: ArtifactKind) -> "RuntimeArtifactKindStrategy":
         return cls.__registry__[kind]()
 
     @abstractmethod
-    def runtime_input_value(self, request: CellProfilerArtifactKindRequest) -> Any:
+    def runtime_input_value(self, request: RuntimeArtifactInputRequest) -> Any:
         """Return the runtime payload bound into absorbed function kwargs."""
 
     @abstractmethod
     def source_image_name(
         self,
-        request: CellProfilerArtifactKindRequest,
+        request: RuntimeArtifactInputRequest,
     ) -> str | None:
         """Return the transitive source image name for one artifact input."""
 
 
-class ImageArtifactKindStrategy(CellProfilerArtifactKindStrategy):
+class ImageArtifactKindStrategy(RuntimeArtifactKindStrategy):
     """Resolve image artifact payloads and source-image lineage."""
 
     kind = ArtifactKind.IMAGE
 
-    def runtime_input_value(self, request: CellProfilerArtifactKindRequest) -> Any:
+    def runtime_input_value(self, request: RuntimeArtifactInputRequest) -> Any:
         if request.spec.name in request.runtime_image_names:
             return _cellprofiler_image_payload(
                 request.adapter.get_image(request.spec.name).data
@@ -1101,7 +1101,7 @@ class ImageArtifactKindStrategy(CellProfilerArtifactKindStrategy):
 
     def source_image_name(
         self,
-        request: CellProfilerArtifactKindRequest,
+        request: RuntimeArtifactInputRequest,
     ) -> str | None:
         if request.spec.name in request.runtime_image_names:
             return request.adapter.get_image(request.spec.name).source_image_name
@@ -1110,12 +1110,12 @@ class ImageArtifactKindStrategy(CellProfilerArtifactKindStrategy):
         return None
 
 
-class ObjectLabelsArtifactKindStrategy(CellProfilerArtifactKindStrategy):
+class ObjectLabelsArtifactKindStrategy(RuntimeArtifactKindStrategy):
     """Resolve object-label payloads and lineage."""
 
     kind = ArtifactKind.OBJECT_LABELS
 
-    def runtime_input_value(self, request: CellProfilerArtifactKindRequest) -> Any:
+    def runtime_input_value(self, request: RuntimeArtifactInputRequest) -> Any:
         if request.spec.name in request.external_object_names:
             if request.fallback_image is None:
                 raise RuntimeError(
@@ -1134,34 +1134,34 @@ class ObjectLabelsArtifactKindStrategy(CellProfilerArtifactKindStrategy):
 
     def source_image_name(
         self,
-        request: CellProfilerArtifactKindRequest,
+        request: RuntimeArtifactInputRequest,
     ) -> str | None:
         if request.spec.name in request.external_object_names:
             return request.spec.name
         return request.adapter.get_objects(request.spec.name).source_image_name
 
 
-class MeasurementsArtifactKindStrategy(CellProfilerArtifactKindStrategy):
+class MeasurementsArtifactKindStrategy(RuntimeArtifactKindStrategy):
     """Resolve measurement payloads and lineage."""
 
     kind = ArtifactKind.MEASUREMENTS
 
-    def runtime_input_value(self, request: CellProfilerArtifactKindRequest) -> Any:
+    def runtime_input_value(self, request: RuntimeArtifactInputRequest) -> Any:
         return request.adapter.get_measurements(request.spec.name).rows
 
     def source_image_name(
         self,
-        request: CellProfilerArtifactKindRequest,
+        request: RuntimeArtifactInputRequest,
     ) -> str | None:
         return request.adapter.get_measurements(request.spec.name).source_image_name
 
 
-class RelationshipsArtifactKindStrategy(CellProfilerArtifactKindStrategy):
+class RelationshipsArtifactKindStrategy(RuntimeArtifactKindStrategy):
     """Resolve relationship payloads."""
 
     kind = ArtifactKind.RELATIONSHIPS
 
-    def runtime_input_value(self, request: CellProfilerArtifactKindRequest) -> Any:
+    def runtime_input_value(self, request: RuntimeArtifactInputRequest) -> Any:
         raise NotImplementedError(
             f"Relationship runtime input '{request.spec.name}' needs an explicit "
             "binding contract before CellProfiler special_inputs can consume it."
@@ -1169,14 +1169,14 @@ class RelationshipsArtifactKindStrategy(CellProfilerArtifactKindStrategy):
 
     def source_image_name(
         self,
-        request: CellProfilerArtifactKindRequest,
+        request: RuntimeArtifactInputRequest,
     ) -> str | None:
         return None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class CellProfilerInputBindingRequestBase(ABC):
-    """Shared runtime context for CellProfiler runtime-input binding."""
+class RuntimeInputBindingRequestBase(ABC):
+    """Shared runtime context for artifact-backed runtime-input binding."""
 
     module_name: str
     adapter: CellProfilerRuntimeAdapter
@@ -1202,19 +1202,19 @@ class CellProfilerInputBindingRequestBase(ABC):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class CellProfilerObjectInputBindingRequest(CellProfilerInputBindingRequestBase):
-    """Authoritative runtime context for binding CellProfiler object-label inputs."""
+class ObjectInputBindingRequest(RuntimeInputBindingRequestBase):
+    """Authoritative runtime context for binding object-label inputs."""
 
     object_inputs: tuple[ArtifactSpec, ...]
 
     def __post_init__(self) -> None:
-        CellProfilerInputBindingRequestBase.__post_init__(self)
+        RuntimeInputBindingRequestBase.__post_init__(self)
         object.__setattr__(self, "object_inputs", tuple(self.object_inputs))
 
     def with_object_inputs(
         self,
         object_inputs: tuple[ArtifactSpec, ...],
-    ) -> "CellProfilerObjectInputBindingRequest":
+    ) -> "ObjectInputBindingRequest":
         return type(self)(
             module_name=self.module_name,
             object_inputs=object_inputs,
@@ -1259,7 +1259,7 @@ class CellProfilerObjectInputPolicy(ABC, metaclass=AutoRegisterMeta):
     @abstractmethod
     def bind(
         self,
-        request: CellProfilerObjectInputBindingRequest,
+        request: ObjectInputBindingRequest,
     ) -> dict[str, Any]:
         """Return absorbed-function kwargs for object-label runtime inputs."""
 
@@ -1269,7 +1269,7 @@ class UnsupportedObjectInputPolicy(CellProfilerObjectInputPolicy):
 
     def bind(
         self,
-        request: CellProfilerObjectInputBindingRequest,
+        request: ObjectInputBindingRequest,
     ) -> dict[str, Any]:
         if not request.object_inputs:
             return {}
@@ -1287,7 +1287,7 @@ class SingleObjectLabelInputPolicy(CellProfilerObjectInputPolicy):
 
     def bind(
         self,
-        request: CellProfilerObjectInputBindingRequest,
+        request: ObjectInputBindingRequest,
     ) -> dict[str, Any]:
         request.require_exact_object_count(1)
         return {
@@ -1310,7 +1310,7 @@ class IdentifyTertiaryObjectInputPolicy(CellProfilerObjectInputPolicy):
 
     def bind(
         self,
-        request: CellProfilerObjectInputBindingRequest,
+        request: ObjectInputBindingRequest,
     ) -> dict[str, Any]:
         request.require_exact_object_count(2)
         larger, smaller = request.object_inputs
@@ -1369,7 +1369,7 @@ class OverlayOutlinesInputPolicy(CellProfilerObjectInputPolicy):
 
     def bind(
         self,
-        request: CellProfilerObjectInputBindingRequest,
+        request: ObjectInputBindingRequest,
     ) -> dict[str, Any]:
         return {"object_labels": request.labels_for_inputs()}
 
@@ -1379,7 +1379,7 @@ class ObjectRowsInputPolicy(CellProfilerObjectInputPolicy):
 
     def bind(
         self,
-        request: CellProfilerObjectInputBindingRequest,
+        request: ObjectInputBindingRequest,
     ) -> dict[str, Any]:
         return {"object_labels": request.labels_for_inputs()}
 
@@ -1389,7 +1389,7 @@ class ObjectRowsWithMeasurementsInputPolicy(ObjectRowsInputPolicy):
 
     def bind(
         self,
-        request: CellProfilerObjectInputBindingRequest,
+        request: ObjectInputBindingRequest,
     ) -> dict[str, Any]:
         bound = super().bind(request)
         bound["measurement_tables"] = request.measurement_tables_for_primary_object()
@@ -1436,7 +1436,7 @@ class FilterObjectsInputPolicy(ObjectRowsWithMeasurementsInputPolicy):
 
     def bind(
         self,
-        request: CellProfilerObjectInputBindingRequest,
+        request: ObjectInputBindingRequest,
     ) -> dict[str, Any]:
         plan = FilterObjectsRuntimeInputPlan.from_inputs(
             request.object_inputs,
@@ -1455,7 +1455,7 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
 
     def bind(
         self,
-        request: CellProfilerObjectInputBindingRequest,
+        request: ObjectInputBindingRequest,
     ) -> dict[str, Any]:
         return {
             "operand1_value": _calculate_math_operand_value(
@@ -2073,8 +2073,8 @@ def _slice_aligned_measurement_values(
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class CellProfilerSpecialInputBindingRequest(CellProfilerInputBindingRequestBase):
-    """Authoritative runtime context for binding CellProfiler special_inputs."""
+class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
+    """Authoritative runtime context for binding declared special_inputs."""
 
     parameter_names: tuple[str, ...]
     runtime_inputs: tuple[ArtifactSpec, ...]
@@ -2082,7 +2082,7 @@ class CellProfilerSpecialInputBindingRequest(CellProfilerInputBindingRequestBase
     runtime_image_names: frozenset[str]
 
     def __post_init__(self) -> None:
-        CellProfilerInputBindingRequestBase.__post_init__(self)
+        RuntimeInputBindingRequestBase.__post_init__(self)
         object.__setattr__(self, "parameter_names", tuple(self.parameter_names))
         object.__setattr__(self, "runtime_inputs", tuple(self.runtime_inputs))
         object.__setattr__(
@@ -2132,7 +2132,7 @@ class CellProfilerSpecialInputPolicy(ABC, metaclass=AutoRegisterMeta):
     @abstractmethod
     def bind(
         self,
-        request: CellProfilerSpecialInputBindingRequest,
+        request: SpecialInputBindingRequest,
     ) -> dict[str, Any]:
         """Return kwargs for a callable's declared special_inputs."""
 
@@ -2142,7 +2142,7 @@ class PositionalSpecialInputPolicy(CellProfilerSpecialInputPolicy):
 
     def bind(
         self,
-        request: CellProfilerSpecialInputBindingRequest,
+        request: SpecialInputBindingRequest,
     ) -> dict[str, Any]:
         return _bind_special_runtime_inputs(request)
 
@@ -2163,7 +2163,7 @@ class DisplayDataOnImageSpecialInputPolicy(CellProfilerSpecialInputPolicy):
 
     def bind(
         self,
-        request: CellProfilerSpecialInputBindingRequest,
+        request: SpecialInputBindingRequest,
     ) -> dict[str, Any]:
         object_inputs = request.object_inputs
         _require_exact_object_count(request.module_name, object_inputs, 1)
@@ -2207,7 +2207,7 @@ class ClassifyObjectsMeasurementInputPolicy(CellProfilerSpecialInputPolicy):
 
     def bind(
         self,
-        request: CellProfilerSpecialInputBindingRequest,
+        request: SpecialInputBindingRequest,
     ) -> dict[str, Any]:
         object_inputs = request.object_inputs
         _require_exact_object_count(request.module_name, object_inputs, 1)
@@ -2367,7 +2367,7 @@ def _callable_accepts_composed_image_payload(func: Callable[..., Any]) -> bool:
 
 
 def _bind_special_runtime_inputs(
-    request: CellProfilerSpecialInputBindingRequest,
+    request: SpecialInputBindingRequest,
 ) -> dict[str, Any]:
     if len(request.parameter_names) != len(request.runtime_inputs):
         raise NotImplementedError(
@@ -2387,11 +2387,11 @@ def _bind_special_runtime_inputs(
 
 def _runtime_input_value(
     spec: ArtifactSpec,
-    request: CellProfilerSpecialInputBindingRequest,
+    request: SpecialInputBindingRequest,
 ) -> Any:
     try:
         return _artifact_kind_strategy(spec.kind).runtime_input_value(
-            CellProfilerArtifactKindRequest(
+            RuntimeArtifactInputRequest(
                 spec=spec,
                 adapter=request.adapter,
                 fallback_image=request.fallback_image,
@@ -2409,9 +2409,9 @@ def _runtime_input_value(
 
 def _artifact_kind_strategy(
     kind: ArtifactKind,
-) -> CellProfilerArtifactKindStrategy:
+) -> RuntimeArtifactKindStrategy:
     try:
-        return CellProfilerArtifactKindStrategy.for_kind(kind)
+        return RuntimeArtifactKindStrategy.for_kind(kind)
     except KeyError as exc:
         raise TypeError(
             f"No CellProfiler artifact kind strategy registered for {kind.value}."
