@@ -9,11 +9,31 @@ from enum import Enum
 from typing import Any
 
 from .parser import ModuleBlock
-from .setting_names import optional_setting_value
+from .setting_names import SettingNameFamily, optional_setting_value, setting_names
 
 logger = logging.getLogger(__name__)
 
 SettingParser = Callable[[str], object]
+
+
+def parse_cellprofiler_bool(value: str) -> bool:
+    """Parse a CellProfiler boolean literal."""
+    normalized = value.strip().lower()
+    if normalized in SettingsBinder.BOOL_TRUE:
+        return True
+    if normalized in SettingsBinder.BOOL_FALSE:
+        return False
+    raise ValueError(f"CellProfiler boolean setting must be Yes/No, got {value!r}.")
+
+
+def parse_cellprofiler_float(value: str) -> float:
+    """Parse a numeric CellProfiler setting as float."""
+    return float(value)
+
+
+def parse_cellprofiler_int(value: str) -> int:
+    """Parse a numeric CellProfiler setting as int, accepting decimal spelling."""
+    return int(float(value))
 
 
 def normalize_cellprofiler_setting_name(name: str) -> str:
@@ -38,15 +58,25 @@ class BoundParameter:
 class SettingToKeywordBinding:
     """Declarative mapping from one parsed setting to one function kwarg."""
 
-    setting_name: str
+    setting_name: str | SettingNameFamily
     parameter_name: str
-    parse: SettingParser
+    parse: SettingParser | None = None
 
-    def bind(self, module: ModuleBlock, kwargs: dict[str, Any]) -> None:
+    def bind(
+        self,
+        module: ModuleBlock,
+        kwargs: dict[str, Any],
+        binder: "SettingsBinder",
+    ) -> None:
         value = optional_setting_value(module, self.setting_name)
         if value is None:
             return
-        kwargs[self.parameter_name] = self.parse(value)
+        setting_name = setting_names(self.setting_name)[0]
+        kwargs[self.parameter_name] = (
+            binder.parse_value(setting_name, value)
+            if self.parse is None
+            else self.parse(value)
+        )
 
 
 class SettingsBinder:
@@ -79,6 +109,17 @@ class SettingsBinder:
             if normalized_key in self.SKIP_SETTINGS:
                 continue
             kwargs[normalized_key] = self.parse_value(key, value)
+        return kwargs
+
+    def bind_declared(
+        self,
+        module: ModuleBlock,
+        bindings: tuple[SettingToKeywordBinding, ...],
+    ) -> dict[str, Any]:
+        """Bind an explicit setting-to-kwarg declaration for one module."""
+        kwargs: dict[str, Any] = {}
+        for binding in bindings:
+            binding.bind(module, kwargs, self)
         return kwargs
     
     def bind_with_details(self, settings: Mapping[str, str]) -> list[BoundParameter]:

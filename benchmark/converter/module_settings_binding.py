@@ -34,12 +34,12 @@ from .gray_to_color_settings import (
     is_blank_gray_to_color_source,
 )
 from .illumination_settings import (
-    correct_illumination_apply_bound_kwargs,
-    correct_illumination_calculate_bound_kwargs,
+    CORRECT_ILLUMINATION_APPLY_SETTINGS,
+    CORRECT_ILLUMINATION_CALCULATE_SETTINGS,
 )
 from .overlay_outlines_settings import overlay_outlines_bound_kwargs
 from .parser import ModuleBlock
-from .settings_binder import SettingsBinder
+from .settings_binder import SettingToKeywordBinding, SettingsBinder
 from .straighten_worms_settings import straighten_worms_bound_kwargs
 from .structuring_element_settings import structuring_element_bound_kwargs
 from .untangle_worms_settings import untangle_worms_bound_kwargs
@@ -97,6 +97,24 @@ class GenericModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         return _translate_bound_kwargs(
             binder.bind(module.settings),
             param_mapping,
+        )
+
+
+class DeclarativeModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind modules described by explicit setting-to-kwarg declarations."""
+
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = ()
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del param_mapping
+        return BoundModuleSettings(
+            binder.bind_declared(module, type(self).setting_bindings)
         )
 
 
@@ -285,39 +303,21 @@ class CropModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
 
 class CorrectIlluminationCalculateModuleSettingsBindingStrategy(
-    ModuleSettingsBindingStrategy
+    DeclarativeModuleSettingsBindingStrategy
 ):
     """Bind illumination-function calculation settings without bool/enum loss."""
 
     module_name = "CorrectIlluminationCalculate"
-
-    def bind(
-        self,
-        module: ModuleBlock,
-        *,
-        binder: SettingsBinder,
-        param_mapping: Mapping[str, Any],
-    ) -> BoundModuleSettings:
-        del binder, param_mapping
-        return BoundModuleSettings(correct_illumination_calculate_bound_kwargs(module))
+    setting_bindings = CORRECT_ILLUMINATION_CALCULATE_SETTINGS
 
 
 class CorrectIlluminationApplyModuleSettingsBindingStrategy(
-    ModuleSettingsBindingStrategy
+    DeclarativeModuleSettingsBindingStrategy
 ):
     """Bind illumination application settings for image+function pairs."""
 
     module_name = "CorrectIlluminationApply"
-
-    def bind(
-        self,
-        module: ModuleBlock,
-        *,
-        binder: SettingsBinder,
-        param_mapping: Mapping[str, Any],
-    ) -> BoundModuleSettings:
-        del binder, param_mapping
-        return BoundModuleSettings(correct_illumination_apply_bound_kwargs(module))
+    setting_bindings = CORRECT_ILLUMINATION_APPLY_SETTINGS
 
 
 class StructuringElementModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):

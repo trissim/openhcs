@@ -1,9 +1,12 @@
 from enum import Enum
 
 from benchmark.converter.settings_binder import (
+    SettingToKeywordBinding,
     SettingsBinder,
     normalize_cellprofiler_setting_name,
+    parse_cellprofiler_int,
 )
+from benchmark.converter.parser import ModuleBlock
 
 
 class ThresholdMethod(Enum):
@@ -53,3 +56,29 @@ def test_settings_binder_preserves_binding_provenance():
     assert details[0].value is False
     assert details[0].original_key == "Use advanced settings?"
     assert details[0].original_value == "No"
+
+
+def test_settings_binder_binds_declared_setting_to_keyword():
+    module = ModuleBlock(
+        name="Example",
+        module_num=1,
+        settings={
+            "Block size": "40.0",
+            "Use correction?": "Yes",
+        },
+    )
+
+    assert SettingsBinder().bind_declared(
+        module,
+        (
+            SettingToKeywordBinding(
+                "Block size",
+                "block_size",
+                parse_cellprofiler_int,
+            ),
+            SettingToKeywordBinding("Use correction?", "use_correction"),
+        ),
+    ) == {
+        "block_size": 40,
+        "use_correction": True,
+    }
