@@ -37,6 +37,7 @@ from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
 )
 from benchmark.cellprofiler_library.functions.tile import tile
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.callable_contract import attach_callable_contract_metadata
 from openhcs.core.config import DtypeConfig
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.runtime_values import MeasurementTable
@@ -693,7 +694,10 @@ def test_cellprofiler_contract_executor_infers_unknown_absorbed_contract():
             raise RuntimeError("2D only")
         return image
 
-    two_dimensional_only.__cellprofiler_declared_contract__ = "unknown"
+    attach_callable_contract_metadata(
+        two_dimensional_only,
+        declared_processing_contract="unknown",
+    )
 
     assert (
         CellProfilerFunctionContractMetadata.from_callable(

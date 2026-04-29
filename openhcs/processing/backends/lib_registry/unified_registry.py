@@ -148,6 +148,14 @@ class ProcessingContract(Enum):
     FLEXIBLE = "_execute_flexible"
     VOLUMETRIC_TO_SLICE = "_execute_volumetric_to_slice"
 
+    @classmethod
+    def from_declared_name(cls, contract_name: str) -> "ProcessingContract | None":
+        """Resolve a declared contract name to the canonical enum member."""
+        normalized = contract_name.upper()
+        if normalized not in cls.__members__:
+            return None
+        return cls[normalized]
+
     def execute(self, registry, func, image, *args, **kwargs):
         """Execute the contract method on the registry."""
         method = getattr(registry, self.value)

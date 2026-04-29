@@ -21,6 +21,7 @@ from openhcs.core.aligned_image_payload import (
     payload_slice_count,
 )
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.callable_contract import CallableContract
 from openhcs.core.config import DtypeConfig
 from openhcs.core.memory import (
     MEMORY_TYPE_NUMPY,
@@ -2679,12 +2680,14 @@ class CellProfilerFunctionContractMetadata:
         cls,
         func: Callable[..., Any],
     ) -> "CellProfilerFunctionContractMetadata":
-        metadata = _callable_metadata(func)
-        explicit = metadata.get("__processing_contract__")
-        declared = metadata.get("__cellprofiler_declared_contract__")
+        contract = CallableContract.from_callable(func)
         return cls(
-            explicit=explicit if isinstance(explicit, ProcessingContract) else None,
-            declared=declared if isinstance(declared, str) else None,
+            explicit=(
+                contract.processing_contract
+                if isinstance(contract.processing_contract, ProcessingContract)
+                else None
+            ),
+            declared=contract.declared_processing_contract,
         )
 
     def resolve(self, func: Callable[..., Any]) -> ProcessingContract:
@@ -2695,17 +2698,10 @@ class CellProfilerFunctionContractMetadata:
             if inferred is not None:
                 return inferred
         if self.declared is not None:
-            declared = _declared_processing_contract(self.declared)
+            declared = ProcessingContract.from_declared_name(self.declared)
             if declared is not None:
                 return declared
         return ProcessingContract.FLEXIBLE
-
-
-def _callable_metadata(func: Callable[..., Any]) -> Mapping[str, Any]:
-    try:
-        return vars(func)
-    except TypeError:
-        return {}
 
 
 def _infer_processing_contract(
@@ -2717,15 +2713,6 @@ def _infer_processing_contract(
     if inferred.name not in ProcessingContract.__members__:
         return None
     return ProcessingContract[inferred.name]
-
-
-def _declared_processing_contract(
-    contract_name: str,
-) -> ProcessingContract | None:
-    normalized = contract_name.upper()
-    if normalized not in ProcessingContract.__members__:
-        return None
-    return ProcessingContract[normalized]
 
 
 def _slice_pure_2d_kwargs(

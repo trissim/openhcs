@@ -238,6 +238,7 @@ from openhcs.constants.input_source import InputSource
                 "    cellprofiler_runtime_adapter_factory,\n"
                 ")\n"
                 "from openhcs.core.module_artifact_contract import ModuleArtifactContract\n"
+                "from openhcs.core.callable_contract import attach_callable_contract_metadata\n"
                 "from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs\n"
                 "from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract\n"
                 "from openhcs.core.runtime_adapters import runtime_adapter\n\n"
@@ -269,8 +270,10 @@ from openhcs.constants.input_source import InputSource
                     f'function_name="{func_name}")'
                 )
                 func_assignments.append(
-                    f'{binding_name}.__cellprofiler_declared_contract__ = '
-                    f'{repr(self._module_metadata(module.name)["contract"])}'
+                    "attach_callable_contract_metadata("
+                    f"{binding_name}, "
+                    "declared_processing_contract="
+                    f"{repr(self._module_metadata(module.name)['contract'])})"
                 )
             imports += "\n".join(func_assignments) + "\n\n"
 
@@ -576,11 +579,11 @@ from openhcs.constants.input_source import InputSource
                 f"{processing_contract}"
             )
             lines.append(
-                f"{runtime_binding}.__cellprofiler_declared_contract__ = "
-                f"{repr(self._module_metadata(module.name)['contract'])}"
-            )
-            lines.append(
-                f"{runtime_binding}.__cellprofiler_raw_function__ = {raw_binding}"
+                "attach_callable_contract_metadata("
+                f"{runtime_binding}, "
+                "declared_processing_contract="
+                f"{repr(self._module_metadata(module.name)['contract'])}, "
+                f"raw_processing_function={raw_binding})"
             )
             lines.append("")
 

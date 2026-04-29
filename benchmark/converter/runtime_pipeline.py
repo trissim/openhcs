@@ -19,6 +19,7 @@ from typing import Any, ClassVar
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.constants import MULTIPROCESSING_AXIS
+from openhcs.core.callable_contract import CallableContract
 from openhcs.core.config import DtypeConfig
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
@@ -410,17 +411,17 @@ def _function_spec_callables(func_spec: Any) -> tuple[Callable[..., Any], ...]:
 
 def _processing_contract_for(func: Callable[..., Any]) -> ProcessingContract:
     """Resolve the generated function processing contract from typed function metadata."""
-    metadata = func.__dict__
-    contract = metadata.get("__processing_contract__")
-    declared_contract = metadata.get("__cellprofiler_declared_contract__")
-    if isinstance(contract, ProcessingContract):
-        return contract
-    if declared_contract == "unknown":
+    contract = CallableContract.from_callable(func)
+    if isinstance(contract.processing_contract, ProcessingContract):
+        return contract.processing_contract
+    if contract.declared_processing_contract == "unknown":
         inferred = _infer_unknown_processing_contract(func)
         if inferred is not None:
             return inferred
-    if isinstance(declared_contract, str):
-        mapped = _declared_processing_contract(declared_contract)
+    if contract.declared_processing_contract is not None:
+        mapped = ProcessingContract.from_declared_name(
+            contract.declared_processing_contract
+        )
         if mapped is not None:
             return mapped
     return ProcessingContract.FLEXIBLE
@@ -430,22 +431,13 @@ def _infer_unknown_processing_contract(
     func: Callable[..., Any],
 ) -> ProcessingContract | None:
     """Infer contract for absorbed functions whose stored registry contract is unknown."""
-    raw_func = func.__dict__.get("__cellprofiler_raw_function__", func)
+    contract = CallableContract.from_callable(func)
+    raw_func = contract.raw_processing_function or func
     inference = infer_contract(raw_func, dtype_config=DtypeConfig())
     mapper = InferredContractMapper.for_contract(inference.contract)
     if mapper is None:
         return None
     return mapper.processing_contract()
-
-
-def _declared_processing_contract(
-    contract_name: str,
-) -> ProcessingContract | None:
-    """Map stored absorbed-library contract strings onto OpenHCS ProcessingContract."""
-    normalized = contract_name.upper()
-    if normalized not in {"PURE_2D", "PURE_3D", "FLEXIBLE", "VOLUMETRIC_TO_SLICE"}:
-        return None
-    return ProcessingContract[normalized]
 
 
 def _generated_metadata_name(func: Callable[..., Any]) -> str:

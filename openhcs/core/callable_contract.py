@@ -18,6 +18,9 @@ from openhcs.core.runtime_adapters import (
 
 ArtifactSpecItems = tuple[tuple[str, ArtifactSpec], ...]
 CallableNamespace = Mapping[str, Any]
+PROCESSING_CONTRACT_ATTR = "__processing_contract__"
+DECLARED_PROCESSING_CONTRACT_ATTR = "__openhcs_declared_processing_contract__"
+RAW_PROCESSING_FUNCTION_ATTR = "__openhcs_raw_processing_function__"
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +35,9 @@ class CallableContract:
     artifact_inputs: ArtifactSpecItems = ()
     artifact_outputs: ArtifactSpecItems = ()
     runtime_adapter: RuntimeAdapterSpec | None = None
+    processing_contract: Any | None = None
+    declared_processing_contract: str | None = None
+    raw_processing_function: Any | None = None
 
     @classmethod
     def from_callable(cls, func: Any) -> "CallableContract":
@@ -63,6 +69,13 @@ class CallableContract:
                 "__artifact_outputs__",
             ),
             runtime_adapter=runtime_adapter_spec_from_callable(func),
+            processing_contract=namespace.get(PROCESSING_CONTRACT_ATTR),
+            declared_processing_contract=_optional_string(
+                namespace,
+                function_name,
+                DECLARED_PROCESSING_CONTRACT_ATTR,
+            ),
+            raw_processing_function=namespace.get(RAW_PROCESSING_FUNCTION_ATTR),
         )
 
     @property
@@ -109,6 +122,35 @@ def _callable_namespace(func: Any) -> CallableNamespace:
     return func.__dict__
 
 
+def attach_callable_contract_metadata(
+    func: Any,
+    *,
+    declared_processing_contract: str | None = None,
+    raw_processing_function: Any | None = None,
+) -> None:
+    """Attach OpenHCS callable metadata used by compiler/runtime phases."""
+    if declared_processing_contract is not None:
+        if (
+            not isinstance(declared_processing_contract, str)
+            or not declared_processing_contract.strip()
+        ):
+            raise ValueError(
+                "declared_processing_contract must be a non-empty string."
+            )
+        setattr(
+            func,
+            DECLARED_PROCESSING_CONTRACT_ATTR,
+            declared_processing_contract,
+        )
+    if raw_processing_function is not None:
+        if not callable(raw_processing_function):
+            raise TypeError(
+                "raw_processing_function must be callable, "
+                f"got {type(raw_processing_function).__name__}."
+            )
+        setattr(func, RAW_PROCESSING_FUNCTION_ATTR, raw_processing_function)
+
+
 def _callable_name(func: Any) -> str:
     """Return the callable's nominal function name."""
     name = func.function_name if _is_function_reference(func) else func.__name__
@@ -153,6 +195,22 @@ def _optional_memory_type(
             f"got {type(memory_type).__name__}."
         )
     return memory_type
+
+
+def _optional_string(
+    namespace: CallableNamespace,
+    function_name: str,
+    field_name: str,
+) -> str | None:
+    value = namespace.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(
+            f"{function_name!r}.{field_name} must be a string, "
+            f"got {type(value).__name__}."
+        )
+    return value
 
 
 def _artifact_spec_items(

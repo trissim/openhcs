@@ -40,7 +40,10 @@ class CellProfilerProcessingContractName(str, Enum):
     def to_openhcs_contract(self) -> ProcessingContract:
         if self is CellProfilerProcessingContractName.UNKNOWN:
             raise ValueError("Unknown CellProfiler contracts are not executable.")
-        return ProcessingContract[self.name]
+        contract = ProcessingContract.from_declared_name(self.name)
+        if contract is None:
+            raise ValueError(f"Unsupported OpenHCS contract {self.name!r}.")
+        return contract
 
 
 class ProcessingContractResolutionSource(str, Enum):
