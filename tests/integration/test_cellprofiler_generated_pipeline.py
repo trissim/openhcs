@@ -667,6 +667,113 @@ def test_official_example_cometassay_cppipe_executes_mask_geometry(
     assert overlay.ndim == 3
 
 
+def test_official_example_colocalization_cppipe_executes_relationship_exports(
+    tmp_path: Path,
+) -> None:
+    examples_root = _official_cellprofiler_examples_root()
+    cppipe_path = (
+        examples_root
+        / "CellProfiler3Pipelines"
+        / "ExampleColocalization.cppipe"
+    )
+    source_root = examples_root / "ExampleColocalization"
+    if not cppipe_path.exists() or not source_root.exists():
+        pytest.skip(
+            "Official CellProfiler ExampleColocalization files are not available. "
+            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
+            f"looked under {examples_root}."
+        )
+
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / "generated_official_colocalization_pipeline.py",
+    )
+    workspace = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "official_colocalization_openhcs_workspace",
+        prepared.source_schema,
+    )
+
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=True,
+        microscope=Microscope.AUTO,
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            output_dir_suffix="_generated_cppipe",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    orchestrator = PipelineOrchestrator(
+        workspace.workspace_root,
+        pipeline_config=pipeline_config,
+    )
+    orchestrator.initialize()
+
+    execution = execute_pipeline_direct(
+        orchestrator,
+        prepared.pipeline,
+        well_filter=["A01"],
+    )
+
+    assert all(
+        result.is_success()
+        for result in execution.execution_results.values()
+    )
+    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
+    relationship_records = runtime_store.find(
+        kind=ArtifactKind.RELATIONSHIPS,
+        axis_id="A01",
+    )
+    assert {
+        record.key.name
+        for record in relationship_records
+    } == {
+        "Objects1_Objects2_relationships",
+        "ExpandedObjects1_ExpandedObjects2_relationships",
+    }
+    assert runtime_store.find(
+        name="MeasureColocalization_9_measurements",
+        kind=ArtifactKind.MEASUREMENTS,
+        axis_id="A01",
+    )
+    assert runtime_store.find(
+        name="CalculateMath_22_measurements",
+        kind=ArtifactKind.MEASUREMENTS,
+        axis_id="A01",
+    )
+
+    image_outputs = sorted(
+        (_generated_output_root(workspace.workspace_root) / "images").glob("*.png")
+    )
+    assert [path.name for path in image_outputs] == [
+        "A01_s001_w1_z001_t001.png",
+        "A01_s001_w2_z001_t001.png",
+    ]
+    csv_outputs = sorted(
+        _generated_results_dir(workspace.workspace_root).glob("*.csv")
+    )
+    assert any("relationships" in path.name for path in csv_outputs)
+    assert any("MeasureColocalization" in path.name for path in csv_outputs)
+    assert _matching_header(
+        {path.name: _csv_header(path) for path in csv_outputs},
+        "relationships",
+    ) == [
+        "relationship_type",
+        "source_role",
+        "target_role",
+        "source_object",
+        "target_object",
+        "parent_id",
+        "child_id",
+        "slice_index",
+    ]
+
+
 def test_official_example_illumination_example1_uses_rule_row_binding(
     tmp_path: Path,
 ) -> None:

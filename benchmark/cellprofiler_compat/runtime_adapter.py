@@ -430,7 +430,7 @@ class CellProfilerRuntimeAdapter:
             axis_id=self.axis_id,
         )
         self._save_payload(runtime_value.data, plan.path)
-        return self.runtime_value_store.record(
+        return self.runtime_value_store.replace(
             runtime_value,
             path=plan.path,
             backend=self.backend,

@@ -11,6 +11,7 @@ from benchmark.cellprofiler_library.functions.align import align
 from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
     correct_illumination_calculate,
 )
+from benchmark.cellprofiler_library.functions.crop import crop
 from benchmark.cellprofiler_library.functions.measureimageareaoccupied import (
     measure_image_area_occupied,
 )
@@ -18,6 +19,7 @@ from benchmark.cellprofiler_library.functions.maskimage import mask_image
 from benchmark.cellprofiler_library.functions.opening import opening
 from benchmark.cellprofiler_library.functions.overlayoutlines import overlay_outlines
 from benchmark.cellprofiler_library.functions.unmixcolors import unmix_colors
+from benchmark.cellprofiler_semantics.crop import RemovalMethod
 from openhcs.core.config import DtypeConfig
 from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -135,6 +137,23 @@ def test_unmix_colors_returns_one_output_per_stain_row():
     assert [output.shape for output in outputs] == [(8, 9), (8, 9), (8, 9)]
     assert all(output.dtype == np.float32 for output in outputs)
     assert unmix_colors.__processing_contract__ is ProcessingContract.FLEXIBLE
+
+
+def test_crop_preserves_hwc_color_image_domain() -> None:
+    image = np.arange(8 * 9 * 3, dtype=np.uint8).reshape(8, 9, 3)
+
+    cropped, mask, measurements = crop(
+        image,
+        removal_method=RemovalMethod.ALL,
+        left_right_rectangle_positions=(2, 7),
+        top_bottom_rectangle_positions=(1, 6),
+        dtype_config=DtypeConfig(),
+    )
+
+    assert cropped.shape == (5, 5, 3)
+    assert mask.shape == (8, 9)
+    assert measurements.area_retained == 25
+    np.testing.assert_array_equal(cropped, image[1:6, 2:7])
 
 
 def test_measure_image_area_occupied_runs_mixed_rows():

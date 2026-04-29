@@ -1473,6 +1473,28 @@ def test_measurement_lookup_aligns_values_to_label_slices():
     np.testing.assert_array_equal(value_slices[1], np.array([300.0]))
 
 
+def test_measurement_lookup_returns_empty_slices_for_empty_objects():
+    value_slices = measurement_values_for_label_slices(
+        (),
+        "AreaShape_FormFactor",
+        np.zeros((2, 3, 4), dtype=np.int32),
+        object_name=NUCLEI,
+    )
+
+    assert len(value_slices) == 2
+    assert all(value_slice.size == 0 for value_slice in value_slices)
+
+
+def test_measurement_lookup_rejects_missing_feature_for_nonempty_objects():
+    with pytest.raises(ValueError, match="AreaShape_FormFactor"):
+        measurement_values_for_label_slices(
+            (),
+            "AreaShape_FormFactor",
+            np.array([[1, 0], [0, 0]], dtype=np.int32),
+            object_name=NUCLEI,
+        )
+
+
 def test_calculate_math_records_object_indexed_measurements():
     adapter, _filemanager = _adapter(
         {

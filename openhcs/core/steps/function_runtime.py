@@ -138,7 +138,7 @@ def _save_artifact_value(
         context,
         owner_name=PROCESSING_CONTEXT_OWNER_NAME,
     )
-    runtime_value_store.record(
+    runtime_value_store.replace(
         runtime_value,
         path=vfs_path,
         backend=Backend.MEMORY.value,

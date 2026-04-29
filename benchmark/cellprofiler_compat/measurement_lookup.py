@@ -47,17 +47,22 @@ def measurement_values_for_label_slices(
 ) -> tuple[np.ndarray, ...]:
     """Return measurement values aligned to positive label IDs in each label plane."""
 
-    values_by_label, positional_values = measurement_value_index(
-        measurement_tables,
-        feature_name,
-        object_name=object_name,
-    )
     label_array = np.asarray(labels)
     label_planes = (
         (label_array,)
         if label_array.ndim <= 2
         else tuple(label_array[index] for index in range(label_array.shape[0]))
     )
+    try:
+        values_by_label, positional_values = measurement_value_index(
+            measurement_tables,
+            feature_name,
+            object_name=object_name,
+        )
+    except ValueError:
+        if _label_planes_are_empty(label_planes):
+            return tuple(np.array([], dtype=float) for _plane in label_planes)
+        raise
     return tuple(
         _measurement_values_for_label_plane(
             label_plane,
@@ -110,6 +115,10 @@ def measurement_rows(
             continue
         rows.append(table.rows)
     return tuple(rows)
+
+
+def _label_planes_are_empty(label_planes: tuple[np.ndarray, ...]) -> bool:
+    return all(not np.any(label_plane > 0) for label_plane in label_planes)
 
 
 def measurement_row_mapping(row: object) -> Mapping[str, object]:

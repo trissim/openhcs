@@ -155,6 +155,26 @@ class RuntimeValueStore:
         self._records_by_key[value.key] = record
         return record
 
+    def replace(
+        self,
+        value: RuntimeValue,
+        *,
+        path: str,
+        backend: str,
+    ) -> StoredRuntimeValue:
+        """Replace the current binding for a typed artifact key.
+
+        Path planning treats repeated producers for the same artifact name as a
+        new workspace binding. This method makes that replacement explicit while
+        keeping record() strict for accidental duplicate writes.
+        """
+        record = StoredRuntimeValue(
+            value=value,
+            location=RuntimeArtifactLocation(path=path, backend=backend),
+        )
+        self._records_by_key[value.key] = record
+        return record
+
     def resolve(
         self,
         query: RuntimeArtifactQuery,

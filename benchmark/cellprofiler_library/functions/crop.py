@@ -5,9 +5,11 @@ Original: crop, measure_area_retained_after_cropping, measure_original_image_are
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
+from metaclass_registry import AutoRegisterMeta
 import numpy as np
 
 from benchmark.cellprofiler_semantics.crop import (
@@ -15,8 +17,10 @@ from benchmark.cellprofiler_semantics.crop import (
     CroppingMethod,
     RemovalMethod,
 )
+from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.runtime_semantics import coerce_enum
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
 
@@ -29,6 +33,145 @@ class CropMeasurement:
     original_area: int
     area_retained: int
     fraction_retained: float
+
+
+@dataclass(frozen=True, slots=True)
+class CropMaskRequest:
+    """Nominal crop-mask construction request."""
+
+    orig_image_pixels: np.ndarray
+    mask_plane: np.ndarray | None
+    crop_shape: CropShape
+    cropping_method: CroppingMethod
+    left_right_rectangle_positions: tuple[int | None, int | None] | None
+    top_bottom_rectangle_positions: tuple[int | None, int | None] | None
+    ellipse_center: tuple[float, float] | None
+    ellipse_x_radius: float | None
+    ellipse_y_radius: float | None
+    cropping_labels: Any | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "crop_shape",
+            coerce_enum(CropShape, self.crop_shape, "Crop.crop_shape"),
+        )
+        object.__setattr__(
+            self,
+            "cropping_method",
+            coerce_enum(
+                CroppingMethod,
+                self.cropping_method,
+                "Crop.cropping_method",
+            ),
+        )
+
+
+class CropShapeMaskStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal strategy family for CellProfiler Crop shape modes."""
+
+    __registry_key__ = "crop_shape"
+    __skip_if_no_key__ = True
+    crop_shape: ClassVar[CropShape | None] = None
+
+    @classmethod
+    def for_shape(cls, crop_shape: CropShape) -> "CropShapeMaskStrategy":
+        strategy_type = cls.__registry__.get(crop_shape)
+        if strategy_type is None:
+            raise NotImplementedError(
+                f"Unsupported CellProfiler Crop shape {crop_shape.value!r}."
+            )
+        return strategy_type()
+
+    @abstractmethod
+    def mask(self, request: CropMaskRequest) -> np.ndarray:
+        """Return a boolean crop mask for one shape mode."""
+
+
+class PreviousCroppingMaskStrategy(CropShapeMaskStrategy):
+    """Use the prior Crop sidecar mask."""
+
+    crop_shape = CropShape.CROPPING
+
+    def mask(self, request: CropMaskRequest) -> np.ndarray:
+        if request.mask_plane is None:
+            raise ValueError("Crop Previous cropping mode requires a crop-mask plane.")
+        return _validate_crop_mask(request.mask_plane, request.orig_image_pixels)
+
+
+class ImageMaskCropMaskStrategy(CropShapeMaskStrategy):
+    """Use a supplied image mask."""
+
+    crop_shape = CropShape.IMAGE
+
+    def mask(self, request: CropMaskRequest) -> np.ndarray:
+        if request.mask_plane is None:
+            raise ValueError("Crop image-mask mode requires a mask-image plane.")
+        return _validate_crop_mask(request.mask_plane > 0, request.orig_image_pixels)
+
+
+class ObjectMaskCropMaskStrategy(CropShapeMaskStrategy):
+    """Use supplied object labels as the crop mask."""
+
+    crop_shape = CropShape.OBJECTS
+
+    def mask(self, request: CropMaskRequest) -> np.ndarray:
+        if request.cropping_labels is None:
+            raise ValueError("Crop object-mask mode requires cropping_labels.")
+        return _validate_crop_mask(
+            np.asarray(request.cropping_labels) > 0,
+            request.orig_image_pixels,
+        )
+
+
+class RectangleCropMaskStrategy(CropShapeMaskStrategy):
+    """Build a rectangular coordinate crop mask."""
+
+    crop_shape = CropShape.RECTANGLE
+
+    def mask(self, request: CropMaskRequest) -> np.ndarray:
+        _require_coordinate_cropping(request)
+        left, right = _rectangle_pair(
+            request.left_right_rectangle_positions,
+            "left_right_rectangle_positions",
+        )
+        top, bottom = _rectangle_pair(
+            request.top_bottom_rectangle_positions,
+            "top_bottom_rectangle_positions",
+        )
+        return _get_rectangle_cropping(
+            request.orig_image_pixels,
+            (left, right, top, bottom),
+        )
+
+
+class EllipseCropMaskStrategy(CropShapeMaskStrategy):
+    """Build an elliptical coordinate crop mask."""
+
+    crop_shape = CropShape.ELLIPSE
+
+    def mask(self, request: CropMaskRequest) -> np.ndarray:
+        _require_coordinate_cropping(request)
+        if (
+            request.ellipse_center is None
+            or request.ellipse_x_radius is None
+            or request.ellipse_y_radius is None
+        ):
+            raise ValueError("Crop ellipse mode requires center and X/Y radii.")
+        return _get_ellipse_cropping(
+            request.orig_image_pixels,
+            _float_pair(request.ellipse_center, "ellipse_center"),
+            (float(request.ellipse_x_radius), float(request.ellipse_y_radius)),
+        )
+
+
+def _require_coordinate_cropping(request: CropMaskRequest) -> None:
+    if request.cropping_method.is_coordinate_based:
+        return
+    raise NotImplementedError(
+        f"Headless OpenHCS execution supports coordinate Crop, not "
+        f"{request.cropping_method.value!r}."
+    )
 
 
 def _get_ellipse_cropping(
@@ -103,17 +246,15 @@ def _get_cropped_mask(
     mask: np.ndarray | None,
     removal_method: RemovalMethod,
 ) -> np.ndarray:
-    if removal_method is RemovalMethod.NO:
+    if not removal_method.removes_empty_rows_or_columns:
         return cropping if mask is None else mask
-    if removal_method in {RemovalMethod.EDGES, RemovalMethod.ALL}:
-        if mask is not None:
-            return mask
-        return _crop_image(
-            cropping,
-            cropping,
-            crop_internal=removal_method is RemovalMethod.ALL,
-        )
-    raise NotImplementedError(f"Unimplemented Crop removal method: {removal_method}.")
+    if mask is not None:
+        return mask
+    return _crop_image(
+        cropping,
+        cropping,
+        crop_internal=removal_method.removes_internal_empty_rows_or_columns,
+    )
 
 
 def _get_cropped_image_pixels(
@@ -122,20 +263,18 @@ def _get_cropped_image_pixels(
     mask: np.ndarray | None,
     removal_method: RemovalMethod,
 ) -> np.ndarray:
-    if removal_method is RemovalMethod.NO:
+    if not removal_method.removes_empty_rows_or_columns:
         cropped_pixel_data = orig_image_pixels.copy()
         cropped_pixel_data[~cropping] = 0
         return cropped_pixel_data
-    if removal_method in {RemovalMethod.EDGES, RemovalMethod.ALL}:
-        cropped_pixel_data = _crop_image(
-            orig_image_pixels,
-            cropping,
-            crop_internal=removal_method is RemovalMethod.ALL,
-        )
-        if mask is not None:
-            cropped_pixel_data[~mask.astype(bool)] = 0
-        return cropped_pixel_data
-    raise NotImplementedError(f"Unimplemented Crop removal method: {removal_method}.")
+    cropped_pixel_data = _crop_image(
+        orig_image_pixels,
+        cropping,
+        crop_internal=removal_method.removes_internal_empty_rows_or_columns,
+    )
+    if mask is not None:
+        cropped_pixel_data[~mask.astype(bool)] = 0
+    return cropped_pixel_data
 
 
 @numpy
@@ -155,9 +294,9 @@ def _get_cropped_image_pixels(
 )
 def crop(
     image: np.ndarray,
-    crop_shape: CropShape = CropShape.RECTANGLE,
-    cropping_method: CroppingMethod = CroppingMethod.COORDINATES,
-    removal_method: RemovalMethod = RemovalMethod.NO,
+    crop_shape: CropShape | str = CropShape.RECTANGLE,
+    cropping_method: CroppingMethod | str = CroppingMethod.COORDINATES,
+    removal_method: RemovalMethod | str = RemovalMethod.NO,
     left_right_rectangle_positions: tuple[int | None, int | None] | None = None,
     top_bottom_rectangle_positions: tuple[int | None, int | None] | None = None,
     ellipse_center: tuple[float, float] | None = None,
@@ -167,8 +306,8 @@ def crop(
 ) -> tuple[np.ndarray, np.ndarray, CropMeasurement]:
     """Crop an image and return its CellProfiler crop_mask sidecar."""
     orig_image_pixels, mask_plane = _split_crop_input(image)
-    cropping = _crop_mask_for_shape(
-        orig_image_pixels,
+    request = CropMaskRequest(
+        orig_image_pixels=orig_image_pixels,
         mask_plane=mask_plane,
         crop_shape=crop_shape,
         cropping_method=cropping_method,
@@ -179,6 +318,12 @@ def crop(
         ellipse_y_radius=ellipse_y_radius,
         cropping_labels=cropping_labels,
     )
+    removal_method = coerce_enum(
+        RemovalMethod,
+        removal_method,
+        "Crop.removal_method",
+    )
+    cropping = CropShapeMaskStrategy.for_shape(request.crop_shape).mask(request)
     cropped_mask = _get_cropped_mask(cropping, None, removal_method)
     cropped_pixel_data = _get_cropped_image_pixels(
         orig_image_pixels,
@@ -201,6 +346,8 @@ def crop(
 def _split_crop_input(image: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
     if image.ndim == 2:
         return image, None
+    if is_color_image_slice(image):
+        return image, None
     if image.ndim == 3 and image.shape[0] >= 1:
         mask_plane = image[1].astype(bool) if image.shape[0] >= 2 else None
         return image[0], mask_plane
@@ -208,58 +355,6 @@ def _split_crop_input(image: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]
         "Crop expects a 2D image or a stacked image/mask payload; "
         f"got shape {getattr(image, 'shape', None)!r}."
     )
-
-
-def _crop_mask_for_shape(
-    orig_image_pixels: np.ndarray,
-    *,
-    mask_plane: np.ndarray | None,
-    crop_shape: CropShape,
-    cropping_method: CroppingMethod,
-    left_right_rectangle_positions: tuple[int | None, int | None] | None,
-    top_bottom_rectangle_positions: tuple[int | None, int | None] | None,
-    ellipse_center: tuple[float, float] | None,
-    ellipse_x_radius: float | None,
-    ellipse_y_radius: float | None,
-    cropping_labels: Any | None,
-) -> np.ndarray:
-    if crop_shape is CropShape.CROPPING:
-        if mask_plane is None:
-            raise ValueError("Crop Previous cropping mode requires a crop-mask plane.")
-        return _validate_crop_mask(mask_plane, orig_image_pixels)
-    if crop_shape is CropShape.IMAGE:
-        if mask_plane is None:
-            raise ValueError("Crop image-mask mode requires a mask-image plane.")
-        return _validate_crop_mask(mask_plane > 0, orig_image_pixels)
-    if crop_shape is CropShape.OBJECTS:
-        if cropping_labels is None:
-            raise ValueError("Crop object-mask mode requires cropping_labels.")
-        return _validate_crop_mask(np.asarray(cropping_labels) > 0, orig_image_pixels)
-
-    if cropping_method is not CroppingMethod.COORDINATES:
-        raise NotImplementedError(
-            f"Headless OpenHCS execution supports coordinate Crop, not "
-            f"{cropping_method.value!r}."
-        )
-    if crop_shape is CropShape.RECTANGLE:
-        left, right = _rectangle_pair(
-            left_right_rectangle_positions,
-            "left_right_rectangle_positions",
-        )
-        top, bottom = _rectangle_pair(
-            top_bottom_rectangle_positions,
-            "top_bottom_rectangle_positions",
-        )
-        return _get_rectangle_cropping(orig_image_pixels, (left, right, top, bottom))
-    if crop_shape is CropShape.ELLIPSE:
-        if ellipse_center is None or ellipse_x_radius is None or ellipse_y_radius is None:
-            raise ValueError("Crop ellipse mode requires center and X/Y radii.")
-        return _get_ellipse_cropping(
-            orig_image_pixels,
-            _float_pair(ellipse_center, "ellipse_center"),
-            (float(ellipse_x_radius), float(ellipse_y_radius)),
-        )
-    raise NotImplementedError(f"Unsupported CellProfiler Crop shape {crop_shape.value!r}.")
 
 
 def _validate_crop_mask(

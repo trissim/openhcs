@@ -51,3 +51,25 @@ def test_runtime_value_store_rejects_same_key_different_path():
 
     with pytest.raises(ValueError, match="cannot overwrite"):
         store.record(value, path="/other/measurements.pkl", backend="memory")
+
+
+def test_runtime_value_store_replace_updates_current_binding():
+    store = RuntimeValueStore()
+    value = _runtime_value()
+    store.record(value, path="/memory/measurements.pkl", backend="memory")
+
+    replacement = store.replace(
+        value,
+        path="/other/measurements.pkl",
+        backend="memory",
+    )
+
+    assert store.get(value.key) is replacement
+    assert store.find_by_location(
+        path="/memory/measurements.pkl",
+        backend="memory",
+    ) == ()
+    assert store.find_by_location(
+        path="/other/measurements.pkl",
+        backend="memory",
+    ) == (replacement,)
