@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping
 
-from openhcs.core.memory import detect_memory_type, stack_slices, unstack_slices
+from openhcs.core.image_shapes import (
+    is_color_image_slice,
+    is_color_image_stack,
+    is_grayscale_image_stack,
+)
+from openhcs.core.image_stack_layout import ImageStackLayout
+from openhcs.core.memory import detect_memory_type
 
 
 class ImagePayloadExecutionMode(Enum):
@@ -94,9 +100,17 @@ def payload_slices_for_alignment(payload: Any) -> tuple[Any, ...]:
     """Return payload slices used for multi-source alignment."""
     if hasattr(payload, "ndim") and payload.ndim == 2:
         return (payload,)
-    if hasattr(payload, "ndim") and payload.ndim == 3:
+    if is_color_image_slice(payload):
+        return (payload,)
+    if is_grayscale_image_stack(payload) or is_color_image_stack(payload):
         memory_type = detect_memory_type(payload)
-        return tuple(unstack_slices(payload, memory_type, 0))
+        return tuple(
+            ImageStackLayout.for_stack(payload).unstack(
+                array=payload,
+                memory_type=memory_type,
+                gpu_id=0,
+            )
+        )
     return (payload,)
 
 
@@ -143,13 +157,13 @@ def compose_one_image_bundle(
 ) -> Any:
     """Stack same-slice image payloads into one multi-image bundle."""
     memory_type = detect_memory_type(image_payloads[0])
-    return stack_slices(list(image_payloads), memory_type=memory_type, gpu_id=0)
+    return ImageStackLayout.for_slices(image_payloads).stack(
+        slices=image_payloads,
+        memory_type=memory_type,
+        gpu_id=0,
+    )
 
 
 def payload_slice_count(payload: Any) -> int:
     """Return the number of aligned slices represented by one payload."""
-    if hasattr(payload, "ndim") and payload.ndim == 2:
-        return 1
-    if hasattr(payload, "shape") and payload.shape:
-        return int(payload.shape[0])
-    return 1
+    return len(payload_slices_for_alignment(payload))

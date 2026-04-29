@@ -15,6 +15,7 @@ from .align_settings import align_bound_kwargs
 from .area_occupied_settings import area_occupied_bound_kwargs
 from .calculate_math_settings import calculate_math_bound_kwargs
 from .classify_objects_settings import classify_objects_bound_kwargs
+from .color_to_gray_settings import color_to_gray_bound_kwargs
 from .crop_settings import crop_bound_kwargs
 from .display_data_settings import display_data_on_image_bound_kwargs
 from .filter_objects_settings import filter_objects_bound_kwargs
@@ -130,6 +131,22 @@ class UnmixColorsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     ) -> BoundModuleSettings:
         del binder, param_mapping
         return BoundModuleSettings(unmix_colors_bound_kwargs(module))
+
+
+class ColorToGrayModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind ColorToGray's mode-dependent channel plan."""
+
+    module_name = "ColorToGray"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del param_mapping
+        return BoundModuleSettings(color_to_gray_bound_kwargs(module, binder))
 
 
 class MeasureImageAreaOccupiedModuleSettingsBindingStrategy(

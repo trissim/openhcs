@@ -13,7 +13,9 @@ from metaclass_registry import AutoRegisterMeta
 
 from openhcs.constants.constants import Backend
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
-from openhcs.core.memory import detect_memory_type, stack_slices, unstack_slices
+from openhcs.core.image_shapes import is_color_image_slice
+from openhcs.core.image_stack_layout import ImageStackLayout
+from openhcs.core.memory import detect_memory_type
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     NamedSourceBinding,
@@ -982,8 +984,14 @@ def _is_numeric_array_payload(payload: Any) -> bool:
 def _unstack_payload(payload: Any) -> list[Any]:
     if hasattr(payload, "ndim") and payload.ndim == 2:
         return [payload]
+    if is_color_image_slice(payload):
+        return [payload]
     memory_type = detect_memory_type(payload)
-    return list(unstack_slices(payload, memory_type, 0, validate_slices=False))
+    return ImageStackLayout.for_stack(payload).unstack(
+        array=payload,
+        memory_type=memory_type,
+        gpu_id=0,
+    )
 
 
 def _restack_like_payload(
@@ -995,7 +1003,11 @@ def _restack_like_payload(
     if len(slices) == 1:
         return slices[0]
     memory_type = detect_memory_type(reference_payload)
-    return stack_slices(slices, memory_type=memory_type, gpu_id=0)
+    return ImageStackLayout.for_slices(slices).stack(
+        slices=slices,
+        memory_type=memory_type,
+        gpu_id=0,
+    )
 
 
 def _inherited_scope_components(

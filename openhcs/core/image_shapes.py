@@ -25,7 +25,7 @@ def is_color_image_slice(value: Any) -> bool:
 
 def is_grayscale_image_stack(value: Any) -> bool:
     """Return True for an OpenHCS grayscale stack shaped (N, H, W)."""
-    return hasattr(value, "ndim") and value.ndim == 3
+    return hasattr(value, "ndim") and value.ndim == 3 and not is_color_image_slice(value)
 
 
 def is_color_image_stack(value: Any) -> bool:

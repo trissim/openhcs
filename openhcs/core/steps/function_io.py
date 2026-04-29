@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from openhcs.constants.constants import Backend, LOADABLE_IMAGE_EXTENSIONS
+from openhcs.core.image_file_serialization import prepare_disk_image_payloads
 
 if TYPE_CHECKING:
     from openhcs.core.context.processing_context import ProcessingContext
@@ -97,8 +98,13 @@ def save_materialized_data(
             }
         )
 
+    payloads = (
+        prepare_disk_image_payloads(memory_data, materialized_paths)
+        if materialized_backend == Backend.DISK.value
+        else memory_data
+    )
     filemanager.save_batch(
-        memory_data, list(materialized_paths), materialized_backend, **save_kwargs
+        payloads, list(materialized_paths), materialized_backend, **save_kwargs
     )
 
 

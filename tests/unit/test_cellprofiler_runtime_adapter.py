@@ -767,6 +767,53 @@ def test_cellprofiler_adapter_resolves_step_input_source_filters_without_metadat
     np.testing.assert_array_equal(resolved, channel_1)
 
 
+def test_cellprofiler_adapter_resolves_step_input_color_stack_source_filters():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="orig_color",
+                        selector=SourceSelector(
+                            filters=(
+                                SourceFilterClause(
+                                    subject=SourceFilterSubject.FILE,
+                                    match_type=SourceFilterMatchType.CONTAINS,
+                                    value="t0",
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=(
+            "DMSO_B5_t0.JPG",
+            "DMSO_B5_t24.JPG",
+        ),
+        step_input_dir="/plate/images",
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(FileManagerStub()),
+        filemanager=FileManagerStub(),
+    )
+    t0 = np.zeros((3, 4, 3), dtype=np.float32)
+    t24 = np.ones((3, 4, 3), dtype=np.float32)
+    image_stack = np.stack((t0, t24), axis=0)
+
+    resolved = adapter.resolve_source_image("orig_color", image_stack)
+
+    assert resolved.shape == (3, 4, 3)
+    np.testing.assert_array_equal(resolved, t0)
+
+
 def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan(tmp_path):
     source_bindings = StepSourceBindingsConfig(
         groups=(

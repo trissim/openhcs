@@ -6,6 +6,8 @@ from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
     ImagePayloadExecutionMode,
     compose_aligned_image_payload,
+    payload_slice_count,
+    payload_slices_for_alignment,
 )
 from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
 from benchmark.cellprofiler_compat.module_execution import (
@@ -19,6 +21,7 @@ from benchmark.cellprofiler_compat.module_execution import (
     _measurement_table_rows,
     _object_only_reference_image,
 )
+from benchmark.cellprofiler_library.functions.colortogray import color_to_gray
 from benchmark.cellprofiler_library.functions.filterobjects import (
     FilterMethod,
     FilterMode,
@@ -76,6 +79,15 @@ class _FakeCellProfilerRuntime:
     ) -> None:
         self.objects.append((name, labels, kwargs))
 
+    def add_image(
+        self,
+        name: str,
+        data: object,
+        **kwargs: object,
+    ) -> None:
+        del kwargs
+        self.images[name] = _FakeRuntimeImage(data)
+
 
 def test_coerce_invocation_kwargs_uses_function_enum_annotations() -> None:
     coerced = _coerce_invocation_kwargs(
@@ -123,6 +135,78 @@ def test_cellprofiler_contract_executor_stacks_color_slice_outputs():
 
     assert calls == [(4, 5), (4, 5)]
     assert result.shape == (2, 4, 5, 3)
+
+
+def test_color_to_gray_combines_openhcs_color_stack() -> None:
+    image = np.zeros((2, 4, 5, 3), dtype=np.float32)
+    image[..., 0] = 2.0
+    image[..., 1] = 4.0
+    image[..., 2] = 6.0
+
+    result = color_to_gray(
+        image,
+        mode="combine",
+        image_type="rgb",
+        channel_indices=(0, 1, 2),
+        contributions=(1.0, 1.0, 2.0),
+        dtype_config=DtypeConfig(),
+    )
+
+    assert result.shape == (2, 4, 5)
+    np.testing.assert_array_equal(result, np.full((2, 4, 5), 4.5, dtype=np.float32))
+
+
+def test_color_to_gray_splits_openhcs_color_slice_by_selected_channels() -> None:
+    image = np.zeros((4, 5, 3), dtype=np.float32)
+    image[..., 0] = 1.0
+    image[..., 1] = 2.0
+    image[..., 2] = 3.0
+
+    red, blue = color_to_gray(
+        image,
+        mode="split",
+        image_type="rgb",
+        channel_indices=(0, 2),
+        dtype_config=DtypeConfig(),
+    )
+
+    assert red.shape == (4, 5)
+    assert blue.shape == (4, 5)
+    np.testing.assert_array_equal(red, np.ones((4, 5), dtype=np.float32))
+    np.testing.assert_array_equal(blue, np.full((4, 5), 3.0, dtype=np.float32))
+
+
+def test_aligned_payload_treats_hwc_color_as_one_slice() -> None:
+    color_slice = np.zeros((4, 5, 3), dtype=np.float32)
+
+    slices = payload_slices_for_alignment(color_slice)
+
+    assert len(slices) == 1
+    assert slices[0] is color_slice
+    assert payload_slice_count(color_slice) == 1
+
+
+def test_module_executor_rewraps_single_image_output_for_openhcs_main_flow() -> None:
+    def to_gray(image: np.ndarray) -> np.ndarray:
+        return image[..., 0]
+
+    color_slice = np.zeros((4, 5, 3), dtype=np.float32)
+    color_stack = color_slice[np.newaxis, ...]
+    runtime = _FakeCellProfilerRuntime(
+        {"OrigColor": _FakeRuntimeImage(color_slice, source_image_name="OrigColor")}
+    )
+    executor = CellProfilerModuleExecutor(
+        CellProfilerModuleContract(
+            module_name="ColorToGray",
+            inputs=(ArtifactSpec("OrigColor", ArtifactKind.IMAGE),),
+            outputs=(ArtifactSpec("OrigGray", ArtifactKind.IMAGE),),
+        )
+    )
+
+    result = executor.run(to_gray, color_stack, cellprofiler_runtime=runtime)
+
+    assert result.shape == (1, 4, 5)
+    assert runtime.images["OrigGray"].data.shape == (4, 5)
 
 
 def test_cellprofiler_contract_executor_slices_aligned_runtime_kwargs():

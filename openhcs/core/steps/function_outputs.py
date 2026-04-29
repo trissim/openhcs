@@ -7,6 +7,7 @@ import time
 
 from openhcs.constants.constants import Backend
 from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.image_file_serialization import prepare_disk_image_payloads
 from openhcs.core.steps.function_artifact_materialization import (
     materialize_artifact_outputs,
 )
@@ -49,8 +50,13 @@ def _write_memory_outputs_if_needed(
         plan.axis_id
     )
     context.filemanager.ensure_directory(plan.output_dir, plan.write_backend)
+    payloads = (
+        prepare_disk_image_payloads(memory_data, memory_paths)
+        if plan.write_backend == Backend.DISK.value
+        else memory_data
+    )
     context.filemanager.save_batch(
-        memory_data,
+        payloads,
         memory_paths,
         plan.write_backend,
         chunk_name=plan.axis_id,

@@ -31,7 +31,9 @@ from openhcs.core.memory import (
 from openhcs.core.image_shapes import (
     is_color_image_slice,
     is_color_image_stack,
+    is_image_stack,
 )
+from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.pipeline.function_contracts import special_input_names_from_callable
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest
 from openhcs.core.runtime_stores import require_runtime_value_store
@@ -170,7 +172,7 @@ class CellProfilerModuleExecutor:
             output_image=main_output,
         ):
             return image
-        return main_output
+        return _openhcs_main_flow_output(image, main_output)
 
     def _runs_per_object_measurement(self) -> bool:
         return CellProfilerPerObjectMeasurementPolicy.matches(
@@ -2172,6 +2174,26 @@ def _collapse_singleton_stack_output(value: Any) -> Any:
     if isinstance(value, tuple):
         return tuple(_collapse_singleton_stack_output(item) for item in value)
     return value
+
+
+def _openhcs_main_flow_output(
+    input_image: Any,
+    output_image: Any,
+) -> Any:
+    if not is_image_stack(input_image):
+        return output_image
+    if not _is_image_slice(output_image):
+        return output_image
+    memory_type = detect_memory_type(input_image)
+    return ImageStackLayout.for_slices((output_image,)).stack(
+        slices=(output_image,),
+        memory_type=memory_type,
+        gpu_id=0,
+    )
+
+
+def _is_image_slice(value: Any) -> bool:
+    return (hasattr(value, "ndim") and value.ndim == 2) or is_color_image_slice(value)
 
 
 def _single_source_name(source_names: tuple[str, ...]) -> str | None:

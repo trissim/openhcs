@@ -1002,6 +1002,67 @@ def test_overlay_outlines_accepts_mixed_image_and_object_rows() -> None:
     ]
 
 
+def test_color_to_gray_combine_contract_ignores_dormant_split_outputs() -> None:
+    module = _module_with_records(
+        1,
+        "ColorToGray",
+        [
+            ("Select the input image", "OrigColor"),
+            ("Conversion method", "Combine"),
+            ("Image type", "RGB"),
+            ("Name the output image", "OrigGray"),
+            ("Relative weight of the red channel", "1.0"),
+            ("Relative weight of the green channel", "1.0"),
+            ("Relative weight of the blue channel", "1.0"),
+            ("Convert red to gray?", "Yes"),
+            ("Name the output image", "OrigRed"),
+            ("Convert green to gray?", "Yes"),
+            ("Name the output image", "OrigGreen"),
+            ("Convert blue to gray?", "Yes"),
+            ("Name the output image", "OrigBlue"),
+        ],
+    )
+
+    table = CellProfilerSymbolTable.compile([module])
+    contract = table.contracts_by_module_num[1]
+
+    assert [spec.name for spec in contract.inputs] == ["OrigColor"]
+    assert [spec.name for spec in contract.outputs] == ["OrigGray"]
+
+
+def test_color_to_gray_split_contract_uses_enabled_rgb_outputs() -> None:
+    module = _module_with_records(
+        1,
+        "ColorToGray",
+        [
+            ("Select the input image", "OrigColor"),
+            ("Conversion method", "Split"),
+            ("Image type", "RGB"),
+            ("Name the output image", "OrigGray"),
+            ("Relative weight of the red channel", "1.0"),
+            ("Relative weight of the green channel", "1.0"),
+            ("Relative weight of the blue channel", "1.0"),
+            ("Convert red to gray?", "Yes"),
+            ("Name the output image", "OrigRed"),
+            ("Convert green to gray?", "No"),
+            ("Name the output image", "OrigGreen"),
+            ("Convert blue to gray?", "Yes"),
+            ("Name the output image", "OrigBlue"),
+            ("Convert hue to gray?", "Yes"),
+            ("Name the output image", "OrigHue"),
+            ("Convert saturation to gray?", "Yes"),
+            ("Name the output image", "OrigSaturation"),
+            ("Convert value to gray?", "Yes"),
+            ("Name the output image", "OrigValue"),
+        ],
+    )
+
+    table = CellProfilerSymbolTable.compile([module])
+    contract = table.contracts_by_module_num[1]
+
+    assert [spec.name for spec in contract.outputs] == ["OrigRed", "OrigBlue"]
+
+
 def test_cellprofiler_symbol_table_infers_common_image_transform_contract():
     modules = [
         _module(

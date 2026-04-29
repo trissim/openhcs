@@ -58,6 +58,10 @@ from .area_occupied_settings import (
     area_occupied_rows,
 )
 from .calculate_math_settings import calculate_math_object_dependencies
+from .color_to_gray_settings import (
+    color_to_gray_input_name,
+    color_to_gray_output_names,
+)
 from .crop_settings import (
     crop_input_image_name,
     crop_mask_image_name,
@@ -1182,6 +1186,22 @@ def _unmix_colors(
     return _contracts(module, builder, inputs=[image], outputs=outputs)
 
 
+def _color_to_gray(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    image = builder.require(
+        color_to_gray_input_name(module),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    outputs = [
+        builder.declare(output_name, CellProfilerSymbolKind.IMAGE, module)
+        for output_name in color_to_gray_output_names(module)
+    ]
+    return _contracts(module, builder, inputs=[image], outputs=outputs)
+
+
 def _correct_illumination_apply(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
@@ -1618,6 +1638,7 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     (("FilterObjects",), _filter_objects),
     (("ClassifyObjectsSingleMeasurement",), _classify_objects),
     (("DefineGridManual",), _define_grid),
+    (("ColorToGray",), _color_to_gray),
     (("GrayToColor",), _gray_to_color),
     (("UnmixColors",), _unmix_colors),
     (("OverlayOutlines",), _overlay_outlines),

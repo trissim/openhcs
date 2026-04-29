@@ -449,6 +449,84 @@ def test_official_example_untangleworms_cppipe_executes_via_source_schema_worksp
     )
 
 
+def test_official_example_woundhealing_cppipe_executes_disk_outputs(
+    tmp_path: Path,
+) -> None:
+    examples_root = _official_cellprofiler_examples_root()
+    cppipe_path = (
+        examples_root
+        / "CellProfiler3Pipelines"
+        / "ExampleWoundHealing.cppipe"
+    )
+    source_root = examples_root / "ExampleWoundHealing"
+    if not cppipe_path.exists() or not source_root.exists():
+        pytest.skip(
+            "Official CellProfiler ExampleWoundHealing files are not available. "
+            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
+            f"looked under {examples_root}."
+        )
+
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / "generated_official_woundhealing_pipeline.py",
+    )
+    workspace = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "official_woundhealing_openhcs_workspace",
+        prepared.source_schema,
+    )
+
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=True,
+        microscope=Microscope.AUTO,
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            output_dir_suffix="_generated_cppipe",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    orchestrator = PipelineOrchestrator(
+        workspace.workspace_root,
+        pipeline_config=pipeline_config,
+    )
+    orchestrator.initialize()
+
+    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+
+    assert all(
+        result.is_success()
+        for result in execution.execution_results.values()
+    )
+    image_outputs = sorted(
+        (_generated_output_root(workspace.workspace_root) / "images").glob("*.JPG")
+    )
+    assert [path.name for path in image_outputs] == [
+        "A01_s001_w1_z001_t001.JPG",
+        "A02_s002_w1_z001_t001.JPG",
+    ]
+    assert all(
+        np.asarray(Image.open(path)).dtype == np.uint8
+        for path in image_outputs
+    )
+    csv_outputs = sorted(
+        _generated_results_dir(workspace.workspace_root).glob(
+            "*MeasureImageAreaOccupied_8_measurements_step3.csv"
+        )
+    )
+    assert len(csv_outputs) == 2
+    assert _csv_header(csv_outputs[0]) == [
+        "slice_index",
+        "area_occupied",
+        "perimeter",
+        "total_area",
+    ]
+
+
 def test_official_cellprofiler3_cppipe_corpus_prepares(
     tmp_path: Path,
 ) -> None:
