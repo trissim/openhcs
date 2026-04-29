@@ -43,7 +43,7 @@ def test_cppipe_execution_validation_accepts_csv_with_data_rows(
         tmp_path,
     )
 
-    assert validation.observation.csv_row_counts_by_path[csv_path] == 1
+    assert validation.observation.exports.table_row_counts_by_path[csv_path] == 1
 
 
 def _prepared_exporting_measurements() -> SimpleNamespace:

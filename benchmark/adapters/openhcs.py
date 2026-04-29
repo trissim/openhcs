@@ -204,8 +204,8 @@ class OpenHCSAdapter(ToolAdapter):
             "cppipe_path": str(cppipe_path),
             "generated_pipeline_module": prepared.module_name,
             "axis_count": len(execution.execution_results),
-            "csv_output_count": len(validation.observation.csv_outputs),
-            "image_output_count": len(validation.observation.image_outputs),
+            "csv_output_count": len(validation.observation.exports.table_outputs),
+            "image_output_count": len(validation.observation.exports.image_outputs),
         }
         if source_workspace is not None:
             provenance["source_workspace"] = str(source_workspace.workspace_root)
