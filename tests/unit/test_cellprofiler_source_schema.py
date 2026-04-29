@@ -125,6 +125,28 @@ def test_cppipe_parser_supports_indented_legacy_pipeline_modules(tmp_path: Path)
     )
 
 
+def test_compile_image_schema_lowers_images_module_to_source_universe_filters():
+    images_module = _module_with_records(
+        1,
+        "Images",
+        [
+            ("Filter images?", "Images only"),
+            ("Select the rule criteria", 'or (file does containregexp "A01")'),
+        ],
+    )
+
+    schema = compile_image_schema([images_module])
+
+    assert schema.images_rule is not None
+    assert schema.images_rule.filters[0].match_type is SourceFilterMatchType.IS_IMAGE
+    assert schema.images_rule.filters[1].subject is SourceFilterSubject.FILE
+    assert (
+        schema.images_rule.filters[1].match_type
+        is SourceFilterMatchType.CONTAINS_REGEX
+    )
+    assert schema.images_rule.filters[1].value == "A01"
+
+
 def test_compile_image_schema_lowers_names_and_types_to_typed_selectors():
     metadata_module = _module_with_records(
         1,
@@ -357,6 +379,7 @@ def test_compile_image_schema_supports_v5_regex_labels_and_file_filters():
         is SourceFilterMatchType.CONTAINS
     )
     assert len(schema.imported_metadata_tables) == 1
+    assert schema.imported_metadata_tables[0].location == "metadata.csv"
     assert (
         schema.imported_metadata_tables[0].joins[0].image_metadata_field
         == "WellRow"

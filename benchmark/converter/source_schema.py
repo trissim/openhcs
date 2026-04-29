@@ -152,13 +152,12 @@ class ImagesModuleCompiler(SetupModuleCompiler):
         module: ModuleBlock,
         state: PipelineImageSchemaBuilder,
     ) -> None:
-        filtering_mode = module.get_setting("Filter images?", "")
-        criteria = module.get_setting("Select the rule criteria", "")
-        if filtering_mode or criteria:
-            state.images_rule = ImagesRule(
-                filtering_mode=filtering_mode,
-                criteria=criteria,
-            )
+        filters = _images_rule_filters(
+            filtering_mode=module.get_setting("Filter images?", ""),
+            criteria=module.get_setting("Select the rule criteria", ""),
+        )
+        if filters:
+            state.images_rule = ImagesRule(filters=filters)
 
 
 class LoadImagesModuleCompiler(SetupModuleCompiler):
@@ -430,6 +429,27 @@ def _require_legacy_load_images_source_type(module: ModuleBlock) -> None:
         )
 
 
+def _images_rule_filters(
+    *,
+    filtering_mode: str,
+    criteria: str,
+) -> tuple[SourceFilterClause, ...]:
+    filters = list(_filter_clauses_from_criteria(criteria))
+    normalized_mode = filtering_mode.strip().lower()
+    if "images" in normalized_mode and not any(
+        clause.match_type is SourceFilterMatchType.IS_IMAGE
+        for clause in filters
+    ):
+        filters.insert(
+            0,
+            SourceFilterClause(
+                subject=SourceFilterSubject.FILE,
+                match_type=SourceFilterMatchType.IS_IMAGE,
+            ),
+        )
+    return tuple(dict.fromkeys(filters))
+
+
 def _declare_load_images_grouping(
     module: ModuleBlock,
     state: PipelineImageSchemaBuilder,
@@ -603,10 +623,27 @@ def _is_imported_metadata_method(value: str) -> bool:
 
 def _imported_metadata_table(block: Sequence[ModuleSetting]) -> ImportedMetadataTable:
     return ImportedMetadataTable(
-        location=block_setting_value(block, "Metadata file location", default="")
-        or None,
+        location=_imported_metadata_location(
+            block_setting_value(block, "Metadata file location", default="")
+        ),
         joins=_imported_metadata_joins(block),
     )
+
+
+def _imported_metadata_location(value: str) -> str | None:
+    decoded = decode_cellprofiler_setting_literal(value).strip()
+    if not decoded:
+        return None
+    if "|" not in decoded:
+        return decoded
+    location_kind, location_path = decoded.split("|", 1)
+    if location_kind.strip().lower() != "default input folder":
+        raise ValueError(
+            "Metadata imported-table lowering only supports Default Input Folder "
+            f"locations, got {location_kind!r}."
+        )
+    normalized_path = location_path.strip()
+    return normalized_path or None
 
 
 def _imported_metadata_joins(

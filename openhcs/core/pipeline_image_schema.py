@@ -17,6 +17,7 @@ from openhcs.core.source_bindings import (
     NamedSourceBinding,
     SourceBindingMatchPlan,
     SourceBindingOrigin,
+    SourceFilterClause,
     SourceSelector,
 )
 
@@ -25,8 +26,16 @@ from openhcs.core.source_bindings import (
 class ImagesRule:
     """One setup-module source universe rule."""
 
-    filtering_mode: str
-    criteria: str
+    filters: tuple[SourceFilterClause, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "filters", tuple(self.filters))
+        for clause in self.filters:
+            if not isinstance(clause, SourceFilterClause):
+                raise TypeError(
+                    "ImagesRule.filters must contain SourceFilterClause values, "
+                    f"got {type(clause).__name__}."
+                )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

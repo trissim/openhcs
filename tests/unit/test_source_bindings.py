@@ -78,6 +78,32 @@ def test_step_source_bindings_reject_duplicate_aliases_and_group_keys():
         )
 
 
+def test_source_bindings_expose_generic_resolution_requirements():
+    config = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="DNA",
+                        selector=SourceSelector(
+                            components=(ComponentSelector(AllComponents.CHANNEL, "1"),)
+                        ),
+                    ),
+                    NamedSourceBinding(
+                        alias="IllumDNA",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                    ),
+                ),
+            ),
+        )
+    )
+
+    assert config.requires_step_input_channel_stack
+    assert config.requires_pipeline_start_resolution
+    assert config.groups[0].bindings[0].requires_selector_resolution
+    assert not config.groups[0].bindings[1].requires_step_input_channel_stack
+
+
 def test_compiled_source_binding_plan_preserves_grouped_named_selectors():
     config = StepSourceBindingsConfig(
         groups=(
@@ -202,6 +228,9 @@ def test_source_binding_runtime_context_preserves_source_provenance_through_pick
         step_input_source_paths={
             "A01_s001_w1_z001_t001.tif": "/real/source_C20_w1.tif",
         },
+        source_metadata_by_path={
+            "A01_s001_w1_z001_t001.tif": {"Compound": "DMSO"},
+        },
         pipeline_input_files=("/real/source_C20_w1.tif",),
         pipeline_input_backend="disk",
     )
@@ -211,4 +240,7 @@ def test_source_binding_runtime_context_preserves_source_provenance_through_pick
     assert restored == context
     assert dict(restored.step_input_source_paths) == {
         "A01_s001_w1_z001_t001.tif": "/real/source_C20_w1.tif",
+    }
+    assert dict(restored.source_metadata_by_path["A01_s001_w1_z001_t001.tif"]) == {
+        "Compound": "DMSO",
     }

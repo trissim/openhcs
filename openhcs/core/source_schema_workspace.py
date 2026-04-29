@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import ClassVar
@@ -17,6 +18,8 @@ from openhcs.constants.constants import AllComponents, Backend
 from openhcs.core.pipeline_image_schema import (
     ImageAssignment,
     ImageTypeSourceRole,
+    ImportedMetadataJoin,
+    ImportedMetadataTable,
     PipelineImageSchema,
     SourceAssignmentBase,
 )
@@ -50,6 +53,9 @@ class SourceSchemaWorkspaceMaterialization:
     metadata_path: Path
     primary_mappings: Mapping[str, str]
     auxiliary_mappings: Mapping[str, str]
+    source_metadata: Mapping[str, Mapping[str, str]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_root", Path(self.source_root))
@@ -65,6 +71,18 @@ class SourceSchemaWorkspaceMaterialization:
             "auxiliary_mappings",
             MappingProxyType(dict(self.auxiliary_mappings)),
         )
+        object.__setattr__(
+            self,
+            "source_metadata",
+            MappingProxyType(
+                {
+                    str(path): MappingProxyType(
+                        {str(key): str(value) for key, value in metadata.items()}
+                    )
+                    for path, metadata in self.source_metadata.items()
+                }
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +97,28 @@ class SourceSchemaCandidate:
         object.__setattr__(self, "path", Path(self.path))
         object.__setattr__(self, "relative_path", self.relative_path.replace(os.sep, "/"))
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+
+
+@dataclass(frozen=True, slots=True)
+class ImportedMetadataRows:
+    """Rows loaded from one pipeline-level imported metadata table."""
+
+    table: ImportedMetadataTable
+    rows: tuple[Mapping[str, str], ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.table, ImportedMetadataTable):
+            raise TypeError(
+                "ImportedMetadataRows.table must be ImportedMetadataTable, "
+                f"got {type(self.table).__name__}."
+            )
+        object.__setattr__(
+            self,
+            "rows",
+            tuple(MappingProxyType(dict(row)) for row in self.rows),
+        )
+        if not self.rows:
+            raise ValueError("Imported metadata tables must contain at least one row.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,14 +412,20 @@ def materialize_source_schema_workspace(
         schema,
         stack_candidates,
     )
-    primary_mappings, component_values = _primary_workspace_mappings(
+    primary_mappings, primary_source_metadata, component_values = _primary_workspace_mappings(
         workspace_root,
         image_sets,
         tuple(stack_assignments),
     )
-    auxiliary_mappings = _auxiliary_workspace_mappings(
+    auxiliary_mappings, auxiliary_source_metadata = _auxiliary_workspace_mappings(
         workspace_root,
         auxiliary_candidates,
+    )
+    source_metadata = MappingProxyType(
+        {
+            **dict(primary_source_metadata),
+            **dict(auxiliary_source_metadata),
+        }
     )
     metadata_path = workspace_root / "openhcs_metadata.json"
     _write_workspace_metadata(
@@ -387,6 +433,8 @@ def materialize_source_schema_workspace(
         primary_mappings,
         auxiliary_mappings,
         component_values,
+        primary_source_metadata,
+        auxiliary_source_metadata,
     )
     return SourceSchemaWorkspaceMaterialization(
         source_root=source_root,
@@ -394,6 +442,7 @@ def materialize_source_schema_workspace(
         metadata_path=metadata_path,
         primary_mappings=primary_mappings,
         auxiliary_mappings=auxiliary_mappings,
+        source_metadata=source_metadata,
     )
 
 
@@ -429,10 +478,21 @@ def _source_candidates(
     source_files: tuple[Path, ...],
     schema: PipelineImageSchema,
 ) -> tuple[SourceSchemaCandidate, ...]:
+    imported_metadata = _imported_metadata_rows(source_root, schema)
     candidates: list[SourceSchemaCandidate] = []
     for path in source_files:
+        if schema.images_rule is not None and not source_filters_match(
+            str(path),
+            schema.images_rule.filters,
+        ):
+            continue
         relative_path = path.relative_to(source_root).as_posix()
         metadata = metadata_from_rules(str(path), schema.metadata_rules)
+        metadata = _metadata_with_imported_tables(
+            metadata,
+            imported_metadata,
+            path=relative_path,
+        )
         candidates.append(
             SourceSchemaCandidate(
                 path=path,
@@ -441,6 +501,134 @@ def _source_candidates(
             )
         )
     return tuple(candidates)
+
+
+def _imported_metadata_rows(
+    source_root: Path,
+    schema: PipelineImageSchema,
+) -> tuple[ImportedMetadataRows, ...]:
+    return tuple(
+        ImportedMetadataRows(
+            table=table,
+            rows=_read_imported_metadata_rows(source_root, table),
+        )
+        for table in schema.imported_metadata_tables
+    )
+
+
+def _read_imported_metadata_rows(
+    source_root: Path,
+    table: ImportedMetadataTable,
+) -> tuple[Mapping[str, str], ...]:
+    table_path = _imported_metadata_path(source_root, table)
+    if not table_path.is_file():
+        raise FileNotFoundError(f"Imported metadata table does not exist: {table_path}")
+    with table_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            raise ValueError(
+                f"Imported metadata table {table_path} has no header row."
+            )
+        rows = tuple(
+            MappingProxyType(
+                {
+                    str(key): str(value)
+                    for key, value in row.items()
+                    if key is not None and value is not None
+                }
+            )
+            for row in reader
+        )
+    if not rows:
+        raise ValueError(f"Imported metadata table {table_path} has no data rows.")
+    return rows
+
+
+def _imported_metadata_path(
+    source_root: Path,
+    table: ImportedMetadataTable,
+) -> Path:
+    if table.location is None:
+        raise ValueError("Imported metadata tables require a location.")
+    location = Path(table.location)
+    if location.is_absolute():
+        return location
+    return source_root / location
+
+
+def _metadata_with_imported_tables(
+    metadata: Mapping[str, str],
+    imported_metadata: tuple[ImportedMetadataRows, ...],
+    *,
+    path: str,
+) -> Mapping[str, str]:
+    if not imported_metadata:
+        return MappingProxyType(dict(metadata))
+    merged = dict(metadata)
+    for table_rows in imported_metadata:
+        row = _matched_imported_metadata_row(merged, table_rows, path=path)
+        if row is None:
+            continue
+        merge_source_metadata(merged, row, path=path)
+    return MappingProxyType(merged)
+
+
+def _matched_imported_metadata_row(
+    image_metadata: Mapping[str, str],
+    imported_metadata: ImportedMetadataRows,
+    *,
+    path: str,
+) -> Mapping[str, str] | None:
+    joins = imported_metadata.table.joins
+    if not joins:
+        raise ValueError(
+            "Imported metadata tables require explicit image-to-table joins."
+        )
+    join_values = {
+        join.image_metadata_field: source_metadata_value(
+            image_metadata,
+            join.image_metadata_field,
+        )
+        for join in joins
+    }
+    present_join_values = {
+        field: value
+        for field, value in join_values.items()
+        if value is not None
+    }
+    if not present_join_values:
+        return None
+    if len(present_join_values) != len(joins):
+        missing = tuple(
+            field for field, value in join_values.items() if value is None
+        )
+        raise ValueError(
+            f"Source candidate {path!r} is missing imported metadata join "
+            f"fields {missing!r}."
+        )
+    matched_rows = tuple(
+        row
+        for row in imported_metadata.rows
+        if _imported_metadata_row_matches(row, image_metadata, joins)
+    )
+    if len(matched_rows) != 1:
+        raise ValueError(
+            f"Source candidate {path!r} matched {len(matched_rows)} imported "
+            f"metadata rows; expected exactly one."
+        )
+    return matched_rows[0]
+
+
+def _imported_metadata_row_matches(
+    row: Mapping[str, str],
+    image_metadata: Mapping[str, str],
+    joins: tuple[ImportedMetadataJoin, ...],
+) -> bool:
+    return all(
+        source_metadata_value(row, join.imported_metadata_field)
+        == source_metadata_value(image_metadata, join.image_metadata_field)
+        for join in joins
+    )
 
 
 def _matched_candidates_by_alias(
@@ -607,7 +795,11 @@ def _primary_workspace_mappings(
     workspace_root: Path,
     image_sets: tuple[ImageSetRecord, ...],
     stack_assignments: tuple[ImageAssignment, ...],
-) -> tuple[Mapping[str, str], Mapping[AllComponents, Mapping[str, str | None]]]:
+) -> tuple[
+    Mapping[str, str],
+    Mapping[str, Mapping[str, str]],
+    Mapping[AllComponents, Mapping[str, str | None]],
+]:
     parser = ImageXpressFilenameParser()
     channel_values = {
         str(index): assignment.alias
@@ -616,6 +808,7 @@ def _primary_workspace_mappings(
     wells: dict[str, None] = {}
     sites: dict[str, None] = {}
     primary_mappings: dict[str, str] = {}
+    source_metadata: dict[str, Mapping[str, str]] = {}
     for image_set in image_sets:
         well = ComponentProjection.resolve(
             AllComponents.WELL,
@@ -645,6 +838,10 @@ def _primary_workspace_mappings(
                 virtual_path,
                 _workspace_relative_path(workspace_root, candidate.path),
             )
+            source_metadata[virtual_path] = _source_metadata_for_virtual_path(
+                image_set.metadata,
+                candidate.metadata,
+            )
     component_values: Mapping[AllComponents, Mapping[str, str | None]] = MappingProxyType(
         {
             AllComponents.CHANNEL: MappingProxyType(channel_values),
@@ -654,14 +851,19 @@ def _primary_workspace_mappings(
             AllComponents.TIMEPOINT: MappingProxyType({"1": None}),
         }
     )
-    return MappingProxyType(primary_mappings), component_values
+    return (
+        MappingProxyType(primary_mappings),
+        MappingProxyType(source_metadata),
+        component_values,
+    )
 
 
 def _auxiliary_workspace_mappings(
     workspace_root: Path,
     auxiliary_candidates: Mapping[str, tuple[SourceSchemaCandidate, ...]],
-) -> Mapping[str, str]:
+) -> tuple[Mapping[str, str], Mapping[str, Mapping[str, str]]]:
     mappings: dict[str, str] = {}
+    source_metadata: dict[str, Mapping[str, str]] = {}
     for alias, candidates in auxiliary_candidates.items():
         for index, candidate in enumerate(candidates, start=1):
             virtual_path = (
@@ -673,7 +875,20 @@ def _auxiliary_workspace_mappings(
                 virtual_path,
                 _workspace_relative_path(workspace_root, candidate.path),
             )
-    return MappingProxyType(mappings)
+            source_metadata[virtual_path] = _source_metadata_for_virtual_path(
+                {"source_alias": alias},
+                candidate.metadata,
+            )
+    return MappingProxyType(mappings), MappingProxyType(source_metadata)
+
+
+def _source_metadata_for_virtual_path(
+    image_set_metadata: Mapping[str, str],
+    candidate_metadata: Mapping[str, str],
+) -> Mapping[str, str]:
+    metadata = dict(image_set_metadata)
+    merge_source_metadata(metadata, candidate_metadata, path="source_metadata")
+    return MappingProxyType(metadata)
 
 
 def _write_workspace_metadata(
@@ -681,12 +896,15 @@ def _write_workspace_metadata(
     primary_mappings: Mapping[str, str],
     auxiliary_mappings: Mapping[str, str],
     component_values: Mapping[AllComponents, Mapping[str, str | None]],
+    primary_source_metadata: Mapping[str, Mapping[str, str]],
+    auxiliary_source_metadata: Mapping[str, Mapping[str, str]],
 ) -> None:
     subdirectories = {
         FIELDS.DEFAULT_SUBDIRECTORY: _metadata_dict(
             image_files=tuple(primary_mappings),
             workspace_mapping=primary_mappings,
             component_values=component_values,
+            source_metadata=primary_source_metadata,
             main=True,
         )
     }
@@ -695,6 +913,7 @@ def _write_workspace_metadata(
             image_files=tuple(auxiliary_mappings),
             workspace_mapping=auxiliary_mappings,
             component_values=component_values,
+            source_metadata=auxiliary_source_metadata,
             main=False,
         )
     metadata_path.write_text(
@@ -708,6 +927,7 @@ def _metadata_dict(
     image_files: tuple[str, ...],
     workspace_mapping: Mapping[str, str],
     component_values: Mapping[AllComponents, Mapping[str, str | None]],
+    source_metadata: Mapping[str, Mapping[str, str]],
     main: bool,
 ) -> dict[str, object]:
     return asdict(
@@ -727,6 +947,10 @@ def _metadata_dict(
                 Backend.VIRTUAL_WORKSPACE.value: True,
             },
             workspace_mapping=dict(workspace_mapping),
+            source_metadata={
+                path: dict(metadata)
+                for path, metadata in source_metadata.items()
+            },
             main=main,
         )
     )

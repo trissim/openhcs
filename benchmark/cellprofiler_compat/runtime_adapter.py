@@ -561,7 +561,7 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
     origin = SourceBindingOrigin.STEP_INPUT
 
     def resolve_image(self, request: SourceBindingResolutionRequest) -> Any:
-        if not _binding_requires_selector(request.binding):
+        if not request.binding.requires_selector_resolution:
             return _natural_step_input_payload(request.current_image)
         step_input_files = request.adapter.source_binding_context.step_input_files
         if not step_input_files:
@@ -776,16 +776,6 @@ class NumpyArraySourceFileLoader(PipelineStartSourceFileLoader):
         return payload
 
 
-def _binding_requires_selector(binding: NamedSourceBinding) -> bool:
-    selector = binding.selector
-    return bool(
-        selector.components
-        or selector.metadata
-        or selector.filters
-        or not selector.inherit_current_scope
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class ParsedSourceCandidate:
     """One parsed file candidate used for source-binding selector resolution."""
@@ -876,7 +866,47 @@ def _candidate_metadata(
             parser,
             strict=False,
         )
+    _merge_context_source_metadata(
+        metadata,
+        _candidate_metadata_paths(file_path, resolved_path, virtual_path),
+        context,
+    )
     return metadata
+
+
+def _candidate_metadata_paths(
+    file_path: str,
+    resolved_path: str,
+    virtual_path: str | None,
+) -> tuple[str, ...]:
+    paths = (file_path, resolved_path) if virtual_path is None else (
+        file_path,
+        resolved_path,
+        virtual_path,
+    )
+    return tuple(dict.fromkeys(paths))
+
+
+def _merge_context_source_metadata(
+    metadata: dict[str, Any],
+    paths: tuple[str, ...],
+    context: SourceBindingRuntimeContext,
+) -> None:
+    for path in dict.fromkeys(paths):
+        context_metadata = _context_source_metadata(path, context)
+        if context_metadata is not None:
+            merge_source_metadata(metadata, context_metadata, path=path)
+
+
+def _context_source_metadata(
+    file_path: str,
+    context: SourceBindingRuntimeContext,
+) -> Mapping[str, str] | None:
+    for key in _source_path_lookup_keys(file_path, context.step_input_dir):
+        metadata = context.source_metadata_by_path.get(key)
+        if metadata is not None:
+            return metadata
+    return context.source_metadata_by_path.get(str(Path(file_path)))
 
 
 def _merge_candidate_path_metadata(

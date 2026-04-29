@@ -521,6 +521,11 @@ class PatternGroupRuntime:
             if source_backend == Backend.VIRTUAL_WORKSPACE.value
             else {}
         )
+        source_metadata_by_path = (
+            self._virtual_workspace_source_metadata_by_path()
+            if source_backend == Backend.VIRTUAL_WORKSPACE.value
+            else {}
+        )
         pipeline_input_files, pipeline_input_backend = (
             self._pipeline_start_source_universe(
                 source_backend,
@@ -531,6 +536,7 @@ class PatternGroupRuntime:
             step_input_files=tuple(matching_files),
             step_input_dir=str(self.plan.input_dir),
             step_input_source_paths=step_input_source_paths,
+            source_metadata_by_path=source_metadata_by_path,
             pipeline_input_files=pipeline_input_files,
             pipeline_input_backend=pipeline_input_backend,
         )
@@ -600,6 +606,38 @@ class PatternGroupRuntime:
                 "workspace_mapping entries in OpenHCS metadata."
             )
         return workspace_source_paths
+
+    def _virtual_workspace_source_metadata_by_path(
+        self,
+    ) -> Mapping[str, Mapping[str, str]]:
+        from openhcs.microscopes.openhcs import FIELDS, OpenHCSMetadataHandler
+
+        metadata_handler = OpenHCSMetadataHandler(self.context.filemanager)
+        metadata = metadata_handler._load_metadata_dict(self.context.plate_path)
+        source_metadata_by_path: dict[str, Mapping[str, str]] = {}
+        for subdirectory in metadata.get(FIELDS.SUBDIRECTORIES, {}).values():
+            workspace_mapping = subdirectory.get("workspace_mapping", {})
+            source_metadata = subdirectory.get(FIELDS.SOURCE_METADATA, {})
+            if not isinstance(source_metadata, Mapping):
+                raise RuntimeError(
+                    "virtual_workspace source metadata must be a path-keyed mapping."
+                )
+            for virtual_relative, metadata_fields in source_metadata.items():
+                if not isinstance(metadata_fields, Mapping):
+                    raise RuntimeError(
+                        "virtual_workspace source metadata values must be mappings."
+                    )
+                normalized_metadata = {
+                    str(key): str(value)
+                    for key, value in metadata_fields.items()
+                }
+                virtual_path = str(virtual_relative)
+                source_metadata_by_path[virtual_path] = normalized_metadata
+                real_relative = workspace_mapping.get(virtual_path)
+                if real_relative is not None:
+                    real_path = str(Path(self.context.plate_path) / real_relative)
+                    source_metadata_by_path[real_path] = normalized_metadata
+        return source_metadata_by_path
 
     def _virtual_workspace_real_source_files(
         self,

@@ -23,9 +23,7 @@ from openhcs.core.artifact_materialization_policy import (
     DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
 )
 from openhcs.core.artifacts import ArtifactSpec
-from openhcs.constants.constants import AllComponents
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
-from openhcs.core.source_bindings import StepSourceBindingsConfig, SourceBindingOrigin
 
 from benchmark.cellprofiler_library import canonical_module_name
 
@@ -418,9 +416,9 @@ from openhcs.constants.input_source import InputSource
         """Derive native stack/group semantics for one converted step."""
         source_bindings = contract.source_bindings
         if not source_bindings.is_empty:
-            if self._requires_channel_stack_input(source_bindings):
+            if source_bindings.requires_step_input_channel_stack:
                 return ("VariableComponents.CHANNEL",), "GroupBy.SITE"
-            if self._requires_pipeline_start_source_resolution(source_bindings):
+            if source_bindings.requires_pipeline_start_resolution:
                 return (
                     "VariableComponents.SITE",
                     "VariableComponents.CHANNEL",
@@ -435,35 +433,6 @@ from openhcs.constants.input_source import InputSource
             )
         )
         return tuple(variable_components), None
-
-    def _requires_channel_stack_input(
-        self,
-        source_bindings: StepSourceBindingsConfig,
-    ) -> bool:
-        """Whether one step-input source binding needs channel-varying stack input."""
-        for group in source_bindings.groups:
-            for binding in group.bindings:
-                if binding.origin is not SourceBindingOrigin.STEP_INPUT:
-                    continue
-                if binding.selector.filters or binding.selector.metadata:
-                    return True
-                if any(
-                    selector.component is AllComponents.CHANNEL
-                    for selector in binding.selector.components
-                ):
-                    return True
-        return False
-
-    def _requires_pipeline_start_source_resolution(
-        self,
-        source_bindings: StepSourceBindingsConfig,
-    ) -> bool:
-        """Whether source bindings own image/channel selection from pipeline start."""
-        return any(
-            binding.origin is SourceBindingOrigin.PIPELINE_START
-            for group in source_bindings.groups
-            for binding in group.bindings
-        )
 
     def _generate_artifact_contracts(
         self,
@@ -668,23 +637,6 @@ from openhcs.constants.input_source import InputSource
             str(self._module_metadata(module_name)["contract"]),
         )
         return f"ProcessingContract.{resolved_contract.contract.name}"
-
-    def _requires_step_input_selector_resolution(
-        self,
-        source_bindings: StepSourceBindingsConfig,
-    ) -> bool:
-        """Whether runtime alias resolution needs the unsliced current stack."""
-        return any(
-            binding.origin is SourceBindingOrigin.STEP_INPUT
-            and (
-                binding.selector.components
-                or binding.selector.metadata
-                or binding.selector.filters
-                or not binding.selector.inherit_current_scope
-            )
-            for group in source_bindings.groups
-            for binding in group.bindings
-        )
 
     def _parse_parameter_mapping(self, func_name: str) -> Dict[str, Any]:
         """

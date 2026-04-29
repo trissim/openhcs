@@ -146,6 +146,7 @@ class OpenHCSMetadataFields:
     SUBDIRECTORIES: str = METADATA_CONFIG.SUBDIRECTORIES_KEY
     IMAGE_FILES: str = "image_files"
     AVAILABLE_BACKENDS: str = METADATA_CONFIG.AVAILABLE_BACKENDS_KEY
+    SOURCE_METADATA: str = "source_metadata"
 
     # Required metadata fields
     GRID_DIMENSIONS: str = "grid_dimensions"
@@ -506,6 +507,7 @@ class OpenHCSMetadata:
     timepoints: Optional[Dict[str, str]]
     available_backends: Dict[str, bool]
     workspace_mapping: Optional[Dict[str, str]] = None  # Plate-relative virtual → real path mapping
+    source_metadata: Optional[Dict[str, Dict[str, str]]] = None  # Virtual or real path → source metadata fields
     main: Optional[bool] = None  # Indicates if this subdirectory is the primary/input subdirectory
     results_dir: Optional[str] = None  # Sibling directory containing analysis results for this subdirectory
 
@@ -540,6 +542,18 @@ class SubdirectoryKeyedMetadata:
     def from_legacy_dict(cls, legacy_dict: Dict[str, Any], default_sub_dir: str = FIELDS.DEFAULT_SUBDIRECTORY_LEGACY) -> 'SubdirectoryKeyedMetadata':
         """Create from legacy single-subdirectory metadata dict."""
         return cls.from_single_metadata(default_sub_dir, OpenHCSMetadata(**legacy_dict))
+
+
+@dataclass(frozen=True)
+class OpenHCSMetadataGenerationRequest:
+    """Authoritative request for writing one OpenHCS metadata subdirectory."""
+
+    context: 'ProcessingContext'
+    output_dir: str
+    write_backend: str
+    is_main: bool
+    sub_dir: str
+    results_dir: Optional[str] = None
 
 
 class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
@@ -597,7 +611,16 @@ class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
                 return
 
         # Extract metadata from current state
-        current_metadata = self._extract_metadata_from_disk_state(context, output_dir, write_backend, is_main, sub_dir, results_dir)
+        current_metadata = self._extract_metadata_from_disk_state(
+            OpenHCSMetadataGenerationRequest(
+                context=context,
+                output_dir=output_dir,
+                write_backend=write_backend,
+                is_main=is_main,
+                sub_dir=sub_dir,
+                results_dir=results_dir,
+            )
+        )
         metadata_dict = asdict(current_metadata)
 
         # Filter None values unless override allowed
@@ -608,7 +631,10 @@ class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
 
 
 
-    def _extract_metadata_from_disk_state(self, context: 'ProcessingContext', output_dir: str, write_backend: str, is_main: bool, sub_dir: str, results_dir: str = None) -> OpenHCSMetadata:
+    def _extract_metadata_from_disk_state(
+        self,
+        request: OpenHCSMetadataGenerationRequest,
+    ) -> OpenHCSMetadata:
         """Extract metadata reflecting current disk state after processing.
 
         CRITICAL: Extracts component metadata (channels, wells, sites, z_indexes, timepoints)
@@ -617,20 +643,24 @@ class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
 
         For example, if processing filters to only channels 1-2, the metadata will show only those channels.
         """
+        context = request.context
         handler = context.microscope_handler
 
         # metadata_cache is always set by create_context() - fail if not present
         if not hasattr(context, 'metadata_cache'):
             raise RuntimeError("ProcessingContext missing metadata_cache - must be created via create_context()")
 
-        actual_files = self.filemanager.list_image_files(output_dir, write_backend)
-        relative_files = [f"{sub_dir}/{Path(f).name}" for f in actual_files]
+        actual_files = self.filemanager.list_image_files(
+            request.output_dir,
+            request.write_backend,
+        )
+        relative_files = [f"{request.sub_dir}/{Path(f).name}" for f in actual_files]
 
         # Calculate relative results directory path (relative to plate root)
         # Example: "images_results" for images subdirectory
         relative_results_dir = None
-        if results_dir:
-            results_path = Path(results_dir)
+        if request.results_dir:
+            results_path = Path(request.results_dir)
             relative_results_dir = results_path.name  # Just the directory name, not full path
 
         # Extract grid_dimensions and pixel_size from input metadata
@@ -677,9 +707,9 @@ class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
             sites=merged_metadata.get(AllComponents.SITE),
             z_indexes=merged_metadata.get(AllComponents.Z_INDEX),
             timepoints=merged_metadata.get(AllComponents.TIMEPOINT),
-            available_backends={write_backend: True},
+            available_backends={request.write_backend: True},
             workspace_mapping=None,  # Preserve existing - filtered out by create_metadata()
-            main=is_main if is_main else None,
+            main=request.is_main if request.is_main else None,
             results_dir=relative_results_dir
         )
 

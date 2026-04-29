@@ -8,11 +8,15 @@ from PIL import Image
 
 from openhcs.core.pipeline_image_schema import (
     ImageAssignment,
+    ImagesRule,
+    ImportedMetadataJoin,
+    ImportedMetadataTable,
     PipelineImageSchema,
 )
 from openhcs.core.source_bindings import (
     MetadataExtractionRule,
     MetadataSource,
+    MetadataSelector,
     SourceBindingMatchDimension,
     SourceBindingMatchField,
     SourceBindingMatchMethod,
@@ -90,6 +94,64 @@ def test_materialize_source_schema_workspace_derives_well_match_field(
     assert primary["wells"] == {"A01": None}
 
 
+def test_materialize_source_schema_workspace_applies_images_rule(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "Channel1-A01.tif", value=1)
+    _write_image(source_root / "Channel2-A01.tif", value=2)
+    _write_image(source_root / "Channel1-B01.tif", value=3)
+    _write_image(source_root / "Channel2-B01.tif", value=4)
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        _filtered_source_schema(),
+    )
+
+    metadata = json.loads(result.metadata_path.read_text())
+    primary = metadata["subdirectories"]["."]
+
+    assert set(primary["workspace_mapping"]) == {
+        "A01_s001_w1_z001_t001.tif",
+        "A01_s001_w2_z001_t001.tif",
+    }
+    assert primary["wells"] == {"A01": None}
+
+
+def test_materialize_source_schema_workspace_joins_imported_metadata(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "Channel1-A-01.tif", value=1)
+    _write_image(source_root / "Channel2-A-01.tif", value=2)
+    (source_root / "metadata.csv").write_text(
+        "Row,Compound\nA,DMSO\n",
+        encoding="utf-8",
+    )
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        _imported_metadata_source_schema(),
+    )
+
+    metadata = json.loads(result.metadata_path.read_text())
+    primary = metadata["subdirectories"]["."]
+
+    assert set(primary["workspace_mapping"]) == {
+        "A01_s001_w1_z001_t001.tif",
+        "A01_s001_w2_z001_t001.tif",
+    }
+    assert primary["wells"] == {"A01": None}
+    assert primary["source_metadata"]["A01_s001_w1_z001_t001.tif"]["Compound"] == (
+        "DMSO"
+    )
+    assert result.source_metadata["A01_s001_w2_z001_t001.tif"]["Compound"] == "DMSO"
+
+
 def _example_sbs_source_schema() -> PipelineImageSchema:
     metadata_rule = MetadataExtractionRule(
         source=MetadataSource.FILE_NAME,
@@ -154,6 +216,115 @@ def _example_sbs_source_schema() -> PipelineImageSchema:
                     fields=(
                         SourceBindingMatchField("rawGFP", "WellColumn"),
                         SourceBindingMatchField("rawDNA", "WellColumn"),
+                    )
+                ),
+            ),
+        ),
+    )
+
+
+def _filtered_source_schema() -> PipelineImageSchema:
+    return PipelineImageSchema(
+        images_rule=ImagesRule(
+            filters=(
+                SourceFilterClause(
+                    SourceFilterSubject.FILE,
+                    SourceFilterMatchType.CONTAINS,
+                    "A01",
+                ),
+            ),
+        ),
+        assignments_by_alias={
+            "rawGFP": ImageAssignment(
+                alias="rawGFP",
+                image_type="Grayscale image",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "Channel1",
+                        ),
+                    )
+                ),
+                origin=SourceBindingOrigin.PIPELINE_START,
+            ),
+            "rawDNA": ImageAssignment(
+                alias="rawDNA",
+                image_type="Grayscale image",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "Channel2",
+                        ),
+                    )
+                ),
+                origin=SourceBindingOrigin.PIPELINE_START,
+            ),
+        },
+    )
+
+
+def _imported_metadata_source_schema() -> PipelineImageSchema:
+    return PipelineImageSchema(
+        metadata_rules=(
+            MetadataExtractionRule(
+                source=MetadataSource.FILE_NAME,
+                pattern=r"^Channel(?P<ChannelNumber>[0-9])-(?P<WellRow>[A-Z])-(?P<WellColumn>[0-9]{2})",
+            ),
+        ),
+        imported_metadata_tables=(
+            ImportedMetadataTable(
+                location="metadata.csv",
+                joins=(
+                    ImportedMetadataJoin(
+                        image_metadata_field="WellRow",
+                        imported_metadata_field="Row",
+                    ),
+                ),
+            ),
+        ),
+        assignments_by_alias={
+            "rawGFP": ImageAssignment(
+                alias="rawGFP",
+                image_type="Grayscale image",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "Channel1",
+                        ),
+                    ),
+                    metadata=(MetadataSelector("Compound", "DMSO"),),
+                ),
+                origin=SourceBindingOrigin.PIPELINE_START,
+            ),
+            "rawDNA": ImageAssignment(
+                alias="rawDNA",
+                image_type="Grayscale image",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "Channel2",
+                        ),
+                    ),
+                    metadata=(MetadataSelector("Compound", "DMSO"),),
+                ),
+                origin=SourceBindingOrigin.PIPELINE_START,
+            ),
+        },
+        match_plan=SourceBindingMatchPlan(
+            method=SourceBindingMatchMethod.METADATA,
+            dimensions=(
+                SourceBindingMatchDimension(
+                    fields=(
+                        SourceBindingMatchField("rawGFP", "Compound"),
+                        SourceBindingMatchField("rawDNA", "Compound"),
                     )
                 ),
             ),

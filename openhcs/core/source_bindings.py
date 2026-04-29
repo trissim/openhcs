@@ -319,6 +319,32 @@ class NamedSourceBinding:
             ),
         )
 
+    @property
+    def requires_selector_resolution(self) -> bool:
+        """Whether this binding needs file/metadata-aware source resolution."""
+
+        return bool(
+            self.selector.components
+            or self.selector.metadata
+            or self.selector.filters
+            or not self.selector.inherit_current_scope
+        )
+
+    @property
+    def requires_step_input_channel_stack(self) -> bool:
+        """Whether resolving this binding needs channel-varying step input."""
+
+        if self.origin is not SourceBindingOrigin.STEP_INPUT:
+            return False
+        return bool(
+            self.selector.filters
+            or self.selector.metadata
+            or any(
+                selector.component is AllComponents.CHANNEL
+                for selector in self.selector.components
+            )
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class GroupedSourceBindings:
@@ -411,6 +437,26 @@ class StepSourceBindingsConfig(_SourceBindingPlanBase):
     @property
     def has_primary_content(self) -> bool:
         return bool(self.groups)
+
+    @property
+    def requires_step_input_channel_stack(self) -> bool:
+        """Whether any binding needs channel-resolved stack input."""
+
+        return any(
+            binding.requires_step_input_channel_stack
+            for group in self.groups
+            for binding in group.bindings
+        )
+
+    @property
+    def requires_pipeline_start_resolution(self) -> bool:
+        """Whether any binding resolves from the pipeline-start source universe."""
+
+        return any(
+            binding.origin is SourceBindingOrigin.PIPELINE_START
+            for group in self.groups
+            for binding in group.bindings
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -524,6 +570,9 @@ class SourceBindingRuntimeContext:
     step_input_source_paths: Mapping[str, str] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    source_metadata_by_path: Mapping[str, Mapping[str, str]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     pipeline_input_files: tuple[str, ...] = ()
     pipeline_input_backend: str | None = None
 
@@ -540,6 +589,18 @@ class SourceBindingRuntimeContext:
             "step_input_source_paths",
             MappingProxyType(
                 {str(path): str(source) for path, source in self.step_input_source_paths.items()}
+            ),
+        )
+        object.__setattr__(
+            self,
+            "source_metadata_by_path",
+            MappingProxyType(
+                {
+                    str(path): MappingProxyType(
+                        {str(key): str(value) for key, value in metadata.items()}
+                    )
+                    for path, metadata in self.source_metadata_by_path.items()
+                }
             ),
         )
         object.__setattr__(
@@ -562,6 +623,7 @@ class SourceBindingRuntimeContext:
             tuple[str, ...],
             str | None,
             dict[str, str],
+            dict[str, dict[str, str]],
             tuple[str, ...],
             str | None,
         ],
@@ -573,6 +635,10 @@ class SourceBindingRuntimeContext:
                 self.step_input_files,
                 self.step_input_dir,
                 dict(self.step_input_source_paths),
+                {
+                    path: dict(metadata)
+                    for path, metadata in self.source_metadata_by_path.items()
+                },
                 self.pipeline_input_files,
                 self.pipeline_input_backend,
             ),
