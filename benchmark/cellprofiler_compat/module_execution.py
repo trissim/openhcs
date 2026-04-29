@@ -1141,8 +1141,8 @@ class OverlayOutlinesInputPolicy(CellProfilerObjectInputPolicy):
         }
 
 
-class ObjectRowsWithMeasurementsInputPolicy(CellProfilerObjectInputPolicy):
-    """Bind ordered object rows plus prior measurements for the primary object."""
+class ObjectRowsInputPolicy(CellProfilerObjectInputPolicy):
+    """Bind ordered object rows to object-label payloads."""
 
     def bind(
         self,
@@ -1155,9 +1155,6 @@ class ObjectRowsWithMeasurementsInputPolicy(CellProfilerObjectInputPolicy):
         external_object_names: frozenset[str],
     ) -> dict[str, Any]:
         del module_name, kwargs
-        if not object_inputs:
-            return {"object_labels": (), "measurement_tables": ()}
-        primary_object = object_inputs[0]
         return {
             "object_labels": tuple(
                 _object_input_labels(
@@ -1168,13 +1165,40 @@ class ObjectRowsWithMeasurementsInputPolicy(CellProfilerObjectInputPolicy):
                 )
                 for spec in object_inputs
             ),
-            "measurement_tables": adapter.measurement_tables_for_object(
-                primary_object.name
-            ),
         }
 
 
-class MeasureImageAreaOccupiedInputPolicy(ObjectRowsWithMeasurementsInputPolicy):
+class ObjectRowsWithMeasurementsInputPolicy(ObjectRowsInputPolicy):
+    """Bind ordered object rows plus prior measurements for the primary object."""
+
+    def bind(
+        self,
+        module_name: str,
+        object_inputs: tuple[ArtifactSpec, ...],
+        adapter: CellProfilerRuntimeAdapter,
+        *,
+        kwargs: Mapping[str, Any],
+        fallback_image: Any,
+        external_object_names: frozenset[str],
+    ) -> dict[str, Any]:
+        bound = super().bind(
+            module_name,
+            object_inputs,
+            adapter,
+            kwargs=kwargs,
+            fallback_image=fallback_image,
+            external_object_names=external_object_names,
+        )
+        primary_object = object_inputs[0] if object_inputs else None
+        bound["measurement_tables"] = (
+            adapter.measurement_tables_for_object(primary_object.name)
+            if primary_object is not None
+            else ()
+        )
+        return bound
+
+
+class MeasureImageAreaOccupiedInputPolicy(ObjectRowsInputPolicy):
     """Bind ordered object rows for the generic area-occupied runner."""
 
     module_name = "MeasureImageAreaOccupiedBinary"
@@ -2119,11 +2143,18 @@ class CellProfilerFunctionContractExecutor:
         image: Any,
         **kwargs: Any,
     ) -> Any:
-        if not hasattr(image, "ndim") or image.ndim == 2:
+        if not hasattr(image, "ndim"):
             return func(image, **kwargs)
 
         memory_type = detect_memory_type(image)
-        slices_2d = unstack_slices(image, memory_type, 0)
+        if image.ndim == 2:
+            slice_count = _slice_count_from_pure_2d_kwargs(kwargs)
+            if slice_count is None:
+                return func(image, **kwargs)
+            slices_2d = tuple(image for _ in range(slice_count))
+        else:
+            slices_2d = unstack_slices(image, memory_type, 0)
+
         slice_count = len(slices_2d)
         slice_results = [
             _rewrite_slice_index(
@@ -2239,6 +2270,29 @@ def _slice_pure_2d_kwargs(
         name: _slice_pure_2d_value(value, slice_index, slice_count)
         for name, value in kwargs.items()
     }
+
+
+def _slice_count_from_pure_2d_kwargs(
+    kwargs: Mapping[str, Any],
+) -> int | None:
+    slice_counts = {
+        value.shape[0]
+        for value in kwargs.values()
+        if hasattr(value, "ndim") and value.ndim == 3 and value.shape[0] > 1
+    }
+    if len(slice_counts) > 1:
+        raise ValueError(
+            "Cannot align PURE_2D invocation with conflicting kwarg slice "
+            f"counts: {sorted(slice_counts)}."
+        )
+    if slice_counts:
+        return next(iter(slice_counts))
+    if any(
+        hasattr(value, "ndim") and value.ndim == 3 and value.shape[0] == 1
+        for value in kwargs.values()
+    ):
+        return 1
+    return None
 
 
 def _slice_pure_2d_value(value: Any, slice_index: int, slice_count: int) -> Any:

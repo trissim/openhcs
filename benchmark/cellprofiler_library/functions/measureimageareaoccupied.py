@@ -270,15 +270,7 @@ def _measure_object_labels(
     *,
     slice_index: int = 0,
 ) -> tuple[np.ndarray, AreaOccupiedMeasurement]:
-    from skimage.measure import regionprops
-
-    region_properties = regionprops(labels.astype(np.int32))
-    area_occupied = float(np.sum([region.area for region in region_properties]))
-    perimeter_value = (
-        float(np.sum([np.round(region.perimeter) for region in region_properties]))
-        if area_occupied > 0
-        else 0.0
-    )
+    area_occupied, perimeter_value = _label_area_and_perimeter(labels)
     measurement = _area_occupied_measurement(
         area_occupied,
         perimeter_value,
@@ -287,6 +279,31 @@ def _measure_object_labels(
     )
     object_region_mask = (labels > 0).astype(getattr(image, "dtype", labels.dtype))
     return object_region_mask, measurement
+
+
+def _label_area_and_perimeter(labels: np.ndarray) -> tuple[float, float]:
+    if not hasattr(labels, "ndim") or labels.ndim <= 2:
+        return _label_plane_area_and_perimeter(labels)
+    plane_measurements = tuple(
+        _label_plane_area_and_perimeter(labels[index])
+        for index in range(labels.shape[0])
+    )
+    return (
+        float(sum(area for area, _perimeter in plane_measurements)),
+        float(sum(perimeter for _area, perimeter in plane_measurements)),
+    )
+
+
+def _label_plane_area_and_perimeter(labels: np.ndarray) -> tuple[float, float]:
+    from skimage.measure import regionprops
+
+    region_properties = regionprops(labels.astype(np.int32))
+    area_occupied = float(np.sum([region.area for region in region_properties]))
+    if area_occupied == 0:
+        return area_occupied, 0.0
+    return area_occupied, float(
+        np.sum([np.round(region.perimeter) for region in region_properties])
+    )
 
 
 def _reference_image_for_labels(image: np.ndarray, labels: np.ndarray) -> np.ndarray:

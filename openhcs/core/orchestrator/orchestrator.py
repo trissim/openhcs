@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional, Union, Set
 
 from openhcs.constants.constants import (
     Backend,
-    DEFAULT_IMAGE_EXTENSIONS,
+    LOADABLE_IMAGE_EXTENSIONS,
     GroupBy,
     OrchestratorState,
     get_openhcs_config,
@@ -1697,12 +1697,12 @@ class PipelineOrchestrator:
             )
 
             filenames = self.filemanager.list_files(
-                str(self.input_dir), backend_to_use, extensions=DEFAULT_IMAGE_EXTENSIONS
+                str(self.input_dir), backend_to_use, extensions=LOADABLE_IMAGE_EXTENSIONS
             )
             logger.info(
                 "Component key discovery: listed %d files (extensions=%s)",
                 len(filenames),
-                DEFAULT_IMAGE_EXTENSIONS,
+                LOADABLE_IMAGE_EXTENSIONS,
             )
             if filenames:
                 preview = [str(p) for p in filenames[:10]]

@@ -347,7 +347,16 @@ class OrchestratorState(Enum):
 
 # I/O-related constants
 DEFAULT_IMAGE_EXTENSION = ".tif"
-DEFAULT_IMAGE_EXTENSIONS: Set[str] = {".tif", ".tiff", ".TIF", ".TIFF"}
+_TIFF_IMAGE_EXTENSIONS: Set[str] = {".tif", ".tiff"}
+_RASTER_IMAGE_EXTENSIONS: Set[str] = {
+    ".bmp",
+    ".gif",
+    ".jpeg",
+    ".jpg",
+    ".png",
+}
+DEFAULT_IMAGE_EXTENSIONS: Set[str] = set(_TIFF_IMAGE_EXTENSIONS)
+LOADABLE_IMAGE_EXTENSIONS: Set[str] = _TIFF_IMAGE_EXTENSIONS | _RASTER_IMAGE_EXTENSIONS
 DEFAULT_SITE_PADDING = 3
 DEFAULT_RECURSIVE_PATTERN_SEARCH = False
 # Lazy default resolution using lru_cache

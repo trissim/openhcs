@@ -12,8 +12,6 @@ from openhcs.core.artifact_materialization_policy import (
     resolve_artifact_materialization_spec,
 )
 from openhcs.core.runtime_stores import (
-    RuntimeArtifactLocation,
-    RuntimeArtifactQuery,
     StoredRuntimeValue,
     require_runtime_value_store,
 )
@@ -28,11 +26,14 @@ def _build_analysis_filename(
     plan: FunctionStepExecutionPlan,
     dict_key: str | None = None,
     context: Any = None,
+    artifact_path: str | None = None,
 ) -> str:
     """Build an analysis result filename from the first matching image path."""
     memory_paths = plan.get_paths_for_axis(plan.output_dir, Backend.MEMORY.value)
 
     if not memory_paths:
+        if dict_key is not None and artifact_path is not None:
+            return f"{Path(artifact_path).stem}.roi.zip"
         return f"{plan.axis_id}_{output_key}_step{plan.pipeline_position}.roi.zip"
 
     if dict_key and context:
@@ -153,56 +154,74 @@ def _filter_group_materializer_paths(
     ]
 
 
-def _resolve_group_artifact_path(
+def _planned_artifact_paths(output_plan: ArtifactOutputPlan) -> frozenset[str]:
+    """Return every compiler-planned memory path for one artifact output."""
+    paths = {output_plan.path}
+    paths.update((output_plan.paths_by_group or {}).values())
+    return frozenset(paths)
+
+
+def _sort_key_for_record(
+    record: StoredRuntimeValue,
     output_plan: ArtifactOutputPlan,
-    dict_key: str | None,
-) -> str:
-    """Resolve the memory VFS path for one artifact output/group pair."""
-    paths_by_group = output_plan.paths_by_group or {}
-    if dict_key is None:
-        return paths_by_group.get(None, output_plan.path)
-    if dict_key in paths_by_group:
-        return paths_by_group[dict_key]
-    if None in paths_by_group:
-        return paths_by_group[None]
-
-    from openhcs.core.pipeline.path_planner import PipelinePathPlanner
-
-    return PipelinePathPlanner.build_dict_pattern_path(output_plan.path, dict_key)
+) -> tuple[int, str]:
+    group_order = {
+        group_key: index
+        for index, group_key in enumerate(output_plan.group_keys or (None,))
+    }
+    group_key = record.key.scope.group_key
+    return (
+        group_order.get(group_key, len(group_order)),
+        "" if group_key is None else str(group_key),
+    )
 
 
-def _resolve_materialization_record(
+def _actual_materialization_records(
     *,
     context: Any,
     plan: FunctionStepExecutionPlan,
     output_plan: ArtifactOutputPlan,
-    dict_key: str | None,
-) -> StoredRuntimeValue:
-    """Resolve the typed runtime record for one planned artifact materialization."""
-    channel_path = _resolve_group_artifact_path(output_plan, dict_key)
-    store = require_runtime_value_store(
-        context,
-        owner_name="context",
-    )
-    query = RuntimeArtifactQuery.by_location(
-        name=output_plan.name,
-        kind=output_plan.kind,
-        axis_id=plan.axis_id,
-        location=RuntimeArtifactLocation(
-            path=channel_path,
-            backend=Backend.MEMORY.value,
-        ),
-    )
-    record = store.resolve(
-        query,
-        purpose="planned artifact materialization",
-    )
-    if not context.filemanager.exists(record.path, record.backend):
-        raise RuntimeError(
-            f"RuntimeValueStore has record for artifact '{output_plan.name}' at "
-            f"'{record.path}' ({record.backend}), but the VFS payload is missing."
+) -> tuple[StoredRuntimeValue, ...]:
+    """Resolve records actually produced for one planned output."""
+    store = require_runtime_value_store(context, owner_name="context")
+    planned_paths = _planned_artifact_paths(output_plan)
+    records = tuple(
+        record
+        for record in store.find(
+            name=output_plan.name,
+            kind=output_plan.kind,
+            axis_id=plan.axis_id,
         )
-    return record
+        if (
+            record.backend == Backend.MEMORY.value
+            and record.path in planned_paths
+        )
+    )
+    if not records:
+        raise RuntimeError(
+            f"Missing RuntimeValueStore record for planned artifact materialization "
+            f"'{output_plan.name}' ({output_plan.kind.value}) on axis "
+            f"'{plan.axis_id}'."
+        )
+    return tuple(
+        sorted(
+            records,
+            key=lambda record: _sort_key_for_record(record, output_plan),
+        )
+    )
+
+
+def _require_materialization_payload(
+    record: StoredRuntimeValue,
+    output_plan: ArtifactOutputPlan,
+    context: Any,
+) -> None:
+    if context.filemanager.exists(record.path, record.backend):
+        return
+    raise RuntimeError(
+        f"RuntimeValueStore has record for artifact '{output_plan.name}' at "
+        f"'{record.path}' ({record.backend}), but the VFS payload is missing."
+    )
 
 
 def materialize_artifact_outputs(
@@ -234,15 +253,14 @@ def materialize_artifact_outputs(
         if output_plan.materialization is None and output_plan.kind is ArtifactKind.SPECIAL:
             continue
 
-        group_keys = output_plan.group_keys or [None]
-
-        for dict_key in group_keys:
-            record = _resolve_materialization_record(
-                context=context,
-                plan=plan,
-                output_plan=output_plan,
-                dict_key=dict_key,
-            )
+        records = _actual_materialization_records(
+            context=context,
+            plan=plan,
+            output_plan=output_plan,
+        )
+        for record in records:
+            _require_materialization_payload(record, output_plan, context)
+            dict_key = record.key.scope.group_key
 
             filemanager.ensure_directory(
                 Path(record.path).parent, record.backend
@@ -256,7 +274,11 @@ def materialize_artifact_outputs(
                 continue
 
             filename = _build_analysis_filename(
-                output_key, plan, dict_key, context
+                output_key,
+                plan,
+                dict_key,
+                context,
+                artifact_path=record.path,
             )
             analysis_path = analysis_output_dir / filename
             extra_inputs = _resolve_materializer_inputs(

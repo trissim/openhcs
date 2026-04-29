@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
-from openhcs.constants.constants import Backend
+from openhcs.constants.constants import Backend, LOADABLE_IMAGE_EXTENSIONS
 
 if TYPE_CHECKING:
     from openhcs.core.context.processing_context import ProcessingContext
@@ -112,7 +112,11 @@ def get_all_image_paths(
     """Get all image file paths for one multiprocessing axis value."""
     from openhcs.constants import MULTIPROCESSING_AXIS
 
-    all_image_files = filemanager.list_image_files(str(input_dir), backend)
+    all_image_files = filemanager.list_image_files(
+        str(input_dir),
+        backend,
+        extensions=LOADABLE_IMAGE_EXTENSIONS,
+    )
     axis_key = MULTIPROCESSING_AXIS.value
     parser = microscope_handler.parser
 

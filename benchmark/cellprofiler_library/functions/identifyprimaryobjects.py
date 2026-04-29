@@ -46,6 +46,17 @@ class FillHolesOption(Enum):
         return option
 
 
+class ExcessObjectHandling(Enum):
+    CONTINUE = ("Continue", False)
+    ERASE = ("Erase", True)
+
+    def __new__(cls, value: str, erase_excess: bool):
+        option = object.__new__(cls)
+        option._value_ = value
+        option.erase_excess = erase_excess
+        return option
+
+
 class WatershedImageBuilder(ABC, metaclass=AutoRegisterMeta):
     """Build the watershed surface for one closed watershed method."""
 
@@ -84,6 +95,28 @@ class PropagateWatershedImageBuilder(WatershedImageBuilder):
         return 1 - image
 
 
+def _fill_labeled_holes(labeled_image: np.ndarray) -> np.ndarray:
+    """Fill enclosed background regions without scanning once per object."""
+    from scipy import ndimage as ndi
+
+    object_mask = labeled_image > 0
+    filled_mask = ndi.binary_fill_holes(object_mask)
+    hole_mask = filled_mask & ~object_mask
+    if not hole_mask.any():
+        return labeled_image
+
+    _, nearest_indices = ndi.distance_transform_edt(
+        ~object_mask,
+        return_distances=True,
+        return_indices=True,
+    )
+    filled_labels = labeled_image.copy()
+    filled_labels[hole_mask] = labeled_image[
+        tuple(axis_indices[hole_mask] for axis_indices in nearest_indices)
+    ]
+    return filled_labels
+
+
 @dataclass
 class PrimaryObjectStats:
     slice_index: int
@@ -113,69 +146,9 @@ def identify_primary_objects(
     threshold_min: float = 0.0,
     threshold_max: float = 1.0,
     maximum_object_count: int = 500,
-    limit_erase: bool = False,
+    limit_erase: ExcessObjectHandling = ExcessObjectHandling.CONTINUE,
 ) -> Tuple[np.ndarray, PrimaryObjectStats, np.ndarray]:
     """
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select the input image' -> (pipeline-handled)
-        'Name the primary objects to be identified' -> (pipeline-handled)
-        'Typical diameter of objects, in pixel units (Min,Max)' -> [min_diameter, max_diameter]
-        'Discard objects outside the diameter range?' -> exclude_size
-        'Discard objects touching the border of the image?' -> exclude_border_objects
-        'Method to distinguish clumped objects' -> unclump_method
-        'Method to draw dividing lines between clumped objects' -> watershed_method
-        'Size of smoothing filter' -> smoothing_filter_size
-        'Suppress local maxima that are closer than this minimum allowed distance' -> maxima_suppression_size
-        'Speed up by using lower-resolution image to find local maxima?' -> low_res_maxima
-        'Fill holes in identified objects?' -> fill_holes
-        'Automatically calculate size of smoothing filter for declumping?' -> automatic_smoothing
-        'Automatically calculate minimum allowed distance between local maxima?' -> automatic_suppression
-        'Handling of objects if excessive number of objects identified' -> limit_erase
-        'Maximum number of objects' -> maximum_object_count
-        'Threshold correction factor' -> threshold_correction_factor
-        'Lower bound on threshold' -> threshold_min
-        'Upper bound on threshold' -> threshold_max
-
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select the input image' -> (pipeline-handled)
-        'Name the primary objects to be identified' -> (pipeline-handled)
-        'Typical diameter of objects, in pixel units (Min,Max)' -> [min_diameter, max_diameter]
-        'Discard objects outside the diameter range?' -> exclude_size
-        'Discard objects touching the border of the image?' -> exclude_border_objects
-        'Method to distinguish clumped objects' -> unclump_method
-        'Method to draw dividing lines between clumped objects' -> watershed_method
-        'Size of smoothing filter' -> smoothing_filter_size
-        'Suppress local maxima that are closer than this minimum allowed distance' -> maxima_suppression_size
-        'Speed up by using lower-resolution image to find local maxima?' -> low_res_maxima
-        'Fill holes in identified objects?' -> fill_holes
-        'Automatically calculate size of smoothing filter for declumping?' -> automatic_smoothing
-        'Automatically calculate minimum allowed distance between local maxima?' -> automatic_suppression
-        'Handling of objects if excessive number of objects identified' -> limit_erase
-        'Maximum number of objects' -> maximum_object_count
-        'Threshold correction factor' -> threshold_correction_factor
-        'Lower bound on threshold' -> threshold_min
-        'Upper bound on threshold' -> threshold_max
-
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select the input image' -> (pipeline-handled)
-        'Name the primary objects to be identified' -> (pipeline-handled)
-        'Typical diameter of objects, in pixel units (Min,Max)' -> [min_diameter, max_diameter]
-        'Discard objects outside the diameter range?' -> exclude_size
-        'Discard objects touching the border of the image?' -> exclude_border_objects
-        'Method to distinguish clumped objects' -> unclump_method
-        'Method to draw dividing lines between clumped objects' -> watershed_method
-        'Size of smoothing filter' -> smoothing_filter_size
-        'Suppress local maxima that are closer than this minimum allowed distance' -> maxima_suppression_size
-        'Speed up by using lower-resolution image to find local maxima?' -> low_res_maxima
-        'Fill holes in identified objects?' -> fill_holes
-        'Automatically calculate size of smoothing filter for declumping?' -> automatic_smoothing
-        'Automatically calculate minimum allowed distance between local maxima?' -> automatic_suppression
-        'Handling of objects if excessive number of objects identified' -> limit_erase
-        'Maximum number of objects' -> maximum_object_count
-
     CellProfiler Parameter Mapping:
     (CellProfiler setting -> Python parameter)
         'Select the input image' -> (pipeline-handled)
@@ -310,10 +283,7 @@ def identify_primary_objects(
     
     # Fill holes after declumping if requested
     if fill_holes.fill_after_declump:
-        for obj_id in range(1, object_count + 1):
-            obj_mask = labeled_image == obj_id
-            filled = ndi.binary_fill_holes(obj_mask)
-            labeled_image[filled & ~obj_mask] = obj_id
+        labeled_image = _fill_labeled_holes(labeled_image)
     
     # Filter objects touching border
     if exclude_border_objects and object_count > 0:
@@ -341,7 +311,7 @@ def identify_primary_objects(
     labeled_image, object_count = label(labeled_image > 0, return_num=True)
     
     # Check object count limit
-    if limit_erase and object_count > maximum_object_count:
+    if limit_erase.erase_excess and object_count > maximum_object_count:
         labeled_image = np.zeros_like(labeled_image)
         object_count = 0
     

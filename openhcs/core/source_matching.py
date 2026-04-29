@@ -10,6 +10,7 @@ from typing import Any, Callable, ClassVar, Mapping
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.constants.constants import LOADABLE_IMAGE_EXTENSIONS
 from openhcs.core.source_bindings import (
     MetadataExtractionRule,
     MetadataSource,
@@ -72,7 +73,7 @@ def is_image_path(file_path: str) -> bool:
     """Return whether the path extension is a loadable image source."""
 
     suffix = Path(file_path).suffix.lower()
-    return suffix in {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
+    return suffix in LOADABLE_IMAGE_EXTENSIONS
 
 
 def is_tif_path(file_path: str) -> bool:

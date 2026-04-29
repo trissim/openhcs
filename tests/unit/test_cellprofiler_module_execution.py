@@ -83,6 +83,33 @@ def test_cellprofiler_contract_executor_slices_aligned_runtime_kwargs():
     assert result_labels.shape == labels.shape
 
 
+def test_cellprofiler_contract_executor_broadcasts_2d_image_to_stacked_kwargs():
+    calls = []
+
+    def increment_labels(image: np.ndarray, *, labels: np.ndarray):
+        calls.append((image.shape, labels.shape))
+        return labels + 1
+
+    increment_labels.__processing_contract__ = ProcessingContract.PURE_2D
+    image = np.zeros((4, 5), dtype=np.uint16)
+    labels = np.stack(
+        (
+            np.ones((4, 5), dtype=np.int32),
+            np.full((4, 5), 2, dtype=np.int32),
+        )
+    )
+
+    result = CellProfilerFunctionContractExecutor().execute(
+        increment_labels,
+        image,
+        {"labels": labels},
+    )
+
+    assert calls == [((4, 5), (4, 5)), ((4, 5), (4, 5))]
+    assert result.shape == labels.shape
+    np.testing.assert_array_equal(result, labels + 1)
+
+
 def test_cellprofiler_contract_executor_preserves_multi_image_stack_payload():
     calls = []
 

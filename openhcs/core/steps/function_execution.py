@@ -11,7 +11,7 @@ import psutil
 
 from openhcs.constants import MULTIPROCESSING_AXIS
 from openhcs.constants.constants import (
-    DEFAULT_IMAGE_EXTENSIONS,
+    LOADABLE_IMAGE_EXTENSIONS,
     Backend,
 )
 from openhcs.core.context.processing_context import ProcessingContext
@@ -165,7 +165,7 @@ class FunctionStepExecutor:
             str(plan.input_dir),
             self.context.filemanager,
             plan.read_backend,
-            extensions=DEFAULT_IMAGE_EXTENSIONS,
+            extensions=LOADABLE_IMAGE_EXTENSIONS,
             group_by=plan.group_by,
             variable_components=plan.variable_component_values,
             **{f"{axis_name}_filter": [plan.axis_id]},

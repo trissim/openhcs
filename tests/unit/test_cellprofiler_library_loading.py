@@ -155,6 +155,28 @@ def test_measure_image_area_occupied_runs_mixed_rows():
     )
 
 
+def test_measure_image_area_occupied_reduces_label_stacks_as_2d_planes():
+    image = np.zeros((2, 5, 6), dtype=np.float32)
+    labels = np.zeros_like(image, dtype=np.int32)
+    labels[0, 1:3, 1:4] = 1
+    labels[1, 2:4, 2:5] = 1
+
+    retained, measurements = measure_image_area_occupied(
+        image,
+        operand_choices=("objects",),
+        input_names=("Nuclei",),
+        retained_image_names=("OccupiedNuclei",),
+        object_labels=(labels,),
+        dtype_config=DtypeConfig(),
+    )
+
+    assert retained.shape == labels.shape
+    assert len(measurements) == 1
+    assert measurements[0].area_occupied == 12.0
+    assert measurements[0].total_area == 60.0
+    assert measurements[0].perimeter > 0
+
+
 def test_align_returns_two_registered_images():
     first = np.zeros((8, 8), dtype=np.float32)
     first[2:5, 2:5] = 1.0

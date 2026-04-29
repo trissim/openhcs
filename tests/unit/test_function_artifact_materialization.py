@@ -161,6 +161,50 @@ def test_materialize_artifact_outputs_defaults_measurements_to_existing_csv_spec
     assert path == "/analysis/A01_measurements_step7.roi.zip"
 
 
+def test_materialize_artifact_outputs_uses_actual_group_records(monkeypatch):
+    output_plan = ArtifactOutputPlan(
+        name="measurements",
+        path="/memory/A01_measurements_step7.pkl",
+        kind=ArtifactKind.MEASUREMENTS,
+        group_keys=("1", "2"),
+        paths_by_group={
+            "1": "/memory/A01_w1_measurements_step7.pkl",
+            "2": "/memory/A01_w2_measurements_step7.pkl",
+        },
+    )
+    group_plan = output_plan.for_group("1")
+    filemanager = FileManagerStub()
+    filemanager.memory[group_plan.path] = [{"site": "1", "area": 42}]
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(
+            group_plan,
+            [{"site": "1", "area": 42}],
+            axis_id="A01",
+        ),
+        path=group_plan.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(spec, data, path, *_args, **_kwargs):
+        materialized.append((spec, data, path))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(filemanager, _plan(output_plan), "disk", context)
+
+    assert len(materialized) == 1
+    spec, data, path = materialized[0]
+    assert isinstance(spec.outputs[0], CsvOptions)
+    assert data == [{"site": "1", "area": 42}]
+    assert path == "/analysis/A01_w1_measurements_step7.roi.zip"
+
+
 def test_materialize_artifact_outputs_defaults_metadata_to_existing_json_spec(
     monkeypatch,
 ):

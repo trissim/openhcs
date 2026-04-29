@@ -63,48 +63,148 @@ class ObjectColocalizationMeasurements:
     costes_threshold_1: float
     costes_threshold_2: float
 
+    @classmethod
+    def from_measurement(
+        cls,
+        *,
+        object_label: int,
+        measurement: ColocalizationMeasurements,
+    ) -> "ObjectColocalizationMeasurements":
+        return cls(
+            slice_index=measurement.slice_index,
+            object_label=object_label,
+            correlation=measurement.correlation,
+            slope=measurement.slope,
+            overlap=measurement.overlap,
+            k1=measurement.k1,
+            k2=measurement.k2,
+            manders_m1=measurement.manders_m1,
+            manders_m2=measurement.manders_m2,
+            rwc1=measurement.rwc1,
+            rwc2=measurement.rwc2,
+            costes_m1=measurement.costes_m1,
+            costes_m2=measurement.costes_m2,
+            costes_threshold_1=measurement.costes_threshold_1,
+            costes_threshold_2=measurement.costes_threshold_2,
+        )
+
+
+@dataclass(frozen=True)
+class ColocalizationMeasurementOptions:
+    """Metric switches shared by image- and object-scoped colocalization."""
+
+    threshold_percent: float
+    do_correlation: bool
+    do_manders: bool
+    do_rwc: bool
+    do_overlap: bool
+    do_costes: bool
+    costes_method: CostesMethod
+    scale_max: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "costes_method", CostesMethod(self.costes_method))
+
+
+@dataclass(frozen=True)
+class CostesRegressionLine:
+    """Regression line used by Costes automatic threshold search."""
+
+    slope: float
+    intercept: float
+
+    def second_threshold(self, first_threshold: float) -> float:
+        return (self.slope * first_threshold) + self.intercept
+
+
+def _costes_regression_line(
+    fi: np.ndarray,
+    si: np.ndarray,
+) -> CostesRegressionLine | None:
+    non_zero = (fi > 0) | (si > 0)
+    if np.count_nonzero(non_zero) <= 1:
+        return None
+
+    first_values = fi[non_zero]
+    second_values = si[non_zero]
+    xvar = np.var(first_values, axis=0, ddof=1)
+    yvar = np.var(second_values, axis=0, ddof=1)
+    xmean = np.mean(first_values, axis=0)
+    ymean = np.mean(second_values, axis=0)
+
+    z = first_values + second_values
+    zvar = np.var(z, axis=0, ddof=1)
+    covar = 0.5 * (zvar - (xvar + yvar))
+
+    denom = 2 * covar
+    if denom == 0:
+        return None
+
+    num = (yvar - xvar) + np.sqrt((yvar - xvar) ** 2 + 4 * covar**2)
+    slope = num / denom
+    intercept = ymean - slope * xmean
+    if not np.isfinite(slope) or not np.isfinite(intercept):
+        return None
+    return CostesRegressionLine(float(slope), float(intercept))
+
+
+def _costes_intensity_step(
+    fi: np.ndarray,
+    si: np.ndarray,
+    scale_max: int,
+) -> float:
+    if scale_max <= 0:
+        raise ValueError("scale_max must be positive.")
+    image_max = float(max(np.max(fi), np.max(si)))
+    if image_max <= 1.0:
+        return 1.0 / scale_max
+    return max(1.0, image_max / scale_max)
+
+
+def _initial_costes_scale_index(
+    fi: np.ndarray,
+    si: np.ndarray,
+    regression_line: CostesRegressionLine,
+    intensity_step: float,
+    scale_max: int,
+) -> int:
+    fi_max = float(np.max(fi))
+    si_max = float(np.max(si))
+    image_max = max(fi_max, si_max)
+    scale_index = min(scale_max, max(1, int(np.ceil(image_max / intensity_step))))
+
+    while scale_index > 1:
+        first_threshold = scale_index * intensity_step
+        second_threshold = regression_line.second_threshold(first_threshold)
+        if first_threshold <= fi_max or second_threshold <= si_max:
+            break
+        scale_index -= 1
+
+    return scale_index
+
 
 def _linear_costes(fi: np.ndarray, si: np.ndarray, scale_max: int = 255, fast_mode: bool = True) -> Tuple[float, float]:
     """Find Costes Automatic Threshold using linear algorithm."""
-    i_step = 1 / scale_max
-    non_zero = (fi > 0) | (si > 0)
-    
-    if not np.any(non_zero):
+    regression_line = _costes_regression_line(fi, si)
+    if regression_line is None:
         return 0.0, 0.0
-    
-    xvar = np.var(fi[non_zero], axis=0, ddof=1)
-    yvar = np.var(si[non_zero], axis=0, ddof=1)
-    xmean = np.mean(fi[non_zero], axis=0)
-    ymean = np.mean(si[non_zero], axis=0)
-    
-    z = fi[non_zero] + si[non_zero]
-    zvar = np.var(z, axis=0, ddof=1)
-    covar = 0.5 * (zvar - (xvar + yvar))
-    
-    denom = 2 * covar
-    if denom == 0:
-        return 0.0, 0.0
-    
-    num = (yvar - xvar) + np.sqrt((yvar - xvar) ** 2 + 4 * covar ** 2)
-    a = num / denom
-    b = ymean - a * xmean
-    
-    img_max = max(fi.max(), si.max())
-    i = i_step * ((img_max // i_step) + 1)
-    
+
+    intensity_step = _costes_intensity_step(fi, si, scale_max)
+    scale_index = _initial_costes_scale_index(
+        fi,
+        si,
+        regression_line,
+        intensity_step,
+        scale_max,
+    )
     num_true = None
-    fi_max = fi.max()
-    si_max = si.max()
-    
-    thr_fi_c = i
-    thr_si_c = (a * i) + b
-    
-    while i > fi_max and (a * i) + b > si_max:
-        i -= i_step
-    
-    while i > i_step:
-        thr_fi_c = i
-        thr_si_c = (a * i) + b
+
+    thr_fi_c = scale_index * intensity_step
+    thr_si_c = regression_line.second_threshold(thr_fi_c)
+
+    while scale_index > 0:
+        thr_fi_c = scale_index * intensity_step
+        thr_si_c = regression_line.second_threshold(thr_fi_c)
         combt = (fi < thr_fi_c) | (si < thr_si_c)
         try:
             positives = np.count_nonzero(combt)
@@ -116,16 +216,16 @@ def _linear_costes(fi: np.ndarray, si: np.ndarray, scale_max: int = 255, fast_mo
             
             if costReg <= 0:
                 break
-            elif not fast_mode or i < i_step * 10:
-                i -= i_step
+            elif not fast_mode or scale_index < 10:
+                scale_index -= 1
             elif costReg > 0.45:
-                i -= i_step * 10
+                scale_index -= 10
             elif costReg > 0.35:
-                i -= i_step * 5
+                scale_index -= 5
             elif costReg > 0.25:
-                i -= i_step * 2
+                scale_index -= 2
             else:
-                i -= i_step
+                scale_index -= 1
         except (ValueError, RuntimeWarning):
             break
     
@@ -134,37 +234,26 @@ def _linear_costes(fi: np.ndarray, si: np.ndarray, scale_max: int = 255, fast_mo
 
 def _bisection_costes(fi: np.ndarray, si: np.ndarray, scale_max: int = 255) -> Tuple[float, float]:
     """Find Costes Automatic Threshold using bisection algorithm."""
-    non_zero = (fi > 0) | (si > 0)
-    
-    if not np.any(non_zero):
+    regression_line = _costes_regression_line(fi, si)
+    if regression_line is None:
         return 0.0, 0.0
-    
-    xvar = np.var(fi[non_zero], axis=0, ddof=1)
-    yvar = np.var(si[non_zero], axis=0, ddof=1)
-    xmean = np.mean(fi[non_zero], axis=0)
-    ymean = np.mean(si[non_zero], axis=0)
-    
-    z = fi[non_zero] + si[non_zero]
-    zvar = np.var(z, axis=0, ddof=1)
-    covar = 0.5 * (zvar - (xvar + yvar))
-    
-    denom = 2 * covar
-    if denom == 0:
-        return 0.0, 0.0
-    
-    num = (yvar - xvar) + np.sqrt((yvar - xvar) ** 2 + 4 * covar ** 2)
-    a = num / denom
-    b = ymean - a * xmean
-    
+
+    intensity_step = _costes_intensity_step(fi, si, scale_max)
     left = 1
-    right = scale_max
+    right = _initial_costes_scale_index(
+        fi,
+        si,
+        regression_line,
+        intensity_step,
+        scale_max,
+    )
     mid = int(((right - left) // (6/5)) + left)
     lastmid = 0
     valid = 1
     
     while lastmid != mid:
-        thr_fi_c = mid / scale_max
-        thr_si_c = (a * thr_fi_c) + b
+        thr_fi_c = mid * intensity_step
+        thr_si_c = regression_line.second_threshold(thr_fi_c)
         combt = (fi < thr_fi_c) | (si < thr_si_c)
         
         if np.count_nonzero(combt) <= 2:
@@ -186,8 +275,8 @@ def _bisection_costes(fi: np.ndarray, si: np.ndarray, scale_max: int = 255) -> T
         else:
             mid = int(((right - left) // 2) + left)
     
-    thr_fi_c = (valid - 1) / scale_max
-    thr_si_c = (a * thr_fi_c) + b
+    thr_fi_c = (valid - 1) * intensity_step
+    thr_si_c = regression_line.second_threshold(thr_fi_c)
     
     return thr_fi_c, thr_si_c
 
@@ -196,14 +285,7 @@ def _colocalization_measurement(
     first_pixels: np.ndarray,
     second_pixels: np.ndarray,
     *,
-    threshold_percent: float,
-    do_correlation: bool,
-    do_manders: bool,
-    do_rwc: bool,
-    do_overlap: bool,
-    do_costes: bool,
-    costes_method: CostesMethod,
-    scale_max: int,
+    options: ColocalizationMeasurementOptions,
 ) -> ColocalizationMeasurements:
     mask = (~np.isnan(first_pixels)) & (~np.isnan(second_pixels))
 
@@ -225,7 +307,7 @@ def _colocalization_measurement(
         fi = first_pixels[mask]
         si = second_pixels[mask]
 
-        if do_correlation:
+        if options.do_correlation:
             corr = np.corrcoef(fi, si)[1, 0]
             coeffs = lstsq(
                 np.array((fi, np.ones_like(fi))).T,
@@ -234,9 +316,9 @@ def _colocalization_measurement(
             )[0]
             slope = coeffs[0]
 
-        if any((do_manders, do_rwc, do_overlap)):
-            thr_fi = threshold_percent * np.max(fi) / 100
-            thr_si = threshold_percent * np.max(si) / 100
+        if any((options.do_manders, options.do_rwc, options.do_overlap)):
+            thr_fi = options.threshold_percent * np.max(fi) / 100
+            thr_si = options.threshold_percent * np.max(si) / 100
             thr_fi_out = fi > thr_fi
             thr_si_out = si > thr_si
             combined_thresh = thr_fi_out & thr_si_out
@@ -247,11 +329,11 @@ def _colocalization_measurement(
                 tot_fi_thr = fi[thr_fi_out].sum()
                 tot_si_thr = si[thr_si_out].sum()
 
-                if do_manders and tot_fi_thr > 0 and tot_si_thr > 0:
+                if options.do_manders and tot_fi_thr > 0 and tot_si_thr > 0:
                     m1 = fi_thresh.sum() / tot_fi_thr
                     m2 = si_thresh.sum() / tot_si_thr
 
-                if do_rwc and tot_fi_thr > 0 and tot_si_thr > 0:
+                if options.do_rwc and tot_fi_thr > 0 and tot_si_thr > 0:
                     rank1 = np.lexsort([fi])
                     rank2 = np.lexsort([si])
                     rank1_u = np.hstack(
@@ -274,7 +356,7 @@ def _colocalization_measurement(
                     rwc1 = (fi_thresh * weight_thresh).sum() / tot_fi_thr
                     rwc2 = (si_thresh * weight_thresh).sum() / tot_si_thr
 
-                if do_overlap:
+                if options.do_overlap:
                     denom = np.sqrt(
                         (fi_thresh ** 2).sum() * (si_thresh ** 2).sum()
                     )
@@ -287,15 +369,15 @@ def _colocalization_measurement(
                     if si_sq_sum > 0:
                         k2 = (fi_thresh * si_thresh).sum() / si_sq_sum
 
-        if do_costes:
-            if costes_method == CostesMethod.FASTER:
-                thr_fi_c, thr_si_c = _bisection_costes(fi, si, scale_max)
+        if options.do_costes:
+            if options.costes_method == CostesMethod.FASTER:
+                thr_fi_c, thr_si_c = _bisection_costes(fi, si, options.scale_max)
             else:
-                fast_mode = costes_method == CostesMethod.FAST
+                fast_mode = options.costes_method == CostesMethod.FAST
                 thr_fi_c, thr_si_c = _linear_costes(
                     fi,
                     si,
-                    scale_max,
+                    options.scale_max,
                     fast_mode,
                 )
 
@@ -384,9 +466,7 @@ def measure_colocalization(
     if channel_1 >= image.shape[0] or channel_2 >= image.shape[0]:
         raise ValueError(f"Channel indices ({channel_1}, {channel_2}) out of range for image with {image.shape[0]} channels")
 
-    measurements = _colocalization_measurement(
-        image[channel_1].astype(np.float64),
-        image[channel_2].astype(np.float64),
+    options = ColocalizationMeasurementOptions(
         threshold_percent=threshold_percent,
         do_correlation=do_correlation,
         do_manders=do_manders,
@@ -395,6 +475,11 @@ def measure_colocalization(
         do_costes=do_costes,
         costes_method=costes_method,
         scale_max=scale_max,
+    )
+    measurements = _colocalization_measurement(
+        image[channel_1].astype(np.float64),
+        image[channel_2].astype(np.float64),
+        options=options,
     )
     
     # Return first selected channel as the output image
@@ -445,6 +530,16 @@ def measure_colocalization_objects(
 
     measurements: list[ObjectColocalizationMeasurements] = []
     image_float = image.astype(np.float64, copy=False)
+    options = ColocalizationMeasurementOptions(
+        threshold_percent=threshold_percent,
+        do_correlation=do_correlation,
+        do_manders=do_manders,
+        do_rwc=do_rwc,
+        do_overlap=do_overlap,
+        do_costes=do_costes,
+        costes_method=costes_method,
+        scale_max=scale_max,
+    )
     for object_label in unique_labels:
         mask = labels == object_label
         masked_image = image_float.copy()
@@ -452,32 +547,12 @@ def measure_colocalization_objects(
         object_measurement = _colocalization_measurement(
             masked_image[channel_1],
             masked_image[channel_2],
-            threshold_percent=threshold_percent,
-            do_correlation=do_correlation,
-            do_manders=do_manders,
-            do_rwc=do_rwc,
-            do_overlap=do_overlap,
-            do_costes=do_costes,
-            costes_method=costes_method,
-            scale_max=scale_max,
+            options=options,
         )
         measurements.append(
-            ObjectColocalizationMeasurements(
-                slice_index=object_measurement.slice_index,
+            ObjectColocalizationMeasurements.from_measurement(
                 object_label=int(object_label),
-                correlation=object_measurement.correlation,
-                slope=object_measurement.slope,
-                overlap=object_measurement.overlap,
-                k1=object_measurement.k1,
-                k2=object_measurement.k2,
-                manders_m1=object_measurement.manders_m1,
-                manders_m2=object_measurement.manders_m2,
-                rwc1=object_measurement.rwc1,
-                rwc2=object_measurement.rwc2,
-                costes_m1=object_measurement.costes_m1,
-                costes_m2=object_measurement.costes_m2,
-                costes_threshold_1=object_measurement.costes_threshold_1,
-                costes_threshold_2=object_measurement.costes_threshold_2,
+                measurement=object_measurement,
             )
         )
 
