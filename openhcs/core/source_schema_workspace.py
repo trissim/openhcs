@@ -28,7 +28,9 @@ from openhcs.core.source_matching import (
     is_image_path,
     merge_source_metadata,
     metadata_from_rules,
+    normalize_source_metadata_key,
     source_filters_match,
+    source_metadata_value,
 )
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.microscopes.openhcs import FIELDS, OpenHCSMetadata
@@ -111,6 +113,9 @@ class ComponentProjection(ABC, metaclass=AutoRegisterMeta):
         metadata: Mapping[str, str],
         image_set_index: int,
     ) -> str:
+        direct_value = cls.direct_metadata_value(component, metadata)
+        if direct_value is not None:
+            return direct_value
         projection_types = sorted(
             (
                 projection_type
@@ -135,6 +140,9 @@ class ComponentProjection(ABC, metaclass=AutoRegisterMeta):
         component: AllComponents,
         metadata: Mapping[str, str],
     ) -> str | None:
+        direct_value = cls.direct_metadata_value(component, metadata)
+        if direct_value is not None:
+            return direct_value
         projection_types = sorted(
             (
                 projection_type
@@ -152,6 +160,13 @@ class ComponentProjection(ABC, metaclass=AutoRegisterMeta):
                 return value
         return None
 
+    @staticmethod
+    def direct_metadata_value(
+        component: AllComponents,
+        metadata: Mapping[str, str],
+    ) -> str | None:
+        return source_metadata_value(metadata, component.value)
+
     @abstractmethod
     def value(
         self,
@@ -159,18 +174,6 @@ class ComponentProjection(ABC, metaclass=AutoRegisterMeta):
         image_set_index: int,
     ) -> str | None:
         """Return one OpenHCS component value or None if this projection does not apply."""
-
-
-class WellMetadataProjection(ComponentProjection):
-    component = AllComponents.WELL
-    priority = 10
-
-    def value(
-        self,
-        metadata: Mapping[str, str],
-        image_set_index: int,
-    ) -> str | None:
-        return _metadata_value(metadata, "well")
 
 
 class WellRowColumnMetadataProjection(ComponentProjection):
@@ -202,18 +205,6 @@ class OrdinalWellProjection(ComponentProjection):
         return f"A{image_set_index + 1:02d}"
 
 
-class SiteMetadataProjection(ComponentProjection):
-    component = AllComponents.SITE
-    priority = 10
-
-    def value(
-        self,
-        metadata: Mapping[str, str],
-        image_set_index: int,
-    ) -> str | None:
-        return _metadata_value(metadata, "site")
-
-
 class ImageNumberSiteProjection(ComponentProjection):
     component = AllComponents.SITE
     priority = 20
@@ -223,7 +214,7 @@ class ImageNumberSiteProjection(ComponentProjection):
         metadata: Mapping[str, str],
         image_set_index: int,
     ) -> str | None:
-        return _metadata_value(metadata, "imagenumber")
+        return source_metadata_value(metadata, "imagenumber")
 
 
 class OrdinalSiteProjection(ComponentProjection):
@@ -494,7 +485,8 @@ def _candidate_matches_components(
     selector: SourceSelector,
 ) -> bool:
     return all(
-        _metadata_value(candidate.metadata, component.component.value) == component.value
+        source_metadata_value(candidate.metadata, component.component.value)
+        == component.value
         for component in selector.components
     )
 
@@ -504,7 +496,7 @@ def _candidate_matches_metadata(
     selector: SourceSelector,
 ) -> bool:
     return all(
-        candidate.metadata.get(metadata.field) == metadata.value
+        source_metadata_value(candidate.metadata, metadata.field) == metadata.value
         for metadata in selector.metadata
     )
 
@@ -599,7 +591,7 @@ def _projected_candidate_components(
         if not values:
             continue
         value = next(iter(values))
-        existing = _metadata_value(group_metadata, _normalized_metadata_key(component.value))
+        existing = source_metadata_value(group_metadata, component.value)
         if existing is not None:
             if existing != value:
                 raise ValueError(
@@ -758,18 +750,11 @@ def _workspace_relative_path(workspace_root: Path, path: Path) -> str:
     return os.path.relpath(path, workspace_root).replace(os.sep, "/")
 
 
-def _metadata_value(metadata: Mapping[str, str], normalized_key: str) -> str | None:
-    for key, value in metadata.items():
-        if _normalized_metadata_key(key) == normalized_key:
-            return value
-    return None
-
-
 def _image_set_match_value(
     metadata: Mapping[str, str],
     field: str,
 ) -> str | None:
-    value = _metadata_value(metadata, _normalized_metadata_key(field))
+    value = source_metadata_value(metadata, field)
     if value is not None:
         return value
     component = _component_for_match_field(field)
@@ -779,9 +764,9 @@ def _image_set_match_value(
 
 
 def _component_for_match_field(field: str) -> AllComponents | None:
-    normalized = _normalized_metadata_key(field)
+    normalized = normalize_source_metadata_key(field)
     for component in AllComponents:
-        if _normalized_metadata_key(component.value) == normalized:
+        if normalize_source_metadata_key(component.value) == normalized:
             return component
     return None
 
@@ -791,14 +776,10 @@ def _first_metadata_value(
     normalized_keys: tuple[str, ...],
 ) -> str | None:
     for key in normalized_keys:
-        value = _metadata_value(metadata, key)
+        value = source_metadata_value(metadata, key)
         if value is not None:
             return value
     return None
-
-
-def _normalized_metadata_key(key: str) -> str:
-    return "".join(character for character in key.lower() if character.isalnum())
 
 
 def _component_ordinal_or_label(value: str) -> int | str:

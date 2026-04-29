@@ -36,6 +36,7 @@ from openhcs.core.source_matching import (
     merge_source_metadata,
     metadata_from_rules,
     source_filters_match,
+    source_metadata_value,
 )
 from openhcs.core.runtime_stores import (
     RuntimeArtifactLocation,
@@ -928,7 +929,10 @@ def _match_candidates(
         unsupported = tuple(
             field
             for field in sorted(metadata_fields)
-            if not any(field in candidate.metadata for candidate in candidates)
+            if not any(
+                source_metadata_value(candidate.metadata, field) is not None
+                for candidate in candidates
+            )
         )
         if unsupported:
             raise NotImplementedError(
@@ -965,8 +969,9 @@ def _candidate_matches_explicit_components(
     expected_components: Mapping[str, str],
 ) -> bool:
     return all(
-        candidate.metadata.get(component_name) is not None
-        and str(candidate.metadata[component_name]) == value
+        (metadata_value := source_metadata_value(candidate.metadata, component_name))
+        is not None
+        and metadata_value == value
         for component_name, value in expected_components.items()
     )
 
@@ -976,8 +981,9 @@ def _candidate_matches_inherited_scope(
     inherited_scope: Mapping[str, str],
 ) -> bool:
     return all(
-        candidate.metadata.get(field_name) is None
-        or str(candidate.metadata[field_name]) == value
+        (metadata_value := source_metadata_value(candidate.metadata, field_name))
+        is None
+        or metadata_value == value
         for field_name, value in inherited_scope.items()
     )
 
@@ -987,8 +993,9 @@ def _candidate_matches_metadata(
     metadata_selectors: tuple[Any, ...],
 ) -> bool:
     return all(
-        candidate.metadata.get(selector.field) is not None
-        and str(candidate.metadata[selector.field]) == selector.value
+        (metadata_value := source_metadata_value(candidate.metadata, selector.field))
+        is not None
+        and metadata_value == selector.value
         for selector in metadata_selectors
     )
 
@@ -998,8 +1005,9 @@ def _candidate_matches_image_set_metadata(
     image_set_metadata: Mapping[str, str],
 ) -> bool:
     return all(
-        candidate.metadata.get(field_name) is not None
-        and str(candidate.metadata[field_name]) == value
+        (metadata_value := source_metadata_value(candidate.metadata, field_name))
+        is not None
+        and metadata_value == value
         for field_name, value in image_set_metadata.items()
     )
 
@@ -1140,8 +1148,7 @@ def _inherited_scope_components(
             continue
         normalized_value = str(value)
         if all(
-            candidate.metadata.get(field_name) is not None
-            and str(candidate.metadata[field_name]) == normalized_value
+            source_metadata_value(candidate.metadata, field_name) == normalized_value
             for candidate in candidates[1:]
         ):
             shared[field_name] = normalized_value
@@ -1374,9 +1381,12 @@ def _shared_candidate_values(
     step_input_candidates: tuple[ParsedSourceCandidate, ...],
 ) -> tuple[str, ...]:
     values = tuple(
-        str(candidate.metadata[field.metadata_field])
+        metadata_value
         for candidate in step_input_candidates
-        if candidate.metadata.get(field.metadata_field) is not None
+        for metadata_value in (
+            source_metadata_value(candidate.metadata, field.metadata_field),
+        )
+        if metadata_value is not None
     )
     if not values:
         return ()

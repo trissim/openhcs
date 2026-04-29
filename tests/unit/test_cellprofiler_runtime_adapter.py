@@ -747,6 +747,56 @@ def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules(tmp_
     assert filemanager.loaded_batches == []
 
 
+def test_cellprofiler_adapter_matches_metadata_keys_by_semantic_identity(tmp_path):
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="IllumBlue",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        selector=SourceSelector(
+                            metadata=(MetadataSelector("Metadata_Illum", "DAPI"),),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        metadata_rules=(
+            MetadataExtractionRule(
+                source=MetadataSource.FILE_NAME,
+                pattern=r"(?P<metadataillum>.+)_illum\.mat",
+            ),
+        ),
+    )
+    expected = np.full((2, 2), 31.0, dtype=np.float32)
+    illum_path = tmp_path / "DAPI_illum.mat"
+    savemat(illum_path, {"Image": expected})
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=("A01_s001_w1_z001_t001.tif",),
+        step_input_dir="/plate/Images",
+        pipeline_input_files=(str(illum_path),),
+        pipeline_input_backend="disk",
+    )
+    filemanager = FileManagerStub()
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+
+    resolved = adapter.resolve_source_image(
+        "IllumBlue",
+        np.full((2, 2), 1.0, dtype=np.float32),
+    )
+
+    np.testing.assert_array_equal(resolved, expected)
+
+
 def test_cellprofiler_adapter_resolves_pipeline_start_npy_source(tmp_path):
     source_bindings = StepSourceBindingsConfig(
         groups=(

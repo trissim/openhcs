@@ -335,6 +335,25 @@ def merge_source_metadata(
         target[key] = normalized_value
 
 
+def source_metadata_value(
+    metadata: Mapping[str, Any],
+    key: str,
+) -> str | None:
+    """Return a metadata value by semantic key, ignoring spelling separators."""
+
+    normalized_key = normalize_source_metadata_key(key)
+    for candidate_key, value in metadata.items():
+        if normalize_source_metadata_key(str(candidate_key)) == normalized_key:
+            return str(value)
+    return None
+
+
+def normalize_source_metadata_key(key: str) -> str:
+    """Normalize metadata keys across parser, regex, and setup-module spellings."""
+
+    return "".join(character for character in key.lower() if character.isalnum())
+
+
 def _require_filter_value(clause: SourceFilterClause) -> str:
     if clause.value is None:
         raise ValueError(
