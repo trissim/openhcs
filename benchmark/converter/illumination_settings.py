@@ -1,9 +1,7 @@
-"""Typed lowering for CellProfiler illumination-module settings."""
+"""Typed lowering for illumination-module settings."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -20,25 +18,7 @@ from benchmark.cellprofiler_library.functions.correctilluminationcalculate impor
 )
 
 from .parser import ModuleBlock
-from .setting_names import optional_setting_value
-
-
-SettingParser = Callable[[str], object]
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerSettingBinding:
-    """Declarative mapping from one CellProfiler setting to one function kwarg."""
-
-    setting_name: str
-    parameter_name: str
-    parse: SettingParser
-
-    def bind(self, module: ModuleBlock, kwargs: dict[str, Any]) -> None:
-        value = optional_setting_value(module, self.setting_name)
-        if value is None:
-            return
-        kwargs[self.parameter_name] = self.parse(value)
+from .settings_binder import SettingParser, SettingToKeywordBinding
 
 
 def _enum_literal(enum_type: type[Enum]) -> SettingParser:
@@ -65,73 +45,73 @@ def _float(value: str) -> float:
     return float(value)
 
 
-CORRECT_ILLUMINATION_CALCULATE_SETTINGS: tuple[CellProfilerSettingBinding, ...] = (
-    CellProfilerSettingBinding(
+CORRECT_ILLUMINATION_CALCULATE_SETTINGS: tuple[SettingToKeywordBinding, ...] = (
+    SettingToKeywordBinding(
         "Select how the illumination function is calculated",
         "intensity_choice",
         _enum_literal(IntensityChoice),
     ),
-    CellProfilerSettingBinding(
+    SettingToKeywordBinding(
         "Dilate objects in the final averaged image?",
         "dilate_objects",
         _bool,
     ),
-    CellProfilerSettingBinding("Dilation radius", "object_dilation_radius", _int),
-    CellProfilerSettingBinding("Block size", "block_size", _int),
-    CellProfilerSettingBinding(
+    SettingToKeywordBinding("Dilation radius", "object_dilation_radius", _int),
+    SettingToKeywordBinding("Block size", "block_size", _int),
+    SettingToKeywordBinding(
         "Rescale the illumination function?",
         "rescale_option",
         _enum_literal(RescaleOption),
     ),
-    CellProfilerSettingBinding(
+    SettingToKeywordBinding(
         "Smoothing method",
         "smoothing_method",
         _enum_literal(SmoothingMethod),
     ),
-    CellProfilerSettingBinding(
+    SettingToKeywordBinding(
         "Method to calculate smoothing filter size",
         "filter_size_method",
         _enum_literal(FilterSizeMethod),
     ),
-    CellProfilerSettingBinding("Approximate object diameter", "object_width", _int),
-    CellProfilerSettingBinding("Smoothing filter size", "manual_filter_size", _int),
-    CellProfilerSettingBinding(
+    SettingToKeywordBinding("Approximate object diameter", "object_width", _int),
+    SettingToKeywordBinding("Smoothing filter size", "manual_filter_size", _int),
+    SettingToKeywordBinding(
         "Automatically calculate spline parameters?",
         "automatic_splines",
         _bool,
     ),
-    CellProfilerSettingBinding(
+    SettingToKeywordBinding(
         "Background mode",
         "spline_bg_mode",
         _enum_literal(SplineBgMode),
     ),
-    CellProfilerSettingBinding("Number of spline points", "spline_points", _int),
-    CellProfilerSettingBinding("Background threshold", "spline_threshold", _float),
-    CellProfilerSettingBinding("Image resampling factor", "spline_rescale", _float),
-    CellProfilerSettingBinding(
+    SettingToKeywordBinding("Number of spline points", "spline_points", _int),
+    SettingToKeywordBinding("Background threshold", "spline_threshold", _float),
+    SettingToKeywordBinding("Image resampling factor", "spline_rescale", _float),
+    SettingToKeywordBinding(
         "Maximum number of iterations",
         "spline_max_iterations",
         _int,
     ),
-    CellProfilerSettingBinding(
+    SettingToKeywordBinding(
         "Residual value for convergence",
         "spline_convergence",
         _float,
     ),
 )
 
-CORRECT_ILLUMINATION_APPLY_SETTINGS: tuple[CellProfilerSettingBinding, ...] = (
-    CellProfilerSettingBinding(
+CORRECT_ILLUMINATION_APPLY_SETTINGS: tuple[SettingToKeywordBinding, ...] = (
+    SettingToKeywordBinding(
         "Select how the illumination function is applied",
         "method",
         _enum_literal(IlluminationCorrectionMethod),
     ),
-    CellProfilerSettingBinding(
+    SettingToKeywordBinding(
         "Set output image values less than 0 equal to 0?",
         "truncate_low",
         _bool,
     ),
-    CellProfilerSettingBinding(
+    SettingToKeywordBinding(
         "Set output image values greater than 1 equal to 1?",
         "truncate_high",
         _bool,
@@ -155,7 +135,7 @@ def correct_illumination_apply_bound_kwargs(module: ModuleBlock) -> dict[str, An
 
 def _bound_kwargs(
     module: ModuleBlock,
-    bindings: tuple[CellProfilerSettingBinding, ...],
+    bindings: tuple[SettingToKeywordBinding, ...],
 ) -> dict[str, Any]:
     kwargs: dict[str, Any] = {}
     for binding in bindings:

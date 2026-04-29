@@ -2,12 +2,18 @@
 
 import logging
 import re
+from collections.abc import Callable
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from .parser import ModuleBlock
+from .setting_names import optional_setting_value
+
 logger = logging.getLogger(__name__)
+
+SettingParser = Callable[[str], object]
 
 
 def normalize_cellprofiler_setting_name(name: str) -> str:
@@ -26,6 +32,21 @@ class BoundParameter:
     value: Any
     original_key: str
     original_value: str
+
+
+@dataclass(frozen=True, slots=True)
+class SettingToKeywordBinding:
+    """Declarative mapping from one parsed setting to one function kwarg."""
+
+    setting_name: str
+    parameter_name: str
+    parse: SettingParser
+
+    def bind(self, module: ModuleBlock, kwargs: dict[str, Any]) -> None:
+        value = optional_setting_value(module, self.setting_name)
+        if value is None:
+            return
+        kwargs[self.parameter_name] = self.parse(value)
 
 
 class SettingsBinder:
