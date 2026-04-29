@@ -79,6 +79,7 @@ class CPPipeExecutionObservation:
     csv_outputs: tuple[Path, ...]
     image_outputs: tuple[Path, ...]
     csv_headers_by_path: Mapping[Path, tuple[str, ...]]
+    csv_row_counts_by_path: Mapping[Path, int]
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -97,6 +98,11 @@ class CPPipeExecutionObservation:
             self,
             "csv_headers_by_path",
             MappingProxyType(dict(self.csv_headers_by_path)),
+        )
+        object.__setattr__(
+            self,
+            "csv_row_counts_by_path",
+            MappingProxyType(dict(self.csv_row_counts_by_path)),
         )
 
     @property
@@ -130,6 +136,7 @@ def validate_cppipe_execution(
         csv_outputs=csv_outputs,
         image_outputs=_image_outputs(output_root),
         csv_headers_by_path=_csv_headers_by_path(csv_outputs),
+        csv_row_counts_by_path=_csv_row_counts_by_path(csv_outputs),
     )
     failures = [
         *_execution_failures(execution),
@@ -222,6 +229,8 @@ def _export_failures(
     for path in observation.csv_outputs:
         if not observation.csv_headers_by_path[path]:
             failures.append(f"CSV output {path} has an empty header")
+        if observation.csv_row_counts_by_path[path] == 0:
+            failures.append(f"CSV output {path} has no data rows")
     if expectation.expects_csv_exports:
         failures.extend(_csv_artifact_failures(observation))
     if expectation.expects_image_exports and not observation.image_outputs:
@@ -329,3 +338,14 @@ def _csv_header(path: Path) -> tuple[str, ...]:
 
 def _csv_headers_by_path(paths: tuple[Path, ...]) -> Mapping[Path, tuple[str, ...]]:
     return MappingProxyType({path: _csv_header(path) for path in paths})
+
+
+def _csv_row_count(path: Path) -> int:
+    with path.open(newline="") as handle:
+        reader = csv.reader(handle)
+        next(reader, None)
+        return sum(1 for _row in reader)
+
+
+def _csv_row_counts_by_path(paths: tuple[Path, ...]) -> Mapping[Path, int]:
+    return MappingProxyType({path: _csv_row_count(path) for path in paths})
