@@ -436,6 +436,8 @@ class AnalysisConsolidationConfig(Enableable):
     enabled controls whether consolidation runs after pipeline completion.
     """
 
+    enabled: Annotated[bool, abbreviation("")] = True   
+
     metaxpress_style: Annotated[bool, abbreviation("mx_style")] = True
     """Whether to generate MetaXpress-compatible output format with headers."""
 

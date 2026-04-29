@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional, Union, Set
 
 from openhcs.constants.constants import (
     Backend,
-    LOADABLE_IMAGE_EXTENSIONS,
+    DEFAULT_IMAGE_EXTENSIONS,
     GroupBy,
     OrchestratorState,
     get_openhcs_config,
@@ -32,7 +32,13 @@ from openhcs.core.pipeline.compiler import PipelineCompiler
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.components.validation import convert_enum_by_value
 from openhcs.core.orchestrator.execution_result import ExecutionResult, ExecutionStatus
-from openhcs.core.progress import emit, set_progress_queue, ProgressPhase, ProgressStatus, create_event
+from openhcs.core.progress import (
+    emit,
+    set_progress_queue,
+    ProgressPhase,
+    ProgressStatus,
+    create_event,
+)
 from polystore.filemanager import FileManager
 
 # Zarr backend is CPU-only; always import it (even in subprocess/no-GPU mode)
@@ -45,27 +51,9 @@ from openhcs.config_framework.lazy_factory import (
 )
 from openhcs.microscopes import create_microscope_handler
 from openhcs.microscopes.microscope_base import MicroscopeHandler
-
-
-# Lazy import of consolidate_analysis_results to avoid blocking GUI startup
-# This function imports GPU libraries, so we defer it until first use
-def _get_consolidate_analysis_results():
-    """Lazy import of consolidate_analysis_results function."""
-    if os.getenv("OPENHCS_SUBPROCESS_NO_GPU") == "1":
-        # Subprocess runner mode - create placeholder
-        def consolidate_analysis_results(*args, **kwargs):
-            """Placeholder for subprocess runner mode."""
-            raise RuntimeError(
-                "Analysis consolidation not available in subprocess runner mode"
-            )
-
-        return consolidate_analysis_results
-    else:
-        from openhcs.processing.backends.analysis.consolidate_analysis_results import (
-            consolidate_analysis_results,
-        )
-
-        return consolidate_analysis_results
+from openhcs.processing.backends.analysis.consolidate_analysis_results import (
+    consolidate_results_directories,
+)
 
 
 # Import generic component system - required for orchestrator functionality
@@ -356,7 +344,7 @@ def _execute_single_axis_static(
 
     # Execute each step in the pipeline
     for step_index, step in enumerate(pipeline_definition):
-        step_name = frozen_context.step_plans[step_index].step_name
+        step_name = frozen_context.step_plans[step_index]["step_name"]
 
         emit(
             execution_id=execution_id,
@@ -392,9 +380,9 @@ def _execute_single_axis_static(
         # Handle visualization if requested
         if visualizer:
             step_plan = frozen_context.step_plans[step_index]
-            if step_plan.visualize:
-                output_dir = step_plan.output_dir
-                write_backend = step_plan.write_backend
+            if step_plan["visualize"]:
+                output_dir = step_plan["output_dir"]
+                write_backend = step_plan["write_backend"]
                 if output_dir:
                     logger.debug(
                         f"Visualizing output for step {step_index} from path {output_dir} (backend: {write_backend}) for axis {axis_id}"
@@ -1317,7 +1305,9 @@ class PipelineOrchestrator:
                             f"worker_{idx}": [] for idx in range(actual_max_workers)
                         }
                         for idx, axis_id in enumerate(sorted(contexts_by_axis.keys())):
-                            generated[f"worker_{idx % actual_max_workers}"].append(axis_id)
+                            generated[f"worker_{idx % actual_max_workers}"].append(
+                                axis_id
+                            )
                         worker_assignments = {
                             worker_slot: owned
                             for worker_slot, owned in generated.items()
@@ -1375,25 +1365,6 @@ class PipelineOrchestrator:
                             continue
                         owned_wells = list(worker_assignments[worker_slot])
 
-                        # DEBUG: Log what's being pickled
-                        logger.info(f"DEBUG: Submitting worker {worker_slot}")
-                        logger.info(f"DEBUG: pipeline_definition has {len(pipeline_definition)} steps")
-                        for i, step in enumerate(pipeline_definition):
-                            func_attr = getattr(step, 'func', None)
-                            logger.info(f"DEBUG: step[{i}].func = {type(func_attr).__name__ if func_attr else 'None'}")
-                        logger.info(f"DEBUG: lane_contexts has {len(lane_contexts)} axes")
-                        for axis_id, axis_contexts in lane_contexts:
-                            logger.info(f"DEBUG: axis {axis_id} has {len(axis_contexts)} contexts")
-                            for ctx_key, ctx in axis_contexts[:1]:  # Just check first context
-                                if hasattr(ctx, 'step_plans'):
-                                    for step_idx, plan in list(ctx.step_plans.items())[:2]:  # Just check first 2
-                                        if plan.func is not None:
-                                            logger.info(
-                                                "DEBUG: context step_plans[%s].func = %s",
-                                                step_idx,
-                                                type(plan.func).__name__,
-                                            )
-
                         try:
                             future = executor.submit(
                                 _execute_worker_lane_static,
@@ -1411,7 +1382,9 @@ class PipelineOrchestrator:
                             logger.error(error_msg, exc_info=True)
                             raise
 
-                    for future in concurrent.futures.as_completed(future_to_worker_slot):
+                    for future in concurrent.futures.as_completed(
+                        future_to_worker_slot
+                    ):
                         worker_slot, owned_wells = future_to_worker_slot[future]
 
                         try:
@@ -1493,58 +1466,46 @@ class PipelineOrchestrator:
             analysis_consolidation_config = getattr(
                 first_context, "analysis_consolidation_config", None
             )
-            if analysis_consolidation_config and analysis_consolidation_config.enabled:
+
+            # Debug logging for consolidation troubleshooting
+            if not analysis_consolidation_config.enabled:
+                logger.info("⏭️ CONSOLIDATION: Disabled")
+            else:
                 try:
-                    # Get results directory from compiled contexts (path planner already determined it)
-                    results_dir = None
-                    for axis_id, context in compiled_contexts.items():
-                        # Check if context has step plans with artifact outputs
+                    # Collect all unique results directories from step plans
+                    results_dirs = set()
+                    for context in compiled_contexts.values():
                         for step_plan in context.step_plans.values():
-                            artifact_outputs = step_plan.artifact_outputs
-                            if artifact_outputs:
-                                # Extract results directory from first artifact output path
-                                first_output = next(iter(artifact_outputs.values()))
-                                output_path = Path(first_output.path)
-                                potential_results_dir = output_path.parent
+                            if "analysis_results_dir" in step_plan:
+                                results_dirs.add(
+                                    Path(step_plan["analysis_results_dir"])
+                                )
+                            if "materialized_analysis_results_dir" in step_plan:
+                                results_dirs.add(
+                                    Path(step_plan["materialized_analysis_results_dir"])
+                                )
 
-                                if potential_results_dir.exists():
-                                    results_dir = potential_results_dir
-                                    break
-
-                        if results_dir:
-                            break
-
-                    if results_dir and results_dir.exists():
-                        # Check if there are actually CSV files (materialized results)
-                        csv_files = list(results_dir.glob("*.csv"))
-                        if csv_files:
-                            # Get well IDs from compiled contexts
-                            axis_ids = list(compiled_contexts.keys())
-
-                            consolidate_fn = _get_consolidate_analysis_results()
-                            # Get plate_metadata_config from the context's global_config
-                            plate_metadata_config = (
-                                first_context.global_config.plate_metadata_config
-                                if first_context.global_config
-                                else None
-                            )
-                            consolidate_fn(
-                                results_directory=str(results_dir),
-                                well_ids=axis_ids,
-                                consolidation_config=analysis_consolidation_config,
-                                plate_metadata_config=plate_metadata_config,
-                            )
-                            logger.info("✅ CONSOLIDATION: Completed successfully")
-                        else:
-                            logger.info(
-                                f"⏭️ CONSOLIDATION: No CSV files found in {results_dir}, skipping"
-                            )
-                    else:
-                        logger.info(
-                            "⏭️ CONSOLIDATION: No results directory found in compiled contexts"
+                    if results_dirs:
+                        successful_dirs, failed_dirs = consolidate_results_directories(
+                            results_dirs=list(results_dirs),
+                            plate_path=Path(first_context.plate_path),
+                            analysis_consolidation_config=analysis_consolidation_config,
+                            plate_metadata_config=first_context.plate_metadata_config,
+                            filename_parser=self.microscope_handler.parser,
                         )
+
+                        if successful_dirs:
+                            logger.info(
+                                f"✅ CONSOLIDATION: {len(successful_dirs)} directories consolidated"
+                            )
+                        if failed_dirs:
+                            logger.warning(
+                                f"⚠️ CONSOLIDATION: {len(failed_dirs)} directories failed"
+                            )
                 except Exception as e:
-                    logger.error(f"❌ CONSOLIDATION: Failed: {e}")
+                    logger.error(
+                        f"❌ CONSOLIDATION: Failed with error: {e}", exc_info=True
+                    )
 
             # Update state based on execution results
             if all(result.is_success() for result in execution_results.values()):
@@ -1697,12 +1658,12 @@ class PipelineOrchestrator:
             )
 
             filenames = self.filemanager.list_files(
-                str(self.input_dir), backend_to_use, extensions=LOADABLE_IMAGE_EXTENSIONS
+                str(self.input_dir), backend_to_use, extensions=DEFAULT_IMAGE_EXTENSIONS
             )
             logger.info(
                 "Component key discovery: listed %d files (extensions=%s)",
                 len(filenames),
-                LOADABLE_IMAGE_EXTENSIONS,
+                DEFAULT_IMAGE_EXTENSIONS,
             )
             if filenames:
                 preview = [str(p) for p in filenames[:10]]

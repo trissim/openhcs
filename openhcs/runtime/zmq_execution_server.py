@@ -77,21 +77,6 @@ class ZMQExecutionServer(ExecutionServer):
         self._compiled_artifact_ttl_seconds: float = 30.0 * 60.0
 
     @staticmethod
-    def _build_worker_assignments(
-        wells: list[str], num_workers: int
-    ) -> dict[str, list[str]]:
-        if num_workers <= 0:
-            raise ValueError(f"num_workers must be >= 1, got {num_workers}")
-        if len(set(wells)) != len(wells):
-            raise ValueError(f"Duplicate well IDs detected: {wells}")
-
-        slots = {f"worker_{idx}": [] for idx in range(num_workers)}
-        for idx, axis_id in enumerate(sorted(wells)):
-            slot = f"worker_{idx % num_workers}"
-            slots[slot].append(axis_id)
-        return {slot: owned for slot, owned in slots.items() if owned}
-
-    @staticmethod
     def _extract_compiled_axis_ids(compiled_contexts: dict[str, Any]) -> list[str]:
         """Extract unique axis ids from compiled context keys.
 
@@ -648,19 +633,12 @@ class ZMQExecutionServer(ExecutionServer):
                 wells = list(config_params["well_filter"])
             else:
                 wells = orchestrator.get_component_keys(MULTIPROCESSING_AXIS)
-            worker_assignments = self._build_worker_assignments(
-                wells=wells,
-                num_workers=global_config.num_workers,
-            )
-            self._worker_assignments_by_execution[execution_id] = worker_assignments
 
             # Initialize compiled_pipeline_definition - will be set by either artifact reuse or fresh compilation
             compiled_pipeline_definition = None
 
             if compile_artifact_id is None:
                 planned_metadata = {"total_wells": sorted(wells)}
-                if not compile_only:
-                    planned_metadata["worker_assignments"] = worker_assignments
                 step_names = [step.name for step in pipeline_steps]
                 planned_metadata["step_names"] = step_names
                 _emit_zmq_progress(
@@ -707,24 +685,14 @@ class ZMQExecutionServer(ExecutionServer):
                     )
 
                 compiled_contexts = artifact["compiled_contexts"]
+                if compiled_contexts is None:
+                    raise ValueError("Compile artifact missing compiled_contexts")
                 compiled_pipeline_definition = artifact.get(
                     "compiled_pipeline_definition"
                 )  # Get the stripped pipeline_definition from artifact
                 worker_assignments = artifact["worker_assignments"]
-                compiled_axis_ids = self._extract_compiled_axis_ids(compiled_contexts)
-                normalized_assignments = self._build_worker_assignments(
-                    wells=compiled_axis_ids,
-                    num_workers=global_config.num_workers,
-                )
-                if worker_assignments != normalized_assignments:
-                    logger.info(
-                        "[%s] Normalized worker assignments from artifact to compiled contexts: before=%s after=%s",
-                        execution_id,
-                        worker_assignments,
-                        normalized_assignments,
-                    )
-                worker_assignments = normalized_assignments
                 self._worker_assignments_by_execution[execution_id] = worker_assignments
+                compiled_axis_ids = self._extract_compiled_axis_ids(compiled_contexts)
 
                 # Emit filtered metadata for this execution id.
                 step_names = [step.name for step in pipeline_steps]
@@ -803,20 +771,11 @@ class ZMQExecutionServer(ExecutionServer):
                 )
                 if not compiled_contexts:
                     raise ValueError("Compilation produced no compiled contexts")
-                compiled_axis_ids = self._extract_compiled_axis_ids(compiled_contexts)
-                normalized_assignments = self._build_worker_assignments(
-                    wells=compiled_axis_ids,
-                    num_workers=global_config.num_workers,
-                )
-                if worker_assignments != normalized_assignments:
-                    logger.info(
-                        "[%s] Normalized worker assignments to compiled contexts: before=%s after=%s",
-                        execution_id,
-                        worker_assignments,
-                        normalized_assignments,
-                    )
-                worker_assignments = normalized_assignments
+
+                # Get worker_assignments from compiler result (uses PipelineConfig's num_workers)
+                worker_assignments = compilation["worker_assignments"]
                 self._worker_assignments_by_execution[execution_id] = worker_assignments
+                compiled_axis_ids = self._extract_compiled_axis_ids(compiled_contexts)
 
                 # Emit filtered metadata for this execution id.
                 _emit_zmq_progress(

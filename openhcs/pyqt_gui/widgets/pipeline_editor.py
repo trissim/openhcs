@@ -233,6 +233,9 @@ class PipelineEditorWidget(AbstractManagerWidget):
         # Note: orchestrator is looked up dynamically via _get_current_orchestrator()
         self.plate_manager = None
 
+        # Clipboard for copy-paste operations (in-memory only)
+        self._clipboard_steps: List[FunctionStep] = []
+
         # Initialize base class (creates style_generator, event_bus, item_list, buttons, status_label internally)
         # Also auto-processes PREVIEW_FIELD_CONFIGS declaratively
         super().__init__(service_adapter, color_scheme, gui_config, parent)
@@ -255,6 +258,12 @@ class PipelineEditorWidget(AbstractManagerWidget):
         # Step-specific signal
         self.pipeline_changed.connect(self.on_pipeline_changed)
         self._suppress_pipeline_state_sync = False
+
+        # Keyboard shortcuts for copy-paste
+        from PyQt6.QtGui import QShortcut, QKeySequence
+
+        QShortcut(QKeySequence("Ctrl+C"), self, self._action_copy_steps)
+        QShortcut(QKeySequence("Ctrl+V"), self, self._action_paste_steps)
 
     # ========== Pipeline ObjectState Management ==========
 
@@ -365,14 +374,15 @@ class PipelineEditorWidget(AbstractManagerWidget):
                 )
                 to_register.append(func_state)
 
-        # Atomic: register pipeline + steps + update step_scope_ids together
-        with ObjectStateRegistry.atomic("register steps"):
-            if ObjectStateRegistry.get_by_scope(pipeline_state.scope_id) is None:
-                ObjectStateRegistry.register(pipeline_state)
-            for state in to_register:
-                ObjectStateRegistry.register(state)
-                logger.debug(f"Registered ObjectState for step: {state.scope_id}")
-            pipeline_state.update_parameter("step_scope_ids", step_scope_ids)
+        # Register pipeline + steps + update step_scope_ids
+        # NOTE: This is called within an atomic block from the caller (delete/paste/add)
+        # Do NOT wrap in atomic() here - let the caller manage the atomic context
+        if ObjectStateRegistry.get_by_scope(pipeline_state.scope_id) is None:
+            ObjectStateRegistry.register(pipeline_state)
+        for state in to_register:
+            ObjectStateRegistry.register(state)
+            logger.debug(f"Registered ObjectState for step: {state.scope_id}")
+        pipeline_state.update_parameter("step_scope_ids", step_scope_ids)
 
     @property
     def plate_pipelines(self) -> Dict[str, List[FunctionStep]]:
@@ -1002,9 +1012,10 @@ class PipelineEditorWidget(AbstractManagerWidget):
         if not to_register:
             return
 
-        with ObjectStateRegistry.atomic("register step"):
-            for state in to_register:
-                ObjectStateRegistry.register(state)
+        # NOTE: Registration should be atomic with the calling operation (paste/add)
+        # Do NOT wrap in atomic() here - let the caller manage the atomic context
+        for state in to_register:
+            ObjectStateRegistry.register(state)
 
         logger.debug(f"Registered ObjectState for step (and functions): {scope_id}")
 
@@ -1338,3 +1349,56 @@ class PipelineEditorWidget(AbstractManagerWidget):
         self._normalize_step_scope_tokens(register=False)
         self.update_item_list()
         self.update_button_states()
+
+    def _action_copy_steps(self):
+        """Copy selected steps to clipboard (Ctrl+C)."""
+        selected_steps = self.get_selected_items()
+        if not selected_steps:
+            self.status_message.emit("No steps selected to copy")
+            return
+
+        self._clipboard_steps = [copy.deepcopy(step) for step in selected_steps]
+        step_names = [getattr(step, "name", "?") for step in selected_steps]
+        self.status_message.emit(
+            f"Copied {len(selected_steps)} step(s): {', '.join(step_names)}"
+        )
+
+    def _action_paste_steps(self):
+        """Paste steps from clipboard after selected step (Ctrl+V)."""
+        if not self._clipboard_steps:
+            self.status_message.emit("Clipboard is empty")
+            return
+
+        if not self.current_plate:
+            self.status_message.emit("No plate selected")
+            return
+
+        # Calculate insert position: after last selected index, or at end if nothing selected
+        selected_indices = self.item_list.selectedIndexes()
+        if selected_indices:
+            insert_after_index = max(idx.row() for idx in selected_indices)
+        else:
+            insert_after_index = len(self.pipeline_steps) - 1
+
+        step_names = [getattr(step, "name", "?") for step in self._clipboard_steps]
+        label = f"paste {len(self._clipboard_steps)} step(s): {', '.join(step_names)}"
+
+        with ObjectStateRegistry.atomic(label):
+            # Insert steps after the selected position
+            insert_position = insert_after_index + 1
+            for i, step in enumerate(self._clipboard_steps):
+                # Ensure fresh scope token for the copied step
+                ScopeTokenService.ensure_token(self.current_plate, step)
+                # Register with ObjectState (handles flashing automatically)
+                self._register_step_state(step)
+                # Insert into pipeline
+                self.pipeline_steps.insert(insert_position + i, step)
+
+            # Update Pipeline ObjectState
+            self._update_pipeline_steps(self.current_plate, self.pipeline_steps)
+
+        self.update_item_list()
+        self.pipeline_changed.emit(self.pipeline_steps)
+        self.status_message.emit(
+            f"Pasted {len(self._clipboard_steps)} step(s) after position {insert_after_index + 1}"
+        )

@@ -8,7 +8,7 @@ each well is a row and analysis metrics are columns.
 Usage:
     # Standalone
     df = consolidate_analysis_results("/path/to/results")
-    
+
     # In pipeline
     FunctionStep(func=consolidate_analysis_results_pipeline, ...)
 """
@@ -26,8 +26,13 @@ from openhcs.processing.materialization import CsvOptions, MaterializationSpec
 
 # Import config classes with TYPE_CHECKING to avoid circular imports
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
-    from openhcs.core.config import AnalysisConsolidationConfig, PlateMetadataConfig, GlobalPipelineConfig
+    from openhcs.core.config import (
+        AnalysisConsolidationConfig,
+        PlateMetadataConfig,
+        GlobalPipelineConfig,
+    )
     from openhcs.microscopes.microscope_interfaces import FilenameParser
 
 logger = logging.getLogger(__name__)
@@ -59,9 +64,9 @@ def extract_analysis_type(filename: str, well_id: str) -> str:
         after_well = name_without_ext[well_end_pos:]
 
         # Find first underscore (analysis type starts after this)
-        if '_' in after_well:
+        if "_" in after_well:
             # Remove everything up to and including first underscore
-            analysis_type = after_well[after_well.index('_') + 1:]
+            analysis_type = after_well[after_well.index("_") + 1 :]
         else:
             # No underscore found, use everything after well ID
             analysis_type = after_well
@@ -72,7 +77,9 @@ def extract_analysis_type(filename: str, well_id: str) -> str:
     return analysis_type
 
 
-def create_metaxpress_header(summary_df: pd.DataFrame, plate_metadata: Optional[Dict[str, str]] = None) -> List[List[str]]:
+def create_metaxpress_header(
+    summary_df: pd.DataFrame, plate_metadata: Optional[Dict[str, str]] = None
+) -> List[List[str]]:
     """
     Create MetaXpress-style header rows with metadata.
 
@@ -82,33 +89,39 @@ def create_metaxpress_header(summary_df: pd.DataFrame, plate_metadata: Optional[
         plate_metadata = {}
 
     # Extract plate info from results directory or use defaults
-    barcode = plate_metadata.get('barcode', 'OpenHCS-Plate')
-    plate_name = plate_metadata.get('plate_name', 'OpenHCS Analysis Results')
-    plate_id = plate_metadata.get('plate_id', '00000')
-    description = plate_metadata.get('description', 'Consolidated analysis results from OpenHCS pipeline')
-    acquisition_user = plate_metadata.get('acquisition_user', 'OpenHCS')
-    z_step = plate_metadata.get('z_step', '1')
+    barcode = plate_metadata.get("barcode", "OpenHCS-Plate")
+    plate_name = plate_metadata.get("plate_name", "OpenHCS Analysis Results")
+    plate_id = plate_metadata.get("plate_id", "00000")
+    description = plate_metadata.get(
+        "description", "Consolidated analysis results from OpenHCS pipeline"
+    )
+    acquisition_user = plate_metadata.get("acquisition_user", "OpenHCS")
+    z_step = plate_metadata.get("z_step", "1")
 
     # Create header rows matching MetaXpress format
     header_rows = [
-        ['Barcode', barcode],
-        ['Plate Name', plate_name],
-        ['Plate ID', plate_id],
-        ['Description', description],
-        ['Acquisition User', acquisition_user],
-        ['Z Step', z_step]
+        ["Barcode", barcode],
+        ["Plate Name", plate_name],
+        ["Plate ID", plate_id],
+        ["Description", description],
+        ["Acquisition User", acquisition_user],
+        ["Z Step", z_step],
     ]
 
     # Pad header rows to match the number of columns in the data
     num_cols = len(summary_df.columns)
     for row in header_rows:
         while len(row) < num_cols:
-            row.append('')
+            row.append("")
 
     return header_rows
 
 
-def save_with_metaxpress_header(summary_df: pd.DataFrame, output_path: str, plate_metadata: Optional[Dict[str, str]] = None):
+def save_with_metaxpress_header(
+    summary_df: pd.DataFrame,
+    output_path: str,
+    plate_metadata: Optional[Dict[str, str]] = None,
+):
     """
     Save DataFrame with MetaXpress-style header structure.
     """
@@ -129,14 +142,17 @@ def save_with_metaxpress_header(summary_df: pd.DataFrame, output_path: str, plat
     all_rows = header_rows + data_rows
 
     # Write to CSV manually to preserve the exact structure
-    with open(output_path, 'w', newline='') as f:
+    with open(output_path, "w", newline="") as f:
         import csv
+
         writer = csv.writer(f)
         for row in all_rows:
             writer.writerow(row)
 
 
-def auto_summarize_column(series: pd.Series, column_name: str, analysis_type: str) -> Dict[str, Any]:
+def auto_summarize_column(
+    series: pd.Series, column_name: str, analysis_type: str
+) -> Dict[str, Any]:
     """
     Automatically summarize a pandas series with MetaXpress-style naming.
 
@@ -155,44 +171,68 @@ def auto_summarize_column(series: pd.Series, column_name: str, analysis_type: st
         return {}
 
     # Create clean analysis type name for grouping
-    clean_analysis = analysis_type.replace('_', ' ').title()
+    clean_analysis = analysis_type.replace("_", " ").title()
 
     # Create meaningful metric names based on column content
     if pd.api.types.is_numeric_dtype(clean_series):
         # Numeric data - focus on key metrics like MetaXpress
-        if 'count' in column_name.lower() or 'total' in column_name.lower():
+        if "count" in column_name.lower() or "total" in column_name.lower():
             # Count/total metrics
-            summary[f"Total {column_name.replace('_', ' ').title()} ({clean_analysis})"] = clean_series.sum()
-            summary[f"Mean {column_name.replace('_', ' ').title()} ({clean_analysis})"] = clean_series.mean()
+            summary[
+                f"Total {column_name.replace('_', ' ').title()} ({clean_analysis})"
+            ] = clean_series.sum()
+            summary[
+                f"Mean {column_name.replace('_', ' ').title()} ({clean_analysis})"
+            ] = clean_series.mean()
 
-        elif 'area' in column_name.lower():
+        elif "area" in column_name.lower():
             # Area metrics
-            summary[f"Total {column_name.replace('_', ' ').title()} ({clean_analysis})"] = clean_series.sum()
-            summary[f"Mean {column_name.replace('_', ' ').title()} ({clean_analysis})"] = clean_series.mean()
+            summary[
+                f"Total {column_name.replace('_', ' ').title()} ({clean_analysis})"
+            ] = clean_series.sum()
+            summary[
+                f"Mean {column_name.replace('_', ' ').title()} ({clean_analysis})"
+            ] = clean_series.mean()
 
-        elif 'length' in column_name.lower() or 'distance' in column_name.lower():
+        elif "length" in column_name.lower() or "distance" in column_name.lower():
             # Length/distance metrics
-            summary[f"Total {column_name.replace('_', ' ').title()} ({clean_analysis})"] = clean_series.sum()
-            summary[f"Mean {column_name.replace('_', ' ').title()} ({clean_analysis})"] = clean_series.mean()
+            summary[
+                f"Total {column_name.replace('_', ' ').title()} ({clean_analysis})"
+            ] = clean_series.sum()
+            summary[
+                f"Mean {column_name.replace('_', ' ').title()} ({clean_analysis})"
+            ] = clean_series.mean()
 
-        elif 'intensity' in column_name.lower():
+        elif "intensity" in column_name.lower():
             # Intensity metrics
-            summary[f"Mean {column_name.replace('_', ' ').title()} ({clean_analysis})"] = clean_series.mean()
+            summary[
+                f"Mean {column_name.replace('_', ' ').title()} ({clean_analysis})"
+            ] = clean_series.mean()
 
-        elif 'confidence' in column_name.lower():
+        elif "confidence" in column_name.lower():
             # Confidence metrics
-            summary[f"Mean {column_name.replace('_', ' ').title()} ({clean_analysis})"] = clean_series.mean()
+            summary[
+                f"Mean {column_name.replace('_', ' ').title()} ({clean_analysis})"
+            ] = clean_series.mean()
 
         else:
             # Generic numeric metrics
-            summary[f"Mean {column_name.replace('_', ' ').title()} ({clean_analysis})"] = clean_series.mean()
+            summary[
+                f"Mean {column_name.replace('_', ' ').title()} ({clean_analysis})"
+            ] = clean_series.mean()
 
-    elif clean_series.dtype == bool or set(clean_series.unique()).issubset({0, 1, True, False}):
+    elif clean_series.dtype == bool or set(clean_series.unique()).issubset(
+        {0, 1, True, False}
+    ):
         # Boolean data
         true_count = clean_series.sum()
         total_count = len(clean_series)
-        summary[f"Count {column_name.replace('_', ' ').title()} ({clean_analysis})"] = true_count
-        summary[f"% {column_name.replace('_', ' ').title()} ({clean_analysis})"] = (true_count / total_count) * 100
+        summary[f"Count {column_name.replace('_', ' ').title()} ({clean_analysis})"] = (
+            true_count
+        )
+        summary[f"% {column_name.replace('_', ' ').title()} ({clean_analysis})"] = (
+            true_count / total_count
+        ) * 100
 
     else:
         # Categorical/string data - only include if meaningful
@@ -200,7 +240,9 @@ def auto_summarize_column(series: pd.Series, column_name: str, analysis_type: st
         if len(unique_values) <= 5:  # Only include if not too many categories
             value_counts = clean_series.value_counts()
             most_common = value_counts.index[0] if len(value_counts) > 0 else None
-            summary[f"Primary {column_name.replace('_', ' ').title()} ({clean_analysis})"] = most_common
+            summary[
+                f"Primary {column_name.replace('_', ' ').title()} ({clean_analysis})"
+            ] = most_common
 
     return summary
 
@@ -219,7 +261,7 @@ def summarize_analysis_file(file_path: str, analysis_type: str) -> Dict[str, Any
             return {}
 
         summary = {}
-        clean_analysis = analysis_type.replace('_', ' ').title()
+        clean_analysis = analysis_type.replace("_", " ").title()
 
         # Add key file-level metrics first
         summary[f"Number of Objects ({clean_analysis})"] = len(df)
@@ -230,12 +272,30 @@ def summarize_analysis_file(file_path: str, analysis_type: str) -> Dict[str, Any
 
         for column in df.columns:
             # Skip common index/ID columns
-            if column.lower() in ['index', 'unnamed: 0', 'slice_index', 'cell_id', 'match_id', 'skeleton_id']:
+            if column.lower() in [
+                "index",
+                "unnamed: 0",
+                "slice_index",
+                "cell_id",
+                "match_id",
+                "skeleton_id",
+            ]:
                 continue
 
             # Prioritize key metrics
             col_lower = column.lower()
-            if any(key in col_lower for key in ['area', 'count', 'length', 'distance', 'intensity', 'confidence', 'branch']):
+            if any(
+                key in col_lower
+                for key in [
+                    "area",
+                    "count",
+                    "length",
+                    "distance",
+                    "intensity",
+                    "confidence",
+                    "branch",
+                ]
+            ):
                 priority_columns.append(column)
             else:
                 other_columns.append(column)
@@ -260,9 +320,9 @@ def summarize_analysis_file(file_path: str, analysis_type: str) -> Dict[str, Any
 def consolidate_analysis_results(
     results_directory: str,
     well_ids: List[str],
-    consolidation_config: 'AnalysisConsolidationConfig',
-    plate_metadata_config: 'PlateMetadataConfig',
-    output_path: Optional[str] = None
+    consolidation_config: "AnalysisConsolidationConfig",
+    plate_metadata_config: "PlateMetadataConfig",
+    output_path: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Consolidate analysis results into a single summary table using configuration objects.
@@ -279,7 +339,9 @@ def consolidate_analysis_results(
     results_dir = Path(results_directory)
 
     if not results_dir.exists():
-        raise FileNotFoundError(f"Results directory does not exist: {results_directory}")
+        raise FileNotFoundError(
+            f"Results directory does not exist: {results_directory}"
+        )
 
     logger.info(f"Consolidating analysis results from: {results_directory}")
 
@@ -287,7 +349,9 @@ def consolidate_analysis_results(
     logger.info(f"DEBUG: consolidation_config type: {type(consolidation_config)}")
     logger.info(f"DEBUG: well_pattern: {repr(consolidation_config.well_pattern)}")
     logger.info(f"DEBUG: file_extensions: {repr(consolidation_config.file_extensions)}")
-    logger.info(f"DEBUG: exclude_patterns: {repr(consolidation_config.exclude_patterns)}")
+    logger.info(
+        f"DEBUG: exclude_patterns: {repr(consolidation_config.exclude_patterns)}"
+    )
 
     # Find all relevant files
     all_files = []
@@ -296,7 +360,9 @@ def consolidate_analysis_results(
         files = list(results_dir.glob(pattern))
         all_files.extend([str(f) for f in files])
 
-    logger.info(f"Found {len(all_files)} files with extensions {consolidation_config.file_extensions}")
+    logger.info(
+        f"Found {len(all_files)} files with extensions {consolidation_config.file_extensions}"
+    )
 
     # Apply exclude filters
     if consolidation_config.exclude_patterns:
@@ -305,12 +371,15 @@ def consolidate_analysis_results(
         if isinstance(exclude_patterns, str):
             # If it's a string representation of a tuple, convert it back
             import ast
+
             logger.info(f"DEBUG: exclude_patterns is string: {repr(exclude_patterns)}")
             try:
                 exclude_patterns = ast.literal_eval(exclude_patterns)
                 logger.info(f"DEBUG: Successfully parsed to: {repr(exclude_patterns)}")
             except Exception as e:
-                logger.warning(f"Could not parse exclude_patterns string: {exclude_patterns}, error: {e}")
+                logger.warning(
+                    f"Could not parse exclude_patterns string: {exclude_patterns}, error: {e}"
+                )
                 exclude_patterns = []
 
         filtered_files = []
@@ -320,7 +389,7 @@ def consolidate_analysis_results(
                 filtered_files.append(file_path)
         all_files = filtered_files
         logger.info(f"After filtering: {len(all_files)} files to process")
-    
+
     # Group files by well ID and analysis type
     wells_data = {}
     analysis_types = set()
@@ -338,7 +407,9 @@ def consolidate_analysis_results(
                 break
 
         if not well_id:
-            logger.warning(f"Could not find any well ID from {well_ids} in filename {filename}, skipping")
+            logger.warning(
+                f"Could not find any well ID from {well_ids} in filename {filename}, skipping"
+            )
             continue
 
         analysis_type = extract_analysis_type(filename, well_id)
@@ -348,15 +419,17 @@ def consolidate_analysis_results(
             wells_data[well_id] = {}
 
         wells_data[well_id][analysis_type] = file_path
-    
-    logger.info(f"Processing {len(wells_data)} wells with analysis types: {sorted(analysis_types)}")
-    
+
+    logger.info(
+        f"Processing {len(wells_data)} wells with analysis types: {sorted(analysis_types)}"
+    )
+
     # Process each well and create summary
     summary_rows = []
 
     for well_id in sorted(wells_data.keys()):
         # Always use a consistent well ID column name
-        well_summary = {'Well': well_id}
+        well_summary = {"Well": well_id}
 
         # Process each analysis type for this well
         for analysis_type in sorted(analysis_types):
@@ -377,10 +450,10 @@ def consolidate_analysis_results(
         other_cols = []
 
         for col in summary_df.columns:
-            if col == 'Well':
+            if col == "Well":
                 continue
-            if '(' in col and ')' in col:
-                analysis_name = col.split('(')[-1].replace(')', '')
+            if "(" in col and ")" in col:
+                analysis_name = col.split("(")[-1].replace(")", "")
                 if analysis_name not in analysis_groups:
                     analysis_groups[analysis_name] = []
                 analysis_groups[analysis_name].append(col)
@@ -388,7 +461,7 @@ def consolidate_analysis_results(
                 other_cols.append(col)
 
         # Reorder columns: Well first, then grouped by analysis type
-        ordered_cols = ['Well']
+        ordered_cols = ["Well"]
         for analysis_name in sorted(analysis_groups.keys()):
             ordered_cols.extend(sorted(analysis_groups[analysis_name]))
         ordered_cols.extend(sorted(other_cols))
@@ -396,12 +469,14 @@ def consolidate_analysis_results(
         summary_df = summary_df[ordered_cols]
     else:
         # Original style: sort all columns alphabetically
-        if 'Well' in summary_df.columns:
-            other_cols = [col for col in summary_df.columns if col != 'Well']
-            summary_df = summary_df[['Well'] + sorted(other_cols)]
-    
-    logger.info(f"Created summary table with {len(summary_df)} wells and {len(summary_df.columns)} metrics")
-    
+        if "Well" in summary_df.columns:
+            other_cols = [col for col in summary_df.columns if col != "Well"]
+            summary_df = summary_df[["Well"] + sorted(other_cols)]
+
+    logger.info(
+        f"Created summary table with {len(summary_df)} wells and {len(summary_df.columns)} metrics"
+    )
+
     # Save to CSV if output path specified
     if output_path is None:
         output_path = str(results_dir / consolidation_config.output_filename)
@@ -409,12 +484,14 @@ def consolidate_analysis_results(
     if consolidation_config.metaxpress_style:
         # Create plate metadata dictionary from config
         plate_metadata = {
-            'barcode': plate_metadata_config.barcode or f"OpenHCS-{results_dir.name}",
-            'plate_name': plate_metadata_config.plate_name or results_dir.name,
-            'plate_id': plate_metadata_config.plate_id or str(hash(str(results_dir)) % 100000),
-            'description': plate_metadata_config.description or f"Consolidated analysis results from OpenHCS pipeline: {len(summary_df)} wells analyzed",
-            'acquisition_user': plate_metadata_config.acquisition_user,
-            'z_step': plate_metadata_config.z_step
+            "barcode": plate_metadata_config.barcode or f"OpenHCS-{results_dir.name}",
+            "plate_name": plate_metadata_config.plate_name or results_dir.name,
+            "plate_id": plate_metadata_config.plate_id
+            or str(hash(str(results_dir)) % 100000),
+            "description": plate_metadata_config.description
+            or f"Consolidated analysis results from OpenHCS pipeline: {len(summary_df)} wells analyzed",
+            "acquisition_user": plate_metadata_config.acquisition_user,
+            "z_step": plate_metadata_config.z_step,
         }
 
         save_with_metaxpress_header(summary_df, output_path, plate_metadata)
@@ -430,12 +507,14 @@ def consolidate_analysis_results(
 
 
 @numpy_func
-@artifact_outputs(("consolidated_results", MaterializationSpec(CsvOptions(filename_suffix=".csv"))))
+@artifact_outputs(
+    ("consolidated_results", MaterializationSpec(CsvOptions(filename_suffix=".csv")))
+)
 def consolidate_analysis_results_pipeline(
     image_stack: np.ndarray,
     results_directory: str,
-    consolidation_config: 'AnalysisConsolidationConfig',
-    plate_metadata_config: 'PlateMetadataConfig'
+    consolidation_config: "AnalysisConsolidationConfig",
+    plate_metadata_config: "PlateMetadataConfig",
 ) -> tuple[np.ndarray, pd.DataFrame]:
     """
     Pipeline-compatible version of consolidate_analysis_results.
@@ -447,7 +526,7 @@ def consolidate_analysis_results_pipeline(
         results_directory=results_directory,
         consolidation_config=consolidation_config,
         plate_metadata_config=plate_metadata_config,
-        output_path=None  # Will be handled by materialization
+        output_path=None,  # Will be handled by materialization
     )
 
     return image_stack, summary_df
@@ -458,7 +537,7 @@ def merge_result_type_summaries(
     output_path: str,
     plate_names: Optional[List[str]] = None,
     plate_folder_name: Optional[str] = None,
-    plate_id: Optional[str] = None
+    plate_id: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Merge multiple MetaXpress-style summaries from different result types within the SAME plate.
@@ -492,7 +571,9 @@ def merge_result_type_summaries(
         try:
             # Read MetaXpress CSV, skipping the 6-line header
             df = pd.read_csv(summary_path, skiprows=6)
-            result_type = plate_names[i] if plate_names and i < len(plate_names) else f"type_{i}"
+            result_type = (
+                plate_names[i] if plate_names and i < len(plate_names) else f"type_{i}"
+            )
             logger.info(f"Loaded {len(df)} rows from {result_type}")
 
             if merged_df is None:
@@ -500,12 +581,16 @@ def merge_result_type_summaries(
             else:
                 # Merge on Well - one row per well with all columns combined
                 # Use outer join to keep all wells from all result types
-                merged_df = merged_df.merge(df, on='Well', how='outer', suffixes=('', '_dup'))
+                merged_df = merged_df.merge(
+                    df, on="Well", how="outer", suffixes=("", "_dup")
+                )
 
                 # Drop duplicate columns (keep first occurrence)
-                dup_cols = [col for col in merged_df.columns if col.endswith('_dup')]
+                dup_cols = [col for col in merged_df.columns if col.endswith("_dup")]
                 if dup_cols:
-                    logger.info(f"Dropping {len(dup_cols)} duplicate columns from merge")
+                    logger.info(
+                        f"Dropping {len(dup_cols)} duplicate columns from merge"
+                    )
                     merged_df = merged_df.drop(columns=dup_cols)
 
         except Exception as e:
@@ -516,27 +601,29 @@ def merge_result_type_summaries(
         logger.error("No valid summaries could be loaded")
         return pd.DataFrame()
 
-    logger.info(f"Merged into {len(merged_df)} unique wells with {len(merged_df.columns)} total columns")
+    logger.info(
+        f"Merged into {len(merged_df)} unique wells with {len(merged_df.columns)} total columns"
+    )
 
     # Create MetaXpress header for merged summary
     # Use plate folder name and plate ID if provided
     if plate_folder_name and plate_id:
         merged_metadata = {
-            'barcode': f"OpenHCS-{plate_folder_name}",
-            'plate_name': plate_folder_name,
-            'plate_id': plate_id,
-            'description': f"Merged analysis from {len(summary_paths)} result types: {', '.join(plate_names[:3]) if plate_names else 'unknown'}",
-            'acquisition_user': 'OpenHCS',
-            'z_step': '1'
+            "barcode": f"OpenHCS-{plate_folder_name}",
+            "plate_name": plate_folder_name,
+            "plate_id": plate_id,
+            "description": f"Merged analysis from {len(summary_paths)} result types: {', '.join(plate_names[:3]) if plate_names else 'unknown'}",
+            "acquisition_user": "OpenHCS",
+            "z_step": "1",
         }
     else:
         merged_metadata = {
-            'barcode': f"OpenHCS-Merged-{len(summary_paths)}ResultTypes",
-            'plate_name': f"Merged Analysis ({len(summary_paths)} result types)",
-            'plate_id': str(hash(str(summary_paths)) % 100000),
-            'description': f"Merged analysis from {len(summary_paths)} result types: {', '.join(plate_names[:3]) if plate_names else 'unknown'}",
-            'acquisition_user': 'OpenHCS',
-            'z_step': '1'
+            "barcode": f"OpenHCS-Merged-{len(summary_paths)}ResultTypes",
+            "plate_name": f"Merged Analysis ({len(summary_paths)} result types)",
+            "plate_id": str(hash(str(summary_paths)) % 100000),
+            "description": f"Merged analysis from {len(summary_paths)} result types: {', '.join(plate_names[:3]) if plate_names else 'unknown'}",
+            "acquisition_user": "OpenHCS",
+            "z_step": "1",
         }
 
     # Save with MetaXpress header
@@ -547,9 +634,7 @@ def merge_result_type_summaries(
 
 
 def consolidate_multi_plate_summaries(
-    summary_paths: List[str],
-    output_path: str,
-    plate_names: Optional[List[str]] = None
+    summary_paths: List[str], output_path: str, plate_names: Optional[List[str]] = None
 ) -> pd.DataFrame:
     """
     Consolidate multiple MetaXpress-style summaries from DIFFERENT plates into a single table.
@@ -590,9 +675,13 @@ def consolidate_multi_plate_summaries(
             plate_names.append(plate_dir)
 
     if len(plate_names) != len(summary_paths):
-        raise ValueError(f"plate_names length ({len(plate_names)}) must match summary_paths length ({len(summary_paths)})")
+        raise ValueError(
+            f"plate_names length ({len(plate_names)}) must match summary_paths length ({len(summary_paths)})"
+        )
 
-    logger.info(f"Concatenating {len(summary_paths)} plate summaries (different plates)")
+    logger.info(
+        f"Concatenating {len(summary_paths)} plate summaries (different plates)"
+    )
 
     # Read all summaries and CONCAT (stack rows - never merge different plates)
     combined_dfs = []
@@ -623,7 +712,9 @@ def consolidate_multi_plate_summaries(
 
     # CONCAT all DataFrames (stack rows, keep plates separate)
     result_df = pd.concat(combined_dfs, ignore_index=True)
-    logger.info(f"Concatenated {len(combined_dfs)} plates into {len(result_df)} total rows")
+    logger.info(
+        f"Concatenated {len(combined_dfs)} plates into {len(result_df)} total rows"
+    )
 
     # Save as simple CSV
     result_df.to_csv(output_path, index=False)
@@ -635,8 +726,9 @@ def consolidate_multi_plate_summaries(
 def consolidate_results_directories(
     results_dirs: List[Path],
     plate_path: Path,
-    global_config: 'GlobalPipelineConfig',
-    filename_parser: Optional['FilenameParser'] = None
+    analysis_consolidation_config: "AnalysisConsolidationConfig",
+    plate_metadata_config: "PlateMetadataConfig",
+    filename_parser: "FilenameParser",
 ) -> tuple[List[str], List[tuple[str, str]]]:
     """
     Consolidate multiple results directories and create global summary.
@@ -648,18 +740,16 @@ def consolidate_results_directories(
     Args:
         results_dirs: List of results directory paths to consolidate
         plate_path: Root plate path (used for determining global output location)
-        global_config: Global pipeline configuration
-        filename_parser: Optional filename parser from microscope handler (preferred).
-                        If not provided, falls back to regex pattern from config.
+        analysis_consolidation_config: Analysis consolidation configuration
+        plate_metadata_config: Plate metadata configuration
+        filename_parser: Filename parser from microscope handler
 
     Returns:
         Tuple of (successful_dirs, failed_dirs) where:
         - successful_dirs: List of successfully consolidated directory names
         - failed_dirs: List of (dir_name, error_message) tuples for failures
     """
-    from openhcs.core.orchestrator.orchestrator import _get_consolidate_analysis_results
-
-    consolidate_fn = _get_consolidate_analysis_results()
+    consolidate_fn = consolidate_analysis_results
     successful_dirs = []
     failed_dirs = []
     summary_paths = []
@@ -668,10 +758,14 @@ def consolidate_results_directories(
     for results_dir in results_dirs:
         csv_files = list(results_dir.glob("*.csv"))
         # Skip MetaXpress summaries and other consolidated files
-        csv_files = [f for f in csv_files if not any(
-            pattern in f.name.lower()
-            for pattern in ['metaxpress', 'summary', 'consolidated', 'global']
-        )]
+        csv_files = [
+            f
+            for f in csv_files
+            if not any(
+                pattern in f.name.lower()
+                for pattern in ["metaxpress", "summary", "consolidated", "global"]
+            )
+        ]
 
         if not csv_files:
             logger.info(f"Skipping {results_dir} - no CSV files found")
@@ -682,22 +776,14 @@ def consolidate_results_directories(
         for csv_file in csv_files:
             well_id = None
 
-            # Try using filename parser first (preferred - handles all microscope formats)
-            if filename_parser:
-                parsed = filename_parser.parse_filename(csv_file.name)
-                if parsed and 'well' in parsed:
-                    well_id = parsed['well']
-                else:
-                    logger.error(f"Parser failed to extract well ID from {csv_file.name}: {parsed}")
-
-            # Fall back to regex pattern from config (case-insensitive)
-            if not well_id:
-                import re
-                # Make pattern case-insensitive by using re.IGNORECASE
-                pattern = global_config.analysis_consolidation_config.well_pattern
-                match = re.search(pattern, csv_file.name, re.IGNORECASE)
-                if match:
-                    well_id = match.group(1).upper()  # Normalize to uppercase
+            # Extract well ID using filename parser (required - handles all microscope formats)
+            parsed = filename_parser.parse_filename(csv_file.name)
+            if parsed and "well" in parsed:
+                well_id = parsed["well"]
+            else:
+                logger.error(
+                    f"Parser failed to extract well ID from {csv_file.name}: {parsed}"
+                )
 
             if well_id:
                 well_ids.add(well_id)
@@ -707,19 +793,21 @@ def consolidate_results_directories(
             logger.warning(f"No well IDs found in {results_dir}, skipping")
             continue
 
-        logger.info(f"Consolidating {len(csv_files)} CSV files from {len(well_ids)} wells in {results_dir}")
+        logger.info(
+            f"Consolidating {len(csv_files)} CSV files from {len(well_ids)} wells in {results_dir}"
+        )
 
         try:
             consolidate_fn(
                 results_directory=str(results_dir),
                 well_ids=well_ids,
-                consolidation_config=global_config.analysis_consolidation_config,
-                plate_metadata_config=global_config.plate_metadata_config
+                consolidation_config=analysis_consolidation_config,
+                plate_metadata_config=plate_metadata_config,
             )
             successful_dirs.append(results_dir.name)
 
             # Track summary path for global consolidation
-            summary_filename = global_config.analysis_consolidation_config.output_filename
+            summary_filename = analysis_consolidation_config.output_filename
             summary_path = results_dir / summary_filename
             if summary_path.exists():
                 summary_paths.append(str(summary_path))
@@ -731,15 +819,25 @@ def consolidate_results_directories(
     # Step 2: Create global summary by merging result types if multiple directories were consolidated
     if len(summary_paths) > 1:
         try:
-            logger.info(f"Creating global summary from {len(summary_paths)} result type summaries")
+            logger.info(
+                f"Creating global summary from {len(summary_paths)} result type summaries"
+            )
 
             # Use plate_path root for global output
             global_output_dir = plate_path
-            global_summary_filename = global_config.analysis_consolidation_config.global_summary_filename
+            global_summary_filename = (
+                analysis_consolidation_config.global_summary_filename
+            )
             global_summary_path = global_output_dir / global_summary_filename
 
             # Extract result type names from results directory paths
-            result_type_names = [results_dir.name for results_dir in results_dirs if (results_dir / global_config.analysis_consolidation_config.output_filename).exists()]
+            result_type_names = [
+                results_dir.name
+                for results_dir in results_dirs
+                if (
+                    results_dir / analysis_consolidation_config.output_filename
+                ).exists()
+            ]
 
             # Get plate folder name and plate ID from first summary
             plate_folder_name = plate_path.name
@@ -747,10 +845,10 @@ def consolidate_results_directories(
             if summary_paths:
                 try:
                     # Read Plate ID from first summary's MetaXpress header (line 3)
-                    with open(summary_paths[0], 'r') as f:
+                    with open(summary_paths[0], "r") as f:
                         lines = [next(f) for _ in range(3)]
                         plate_id_line = lines[2]  # Line 3: "Plate ID,12345,..."
-                        plate_id = plate_id_line.split(',')[1]
+                        plate_id = plate_id_line.split(",")[1]
                 except:
                     pass
 
@@ -760,7 +858,7 @@ def consolidate_results_directories(
                 output_path=str(global_summary_path),
                 plate_names=result_type_names,
                 plate_folder_name=plate_folder_name,
-                plate_id=plate_id
+                plate_id=plate_id,
             )
             logger.info(f"✅ Global summary created: {global_summary_path}")
 

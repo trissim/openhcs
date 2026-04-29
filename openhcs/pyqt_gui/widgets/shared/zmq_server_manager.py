@@ -127,6 +127,9 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         for port in scanned_ports:
             self._missing_port_counts.pop(port, None)
 
+        # Add launching viewers (being auto-started from streaming)
+        self._sync_launching_viewers(scanned_ports)
+
         # Add/update servers from scan
         for server_info in parsed_servers:
             self._sync_server_item(server_info)
@@ -143,6 +146,12 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
             if port is None:
                 continue
             if port in scanned_ports:
+                continue
+
+            # Check if this is a launching viewer (being auto-started from streaming)
+            if data.get("launching"):
+                # Don't count launching viewers as missing - they persist until ready
+                self._missing_port_counts.pop(port, None)
                 continue
 
             # Check if server has active executions before removing
@@ -206,6 +215,50 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         rendered_item.setData(0, Qt.ItemDataRole.UserRole, server_info.raw)
         self.server_tree.addTopLevelItem(rendered_item)
         self._server_row_presenter.populate_server_children(server_info, rendered_item)
+
+    def _sync_launching_viewers(self, scanned_ports: set[int]) -> None:
+        """Add launching viewer entries to tree for viewers being auto-started."""
+        from zmqruntime.viewer_state import ViewerStateManager, ViewerState
+
+        mgr = ViewerStateManager.get_instance()
+        launching_viewers = {
+            viewer.port: viewer
+            for viewer in mgr.list_viewers()
+            if viewer.state == ViewerState.LAUNCHING
+        }
+
+        for port, viewer in launching_viewers.items():
+            # Skip if already scanned (viewer is now running)
+            if port in scanned_ports:
+                continue
+
+            # Check if already in tree
+            existing_item = self._find_existing_server_item(port)
+            if existing_item is not None:
+                # Update existing item
+                viewer_type = viewer.viewer_type.capitalize()
+                queued = viewer.queued_images
+                info_text = f"{queued} images queued" if queued > 0 else "Starting..."
+                existing_item.setText(0, f"Port {port} - {viewer_type} Viewer")
+                existing_item.setText(1, "🚀 Launching")
+                existing_item.setText(2, info_text)
+                continue
+
+            # Create new tree item for launching viewer
+            viewer_type = viewer.viewer_type.capitalize()
+            queued = viewer.queued_images
+            info_text = f"{queued} images queued" if queued > 0 else "Starting..."
+
+            item = QTreeWidgetItem()
+            item.setText(0, f"Port {port} - {viewer_type} Viewer")
+            item.setText(1, "🚀 Launching")
+            item.setText(2, info_text)
+            item.setData(
+                0,
+                Qt.ItemDataRole.UserRole,
+                {"port": port, "launching": True, "viewer_type": viewer.viewer_type},
+            )
+            self.server_tree.addTopLevelItem(item)
 
     @pyqtSlot(list)
     def _update_server_list(self, servers: List[Dict[str, Any]]) -> None:

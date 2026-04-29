@@ -246,10 +246,10 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/trissim/openhcs"
-"Bug Reports" = "https://github.com/trissim/openhcs/issues"
-Source = "https://github.com/trissim/openhcs"
-Documentation = "https://github.com/trissim/openhcs/blob/main/README.md"
+Homepage = "https://github.com/OpenHCSDev/OpenHCS"
+"Bug Reports" = "https://github.com/OpenHCSDev/OpenHCS/issues"
+Source = "https://github.com/OpenHCSDev/OpenHCS"
+Documentation = "https://github.com/OpenHCSDev/OpenHCS/blob/main/README.md"
 
 [project.scripts]
 # Main interfaces - GUI is now the default

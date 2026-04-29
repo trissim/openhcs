@@ -614,13 +614,14 @@ class NapariViewerServer(StreamingVisualizerServer):
         """
         import zmq
 
-        # Initialize with SUB socket for receiving images
+        # Initialize with REP socket for receiving images (synchronous request/reply)
+        # REP socket forces workers to wait for acknowledgment before closing shared memory
         super().__init__(
             port,
             viewer_type="napari",
             host="*",
             log_file_path=log_file_path,
-            data_socket_type=zmq.SUB,
+            data_socket_type=zmq.REP,
             transport_mode=coerce_transport_mode(transport_mode),
             config=OPENHCS_ZMQ_CONFIG,
         )
@@ -1304,7 +1305,7 @@ class NapariViewerServer(StreamingVisualizerServer):
 
     def process_image_message(self, message: bytes):
         """
-        Process incoming image data message.
+        Process incoming image data message and send reply for REP socket.
 
         Args:
             message: Raw ZMQ message containing image data
@@ -1337,6 +1338,13 @@ class NapariViewerServer(StreamingVisualizerServer):
         else:
             # Handle single image (legacy)
             self._process_single_image(data, data.get("display_config"))
+
+        # Send reply on REP socket (required pattern)
+        try:
+            reply = {"status": "success", "type": msg_type}
+            self.data_socket.send_json(reply)
+        except Exception as e:
+            logger.error(f"🔬 NAPARI PROCESS: Failed to send reply: {e}")
 
     def _process_single_image(
         self, image_info: Dict[str, Any], display_config_dict: Dict[str, Any]
@@ -1555,15 +1563,14 @@ def _napari_viewer_process(
             server.process_messages()
 
             # Process data messages (images) if ready
+            # REP socket requires recv->send alternation, so process one at a time
             if server._ready:
-                # Process multiple messages per timer tick for better throughput
-                for _ in range(10):  # Process up to 10 messages per tick
-                    try:
-                        message = server.data_socket.recv(zmq.NOBLOCK)
-                        server.process_image_message(message)
-                    except zmq.Again:
-                        # No more messages available
-                        break
+                try:
+                    message = server.data_socket.recv(zmq.NOBLOCK)
+                    server.process_image_message(message)
+                except zmq.Again:
+                    # No message available
+                    pass
 
         # Connect timer to message processing
         timer.timeout.connect(process_messages)

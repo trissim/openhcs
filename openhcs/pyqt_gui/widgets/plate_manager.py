@@ -1166,12 +1166,16 @@ class PlateManagerWidget(AbstractManagerWidget):
         if not is_force_kill:
             logger.info("🛑 Stop button pressed - changing to Force Kill")
             self.execution_state = ManagerExecutionState.FORCE_KILL_READY
+            # Clear stale server info so state can properly reset when plates are terminal
+            self.set_execution_server_info(None)
             self.update_button_states()
             QApplication.processEvents()
         else:
             # Force-kill requested: immediately disable stop interactions while
             # cancellation propagates from background threads.
             self.execution_state = ManagerExecutionState.STOPPING
+            # Clear stale server info so state can properly reset when plates are terminal
+            self.set_execution_server_info(None)
             self.update_button_states()
 
         self._batch_workflow_service.stop_execution(force=is_force_kill)

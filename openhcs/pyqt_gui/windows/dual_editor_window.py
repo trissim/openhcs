@@ -1401,9 +1401,10 @@ class DualEditorWindow(BaseFormDialog):
         # No confirmation needed - time travel allows recovery of any state
 
         # Cleanup tree helper subscriptions to prevent memory leaks
-        self.step_editor.tree_helper.cleanup_subscriptions()
-        self.step_editor.state.off_state_changed(self._dirty_title_callback)
-        self.step_editor.state.off_state_changed(self._dirty_detect_callback)
+        if self.step_editor is not None:
+            self.step_editor.tree_helper.cleanup_subscriptions()
+            self.step_editor.state.off_state_changed(self._dirty_title_callback)
+            self.step_editor.state.off_state_changed(self._dirty_detect_callback)
 
         super().closeEvent(event)  # BaseFormDialog handles unregistration
 

@@ -1074,6 +1074,24 @@ class FijiViewerServer(StreamingVisualizerServer):
 
         # Check if we have an existing hyperstack to merge into
         existing_imp = self.hyperstacks.get(window_key)
+
+        # Check if the existing hyperstack is still valid (window not closed by user)
+        is_valid = False
+        if existing_imp is not None:
+            try:
+                # Check if the ImagePlus still has a valid window
+                window = existing_imp.getWindow()
+                is_valid = window is not None and window.isVisible()
+            except Exception:
+                is_valid = False
+
+        # If existing hyperstack is closed/invalid, treat as new hyperstack
+        if existing_imp is not None and not is_valid:
+            logger.info(
+                f"🔬 FIJI SERVER: Existing hyperstack '{window_key}' is closed/invalid, creating new one"
+            )
+            existing_imp = None
+
         is_new_hyperstack = existing_imp is None
 
         if not is_new_hyperstack:
@@ -1223,18 +1241,26 @@ class FijiViewerServer(StreamingVisualizerServer):
                         # This bypasses scyjava's type checking and works with all numpy dtypes
                         if np_data.dtype == np.uint8:
                             # ByteProcessor expects signed bytes in Java
-                            java_array = jpype.JArray(jpype.JByte)(np_data.astype(np.int8))
+                            java_array = jpype.JArray(jpype.JByte)(
+                                np_data.astype(np.int8)
+                            )
                             processor = ByteProcessor(width, height, java_array, None)
                         elif np_data.dtype in (np.uint16, np.int16):
                             # ShortProcessor expects signed shorts in Java
-                            java_array = jpype.JArray(jpype.JShort)(np_data.astype(np.int16))
+                            java_array = jpype.JArray(jpype.JShort)(
+                                np_data.astype(np.int16)
+                            )
                             processor = ShortProcessor(width, height, java_array, None)
                         elif np_data.dtype in (np.float32, np.float64):
-                            java_array = jpype.JArray(jpype.JFloat)(np_data.astype(np.float32))
+                            java_array = jpype.JArray(jpype.JFloat)(
+                                np_data.astype(np.float32)
+                            )
                             processor = FloatProcessor(width, height, java_array)
                         else:
                             # Default to ShortProcessor
-                            java_array = jpype.JArray(jpype.JShort)(np_data.astype(np.int16))
+                            java_array = jpype.JArray(jpype.JShort)(
+                                np_data.astype(np.int16)
+                            )
                             processor = ShortProcessor(width, height, java_array, None)
 
                         # Build label
@@ -1563,7 +1589,9 @@ class FijiViewerServer(StreamingVisualizerServer):
                         label_parts.append(f"{abbrev} {comp_value}")
 
                 # Window-level fixed labels (e.g., Well when mapped to window mode)
-                for comp_name, comp_value in self.window_fixed_labels.get(window_key, []):
+                for comp_name, comp_value in self.window_fixed_labels.get(
+                    window_key, []
+                ):
                     add_component_label(comp_name, comp_value)
 
                 # Channel
@@ -1695,6 +1723,72 @@ class FijiViewerServer(StreamingVisualizerServer):
                         logger.warning(
                             f"🏷️  FIJI SERVER: No scrollbars found to attach listener (not a hyperstack?)"
                         )
+
+                    # Add WindowListener to detect when user closes the window
+                    # Capture closure variables explicitly
+                    captured_window_key = window_key
+                    captured_hyperstacks = self.hyperstacks
+                    captured_metadata = self.hyperstack_metadata
+                    captured_dim_values = self.window_dimension_values
+                    captured_fixed_labels = self.window_fixed_labels
+                    captured_lock = self._hyperstack_lock
+
+                    @jpype.JImplements("java.awt.event.WindowListener")
+                    class WindowCloseListener:
+                        @jpype.JOverride
+                        def windowClosing(self, event):
+                            with captured_lock:
+                                if captured_window_key in captured_hyperstacks:
+                                    closed_imp = captured_hyperstacks.pop(
+                                        captured_window_key, None
+                                    )
+                                    if closed_imp is not None:
+                                        try:
+                                            closed_imp.close()
+                                        except Exception:
+                                            pass
+                                    if captured_window_key in captured_metadata:
+                                        captured_metadata.pop(captured_window_key, None)
+                                    if captured_window_key in captured_dim_values:
+                                        captured_dim_values.pop(
+                                            captured_window_key, None
+                                        )
+                                    if captured_window_key in captured_fixed_labels:
+                                        captured_fixed_labels.pop(
+                                            captured_window_key, None
+                                        )
+                                    logger.info(
+                                        f"🔬 FIJI SERVER: Cleaned up hyperstack '{captured_window_key}' after window close"
+                                    )
+
+                        @jpype.JOverride
+                        def windowClosed(self, event):
+                            pass
+
+                        @jpype.JOverride
+                        def windowOpened(self, event):
+                            pass
+
+                        @jpype.JOverride
+                        def windowIconified(self, event):
+                            pass
+
+                        @jpype.JOverride
+                        def windowDeiconified(self, event):
+                            pass
+
+                        @jpype.JOverride
+                        def windowActivated(self, event):
+                            pass
+
+                        @jpype.JOverride
+                        def windowDeactivated(self, event):
+                            pass
+
+                    window.addWindowListener(WindowCloseListener())
+                    logger.info(
+                        f"🏷️  FIJI SERVER: Added window close listener for '{window_key}'"
+                    )
 
                 except Exception as e:
                     logger.warning(
@@ -1864,9 +1958,12 @@ class FijiViewerServer(StreamingVisualizerServer):
         # CRITICAL: Calculate global min/max ONCE from all images BEFORE creating stack
         # This avoids O(n) calculation per slice during stack creation
         import numpy as np
-        logger.info(f"🔬 FIJI SERVER: Calculating global min/max from {len(all_images)} images")
-        global_min = float('inf')
-        global_max = float('-inf')
+
+        logger.info(
+            f"🔬 FIJI SERVER: Calculating global min/max from {len(all_images)} images"
+        )
+        global_min = float("inf")
+        global_max = float("-inf")
         for img_data in all_images:
             np_data = self._extract_2d_plane(img_data["data"])
             img_min = float(np.min(np_data))

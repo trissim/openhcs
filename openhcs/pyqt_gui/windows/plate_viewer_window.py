@@ -487,19 +487,27 @@ class PlateViewerWindow(BaseFormDialog):
                 )
                 return
 
-            # Get global config
-            from openhcs.config_framework.global_config import get_current_global_config
-            from openhcs.core.config import GlobalPipelineConfig
-
-            global_config = get_current_global_config(GlobalPipelineConfig)
-
-            if not global_config:
+            # Get resolved configs from orchestrator's pipeline_config using ObjectState
+            if not self.orchestrator.pipeline_config:
                 QMessageBox.warning(
                     self,
-                    "No Global Config",
-                    "No global configuration found. Please ensure the application is properly initialized.",
+                    "No Pipeline Config",
+                    "No pipeline configuration found. Please ensure the orchestrator is properly initialized.",
                 )
                 return
+
+            # Create ObjectState from pipeline_config and resolve configs
+            from openhcs.config_framework.object_state import ObjectState
+
+            pipeline_config_state = ObjectState(self.orchestrator.pipeline_config)
+            analysis_consolidation_config = (
+                pipeline_config_state.get_saved_resolved_value(
+                    "analysis_consolidation_config"
+                )
+            )
+            plate_metadata_config = pipeline_config_state.get_saved_resolved_value(
+                "plate_metadata_config"
+            )
 
             # Use consolidated function that handles both per-directory and global consolidation
             from openhcs.processing.backends.analysis.consolidate_analysis_results import (
@@ -509,7 +517,8 @@ class PlateViewerWindow(BaseFormDialog):
             successful_dirs, failed_dirs = consolidate_results_directories(
                 results_dirs=results_dirs,
                 plate_path=plate_path,
-                global_config=global_config,
+                analysis_consolidation_config=analysis_consolidation_config,
+                plate_metadata_config=plate_metadata_config,
                 filename_parser=self.orchestrator.microscope_handler.parser,
             )
 
@@ -526,7 +535,7 @@ class PlateViewerWindow(BaseFormDialog):
                     + "\n".join(f"  ✓ {d}" for d in successful_dirs)
                 )
                 if len(successful_dirs) > 1:
-                    msg += f"\n\n✅ Global summary created: {global_config.analysis_consolidation_config.global_summary_filename}"
+                    msg += f"\n\n✅ Global summary created: {analysis_consolidation_config.global_summary_filename}"
                 QMessageBox.information(self, "Consolidation Complete", msg)
             elif successful_dirs and failed_dirs:
                 QMessageBox.warning(

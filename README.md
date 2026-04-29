@@ -1,625 +1,396 @@
-# OpenHCS: Open High-Content Screening
-<!--
 <div align="center">
-  <img src="https://raw.githubusercontent.com/trissim/openhcs/main/docs/source/_static/ezstitcher_logo.png" alt="OpenHCS Logo" width="400">
-</div>
--->
+
+<pre>
+  ___                    _   _  ___  _____
+ / _ \ _ __  ___  _ ___ | | | |/ __\/ ___/
+| | | | '_ \/ _ \| '_  \| |_| | |   \___ \
+| |_| | |_||| __/| | | ||  _  | |__  __/ |
+ \___/| .__/\___||_| |_||_| |_|\___/\____/
+      |_|           High-Content Screening
+</pre>
+
+**Bioimage analysis platform for high-content screening**\
+**Compile-time validation · Bidirectional GUI↔Code · Multi-GPU · LLM pipeline generation · 574+ functions**
 
 [![PyPI version](https://img.shields.io/pypi/v/openhcs.svg)](https://pypi.org/project/openhcs/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.12+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![GPU Accelerated](https://img.shields.io/badge/GPU-Accelerated-green.svg)](https://github.com/trissim/openhcs)
-[![Documentation Status](https://readthedocs.org/projects/openhcs/badge/?version=latest)](https://openhcs.readthedocs.io/en/latest/?badge=latest)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![GPU Accelerated](https://img.shields.io/badge/GPU-Accelerated-green.svg)](https://github.com/OpenHCSDev/OpenHCS)
+[![Documentation](https://readthedocs.org/projects/openhcs/badge/?version=latest)](https://openhcs.readthedocs.io)
 
-**A bioimage analysis platform for high-content screening with compile-time validation and bidirectional GUI-code conversion.**
+</div>
 
-OpenHCS is designed to handle large microscopy datasets (100GB+) with an architecture that emphasizes early error detection and flexible workflows. The platform provides compile-time pipeline validation, live configuration updates across windows, and bidirectional conversion between GUI and code representations.
+---
 
-## Key Features
+## 🎬 Demo
 
-### 1. Compile-Time Pipeline Validation
+[![Watch OpenHCS demo (5 min)](docs/source/_static/ui.png)](https://openhcs.readthedocs.io/en/latest/_static/openhcs.mp4)
 
-Many bioimage analysis tools validate pipelines at runtime, which can lead to failures after hours of processing. OpenHCS uses a 5-phase compilation system to catch errors before execution starts:
+Watch demo in browser player: https://openhcs.readthedocs.io/en/latest/_static/openhcs.mp4  
+Mirror link (GitHub raw): https://raw.githubusercontent.com/OpenHCSDev/OpenHCS/refs/heads/main/docs/source/_static/openhcs.mp4
 
-```python
-# Compilation produces immutable execution contexts
-for well_id in wells_to_process:
-    context = self.create_context(well_id)
+---
 
-    # 5-Phase Compilation - fails BEFORE execution starts
-    PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition)
-    PipelineCompiler.declare_zarr_stores_for_context(context, pipeline_definition, self)
-    PipelineCompiler.plan_materialization_flags_for_context(context, pipeline_definition, self)
-    PipelineCompiler.validate_memory_contracts_for_context(context, pipeline_definition, self)
-    PipelineCompiler.assign_gpu_resources_for_context(context)
+OpenHCS processes large microscopy datasets (100GB+) with a **compile-then-execute** architecture. Pipelines are validated across all wells *before* any processing starts, preventing failures after hours of computation. Design pipelines in the GUI, export to Python, edit as code, and re-import — switching seamlessly between visual and programmatic workflows.
 
-    context.freeze()  # Immutable - prevents state mutation during execution
-    compiled_contexts[well_id] = context
+```mermaid
+graph LR
+    subgraph Microscopes
+        IX[ImageXpress]
+        OP[Opera Phenix]
+        OM[OMERO]
+    end
+
+    subgraph OpenHCS Platform
+        PD["Pipeline Designer<br/>(GUI ⇄ Code ⇄ LLM)"]
+        CO["5-Phase Compiler<br/>(validate)"]
+        EX["Multi-Process Executor<br/>(1 process/well · multi-GPU)"]
+        FN["574+ Unified Functions<br/>scikit-image · CuPy · pyclesperanto<br/>PyTorch · JAX · TF · CuCIM · custom"]
+        PS["PolyStore<br/>(Memory ↔ Disk ↔ ZARR ↔ Stream)"]
+    end
+
+    subgraph Viewers
+        NA[Napari]
+        FJ[Fiji/ImageJ]
+    end
+
+    IX --> PD
+    OP --> PD
+    OM --> PD
+    PD --> CO --> EX
+    EX --> FN --> PS
+    PS --> NA
+    PS --> FJ
 ```
 
-This approach catches errors at compile time rather than after hours of processing. Immutable frozen contexts help prevent state mutation bugs during execution.
+---
 
-### 2. Live Cross-Window Configuration Updates
+## ⚡ Key Capabilities
 
-Configuration changes propagate across windows in real-time using lazy resolution with Python's contextvars and MRO-based inheritance:
+<table>
+<tr>
+<td width="50%" valign="top">
 
-- Open 3 windows simultaneously: GlobalPipelineConfig, PipelineConfig, StepConfig
-- Edit a value in GlobalPipelineConfig
-- Watch placeholders update in real-time in PipelineConfig and StepConfig windows
-- Proper inheritance chain: Global → Pipeline → Step with scope isolation per orchestrator
-- Save PipelineConfig, and step editors immediately use the new saved values
+### 🛡️ Compile-Time Validation
+Pipelines are compiled through **5 phases** before execution — path planning, store declaration, materialization flags, memory contract validation, GPU assignment — then frozen into immutable contexts. Errors surface immediately, not after hours of processing.
 
-This uses a class-level registry of active form managers, Qt signals for cross-window updates, and contextvars-based context stacking with MRO-based dual-axis resolution.
+</td>
+<td width="50%" valign="top">
 
-### 3. Bidirectional UI-Code Conversion
+### 🔄 Bidirectional GUI ↔ Code
+Design pipelines visually, export as executable Python, edit in your IDE, re-import to the GUI. Code generation works at **any scope level** — function patterns, individual steps, pipeline configs, full orchestrator scripts — any window holding objects can generate and re-import code.
 
-Pipelines can be designed in the GUI, exported to Python code, edited as code, and re-imported back to the GUI with full fidelity:
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
 
-1. **Design in GUI**: Build pipeline visually with drag-and-drop
-2. **Export to Code**: Click "Code" button → get complete executable Python script
-3. **Edit in Code**: Bulk modifications, complex parameter tuning, version control
-4. **Re-import to GUI**: Save edited code → GUI updates with all changes
-5. **Repeat**: Switch between representations seamlessly
+### 🧠 LLM Pipeline Generation
+Describe a pipeline in natural language and get executable code. Built-in chat panel with local Ollama or remote LLM endpoints. Dynamic system prompts built from the actual function registry — the LLM knows every available function and its signature.
 
-**Three-Tier Generation Architecture**:
+</td>
+<td width="50%" valign="top">
+
+### ⚡ Full Multiprocessing & Multi-GPU
+**1 process per well** via `ProcessPoolExecutor` with GPU scheduler assigning devices to workers. CUDA spawn-safe. Scales from laptops to multi-GPU workstations — process 100GB+ datasets with OME-ZARR compression (LZ4, ZSTD, Blosc).
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🔌 Any Python Function
+Register **any** Python function by decorating it with `@numpy`, `@cupy`, `@pyclesperanto`, `@torch`, or other memory type decorators. Custom functions get automatic contract validation, UI integration, and appear alongside built-in functions. Persisted to `~/.openhcs/custom_functions/`.
+
+</td>
+<td width="50%" valign="top">
+
+### 📊 Results Materialization
+`@special_outputs` declaratively routes analysis results to **CSV**, **JSON**, **ROI ZIP** (ImageJ-compatible), or **TIFF stacks** via pluggable format writers. ROIs stream to Fiji/ImageJ. Results appear alongside processed images with no manual I/O code.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🔬 Process-Isolated Napari & Fiji
+Stream images to **Napari** and **Fiji/ImageJ** in real-time during pipeline execution. Viewers run in separate processes via ZeroMQ — no Qt threading conflicts. Persistent viewers survive pipeline completion. PolyStore treats viewers as streaming backends.
+
+</td>
+<td width="50%" valign="top">
+
+### 🪟 Live Cross-Window Updates
+Edit a value in `GlobalPipelineConfig` — watch it propagate in real-time to `PipelineConfig` and `StepConfig` windows. Dual-axis resolution (context hierarchy × class MRO) with scope isolation per orchestrator.
+
+</td>
+</tr>
+</table>
+
+---
+
+## 🧩 The OpenHCS Ecosystem
+
+OpenHCS is built on **8 purpose-extracted libraries** — each solving a general problem, each independently publishable, all woven into a cohesive platform:
+
+```mermaid
+graph TD
+    OH["OpenHCS Platform<br/>(domain wiring + pipelines)"]
+
+    OH --> OS["ObjectState<br/>(config)"]
+    OH --> AB["ArrayBridge<br/>(arrays)"]
+    OH --> PS["PolyStore<br/>(I/O + streaming)"]
+    OH --> ZR["ZMQRuntime<br/>(exec)"]
+    OH --> QR["PyQT-reactive<br/>(forms)"]
+
+    OS --> PI["python-introspect<br/>(signatures)"]
+    OH --> MR["metaclass-registry<br/>(plugins)"]
+    OH --> PC["pycodify<br/>(serialization)"]
 ```
-Function Patterns (Tier 1)
-       ↓ (encapsulates imports)
-Pipeline Steps (Tier 2)
-       ↓ (encapsulates all pattern imports)
-Orchestrator Config (Tier 3)
-       ↓ (encapsulates all pipeline imports)
-Complete Executable Script
-```
 
-This enables visual tools for rapid prototyping, code editing for complex modifications, and version control for collaboration.
+| Library | Role in OpenHCS | What It Does |
+|:--------|:----------------|:-------------|
+| [**ObjectState**](https://github.com/OpenHCSDev/ObjectState) | Configuration framework | Lazy dataclasses with dual-axis inheritance (context hierarchy × class MRO) and `contextvars`-based resolution |
+| [**ArrayBridge**](https://github.com/OpenHCSDev/ArrayBridge) | Memory type conversion | Unified API across NumPy, CuPy, PyTorch, JAX, TensorFlow, pyclesperanto with DLPack zero-copy transfers |
+| [**PolyStore**](https://github.com/OpenHCSDev/PolyStore) | Unified I/O & streaming | Pluggable backends for storage (disk, memory, ZARR) *and* streaming (Napari, Fiji) — viewers are just backends. Virtual workspace, atomic writes, format detection, ROI extraction |
+| [**ZMQRuntime**](https://github.com/OpenHCSDev/ZMQRuntime) | Distributed execution | ZMQ client-server for remote pipeline execution, progress streaming, and OMERO server-side processing |
+| [**PyQT-reactive**](https://github.com/OpenHCSDev/PyQT-reactive) | UI form generation | React-style reactive forms from dataclasses with cross-window sync and flash animations |
+| [**pycodify**](https://github.com/OpenHCSDev/pycodify) | Code ↔ object conversion | Python source as serialization format — type-preserving, diffable, editable, with collision handling |
+| [**python-introspect**](https://github.com/OpenHCSDev/python-introspect) | Signature analysis | Pure-Python function/dataclass introspection for automatic UI generation and contract analysis |
+| [**metaclass-registry**](https://github.com/OpenHCSDev/metaclass-registry) | Plugin discovery | Zero-boilerplate registry system powering microscope handler and storage backend auto-discovery |
 
-### 4. Large Dataset Support
+---
 
-OpenHCS is designed to handle large high-content screening datasets (100GB+):
+## 🔬 Microscope & Function Support
 
-- **Virtual File System**: Automatic backend switching between memory, disk, and ZARR storage
-- **OME-ZARR Compression**: Configurable algorithms (LZ4, ZLIB, ZSTD, Blosc) with adaptive chunking
-- **GPU Resource Management**: Automatic assignment and load balancing across multiple GPUs
-- **Parallel Processing**: Scales to arbitrary CPU cores with configurable worker processes
+<table>
+<tr>
+<td width="40%" valign="top">
 
-For example, processing entire 96-well plates with 9 sites per well, 4 channels, and 100+ timepoints (100GB+ per plate).
+**Microscope Systems**
 
-## Background
+| System | Vendor |
+|:-------|:-------|
+| ImageXpress | Molecular Devices |
+| Opera Phenix | PerkinElmer |
+| OMERO | Open Microscopy |
+| OpenHCS Format | Native |
 
-OpenHCS evolved from EZStitcher, a microscopy stitching library, into a more general bioimage analysis platform. The architecture addresses some common challenges in scientific software:
+Auto-detected. Extensible via `metaclass-registry`.
 
-- Early error detection through compile-time validation
-- Flexible workflows that work both in GUI and as code
-- Handling datasets that exceed available memory
-- Multi-GPU resource management
+</td>
+<td width="60%" valign="top">
 
-### Architecture
+**574+ Functions — Automatic Discovery**
 
-The codebase implements several patterns that may be of interest:
+| Library | Functions | Acceleration |
+|:--------|:---------:|:------------:|
+| pyclesperanto | 230+ | OpenCL GPU |
+| CuCIM/CuPy | 124+ | CUDA GPU |
+| scikit-image | 110+ | CPU |
+| PyTorch / JAX / TF | ✓ | CUDA GPU |
+| OpenHCS native | ✓ | Mixed |
 
-1. **Dual-Axis Configuration Framework**: Combines context hierarchy (global → pipeline → step) with class inheritance (MRO) for configuration resolution. Extracted as standalone library: [hieraconf](https://github.com/trissim/hieraconf)
+Unified contracts, automatic memory conversion via `ArrayBridge`.
 
-2. **Lazy Dataclass Factory**: Runtime generation of configuration classes with `__getattribute__` interception for on-demand resolution.
+</td>
+</tr>
+</table>
 
-3. **Cross-Window Live Updates**: Class-level registry of active form managers with Qt signals for propagating changes across windows.
+**Processing domains**: image preprocessing · segmentation · cell counting · stitching (MIST + Ashlar GPU) · neurite tracing · morphology · measurements
 
-4. **5-Phase Pipeline Compiler**: Separates pipeline definition from execution to enable compile-time validation.
+---
 
-5. **Bidirectional Code Generation**: Three-tier generation system (function patterns → pipeline steps → orchestrator) for round-trip conversion between GUI and code.
-
-**See**: [Architecture Documentation](https://openhcs.readthedocs.io/en/latest/architecture/) for detailed technical analysis.
-
-## Flexible Pipeline Platform
-
-### General-Purpose Bioimage Analysis
-OpenHCS provides a flexible platform for creating custom image analysis pipelines. Researchers can combine processing functions to build workflows tailored to their experimental needs.
-
-### Function Library
-The platform automatically discovers and integrates 574+ functions from multiple libraries (pyclesperanto, CuPy, PyTorch, JAX, TensorFlow, scikit-image), providing unified access to image processing, segmentation, and analysis tools.
-
-### Custom Function Integration
-Adding custom functions requires following simple signature conventions, allowing the platform to automatically discover and incorporate new processing capabilities.
-
-## Supported Microscope Systems
-
-OpenHCS provides unified interfaces for multiple microscope formats with automatic format detection:
-
-- **ImageXpress (Molecular Devices)**: Complete support for high-content screening systems including metadata parsing and multi-well organization
-- **Opera Phenix (PerkinElmer)**: Automated microscopy platform integration with full metadata support
-- **OpenHCS Format**: Optimized internal format for maximum performance and compression
-- **Extensible Architecture**: Framework for adding new microscope types without code changes
-
-## Desktop Interface and Workflow
-
-### Visual Pipeline Editor
-The PyQt6 desktop interface provides drag-and-drop pipeline creation with real-time parameter adjustment and live preview of processing results.
-
-### Bidirectional Code Integration
-Pipelines can be exported as executable Python scripts for customization, then re-imported back to the interface.
-
-### Real-Time Visualization
-Integrated napari viewers provide immediate visualization of processing results, with persistent viewers that survive pipeline completion for examining intermediate results.
-
-## Installation
-
-OpenHCS is available on PyPI and requires Python 3.11+ with optional GPU acceleration support for CUDA 12.x.
-
-### Quick Start
+## 🚀 Quick Start
 
 ```bash
-# Desktop GUI (recommended for most users)
+# Basic installation with GUI
 pip install openhcs[gui]
 
-# Then launch the application
-openhcs
-```
-
-### Installation Options
-
-```bash
-# Headless (servers, CI, programmatic use - no GUI)
-pip install openhcs
-
-# Desktop GUI only
-pip install openhcs[gui]
-
-# GUI + Napari viewer
+# Add Napari viewer
 pip install openhcs[gui,napari]
 
-# GUI + Fiji/ImageJ viewer
+# Add Fiji/ImageJ viewer
 pip install openhcs[gui,fiji]
 
-# GUI + both viewers
+# Add both viewers
 pip install openhcs[gui,viz]
+
+# Add GPU acceleration (CUDA 12.x required)
+pip install openhcs[gui,gpu]
 
 # Full installation (GUI + viewers + GPU)
 pip install openhcs[gui,viz,gpu]
 
-# Headless with GPU (server processing)
-pip install openhcs[gpu]
-
-# OMERO integration
-pip install openhcs[omero]
-```
-
-### OMERO Integration
-
-The OMERO integration requires the `zeroc-ice` dependency, which is not available on PyPI. The custom `setup.py` automatically downloads and installs zeroc-ice when installing with OMERO extras.
-
-#### Automatic Installation (Recommended)
-
-```bash
-# Install openhcs with OMERO support - zeroc-ice is installed automatically!
-pip install 'openhcs[omero]'
-```
-
-The custom `setup.py` automatically detects your Python version (3.11 or 3.12) and platform (Windows, Linux, macOS), then downloads and installs the appropriate zeroc-ice wheel from Glencoe Software's repository.
-
-**For editable installs (development):**
-```bash
-pip install -e ".[omero]"
-```
-
-#### Alternative Installation Methods
-
-If automatic installation fails, you can use one of these alternatives:
-
-**Option 1: Standalone Script**
-```bash
-# Install zeroc-ice using the standalone script
-python scripts/install_omero_deps.py
-
-# Then install openhcs with OMERO support
-pip install 'openhcs[omero]'
-```
-
-**Option 2: Requirements File**
-```bash
-# Install all OMERO dependencies at once
-pip install -r requirements-omero.txt
-```
-
-This uses `--find-links` to point to Glencoe Software's wheel repository.
-
-**Option 3: Manual Installation**
-1. Visit [Glencoe Software's Ice Binaries](https://www.glencoesoftware.com/blog/2023/12/08/ice-binaries-for-omero.html)
-2. Download the appropriate `zeroc_ice-3.7.9-py3-none-any.whl` for your Python version
-3. Install the wheel:
-   ```bash
-   pip install /path/to/zeroc_ice-3.7.9-py3-none-any.whl
-   ```
-4. Then install openhcs with OMERO support:
-   ```bash
-   pip install 'openhcs[omero]'
-   ```
-
-**Note**: OMERO integration is supported on Python 3.11 and 3.12 only.
-
-**Optional Advanced Features**:
-```bash
-# GPU-accelerated Viterbi decoding for neurite tracing
-pip install git+https://github.com/trissim/torbi.git
-
-# JAX-based BaSiC illumination correction (optional, numpy/cupy versions included)
-pip install basicpy
-```
-
-### Development Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/trissim/openhcs.git
-cd openhcs
-
-# Install with all features for development
-pip install -e ".[all]"
-```
-
-### GPU Requirements
-
-GPU acceleration requires CUDA 12.x. For CPU-only operation:
-
-```bash
-# Skip GPU dependencies entirely
-export OPENHCS_CPU_ONLY=true
-pip install openhcs[gui]
-```
-
-### Launch Application
-
-After installing with `[gui]`, launch the desktop interface:
-
-```bash
-# Launch GUI (requires openhcs[gui])
+# Launch the application
 openhcs
-
-# Alternative commands
-openhcs-gui                    # Same as 'openhcs'
-python -m openhcs.pyqt_gui     # Module invocation
-
-# With debug logging
-openhcs --log-level DEBUG
-
-# Show help
-openhcs --help
 ```
 
-**Note**: The `openhcs` command requires GUI dependencies. If you installed headless (`pip install openhcs`), you'll get a helpful error message telling you to install `openhcs[gui]`.
-
-## Basic Usage
-
-### Getting Started
-
-OpenHCS provides a desktop interface for interactive pipeline creation and execution. The application guides users through microscopy data selection, pipeline configuration, and analysis execution.
-
 ```python
-from openhcs.core.orchestrator.pipeline_orchestrator import PipelineOrchestrator
-from openhcs.core.config import GlobalPipelineConfig
-
-# Initialize OpenHCS
-orchestrator = PipelineOrchestrator(
-    input_dir="path/to/microscopy/data",
-    global_config=GlobalPipelineConfig(num_workers=4)
-)
-
-# Initialize the orchestrator
-orchestrator.initialize()
-
-# Run complete analysis pipeline (requires pipeline definition)
-# Use the desktop interface to create pipelines interactively
-```
-
-### Pipeline Definition
-
-OpenHCS pipelines consist of FunctionStep objects that define processing operations. Each step specifies the function to execute, parameters, and data organization strategy:
-
-```python
+# Or use programmatically — real pipeline from a neuroscience experiment
+from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.constants.constants import VariableComponents
 from openhcs.processing.backends.processors.cupy_processor import (
     stack_percentile_normalize, tophat, create_composite
 )
-from openhcs.processing.backends.analysis.cell_counting_cupy import count_cells_single_channel
 from openhcs.processing.backends.pos_gen.ashlar_main_gpu import ashlar_compute_tile_positions_gpu
 from openhcs.processing.backends.assemblers.assemble_stack_cupy import assemble_stack_cupy
-from openhcs.constants.constants import VariableComponents
+from openhcs.processing.backends.analysis.cell_counting_cpu import count_cells_single_channel
 
-# Define processing pipeline
 steps = [
-    # Image preprocessing
-    FunctionStep(
-        func=[stack_percentile_normalize],
-        name="normalize",
-        variable_components=[VariableComponents.SITE]
-    ),
-    FunctionStep(
-        func=[(tophat, {'selem_radius': 25})],
-        name="enhance",
-        variable_components=[VariableComponents.SITE]
-    ),
+    FunctionStep(func=[
+        (stack_percentile_normalize, {'low_percentile': 1.0, 'high_percentile': 99.0}),
+        (tophat, {'selem_radius': 50, 'downsample_factor': 4})
+    ], name="preprocess", variable_components=[VariableComponents.SITE]),
 
-    # Position generation for stitching
-    FunctionStep(
-        func=[ashlar_compute_tile_positions_gpu],
-        name="positions",
-        variable_components=[VariableComponents.SITE]
-    ),
+    FunctionStep(func=[create_composite],
+                 name="composite", variable_components=[VariableComponents.CHANNEL]),
 
-    # Image assembly using calculated positions
-    FunctionStep(
-        func=[assemble_stack_cupy],
-        name="assemble",
-        variable_components=[VariableComponents.SITE]
-    ),
+    FunctionStep(func=[ashlar_compute_tile_positions_gpu],
+                 name="find_positions", variable_components=[VariableComponents.SITE]),
 
-    # Cell analysis
-    FunctionStep(
-        func=[count_cells_single_channel],
-        name="count_cells",
-        variable_components=[VariableComponents.SITE]
-    )
+    FunctionStep(func=[(assemble_stack_cupy, {'blend_method': 'fixed'})],
+                 name="assemble", variable_components=[VariableComponents.SITE],
+                 force_disk_output=True),
+
+    FunctionStep(func=[count_cells_single_channel],
+                 name="count_cells", variable_components=[VariableComponents.SITE]),
 ]
 
-# Complete working examples available in openhcs/debug/example_export.py
+orchestrator = PipelineOrchestrator("path/to/plate")
+orchestrator.initialize()
+compiled = orchestrator.compile_pipelines(steps)  # Validates everything first
+orchestrator.execute_compiled_plate(steps, compiled, max_workers=5)
 ```
 
-## Processing Functions
-
-OpenHCS provides access to over 574 image processing functions through automatic discovery from multiple libraries:
-
-### Image Processing
-The platform includes comprehensive image processing capabilities: normalization and denoising for preprocessing, Gaussian and median filtering for noise reduction, morphological operations including opening and closing, and projection operations for dimensionality reduction.
-
-### Cell Analysis
-Cell analysis functions support detection through blob detection algorithms (LOG, DOG, DOH), watershed segmentation, and threshold-based methods. GPU-accelerated watershed and region growing provide efficient segmentation. Measurement functions extract intensity, morphology, and texture features from segmented regions.
-
-### Stitching Algorithms
-OpenHCS implements GPU-accelerated versions of established stitching algorithms. MIST provides phase correlation with robust optimization for tile position calculation. Ashlar offers edge-based alignment with GPU acceleration. Assembly functions perform subpixel positioning and blending for final image reconstruction.
-
-### Neurite Analysis
-Specialized neurite analysis includes GPU-accelerated morphological thinning for skeletonization, SKAN-based neurite tracing with HMM models, and quantification of length, branching, and connectivity metrics.
-
-## Documentation
-
-Comprehensive documentation covers all aspects of OpenHCS architecture and usage:
-
-- **[Read the Docs](https://openhcs.readthedocs.io/)** - Complete API documentation, tutorials, and guides
-- **[Coverage Reports](https://trissim.github.io/openhcs/coverage/)** - Test coverage analysis
-- **[API Reference](https://openhcs.readthedocs.io/en/latest/api/)** - Detailed function and class documentation
-- **[User Guide](https://openhcs.readthedocs.io/en/latest/user_guide/)** - Step-by-step tutorials and examples
-
-### Key Documentation Sections
-- **Architecture**: [Pipeline System](https://openhcs.readthedocs.io/en/latest/architecture/pipeline-compilation-system.html) | [GPU Processing](https://openhcs.readthedocs.io/en/latest/architecture/gpu-resource-management.html) | [VFS](https://openhcs.readthedocs.io/en/latest/architecture/vfs-system.html)
-- **Getting Started**: [Installation](https://openhcs.readthedocs.io/en/latest/getting_started/installation.html) | [First Pipeline](https://openhcs.readthedocs.io/en/latest/getting_started/first_pipeline.html)
-- **Advanced Topics**: [GPU Optimization](https://openhcs.readthedocs.io/en/latest/guides/gpu_optimization.html) | [Large Datasets](https://openhcs.readthedocs.io/en/latest/guides/large_datasets.html)
-
-## Technical Architecture Deep Dive
-
-OpenHCS demonstrates several architectural patterns applicable beyond microscopy. The codebase is worth studying for its novel approaches to common software engineering challenges.
-
-### 5-Phase Pipeline Compilation System
-
-**Problem**: Traditional scientific software fails at runtime after hours of processing.
-
-**Solution**: Declarative compilation architecture that validates entire processing chains before execution.
-
-**Implementation**:
-```python
-# Compilation produces immutable execution contexts
-for well_id in wells_to_process:
-    context = self.create_context(well_id)
-
-    # 5-Phase Compilation - fails BEFORE execution starts
-    PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition)
-    PipelineCompiler.declare_zarr_stores_for_context(context, pipeline_definition, self)
-    PipelineCompiler.plan_materialization_flags_for_context(context, pipeline_definition, self)
-    PipelineCompiler.validate_memory_contracts_for_context(context, pipeline_definition, self)
-    PipelineCompiler.assign_gpu_resources_for_context(context)
-
-    context.freeze()  # Immutable - prevents state mutation during execution
-    compiled_contexts[well_id] = context
-```
-
-**Key Innovations**:
-- Immutable frozen contexts prevent state mutation bugs
-- Compile-time validation catches errors before execution
-- Separation of compilation and execution phases
-- GPU resource assignment at compile time, not runtime
-
-**See**: [Pipeline Compilation System](https://openhcs.readthedocs.io/en/latest/architecture/pipeline-compilation-system.html)
-
-### Dual-Axis Configuration Framework
-
-**Problem**: Configuration systems typically support either hierarchy (global → local) OR inheritance (class-based), not both.
-
-**Solution**: Dual-axis resolution combining context hierarchy with class inheritance (MRO).
-
-**Implementation**:
-```python
-# Lazy dataclass with __getattribute__ interception
-class LazyPipelineConfig(PipelineConfig):
-    def __getattribute__(self, name):
-        # Stage 1: Check instance attributes (user overrides)
-        # Stage 2: Check context stack (global → pipeline → step)
-        # Stage 3: Walk MRO for class-level defaults
-        # Stage 4: Return None if no value found
-```
-
-**Key Innovations**:
-- Preserves None vs concrete value distinction for proper inheritance
-- Contextvars-based context stacking for thread-safe resolution
-- MRO-based dual-axis resolution (context + class hierarchy)
-- Field-level inheritance (different fields can inherit from different sources)
-
-**Extracted as standalone library**: [hieraconf](https://github.com/trissim/hieraconf)
-
-**See**: [Configuration Framework](https://openhcs.readthedocs.io/en/latest/architecture/configuration_framework.html)
-
-### Cross-Window Live Updates
-
-**Problem**: Most GUI applications treat each window as isolated. Configuration changes require close-reopen cycles.
-
-**Solution**: Class-level registry of active form managers with Qt signals for cross-window updates.
-
-**Implementation**:
-```python
-# Class-level registry tracks all active form managers
-_active_form_managers = []
-
-# When a value changes in one window
-def _emit_cross_window_change(self, param_name: str, value: object):
-    field_path = f"{self.field_id}.{param_name}"
-    self.context_value_changed.emit(field_path, value,
-                                    self.object_instance, self.context_obj)
-
-# Other windows receive the signal and refresh
-def _on_cross_window_context_changed(self, field_path, new_value,
-                                     editing_object, context_object):
-    if not self._is_affected_by_context_change(editing_object, context_object):
-        return
-    self._schedule_cross_window_refresh()  # Debounced refresh
-```
-
-**Key Innovations**:
-- Live context collection from other open windows
-- Scope isolation (per-orchestrator) prevents cross-contamination
-- Debounced updates prevent excessive refreshes
-- Cascading placeholder refreshes (Global → Pipeline → Step)
-
-**See**: [Parameter Form Lifecycle](https://openhcs.readthedocs.io/en/latest/architecture/parameter_form_lifecycle.html)
-
-### Bidirectional UI-Code Interconversion
-
-**Problem**: GUI tools can export to code but can't re-import. You're forced to choose between GUI or code.
-
-**Solution**: Three-tier generation system with perfect round-trip integrity.
-
-**Implementation**:
-```python
-# Tier 1: Function Pattern Generation
-pattern = gaussian_filter(sigma=2.0, preserve_dtype=True)
-
-# Tier 2: Pipeline Step Generation (encapsulates Tier 1 imports)
-step_1 = FunctionStep(
-    func=(gaussian_filter, {'sigma': 2.0, 'preserve_dtype': True}),
-    name="gaussian_filter",
-    variable_components=[VariableComponents.PLATE]
-)
-
-# Tier 3: Orchestrator Config (encapsulates Tier 1 + 2 imports)
-global_config = GlobalPipelineConfig(num_workers=16)
-pipeline_data = {plate_path: [step_1, step_2, ...]}
-```
-
-**Key Innovations**:
-- Upward import encapsulation (each tier includes all lower tier imports)
-- AST-based code parsing for re-import
-- Lazy dataclass constructor patching preserves None vs concrete distinction
-- Complete executability (generated code runs without additional imports)
-
-**See**: [Code/UI Interconversion](https://openhcs.readthedocs.io/en/latest/architecture/code_ui_interconversion.html)
-
-### Additional Architectural Patterns
-
-**Process-Isolated Real-Time Visualization**: Napari integration via ZeroMQ eliminates Qt threading conflicts. Persistent viewers survive pipeline completion.
-
-**Automatic Function Discovery**: 574+ functions from multiple GPU libraries with contract analysis and type-safe integration.
-
-**Virtual File System**: Automatic backend switching (memory, disk, ZARR) for 100GB+ datasets with adaptive chunking.
-
-**Strict Memory Type Management**: Compile-time validation of memory type compatibility with automatic conversion between array types.
-
-**Evolution-Proof UI Generation**: Type-based form generation from Python annotations. Adapts automatically when signatures change.
-
-**See**: [Complete Architecture Documentation](https://openhcs.readthedocs.io/en/latest/architecture/)
-
-
-
-## Example Workflows
-
-Complete analysis workflows demonstrate OpenHCS capabilities:
+<details>
+<summary><b>📦 All installation options</b></summary>
 
 ```bash
-# View complete production examples
-git clone https://github.com/trissim/openhcs.git
-cat openhcs/examples/example_export.py
+pip install openhcs              # Headless (servers, CI)
+pip install openhcs[gui]         # Desktop GUI
+pip install openhcs[gui,napari]  # GUI + Napari viewer
+pip install openhcs[gui,viz]     # GUI + Napari + Fiji
+pip install openhcs[gui,viz,gpu] # Full installation
+pip install openhcs[gpu]         # Headless + GPU
+pip install openhcs[omero]       # OMERO integration
+pip install -e ".[all,dev]"      # Development (all features)
 ```
 
-Example workflows include preprocessing, stitching, and analysis steps with GPU acceleration, large dataset handling through ZARR compression, parallel processing with resource monitoring, and comprehensive configuration management.
+GPU requires CUDA 12.x. For CPU-only: `OPENHCS_CPU_ONLY=true pip install openhcs[gui]`
 
-## Who Should Use OpenHCS?
+</details>
 
-### For Biologists and Microscopists
+<details>
+<summary><b>🗄️ OMERO integration</b></summary>
 
-**Use OpenHCS if you**:
-- Process high-content screening data (96-well plates, multi-site, multi-channel)
-- Need to analyze 100GB+ datasets that break CellProfiler or ImageJ
-- Want compile-time validation to catch errors before hours of processing
-- Need GPU acceleration for faster analysis
-- Want to switch between GUI and code without losing work
-
-**Don't use OpenHCS if you**:
-- Have simple analysis needs (single images, basic measurements) - use ImageJ/Fiji
-- Need established community plugins - use CellProfiler
-- Don't have Python 3.11+ or can't install dependencies
-
-### For Software Engineers and Computer Scientists
-
-**Study OpenHCS if you're interested in**:
-- Novel configuration frameworks (dual-axis resolution, lazy dataclasses)
-- Compile-time validation for scientific pipelines
-- Cross-window live updates in GUI applications
-- Bidirectional UI-code conversion with round-trip integrity
-- Metaprogramming patterns (lazy dataclass factory, MRO-based resolution)
-
-**The codebase demonstrates**:
-- Contextvars-based context stacking for thread-safe resolution
-- Immutable frozen contexts preventing state mutation
-- Class-level registries for cross-window communication
-- AST-based code generation and parsing
-- Type-based UI generation from Python annotations
-
-**Extracted libraries**:
-- [hieraconf](https://github.com/trissim/hieraconf) - Hierarchical configuration framework
-
-**Potential research contributions**:
-- Configuration framework patterns (publishable in JOSS or PL conferences)
-- Compile-time validation for scientific workflows
-- Cross-window live updates architecture
-
-## Contributing
-
-OpenHCS welcomes contributions from the scientific computing community. The platform is actively developed for neuroscience research applications.
-
-### Development Setup
+OMERO requires `zeroc-ice` (not on PyPI). The custom `setup.py` installs it automatically:
 
 ```bash
-# Clone the repository
-git clone https://github.com/trissim/openhcs.git
-cd openhcs
+pip install 'openhcs[omero]'     # Auto-installs zeroc-ice
+```
 
-# Install in development mode with all features
+If that fails, alternatives:
+```bash
+python scripts/install_omero_deps.py   # Standalone script
+pip install -r requirements-omero.txt  # Requirements file
+```
+
+Supported on Python 3.11 and 3.12. See [Glencoe Software](https://www.glencoesoftware.com/blog/2023/12/08/ice-binaries-for-omero.html) for manual installation.
+
+</details>
+
+---
+
+## 📖 Documentation
+
+| | |
+|:---|:---|
+| 📘 **[Read the Docs](https://openhcs.readthedocs.io/)** | Full API docs, tutorials, guides |
+| 📊 **[Coverage Reports](https://trissim.github.io/openhcs/coverage/)** | Test coverage analysis |
+| 🏗️ **[Architecture](https://openhcs.readthedocs.io/en/latest/architecture/)** | Pipeline system · GPU management · VFS · Config framework |
+| 🎓 **[Getting Started](https://openhcs.readthedocs.io/en/latest/getting_started/)** | Installation · First pipeline |
+
+---
+
+## ⚙️ Architecture Highlights
+
+<details>
+<summary><b>5-Phase Pipeline Compilation</b> — catch errors before execution starts</summary>
+
+```
+Define → Compile → Freeze → Execute
+         ├─ 1. Path planning
+         ├─ 2. ZARR store declaration
+         ├─ 3. Materialization flags
+         ├─ 4. Memory contract validation
+         └─ 5. GPU assignment
+              → context.freeze()  # immutable
+```
+
+Pipelines are compiled for **every well** before any processing begins. Frozen contexts prevent state mutation during execution. [Read more →](https://openhcs.readthedocs.io/en/latest/architecture/pipeline-compilation-system.html)
+
+</details>
+
+<details>
+<summary><b>Dual-Axis Configuration</b> — context hierarchy × class MRO</summary>
+
+Resolution walks two axes simultaneously: the **context stack** (Global → Pipeline → Step) and the **class MRO** (inheritance chain). Built on `contextvars` for thread-safe, scope-isolated resolution. Preserves `None` vs concrete value distinction for proper field-level inheritance. Powered by `ObjectState`. [Read more →](https://openhcs.readthedocs.io/en/latest/architecture/configuration_framework.html)
+
+</details>
+
+<details>
+<summary><b>Bidirectional GUI ↔ Code</b> — code generation at any scope level</summary>
+
+Any window holding `ObjectState` objects can generate and re-import executable Python:
+
+```
+Function patterns · Individual steps · Pipeline configs · Full orchestrator scripts
+              ↕  generate / AST-parse back  ↕
+```
+
+Each scope encapsulates all lower-scope imports. Generated code is fully executable without additional setup. Edit in your IDE or external editor, save, and the GUI re-imports via AST parsing. Powered by `pycodify` + `python-introspect`. [Read more →](https://openhcs.readthedocs.io/en/latest/architecture/code_ui_interconversion.html)
+
+</details>
+
+<details>
+<summary><b>Cross-Window Live Updates</b> — class-level registry + Qt signals</summary>
+
+A class-level registry tracks all active form managers. When a value changes in any config window, Qt signals propagate the change to every affected window with debounced, scope-isolated refreshes. Global → Pipeline → Step cascading with per-orchestrator isolation. Powered by `PyQT-reactive`. [Read more →](https://openhcs.readthedocs.io/en/latest/architecture/parameter_form_lifecycle.html)
+
+</details>
+
+<details>
+<summary><b>More patterns</b> — PolyStore streaming, function discovery, memory types</summary>
+
+- **PolyStore Unified I/O**: Storage backends (disk, memory, ZARR) and streaming backends (Napari, Fiji) behind one API — viewers are just backends. Virtual workspace path translation, atomic writes, ROI extraction.
+- **Automatic Function Discovery**: 574+ functions with contract analysis and type-safe integration via `python-introspect` + `metaclass-registry`
+- **Memory Type Management**: Compile-time validation of array type compatibility with zero-copy conversion via `ArrayBridge`
+- **Custom Function Registration**: Any Python function decorated with `@numpy`, `@cupy`, `@pyclesperanto`, etc. is auto-integrated with contracts, UI forms, and the function registry
+- **Evolution-Proof UI**: Type-based form generation from Python annotations — adapts automatically when signatures change
+
+[Full architecture docs →](https://openhcs.readthedocs.io/en/latest/architecture/)
+
+</details>
+
+---
+
+## 🤝 Contributing
+
+```bash
+git clone https://github.com/OpenHCSDev/OpenHCS.git && cd OpenHCS
 pip install -e ".[all,dev]"
-
-# Run tests
 pytest tests/
-
-# Run OMERO integration tests (requires Docker)
-# See OMERO_TESTING_GUIDE.md for setup instructions
-cd openhcs/omero && docker-compose up -d && ./wait_for_omero.sh && cd ../..
-pytest tests/integration/test_main.py --it-microscopes=OMERO --it-backends=disk -v
 ```
 
-### Contribution Areas
-- **Microscope Formats**: Add support for additional imaging systems
-- **Processing Functions**: Contribute specialized analysis algorithms
-- **GPU Backends**: Extend support for new GPU computing libraries
-- **Documentation**: Improve guides and examples
+**Contribution areas**: microscope formats · processing functions · GPU backends · documentation
 
-## License
+---
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## 📄 License
 
-## Acknowledgments
+MIT — see [LICENSE](LICENSE).
 
-OpenHCS builds upon EZStitcher and incorporates algorithms and concepts from established image analysis libraries including Ashlar for image stitching algorithms, MIST for phase correlation methods, pyclesperanto for GPU-accelerated image processing, and scikit-image for comprehensive image analysis tools.
+## 🙏 Acknowledgments
+
+OpenHCS evolved from [EZStitcher](https://github.com/OpenHCSDev/ezstitcher) and builds on [Ashlar](https://github.com/labsyspharm/ashlar) (stitching), [MIST](https://github.com/usnistgov/MIST) (phase correlation), [pyclesperanto](https://github.com/clEsperanto/pyclesperanto_prototype) (GPU image processing), and [scikit-image](https://scikit-image.org/) (image analysis).

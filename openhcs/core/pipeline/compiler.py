@@ -238,6 +238,7 @@ class AxisCompilationRequest:
     step_state_map: Mapping[int, "ObjectState"]
     step_snapshots: tuple[StepSnapshot, ...]
     analysis_consolidation_config: Any
+    plate_metadata_config: Any
     auto_add_output_plate: Any
     global_step_axis_filters: dict[int, dict[str, Any]]
     enable_visualizer_override: bool
@@ -249,6 +250,7 @@ class AxisCompilationRequest:
         context.analysis_consolidation_config = (
             self.analysis_consolidation_config
         )
+        context.plate_metadata_config = self.plate_metadata_config
         context.auto_add_output_plate_to_plate_manager = (
             self.auto_add_output_plate
         )
@@ -1474,7 +1476,7 @@ class PipelineCompiler:
     @staticmethod
     def _capture_pipeline_config(
         pipeline_config_state: "ObjectState",
-    ) -> tuple[Any, Any]:
+    ) -> tuple[Any, Any, Any, int]:
         from objectstate.lazy_factory import LazyDataclass
 
         lazy_analysis_config = pipeline_config_state.get_saved_resolved_value(
@@ -1488,8 +1490,12 @@ class PipelineCompiler:
         return (
             analysis_consolidation_config,
             pipeline_config_state.get_saved_resolved_value(
+                "plate_metadata_config",
+            ),
+            pipeline_config_state.get_saved_resolved_value(
                 "auto_add_output_plate_to_plate_manager",
             ),
+            pipeline_config_state.get_saved_resolved_value("num_workers"),
         )
 
     @staticmethod
@@ -1748,6 +1754,23 @@ class PipelineCompiler:
         )
 
     @staticmethod
+    def _calculate_worker_assignments(
+        wells: list[str],
+        num_workers: int,
+    ) -> dict[str, list[str]]:
+        """Assign compiled context keys to stable worker slots."""
+        if num_workers <= 0:
+            raise ValueError(f"num_workers must be >= 1, got {num_workers}")
+        if len(set(wells)) != len(wells):
+            raise ValueError(f"Duplicate well IDs: {wells}")
+
+        slots = {f"worker_{idx}": [] for idx in range(num_workers)}
+        for idx, axis_id in enumerate(sorted(wells)):
+            slot = f"worker_{idx % num_workers}"
+            slots[slot].append(axis_id)
+        return {slot: owned for slot, owned in slots.items() if owned}
+
+    @staticmethod
     def compile_pipelines(
         orchestrator,
         pipeline_definition: List[AbstractStep],
@@ -1789,6 +1812,7 @@ class PipelineCompiler:
                 return {
                     "pipeline_definition": pipeline_definition,
                     "compiled_contexts": {},
+                    "worker_assignments": {},
                 }
 
             logger.info(
@@ -1810,10 +1834,14 @@ class PipelineCompiler:
                 return {
                     "pipeline_definition": pipeline_definition,
                     "compiled_contexts": {},
+                    "worker_assignments": {},
                 }
-            analysis_config, auto_add_output_plate = PipelineCompiler._capture_pipeline_config(
-                pipeline_config_state
-            )
+            (
+                analysis_config,
+                plate_metadata_config,
+                auto_add_output_plate,
+                num_workers,
+            ) = PipelineCompiler._capture_pipeline_config(pipeline_config_state)
             PipelineCompiler.validate_backend_compatibility(orchestrator)
             global_step_axis_filters = PipelineCompiler._resolve_global_step_axis_filters(
                 orchestrator,
@@ -1825,6 +1853,7 @@ class PipelineCompiler:
                 step_state_map=pipeline_inputs.step_state_map,
                 step_snapshots=pipeline_inputs.snapshots,
                 analysis_consolidation_config=analysis_config,
+                plate_metadata_config=plate_metadata_config,
                 auto_add_output_plate=auto_add_output_plate,
                 global_step_axis_filters=global_step_axis_filters,
                 enable_visualizer_override=enable_visualizer_override,
@@ -1833,6 +1862,10 @@ class PipelineCompiler:
             compiled_contexts = PipelineCompiler._compile_axis_values(
                 axis_request,
                 axis_values_to_process,
+            )
+            worker_assignments = PipelineCompiler._calculate_worker_assignments(
+                list(compiled_contexts.keys()),
+                num_workers,
             )
             PipelineCompiler._finalize_compilation(
                 orchestrator,

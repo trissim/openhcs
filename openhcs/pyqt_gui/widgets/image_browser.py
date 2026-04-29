@@ -127,8 +127,9 @@ class ImageBrowserWidget(QWidget):
             parent_state=parent_state,
         )
         # Register in ObjectStateRegistry for cross-window inheritance
+        # Use _skip_snapshot=True since this is hidden machinery, not user-facing state
         if self.scope_id:
-            ObjectStateRegistry.register(self.state)
+            ObjectStateRegistry.register(self.state, _skip_snapshot=True)
 
         # TabbedFormWidget will be created lazily in _create_right_panel
         # to avoid heavy initialization during widget construction.
@@ -558,8 +559,8 @@ class ImageBrowserWidget(QWidget):
             for metadata_key in self.metadata_keys:
                 raw_value = metadata.get(metadata_key)
                 if raw_value is not None:
-                    display_value = self._get_metadata_display_value_impl(
-                        metadata_key, str(raw_value), (metadata_key, str(raw_value))
+                    display_value = self._get_metadata_display_value(
+                        metadata_key, raw_value
                     )
                     metadata[f"_display_{metadata_key}"] = display_value
 

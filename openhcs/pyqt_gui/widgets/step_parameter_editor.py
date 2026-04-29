@@ -648,7 +648,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
             python_code = generate_python_source(
                 Assignment("step", current_step),
                 header="# Function Step",
-                clean_mode=False,
+                clean_mode=True,
             )
 
             # Launch editor
@@ -663,6 +663,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
                 callback=self._handle_edited_step_code,
                 use_external=use_external,
                 code_type="step",
+                code_data={"clean_mode": True},
             )
 
         except Exception as e:
