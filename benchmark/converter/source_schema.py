@@ -378,6 +378,7 @@ class NamesAndTypesAssignmentBlockStrategy(ABC, metaclass=AutoRegisterMeta):
     block_start_name: ClassVar[str | None] = None
     exact_count: ClassVar[int | None] = None
     minimum_count: ClassVar[int | None] = None
+    require_block_source_alias: ClassVar[bool] = False
 
     @classmethod
     def blocks_for(
@@ -401,12 +402,26 @@ class NamesAndTypesAssignmentBlockStrategy(ABC, metaclass=AutoRegisterMeta):
         )
         exact_count = type(self).exact_count
         if exact_count is not None:
-            return count == exact_count
+            return self._matches_blocks(settings, count == exact_count)
         minimum_count = type(self).minimum_count
-        if minimum_count is not None:
-            return count >= minimum_count
-        raise TypeError(
-            f"{type(self).__name__} must define exact_count or minimum_count."
+        if minimum_count is None:
+            raise TypeError(
+                f"{type(self).__name__} must define exact_count or minimum_count."
+            )
+        return self._matches_blocks(settings, count >= minimum_count)
+
+    def _matches_blocks(
+        self,
+        settings: Sequence[ModuleSetting],
+        count_matches: bool,
+    ) -> bool:
+        if not count_matches:
+            return False
+        if not type(self).require_block_source_alias:
+            return True
+        return all(
+            _block_declares_source_alias(block)
+            for block in self.blocks(settings)
         )
 
     def blocks(
@@ -427,7 +442,7 @@ class RepeatedAssignmentBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
     """NamesAndTypes stores each assignment as a full repeated setting block."""
 
     strategy_name = "repeated_assignment"
-    priority = 10
+    priority = 20
     match_setting = "Assign a name to"
     block_start_name = "Assign a name to"
     minimum_count = 2
@@ -437,17 +452,18 @@ class RepeatedRuleCriteriaBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
     """NamesAndTypes stores a global preamble followed by repeated rule rows."""
 
     strategy_name = "repeated_rule_criteria"
-    priority = 20
+    priority = 10
     match_setting = "Select the rule criteria"
     block_start_name = "Select the rule criteria"
     minimum_count = 2
+    require_block_source_alias = True
 
 
 class SingleAssignmentBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
     """NamesAndTypes stores one full assignment block."""
 
     strategy_name = "single_assignment"
-    priority = 30
+    priority = 40
     match_setting = "Assign a name to"
     block_start_name = "Assign a name to"
     exact_count = 1
@@ -457,10 +473,11 @@ class SingleRuleCriteriaBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
     """NamesAndTypes stores one assignment row starting at rule criteria."""
 
     strategy_name = "single_rule_criteria"
-    priority = 40
+    priority = 30
     match_setting = "Select the rule criteria"
     block_start_name = "Select the rule criteria"
     exact_count = 1
+    require_block_source_alias = True
 
 
 def _names_and_types_blocks(
@@ -480,6 +497,13 @@ def _required_strategy_attr[T](value: T | None, name: str) -> T:
     if value is None:
         raise TypeError(f"NamesAndTypes assignment strategy must define {name}.")
     return value
+
+
+def _block_declares_source_alias(block: Sequence[ModuleSetting]) -> bool:
+    return bool(
+        block_setting_value(block, "Name to assign these images", default="")
+        or block_setting_value(block, "Name to assign these objects", default="")
+    )
 
 
 def _load_images_blocks(

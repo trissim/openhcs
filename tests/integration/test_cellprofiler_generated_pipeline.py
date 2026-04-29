@@ -23,7 +23,12 @@ from openhcs.core.config import (
     VFSConfig,
 )
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-from openhcs.core.source_bindings import ComponentSelector, SourceBindingOrigin
+from openhcs.core.source_bindings import (
+    ComponentSelector,
+    SourceBindingOrigin,
+    SourceFilterMatchType,
+    SourceFilterSubject,
+)
 from openhcs.core.source_schema_workspace import materialize_source_schema_workspace
 from openhcs.tests.generators.generate_synthetic_data import (
     SyntheticMicroscopyGenerator,
@@ -587,6 +592,88 @@ def test_official_example_cometassay_cppipe_executes_mask_geometry(
     overlay = tifffile.imread(image_outputs[0])
     assert overlay.shape[:2] == (1040, 1388)
     assert overlay.ndim == 3
+
+
+def test_official_example_illumination_example1_uses_rule_row_binding(
+    tmp_path: Path,
+) -> None:
+    examples_root = _official_cellprofiler_examples_root()
+    cppipe_path = (
+        examples_root
+        / "CellProfiler3Pipelines"
+        / "ExampleIlluminationCorrection_Example1_AllMethod.cppipe"
+    )
+    source_root = examples_root / "ExampleIlluminationCorrection"
+    if not cppipe_path.exists() or not source_root.exists():
+        pytest.skip(
+            "Official CellProfiler ExampleIlluminationCorrection files are not "
+            f"available. Set CELLPROFILER_EXAMPLES_ROOT to a local examples "
+            f"checkout; looked under {examples_root}."
+        )
+
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / "generated_official_illumination_pipeline.py",
+    )
+    orig_green = prepared.source_schema.assignment_for_alias("OrigGreen")
+    assert orig_green is not None
+    assert prepared.source_schema.assignment_for_alias("DNA") is None
+    assert orig_green.origin is SourceBindingOrigin.PIPELINE_START
+    assert orig_green.selector.components == ()
+    assert len(orig_green.selector.filters) == 1
+    assert orig_green.selector.filters[0].subject is SourceFilterSubject.FILE
+    assert (
+        orig_green.selector.filters[0].match_type
+        is SourceFilterMatchType.CONTAINS
+    )
+    assert orig_green.selector.filters[0].value == "AS_09047_"
+
+    workspace = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "official_illumination_openhcs_workspace",
+        prepared.source_schema,
+    )
+
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=True,
+        microscope=Microscope.AUTO,
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            output_dir_suffix="_generated_cppipe",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    orchestrator = PipelineOrchestrator(
+        workspace.workspace_root,
+        pipeline_config=pipeline_config,
+    )
+    orchestrator.initialize()
+
+    execution = execute_pipeline_direct(
+        orchestrator,
+        prepared.pipeline,
+        well_filter=["A01"],
+    )
+
+    assert all(
+        result.is_success()
+        for result in execution.execution_results.values()
+    )
+    image_outputs = sorted(
+        (_generated_output_root(workspace.workspace_root) / "images").glob("*.TIF")
+    )
+    assert [path.name for path in image_outputs] == [
+        "A01_s001_w1_z001_t001.TIF",
+    ]
+    corrected = tifffile.imread(image_outputs[0])
+    assert corrected.ndim == 2
+    assert corrected.shape[0] > 0
+    assert corrected.shape[1] > 0
 
 
 def test_official_example_woundhealing_cppipe_executes_disk_outputs(

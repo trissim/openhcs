@@ -660,6 +660,40 @@ def test_compile_image_schema_preserves_real_names_and_types_block_order():
     assert schema.match_plan.dimensions[1].field_for_alias("Actin") == "site"
 
 
+def test_compile_image_schema_uses_rule_row_alias_over_stale_preamble_alias():
+    names_and_types_module = _module_with_records(
+        3,
+        "NamesAndTypes",
+        [
+            ("Assign a name to", "Images matching rules"),
+            ("Select the image type", "Grayscale image"),
+            ("Name to assign these images", "DNA"),
+            ("Image set matching method", "Order"),
+            ("Assignments count", "1"),
+            ("Single images count", "0"),
+            ("Select the rule criteria", 'and (file does contain "AS_09047_")'),
+            ("Name to assign these images", "OrigGreen"),
+            ("Name to assign these objects", "Cell"),
+            ("Select the image type", "Color image"),
+        ],
+    )
+
+    schema = compile_image_schema([names_and_types_module])
+
+    assert schema.assignment_for_alias("DNA") is None
+    orig_green = schema.assignment_for_alias("OrigGreen")
+    assert orig_green is not None
+    assert orig_green.image_type == "Color image"
+    assert orig_green.origin is SourceBindingOrigin.PIPELINE_START
+    assert len(orig_green.selector.filters) == 1
+    assert orig_green.selector.filters[0].subject is SourceFilterSubject.FILE
+    assert (
+        orig_green.selector.filters[0].match_type
+        is SourceFilterMatchType.CONTAINS
+    )
+    assert orig_green.selector.filters[0].value == "AS_09047_"
+
+
 def test_compile_image_schema_supports_order_based_matching():
     names_and_types_module = _module_with_records(
         3,
