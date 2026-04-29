@@ -10,7 +10,6 @@ from openhcs.core.aligned_image_payload import (
     payload_slice_count,
     payload_slices_for_alignment,
 )
-from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
 from benchmark.cellprofiler_compat.module_execution import (
     CellProfilerFunctionContractMetadata,
     CellProfilerFunctionContractExecutor,
@@ -39,6 +38,7 @@ from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
 from benchmark.cellprofiler_library.functions.tile import tile
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.config import DtypeConfig
+from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.runtime_values import MeasurementTable
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
@@ -200,7 +200,7 @@ def test_module_executor_rewraps_single_image_output_for_openhcs_main_flow() -> 
         {"OrigColor": _FakeRuntimeImage(color_slice, source_image_name="OrigColor")}
     )
     executor = CellProfilerModuleExecutor(
-        CellProfilerModuleContract(
+        ModuleArtifactContract(
             module_name="ColorToGray",
             inputs=(ArtifactSpec("OrigColor", ArtifactKind.IMAGE),),
             outputs=(ArtifactSpec("OrigGray", ArtifactKind.IMAGE),),
@@ -275,7 +275,7 @@ def test_cellprofiler_module_executor_normalizes_integer_image_inputs() -> None:
         return image
 
     executor = CellProfilerModuleExecutor(
-        CellProfilerModuleContract(
+        ModuleArtifactContract(
             module_name="Opening",
             inputs=(ArtifactSpec(source_image, ArtifactKind.IMAGE),),
             outputs=(ArtifactSpec("Normalized", ArtifactKind.IMAGE),),
@@ -559,7 +559,7 @@ def test_module_executor_runs_image_measurements_per_declared_image() -> None:
         }
     )
     executor = CellProfilerModuleExecutor(
-        CellProfilerModuleContract(
+        ModuleArtifactContract(
             module_name="MeasureImageQuality",
             inputs=(
                 ArtifactSpec("OrigBlue", ArtifactKind.IMAGE),
@@ -607,7 +607,7 @@ def test_module_executor_preserves_composed_image_measurements() -> None:
         }
     )
     executor = CellProfilerModuleExecutor(
-        CellProfilerModuleContract(
+        ModuleArtifactContract(
             module_name="MeasureColocalization",
             inputs=(
                 ArtifactSpec("OrigBlue", ArtifactKind.IMAGE),
@@ -654,7 +654,7 @@ def test_module_executor_records_multiple_declared_object_outputs() -> None:
         }
     )
     executor = CellProfilerModuleExecutor(
-        CellProfilerModuleContract(
+        ModuleArtifactContract(
             module_name="UntangleWorms",
             inputs=(ArtifactSpec("WormBinary", ArtifactKind.IMAGE),),
             outputs=(

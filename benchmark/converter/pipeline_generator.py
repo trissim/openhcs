@@ -234,10 +234,10 @@ from openhcs.constants.input_source import InputSource
             imports += "from benchmark.cellprofiler_library import require_function\n\n"
             imports += (
                 "from benchmark.cellprofiler_compat import (\n"
-                "    CellProfilerModuleContract,\n"
                 "    CellProfilerModuleExecutor,\n"
                 "    cellprofiler_runtime_adapter_factory,\n"
                 ")\n"
+                "from openhcs.core.module_artifact_contract import ModuleArtifactContract\n"
                 "from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs\n"
                 "from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract\n"
                 "from openhcs.core.runtime_adapters import runtime_adapter\n\n"

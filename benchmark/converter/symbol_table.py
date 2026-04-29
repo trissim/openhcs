@@ -19,7 +19,6 @@ from typing import ClassVar, Iterable, Mapping
 from metaclass_registry import AutoRegisterMeta
 
 from benchmark.cellprofiler_library import canonical_module_name
-from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
 from benchmark.cellprofiler_semantics.crop import (
     CropShape,
 )
@@ -31,6 +30,7 @@ from openhcs.core.artifacts import (
     ArtifactKind,
     ArtifactSpec,
 )
+from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline_image_schema import CellProfilerImageSchema
 from openhcs.core.source_bindings import (
     ComponentSelector,
@@ -228,8 +228,8 @@ class ModuleArtifactContracts:
         )
 
     @property
-    def module_contract(self) -> CellProfilerModuleContract:
-        return CellProfilerModuleContract(
+    def module_contract(self) -> ModuleArtifactContract:
+        return ModuleArtifactContract(
             module_name=self.module_name,
             inputs=self.inputs,
             runtime_artifact_inputs=self.runtime_artifact_inputs,
@@ -493,7 +493,7 @@ def module_contract_literal(contract: ModuleArtifactContracts) -> str:
     if len(contract.runtime_artifact_inputs) == 1:
         runtime_input_specs += ","
     return (
-        "CellProfilerModuleContract("
+        "ModuleArtifactContract("
         f"module_name={contract.module_name!r}, "
         f"inputs=({input_specs}), "
         f"runtime_artifact_inputs=({runtime_input_specs}), "

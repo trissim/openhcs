@@ -2,7 +2,6 @@ from pathlib import Path
 
 import pytest
 
-from benchmark.cellprofiler_compat import CellProfilerModuleContract
 from benchmark.converter.parser import CPPipeParser, ModuleBlock, ModuleSetting
 from benchmark.converter.pipeline_generator import PipelineGenerator
 from benchmark.converter.runtime_pipeline import partition_cppipe_modules
@@ -11,6 +10,7 @@ from benchmark.converter.symbol_table import (
     CellProfilerSymbolTable,
 )
 from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.module_artifact_contract import ModuleArtifactContract
 
 
 def _module(
@@ -128,7 +128,7 @@ def test_cellprofiler_symbol_table_compiles_object_measurement_graph():
     ) == ("OrigBlue",)
     assert primary_contract.runtime_artifact_inputs == ()
     assert primary_contract.outputs[0].kind is ArtifactKind.OBJECT_LABELS
-    assert isinstance(primary_contract.module_contract, CellProfilerModuleContract)
+    assert isinstance(primary_contract.module_contract, ModuleArtifactContract)
 
     secondary_contract = table.contracts_by_module_num[2]
     assert [spec.name for spec in secondary_contract.outputs] == ["Cells"]
@@ -473,7 +473,7 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
 
     assert len(generated.artifact_contracts) == 2
     assert "CELLPROFILER_MODULE_CONTRACTS" in generated.code
-    assert "CellProfilerModuleContract(" in generated.code
+    assert "ModuleArtifactContract(" in generated.code
     assert "source_bindings=StepSourceBindingsConfig(" in generated.code
     assert "runtime_artifact_inputs=(ArtifactSpec('Nuclei'" in generated.code
     assert "identify_primary_objects_1 = require_function" in generated.code

@@ -6,7 +6,6 @@ import numpy as np
 from scipy.io import savemat
 
 from benchmark.cellprofiler_compat import (
-    CellProfilerModuleContract,
     CellProfilerModuleExecutor,
     CellProfilerRelationshipPayload,
     CellProfilerRuntimeAdapter,
@@ -18,6 +17,7 @@ from benchmark.cellprofiler_compat.measurement_lookup import (
 from benchmark.cellprofiler_library import get_function
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, ArtifactSpec
 from openhcs.core.config import DtypeConfig
+from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
@@ -190,7 +190,7 @@ def _executor(
     inputs=(ArtifactSpec(DNA_IMAGE, ArtifactKind.IMAGE),),
 ):
     return CellProfilerModuleExecutor(
-        CellProfilerModuleContract(
+        ModuleArtifactContract(
             module_name=module_name,
             inputs=inputs,
             runtime_artifact_inputs=runtime_artifact_inputs,

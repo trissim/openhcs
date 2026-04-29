@@ -35,6 +35,7 @@ from openhcs.core.image_shapes import (
     is_image_stack,
 )
 from openhcs.core.image_stack_layout import ImageStackLayout
+from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline.function_contracts import special_input_names_from_callable
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest
 from openhcs.core.runtime_semantics import FieldSpec
@@ -47,7 +48,6 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 )
 
 from benchmark.cellprofiler_library import canonical_module_name
-from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
 from benchmark.cellprofiler_compat.measurement_lookup import (
     annotate_measurement_row_object,
     count_feature_object_name,
@@ -107,13 +107,13 @@ def cellprofiler_runtime_adapter_factory(
 class CellProfilerModuleExecutor:
     """Execute one generated CellProfiler module against a typed runtime adapter."""
 
-    contract: CellProfilerModuleContract
+    contract: ModuleArtifactContract
 
     def __post_init__(self) -> None:
-        if not isinstance(self.contract, CellProfilerModuleContract):
+        if not isinstance(self.contract, ModuleArtifactContract):
             raise TypeError(
                 "CellProfilerModuleExecutor.contract must be "
-                "CellProfilerModuleContract, got "
+                "ModuleArtifactContract, got "
                 f"{type(self.contract).__name__}."
             )
 
