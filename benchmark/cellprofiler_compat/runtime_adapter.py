@@ -16,7 +16,7 @@ from benchmark.cellprofiler_compat.measurement_lookup import (
     measurement_row_object_name,
     measurement_rows,
 )
-from openhcs.constants.constants import Backend
+from openhcs.constants.constants import Backend, FileFormat
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.image_stack_layout import ImageStackLayout
@@ -751,6 +751,28 @@ class MatlabMatrixSourceFileLoader(PipelineStartSourceFileLoader):
             f"MATLAB source file {path!r} contains multiple numeric arrays "
             f"{names!r}; expected exactly one payload or one 'Image' payload."
         )
+
+
+class NumpyArraySourceFileLoader(PipelineStartSourceFileLoader):
+    """Load NumPy array image sources such as saved illumination functions."""
+
+    loader_key = "numpy_array"
+
+    def accepts_path(self, path: str) -> bool:
+        return Path(path).suffix.lower() in FileFormat.NUMPY.value
+
+    def load_slices(self, request: PipelineStartSourceLoadRequest) -> list[Any]:
+        return [self._load_array(path) for path in request.selected_paths]
+
+    def _load_array(self, path: str) -> Any:
+        import numpy as np
+
+        payload = np.load(path)
+        if not _is_numeric_array_payload(payload):
+            raise RuntimeError(
+                f"NumPy source file {path!r} does not contain a numeric image array."
+            )
+        return payload
 
 
 def _binding_requires_selector(binding: NamedSourceBinding) -> bool:

@@ -65,6 +65,31 @@ def test_materialize_source_schema_workspace_projects_cellprofiler_sources(
     assert not (source_root / "openhcs_metadata.json").exists()
 
 
+def test_materialize_source_schema_workspace_derives_well_match_field(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "cellprofiler_vitra_source"
+    source_root.mkdir()
+    _write_image(source_root / "Channel 1-01-A-01-00.tif", value=1)
+    _write_image(source_root / "Channel 2-01-A-01-00.tif", value=2)
+    workspace_root = tmp_path / "openhcs_workspace"
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        workspace_root,
+        _well_row_column_match_source_schema(),
+    )
+
+    metadata = json.loads(result.metadata_path.read_text())
+    primary = metadata["subdirectories"]["."]
+
+    assert set(primary["workspace_mapping"]) == {
+        "A01_s001_w1_z001_t001.tif",
+        "A01_s001_w2_z001_t001.tif",
+    }
+    assert primary["wells"] == {"A01": None}
+
+
 def _example_sbs_source_schema() -> CellProfilerImageSchema:
     metadata_rule = MetadataExtractionRule(
         source=MetadataSource.FILE_NAME,
@@ -129,6 +154,60 @@ def _example_sbs_source_schema() -> CellProfilerImageSchema:
                     fields=(
                         SourceBindingMatchField("rawGFP", "WellColumn"),
                         SourceBindingMatchField("rawDNA", "WellColumn"),
+                    )
+                ),
+            ),
+        ),
+    )
+
+
+def _well_row_column_match_source_schema() -> CellProfilerImageSchema:
+    metadata_rule = MetadataExtractionRule(
+        source=MetadataSource.FILE_NAME,
+        pattern=(
+            r"^Channel (?P<ChannelNumber>[0-9])-[0-9]{2}-"
+            r"(?P<WellRow>[A-P])-(?P<WellCol>[0-9]{2})"
+        ),
+    )
+    return CellProfilerImageSchema(
+        metadata_rules=(metadata_rule,),
+        assignments_by_alias={
+            "OrigProtein": ImageAssignment(
+                alias="OrigProtein",
+                image_type="Grayscale image",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "Channel 1",
+                        ),
+                    )
+                ),
+                origin=SourceBindingOrigin.PIPELINE_START,
+            ),
+            "OrigDNA": ImageAssignment(
+                alias="OrigDNA",
+                image_type="Color image",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "Channel 2",
+                        ),
+                    )
+                ),
+                origin=SourceBindingOrigin.PIPELINE_START,
+            ),
+        },
+        match_plan=SourceBindingMatchPlan(
+            method=SourceBindingMatchMethod.METADATA,
+            dimensions=(
+                SourceBindingMatchDimension(
+                    fields=(
+                        SourceBindingMatchField("OrigProtein", "Well"),
+                        SourceBindingMatchField("OrigDNA", "Well"),
                     )
                 ),
             ),

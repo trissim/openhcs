@@ -102,6 +102,7 @@ class ComponentProjection(ABC, metaclass=AutoRegisterMeta):
     __registry_key__ = "__name__"
     component: ClassVar[AllComponents | None] = None
     priority: ClassVar[int] = 100
+    metadata_derived: ClassVar[bool] = True
 
     @classmethod
     def resolve(
@@ -127,6 +128,29 @@ class ComponentProjection(ABC, metaclass=AutoRegisterMeta):
             f"Could not project source metadata fields {sorted(metadata)} "
             f"onto OpenHCS component {component.value!r}."
         )
+
+    @classmethod
+    def resolve_from_metadata(
+        cls,
+        component: AllComponents,
+        metadata: Mapping[str, str],
+    ) -> str | None:
+        projection_types = sorted(
+            (
+                projection_type
+                for projection_type in cls.__registry__.values()
+                if (
+                    projection_type.component is component
+                    and projection_type.metadata_derived
+                )
+            ),
+            key=lambda projection_type: projection_type.priority,
+        )
+        for projection_type in projection_types:
+            value = projection_type().value(metadata, 0)
+            if value is not None:
+                return value
+        return None
 
     @abstractmethod
     def value(
@@ -168,6 +192,7 @@ class WellRowColumnMetadataProjection(ComponentProjection):
 class OrdinalWellProjection(ComponentProjection):
     component = AllComponents.WELL
     priority = 1000
+    metadata_derived = False
 
     def value(
         self,
@@ -204,6 +229,7 @@ class ImageNumberSiteProjection(ComponentProjection):
 class OrdinalSiteProjection(ComponentProjection):
     component = AllComponents.SITE
     priority = 1000
+    metadata_derived = False
 
     def value(
         self,
@@ -263,7 +289,7 @@ class MetadataImageSetAssembler(ImageSetAssembler):
                     field = dimension.field_for_alias(alias)
                     if field is None:
                         continue
-                    value = candidate.metadata.get(field)
+                    value = _image_set_match_value(candidate.metadata, field)
                     if value is None:
                         raise ValueError(
                             f"Source candidate {candidate.relative_path!r} for alias "
@@ -317,7 +343,7 @@ class OrderImageSetAssembler(ImageSetAssembler):
                 ImageSetRecord(
                     index=index,
                     candidates_by_alias=candidates,
-                    metadata=_merged_candidate_metadata(candidates.values()),
+                    metadata=_merged_image_set_metadata({}, candidates.values()),
                 )
             )
         return tuple(image_sets)
@@ -514,18 +540,75 @@ def _merged_image_set_metadata(
     group_metadata: Mapping[str, str],
     candidates: Iterable[SourceSchemaCandidate],
 ) -> Mapping[str, str]:
+    candidate_tuple = tuple(candidates)
     merged = dict(group_metadata)
-    merge_source_metadata(merged, _merged_candidate_metadata(candidates), path="image_set")
+    merge_source_metadata(
+        merged,
+        _shared_candidate_metadata(candidate_tuple),
+        path="image_set",
+    )
+    merge_source_metadata(
+        merged,
+        _projected_candidate_components(merged, candidate_tuple),
+        path="image_set",
+    )
     return MappingProxyType(merged)
 
 
-def _merged_candidate_metadata(
-    candidates: Iterable[SourceSchemaCandidate],
+def _shared_candidate_metadata(
+    candidates: tuple[SourceSchemaCandidate, ...],
 ) -> Mapping[str, str]:
-    merged: dict[str, str] = {}
+    value_sets_by_key: dict[str, set[str]] = {}
+    counts_by_key: dict[str, int] = {}
     for candidate in candidates:
-        merge_source_metadata(merged, candidate.metadata, path=candidate.relative_path)
-    return MappingProxyType(merged)
+        for key, value in candidate.metadata.items():
+            value_sets_by_key.setdefault(key, set()).add(str(value))
+            counts_by_key[key] = counts_by_key.get(key, 0) + 1
+    candidate_count = len(candidates)
+    return MappingProxyType(
+        {
+            key: next(iter(values))
+            for key, values in value_sets_by_key.items()
+            if counts_by_key[key] == candidate_count and len(values) == 1
+        }
+    )
+
+
+def _projected_candidate_components(
+    group_metadata: Mapping[str, str],
+    candidates: tuple[SourceSchemaCandidate, ...],
+) -> Mapping[str, str]:
+    projected: dict[str, str] = {}
+    for component in AllComponents:
+        values = {
+            value
+            for candidate in candidates
+            if (
+                value := ComponentProjection.resolve_from_metadata(
+                    component,
+                    candidate.metadata,
+                )
+            )
+            is not None
+        }
+        if len(values) > 1:
+            raise ValueError(
+                f"Source image set has conflicting {component.value!r} component "
+                f"values {sorted(values)!r}."
+            )
+        if not values:
+            continue
+        value = next(iter(values))
+        existing = _metadata_value(group_metadata, _normalized_metadata_key(component.value))
+        if existing is not None:
+            if existing != value:
+                raise ValueError(
+                    f"Source image set has conflicting {component.value!r} component "
+                    f"values {existing!r} and {value!r}."
+                )
+            continue
+        projected[component.value] = value
+    return MappingProxyType(projected)
 
 
 def _primary_workspace_mappings(
@@ -679,6 +762,27 @@ def _metadata_value(metadata: Mapping[str, str], normalized_key: str) -> str | N
     for key, value in metadata.items():
         if _normalized_metadata_key(key) == normalized_key:
             return value
+    return None
+
+
+def _image_set_match_value(
+    metadata: Mapping[str, str],
+    field: str,
+) -> str | None:
+    value = _metadata_value(metadata, _normalized_metadata_key(field))
+    if value is not None:
+        return value
+    component = _component_for_match_field(field)
+    if component is None:
+        return None
+    return ComponentProjection.resolve_from_metadata(component, metadata)
+
+
+def _component_for_match_field(field: str) -> AllComponents | None:
+    normalized = _normalized_metadata_key(field)
+    for component in AllComponents:
+        if _normalized_metadata_key(component.value) == normalized:
+            return component
     return None
 
 

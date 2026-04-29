@@ -1151,6 +1151,26 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
             (".tif",),
             id="track-objects",
         ),
+        pytest.param(
+            "ExampleVitra",
+            "ExampleVitraImages",
+            (
+                ("CorrProtein", ArtifactKind.IMAGE),
+                ("Cells", ArtifactKind.OBJECT_LABELS),
+                ("Cytoplasm", ArtifactKind.OBJECT_LABELS),
+                ("Outlined", ArtifactKind.IMAGE),
+                ("MeasureObjectIntensity_9_measurements", ArtifactKind.MEASUREMENTS),
+                ("CalculateMath_10_measurements", ArtifactKind.MEASUREMENTS),
+                ("CalculateMath_11_measurements", ArtifactKind.MEASUREMENTS),
+            ),
+            (
+                "MeasureObjectIntensity",
+                "CalculateMath_10",
+                "CalculateMath_11",
+            ),
+            (".tif",),
+            id="vitra-npy-illumination",
+        ),
     ),
 )
 def test_official_cellprofiler3_additional_representative_pipelines_execute(
