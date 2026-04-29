@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, TypeVar
 
 import numpy as np
 import skimage.color
@@ -17,6 +17,10 @@ from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
+
+from benchmark.cellprofiler_library.color import coerce_rgb_color
+
+EnumT = TypeVar("EnumT", bound=Enum)
 
 
 class LineMode(Enum):
@@ -67,7 +71,48 @@ class OverlayOutlineRuntimeRow:
     ) -> "OverlayOutlineRuntimeRow":
         return cls(
             source_kind=_coerce_source_kind(source_kind),
-            color=_coerce_color(color),
+            color=coerce_rgb_color(color),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class OverlayOutlineExecutionContext:
+    """Runtime OverlayOutlines plan shared by plane and single-slice execution."""
+
+    rows: tuple[OverlayOutlineRuntimeRow, ...]
+    object_labels: tuple[np.ndarray, ...]
+    blank_image: bool
+    display_mode: OutlineDisplayMode
+    line_mode: LineMode
+    max_type: MaxType
+
+    def __post_init__(self) -> None:
+        if len(self.object_labels) != self.object_row_count:
+            raise ValueError("OverlayOutlines object_labels count must match object rows.")
+
+    @property
+    def image_row_count(self) -> int:
+        return sum(row.source_kind is OutlineSourceKind.IMAGE for row in self.rows)
+
+    @property
+    def object_row_count(self) -> int:
+        return sum(row.source_kind is OutlineSourceKind.OBJECTS for row in self.rows)
+
+    @property
+    def first_outline_image_index(self) -> int:
+        return 0 if self.blank_image else 1
+
+    def plane(self, slice_index: int) -> "OverlayOutlineExecutionContext":
+        return type(self)(
+            rows=self.rows,
+            object_labels=tuple(
+                _plane_payload_slice(labels, slice_index)
+                for labels in self.object_labels
+            ),
+            blank_image=self.blank_image,
+            display_mode=self.display_mode,
+            line_mode=self.line_mode,
+            max_type=self.max_type,
         )
 
 
@@ -88,68 +133,45 @@ def overlay_outlines(
 ) -> np.ndarray:
     """Overlay object-derived or image-derived outlines onto one output image."""
     del dtype_config
-    display_mode = _coerce_enum(OutlineDisplayMode, display_mode)
-    line_mode = _coerce_enum(LineMode, line_mode)
-    max_type = _coerce_enum(MaxType, max_type)
-    rows = _runtime_rows(outline_source_kinds, outline_colors)
+    context = OverlayOutlineExecutionContext(
+        rows=_runtime_rows(outline_source_kinds, outline_colors),
+        object_labels=tuple(object_labels),
+        blank_image=blank_image,
+        display_mode=_coerce_enum(OutlineDisplayMode, display_mode),
+        line_mode=_coerce_enum(LineMode, line_mode),
+        max_type=_coerce_enum(MaxType, max_type),
+    )
     image_sources = _image_sources_from_payload(
         image,
-        blank_image=blank_image,
-        image_row_count=sum(row.source_kind is OutlineSourceKind.IMAGE for row in rows),
+        blank_image=context.blank_image,
+        image_row_count=context.image_row_count,
     )
-    if len(object_labels) != sum(
-        row.source_kind is OutlineSourceKind.OBJECTS for row in rows
-    ):
-        raise ValueError("OverlayOutlines object_labels count must match object rows.")
 
-    if _requires_plane_stack_execution(image_sources, object_labels):
+    if _requires_plane_stack_execution(image_sources, context.object_labels):
         return _overlay_plane_stack(
-            rows=rows,
+            context=context,
             image_sources=image_sources,
-            object_labels=object_labels,
-            blank_image=blank_image,
-            display_mode=display_mode,
-            line_mode=line_mode,
-            max_type=max_type,
         )
     return _overlay_single_plane(
-        rows=rows,
+        context=context,
         image_sources=image_sources,
-        object_labels=object_labels,
-        blank_image=blank_image,
-        display_mode=display_mode,
-        line_mode=line_mode,
-        max_type=max_type,
     )
 
 
 def _overlay_plane_stack(
     *,
-    rows: tuple[OverlayOutlineRuntimeRow, ...],
+    context: OverlayOutlineExecutionContext,
     image_sources: tuple[np.ndarray, ...],
-    object_labels: Sequence[np.ndarray],
-    blank_image: bool,
-    display_mode: OutlineDisplayMode,
-    line_mode: LineMode,
-    max_type: MaxType,
 ) -> np.ndarray:
-    slice_count = _aligned_plane_slice_count((*image_sources, *object_labels))
+    slice_count = _aligned_plane_slice_count((*image_sources, *context.object_labels))
     return np.stack(
         tuple(
             _overlay_single_plane(
-                rows=rows,
+                context=context.plane(slice_index),
                 image_sources=tuple(
                     _plane_payload_slice(source, slice_index)
                     for source in image_sources
                 ),
-                object_labels=tuple(
-                    _plane_payload_slice(labels, slice_index)
-                    for labels in object_labels
-                ),
-                blank_image=blank_image,
-                display_mode=display_mode,
-                line_mode=line_mode,
-                max_type=max_type,
             )
             for slice_index in range(slice_count)
         )
@@ -158,44 +180,39 @@ def _overlay_plane_stack(
 
 def _overlay_single_plane(
     *,
-    rows: tuple[OverlayOutlineRuntimeRow, ...],
+    context: OverlayOutlineExecutionContext,
     image_sources: tuple[np.ndarray, ...],
-    object_labels: Sequence[np.ndarray],
-    blank_image: bool,
-    display_mode: OutlineDisplayMode,
-    line_mode: LineMode,
-    max_type: MaxType,
 ) -> np.ndarray:
     output = _base_image(
         image_sources=image_sources,
-        object_labels=object_labels,
-        blank_image=blank_image,
-        display_mode=display_mode,
+        object_labels=context.object_labels,
+        blank_image=context.blank_image,
+        display_mode=context.display_mode,
     )
-    outline_intensity = _outline_intensity(output, blank_image, max_type)
-    image_index = 0 if blank_image else 1
+    outline_intensity = _outline_intensity(output, context.blank_image, context.max_type)
+    image_index = context.first_outline_image_index
     object_index = 0
-    for row in rows:
+    for row in context.rows:
         if row.source_kind is OutlineSourceKind.IMAGE:
             output = _draw_outline_image(
                 output,
                 image_sources[image_index],
                 row.color,
                 outline_intensity=outline_intensity,
-                display_mode=display_mode,
+                display_mode=context.display_mode,
             )
             image_index += 1
             continue
         output = _draw_object_labels(
             output,
-            _collapse_singleton_label_stack(object_labels[object_index]),
+            _collapse_singleton_label_stack(context.object_labels[object_index]),
             row.color,
             outline_intensity=outline_intensity,
-            display_mode=display_mode,
-            line_mode=line_mode,
+            display_mode=context.display_mode,
+            line_mode=context.line_mode,
         )
         object_index += 1
-    if display_mode is OutlineDisplayMode.GRAYSCALE and output.ndim == 3:
+    if context.display_mode is OutlineDisplayMode.GRAYSCALE and output.ndim == 3:
         return skimage.color.rgb2gray(output).astype(np.float32)
     return output.astype(np.float32)
 
@@ -409,7 +426,7 @@ def _coerce_source_kind(value: OutlineSourceKind | str) -> OutlineSourceKind:
     return OutlineSourceKind(normalized)
 
 
-def _coerce_enum(enum_type: type[Enum], value: Enum | str) -> Enum:
+def _coerce_enum(enum_type: type[EnumT], value: EnumT | str) -> EnumT:
     if isinstance(value, enum_type):
         return value
     normalized = str(value).strip().lower().replace(" ", "_")
@@ -431,24 +448,6 @@ def _enum_member_literals(member: Enum) -> frozenset[str]:
     )
 
 
-def _coerce_color(value: str | Sequence[float]) -> tuple[float, float, float]:
-    if isinstance(value, str):
-        normalized = value.strip()
-        named = _COLOR_BY_NAME.get(normalized.lower())
-        if named is not None:
-            return named
-        parts = tuple(float(part.strip()) for part in normalized.split(","))
-        return _normalize_color_tuple(parts)
-    return _normalize_color_tuple(tuple(float(part) for part in value))
-
-
-def _normalize_color_tuple(parts: tuple[float, ...]) -> tuple[float, float, float]:
-    if len(parts) != 3:
-        raise ValueError(f"Outline color must have three channels, got {parts!r}.")
-    scale = 255.0 if max(parts) > 1.0 else 1.0
-    return parts[0] / scale, parts[1] / scale, parts[2] / scale
-
-
 def _indexed_value(
     values: Sequence[Any],
     index: int,
@@ -460,13 +459,3 @@ def _indexed_value(
     if index < len(values):
         return values[index]
     return values[-1]
-
-
-_COLOR_BY_NAME = {
-    "white": (1.0, 1.0, 1.0),
-    "black": (0.0, 0.0, 0.0),
-    "red": (1.0, 0.0, 0.0),
-    "green": (0.0, 1.0, 0.0),
-    "blue": (0.0, 0.0, 1.0),
-    "yellow": (1.0, 1.0, 0.0),
-}

@@ -16,6 +16,8 @@ from metaclass_registry import AutoRegisterMeta
 import numpy as np
 from openhcs.core.memory import numpy
 
+from benchmark.cellprofiler_library.color import coerce_rgb_color
+
 
 class GrayToColorScheme(str, Enum):
     """Closed family of supported GrayToColor scheme literals."""
@@ -24,15 +26,6 @@ class GrayToColorScheme(str, Enum):
     CMYK = "CMYK"
     STACK = "Stack"
     COMPOSITE = "Composite"
-
-
-def _hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
-    """Convert hex color string to RGB tuple (0-1 range)."""
-    hex_color = hex_color.lstrip("#")
-    r = int(hex_color[0:2], 16) / 255.0
-    g = int(hex_color[2:4], 16) / 255.0
-    b = int(hex_color[4:6], 16) / 255.0
-    return r, g, b
 
 
 def _coerce_gray_to_color_scheme(
@@ -249,7 +242,7 @@ def _gray_to_color_composite(request: GrayToColorRequest) -> np.ndarray:
             channel_img = channel_img / np.max(channel_img)
         
         # Get RGB color
-        r, g, b = _hex_to_rgb(colors[i])
+        r, g, b = coerce_rgb_color(colors[i])
         weight = weights[i]
         
         # Add weighted colored image

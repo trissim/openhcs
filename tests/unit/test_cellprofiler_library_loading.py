@@ -219,6 +219,24 @@ def test_overlay_outlines_runs_mixed_image_and_object_rows():
     assert overlay_outlines.__processing_contract__ is ProcessingContract.FLEXIBLE
 
 
+def test_overlay_outlines_accepts_hex_color_literals():
+    base = np.zeros((8, 8), dtype=np.float32)
+    labels = np.zeros((8, 8), dtype=np.int32)
+    labels[3:6, 3:6] = 1
+
+    output = overlay_outlines(
+        base,
+        outline_source_kinds=("objects",),
+        outline_colors=("#0800F7",),
+        object_labels=(labels,),
+        dtype_config=DtypeConfig(),
+    )
+
+    assert output.shape == (8, 8, 3)
+    assert output[..., 2].max() > 0.9
+    assert output[..., 0].max() < 0.1
+
+
 def test_overlay_outlines_runs_plane_stack_object_rows():
     image = np.zeros((2, 8, 8), dtype=np.float32)
     labels = np.zeros_like(image, dtype=np.int32)

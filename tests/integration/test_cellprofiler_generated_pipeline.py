@@ -449,6 +449,77 @@ def test_official_example_untangleworms_cppipe_executes_via_source_schema_worksp
     )
 
 
+def test_official_example_untangleworms_brightfield_cppipe_executes_overlay(
+    tmp_path: Path,
+) -> None:
+    examples_root = _official_cellprofiler_examples_root()
+    cppipe_path = (
+        examples_root
+        / "CellProfiler3Pipelines"
+        / "ExampleUntangleWormsBrightField.cppipe"
+    )
+    source_root = examples_root / "ExampleUntangleWormsBrightField"
+    if not cppipe_path.exists() or not source_root.exists():
+        pytest.skip(
+            "Official CellProfiler ExampleUntangleWormsBrightField files are not "
+            f"available. Set CELLPROFILER_EXAMPLES_ROOT to a local examples "
+            f"checkout; looked under {examples_root}."
+        )
+
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / "generated_official_brightfield_pipeline.py",
+    )
+    workspace = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "official_brightfield_openhcs_workspace",
+        prepared.source_schema,
+    )
+
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=True,
+        microscope=Microscope.AUTO,
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            output_dir_suffix="_generated_cppipe",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    orchestrator = PipelineOrchestrator(
+        workspace.workspace_root,
+        pipeline_config=pipeline_config,
+    )
+    orchestrator.initialize()
+
+    execution = execute_pipeline_direct(
+        orchestrator,
+        prepared.pipeline,
+        well_filter=["A01"],
+    )
+
+    assert all(
+        result.is_success()
+        for result in execution.execution_results.values()
+    )
+    overlay_outputs = sorted(
+        (_generated_output_root(workspace.workspace_root) / "images").glob("*.png")
+    )
+    assert [path.name for path in overlay_outputs] == [
+        "A01_s001_w1_z001_t001.png",
+    ]
+    overlay = np.asarray(Image.open(overlay_outputs[0]))
+    assert overlay.dtype == np.uint8
+    assert overlay.ndim == 3
+    red = overlay[..., 0].astype(np.int16)
+    blue = overlay[..., 2].astype(np.int16)
+    assert np.count_nonzero(blue > red + 32) > 0
+
+
 def test_official_example_woundhealing_cppipe_executes_disk_outputs(
     tmp_path: Path,
 ) -> None:
