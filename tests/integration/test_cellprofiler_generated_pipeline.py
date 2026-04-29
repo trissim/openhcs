@@ -10,6 +10,7 @@ from benchmark.converter.runtime_pipeline import (
 )
 import numpy as np
 import pytest
+import tifffile
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.constants import Microscope
 from openhcs.constants.constants import AllComponents
@@ -518,6 +519,74 @@ def test_official_example_untangleworms_brightfield_cppipe_executes_overlay(
     red = overlay[..., 0].astype(np.int16)
     blue = overlay[..., 2].astype(np.int16)
     assert np.count_nonzero(blue > red + 32) > 0
+
+
+def test_official_example_cometassay_cppipe_executes_mask_geometry(
+    tmp_path: Path,
+) -> None:
+    examples_root = _official_cellprofiler_examples_root()
+    cppipe_path = (
+        examples_root
+        / "CellProfiler3Pipelines"
+        / "ExampleCometAssay.cppipe"
+    )
+    source_root = examples_root / "ExampleCometAssay"
+    if not cppipe_path.exists() or not source_root.exists():
+        pytest.skip(
+            "Official CellProfiler ExampleCometAssay files are not available. "
+            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
+            f"looked under {examples_root}."
+        )
+
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / "generated_official_comet_pipeline.py",
+    )
+    workspace = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "official_comet_openhcs_workspace",
+        prepared.source_schema,
+    )
+
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=True,
+        microscope=Microscope.AUTO,
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            output_dir_suffix="_generated_cppipe",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    orchestrator = PipelineOrchestrator(
+        workspace.workspace_root,
+        pipeline_config=pipeline_config,
+    )
+    orchestrator.initialize()
+
+    execution = execute_pipeline_direct(
+        orchestrator,
+        prepared.pipeline,
+        well_filter=["A01"],
+    )
+
+    assert all(
+        result.is_success()
+        for result in execution.execution_results.values()
+    )
+    image_outputs = sorted(
+        (_generated_output_root(workspace.workspace_root) / "images").glob("*.tif")
+    )
+    assert [path.name for path in image_outputs] == [
+        "A01_s001_w1_z001_t001.tif",
+    ]
+    overlay = tifffile.imread(image_outputs[0])
+    assert overlay.shape[:2] == (1040, 1388)
+    assert overlay.ndim == 3
 
 
 def test_official_example_woundhealing_cppipe_executes_disk_outputs(

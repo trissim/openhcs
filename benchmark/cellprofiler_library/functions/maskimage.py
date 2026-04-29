@@ -1,18 +1,16 @@
-"""
-Converted from CellProfiler: MaskImage
-Original: MaskImage.run
-
-MaskImage hides certain portions of an image (based on previously
-identified objects or a binary image) so they are ignored by subsequent
-mask-respecting modules in the pipeline.
-"""
+"""Converted from CellProfiler: MaskImage."""
 
 import numpy as np
-from typing import Tuple
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs
+
+from benchmark.cellprofiler_library.image_geometry import (
+    aligned_image_mask_planes,
+    binary_mask_plane,
+    restore_image_mask_planes,
+)
 
 
 class MaskSource(Enum):
@@ -30,59 +28,41 @@ def mask_image(
     invert_mask: bool = False,
     binary_threshold: float = 0.5,
 ) -> np.ndarray:
-    """
-    Mask an image using objects or a binary/grayscale mask image.
-    
-    The masked image has pixels set to 0 where the mask is False (or where
-    objects are not present if using objects as mask).
-    
-    Args:
-        image: Input image to be masked. Shape (D, H, W) where D is the
-               iteration axis (could be z-slices, timepoints, etc.)
-        mask: Mask array. Shape (D, H, W). If mask_source is OBJECTS, this
-              should be a label image (integers). If mask_source is IMAGE,
-              this should be binary or grayscale.
-        mask_source: Whether mask is from labeled objects or a binary image.
-        invert_mask: If True, invert the mask (mask foreground instead of
-                     background).
-        binary_threshold: Threshold for converting grayscale mask to binary
-                          (only used when mask_source is IMAGE and mask is
-                          not already binary).
-    
-    Returns:
-        Masked image with same shape as input. Pixels outside mask are set to 0.
-    """
-    # Process each slice along dimension 0
-    result = np.zeros_like(image)
-    
-    for i in range(image.shape[0]):
-        img_slice = image[i]
-        mask_slice = mask[i] if mask.shape[0] > 1 else mask[0]
-        
-        # Create binary mask based on source type
-        if mask_source == MaskSource.OBJECTS:
-            # Labels: mask is where labels > 0
-            binary_mask = mask_slice > 0
-        else:
-            # Image: check if already binary, otherwise threshold
-            unique_vals = np.unique(mask_slice)
-            if len(unique_vals) <= 2 and set(unique_vals).issubset({0, 1, True, False}):
-                # Already binary
-                binary_mask = mask_slice > 0
-            else:
-                # Grayscale - threshold at specified value
-                binary_mask = mask_slice > binary_threshold
-        
-        # Invert if requested
-        if invert_mask:
-            binary_mask = ~binary_mask
-        
-        # Apply mask - set pixels outside mask to 0
-        masked_slice = img_slice.copy()
-        masked_slice[~binary_mask] = 0
-        result[i] = masked_slice
-    
-    return result
+    """Mask an image using object labels or a binary/grayscale mask image."""
+    mask_source = _coerce_mask_source(mask_source)
+    masked_planes = tuple(
+        _masked_plane(plane.image, plane.mask, invert_mask=invert_mask)
+        for plane in aligned_image_mask_planes(
+            image,
+            mask,
+            threshold=binary_threshold,
+            labels=mask_source is MaskSource.OBJECTS,
+        )
+    )
+    return restore_image_mask_planes(image, masked_planes)
+
+
+def _masked_plane(
+    image: np.ndarray,
+    binary_mask: np.ndarray,
+    *,
+    invert_mask: bool,
+) -> np.ndarray:
+    if invert_mask:
+        binary_mask = ~binary_mask
+    masked = image.copy()
+    masked[~binary_mask] = 0
+    return masked
+
+
+def _coerce_mask_source(value: MaskSource | str) -> MaskSource:
+    if isinstance(value, MaskSource):
+        return value
+    normalized = str(value).strip().lower()
+    for source in MaskSource:
+        if normalized in {source.name.lower(), source.value.lower()}:
+            return source
+    raise ValueError(f"Unsupported MaskImage mask source: {value!r}.")
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -138,13 +118,7 @@ def mask_image_stacked(
     """
     img = image[0]
     mask = image[1]
-    
-    # Create binary mask
-    unique_vals = np.unique(mask)
-    if len(unique_vals) <= 2 and np.all((unique_vals == 0) | (unique_vals == 1)):
-        binary_mask = mask > 0
-    else:
-        binary_mask = mask > binary_threshold
+    binary_mask = binary_mask_plane(mask, threshold=binary_threshold)
     
     if invert_mask:
         binary_mask = ~binary_mask

@@ -19,6 +19,11 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 )
 
 from benchmark.cellprofiler_library.color import coerce_rgb_color
+from benchmark.cellprofiler_library.image_geometry import (
+    align_binary_mask_to_shape,
+    align_label_plane_to_shape,
+    collapse_singleton_plane_stack,
+)
 
 EnumT = TypeVar("EnumT", bound=Enum)
 
@@ -205,7 +210,7 @@ def _overlay_single_plane(
             continue
         output = _draw_object_labels(
             output,
-            _collapse_singleton_label_stack(context.object_labels[object_index]),
+            collapse_singleton_plane_stack(context.object_labels[object_index]),
             row.color,
             outline_intensity=outline_intensity,
             display_mode=context.display_mode,
@@ -319,7 +324,7 @@ def _blank_shape(
     object_labels: Sequence[np.ndarray],
 ) -> tuple[int, ...]:
     if object_labels:
-        return tuple(_collapse_singleton_label_stack(object_labels[0]).shape)
+        return tuple(collapse_singleton_plane_stack(object_labels[0]).shape)
     if image_sources:
         return tuple(image_sources[0].shape[:2])
     raise ValueError("OverlayOutlines blank mode requires an outline source.")
@@ -344,7 +349,7 @@ def _draw_object_labels(
     display_mode: OutlineDisplayMode,
     line_mode: LineMode,
 ) -> np.ndarray:
-    labels_2d = _resize_labels(labels.astype(np.int32), output.shape[:2])
+    labels_2d = align_label_plane_to_shape(labels.astype(np.int32), output.shape[:2])
     outline_color: tuple[float, float, float] | float
     if display_mode is OutlineDisplayMode.COLOR:
         if output.ndim == 2:
@@ -372,7 +377,7 @@ def _draw_outline_image(
     display_mode: OutlineDisplayMode,
 ) -> np.ndarray:
     mask = _outline_image_mask(outline_image)
-    mask = _resize_mask(mask, output.shape[:2])
+    mask = align_binary_mask_to_shape(mask, output.shape[:2])
     if display_mode is OutlineDisplayMode.COLOR:
         if output.ndim == 2:
             output = skimage.color.gray2rgb(output)
@@ -387,36 +392,6 @@ def _outline_image_mask(outline_image: np.ndarray) -> np.ndarray:
     if is_color_image_slice(mask):
         return np.any(mask, axis=-1)
     return mask
-
-
-def _resize_labels(labels: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
-    if labels.shape == shape:
-        return labels
-    return _resize_nearest(labels, shape).astype(np.int32)
-
-
-def _resize_mask(mask: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
-    if mask.shape == shape:
-        return mask
-    return _resize_nearest(mask.astype(np.uint8), shape).astype(bool)
-
-
-def _resize_nearest(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
-    from skimage.transform import resize
-
-    return resize(
-        image,
-        shape,
-        order=0,
-        preserve_range=True,
-        anti_aliasing=False,
-    )
-
-
-def _collapse_singleton_label_stack(labels: np.ndarray) -> np.ndarray:
-    if labels.ndim == 3 and labels.shape[0] == 1:
-        return labels[0]
-    return labels
 
 
 def _coerce_source_kind(value: OutlineSourceKind | str) -> OutlineSourceKind:

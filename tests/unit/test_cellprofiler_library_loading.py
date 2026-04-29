@@ -14,6 +14,7 @@ from benchmark.cellprofiler_library.functions.correctilluminationcalculate impor
 from benchmark.cellprofiler_library.functions.measureimageareaoccupied import (
     measure_image_area_occupied,
 )
+from benchmark.cellprofiler_library.functions.maskimage import mask_image
 from benchmark.cellprofiler_library.functions.opening import opening
 from benchmark.cellprofiler_library.functions.overlayoutlines import overlay_outlines
 from benchmark.cellprofiler_library.functions.unmixcolors import unmix_colors
@@ -179,6 +180,41 @@ def test_measure_image_area_occupied_reduces_label_stacks_as_2d_planes():
     assert measurements[0].area_occupied == 12.0
     assert measurements[0].total_area == 60.0
     assert measurements[0].perimeter > 0
+
+
+def test_mask_image_applies_2d_object_mask_to_singleton_image_stack():
+    image = np.ones((1, 5, 6), dtype=np.float32)
+    labels = np.zeros((5, 6), dtype=np.int32)
+    labels[1:4, 2:5] = 1
+
+    masked = mask_image(
+        image,
+        labels,
+        mask_source="objects",
+        dtype_config=DtypeConfig(),
+    )
+
+    assert masked.shape == image.shape
+    assert np.count_nonzero(masked[0]) == 9
+    assert np.all(masked[0, labels == 0] == 0)
+
+
+def test_mask_image_uses_aligned_mask_stack_planes():
+    image = np.ones((2, 5, 6), dtype=np.float32)
+    mask = np.zeros_like(image)
+    mask[0, 1:3, 1:3] = 1.0
+    mask[1, 2:5, 3:6] = 1.0
+
+    masked = mask_image(
+        image,
+        mask,
+        mask_source="image",
+        dtype_config=DtypeConfig(),
+    )
+
+    assert masked.shape == image.shape
+    assert np.count_nonzero(masked[0]) == 4
+    assert np.count_nonzero(masked[1]) == 9
 
 
 def test_align_returns_two_registered_images():
