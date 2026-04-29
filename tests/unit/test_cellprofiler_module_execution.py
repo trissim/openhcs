@@ -61,8 +61,8 @@ class _FakeCellProfilerRuntime:
         if missing:
             raise AssertionError(f"Unexpected missing image aliases: {missing!r}")
 
-    def resolve_source_image(self, alias: str, fallback_image: object) -> np.ndarray:
-        del fallback_image
+    def resolve_source_image(self, alias: str, current_image: object) -> np.ndarray:
+        del current_image
         return self.images[alias].data
 
     def get_image(self, name: str) -> _FakeRuntimeImage:

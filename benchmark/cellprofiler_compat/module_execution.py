@@ -147,7 +147,7 @@ class CellProfilerModuleExecutor:
             return self._run_per_image_measurement(
                 func,
                 input_image=image,
-                fallback_image=image,
+                current_image=image,
                 cellprofiler_runtime=cellprofiler_runtime,
                 **kwargs,
             )
@@ -161,7 +161,7 @@ class CellProfilerModuleExecutor:
             return self._run_per_object_measurement(
                 func,
                 input_image=image,
-                fallback_image=image,
+                current_image=image,
                 image_request=image_request,
                 cellprofiler_runtime=cellprofiler_runtime,
                 source_image_name=image_request.source_image_name,
@@ -172,7 +172,7 @@ class CellProfilerModuleExecutor:
             func,
             image_request=image_request,
             adapter=cellprofiler_runtime,
-            fallback_image=image,
+            current_image=image,
             kwargs=kwargs,
         )
         raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
@@ -231,7 +231,7 @@ class CellProfilerModuleExecutor:
         func: Callable[..., Any],
         *,
         input_image: Any,
-        fallback_image: Any,
+        current_image: Any,
         image_request: "CellProfilerImageRequest",
         cellprofiler_runtime: CellProfilerRuntimeAdapter,
         source_image_name: str | None,
@@ -249,7 +249,7 @@ class CellProfilerModuleExecutor:
         measurement_images = self._measurement_image_inputs(
             func,
             cellprofiler_runtime,
-            fallback_image,
+            current_image,
             image_request,
         )
         for measurement_image in measurement_images:
@@ -312,7 +312,7 @@ class CellProfilerModuleExecutor:
         func: Callable[..., Any],
         *,
         input_image: Any,
-        fallback_image: Any,
+        current_image: Any,
         cellprofiler_runtime: CellProfilerRuntimeAdapter,
         **kwargs: Any,
     ) -> Any:
@@ -327,14 +327,14 @@ class CellProfilerModuleExecutor:
         measurement_images = self._independent_measurement_image_inputs(
             func,
             cellprofiler_runtime,
-            fallback_image,
+            current_image,
         )
         runtime_kwargs = {
             **kwargs,
             **self._runtime_input_kwargs(
                 func,
                 cellprofiler_runtime,
-                fallback_image,
+                current_image,
                 kwargs,
             ),
         }
@@ -369,7 +369,7 @@ class CellProfilerModuleExecutor:
         self,
         func: Callable[..., Any],
         adapter: CellProfilerRuntimeAdapter,
-        fallback_image: Any,
+        current_image: Any,
         image_request: "CellProfilerImageRequest",
     ) -> tuple["CellProfilerMeasurementImage", ...]:
         image_inputs = self._primary_image_inputs(func)
@@ -377,7 +377,7 @@ class CellProfilerModuleExecutor:
             return (
                 self._measurement_carrier_image(
                     adapter,
-                    fallback_image,
+                    current_image,
                     reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
                 ),
             )
@@ -389,36 +389,36 @@ class CellProfilerModuleExecutor:
                 self._composed_measurement_image(image_request),
             )
 
-        return self._resolved_measurement_images(image_inputs, adapter, fallback_image)
+        return self._resolved_measurement_images(image_inputs, adapter, current_image)
 
     def _independent_measurement_image_inputs(
         self,
         func: Callable[..., Any],
         adapter: CellProfilerRuntimeAdapter,
-        fallback_image: Any,
+        current_image: Any,
     ) -> tuple["CellProfilerMeasurementImage", ...]:
         image_inputs = self._primary_image_inputs(func)
         if not image_inputs:
             return (
                 self._measurement_carrier_image(
                     adapter,
-                    fallback_image,
+                    current_image,
                     reference_domain=CellProfilerMeasurementImageDomain.SOURCE_IMAGE,
                 ),
             )
 
-        return self._resolved_measurement_images(image_inputs, adapter, fallback_image)
+        return self._resolved_measurement_images(image_inputs, adapter, current_image)
 
     def _measurement_carrier_image(
         self,
         adapter: CellProfilerRuntimeAdapter,
-        fallback_image: Any,
+        current_image: Any,
         *,
         reference_domain: "CellProfilerMeasurementImageDomain",
     ) -> "CellProfilerMeasurementImage":
         return CellProfilerMeasurementImage(
             source_image_name=self._input_source_image_name(adapter),
-            payload=_object_only_reference_image(fallback_image),
+            payload=_object_only_reference_image(current_image),
             reference_domain=reference_domain,
         )
 
@@ -437,7 +437,7 @@ class CellProfilerModuleExecutor:
         self,
         image_inputs: tuple[ArtifactSpec, ...],
         adapter: CellProfilerRuntimeAdapter,
-        fallback_image: Any,
+        current_image: Any,
     ) -> tuple["CellProfilerMeasurementImage", ...]:
         runtime_image_names = frozenset(self._runtime_image_names())
         resolved_images: list[CellProfilerMeasurementImage] = []
@@ -446,7 +446,7 @@ class CellProfilerModuleExecutor:
                 self._resolved_measurement_image(
                     spec,
                     adapter,
-                    fallback_image,
+                    current_image,
                     runtime_image_names,
                 )
             )
@@ -456,7 +456,7 @@ class CellProfilerModuleExecutor:
         self,
         spec: ArtifactSpec,
         adapter: CellProfilerRuntimeAdapter,
-        fallback_image: Any,
+        current_image: Any,
         runtime_image_names: frozenset[str],
     ) -> "CellProfilerMeasurementImage":
         if spec.name in runtime_image_names:
@@ -468,7 +468,7 @@ class CellProfilerModuleExecutor:
         return CellProfilerMeasurementImage(
             source_image_name=spec.name,
             payload=_cellprofiler_image_payload(
-                adapter.resolve_source_image(spec.name, fallback_image)
+                adapter.resolve_source_image(spec.name, current_image)
             ),
         )
 
@@ -482,17 +482,17 @@ class CellProfilerModuleExecutor:
         self,
         spec: ArtifactSpec,
         adapter: CellProfilerRuntimeAdapter,
-        fallback_image: Any,
+        current_image: Any,
     ) -> Any:
         if spec.name in self._external_source_object_names():
-            return adapter.resolve_source_objects(spec.name, fallback_image).labels
+            return adapter.resolve_source_objects(spec.name, current_image).labels
         return adapter.get_objects(spec.name).labels
 
     def _runtime_input_kwargs(
         self,
         func: Callable[..., Any],
         adapter: CellProfilerRuntimeAdapter,
-        fallback_image: Any,
+        current_image: Any,
         kwargs: Mapping[str, Any],
     ) -> dict[str, Any]:
         runtime_inputs = self._special_runtime_inputs(func)
@@ -508,7 +508,7 @@ class CellProfilerModuleExecutor:
                     runtime_inputs=runtime_inputs,
                     adapter=adapter,
                     kwargs=kwargs,
-                    fallback_image=fallback_image,
+                    current_image=current_image,
                     external_image_names=frozenset(self._external_source_image_names()),
                     external_object_names=frozenset(
                         self._external_source_object_names()
@@ -539,7 +539,7 @@ class CellProfilerModuleExecutor:
                 object_inputs=object_inputs,
                 adapter=adapter,
                 kwargs=kwargs,
-                fallback_image=fallback_image,
+                current_image=current_image,
                 external_object_names=frozenset(self._external_source_object_names()),
             )
         )
@@ -599,15 +599,15 @@ class CellProfilerModuleExecutor:
     def _image_request(
         self,
         func: Callable[..., Any],
-        fallback_image: Any,
+        current_image: Any,
         adapter: CellProfilerRuntimeAdapter,
     ) -> "CellProfilerImageRequest":
         image_inputs = self._primary_image_inputs(func)
         if not image_inputs:
             payload = (
-                _object_only_reference_image(fallback_image)
+                _object_only_reference_image(current_image)
                 if self._object_input_specs()
-                else _cellprofiler_image_payload(fallback_image)
+                else _cellprofiler_image_payload(current_image)
             )
             return CellProfilerImageRequest(
                 payload=payload,
@@ -638,7 +638,7 @@ class CellProfilerModuleExecutor:
                 continue
             payloads.append(
                 _cellprofiler_image_payload(
-                    adapter.resolve_source_image(spec.name, fallback_image)
+                    adapter.resolve_source_image(spec.name, current_image)
                 )
             )
         composition = compose_aligned_image_payload(self.module_name, tuple(payloads))
@@ -707,12 +707,12 @@ class CellProfilerModuleExecutor:
         *,
         image_request: "CellProfilerImageRequest",
         adapter: CellProfilerRuntimeAdapter,
-        fallback_image: Any,
+        current_image: Any,
         kwargs: Mapping[str, Any],
     ) -> "CellProfilerInvocationRequest":
         runtime_kwargs = {
             **kwargs,
-            **self._runtime_input_kwargs(func, adapter, fallback_image, kwargs),
+            **self._runtime_input_kwargs(func, adapter, current_image, kwargs),
         }
         return CellProfilerInvocationRequest(
             image=image_request.payload,
@@ -1044,7 +1044,7 @@ class RuntimeArtifactInputRequest:
 
     spec: ArtifactSpec
     adapter: CellProfilerRuntimeAdapter
-    fallback_image: Any | None = None
+    current_image: Any | None = None
     external_image_names: frozenset[str] = frozenset()
     external_object_names: frozenset[str] = frozenset()
     runtime_image_names: frozenset[str] = frozenset()
@@ -1084,15 +1084,15 @@ class ImageArtifactKindStrategy(RuntimeArtifactKindStrategy):
                 request.adapter.get_image(request.spec.name).data
             )
         if request.spec.name in request.external_image_names:
-            if request.fallback_image is None:
+            if request.current_image is None:
                 raise RuntimeError(
                     f"External image input '{request.spec.name}' requires a "
-                    "fallback image payload for source-binding resolution."
+                    "current image payload for source-binding resolution."
                 )
             return _cellprofiler_image_payload(
                 request.adapter.resolve_source_image(
                     request.spec.name,
-                    request.fallback_image,
+                    request.current_image,
                 )
             )
         return _cellprofiler_image_payload(
@@ -1117,15 +1117,15 @@ class ObjectLabelsArtifactKindStrategy(RuntimeArtifactKindStrategy):
 
     def runtime_input_value(self, request: RuntimeArtifactInputRequest) -> Any:
         if request.spec.name in request.external_object_names:
-            if request.fallback_image is None:
+            if request.current_image is None:
                 raise RuntimeError(
                     f"External object input '{request.spec.name}' requires a "
-                    "fallback image payload for source-binding resolution."
+                    "current image payload for source-binding resolution."
                 )
             return _collapse_singleton_label_stack(
                 request.adapter.resolve_source_objects(
                     request.spec.name,
-                    request.fallback_image,
+                    request.current_image,
                 ).labels
             )
         return _collapse_singleton_label_stack(
@@ -1181,7 +1181,7 @@ class RuntimeInputBindingRequestBase(ABC):
     module_name: str
     adapter: CellProfilerRuntimeAdapter
     kwargs: Mapping[str, Any]
-    fallback_image: Any
+    current_image: Any
     external_object_names: frozenset[str]
 
     def __post_init__(self) -> None:
@@ -1196,7 +1196,7 @@ class RuntimeInputBindingRequestBase(ABC):
         return _object_input_labels(
             spec,
             self.adapter,
-            fallback_image=self.fallback_image,
+            current_image=self.current_image,
             external_object_names=self.external_object_names,
         )
 
@@ -1220,7 +1220,7 @@ class ObjectInputBindingRequest(RuntimeInputBindingRequestBase):
             object_inputs=object_inputs,
             adapter=self.adapter,
             kwargs=self.kwargs,
-            fallback_image=self.fallback_image,
+            current_image=self.current_image,
             external_object_names=self.external_object_names,
         )
 
@@ -1981,11 +1981,11 @@ def _object_input_labels(
     spec: ArtifactSpec,
     adapter: CellProfilerRuntimeAdapter,
     *,
-    fallback_image: Any,
+    current_image: Any,
     external_object_names: frozenset[str],
 ) -> Any:
     if spec.name in external_object_names:
-        return adapter.resolve_source_objects(spec.name, fallback_image).labels
+        return adapter.resolve_source_objects(spec.name, current_image).labels
     return adapter.get_objects(spec.name).labels
 
 
@@ -2394,7 +2394,7 @@ def _runtime_input_value(
             RuntimeArtifactInputRequest(
                 spec=spec,
                 adapter=request.adapter,
-                fallback_image=request.fallback_image,
+                current_image=request.current_image,
                 external_image_names=request.external_image_names,
                 external_object_names=request.external_object_names,
                 runtime_image_names=request.runtime_image_names,
