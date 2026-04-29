@@ -1,13 +1,19 @@
+from dataclasses import dataclass
+from types import SimpleNamespace
+
 import pytest
 import numpy as np
 from scipy.io import savemat
-from types import SimpleNamespace
 
 from benchmark.cellprofiler_compat import (
     CellProfilerModuleContract,
     CellProfilerModuleExecutor,
     CellProfilerRelationshipPayload,
     CellProfilerRuntimeAdapter,
+)
+from benchmark.cellprofiler_compat.measurement_lookup import (
+    measurement_values_for_label_slices,
+    measurement_values_for_feature,
 )
 from benchmark.cellprofiler_library import get_function
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, ArtifactSpec
@@ -34,7 +40,7 @@ from openhcs.core.source_bindings import (
     StepSourceBindingsConfig,
 )
 from openhcs.core.runtime_stores import RuntimeValueStore
-from openhcs.core.runtime_values import FieldSpec, RuntimeArrayPayload
+from openhcs.core.runtime_values import FieldSpec, MeasurementTable, RuntimeArrayPayload
 from openhcs.constants.constants import AllComponents
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -56,6 +62,7 @@ MEASURE_OBJECT_SIZE_SHAPE = "MeasureObjectSizeShape"
 MEASURE_COLOCALIZATION = "MeasureColocalization"
 MEASURE_IMAGE_INTENSITY = "MeasureImageIntensity"
 RELATE_OBJECTS = "RelateObjects"
+CALCULATE_MATH = "CalculateMath"
 
 
 class ArrayLike(RuntimeArrayPayload):
@@ -1103,7 +1110,9 @@ def test_cellprofiler_module_executor_reads_objects_for_measurements():
     executor.run(measure, image, cellprofiler_runtime=adapter)
     measurements = adapter.get_measurements(NUCLEI_MEASUREMENTS)
 
-    assert measurements.rows == rows
+    assert measurements.rows == [
+        {"object_id": 1, "area": 12.0, "object_name": NUCLEI},
+    ]
     assert measurements.object_name == NUCLEI
     assert measurements.source_image_name == DNA_IMAGE
 
@@ -1148,8 +1157,8 @@ def test_cellprofiler_module_executor_measures_each_declared_image_for_single_ob
     np.testing.assert_array_equal(result, np.stack((dna, ph3)))
     assert seen == [(3.0, 1), (9.0, 1)]
     assert measurements.rows == [
-        {"mean": 3.0, "label": 1},
-        {"mean": 9.0, "label": 1},
+        {"mean": 3.0, "label": 1, "object_name": NUCLEI},
+        {"mean": 9.0, "label": 1, "object_name": NUCLEI},
     ]
     assert measurements.object_name == NUCLEI
     assert measurements.source_image_name is None
@@ -1194,7 +1203,7 @@ def test_cellprofiler_module_executor_keeps_coupled_measurement_images_composed(
 
     np.testing.assert_array_equal(result, np.stack((dna, ph3)))
     assert seen == [((2, 4, 5), (4, 5))]
-    assert measurements.rows == [{"object_count": 1}]
+    assert measurements.rows == [{"object_count": 1, "object_name": NUCLEI}]
     assert measurements.object_name == NUCLEI
     assert measurements.source_image_name is None
 
@@ -1231,9 +1240,309 @@ def test_cellprofiler_module_executor_combines_multi_object_measurements():
     executor.run(measure, image, cellprofiler_runtime=adapter)
     measurements = adapter.get_measurements(MEASUREMENTS)
 
-    assert measurements.rows == [{"object": NUCLEI}, {"object": CELLS}]
+    assert measurements.rows == [
+        {"object": NUCLEI, "object_name": NUCLEI},
+        {"object": CELLS, "object_name": CELLS},
+    ]
     assert measurements.object_name is None
     assert measurements.source_image_name == DNA_IMAGE
+    assert adapter.measurement_tables_for_object(NUCLEI) == (measurements,)
+    assert adapter.measurement_tables_for_object(CELLS) == (measurements,)
+
+
+def test_measurement_lookup_filters_mixed_object_measurement_rows():
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    adapter.add_objects(
+        NUCLEI,
+        np.array([[1, 2], [0, 0]], dtype=np.int32),
+    )
+    adapter.add_objects(
+        CELLS,
+        np.array([[1, 0], [0, 0]], dtype=np.int32),
+    )
+    adapter.add_measurements(
+        MEASUREMENTS,
+        [
+            {"object_name": NUCLEI, "object_label": 1, "mean_intensity": 5.0},
+            {"object_name": NUCLEI, "object_label": 2, "mean_intensity": 7.0},
+            {"object_name": CELLS, "object_label": 1, "mean_intensity": 11.0},
+        ],
+    )
+
+    values = measurement_values_for_feature(
+        adapter.measurement_tables_for_object(NUCLEI),
+        "Intensity_MeanIntensity_CropBlue",
+        object_count=2,
+        object_name=NUCLEI,
+    )
+
+    np.testing.assert_array_equal(values, np.array([5.0, 7.0]))
+
+
+def test_measurement_lookup_reads_slotted_dataclass_rows():
+    @dataclass(frozen=True, slots=True)
+    class MeasurementRow:
+        object_name: str
+        object_label: int
+        mean_intensity: float
+
+    values = measurement_values_for_feature(
+        (
+            MeasurementTable(
+                name=MEASUREMENTS,
+                rows=(
+                    MeasurementRow(NUCLEI, 1, 5.0),
+                    MeasurementRow(CELLS, 1, 11.0),
+                ),
+            ),
+        ),
+        "Intensity_MeanIntensity_CropBlue",
+        object_count=1,
+        object_name=NUCLEI,
+    )
+
+    np.testing.assert_array_equal(values, np.array([5.0]))
+
+
+def test_measurement_lookup_reads_long_form_feature_value_rows():
+    values = measurement_values_for_feature(
+        (
+            MeasurementTable(
+                name=MEASUREMENTS,
+                rows=(
+                    {
+                        "object_name": NUCLEI,
+                        "object_label": 1,
+                        "feature_name": "Math_Ratio",
+                        "result_value": 0.5,
+                    },
+                    {
+                        "object_name": CELLS,
+                        "object_label": 1,
+                        "feature_name": "Math_Ratio",
+                        "result_value": 0.25,
+                    },
+                ),
+            ),
+        ),
+        "Math_Ratio",
+        object_count=1,
+        object_name=NUCLEI,
+    )
+
+    np.testing.assert_array_equal(values, np.array([0.5]))
+
+
+def test_measurement_lookup_aligns_values_to_label_slices():
+    value_slices = measurement_values_for_label_slices(
+        (
+            MeasurementTable(
+                name=MEASUREMENTS,
+                rows=(
+                    {"object_label": 10, "area": 100.0, "object_name": NUCLEI},
+                    {"object_label": 20, "area": 200.0, "object_name": NUCLEI},
+                    {"object_label": 30, "area": 300.0, "object_name": NUCLEI},
+                ),
+            ),
+        ),
+        "AreaShape_Area",
+        np.array(
+            [
+                [[10, 20], [0, 0]],
+                [[30, 0], [0, 0]],
+            ],
+            dtype=np.int32,
+        ),
+        object_name=NUCLEI,
+    )
+
+    assert len(value_slices) == 2
+    np.testing.assert_array_equal(value_slices[0], np.array([100.0, 200.0]))
+    np.testing.assert_array_equal(value_slices[1], np.array([300.0]))
+
+
+def test_calculate_math_records_object_indexed_measurements():
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    labels = np.array([[1, 2], [0, 0]], dtype=np.int32)
+    adapter.add_objects(NUCLEI, labels)
+    adapter.add_measurements(
+        "PriorMeasurements",
+        [
+            {
+                "object_name": NUCLEI,
+                "object_label": 1,
+                "mean_intensity": 10.0,
+                "area": 20.0,
+            },
+            {
+                "object_name": NUCLEI,
+                "object_label": 2,
+                "mean_intensity": 20.0,
+                "area": 80.0,
+            },
+        ],
+        object_name=NUCLEI,
+    )
+    executor = _executor(
+        CALCULATE_MATH,
+        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        runtime_artifact_inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+    )
+
+    result = executor.run(
+        get_function(CALCULATE_MATH),
+        np.zeros((2, 2), dtype=np.float32),
+        cellprofiler_runtime=adapter,
+        output_name="Ratio",
+        operation="Divide",
+        operand1_feature="Intensity_MeanIntensity_CropBlue",
+        operand2_feature="AreaShape_Area",
+        operand1_object_name=NUCLEI,
+        operand2_object_name=NUCLEI,
+        dtype_config=DtypeConfig(),
+    )
+    measurements = adapter.get_measurements(MEASUREMENTS)
+
+    np.testing.assert_array_equal(result, np.zeros((2, 2), dtype=np.float32))
+    assert measurements.object_name == NUCLEI
+    assert [row.object_name for row in measurements.rows] == [NUCLEI, NUCLEI]
+    assert [row.object_label for row in measurements.rows] == [1, 2]
+    assert [row.feature_name for row in measurements.rows] == [
+        "Math_Ratio",
+        "Math_Ratio",
+    ]
+    np.testing.assert_allclose(
+        [row.result_value for row in measurements.rows],
+        [0.5, 0.25],
+    )
+    np.testing.assert_allclose(
+        measurement_values_for_feature(
+            adapter.measurement_tables_for_object(NUCLEI),
+            "Math_Ratio",
+            object_count=2,
+            object_name=NUCLEI,
+        ),
+        np.array([0.5, 0.25]),
+    )
+
+
+def test_classify_objects_binds_runtime_measurement_values():
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    labels = np.array([[1, 2], [0, 0]], dtype=np.int32)
+    adapter.add_objects(NUCLEI, labels)
+    adapter.add_measurements(
+        "PriorMeasurements",
+        [
+            {
+                "object_name": NUCLEI,
+                "object_label": 1,
+                "feature_name": "Math_Ratio",
+                "result_value": 0.5,
+            },
+            {
+                "object_name": NUCLEI,
+                "object_label": 2,
+                "feature_name": "Math_Ratio",
+                "result_value": 0.8,
+            },
+        ],
+        object_name=NUCLEI,
+    )
+    executor = _executor(
+        "ClassifyObjectsSingleMeasurement",
+        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        runtime_artifact_inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+    )
+
+    result = executor.run(
+        get_function("ClassifyObjects"),
+        np.zeros((3, 3), dtype=np.float32),
+        cellprofiler_runtime=adapter,
+        measurement_feature="Math_Ratio",
+        bin_choice="even",
+        bin_count=2,
+        low_threshold=0.0,
+        high_threshold=1.0,
+        dtype_config=DtypeConfig(),
+    )
+    measurements = adapter.get_measurements(MEASUREMENTS)
+
+    np.testing.assert_array_equal(result, np.zeros((3, 3), dtype=np.float32))
+    assert measurements.object_name == NUCLEI
+    assert measurements.rows[0].total_objects == 2
+
+
+def test_classify_objects_slices_runtime_measurements_with_label_stack():
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    labels = np.array(
+        [
+            [[1, 2], [0, 0]],
+            [[3, 4], [0, 0]],
+        ],
+        dtype=np.int32,
+    )
+    adapter.add_objects(NUCLEI, labels)
+    adapter.add_measurements(
+        "PriorMeasurements",
+        [
+            {
+                "object_name": NUCLEI,
+                "object_label": label,
+                "area": float(label),
+            }
+            for label in (1, 2, 3, 4)
+        ],
+        object_name=NUCLEI,
+    )
+    executor = _executor(
+        "ClassifyObjectsSingleMeasurement",
+        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        runtime_artifact_inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+    )
+
+    result = executor.run(
+        get_function("ClassifyObjects"),
+        np.zeros((2, 2), dtype=np.float32),
+        cellprofiler_runtime=adapter,
+        measurement_feature="AreaShape_Area",
+        bin_choice="even",
+        bin_count=2,
+        low_threshold=0.0,
+        high_threshold=4.0,
+        dtype_config=DtypeConfig(),
+    )
+    measurements = adapter.get_measurements(MEASUREMENTS)
+
+    assert result.shape == (2, 2)
+    assert measurements.rows[0].total_objects == 2
+    assert measurements.rows[1].total_objects == 2
 
 
 def test_cellprofiler_module_executor_preserves_main_stack_for_measurements():
@@ -1275,7 +1584,10 @@ def test_cellprofiler_module_executor_preserves_main_stack_for_measurements():
     for measurement_image, measurement_labels in seen_images:
         assert measurement_image.shape == measurement_labels.shape == (4, 5)
     np.testing.assert_array_equal(result, image)
-    assert measurements.rows == [{"object_count": 1}, {"object_count": 2}]
+    assert measurements.rows == [
+        {"object_count": 1, "object_name": NUCLEI},
+        {"object_count": 2, "object_name": CELLS},
+    ]
 
 
 def test_cellprofiler_module_executor_measures_each_declared_image_and_object():
@@ -1323,10 +1635,10 @@ def test_cellprofiler_module_executor_measures_each_declared_image_and_object():
     np.testing.assert_array_equal(result, np.stack((dna, ph3)))
     assert seen == [(3.0, 1), (3.0, 2), (9.0, 1), (9.0, 2)]
     assert measurements.rows == [
-        {"mean": 3.0, "label": 1},
-        {"mean": 3.0, "label": 2},
-        {"mean": 9.0, "label": 1},
-        {"mean": 9.0, "label": 2},
+        {"mean": 3.0, "label": 1, "object_name": NUCLEI},
+        {"mean": 3.0, "label": 2, "object_name": CELLS},
+        {"mean": 9.0, "label": 1, "object_name": NUCLEI},
+        {"mean": 9.0, "label": 2, "object_name": CELLS},
     ]
     assert measurements.source_image_name is None
 

@@ -13,6 +13,11 @@ from .settings_binder import SettingsBinder
 CLASSIFICATION_DECISION_COUNT_SETTING = SettingNameFamily(
     "Make each classification decision on how many measurements?"
 )
+SINGLE_MEASUREMENT_FEATURE_SETTING = SettingNameFamily(
+    "Select the measurement to classify by"
+)
+FIRST_MEASUREMENT_FEATURE_SETTING = SettingNameFamily("Select the first measurement")
+SECOND_MEASUREMENT_FEATURE_SETTING = SettingNameFamily("Select the second measurement")
 
 
 class ClassifyObjectsVariant(Enum):
@@ -58,6 +63,10 @@ def _single_measurement_kwargs(
     binder: SettingsBinder,
 ) -> dict[str, Any]:
     return {
+        "measurement_feature": _required_setting_value(
+            module,
+            SINGLE_MEASUREMENT_FEATURE_SETTING,
+        ),
         "bin_choice": _bin_choice(
             _first_setting_value(
                 module,
@@ -112,6 +121,14 @@ def _two_measurement_kwargs(
     binder: SettingsBinder,
 ) -> dict[str, Any]:
     return {
+        "measurement1_feature": _required_setting_value(
+            module,
+            FIRST_MEASUREMENT_FEATURE_SETTING,
+        ),
+        "measurement2_feature": _required_setting_value(
+            module,
+            SECOND_MEASUREMENT_FEATURE_SETTING,
+        ),
         "threshold1_method": _threshold_method(
             _first_setting_value(
                 module,
@@ -181,6 +198,16 @@ def _optional_setting_value(
 ) -> str | None:
     value = _first_setting_value(module, setting_name, default="")
     return value or None
+
+
+def _required_setting_value(
+    module: ModuleBlock,
+    setting_name: str | SettingNameFamily,
+) -> str:
+    value = _first_setting_value(module, setting_name, default="").strip()
+    if not value:
+        raise ValueError(f"ClassifyObjects requires setting {setting_name!r}.")
+    return value
 
 
 def _first_setting_value(

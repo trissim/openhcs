@@ -11,6 +11,11 @@ from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
+from benchmark.cellprofiler_compat.measurement_lookup import (
+    measurement_row_mapping,
+    measurement_row_object_name,
+    measurement_rows,
+)
 from openhcs.constants.constants import Backend
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.image_shapes import is_color_image_slice
@@ -328,9 +333,12 @@ class CellProfilerRuntimeAdapter:
             match_group=group_key is not None,
         )
         return tuple(
-            MeasurementTable.from_runtime_value(record.value)
+            table
             for record in records
-            if record.value.schema.object_name == object_name
+            if _measurement_table_matches_object(
+                table := MeasurementTable.from_runtime_value(record.value),
+                object_name,
+            )
         )
 
     def add_relationship(
@@ -480,6 +488,20 @@ class CellProfilerRuntimeAdapter:
             )
         self.filemanager.ensure_directory(str(Path(path).parent), self.backend)
         self.filemanager.save(data, path, self.backend)
+
+
+def _measurement_table_matches_object(
+    table: MeasurementTable,
+    object_name: str,
+) -> bool:
+    if table.object_name == object_name:
+        return True
+    if table.object_name is not None:
+        return False
+    return any(
+        measurement_row_object_name(measurement_row_mapping(row)) == object_name
+        for row in measurement_rows((table,))
+    )
 
 
 @dataclass(frozen=True, slots=True)

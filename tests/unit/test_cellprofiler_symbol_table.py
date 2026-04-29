@@ -1239,6 +1239,7 @@ def test_classifyobjects_alias_compiles_variant_contract_and_settings():
                     "Single measurement",
                 ),
                 ("Select the object to be classified", "Nuclei"),
+                ("Select the measurement to classify by", "Math_Ratio"),
                 ("Select bin spacing", "Custom-defined bins"),
                 (
                     "Enter the custom thresholds separating the values between bins",
@@ -1270,6 +1271,7 @@ def test_classifyobjects_alias_compiles_variant_contract_and_settings():
         'classify_objects_single_measurement_2 = require_function('
         '"ClassifyObjects", function_name="classify_objects_single_measurement")'
     ) in generated.code
+    assert "'measurement_feature': 'Math_Ratio'" in generated.code
     assert "'bin_choice': 'custom'" in generated.code
     assert "'custom_thresholds': '0.25,0.75'" in generated.code
 

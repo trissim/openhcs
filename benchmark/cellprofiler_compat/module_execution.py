@@ -6,8 +6,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from inspect import signature
+from inspect import Parameter, signature
 import re
+from types import MappingProxyType
 from typing import Any, ClassVar, get_type_hints
 
 from metaclass_registry import AutoRegisterMeta
@@ -47,7 +48,9 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 from benchmark.cellprofiler_library import canonical_module_name
 from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
 from benchmark.cellprofiler_compat.measurement_lookup import (
+    annotate_measurement_row_object,
     count_feature_object_name,
+    measurement_values_for_label_slices,
     measurement_values_for_feature,
 )
 from benchmark.cellprofiler_compat.relationship_payload import (
@@ -57,6 +60,7 @@ from benchmark.cellprofiler_compat.runtime_adapter import CellProfilerRuntimeAda
 from benchmark.converter.contract_inference import InferredContract, infer_contract
 
 _MODULE_NAME_REGISTRY_KEY = "module_name"
+_INVOCATION_CONTROL_KWARGS = frozenset(("dtype_config", "slice_by_slice"))
 
 
 def cellprofiler_runtime_adapter_factory(
@@ -258,7 +262,10 @@ class CellProfilerModuleExecutor:
                 _ignored_main_output, artifact_values = _split_cellprofiler_output(
                     raw_output
                 )
-                combined_rows.extend(_measurement_rows_from_output(artifact_values))
+                combined_rows.extend(
+                    annotate_measurement_row_object(row, object_spec.name)
+                    for row in _measurement_rows_from_output(artifact_values)
+                )
 
         source_image_names = tuple(
             image.source_image_name
@@ -455,17 +462,19 @@ class CellProfilerModuleExecutor:
         special_input_names = special_input_names_from_callable(func)
         if special_input_names:
             return CellProfilerSpecialInputPolicy.for_module(self.module_name).bind(
-                self.module_name,
-                special_input_names,
-                runtime_inputs,
-                adapter,
-                kwargs=kwargs,
-                fallback_image=fallback_image,
-                external_image_names=frozenset(self._external_source_image_names()),
-                external_object_names=frozenset(
-                    self._external_source_object_names()
-                ),
-                runtime_image_names=frozenset(self._runtime_image_names()),
+                CellProfilerSpecialInputBindingRequest(
+                    module_name=self.module_name,
+                    parameter_names=special_input_names,
+                    runtime_inputs=runtime_inputs,
+                    adapter=adapter,
+                    kwargs=kwargs,
+                    fallback_image=fallback_image,
+                    external_image_names=frozenset(self._external_source_image_names()),
+                    external_object_names=frozenset(
+                        self._external_source_object_names()
+                    ),
+                    runtime_image_names=frozenset(self._runtime_image_names()),
+                )
             )
 
         unsupported_non_object_inputs = tuple(
@@ -841,12 +850,32 @@ class CellProfilerMeasurementImage(CellProfilerImageExecutionContext):
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CellProfilerSliceAlignedValues:
+    """Non-image vector payload with one value array per object-label slice."""
+
+    slices: tuple[np.ndarray, ...]
+
+    def __post_init__(self) -> None:
+        slices = tuple(np.asarray(value) for value in self.slices)
+        if not slices:
+            raise ValueError("CellProfilerSliceAlignedValues.slices cannot be empty.")
+        object.__setattr__(self, "slices", slices)
+
+    @property
+    def slice_count(self) -> int:
+        return len(self.slices)
+
+    def value_for_slice(self, slice_index: int) -> np.ndarray:
+        return self.slices[slice_index]
+
+
 def _coerce_invocation_kwargs(
     func: Callable[..., Any],
     kwargs: Mapping[str, Any],
 ) -> dict[str, Any]:
-    coerced_kwargs = dict(kwargs)
     parameters = signature(func).parameters
+    coerced_kwargs = _accepted_invocation_kwargs(parameters, kwargs)
     annotations = _callable_type_hints(func)
     for name, value in tuple(coerced_kwargs.items()):
         enum_type = _enum_annotation_type(
@@ -857,6 +886,19 @@ def _coerce_invocation_kwargs(
             continue
         coerced_kwargs[name] = _coerce_enum_argument(enum_type, value, name)
     return coerced_kwargs
+
+
+def _accepted_invocation_kwargs(
+    parameters: Mapping[str, Parameter],
+    kwargs: Mapping[str, Any],
+) -> dict[str, Any]:
+    if any(parameter.kind is Parameter.VAR_KEYWORD for parameter in parameters.values()):
+        return dict(kwargs)
+    return {
+        name: value
+        for name, value in kwargs.items()
+        if name in parameters or name in _INVOCATION_CONTROL_KWARGS
+    }
 
 
 def _callable_type_hints(func: Callable[..., Any]) -> Mapping[str, Any]:
@@ -1847,6 +1889,53 @@ def _object_label_count(
     return int(adapter.get_objects(object_name).labels.max())
 
 
+def _slice_aligned_measurement_values(
+    value_slices: tuple[np.ndarray, ...],
+) -> np.ndarray | CellProfilerSliceAlignedValues:
+    if len(value_slices) == 1:
+        return value_slices[0]
+    return CellProfilerSliceAlignedValues(value_slices)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CellProfilerSpecialInputBindingRequest:
+    """Authoritative runtime context for binding CellProfiler special_inputs."""
+
+    module_name: str
+    parameter_names: tuple[str, ...]
+    runtime_inputs: tuple[ArtifactSpec, ...]
+    adapter: CellProfilerRuntimeAdapter
+    kwargs: Mapping[str, Any]
+    fallback_image: Any
+    external_image_names: frozenset[str]
+    external_object_names: frozenset[str]
+    runtime_image_names: frozenset[str]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "parameter_names", tuple(self.parameter_names))
+        object.__setattr__(self, "runtime_inputs", tuple(self.runtime_inputs))
+        object.__setattr__(self, "kwargs", MappingProxyType(dict(self.kwargs)))
+        object.__setattr__(
+            self,
+            "external_image_names",
+            frozenset(self.external_image_names),
+        )
+        object.__setattr__(
+            self,
+            "external_object_names",
+            frozenset(self.external_object_names),
+        )
+        object.__setattr__(
+            self,
+            "runtime_image_names",
+            frozenset(self.runtime_image_names),
+        )
+
+    @property
+    def object_inputs(self) -> tuple[ArtifactSpec, ...]:
+        return _specs_of_kind(self.runtime_inputs, ArtifactKind.OBJECT_LABELS)
+
+
 class CellProfilerSpecialInputPolicy(ABC, metaclass=AutoRegisterMeta):
     """Nominal module-specific binding for CellProfiler special_inputs."""
 
@@ -1878,16 +1967,7 @@ class CellProfilerSpecialInputPolicy(ABC, metaclass=AutoRegisterMeta):
     @abstractmethod
     def bind(
         self,
-        module_name: str,
-        parameter_names: tuple[str, ...],
-        runtime_inputs: tuple[ArtifactSpec, ...],
-        adapter: CellProfilerRuntimeAdapter,
-        *,
-        kwargs: Mapping[str, Any],
-        fallback_image: Any,
-        external_image_names: frozenset[str],
-        external_object_names: frozenset[str],
-        runtime_image_names: frozenset[str],
+        request: CellProfilerSpecialInputBindingRequest,
     ) -> dict[str, Any]:
         """Return kwargs for a callable's declared special_inputs."""
 
@@ -1897,28 +1977,9 @@ class PositionalSpecialInputPolicy(CellProfilerSpecialInputPolicy):
 
     def bind(
         self,
-        module_name: str,
-        parameter_names: tuple[str, ...],
-        runtime_inputs: tuple[ArtifactSpec, ...],
-        adapter: CellProfilerRuntimeAdapter,
-        *,
-        kwargs: Mapping[str, Any],
-        fallback_image: Any,
-        external_image_names: frozenset[str],
-        external_object_names: frozenset[str],
-        runtime_image_names: frozenset[str],
+        request: CellProfilerSpecialInputBindingRequest,
     ) -> dict[str, Any]:
-        del kwargs
-        return _bind_special_runtime_inputs(
-            module_name,
-            parameter_names,
-            runtime_inputs,
-            adapter,
-            fallback_image=fallback_image,
-            external_image_names=external_image_names,
-            external_object_names=external_object_names,
-            runtime_image_names=runtime_image_names,
-        )
+        return _bind_special_runtime_inputs(request)
 
 
 class DisplayDataOnImageSpecialInputPolicy(CellProfilerSpecialInputPolicy):
@@ -1937,40 +1998,97 @@ class DisplayDataOnImageSpecialInputPolicy(CellProfilerSpecialInputPolicy):
 
     def bind(
         self,
-        module_name: str,
-        parameter_names: tuple[str, ...],
-        runtime_inputs: tuple[ArtifactSpec, ...],
-        adapter: CellProfilerRuntimeAdapter,
-        *,
-        kwargs: Mapping[str, Any],
-        fallback_image: Any,
-        external_image_names: frozenset[str],
-        external_object_names: frozenset[str],
-        runtime_image_names: frozenset[str],
+        request: CellProfilerSpecialInputBindingRequest,
     ) -> dict[str, Any]:
-        del parameter_names, external_image_names, runtime_image_names
-        object_inputs = _specs_of_kind(runtime_inputs, ArtifactKind.OBJECT_LABELS)
-        _require_exact_object_count(module_name, object_inputs, 1)
+        object_inputs = request.object_inputs
+        _require_exact_object_count(request.module_name, object_inputs, 1)
         object_spec = object_inputs[0]
         labels = _object_input_labels(
             object_spec,
-            adapter,
-            fallback_image=fallback_image,
-            external_object_names=external_object_names,
+            request.adapter,
+            fallback_image=request.fallback_image,
+            external_object_names=request.external_object_names,
         )
         feature_name = _required_string_kwarg(
-            kwargs,
+            request.kwargs,
             "measurement_feature",
-            module_name,
+            request.module_name,
         )
         return {
             "labels": labels,
-            "measurements": measurement_values_for_feature(
-                adapter.measurement_tables_for_object(object_spec.name),
-                feature_name,
-                object_count=int(labels.max()),
+            "measurements": _slice_aligned_measurement_values(
+                measurement_values_for_label_slices(
+                    request.adapter.measurement_tables_for_object(object_spec.name),
+                    feature_name,
+                    labels,
+                    object_name=object_spec.name,
+                )
             ),
         }
+
+
+class ClassifyObjectsMeasurementInputPolicy(CellProfilerSpecialInputPolicy):
+    """Resolve ClassifyObjects label and measurement-vector inputs."""
+
+    measurement_kwarg_by_parameter: ClassVar[Mapping[str, str]] = {
+        "measurement_values": "measurement_feature",
+        "measurement1_values": "measurement1_feature",
+        "measurement2_values": "measurement2_feature",
+    }
+
+    def special_image_inputs(
+        self,
+        module_name: str,
+        func: Callable[..., Any],
+        declared_inputs: tuple[ArtifactSpec, ...],
+    ) -> tuple[ArtifactSpec, ...]:
+        del module_name, func, declared_inputs
+        return ()
+
+    def bind(
+        self,
+        request: CellProfilerSpecialInputBindingRequest,
+    ) -> dict[str, Any]:
+        object_inputs = request.object_inputs
+        _require_exact_object_count(request.module_name, object_inputs, 1)
+        object_spec = object_inputs[0]
+        labels = _object_input_labels(
+            object_spec,
+            request.adapter,
+            fallback_image=request.fallback_image,
+            external_object_names=request.external_object_names,
+        )
+        return {
+            "labels": labels,
+            **{
+                parameter_name: _slice_aligned_measurement_values(
+                    measurement_values_for_label_slices(
+                        request.adapter.measurement_tables_for_object(
+                            object_spec.name
+                        ),
+                        _required_string_kwarg(
+                            request.kwargs,
+                            kwarg_name,
+                            request.module_name,
+                        ),
+                        labels,
+                        object_name=object_spec.name,
+                    )
+                )
+                for parameter_name, kwarg_name in (
+                    type(self).measurement_kwarg_by_parameter.items()
+                )
+                if kwarg_name in request.kwargs
+            },
+        }
+
+
+class ClassifyObjectsSingleMeasurementInputPolicy(ClassifyObjectsMeasurementInputPolicy):
+    module_name = "ClassifyObjectsSingleMeasurement"
+
+
+class ClassifyObjectsTwoMeasurementsInputPolicy(ClassifyObjectsMeasurementInputPolicy):
+    module_name = "ClassifyObjectsTwoMeasurements"
 
 
 def _signature_special_image_inputs(
@@ -2024,7 +2142,7 @@ def _calculate_math_operand_value(
     *,
     feature_kwarg: str,
     object_kwarg: str,
-) -> float:
+) -> Any:
     feature_name = _required_string_kwarg(kwargs, feature_kwarg, "CalculateMath")
     object_name = _optional_string_kwarg(kwargs, object_kwarg)
     count_object_name = count_feature_object_name(feature_name)
@@ -2039,13 +2157,9 @@ def _calculate_math_operand_value(
         adapter.measurement_tables_for_object(object_name),
         feature_name,
         object_count=_object_label_count(adapter, object_name),
+        object_name=object_name,
     )
-    if len(values) == 1:
-        return float(values[0])
-    raise NotImplementedError(
-        f"CalculateMath scalar function cannot consume non-scalar feature "
-        f"{feature_name!r} for object set {object_name!r}."
-    )
+    return float(values[0]) if len(values) == 1 else values
 
 
 @dataclass(frozen=True, slots=True)
@@ -2098,33 +2212,19 @@ def _callable_accepts_composed_image_payload(func: Callable[..., Any]) -> bool:
 
 
 def _bind_special_runtime_inputs(
-    module_name: str,
-    parameter_names: tuple[str, ...],
-    runtime_inputs: tuple[ArtifactSpec, ...],
-    adapter: CellProfilerRuntimeAdapter,
-    *,
-    fallback_image: Any,
-    external_image_names: frozenset[str],
-    external_object_names: frozenset[str],
-    runtime_image_names: frozenset[str],
+    request: CellProfilerSpecialInputBindingRequest,
 ) -> dict[str, Any]:
-    if len(parameter_names) != len(runtime_inputs):
+    if len(request.parameter_names) != len(request.runtime_inputs):
         raise NotImplementedError(
-            f"{module_name} declares special_inputs {list(parameter_names)}, but "
-            f"compiled runtime inputs are {[spec.name for spec in runtime_inputs]}."
+            f"{request.module_name} declares special_inputs "
+            f"{list(request.parameter_names)}, but compiled runtime inputs are "
+            f"{[spec.name for spec in request.runtime_inputs]}."
         )
     return {
-        parameter_name: _runtime_input_value(
-            spec,
-            adapter,
-            fallback_image=fallback_image,
-            external_image_names=external_image_names,
-            external_object_names=external_object_names,
-            runtime_image_names=runtime_image_names,
-        )
+        parameter_name: _runtime_input_value(spec, request)
         for parameter_name, spec in zip(
-            parameter_names,
-            runtime_inputs,
+            request.parameter_names,
+            request.runtime_inputs,
             strict=True,
         )
     }
@@ -2132,22 +2232,17 @@ def _bind_special_runtime_inputs(
 
 def _runtime_input_value(
     spec: ArtifactSpec,
-    adapter: CellProfilerRuntimeAdapter,
-    *,
-    fallback_image: Any,
-    external_image_names: frozenset[str],
-    external_object_names: frozenset[str],
-    runtime_image_names: frozenset[str],
+    request: CellProfilerSpecialInputBindingRequest,
 ) -> Any:
     try:
         return _artifact_kind_strategy(spec.kind).runtime_input_value(
             CellProfilerArtifactKindRequest(
                 spec=spec,
-                adapter=adapter,
-                fallback_image=fallback_image,
-                external_image_names=external_image_names,
-                external_object_names=external_object_names,
-                runtime_image_names=runtime_image_names,
+                adapter=request.adapter,
+                fallback_image=request.fallback_image,
+                external_image_names=request.external_image_names,
+                external_object_names=request.external_object_names,
+                runtime_image_names=request.runtime_image_names,
             )
         )
     except KeyError as exc:
@@ -2496,6 +2591,11 @@ def _slice_count_from_pure_2d_kwargs(
         for value in kwargs.values()
         if hasattr(value, "ndim") and value.ndim == 3 and value.shape[0] > 1
     }
+    slice_counts.update(
+        value.slice_count
+        for value in kwargs.values()
+        if isinstance(value, CellProfilerSliceAlignedValues) and value.slice_count > 1
+    )
     if len(slice_counts) > 1:
         raise ValueError(
             "Cannot align PURE_2D invocation with conflicting kwarg slice "
@@ -2512,6 +2612,8 @@ def _slice_count_from_pure_2d_kwargs(
 
 
 def _slice_pure_2d_value(value: Any, slice_index: int, slice_count: int) -> Any:
+    if isinstance(value, CellProfilerSliceAlignedValues):
+        return value.value_for_slice(slice_index)
     if not hasattr(value, "ndim") or value.ndim != 3:
         return value
     if value.shape[0] == slice_count:

@@ -455,6 +455,77 @@ def test_official_example_untangleworms_cppipe_executes_via_source_schema_worksp
     )
 
 
+def test_official_examplefly_cppipe_executes_measurement_math_classification(
+    tmp_path: Path,
+) -> None:
+    examples_root = _official_cellprofiler_examples_root()
+    source_root = examples_root / "ExampleFly"
+    cppipe_path = source_root / "ExampleFly.cppipe"
+    if not cppipe_path.exists() or not source_root.exists():
+        pytest.skip(
+            "Official CellProfiler ExampleFly files are not available. "
+            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
+            f"looked under {examples_root}."
+        )
+
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / "generated_official_examplefly_pipeline.py",
+    )
+    workspace = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "official_examplefly_openhcs_workspace",
+        prepared.source_schema,
+    )
+
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=True,
+        microscope=Microscope.AUTO,
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            output_dir_suffix="_generated_cppipe",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    orchestrator = PipelineOrchestrator(
+        workspace.workspace_root,
+        pipeline_config=pipeline_config,
+    )
+    orchestrator.initialize()
+
+    execution = execute_pipeline_direct(
+        orchestrator,
+        prepared.pipeline,
+        well_filter=["A01"],
+    )
+
+    assert all(
+        result.is_success()
+        for result in execution.execution_results.values()
+    )
+    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
+    assert runtime_store.find(
+        name="CalculateMath_18_measurements",
+        kind=ArtifactKind.MEASUREMENTS,
+        axis_id="A01",
+    )
+    assert runtime_store.find(
+        name="ClassifyObjects_19_measurements",
+        kind=ArtifactKind.MEASUREMENTS,
+        axis_id="A01",
+    )
+    assert runtime_store.find(
+        name="RGBImage",
+        kind=ArtifactKind.IMAGE,
+        axis_id="A01",
+    )
+
+
 def test_official_example_untangleworms_brightfield_cppipe_executes_overlay(
     tmp_path: Path,
 ) -> None:
