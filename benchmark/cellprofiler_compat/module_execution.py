@@ -39,6 +39,7 @@ from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline.function_contracts import special_input_names_from_callable
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest
+from openhcs.core.runtime_artifact_queries import annotate_measurement_row_object
 from openhcs.core.runtime_semantics import FieldSpec
 from openhcs.core.runtime_stores import require_runtime_value_store
 from openhcs.processing.backends.lib_registry.unified_registry import (
@@ -50,7 +51,6 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 
 from benchmark.cellprofiler_library import canonical_module_name
 from benchmark.cellprofiler_compat.measurement_lookup import (
-    annotate_measurement_row_object,
     count_feature_object_name,
     measurement_values_for_label_slices,
     measurement_values_for_feature,

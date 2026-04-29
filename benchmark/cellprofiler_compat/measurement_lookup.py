@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import fields, is_dataclass
 import re
 
 import numpy as np
 
+from openhcs.core.runtime_artifact_queries import (
+    MEASUREMENT_OBJECT_NAME_FIELD,
+    annotate_measurement_row_object,
+    measurement_row_mapping,
+    measurement_row_object_name,
+    measurement_rows,
+)
 from openhcs.core.runtime_values import MeasurementTable
 
-MEASUREMENT_OBJECT_NAME_FIELD = "object_name"
 MEASUREMENT_FEATURE_NAME_FIELDS = ("feature_name", "measurement_name", "output_name")
 MEASUREMENT_VALUE_FIELDS = ("result_value", "measurement_value", "value", "mean_value")
 
@@ -105,33 +110,8 @@ def measurement_value_index(
     return values_by_label, positional_values
 
 
-def measurement_rows(
-    measurement_tables: tuple[MeasurementTable, ...],
-) -> tuple[object, ...]:
-    rows: list[object] = []
-    for table in measurement_tables:
-        if isinstance(table.rows, list | tuple):
-            rows.extend(table.rows)
-            continue
-        rows.append(table.rows)
-    return tuple(rows)
-
-
 def _label_planes_are_empty(label_planes: tuple[np.ndarray, ...]) -> bool:
     return all(not np.any(label_plane > 0) for label_plane in label_planes)
-
-
-def measurement_row_mapping(row: object) -> Mapping[str, object]:
-    if isinstance(row, Mapping):
-        return row
-    if is_dataclass(row):
-        return {field.name: getattr(row, field.name) for field in fields(row)}
-    try:
-        return vars(row)
-    except TypeError as exc:
-        raise TypeError(
-            f"Unsupported CellProfiler measurement row type {type(row).__name__}."
-        ) from exc
 
 
 def matching_measurement_field(
@@ -177,24 +157,6 @@ def measurement_object_label(row: Mapping[str, object]) -> int | None:
         if key in row:
             return int(row[key])
     return None
-
-
-def measurement_row_object_name(row: Mapping[str, object]) -> str | None:
-    value = row.get(MEASUREMENT_OBJECT_NAME_FIELD)
-    if value is None:
-        return None
-    normalized = str(value).strip()
-    return normalized or None
-
-
-def annotate_measurement_row_object(row: object, object_name: str) -> Mapping[str, object]:
-    normalized_object_name = object_name.strip()
-    if not normalized_object_name:
-        raise ValueError("object_name cannot be empty.")
-    return {
-        **dict(measurement_row_mapping(row)),
-        MEASUREMENT_OBJECT_NAME_FIELD: normalized_object_name,
-    }
 
 
 def measurement_feature_candidates(feature_name: str) -> frozenset[str]:

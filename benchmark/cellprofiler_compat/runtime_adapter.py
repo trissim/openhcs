@@ -11,11 +11,6 @@ from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
-from benchmark.cellprofiler_compat.measurement_lookup import (
-    measurement_row_mapping,
-    measurement_row_object_name,
-    measurement_rows,
-)
 from openhcs.constants.constants import Backend, FileFormat
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.image_shapes import is_color_image_slice
@@ -43,6 +38,11 @@ from openhcs.core.runtime_stores import (
     RuntimeValueStore,
     StoredRuntimeValue,
     replace_runtime_artifact_payload,
+)
+from openhcs.core.runtime_artifact_queries import (
+    RuntimeArtifactQueryContext,
+    runtime_measurement_tables_for_object,
+    runtime_relationship,
 )
 from openhcs.core.runtime_values import (
     FieldSpec,
@@ -226,7 +226,10 @@ class CellProfilerRuntimeAdapter:
         *,
         group_key: str | None = None,
     ) -> NamedImage:
-        record = self._resolve_one(name, ArtifactKind.IMAGE, group_key=group_key)
+        record = self._query_context(group_key).resolve(
+            name=name,
+            kind=ArtifactKind.IMAGE,
+        )
         schema = record.value.schema
         return NamedImage(
             name=name,
@@ -264,10 +267,9 @@ class CellProfilerRuntimeAdapter:
         *,
         group_key: str | None = None,
     ) -> ObjectLabelSet:
-        record = self._resolve_one(
-            name,
-            ArtifactKind.OBJECT_LABELS,
-            group_key=group_key,
+        record = self._query_context(group_key).resolve(
+            name=name,
+            kind=ArtifactKind.OBJECT_LABELS,
         )
         schema = record.value.schema
         return ObjectLabelSet(
@@ -295,7 +297,10 @@ class CellProfilerRuntimeAdapter:
             object_name,
             ArtifactKind.OBJECT_LABELS,
         ):
-            self._resolve_one(object_name, ArtifactKind.OBJECT_LABELS)
+            self._query_context().resolve(
+                name=object_name,
+                kind=ArtifactKind.OBJECT_LABELS,
+            )
         return self._record_native_value(
             name,
             ArtifactKind.MEASUREMENTS,
@@ -315,10 +320,9 @@ class CellProfilerRuntimeAdapter:
         *,
         group_key: str | None = None,
     ) -> MeasurementTable:
-        record = self._resolve_one(
-            name,
-            ArtifactKind.MEASUREMENTS,
-            group_key=group_key,
+        record = self._query_context(group_key).resolve(
+            name=name,
+            kind=ArtifactKind.MEASUREMENTS,
         )
         return MeasurementTable.from_runtime_value(record.value)
 
@@ -329,19 +333,9 @@ class CellProfilerRuntimeAdapter:
         group_key: str | None = None,
     ) -> tuple[MeasurementTable, ...]:
         """Return prior measurement tables whose subject is an object set."""
-        records = self.runtime_value_store.find(
-            kind=ArtifactKind.MEASUREMENTS,
-            axis_id=self.axis_id,
-            group_key=group_key,
-            match_group=group_key is not None,
-        )
-        return tuple(
-            table
-            for record in records
-            if _measurement_table_matches_object(
-                table := MeasurementTable.from_runtime_value(record.value),
-                object_name,
-            )
+        return runtime_measurement_tables_for_object(
+            self._query_context(group_key),
+            object_name,
         )
 
     def add_relationship(
@@ -353,8 +347,14 @@ class CellProfilerRuntimeAdapter:
         parent_ids: Any,
         child_ids: Any,
     ) -> StoredRuntimeValue:
-        self._resolve_one(parent_object_name, ArtifactKind.OBJECT_LABELS)
-        self._resolve_one(child_object_name, ArtifactKind.OBJECT_LABELS)
+        self._query_context().resolve(
+            name=parent_object_name,
+            kind=ArtifactKind.OBJECT_LABELS,
+        )
+        self._query_context().resolve(
+            name=child_object_name,
+            kind=ArtifactKind.OBJECT_LABELS,
+        )
         return self._record_native_value(
             name,
             ArtifactKind.RELATIONSHIPS,
@@ -382,42 +382,9 @@ class CellProfilerRuntimeAdapter:
         *,
         group_key: str | None = None,
     ) -> ObjectRelationship:
-        record = self._resolve_one(
-            name,
-            ArtifactKind.RELATIONSHIPS,
-            group_key=group_key,
-        )
-        data = record.value.data
-        if not isinstance(data, Mapping):
-            raise TypeError(
-                f"Relationship '{name}' payload must be mapping-backed, "
-                f"got {type(data).__name__}."
-            )
-        schema = record.value.schema
-        relationship = schema.relationship
-        if relationship is not None:
-            return ObjectRelationship(
-                name=name,
-                source=relationship.source,
-                target=relationship.target,
-                source_ids=data[relationship.source.id_field],
-                target_ids=data[relationship.target.id_field],
-                relationship_type=relationship.relationship_type,
-            )
-        return ObjectRelationship(
+        return runtime_relationship(
+            self._query_context(group_key),
             name=name,
-            source=RelationshipEndpoint(
-                data["source_object"],
-                role="source",
-                id_field="source_id",
-            ),
-            target=RelationshipEndpoint(
-                data["target_object"],
-                role="target",
-                id_field="target_id",
-            ),
-            source_ids=data["source_id"],
-            target_ids=data["target_id"],
         )
 
     def _record_native_value(
@@ -457,31 +424,15 @@ class CellProfilerRuntimeAdapter:
             )
         return plan
 
-    def _resolve_one(
+    def _query_context(
         self,
-        name: str,
-        kind: ArtifactKind,
-        *,
         group_key: str | None = None,
-    ) -> StoredRuntimeValue:
-        records = self.runtime_value_store.find(
-            name=name,
-            kind=kind,
-            axis_id=self.axis_id,
-            group_key=group_key,
-            match_group=group_key is not None,
+    ) -> RuntimeArtifactQueryContext:
+        return RuntimeArtifactQueryContext(
+            self.runtime_value_store,
+            self.axis_id,
+            group_key,
         )
-        if not records:
-            raise RuntimeError(
-                f"Missing CellProfiler runtime artifact '{name}' "
-                f"({kind.value}) on axis '{self.axis_id}'."
-            )
-        if len(records) > 1:
-            raise RuntimeError(
-                f"Ambiguous CellProfiler runtime artifact '{name}' "
-                f"({kind.value}) on axis '{self.axis_id}': {records!r}."
-            )
-        return records[0]
 
     def _save_payload(self, data: Any, path: str) -> None:
         if self.filemanager is None:
@@ -494,20 +445,6 @@ class CellProfilerRuntimeAdapter:
             data,
             RuntimeArtifactLocation(path=path, backend=self.backend),
         )
-
-
-def _measurement_table_matches_object(
-    table: MeasurementTable,
-    object_name: str,
-) -> bool:
-    if table.object_name == object_name:
-        return True
-    if table.object_name is not None:
-        return False
-    return any(
-        measurement_row_object_name(measurement_row_mapping(row)) == object_name
-        for row in measurement_rows((table,))
-    )
 
 
 @dataclass(frozen=True, slots=True)

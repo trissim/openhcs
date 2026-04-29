@@ -410,7 +410,7 @@ def test_cellprofiler_adapter_measurements_require_object_reference():
         }
     )
 
-    with pytest.raises(RuntimeError, match="Missing CellProfiler runtime artifact"):
+    with pytest.raises(RuntimeError, match="Missing runtime artifact"):
         adapter.add_measurements(
             NUCLEI_MEASUREMENTS,
             [{"object_id": 1}],

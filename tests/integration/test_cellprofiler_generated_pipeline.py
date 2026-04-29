@@ -25,6 +25,10 @@ from openhcs.core.config import (
     VFSConfig,
 )
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.core.runtime_artifact_queries import (
+    RuntimeArtifactQueryContext,
+    runtime_relationship,
+)
 from openhcs.core.source_bindings import (
     ComponentSelector,
     SourceBindingOrigin,
@@ -729,6 +733,11 @@ def test_official_example_colocalization_cppipe_executes_relationship_exports(
         result.is_success()
         for result in execution.execution_results.values()
     )
+    validate_cppipe_execution(
+        prepared,
+        execution,
+        _generated_output_root(workspace.workspace_root),
+    )
     runtime_store = execution.compiled_contexts["A01"].runtime_value_store
     relationship_records = runtime_store.find(
         kind=ArtifactKind.RELATIONSHIPS,
@@ -741,6 +750,15 @@ def test_official_example_colocalization_cppipe_executes_relationship_exports(
         "Objects1_Objects2_relationships",
         "ExpandedObjects1_ExpandedObjects2_relationships",
     }
+    relationships = tuple(
+        runtime_relationship(
+            RuntimeArtifactQueryContext(runtime_store, "A01"),
+            record.key.name,
+        )
+        for record in relationship_records
+    )
+    assert {relationship.source.role for relationship in relationships} == {"parent"}
+    assert {relationship.target.role for relationship in relationships} == {"child"}
     assert runtime_store.find(
         name="MeasureColocalization_9_measurements",
         kind=ArtifactKind.MEASUREMENTS,
@@ -1348,6 +1366,11 @@ def test_cppipe_generated_pipeline_materializes_relationship_outputs(
         result.is_success()
         for result in execution.execution_results.values()
     )
+    validate_cppipe_execution(
+        prepared,
+        execution,
+        _generated_output_root(plate_path),
+    )
 
     runtime_store = execution.compiled_contexts["A01"].runtime_value_store
     relationship_records = runtime_store.find(
@@ -1360,6 +1383,13 @@ def test_cppipe_generated_pipeline_materializes_relationship_outputs(
     )
     assert relationship_records
     assert measurement_records
+    relationship = runtime_relationship(
+        RuntimeArtifactQueryContext(runtime_store, "A01"),
+        relationship_records[0].key.name,
+    )
+    assert relationship.source.name == "Nuclei"
+    assert relationship.target.name == "Cells"
+    assert relationship.relationship_type == "parent_child"
 
     csv_outputs = sorted(_generated_results_dir(plate_path).rglob("*.csv"))
     assert csv_outputs
@@ -1439,6 +1469,11 @@ def test_percent_positive_cppipe_executes_relationship_measurement_consumers(
     assert all(
         result.is_success()
         for result in execution.execution_results.values()
+    )
+    validate_cppipe_execution(
+        prepared,
+        execution,
+        _generated_output_root(workspace.workspace_root),
     )
     runtime_store = execution.compiled_contexts["A01"].runtime_value_store
     assert runtime_store.find(

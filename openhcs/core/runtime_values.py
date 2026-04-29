@@ -367,6 +367,34 @@ class ObjectRelationship(NativeRuntimeValue):
     target_ids: Any
     relationship_type: str = "related"
 
+    @classmethod
+    def from_runtime_value(cls, value: RuntimeValue) -> Self:
+        """Reconstruct the native relationship view from a runtime value."""
+        if value.kind is not ArtifactKind.RELATIONSHIPS:
+            raise TypeError(
+                "ObjectRelationship.from_runtime_value requires a RELATIONSHIPS "
+                f"runtime value, got {value.kind.value}."
+            )
+        if not isinstance(value.data, Mapping):
+            raise TypeError(
+                f"Relationship '{value.name}' payload must be mapping-backed, "
+                f"got {type(value.data).__name__}."
+            )
+        relationship = value.schema.relationship
+        if relationship is None:
+            raise TypeError(
+                f"Relationship '{value.name}' is missing typed relationship "
+                "schema."
+            )
+        return cls(
+            name=value.name,
+            source=relationship.source,
+            target=relationship.target,
+            source_ids=value.data[relationship.source.id_field],
+            target_ids=value.data[relationship.target.id_field],
+            relationship_type=relationship.relationship_type,
+        )
+
     def __post_init__(self) -> None:
         NativeRuntimeValue.__post_init__(self)
         if not isinstance(self.source, RelationshipEndpoint):
