@@ -6,7 +6,6 @@ import ast
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, ClassVar, Mapping
 
@@ -21,6 +20,7 @@ from openhcs.core.pipeline_image_schema import (
     ImportedMetadataTable,
     ImagesRule,
     PipelineImageSchema,
+    PipelineImageSchemaBuilder,
     SourceArtifactAssignment,
     image_type_participates_in_image_stack,
 )
@@ -126,109 +126,14 @@ class SetupModuleCompiler(ABC, metaclass=AutoRegisterMeta):
     def compile(
         self,
         module: ModuleBlock,
-        state: _SchemaBuilder,
+        state: PipelineImageSchemaBuilder,
     ) -> None:
         """Lower one setup module into schema state."""
-
-@dataclass(frozen=True, slots=True)
-class _SetupModuleCompilation:
-    """Mutable-free setup-module lowering state."""
-
-    images_rule: ImagesRule | None = None
-    metadata_rules: tuple[MetadataExtractionRule, ...] = ()
-    imported_metadata_tables: tuple[ImportedMetadataTable, ...] = ()
-    assignments_by_alias: Mapping[str, ImageAssignment] = MappingProxyType({})
-    source_artifacts_by_alias: Mapping[str, SourceArtifactAssignment] = (
-        MappingProxyType({})
-    )
-    match_plan: SourceBindingMatchPlan | None = None
-    grouping: GroupingPlan | None = None
-
-    def to_schema(self) -> PipelineImageSchema:
-        return PipelineImageSchema(
-            images_rule=self.images_rule,
-            metadata_rules=self.metadata_rules,
-            imported_metadata_tables=self.imported_metadata_tables,
-            assignments_by_alias=self.assignments_by_alias,
-            source_artifacts_by_alias=self.source_artifacts_by_alias,
-            match_plan=self.match_plan,
-            grouping=self.grouping,
-        )
-
-
-class _SchemaBuilder:
-    def __init__(self) -> None:
-        self.images_rule: ImagesRule | None = None
-        self.metadata_rules: list[MetadataExtractionRule] = []
-        self.imported_metadata_tables: list[ImportedMetadataTable] = []
-        self.assignments_by_alias: dict[str, ImageAssignment] = {}
-        self.source_artifacts_by_alias: dict[str, SourceArtifactAssignment] = {}
-        self.match_plan: SourceBindingMatchPlan | None = None
-        self.grouping: GroupingPlan | None = None
-
-    def build(self) -> PipelineImageSchema:
-        return _SetupModuleCompilation(
-            images_rule=self.images_rule,
-            metadata_rules=tuple(self.metadata_rules),
-            imported_metadata_tables=tuple(self.imported_metadata_tables),
-            assignments_by_alias=MappingProxyType(dict(self.assignments_by_alias)),
-            source_artifacts_by_alias=MappingProxyType(
-                dict(self.source_artifacts_by_alias)
-            ),
-            match_plan=self.match_plan,
-            grouping=self.grouping,
-        ).to_schema()
-
-    def add_metadata_rule(self, rule: MetadataExtractionRule) -> None:
-        if rule not in self.metadata_rules:
-            self.metadata_rules.append(rule)
-
-    def add_imported_metadata_table(self, table: ImportedMetadataTable) -> None:
-        self.imported_metadata_tables.append(table)
-
-    def declare_assignment(self, assignment: ImageAssignment) -> None:
-        existing = self.assignments_by_alias.get(assignment.alias)
-        if existing is not None and existing != assignment:
-            raise ValueError(
-                f"Pipeline image alias {assignment.alias!r} is already declared "
-                "with different setup semantics."
-            )
-        if assignment.alias in self.source_artifacts_by_alias:
-            raise ValueError(
-                f"Pipeline alias {assignment.alias!r} is already declared as "
-                "a non-image source artifact."
-            )
-        self.assignments_by_alias[assignment.alias] = assignment
-
-    def declare_source_artifact(
-        self,
-        assignment: SourceArtifactAssignment,
-    ) -> None:
-        existing = self.source_artifacts_by_alias.get(assignment.alias)
-        if existing is not None and existing != assignment:
-            raise ValueError(
-                f"Pipeline source artifact {assignment.alias!r} is already "
-                "declared with different setup semantics."
-            )
-        if assignment.alias in self.assignments_by_alias:
-            raise ValueError(
-                f"Pipeline alias {assignment.alias!r} is already declared as "
-                "an image assignment."
-            )
-        self.source_artifacts_by_alias[assignment.alias] = assignment
-
-    def declare_match_plan(self, match_plan: SourceBindingMatchPlan) -> None:
-        if self.match_plan is not None and self.match_plan != match_plan:
-            raise ValueError(
-                "Pipeline image schema already declared a different image-set "
-                "match plan."
-            )
-        self.match_plan = match_plan
 
 
 def compile_image_schema(modules: Iterable[ModuleBlock]) -> PipelineImageSchema:
     """Compile setup modules into a typed pipeline-level image schema."""
-    builder = _SchemaBuilder()
+    builder = PipelineImageSchemaBuilder()
     for module in modules:
         if not module.enabled:
             continue
@@ -244,7 +149,7 @@ class ImagesModuleCompiler(SetupModuleCompiler):
     def compile(
         self,
         module: ModuleBlock,
-        state: _SchemaBuilder,
+        state: PipelineImageSchemaBuilder,
     ) -> None:
         filtering_mode = module.get_setting("Filter images?", "")
         criteria = module.get_setting("Select the rule criteria", "")
@@ -261,7 +166,7 @@ class LoadImagesModuleCompiler(SetupModuleCompiler):
     def compile(
         self,
         module: ModuleBlock,
-        state: _SchemaBuilder,
+        state: PipelineImageSchemaBuilder,
     ) -> None:
         _require_legacy_load_images_source_type(module)
         _declare_load_images_grouping(module, state)
@@ -288,7 +193,7 @@ class MetadataModuleCompiler(SetupModuleCompiler):
     def compile(
         self,
         module: ModuleBlock,
-        state: _SchemaBuilder,
+        state: PipelineImageSchemaBuilder,
     ) -> None:
         for block in repeating_setting_blocks(
             module.iter_settings(),
@@ -303,7 +208,7 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
     def compile(
         self,
         module: ModuleBlock,
-        state: _SchemaBuilder,
+        state: PipelineImageSchemaBuilder,
     ) -> None:
         assignment_blocks = _names_and_types_blocks(module.iter_settings())
         match_plan = _match_plan_from_names_and_types(module, assignment_blocks)
@@ -356,7 +261,7 @@ class GroupsModuleCompiler(SetupModuleCompiler):
     def compile(
         self,
         module: ModuleBlock,
-        state: _SchemaBuilder,
+        state: PipelineImageSchemaBuilder,
     ) -> None:
         if module.get_setting("Do you want to group your images?", "No") != "Yes":
             return
@@ -526,7 +431,7 @@ def _require_legacy_load_images_source_type(module: ModuleBlock) -> None:
 
 def _declare_load_images_grouping(
     module: ModuleBlock,
-    state: _SchemaBuilder,
+    state: PipelineImageSchemaBuilder,
 ) -> None:
     if module.get_setting("Do you want to group image sets by metadata?", "") != "Yes":
         return
@@ -585,7 +490,7 @@ def _load_images_match_type(module: ModuleBlock) -> SourceFilterMatchType:
 def _compile_load_images_metadata_rules(
     block: Sequence[ModuleSetting],
     filters: tuple[SourceFilterClause, ...],
-    state: _SchemaBuilder,
+    state: PipelineImageSchemaBuilder,
 ) -> None:
     mode = block_setting_value(block, _LOAD_IMAGES_METADATA_MODE_SETTING)
     for source in _load_images_metadata_sources(mode):
@@ -661,7 +566,7 @@ def _metadata_source(value: str) -> MetadataSource:
 
 def _compile_metadata_block(
     block: Sequence[ModuleSetting],
-    state: _SchemaBuilder,
+    state: PipelineImageSchemaBuilder,
 ) -> None:
     method = block_setting_value(block, "Metadata extraction method")
     if _is_imported_metadata_method(method):

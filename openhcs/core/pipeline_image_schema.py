@@ -393,6 +393,78 @@ class PipelineImageSchema:
         return artifact_assignment
 
 
+class PipelineImageSchemaBuilder:
+    """Mutable accumulator for pipeline-level source schema declarations."""
+
+    def __init__(self) -> None:
+        self.images_rule: ImagesRule | None = None
+        self.metadata_rules: list[MetadataExtractionRule] = []
+        self.imported_metadata_tables: list[ImportedMetadataTable] = []
+        self.assignments_by_alias: dict[str, ImageAssignment] = {}
+        self.source_artifacts_by_alias: dict[str, SourceArtifactAssignment] = {}
+        self.match_plan: SourceBindingMatchPlan | None = None
+        self.grouping: GroupingPlan | None = None
+
+    def build(self) -> PipelineImageSchema:
+        return PipelineImageSchema(
+            images_rule=self.images_rule,
+            metadata_rules=tuple(self.metadata_rules),
+            imported_metadata_tables=tuple(self.imported_metadata_tables),
+            assignments_by_alias=MappingProxyType(dict(self.assignments_by_alias)),
+            source_artifacts_by_alias=MappingProxyType(
+                dict(self.source_artifacts_by_alias)
+            ),
+            match_plan=self.match_plan,
+            grouping=self.grouping,
+        )
+
+    def add_metadata_rule(self, rule: MetadataExtractionRule) -> None:
+        if rule not in self.metadata_rules:
+            self.metadata_rules.append(rule)
+
+    def add_imported_metadata_table(self, table: ImportedMetadataTable) -> None:
+        self.imported_metadata_tables.append(table)
+
+    def declare_assignment(self, assignment: ImageAssignment) -> None:
+        existing = self.assignments_by_alias.get(assignment.alias)
+        if existing is not None and existing != assignment:
+            raise ValueError(
+                f"Pipeline image alias {assignment.alias!r} is already declared "
+                "with different setup semantics."
+            )
+        if assignment.alias in self.source_artifacts_by_alias:
+            raise ValueError(
+                f"Pipeline alias {assignment.alias!r} is already declared as "
+                "a non-image source artifact."
+            )
+        self.assignments_by_alias[assignment.alias] = assignment
+
+    def declare_source_artifact(
+        self,
+        assignment: SourceArtifactAssignment,
+    ) -> None:
+        existing = self.source_artifacts_by_alias.get(assignment.alias)
+        if existing is not None and existing != assignment:
+            raise ValueError(
+                f"Pipeline source artifact {assignment.alias!r} is already "
+                "declared with different setup semantics."
+            )
+        if assignment.alias in self.assignments_by_alias:
+            raise ValueError(
+                f"Pipeline alias {assignment.alias!r} is already declared as "
+                "an image assignment."
+            )
+        self.source_artifacts_by_alias[assignment.alias] = assignment
+
+    def declare_match_plan(self, match_plan: SourceBindingMatchPlan) -> None:
+        if self.match_plan is not None and self.match_plan != match_plan:
+            raise ValueError(
+                "Pipeline image schema already declared a different image-set "
+                "match plan."
+            )
+        self.match_plan = match_plan
+
+
 class LegacyImageAssignmentStrategy(ABC, metaclass=AutoRegisterMeta):
     """Nominal fallback family for legacy semantic image aliases."""
 
