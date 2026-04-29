@@ -11,7 +11,6 @@ from openhcs.core.aligned_image_payload import (
     payload_slices_for_alignment,
 )
 from benchmark.cellprofiler_compat.module_execution import (
-    CellProfilerFunctionContractMetadata,
     CellProfilerFunctionContractExecutor,
     CellProfilerMeasurementImageDomain,
     CellProfilerModuleExecutor,
@@ -21,6 +20,7 @@ from benchmark.cellprofiler_compat.module_execution import (
     _measurement_labels_for_image,
     _measurement_table_rows,
     _object_only_reference_image,
+    _processing_contract_for_callable,
 )
 from benchmark.cellprofiler_library.functions.colortogray import color_to_gray
 from benchmark.cellprofiler_library.functions.filterobjects import (
@@ -699,11 +699,8 @@ def test_cellprofiler_contract_executor_infers_unknown_absorbed_contract():
         declared_processing_contract="unknown",
     )
 
-    assert (
-        CellProfilerFunctionContractMetadata.from_callable(
-            two_dimensional_only
-        ).resolve(two_dimensional_only)
-        is ProcessingContract.PURE_2D
+    assert _processing_contract_for_callable(two_dimensional_only) is (
+        ProcessingContract.PURE_2D
     )
 
 

@@ -827,9 +827,7 @@ class NaturalImageExecutionStrategy(CellProfilerImageExecutionStrategy):
         image: Any,
         kwargs: Mapping[str, Any],
     ) -> Any:
-        return CellProfilerFunctionContractMetadata.from_callable(func).resolve(
-            func
-        ).execute(
+        return _processing_contract_for_callable(func).execute(
             executor,
             func,
             image,
@@ -2668,40 +2666,21 @@ class CellProfilerFunctionContractExecutor:
         return stack_slices([result_2d], memory_type, 0)
 
 
-@dataclass(frozen=True, slots=True)
-class CellProfilerFunctionContractMetadata:
-    """Decorator-declared processing contract metadata for one absorbed callable."""
-
-    explicit: ProcessingContract | None
-    declared: str | None
-
-    @classmethod
-    def from_callable(
-        cls,
-        func: Callable[..., Any],
-    ) -> "CellProfilerFunctionContractMetadata":
-        contract = CallableContract.from_callable(func)
-        return cls(
-            explicit=(
-                contract.processing_contract
-                if isinstance(contract.processing_contract, ProcessingContract)
-                else None
-            ),
-            declared=contract.declared_processing_contract,
+def _processing_contract_for_callable(func: Callable[..., Any]) -> ProcessingContract:
+    contract = CallableContract.from_callable(func)
+    if isinstance(contract.processing_contract, ProcessingContract):
+        return contract.processing_contract
+    if contract.declared_processing_contract == "unknown":
+        inferred = _infer_processing_contract(func)
+        if inferred is not None:
+            return inferred
+    if contract.declared_processing_contract is not None:
+        declared = ProcessingContract.from_declared_name(
+            contract.declared_processing_contract
         )
-
-    def resolve(self, func: Callable[..., Any]) -> ProcessingContract:
-        if self.explicit is not None:
-            return self.explicit
-        if self.declared == "unknown":
-            inferred = _infer_processing_contract(func)
-            if inferred is not None:
-                return inferred
-        if self.declared is not None:
-            declared = ProcessingContract.from_declared_name(self.declared)
-            if declared is not None:
-                return declared
-        return ProcessingContract.FLEXIBLE
+        if declared is not None:
+            return declared
+    return ProcessingContract.FLEXIBLE
 
 
 def _infer_processing_contract(
@@ -2710,9 +2689,7 @@ def _infer_processing_contract(
     inferred = infer_contract(func, dtype_config=DtypeConfig()).contract
     if inferred is InferredContract.UNKNOWN or inferred is InferredContract.ERROR:
         return None
-    if inferred.name not in ProcessingContract.__members__:
-        return None
-    return ProcessingContract[inferred.name]
+    return ProcessingContract.from_declared_name(inferred.name)
 
 
 def _slice_pure_2d_kwargs(
