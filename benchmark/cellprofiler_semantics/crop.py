@@ -28,11 +28,3 @@ class RemovalMethod(str, Enum):
     NO = "No"
     EDGES = "Edges"
     ALL = "All"
-
-
-def cellprofiler_crop_mask_artifact_name(image_name: str) -> str:
-    """Return the internal artifact name carrying an image's Crop crop_mask."""
-    normalized = image_name.strip()
-    if not normalized:
-        raise ValueError("Crop mask artifact image name cannot be empty.")
-    return f"{normalized}__cellprofiler_crop_mask"

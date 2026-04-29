@@ -22,12 +22,15 @@ from benchmark.cellprofiler_library import canonical_module_name
 from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
 from benchmark.cellprofiler_semantics.crop import (
     CropShape,
-    cellprofiler_crop_mask_artifact_name,
 )
 from openhcs.core.artifact_materialization_policy import (
     DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
 )
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.artifacts import (
+    CROP_MASK_ARTIFACT_SIDECAR,
+    ArtifactKind,
+    ArtifactSpec,
+)
 from openhcs.core.pipeline_image_schema import CellProfilerImageSchema
 from openhcs.core.source_bindings import (
     ComponentSelector,
@@ -749,7 +752,7 @@ def _crop(
         module,
     )
     crop_mask = builder.declare(
-        cellprofiler_crop_mask_artifact_name(output_name),
+        CROP_MASK_ARTIFACT_SIDECAR.name_for(output_name),
         CellProfilerSymbolKind.IMAGE,
         module,
     )

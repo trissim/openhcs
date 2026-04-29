@@ -72,6 +72,40 @@ class ArtifactKind(str, Enum):
         return self._payload_description
 
 
+class ArtifactSidecarRole(str, Enum):
+    """Named sidecar artifact roles derived from a primary artifact."""
+
+    CROP_MASK = "crop_mask"
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactSidecarSpec:
+    """Typed naming rule for a sidecar artifact derived from another artifact."""
+
+    role: ArtifactSidecarRole
+    separator: str = "__"
+
+    def __post_init__(self) -> None:
+        role = (
+            self.role
+            if isinstance(self.role, ArtifactSidecarRole)
+            else ArtifactSidecarRole(self.role)
+        )
+        object.__setattr__(self, "role", role)
+        if not self.separator:
+            raise ValueError("ArtifactSidecarSpec.separator cannot be empty.")
+
+    def name_for(self, primary_artifact_name: str) -> str:
+        """Return the sidecar artifact name for one primary artifact."""
+        normalized = primary_artifact_name.strip()
+        if not normalized:
+            raise ValueError("primary_artifact_name cannot be empty.")
+        return f"{normalized}{self.separator}{self.role.value}"
+
+
+CROP_MASK_ARTIFACT_SIDECAR = ArtifactSidecarSpec(ArtifactSidecarRole.CROP_MASK)
+
+
 @dataclass(frozen=True)
 class ArtifactSpec:
     """Declared input or output artifact contract for a function invocation."""

@@ -8,8 +8,8 @@ from benchmark.cellprofiler_semantics.crop import (
     CropShape,
     CroppingMethod,
     RemovalMethod,
-    cellprofiler_crop_mask_artifact_name,
 )
+from openhcs.core.artifacts import CROP_MASK_ARTIFACT_SIDECAR
 
 from .parser import ModuleBlock
 from .setting_names import optional_setting_value, required_setting_value
@@ -110,7 +110,7 @@ def crop_previous_mask_artifact_name(module: ModuleBlock) -> str | None:
     previous_image_name = _optional_symbol(module, CROP_PREVIOUS_IMAGE_SETTING)
     if previous_image_name is None:
         return None
-    return cellprofiler_crop_mask_artifact_name(previous_image_name)
+    return CROP_MASK_ARTIFACT_SIDECAR.name_for(previous_image_name)
 
 
 def crop_mask_image_name(module: ModuleBlock) -> str | None:

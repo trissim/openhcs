@@ -2,15 +2,17 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from openhcs.core.aligned_image_payload import (
+    AlignedImageStack,
+    ImagePayloadExecutionMode,
+    compose_aligned_image_payload,
+)
 from benchmark.cellprofiler_compat.module_contract import CellProfilerModuleContract
 from benchmark.cellprofiler_compat.module_execution import (
-    CellProfilerAlignedImageStack,
     CellProfilerFunctionContractMetadata,
     CellProfilerFunctionContractExecutor,
-    CellProfilerImageExecutionMode,
     CellProfilerModuleExecutor,
     _coerce_invocation_kwargs,
-    _compose_image_payload,
     _measurement_image_for_labels,
     _measurement_labels,
     _measurement_labels_for_image,
@@ -212,13 +214,13 @@ def test_compose_image_payload_aligns_multislice_inputs_with_broadcast():
     )
     illumination = np.full((4, 5), 3, dtype=np.float32)
 
-    composition = _compose_image_payload(
+    composition = compose_aligned_image_payload(
         "CorrectIlluminationApply",
         (raw_stack, illumination),
     )
 
-    assert composition.execution_mode is CellProfilerImageExecutionMode.ALIGNED_MULTI_IMAGE_STACK
-    assert isinstance(composition.payload, CellProfilerAlignedImageStack)
+    assert composition.execution_mode is ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK
+    assert isinstance(composition.payload, AlignedImageStack)
     assert len(composition.payload.slices) == 2
     for slice_index, composed_slice in enumerate(composition.payload.slices):
         assert composed_slice.shape == (2, 4, 5)
@@ -233,7 +235,7 @@ def test_cellprofiler_contract_executor_applies_aligned_multi_image_stack():
         calls.append(image.shape)
         return (image[0] - image[1])[np.newaxis, ...]
 
-    aligned_stack = CellProfilerAlignedImageStack(
+    aligned_stack = AlignedImageStack(
         slices=(
             np.stack(
                 (
@@ -254,7 +256,7 @@ def test_cellprofiler_contract_executor_applies_aligned_multi_image_stack():
         subtract_illumination,
         aligned_stack,
         {},
-        execution_mode=CellProfilerImageExecutionMode.ALIGNED_MULTI_IMAGE_STACK,
+        execution_mode=ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK,
     )
 
     assert calls == [(2, 4, 5), (2, 4, 5)]
@@ -270,7 +272,7 @@ def test_aligned_multi_image_stack_slices_runtime_array_kwargs() -> None:
         calls.append((image.shape, labels.shape))
         return image[0], labels
 
-    aligned_stack = CellProfilerAlignedImageStack(
+    aligned_stack = AlignedImageStack(
         slices=(
             np.stack(
                 (
@@ -297,7 +299,7 @@ def test_aligned_multi_image_stack_slices_runtime_array_kwargs() -> None:
         keep_labels,
         aligned_stack,
         {"labels": labels},
-        execution_mode=CellProfilerImageExecutionMode.ALIGNED_MULTI_IMAGE_STACK,
+        execution_mode=ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK,
     )
 
     assert calls == [((2, 4, 5), (4, 5)), ((2, 4, 5), (4, 5))]

@@ -2,6 +2,7 @@ import pytest
 import numpy as np
 
 from openhcs.core.artifacts import (
+    CROP_MASK_ARTIFACT_SIDECAR,
     ArtifactInputPlan,
     ArtifactKind,
     ArtifactOutputPlan,
@@ -46,6 +47,12 @@ class ContextStub:
         self.axis_id = "A01"
         self.filemanager = FileManagerStub()
         self.runtime_value_store = RuntimeValueStore()
+
+
+def test_crop_mask_sidecar_names_derive_from_core_artifact_role():
+    assert CROP_MASK_ARTIFACT_SIDECAR.name_for("CroppedImage") == (
+        "CroppedImage__crop_mask"
+    )
 
 
 def test_execute_function_core_saves_named_step_result_artifacts():

@@ -449,6 +449,35 @@ def test_official_example_untangleworms_cppipe_executes_via_source_schema_worksp
     )
 
 
+def test_official_cellprofiler3_cppipe_corpus_prepares(
+    tmp_path: Path,
+) -> None:
+    examples_root = _official_cellprofiler_examples_root()
+    cppipe_dir = examples_root / "CellProfiler3Pipelines"
+    if not cppipe_dir.exists():
+        pytest.skip(
+            "Official CellProfiler3 pipeline corpus is not available. "
+            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
+            f"looked under {examples_root}."
+        )
+
+    cppipe_paths = tuple(sorted(cppipe_dir.glob("*.cppipe")))
+    assert cppipe_paths
+    failures: list[str] = []
+    for cppipe_path in cppipe_paths:
+        try:
+            prepared = prepare_generated_pipeline(
+                cppipe_path,
+                output_path=tmp_path / f"{cppipe_path.stem}_openhcs.py",
+            )
+        except Exception as exc:  # pragma: no cover - assertion includes details
+            failures.append(f"{cppipe_path.name}: {type(exc).__name__}: {exc}")
+            continue
+        assert prepared.pipeline.steps
+
+    assert not failures
+
+
 def test_cppipe_generated_pipeline_materializes_relationship_outputs(
     tmp_path: Path,
 ) -> None:
