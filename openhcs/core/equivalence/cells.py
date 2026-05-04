@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import math
+from abc import ABC, abstractmethod
 from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
+from types import MappingProxyType
+
+from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.equivalence.policy import RuntimeEquivalencePolicy
 
@@ -50,6 +54,68 @@ class RuntimeCellSignature:
         """Rebuild a cell signature from a semantic cache payload."""
         kind, value = payload  # type: ignore[misc]
         return cls(RuntimeCellValueKind(str(kind)), str(value))
+
+
+class RuntimeCellMissingStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Closed RuntimeCellValueKind strategy for missing-value semantics."""
+
+    __registry_key__ = "kind"
+    __skip_if_no_key__ = True
+    kind: RuntimeCellValueKind | None = None
+
+    @classmethod
+    def for_kind(
+        cls,
+        kind: RuntimeCellValueKind,
+    ) -> "RuntimeCellMissingStrategy":
+        strategy_type = _RUNTIME_CELL_MISSING_STRATEGY_BY_KIND[kind]
+        return strategy_type()
+
+    @abstractmethod
+    def is_missing(self, value: RuntimeCellSignature) -> bool:
+        """Return whether this cell signature should be treated as missing."""
+
+
+class EmptyRuntimeCellMissingStrategy(RuntimeCellMissingStrategy):
+    kind = RuntimeCellValueKind.EMPTY
+
+    def is_missing(self, value: RuntimeCellSignature) -> bool:
+        return True
+
+
+class NumberRuntimeCellMissingStrategy(RuntimeCellMissingStrategy):
+    kind = RuntimeCellValueKind.NUMBER
+
+    def is_missing(self, value: RuntimeCellSignature) -> bool:
+        try:
+            return math.isnan(float(value.value))
+        except ValueError:
+            return False
+
+
+class TextRuntimeCellMissingStrategy(RuntimeCellMissingStrategy):
+    kind = RuntimeCellValueKind.TEXT
+
+    def is_missing(self, value: RuntimeCellSignature) -> bool:
+        return False
+
+
+_RUNTIME_CELL_MISSING_STRATEGY_BY_KIND = MappingProxyType(
+    dict(RuntimeCellMissingStrategy.__registry__)
+)
+if set(_RUNTIME_CELL_MISSING_STRATEGY_BY_KIND) != set(RuntimeCellValueKind):
+    missing_kinds = sorted(
+        set(RuntimeCellValueKind) - set(_RUNTIME_CELL_MISSING_STRATEGY_BY_KIND),
+        key=lambda kind: kind.value,
+    )
+    extra_kinds = sorted(
+        set(_RUNTIME_CELL_MISSING_STRATEGY_BY_KIND) - set(RuntimeCellValueKind),
+        key=lambda kind: kind.value,
+    )
+    raise ValueError(
+        "Runtime cell missing strategies must cover RuntimeCellValueKind exactly: "
+        f"missing={missing_kinds!r}, extra={extra_kinds!r}."
+    )
 
 
 @dataclass(frozen=True, slots=True)

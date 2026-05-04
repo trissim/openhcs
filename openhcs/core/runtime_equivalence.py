@@ -7,7 +7,6 @@ import inspect
 import math
 import re
 import sys
-from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -17,7 +16,6 @@ from types import MappingProxyType, ModuleType
 from typing import Generic, TypeVar
 
 import numpy as np
-from metaclass_registry import AutoRegisterMeta
 
 from nominal_refactor_advisor.collection_algebra import sorted_tuple
 from nominal_refactor_advisor.record_algebra import product_record
@@ -69,6 +67,7 @@ from openhcs.core.equivalence.keys import (
     RuntimeMeasurementSubjectKey,
 )
 from openhcs.core.equivalence.cells import (
+    RuntimeCellMissingStrategy,
     RuntimeCellSignature,
     RuntimeCellValueKind,
     absolute_numeric_counters_equivalent as _absolute_numeric_counters_equivalent,
@@ -376,68 +375,6 @@ class _ObjectLabelMeasurementContext:
             label_set.declared_object_count,
             label_set.declared_object_ids,
         )
-
-
-class _RuntimeCellMissingStrategy(ABC, metaclass=AutoRegisterMeta):
-    """Closed RuntimeCellValueKind strategy for missing-value semantics."""
-
-    __registry_key__ = "kind"
-    __skip_if_no_key__ = True
-    kind: RuntimeCellValueKind | None = None
-
-    @classmethod
-    def for_kind(
-        cls,
-        kind: RuntimeCellValueKind,
-    ) -> "_RuntimeCellMissingStrategy":
-        strategy_type = _RUNTIME_CELL_MISSING_STRATEGY_BY_KIND[kind]
-        return strategy_type()
-
-    @abstractmethod
-    def is_missing(self, value: RuntimeCellSignature) -> bool:
-        """Return whether this cell signature should be treated as missing."""
-
-
-class _EmptyRuntimeCellMissingStrategy(_RuntimeCellMissingStrategy):
-    kind = RuntimeCellValueKind.EMPTY
-
-    def is_missing(self, value: RuntimeCellSignature) -> bool:
-        return True
-
-
-class _NumberRuntimeCellMissingStrategy(_RuntimeCellMissingStrategy):
-    kind = RuntimeCellValueKind.NUMBER
-
-    def is_missing(self, value: RuntimeCellSignature) -> bool:
-        try:
-            return math.isnan(float(value.value))
-        except ValueError:
-            return False
-
-
-class _TextRuntimeCellMissingStrategy(_RuntimeCellMissingStrategy):
-    kind = RuntimeCellValueKind.TEXT
-
-    def is_missing(self, value: RuntimeCellSignature) -> bool:
-        return False
-
-
-_RUNTIME_CELL_MISSING_STRATEGY_BY_KIND = MappingProxyType(
-    dict(_RuntimeCellMissingStrategy.__registry__)
-)
-if set(_RUNTIME_CELL_MISSING_STRATEGY_BY_KIND) != set(RuntimeCellValueKind):
-    missing_kinds = sorted(
-        set(RuntimeCellValueKind) - set(_RUNTIME_CELL_MISSING_STRATEGY_BY_KIND),
-        key=lambda kind: kind.value,
-    )
-    extra_kinds = sorted(
-        set(_RUNTIME_CELL_MISSING_STRATEGY_BY_KIND) - set(RuntimeCellValueKind),
-        key=lambda kind: kind.value,
-    )
-    raise ValueError(
-        "Runtime cell missing strategies must cover RuntimeCellValueKind exactly: "
-        f"missing={missing_kinds!r}, extra={extra_kinds!r}."
-    )
 
 
 _MeasurementScopeAggregatePolicy = product_record(
@@ -3212,8 +3149,8 @@ def _dedupe_measurement_facts(
     for key, value in facts:
         current = values_by_key.get(key)
         if current is None or (
-            _RuntimeCellMissingStrategy.for_kind(current.kind).is_missing(current)
-            and not _RuntimeCellMissingStrategy.for_kind(value.kind).is_missing(value)
+            RuntimeCellMissingStrategy.for_kind(current.kind).is_missing(current)
+            and not RuntimeCellMissingStrategy.for_kind(value.kind).is_missing(value)
         ):
             values_by_key[key] = value
     return tuple(values_by_key.items())
@@ -3234,10 +3171,10 @@ def _dedupe_measurement_fact_records(
             qualified_by_key[key] = qualified_observation
             continue
 
-        if _RuntimeCellMissingStrategy.for_kind(value.kind).is_missing(value):
+        if RuntimeCellMissingStrategy.for_kind(value.kind).is_missing(value):
             continue
         if any(
-            _RuntimeCellMissingStrategy.for_kind(current.kind).is_missing(current)
+            RuntimeCellMissingStrategy.for_kind(current.kind).is_missing(current)
             for current in current_values
         ):
             values_by_key[key] = [value]
