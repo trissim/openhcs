@@ -2,6 +2,8 @@
 
 from collections import Counter
 
+import numpy as np
+
 from openhcs.core import runtime_equivalence
 from openhcs.core.equivalence import (
     RuntimeCellSignature,
@@ -24,6 +26,8 @@ from openhcs.core.equivalence import (
     runtime_cell_signature,
     runtime_cell_signature_counters_equivalent,
 )
+from openhcs.core.equivalence.arrays import semantic_array_payload
+from openhcs.core.equivalence.tables import measurement_table_cell_payload
 from openhcs.core.runtime_semantics import MeasurementScope
 
 
@@ -116,6 +120,14 @@ def test_runtime_equivalence_cell_counter_comparison_has_package_owner() -> None
 
 def test_runtime_equivalence_image_snapshot_has_package_owner() -> None:
     assert runtime_equivalence.RuntimeImageSnapshot is RuntimeImageSnapshot
+
+
+def test_runtime_equivalence_array_payloads_use_canonical_equivalence_surface() -> None:
+    array = np.array([[1, 2], [3, 4]], dtype=np.int16)
+
+    assert semantic_array_payload(array)[:3] == ("array", "int16", (2, 2))
+    assert measurement_table_cell_payload(np.float64(1.5)) == ("float", "1.5")
+    assert measurement_table_cell_payload(array)[:3] == ("array", "int16", (2, 2))
 
 
 def test_runtime_equivalence_table_snapshot_has_package_owner() -> None:

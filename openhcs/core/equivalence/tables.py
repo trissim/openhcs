@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import csv
+import math
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from nominal_refactor_advisor.collection_algebra import sorted_tuple
 
+from openhcs.core.equivalence.arrays import canonical_scalar, semantic_array_payload
 from openhcs.core.equivalence.cells import runtime_cell_signature
 from openhcs.core.equivalence.policy import (
     RuntimeEquivalencePolicy,
@@ -19,7 +21,10 @@ from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_OBJECT_ID_FIELDS,
     MEASUREMENT_OBJECT_NAME_FIELD,
     MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
+    measurement_row_mapping,
+    measurement_rows,
 )
+from openhcs.core.runtime_values import MeasurementTable
 
 MEASUREMENT_IDENTITY_FIELDS = frozenset(
     {
@@ -41,6 +46,9 @@ CSV_HEADER_CONTEXT_STOPWORDS = frozenset(
         "measurement",
         "measurements",
     }
+)
+RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS = frozenset(
+    {"image_id", "image_number", "slice_index"}
 )
 
 
@@ -120,6 +128,111 @@ class RuntimeTableSnapshot:
             )
             for row in self.rows
         )
+
+
+def aggregate_measurement_table_key(
+    table: MeasurementTable,
+) -> tuple[object, ...] | None:
+    """Return a semantic key for duplicate full-axis measurement tables.
+
+    Grouped execution can materialize an already-aggregated measurement table
+    once per group key. Row-local image identity fields carry the actual
+    measurement scope, so exact duplicate full-axis tables should only
+    contribute once. Group-local tables remain count-preserving.
+    """
+    rows = tuple(measurement_rows((table,)))
+    if not rows:
+        return None
+
+    row_mappings = tuple(measurement_row_mapping(row) for row in rows)
+    normalized_field_cache: dict[str, str] = {}
+
+    def normalized_field(field_name: str) -> str:
+        cached = normalized_field_cache.get(field_name)
+        if cached is None:
+            cached = normalize_runtime_identifier(field_name)
+            normalized_field_cache[field_name] = cached
+        return cached
+
+    row_identity_values: set[tuple[str, object]] = set()
+    for row_mapping in row_mappings:
+        for field_name, value in row_mapping.items():
+            normalized_field_name = normalized_field(str(field_name))
+            if normalized_field_name in RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS:
+                row_identity_values.add(
+                    (
+                        normalized_field_name,
+                        measurement_table_cell_payload(value),
+                    )
+                )
+        if len(row_identity_values) > 1:
+            break
+
+    if len(row_identity_values) <= 1:
+        return None
+
+    row_payloads: list[tuple[tuple[str, object], ...]] = []
+    for row_mapping in row_mappings:
+        row_payloads.append(
+            tuple(
+                (
+                    normalized_field(str(field_name)),
+                    measurement_table_cell_payload(value),
+                )
+                for field_name, value in row_mapping.items()
+            )
+        )
+
+    field_payloads = tuple(
+        (field.name, field.dtype, field.required)
+        for field in table.fields
+    )
+    return (
+        table.name,
+        repr(table.subject),
+        table.object_name,
+        table.object_id_field,
+        table.source_image_name,
+        field_payloads,
+        tuple(row_payloads),
+    )
+
+
+def measurement_table_cell_payload(value: object) -> object:
+    """Return a hashable exact payload for measurement-table dedupe."""
+    value = canonical_scalar(value)
+    array_payload = semantic_array_payload(value)
+    if array_payload is not None:
+        return array_payload
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return ("str", value)
+    if isinstance(value, bool):
+        return ("bool", value)
+    if isinstance(value, int):
+        return ("int", value)
+    if isinstance(value, float) and math.isnan(value):
+        return ("float", "nan")
+    if isinstance(value, float):
+        return ("float", repr(value))
+    if isinstance(value, Mapping):
+        return (
+            "mapping",
+            tuple(
+                (
+                    measurement_table_cell_payload(key),
+                    measurement_table_cell_payload(nested_value),
+                )
+                for key, nested_value in value.items()
+            ),
+        )
+    if isinstance(value, (tuple, list)):
+        return (
+            type(value).__name__,
+            tuple(measurement_table_cell_payload(item) for item in value),
+        )
+    return (type(value).__name__, repr(value))
 
 
 def read_semantic_csv_table(

@@ -9,7 +9,7 @@ import re
 import sys
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, make_dataclass
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType, ModuleType
@@ -81,6 +81,8 @@ from openhcs.core.equivalence.tables import (
     CSV_HEADER_CONTEXT_STOPWORDS as _CSV_HEADER_CONTEXT_STOPWORDS,
     MEASUREMENT_IDENTITY_FIELDS as _MEASUREMENT_IDENTITY_FIELDS,
     RuntimeTableSnapshot,
+    aggregate_measurement_table_key,
+    measurement_table_cell_payload,
 )
 from openhcs.core.equivalence.images import RuntimeImageSnapshot
 from openhcs.core.equivalence.outputs import (
@@ -104,9 +106,6 @@ _RUNTIME_MEASUREMENT_PROJECTION_MODULES = (
     sys.modules[__name__],
     runtime_artifact_queries,
     runtime_semantics,
-)
-_RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS = frozenset(
-    {"image_id", "image_number", "slice_index"}
 )
 _CACHE_MISS = object()
 
@@ -161,12 +160,35 @@ _RuntimeMeasurementNameParts = tuple[tuple[str, ...], tuple[str, ...]]
 _RuntimeSourceTokenGroups = tuple[tuple[str, tuple[str, ...]], ...]
 
 
-@dataclass(frozen=True, slots=True)
-class _RuntimeMeasurementRowSchema:
-    feature_indexes: tuple[int, ...]
-    qualifiers_by_index: dict[int, tuple[_RuntimeMeasurementIndexedQualifier, ...]]
-    long_form_feature_indexes: tuple[int, ...]
-    long_form_value_indexes: tuple[int, ...]
+_RecordField = tuple[str, object]
+
+
+def _frozen_slots_record(
+    class_name: str,
+    fields: tuple[_RecordField, ...],
+) -> type[object]:
+    """Construct local semantic records without repeating dataclass shells."""
+    return make_dataclass(
+        class_name,
+        fields,
+        frozen=True,
+        slots=True,
+        namespace={"__module__": __name__},
+    )
+
+
+_RuntimeMeasurementRowSchema = _frozen_slots_record(
+    "_RuntimeMeasurementRowSchema",
+    (
+        ("feature_indexes", tuple[int, ...]),
+        (
+            "qualifiers_by_index",
+            dict[int, tuple[_RuntimeMeasurementIndexedQualifier, ...]],
+        ),
+        ("long_form_feature_indexes", tuple[int, ...]),
+        ("long_form_value_indexes", tuple[int, ...]),
+    ),
+)
 
 
 _RuntimeMeasurementQualifierCacheKey = tuple[
@@ -309,13 +331,16 @@ class _RuntimeRowProjectionContext:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class _LongFormMeasurementContext:
-    row: Mapping[str, object]
-    subject: RuntimeMeasurementSubjectKey
-    policy: RuntimeEquivalencePolicy
-    source_name: str | None
-    known_source_names: tuple[str, ...]
+_LongFormMeasurementContext = _frozen_slots_record(
+    "_LongFormMeasurementContext",
+    (
+        ("row", Mapping[str, object]),
+        ("subject", RuntimeMeasurementSubjectKey),
+        ("policy", RuntimeEquivalencePolicy),
+        ("source_name", str | None),
+        ("known_source_names", tuple[str, ...]),
+    ),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,54 +374,69 @@ class _CachedLongFormMeasurementContext:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class _AggregateInputRecordingContext:
-    values_by_feature: _AggregateValuesByFeature
-    row_mapping: Mapping[str, object]
-    axis_key: object | None
-    required_keys: _RuntimeRequiredMeasurementKeys
-    key_cache: _AggregateMeanKeyCache
+_AggregateInputRecordingContext = _frozen_slots_record(
+    "_AggregateInputRecordingContext",
+    (
+        ("values_by_feature", _AggregateValuesByFeature),
+        ("row_mapping", Mapping[str, object]),
+        ("axis_key", object | None),
+        ("required_keys", _RuntimeRequiredMeasurementKeys),
+        ("key_cache", _AggregateMeanKeyCache),
+    ),
+)
 
 
-@dataclass(frozen=True, slots=True)
-class _RuntimeMeasurementFactRecordingContext:
-    values_by_feature: _RuntimeMeasurementFactCounters
-    explicit_measurement_keys: set[RuntimeMeasurementFeatureKey]
-    required_keys: _RuntimeRequiredMeasurementKeys
+_RuntimeMeasurementFactRecordingContext = _frozen_slots_record(
+    "_RuntimeMeasurementFactRecordingContext",
+    (
+        ("values_by_feature", _RuntimeMeasurementFactCounters),
+        ("explicit_measurement_keys", set[RuntimeMeasurementFeatureKey]),
+        ("required_keys", _RuntimeRequiredMeasurementKeys),
+    ),
+)
 
 
-@dataclass(frozen=True, slots=True)
-class _StaticWideRuntimeRowProjectionContext:
-    header: tuple[str, ...]
-    policy: RuntimeEquivalencePolicy
-    known_source_names: tuple[str, ...]
-    input_keys: _RuntimeRequiredMeasurementKeys
-    feature_column_indexes: tuple[int, ...]
-    aggregate_reference_indexes: frozenset[int]
-    qualifiers_by_index: _StaticWideRuntimeQualifiersByIndex
-    qualifier_render_cache: _RuntimeMeasurementQualifierRenderCache
-    key_cache: _StaticWideRuntimeKeyCache
-    padding_group_cache: _RuntimeMeasurementPaddingGroupCache
-    table_padding_group: str
+_StaticWideRuntimeRowProjectionContext = _frozen_slots_record(
+    "_StaticWideRuntimeRowProjectionContext",
+    (
+        ("header", tuple[str, ...]),
+        ("policy", RuntimeEquivalencePolicy),
+        ("known_source_names", tuple[str, ...]),
+        ("input_keys", _RuntimeRequiredMeasurementKeys),
+        ("feature_column_indexes", tuple[int, ...]),
+        ("aggregate_reference_indexes", frozenset[int]),
+        ("qualifiers_by_index", _StaticWideRuntimeQualifiersByIndex),
+        ("qualifier_render_cache", _RuntimeMeasurementQualifierRenderCache),
+        ("key_cache", _StaticWideRuntimeKeyCache),
+        ("padding_group_cache", _RuntimeMeasurementPaddingGroupCache),
+        ("table_padding_group", str),
+    ),
+)
 
 
-@dataclass(frozen=True, slots=True)
-class _MeasurementFeatureKeySourceContext:
-    field_name: str
-    subject: RuntimeMeasurementSubjectKey
-    policy: RuntimeEquivalencePolicy
-    qualifiers: tuple[str, ...]
-    source_name: str | None
-    known_source_names: tuple[str, ...]
+_MeasurementFeatureKeySourceContext = _frozen_slots_record(
+    "_MeasurementFeatureKeySourceContext",
+    (
+        ("field_name", str),
+        ("subject", RuntimeMeasurementSubjectKey),
+        ("policy", RuntimeEquivalencePolicy),
+        ("qualifiers", tuple[str, ...]),
+        ("source_name", str | None),
+        ("known_source_names", tuple[str, ...]),
+    ),
+)
 
 
-@dataclass(frozen=True, slots=True)
-class _RuntimeMeasurementTableProjectionContext:
-    table: MeasurementTable
-    policy: RuntimeEquivalencePolicy
-    axis_key: object | None
-    known_source_names: tuple[str, ...]
-    required_keys: _RuntimeRequiredMeasurementKeys
+_RuntimeMeasurementTableProjectionContext = _frozen_slots_record(
+    "_RuntimeMeasurementTableProjectionContext",
+    (
+        ("table", MeasurementTable),
+        ("policy", RuntimeEquivalencePolicy),
+        ("axis_key", object | None),
+        ("known_source_names", tuple[str, ...]),
+        ("required_keys", _RuntimeRequiredMeasurementKeys),
+    ),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -646,7 +686,7 @@ class RuntimeMeasurementSnapshot:
                     continue
                 if record.key.kind is ArtifactKind.MEASUREMENTS:
                     table = MeasurementTable.from_runtime_value(record.value)
-                    aggregate_table_key = _aggregate_measurement_table_key(table)
+                    aggregate_table_key = aggregate_measurement_table_key(table)
                     if aggregate_table_key is not None:
                         if aggregate_table_key in seen_aggregate_measurement_tables:
                             continue
@@ -856,114 +896,6 @@ class RuntimeMeasurementSnapshot:
                 RuntimeMeasurementFeatureKey.from_cache_payload(feature_payload)
             ] = counter
         return cls(values_by_feature=values_by_feature)
-
-
-def _aggregate_measurement_table_key(table: MeasurementTable) -> tuple[object, ...] | None:
-    """Return a semantic key for duplicate full-axis measurement tables.
-
-    Grouped execution can materialize an already-aggregated measurement table
-    once per group key. Row-local image identity fields carry the actual
-    measurement scope, so exact duplicate full-axis tables should only
-    contribute once. Group-local tables remain count-preserving.
-    """
-    rows = tuple(measurement_rows((table,)))
-    if not rows:
-        return None
-
-    row_mappings = tuple(measurement_row_mapping(row) for row in rows)
-    normalized_field_cache: dict[str, str] = {}
-
-    def normalized_field(field_name: str) -> str:
-        cached = normalized_field_cache.get(field_name)
-        if cached is None:
-            cached = _normalize_identifier(field_name)
-            normalized_field_cache[field_name] = cached
-        return cached
-
-    row_identity_values: set[tuple[str, object]] = set()
-    for row_mapping in row_mappings:
-        for field_name, value in row_mapping.items():
-            normalized_field_name = normalized_field(str(field_name))
-            if normalized_field_name in _RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS:
-                row_identity_values.add(
-                    (
-                        normalized_field_name,
-                        _measurement_table_cell_payload(value),
-                    )
-                )
-        if len(row_identity_values) > 1:
-            break
-
-    if len(row_identity_values) <= 1:
-        return None
-
-    row_payloads: list[tuple[tuple[str, object], ...]] = []
-    for row_mapping in row_mappings:
-        row_payloads.append(
-            tuple(
-                (
-                    normalized_field(str(field_name)),
-                    _measurement_table_cell_payload(value),
-                )
-                for field_name, value in row_mapping.items()
-            )
-        )
-
-    field_payloads = tuple(
-        (field.name, field.dtype, field.required)
-        for field in table.fields
-    )
-    return (
-        table.name,
-        repr(table.subject),
-        table.object_name,
-        table.object_id_field,
-        table.source_image_name,
-        field_payloads,
-        tuple(row_payloads),
-    )
-
-
-def _measurement_table_cell_payload(value: object) -> object:
-    """Return a hashable exact payload for measurement-table dedupe."""
-    if isinstance(value, np.generic):
-        return _measurement_table_cell_payload(value.item())
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return ("str", value)
-    if isinstance(value, bool):
-        return ("bool", value)
-    if isinstance(value, int):
-        return ("int", value)
-    if isinstance(value, float) and math.isnan(value):
-        return ("float", "nan")
-    if isinstance(value, float):
-        return ("float", repr(value))
-    if isinstance(value, Mapping):
-        return (
-            "mapping",
-            tuple(
-                (
-                    _measurement_table_cell_payload(key),
-                    _measurement_table_cell_payload(nested_value),
-                )
-                for key, nested_value in value.items()
-            ),
-        )
-    if isinstance(value, (tuple, list)):
-        return (
-            type(value).__name__,
-            tuple(_measurement_table_cell_payload(item) for item in value),
-        )
-    if isinstance(value, np.ndarray):
-        return (
-            "ndarray",
-            str(value.dtype),
-            tuple(value.shape),
-            hashlib.sha256(value.tobytes()).hexdigest(),
-        )
-    return (type(value).__name__, repr(value))
 
 
 def runtime_output_equivalence(
@@ -2392,7 +2324,7 @@ def _measurement_row_image_identity_key(
         identity_values.append(
             (
                 normalized_field_name,
-                _measurement_table_cell_payload(value),
+                measurement_table_cell_payload(value),
             )
         )
     return sorted_tuple(identity_values)
@@ -2407,7 +2339,7 @@ def _axis_scoped_measurement_row_identity(
     if axis_key is None:
         return row_identity
     return (
-        ("_runtime_axis", _measurement_table_cell_payload(axis_key)),
+        ("_runtime_axis", measurement_table_cell_payload(axis_key)),
         *row_identity,
     )
 
@@ -3030,19 +2962,6 @@ class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
         return padding_group
 
 
-def _runtime_row_projection_cached(
-    context: _RuntimeRowProjectionContext,
-    *,
-    value_projector: _RuntimeRowValueProjector[_RuntimeRowProjectionValueT],
-    long_form_projector: _RuntimeRowLongFormProjector[_RuntimeRowProjectionValueT],
-) -> _RuntimeRowProjection[_RuntimeRowProjectionValueT]:
-    return _RuntimeRowProjectionEngine(
-        context,
-        value_projector,
-        long_form_projector,
-    ).project()
-
-
 def _runtime_measurement_row_schema_cached(
     context: _RuntimeRowProjectionContext,
     header: tuple[str, ...],
@@ -3112,11 +3031,11 @@ def _measurement_facts_from_runtime_row_cached(
     context: _RuntimeRowProjectionContext,
 ) -> _RuntimeMeasurementFacts:
     """Project one runtime row using table-local schema/key caches."""
-    projection = _runtime_row_projection_cached(
+    projection = _RuntimeRowProjectionEngine(
         context,
-        value_projector=_cell_measurement_facts,
-        long_form_projector=lambda fact: (fact,),
-    )
+        _cell_measurement_facts,
+        lambda fact: (fact,),
+    ).project()
     row_facts = tuple(
         (key, value)
         for _padding_group, key, value in projection.records
@@ -4541,11 +4460,11 @@ def _numeric_measurement_values_from_runtime_row_cached(
     context: _RuntimeRowProjectionContext,
 ) -> _RuntimeNumericMeasurementValues:
     """Project numeric runtime row values without building cell signatures."""
-    projection = _runtime_row_projection_cached(
+    projection = _RuntimeRowProjectionEngine(
         context,
-        value_projector=_numeric_cell_measurement_values,
-        long_form_projector=_numeric_long_form_measurement_values,
-    )
+        _numeric_cell_measurement_values,
+        _numeric_long_form_measurement_values,
+    ).project()
     row_values_by_key = _dedupe_numeric_measurement_values(
         (key, value)
         for _padding_group, key, value in projection.records

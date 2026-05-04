@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import imageio.v3 as imageio
 import numpy as np
 
+from openhcs.core.equivalence.arrays import canonical_numpy_array, semantic_array_payload
 from openhcs.core.equivalence.policy import RuntimeEquivalencePolicy
 
 
@@ -39,12 +39,17 @@ class RuntimeImageSnapshot:
         array: object,
     ) -> "RuntimeImageSnapshot":
         """Build a semantic image snapshot from an in-memory runtime artifact."""
-        contiguous = np.ascontiguousarray(array)
+        contiguous = canonical_numpy_array(array)
+        if contiguous is None:
+            contiguous = np.ascontiguousarray(array)
+        array_payload = semantic_array_payload(contiguous)
+        if array_payload is None:
+            raise TypeError(f"Cannot build image snapshot from {type(array)!r}.")
         return cls(
             path=Path(path),
             shape=tuple(int(axis) for axis in contiguous.shape),
             dtype=str(contiguous.dtype),
-            pixel_digest=hashlib.sha256(contiguous.tobytes()).hexdigest(),
+            pixel_digest=array_payload[3],
             pixel_data=contiguous.copy(),
         )
 
