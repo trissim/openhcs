@@ -7,15 +7,17 @@ import inspect
 import math
 import re
 import sys
+from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import Generic, TypeVar
 
 import numpy as np
+from metaclass_registry import AutoRegisterMeta
 
 from nominal_refactor_advisor.collection_algebra import sorted_tuple
 from nominal_refactor_advisor.record_algebra import product_record
@@ -118,12 +120,15 @@ def runtime_measurement_projection_cache_identity() -> tuple[tuple[str, str], ..
     )
 
 
-def _module_source_digest(module: object) -> str:
+def _module_source_digest(module: ModuleType) -> str:
     try:
         source = inspect.getsource(module).encode("utf-8")
     except (OSError, TypeError):
-        module_file = getattr(module, "__file__", None)
-        source = Path(module_file).read_bytes() if module_file else repr(module).encode("utf-8")
+        source = (
+            Path(module.__file__).read_bytes()
+            if module.__file__ is not None
+            else repr(module).encode("utf-8")
+        )
     return hashlib.sha256(source).hexdigest()
 
 
@@ -248,6 +253,46 @@ class _RuntimeRowProjectionContext:
 
 
 @dataclass(frozen=True, slots=True)
+class _LongFormMeasurementContext:
+    row: Mapping[str, object]
+    subject: RuntimeMeasurementSubjectKey
+    policy: RuntimeEquivalencePolicy
+    source_name: str | None
+    known_source_names: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedLongFormMeasurementContext:
+    row_values: tuple[object, ...]
+    subject: RuntimeMeasurementSubjectKey
+    policy: RuntimeEquivalencePolicy
+    source_name: str | None
+    known_source_names: tuple[str, ...]
+    feature_indexes: tuple[int, ...]
+    value_indexes: tuple[int, ...]
+    key_cache: _RuntimeMeasurementLongFormKeyCache
+
+    @classmethod
+    def from_runtime_row_projection(
+        cls,
+        context: _RuntimeRowProjectionContext,
+        row_values: tuple[object, ...],
+        feature_indexes: tuple[int, ...],
+        value_indexes: tuple[int, ...],
+    ) -> "_CachedLongFormMeasurementContext":
+        return cls(
+            row_values,
+            context.subject,
+            context.policy,
+            context.source_name,
+            context.known_source_names,
+            feature_indexes,
+            value_indexes,
+            context.long_form_key_cache,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class _AggregateInputRecordingContext:
     values_by_feature: _AggregateValuesByFeature
     row_mapping: Mapping[str, object]
@@ -298,6 +343,101 @@ class _RuntimeMeasurementTableProjectionContext:
     axis_key: object | None
     known_source_names: tuple[str, ...]
     required_keys: frozenset[RuntimeMeasurementFeatureKey] | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ObjectLabelMeasurementContext:
+    labels: object
+    object_name: str | None
+    policy: RuntimeEquivalencePolicy
+    object_identifier_subjects: frozenset[RuntimeMeasurementSubjectKey]
+    object_location_subjects: frozenset[RuntimeMeasurementSubjectKey]
+    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None
+    declared_object_count: int | None
+    declared_object_ids: tuple[int, ...]
+
+    @classmethod
+    def from_runtime_value(
+        cls,
+        value: RuntimeValue,
+        policy: RuntimeEquivalencePolicy,
+        object_identifier_subjects: frozenset[RuntimeMeasurementSubjectKey],
+        object_location_subjects: frozenset[RuntimeMeasurementSubjectKey],
+        required_keys: frozenset[RuntimeMeasurementFeatureKey] | None,
+    ) -> "_ObjectLabelMeasurementContext":
+        label_set = ObjectLabelSet.from_runtime_value(value)
+        return cls(
+            label_set.labels,
+            value.schema.object_name,
+            policy,
+            object_identifier_subjects,
+            object_location_subjects,
+            required_keys,
+            label_set.declared_object_count,
+            label_set.declared_object_ids,
+        )
+
+
+class _RuntimeCellMissingStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Closed RuntimeCellValueKind strategy for missing-value semantics."""
+
+    __registry_key__ = "kind"
+    __skip_if_no_key__ = True
+    kind: RuntimeCellValueKind | None = None
+
+    @classmethod
+    def for_kind(
+        cls,
+        kind: RuntimeCellValueKind,
+    ) -> "_RuntimeCellMissingStrategy":
+        strategy_type = _RUNTIME_CELL_MISSING_STRATEGY_BY_KIND[kind]
+        return strategy_type()
+
+    @abstractmethod
+    def is_missing(self, value: RuntimeCellSignature) -> bool:
+        """Return whether this cell signature should be treated as missing."""
+
+
+class _EmptyRuntimeCellMissingStrategy(_RuntimeCellMissingStrategy):
+    kind = RuntimeCellValueKind.EMPTY
+
+    def is_missing(self, value: RuntimeCellSignature) -> bool:
+        return True
+
+
+class _NumberRuntimeCellMissingStrategy(_RuntimeCellMissingStrategy):
+    kind = RuntimeCellValueKind.NUMBER
+
+    def is_missing(self, value: RuntimeCellSignature) -> bool:
+        try:
+            return math.isnan(float(value.value))
+        except ValueError:
+            return False
+
+
+class _TextRuntimeCellMissingStrategy(_RuntimeCellMissingStrategy):
+    kind = RuntimeCellValueKind.TEXT
+
+    def is_missing(self, value: RuntimeCellSignature) -> bool:
+        return False
+
+
+_RUNTIME_CELL_MISSING_STRATEGY_BY_KIND = MappingProxyType(
+    dict(_RuntimeCellMissingStrategy.__registry__)
+)
+if set(_RUNTIME_CELL_MISSING_STRATEGY_BY_KIND) != set(RuntimeCellValueKind):
+    missing_kinds = sorted(
+        set(RuntimeCellValueKind) - set(_RUNTIME_CELL_MISSING_STRATEGY_BY_KIND),
+        key=lambda kind: kind.value,
+    )
+    extra_kinds = sorted(
+        set(_RUNTIME_CELL_MISSING_STRATEGY_BY_KIND) - set(RuntimeCellValueKind),
+        key=lambda kind: kind.value,
+    )
+    raise ValueError(
+        "Runtime cell missing strategies must cover RuntimeCellValueKind exactly: "
+        f"missing={missing_kinds!r}, extra={extra_kinds!r}."
+    )
 
 
 _MeasurementScopeAggregatePolicy = product_record(
@@ -559,12 +699,13 @@ class RuntimeMeasurementSnapshot:
             _record_measurement_facts(
                 values_by_feature,
                 _object_label_measurement_facts(
-                    record.value.data,
-                    record.value.schema.object_name,
-                    policy,
-                    object_identifier_subjects=object_identifier_subjects,
-                    object_location_subjects=object_location_subjects,
-                    required_keys=required_measurement_keys,
+                    _ObjectLabelMeasurementContext.from_runtime_value(
+                        record.value,
+                        policy,
+                        object_identifier_subjects,
+                        object_location_subjects,
+                        required_measurement_keys,
+                    ),
                 ),
                 required_keys=required_measurement_keys,
             )
@@ -2415,11 +2556,13 @@ def _measurement_facts_from_table_snapshot(
             padding_groups_by_index=padding_groups_by_index,
         )
         long_form_fact = _long_form_measurement_fact(
-            row_mapping,
-            row_subject,
-            policy,
-            source_name=source_name,
-            known_source_names=known_source_names,
+            _LongFormMeasurementContext(
+                row_mapping,
+                row_subject,
+                policy,
+                source_name,
+                known_source_names,
+            )
         )
         if long_form_fact is not None:
             facts.append(long_form_fact)
@@ -2829,14 +2972,12 @@ def _runtime_row_projection_cached(
     row_values = tuple(row.get(field_name) for field_name in header)
     long_form_fact = (
         _long_form_measurement_fact_cached(
-            row_values,
-            subject,
-            policy,
-            source_name=context.source_name,
-            known_source_names=context.known_source_names,
-            feature_indexes=long_form_feature_indexes,
-            value_indexes=long_form_value_indexes,
-            key_cache=context.long_form_key_cache,
+            _CachedLongFormMeasurementContext.from_runtime_row_projection(
+                context,
+                row_values,
+                long_form_feature_indexes,
+                long_form_value_indexes,
+            )
         )
         if long_form_feature_indexes and long_form_value_indexes
         else None
@@ -3071,8 +3212,8 @@ def _dedupe_measurement_facts(
     for key, value in facts:
         current = values_by_key.get(key)
         if current is None or (
-            _cell_signature_is_missing(current)
-            and not _cell_signature_is_missing(value)
+            _RuntimeCellMissingStrategy.for_kind(current.kind).is_missing(current)
+            and not _RuntimeCellMissingStrategy.for_kind(value.kind).is_missing(value)
         ):
             values_by_key[key] = value
     return tuple(values_by_key.items())
@@ -3093,9 +3234,12 @@ def _dedupe_measurement_fact_records(
             qualified_by_key[key] = qualified_observation
             continue
 
-        if _cell_signature_is_missing(value):
+        if _RuntimeCellMissingStrategy.for_kind(value.kind).is_missing(value):
             continue
-        if any(_cell_signature_is_missing(current) for current in current_values):
+        if any(
+            _RuntimeCellMissingStrategy.for_kind(current.kind).is_missing(current)
+            for current in current_values
+        ):
             values_by_key[key] = [value]
             qualified_by_key[key] = qualified_observation
             continue
@@ -3128,17 +3272,6 @@ def _measurement_field_has_collapsed_numeric_qualifier(
         dialect=dialect,
     )
     return _semantic_core_measurement_feature_parts(parts, dialect) != parts
-
-
-def _cell_signature_is_missing(value: RuntimeCellSignature) -> bool:
-    if value.kind is RuntimeCellValueKind.EMPTY:
-        return True
-    if value.kind is RuntimeCellValueKind.NUMBER:
-        try:
-            return math.isnan(float(value.value))
-        except ValueError:
-            return False
-    return False
 
 
 def _contextual_measurement_padding_indexes(
@@ -3404,101 +3537,88 @@ def _reverse_regression_slope(
 
 
 def _long_form_measurement_fact(
-    row: Mapping[str, object],
-    subject: RuntimeMeasurementSubjectKey,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    source_name: str | None,
-    known_source_names: tuple[str, ...],
+    context: _LongFormMeasurementContext,
 ) -> tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature] | None:
-    feature_name = _first_row_value(row, _MEASUREMENT_FEATURE_NAME_FIELDS)
-    value = _first_row_value(row, _MEASUREMENT_VALUE_FIELDS)
+    feature_name = _first_row_value(context.row, _MEASUREMENT_FEATURE_NAME_FIELDS)
+    value = _first_row_value(context.row, _MEASUREMENT_VALUE_FIELDS)
     if feature_name is None or value is None:
         return None
     if _is_aggregate_image_number_reference_measurement_field(str(feature_name)):
         return None
     aggregate_key = _aggregate_measurement_feature_key(
         str(feature_name),
-        subject,
-        policy,
-        known_source_names=known_source_names,
+        context.subject,
+        context.policy,
+        known_source_names=context.known_source_names,
     )
     if aggregate_key is not None:
-        return aggregate_key, _cell_signature(str(value), policy)
+        return aggregate_key, _cell_signature(str(value), context.policy)
     canonical_feature_name, canonical_source_name = (
         _canonical_measurement_feature_name_and_source(
             str(feature_name),
-            policy,
-            source_name=source_name,
-            known_source_names=known_source_names,
+            context.policy,
+            source_name=context.source_name,
+            known_source_names=context.known_source_names,
         )
     )
     if not canonical_feature_name:
         return None
     return (
         _runtime_measurement_feature_key(
-            subject,
+            context.subject,
             canonical_feature_name,
             source_name=canonical_source_name,
         ),
-        _cell_signature(str(value), policy),
+        _cell_signature(str(value), context.policy),
     )
 
 
 def _long_form_measurement_fact_cached(
-    row_values: tuple[object, ...],
-    subject: RuntimeMeasurementSubjectKey,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    source_name: str | None,
-    known_source_names: tuple[str, ...],
-    feature_indexes: tuple[int, ...],
-    value_indexes: tuple[int, ...],
-    key_cache: dict[
-        tuple[RuntimeMeasurementSubjectKey, str | None, str],
-        RuntimeMeasurementFeatureKey | None,
-    ],
+    context: _CachedLongFormMeasurementContext,
 ) -> tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature] | None:
-    feature_name = _first_indexed_row_value(row_values, feature_indexes)
-    value = _first_indexed_row_value(row_values, value_indexes)
+    feature_name = _first_indexed_row_value(
+        context.row_values,
+        context.feature_indexes,
+    )
+    value = _first_indexed_row_value(context.row_values, context.value_indexes)
     if feature_name is None or value is None:
         return None
     feature_text = str(feature_name)
     if _is_aggregate_image_number_reference_measurement_field(feature_text):
         return None
-    cache_key = (subject, source_name, feature_text)
-    key = key_cache.get(cache_key, _CACHE_MISS)
+    cache_key = (context.subject, context.source_name, feature_text)
+    key = context.key_cache.get(cache_key, _CACHE_MISS)
     if key is _CACHE_MISS:
         aggregate_key = _aggregate_measurement_feature_key(
             feature_text,
-            subject,
-            policy,
-            known_source_names=known_source_names,
+            context.subject,
+            context.policy,
+            known_source_names=context.known_source_names,
         )
         if aggregate_key is not None:
-            key_cache[cache_key] = aggregate_key
-            return aggregate_key, _cell_signature(str(value), policy)
+            context.key_cache[cache_key] = aggregate_key
+            return aggregate_key, _cell_signature(str(value), context.policy)
         canonical_feature_name, canonical_source_name = (
             _canonical_measurement_feature_name_and_source(
                 feature_text,
-                policy,
-                source_name=source_name,
-                known_source_names=known_source_names,
+                context.policy,
+                source_name=context.source_name,
+                known_source_names=context.known_source_names,
             )
         )
         key = (
             _runtime_measurement_feature_key(
-                subject,
+                context.subject,
                 canonical_feature_name,
                 source_name=canonical_source_name,
             )
             if canonical_feature_name
             else None
         )
-        key_cache[cache_key] = key
+        context.key_cache[cache_key] = key
     if key is None:
         return None
-    return key, _cell_signature(str(value), policy)
+    return key, _cell_signature(str(value), context.policy)
 
 
 def _field_indexes_for_names(
@@ -3669,38 +3789,22 @@ def _required_mean_measurement_keys(
 
 
 def _object_label_measurement_facts(
-    labels: object,
-    object_name: str | None,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    object_identifier_subjects: frozenset[RuntimeMeasurementSubjectKey] = (
-        frozenset()
-    ),
-    object_location_subjects: frozenset[RuntimeMeasurementSubjectKey] = frozenset(),
-    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None = None,
+    context: _ObjectLabelMeasurementContext,
 ) -> tuple[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature], ...]:
-    if not _object_label_measurements_required(object_name, required_keys):
+    if not _object_label_measurements_required(
+        context.object_name,
+        context.required_keys,
+    ):
         return ()
     return (
         *_object_count_measurement_facts(
-            labels,
-            object_name,
-            policy,
-            required_keys=required_keys,
+            context,
         ),
         *_object_identifier_measurement_facts(
-            labels,
-            object_name,
-            policy,
-            object_identifier_subjects=object_identifier_subjects,
-            required_keys=required_keys,
+            context,
         ),
         *_object_location_measurement_facts(
-            labels,
-            object_name,
-            policy,
-            object_location_subjects=object_location_subjects,
-            required_keys=required_keys,
+            context,
         ),
     )
 
@@ -3718,41 +3822,34 @@ def _object_label_measurements_required(
 
 
 def _object_identifier_measurement_facts(
-    labels: object,
-    object_name: str | None,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    object_identifier_subjects: frozenset[RuntimeMeasurementSubjectKey],
-    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None = None,
+    context: _ObjectLabelMeasurementContext,
 ) -> tuple[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature], ...]:
-    if object_name is None:
+    if context.object_name is None:
         return ()
-    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, object_name)
-    if subject in object_identifier_subjects:
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, context.object_name)
+    if subject in context.object_identifier_subjects:
         return ()
-    keys = _required_object_identifier_keys(subject, required_keys)
+    keys = _required_object_identifier_keys(subject, context.required_keys)
     if not keys:
         return ()
     try:
-        label_array = np.asarray(labels)
+        label_array = np.asarray(context.labels)
     except Exception:
         return ()
     if label_array.ndim == 0:
         return ()
 
-    declared_object_count = getattr(labels, "declared_object_count", None)
-    declared_object_ids = getattr(labels, "declared_object_ids", ())
     planes = (label_array,) if label_array.ndim <= 2 else tuple(label_array)
     facts: list[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature]] = []
     for plane in planes:
         object_ids = dense_object_label_id_domain(
             plane,
-            declared_object_count=declared_object_count,
-            declared_object_ids=declared_object_ids,
+            declared_object_count=context.declared_object_count,
+            declared_object_ids=context.declared_object_ids,
         )
         for key in keys:
             facts.extend(
-                (key, _cell_signature(str(object_id), policy))
+                (key, _cell_signature(str(object_id), context.policy))
                 for object_id in object_ids
             )
     return tuple(facts)
@@ -3775,27 +3872,21 @@ def _required_object_identifier_keys(
 
 
 def _object_count_measurement_facts(
-    labels: object,
-    object_name: str | None,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None = None,
+    context: _ObjectLabelMeasurementContext,
 ) -> tuple[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature], ...]:
-    if object_name is None:
+    if context.object_name is None:
         return ()
-    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, object_name)
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, context.object_name)
     key = RuntimeMeasurementFeatureKey(subject, "object_count", "count")
-    if required_keys is not None and key not in required_keys:
+    if context.required_keys is not None and key not in context.required_keys:
         return ()
     try:
-        label_array = np.asarray(labels)
+        label_array = np.asarray(context.labels)
     except Exception:
         return ()
     if label_array.ndim == 0:
         return ()
     planes = (label_array,) if label_array.ndim <= 2 else tuple(label_array)
-    declared_object_ids = getattr(labels, "declared_object_ids", ())
-    declared_object_count = getattr(labels, "declared_object_count", None)
     return tuple(
         (
             key,
@@ -3804,12 +3895,12 @@ def _object_count_measurement_facts(
                     len(
                         dense_object_label_id_domain(
                             plane,
-                            declared_object_count=declared_object_count,
-                            declared_object_ids=declared_object_ids,
+                            declared_object_count=context.declared_object_count,
+                            declared_object_ids=context.declared_object_ids,
                         )
                     )
                 ),
-                policy,
+                context.policy,
             ),
         )
         for plane in planes
@@ -3817,26 +3908,21 @@ def _object_count_measurement_facts(
 
 
 def _object_location_measurement_facts(
-    labels: object,
-    object_name: str | None,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    object_location_subjects: frozenset[RuntimeMeasurementSubjectKey],
-    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None = None,
+    context: _ObjectLabelMeasurementContext,
 ) -> tuple[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature], ...]:
-    if object_name is None:
+    if context.object_name is None:
         return ()
-    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, object_name)
-    if subject in object_location_subjects:
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, context.object_name)
+    if subject in context.object_location_subjects:
         return ()
     required_feature_names = _required_object_location_feature_names(
         subject,
-        required_keys,
+        context.required_keys,
         statistic="value",
     )
     required_mean_feature_names = _required_object_location_feature_names(
         subject,
-        required_keys,
+        context.required_keys,
         statistic="mean",
     )
     if (
@@ -3847,16 +3933,16 @@ def _object_location_measurement_facts(
     ):
         return ()
     try:
-        label_array = np.asarray(labels)
+        label_array = np.asarray(context.labels)
     except Exception:
         return ()
     if label_array.ndim == 0:
         return ()
-    object_ids = dense_object_label_id_domain(labels)
+    object_ids = dense_object_label_id_domain(context.labels)
     if not object_ids:
         return ()
 
-    include_missing_locations = getattr(labels, "declared_object_count", None) is not None
+    include_missing_locations = context.declared_object_count is not None
     facts: list[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature]] = []
     planes = (label_array,) if label_array.ndim <= 2 else tuple(label_array)
     for plane in planes:
@@ -3864,7 +3950,7 @@ def _object_location_measurement_facts(
             _object_location_measurement_facts_for_plane(
                 plane,
                 subject,
-                policy,
+                context.policy,
                 required_feature_names=required_feature_names,
                 required_mean_feature_names=required_mean_feature_names,
                 object_ids=object_ids,
@@ -4621,7 +4707,7 @@ def _measurement_source_names_from_artifact_execution(
     source_names: set[str] = set()
     for records in observation.records_by_axis.values():
         for record in records:
-            schema_source_name = getattr(record.value.schema, "source_image_name", None)
+            schema_source_name = record.value.schema.source_image_name
             if schema_source_name is not None:
                 source_names.update(_source_name_aliases(str(schema_source_name)))
             if record.key.kind is not ArtifactKind.MEASUREMENTS:
