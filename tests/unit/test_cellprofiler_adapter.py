@@ -7,6 +7,8 @@ import pytest
 
 from benchmark.adapters.cellprofiler import (
     CELLPROFILER_EXECUTABLE_ENV,
+    DETERMINISTIC_PYTHONHASHSEED,
+    PYTHONHASHSEED_ENV,
     CellProfilerAdapter,
 )
 from benchmark.contracts.tool_adapter import ToolNotInstalledError
@@ -30,6 +32,7 @@ def test_cellprofiler_adapter_accepts_executable_env(monkeypatch) -> None:
         command,
         *,
         capture_output: bool,
+        env=None,
         text: bool,
         timeout: float | None,
         check: bool,
@@ -65,6 +68,7 @@ def test_cellprofiler_adapter_runs_cppipe_headless(
         command,
         *,
         capture_output: bool,
+        env=None,
         text: bool,
         timeout: float | None,
         check: bool,
@@ -81,6 +85,7 @@ def test_cellprofiler_adapter_runs_cppipe_headless(
                 stdout="CellProfiler 4.2.6\n",
                 stderr="",
             )
+        assert env[PYTHONHASHSEED_ENV] == DETERMINISTIC_PYTHONHASHSEED
         output_root = Path(command[command.index("-o") + 1])
         output_root.mkdir(parents=True, exist_ok=True)
         (output_root / "Image.csv").write_text("ImageNumber,Count\n1,2\n")
@@ -106,6 +111,7 @@ def test_cellprofiler_adapter_runs_cppipe_headless(
     assert result.provenance["cellprofiler_version"] == "CellProfiler 4.2.6"
     assert result.provenance["pipeline_source"] == "native_cppipe"
     assert result.provenance["csv_output_count"] == 1
+    assert result.provenance["pythonhashseed"] == DETERMINISTIC_PYTHONHASHSEED
     assert {
         record["phase"] for record in result.provenance["phase_timing_records"]
     } == {"RESOLVE_SOURCE", "EXECUTE_NATIVE_CP", "SNAPSHOT_OUTPUTS"}

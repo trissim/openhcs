@@ -107,6 +107,8 @@ def test_comparison_writers_emit_raw_phase_and_summary_tables(
         "EXECUTE_OPENHCS",
     }
     assert summary_rows[0]["median_speedup"] == "6.0"
+    assert summary_rows[0]["speedup_target"] == "5.0"
+    assert summary_rows[0]["meets_speedup_target"] == "True"
     assert summary_rows[0]["equivalent_count"] == "0"
 
 

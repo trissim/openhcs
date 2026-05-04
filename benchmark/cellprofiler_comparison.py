@@ -34,6 +34,8 @@ NUMERIC_REL_TOLERANCE_FIELD = "numeric_rel_tolerance"
 NATIVE_EXECUTION_SECONDS_FIELD = "native_execution_seconds"
 OPENHCS_EXECUTION_SECONDS_FIELD = "openhcs_execution_seconds"
 SPEEDUP_FIELD = "speedup"
+SPEEDUP_TARGET_FIELD = "speedup_target"
+MEETS_SPEEDUP_TARGET_FIELD = "meets_speedup_target"
 PARITY_ACCURACY_FIELD = "parity_accuracy"
 NATIVE_CACHED_FIELD = "native_cached"
 OPENHCS_CACHED_FIELD = "openhcs_cached"
@@ -50,6 +52,7 @@ MEDIAN_NATIVE_EXECUTION_SECONDS_FIELD = "median_native_execution_seconds"
 MEDIAN_OPENHCS_EXECUTION_SECONDS_FIELD = "median_openhcs_execution_seconds"
 MEDIAN_SPEEDUP_FIELD = "median_speedup"
 MIN_PARITY_ACCURACY_FIELD = "min_parity_accuracy"
+DEFAULT_SPEEDUP_TARGET = 5.0
 CsvRow = Mapping[str, object]
 CsvRowBuilder = Callable[
     [Sequence["CellProfilerComparisonObservation"]],
@@ -177,10 +180,13 @@ def run_comparison_suite(
     suite_id: str,
     repeats: int = 1,
     reuse_openhcs_cache: bool = True,
+    speedup_target: float = DEFAULT_SPEEDUP_TARGET,
 ) -> tuple[CellProfilerComparisonObservation, ...]:
     """Run all cases and write raw benchmark observations."""
     if repeats < 1:
         raise ValueError("repeats must be at least 1.")
+    if speedup_target <= 0:
+        raise ValueError("speedup_target must be positive.")
     output_root.mkdir(parents=True, exist_ok=True)
     observations: list[CellProfilerComparisonObservation] = []
     for repetition in range(1, repeats + 1):
@@ -199,8 +205,16 @@ def run_comparison_suite(
             )
             write_observations_csv(output_root / "observations.csv", observations)
             write_phase_timing_csv(output_root / "phase_timing.csv", observations)
-            write_summary_csv(output_root / "summary.csv", observations)
-            write_suite_metadata(output_root / "suite_metadata.json", suite_id=suite_id)
+            write_summary_csv(
+                output_root / "summary.csv",
+                observations,
+                speedup_target=speedup_target,
+            )
+            write_suite_metadata(
+                output_root / "suite_metadata.json",
+                suite_id=suite_id,
+                speedup_target=speedup_target,
+            )
     return tuple(observations)
 
 
@@ -246,9 +260,11 @@ def write_phase_timing_csv(
 def write_summary_csv(
     path: Path,
     observations: Sequence[CellProfilerComparisonObservation],
+    *,
+    speedup_target: float = DEFAULT_SPEEDUP_TARGET,
 ) -> None:
     """Write per-case aggregate medians for plotting."""
-    _write_csv_table(path, _SUMMARY_TABLE, observations)
+    _write_csv_table(path, _summary_table(speedup_target), observations)
 
 
 def _write_csv_table(
@@ -292,12 +308,17 @@ def _phase_timing_csv_rows(
 
 def _summary_csv_rows(
     observations: Sequence[CellProfilerComparisonObservation],
+    *,
+    speedup_target: float,
 ) -> Iterable[CsvRow]:
     grouped: dict[str, list[CellProfilerComparisonObservation]] = defaultdict(list)
     for observation in observations:
         grouped[observation.case_name].append(observation)
     for case_name in sorted(grouped):
         case_observations = grouped[case_name]
+        median_speedup = _median_present(
+            observation.speedup for observation in case_observations
+        )
         yield {
             CASE_NAME_FIELD: case_name,
             N_FIELD: len(case_observations),
@@ -312,8 +333,10 @@ def _summary_csv_rows(
                 observation.openhcs.execution_seconds
                 for observation in case_observations
             ),
-            MEDIAN_SPEEDUP_FIELD: _median_present(
-                observation.speedup for observation in case_observations
+            MEDIAN_SPEEDUP_FIELD: median_speedup,
+            SPEEDUP_TARGET_FIELD: speedup_target,
+            MEETS_SPEEDUP_TARGET_FIELD: (
+                median_speedup is not None and median_speedup >= speedup_target
             ),
             MIN_PARITY_ACCURACY_FIELD: min(
                 observation.parity_accuracy for observation in case_observations
@@ -355,24 +378,36 @@ _PHASE_TIMING_TABLE = CsvTableSpec(
     ),
     _phase_timing_csv_rows,
 )
-_SUMMARY_TABLE = CsvTableSpec(
-    (
-        CASE_NAME_FIELD,
-        N_FIELD,
-        EQUIVALENT_COUNT_FIELD,
-        MEDIAN_NATIVE_EXECUTION_SECONDS_FIELD,
-        MEDIAN_OPENHCS_EXECUTION_SECONDS_FIELD,
-        MEDIAN_SPEEDUP_FIELD,
-        MIN_PARITY_ACCURACY_FIELD,
-    ),
-    _summary_csv_rows,
-)
+def _summary_table(speedup_target: float) -> CsvTableSpec:
+    return CsvTableSpec(
+        (
+            CASE_NAME_FIELD,
+            N_FIELD,
+            EQUIVALENT_COUNT_FIELD,
+            MEDIAN_NATIVE_EXECUTION_SECONDS_FIELD,
+            MEDIAN_OPENHCS_EXECUTION_SECONDS_FIELD,
+            MEDIAN_SPEEDUP_FIELD,
+            SPEEDUP_TARGET_FIELD,
+            MEETS_SPEEDUP_TARGET_FIELD,
+            MIN_PARITY_ACCURACY_FIELD,
+        ),
+        lambda observations: _summary_csv_rows(
+            observations,
+            speedup_target=speedup_target,
+        ),
+    )
 
 
-def write_suite_metadata(path: Path, *, suite_id: str) -> None:
+def write_suite_metadata(
+    path: Path,
+    *,
+    suite_id: str,
+    speedup_target: float = DEFAULT_SPEEDUP_TARGET,
+) -> None:
     """Write reproducibility metadata for the benchmark suite."""
     payload = {
         "suite_id": suite_id,
+        "speedup_target": speedup_target,
         "created_at_epoch_seconds": time.time(),
         "python": sys.version,
         "platform": platform.platform(),

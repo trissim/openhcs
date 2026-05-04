@@ -36,6 +36,12 @@ def main() -> int:
     run_parser.add_argument("--suite-id")
     run_parser.add_argument("--repeats", type=int, default=1)
     run_parser.add_argument(
+        "--speedup-target",
+        type=float,
+        default=5.0,
+        help="Minimum acceptable OpenHCS speedup recorded in summary artifacts.",
+    )
+    run_parser.add_argument(
         "--force-openhcs-run",
         action="store_true",
         help="Disable OpenHCS benchmark/runtime execution cache reuse.",
@@ -64,6 +70,7 @@ def _run_command(args: argparse.Namespace) -> int:
         suite_id=suite_id,
         repeats=args.repeats,
         reuse_openhcs_cache=not args.force_openhcs_run,
+        speedup_target=args.speedup_target,
     )
     print(f"suite_id={suite_id}")
     print(f"observations={len(observations)}")

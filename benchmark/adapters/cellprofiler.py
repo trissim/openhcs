@@ -27,6 +27,8 @@ from openhcs.core.runtime_equivalence import RuntimeOutputSnapshot
 
 BENCHMARK_CACHE_DOMAINS = frozenset({"native_reference"})
 CELLPROFILER_EXECUTABLE_ENV = "CELLPROFILER_EXECUTABLE"
+PYTHONHASHSEED_ENV = "PYTHONHASHSEED"
+DETERMINISTIC_PYTHONHASHSEED = "0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +137,13 @@ class CellProfilerAdapter(ToolAdapter):
             "-o",
             str(native_output_root),
         )
+        subprocess_env = {
+            **environ,
+            PYTHONHASHSEED_ENV: environ.get(
+                PYTHONHASHSEED_ENV,
+                DETERMINISTIC_PYTHONHASHSEED,
+            ),
+        }
 
         with ExitStack() as stack:
             for metric in request.metrics:
@@ -143,6 +152,7 @@ class CellProfilerAdapter(ToolAdapter):
                 with phase_timing.phase(BenchmarkPhase.EXECUTE_NATIVE_CP):
                     result = subprocess.run(
                         command,
+                        env=subprocess_env,
                         capture_output=True,
                         text=True,
                         timeout=request.timeout_seconds,
@@ -166,6 +176,7 @@ class CellProfilerAdapter(ToolAdapter):
             "cppipe_path": str(source.path),
             "csv_output_count": len(snapshot.tables),
             "image_output_count": len(snapshot.images),
+            "pythonhashseed": subprocess_env[PYTHONHASHSEED_ENV],
             "phase_timing_records": phase_timing.payloads(),
         }
         if source.reference_url is not None:
