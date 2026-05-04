@@ -1,5 +1,7 @@
 """Runtime equivalence package boundary tests."""
 
+from collections import Counter
+
 from openhcs.core import runtime_equivalence
 from openhcs.core.equivalence import (
     RuntimeCellSignature,
@@ -13,10 +15,14 @@ from openhcs.core.equivalence import (
     RuntimeMeasurementFeatureKey,
     RuntimeMeasurementFeatureNumericTolerance,
     RuntimeMeasurementSubjectKey,
+    RuntimeOutputSnapshot,
     RuntimeTableSnapshot,
+    finite_signature_number,
     normalize_runtime_identifier,
     normalize_runtime_source_name,
+    runtime_table_differences,
     runtime_cell_signature,
+    runtime_cell_signature_counters_equivalent,
 )
 from openhcs.core.runtime_semantics import MeasurementScope
 
@@ -95,6 +101,17 @@ def test_runtime_equivalence_cell_signatures_have_package_owner() -> None:
     assert runtime_cell_signature("1.23456", RuntimeEquivalencePolicy()).kind is (
         RuntimeCellValueKind.NUMBER
     )
+    assert finite_signature_number(signature) == 1.0
+
+
+def test_runtime_equivalence_cell_counter_comparison_has_package_owner() -> None:
+    signature = RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "1.0")
+
+    assert runtime_cell_signature_counters_equivalent(
+        Counter((signature,)),
+        Counter((signature,)),
+        RuntimeEquivalencePolicy(),
+    )
 
 
 def test_runtime_equivalence_image_snapshot_has_package_owner() -> None:
@@ -110,3 +127,14 @@ def test_runtime_equivalence_table_snapshot_has_package_owner() -> None:
 
     assert runtime_equivalence.RuntimeTableSnapshot is RuntimeTableSnapshot
     assert table.schema_key == ("ImageNumber", "MeanIntensity")
+
+
+def test_runtime_equivalence_output_snapshot_has_package_owner() -> None:
+    snapshot = RuntimeOutputSnapshot(tables=(), images=())
+
+    assert runtime_equivalence.RuntimeOutputSnapshot is RuntimeOutputSnapshot
+    assert snapshot.tables == ()
+
+
+def test_runtime_equivalence_table_comparison_has_package_owner() -> None:
+    assert runtime_table_differences((), (), RuntimeEquivalencePolicy()) == ()

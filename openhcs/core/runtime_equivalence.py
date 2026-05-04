@@ -35,11 +35,7 @@ from openhcs.core.runtime_artifact_queries import (
 from openhcs.core.runtime_execution_validation import (
     RuntimeArtifactExecutionObservation,
 )
-from openhcs.core.runtime_exports import (
-    RuntimeExportObservation,
-    RuntimeImageExportSpec,
-    image_runtime_records,
-)
+from openhcs.core.runtime_exports import RuntimeImageExportSpec
 from openhcs.core.runtime_semantics import (
     MeasurementScope,
     MeasurementSubject,
@@ -69,7 +65,12 @@ from openhcs.core.equivalence.keys import (
 from openhcs.core.equivalence.cells import (
     RuntimeCellSignature,
     RuntimeCellValueKind,
+    absolute_numeric_counters_equivalent as _absolute_numeric_counters_equivalent,
+    finite_signature_number as _finite_signature_number,
     runtime_cell_signature as _cell_signature,
+    runtime_cell_signature_counters_equivalent as _cell_signature_counters_equivalent,
+    sparse_absolute_numeric_counters_equivalent as _sparse_absolute_numeric_counters_equivalent,
+    sparse_numeric_counters_equivalent as _sparse_numeric_counters_equivalent,
 )
 from openhcs.core.equivalence.tables import (
     CSV_HEADER_CONTEXT_STOPWORDS as _CSV_HEADER_CONTEXT_STOPWORDS,
@@ -77,10 +78,19 @@ from openhcs.core.equivalence.tables import (
     RuntimeTableSnapshot,
 )
 from openhcs.core.equivalence.images import RuntimeImageSnapshot
+from openhcs.core.equivalence.outputs import (
+    RuntimeOutputSnapshot,
+    image_paths,
+    table_paths,
+)
 from openhcs.core.equivalence.report import (
     RuntimeEquivalenceDifference,
     RuntimeEquivalenceDifferenceKind,
     RuntimeEquivalenceReport,
+)
+from openhcs.core.equivalence.comparison import (
+    runtime_image_differences as _image_differences,
+    runtime_table_differences as _table_differences,
 )
 
 
@@ -570,75 +580,6 @@ def _measurement_table_cell_payload(value: object) -> object:
     return (type(value).__name__, repr(value))
 
 
-@dataclass(frozen=True, slots=True)
-class RuntimeOutputSnapshot:
-    """Semantic snapshot of runtime file outputs."""
-
-    tables: tuple[RuntimeTableSnapshot, ...] = ()
-    images: tuple[RuntimeImageSnapshot, ...] = ()
-
-    @classmethod
-    def from_export_observation(
-        cls,
-        observation: RuntimeExportObservation,
-    ) -> "RuntimeOutputSnapshot":
-        """Build a semantic output snapshot from observed runtime exports."""
-        return cls(
-            tables=tuple(
-                RuntimeTableSnapshot.from_csv(path)
-                for path in observation.table_outputs
-            ),
-            images=tuple(
-                RuntimeImageSnapshot.from_image_file(path)
-                for path in observation.image_outputs
-            ),
-        )
-
-    @classmethod
-    def from_artifact_execution_observation(
-        cls,
-        observation: RuntimeArtifactExecutionObservation,
-        *,
-        image_artifact_names: frozenset[str] = frozenset(),
-        image_export_specs: tuple[RuntimeImageExportSpec, ...] = (),
-    ) -> "RuntimeOutputSnapshot":
-        """Build a snapshot from files owned by observed runtime artifacts."""
-        file_snapshot = cls.from_export_observation(
-            observation.exports.with_runtime_artifact_tables(
-                observation.records_by_axis
-            )
-        )
-        image_specs = _image_export_specs(
-            image_artifact_names=image_artifact_names,
-            image_export_specs=image_export_specs,
-        )
-        if not image_specs:
-            return cls(tables=file_snapshot.tables)
-        return cls(
-            tables=file_snapshot.tables,
-            images=_image_snapshots_from_artifact_execution(
-                observation,
-                image_export_specs=image_specs,
-            ),
-        )
-
-    @classmethod
-    def from_output_root(cls, output_root: Path) -> "RuntimeOutputSnapshot":
-        """Build a semantic output snapshot from an output directory."""
-        root = Path(output_root)
-        if not root.exists():
-            raise FileNotFoundError(f"Runtime output root does not exist: {root}")
-        return cls(
-            tables=tuple(
-                RuntimeTableSnapshot.from_csv(path) for path in table_paths(root)
-            ),
-            images=tuple(
-                RuntimeImageSnapshot.from_image_file(path)
-                for path in image_paths(root)
-            ),
-        )
-
-
 def runtime_output_equivalence(
     reference: RuntimeOutputSnapshot,
     candidate: RuntimeOutputSnapshot,
@@ -772,58 +713,6 @@ def runtime_artifact_execution_equivalence(
     )
 
 
-def table_paths(output_root: Path) -> tuple[Path, ...]:
-    """Return non-empty CSV output paths under an output root."""
-    root = Path(output_root)
-    return tuple(
-        path
-        for path in sorted(root.rglob("*.csv"))
-        if path.is_file() and path.stat().st_size > 0
-    )
-
-
-def image_paths(output_root: Path) -> tuple[Path, ...]:
-    """Return image output paths under an output root."""
-    root = Path(output_root)
-    return tuple(
-        path
-        for path in sorted(root.rglob("*"))
-        if path.is_file() and _is_image_path(path)
-    )
-
-
-def _image_snapshots_from_artifact_execution(
-    observation: RuntimeArtifactExecutionObservation,
-    *,
-    image_export_specs: tuple[RuntimeImageExportSpec, ...],
-) -> tuple[RuntimeImageSnapshot, ...]:
-    return tuple(
-        RuntimeImageSnapshot.from_array(
-            f"{record.key.scope.axis_id}_{export_spec.artifact_name}",
-            export_spec.prepare_payload(record.value.data),
-        )
-        for axis_id in sorted(observation.records_by_axis)
-        for export_spec in image_export_specs
-        for record in image_runtime_records(
-            observation.records_by_axis[axis_id],
-            artifact_names=frozenset((export_spec.artifact_name,)),
-        )
-    )
-
-
-def _image_export_specs(
-    *,
-    image_artifact_names: frozenset[str],
-    image_export_specs: tuple[RuntimeImageExportSpec, ...],
-) -> tuple[RuntimeImageExportSpec, ...]:
-    if image_export_specs:
-        return image_export_specs
-    return tuple(
-        RuntimeImageExportSpec(artifact_name)
-        for artifact_name in sorted(image_artifact_names)
-    )
-
-
 def _runtime_artifact_count_differences(
     reference: RuntimeArtifactExecutionObservation,
     candidate: RuntimeArtifactExecutionObservation,
@@ -849,206 +738,6 @@ def _total_record_counts(
     for axis_counts in observation.record_counts_by_axis.values():
         counts.update(axis_counts)
     return counts
-
-
-def _table_differences(
-    reference_tables: tuple[RuntimeTableSnapshot, ...],
-    candidate_tables: tuple[RuntimeTableSnapshot, ...],
-    policy: RuntimeEquivalencePolicy,
-) -> tuple[RuntimeEquivalenceDifference, ...]:
-    differences: list[RuntimeEquivalenceDifference] = []
-    reference_tables = _comparable_table_snapshots(reference_tables)
-    candidate_tables = _comparable_table_snapshots(candidate_tables)
-    reference_groups = _tables_by_schema(reference_tables)
-    candidate_groups = _tables_by_schema(candidate_tables)
-    reference_schemas = set(reference_groups)
-    candidate_schemas = set(candidate_groups)
-    for schema in sorted(reference_schemas - candidate_schemas):
-        differences.append(
-            RuntimeEquivalenceDifference(
-                RuntimeEquivalenceDifferenceKind.TABLE_SCHEMA,
-                f"candidate is missing table schema {schema!r}",
-            )
-        )
-    for schema in sorted(candidate_schemas - reference_schemas):
-        differences.append(
-            RuntimeEquivalenceDifference(
-                RuntimeEquivalenceDifferenceKind.TABLE_SCHEMA,
-                f"candidate has extra table schema {schema!r}",
-            )
-        )
-    for schema in sorted(reference_schemas & candidate_schemas):
-        reference_group = reference_groups[schema]
-        candidate_group = candidate_groups[schema]
-        if len(reference_group) != len(candidate_group):
-            differences.append(
-                RuntimeEquivalenceDifference(
-                    RuntimeEquivalenceDifferenceKind.TABLE_COUNT,
-                    f"table schema {schema!r} count differs: "
-                    f"reference={len(reference_group)}, "
-                    f"candidate={len(candidate_group)}",
-                )
-            )
-        differences.extend(
-            _table_content_differences(
-                schema,
-                reference_group,
-                candidate_group,
-                policy,
-            )
-        )
-    return tuple(differences)
-
-
-def _table_content_differences(
-    schema: tuple[str, ...],
-    reference_group: tuple[RuntimeTableSnapshot, ...],
-    candidate_group: tuple[RuntimeTableSnapshot, ...],
-    policy: RuntimeEquivalencePolicy,
-) -> tuple[RuntimeEquivalenceDifference, ...]:
-    reference_shapes = Counter(len(table.rows) for table in reference_group)
-    candidate_shapes = Counter(len(table.rows) for table in candidate_group)
-    differences: list[RuntimeEquivalenceDifference] = []
-    if reference_shapes != candidate_shapes:
-        differences.append(
-            RuntimeEquivalenceDifference(
-                RuntimeEquivalenceDifferenceKind.TABLE_CONTENT,
-                f"table schema {schema!r} row counts differ: "
-                f"reference={dict(reference_shapes)!r}, "
-                f"candidate={dict(candidate_shapes)!r}",
-            )
-        )
-    if not policy.compare_table_values:
-        return tuple(differences)
-
-    reference_content = Counter(
-        table.content_key(policy) for table in reference_group
-    )
-    candidate_content = Counter(
-        table.content_key(policy) for table in candidate_group
-    )
-    if reference_content != candidate_content:
-        differences.append(
-            RuntimeEquivalenceDifference(
-                RuntimeEquivalenceDifferenceKind.TABLE_CONTENT,
-                f"table schema {schema!r} values differ",
-            )
-        )
-    return tuple(differences)
-
-
-def _image_differences(
-    reference_images: tuple[RuntimeImageSnapshot, ...],
-    candidate_images: tuple[RuntimeImageSnapshot, ...],
-    policy: RuntimeEquivalencePolicy,
-) -> tuple[RuntimeEquivalenceDifference, ...]:
-    differences: list[RuntimeEquivalenceDifference] = []
-    if len(reference_images) != len(candidate_images):
-        differences.append(
-            RuntimeEquivalenceDifference(
-                RuntimeEquivalenceDifferenceKind.IMAGE_COUNT,
-                f"image output count differs: reference={len(reference_images)}, "
-                f"candidate={len(candidate_images)}",
-            )
-        )
-    if not _image_snapshots_equivalent(reference_images, candidate_images, policy):
-        differences.append(
-            RuntimeEquivalenceDifference(
-                RuntimeEquivalenceDifferenceKind.IMAGE_CONTENT,
-                "image output content differs",
-            )
-        )
-    return tuple(differences)
-
-
-def _image_snapshots_equivalent(
-    reference_images: tuple[RuntimeImageSnapshot, ...],
-    candidate_images: tuple[RuntimeImageSnapshot, ...],
-    policy: RuntimeEquivalencePolicy,
-) -> bool:
-    if len(reference_images) != len(candidate_images):
-        return False
-
-    unmatched = list(candidate_images)
-    for reference_image in reference_images:
-        match_index = _matching_image_index(reference_image, unmatched, policy)
-        if match_index is None:
-            return False
-        unmatched.pop(match_index)
-    return not unmatched
-
-
-def _matching_image_index(
-    reference_image: RuntimeImageSnapshot,
-    candidate_images: list[RuntimeImageSnapshot],
-    policy: RuntimeEquivalencePolicy,
-) -> int | None:
-    for index, candidate_image in enumerate(candidate_images):
-        if reference_image.content_key(policy) == candidate_image.content_key(policy):
-            return index
-    for index, candidate_image in enumerate(candidate_images):
-        if _image_pixels_equivalent(reference_image, candidate_image, policy):
-            return index
-    return None
-
-
-def _image_pixels_equivalent(
-    reference_image: RuntimeImageSnapshot,
-    candidate_image: RuntimeImageSnapshot,
-    policy: RuntimeEquivalencePolicy,
-) -> bool:
-    if not policy.compare_image_pixels:
-        return False
-    comparable_pixels = _comparable_image_pixels(reference_image, candidate_image)
-    if comparable_pixels is None:
-        return False
-    reference_pixels, candidate_pixels = comparable_pixels
-    if (
-        policy.image_abs_tolerance == 0
-        and policy.image_rel_tolerance == 0
-        and policy.image_max_different_fraction == 0
-    ):
-        return np.array_equal(reference_pixels, candidate_pixels, equal_nan=True)
-    if reference_pixels.size == 0:
-        return True
-    if not (
-        np.issubdtype(reference_pixels.dtype, np.number)
-        and np.issubdtype(candidate_pixels.dtype, np.number)
-    ):
-        return False
-
-    close_pixels = np.isclose(
-        reference_pixels.astype(np.float64, copy=False),
-        candidate_pixels.astype(np.float64, copy=False),
-        rtol=policy.image_rel_tolerance,
-        atol=policy.image_abs_tolerance,
-        equal_nan=True,
-    )
-    different_fraction = 1.0 - (float(np.count_nonzero(close_pixels)) / close_pixels.size)
-    return different_fraction <= policy.image_max_different_fraction
-
-
-def _comparable_image_pixels(
-    reference_image: RuntimeImageSnapshot,
-    candidate_image: RuntimeImageSnapshot,
-) -> tuple[np.ndarray, np.ndarray] | None:
-    reference_pixels = np.asarray(reference_image.pixel_data)
-    candidate_pixels = np.asarray(candidate_image.pixel_data)
-    if reference_pixels.shape == candidate_pixels.shape:
-        return reference_pixels, candidate_pixels
-    reference_normalized = _grayscale_equivalent_pixels(reference_pixels)
-    candidate_normalized = _grayscale_equivalent_pixels(candidate_pixels)
-    if reference_normalized.shape != candidate_normalized.shape:
-        return None
-    return reference_normalized, candidate_normalized
-
-
-def _grayscale_equivalent_pixels(pixels: np.ndarray) -> np.ndarray:
-    if pixels.ndim == 3 and pixels.shape[-1] in (3, 4):
-        color = pixels[..., :3]
-        if np.all(color == color[..., :1]):
-            return color[..., 0]
-    return pixels
 
 
 def _measurement_differences(
@@ -1658,258 +1347,6 @@ def _is_zernike_feature(feature_name: str) -> bool:
     return bool(re.fullmatch(r"zernike_\d+_\d+", feature_name))
 
 
-def _cell_signature_counters_equivalent(
-    reference: Counter[RuntimeCellSignature],
-    candidate: Counter[RuntimeCellSignature],
-    policy: RuntimeEquivalencePolicy,
-) -> bool:
-    if reference == candidate:
-        return True
-    if policy.numeric_abs_tolerance == 0 and policy.numeric_rel_tolerance == 0:
-        return False
-
-    reference_exact, reference_numbers = _split_approximate_numeric_signatures(reference)
-    candidate_exact, candidate_numbers = _split_approximate_numeric_signatures(candidate)
-    return (
-        reference_exact == candidate_exact
-        and _finite_numeric_values_equivalent(
-            reference_numbers,
-            candidate_numbers,
-            policy,
-        )
-    )
-
-
-def _split_approximate_numeric_signatures(
-    signatures: Counter[RuntimeCellSignature],
-) -> tuple[Counter[RuntimeCellSignature], tuple[float, ...]]:
-    exact: Counter[RuntimeCellSignature] = Counter()
-    numbers: list[float] = []
-    for signature, count in signatures.items():
-        numeric = _finite_signature_number(signature)
-        if numeric is None:
-            exact[signature] = count
-            continue
-        numbers.extend([numeric] * count)
-    return exact, tuple(numbers)
-
-
-def _finite_signature_number(signature: RuntimeCellSignature) -> float | None:
-    if signature.kind is not RuntimeCellValueKind.NUMBER:
-        return None
-    try:
-        numeric = float(signature.value)
-    except ValueError:
-        return None
-    return numeric if math.isfinite(numeric) else None
-
-
-def _finite_numeric_values_equivalent(
-    reference: tuple[float, ...],
-    candidate: tuple[float, ...],
-    policy: RuntimeEquivalencePolicy,
-) -> bool:
-    if len(reference) != len(candidate):
-        return False
-    unmatched_reference, unmatched_candidate = _unmatched_numeric_values(
-        reference,
-        candidate,
-        policy,
-    )
-    return not unmatched_reference and not unmatched_candidate
-
-
-def _sparse_numeric_counters_equivalent(
-    reference: Counter[RuntimeCellSignature],
-    candidate: Counter[RuntimeCellSignature],
-    policy: RuntimeEquivalencePolicy,
-    *,
-    abs_tolerance: float,
-    rel_tolerance: float,
-    max_unstable_values: int,
-    max_unstable_fraction: float,
-) -> bool:
-    reference_exact, reference_numbers = _split_approximate_numeric_signatures(reference)
-    candidate_exact, candidate_numbers = _split_approximate_numeric_signatures(candidate)
-    if not _sparse_nonfinite_numeric_counters_equivalent(
-        reference_exact,
-        candidate_exact,
-        max_unstable_values=max_unstable_values,
-        max_unstable_fraction=max_unstable_fraction,
-    ):
-        return False
-    return _sparse_numeric_values_equivalent(
-        reference_numbers,
-        candidate_numbers,
-        policy,
-        abs_tolerance=abs_tolerance,
-        rel_tolerance=rel_tolerance,
-        max_unstable_values=max_unstable_values,
-        max_unstable_fraction=max_unstable_fraction,
-    )
-
-
-def _sparse_nonfinite_numeric_counters_equivalent(
-    reference: Counter[RuntimeCellSignature],
-    candidate: Counter[RuntimeCellSignature],
-    *,
-    max_unstable_values: int,
-    max_unstable_fraction: float,
-) -> bool:
-    if reference == candidate:
-        return True
-    if any(not _signature_is_nonfinite_number(signature) for signature in reference):
-        return False
-    if any(not _signature_is_nonfinite_number(signature) for signature in candidate):
-        return False
-
-    unstable_cap = max(
-        max_unstable_values,
-        math.ceil(sum(reference.values()) * max_unstable_fraction),
-    )
-    missing = sum((reference - candidate).values())
-    extra = sum((candidate - reference).values())
-    return max(missing, extra) <= unstable_cap
-
-
-def _signature_is_nonfinite_number(signature: RuntimeCellSignature) -> bool:
-    if signature.kind is not RuntimeCellValueKind.NUMBER:
-        return False
-    try:
-        numeric = float(signature.value)
-    except ValueError:
-        return False
-    return not math.isfinite(numeric)
-
-
-def _sparse_numeric_values_equivalent(
-    reference_numbers: tuple[float, ...],
-    candidate_numbers: tuple[float, ...],
-    policy: RuntimeEquivalencePolicy,
-    *,
-    abs_tolerance: float,
-    rel_tolerance: float,
-    max_unstable_values: int,
-    max_unstable_fraction: float,
-) -> bool:
-    unstable_cap = max(
-        max_unstable_values,
-        math.ceil(len(reference_numbers) * max_unstable_fraction),
-    )
-    unstable_policy = RuntimeEquivalencePolicy(
-        numeric_decimal_places=policy.numeric_decimal_places,
-        numeric_abs_tolerance=abs_tolerance,
-        numeric_rel_tolerance=rel_tolerance,
-        measurement_feature_name_mode=policy.measurement_feature_name_mode,
-    )
-    unmatched_reference, unmatched_candidate = _unmatched_numeric_values(
-        reference_numbers,
-        candidate_numbers,
-        policy,
-    )
-    relaxed_unmatched_reference, relaxed_unmatched_candidate = _unmatched_numeric_values(
-        unmatched_reference,
-        unmatched_candidate,
-        unstable_policy,
-    )
-    return (
-        max(len(relaxed_unmatched_reference), len(relaxed_unmatched_candidate))
-        <= unstable_cap
-    )
-
-
-def _unmatched_numeric_values(
-    reference: tuple[float, ...],
-    candidate: tuple[float, ...],
-    policy: RuntimeEquivalencePolicy,
-) -> tuple[tuple[float, ...], tuple[float, ...]]:
-    """Return numeric values left after stable one-to-one tolerance matching."""
-    reference_values = sorted(reference)
-    candidate_values = sorted(candidate)
-    unmatched_reference: list[float] = []
-    unmatched_candidate: list[float] = []
-    reference_index = 0
-    candidate_index = 0
-    while (
-        reference_index < len(reference_values)
-        and candidate_index < len(candidate_values)
-    ):
-        reference_value = reference_values[reference_index]
-        candidate_value = candidate_values[candidate_index]
-        if _numbers_equivalent(reference_value, candidate_value, policy):
-            reference_index += 1
-            candidate_index += 1
-            continue
-        tolerance = max(
-            policy.numeric_abs_tolerance,
-            policy.numeric_rel_tolerance
-            * max(abs(reference_value), abs(candidate_value)),
-        )
-        if candidate_value < reference_value - tolerance:
-            unmatched_candidate.append(candidate_value)
-            candidate_index += 1
-            continue
-        unmatched_reference.append(reference_value)
-        reference_index += 1
-
-    unmatched_reference.extend(reference_values[reference_index:])
-    unmatched_candidate.extend(candidate_values[candidate_index:])
-    return tuple(unmatched_reference), tuple(unmatched_candidate)
-
-
-def _absolute_numeric_counters_equivalent(
-    reference: Counter[RuntimeCellSignature],
-    candidate: Counter[RuntimeCellSignature],
-    policy: RuntimeEquivalencePolicy,
-) -> bool:
-    reference_exact, reference_numbers = _split_approximate_numeric_signatures(reference)
-    candidate_exact, candidate_numbers = _split_approximate_numeric_signatures(candidate)
-    if reference_exact != candidate_exact:
-        return False
-    return _finite_numeric_values_equivalent(
-        tuple(abs(value) for value in reference_numbers),
-        tuple(abs(value) for value in candidate_numbers),
-        policy,
-    )
-
-
-def _sparse_absolute_numeric_counters_equivalent(
-    reference: Counter[RuntimeCellSignature],
-    candidate: Counter[RuntimeCellSignature],
-    policy: RuntimeEquivalencePolicy,
-    *,
-    abs_tolerance: float,
-    rel_tolerance: float,
-    max_unstable_values: int,
-    max_unstable_fraction: float,
-) -> bool:
-    reference_exact, reference_numbers = _split_approximate_numeric_signatures(reference)
-    candidate_exact, candidate_numbers = _split_approximate_numeric_signatures(candidate)
-    if reference_exact != candidate_exact:
-        return False
-    return _sparse_numeric_values_equivalent(
-        tuple(abs(value) for value in reference_numbers),
-        tuple(abs(value) for value in candidate_numbers),
-        policy,
-        abs_tolerance=abs_tolerance,
-        rel_tolerance=rel_tolerance,
-        max_unstable_values=max_unstable_values,
-        max_unstable_fraction=max_unstable_fraction,
-    )
-
-
-def _numbers_equivalent(
-    reference: float,
-    candidate: float,
-    policy: RuntimeEquivalencePolicy,
-) -> bool:
-    tolerance = max(
-        policy.numeric_abs_tolerance,
-        policy.numeric_rel_tolerance * max(abs(reference), abs(candidate)),
-    )
-    return abs(reference - candidate) <= tolerance
-
-
 def _feature_label(feature: RuntimeMeasurementFeatureKey) -> str:
     subject = feature.subject
     if subject.name is None:
@@ -1922,30 +1359,6 @@ def _feature_label(feature: RuntimeMeasurementFeatureKey) -> str:
     if feature.statistic == "value":
         return f"{subject_label}/{feature_label}"
     return f"{subject_label}/{feature.statistic}({feature_label})"
-
-
-def _tables_by_schema(
-    tables: tuple[RuntimeTableSnapshot, ...],
-) -> dict[tuple[str, ...], tuple[RuntimeTableSnapshot, ...]]:
-    groups: dict[tuple[str, ...], list[RuntimeTableSnapshot]] = {}
-    for table in tables:
-        groups.setdefault(table.schema_key, []).append(table)
-    return {schema: tuple(group) for schema, group in groups.items()}
-
-
-def _comparable_table_snapshots(
-    tables: tuple[RuntimeTableSnapshot, ...],
-) -> tuple[RuntimeTableSnapshot, ...]:
-    return tuple(table for table in tables if not _is_metadata_table_snapshot(table))
-
-
-def _is_metadata_table_snapshot(table: RuntimeTableSnapshot) -> bool:
-    if _normalize_identifier(table.path.stem) != "experiment":
-        return False
-    normalized_header = frozenset(
-        _normalize_identifier(column) for column in table.header
-    )
-    return normalized_header == frozenset(("key", "value"))
 
 
 def _record_measurement_facts(
@@ -6050,18 +5463,6 @@ def _is_normalized_measurement_identity_field(
     if normalized.startswith(_NON_MEASUREMENT_FIELD_PREFIXES):
         return True
     return normalized.startswith("metadata_")
-
-
-def _is_image_path(path: Path) -> bool:
-    return path.suffix.lower() in {
-        ".bmp",
-        ".jpeg",
-        ".jpg",
-        ".npy",
-        ".png",
-        ".tif",
-        ".tiff",
-    }
 
 
 _MEASUREMENT_FEATURE_NAME_FIELDS = MEASUREMENT_FEATURE_NAME_FIELDS
