@@ -165,6 +165,18 @@ _RuntimeMeasurementPaddingGroupCache = dict[
     tuple[str, RuntimeMeasurementFeatureKey],
     tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
 ]
+_RuntimeMeasurementIndexedQualifierCache = dict[
+    tuple[_RuntimeMeasurementIndexedQualifier, ...],
+    tuple[str, ...],
+]
+_StaticWideRuntimeKeyCache = dict[
+    tuple[RuntimeMeasurementSubjectKey, str | None, int, tuple[str, ...]],
+    RuntimeMeasurementFeatureKey | None,
+]
+_StaticWideRuntimeQualifiersByIndex = dict[
+    int,
+    tuple[_RuntimeMeasurementIndexedQualifier, ...],
+]
 _AggregateValuesByFeature = dict[
     tuple[RuntimeMeasurementFeatureKey, tuple[tuple[str, object], ...]],
     list[float],
@@ -245,6 +257,31 @@ class _AggregateInputRecordingContext:
 
 
 @dataclass(frozen=True, slots=True)
+class _RuntimeMeasurementFactRecordingContext:
+    values_by_feature: dict[
+        RuntimeMeasurementFeatureKey,
+        Counter[RuntimeCellSignature],
+    ]
+    explicit_measurement_keys: set[RuntimeMeasurementFeatureKey]
+    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None
+
+
+@dataclass(frozen=True, slots=True)
+class _StaticWideRuntimeRowProjectionContext:
+    header: tuple[str, ...]
+    policy: RuntimeEquivalencePolicy
+    known_source_names: tuple[str, ...]
+    input_keys: frozenset[RuntimeMeasurementFeatureKey] | None
+    feature_column_indexes: tuple[int, ...]
+    aggregate_reference_indexes: frozenset[int]
+    qualifiers_by_index: _StaticWideRuntimeQualifiersByIndex
+    qualifier_render_cache: _RuntimeMeasurementQualifierRenderCache
+    key_cache: _StaticWideRuntimeKeyCache
+    padding_group_cache: _RuntimeMeasurementPaddingGroupCache
+    table_padding_group: str
+
+
+@dataclass(frozen=True, slots=True)
 class _MeasurementFeatureKeySourceContext:
     field_name: str
     subject: RuntimeMeasurementSubjectKey
@@ -252,6 +289,15 @@ class _MeasurementFeatureKeySourceContext:
     qualifiers: tuple[str, ...]
     source_name: str | None
     known_source_names: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _RuntimeMeasurementTableProjectionContext:
+    table: MeasurementTable
+    policy: RuntimeEquivalencePolicy
+    axis_key: object | None
+    known_source_names: tuple[str, ...]
+    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None
 
 
 _MeasurementScopeAggregatePolicy = product_record(
@@ -481,23 +527,22 @@ class RuntimeMeasurementSnapshot:
                             continue
                         seen_aggregate_measurement_tables.add(aggregate_table_key)
                     measurement_tables_by_axis.setdefault(axis_key, []).append(table)
-                    if _record_static_wide_runtime_measurement_table(
-                        values_by_feature,
+                    table_projection_context = _RuntimeMeasurementTableProjectionContext(
                         table,
                         policy,
-                        axis_key=axis_key,
-                        known_source_names=known_source_names,
-                        required_keys=required_measurement_keys,
+                        axis_key,
+                        known_source_names,
+                        required_measurement_keys,
+                    )
+                    if _record_static_wide_runtime_measurement_table(
+                        values_by_feature,
+                        table_projection_context,
                     ):
                         continue
                     _record_measurement_facts(
                         values_by_feature,
                         _measurement_facts_from_runtime_table(
-                            table,
-                            policy,
-                            axis_key=axis_key,
-                            known_source_names=known_source_names,
-                            required_keys=required_measurement_keys,
+                            table_projection_context,
                         ),
                         required_keys=required_measurement_keys,
                     )
@@ -1809,14 +1854,11 @@ def _record_static_wide_runtime_measurement_table(
         RuntimeMeasurementFeatureKey,
         Counter[RuntimeCellSignature],
     ],
-    table: MeasurementTable,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    axis_key: object | None = None,
-    known_source_names: tuple[str, ...],
-    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None = None,
+    context: _RuntimeMeasurementTableProjectionContext,
 ) -> bool:
     """Record wide runtime measurement tables without per-row key rebuilding."""
+    table = context.table
+    policy = context.policy
     all_rows = measurement_rows((table,))
     if not all_rows:
         return True
@@ -1868,13 +1910,13 @@ def _record_static_wide_runtime_measurement_table(
             first_row_values,
             subject_schema,
         ),
-        known_source_names=known_source_names,
+        known_source_names=context.known_source_names,
     ):
         return False
 
     input_keys = _required_measurement_input_keys(
-        required_keys,
-        known_source_names=known_source_names,
+        context.required_keys,
+        known_source_names=context.known_source_names,
     )
     required_subjects = _required_measurement_subjects(input_keys)
     qualifier_indexes = {
@@ -1895,33 +1937,36 @@ def _record_static_wide_runtime_measurement_table(
         )
         for index in feature_column_indexes
     }
-    qualifier_render_cache: dict[
-        _RuntimeMeasurementQualifierCacheKey,
-        str | None,
-    ] = {}
-    padding_group_cache: dict[
-        tuple[str, RuntimeMeasurementFeatureKey],
-        tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
-    ] = {}
-    key_cache: dict[
-        tuple[RuntimeMeasurementSubjectKey, str | None, int, tuple[str, ...]],
-        RuntimeMeasurementFeatureKey | None,
-    ] = {}
+    qualifier_render_cache: _RuntimeMeasurementQualifierRenderCache = {}
+    padding_group_cache: _RuntimeMeasurementPaddingGroupCache = {}
+    key_cache: _StaticWideRuntimeKeyCache = {}
     aggregate_reference_indexes = frozenset(
         index
         for index in feature_column_indexes
         if _is_aggregate_image_number_reference_measurement_field(header[index])
     )
-    aggregate_values_by_feature: dict[
-        tuple[RuntimeMeasurementFeatureKey, tuple[tuple[str, object], ...]],
-        list[float],
-    ] = {}
-    aggregate_input_key_cache: dict[
-        RuntimeMeasurementFeatureKey,
-        RuntimeMeasurementFeatureKey | None,
-    ] = {}
+    aggregate_values_by_feature: _AggregateValuesByFeature = {}
+    aggregate_input_key_cache: _AggregateMeanKeyCache = {}
     table_padding_group = _normalize_identifier(table.name) or "measurements"
     table_explicit_measurement_keys: set[RuntimeMeasurementFeatureKey] = set()
+    fact_recording_context = _RuntimeMeasurementFactRecordingContext(
+        values_by_feature,
+        table_explicit_measurement_keys,
+        context.required_keys,
+    )
+    row_projection_context = _StaticWideRuntimeRowProjectionContext(
+        header,
+        policy,
+        context.known_source_names,
+        input_keys,
+        feature_column_indexes,
+        aggregate_reference_indexes,
+        qualifiers_by_index,
+        qualifier_render_cache,
+        key_cache,
+        padding_group_cache,
+        table_padding_group,
+    )
 
     for row in all_rows:
         row_mapping = measurement_row_mapping(row)
@@ -1942,129 +1987,125 @@ def _record_static_wide_runtime_measurement_table(
             row_values,
             subject_schema,
         )
-        row_fact_records: list[
-            tuple[
-                tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
-                RuntimeMeasurementFeatureKey,
-                RuntimeCellSignature,
-            ]
-        ] = []
-        padding_group_presence: dict[
-            tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
-            bool,
-        ] = {}
-        row_qualifier_cache: dict[
-            tuple[_RuntimeMeasurementIndexedQualifier, ...],
-            tuple[str, ...],
-        ] = {}
-        for index in feature_column_indexes:
-            if index in aggregate_reference_indexes:
-                continue
-            field_name = header[index]
-            value = row_values[index]
-            indexed_qualifiers = qualifiers_by_index[index]
-            if not indexed_qualifiers:
-                qualifiers = ()
-            else:
-                qualifiers = row_qualifier_cache.get(indexed_qualifiers)
-                if qualifiers is None:
-                    qualifiers = _measurement_row_qualifiers_from_indexed_values_cached(
-                        row_values,
-                        indexed_qualifiers,
-                        qualifier_render_cache,
-                    )
-                    row_qualifier_cache[indexed_qualifiers] = qualifiers
-            cache_key = (subject, source_name, index, qualifiers)
-            key = key_cache.get(cache_key, _CACHE_MISS)
-            if key is _CACHE_MISS:
-                key = _measurement_feature_key_from_source_context(
-                    _MeasurementFeatureKeySourceContext(
-                        field_name,
-                        subject,
-                        policy,
-                        qualifiers,
-                        source_name,
-                        known_source_names,
-                    )
-                )
-                key_cache[cache_key] = key
-            if key is None:
-                continue
-            padding_group_cache_key = (field_name, key)
-            padding_group = padding_group_cache.get(padding_group_cache_key)
-            if padding_group is None:
-                padding_group = _runtime_measurement_padding_group(
-                    table_padding_group,
-                    field_name,
-                    key,
-                    policy.measurement_dialect,
-                )
-                padding_group_cache[padding_group_cache_key] = padding_group
-            padding_group_presence[padding_group] = (
-                padding_group_presence.get(padding_group, False)
-                or _measurement_value_is_present(value)
-            )
-            if (
-                input_keys is not None
-                and key not in input_keys
-                and not isinstance(value, Mapping)
-            ):
-                continue
-            cell_facts = _cell_measurement_facts(key, value, policy)
-            if input_keys is not None:
-                cell_facts = tuple(
-                    (cell_key, cell_value)
-                    for cell_key, cell_value in cell_facts
-                    if cell_key in input_keys
-                )
-            row_fact_records.extend(
-                (padding_group, cell_key, cell_value)
-                for cell_key, cell_value in cell_facts
-            )
-
-        row_facts = tuple(
-            (key, value)
-            for padding_group, key, value in row_fact_records
-            if padding_group_presence.get(padding_group, True)
-        )
-        derived_row_facts = _derive_pair_measurement_facts(
-            _dedupe_measurement_facts(row_facts),
-            policy,
-            known_source_names=known_source_names,
+        derived_row_facts = _static_wide_runtime_measurement_row_facts(
+            row_projection_context,
+            row_values,
+            subject,
+            source_name,
         )
         if not derived_row_facts:
             continue
-        row_identity: tuple[tuple[str, object], ...] | None = None
         aggregate_input_context = _AggregateInputRecordingContext(
             aggregate_values_by_feature,
             row_mapping,
-            axis_key,
-            required_keys,
+            context.axis_key,
+            context.required_keys,
             aggregate_input_key_cache,
         )
-        for key, value in derived_row_facts:
-            table_explicit_measurement_keys.add(key)
-            if required_keys is None or key in required_keys:
-                values_by_feature.setdefault(key, Counter())[value] += 1
-            row_identity = _record_row_aggregate_input_value(
-                aggregate_input_context,
-                key,
-                value,
-                row_identity=row_identity,
-            )
+        _record_runtime_measurement_facts_for_row(
+            fact_recording_context,
+            aggregate_input_context,
+            derived_row_facts,
+        )
 
     explicit_measurement_keys = frozenset(table_explicit_measurement_keys)
-    for (mean_key, _row_identity), values in aggregate_values_by_feature.items():
-        if not values:
-            continue
-        if mean_key in explicit_measurement_keys:
-            continue
-        if required_keys is not None and mean_key not in required_keys:
-            continue
-        values_by_feature.setdefault(mean_key, Counter())[
-            _cell_signature(str(sum(values) / len(values)), policy)
-        ] += 1
+    _record_runtime_aggregate_mean_facts(
+        values_by_feature,
+        aggregate_values_by_feature,
+        explicit_measurement_keys,
+        policy,
+        required_keys=context.required_keys,
+    )
     return True
+
+
+def _static_wide_runtime_measurement_row_facts(
+    context: _StaticWideRuntimeRowProjectionContext,
+    row_values: tuple[object, ...],
+    subject: RuntimeMeasurementSubjectKey,
+    source_name: str | None,
+) -> tuple[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature], ...]:
+    row_fact_records: list[_RuntimeRowProjectionRecord[RuntimeCellSignature]] = []
+    padding_group_presence: dict[
+        tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
+        bool,
+    ] = {}
+    row_qualifier_cache: _RuntimeMeasurementIndexedQualifierCache = {}
+    for index in context.feature_column_indexes:
+        if index in context.aggregate_reference_indexes:
+            continue
+        field_name = context.header[index]
+        value = row_values[index]
+        indexed_qualifiers = context.qualifiers_by_index[index]
+        if not indexed_qualifiers:
+            qualifiers = ()
+        else:
+            qualifiers = row_qualifier_cache.get(indexed_qualifiers)
+            if qualifiers is None:
+                qualifiers = _measurement_row_qualifiers_from_indexed_values_cached(
+                    row_values,
+                    indexed_qualifiers,
+                    context.qualifier_render_cache,
+                )
+                row_qualifier_cache[indexed_qualifiers] = qualifiers
+        cache_key = (subject, source_name, index, qualifiers)
+        key = context.key_cache.get(cache_key, _CACHE_MISS)
+        if key is _CACHE_MISS:
+            key = _measurement_feature_key_from_source_context(
+                _MeasurementFeatureKeySourceContext(
+                    field_name,
+                    subject,
+                    context.policy,
+                    qualifiers,
+                    source_name,
+                    context.known_source_names,
+                )
+            )
+            context.key_cache[cache_key] = key
+        if key is None:
+            continue
+        padding_group_cache_key = (field_name, key)
+        padding_group = context.padding_group_cache.get(padding_group_cache_key)
+        if padding_group is None:
+            padding_group = _runtime_measurement_padding_group(
+                context.table_padding_group,
+                field_name,
+                key,
+                context.policy.measurement_dialect,
+            )
+            context.padding_group_cache[padding_group_cache_key] = padding_group
+        padding_group_presence[padding_group] = (
+            padding_group_presence.get(padding_group, False)
+            or _measurement_value_is_present(value)
+        )
+        if (
+            context.input_keys is not None
+            and key not in context.input_keys
+            and not isinstance(value, Mapping)
+        ):
+            continue
+        cell_facts = _cell_measurement_facts(key, value, context.policy)
+        if context.input_keys is not None:
+            cell_facts = tuple(
+                (cell_key, cell_value)
+                for cell_key, cell_value in cell_facts
+                if cell_key in context.input_keys
+            )
+        row_fact_records.extend(
+            (padding_group, cell_key, cell_value)
+            for cell_key, cell_value in cell_facts
+        )
+
+    row_facts = tuple(
+        (key, value)
+        for padding_group, key, value in row_fact_records
+        if padding_group_presence.get(padding_group, True)
+    )
+    return _derive_pair_measurement_facts(
+        _dedupe_measurement_facts(row_facts),
+        context.policy,
+        known_source_names=context.known_source_names,
+    )
 
 
 def _record_row_aggregate_input_value(
@@ -2098,6 +2139,47 @@ def _record_row_aggregate_input_value(
         numeric_value
     )
     return row_identity
+
+
+def _record_runtime_measurement_facts_for_row(
+    fact_context: _RuntimeMeasurementFactRecordingContext,
+    aggregate_context: _AggregateInputRecordingContext,
+    facts: Iterable[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature]],
+) -> None:
+    row_identity: tuple[tuple[str, object], ...] | None = None
+    for key, value in facts:
+        fact_context.explicit_measurement_keys.add(key)
+        if fact_context.required_keys is None or key in fact_context.required_keys:
+            fact_context.values_by_feature.setdefault(key, Counter())[value] += 1
+        row_identity = _record_row_aggregate_input_value(
+            aggregate_context,
+            key,
+            value,
+            row_identity=row_identity,
+        )
+
+
+def _record_runtime_aggregate_mean_facts(
+    values_by_feature: dict[
+        RuntimeMeasurementFeatureKey,
+        Counter[RuntimeCellSignature],
+    ],
+    aggregate_values_by_feature: _AggregateValuesByFeature,
+    explicit_measurement_keys: frozenset[RuntimeMeasurementFeatureKey],
+    policy: RuntimeEquivalencePolicy,
+    *,
+    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None,
+) -> None:
+    for (mean_key, _row_identity), values in aggregate_values_by_feature.items():
+        if not values:
+            continue
+        if mean_key in explicit_measurement_keys:
+            continue
+        if required_keys is not None and mean_key not in required_keys:
+            continue
+        values_by_feature.setdefault(mean_key, Counter())[
+            _cell_signature(str(sum(values) / len(values)), policy)
+        ] += 1
 
 
 def _table_image_number_offset(
@@ -2557,17 +2639,14 @@ def _wide_measurement_table_needs_row_derivation(
 
 
 def _measurement_facts_from_runtime_table(
-    table: MeasurementTable,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    axis_key: object | None = None,
-    known_source_names: tuple[str, ...],
-    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None = None,
+    context: _RuntimeMeasurementTableProjectionContext,
 ) -> tuple[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature], ...]:
+    table = context.table
+    policy = context.policy
     facts: list[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature]] = []
     row_required_keys = _required_measurement_input_keys(
-        required_keys,
-        known_source_names=known_source_names,
+        context.required_keys,
+        known_source_names=context.known_source_names,
     )
     row_required_subjects = _required_measurement_subjects(row_required_keys)
     schema_cache: _RuntimeMeasurementRowSchemaCache = {}
@@ -2579,14 +2658,8 @@ def _measurement_facts_from_runtime_table(
         tuple[str, ...],
         _RuntimeMeasurementRowSubjectSchema,
     ] = {}
-    aggregate_values_by_feature: dict[
-        tuple[RuntimeMeasurementFeatureKey, tuple[tuple[str, object], ...]],
-        list[float],
-    ] = {}
-    aggregate_input_key_cache: dict[
-        RuntimeMeasurementFeatureKey,
-        RuntimeMeasurementFeatureKey | None,
-    ] = {}
+    aggregate_values_by_feature: _AggregateValuesByFeature = {}
+    aggregate_input_key_cache: _AggregateMeanKeyCache = {}
     table_subject = RuntimeMeasurementSubjectKey.from_subject(table.subject)
     table_padding_group = _normalize_identifier(table.name) or "measurements"
     for row in measurement_rows((table,)):
@@ -2618,7 +2691,7 @@ def _measurement_facts_from_runtime_table(
             subject,
             policy,
             source_name=source_name,
-            known_source_names=known_source_names,
+            known_source_names=context.known_source_names,
             required_keys=row_required_keys,
             table_padding_group=table_padding_group,
             schema_cache=schema_cache,
@@ -2635,8 +2708,8 @@ def _measurement_facts_from_runtime_table(
         aggregate_input_context = _AggregateInputRecordingContext(
             aggregate_values_by_feature,
             row_mapping,
-            axis_key,
-            required_keys,
+            context.axis_key,
+            context.required_keys,
             aggregate_input_key_cache,
         )
         for key, value in row_facts:
@@ -2652,7 +2725,7 @@ def _measurement_facts_from_runtime_table(
     for (mean_key, _row_identity), values in aggregate_values_by_feature.items():
         if not values or mean_key in explicit_keys:
             continue
-        if required_keys is not None and mean_key not in required_keys:
+        if context.required_keys is not None and mean_key not in context.required_keys:
             continue
         derived_facts.append(
             (
