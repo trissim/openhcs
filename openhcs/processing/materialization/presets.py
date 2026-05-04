@@ -229,6 +229,7 @@ def tiff_stack(
     *,
     source: Optional[str] = None,
     normalize_uint8: bool = False,
+    preserve_channels_last_color: bool = True,
     slice_pattern: str = "_slice_{index:03d}.tif",
     summary_suffix: str = "_summary.txt",
     empty_summary: str = "No images generated (empty data)\n",
@@ -238,6 +239,7 @@ def tiff_stack(
         TiffStackOptions(
             source=source,
             normalize_uint8=normalize_uint8,
+            preserve_channels_last_color=preserve_channels_last_color,
             slice_pattern=slice_pattern,
             summary_suffix=summary_suffix,
             empty_summary=empty_summary,

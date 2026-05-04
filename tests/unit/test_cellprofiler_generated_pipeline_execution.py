@@ -663,6 +663,16 @@ def test_generator_keeps_unmaterialized_image_artifacts_required_by_saveimages()
     assert 'name="ConvertObjectsToImage"' in generated.code
     assert 'name="Opening"' in generated.code
     assert 'name="OverlayOutlines"' in generated.code
+    assert (
+        f"ArtifactSpec({OVERLAY_IMAGE!r}, ArtifactKind.IMAGE, "
+        "materialization=tiff_stack(normalize_uint8=True))"
+        in generated.code
+    )
+    assert (
+        f"ArtifactSpec({OVERLAY_IMAGE!r}, ArtifactKind.IMAGE, "
+        "materialization=NO_ARTIFACT_MATERIALIZATION)"
+        not in generated.code
+    )
     assert [contract.module_name for contract in generated.artifact_contracts] == [
         IDENTIFY_PRIMARY_OBJECTS,
         CONVERT_OBJECTS_TO_IMAGE,

@@ -6,15 +6,19 @@ execution. FunctionStep remains responsible for step-level orchestration.
 
 import inspect
 import logging
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Callable, Mapping, Optional, Sequence
+from weakref import WeakKeyDictionary
 
 import numpy as np
 
 from openhcs.constants.constants import Backend
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, StepResult
+from openhcs.core.callable_contract import prepare_processing_callable
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_patterns import (
     CompiledFunctionGroup,
@@ -48,6 +52,18 @@ from openhcs.core.runtime_values import (
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 
 logger = logging.getLogger(__name__)
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+
+
+def _runtime_profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_runtime_profile(label: str, seconds: float, **fields: Any) -> None:
+    if not _runtime_profile_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 PROCESSING_CONTEXT_OWNER_NAME = ProcessingContext.__name__
 
@@ -115,6 +131,45 @@ class PatternGroupData:
     matching_files: list[str]
     main_data_stack: Any
     source_binding_context: SourceBindingRuntimeContext
+
+
+@dataclass(frozen=True, slots=True)
+class VirtualWorkspaceSourceProjection:
+    """Source-binding projection derived from OpenHCS virtual-workspace metadata."""
+
+    source_paths_by_virtual_path: Mapping[str, str]
+    source_metadata_by_path: Mapping[str, Mapping[str, str]]
+
+
+@dataclass(slots=True)
+class SourceBindingExecutionCache:
+    """Process-local cache for source-binding metadata shared by step runtimes."""
+
+    virtual_workspace_projections: dict[str, VirtualWorkspaceSourceProjection]
+    physical_source_files: dict[tuple[str, tuple[str, ...]], tuple[str, ...]]
+
+    @classmethod
+    def empty(cls) -> "SourceBindingExecutionCache":
+        return cls(
+            virtual_workspace_projections={},
+            physical_source_files={},
+        )
+
+
+_SOURCE_BINDING_EXECUTION_CACHES: WeakKeyDictionary[
+    ProcessingContext,
+    SourceBindingExecutionCache,
+] = WeakKeyDictionary()
+
+
+def _source_binding_execution_cache(
+    context: ProcessingContext,
+) -> SourceBindingExecutionCache:
+    cache = _SOURCE_BINDING_EXECUTION_CACHES.get(context)
+    if cache is None:
+        cache = SourceBindingExecutionCache.empty()
+        _SOURCE_BINDING_EXECUTION_CACHES[context] = cache
+    return cache
 
 
 def _save_artifact_value(
@@ -269,6 +324,42 @@ def _resolve_invocation_callable(invocation: CompiledFunctionInvocation) -> Call
     raise TypeError(f"Invalid compiled invocation function: {invocation.func}")
 
 
+def prepare_compiled_function_group(group: CompiledFunctionGroup) -> None:
+    """Run optional preparation hooks for each callable in a compiled group."""
+    for invocation in group.invocations:
+        prepare_processing_callable(invocation.func)
+
+
+def prepare_compiled_context_callables(compiled_contexts: Mapping[str, Any]) -> None:
+    """Prepare every compiled callable visible in a set of execution contexts."""
+    prepared_group_keys: set[tuple[str, int, str]] = set()
+    prepared_invocation_count = 0
+    for context_key, context in compiled_contexts.items():
+        step_plans = getattr(context, "step_plans", None)
+        if not step_plans:
+            continue
+        for step_plan in step_plans.values():
+            compiled_pattern = getattr(step_plan, "compiled_function_pattern", None)
+            if compiled_pattern is None:
+                continue
+            for group in compiled_pattern.groups:
+                prepare_key = (
+                    str(context_key),
+                    int(step_plan.step_index),
+                    group.group_key,
+                )
+                if prepare_key in prepared_group_keys:
+                    continue
+                prepare_compiled_function_group(group)
+                prepared_invocation_count += len(group.invocations)
+                prepared_group_keys.add(prepare_key)
+    logger.info(
+        "Prepared %d compiled callable invocations across %d groups.",
+        prepared_invocation_count,
+        len(prepared_group_keys),
+    )
+
+
 def _execute_function_core(request: FunctionExecutionRequest) -> Any:
     """Execute one callable and route declared artifact I/O."""
     func_callable = request.func_callable
@@ -289,6 +380,7 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
             logger.info(
                 f"Loading artifact input '{arg_name}' from path '{input_plan.path}' (memory backend)"
             )
+            load_started_at = time.perf_counter()
             try:
                 final_kwargs[arg_name] = _load_artifact_input_value(
                     context,
@@ -300,6 +392,13 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                     exc_info=True,
                 )
                 raise
+            _log_runtime_profile(
+                "artifact_input_load",
+                time.perf_counter() - load_started_at,
+                function=func_callable.__name__,
+                artifact=arg_name,
+                kind=input_plan.kind.value,
+            )
 
     sig = inspect.signature(func_callable)
     if "context" in sig.parameters:
@@ -312,6 +411,7 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                 f"{func_callable.__name__} declares runtime adapter parameter "
                 f"'{adapter_parameter}', but its signature does not accept it."
             )
+        adapter_started_at = time.perf_counter()
         final_kwargs[adapter_parameter] = request.runtime_adapter.factory(
             RuntimeAdapterRequest(
                 context=context,
@@ -321,9 +421,21 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                 group_key=request.group_key,
             )
         )
+        _log_runtime_profile(
+            "runtime_adapter_factory",
+            time.perf_counter() - adapter_started_at,
+            function=func_callable.__name__,
+            adapter=adapter_parameter,
+        )
 
     logger.info(f"Executing function: {func_callable.__name__}")
+    call_started_at = time.perf_counter()
     raw_function_output = func_callable(request.main_data_arg, **final_kwargs)
+    _log_runtime_profile(
+        "function_call",
+        time.perf_counter() - call_started_at,
+        function=func_callable.__name__,
+    )
 
     if isinstance(raw_function_output, StepResult):
         main_output_data = raw_function_output.image
@@ -336,10 +448,18 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                     raise ValueError(
                         f"Function returned StepResult without planned artifact '{output_key}'."
                     )
+                save_started_at = time.perf_counter()
                 _save_artifact_value(
                     context,
                     output_plan,
                     raw_function_output.artifacts[output_key],
+                )
+                _log_runtime_profile(
+                    "artifact_output_save",
+                    time.perf_counter() - save_started_at,
+                    function=func_callable.__name__,
+                    artifact=output_key,
+                    kind=output_plan.kind.value,
                 )
     elif isinstance(raw_function_output, tuple):
         main_output_data = raw_function_output[0]
@@ -351,10 +471,18 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                     f"Saving artifact output '{output_key}' to VFS path '{output_plan.path}' (memory backend)"
                 )
                 if i < len(returned_artifact_values_tuple):
+                    save_started_at = time.perf_counter()
                     _save_artifact_value(
                         context,
                         output_plan,
                         returned_artifact_values_tuple[i],
+                    )
+                    _log_runtime_profile(
+                        "artifact_output_save",
+                        time.perf_counter() - save_started_at,
+                        function=func_callable.__name__,
+                        artifact=output_key,
+                        kind=output_plan.kind.value,
                     )
                 else:
                     logger.error(
@@ -391,6 +519,7 @@ def _execute_chain_core(request: FunctionChainExecutionRequest) -> Any:
             gpu_id=plan.device_id,
         )
 
+        invocation_started_at = time.perf_counter()
         current_stack = _execute_function_core(
             FunctionExecutionRequest(
                 func_callable=actual_callable,
@@ -404,6 +533,13 @@ def _execute_chain_core(request: FunctionChainExecutionRequest) -> Any:
                 source_binding_context=request.source_binding_context,
                 group_key=invocation.key.group_key,
             )
+        )
+        _log_runtime_profile(
+            "invocation_total",
+            time.perf_counter() - invocation_started_at,
+            function=getattr(actual_callable, "__name__", invocation.key.function_name),
+            group=invocation.key.group_key,
+            position=invocation.key.position,
         )
 
         current_memory_type = invocation_output_type
@@ -516,11 +652,51 @@ class PatternGroupRuntime:
         )
 
         try:
+            load_started_at = time.perf_counter()
             loaded = self._load_input_stack()
+            _log_runtime_profile(
+                "pattern_load_stack",
+                time.perf_counter() - load_started_at,
+                step=self.plan.step_index,
+                step_name=self.plan.step_name,
+                pattern=self.pattern_repr,
+            )
+            execute_started_at = time.perf_counter()
             processed_stack = self._execute_pattern(loaded)
+            _log_runtime_profile(
+                "pattern_execute_chain",
+                time.perf_counter() - execute_started_at,
+                step=self.plan.step_index,
+                step_name=self.plan.step_name,
+                pattern=self.pattern_repr,
+            )
+            unstack_started_at = time.perf_counter()
             output_slices = self._validate_and_unstack(processed_stack)
+            _log_runtime_profile(
+                "pattern_validate_unstack",
+                time.perf_counter() - unstack_started_at,
+                step=self.plan.step_index,
+                step_name=self.plan.step_name,
+                pattern=self.pattern_repr,
+            )
+            save_started_at = time.perf_counter()
             self._save_outputs(output_slices, loaded.matching_files)
+            _log_runtime_profile(
+                "pattern_save_outputs",
+                time.perf_counter() - save_started_at,
+                step=self.plan.step_index,
+                step_name=self.plan.step_name,
+                pattern=self.pattern_repr,
+            )
+            cleanup_started_at = time.perf_counter()
             self._cleanup_collapsed_inputs(output_slices, loaded.matching_files)
+            _log_runtime_profile(
+                "pattern_cleanup",
+                time.perf_counter() - cleanup_started_at,
+                step=self.plan.step_index,
+                step_name=self.plan.step_name,
+                pattern=self.pattern_repr,
+            )
             logger.debug(
                 f"Finished pattern group {self.pattern_repr} in {(time.time() - start_time):.2f}s."
             )
@@ -604,9 +780,6 @@ class PatternGroupRuntime:
         self,
         matching_files: list[str],
     ) -> SourceBindingRuntimeContext:
-        if self.plan.source_binding_plan.is_empty:
-            return SourceBindingRuntimeContext.empty()
-
         source_backend = self.context.microscope_handler.get_primary_backend(
             self.context.input_dir,
             self.context.filemanager,
@@ -672,6 +845,11 @@ class PatternGroupRuntime:
         )
 
     def _requires_full_pipeline_source_universe(self) -> bool:
+        if any(
+            invocation.contract.runtime_adapter is not None
+            for invocation in self.plan.compiled_function_pattern.iter_invocations()
+        ):
+            return True
         plan = self.plan.source_binding_plan
         if plan.metadata_rules:
             return True
@@ -682,36 +860,36 @@ class PatternGroupRuntime:
         )
 
     def _virtual_workspace_source_paths_by_virtual_path(self) -> Mapping[str, str]:
-        from openhcs.microscopes.openhcs import FIELDS, OpenHCSMetadataHandler
-
-        metadata_handler = OpenHCSMetadataHandler(self.context.filemanager)
-        metadata = metadata_handler._load_metadata_dict(self.context.plate_path)
-        subdirectories = metadata.get(FIELDS.SUBDIRECTORIES, {})
-        workspace_source_paths = {
-            virtual_relative: str(Path(self.context.plate_path) / real_relative)
-            for subdirectory in subdirectories.values()
-            for virtual_relative, real_relative in subdirectory.get(
-                "workspace_mapping",
-                {},
-            ).items()
-        }
-        if not workspace_source_paths:
-            raise RuntimeError(
-                "virtual_workspace source binding resolution requires "
-                "workspace_mapping entries in OpenHCS metadata."
-            )
-        return workspace_source_paths
+        return self._virtual_workspace_source_projection().source_paths_by_virtual_path
 
     def _virtual_workspace_source_metadata_by_path(
         self,
     ) -> Mapping[str, Mapping[str, str]]:
-        from openhcs.microscopes.openhcs import FIELDS, OpenHCSMetadataHandler
+        return self._virtual_workspace_source_projection().source_metadata_by_path
 
-        metadata_handler = OpenHCSMetadataHandler(self.context.filemanager)
-        metadata = metadata_handler._load_metadata_dict(self.context.plate_path)
+    def _virtual_workspace_source_projection(self) -> VirtualWorkspaceSourceProjection:
+        """Return cached virtual-workspace source-binding projection for this plate."""
+        plate_path = str(Path(self.context.plate_path))
+        cache = _source_binding_execution_cache(self.context)
+        projection = cache.virtual_workspace_projections.get(plate_path)
+        if projection is not None:
+            return projection
+
+        from openhcs.microscopes.openhcs import FIELDS
+
+        metadata = self._openhcs_metadata_dict()
+        workspace_source_paths: dict[str, str] = {}
         source_metadata_by_path: dict[str, Mapping[str, str]] = {}
         for subdirectory in metadata.get(FIELDS.SUBDIRECTORIES, {}).values():
             workspace_mapping = subdirectory.get("workspace_mapping", {})
+            for virtual_relative, real_relative in workspace_mapping.items():
+                real_path = str(Path(self.context.plate_path) / real_relative)
+                virtual_path = str(virtual_relative)
+                workspace_source_paths[virtual_path] = real_path
+                workspace_source_paths[
+                    str(Path(self.context.plate_path) / virtual_path)
+                ] = real_path
+
             source_metadata = subdirectory.get(FIELDS.SOURCE_METADATA, {})
             if not isinstance(source_metadata, Mapping):
                 raise RuntimeError(
@@ -722,17 +900,39 @@ class PatternGroupRuntime:
                     raise RuntimeError(
                         "virtual_workspace source metadata values must be mappings."
                     )
-                normalized_metadata = {
-                    str(key): str(value)
-                    for key, value in metadata_fields.items()
-                }
+                normalized_metadata = MappingProxyType(
+                    {
+                        str(key): str(value)
+                        for key, value in metadata_fields.items()
+                    }
+                )
                 virtual_path = str(virtual_relative)
                 source_metadata_by_path[virtual_path] = normalized_metadata
                 real_relative = workspace_mapping.get(virtual_path)
                 if real_relative is not None:
                     real_path = str(Path(self.context.plate_path) / real_relative)
                     source_metadata_by_path[real_path] = normalized_metadata
-        return source_metadata_by_path
+
+        if not workspace_source_paths:
+            raise RuntimeError(
+                "virtual_workspace source binding resolution requires "
+                "workspace_mapping entries in OpenHCS metadata."
+            )
+
+        projection = VirtualWorkspaceSourceProjection(
+            source_paths_by_virtual_path=MappingProxyType(workspace_source_paths),
+            source_metadata_by_path=MappingProxyType(source_metadata_by_path),
+        )
+        cache.virtual_workspace_projections[plate_path] = projection
+        return projection
+
+    def _openhcs_metadata_dict(self) -> Mapping[str, Any]:
+        from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
+
+        metadata_handler = self.context.microscope_handler.metadata_handler
+        if not isinstance(metadata_handler, OpenHCSMetadataHandler):
+            metadata_handler = OpenHCSMetadataHandler(self.context.filemanager)
+        return metadata_handler._load_metadata_dict(self.context.plate_path)
 
     def _virtual_workspace_real_source_files(
         self,
@@ -740,7 +940,7 @@ class PatternGroupRuntime:
     ) -> tuple[str, ...]:
         from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
 
-        workspace_source_files = tuple(step_input_source_paths.values())
+        workspace_source_files = tuple(dict.fromkeys(step_input_source_paths.values()))
         if not workspace_source_files:
             raise RuntimeError(
                 "virtual_workspace pipeline-start source resolution requires "
@@ -761,7 +961,13 @@ class PatternGroupRuntime:
         *,
         excluded_names: tuple[str, ...] = (),
     ) -> tuple[str, ...]:
-        return tuple(
+        plate_path = str(Path(self.context.plate_path))
+        cache_key = (plate_path, tuple(sorted(str(name) for name in excluded_names)))
+        cache = _source_binding_execution_cache(self.context)
+        cached_files = cache.physical_source_files.get(cache_key)
+        if cached_files is not None:
+            return cached_files
+        source_files = tuple(
             str(path)
             for path in self.context.filemanager.list_files(
                 str(self.context.plate_path),
@@ -770,6 +976,8 @@ class PatternGroupRuntime:
             )
             if Path(path).name not in excluded_names
         )
+        cache.physical_source_files[cache_key] = source_files
+        return source_files
 
     def _component_artifact_plans(self) -> ComponentArtifactPlans:
         request = self.request

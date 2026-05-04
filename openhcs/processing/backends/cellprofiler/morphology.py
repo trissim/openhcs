@@ -957,11 +957,11 @@ def _scipy_declumping_seed_points(
     if image_resize_factor < 1.0:
         shape = np.maximum(
             1,
-            np.floor(np.asarray(image_array.shape) * float(image_resize_factor)),
+            np.ceil(np.asarray(image_array.shape) * float(image_resize_factor)),
         ).astype(int)
-        coordinates = (
-            np.mgrid[0 : shape[0], 0 : shape[1]].astype(float) + 0.5
-        ) / float(image_resize_factor)
+        coordinates = np.mgrid[0 : shape[0], 0 : shape[1]].astype(float) / float(
+            image_resize_factor
+        )
         resized_image = ndi.map_coordinates(image_array, coordinates)
         resized_labels = ndi.map_coordinates(
             labels_array,

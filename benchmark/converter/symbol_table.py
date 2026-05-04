@@ -497,11 +497,27 @@ class _SymbolTableBuilder:
         return assignment.to_binding()
 
 
-def module_contract_literal(contract: ModuleArtifactContracts) -> str:
+def module_contract_literal(
+    contract: ModuleArtifactContracts,
+    *,
+    externally_materialized_outputs: frozenset[tuple[ArtifactKind, str]] = (
+        frozenset()
+    ),
+) -> str:
     """Render a deterministic Python literal for generated pipeline files."""
     input_specs = ", ".join(_artifact_spec_literal(spec) for spec in contract.inputs)
     output_specs = ", ".join(
-        _artifact_spec_literal(spec, preserve_default_materialization=True)
+        _artifact_spec_literal(
+            spec,
+            preserve_default_materialization=(
+                (spec.kind, spec.name) not in externally_materialized_outputs
+            ),
+            materialization_literal=(
+                "tiff_stack(normalize_uint8=True)"
+                if (spec.kind, spec.name) in externally_materialized_outputs
+                else None
+            ),
+        )
         for spec in contract.outputs
     )
     runtime_input_specs = ", ".join(
@@ -689,7 +705,13 @@ def _artifact_spec_literal(
     spec: ArtifactSpec,
     *,
     preserve_default_materialization: bool = False,
+    materialization_literal: str | None = None,
 ) -> str:
+    if materialization_literal is not None:
+        return (
+            f"ArtifactSpec({spec.name!r}, ArtifactKind.{spec.kind.name}, "
+            f"materialization={materialization_literal})"
+        )
     if (
         preserve_default_materialization
         and spec.kind not in DEFAULT_ARTIFACT_MATERIALIZATION_RULES
@@ -1916,8 +1938,9 @@ def _declare_function_backed_module_builder(
         ModuleArtifactContracts,
     ],
 ) -> None:
-    type(
-        f"{module_name}ContractBuilder",
+    class_name = f"{module_name}ContractBuilder"
+    globals()[class_name] = type(
+        class_name,
         (FunctionBackedModuleContractBuilder,),
         {
             "__module__": __name__,

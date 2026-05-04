@@ -162,6 +162,7 @@ _FUNCTION_REFERENCE_PRESERVED_ATTRS = (
     "__artifact_inputs__",
     "__artifact_outputs__",
     "__runtime_adapter__",
+    "__openhcs_prepare__",
     "input_memory_type",
     "output_memory_type",
 )

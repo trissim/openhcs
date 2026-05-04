@@ -10,6 +10,7 @@ import numpy as np
 from typing import Tuple, Optional, List
 from dataclasses import dataclass, field
 from enum import Enum
+from numba import njit
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.backends.cellprofiler._backend import BackendProviderInput
@@ -59,79 +60,44 @@ def _calculate_focus_score(pixel_data: np.ndarray) -> float:
     """Calculate normalized variance focus score."""
     if pixel_data.size == 0:
         return 0.0
-    mean_val = np.mean(pixel_data)
-    if mean_val <= 0:
+    return float(
+        _focus_score_numba(
+            np.ascontiguousarray(pixel_data, dtype=np.float64),
+        )
+    )
+
+
+@njit(cache=True)
+def _focus_score_numba(pixel_data: np.ndarray) -> float:
+    flat = pixel_data.ravel()
+    count = flat.size
+    if count == 0:
         return 0.0
-    squared_normalized = (pixel_data - mean_val) ** 2
-    focus_score = np.sum(squared_normalized) / (pixel_data.size * mean_val)
-    return float(focus_score)
+
+    total = 0.0
+    for index in range(count):
+        total += flat[index]
+    mean_value = total / float(count)
+    if mean_value <= 0.0:
+        return 0.0
+
+    squared_sum = 0.0
+    for index in range(count):
+        diff = flat[index] - mean_value
+        squared_sum += diff * diff
+    return squared_sum / (float(count) * mean_value)
 
 
 def _calculate_local_focus_score(pixel_data: np.ndarray, scale: int) -> float:
     """Calculate local focus score using grid-based normalized variance."""
-    from scipy.ndimage import mean as ndimage_mean, sum as ndimage_sum
-    
-    shape = pixel_data.shape
-    if pixel_data.size == 0:
+    if pixel_data.size == 0 or scale <= 0:
         return 0.0
-    
-    # Create grid labels
-    i, j = np.mgrid[0:shape[0], 0:shape[1]].astype(float)
-    m, n = (np.array(shape) + scale - 1) // scale
-    i = (i * float(m) / float(shape[0])).astype(int)
-    j = (j * float(n) / float(shape[1])).astype(int)
-    grid = i * n + j + 1
-    grid_range = np.arange(0, m * n + 1, dtype=np.int32)
-    
-    # Calculate local means
-    local_means = ndimage_mean(pixel_data, grid, grid_range)
-    if not isinstance(local_means, np.ndarray):
-        local_means = np.array([local_means])
-    
-    # Handle NaN values
-    local_means = np.nan_to_num(local_means, nan=0.0)
-    
-    # Calculate local squared normalized image
-    local_squared_normalized = (pixel_data - local_means[grid]) ** 2
-    
-    # Compute for non-zero means
-    grid_mask = (local_means != 0) & np.isfinite(local_means)
-    nz_grid_range = grid_range[grid_mask]
-    
-    if len(nz_grid_range) == 0:
-        return 0.0
-    
-    if nz_grid_range[0] == 0:
-        nz_grid_range = nz_grid_range[1:]
-        local_means = local_means[1:]
-        grid_mask = grid_mask[1:]
-    
-    if len(nz_grid_range) == 0:
-        return 0.0
-    
-    sums = ndimage_sum(local_squared_normalized, grid, nz_grid_range)
-    if not isinstance(sums, np.ndarray):
-        sums = np.array([sums])
-    
-    pixel_counts = ndimage_sum(np.ones(shape), grid, nz_grid_range)
-    if not isinstance(pixel_counts, np.ndarray):
-        pixel_counts = np.array([pixel_counts])
-    
-    valid_means = local_means[grid_mask] if len(local_means) > len(nz_grid_range) else local_means[:len(nz_grid_range)]
-    
-    with np.errstate(divide='ignore', invalid='ignore'):
-        local_norm_var = sums / (pixel_counts * valid_means[:len(sums)])
-    
-    local_norm_var = local_norm_var[np.isfinite(local_norm_var)]
-    
-    if len(local_norm_var) == 0:
-        return 0.0
-    
-    local_norm_median = np.median(local_norm_var)
-    if np.isfinite(local_norm_median) and local_norm_median > 0:
-        return float(np.var(local_norm_var) / local_norm_median)
-    
-    return 0.0
+    return float(
+        _local_focus_score_numba(
+            np.ascontiguousarray(pixel_data, dtype=np.float64),
+            int(scale),
+        )
+    )
 
 
 def _calculate_correlation(
@@ -149,16 +115,98 @@ def _calculate_correlation(
     ).haralick_h3(pixel_data, scale=scale)
 
 
+@njit(cache=True)
+def _local_focus_score_numba(pixel_data: np.ndarray, scale: int) -> float:
+    height, width = pixel_data.shape
+    if height == 0 or width == 0 or scale <= 0:
+        return 0.0
+
+    grid_rows = (height + scale - 1) // scale
+    grid_cols = (width + scale - 1) // scale
+    grid_count = grid_rows * grid_cols
+
+    sums = np.zeros(grid_count, dtype=np.float64)
+    counts = np.zeros(grid_count, dtype=np.int64)
+    for row in range(height):
+        grid_row = int(row * float(grid_rows) / float(height))
+        if grid_row >= grid_rows:
+            grid_row = grid_rows - 1
+        for col in range(width):
+            grid_col = int(col * float(grid_cols) / float(width))
+            if grid_col >= grid_cols:
+                grid_col = grid_cols - 1
+            grid_index = grid_row * grid_cols + grid_col
+            sums[grid_index] += pixel_data[row, col]
+            counts[grid_index] += 1
+
+    means = np.zeros(grid_count, dtype=np.float64)
+    valid_count = 0
+    for grid_index in range(grid_count):
+        count = counts[grid_index]
+        if count <= 0:
+            continue
+        mean_value = sums[grid_index] / count
+        if mean_value != 0.0 and np.isfinite(mean_value):
+            means[grid_index] = mean_value
+            valid_count += 1
+
+    if valid_count == 0:
+        return 0.0
+
+    squared_sums = np.zeros(grid_count, dtype=np.float64)
+    for row in range(height):
+        grid_row = int(row * float(grid_rows) / float(height))
+        if grid_row >= grid_rows:
+            grid_row = grid_rows - 1
+        for col in range(width):
+            grid_col = int(col * float(grid_cols) / float(width))
+            if grid_col >= grid_cols:
+                grid_col = grid_cols - 1
+            grid_index = grid_row * grid_cols + grid_col
+            mean_value = means[grid_index]
+            diff = pixel_data[row, col] - mean_value
+            squared_sums[grid_index] += diff * diff
+
+    local_norm_var = np.empty(valid_count, dtype=np.float64)
+    output_index = 0
+    for grid_index in range(grid_count):
+        mean_value = means[grid_index]
+        if mean_value == 0.0 or not np.isfinite(mean_value):
+            continue
+        value = squared_sums[grid_index] / (counts[grid_index] * mean_value)
+        if np.isfinite(value):
+            local_norm_var[output_index] = value
+            output_index += 1
+
+    if output_index == 0:
+        return 0.0
+
+    values = local_norm_var[:output_index]
+    median_value = np.median(values)
+    if (not np.isfinite(median_value)) or median_value <= 0.0:
+        return 0.0
+
+    mean_value = 0.0
+    for index in range(output_index):
+        mean_value += values[index]
+    mean_value /= output_index
+
+    variance = 0.0
+    for index in range(output_index):
+        diff = values[index] - mean_value
+        variance += diff * diff
+    variance /= output_index
+    return variance / median_value
+
+
 def _calculate_power_spectrum_slope(
     pixel_data: np.ndarray,
     *,
     backend_provider: BackendProviderInput | None = None,
 ) -> float:
     """Calculate CellProfiler's log-log radial power spectrum slope."""
-    if pixel_data.size == 0 or len(np.unique(pixel_data)) <= 1:
+    if pixel_data.size == 0 or not _has_multiple_unique_values(pixel_data):
         return 0.0
-
-    import scipy.linalg
 
     radii, magnitude, power = _cellprofiler_radial_power_spectrum(
         pixel_data,
@@ -173,16 +221,43 @@ def _calculate_power_spectrum_slope(
     if radii.shape[0] <= 1:
         return 0.0
 
-    idx = np.isfinite(np.log(power))
-    design = np.hstack(
-        (
-            np.log(radii)[idx][:, np.newaxis],
-            np.ones(radii.shape)[idx][:, np.newaxis],
-        )
+    slope_value = _least_squares_log_log_slope_numba(
+        np.ascontiguousarray(radii.ravel(), dtype=np.float64),
+        np.ascontiguousarray(power.ravel(), dtype=np.float64),
     )
-    slope = scipy.linalg.lstsq(design, np.log(power)[idx][:, np.newaxis])[0][0]
-    slope_value = float(np.asarray(slope).ravel()[0])
-    return slope_value if np.isfinite(slope_value) else 0.0
+    return float(slope_value) if np.isfinite(slope_value) else 0.0
+
+
+@njit(cache=True)
+def _least_squares_log_log_slope_numba(
+    radii: np.ndarray,
+    power: np.ndarray,
+) -> float:
+    count = 0
+    sum_x = 0.0
+    sum_y = 0.0
+    sum_xx = 0.0
+    sum_xy = 0.0
+    for index in range(radii.size):
+        radius = radii[index]
+        power_value = power[index]
+        if radius <= 0.0 or power_value <= 0.0:
+            continue
+        x_value = np.log(radius)
+        y_value = np.log(power_value)
+        if not (np.isfinite(x_value) and np.isfinite(y_value)):
+            continue
+        count += 1
+        sum_x += x_value
+        sum_y += y_value
+        sum_xx += x_value * x_value
+        sum_xy += x_value * y_value
+    if count <= 1:
+        return 0.0
+    denominator = float(count) * sum_xx - sum_x * sum_x
+    if denominator == 0.0:
+        return 0.0
+    return (float(count) * sum_xy - sum_x * sum_y) / denominator
 
 
 def _cellprofiler_radial_power_spectrum(
@@ -243,7 +318,7 @@ def _calculate_intensity_metrics(pixel_data: np.ndarray) -> dict:
 
 def _calculate_threshold(pixel_data: np.ndarray, method: ThresholdMethod) -> float:
     """Calculate automatic threshold using specified method."""
-    if pixel_data.size == 0 or len(np.unique(pixel_data)) <= 1:
+    if pixel_data.size == 0 or not _has_multiple_unique_values(pixel_data):
         return 0.0
 
     method = _coerce_function_enum(ThresholdMethod, method)
@@ -265,6 +340,34 @@ def _calculate_threshold(pixel_data: np.ndarray, method: ThresholdMethod) -> flo
     if method == ThresholdMethod.YEN:
         return primitives.yen_threshold(values)
     raise NotImplementedError(f"Threshold method {method} not supported.")
+
+
+def _has_multiple_unique_values(pixel_data: np.ndarray) -> bool:
+    """Return whether ``np.unique(pixel_data)`` would contain more than one value."""
+    return bool(
+        _has_multiple_unique_values_numba(
+            np.ascontiguousarray(pixel_data, dtype=np.float32),
+        )
+    )
+
+
+@njit(cache=True)
+def _has_multiple_unique_values_numba(pixel_data: np.ndarray) -> bool:
+    flat_size = pixel_data.size
+    if flat_size <= 1:
+        return False
+    flat = pixel_data.ravel()
+    first = flat[0]
+    first_is_nan = np.isnan(first)
+    for index in range(1, flat_size):
+        value = flat[index]
+        value_is_nan = np.isnan(value)
+        if first_is_nan:
+            if not value_is_nan:
+                return True
+        elif value_is_nan or value != first:
+            return True
+    return False
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -343,3 +446,15 @@ def measure_image_quality(
         metrics.threshold_otsu = _calculate_threshold(pixel_data, threshold_method)
     
     return image, metrics
+
+
+def _prepare_measure_image_quality() -> None:
+    sample = (
+        (np.arange(64 * 64, dtype=np.uint16) % 256)
+        .astype(np.float32)
+        .reshape((64, 64))
+    )
+    measure_image_quality.__wrapped__(sample)
+
+
+measure_image_quality.__openhcs_prepare__ = _prepare_measure_image_quality

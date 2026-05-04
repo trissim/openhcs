@@ -30,7 +30,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, is_dataclass, replace
 from enum import Enum
 from functools import wraps
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Type, get_type_hints
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Type, get_type_hints
 
 
 from openhcs.core.xdg_paths import get_cache_file_path
@@ -187,15 +187,60 @@ def _rewrite_slice_index(value: Any, slice_index: int) -> Any:
     if isinstance(value, dict):
         if "slice_index" in value:
             return {**value, "slice_index": slice_index}
+        if _is_flat_mapping_row(value):
+            return value
         return {
             key: _rewrite_slice_index(item, slice_index)
             for key, item in value.items()
         }
     if isinstance(value, list):
-        return [_rewrite_slice_index(item, slice_index) for item in value]
+        if _is_slice_index_free_flat_sequence(value):
+            return value
+        rewritten = None
+        for index, item in enumerate(value):
+            rewritten_item = _rewrite_slice_index(item, slice_index)
+            if rewritten is not None:
+                rewritten.append(rewritten_item)
+            elif rewritten_item is not item:
+                rewritten = [*value[:index], rewritten_item]
+        return value if rewritten is None else rewritten
     if isinstance(value, tuple):
-        return tuple(_rewrite_slice_index(item, slice_index) for item in value)
+        if _is_slice_index_free_flat_sequence(value):
+            return value
+        rewritten_items = tuple(_rewrite_slice_index(item, slice_index) for item in value)
+        if all(
+            rewritten_item is item
+            for rewritten_item, item in zip(rewritten_items, value, strict=True)
+        ):
+            return value
+        return rewritten_items
     return value
+
+
+def _is_slice_index_free_flat_sequence(value: list[Any] | tuple[Any, ...]) -> bool:
+    """Return whether a sequence is a flat measurement-row collection."""
+    if not value:
+        return True
+    first = value[0]
+    if is_dataclass(first) and not isinstance(first, type):
+        row_type = type(first)
+        return (
+            not hasattr(first, "slice_index")
+            and all(type(item) is row_type for item in value)
+        )
+    return False
+
+
+def _is_flat_mapping_row(value: Mapping[Any, Any]) -> bool:
+    return all(not _value_may_contain_slice_index(item) for item in value.values())
+
+
+def _value_may_contain_slice_index(value: Any) -> bool:
+    return (
+        hasattr(value, "ndim")
+        or isinstance(value, (dict, list, tuple))
+        or (is_dataclass(value) and not isinstance(value, type))
+    )
 
 
 # Enums for OpenHCS principle compliance (replace magic strings)
@@ -450,6 +495,8 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         # Explicitly copy __processing_contract__ if it exists
         if hasattr(func, '__processing_contract__'):
             wrapper.__processing_contract__ = func.__processing_contract__
+        from openhcs.core.callable_contract import attach_callable_contract_metadata
+        attach_callable_contract_metadata(wrapper, raw_processing_function=func)
 
         # Nominal enable semantics: decorated callables are Enableable.
         # (Enableable is metadata only; enabled remains a kw-only param for call sites.)
@@ -926,7 +973,7 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
 
         def adapter(image, *args, **kwargs):
             processed_image = self._preprocess_input(image, func_name)
-            result = contract.execute(self, arraybridge_wrapped_func, processed_image, *args, **kwargs)
+            result = arraybridge_wrapped_func(processed_image, *args, **kwargs)
             return self._postprocess_output(result, image, func_name)
 
         # Apply wraps and preserve signature

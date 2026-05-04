@@ -224,6 +224,8 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
         OpenHCSMetadataBase.__init__(self, filemanager)
         self._metadata_cache: Optional[Dict[str, Any]] = None
         self._plate_path_cache: Optional[Path] = None
+        self._metadata_dict_cache: Optional[Dict[str, Any]] = None
+        self._metadata_dict_plate_path_cache: Optional[Path] = None
 
     def _load_metadata(self, plate_path: Union[str, Path]) -> Dict[str, Any]:
         """
@@ -314,7 +316,14 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
 
     def _load_metadata_dict(self, plate_path: Union[str, Path]) -> Dict[str, Any]:
         """Load and parse metadata JSON, fail-loud on errors."""
-        metadata_file_path = self.find_metadata_file(plate_path)
+        current_path = Path(plate_path)
+        if (
+            self._metadata_dict_cache is not None
+            and self._metadata_dict_plate_path_cache == current_path
+        ):
+            return self._metadata_dict_cache
+
+        metadata_file_path = self.find_metadata_file(current_path)
         if not self.filemanager.exists(str(metadata_file_path), Backend.DISK.value):
             raise MetadataNotFoundError(f"Metadata file '{self.METADATA_FILENAME}' not found in {plate_path}")
 
@@ -322,9 +331,13 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
             content = self.filemanager.load(str(metadata_file_path), Backend.DISK.value)
             # Backend may return already-parsed dict (disk backend auto-parses JSON)
             if isinstance(content, dict):
-                return content
-            # Otherwise parse raw bytes/string
-            return json.loads(content.decode('utf-8') if isinstance(content, bytes) else content)
+                metadata_dict = content
+            else:
+                # Otherwise parse raw bytes/string
+                metadata_dict = json.loads(content.decode('utf-8') if isinstance(content, bytes) else content)
+            self._metadata_dict_cache = metadata_dict
+            self._metadata_dict_plate_path_cache = current_path
+            return metadata_dict
         except json.JSONDecodeError as e:
             raise MetadataNotFoundError(f"Error decoding JSON from '{metadata_file_path}': {e}") from e
 
@@ -485,6 +498,8 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
             # Clear cache to force reload on next access
             self._metadata_cache = None
             self._plate_path_cache = None
+            self._metadata_dict_cache = None
+            self._metadata_dict_plate_path_cache = None
             logger.info(f"Updated available backends to {available_backends} in {metadata_file_path}")
         except MetadataWriteError as e:
             raise ValueError(f"Failed to update available backends: {e}") from e

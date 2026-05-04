@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import OrderedDict
+from dataclasses import dataclass
+import hashlib
+import logging
 import math
+import os
+import time
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -16,6 +22,36 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+logger = logging.getLogger(__name__)
+
+
+def _profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_profile(label: str, seconds: float, **fields: object) -> None:
+    if not _profile_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+
+
+@dataclass(frozen=True)
+class _ZernikeLabelGeometry:
+    centers: np.ndarray
+    radii: np.ndarray
+    y_coords: np.ndarray
+    x_coords: np.ndarray
+    label_values: np.ndarray
+
+
+_ZERNIKE_LABEL_GEOMETRY_CACHE: OrderedDict[
+    tuple[str, tuple[int, ...], bytes, str, tuple[int, ...], bytes],
+    _ZernikeLabelGeometry,
+] = OrderedDict()
+_ZERNIKE_LABEL_GEOMETRY_CACHE_MAX_ENTRIES = 16
 
 
 class ShapeZernikeBackendStrategy(
@@ -196,8 +232,6 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         *,
         max_order: int,
     ) -> tuple[tuple[tuple[int, int], ...], np.ndarray]:
-        import centrosome.cpmorphology
-
         labels_array = np.asarray(labels, dtype=np.int32)
         if labels_array.size == 0 or int(labels_array.max()) <= 0:
             zernike_numbers_array = _zernike_indexes_array(int(max_order))
@@ -214,18 +248,21 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         if zernike_numbers_array.size == 0:
             return zernike_numbers, np.zeros((dense_labels.size, 0), dtype=float)
 
-        centers, radii = centrosome.cpmorphology.minimum_enclosing_circle(
+        geometry = _zernike_label_geometry(
             labels_array,
             dense_labels.astype(np.int32, copy=False),
         )
-        y_coords, x_coords = np.nonzero(labels_array > 0)
-        if y_coords.size == 0:
+        if geometry.y_coords.size == 0:
             return zernike_numbers, np.zeros(
                 (dense_labels.size, zernike_numbers_array.shape[0]),
                 dtype=float,
             )
 
-        label_values = labels_array[y_coords, x_coords]
+        centers = geometry.centers
+        radii = geometry.radii
+        y_coords = geometry.y_coords
+        x_coords = geometry.x_coords
+        label_values = geometry.label_values
         valid = (
             (label_values > 0)
             & (label_values <= dense_labels.size)
@@ -267,13 +304,19 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         *,
         max_order: int,
     ) -> tuple[tuple[tuple[int, int], ...], np.ndarray, np.ndarray]:
-        import centrosome.cpmorphology
-
+        total_started_at = time.perf_counter()
+        prepare_started_at = time.perf_counter()
         image_array = np.asarray(image, dtype=np.float64)
         labels_array = np.asarray(labels, dtype=np.int32)
         object_ids = np.asarray(measured_labels, dtype=np.int32)
         zernike_numbers_array = _zernike_indexes_array(int(max_order))
         zernike_numbers = tuple((int(n), int(m)) for n, m in zernike_numbers_array)
+        _log_profile(
+            "zernike_intensity_prepare",
+            time.perf_counter() - prepare_started_at,
+            objects=object_ids.size,
+            orders=zernike_numbers_array.shape[0],
+        )
         if object_ids.size == 0 or zernike_numbers_array.size == 0:
             return (
                 zernike_numbers,
@@ -281,19 +324,30 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
                 np.zeros((object_ids.size, len(zernike_numbers)), dtype=float),
             )
 
-        centers, radii = centrosome.cpmorphology.minimum_enclosing_circle(
+        geometry_started_at = time.perf_counter()
+        geometry = _zernike_label_geometry(
             labels_array,
             object_ids,
         )
-        y_coords, x_coords = np.nonzero(labels_array > 0)
-        if y_coords.size == 0:
+        _log_profile(
+            "zernike_intensity_geometry",
+            time.perf_counter() - geometry_started_at,
+            objects=object_ids.size,
+            pixels=geometry.label_values.size,
+        )
+        if geometry.y_coords.size == 0:
             return (
                 zernike_numbers,
                 np.full((object_ids.size, len(zernike_numbers)), np.nan),
                 np.full((object_ids.size, len(zernike_numbers)), np.nan),
             )
 
-        label_values = labels_array[y_coords, x_coords]
+        filter_started_at = time.perf_counter()
+        centers = geometry.centers
+        radii = geometry.radii
+        y_coords = geometry.y_coords
+        x_coords = geometry.x_coords
+        label_values = geometry.label_values
         valid = (
             (label_values > 0)
             & (label_values <= object_ids.size)
@@ -303,6 +357,12 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         y_coords = np.ascontiguousarray(y_coords[valid], dtype=np.float64)
         x_coords = np.ascontiguousarray(x_coords[valid], dtype=np.float64)
         label_values = np.ascontiguousarray(label_values[valid], dtype=np.int32)
+        _log_profile(
+            "zernike_intensity_filter_pixels",
+            time.perf_counter() - filter_started_at,
+            objects=object_ids.size,
+            pixels=label_values.size,
+        )
         if y_coords.size == 0:
             return (
                 zernike_numbers,
@@ -310,9 +370,16 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
                 np.full((object_ids.size, len(zernike_numbers)), np.nan),
             )
 
+        terms_started_at = time.perf_counter()
         coefficients, exponents, term_counts = _zernike_radial_terms(
             zernike_numbers_array
         )
+        _log_profile(
+            "zernike_intensity_radial_terms",
+            time.perf_counter() - terms_started_at,
+            orders=zernike_numbers_array.shape[0],
+        )
+        score_started_at = time.perf_counter()
         magnitudes, phases = _score_intensity_zernike_moments_direct_numba(
             np.ascontiguousarray(image_array, dtype=np.float64),
             np.ascontiguousarray(label_values, dtype=np.int32),
@@ -325,6 +392,18 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
             exponents,
             term_counts,
             int(object_ids.size),
+        )
+        _log_profile(
+            "zernike_intensity_score",
+            time.perf_counter() - score_started_at,
+            objects=object_ids.size,
+            pixels=label_values.size,
+            orders=zernike_numbers_array.shape[0],
+        )
+        _log_profile(
+            "zernike_intensity_total",
+            time.perf_counter() - total_started_at,
+            objects=object_ids.size,
         )
         return zernike_numbers, magnitudes, phases
 
@@ -367,6 +446,77 @@ def intensity_zernike_moments(
     )
 
 
+def _zernike_label_geometry(
+    labels: np.ndarray,
+    object_ids: np.ndarray,
+) -> _ZernikeLabelGeometry:
+    """Return exact cached label geometry shared by shape/intensity Zernikes."""
+    import centrosome.cpmorphology
+
+    total_started_at = time.perf_counter()
+    labels_array = np.ascontiguousarray(labels, dtype=np.int32)
+    object_ids_array = np.ascontiguousarray(object_ids, dtype=np.int32)
+    key_started_at = time.perf_counter()
+    key = (*_array_content_key(labels_array), *_array_content_key(object_ids_array))
+    _log_profile(
+        "zernike_geometry_key",
+        time.perf_counter() - key_started_at,
+        objects=object_ids_array.size,
+    )
+    entry = _ZERNIKE_LABEL_GEOMETRY_CACHE.get(key)
+    if entry is not None:
+        _ZERNIKE_LABEL_GEOMETRY_CACHE.move_to_end(key)
+        _log_profile(
+            "zernike_geometry_cache_hit",
+            time.perf_counter() - total_started_at,
+            objects=object_ids_array.size,
+        )
+        return entry
+
+    circle_started_at = time.perf_counter()
+    centers, radii = centrosome.cpmorphology.minimum_enclosing_circle(
+        labels_array,
+        object_ids_array,
+    )
+    _log_profile(
+        "zernike_geometry_min_enclosing_circle",
+        time.perf_counter() - circle_started_at,
+        objects=object_ids_array.size,
+    )
+    compact_started_at = time.perf_counter()
+    y_coords, x_coords = np.nonzero(labels_array > 0)
+    label_values = labels_array[y_coords, x_coords]
+    _log_profile(
+        "zernike_geometry_compact_pixels",
+        time.perf_counter() - compact_started_at,
+        pixels=label_values.size,
+    )
+    geometry = _ZernikeLabelGeometry(
+        centers=np.ascontiguousarray(centers, dtype=np.float64),
+        radii=np.ascontiguousarray(radii, dtype=np.float64),
+        y_coords=np.ascontiguousarray(y_coords, dtype=np.float64),
+        x_coords=np.ascontiguousarray(x_coords, dtype=np.float64),
+        label_values=np.ascontiguousarray(label_values, dtype=np.int32),
+    )
+    _ZERNIKE_LABEL_GEOMETRY_CACHE[key] = geometry
+    _ZERNIKE_LABEL_GEOMETRY_CACHE.move_to_end(key)
+    while len(_ZERNIKE_LABEL_GEOMETRY_CACHE) > _ZERNIKE_LABEL_GEOMETRY_CACHE_MAX_ENTRIES:
+        _ZERNIKE_LABEL_GEOMETRY_CACHE.popitem(last=False)
+    _log_profile(
+        "zernike_geometry_total",
+        time.perf_counter() - total_started_at,
+        objects=object_ids_array.size,
+        pixels=label_values.size,
+    )
+    return geometry
+
+
+def _array_content_key(array: np.ndarray) -> tuple[str, tuple[int, ...], bytes]:
+    contiguous = np.ascontiguousarray(array)
+    digest = hashlib.blake2b(contiguous.view(np.uint8), digest_size=16).digest()
+    return str(contiguous.dtype), tuple(int(value) for value in contiguous.shape), digest
+
+
 def _zernike_indexes_array(max_order: int) -> np.ndarray:
     indexes: list[tuple[int, int]] = []
     for n_value in range(0, int(max_order) + 1):
@@ -401,6 +551,17 @@ def _score_zernike_moments_direct_numba(
     zernike_count = zernike_numbers.shape[0]
     real_sums = np.zeros((object_count, zernike_count), dtype=np.float64)
     imag_sums = np.zeros((object_count, zernike_count), dtype=np.float64)
+    max_order = 0
+    for zernike_index in range(zernike_count):
+        n_value = int(zernike_numbers[zernike_index, 0])
+        m_value = abs(int(zernike_numbers[zernike_index, 1]))
+        if n_value > max_order:
+            max_order = n_value
+        if m_value > max_order:
+            max_order = m_value
+    rho_powers = np.empty(max_order + 1, dtype=np.float64)
+    cos_by_m = np.empty(max_order + 1, dtype=np.float64)
+    sin_by_m = np.empty(max_order + 1, dtype=np.float64)
     for pixel_index in range(label_values.size):
         object_index = label_values[pixel_index] - 1
         if object_index < 0 or object_index >= object_count:
@@ -414,17 +575,40 @@ def _score_zernike_moments_direct_numba(
         if rho_squared > 1.0:
             continue
         rho = np.sqrt(rho_squared)
-        theta = np.arctan2(normalized_x, normalized_y)
+        rho_powers[0] = 1.0
+        for order in range(1, max_order + 1):
+            rho_powers[order] = rho_powers[order - 1] * rho
+
+        cos_by_m[0] = 1.0
+        sin_by_m[0] = 0.0
+        if max_order > 0:
+            if rho > 0.0:
+                cos_theta = normalized_y / rho
+                sin_theta = normalized_x / rho
+            else:
+                cos_theta = 1.0
+                sin_theta = 0.0
+            cos_by_m[1] = cos_theta
+            sin_by_m[1] = sin_theta
+            for order in range(2, max_order + 1):
+                cos_by_m[order] = (
+                    cos_by_m[order - 1] * cos_theta
+                    - sin_by_m[order - 1] * sin_theta
+                )
+                sin_by_m[order] = (
+                    sin_by_m[order - 1] * cos_theta
+                    + cos_by_m[order - 1] * sin_theta
+                )
         for zernike_index in range(zernike_count):
             radial = 0.0
             for term_index in range(term_counts[zernike_index]):
                 radial += (
                     coefficients[zernike_index, term_index]
-                    * rho ** exponents[zernike_index, term_index]
+                    * rho_powers[exponents[zernike_index, term_index]]
                 )
             m = abs(zernike_numbers[zernike_index, 1])
-            real_sums[object_index, zernike_index] += radial * np.cos(m * theta)
-            imag_sums[object_index, zernike_index] += radial * np.sin(m * theta)
+            real_sums[object_index, zernike_index] += radial * cos_by_m[m]
+            imag_sums[object_index, zernike_index] += radial * sin_by_m[m]
 
     output = np.empty((object_count, zernike_count), dtype=np.float64)
     for object_index in range(object_count):
@@ -461,6 +645,17 @@ def _score_intensity_zernike_moments_direct_numba(
     real_sums = np.zeros((object_count, zernike_count), dtype=np.float64)
     imag_sums = np.zeros((object_count, zernike_count), dtype=np.float64)
     areas = np.zeros(object_count, dtype=np.float64)
+    max_order = 0
+    for zernike_index in range(zernike_count):
+        n_value = int(zernike_numbers[zernike_index, 0])
+        m_value = abs(int(zernike_numbers[zernike_index, 1]))
+        if n_value > max_order:
+            max_order = n_value
+        if m_value > max_order:
+            max_order = m_value
+    rho_powers = np.empty(max_order + 1, dtype=np.float64)
+    cos_by_m = np.empty(max_order + 1, dtype=np.float64)
+    sin_by_m = np.empty(max_order + 1, dtype=np.float64)
     for pixel_index in range(label_values.size):
         object_index = label_values[pixel_index] - 1
         if object_index < 0 or object_index >= object_count:
@@ -477,21 +672,44 @@ def _score_intensity_zernike_moments_direct_numba(
         if rho_squared > 1.0:
             continue
         rho = np.sqrt(rho_squared)
-        theta = np.arctan2(normalized_x, normalized_y)
+        rho_powers[0] = 1.0
+        for order in range(1, max_order + 1):
+            rho_powers[order] = rho_powers[order - 1] * rho
+
+        cos_by_m[0] = 1.0
+        sin_by_m[0] = 0.0
+        if max_order > 0:
+            if rho > 0.0:
+                cos_theta = normalized_y / rho
+                sin_theta = normalized_x / rho
+            else:
+                cos_theta = 1.0
+                sin_theta = 0.0
+            cos_by_m[1] = cos_theta
+            sin_by_m[1] = sin_theta
+            for order in range(2, max_order + 1):
+                cos_by_m[order] = (
+                    cos_by_m[order - 1] * cos_theta
+                    - sin_by_m[order - 1] * sin_theta
+                )
+                sin_by_m[order] = (
+                    sin_by_m[order - 1] * cos_theta
+                    + cos_by_m[order - 1] * sin_theta
+                )
         pixel_value = image[int(y), int(x)]
         for zernike_index in range(zernike_count):
             radial = 0.0
             for term_index in range(term_counts[zernike_index]):
                 radial += (
                     coefficients[zernike_index, term_index]
-                    * rho ** exponents[zernike_index, term_index]
+                    * rho_powers[exponents[zernike_index, term_index]]
                 )
             m = abs(zernike_numbers[zernike_index, 1])
             real_sums[object_index, zernike_index] += (
-                pixel_value * radial * np.cos(m * theta)
+                pixel_value * radial * cos_by_m[m]
             )
             imag_sums[object_index, zernike_index] += (
-                pixel_value * radial * np.sin(m * theta)
+                pixel_value * radial * sin_by_m[m]
             )
 
     magnitudes = np.empty((object_count, zernike_count), dtype=np.float64)

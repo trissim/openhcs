@@ -11,6 +11,7 @@ from benchmark.cellprofiler_comparison import (
     load_comparison_cases,
     load_observations_jsonl,
     _discard_openhcs_benchmark_tree,
+    _discard_successful_openhcs_benchmark_tree,
     write_observations_csv,
     write_phase_timing_csv,
     write_summary_csv,
@@ -113,6 +114,8 @@ def test_comparison_writers_emit_raw_phase_and_summary_tables(
     assert summary_rows[0]["median_speedup"] == "6.0"
     assert summary_rows[0]["median_total_phase_speedup"] == "6.0"
     assert summary_rows[0]["speedup_target"] == "5.0"
+    assert summary_rows[0]["meets_execution_speedup_target"] == "True"
+    assert summary_rows[0]["meets_total_phase_speedup_target"] == "True"
     assert summary_rows[0]["meets_speedup_target"] == "True"
     assert summary_rows[0]["equivalent_count"] == "0"
 
@@ -183,6 +186,46 @@ def test_discard_openhcs_benchmark_tree_refuses_unmarked_directory(
         _discard_openhcs_benchmark_tree(unmarked, suite_output_root=suite_root)
 
     assert unmarked.exists()
+
+
+def test_discard_successful_openhcs_benchmark_tree_preserves_failed_outputs(
+    tmp_path: Path,
+) -> None:
+    case = CellProfilerComparisonCase(
+        name="ExampleFailed",
+        dataset_path=tmp_path / "ExampleFailed",
+        cppipe_path=tmp_path / "ExampleFailed.cppipe",
+    )
+    output_tree = tmp_path / "suite" / "tool_outputs" / "OpenHCS_failed"
+    observation = comparison_observation_from_result(
+        CellProfilerCompatibilityResult(
+            native_cellprofiler=_benchmark_result(
+                "CellProfiler",
+                tmp_path / "native",
+                "EXECUTE_NATIVE_CP",
+                1.0,
+            ),
+            openhcs_converted=_benchmark_result(
+                "OpenHCS",
+                output_tree,
+                "EXECUTE_OPENHCS",
+                1.0,
+                success=False,
+                error_message="semantic mismatch",
+                provenance={"equivalence_difference_count": 1},
+            ),
+        ),
+        case=case,
+        suite_id="suite-1",
+        repetition=1,
+    )
+
+    _discard_successful_openhcs_benchmark_tree(
+        observation,
+        suite_output_root=tmp_path / "suite",
+    )
+
+    assert output_tree.exists()
 
 
 def _benchmark_result(

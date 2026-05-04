@@ -81,6 +81,34 @@ def test_track_objects_emits_stack_tracking_measurements():
     ) == 1.0
 
 
+def test_track_objects_uses_global_image_number_start_for_measurements():
+    labels = np.zeros((2, 5, 5), dtype=np.int32)
+    labels[0, 1:3, 1:3] = 1
+    labels[1, 1:3, 2:4] = 1
+    image = np.zeros(labels.shape, dtype=np.float32)
+
+    _output, rows = unwrap(track_objects)(
+        image,
+        labels=labels,
+        object_name="Cells",
+        tracking_method="overlap",
+        pixel_radius=50,
+        image_number_start=22,
+    )
+
+    assert _measurement_value(
+        rows,
+        image_number=22,
+        feature_name="TrackObjects_NewObjectCount_Cells_50",
+    ) == 1
+    assert _measurement_value(
+        rows,
+        image_number=23,
+        object_label=1,
+        feature_name="TrackObjects_ParentImageNumber_50",
+    ) == 22
+
+
 def test_track_objects_overlap_allows_split_children_to_inherit_parent_label():
     labels = np.zeros((3, 7, 8), dtype=np.int32)
     labels[0, 1:5, 1:5] = 1

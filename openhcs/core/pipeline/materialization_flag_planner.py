@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List
 
 from openhcs.constants.constants import Backend
+from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.config import MaterializationBackend
@@ -84,7 +85,12 @@ class MaterializationFlagPlanner:
                 # Steps with zarr_config should write to materialization backend
                 materialization_backend = MaterializationFlagPlanner._resolve_materialization_backend(context, vfs_config)
                 step_plan.write_backend = materialization_backend
-            elif i == len(pipeline_definition) - 1:  # Last step without zarr - write to materialization backend
+            elif (
+                i == len(pipeline_definition) - 1
+                and MaterializationFlagPlanner._final_step_materializes_images(
+                    step_plan
+                )
+            ):  # Last image-producing step without zarr - write to materialization backend
                 materialization_backend = MaterializationFlagPlanner._resolve_materialization_backend(context, vfs_config)
                 step_plan.write_backend = materialization_backend
             else:  # Other steps - write to memory
@@ -120,11 +126,18 @@ class MaterializationFlagPlanner:
         return MaterializationFlagPlanner._detect_backend_for_context(context, fallback_backend=MaterializationBackend.DISK.value)
 
     @staticmethod
+    def _final_step_materializes_images(step_plan) -> bool:
+        """Return whether automatic final materialization should flush images."""
+        if not step_plan.artifact_outputs:
+            return True
+        image_kinds = {ArtifactKind.IMAGE, ArtifactKind.OBJECT_LABELS}
+        return any(output.kind in image_kinds for output in step_plan.artifact_outputs.values())
+
+    @staticmethod
     def _detect_backend_for_context(context: ProcessingContext, fallback_backend: str) -> str:
         """Unified backend detection logic for both read and materialization backends."""
         # Use the microscope handler's get_primary_backend method
         # This handles both OpenHCS (metadata-based) and other microscopes (compatibility-based)
         return context.microscope_handler.get_primary_backend(context.input_dir, context.filemanager)
-
 
 

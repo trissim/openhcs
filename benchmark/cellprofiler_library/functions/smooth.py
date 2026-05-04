@@ -242,8 +242,9 @@ def _masked_linear_filter(
     operation,
 ) -> np.ndarray:
     if mask is None:
-        return operation(image)
-    mask = np.asarray(mask, dtype=bool)
+        mask = np.ones(image.shape, dtype=bool)
+    else:
+        mask = np.asarray(mask, dtype=bool)
     masked_image = np.zeros(image.shape, dtype=image.dtype)
     masked_image[mask] = image[mask]
     weights = operation(mask.astype(float))
@@ -264,7 +265,12 @@ def _gaussian_filter_numba(
     kernel = _gaussian_kernel_1d(sigma)
     contiguous_image = np.ascontiguousarray(image_array)
     if mask is None:
-        return _separable_gaussian_constant_2d_numba(contiguous_image, kernel)
+        mask_array = np.ones(image_array.shape, dtype=np.bool_)
+        return _masked_separable_gaussian_constant_2d_numba(
+            contiguous_image,
+            np.ascontiguousarray(mask_array),
+            kernel,
+        )
 
     mask_array = np.asarray(mask, dtype=np.bool_)
     if mask_array.shape != image_array.shape:

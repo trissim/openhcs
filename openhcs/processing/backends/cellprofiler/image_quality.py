@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import OrderedDict
+from dataclasses import dataclass
 
 import numpy as np
-import scipy.ndimage
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
@@ -16,6 +17,19 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+
+
+@dataclass(frozen=True)
+class _RadialSpectrumGeometry:
+    radii: np.ndarray
+    labels: np.ndarray
+
+
+_RADIAL_SPECTRUM_GEOMETRY_CACHE: OrderedDict[
+    tuple[int, int],
+    _RadialSpectrumGeometry,
+] = OrderedDict()
+_RADIAL_SPECTRUM_GEOMETRY_CACHE_MAX_ENTRIES = 16
 
 
 class ImageQualityBackendStrategy(
@@ -202,14 +216,6 @@ def _radial_power_spectrum_numpy(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     from scipy.fftpack import fft2
 
-    height, width = image.shape
-    row2 = np.arange(height).reshape((height, 1)) ** 2
-    col2 = np.arange(width) ** 2
-    radii2 = row2 + col2
-    radii2 = np.minimum(radii2, np.flipud(radii2))
-    radii2 = np.minimum(radii2, np.fliplr(radii2))
-    max_width = min(height, width) / 8.0
-
     working = image.astype(np.float64, copy=False)
     if np.ptp(working) > 0.0:
         mean_value = float(np.mean(working))
@@ -220,19 +226,53 @@ def _radial_power_spectrum_numpy(
     centered = working - np.mean(working)
     magnitude = np.abs(fft2(centered))
     power = magnitude**2
-    radii = np.floor(np.sqrt(radii2)).astype(int) + 1
-    labels = np.arange(2, int(np.floor(max_width)), dtype=int)
+    geometry = _radial_spectrum_geometry(image.shape)
+    labels = geometry.labels
     if labels.size == 0:
         return (
             np.array([2], dtype=int),
             np.array([0], dtype=int),
             np.array([0], dtype=int),
         )
+    radii_flat = geometry.radii.ravel()
     return (
         labels,
-        np.asarray(scipy.ndimage.sum(magnitude, radii, labels)),
-        np.asarray(scipy.ndimage.sum(power, radii, labels)),
+        np.bincount(
+            radii_flat,
+            weights=magnitude.ravel(),
+            minlength=int(labels[-1]) + 1,
+        )[labels],
+        np.bincount(
+            radii_flat,
+            weights=power.ravel(),
+            minlength=int(labels[-1]) + 1,
+        )[labels],
     )
+
+
+def _radial_spectrum_geometry(shape: tuple[int, int]) -> _RadialSpectrumGeometry:
+    key = (int(shape[0]), int(shape[1]))
+    geometry = _RADIAL_SPECTRUM_GEOMETRY_CACHE.get(key)
+    if geometry is not None:
+        _RADIAL_SPECTRUM_GEOMETRY_CACHE.move_to_end(key)
+        return geometry
+
+    height, width = key
+    row2 = np.arange(height).reshape((height, 1)) ** 2
+    col2 = np.arange(width) ** 2
+    radii2 = row2 + col2
+    radii2 = np.minimum(radii2, np.flipud(radii2))
+    radii2 = np.minimum(radii2, np.fliplr(radii2))
+    max_width = min(height, width) / 8.0
+    geometry = _RadialSpectrumGeometry(
+        radii=(np.floor(np.sqrt(radii2)).astype(int) + 1),
+        labels=np.arange(2, int(np.floor(max_width)), dtype=int),
+    )
+    _RADIAL_SPECTRUM_GEOMETRY_CACHE[key] = geometry
+    _RADIAL_SPECTRUM_GEOMETRY_CACHE.move_to_end(key)
+    while len(_RADIAL_SPECTRUM_GEOMETRY_CACHE) > _RADIAL_SPECTRUM_GEOMETRY_CACHE_MAX_ENTRIES:
+        _RADIAL_SPECTRUM_GEOMETRY_CACHE.popitem(last=False)
+    return geometry
 
 
 def _finite_scalar(value: object) -> float:

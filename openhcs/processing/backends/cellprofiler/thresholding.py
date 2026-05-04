@@ -229,6 +229,24 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
 
+    def diagnostics(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray,
+        binary_image: np.ndarray,
+    ) -> tuple[float, float]:
+        image_array = np.asarray(image, dtype=np.float64)
+        mask_array = np.asarray(mask, dtype=np.bool_)
+        binary_array = np.asarray(binary_image, dtype=np.bool_)
+        self._validate_inputs(image_array, mask_array, binary_array)
+        weighted_variance, sum_of_entropies = _threshold_diagnostics_numba(
+            np.ascontiguousarray(image_array),
+            np.ascontiguousarray(mask_array),
+            np.ascontiguousarray(binary_array),
+            np.ascontiguousarray(_deterministic_normal_noise(image_array.shape)),
+        )
+        return float(weighted_variance), float(sum_of_entropies)
+
     def weighted_variance(
         self,
         image: np.ndarray,
@@ -238,21 +256,7 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
         image_array = np.asarray(image, dtype=np.float64)
         mask_array = np.asarray(mask, dtype=np.bool_)
         binary_array = np.asarray(binary_image, dtype=np.bool_)
-        if image_array.ndim != 2:
-            raise NotImplementedError(
-                "CellProfiler threshold diagnostics currently support 2-D "
-                f"NumPy planes, got shape {image_array.shape!r}."
-            )
-        if mask_array.shape != image_array.shape:
-            raise ValueError(
-                "Threshold diagnostics mask must match the image shape; got "
-                f"mask {mask_array.shape!r} for image {image_array.shape!r}."
-            )
-        if binary_array.shape != image_array.shape:
-            raise ValueError(
-                "Threshold diagnostics binary image must match the image shape; got "
-                f"binary {binary_array.shape!r} for image {image_array.shape!r}."
-            )
+        self._validate_inputs(image_array, mask_array, binary_array)
         return float(
             _threshold_weighted_variance_numba(
                 np.ascontiguousarray(image_array),
@@ -270,6 +274,22 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
         image_array = np.asarray(image, dtype=np.float64)
         mask_array = np.asarray(mask, dtype=np.bool_)
         binary_array = np.asarray(binary_image, dtype=np.bool_)
+        self._validate_inputs(image_array, mask_array, binary_array)
+        return float(
+            _threshold_sum_of_entropies_numba(
+                np.ascontiguousarray(image_array),
+                np.ascontiguousarray(mask_array),
+                np.ascontiguousarray(binary_array),
+                np.ascontiguousarray(_deterministic_normal_noise(image_array.shape)),
+            )
+        )
+
+    def _validate_inputs(
+        self,
+        image_array: np.ndarray,
+        mask_array: np.ndarray,
+        binary_array: np.ndarray,
+    ) -> None:
         if image_array.ndim != 2:
             raise NotImplementedError(
                 "CellProfiler threshold diagnostics currently support 2-D "
@@ -285,14 +305,6 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                 "Threshold diagnostics binary image must match the image shape; got "
                 f"binary {binary_array.shape!r} for image {image_array.shape!r}."
             )
-        return float(
-            _threshold_sum_of_entropies_numba(
-                np.ascontiguousarray(image_array),
-                np.ascontiguousarray(mask_array),
-                np.ascontiguousarray(binary_array),
-                np.ascontiguousarray(_deterministic_normal_noise(image_array.shape)),
-            )
-        )
 
 
 class ThresholdPrimitiveBackendStrategy(
@@ -447,10 +459,7 @@ class NumbaNumpyThresholdPrimitiveBackendStrategy(ThresholdPrimitiveBackendStrat
         transformed, _noise_min, log_min, log_max = _log_transform_numba(
             np.ascontiguousarray(values_array.ravel()),
         )
-        threshold = _sorted_weighted_otsu_threshold_numba(
-            np.ascontiguousarray(transformed),
-            256,
-        )
+        threshold = _weighted_otsu_threshold_numba_compatible(transformed, 256)
         return float(
             _inverse_log_transform_numba(
                 np.asarray([threshold], dtype=np.float64),
@@ -678,6 +687,25 @@ def _finite_flat_float32(values: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(flat[np.isfinite(flat)], dtype=np.float32)
 
 
+def _weighted_otsu_threshold_numba_compatible(
+    values: np.ndarray,
+    bin_count: int,
+) -> float:
+    """Return weighted Otsu using the fastest exact sorted-rank representation."""
+    values_array = np.ascontiguousarray(values, dtype=np.float64)
+    unique_values, counts = np.unique(values_array, return_counts=True)
+    if unique_values.size < values_array.size:
+        return float(
+            _counted_sorted_weighted_otsu_threshold_numba(
+                np.ascontiguousarray(unique_values, dtype=np.float64),
+                np.ascontiguousarray(counts, dtype=np.int64),
+                int(values_array.size),
+                int(bin_count),
+            )
+        )
+    return float(_sorted_weighted_otsu_threshold_numba(values_array, int(bin_count)))
+
+
 def _li_threshold_float32_numpy(values: np.ndarray) -> float:
     """Return Li threshold with NumPy float32 reduction semantics.
 
@@ -797,6 +825,156 @@ def _numpy_threshold_sum_of_entropies(
     hfg = hfg.astype(float) / float(np.sum(hfg))
     hbg = hbg.astype(float) / float(np.sum(hbg))
     return float(np.sum(hfg * np.log2(hfg)) + np.sum(hbg * np.log2(hbg)))
+
+
+@njit(cache=True)
+def _threshold_diagnostics_numba(
+    image: np.ndarray,
+    mask: np.ndarray,
+    binary_image: np.ndarray,
+    noise: np.ndarray,
+) -> tuple[float, float]:
+    height, width = image.shape
+    any_weighted_masked = False
+    any_entropy_masked = False
+    weighted_max_value = -np.inf
+    entropy_max_value = -np.inf
+    for y in range(height):
+        for x in range(width):
+            if not mask[y, x]:
+                continue
+            value = image[y, x]
+            any_weighted_masked = True
+            if value > weighted_max_value:
+                weighted_max_value = value
+            if not np.isnan(value):
+                any_entropy_masked = True
+                if value > entropy_max_value:
+                    entropy_max_value = value
+
+    weighted_variance = 0.0
+    weighted_minval = weighted_max_value / 256.0
+    if any_weighted_masked and weighted_minval != 0.0:
+        fg_count = 0
+        bg_count = 0
+        fg_sum = 0.0
+        bg_sum = 0.0
+        fg_sumsq = 0.0
+        bg_sumsq = 0.0
+        for y in range(height):
+            for x in range(width):
+                if not mask[y, x]:
+                    continue
+                value = image[y, x]
+                if value < weighted_minval:
+                    value = weighted_minval
+                log_value = math.log2(value)
+                if binary_image[y, x]:
+                    fg_count += 1
+                    fg_sum += log_value
+                    fg_sumsq += log_value * log_value
+                else:
+                    bg_count += 1
+                    bg_sum += log_value
+                    bg_sumsq += log_value * log_value
+
+        if fg_count == 0 and bg_count == 0:
+            weighted_variance = 0.0
+        elif fg_count == 0:
+            bg_mean = bg_sum / bg_count
+            weighted_variance = bg_sumsq / bg_count - bg_mean * bg_mean
+        elif bg_count == 0:
+            fg_mean = fg_sum / fg_count
+            weighted_variance = fg_sumsq / fg_count - fg_mean * fg_mean
+        else:
+            fg_mean = fg_sum / fg_count
+            bg_mean = bg_sum / bg_count
+            fg_variance = fg_sumsq / fg_count - fg_mean * fg_mean
+            bg_variance = bg_sumsq / bg_count - bg_mean * bg_mean
+            weighted_variance = (
+                fg_variance * fg_count + bg_variance * bg_count
+            ) / (fg_count + bg_count)
+
+    if not any_entropy_masked:
+        return weighted_variance, 0.0
+    entropy_minval = entropy_max_value / 256.0
+    if entropy_minval == 0.0:
+        return weighted_variance, 0.0
+
+    delta = 2.0 ** -8
+    im_min = np.inf
+    im_max = -np.inf
+    foreground_count = 0
+    background_count = 0
+    smoothed = np.empty((height, width), dtype=np.float64)
+    for y in range(height):
+        for x in range(width):
+            value = image[y, x]
+            if value < entropy_minval:
+                value = entropy_minval
+            if value < delta:
+                clipped = delta
+            elif value > 1.0:
+                clipped = 1.0
+            else:
+                clipped = value
+
+            noise_value = noise[y, x]
+            smoothed_value = 2.0 ** (
+                math.log2(clipped + delta) * noise_value
+                + (1.0 - noise_value) * math.log2(clipped)
+            )
+            if smoothed_value > 1.0:
+                smoothed_value = 1.0
+            elif smoothed_value < 0.0:
+                smoothed_value = 0.0
+            smoothed[y, x] = smoothed_value
+            if smoothed_value < im_min:
+                im_min = smoothed_value
+            if smoothed_value > im_max:
+                im_max = smoothed_value
+
+            if mask[y, x] and not np.isnan(image[y, x]):
+                if binary_image[y, x]:
+                    foreground_count += 1
+                else:
+                    background_count += 1
+
+    upper = math.log2(im_max)
+    lower = math.log2(im_min)
+    if upper == lower:
+        return weighted_variance, math.log2(float(foreground_count + background_count))
+    if foreground_count == 0 or background_count == 0:
+        return weighted_variance, 0.0
+
+    foreground_hist = np.zeros(256, dtype=np.int64)
+    background_hist = np.zeros(256, dtype=np.int64)
+    scale = 256.0 / (upper - lower)
+    for y in range(height):
+        for x in range(width):
+            if (not mask[y, x]) or np.isnan(image[y, x]):
+                continue
+            log_value = math.log2(smoothed[y, x])
+            bin_index = int((log_value - lower) * scale)
+            if bin_index < 0:
+                continue
+            if bin_index >= 256:
+                if bin_index == 256:
+                    bin_index = 255
+                else:
+                    continue
+            if binary_image[y, x]:
+                foreground_hist[bin_index] += 1
+            else:
+                background_hist[bin_index] += 1
+
+    return weighted_variance, _histogram_entropy_numba(
+        foreground_hist,
+        foreground_count,
+    ) + _histogram_entropy_numba(
+        background_hist,
+        background_count,
+    )
 
 
 @njit(cache=True)
@@ -1258,6 +1436,190 @@ def _sorted_weighted_otsu_threshold_numba(
     if high_index >= size:
         high_index = size - 1
     return (float(sorted_values[low_index]) + float(sorted_values[high_index])) / 2.0
+
+
+@njit(cache=True)
+def _counted_sorted_weighted_otsu_threshold_numba(
+    unique_values: np.ndarray,
+    counts: np.ndarray,
+    size: int,
+    bin_count: int,
+) -> float:
+    if size == 0:
+        return 0.0
+    if size == 1:
+        return float(unique_values[0])
+    if bin_count > size:
+        bin_count = size
+    step = size // bin_count
+    if step < 1:
+        step = 1
+
+    unique_count = unique_values.size
+    cumulative_counts = np.empty(unique_count, dtype=np.int64)
+    cumulative_sums = np.empty(unique_count, dtype=np.float64)
+    cumulative_squares = np.empty(unique_count, dtype=np.float64)
+
+    running_count = 0
+    running_sum = 0.0
+    running_square = 0.0
+    for index in range(unique_count):
+        count = counts[index]
+        value = unique_values[index]
+        running_count += count
+        running_sum += value * float(count)
+        running_square += value * value * float(count)
+        cumulative_counts[index] = running_count
+        cumulative_sums[index] = running_sum
+        cumulative_squares[index] = running_square
+
+    total_sum = cumulative_sums[unique_count - 1]
+    total_square = cumulative_squares[unique_count - 1]
+
+    best_score = np.inf
+    best_candidate = 0
+    candidate_count = 0
+    for candidate_index in range(0, size - 1, step):
+        high_index = candidate_index + 1
+        foreground_count = candidate_index + 1
+        background_count = size - high_index
+        foreground_variance = _counted_prefix_variance_at_rank_numba(
+            unique_values,
+            cumulative_counts,
+            cumulative_sums,
+            cumulative_squares,
+            candidate_index,
+        )
+        background_sum = total_sum - _counted_prefix_sum_at_rank_numba(
+            unique_values,
+            cumulative_counts,
+            cumulative_sums,
+            high_index - 1,
+        )
+        background_square = total_square - _counted_prefix_square_at_rank_numba(
+            unique_values,
+            cumulative_counts,
+            cumulative_squares,
+            high_index - 1,
+        )
+        background_variance = _sample_variance_numba(
+            background_count,
+            background_sum,
+            background_square,
+        )
+        score = (
+            foreground_variance * float(candidate_index)
+            + background_variance * float(background_count)
+        )
+        if score < best_score:
+            best_score = score
+            best_candidate = candidate_count
+        candidate_count += 1
+
+    if candidate_count == 0:
+        return _counted_value_at_rank_numba(unique_values, cumulative_counts, 1)
+
+    low_candidate = best_candidate - 1
+    high_candidate = best_candidate + 1
+    if low_candidate < 0:
+        low_candidate = 0
+    if high_candidate >= candidate_count:
+        high_candidate = candidate_count - 1
+    low_index = 1 + low_candidate * step
+    high_index = 1 + high_candidate * step
+    if low_index >= size:
+        low_index = size - 1
+    if high_index >= size:
+        high_index = size - 1
+    return (
+        _counted_value_at_rank_numba(unique_values, cumulative_counts, low_index)
+        + _counted_value_at_rank_numba(unique_values, cumulative_counts, high_index)
+    ) / 2.0
+
+
+@njit(cache=True)
+def _counted_prefix_variance_at_rank_numba(
+    unique_values: np.ndarray,
+    cumulative_counts: np.ndarray,
+    cumulative_sums: np.ndarray,
+    cumulative_squares: np.ndarray,
+    rank: int,
+) -> float:
+    prefix_count = rank + 1
+    prefix_sum = _counted_prefix_sum_at_rank_numba(
+        unique_values,
+        cumulative_counts,
+        cumulative_sums,
+        rank,
+    )
+    prefix_square = _counted_prefix_square_at_rank_numba(
+        unique_values,
+        cumulative_counts,
+        cumulative_squares,
+        rank,
+    )
+    return _sample_variance_numba(prefix_count, prefix_sum, prefix_square)
+
+
+@njit(cache=True)
+def _counted_prefix_sum_at_rank_numba(
+    unique_values: np.ndarray,
+    cumulative_counts: np.ndarray,
+    cumulative_sums: np.ndarray,
+    rank: int,
+) -> float:
+    bucket = _counted_bucket_for_rank_numba(cumulative_counts, rank)
+    previous_count = 0 if bucket == 0 else cumulative_counts[bucket - 1]
+    previous_sum = 0.0 if bucket == 0 else cumulative_sums[bucket - 1]
+    partial_count = rank - previous_count + 1
+    return previous_sum + unique_values[bucket] * float(partial_count)
+
+
+@njit(cache=True)
+def _counted_prefix_square_at_rank_numba(
+    unique_values: np.ndarray,
+    cumulative_counts: np.ndarray,
+    cumulative_squares: np.ndarray,
+    rank: int,
+) -> float:
+    bucket = _counted_bucket_for_rank_numba(cumulative_counts, rank)
+    previous_count = 0 if bucket == 0 else cumulative_counts[bucket - 1]
+    previous_square = 0.0 if bucket == 0 else cumulative_squares[bucket - 1]
+    partial_count = rank - previous_count + 1
+    value = unique_values[bucket]
+    return previous_square + value * value * float(partial_count)
+
+
+@njit(cache=True)
+def _counted_value_at_rank_numba(
+    unique_values: np.ndarray,
+    cumulative_counts: np.ndarray,
+    rank: int,
+) -> float:
+    return float(unique_values[_counted_bucket_for_rank_numba(cumulative_counts, rank)])
+
+
+@njit(cache=True)
+def _counted_bucket_for_rank_numba(cumulative_counts: np.ndarray, rank: int) -> int:
+    low = 0
+    high = cumulative_counts.size - 1
+    while low < high:
+        middle = (low + high) // 2
+        if rank < cumulative_counts[middle]:
+            high = middle
+        else:
+            low = middle + 1
+    return low
+
+
+@njit(cache=True)
+def _sample_variance_numba(count: int, total: float, square_total: float) -> float:
+    if count <= 1:
+        return 0.0
+    variance = (square_total - total * total / float(count)) / float(count - 1)
+    if variance > 0.0:
+        return variance
+    return 0.0
 
 
 @njit(cache=True)

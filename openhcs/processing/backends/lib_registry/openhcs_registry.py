@@ -10,13 +10,83 @@ import logging
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Tuple, Any
+import ast
 import importlib
+import os
+from functools import lru_cache
 
 from openhcs.constants import MemoryType, VALID_MEMORY_TYPES
 from openhcs.core.callable_contract import CallableContract
 from openhcs.processing.backends.lib_registry.unified_registry import LibraryRegistryBase, FunctionMetadata
 
 logger = logging.getLogger(__name__)
+
+_MEMORY_DECORATOR_NAMES: Dict[str, str] = {
+    "numpy": MemoryType.NUMPY.value,
+    "numpy_func": MemoryType.NUMPY.value,
+    "cupy": MemoryType.CUPY.value,
+    "cupy_func": MemoryType.CUPY.value,
+    "torch": MemoryType.TORCH.value,
+    "torch_func": MemoryType.TORCH.value,
+    "tensorflow": MemoryType.TENSORFLOW.value,
+    "tensorflow_func": MemoryType.TENSORFLOW.value,
+    "jax": MemoryType.JAX.value,
+    "jax_func": MemoryType.JAX.value,
+    "pyclesperanto": MemoryType.PYCLESPERANTO.value,
+    "pyclesperanto_func": MemoryType.PYCLESPERANTO.value,
+}
+
+
+def _allowed_openhcs_memory_types() -> frozenset[str] | None:
+    """Return the memory types eligible for OpenHCS registry imports."""
+    if os.getenv("OPENHCS_CPU_ONLY", "false").lower() != "true":
+        return None
+    return frozenset((MemoryType.NUMPY.value,))
+
+
+@lru_cache(maxsize=1024)
+def _module_declares_allowed_memory_type(
+    module_name: str,
+    allowed_memory_types: frozenset[str] | None,
+) -> bool:
+    if allowed_memory_types is None:
+        return True
+    spec = importlib.util.find_spec(module_name)
+    origin = spec.origin if spec is not None else None
+    if spec is not None and spec.submodule_search_locations is not None:
+        return True
+    if origin is None:
+        return True
+    try:
+        source = Path(origin).read_text(encoding="utf-8")
+    except OSError:
+        return True
+    try:
+        module_ast = ast.parse(source, filename=origin)
+    except SyntaxError:
+        return True
+    declared_memory_types = {
+        memory_type
+        for node in ast.walk(module_ast)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        for decorator in node.decorator_list
+        for memory_type in (_memory_type_from_decorator(decorator),)
+        if memory_type is not None
+    }
+    if not declared_memory_types:
+        return False
+    return bool(declared_memory_types & allowed_memory_types)
+
+
+def _memory_type_from_decorator(decorator: ast.expr) -> str | None:
+    decorator_func = decorator.func if isinstance(decorator, ast.Call) else decorator
+    if isinstance(decorator_func, ast.Name):
+        decorator_name = decorator_func.id
+    elif isinstance(decorator_func, ast.Attribute):
+        decorator_name = decorator_func.attr
+    else:
+        return None
+    return _MEMORY_DECORATOR_NAMES.get(decorator_name)
 
 
 class OpenHCSRegistry(LibraryRegistryBase):
@@ -72,7 +142,17 @@ class OpenHCSRegistry(LibraryRegistryBase):
     def get_modules_to_scan(self) -> List[Tuple[str, Any]]:
         """Get modules to scan for OpenHCS functions."""
         modules = []
+        allowed_memory_types = _allowed_openhcs_memory_types()
         for module_name in self.MODULES_TO_SCAN:
+            if not _module_declares_allowed_memory_type(
+                module_name,
+                allowed_memory_types,
+            ):
+                logger.debug(
+                    "Skipping OpenHCS module %s - no allowed memory decorators",
+                    module_name,
+                )
+                continue
             try:
                 module = importlib.import_module(module_name)
                 modules.append((module_name, module))

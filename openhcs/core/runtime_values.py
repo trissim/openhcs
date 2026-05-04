@@ -33,6 +33,7 @@ from openhcs.core.runtime_semantics import (
 
 
 _TPayload = TypeVar("_TPayload", bound=type[Any])
+_ARRAY_PAYLOAD_PREDICATES: list[Callable[[Any], bool]] = []
 logger = logging.getLogger(__name__)
 
 
@@ -688,6 +689,15 @@ def register_array_payload_type(payload_type: _TPayload) -> _TPayload:
     """Declare an external type as a runtime array payload."""
     RuntimeArrayPayload.register(payload_type)
     return payload_type
+
+
+def register_array_payload_predicate(
+    predicate: Callable[[Any], bool],
+) -> Callable[[Any], bool]:
+    """Declare a semantic predicate for runtime array payload recognition."""
+    if predicate not in _ARRAY_PAYLOAD_PREDICATES:
+        _ARRAY_PAYLOAD_PREDICATES.append(predicate)
+    return predicate
 
 
 def register_columnar_rows_type(payload_type: _TPayload) -> _TPayload:
@@ -1484,7 +1494,10 @@ def _is_table_like(data: Any) -> bool:
 
 def _is_array_like(data: Any) -> bool:
     _ensure_runtime_payload_integrations_registered()
-    return isinstance(data, RuntimeArrayPayload)
+    return isinstance(data, RuntimeArrayPayload) or any(
+        predicate(data)
+        for predicate in _ARRAY_PAYLOAD_PREDICATES
+    )
 
 
 def _is_mapping_like(data: Any) -> bool:

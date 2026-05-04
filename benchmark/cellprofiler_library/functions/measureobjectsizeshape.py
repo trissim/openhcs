@@ -3,10 +3,13 @@ Converted from CellProfiler: MeasureObjectSizeShape
 Original: measureobjectsizeshape
 """
 
+import logging
 import numpy as np
+import os
 import skimage.measure
-import skimage.morphology
+import time
 from typing import Any
+from numba import njit
 from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
 
@@ -15,8 +18,10 @@ from openhcs.core.runtime_semantics import (
     indexed_measurement_feature_name,
     object_shape_measurement_field_names,
 )
+from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.cellprofiler.shape import ShapeMeasurementBackendStrategy
 from openhcs.processing.backends.cellprofiler.zernike import shape_zernike_moments
+from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
 from openhcs.processing.backends.analysis.region_properties import (
     LabelRegionPropertiesBackendStrategy,
 )
@@ -25,6 +30,19 @@ from openhcs.processing.materialization import csv_materializer
 
 
 _ZERNIKE_MAX_ORDER = 9
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+logger = logging.getLogger(__name__)
+
+
+def _profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_profile(label: str, seconds: float, **fields: object) -> None:
+    if not _profile_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
 @numpy
@@ -54,10 +72,12 @@ def measure_object_size_shape(
     Returns:
         Tuple of (original image, list of measurement rows per object)
     """
+    total_started_at = time.perf_counter()
     label_array = labels.astype(np.int32, copy=False)
     if not np.any(label_array > 0):
         return image, []
 
+    phase_started_at = time.perf_counter()
     feature_values, measured_labels = _measure_object_size_shape_features(
         label_array,
         calculate_advanced=calculate_advanced,
@@ -65,7 +85,26 @@ def measure_object_size_shape(
         shape_backend_provider=shape_backend_provider,
         zernike_backend_provider=zernike_backend_provider,
     )
+    _log_profile(
+        "moss_features_total",
+        time.perf_counter() - phase_started_at,
+        function="measure_object_size_shape",
+        objects=len(measured_labels),
+    )
+    phase_started_at = time.perf_counter()
     rows = _object_size_shape_rows(feature_values, measured_labels)
+    _log_profile(
+        "moss_rows",
+        time.perf_counter() - phase_started_at,
+        function="measure_object_size_shape",
+        rows=len(rows),
+    )
+    _log_profile(
+        "moss_total",
+        time.perf_counter() - total_started_at,
+        function="measure_object_size_shape",
+        objects=len(measured_labels),
+    )
     return image, rows
 
 
@@ -101,16 +140,44 @@ def _measure_object_size_shape_features_2d(
     shape_backend_provider: CellProfilerBackendProvider | None,
     zernike_backend_provider: CellProfilerBackendProvider | None,
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    total_started_at = time.perf_counter()
+    phase_started_at = time.perf_counter()
     shape_backend = ShapeMeasurementBackendStrategy.for_memory_type(
         backend_provider=shape_backend_provider,
     )
+    _log_profile(
+        "moss_backend_resolution",
+        time.perf_counter() - phase_started_at,
+        function="measure_object_size_shape",
+    )
+    phase_started_at = time.perf_counter()
     fast_region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
         labels
     )
+    _log_profile(
+        "moss_region_properties",
+        time.perf_counter() - phase_started_at,
+        function="measure_object_size_shape",
+        objects=int(fast_region_props.label.size),
+    )
+    phase_started_at = time.perf_counter()
     props = fast_region_props.as_regionprops_table_subset()
+    _log_profile(
+        "moss_regionprops_table_subset",
+        time.perf_counter() - phase_started_at,
+        function="measure_object_size_shape",
+        fields=len(props),
+    )
+    phase_started_at = time.perf_counter()
     convex_area, solidity = _convex_area_and_solidity_from_labels(
         labels,
         fast_region_props,
+    )
+    _log_profile(
+        "moss_convex_area_solidity",
+        time.perf_counter() - phase_started_at,
+        function="measure_object_size_shape",
+        objects=int(fast_region_props.label.size),
     )
     props["convex_area"] = convex_area
     props["solidity"] = solidity
@@ -121,27 +188,49 @@ def _measure_object_size_shape_features_2d(
 
     perimeter = np.asarray(props["perimeter"], dtype=float)
     area = np.asarray(props["area"], dtype=float)
+    phase_started_at = time.perf_counter()
     max_radius, mean_radius, median_radius = shape_backend.radius_features_from_labels(
         labels,
         measured_labels,
+    )
+    _log_profile(
+        "moss_radius_features",
+        time.perf_counter() - phase_started_at,
+        function="measure_object_size_shape",
+        objects=nobjects,
     )
     dense_labels = np.arange(1, int(np.max(labels)) + 1, dtype=measured_labels.dtype)
     with np.errstate(divide="ignore", invalid="ignore"):
         form_factor = 4.0 * np.pi * area / perimeter**2
     with np.errstate(divide="ignore", invalid="ignore"):
         compactness = 1.0 / form_factor
+    phase_started_at = time.perf_counter()
     min_feret_diameter, max_feret_diameter = shape_backend.feret_diameters(
         labels,
         dense_labels,
     )
+    _log_profile(
+        "moss_feret_diameters",
+        time.perf_counter() - phase_started_at,
+        function="measure_object_size_shape",
+        objects=int(dense_labels.size),
+    )
 
+    phase_started_at = time.perf_counter()
+    dense_center_y, dense_center_x = _dense_label_centers_2d(labels)
+    _log_profile(
+        "moss_dense_centers",
+        time.perf_counter() - phase_started_at,
+        function="measure_object_size_shape",
+        objects=int(dense_labels.size),
+    )
     center_x = _compact_values_with_dense_tail(
         np.asarray(props["centroid-1"], dtype=float),
-        _dense_label_centers_2d(labels, axis=1),
+        dense_center_x,
     )
     center_y = _compact_values_with_dense_tail(
         np.asarray(props["centroid-0"], dtype=float),
-        _dense_label_centers_2d(labels, axis=0),
+        dense_center_y,
     )
 
     features = {
@@ -198,8 +287,15 @@ def _measure_object_size_shape_features_2d(
         ],
     }
     if calculate_advanced:
+        phase_started_at = time.perf_counter()
         features.update(_advanced_2d_features(props))
+        _log_profile(
+            "moss_advanced_features",
+            time.perf_counter() - phase_started_at,
+            function="measure_object_size_shape",
+        )
     if calculate_zernikes:
+        phase_started_at = time.perf_counter()
         features.update(
             _zernike_features(
                 labels,
@@ -207,6 +303,18 @@ def _measure_object_size_shape_features_2d(
                 backend_provider=zernike_backend_provider,
             )
         )
+        _log_profile(
+            "moss_zernike_features",
+            time.perf_counter() - phase_started_at,
+            function="measure_object_size_shape",
+            objects=nobjects,
+        )
+    _log_profile(
+        "moss_features_2d_total",
+        time.perf_counter() - total_started_at,
+        function="measure_object_size_shape",
+        objects=nobjects,
+    )
     return features, measured_labels
 
 
@@ -291,6 +399,7 @@ def _convex_area_and_solidity_from_labels(
     region_props: Any,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return exact skimage-compatible convex area and solidity per label."""
+    morphology_backend = MorphologyBackendStrategy.for_memory_type(MemoryType.NUMPY)
     object_count = int(region_props.label.size)
     convex_area = np.zeros(object_count, dtype=float)
     solidity = np.ones(object_count, dtype=float)
@@ -300,7 +409,7 @@ def _convex_area_and_solidity_from_labels(
         max_y = int(region_props.bbox_max_y[index])
         max_x = int(region_props.bbox_max_x[index])
         crop = labels[min_y:max_y, min_x:max_x] == int(label_id)
-        hull = skimage.morphology.convex_hull_image(crop)
+        hull = morphology_backend.convex_hull_image(crop)
         hull_area = float(np.count_nonzero(hull))
         convex_area[index] = hull_area
         solidity[index] = (
@@ -372,6 +481,7 @@ def _object_size_shape_rows(
         (
             feature_name,
             np.asarray(values),
+            _python_feature_values(values),
             _missing_shape_feature_value(feature_name),
         )
         for feature_name, values in feature_values.items()
@@ -380,7 +490,7 @@ def _object_size_shape_rows(
         len(np.asarray(measured_labels)),
         *(
             values.shape[0]
-            for _feature_name, values, _missing_value in feature_items
+            for _feature_name, values, _python_values, _missing_value in feature_items
             if values.ndim > 0
         ),
         0,
@@ -391,17 +501,24 @@ def _object_size_shape_rows(
             "object_label": index + 1,
             "Center_Z": 0.0,
         }
-        for feature_name, values, missing_value in feature_items:
+        for feature_name, values, python_values, missing_value in feature_items:
             if values.ndim > 0:
                 if index >= values.shape[0]:
                     value = missing_value
                 else:
-                    value = values[index]
+                    value = python_values[index]
             else:
-                value = values.item()
-            row[feature_name] = value.item() if isinstance(value, np.generic) else value
+                value = python_values
+            row[feature_name] = value
         rows.append(row)
     return rows
+
+
+def _python_feature_values(values: np.ndarray) -> object:
+    array = np.asarray(values)
+    if array.ndim == 0:
+        return array.item()
+    return array.tolist()
 
 
 def _shape_feature(feature: ObjectShapeMeasurementFeature) -> str:
@@ -415,24 +532,43 @@ def _indexed_shape_feature(
     return indexed_measurement_feature_name(feature, *indices)
 
 
-def _dense_label_centers_2d(labels: np.ndarray, *, axis: int) -> np.ndarray:
-    labels_int = labels.astype(np.intp, copy=False)
-    max_label = int(labels_int.max()) if labels_int.size else 0
-    if max_label <= 0:
-        return np.zeros(0, dtype=float)
+def _dense_label_centers_2d(labels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    return _dense_label_centers_2d_numba(np.ascontiguousarray(labels, dtype=np.int32))
 
-    valid = labels_int > 0
-    valid_labels = labels_int[valid]
-    counts = np.bincount(valid_labels, minlength=max_label + 1).astype(float)
-    coordinates = np.indices(labels_int.shape, sparse=False)[axis]
-    sums = np.bincount(
-        valid_labels,
-        weights=coordinates[valid],
-        minlength=max_label + 1,
-    )
-    centers = np.full(max_label + 1, np.nan, dtype=float)
-    np.divide(sums, counts, out=centers, where=counts > 0)
-    return centers[1:]
+
+@njit(cache=True)
+def _dense_label_centers_2d_numba(
+    labels: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    max_label = int(labels.max()) if labels.size else 0
+    if max_label <= 0:
+        empty = np.zeros(0, dtype=np.float64)
+        return empty, empty
+
+    counts = np.zeros(max_label + 1, dtype=np.float64)
+    y_sums = np.zeros(max_label + 1, dtype=np.float64)
+    x_sums = np.zeros(max_label + 1, dtype=np.float64)
+    height, width = labels.shape
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label <= 0:
+                continue
+            counts[label] += 1.0
+            y_sums[label] += float(y)
+            x_sums[label] += float(x)
+
+    center_y = np.empty(max_label, dtype=np.float64)
+    center_x = np.empty(max_label, dtype=np.float64)
+    for label in range(1, max_label + 1):
+        count = counts[label]
+        if count > 0.0:
+            center_y[label - 1] = y_sums[label] / count
+            center_x[label - 1] = x_sums[label] / count
+        else:
+            center_y[label - 1] = np.nan
+            center_x[label - 1] = np.nan
+    return center_y, center_x
 
 
 def _compact_values_with_dense_tail(
@@ -549,3 +685,13 @@ def _missing_shape_feature_value(feature_name: str) -> float:
     }:
         return 0.0
     return np.nan
+
+
+def _prepare_measure_object_size_shape() -> None:
+    image = np.linspace(0.0, 1.0, 32 * 32, dtype=np.float32).reshape((32, 32))
+    labels = np.zeros((32, 32), dtype=np.int32)
+    labels[8:24, 8:24] = 1
+    measure_object_size_shape.__wrapped__(image, labels)
+
+
+measure_object_size_shape.__openhcs_prepare__ = _prepare_measure_object_size_shape

@@ -144,6 +144,56 @@ class NativeNumpyRankMedianSmoothingBackendStrategy(
         return result.astype(np.float32) / 65535.0
 
 
+class CentrosomeNumpyConvexHullSmoothingBackendStrategy(
+    ConvexHullSmoothingBackendStrategy,
+):
+    """CellProfiler/centrosome reference convex-hull smoothing for NumPy planes."""
+
+    backend_key = cellprofiler_backend_key(
+        MemoryType.NUMPY,
+        CellProfilerBackendProvider.CENTROSOME,
+    )
+    memory_type = MemoryType.NUMPY
+    backend_provider = CellProfilerBackendProvider.CENTROSOME
+    is_default_backend = True
+
+    def smooth_background_plane(
+        self,
+        pixel_data: np.ndarray,
+        *,
+        mask: np.ndarray | None,
+        filter_size: float,
+        morphology: object,
+    ) -> np.ndarray:
+        del filter_size, morphology
+        import centrosome.cpmorphology
+        import centrosome.filter
+
+        image = np.asarray(pixel_data, dtype=np.float32)
+        mask_array = (
+            None
+            if mask is None
+            else np.asarray(mask, dtype=bool)
+        )
+        eroded = centrosome.cpmorphology.grey_erosion(
+            image,
+            2,
+            mask_array,
+        )
+        transformed = centrosome.filter.convex_hull_transform(
+            eroded,
+            mask=mask_array,
+        )
+        return np.asarray(
+            centrosome.cpmorphology.grey_dilation(
+                transformed,
+                2,
+                mask_array,
+            ),
+            dtype=np.float32,
+        )
+
+
 class LegacyFastNumpyConvexHullSmoothingBackendStrategy(
     ConvexHullSmoothingBackendStrategy,
 ):
@@ -208,7 +258,7 @@ class ExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
         filter_size: float,
         morphology: object,
     ) -> np.ndarray:
-        del filter_size, morphology
+        del filter_size
         image = np.asarray(pixel_data, dtype=np.float32)
         if image.ndim != 2:
             raise NotImplementedError(
@@ -229,17 +279,27 @@ class ExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
         if not np.any(valid_mask):
             return np.zeros(image.shape, dtype=np.float32)
 
-        valid_values = image[valid_mask]
+        eroded = _cellprofiler_masked_grey_erosion(
+            image,
+            valid_mask,
+            _convex_hull_smoothing_footprint(morphology),
+        )
+        valid_values = eroded[valid_mask]
         thresholds = np.linspace(
             float(np.min(valid_values)),
             float(np.max(valid_values)),
             256,
             dtype=np.float32,
         )[1:]
-        return _exact_level_set_convex_hull_smoothing_numba(
-            np.ascontiguousarray(image, dtype=np.float32),
+        hull = _exact_level_set_convex_hull_smoothing_numba(
+            np.ascontiguousarray(eroded, dtype=np.float32),
             np.ascontiguousarray(valid_mask, dtype=np.bool_),
             np.ascontiguousarray(thresholds, dtype=np.float32),
+        )
+        return _cellprofiler_masked_grey_dilation(
+            hull,
+            valid_mask,
+            _convex_hull_smoothing_footprint(morphology),
         )
 
 
@@ -254,7 +314,7 @@ class NumbaExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA_EXACT
-    is_default_backend = True
+    is_default_backend = False
 
 
 class NativeExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
@@ -309,20 +369,67 @@ def _native_exact_level_set_convex_hull_smoothing(
     if not np.any(valid_mask):
         return np.zeros(image.shape, dtype=np.float32)
 
-    valid_values = image[valid_mask]
+    footprint = _convex_hull_smoothing_footprint(morphology)
+    eroded = _cellprofiler_masked_grey_erosion(image, valid_mask, footprint)
+    valid_values = eroded[valid_mask]
     minimum = float(np.min(valid_values))
     maximum = float(np.max(valid_values))
     output = np.full(image.shape, minimum, dtype=np.float32)
     output[~valid_mask] = 0
     if maximum <= minimum:
-        return output
+        return _cellprofiler_masked_grey_dilation(output, valid_mask, footprint)
 
     for threshold in np.linspace(minimum, maximum, 256, dtype=np.float32)[1:]:
-        level_mask = valid_mask & (image >= float(threshold))
+        level_mask = valid_mask & (eroded >= float(threshold))
         if not np.any(level_mask):
             continue
         output[morphology.convex_hull_image(level_mask) & valid_mask] = threshold
-    return output
+    return _cellprofiler_masked_grey_dilation(output, valid_mask, footprint)
+
+
+def _convex_hull_smoothing_footprint(morphology: object) -> np.ndarray:
+    """Return CP's radius-2 disk footprint for convex-hull smoothing."""
+    return np.asarray(morphology.disk_footprint(2), dtype=bool)
+
+
+def _cellprofiler_masked_grey_erosion(
+    image: np.ndarray,
+    mask: np.ndarray,
+    footprint: np.ndarray,
+) -> np.ndarray:
+    """Match centrosome.cpmorphology.grey_erosion masking semantics."""
+    from scipy import ndimage as ndi
+
+    radius = max(1, int(np.ceil(np.max(np.asarray(footprint.shape)) / 2 - 0.5)))
+    padded = np.ones(np.asarray(image.shape) + radius * 2, dtype=image.dtype)
+    core = tuple(slice(radius, -radius) for _axis in image.shape)
+    padded[core] = image
+    padded_core = padded[core]
+    padded_core[~mask] = 1
+    eroded = ndi.grey_erosion(padded, footprint=footprint)[core]
+    result = np.asarray(eroded, dtype=np.float32)
+    result[~mask] = image[~mask]
+    return result
+
+
+def _cellprofiler_masked_grey_dilation(
+    image: np.ndarray,
+    mask: np.ndarray,
+    footprint: np.ndarray,
+) -> np.ndarray:
+    """Match centrosome.cpmorphology.grey_dilation masking semantics."""
+    from scipy import ndimage as ndi
+
+    radius = max(1, int(np.ceil(np.max(np.asarray(footprint.shape)) / 2 - 0.5)))
+    padded = np.zeros(np.asarray(image.shape) + radius * 2, dtype=image.dtype)
+    core = tuple(slice(radius, -radius) for _axis in image.shape)
+    padded[core] = image
+    padded_core = padded[core]
+    padded_core[~mask] = 0
+    dilated = ndi.grey_dilation(padded, footprint=footprint)[core]
+    result = np.asarray(dilated, dtype=np.float32)
+    result[~mask] = image[~mask]
+    return result
 
 
 @njit(cache=True)

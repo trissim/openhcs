@@ -144,3 +144,15 @@ def _single_plane(array: np.ndarray, name: str) -> np.ndarray:
         f"MeasureObjectIntensity expects a 2-D {name} plane or singleton stack, "
         f"got shape {array.shape!r}."
     )
+
+
+def _prepare_measure_object_intensity() -> None:
+    """Compile object-intensity kernels before benchmark execution."""
+    image = np.linspace(0.0, 1.0, 64 * 64, dtype=np.float32).reshape((64, 64))
+    labels = np.zeros((64, 64), dtype=np.int32)
+    labels[8:24, 8:24] = 1
+    labels[32:56, 32:56] = 2
+    measure_object_intensity.__wrapped__(image, labels)
+
+
+measure_object_intensity.__openhcs_prepare__ = _prepare_measure_object_intensity

@@ -1,7 +1,15 @@
 import numpy as np
+import pytest
 
 from benchmark.cellprofiler_library.functions import measureobjectintensitydistribution as mid
 from openhcs.core.config import DtypeConfig
+
+
+@pytest.fixture(autouse=True)
+def clear_radial_label_geometry_cache():
+    mid._RADIAL_LABEL_GEOMETRY_CACHE.clear()
+    yield
+    mid._RADIAL_LABEL_GEOMETRY_CACHE.clear()
 
 
 def test_radial_distribution_excludes_pixels_without_propagated_center(monkeypatch):
@@ -42,6 +50,23 @@ def test_radial_distribution_excludes_pixels_without_propagated_center(monkeypat
     assert all(np.isnan(measurement.frac_at_d) for measurement in measurements)
     assert all(np.isnan(measurement.mean_frac) for measurement in measurements)
     assert all(measurement.radial_cv == 0.0 for measurement in measurements)
+
+
+def test_radial_label_geometry_cache_reuses_equal_label_values():
+    labels = np.array(
+        [
+            [1, 1, 0, 2],
+            [1, 0, 0, 2],
+            [0, 0, 2, 2],
+        ],
+        dtype=np.int32,
+    )
+
+    first = mid._radial_label_geometry(labels, 2)
+    second = mid._radial_label_geometry(labels.copy(), 2)
+
+    assert second is first
+    assert len(mid._RADIAL_LABEL_GEOMETRY_CACHE) == 1
 
 
 def test_radial_distribution_marks_missing_dense_label_fraction_fields_nan():

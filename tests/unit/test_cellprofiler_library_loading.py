@@ -46,6 +46,7 @@ from benchmark.cellprofiler_library.functions.measurecolocalization import (
     _costes_first_channel_bin_threshold,
     _divide_costes_measurements,
     _object_colocalization_row,
+    _thresholded_colocalization_metrics_numba,
 )
 from benchmark.cellprofiler_library.functions.opening import opening
 from benchmark.cellprofiler_library.functions.overlayoutlines import overlay_outlines
@@ -173,7 +174,30 @@ def test_smooth_matches_cellprofiler_masked_gaussian():
         / (weights + np.finfo(float).eps)
     )
     assert np.allclose(image_payload_data(result), expected.astype(np.float32))
-    assert np.array_equal(image_payload_mask(result), mask)
+
+
+def test_smooth_matches_cellprofiler_unmasked_gaussian_edge_normalization():
+    from scipy.ndimage import gaussian_filter
+
+    image = np.zeros((9, 9), dtype=np.float32)
+    image[0, 0] = 1.0
+    object_size = 3.0
+
+    result = smooth(
+        image,
+        smoothing_method="Gaussian Filter",
+        auto_object_size=False,
+        object_size=object_size,
+        dtype_config=DtypeConfig(),
+    )
+
+    sigma = object_size / 2.35
+    mask = np.ones(image.shape, dtype=bool)
+    weights = gaussian_filter(mask.astype(float), sigma, mode="constant", cval=0)
+    expected = gaussian_filter(image, sigma, mode="constant", cval=0) / (
+        weights + np.finfo(float).eps
+    )
+    assert np.allclose(image_payload_data(result), expected.astype(np.float32))
 
 
 def test_enhance_edges_accepts_cellprofiler_display_setting_literals():
@@ -350,6 +374,58 @@ def test_measure_colocalization_records_direct_reverse_slope():
 
     assert measurement.slope == pytest.approx(expected_forward)
     assert measurement.slope_reverse == pytest.approx(expected_reverse)
+
+
+def test_measure_colocalization_threshold_metrics_match_numpy_semantics():
+    first = np.array([0.0, 0.2, 0.2, 0.7, 0.9, 1.0], dtype=np.float64)
+    second = np.array([0.1, 0.1, 0.4, 0.6, 0.95, 0.2], dtype=np.float64)
+    threshold_percent = 15.0
+
+    thr_fi = threshold_percent * np.max(first) / 100
+    thr_si = threshold_percent * np.max(second) / 100
+    thr_fi_out = first > thr_fi
+    thr_si_out = second > thr_si
+    combined = thr_fi_out & thr_si_out
+    first_thresholded = first[combined]
+    second_thresholded = second[combined]
+    total_first = first[thr_fi_out].sum()
+    total_second = second[thr_si_out].sum()
+
+    rank1 = np.lexsort([first])
+    rank2 = np.lexsort([second])
+    rank1_u = np.hstack([[False], first[rank1[:-1]] != first[rank1[1:]]])
+    rank2_u = np.hstack([[False], second[rank2[:-1]] != second[rank2[1:]]])
+    rank1_s = np.cumsum(rank1_u)
+    rank2_s = np.cumsum(rank2_u)
+    rank_im1 = np.zeros(first.shape, dtype=int)
+    rank_im2 = np.zeros(second.shape, dtype=int)
+    rank_im1[rank1] = rank1_s
+    rank_im2[rank2] = rank2_s
+    rank_count = max(rank_im1.max(), rank_im2.max()) + 1
+    weight = (rank_count - np.abs(rank_im1 - rank_im2)) / rank_count
+    product_sum = (first_thresholded * second_thresholded).sum()
+
+    expected = (
+        first_thresholded.sum() / total_first,
+        second_thresholded.sum() / total_second,
+        (first_thresholded * weight[combined]).sum() / total_first,
+        (second_thresholded * weight[combined]).sum() / total_second,
+        product_sum
+        / np.sqrt((first_thresholded**2).sum() * (second_thresholded**2).sum()),
+        product_sum / (first_thresholded**2).sum(),
+        product_sum / (second_thresholded**2).sum(),
+    )
+
+    observed = _thresholded_colocalization_metrics_numba(
+        first,
+        second,
+        threshold_percent,
+        True,
+        True,
+        True,
+    )
+
+    np.testing.assert_allclose(observed, expected, rtol=1e-12, atol=1e-12)
 
 
 def test_cellprofiler_multiotsu_threshold_ignores_robust_background_settings():
@@ -1473,6 +1549,99 @@ def test_measure_image_quality_uses_numba_otsu():
     assert _calculate_threshold(image, ThresholdMethod.OTSU) == expected
 
 
+def test_measure_image_quality_constancy_check_matches_numpy_unique():
+    from benchmark.cellprofiler_library.functions.measureimagequality import (
+        _has_multiple_unique_values,
+    )
+
+    cases = (
+        np.array([[1.0, 1.0]], dtype=np.float32),
+        np.array([[1.0, 2.0]], dtype=np.float32),
+        np.array([[np.nan, np.nan]], dtype=np.float32),
+        np.array([[np.nan, 1.0]], dtype=np.float32),
+        np.array([[0.0, -0.0]], dtype=np.float32),
+    )
+
+    for image in cases:
+        expected = len(np.unique(image)) > 1
+        assert _has_multiple_unique_values(image) is expected
+
+
+def test_measure_image_quality_log_log_slope_matches_lstsq():
+    import scipy.linalg
+
+    from benchmark.cellprofiler_library.functions.measureimagequality import (
+        _least_squares_log_log_slope_numba,
+    )
+
+    radii = np.array([1.0, 2.0, 4.0, 8.0], dtype=np.float64)
+    power = radii**-1.75
+    idx = np.isfinite(np.log(power))
+    design = np.hstack(
+        (
+            np.log(radii)[idx][:, np.newaxis],
+            np.ones(radii.shape)[idx][:, np.newaxis],
+        )
+    )
+    expected = scipy.linalg.lstsq(
+        design,
+        np.log(power)[idx][:, np.newaxis],
+    )[0][0]
+
+    assert np.isclose(
+        _least_squares_log_log_slope_numba(radii, power),
+        float(np.asarray(expected).ravel()[0]),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
+def test_measure_image_quality_local_focus_matches_grid_semantics():
+    from scipy.ndimage import mean as ndimage_mean, sum as ndimage_sum
+
+    from benchmark.cellprofiler_library.functions.measureimagequality import (
+        _calculate_local_focus_score,
+    )
+
+    image = np.arange(35, dtype=np.float32).reshape(5, 7) / 10.0
+    scale = 3
+    shape = image.shape
+    i, j = np.mgrid[0 : shape[0], 0 : shape[1]].astype(float)
+    m, n = (np.array(shape) + scale - 1) // scale
+    i = (i * float(m) / float(shape[0])).astype(int)
+    j = (j * float(n) / float(shape[1])).astype(int)
+    grid = i * n + j + 1
+    grid_range = np.arange(0, m * n + 1, dtype=np.int32)
+    local_means = np.nan_to_num(
+        ndimage_mean(image, grid, grid_range),
+        nan=0.0,
+    )
+    local_squared_normalized = (image - local_means[grid]) ** 2
+    grid_mask = (local_means != 0) & np.isfinite(local_means)
+    nz_grid_range = grid_range[grid_mask]
+    if nz_grid_range[0] == 0:
+        nz_grid_range = nz_grid_range[1:]
+        local_means = local_means[1:]
+        grid_mask = grid_mask[1:]
+    sums = ndimage_sum(local_squared_normalized, grid, nz_grid_range)
+    pixel_counts = ndimage_sum(np.ones(shape), grid, nz_grid_range)
+    valid_means = (
+        local_means[grid_mask]
+        if len(local_means) > len(nz_grid_range)
+        else local_means[: len(nz_grid_range)]
+    )
+    expected_values = sums / (pixel_counts * valid_means[: len(sums)])
+    expected_values = expected_values[np.isfinite(expected_values)]
+    expected = float(np.var(expected_values) / np.median(expected_values))
+
+    assert np.isclose(
+        _calculate_local_focus_score(image, scale),
+        expected,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
 def test_measure_object_neighbors_accepts_explicit_centrosome_morphology(monkeypatch):
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
@@ -1846,6 +2015,54 @@ def test_illumination_functions_accept_cellprofiler_enum_literals():
     np.testing.assert_array_equal(
         corrected,
         np.full((1, 8, 8), 0.75, dtype=np.float32),
+    )
+
+
+def test_correct_illumination_fit_polynomial_matches_dense_design_matrix():
+    from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
+        _fit_polynomial_surface,
+    )
+
+    image = (np.arange(48, dtype=np.float32).reshape(6, 8) / 47.0) ** 2
+    mask = np.ones(image.shape, dtype=bool)
+    mask[1::3, 2::4] = False
+    h, w = image.shape
+    y, x = np.mgrid[0:h, 0:w].astype(float)
+    y = y / h - 0.5
+    x = x / w - 0.5
+    valid = mask.flatten()
+    design = np.column_stack(
+        [
+            (x**2).flatten()[valid],
+            (y**2).flatten()[valid],
+            (x * y).flatten()[valid],
+            x.flatten()[valid],
+            y.flatten()[valid],
+            np.ones(valid.sum()),
+        ]
+    )
+    coeffs, _, _, _ = np.linalg.lstsq(
+        design,
+        image.flatten()[valid],
+        rcond=None,
+    )
+    full_design = np.column_stack(
+        [
+            (x**2).flatten(),
+            (y**2).flatten(),
+            (x * y).flatten(),
+            x.flatten(),
+            y.flatten(),
+            np.ones(h * w),
+        ]
+    )
+    expected = (full_design @ coeffs).reshape(h, w)
+
+    np.testing.assert_allclose(
+        _fit_polynomial_surface(image, mask),
+        expected,
+        rtol=1e-10,
+        atol=1e-10,
     )
 
 

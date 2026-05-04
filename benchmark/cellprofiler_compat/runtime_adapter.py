@@ -5,7 +5,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+import logging
+import os
 from pathlib import Path
+import time
 from types import MappingProxyType
 from typing import Any, ClassVar
 
@@ -66,6 +69,20 @@ from openhcs.core.runtime_values import (
     image_payload_with_context,
     normalize_artifact_value,
 )
+
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+logger = logging.getLogger(__name__)
+
+
+def _runtime_profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_adapter_profile(label: str, seconds: float, **fields: Any) -> None:
+    if not _runtime_profile_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +278,7 @@ class CellProfilerRuntimeAdapter:
             ObjectLabelRepresentation.DENSE_LABELS
         ),
     ) -> StoredRuntimeValue:
+        construct_started_at = time.perf_counter()
         object_labels = (
             ObjectLabelSet(
                 name=name,
@@ -281,6 +299,13 @@ class CellProfilerRuntimeAdapter:
                 dimensions=dimensions,
                 representation=representation,
             )
+        )
+        _log_adapter_profile(
+            "adapter_construct_object_labels",
+            time.perf_counter() - construct_started_at,
+            artifact=name,
+            kind=ArtifactKind.OBJECT_LABELS.value,
+            payload_type=type(labels).__name__,
         )
         return self._record_native_value(
             name,
@@ -469,18 +494,55 @@ class CellProfilerRuntimeAdapter:
         expected_kind: ArtifactKind,
         native_value: Any,
     ) -> StoredRuntimeValue:
+        total_started_at = time.perf_counter()
+        plan_started_at = time.perf_counter()
         plan = self._require_output_plan(name, expected_kind)
+        _log_adapter_profile(
+            "adapter_require_output_plan",
+            time.perf_counter() - plan_started_at,
+            artifact=name,
+            kind=expected_kind.value,
+        )
+        normalize_started_at = time.perf_counter()
         runtime_value = normalize_artifact_value(
             plan,
             native_value,
             axis_id=self.axis_id,
         )
+        _log_adapter_profile(
+            "adapter_normalize_artifact_value",
+            time.perf_counter() - normalize_started_at,
+            artifact=name,
+            kind=expected_kind.value,
+            payload_type=type(runtime_value.data).__name__,
+        )
+        save_started_at = time.perf_counter()
         self._save_payload(runtime_value.data, plan.path)
-        return self.runtime_value_store.replace(
+        _log_adapter_profile(
+            "adapter_save_payload",
+            time.perf_counter() - save_started_at,
+            artifact=name,
+            kind=expected_kind.value,
+        )
+        store_started_at = time.perf_counter()
+        stored_value = self.runtime_value_store.replace(
             runtime_value,
             path=plan.path,
             backend=self.backend,
         )
+        _log_adapter_profile(
+            "adapter_runtime_store_replace",
+            time.perf_counter() - store_started_at,
+            artifact=name,
+            kind=expected_kind.value,
+        )
+        _log_adapter_profile(
+            "adapter_record_native_value",
+            time.perf_counter() - total_started_at,
+            artifact=name,
+            kind=expected_kind.value,
+        )
+        return stored_value
 
     def _require_output_plan(
         self,

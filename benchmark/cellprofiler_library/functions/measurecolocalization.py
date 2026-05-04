@@ -27,6 +27,7 @@ from openhcs.processing.backends.cellprofiler.colocalization import (
 )
 from openhcs.processing.materialization import csv_materializer
 import scipy.ndimage
+from numba import njit
 
 
 class CostesMethod(Enum):
@@ -426,57 +427,22 @@ def _colocalization_measurement(
             )
 
         if any((options.do_manders, options.do_rwc, options.do_overlap)):
-            thr_fi = options.threshold_percent * np.max(fi) / 100
-            thr_si = options.threshold_percent * np.max(si) / 100
-            thr_fi_out = fi > thr_fi
-            thr_si_out = si > thr_si
-            combined_thresh = thr_fi_out & thr_si_out
-
-            if np.any(combined_thresh):
-                fi_thresh = fi[combined_thresh]
-                si_thresh = si[combined_thresh]
-                tot_fi_thr = fi[thr_fi_out].sum()
-                tot_si_thr = si[thr_si_out].sum()
-
-                if options.do_manders and tot_fi_thr > 0 and tot_si_thr > 0:
-                    m1 = fi_thresh.sum() / tot_fi_thr
-                    m2 = si_thresh.sum() / tot_si_thr
-
-                if options.do_rwc and tot_fi_thr > 0 and tot_si_thr > 0:
-                    rank1 = np.lexsort([fi])
-                    rank2 = np.lexsort([si])
-                    rank1_u = np.hstack(
-                        [[False], fi[rank1[:-1]] != fi[rank1[1:]]]
-                    )
-                    rank2_u = np.hstack(
-                        [[False], si[rank2[:-1]] != si[rank2[1:]]]
-                    )
-                    rank1_s = np.cumsum(rank1_u)
-                    rank2_s = np.cumsum(rank2_u)
-                    rank_im1 = np.zeros(fi.shape, dtype=int)
-                    rank_im2 = np.zeros(si.shape, dtype=int)
-                    rank_im1[rank1] = rank1_s
-                    rank_im2[rank2] = rank2_s
-
-                    r = max(rank_im1.max(), rank_im2.max()) + 1
-                    di = np.abs(rank_im1 - rank_im2)
-                    weight = (r - di) / r
-                    weight_thresh = weight[combined_thresh]
-                    rwc1 = (fi_thresh * weight_thresh).sum() / tot_fi_thr
-                    rwc2 = (si_thresh * weight_thresh).sum() / tot_si_thr
-
-                if options.do_overlap:
-                    denom = np.sqrt(
-                        (fi_thresh ** 2).sum() * (si_thresh ** 2).sum()
-                    )
-                    if denom > 0:
-                        overlap = (fi_thresh * si_thresh).sum() / denom
-                    fi_sq_sum = (fi_thresh ** 2).sum()
-                    si_sq_sum = (si_thresh ** 2).sum()
-                    if fi_sq_sum > 0:
-                        k1 = (fi_thresh * si_thresh).sum() / fi_sq_sum
-                    if si_sq_sum > 0:
-                        k2 = (fi_thresh * si_thresh).sum() / si_sq_sum
+            (
+                m1,
+                m2,
+                rwc1,
+                rwc2,
+                overlap,
+                k1,
+                k2,
+            ) = _thresholded_colocalization_metrics_numba(
+                np.ascontiguousarray(fi, dtype=np.float64),
+                np.ascontiguousarray(si, dtype=np.float64),
+                float(options.threshold_percent),
+                bool(options.do_manders),
+                bool(options.do_rwc),
+                bool(options.do_overlap),
+            )
 
         if options.do_costes:
             if options.costes_method == CostesMethod.FASTER:
@@ -496,19 +462,12 @@ def _colocalization_measurement(
                     backend_provider=options.costes_backend_provider,
                 )
 
-            first_above_costes = _costes_above_threshold(fi, thr_fi_c)
-            second_above_costes = _costes_above_threshold(si, thr_si_c)
-            combined_thresh_c = first_above_costes & second_above_costes
-            if np.any(combined_thresh_c):
-                fi_thresh_c = fi[combined_thresh_c]
-                si_thresh_c = si[combined_thresh_c]
-                tot_fi_thr_c = fi[first_above_costes].sum()
-                tot_si_thr_c = si[second_above_costes].sum()
-
-                if tot_fi_thr_c > 0:
-                    c1 = fi_thresh_c.sum() / tot_fi_thr_c
-                if tot_si_thr_c > 0:
-                    c2 = si_thresh_c.sum() / tot_si_thr_c
+            c1, c2 = _costes_manders_numba(
+                np.ascontiguousarray(fi),
+                np.ascontiguousarray(si),
+                _pixel_dtype_threshold(fi, thr_fi_c),
+                _pixel_dtype_threshold(si, thr_si_c),
+            )
 
     return ColocalizationMeasurements(
         slice_index=0,
@@ -527,6 +486,193 @@ def _colocalization_measurement(
         costes_threshold_1=float(thr_fi_c) if not np.isnan(thr_fi_c) else 0.0,
         costes_threshold_2=float(thr_si_c) if not np.isnan(thr_si_c) else 0.0,
     )
+
+
+@njit(cache=True)
+def _thresholded_colocalization_metrics_numba(
+    first: np.ndarray,
+    second: np.ndarray,
+    threshold_percent: float,
+    do_manders: bool,
+    do_rwc: bool,
+    do_overlap: bool,
+) -> tuple[float, float, float, float, float, float, float]:
+    count = first.size
+    nan_value = np.nan
+    if count == 0:
+        return (
+            nan_value,
+            nan_value,
+            nan_value,
+            nan_value,
+            nan_value,
+            nan_value,
+            nan_value,
+        )
+
+    first_max = first[0]
+    second_max = second[0]
+    for index in range(1, count):
+        if first[index] > first_max:
+            first_max = first[index]
+        if second[index] > second_max:
+            second_max = second[index]
+
+    first_threshold = threshold_percent * first_max / 100.0
+    second_threshold = threshold_percent * second_max / 100.0
+
+    first_threshold_total = 0.0
+    second_threshold_total = 0.0
+    combined_first_total = 0.0
+    combined_second_total = 0.0
+    combined_first_square_total = 0.0
+    combined_second_square_total = 0.0
+    combined_product_total = 0.0
+    combined_count = 0
+    for index in range(count):
+        first_value = first[index]
+        second_value = second[index]
+        first_above = first_value > first_threshold
+        second_above = second_value > second_threshold
+        if first_above:
+            first_threshold_total += first_value
+        if second_above:
+            second_threshold_total += second_value
+        if first_above and second_above:
+            combined_count += 1
+            combined_first_total += first_value
+            combined_second_total += second_value
+            combined_first_square_total += first_value * first_value
+            combined_second_square_total += second_value * second_value
+            combined_product_total += first_value * second_value
+
+    if combined_count == 0:
+        return (
+            nan_value,
+            nan_value,
+            nan_value,
+            nan_value,
+            nan_value,
+            nan_value,
+            nan_value,
+        )
+
+    manders_m1 = nan_value
+    manders_m2 = nan_value
+    if do_manders and first_threshold_total > 0.0 and second_threshold_total > 0.0:
+        manders_m1 = combined_first_total / first_threshold_total
+        manders_m2 = combined_second_total / second_threshold_total
+
+    overlap = nan_value
+    k1 = nan_value
+    k2 = nan_value
+    if do_overlap:
+        denominator = np.sqrt(
+            combined_first_square_total * combined_second_square_total
+        )
+        if denominator > 0.0:
+            overlap = combined_product_total / denominator
+        if combined_first_square_total > 0.0:
+            k1 = combined_product_total / combined_first_square_total
+        if combined_second_square_total > 0.0:
+            k2 = combined_product_total / combined_second_square_total
+
+    rwc1 = nan_value
+    rwc2 = nan_value
+    if do_rwc and first_threshold_total > 0.0 and second_threshold_total > 0.0:
+        first_ranks = _dense_rank_values_numba(first)
+        second_ranks = _dense_rank_values_numba(second)
+        max_rank = 0
+        for index in range(count):
+            if first_ranks[index] > max_rank:
+                max_rank = first_ranks[index]
+            if second_ranks[index] > max_rank:
+                max_rank = second_ranks[index]
+        rank_count = float(max_rank + 1)
+        weighted_first_total = 0.0
+        weighted_second_total = 0.0
+        for index in range(count):
+            first_value = first[index]
+            second_value = second[index]
+            if first_value <= first_threshold or second_value <= second_threshold:
+                continue
+            rank_delta = first_ranks[index] - second_ranks[index]
+            if rank_delta < 0:
+                rank_delta = -rank_delta
+            weight = (rank_count - float(rank_delta)) / rank_count
+            weighted_first_total += first_value * weight
+            weighted_second_total += second_value * weight
+        rwc1 = weighted_first_total / first_threshold_total
+        rwc2 = weighted_second_total / second_threshold_total
+
+    return manders_m1, manders_m2, rwc1, rwc2, overlap, k1, k2
+
+
+@njit(cache=True)
+def _costes_manders_numba(
+    first: np.ndarray,
+    second: np.ndarray,
+    first_threshold: float,
+    second_threshold: float,
+) -> tuple[float, float]:
+    first_threshold_total = 0.0
+    second_threshold_total = 0.0
+    combined_first_total = 0.0
+    combined_second_total = 0.0
+    combined_count = 0
+
+    for index in range(first.size):
+        first_value = first[index]
+        second_value = second[index]
+        if first_threshold <= 0.0:
+            first_above = first_value >= first_threshold
+        else:
+            first_above = first_value > first_threshold
+        if second_threshold <= 0.0:
+            second_above = second_value >= second_threshold
+        else:
+            second_above = second_value > second_threshold
+
+        if first_above:
+            first_threshold_total += first_value
+        if second_above:
+            second_threshold_total += second_value
+        if first_above and second_above:
+            combined_count += 1
+            combined_first_total += first_value
+            combined_second_total += second_value
+
+    costes_m1 = np.nan
+    costes_m2 = np.nan
+    if combined_count > 0:
+        if first_threshold_total > 0.0:
+            costes_m1 = combined_first_total / first_threshold_total
+        if second_threshold_total > 0.0:
+            costes_m2 = combined_second_total / second_threshold_total
+    return costes_m1, costes_m2
+
+
+def _pixel_dtype_threshold(pixels: np.ndarray, threshold: float) -> float:
+    """Round scalar thresholds into the pixel dtype before bin comparisons."""
+    return float(np.asarray(threshold, dtype=np.asarray(pixels).dtype).item())
+
+
+@njit(cache=True)
+def _dense_rank_values_numba(values: np.ndarray) -> np.ndarray:
+    order = np.argsort(values)
+    ranks = np.empty(values.size, dtype=np.int64)
+    current_rank = 0
+    if values.size == 0:
+        return ranks
+    ranks[order[0]] = current_rank
+    previous = values[order[0]]
+    for sorted_index in range(1, values.size):
+        value = values[order[sorted_index]]
+        if value != previous:
+            current_rank += 1
+            previous = value
+        ranks[order[sorted_index]] = current_rank
+    return ranks
 
 
 def _cellprofiler_float_pixels(image: np.ndarray) -> np.ndarray:

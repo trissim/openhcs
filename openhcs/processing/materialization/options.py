@@ -72,6 +72,7 @@ class TiffStackOptions(FileOutputOptions, SourceOptions):
     """TIFF stack writer options (per-slice TIFF + summary)."""
 
     normalize_uint8: bool = False
+    preserve_channels_last_color: bool = True
     slice_pattern: str = "_slice_{index:03d}.tif"
     summary_suffix: str = "_summary.txt"
     empty_summary: str = "No images generated (empty data)\n"

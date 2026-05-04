@@ -5,11 +5,13 @@ Key idea: the abstraction boundary is the output *format* (writers), not per-ana
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import pandas as pd
 
@@ -259,10 +261,111 @@ def _render_csv(data: Any, options: CsvOptions) -> str:
     if isinstance(data, pd.DataFrame):
         return data.to_csv(index=False)
 
+    if direct_rows := _direct_csv_mapping_rows(data, options):
+        rows, fieldnames = direct_rows
+        return _render_csv_rows(rows, fieldnames)
+    if direct_object_rows := _direct_csv_object_rows(data, options):
+        rows, fieldnames = direct_object_rows
+        return _render_csv_object_rows(rows, fieldnames)
+
     rows = _build_tabular_rows(data, options)
     if not rows and options.fields:
-        return pd.DataFrame(columns=options.fields).to_csv(index=False)
-    return pd.DataFrame(rows).to_csv(index=False)
+        return _render_csv_rows((), tuple(options.fields))
+    if not rows:
+        return pd.DataFrame(rows).to_csv(index=False)
+    return _render_csv_rows(rows, _csv_fieldnames(rows, options.fields))
+
+
+def _direct_csv_mapping_rows(
+    data: Any,
+    options: CsvOptions,
+) -> tuple[Sequence[Mapping[str, Any]], tuple[str, ...]] | None:
+    """Return existing mapping rows when generic extraction would be a no-op."""
+    if options.row_unpacker is not None or options.row_field is not None:
+        return None
+    if not isinstance(data, (list, tuple)):
+        return None
+    if not data:
+        if options.fields:
+            return data, tuple(options.fields)
+        return None
+    first_row = data[0]
+    if not isinstance(first_row, Mapping):
+        return None
+
+    fieldnames = _csv_fieldnames(data, options.fields)
+    if "slice_index" in fieldnames and "slice_index" not in first_row:
+        return None
+    return data, fieldnames
+
+
+def _direct_csv_object_rows(
+    data: Any,
+    options: CsvOptions,
+) -> tuple[Sequence[Any], tuple[str, ...]] | None:
+    """Return object rows when declared fields let us avoid dict materialization."""
+    if (
+        options.row_unpacker is not None
+        or options.row_field is not None
+        or not options.fields
+        or not isinstance(data, (list, tuple))
+    ):
+        return None
+    if not data:
+        return data, tuple(options.fields)
+    first_row = data[0]
+    if isinstance(first_row, Mapping) or not (
+        is_dataclass(first_row) or hasattr(first_row, "__dict__")
+    ):
+        return None
+    return data, tuple(options.fields)
+
+
+def _render_csv_rows(
+    rows: Sequence[Mapping[str, Any]],
+    fieldnames: Sequence[str],
+) -> str:
+    output = io.StringIO()
+    ordered_fieldnames = tuple(fieldnames)
+    writer = csv.writer(output)
+    writer.writerow(ordered_fieldnames)
+    writer.writerows(
+        tuple(row.get(fieldname) for fieldname in ordered_fieldnames)
+        for row in rows
+    )
+    return output.getvalue()
+
+
+def _render_csv_object_rows(
+    rows: Sequence[Any],
+    fieldnames: Sequence[str],
+) -> str:
+    output = io.StringIO()
+    ordered_fieldnames = tuple(fieldnames)
+    writer = csv.writer(output)
+    writer.writerow(ordered_fieldnames)
+    writer.writerows(
+        tuple(getattr(row, fieldname, None) for fieldname in ordered_fieldnames)
+        for row in rows
+    )
+    return output.getvalue()
+
+
+def _csv_fieldnames(
+    rows: Sequence[Mapping[str, Any]],
+    declared_fields: Sequence[str] | None,
+) -> tuple[str, ...]:
+    if declared_fields is not None:
+        return tuple(declared_fields)
+    fieldnames: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for fieldname in row:
+            if fieldname in seen:
+                continue
+            seen.add(fieldname)
+            fieldnames.append(fieldname)
+    return tuple(fieldnames)
 
 
 def _render_json(data: Any, options: JsonOptions) -> str:
@@ -394,7 +497,13 @@ def _write_tiff_stack(data: Any, options: TiffStackOptions, ctx: Materialization
         slices = list(data)
     else:
         ndim = getattr(data, "ndim", None)
-        if ndim == 3:
+        if (
+            ndim == 3
+            and not (
+                options.preserve_channels_last_color
+                and _is_channels_last_color_image(data)
+            )
+        ):
             slices = [data[i] for i in range(data.shape[0])]  # type: ignore[index]
         else:
             slices = [data]
@@ -418,6 +527,14 @@ def _write_tiff_stack(data: Any, options: TiffStackOptions, ctx: Materialization
     )
     outs.append(Output(path=summary_path, content=summary_content))
     return outs
+
+
+def _is_channels_last_color_image(data: Any) -> bool:
+    """Return whether a 3D array is one channel-last RGB/RGBA image."""
+    shape = getattr(data, "shape", None)
+    if not shape or len(shape) != 3:
+        return False
+    return int(shape[-1]) in (3, 4)
 
 
 @dataclass(frozen=True, init=False)

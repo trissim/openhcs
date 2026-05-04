@@ -12,6 +12,7 @@ from typing import ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
+from numba import njit
 
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import (
@@ -189,42 +190,10 @@ class FitPolynomialSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method_label = method.value
 
     def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
-        pixel_data = request.pixel_data
-        h, w = pixel_data.shape
-        y, x = np.mgrid[0:h, 0:w].astype(float)
-        y = y / h - 0.5
-        x = x / w - 0.5
-        valid = (
-            request.mask.flatten()
-            if request.mask is not None
-            else np.ones(h * w, dtype=bool)
+        return _fit_polynomial_surface(
+            request.pixel_data,
+            request.mask,
         )
-        design = np.column_stack(
-            [
-                (x**2).flatten()[valid],
-                (y**2).flatten()[valid],
-                (x * y).flatten()[valid],
-                x.flatten()[valid],
-                y.flatten()[valid],
-                np.ones(valid.sum()),
-            ]
-        )
-        coeffs, _, _, _ = np.linalg.lstsq(
-            design,
-            pixel_data.flatten()[valid],
-            rcond=None,
-        )
-        full_design = np.column_stack(
-            [
-                (x**2).flatten(),
-                (y**2).flatten(),
-                (x * y).flatten(),
-                x.flatten(),
-                y.flatten(),
-                np.ones(h * w),
-            ]
-        )
-        return (full_design @ coeffs).reshape(h, w)
 
 
 class GaussianFilterSmoothingPlaneStrategy(SmoothingPlaneStrategy):
@@ -364,6 +333,94 @@ def _masked_gaussian_filter(
         cval=0,
     )
     return smoothed / np.maximum(mask_smoothed, 1e-10)
+
+
+def _fit_polynomial_surface(
+    pixel_data: np.ndarray,
+    mask: np.ndarray | None,
+) -> np.ndarray:
+    """Fit CP's quadratic illumination surface without dense design matrices."""
+    image = np.ascontiguousarray(pixel_data, dtype=np.float64)
+    if image.ndim != 2:
+        raise NotImplementedError(
+            "Fit-polynomial illumination smoothing currently supports 2-D "
+            f"NumPy planes, got shape {image.shape!r}."
+        )
+    mask_array = (
+        np.empty((0, 0), dtype=np.bool_)
+        if mask is None
+        else np.ascontiguousarray(mask, dtype=np.bool_)
+    )
+    if mask is not None and mask_array.shape != image.shape:
+        raise ValueError(
+            "Fit-polynomial illumination mask must match the image shape; got "
+            f"mask {mask_array.shape!r} for image {image.shape!r}."
+        )
+    gram, rhs = _fit_polynomial_normal_equations_numba(
+        image,
+        mask_array,
+        mask is not None,
+    )
+    coeffs = np.linalg.lstsq(gram, rhs, rcond=None)[0]
+    return _evaluate_polynomial_surface_numba(
+        image.shape[0],
+        image.shape[1],
+        np.ascontiguousarray(coeffs, dtype=np.float64),
+    )
+
+
+@njit(cache=True)
+def _fit_polynomial_normal_equations_numba(
+    pixel_data: np.ndarray,
+    mask: np.ndarray,
+    has_mask: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    height, width = pixel_data.shape
+    gram = np.zeros((6, 6), dtype=np.float64)
+    rhs = np.zeros(6, dtype=np.float64)
+    features = np.empty(6, dtype=np.float64)
+    for row in range(height):
+        y_value = row / height - 0.5
+        y2 = y_value * y_value
+        for col in range(width):
+            if has_mask and not mask[row, col]:
+                continue
+            x_value = col / width - 0.5
+            features[0] = x_value * x_value
+            features[1] = y2
+            features[2] = x_value * y_value
+            features[3] = x_value
+            features[4] = y_value
+            features[5] = 1.0
+            value = pixel_data[row, col]
+            for i in range(6):
+                rhs[i] += features[i] * value
+                for j in range(6):
+                    gram[i, j] += features[i] * features[j]
+    return gram, rhs
+
+
+@njit(cache=True)
+def _evaluate_polynomial_surface_numba(
+    height: int,
+    width: int,
+    coeffs: np.ndarray,
+) -> np.ndarray:
+    output = np.empty((height, width), dtype=np.float64)
+    for row in range(height):
+        y_value = row / height - 0.5
+        y2 = y_value * y_value
+        for col in range(width):
+            x_value = col / width - 0.5
+            output[row, col] = (
+                coeffs[0] * x_value * x_value
+                + coeffs[1] * y2
+                + coeffs[2] * x_value * y_value
+                + coeffs[3] * x_value
+                + coeffs[4] * y_value
+                + coeffs[5]
+            )
+    return output
 
 
 def _blockwise_background_minimum(

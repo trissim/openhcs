@@ -1,8 +1,10 @@
 import numpy as np
 
 from benchmark.cellprofiler_library.functions.measuregranularity import (
+    _GRANULARITY_IMAGE_SERIES_CACHE,
     _background_corrected_pixels,
     _disk_offsets,
+    _granularity_image_series,
     _gray_dilation_offsets_reflect_numba,
     _gray_erosion_offsets_reflect_numba,
     _mean_by_label_from_resampled_numba,
@@ -36,6 +38,30 @@ def test_measure_granularity_objects_preserves_sparse_label_ids():
     )
 
     assert [measurement.object_id for measurement in measurements] == [1, 3]
+
+
+def test_granularity_series_cache_reuses_equal_image_values():
+    image = np.arange(36, dtype=np.float64).reshape(6, 6)
+    image_copy = image.copy()
+    _GRANULARITY_IMAGE_SERIES_CACHE.clear()
+
+    first = _granularity_image_series(
+        image,
+        subsample_size=1.0,
+        background_subsample_size=1.0,
+        element_radius=1,
+        spectrum_length=2,
+    )
+    second = _granularity_image_series(
+        image_copy,
+        subsample_size=1.0,
+        background_subsample_size=1.0,
+        element_radius=1,
+        spectrum_length=2,
+    )
+
+    assert second is first
+    assert len(_GRANULARITY_IMAGE_SERIES_CACHE) == 1
 
 
 def test_resampled_object_means_match_order_one_coordinate_sampling():

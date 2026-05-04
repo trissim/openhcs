@@ -6,7 +6,10 @@ Keep this module free of backend/registry concerns.
 from __future__ import annotations
 
 from dataclasses import fields, is_dataclass
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
+
+import pandas as pd
 
 
 def extract_fields(item: Any, field_names: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -19,33 +22,33 @@ def extract_fields(item: Any, field_names: Optional[List[str]] = None) -> Dict[s
     - pandas Series (uses index)
     """
 
-    # pandas (optional)
-    try:
-        import pandas as pd
-
-        if isinstance(item, pd.DataFrame):
-            if field_names:
-                return {f: item[f].tolist() for f in field_names if f in item.columns}
-            return {col: item[col].tolist() for col in item.columns}
-
-        if isinstance(item, pd.Series):
-            if field_names:
-                return {f: item[f] for f in field_names if f in item.index}
-            return item.to_dict()
-    except ImportError:
-        pass
-
-    if is_dataclass(item):
-        if field_names:
-            return {f: getattr(item, f, None) for f in field_names if hasattr(item, f)}
-        return {f.name: getattr(item, f.name) for f in fields(item)}
-
     if isinstance(item, dict):
         if field_names:
             return {f: item.get(f) for f in field_names if f in item}
         return item
 
+    if isinstance(item, pd.DataFrame):
+        if field_names:
+            return {f: item[f].tolist() for f in field_names if f in item.columns}
+        return {col: item[col].tolist() for col in item.columns}
+
+    if isinstance(item, pd.Series):
+        if field_names:
+            return {f: item[f] for f in field_names if f in item.index}
+        return item.to_dict()
+
+    if is_dataclass(item):
+        if field_names:
+            return {f: getattr(item, f, None) for f in field_names if hasattr(item, f)}
+        return {name: getattr(item, name) for name in _dataclass_field_names(type(item))}
+
     return {"value": item}
+
+
+@lru_cache(maxsize=256)
+def _dataclass_field_names(item_type: type[object]) -> Tuple[str, ...]:
+    """Return dataclass field names without per-row reflection overhead."""
+    return tuple(field.name for field in fields(item_type))
 
 
 def coerce_jsonable(value: Any) -> Any:

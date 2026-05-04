@@ -337,6 +337,23 @@ def test_declumping_integer_lattice_fast_path_matches_legacy_resize_path() -> No
         np.testing.assert_array_equal(seeds, expected)
 
 
+def test_declumping_downsample_grid_uses_cellprofiler_pixel_origins() -> None:
+    image = np.zeros((6, 6), dtype=float)
+    labels = np.ones(image.shape, dtype=np.int32)
+    image[0, 0] = 1.0
+    image[2, 2] = 0.8
+    footprint = np.ones((3, 3), dtype=bool)
+
+    seeds = MORPHOLOGY.declumping_seed_points(
+        image,
+        labels,
+        footprint,
+        0.5,
+    )
+
+    np.testing.assert_array_equal(np.argwhere(seeds), np.array([[0, 0]]))
+
+
 def test_numba_morphology_backend_matches_native_seed_extraction() -> None:
     native = MorphologyBackendStrategy.for_memory_type(
         MemoryType.NUMPY,
@@ -518,10 +535,10 @@ def _legacy_declumping_seed_points(
 
     low_res_shape = np.maximum(
         1,
-        np.floor(np.asarray(image.shape) * image_resize_factor),
+        np.ceil(np.asarray(image.shape) * image_resize_factor),
     ).astype(int)
-    low_res_coordinates = (
-        np.mgrid[0 : low_res_shape[0], 0 : low_res_shape[1]].astype(float) + 0.5
+    low_res_coordinates = np.mgrid[0 : low_res_shape[0], 0 : low_res_shape[1]].astype(
+        float
     ) / image_resize_factor
     low_res_image = ndi.map_coordinates(image, low_res_coordinates)
     low_res_labels = ndi.map_coordinates(

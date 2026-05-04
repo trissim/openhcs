@@ -24,6 +24,7 @@ from openhcs.core.config import DtypeConfig
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.progress import set_progress_queue
+from openhcs.core.steps.function_runtime import prepare_compiled_context_callables
 from openhcs.core.vfs_protocol import FileManagerLike
 from openhcs.interop.cellprofiler.import_records import (
     CellProfilerModuleReference,
@@ -464,6 +465,8 @@ def execute_pipeline_direct(
                 progress_context=progress_context,
             )
         else:
+            with phase_timing.phase(BenchmarkPhase.COMPILE_OPENHCS):
+                prepare_compiled_context_callables(compiled_contexts)
             with phase_timing.phase(BenchmarkPhase.EXECUTE_OPENHCS):
                 execution_results = orchestrator.execute_compiled_plate(
                     pipeline_definition=pipeline.steps,

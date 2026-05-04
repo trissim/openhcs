@@ -19,6 +19,7 @@ from openhcs.core.memory import numpy
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
 from openhcs.processing.backends.cellprofiler.neighbors import (
+    NeighborTopologyBackendStrategy,
     neighbor_topology_backend,
 )
 from openhcs.processing.backends.cellprofiler.outlines import object_outline_backend
@@ -168,18 +169,12 @@ def _centers_of_labels(
 def _variant_numbers_for_final_labels(
     final_labels: np.ndarray,
     variant_labels: np.ndarray,
+    *,
+    neighbor_backend: NeighborTopologyBackendStrategy | None = None,
 ) -> np.ndarray:
     """Map each final object ID to the corresponding variant object ID."""
-    final_count = int(np.max(final_labels)) if final_labels.size else 0
-    numbers = np.zeros(final_count, dtype=np.int32)
-    for final_id in range(1, final_count + 1):
-        overlap = variant_labels[final_labels == final_id]
-        overlap = overlap[overlap > 0]
-        if overlap.size == 0:
-            continue
-        counts = np.bincount(overlap.astype(np.int32, copy=False))
-        numbers[final_id - 1] = int(np.argmax(counts))
-    return numbers
+    backend = neighbor_backend or neighbor_topology_backend()
+    return backend.variant_numbers_for_final_labels(final_labels, variant_labels)
 
 
 def _labels_or_default(
@@ -378,9 +373,14 @@ def measure_object_neighbors(
     if not consider_discarded_objects:
         neighbor_topology_labels[neighbor_final_labels <= 0] = 0
 
+    neighbor_backend = neighbor_topology_backend(
+        backend_provider=neighbor_topology_backend_provider,
+    )
+
     object_numbers = _variant_numbers_for_final_labels(
         final_labels,
         measured_variant_labels,
+        neighbor_backend=neighbor_backend,
     )
     neighbor_numbers = (
         object_numbers
@@ -388,6 +388,7 @@ def measure_object_neighbors(
         else _variant_numbers_for_final_labels(
             neighbor_final_labels,
             neighbor_topology_labels,
+            neighbor_backend=neighbor_backend,
         )
     )
     final_has_pixels = (
@@ -484,50 +485,36 @@ def measure_object_neighbors(
         )
         
         # Calculate perimeters
-        object_indexes = np.arange(variant_object_count) + 1
         perimeter_outlines = _outline(
             working_labels,
             outline_backend_provider=outline_backend_provider,
         )
-        perimeters = np.array([np.sum(perimeter_outlines == i) for i in object_indexes])
-        perimeters = np.maximum(perimeters, 1)  # Avoid division by zero
+        perimeters = neighbor_backend.perimeter_counts(
+            perimeter_outlines,
+            variant_object_count=variant_object_count,
+        )
         
         # Find nearest neighbors using variant-label center distances.
         if variant_neighbor_count >= (2 if neighbors_are_same_objects else 1):
-            for i in range(variant_object_count):
-                if i >= len(ocenters) or not np.all(np.isfinite(ocenters[i])):
-                    continue
-                usable_ncenters = ncenters[:variant_neighbor_count]
-                distances = np.sqrt(
-                    (ocenters[i, 0] - usable_ncenters[:, 0])**2 +
-                    (ocenters[i, 1] - usable_ncenters[:, 1])**2
-                )
-                if neighbors_are_same_objects and i < len(distances):
-                    distances[i] = np.inf
-                
-                sorted_idx = np.argsort(distances)
-                sorted_idx = sorted_idx[np.isfinite(distances[sorted_idx])]
-
-                if len(sorted_idx) > 0:
-                    first_idx = sorted_idx[0]
-                    first_x_vector[i] = usable_ncenters[first_idx, 1] - ocenters[i, 1]
-                    first_y_vector[i] = usable_ncenters[first_idx, 0] - ocenters[i, 0]
-                
-                if len(sorted_idx) > 1:
-                    second_idx = sorted_idx[1]
-                    second_x_vector[i] = usable_ncenters[second_idx, 1] - ocenters[i, 1]
-                    second_y_vector[i] = usable_ncenters[second_idx, 0] - ocenters[i, 0]
-        
-        # Calculate angles between neighbors
-        for i in range(variant_object_count):
-            v1 = np.array([first_x_vector[i], first_y_vector[i]])
-            v2 = np.array([second_x_vector[i], second_y_vector[i]])
-            norm1 = np.linalg.norm(v1)
-            norm2 = np.linalg.norm(v2)
-            if norm1 > 0 and norm2 > 0:
-                dot = np.dot(v1, v2) / (norm1 * norm2)
-                dot = np.clip(dot, -1, 1)
-                angle[i] = np.arccos(dot) * 180.0 / np.pi
+            closest = neighbor_backend.closest_neighbors(
+                ocenters,
+                ncenters,
+                object_numbers,
+                neighbor_numbers,
+                final_has_pixels,
+                neighbor_has_pixels,
+                neighbors_are_same_objects=neighbors_are_same_objects,
+                variant_object_count=variant_object_count,
+                variant_neighbor_count=variant_neighbor_count,
+                final_object_count=final_object_count,
+            )
+            first_x_vector = closest.first_x_vector
+            first_y_vector = closest.first_y_vector
+            second_x_vector = closest.second_x_vector
+            second_y_vector = closest.second_y_vector
+            angle = closest.angle_between_neighbors
+            final_first_object_number = closest.final_first_object_number
+            final_second_object_number = closest.final_second_object_number
         
         strel = _strel_disk(
             distance,
@@ -538,9 +525,7 @@ def measure_object_neighbors(
             morphology_backend_provider=morphology_backend_provider,
         )
 
-        topology = neighbor_topology_backend(
-            backend_provider=neighbor_topology_backend_provider,
-        ).measure_topology(
+        topology = neighbor_backend.measure_topology(
             working_labels,
             neighbor_working_labels,
             perimeter_outlines,
@@ -556,40 +541,6 @@ def measure_object_neighbors(
         pixel_count = topology.touching_pixel_count
         percent_touching = pixel_count * 100 / perimeters
 
-        object_variant_indexes = object_numbers - 1
-        neighbor_variant_indexes = neighbor_numbers - 1
-        valid_object_indexes = object_variant_indexes >= 0
-        valid_neighbor_indexes = neighbor_variant_indexes >= 0
-        if np.any(valid_object_indexes) and np.any(valid_neighbor_indexes):
-            object_rows = object_variant_indexes[valid_object_indexes]
-            neighbor_rows = neighbor_variant_indexes[valid_neighbor_indexes]
-            distance_matrix = np.sqrt(
-                (
-                    ocenters[object_rows[:, np.newaxis], 0]
-                    - ncenters[neighbor_rows[np.newaxis, :], 0]
-                ) ** 2
-                + (
-                    ocenters[object_rows[:, np.newaxis], 1]
-                    - ncenters[neighbor_rows[np.newaxis, :], 1]
-                ) ** 2
-            )
-            distance_matrix[~final_has_pixels[valid_object_indexes], :] = np.inf
-            distance_matrix[:, ~neighbor_has_pixels[valid_neighbor_indexes]] = np.inf
-            if neighbors_are_same_objects:
-                same_count = min(distance_matrix.shape)
-                distance_matrix[np.arange(same_count), np.arange(same_count)] = np.inf
-
-            sorted_neighbors = np.argsort(distance_matrix, axis=1)
-            valid_final_ids = np.flatnonzero(valid_object_indexes)
-            valid_neighbor_ids = np.flatnonzero(valid_neighbor_indexes)
-            for row_index, final_id in enumerate(valid_final_ids):
-                ordered = sorted_neighbors[row_index]
-                ordered = ordered[np.isfinite(distance_matrix[row_index, ordered])]
-                if ordered.size > 0:
-                    final_first_object_number[final_id] = valid_neighbor_ids[ordered[0]] + 1
-                if ordered.size > 1:
-                    final_second_object_number[final_id] = valid_neighbor_ids[ordered[1]] + 1
-    
     neighbor_count_image = np.zeros(final_labels.shape, dtype=float)
     percent_touching_image = np.zeros(final_labels.shape, dtype=float)
     object_mask = final_labels > 0

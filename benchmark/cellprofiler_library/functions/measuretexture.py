@@ -364,3 +364,19 @@ def measure_texture_objects(
                 )
 
     return image, measurements
+
+
+def _prepare_measure_texture() -> None:
+    image = np.linspace(0.0, 1.0, 32 * 32, dtype=np.float32).reshape((32, 32))
+    measure_texture.__wrapped__(image)
+
+
+def _prepare_measure_texture_objects() -> None:
+    image = np.linspace(0.0, 1.0, 32 * 32, dtype=np.float32).reshape((32, 32))
+    labels = np.zeros((32, 32), dtype=np.int32)
+    labels[8:24, 8:24] = 1
+    measure_texture_objects.__wrapped__(image, labels)
+
+
+measure_texture.__openhcs_prepare__ = _prepare_measure_texture
+measure_texture_objects.__openhcs_prepare__ = _prepare_measure_texture_objects

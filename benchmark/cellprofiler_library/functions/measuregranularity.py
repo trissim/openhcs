@@ -7,15 +7,34 @@ Granularity is measured by iteratively eroding the image and measuring
 how much signal is lost at each scale.
 """
 
+import logging
 import numpy as np
+import os
+import time
 from typing import Tuple, List
 from dataclasses import dataclass
 from functools import lru_cache
-from numba import njit
+from collections import OrderedDict
+import hashlib
+from numba import njit, prange
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
 from openhcs.processing.materialization import csv_materializer
+
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+logger = logging.getLogger(__name__)
+
+
+def _profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_profile(label: str, seconds: float, **fields: object) -> None:
+    if not _profile_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
 @dataclass
@@ -63,6 +82,25 @@ class ObjectGranularityMeasurement:
     gs16: float
 
 
+@dataclass(frozen=True)
+class _GranularityImageSeries:
+    pixels: np.ndarray
+    new_shape: np.ndarray
+    reconstructions: tuple[np.ndarray, ...]
+
+
+@dataclass(frozen=True)
+class _GranularityImageSeriesCacheEntry:
+    series: _GranularityImageSeries
+
+
+_GRANULARITY_IMAGE_SERIES_CACHE: dict[
+    tuple[str, tuple[int, ...], bytes, float, float, int, int],
+    _GranularityImageSeriesCacheEntry,
+] = OrderedDict()
+_GRANULARITY_IMAGE_SERIES_CACHE_MAX_ENTRIES = 16
+
+
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_outputs(("granularity_measurements", csv_materializer(
     fields=["slice_index", "gs1", "gs2", "gs3", "gs4", "gs5", "gs6", "gs7", "gs8",
@@ -93,25 +131,23 @@ def measure_granularity(
     Returns:
         Tuple of (original image, granularity measurements)
     """
-    pixels, _new_shape = _background_corrected_pixels(
+    series = _granularity_image_series(
         image,
         subsample_size,
         background_subsample_size,
         element_radius,
+        spectrum_length,
     )
+    pixels = series.pixels
     
     # Calculate granular spectrum
     startmean = np.mean(pixels)
     startmean = max(startmean, np.finfo(float).eps)
-    ero = pixels.copy()
     currentmean = startmean
     gs_values = []
-    cross_offsets = _disk_offsets(1)
     
-    for i in range(spectrum_length):
+    for i, rec in enumerate(series.reconstructions):
         prevmean = currentmean
-        ero = _gray_erosion_offsets_reflect_numba(ero, cross_offsets)
-        rec = _reconstruct_dilation_cross_numba(ero, pixels)
         currentmean = np.mean(rec)
         gs = (prevmean - currentmean) * 100 / startmean
         if i > 0 and gs < 0.0:
@@ -174,27 +210,53 @@ def measure_granularity_objects(
     Returns:
         Tuple of (original image, list of per-object granularity measurements)
     """
+    total_started_at = time.perf_counter()
     orig_shape = image.shape
+    phase_started_at = time.perf_counter()
     object_range = np.unique(labels[labels > 0]).astype(np.int32, copy=False)
     nobjects = int(object_range.size)
+    _log_profile(
+        "granularity_object_ids",
+        time.perf_counter() - phase_started_at,
+        function="measure_granularity_objects",
+        nobjects=nobjects,
+    )
 
     if nobjects == 0:
         return image, []
 
-    pixels, new_shape = _background_corrected_pixels(
+    phase_started_at = time.perf_counter()
+    series = _granularity_image_series(
         image,
         subsample_size,
         background_subsample_size,
         element_radius,
+        spectrum_length,
+    )
+    pixels = series.pixels
+    new_shape = series.new_shape
+    _log_profile(
+        "granularity_series",
+        time.perf_counter() - phase_started_at,
+        function="measure_granularity_objects",
+        reconstructions=len(series.reconstructions),
     )
     
     labels = np.asarray(labels, dtype=np.int32)
+    phase_started_at = time.perf_counter()
     label_to_index = _label_to_index_lookup_numba(object_range)
     pixel_rows, pixel_cols, pixel_object_indices, object_counts = (
         _compact_label_pixels_from_lookup_numba(labels, label_to_index)
     )
+    _log_profile(
+        "granularity_compact_labels",
+        time.perf_counter() - phase_started_at,
+        function="measure_granularity_objects",
+        foreground_pixels=len(pixel_object_indices),
+    )
 
     # Get initial means per object
+    phase_started_at = time.perf_counter()
     current_means = _mean_by_compact_label_pixels_numba(
         np.asarray(image),
         pixel_rows,
@@ -203,19 +265,19 @@ def measure_granularity_objects(
         object_counts,
     )
     start_means = np.maximum(current_means, np.finfo(float).eps)
-    
-    # Calculate granular spectrum per object
-    ero = pixels.copy()
-    cross_offsets = _disk_offsets(1)
+    _log_profile(
+        "granularity_initial_means",
+        time.perf_counter() - phase_started_at,
+        function="measure_granularity_objects",
+    )
     
     # Store gs values per object: shape (nobjects, spectrum_length)
     gs_per_object = np.zeros((nobjects, 16))
     
-    for gs_idx in range(spectrum_length):
+    phase_started_at = time.perf_counter()
+    for gs_idx, rec in enumerate(series.reconstructions):
         prev_means = current_means.copy()
-        ero = _gray_erosion_offsets_reflect_numba(ero, cross_offsets)
-        rec = _reconstruct_dilation_cross_numba(ero, pixels)
-        
+
         if subsample_size < 1:
             row_scale = (
                 float(new_shape[0] - 1) / float(orig_shape[0] - 1)
@@ -249,8 +311,14 @@ def measure_granularity_objects(
             np.maximum(gs_values, 0.0, out=gs_values)
         gs_per_object[:, gs_idx] = gs_values
         current_means = new_means
+    _log_profile(
+        "granularity_spectrum_means",
+        time.perf_counter() - phase_started_at,
+        function="measure_granularity_objects",
+    )
     
     # Create measurement objects
+    phase_started_at = time.perf_counter()
     measurements = []
     for obj_idx, object_id in enumerate(object_range):
         gs = gs_per_object[obj_idx]
@@ -262,8 +330,164 @@ def measure_granularity_objects(
             gs9=gs[8], gs10=gs[9], gs11=gs[10], gs12=gs[11],
             gs13=gs[12], gs14=gs[13], gs15=gs[14], gs16=gs[15],
         ))
+    _log_profile(
+        "granularity_rows",
+        time.perf_counter() - phase_started_at,
+        function="measure_granularity_objects",
+        rows=len(measurements),
+    )
+    _log_profile(
+        "granularity_total",
+        time.perf_counter() - total_started_at,
+        function="measure_granularity_objects",
+    )
     
     return image, measurements
+
+
+def _granularity_image_series(
+    image: np.ndarray,
+    subsample_size: float,
+    background_subsample_size: float,
+    element_radius: int,
+    spectrum_length: int,
+) -> _GranularityImageSeries:
+    """Return reusable background-corrected reconstruction series for one image."""
+    image_array = np.asarray(image)
+    phase_started_at = time.perf_counter()
+    dtype, shape, digest = _granularity_image_content_key(image_array)
+    _log_profile(
+        "granularity_series_key",
+        time.perf_counter() - phase_started_at,
+        function="measure_granularity_objects",
+    )
+    key = (
+        dtype,
+        shape,
+        digest,
+        float(subsample_size),
+        float(background_subsample_size),
+        int(element_radius),
+        int(spectrum_length),
+    )
+    entry = _GRANULARITY_IMAGE_SERIES_CACHE.get(key)
+    if entry is not None:
+        _GRANULARITY_IMAGE_SERIES_CACHE.move_to_end(key)
+        _log_profile(
+            "granularity_series_cache_hit",
+            0.0,
+            function="measure_granularity_objects",
+        )
+        return entry.series
+
+    phase_started_at = time.perf_counter()
+    pixels, new_shape = _background_corrected_pixels(
+        image_array,
+        subsample_size,
+        background_subsample_size,
+        element_radius,
+    )
+    _log_profile(
+        "granularity_background_correct",
+        time.perf_counter() - phase_started_at,
+        function="measure_granularity_objects",
+        shape=tuple(int(value) for value in pixels.shape),
+    )
+    phase_started_at = time.perf_counter()
+    reconstructions = _granularity_reconstruction_series(
+        pixels,
+        spectrum_length,
+    )
+    _log_profile(
+        "granularity_reconstruction_series",
+        time.perf_counter() - phase_started_at,
+        function="measure_granularity_objects",
+        reconstructions=len(reconstructions),
+    )
+    series = _GranularityImageSeries(
+        pixels=pixels,
+        new_shape=new_shape,
+        reconstructions=reconstructions,
+    )
+    _GRANULARITY_IMAGE_SERIES_CACHE[key] = _GranularityImageSeriesCacheEntry(
+        series=series,
+    )
+    _GRANULARITY_IMAGE_SERIES_CACHE.move_to_end(key)
+    while len(_GRANULARITY_IMAGE_SERIES_CACHE) > _GRANULARITY_IMAGE_SERIES_CACHE_MAX_ENTRIES:
+        _GRANULARITY_IMAGE_SERIES_CACHE.popitem(last=False)
+    return series
+
+
+def _granularity_image_content_key(
+    image: np.ndarray,
+) -> tuple[str, tuple[int, ...], bytes]:
+    """Return an exact value key for deterministic granularity series reuse."""
+    contiguous = np.ascontiguousarray(image)
+    digest = hashlib.blake2b(contiguous.view(np.uint8), digest_size=16).digest()
+    return str(contiguous.dtype), tuple(int(value) for value in contiguous.shape), digest
+
+
+def _prepare_granularity_backend() -> None:
+    """Compile Numba kernels used by the granularity backend before execution."""
+    image = np.linspace(0.0, 1.0, 64 * 64, dtype=np.float32).reshape((64, 64))
+    labels = np.zeros((64, 64), dtype=np.int32)
+    labels[8:24, 8:24] = 1
+    labels[32:56, 32:56] = 2
+    measure_granularity.__wrapped__(
+        image,
+        subsample_size=1.0,
+        background_subsample_size=0.25,
+        element_radius=10,
+        spectrum_length=5,
+    )
+    measure_granularity_objects.__wrapped__(
+        image,
+        labels,
+        subsample_size=1.0,
+        background_subsample_size=0.25,
+        element_radius=10,
+        spectrum_length=5,
+    )
+
+
+def _granularity_reconstruction_series(
+    pixels: np.ndarray,
+    spectrum_length: int,
+) -> tuple[np.ndarray, ...]:
+    """Compute the erosion/reconstruction images shared across object sets."""
+    ero = pixels.copy()
+    cross_offsets = _disk_offsets(1)
+    reconstructions = []
+    erosion_seconds = 0.0
+    reconstruction_seconds = 0.0
+    for index in range(int(spectrum_length)):
+        phase_started_at = time.perf_counter()
+        ero = _gray_erosion_offsets_reflect_numba(ero, cross_offsets)
+        erosion_seconds += time.perf_counter() - phase_started_at
+        phase_started_at = time.perf_counter()
+        reconstruction = _reconstruct_dilation_cross_numba(ero, pixels)
+        reconstruction_seconds += time.perf_counter() - phase_started_at
+        _log_profile(
+            "granularity_reconstruction_iteration",
+            time.perf_counter() - phase_started_at,
+            function="measure_granularity_objects",
+            iteration=index + 1,
+            shape=tuple(int(value) for value in pixels.shape),
+        )
+        reconstructions.append(reconstruction)
+    _log_profile(
+        "granularity_reconstruction_erosion_total",
+        erosion_seconds,
+        function="measure_granularity_objects",
+        reconstructions=len(reconstructions),
+    )
+    _log_profile(
+        "granularity_reconstruction_dilation_total",
+        reconstruction_seconds,
+        function="measure_granularity_objects",
+        reconstructions=len(reconstructions),
+    )
+    return tuple(reconstructions)
 
 
 def _background_corrected_pixels(
@@ -345,7 +569,7 @@ def _disk_offsets(radius: int) -> np.ndarray:
     return np.asarray(coords, dtype=np.int32)
 
 
-@njit(cache=True)
+@njit(cache=True, parallel=True)
 def _resample_bilinear_numba(
     image: np.ndarray,
     output_height: int,
@@ -354,7 +578,7 @@ def _resample_bilinear_numba(
     col_scale: float,
 ) -> np.ndarray:
     result = np.empty((output_height, output_width), dtype=np.float64)
-    for row in range(output_height):
+    for row in prange(output_height):
         sample_row = row * row_scale
         for col in range(output_width):
             result[row, col] = _bilinear_sample_numba(
@@ -365,23 +589,23 @@ def _resample_bilinear_numba(
     return result
 
 
-@njit(cache=True)
+@njit(cache=True, parallel=True)
 def _clip_negative_inplace_numba(image: np.ndarray) -> None:
     height, width = image.shape
-    for row in range(height):
+    for row in prange(height):
         for col in range(width):
             if image[row, col] < 0.0:
                 image[row, col] = 0.0
 
 
-@njit(cache=True)
+@njit(cache=True, parallel=True)
 def _gray_erosion_offsets_reflect_numba(
     image: np.ndarray,
     offsets: np.ndarray,
 ) -> np.ndarray:
     height, width = image.shape
     result = np.empty((height, width), dtype=np.float64)
-    for row in range(height):
+    for row in prange(height):
         for col in range(width):
             best = np.inf
             for offset_index in range(offsets.shape[0]):
@@ -394,14 +618,14 @@ def _gray_erosion_offsets_reflect_numba(
     return result
 
 
-@njit(cache=True)
+@njit(cache=True, parallel=True)
 def _gray_dilation_offsets_reflect_numba(
     image: np.ndarray,
     offsets: np.ndarray,
 ) -> np.ndarray:
     height, width = image.shape
     result = np.empty((height, width), dtype=np.float64)
-    for row in range(height):
+    for row in prange(height):
         for col in range(width):
             best = -np.inf
             for offset_index in range(offsets.shape[0]):
@@ -950,3 +1174,7 @@ def _bilinear_sample_numba(
         + float(image[row1, col1]) * col_weight
     )
     return top * (1.0 - row_weight) + bottom * row_weight
+
+
+measure_granularity.__openhcs_prepare__ = _prepare_granularity_backend
+measure_granularity_objects.__openhcs_prepare__ = _prepare_granularity_backend

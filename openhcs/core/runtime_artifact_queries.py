@@ -384,9 +384,7 @@ def _row_sequence_measurement_value_index(
     feature_field = _matching_row_value_field(
         field_names,
         query.feature_name,
-        table_source_image_name=(
-            None if query.object_name is not None else table.source_image_name
-        ),
+        table_source_image_name=table.source_image_name,
     )
     if feature_field is None:
         return None
@@ -551,13 +549,19 @@ def measurement_row_mapping(row: object) -> Mapping[str, object]:
     if isinstance(row, Mapping):
         return row
     if is_dataclass(row):
-        return {field.name: getattr(row, field.name) for field in fields(row)}
+        return {name: getattr(row, name) for name in _dataclass_field_names(type(row))}
     try:
         return vars(row)
     except TypeError as exc:
         raise TypeError(
             f"Unsupported measurement row type {type(row).__name__}."
         ) from exc
+
+
+@lru_cache(maxsize=256)
+def _dataclass_field_names(row_type: type[object]) -> tuple[str, ...]:
+    """Return dataclass field names without per-row reflection overhead."""
+    return tuple(field.name for field in fields(row_type))
 
 
 def normalize_measurement_token(value: object) -> str:
@@ -856,9 +860,7 @@ def _measurement_value_indexes_by_slice(
         feature_field = _matching_row_value_field(
             field_names,
             feature_name,
-            table_source_image_name=(
-                None if object_name is not None else table.source_image_name
-            ),
+            table_source_image_name=table.source_image_name,
         )
         if feature_field is None:
             continue

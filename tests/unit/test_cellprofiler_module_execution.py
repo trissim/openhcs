@@ -441,6 +441,72 @@ def test_measure_object_size_shape_declares_compact_row_identity_policy() -> Non
     )
 
 
+def test_per_object_measurement_reuses_2d_labels_for_each_image_stack_slice() -> None:
+    @dataclass(frozen=True)
+    class SliceObjectMeasurement:
+        slice_index: int
+        object_label: int
+        value: float
+
+    calls: list[tuple[tuple[int, ...], tuple[int, ...], float]] = []
+
+    def measure(image: np.ndarray, *, labels: np.ndarray):
+        calls.append((image.shape, labels.shape, float(image[0, 0])))
+        return image, [
+            SliceObjectMeasurement(slice_index=0, object_label=1, value=float(image[0, 0])),
+            SliceObjectMeasurement(slice_index=0, object_label=2, value=float(image[0, 1])),
+        ]
+
+    measure.__processing_contract__ = ProcessingContract.PURE_2D
+    image_stack = np.stack(
+        (
+            np.asarray([[10.0, 11.0], [0.0, 0.0]], dtype=np.float32),
+            np.asarray([[20.0, 21.0], [0.0, 0.0]], dtype=np.float32),
+        )
+    )
+    labels = np.asarray([[1, 2], [0, 0]], dtype=np.int32)
+    runtime = _FakeCellProfilerRuntime(
+        {"Intensity": _FakeRuntimeImage(image_stack)},
+        {
+            "Objects": ObjectLabelSet(
+                name="Objects",
+                labels=labels,
+            )
+        },
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="MeasureObjectIntensity",
+            inputs=(
+                ArtifactSpec("Intensity", ArtifactKind.IMAGE),
+                ArtifactSpec("Objects", ArtifactKind.OBJECT_LABELS),
+            ),
+            runtime_artifact_inputs=(
+                ArtifactSpec("Intensity", ArtifactKind.IMAGE),
+                ArtifactSpec("Objects", ArtifactKind.OBJECT_LABELS),
+            ),
+            outputs=(ArtifactSpec("ObjectIntensity", ArtifactKind.MEASUREMENTS),),
+        )
+    )
+
+    result = executor.run(measure, image_stack, cellprofiler_runtime=runtime)
+
+    assert result is image_stack
+    assert calls == [((2, 2), (2, 2), 10.0), ((2, 2), (2, 2), 20.0)]
+    assert len(runtime.measurements) == 1
+    _name, rows, kwargs = runtime.measurements[0]
+    assert kwargs["object_name"] == "Objects"
+    assert {
+        (row["slice_index"], row["object_label"], row["value"])
+        for row in rows
+    } == {
+        (0, 1, 10.0),
+        (0, 2, 11.0),
+        (1, 1, 20.0),
+        (1, 2, 21.0),
+    }
+
+
 def test_measurement_record_fields_prefers_artifact_materialization_schema() -> None:
     spec = ArtifactSpec(
         name="measurements",
@@ -2952,6 +3018,19 @@ def test_measurement_image_for_labels_preserves_source_stack_for_2d_labels() -> 
     labels = np.ones((4, 5), dtype=np.int32)
 
     measurement_image = _measurement_image_for_labels(image, labels)
+
+    assert measurement_image is image
+
+
+def test_measurement_image_for_labels_preserves_object_domain_stack_for_2d_labels() -> None:
+    image = np.arange(2 * 4 * 5, dtype=np.uint16).reshape(2, 4, 5)
+    labels = np.ones((4, 5), dtype=np.int32)
+
+    measurement_image = _measurement_image_for_labels(
+        image,
+        labels,
+        reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
+    )
 
     assert measurement_image is image
 

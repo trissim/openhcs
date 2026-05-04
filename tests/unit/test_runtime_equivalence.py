@@ -1548,6 +1548,63 @@ def test_runtime_reference_artifact_equivalence_allows_max_location_ties(
     assert tie_policy_report.is_equivalent
 
 
+def test_runtime_reference_artifact_equivalence_uses_object_table_source_image(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Cells.csv").write_text(
+        "Image,Cells,Cells\n"
+        "ImageNumber,ObjectNumber,Texture_AngularSecondMoment_DNA_3_00_256\n"
+        "1,1,0.25\n",
+        encoding="utf-8",
+    )
+    table = MeasurementTable(
+        name="MeasureTexture",
+        rows=(
+            {
+                "slice_index": 0,
+                "object_label": 1,
+                "object_name": "Cells",
+                "scale": 3,
+                "direction": 0,
+                "gray_levels": 256,
+                "angular_second_moment": 0.25,
+            },
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+        object_name="Cells",
+        source_image_name="DNA",
+    )
+    store = RuntimeValueStore()
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="MeasureTexture",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=table.rows,
+            schema=table.runtime_schema(table.rows),
+        ),
+        path="/memory/MeasureTexture.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
 def test_runtime_reference_artifact_equivalence_allows_stable_geometry_zernike_drift(
     tmp_path: Path,
 ) -> None:
@@ -3928,6 +3985,72 @@ def test_runtime_measurement_snapshot_deduplicates_aggregate_group_tables(
         ("number", "10.0", 1),
         ("number", "20.0", 1),
     }
+
+
+def test_runtime_measurement_equivalence_normalizes_long_form_image_number_features(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "reference"
+    candidate_root = tmp_path / "candidate"
+    sequence_root = reference_root / "Sequence2"
+    sequence_root.mkdir(parents=True)
+    candidate_root.mkdir()
+    (sequence_root / "Embryos.csv").write_text(
+        "ImageNumber,ObjectNumber,TrackObjects_ParentImageNumber_50\n"
+        "22,1,0\n"
+        "23,1,22\n",
+        encoding="utf-8",
+    )
+    table = MeasurementTable(
+        name="TrackObjects",
+        rows=(
+            {
+                "image_number": 22,
+                "object_label": 1,
+                "feature_name": "TrackObjects_ParentImageNumber_50",
+                "measurement_value": 0,
+            },
+            {
+                "image_number": 23,
+                "object_label": 1,
+                "feature_name": "TrackObjects_ParentImageNumber_50",
+                "measurement_value": 22,
+            },
+        ),
+        object_name="Embryos",
+    )
+    store = RuntimeValueStore()
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="TrackObjects",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="Sequence2"),
+            ),
+            data=table.rows,
+            schema=table.runtime_schema(table.rows),
+        ),
+        path="/memory/TrackObjects.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"Sequence2": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+    policy = RuntimeEquivalencePolicy()
+    reference = RuntimeMeasurementSnapshot.from_output_snapshot(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        policy=policy,
+    )
+    candidate = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        observation,
+        policy=policy,
+        required_measurement_keys=frozenset(reference.values_by_feature),
+    )
+
+    report = runtime_measurement_equivalence(reference, candidate, policy=policy)
+
+    assert report.is_equivalent
 
 
 def test_runtime_measurement_snapshot_preserves_group_local_duplicate_rows(

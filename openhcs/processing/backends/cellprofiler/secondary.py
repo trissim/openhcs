@@ -141,7 +141,7 @@ class CentrosomeSecondaryPropagationBackendStrategy(
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.CENTROSOME
-    is_default_backend = True
+    is_default_backend = False
 
     def propagate(
         self,
@@ -161,6 +161,45 @@ class CentrosomeSecondaryPropagationBackendStrategy(
             regularization,
         )
         return np.asarray(result, dtype=np.int32)
+
+
+class NumbaSecondaryPropagationBackendStrategy(
+    SecondaryPropagationBackendStrategy,
+):
+    """Numba implementation of centrosome's regularized propagation semantics."""
+
+    backend_key = cellprofiler_backend_key(
+        MemoryType.NUMPY,
+        CellProfilerBackendProvider.NUMBA,
+    )
+    memory_type = MemoryType.NUMPY
+    backend_provider = CellProfilerBackendProvider.NUMBA
+    is_default_backend = True
+
+    def propagate(
+        self,
+        image: np.ndarray,
+        labels: np.ndarray,
+        mask: np.ndarray,
+        regularization: float,
+    ) -> np.ndarray:
+        image_array = np.asarray(image, dtype=np.float64)
+        label_array = np.asarray(labels, dtype=np.int32)
+        mask_array = np.asarray(mask, dtype=np.bool_)
+        if image_array.ndim != 2 or label_array.ndim != 2 or mask_array.ndim != 2:
+            raise NotImplementedError(
+                "Numba secondary propagation backend currently supports 2-D arrays."
+            )
+        if image_array.shape != label_array.shape or image_array.shape != mask_array.shape:
+            raise ValueError("image, labels, and mask must have the same shape.")
+        if np.max(label_array) == 0:
+            return label_array.copy()
+        return _propagate_labels_numba(
+            np.ascontiguousarray(image_array),
+            np.ascontiguousarray(label_array),
+            np.ascontiguousarray(mask_array),
+            float(regularization),
+        )
 
 
 @njit(cache=True, parallel=True)
@@ -266,8 +305,271 @@ def _edt_intersection_numba(source: np.ndarray, q: int, v: int) -> float:
     return ((source[q] + q * q) - (source[v] + v * v)) / (2.0 * q - 2.0 * v)
 
 
+@njit(cache=True)
+def _propagation_cost_numba(
+    image: np.ndarray,
+    y1: int,
+    x1: int,
+    y2: int,
+    x2: int,
+    weight: float,
+) -> float:
+    height, width = image.shape
+    pixel_diff = 0.0
+    for dy in range(-1, 2):
+        yy1 = y1 + dy
+        yy2 = y2 + dy
+        if yy1 < 0:
+            yy1 = 0
+        elif yy1 >= height:
+            yy1 = height - 1
+        if yy2 < 0:
+            yy2 = 0
+        elif yy2 >= height:
+            yy2 = height - 1
+        for dx in range(-1, 2):
+            xx1 = x1 + dx
+            xx2 = x2 + dx
+            if xx1 < 0:
+                xx1 = 0
+            elif xx1 >= width:
+                xx1 = width - 1
+            if xx2 < 0:
+                xx2 = 0
+            elif xx2 >= width:
+                xx2 = width - 1
+            v1 = image[yy1, xx1]
+            v2 = image[yy2, xx2]
+            if v1 > v2:
+                pixel_diff += v1 - v2
+            else:
+                pixel_diff += v2 - v1
+    manhattan_distance = abs(y1 - y2) + abs(x1 - x2)
+    return np.sqrt(pixel_diff * pixel_diff + manhattan_distance * weight * weight)
+
+
+@njit(cache=True)
+def _propagation_heap_less(
+    left_value: float,
+    left_label: int,
+    left_y: int,
+    left_x: int,
+    right_value: float,
+    right_label: int,
+    right_y: int,
+    right_x: int,
+) -> bool:
+    if left_value != right_value:
+        return left_value < right_value
+    if left_label != right_label:
+        return left_label < right_label
+    if left_y != right_y:
+        return left_y < right_y
+    return left_x < right_x
+
+
+@njit(cache=True)
+def _propagation_heap_swap(
+    values: np.ndarray,
+    labels: np.ndarray,
+    ys: np.ndarray,
+    xs: np.ndarray,
+    left: int,
+    right: int,
+) -> None:
+    value = values[left]
+    label = labels[left]
+    y = ys[left]
+    x = xs[left]
+    values[left] = values[right]
+    labels[left] = labels[right]
+    ys[left] = ys[right]
+    xs[left] = xs[right]
+    values[right] = value
+    labels[right] = label
+    ys[right] = y
+    xs[right] = x
+
+
+@njit(cache=True)
+def _propagation_heap_push(
+    values: np.ndarray,
+    labels: np.ndarray,
+    ys: np.ndarray,
+    xs: np.ndarray,
+    size: int,
+    value: float,
+    label: int,
+    y: int,
+    x: int,
+) -> int:
+    values[size] = value
+    labels[size] = label
+    ys[size] = y
+    xs[size] = x
+    size += 1
+    position = size - 1
+    while position > 0:
+        parent = (position - 1) // 2
+        if not _propagation_heap_less(
+            values[position],
+            labels[position],
+            ys[position],
+            xs[position],
+            values[parent],
+            labels[parent],
+            ys[parent],
+            xs[parent],
+        ):
+            break
+        _propagation_heap_swap(values, labels, ys, xs, position, parent)
+        position = parent
+    return size
+
+
+@njit(cache=True)
+def _propagation_heap_pop(
+    values: np.ndarray,
+    labels: np.ndarray,
+    ys: np.ndarray,
+    xs: np.ndarray,
+    size: int,
+) -> tuple[int, float, int, int, int]:
+    value = values[0]
+    label = labels[0]
+    y = ys[0]
+    x = xs[0]
+    size -= 1
+    if size > 0:
+        values[0] = values[size]
+        labels[0] = labels[size]
+        ys[0] = ys[size]
+        xs[0] = xs[size]
+        position = 0
+        while True:
+            left = position * 2 + 1
+            right = left + 1
+            if left >= size:
+                break
+            smallest = left
+            if right < size and _propagation_heap_less(
+                values[right],
+                labels[right],
+                ys[right],
+                xs[right],
+                values[left],
+                labels[left],
+                ys[left],
+                xs[left],
+            ):
+                smallest = right
+            if not _propagation_heap_less(
+                values[smallest],
+                labels[smallest],
+                ys[smallest],
+                xs[smallest],
+                values[position],
+                labels[position],
+                ys[position],
+                xs[position],
+            ):
+                break
+            _propagation_heap_swap(values, labels, ys, xs, position, smallest)
+            position = smallest
+    return size, value, label, y, x
+
+
+@njit(cache=True)
+def _propagate_labels_numba(
+    image: np.ndarray,
+    seed_labels: np.ndarray,
+    mask: np.ndarray,
+    weight: float,
+) -> np.ndarray:
+    height, width = image.shape
+    output = np.zeros((height, width), dtype=np.int32)
+    distances = np.empty((height, width), dtype=np.float64)
+    for y in range(height):
+        for x in range(width):
+            if seed_labels[y, x] > 0:
+                distances[y, x] = 0.0
+            else:
+                distances[y, x] = -1.0
+
+    capacity = height * width * 8
+    heap_values = np.empty(capacity, dtype=np.float64)
+    heap_labels = np.empty(capacity, dtype=np.int32)
+    heap_ys = np.empty(capacity, dtype=np.int32)
+    heap_xs = np.empty(capacity, dtype=np.int32)
+    heap_size = 0
+    for y in range(height):
+        for x in range(width):
+            label = int(seed_labels[y, x])
+            if label > 0 and mask[y, x]:
+                heap_size = _propagation_heap_push(
+                    heap_values,
+                    heap_labels,
+                    heap_ys,
+                    heap_xs,
+                    heap_size,
+                    0.0,
+                    label,
+                    y,
+                    x,
+                )
+
+    delta_y = np.array((-1, -1, -1, 0, 0, 1, 1, 1), dtype=np.int32)
+    delta_x = np.array((-1, 0, 1, -1, 1, -1, 0, 1), dtype=np.int32)
+    while heap_size > 0:
+        heap_size, _value, label, y1, x1 = _propagation_heap_pop(
+            heap_values,
+            heap_labels,
+            heap_ys,
+            heap_xs,
+            heap_size,
+        )
+        if output[y1, x1] != 0:
+            continue
+        output[y1, x1] = label
+        d0 = distances[y1, x1]
+        for index in range(8):
+            y2 = y1 + int(delta_y[index])
+            x2 = x1 + int(delta_x[index])
+            if y2 < 0 or y2 >= height or x2 < 0 or x2 >= width:
+                continue
+            if output[y2, x2] > 0 or not mask[y2, x2]:
+                continue
+            distance = _propagation_cost_numba(
+                image,
+                y1,
+                x1,
+                y2,
+                x2,
+                weight,
+            ) + d0
+            if distances[y2, x2] == -1.0 or distances[y2, x2] > distance:
+                distances[y2, x2] = distance
+                heap_size = _propagation_heap_push(
+                    heap_values,
+                    heap_labels,
+                    heap_ys,
+                    heap_xs,
+                    heap_size,
+                    distance,
+                    label,
+                    y2,
+                    x2,
+                )
+    for y in range(height):
+        for x in range(width):
+            if seed_labels[y, x] > 0:
+                output[y, x] = seed_labels[y, x]
+    return output
+
+
 __all__ = [
     "CentrosomeSecondaryPropagationBackendStrategy",
+    "NumbaSecondaryPropagationBackendStrategy",
     "NumbaSecondaryDistanceTransformBackendStrategy",
     "NumpySecondaryDistanceTransformBackendStrategy",
     "SecondaryDistanceTransformBackendStrategy",

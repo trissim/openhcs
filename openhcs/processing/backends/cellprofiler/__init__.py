@@ -18,7 +18,10 @@ from benchmark.cellprofiler_library import (
     get_contract,
     list_modules,
 )
-from openhcs.core.callable_contract import CallableContract
+from openhcs.core.callable_contract import (
+    CallableContract,
+    attach_callable_contract_metadata,
+)
 from openhcs.core.callable_contract import (
     DECLARED_PROCESSING_CONTRACT_ATTR,
     PROCESSING_CONTRACT_ATTR,
@@ -127,6 +130,7 @@ def _make_processing_wrapper(
     setattr(wrapper, PROCESSING_CONTRACT_ATTR, contract)
     setattr(wrapper, DECLARED_PROCESSING_CONTRACT_ATTR, contract.name)
     setattr(wrapper, CELLPROFILER_MODULE_ATTR, module_name)
+    attach_callable_contract_metadata(wrapper, raw_processing_function=func)
     return wrapper
 
 

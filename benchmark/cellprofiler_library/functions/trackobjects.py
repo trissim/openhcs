@@ -145,6 +145,7 @@ def track_objects(
     minimum_lifetime: int = 1,
     use_maximum_lifetime: bool = False,
     maximum_lifetime: int = 100,
+    image_number_start: int = 1,
     tracking_backend_provider: CellProfilerBackendProvider | None = None,
     _tracking_state: Optional[Dict[str, Any]] = None
 ) -> Tuple[np.ndarray, list[dict[str, Any]]]:
@@ -193,7 +194,7 @@ def track_objects(
     ] = []
 
     for frame_index, current_labels in enumerate(label_frames):
-        image_number = frame_index + 1
+        image_number = int(image_number_start) + frame_index
         old_labels = _tracking_state.get("old_labels")
         old_object_numbers = _tracking_state.get(
             "old_object_numbers",

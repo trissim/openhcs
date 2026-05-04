@@ -345,12 +345,12 @@ def consolidate_analysis_results(
 
     logger.info(f"Consolidating analysis results from: {results_directory}")
 
-    # Debug config objects
-    logger.info(f"DEBUG: consolidation_config type: {type(consolidation_config)}")
-    logger.info(f"DEBUG: well_pattern: {repr(consolidation_config.well_pattern)}")
-    logger.info(f"DEBUG: file_extensions: {repr(consolidation_config.file_extensions)}")
-    logger.info(
-        f"DEBUG: exclude_patterns: {repr(consolidation_config.exclude_patterns)}"
+    logger.debug("consolidation_config type: %s", type(consolidation_config))
+    logger.debug("well_pattern: %r", consolidation_config.well_pattern)
+    logger.debug("file_extensions: %r", consolidation_config.file_extensions)
+    logger.debug(
+        "exclude_patterns: %r",
+        consolidation_config.exclude_patterns,
     )
 
     # Find all relevant files

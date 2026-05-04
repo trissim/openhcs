@@ -295,6 +295,9 @@ from openhcs.constants.input_source import InputSource
             symbol_table.contract_for(module)
             for module in skipped_modules
         )
+        save_images_required_artifacts = frozenset(
+            _save_images_required_artifacts(skipped_modules)
+        )
         executable_modules = (
             self._prune_dead_unmaterialized_artifact_steps(
                 registry_modules,
@@ -307,7 +310,7 @@ from openhcs.constants.input_source import InputSource
                         *contract.runtime_artifact_inputs,
                     )
                 }
-                | _save_images_required_artifacts(skipped_modules),
+                | save_images_required_artifacts,
             )
             if prune_dead_unmaterialized_artifact_steps
             else registry_modules
@@ -328,7 +331,7 @@ from openhcs.constants.input_source import InputSource
                 "    cellprofiler_runtime_adapter_factory,\n"
                 ")\n"
                 "from openhcs.core.module_artifact_contract import ModuleArtifactContract\n"
-                "from openhcs.core.callable_contract import attach_callable_contract_metadata\n"
+                "from openhcs.core.callable_contract import attach_callable_contract_metadata, prepare_processing_callable\n"
                 "from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs\n"
                 "from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract\n"
                 "from openhcs.core.runtime_adapters import runtime_adapter\n\n"
@@ -367,7 +370,11 @@ from openhcs.constants.input_source import InputSource
                 )
             imports += "\n".join(func_assignments) + "\n\n"
 
-        imports += self._generate_artifact_contracts(symbol_table, executable_modules)
+        imports += self._generate_artifact_contracts(
+            symbol_table,
+            executable_modules,
+            externally_materialized_outputs=save_images_required_artifacts,
+        )
         imports += self._generate_runtime_wrappers(
             executable_modules,
             raw_function_bindings,
@@ -584,6 +591,10 @@ from openhcs.constants.input_source import InputSource
         self,
         symbol_table: CellProfilerSymbolTable,
         modules: List[ModuleBlock],
+        *,
+        externally_materialized_outputs: frozenset[tuple[ArtifactKind, str]] = (
+            frozenset()
+        ),
     ) -> str:
         """Emit converter-owned artifact contracts into generated pipeline code."""
         contracts = []
@@ -607,10 +618,13 @@ from openhcs.constants.input_source import InputSource
             lines.append(
                 "from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION"
             )
+        if externally_materialized_outputs:
+            lines.append("from openhcs.processing.materialization import tiff_stack")
         lines.extend(("", "CELLPROFILER_MODULE_CONTRACTS = {"))
         for contract in contracts:
             lines.append(
-                f"    {contract.module_num}: {module_contract_literal(contract)},"
+                f"    {contract.module_num}: "
+                f"{module_contract_literal(contract, externally_materialized_outputs=externally_materialized_outputs)},"
             )
         lines.append("}")
         lines.append("")
@@ -683,6 +697,16 @@ from openhcs.constants.input_source import InputSource
                 f"{raw_binding}, image, "
                 "cellprofiler_runtime=cellprofiler_runtime, **kwargs)"
             )
+            prepare_binding = f"_prepare_{runtime_binding}"
+            lines.append(
+                f"def {prepare_binding}():"
+            )
+            lines.append(
+                f"    prepare_processing_callable({raw_binding})"
+            )
+            lines.append(
+                f"    {executor_name}.prepare({raw_binding})"
+            )
             lines.append(
                 f"{runtime_binding}.input_memory_type = {raw_binding}.input_memory_type"
             )
@@ -698,7 +722,8 @@ from openhcs.constants.input_source import InputSource
                 f"{runtime_binding}, "
                 "declared_processing_contract="
                 f"{repr(self._module_metadata(module.name)['contract'])}, "
-                f"raw_processing_function={raw_binding})"
+                f"raw_processing_function={raw_binding}, "
+                f"prepare={prepare_binding})"
             )
             lines.append("")
 

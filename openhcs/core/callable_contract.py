@@ -7,6 +7,7 @@ compiler has one source of truth for memory and artifact declarations.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any, Mapping
 
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, ArtifactSpec
@@ -21,6 +22,9 @@ CallableNamespace = Mapping[str, Any]
 PROCESSING_CONTRACT_ATTR = "__processing_contract__"
 DECLARED_PROCESSING_CONTRACT_ATTR = "__openhcs_declared_processing_contract__"
 RAW_PROCESSING_FUNCTION_ATTR = "__openhcs_raw_processing_function__"
+PROCESSING_PREPARE_ATTR = "__openhcs_prepare__"
+_PREPARED_CALLABLE_KEYS: set[tuple[int, int]] = set()
+_PREPARED_CALLABLE_LOCK = Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +131,7 @@ def attach_callable_contract_metadata(
     *,
     declared_processing_contract: str | None = None,
     raw_processing_function: Any | None = None,
+    prepare: Any | None = None,
 ) -> None:
     """Attach OpenHCS callable metadata used by compiler/runtime phases."""
     if declared_processing_contract is not None:
@@ -149,6 +154,41 @@ def attach_callable_contract_metadata(
                 f"got {type(raw_processing_function).__name__}."
             )
         setattr(func, RAW_PROCESSING_FUNCTION_ATTR, raw_processing_function)
+        raw_prepare = getattr(raw_processing_function, PROCESSING_PREPARE_ATTR, None)
+        if raw_prepare is not None and not hasattr(func, PROCESSING_PREPARE_ATTR):
+            if not callable(raw_prepare):
+                raise TypeError(
+                    "raw_processing_function prepare hook must be callable, "
+                    f"got {type(raw_prepare).__name__}."
+                )
+            setattr(func, PROCESSING_PREPARE_ATTR, raw_prepare)
+    if prepare is not None:
+        if not callable(prepare):
+            raise TypeError(
+                "prepare must be callable, "
+                f"got {type(prepare).__name__}."
+            )
+        setattr(func, PROCESSING_PREPARE_ATTR, prepare)
+
+
+def prepare_processing_callable(func: Any) -> None:
+    """Run an optional callable preparation hook before timed data processing."""
+    namespace = _callable_namespace(func)
+    prepare = namespace.get(PROCESSING_PREPARE_ATTR)
+    if prepare is None:
+        return
+    if not callable(prepare):
+        raise TypeError(
+            f"{_callable_name(func)!r}.{PROCESSING_PREPARE_ATTR} must be "
+            f"callable, got {type(prepare).__name__}."
+        )
+    prepare_key = (id(func), id(prepare))
+    with _PREPARED_CALLABLE_LOCK:
+        if prepare_key in _PREPARED_CALLABLE_KEYS:
+            return
+    prepare()
+    with _PREPARED_CALLABLE_LOCK:
+        _PREPARED_CALLABLE_KEYS.add(prepare_key)
 
 
 def _callable_name(func: Any) -> str:

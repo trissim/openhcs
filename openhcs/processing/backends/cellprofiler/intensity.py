@@ -183,34 +183,109 @@ def _object_intensity_quantiles(
     label_to_index: np.ndarray,
     counts: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    valid = np.isfinite(image) & (labels > 0)
-    if not np.any(valid):
-        zeros = np.zeros(object_labels.size, dtype=float)
-        return zeros.copy(), zeros.copy(), zeros.copy(), zeros.copy()
-
-    values = image[valid]
-    value_labels = labels[valid]
-    order = np.lexsort((values, value_labels))
-    sorted_values = np.ascontiguousarray(values[order], dtype=np.float64)
-    sorted_labels = np.ascontiguousarray(value_labels[order], dtype=np.int64)
-
-    starts = np.full(object_labels.size, -1, dtype=np.int64)
-    _group_starts_numba(sorted_labels, label_to_index, starts)
-    lower, median, upper = _quartiles_from_sorted_numba(
-        sorted_values,
-        starts,
-        counts,
+    return _object_intensity_quantiles_grouped_numba(
+        image,
+        labels,
+        label_to_index,
+        counts.astype(np.int64, copy=False),
     )
 
-    median_per_pixel = median[label_to_index[value_labels]]
-    mad_values = np.abs(values - median_per_pixel)
-    mad_order = np.lexsort((mad_values, value_labels))
-    sorted_mad_values = np.ascontiguousarray(mad_values[mad_order], dtype=np.float64)
-    sorted_mad_labels = np.ascontiguousarray(value_labels[mad_order], dtype=np.int64)
-    mad_starts = np.full(object_labels.size, -1, dtype=np.int64)
-    _group_starts_numba(sorted_mad_labels, label_to_index, mad_starts)
-    mad = _median_from_sorted_numba(sorted_mad_values, mad_starts, counts)
+
+@njit(cache=True)
+def _object_intensity_quantiles_grouped_numba(
+    image: np.ndarray,
+    labels: np.ndarray,
+    label_to_index: np.ndarray,
+    counts: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    object_count = counts.size
+    lower = np.zeros(object_count, dtype=np.float64)
+    median = np.zeros(object_count, dtype=np.float64)
+    upper = np.zeros(object_count, dtype=np.float64)
+    mad = np.zeros(object_count, dtype=np.float64)
+
+    total_count = 0
+    for index in range(object_count):
+        total_count += int(counts[index])
+    if total_count <= 0:
+        return lower, median, upper, mad
+
+    offsets = np.empty(object_count + 1, dtype=np.int64)
+    offsets[0] = 0
+    for index in range(object_count):
+        offsets[index + 1] = offsets[index] + int(counts[index])
+
+    write_offsets = offsets[:-1].copy()
+    values = np.empty(total_count, dtype=np.float64)
+    height, width = image.shape
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label <= 0 or label >= label_to_index.size:
+                continue
+            index = int(label_to_index[label])
+            if index < 0:
+                continue
+            value = float(image[y, x])
+            if not np.isfinite(value):
+                continue
+            offset = write_offsets[index]
+            values[offset] = value
+            write_offsets[index] = offset + 1
+
+    for index in range(object_count):
+        start = int(offsets[index])
+        count = int(counts[index])
+        if count <= 0:
+            continue
+        sorted_group = np.sort(values[start:start + count].copy())
+        lower[index] = _quantile_from_dense_sorted_group(sorted_group, 0.25)
+        median[index] = _quantile_from_dense_sorted_group(sorted_group, 0.5)
+        upper[index] = _quantile_from_dense_sorted_group(sorted_group, 0.75)
+
+    write_offsets = offsets[:-1].copy()
+    deviations = np.empty(total_count, dtype=np.float64)
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label <= 0 or label >= label_to_index.size:
+                continue
+            index = int(label_to_index[label])
+            if index < 0:
+                continue
+            value = float(image[y, x])
+            if not np.isfinite(value):
+                continue
+            offset = write_offsets[index]
+            deviations[offset] = abs(value - median[index])
+            write_offsets[index] = offset + 1
+
+    for index in range(object_count):
+        start = int(offsets[index])
+        count = int(counts[index])
+        if count <= 0:
+            continue
+        sorted_group = np.sort(deviations[start:start + count].copy())
+        mad[index] = _quantile_from_dense_sorted_group(sorted_group, 0.5)
+
     return lower, median, upper, mad
+
+
+@njit(cache=True)
+def _quantile_from_dense_sorted_group(
+    sorted_values: np.ndarray,
+    fraction: float,
+) -> float:
+    count = sorted_values.size
+    if count <= 0:
+        return 0.0
+    qindex = count * fraction
+    low = int(qindex)
+    qfraction = qindex - low
+    last = count - 1
+    if low < last:
+        return sorted_values[low] * (1.0 - qfraction) + sorted_values[low + 1] * qfraction
+    return sorted_values[last]
 
 
 @njit(cache=True)

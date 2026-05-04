@@ -789,6 +789,23 @@ def test_legacy_fast_intensity_zernike_backend_matches_centrosome_provider() -> 
     )
 
 
+def test_zernike_label_geometry_cache_reuses_equal_label_values() -> None:
+    from openhcs.processing.backends.cellprofiler import zernike
+
+    labels = np.zeros((12, 12), dtype=np.int32)
+    labels[2:6, 2:6] = 1
+    labels[7:10, 7:11] = 2
+    object_ids = np.array([1, 2], dtype=np.int32)
+    zernike._ZERNIKE_LABEL_GEOMETRY_CACHE.clear()
+
+    first = zernike._zernike_label_geometry(labels, object_ids)
+    second = zernike._zernike_label_geometry(labels.copy(), object_ids.copy())
+
+    assert second is first
+    assert len(zernike._ZERNIKE_LABEL_GEOMETRY_CACHE) == 1
+    zernike._ZERNIKE_LABEL_GEOMETRY_CACHE.clear()
+
+
 def test_zernike_numba_provider_is_not_registered_until_pure() -> None:
     import pytest
 

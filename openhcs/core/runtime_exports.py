@@ -549,9 +549,25 @@ def _table_outputs_from_roots(output_roots: tuple[Path, ...]) -> tuple[Path, ...
 
 def _image_outputs(output_root: Path, image_dir_name: str) -> tuple[Path, ...]:
     image_dir = Path(output_root) / image_dir_name
-    if not image_dir.exists():
-        return ()
-    return tuple(path for path in sorted(image_dir.iterdir()) if path.is_file())
+    if image_dir.exists():
+        return tuple(path for path in sorted(image_dir.iterdir()) if path.is_file())
+    return tuple(
+        path
+        for path in sorted(Path(output_root).rglob("*"))
+        if path.is_file() and _is_image_output_path(path)
+    )
+
+
+def _is_image_output_path(path: Path) -> bool:
+    return path.suffix.lower() in {
+        ".bmp",
+        ".jpeg",
+        ".jpg",
+        ".npy",
+        ".png",
+        ".tif",
+        ".tiff",
+    }
 
 
 def _image_outputs_from_roots(

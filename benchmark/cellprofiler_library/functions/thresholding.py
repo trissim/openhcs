@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import logging
+import os
+import time
 
 import numpy as np
 import scipy.interpolate
@@ -17,6 +20,19 @@ CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE = 1.3488
 CELLPROFILER_MULTI_OTSU_BINS = 4096
 CELLPROFILER_LOG_MULTI_OTSU_BINS = 128
 CELLPROFILER_LOG_MULTI_OTSU_BIN_CENTER_OFFSET = 0.0
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+logger = logging.getLogger(__name__)
+
+
+def _profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_profile(label: str, seconds: float, **fields: object) -> None:
+    if not _profile_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
 class CellProfilerThresholdAssignment(Enum):
@@ -586,6 +602,8 @@ def cellprofiler_threshold(
     smooth_threshold_application: bool = True,
 ) -> tuple[np.ndarray, float, float]:
     """Apply CellProfiler threshold semantics without a CP workspace."""
+    total_started_at = time.perf_counter()
+    phase_started_at = time.perf_counter()
     threshold_mask = None if mask is None else np.asarray(mask, dtype=bool)
     threshold_scope = _coerce_function_enum(
         CellProfilerThresholdScope,
@@ -611,6 +629,11 @@ def cellprofiler_threshold(
         CellProfilerVarianceMethod,
         variance_method,
     )
+    _log_profile(
+        "threshold_coerce_settings",
+        time.perf_counter() - phase_started_at,
+        function="cellprofiler_threshold",
+    )
 
     if not use_advanced_settings:
         threshold_scope = CellProfilerThresholdScope.GLOBAL
@@ -632,6 +655,7 @@ def cellprofiler_threshold(
         final_threshold: float | np.ndarray = float(manual_threshold)
         original_threshold = float(manual_threshold)
     else:
+        phase_started_at = time.perf_counter()
         threshold_kwargs = _threshold_method_kwargs(
             effective_method,
             lower_outlier_fraction=lower_outlier_fraction,
@@ -640,7 +664,14 @@ def cellprofiler_threshold(
             variance_method=variance_method,
             number_of_deviations=number_of_deviations,
         )
+        _log_profile(
+            "threshold_method_kwargs",
+            time.perf_counter() - phase_started_at,
+            function="cellprofiler_threshold",
+            method=effective_method.value,
+        )
         if threshold_scope is CellProfilerThresholdScope.ADAPTIVE:
+            phase_started_at = time.perf_counter()
             final_threshold = cellprofiler_get_adaptive_threshold(
                 threshold_image,
                 mask=threshold_mask,
@@ -653,6 +684,13 @@ def cellprofiler_threshold(
                 log_transform=log_transform,
                 **threshold_kwargs,
             )
+            _log_profile(
+                "threshold_adaptive_final",
+                time.perf_counter() - phase_started_at,
+                function="cellprofiler_threshold",
+                method=effective_method.value,
+            )
+            phase_started_at = time.perf_counter()
             original_threshold = float(
                 np.mean(
                     np.atleast_1d(
@@ -679,6 +717,12 @@ def cellprofiler_threshold(
                     )
                 )
             )
+            _log_profile(
+                "threshold_adaptive_original",
+                time.perf_counter() - phase_started_at,
+                function="cellprofiler_threshold",
+                method=effective_method.value,
+            )
         else:
             selection_image, selection_kwargs = _global_threshold_selection_image(
                 effective_method=effective_method,
@@ -686,6 +730,7 @@ def cellprofiler_threshold(
                 image=image,
                 threshold_image=threshold_image,
             )
+            phase_started_at = time.perf_counter()
             raw_threshold = cellprofiler_get_global_threshold(
                 selection_image,
                 mask=threshold_mask,
@@ -698,6 +743,14 @@ def cellprofiler_threshold(
                 **threshold_kwargs,
                 **selection_kwargs,
             )
+            _log_profile(
+                "threshold_global_raw",
+                time.perf_counter() - phase_started_at,
+                function="cellprofiler_threshold",
+                method=effective_method.value,
+                pixels=np.asarray(selection_image).size,
+            )
+            phase_started_at = time.perf_counter()
             final_threshold = _clip_threshold(
                 raw_threshold * threshold_correction_factor,
                 threshold_min,
@@ -708,24 +761,49 @@ def cellprofiler_threshold(
                 if not use_advanced_settings
                 else _clip_threshold(raw_threshold, 0, 1)
             )
+            _log_profile(
+                "threshold_clip",
+                time.perf_counter() - phase_started_at,
+                function="cellprofiler_threshold",
+                method=effective_method.value,
+            )
 
     application_image = image
     application_smoothing = (
         threshold_smoothing_scale if smooth_threshold_application else 0.0
     )
+    phase_started_at = time.perf_counter()
     binary, _sigma = cellprofiler_apply_threshold(
         application_image,
         threshold=final_threshold,
         mask=threshold_mask,
         smoothing=application_smoothing,
     )
+    _log_profile(
+        "threshold_apply",
+        time.perf_counter() - phase_started_at,
+        function="cellprofiler_threshold",
+        smoothing=float(application_smoothing),
+    )
+    phase_started_at = time.perf_counter()
     if threshold_mask is not None:
         binary = np.asarray(binary, dtype=bool) & threshold_mask
-    return (
+    result = (
         binary.astype(bool),
         float(np.mean(np.atleast_1d(final_threshold))),
         float(original_threshold),
     )
+    _log_profile(
+        "threshold_finalize",
+        time.perf_counter() - phase_started_at,
+        function="cellprofiler_threshold",
+    )
+    _log_profile(
+        "threshold_total",
+        time.perf_counter() - total_started_at,
+        function="cellprofiler_threshold",
+    )
+    return result
 
 
 def cellprofiler_threshold_diagnostics(
@@ -737,16 +815,24 @@ def cellprofiler_threshold_diagnostics(
     mask: np.ndarray | None = None,
 ) -> CellProfilerThresholdDiagnostics:
     """Return CellProfiler's image-level threshold quality measurements."""
+    total_started_at = time.perf_counter()
+    phase_started_at = time.perf_counter()
     measurement_mask = (
         np.ones_like(binary, dtype=bool)
         if mask is None
         else np.asarray(mask, dtype=bool)
     )
     binary_image = np.asarray(binary, dtype=bool)
+    _log_profile(
+        "threshold_diagnostics_prepare",
+        time.perf_counter() - phase_started_at,
+        function="cellprofiler_threshold_diagnostics",
+    )
     from openhcs.processing.backends.cellprofiler.thresholding import (
         ThresholdDiagnosticsBackendStrategy,
     )
 
+    phase_started_at = time.perf_counter()
     weighted_variance, sum_of_entropies = (
         ThresholdDiagnosticsBackendStrategy.for_memory_type().diagnostics(
             image,
@@ -754,9 +840,26 @@ def cellprofiler_threshold_diagnostics(
             binary_image,
         )
     )
-    return CellProfilerThresholdDiagnostics(
+    _log_profile(
+        "threshold_diagnostics_backend",
+        time.perf_counter() - phase_started_at,
+        function="cellprofiler_threshold_diagnostics",
+    )
+    phase_started_at = time.perf_counter()
+    result = CellProfilerThresholdDiagnostics(
         final_threshold=float(final_threshold),
         original_threshold=float(original_threshold),
         weighted_variance=float(np.mean(np.atleast_1d(weighted_variance))),
         sum_of_entropies=float(np.mean(np.atleast_1d(sum_of_entropies))),
     )
+    _log_profile(
+        "threshold_diagnostics_finalize",
+        time.perf_counter() - phase_started_at,
+        function="cellprofiler_threshold_diagnostics",
+    )
+    _log_profile(
+        "threshold_diagnostics_total",
+        time.perf_counter() - total_started_at,
+        function="cellprofiler_threshold_diagnostics",
+    )
+    return result

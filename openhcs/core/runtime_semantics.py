@@ -483,6 +483,7 @@ def dense_object_label_id_domain(
         count = int(resolved_count)
         if count < 0:
             raise ValueError("declared_object_count cannot be negative.")
+        return tuple(range(1, count + 1))
     else:
         count = 0
 
@@ -559,16 +560,14 @@ def object_label_parent_child_payload(
             context_array,
         )
 
-    parent_ids: list[int] = []
-    child_ids: list[int] = []
-    for child_id in sorted(int(label) for label in np.unique(child_array) if label > 0):
-        parent_ids.append(
-            _dominant_positive_label(parent_array[context_array == child_id])
-        )
-        child_ids.append(child_id)
+    child_ids_array, parent_ids_array = _dominant_parent_ids_by_child(
+        parent_array,
+        child_array,
+        context_array,
+    )
     return ParentChildRelationshipPayload(
-        parent_ids=tuple(parent_ids),
-        child_ids=tuple(child_ids),
+        parent_ids=tuple(int(parent_id) for parent_id in parent_ids_array),
+        child_ids=tuple(int(child_id) for child_id in child_ids_array),
     )
 
 
@@ -642,6 +641,51 @@ def _dominant_positive_label(labels: Any) -> int:
         return 0
     counts = np.bincount(positive_labels)
     return int(np.argmax(counts))
+
+
+def _dominant_parent_ids_by_child(
+    parent_array: Any,
+    child_array: Any,
+    context_array: Any,
+) -> tuple[Any, Any]:
+    import numpy as np
+
+    children = np.asarray(child_array, dtype=np.int64)
+    parents = np.asarray(parent_array, dtype=np.int64)
+    context = np.asarray(context_array, dtype=np.int64)
+
+    child_ids = np.unique(children[children > 0])
+    if child_ids.size == 0:
+        empty = np.zeros(0, dtype=np.int64)
+        return empty, empty
+
+    max_parent = int(np.max(parents)) if parents.size else 0
+    parent_ids = np.zeros(child_ids.size, dtype=np.int64)
+    valid = (context > 0) & (parents > 0)
+    if not np.any(valid) or max_parent <= 0:
+        return child_ids, parent_ids
+
+    stride = max_parent + 1
+    pair_keys = context[valid] * stride + parents[valid]
+    counts = np.bincount(pair_keys)
+    child_to_index = np.full(int(child_ids[-1]) + 1, -1, dtype=np.int64)
+    child_to_index[child_ids] = np.arange(child_ids.size, dtype=np.int64)
+
+    nonzero_keys = np.flatnonzero(counts)
+    best_counts = np.zeros(child_ids.size, dtype=np.int64)
+    for key in nonzero_keys:
+        child_id = key // stride
+        if child_id >= child_to_index.size:
+            continue
+        output_index = child_to_index[child_id]
+        if output_index < 0:
+            continue
+        count = counts[key]
+        parent_id = key % stride
+        if count > best_counts[output_index]:
+            best_counts[output_index] = count
+            parent_ids[output_index] = parent_id
+    return child_ids, parent_ids
 
 
 def _require_name(value: str, field_name: str) -> None:

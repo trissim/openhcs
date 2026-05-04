@@ -316,6 +316,7 @@ class _RuntimeRowProjectionContext:
     known_source_names: tuple[str, ...]
     required_keys: _RuntimeRequiredMeasurementKeys
     table_padding_group: str
+    image_number_offset: float
     schema_cache: _RuntimeMeasurementRowSchemaCache
     key_cache: _RuntimeMeasurementFeatureKeyCache
     long_form_key_cache: _RuntimeMeasurementLongFormKeyCache
@@ -333,6 +334,7 @@ class _RuntimeRowProjectionContext:
         known_source_names: tuple[str, ...],
         required_keys: _RuntimeRequiredMeasurementKeys,
         table_padding_group: str,
+        image_number_offset: float,
         schema_cache: _RuntimeMeasurementRowSchemaCache,
         key_cache: _RuntimeMeasurementFeatureKeyCache,
         long_form_key_cache: _RuntimeMeasurementLongFormKeyCache,
@@ -347,6 +349,7 @@ class _RuntimeRowProjectionContext:
             known_source_names=known_source_names,
             required_keys=required_keys,
             table_padding_group=table_padding_group,
+            image_number_offset=image_number_offset,
             schema_cache=schema_cache,
             key_cache=key_cache,
             long_form_key_cache=long_form_key_cache,
@@ -363,6 +366,7 @@ _LongFormMeasurementContext = _frozen_slots_record(
         ("policy", RuntimeEquivalencePolicy),
         ("source_name", str | None),
         ("known_source_names", tuple[str, ...]),
+        ("image_number_offset", float),
     ),
 )
 
@@ -374,6 +378,7 @@ class _CachedLongFormMeasurementContext:
     policy: RuntimeEquivalencePolicy
     source_name: str | None
     known_source_names: tuple[str, ...]
+    image_number_offset: float
     feature_indexes: tuple[int, ...]
     value_indexes: tuple[int, ...]
     key_cache: _RuntimeMeasurementLongFormKeyCache
@@ -392,6 +397,7 @@ class _CachedLongFormMeasurementContext:
             context.policy,
             context.source_name,
             context.known_source_names,
+            context.image_number_offset,
             feature_indexes,
             value_indexes,
             context.long_form_key_cache,
@@ -1725,6 +1731,7 @@ def _record_static_wide_measurement_table_snapshot(
         for index in feature_column_indexes
     }
 
+    image_number_offset = _table_image_number_offset(table.header, table.rows)
     for row in table.rows:
         row_mapping = dict(zip(table.header, row, strict=True))
         row_subject = _measurement_subject_from_export_row(table.path, row_mapping)
@@ -2163,6 +2170,24 @@ def _table_image_number_offset(
     return min(image_numbers) - 1.0
 
 
+def _runtime_table_image_number_offset(rows: tuple[object, ...]) -> float:
+    image_numbers: list[float] = []
+    for row in rows:
+        row_mapping = measurement_row_mapping(row)
+        image_number = _first_row_value(row_mapping, ("image_number",))
+        if image_number is None:
+            continue
+        try:
+            numeric_image_number = float(str(image_number).strip())
+        except ValueError:
+            continue
+        if math.isfinite(numeric_image_number) and numeric_image_number > 0:
+            image_numbers.append(numeric_image_number)
+    if not image_numbers:
+        return 0.0
+    return min(image_numbers) - 1.0
+
+
 def _normalize_image_number_reference_measurement_value(
     field_name: str,
     value: object,
@@ -2318,6 +2343,7 @@ def _measurement_facts_from_table_snapshot(
         known_source_names=known_source_names,
     )
 
+    image_number_offset = _table_image_number_offset(table.header, table.rows)
     facts: _RuntimeMeasurementFactList = []
     for row in table.rows:
         row_mapping = dict(zip(table.header, row, strict=True))
@@ -2341,6 +2367,7 @@ def _measurement_facts_from_table_snapshot(
                 policy,
                 source_name,
                 known_source_names,
+                image_number_offset,
             )
         )
         if long_form_fact is not None:
@@ -2557,7 +2584,9 @@ def _measurement_facts_from_runtime_table(
     aggregate_input_key_cache: _AggregateMeanKeyCache = {}
     table_subject = RuntimeMeasurementSubjectKey.from_subject(table.subject)
     table_padding_group = _normalize_identifier(table.name) or "measurements"
-    for row in measurement_rows((table,)):
+    table_rows = tuple(measurement_rows((table,)))
+    image_number_offset = _runtime_table_image_number_offset(table_rows)
+    for row in table_rows:
         row_mapping = measurement_row_mapping(row)
         header = tuple(row_mapping)
         row_values = tuple(row_mapping.get(field_name) for field_name in header)
@@ -2589,6 +2618,7 @@ def _measurement_facts_from_runtime_table(
             known_source_names=context.known_source_names,
             required_keys=row_required_keys,
             table_padding_group=table_padding_group,
+            image_number_offset=image_number_offset,
             schema_cache=schema_cache,
             key_cache=key_cache,
             long_form_key_cache=long_form_key_cache,
@@ -3355,6 +3385,11 @@ def _long_form_measurement_fact(
         return None
     if _is_aggregate_image_number_reference_measurement_field(str(feature_name)):
         return None
+    value = _normalize_image_number_reference_measurement_value(
+        str(feature_name),
+        value,
+        context.image_number_offset,
+    )
     aggregate_key = _aggregate_measurement_feature_key(
         str(feature_name),
         context.subject,
@@ -3396,6 +3431,11 @@ def _long_form_measurement_fact_cached(
     feature_text = str(feature_name)
     if _is_aggregate_image_number_reference_measurement_field(feature_text):
         return None
+    value = _normalize_image_number_reference_measurement_value(
+        feature_text,
+        value,
+        context.image_number_offset,
+    )
     cache_key = (context.subject, context.source_name, feature_text)
     key = context.key_cache.get(cache_key, _CACHE_MISS)
     if key is _CACHE_MISS:
@@ -4292,7 +4332,9 @@ def _object_measurement_values_by_label(
         object_id_field = measurement_table_object_id_field(table)
         table_source_name = table.source_image_name
         table_padding_group = _normalize_identifier(table.name) or "measurements"
-        for row in measurement_rows((table,)):
+        table_rows = tuple(measurement_rows((table,)))
+        image_number_offset = _runtime_table_image_number_offset(table_rows)
+        for row in table_rows:
             row_mapping = measurement_row_mapping(row)
             try:
                 object_label = measurement_object_label(
@@ -4324,6 +4366,7 @@ def _object_measurement_values_by_label(
                 known_source_names=known_source_names,
                 required_keys=row_required_keys,
                 table_padding_group=table_padding_group,
+                image_number_offset=image_number_offset,
                 schema_cache=schema_cache,
                 key_cache=key_cache,
                 long_form_key_cache=long_form_key_cache,

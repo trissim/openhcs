@@ -27,11 +27,24 @@ from openhcs.core.steps.function_outputs import finalize_function_step_outputs
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 from openhcs.core.steps.function_runtime import (
     PatternGroupExecutionRequest,
+    prepare_compiled_function_group,
     _process_single_pattern_group,
 )
 
 
 logger = logging.getLogger(__name__)
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+
+
+def _runtime_profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_step_profile(label: str, seconds: float, **fields: Any) -> None:
+    if not _runtime_profile_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
 def _filter_patterns_by_component(
@@ -97,15 +110,51 @@ class FunctionStepExecutor:
         step_started_at = time.perf_counter()
         self._log_execution_start()
 
+        phase_started_at = time.perf_counter()
         patterns_by_axis = self._detect_patterns()
+        _log_step_profile(
+            "step_detect_patterns",
+            time.perf_counter() - phase_started_at,
+            step=plan.step_index,
+            step_name=plan.step_name,
+        )
         self._log_discovered_patterns(patterns_by_axis)
+        phase_started_at = time.perf_counter()
         self._convert_input_if_needed()
+        _log_step_profile(
+            "step_convert_input",
+            time.perf_counter() - phase_started_at,
+            step=plan.step_index,
+            step_name=plan.step_name,
+        )
         self._require_patterns(patterns_by_axis)
         self._apply_sequential_filter(patterns_by_axis)
 
+        phase_started_at = time.perf_counter()
         grouped_patterns = self._prepare_groups(patterns_by_axis)
+        _log_step_profile(
+            "step_prepare_groups",
+            time.perf_counter() - phase_started_at,
+            step=plan.step_index,
+            step_name=plan.step_name,
+        )
         total_groups = self._count_pattern_groups(grouped_patterns)
+        phase_started_at = time.perf_counter()
         self._preload_inputs_if_needed(grouped_patterns)
+        _log_step_profile(
+            "step_preload_inputs",
+            time.perf_counter() - phase_started_at,
+            step=plan.step_index,
+            step_name=plan.step_name,
+        )
+        phase_started_at = time.perf_counter()
+        self._prepare_callables(grouped_patterns)
+        _log_step_profile(
+            "step_prepare_callables",
+            time.perf_counter() - phase_started_at,
+            step=plan.step_index,
+            step_name=plan.step_name,
+        )
         execution_started_at = time.perf_counter()
         self._execute_pattern_groups(
             grouped_patterns,
@@ -319,7 +368,7 @@ class FunctionStepExecutor:
 
         process = psutil.Process(os.getpid())
         mem_before_mb = process.memory_info().rss / 1024 / 1024
-        logger.info("Memory before preload: %.1f MB RSS", mem_before_mb)
+        logger.debug("Memory before preload: %.1f MB RSS", mem_before_mb)
 
         if self.context.current_sequential_combination:
             patterns_to_preload = [
@@ -352,11 +401,22 @@ class FunctionStepExecutor:
             )
 
         mem_after_mb = process.memory_info().rss / 1024 / 1024
-        logger.info(
+        logger.debug(
             "Memory after preload: %.1f MB RSS (+%.1f MB)",
             mem_after_mb,
             mem_after_mb - mem_before_mb,
         )
+
+    def _prepare_callables(self, grouped_patterns: Mapping[Any, Sequence[Any]]) -> None:
+        prepared_group_keys: set[str] = set()
+        for component_value in grouped_patterns:
+            compiled_group = self.plan.compiled_function_pattern.group_for_component(
+                component_value
+            )
+            if compiled_group is None or compiled_group.group_key in prepared_group_keys:
+                continue
+            prepare_compiled_function_group(compiled_group)
+            prepared_group_keys.add(compiled_group.group_key)
 
     def _execute_pattern_groups(
         self,

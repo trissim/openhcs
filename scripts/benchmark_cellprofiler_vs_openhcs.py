@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import logging
 import os
 from collections.abc import Sequence
 from datetime import datetime
@@ -29,6 +30,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Generate CP-vs-OpenHCS runtime and parity benchmark artifacts."
     )
+    parser.add_argument(
+        "--log-level",
+        default=os.environ.get("OPENHCS_BENCHMARK_LOG_LEVEL", "WARNING"),
+        help="Python logging level for benchmark harness and OpenHCS runtime logs.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run_parser = subparsers.add_parser("run", help="Run benchmark cases.")
@@ -39,6 +45,11 @@ def main() -> int:
     run_parser.add_argument("--continue-on-error", action="store_true")
     run_parser.add_argument("--suite-id")
     run_parser.add_argument("--repeats", type=int, default=1)
+    run_parser.add_argument(
+        "--log-level",
+        default=os.environ.get("OPENHCS_BENCHMARK_LOG_LEVEL", "WARNING"),
+        help="Python logging level for benchmark harness and OpenHCS runtime logs.",
+    )
     run_parser.add_argument(
         "--speedup-target",
         type=float,
@@ -65,11 +76,21 @@ def main() -> int:
     manifest_parser.add_argument("--value-only", action="store_true")
     manifest_parser.add_argument("--microscope-type")
     manifest_parser.add_argument("--cellprofiler-timeout-seconds", type=float)
+    manifest_parser.add_argument(
+        "--log-level",
+        default=os.environ.get("OPENHCS_BENCHMARK_LOG_LEVEL", "WARNING"),
+        help="Python logging level for benchmark harness and OpenHCS runtime logs.",
+    )
     manifest_parser.set_defaults(handler=_official_cp3_manifest_command)
 
     plot_parser = subparsers.add_parser("plot", help="Plot benchmark CSV output.")
     plot_parser.add_argument("--summary-csv", type=Path, required=True)
     plot_parser.add_argument("--output-dir", type=Path, required=True)
+    plot_parser.add_argument(
+        "--log-level",
+        default=os.environ.get("OPENHCS_BENCHMARK_LOG_LEVEL", "WARNING"),
+        help="Python logging level for benchmark harness and OpenHCS runtime logs.",
+    )
     plot_parser.set_defaults(handler=_plot_command)
     args = parser.parse_args()
     return args.handler(args)
@@ -77,6 +98,7 @@ def main() -> int:
 
 def _run_command(args: argparse.Namespace) -> int:
     _configure_reproducible_runtime_env()
+    _configure_benchmark_logging(args.log_level)
     from benchmark.cellprofiler_comparison import (
         load_comparison_cases,
         run_comparison_suite,
@@ -102,6 +124,7 @@ def _run_command(args: argparse.Namespace) -> int:
 
 def _official_cp3_manifest_command(args: argparse.Namespace) -> int:
     _configure_reproducible_runtime_env()
+    _configure_benchmark_logging(args.log_level)
     cppipe_dir = args.examples_root / "CellProfiler3Pipelines"
     if not cppipe_dir.is_dir():
         raise FileNotFoundError(f"CellProfiler3Pipelines directory not found: {cppipe_dir}")
@@ -155,6 +178,7 @@ def _official_cellprofiler3_source_name_for_pipeline(
 
 def _plot_command(args: argparse.Namespace) -> int:
     _configure_reproducible_runtime_env()
+    _configure_benchmark_logging(args.log_level)
     plot_summary(args.summary_csv, args.output_dir)
     print(f"figures={args.output_dir}")
     return 0
@@ -302,6 +326,23 @@ def _configure_reproducible_runtime_env() -> None:
     os.environ.setdefault("OPENHCS_CPU_ONLY", "true")
     os.environ.setdefault("OPENHCS_SUBPROCESS_NO_GPU", "1")
     os.environ.setdefault("POLYSTORE_SUBPROCESS_NO_GPU", "1")
+
+
+def _configure_benchmark_logging(log_level: str) -> None:
+    """Configure benchmark logging before importing OpenHCS runtime modules."""
+    level = getattr(logging, log_level.upper(), None)
+    if not isinstance(level, int):
+        raise ValueError(f"Unknown log level: {log_level!r}")
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        logging.basicConfig(
+            level=level,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
+        return
+    root_logger.setLevel(level)
+    for handler in root_logger.handlers:
+        handler.setLevel(level)
 
 
 if __name__ == "__main__":

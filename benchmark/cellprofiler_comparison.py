@@ -42,6 +42,8 @@ SPEEDUP_FIELD = "speedup"
 TOTAL_PHASE_SPEEDUP_FIELD = "total_phase_speedup"
 SPEEDUP_TARGET_FIELD = "speedup_target"
 MEETS_SPEEDUP_TARGET_FIELD = "meets_speedup_target"
+MEETS_EXECUTION_SPEEDUP_TARGET_FIELD = "meets_execution_speedup_target"
+MEETS_TOTAL_PHASE_SPEEDUP_TARGET_FIELD = "meets_total_phase_speedup_target"
 PARITY_ACCURACY_FIELD = "parity_accuracy"
 NATIVE_CACHED_FIELD = "native_cached"
 OPENHCS_CACHED_FIELD = "openhcs_cached"
@@ -367,6 +369,13 @@ def _summary_csv_rows(
         median_total_phase_speedup = _median_present(
             observation.total_phase_speedup for observation in case_observations
         )
+        meets_execution_speedup_target = (
+            median_speedup is not None and median_speedup >= speedup_target
+        )
+        meets_total_phase_speedup_target = (
+            median_total_phase_speedup is not None
+            and median_total_phase_speedup >= speedup_target
+        )
         yield {
             CASE_NAME_FIELD: case_name,
             N_FIELD: len(case_observations),
@@ -392,10 +401,10 @@ def _summary_csv_rows(
             MEDIAN_SPEEDUP_FIELD: median_speedup,
             MEDIAN_TOTAL_PHASE_SPEEDUP_FIELD: median_total_phase_speedup,
             SPEEDUP_TARGET_FIELD: speedup_target,
+            MEETS_EXECUTION_SPEEDUP_TARGET_FIELD: meets_execution_speedup_target,
+            MEETS_TOTAL_PHASE_SPEEDUP_TARGET_FIELD: meets_total_phase_speedup_target,
             MEETS_SPEEDUP_TARGET_FIELD: (
-                median_speedup is not None and median_speedup >= speedup_target
-                and median_total_phase_speedup is not None
-                and median_total_phase_speedup >= speedup_target
+                meets_execution_speedup_target and meets_total_phase_speedup_target
             ),
             MIN_PARITY_ACCURACY_FIELD: min(
                 observation.parity_accuracy for observation in case_observations
@@ -453,6 +462,8 @@ def _summary_table(speedup_target: float) -> CsvTableSpec:
             MEDIAN_SPEEDUP_FIELD,
             MEDIAN_TOTAL_PHASE_SPEEDUP_FIELD,
             SPEEDUP_TARGET_FIELD,
+            MEETS_EXECUTION_SPEEDUP_TARGET_FIELD,
+            MEETS_TOTAL_PHASE_SPEEDUP_TARGET_FIELD,
             MEETS_SPEEDUP_TARGET_FIELD,
             MIN_PARITY_ACCURACY_FIELD,
         ),
@@ -530,8 +541,8 @@ def _run_comparison_case(
         repetition=repetition,
     )
     if discard_openhcs_outputs:
-        _discard_openhcs_benchmark_tree(
-            Path(observation.openhcs.output_path),
+        _discard_successful_openhcs_benchmark_tree(
+            observation,
             suite_output_root=output_root,
         )
     return observation
@@ -757,6 +768,20 @@ def _discard_openhcs_benchmark_tree(
             f"{target} not under {suite_root}"
         ) from exc
     shutil.rmtree(target)
+
+
+def _discard_successful_openhcs_benchmark_tree(
+    observation: CellProfilerComparisonObservation,
+    *,
+    suite_output_root: Path,
+) -> None:
+    """Delete successful OpenHCS outputs while preserving failed debug artifacts."""
+    if not observation.openhcs.success:
+        return
+    _discard_openhcs_benchmark_tree(
+        Path(observation.openhcs.output_path),
+        suite_output_root=suite_output_root,
+    )
 
 
 def _marked_openhcs_output_tree(output_path: Path, suite_output_root: Path) -> Path:

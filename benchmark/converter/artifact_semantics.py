@@ -317,7 +317,7 @@ class MaterializationOptionSpecialOutputKindClassifierSpec:
 def _declare_materialization_option_classifier(
     spec: MaterializationOptionSpecialOutputKindClassifierSpec,
 ) -> None:
-    type(
+    globals()[spec.class_name] = type(
         spec.class_name,
         (MaterializationOptionSpecialOutputKindClassifier,),
         {

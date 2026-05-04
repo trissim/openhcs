@@ -22,7 +22,6 @@ from benchmark.cellprofiler_library.functions.measureobjectintensitydistribution
 from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
 )
-
 from .align_settings import align_bound_kwargs
 from .area_occupied_settings import area_occupied_bound_kwargs
 from .calculate_math_settings import calculate_math_bound_kwargs
