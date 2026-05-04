@@ -96,7 +96,7 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 from openhcs.processing.materialization import tabular_field_names_from_materialization
 
 from benchmark.cellprofiler_library import canonical_module_name, require_function
-from benchmark.cellprofiler_compat.measurement_scope import (
+from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
     CellProfilerMeasurementTargetScope,
     coerce_cellprofiler_measurement_target_scope,

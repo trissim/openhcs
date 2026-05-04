@@ -23,7 +23,7 @@ from openhcs.core.runtime_equivalence import (
     runtime_output_equivalence as _runtime_output_equivalence,
     runtime_reference_artifact_equivalence as _runtime_reference_artifact_equivalence,
 )
-from benchmark.cellprofiler_compat.measurement_dialect import (
+from openhcs.interop.cellprofiler.measurement_dialect import (
     CELLPROFILER_MEASUREMENT_DIALECT,
     cellprofiler_runtime_equivalence_policy,
 )

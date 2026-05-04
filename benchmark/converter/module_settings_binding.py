@@ -19,7 +19,7 @@ from benchmark.cellprofiler_library.functions.measureobjectintensitydistribution
     CenterChoice,
     ZernikeMode,
 )
-from benchmark.cellprofiler_compat.measurement_scope import (
+from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
 )
 

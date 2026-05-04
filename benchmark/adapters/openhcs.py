@@ -30,7 +30,7 @@ from benchmark.converter.execution_validation import (
     CPPipeExecutionValidationError,
     validate_cppipe_execution,
 )
-from benchmark.cellprofiler_compat.measurement_dialect import (
+from openhcs.interop.cellprofiler.measurement_dialect import (
     cellprofiler_runtime_equivalence_policy,
 )
 from benchmark.contracts.tool_adapter import (

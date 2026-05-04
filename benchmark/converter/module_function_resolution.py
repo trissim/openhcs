@@ -9,7 +9,7 @@ from typing import ClassVar
 from metaclass_registry import AutoRegisterMeta
 
 from benchmark.cellprofiler_library import canonical_module_name
-from benchmark.cellprofiler_compat.measurement_scope import (
+from openhcs.interop.cellprofiler.measurement_scope import (
     CellProfilerMeasurementTargetScope as MeasurementTargetScope,
 )
 
