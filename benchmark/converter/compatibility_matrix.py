@@ -11,8 +11,8 @@ from benchmark.cellprofiler_library import (
     canonical_module_name,
     get_contract,
     list_modules,
-    require_function,
 )
+from openhcs.processing.backends.cellprofiler import require_cellprofiler_function
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
@@ -292,7 +292,7 @@ def _cellprofiler_source_module_names(
 
 def _module_importable(module_name: str) -> bool:
     try:
-        require_function(module_name)
+        require_cellprofiler_function(module_name)
     except Exception:
         return False
     return True

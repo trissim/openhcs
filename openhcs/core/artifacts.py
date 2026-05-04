@@ -53,6 +53,11 @@ class ArtifactKind(str, Enum):
     MEASUREMENTS = ("measurements", ArtifactPayloadShape.TABLE)
     RELATIONSHIPS = ("relationships", ArtifactPayloadShape.TABLE)
     TABLE = ("table", ArtifactPayloadShape.TABLE)
+    SPATIAL_GRID = (
+        "spatial_grid",
+        ArtifactPayloadShape.MAPPING,
+        {"payload_description": "spatial grid mapping"},
+    )
     METADATA = (
         "metadata",
         ArtifactPayloadShape.MAPPING,

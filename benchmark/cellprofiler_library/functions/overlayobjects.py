@@ -61,13 +61,9 @@ def overlay_objects(
     n_labels = max_label + 1
     
     # Create colormap colors
-    try:
-        from matplotlib import colormaps
-        cmap = colormaps.get_cmap(colormap)
-    except (ImportError, AttributeError):
-        # Fallback for older matplotlib versions
-        import matplotlib.pyplot as plt
-        cmap = plt.cm.get_cmap(colormap)
+    from matplotlib import colormaps
+
+    cmap = colormaps.get_cmap(colormap)
     
     # Generate colors for each label (skip 0 which is background)
     colors = []

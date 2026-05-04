@@ -10,12 +10,13 @@ from types import MappingProxyType
 from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
+import numpy as np
 
 from openhcs.constants.constants import Backend, FileFormat
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
-from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.memory import detect_memory_type
+from openhcs.core.aligned_image_payload import payload_slices_for_alignment
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     NamedSourceBinding,
@@ -41,17 +42,28 @@ from openhcs.core.runtime_stores import (
 )
 from openhcs.core.runtime_artifact_queries import (
     RuntimeArtifactQueryContext,
+    runtime_measurement_tables,
+    runtime_measurement_tables_for_scope,
     runtime_measurement_tables_for_object,
     runtime_relationship,
+    runtime_spatial_grid,
 )
+from openhcs.core.runtime_semantics import MeasurementScope, RelationshipSemantics
 from openhcs.core.runtime_values import (
     FieldSpec,
     MeasurementTable,
     NamedImage,
+    ObjectLabelPayload,
     ObjectLabelSet,
     ObjectLabelRepresentation,
-    RelationshipEndpoint,
     ObjectRelationship,
+    SpatialGrid,
+    compose_image_payload_metadata,
+    image_payload_data,
+    image_payload_mask,
+    image_payload_metadata,
+    image_payload_metadata_from_source,
+    image_payload_with_context,
     normalize_artifact_value,
 )
 
@@ -78,7 +90,7 @@ class CellProfilerRuntimeAdapter:
     group_key: str | None = None
     processing_context: Any | None = None
     filemanager: Any | None = None
-    backend: str = "memory"
+    backend: str = Backend.MEMORY.value
 
     def __post_init__(self) -> None:
         if not isinstance(self.runtime_value_store, RuntimeValueStore):
@@ -249,16 +261,31 @@ class CellProfilerRuntimeAdapter:
             ObjectLabelRepresentation.DENSE_LABELS
         ),
     ) -> StoredRuntimeValue:
-        return self._record_native_value(
-            name,
-            ArtifactKind.OBJECT_LABELS,
+        object_labels = (
             ObjectLabelSet(
+                name=name,
+                labels=labels.labels,
+                unedited_labels=labels.unedited_labels,
+                small_removed_labels=labels.small_removed_labels,
+                declared_object_count=labels.declared_object_count,
+                declared_object_ids=labels.declared_object_ids,
+                source_image_name=source_image_name,
+                dimensions=dimensions,
+                representation=representation,
+            )
+            if isinstance(labels, ObjectLabelPayload)
+            else ObjectLabelSet(
                 name=name,
                 labels=labels,
                 source_image_name=source_image_name,
                 dimensions=dimensions,
                 representation=representation,
-            ),
+            )
+        )
+        return self._record_native_value(
+            name,
+            ArtifactKind.OBJECT_LABELS,
+            object_labels,
         )
 
     def get_objects(
@@ -271,17 +298,7 @@ class CellProfilerRuntimeAdapter:
             name=name,
             kind=ArtifactKind.OBJECT_LABELS,
         )
-        schema = record.value.schema
-        return ObjectLabelSet(
-            name=name,
-            labels=record.value.data,
-            source_image_name=schema.source_image_name,
-            dimensions=schema.dimensions,
-            representation=(
-                schema.label_representation
-                or ObjectLabelRepresentation.DENSE_LABELS
-            ),
-        )
+        return ObjectLabelSet.from_runtime_value(record.value)
 
     def add_measurements(
         self,
@@ -338,6 +355,38 @@ class CellProfilerRuntimeAdapter:
             object_name,
         )
 
+    def measurement_tables(
+        self,
+        *,
+        group_key: str | None = None,
+        match_group: bool = True,
+    ) -> tuple[MeasurementTable, ...]:
+        """Return measurement tables visible to the current runtime scope."""
+        return runtime_measurement_tables(
+            self._measurement_query_context(
+                group_key=group_key,
+                match_group=match_group,
+            )
+        )
+
+    def measurement_tables_for_scope(
+        self,
+        scope: MeasurementScope,
+        *,
+        name: str | None = None,
+        group_key: str | None = None,
+        match_group: bool = True,
+    ) -> tuple[MeasurementTable, ...]:
+        """Return measurement tables for one generic semantic scope."""
+        return runtime_measurement_tables_for_scope(
+            self._measurement_query_context(
+                group_key=group_key,
+                match_group=match_group,
+            ),
+            scope,
+            name,
+        )
+
     def add_relationship(
         self,
         name: str,
@@ -346,6 +395,8 @@ class CellProfilerRuntimeAdapter:
         child_object_name: str,
         parent_ids: Any,
         child_ids: Any,
+        slice_indices: tuple[int, ...] = (),
+        slice_count: int | None = None,
     ) -> StoredRuntimeValue:
         self._query_context().resolve(
             name=parent_object_name,
@@ -355,24 +406,22 @@ class CellProfilerRuntimeAdapter:
             name=child_object_name,
             kind=ArtifactKind.OBJECT_LABELS,
         )
+        semantics = RelationshipSemantics.parent_child(
+            parent_object_name,
+            child_object_name,
+        )
         return self._record_native_value(
             name,
             ArtifactKind.RELATIONSHIPS,
             ObjectRelationship(
                 name=name,
-                source=RelationshipEndpoint(
-                    parent_object_name,
-                    role="parent",
-                    id_field="parent_id",
-                ),
-                target=RelationshipEndpoint(
-                    child_object_name,
-                    role="child",
-                    id_field="child_id",
-                ),
+                source=semantics.source,
+                target=semantics.target,
                 source_ids=parent_ids,
                 target_ids=child_ids,
-                relationship_type="parent_child",
+                relationship_type=semantics.relationship_type,
+                slice_indices=slice_indices,
+                slice_count=slice_count,
             ),
         )
 
@@ -383,6 +432,33 @@ class CellProfilerRuntimeAdapter:
         group_key: str | None = None,
     ) -> ObjectRelationship:
         return runtime_relationship(
+            self._query_context(group_key),
+            name=name,
+        )
+
+    def add_spatial_grid(
+        self,
+        name: str,
+        grid: SpatialGrid | Mapping[str, Any],
+    ) -> StoredRuntimeValue:
+        spatial_grid = (
+            grid.with_name(name)
+            if isinstance(grid, SpatialGrid)
+            else SpatialGrid.from_mapping(name, grid)
+        )
+        return self._record_native_value(
+            name,
+            ArtifactKind.SPATIAL_GRID,
+            spatial_grid,
+        )
+
+    def get_spatial_grid(
+        self,
+        name: str,
+        *,
+        group_key: str | None = None,
+    ) -> SpatialGrid:
+        return runtime_spatial_grid(
             self._query_context(group_key),
             name=name,
         )
@@ -434,6 +510,19 @@ class CellProfilerRuntimeAdapter:
             group_key,
         )
 
+    def _measurement_query_context(
+        self,
+        *,
+        group_key: str | None,
+        match_group: bool,
+    ) -> RuntimeArtifactQueryContext:
+        resolved_group_key = self.group_key if group_key is None else group_key
+        return RuntimeArtifactQueryContext(
+            self.runtime_value_store,
+            self.axis_id,
+            resolved_group_key if match_group else None,
+        )
+
     def _save_payload(self, data: Any, path: str) -> None:
         if self.filemanager is None:
             raise RuntimeError(
@@ -479,13 +568,14 @@ class SourceBindingMatchPlanRequest:
 class SourceBindingResolver(ABC, metaclass=AutoRegisterMeta):
     """Nominal family for resolving typed source bindings."""
 
-    __registry_key__ = "origin"
+    __registry_key__ = "origin_key"
     __skip_if_no_key__ = True
     origin: ClassVar[SourceBindingOrigin | None] = None
+    origin_key: ClassVar[str | None] = None
 
     @classmethod
     def for_origin(cls, origin: SourceBindingOrigin) -> "SourceBindingResolver":
-        return cls.__registry__[origin]()
+        return cls.__registry__[origin.value]()
 
     @abstractmethod
     def resolve_image(self, request: SourceBindingResolutionRequest) -> Any:
@@ -496,6 +586,7 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
     """Resolve named images directly from the current FunctionStep input."""
 
     origin = SourceBindingOrigin.STEP_INPUT
+    origin_key = SourceBindingOrigin.STEP_INPUT.value
 
     def resolve_image(self, request: SourceBindingResolutionRequest) -> Any:
         if not request.binding.requires_selector_resolution:
@@ -533,6 +624,7 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
     """Resolve named images from the original pipeline-start source universe."""
 
     origin = SourceBindingOrigin.PIPELINE_START
+    origin_key = SourceBindingOrigin.PIPELINE_START.value
 
     def resolve_image(self, request: SourceBindingResolutionRequest) -> Any:
         pipeline_input_files = request.adapter.source_binding_context.pipeline_input_files
@@ -655,7 +747,14 @@ class OpenHCSImageSourceFileLoader(PipelineStartSourceFileLoader):
             request.backend,
             **load_kwargs,
         )
-        return list(loaded_images)
+        return [
+            _source_payload_with_metadata(
+                payload,
+                source_path=source_path,
+                request=request,
+            )
+            for payload, source_path in zip(loaded_images, request.selected_paths)
+        ]
 
 
 class MatlabMatrixSourceFileLoader(PipelineStartSourceFileLoader):
@@ -667,7 +766,14 @@ class MatlabMatrixSourceFileLoader(PipelineStartSourceFileLoader):
         return Path(path).suffix.lower() == ".mat"
 
     def load_slices(self, request: PipelineStartSourceLoadRequest) -> list[Any]:
-        return [self._load_matrix(path) for path in request.selected_paths]
+        return [
+            _source_payload_with_metadata(
+                self._load_matrix(path),
+                source_path=path,
+                request=request,
+            )
+            for path in request.selected_paths
+        ]
 
     def _load_matrix(self, path: str) -> Any:
         from scipy.io import loadmat
@@ -700,7 +806,14 @@ class NumpyArraySourceFileLoader(PipelineStartSourceFileLoader):
         return Path(path).suffix.lower() in FileFormat.NUMPY.value
 
     def load_slices(self, request: PipelineStartSourceLoadRequest) -> list[Any]:
-        return [self._load_array(path) for path in request.selected_paths]
+        return [
+            _source_payload_with_metadata(
+                self._load_array(path),
+                source_path=path,
+                request=request,
+            )
+            for path in request.selected_paths
+        ]
 
     def _load_array(self, path: str) -> Any:
         import numpy as np
@@ -711,6 +824,28 @@ class NumpyArraySourceFileLoader(PipelineStartSourceFileLoader):
                 f"NumPy source file {path!r} does not contain a numeric image array."
             )
         return payload
+
+
+def _source_payload_with_metadata(
+    payload: Any,
+    *,
+    source_path: str,
+    request: PipelineStartSourceLoadRequest,
+) -> Any:
+    """Attach generic source metadata to a loaded image payload."""
+    metadata = image_payload_metadata(payload)
+    if not metadata.has_values:
+        metadata = image_payload_metadata_from_source(
+            payload,
+            source_path=source_path,
+            read_backend=request.backend,
+            filemanager=_require_processing_context(request.adapter).filemanager,
+        )
+    return image_payload_with_context(
+        image_payload_data(payload),
+        mask=image_payload_mask(payload),
+        metadata=metadata,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1075,16 +1210,7 @@ def _is_numeric_array_payload(payload: Any) -> bool:
 
 
 def _unstack_payload(payload: Any) -> list[Any]:
-    if hasattr(payload, "ndim") and payload.ndim == 2:
-        return [payload]
-    if is_color_image_slice(payload):
-        return [payload]
-    memory_type = detect_memory_type(payload)
-    return ImageStackLayout.for_stack(payload).unstack(
-        array=payload,
-        memory_type=memory_type,
-        gpu_id=0,
-    )
+    return list(payload_slices_for_alignment(payload))
 
 
 def _restack_like_payload(
@@ -1095,9 +1221,36 @@ def _restack_like_payload(
         raise ValueError("Cannot restack an empty slice list.")
     if len(slices) == 1:
         return slices[0]
-    memory_type = detect_memory_type(reference_payload)
-    return ImageStackLayout.for_slices(slices).stack(
-        slices=slices,
+    slice_data = tuple(image_payload_data(slice_payload) for slice_payload in slices)
+    memory_type = detect_memory_type(image_payload_data(reference_payload))
+    stacked = ImageStackLayout.for_slices(slice_data).stack(
+        slices=slice_data,
+        memory_type=memory_type,
+        gpu_id=0,
+    )
+    return image_payload_with_context(
+        stacked,
+        mask=_stack_payload_masks(slices, memory_type),
+        metadata=compose_image_payload_metadata(slices),
+    )
+
+
+def _stack_payload_masks(
+    slices: list[Any],
+    memory_type: str,
+) -> Any | None:
+    masks = tuple(image_payload_mask(slice_payload) for slice_payload in slices)
+    if not any(mask is not None for mask in masks):
+        return None
+    slice_data = tuple(image_payload_data(slice_payload) for slice_payload in slices)
+    resolved_masks = [
+        np.ones(np.asarray(data).shape[:2], dtype=bool)
+        if mask is None
+        else np.asarray(mask, dtype=bool)
+        for data, mask in zip(slice_data, masks)
+    ]
+    return ImageStackLayout.for_slices(resolved_masks).stack(
+        slices=resolved_masks,
         memory_type=memory_type,
         gpu_id=0,
     )
@@ -1197,17 +1350,19 @@ class OrderSourceBindingMatchPlanResolver(SourceBindingMatchPlanResolver):
         self,
         request: SourceBindingMatchPlanRequest,
     ) -> tuple[ParsedSourceCandidate, ...]:
-        current_index = _order_match_index(request)
-        if current_index is None:
+        current_indexes = _order_match_indexes(request)
+        if not current_indexes:
             scoped_candidates = _target_candidates_in_current_scope(
                 request.step_input_candidates,
                 request.target_candidates,
             )
             return scoped_candidates or request.target_candidates
         ordered_target_candidates = _ordered_source_candidates(request.target_candidates)
-        if current_index >= len(ordered_target_candidates):
-            return ()
-        return (ordered_target_candidates[current_index],)
+        return tuple(
+            ordered_target_candidates[index]
+            for index in current_indexes
+            if index < len(ordered_target_candidates)
+        )
 
 
 def _match_image_set_candidates(
@@ -1257,23 +1412,16 @@ def _target_candidates_in_current_scope(
     )
 
 
-def _order_match_index(
+def _order_match_indexes(
     request: SourceBindingMatchPlanRequest,
-) -> int | None:
+) -> tuple[int, ...]:
     indexes = {
         index
         for candidate in request.step_input_candidates
         for index in (_source_alias_order_index(candidate=candidate, request=request),)
         if index is not None
     }
-    if not indexes:
-        return None
-    if len(indexes) != 1:
-        raise RuntimeError(
-            f"Order-based image-set matching for alias {request.alias!r} found "
-            f"conflicting current image-set indexes: {sorted(indexes)}."
-        )
-    return next(iter(indexes))
+    return tuple(sorted(indexes))
 
 
 def _source_alias_order_index(

@@ -167,6 +167,7 @@ def generate_pipeline_from_cppipe(
     parser: CPPipeParser | None = None,
     generator: PipelineGenerator | None = None,
     infrastructure_module_names: frozenset[str] = INFRASTRUCTURE_MODULE_NAMES,
+    prune_dead_unmaterialized_artifact_steps: bool = False,
 ) -> GeneratedCPPipePipeline:
     """Parse and convert a .cppipe file into generated OpenHCS pipeline code."""
     cppipe_parser = parser or CPPipeParser()
@@ -193,6 +194,9 @@ def generate_pipeline_from_cppipe(
         source_cppipe=cppipe_path,
         modules=list(partition.processing_modules),
         skipped_modules=list(partition.infrastructure_modules),
+        prune_dead_unmaterialized_artifact_steps=(
+            prune_dead_unmaterialized_artifact_steps
+        ),
     )
     return GeneratedCPPipePipeline(
         cppipe_path=cppipe_path,
@@ -211,6 +215,7 @@ def prepare_generated_pipeline(
     parser: CPPipeParser | None = None,
     generator: PipelineGenerator | None = None,
     infrastructure_module_names: frozenset[str] = INFRASTRUCTURE_MODULE_NAMES,
+    prune_dead_unmaterialized_artifact_steps: bool = False,
 ) -> PreparedGeneratedPipeline:
     """Generate, import, and register a .cppipe-derived OpenHCS pipeline."""
     converted = generate_pipeline_from_cppipe(
@@ -218,6 +223,9 @@ def prepare_generated_pipeline(
         parser=parser,
         generator=generator,
         infrastructure_module_names=infrastructure_module_names,
+        prune_dead_unmaterialized_artifact_steps=(
+            prune_dead_unmaterialized_artifact_steps
+        ),
     )
     converted.generated_pipeline.save(output_path)
 

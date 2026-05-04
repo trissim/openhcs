@@ -7,10 +7,11 @@ from openhcs.core.runtime_artifact_queries import (
     RuntimeArtifactQueryContext,
     annotate_measurement_row_object,
     measurement_row_mapping,
+    measurement_values_for_feature,
     runtime_measurement_tables_for_object,
     runtime_relationship,
 )
-from openhcs.core.runtime_semantics import RelationshipEndpoint
+from openhcs.core.runtime_semantics import RelationshipSemantics
 from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_values import (
     MeasurementTable,
@@ -80,17 +81,39 @@ def test_measurement_row_mapping_accepts_slotted_dataclasses() -> None:
     }
 
 
+def test_measurement_feature_query_uses_table_object_id_field() -> None:
+    table = MeasurementTable(
+        name="ObjectMeasurements",
+        rows=(
+            {"cell_id": 2, "area": 20.0},
+            {"cell_id": 1, "area": 10.0},
+        ),
+        object_name="Cells",
+        object_id_field="cell_id",
+    )
+
+    values = measurement_values_for_feature(
+        (table,),
+        "area",
+        object_count=2,
+        object_name="Cells",
+    )
+
+    assert values.tolist() == [10.0, 20.0]
+
+
 def test_runtime_relationship_query_reconstructs_typed_relationship() -> None:
     store = RuntimeValueStore()
+    semantics = RelationshipSemantics.parent_child("Cells", "Nuclei")
     _record_native(
         store,
         ObjectRelationship(
             name="ParentChild",
-            source=RelationshipEndpoint("Cells", role="parent", id_field="parent_id"),
-            target=RelationshipEndpoint("Nuclei", role="child", id_field="child_id"),
+            source=semantics.source,
+            target=semantics.target,
             source_ids=(10, 11),
             target_ids=(1, 2),
-            relationship_type="parent_child",
+            relationship_type=semantics.relationship_type,
         ),
         ArtifactKind.RELATIONSHIPS,
     )

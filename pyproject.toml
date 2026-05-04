@@ -50,6 +50,7 @@ dependencies = [
     "scikit-learn>=1.7.1",
     "scipy>=1.12.0",
     "pandas>=2.3.1",
+    "numba>=0.61.0",
 
     # Image I/O and formats
     "imageio>=2.37.0",
@@ -101,6 +102,13 @@ dev = [
 # GUI testing dependencies
 dev-gui = [
     "pytest-qt>=4.2.0",
+]
+
+# CellProfiler compatibility/parity dependencies
+cellprofiler-compat = [
+    "centrosome>=1.3.3",
+    "mahotas>=1.4.18",
+    "matplotlib>=3.10.0",
 ]
 
 # Terminal User Interface (TUI) - DEPRECATED, not available on PyPI

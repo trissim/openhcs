@@ -15,6 +15,7 @@ from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.pipeline_image_schema import (
     GroupingPlan,
     ImageAssignment,
+    ImagePlaneSource,
     ImportedMetadataJoin,
     ImportedMetadataTable,
     ImagesRule,
@@ -134,14 +135,49 @@ class SetupModuleCompiler(ABC, metaclass=AutoRegisterMeta):
 
 def compile_image_schema(modules: Iterable[ModuleBlock]) -> PipelineImageSchema:
     """Compile setup modules into a typed pipeline-level image schema."""
+    module_tuple = tuple(modules)
     builder = PipelineImageSchemaBuilder()
-    for module in modules:
+    for module in module_tuple:
         if not module.enabled:
             continue
         compiler = SetupModuleCompiler.for_module(module.name)
         if compiler is not None:
             compiler.compile(module, builder)
+    _compile_disabled_path_metadata_for_ordered_image_sets(module_tuple, builder)
+    _compile_embedded_image_plane_sources(module_tuple, builder)
     return builder.build()
+
+
+def _compile_embedded_image_plane_sources(
+    modules: Sequence[ModuleBlock],
+    state: PipelineImageSchemaBuilder,
+) -> None:
+    for module in modules:
+        source_rows = module.metadata.get("image_plane_sources")
+        if not source_rows:
+            continue
+        for row in source_rows:
+            if not isinstance(row, Mapping):
+                continue
+            uri = row.get("uri")
+            if not uri:
+                continue
+            state.add_image_plane_source(
+                ImagePlaneSource(
+                    uri=str(uri),
+                    series=_optional_image_plane_value(row.get("series")),
+                    index=_optional_image_plane_value(row.get("index")),
+                    channel=_optional_image_plane_value(row.get("channel")),
+                )
+            )
+        return
+
+
+def _optional_image_plane_value(value: object) -> str | None:
+    if value is None:
+        return None
+    stripped = str(value).strip()
+    return stripped or None
 
 
 class ImagesModuleCompiler(SetupModuleCompiler):
@@ -195,11 +231,73 @@ class MetadataModuleCompiler(SetupModuleCompiler):
         module: ModuleBlock,
         state: PipelineImageSchemaBuilder,
     ) -> None:
+        if not _metadata_extraction_enabled(module):
+            return
         for block in repeating_setting_blocks(
             module.iter_settings(),
             start_name="Metadata extraction method",
         ):
             _compile_metadata_block(block, state)
+
+
+def _compile_disabled_path_metadata_for_ordered_image_sets(
+    modules: Sequence[ModuleBlock],
+    state: PipelineImageSchemaBuilder,
+) -> None:
+    """Preserve explicit filename axis metadata for order-matched image sets.
+
+    Some public CP3 example pipelines keep a filename metadata regex in the
+    Metadata module while disabling CP measurement-level metadata extraction.
+    The regex is still the only typed source-schema declaration of well/site
+    identity for OpenHCS's per-axis execution model, so use it strictly as a
+    source projection rule when NamesAndTypes assembles image sets by order.
+    """
+
+    if state.metadata_rules:
+        return
+    if state.match_plan is None:
+        return
+    if state.match_plan.method is not SourceBindingMatchMethod.ORDER:
+        return
+    if not state.assignments_by_alias:
+        return
+    for module in modules:
+        if module.name != "Metadata" or not module.enabled:
+            continue
+        if _metadata_extraction_enabled(module):
+            continue
+        for block in repeating_setting_blocks(
+            module.iter_settings(),
+            start_name="Metadata extraction method",
+        ):
+            _compile_disabled_path_metadata_block(block, state)
+
+
+def _compile_disabled_path_metadata_block(
+    block: Sequence[ModuleSetting],
+    state: PipelineImageSchemaBuilder,
+) -> None:
+    method = block_setting_value(block, "Metadata extraction method")
+    if not _is_path_metadata_extraction_method(method):
+        return
+    source = _metadata_source(
+        block_setting_value(block, "Metadata source", default="File name")
+    )
+    pattern = _metadata_pattern_for_block(block, source)
+    if not pattern:
+        return
+    state.add_metadata_rule(
+        MetadataExtractionRule(
+            source=source,
+            pattern=pattern,
+            filters=_filter_clauses_from_criteria(
+                block_setting_value(
+                    block,
+                    "Select the filtering criteria",
+                )
+            ),
+        )
+    )
 
 
 class NamesAndTypesModuleCompiler(SetupModuleCompiler):
@@ -435,6 +533,13 @@ def _images_rule_filters(
     criteria: str,
 ) -> tuple[SourceFilterClause, ...]:
     filters = list(_filter_clauses_from_criteria(criteria))
+    if _criteria_is_multi_clause_disjunction(criteria, filters):
+        # PipelineImageSchema.ImagesRule is intentionally conjunctive. A
+        # multi-clause CP Images disjunction is a source-universe prefilter, so
+        # lowering it as AND is incorrect and can exclude valid per-alias
+        # matches. Preserve correctness by not applying a global prefilter; the
+        # NamesAndTypes selectors still bind the concrete aliases.
+        return ()
     normalized_mode = filtering_mode.strip().lower()
     if "images" in normalized_mode and not any(
         clause.match_type is SourceFilterMatchType.IS_IMAGE
@@ -446,8 +551,15 @@ def _images_rule_filters(
                 subject=SourceFilterSubject.FILE,
                 match_type=SourceFilterMatchType.IS_IMAGE,
             ),
-        )
+    )
     return tuple(dict.fromkeys(filters))
+
+
+def _criteria_is_multi_clause_disjunction(
+    criteria: str,
+    filters: Sequence[SourceFilterClause],
+) -> bool:
+    return criteria.strip().lower().startswith("or ") and len(filters) > 1
 
 
 def _declare_load_images_grouping(
@@ -577,6 +689,14 @@ def _metadata_source(value: str) -> MetadataSource:
     if normalized == "folder name":
         return MetadataSource.FOLDER_NAME
     return MetadataSource.FILE_NAME
+
+
+def _metadata_extraction_enabled(module: ModuleBlock) -> bool:
+    value = decode_cellprofiler_setting_literal(
+        module.get_setting("Extract metadata?", "Yes")
+    )
+    normalized = value.replace("\x00", "").strip().lower()
+    return normalized not in {"no", "false", "0"}
 
 
 def _compile_metadata_block(

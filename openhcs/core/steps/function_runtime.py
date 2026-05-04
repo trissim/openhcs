@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
+import numpy as np
+
 from openhcs.constants.constants import Backend
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, StepResult
 from openhcs.core.context.processing_context import ProcessingContext
@@ -34,7 +36,15 @@ from openhcs.core.source_bindings import (
     SourceBindingOrigin,
     SourceBindingRuntimeContext,
 )
-from openhcs.core.runtime_values import normalize_artifact_value
+from openhcs.core.runtime_values import (
+    ImagePayloadMetadata,
+    image_payload_data,
+    image_payload_metadata,
+    image_payload_mask,
+    image_payload_with_context,
+    normalize_artifact_value,
+    with_image_payload_data,
+)
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 
 logger = logging.getLogger(__name__)
@@ -374,8 +384,8 @@ def _execute_chain_core(request: FunctionChainExecutionRequest) -> Any:
                 f"Compiled invocation {invocation.key} is missing memory types."
             )
 
-        current_stack = convert_memory(
-            data=current_stack,
+        current_stack = _convert_main_flow_memory(
+            current_stack,
             source_type=current_memory_type,
             target_type=invocation_input_type,
             gpu_id=plan.device_id,
@@ -399,6 +409,89 @@ def _execute_chain_core(request: FunctionChainExecutionRequest) -> Any:
         current_memory_type = invocation_output_type
 
     return current_stack
+
+
+def _convert_main_flow_memory(
+    payload: Any,
+    *,
+    source_type: str,
+    target_type: str,
+    gpu_id: int,
+) -> Any:
+    """Convert main-flow image pixels while preserving image context."""
+    data = image_payload_data(payload)
+    converted = convert_memory(
+        data=data,
+        source_type=source_type,
+        target_type=target_type,
+        gpu_id=gpu_id,
+    )
+    return with_image_payload_data(payload, converted)
+
+
+def _stack_payload_context(raw_slices: Sequence[Any], stack: Any) -> Any:
+    """Attach per-slice image context to a freshly loaded stack."""
+    metadata = _stack_payload_metadata(raw_slices)
+    mask = _stack_payload_mask(raw_slices)
+    return image_payload_with_context(stack, mask=mask, metadata=metadata)
+
+
+def _stack_payload_metadata(raw_slices: Sequence[Any]) -> ImagePayloadMetadata:
+    slice_metadata = tuple(image_payload_metadata(slice_data) for slice_data in raw_slices)
+    if not any(metadata.has_values for metadata in slice_metadata):
+        return ImagePayloadMetadata()
+    return ImagePayloadMetadata(
+        channel_intensity_scales=tuple(
+            metadata.intensity_scale_for_channel(0)
+            for metadata in slice_metadata
+        ),
+        channel_source_dtypes=tuple(
+            metadata.source_dtype
+            for metadata in slice_metadata
+        ),
+        channel_source_paths=tuple(
+            metadata.source_path
+            for metadata in slice_metadata
+        ),
+    )
+
+
+def _stack_payload_mask(raw_slices: Sequence[Any]) -> Any | None:
+    masks = tuple(image_payload_mask(slice_data) for slice_data in raw_slices)
+    if not any(mask is not None for mask in masks):
+        return None
+    data_slices = tuple(image_payload_data(slice_data) for slice_data in raw_slices)
+    resolved_masks = tuple(
+        np.ones(np.asarray(data_slice).shape[:2], dtype=bool)
+        if mask is None
+        else np.asarray(mask, dtype=bool)
+        for data_slice, mask in zip(data_slices, masks)
+    )
+    return np.stack(resolved_masks)
+
+
+def _unstack_payload_context(payload: Any, slices: Sequence[Any]) -> list[Any]:
+    """Attach per-slice image context after unstacking a runtime stack."""
+    mask = image_payload_mask(payload)
+    metadata = image_payload_metadata(payload)
+    if mask is None and not metadata.has_values:
+        return list(slices)
+    return [
+        image_payload_with_context(
+            data=slice_data,
+            mask=None if mask is None else _payload_mask_slice(mask, index),
+            metadata=metadata.for_channel(index),
+        )
+        for index, slice_data in enumerate(slices)
+    ]
+
+
+def _payload_mask_slice(mask: Any, index: int) -> Any:
+    if not hasattr(mask, "ndim"):
+        return mask
+    if mask.ndim == 3:
+        return mask[index]
+    return mask
 
 
 class PatternGroupRuntime:
@@ -493,11 +586,13 @@ class PatternGroupRuntime:
                 f"Check file integrity and format compatibility."
             )
 
-        main_data_stack = ImageStackLayout.for_slices(raw_slices).stack(
-            slices=raw_slices,
+        raw_slice_data = tuple(image_payload_data(slice_data) for slice_data in raw_slices)
+        main_data_stack = ImageStackLayout.for_slices(raw_slice_data).stack(
+            slices=raw_slice_data,
             memory_type=self.plan.input_memory_type,
             gpu_id=self.plan.device_id,
         )
+        main_data_stack = _stack_payload_context(raw_slices, main_data_stack)
 
         return PatternGroupData(
             matching_files=matching_files,
@@ -720,30 +815,32 @@ class PatternGroupRuntime:
         )
 
     def _validate_and_unstack(self, processed_stack: Any) -> list[Any]:
+        processed_data = image_payload_data(processed_stack)
         try:
-            layout = ImageStackLayout.for_stack(processed_stack)
+            layout = ImageStackLayout.for_stack(processed_data)
         except ValueError as exc:
             logger.error("Function output is not an OpenHCS image stack.")
             logger.error(f"Output type: {type(processed_stack)}")
             logger.error(
-                f"Output shape: {getattr(processed_stack, 'shape', 'no shape attr')}"
+                f"Output shape: {getattr(processed_data, 'shape', 'no shape attr')}"
             )
             logger.error(
-                f"Output exposes ndim: {hasattr(processed_stack, 'ndim')}"
+                f"Output exposes ndim: {hasattr(processed_data, 'ndim')}"
             )
-            if hasattr(processed_stack, "ndim"):
-                logger.error(f"Output ndim: {processed_stack.ndim}")
+            if hasattr(processed_data, "ndim"):
+                logger.error(f"Output ndim: {processed_data.ndim}")
             raise ValueError(
                 "Main processing must result in an image stack shaped "
                 f"(N, H, W) or (N, H, W, C), got "
-                f"{getattr(processed_stack, 'shape', 'unknown')}"
+                f"{getattr(processed_data, 'shape', 'unknown')}"
             ) from exc
 
-        return layout.unstack(
-            array=processed_stack,
+        output_slices = layout.unstack(
+            array=processed_data,
             memory_type=self.plan.output_memory_type,
             gpu_id=self.plan.device_id,
         )
+        return _unstack_payload_context(processed_stack, output_slices)
 
     def _save_outputs(self, output_slices: list[Any], matching_files: list[str]) -> None:
         context = self.context

@@ -24,16 +24,26 @@ import importlib
 import inspect
 import json
 import logging
+import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, is_dataclass, replace
 from enum import Enum
 from functools import wraps
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Type
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Type, get_type_hints
 
 
 from openhcs.core.xdg_paths import get_cache_file_path
 from openhcs.core.memory import unstack_slices, stack_slices
+from openhcs.core.runtime_values import (
+    ImageMetadataPayload,
+    MaskedImagePayload,
+    ObjectLabelPayload,
+    compose_image_payload_metadata,
+    image_payload_data,
+    image_payload_mask,
+    image_payload_with_context,
+)
 from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict
 from openhcs.core.config import LazyDtypeConfig , LazyWellFilterConfig, LazyStepWellFilterConfig
 
@@ -82,6 +92,9 @@ def _aggregate_pure_2d_auxiliary_output(
     """Aggregate one auxiliary PURE_2D output across slices."""
     if not values:
         return []
+    runtime_payload = _aggregate_runtime_array_payload_slices(values, memory_type)
+    if runtime_payload is not None:
+        return runtime_payload
     if all(_is_2d_array_like(value) for value in values):
         return stack_slices(values, memory_type, 0)
     if all(_is_flat_sequence(value) for value in values):
@@ -89,7 +102,66 @@ def _aggregate_pure_2d_auxiliary_output(
         for value in values:
             flattened.extend(value)
         return flattened
+    if len(values) == 1:
+        return values[0]
     return list(values)
+
+
+def _aggregate_runtime_array_payload_slices(
+    values: list[Any],
+    memory_type: str,
+) -> Any | None:
+    if all(isinstance(value, (MaskedImagePayload, ImageMetadataPayload)) for value in values):
+        data = stack_slices([image_payload_data(value) for value in values], memory_type, 0)
+        masks = [image_payload_mask(value) for value in values]
+        present_masks = [mask for mask in masks if mask is not None]
+        if present_masks and len(present_masks) != len(masks):
+            raise ValueError("Cannot aggregate a mix of masked and unmasked image payloads.")
+        mask = (
+            None
+            if not present_masks
+            else present_masks[0]
+            if len(present_masks) == 1
+            else stack_slices(present_masks, memory_type, 0)
+        )
+        return image_payload_with_context(
+            data,
+            mask=mask,
+            metadata=compose_image_payload_metadata(tuple(values)),
+        )
+
+    if not all(isinstance(value, ObjectLabelPayload) for value in values):
+        return None
+    labels = stack_slices([value.labels for value in values], memory_type, 0)
+    unedited_labels = (
+        stack_slices(
+            [value.labels_for_variant("unedited") for value in values],
+            memory_type,
+            0,
+        )
+        if any(value.unedited_labels is not None for value in values)
+        else None
+    )
+    small_removed_labels = (
+        stack_slices(
+            [value.labels_for_variant("small_removed") for value in values],
+            memory_type,
+            0,
+        )
+        if any(value.small_removed_labels is not None for value in values)
+        else None
+    )
+    declared_counts = {value.declared_object_count for value in values}
+    declared_ids = {value.declared_object_ids for value in values}
+    return ObjectLabelPayload(
+        labels=labels,
+        unedited_labels=unedited_labels,
+        small_removed_labels=small_removed_labels,
+        declared_object_count=(
+            declared_counts.pop() if len(declared_counts) == 1 else None
+        ),
+        declared_object_ids=declared_ids.pop() if len(declared_ids) == 1 else (),
+    )
 
 
 def _is_2d_array_like(value: Any) -> bool:
@@ -259,10 +331,6 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         self.library_name = library_name
         self._cache_path = get_cache_file_path(f"{library_name}_function_metadata.json")
         self._library_warmed = False
-
-
-
-
 
     # ===== ESSENTIAL ABC METHODS =====
 
@@ -481,6 +549,14 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         module = importlib.import_module(module_path)
         return getattr(module, func_name)
 
+    def create_library_adapter(
+        self,
+        original_func: Callable,
+        contract: ProcessingContract,
+    ) -> Callable:
+        """Return the callable shape used before contract wrapping."""
+        return original_func
+
     # ===== PROCESSING CONTRACT EXECUTION METHODS =====
     def _execute_slice_by_slice(self, func, image, *args, **kwargs):
         """Shared slice-by-slice execution logic."""
@@ -558,10 +634,10 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         self._library_warmed = True
 
     # ===== CACHING METHODS =====
-    def _load_or_discover_functions(self) -> Dict[str, FunctionMetadata]:
+    def load_or_discover_functions(self) -> Dict[str, FunctionMetadata]:
         """Load functions from cache or discover them if cache is invalid."""
         self._ensure_library_warmed()
-        logger.info(f"🔄 _load_or_discover_functions called for {self.library_name}")
+        logger.info(f"🔄 load_or_discover_functions called for {self.library_name}")
 
         cached_functions = self._load_from_cache()
         if cached_functions is not None:
@@ -572,6 +648,10 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         functions = self.discover_functions()
         self._save_to_cache(functions)
         return functions
+
+    def _load_or_discover_functions(self) -> Dict[str, FunctionMetadata]:
+        """Backward-compatible alias for older registry callers."""
+        return self.load_or_discover_functions()
 
     def _load_from_cache(self) -> Optional[Dict[str, FunctionMetadata]]:
         """Load function metadata from cache with validation."""
@@ -598,6 +678,12 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             logger.info(f"{self.library_name} version changed ({cached_version} → {current_version}) - cache invalid")
             return None
 
+        cached_signature = cache_data.get('discovery_signature')
+        current_signature = self.get_discovery_signature()
+        if cached_signature != current_signature:
+            logger.info(f"{self.library_name} discovery inputs changed - cache invalid")
+            return None
+
         cache_timestamp = cache_data.get('timestamp', 0)
         cache_age_days = (time.time() - cache_timestamp) / (24 * 3600)
         if cache_age_days > 7:
@@ -612,19 +698,9 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             func = self._get_function_by_name(cached_data['module'], original_name)
             contract = ProcessingContract[cached_data['contract']]
 
-            # Apply the same wrappers as during discovery
-            has_adapter = hasattr(self, 'create_library_adapter')
-            logger.debug(f"📂 LOAD FROM CACHE: {func_name} - hasattr(create_library_adapter)={has_adapter}")
-
-            if has_adapter:
-                # External library - apply library adapter + contract wrapper + param injection
-                adapted_func = self.create_library_adapter(func, contract)
-                contract_wrapped_func = self.apply_contract_wrapper(adapted_func, contract)
-                final_func = self._inject_optional_dataclass_params(contract_wrapped_func)
-            else:
-                # OpenHCS - apply contract wrapper + param injection
-                contract_wrapped_func = self.apply_contract_wrapper(func, contract)
-                final_func = self._inject_optional_dataclass_params(contract_wrapped_func)
+            adapted_func = self.create_library_adapter(func, contract)
+            contract_wrapped_func = self.apply_contract_wrapper(adapted_func, contract)
+            final_func = self._inject_optional_dataclass_params(contract_wrapped_func)
 
             metadata = FunctionMetadata(
                 name=func_name,
@@ -640,11 +716,35 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
 
         return functions
 
+    def get_discovery_signature(self) -> str:
+        """Return the existing JSON cache's discovery-input signature."""
+        signature = {
+            'registry_class': f"{type(self).__module__}.{type(self).__qualname__}",
+            'modules_to_scan': list(self.MODULES_TO_SCAN),
+            'source_mtimes': self.cache_source_mtimes(),
+        }
+        return json.dumps(signature, sort_keys=True)
+
+    def cache_source_mtimes(self) -> Dict[str, float]:
+        """Return optional scanned source mtimes for the existing JSON cache."""
+        return {}
+
     def _save_to_cache(self, functions: Dict[str, FunctionMetadata]) -> None:
         """Save function metadata to cache."""
+        writable_parent = self._writable_cache_parent()
+        if writable_parent is None:
+            logger.warning(
+                "Registry cache path %s is not writable; using discovered "
+                "%s functions without refreshing the disk cache.",
+                self._cache_path,
+                self.library_name,
+            )
+            return
+
         cache_data = {
             'cache_version': '1.0',
             'library_version': self.get_library_version(),
+            'discovery_signature': self.get_discovery_signature(),
             'timestamp': time.time(),
             'functions': {
                 func_name: {
@@ -664,6 +764,19 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             json.dump(cache_data, f, indent=2)
 
         logger.info(f"💾 Saved {len(functions)} {self.library_name} functions to cache")
+
+    def _writable_cache_parent(self) -> Optional[str]:
+        """Return the nearest existing writable cache parent, or None."""
+        parent = self._cache_path.parent
+        while not parent.exists():
+            if parent.parent == parent:
+                return None
+            parent = parent.parent
+        if not parent.is_dir():
+            return None
+        if not os.access(parent, os.W_OK | os.X_OK):
+            return None
+        return str(parent)
 
     def get_memory_type(self) -> str:
         """Get the memory type string value for this library."""
@@ -939,7 +1052,6 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         This prevents functions with unresolvable type hints from being registered.
         """
         try:
-            from typing import get_type_hints
             # Try to resolve type hints - this will fail if dependencies are missing
             get_type_hints(func)
             return True

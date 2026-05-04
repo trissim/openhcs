@@ -5,6 +5,8 @@ from __future__ import annotations
 import csv
 import json
 import os
+import shutil
+import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
@@ -17,6 +19,7 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.constants.constants import AllComponents, Backend
 from openhcs.core.pipeline_image_schema import (
     ImageAssignment,
+    ImagePlaneSource,
     ImageTypeSourceRole,
     ImportedMetadataJoin,
     ImportedMetadataTable,
@@ -31,17 +34,19 @@ from openhcs.core.source_matching import (
     is_image_path,
     merge_source_metadata,
     metadata_from_rules,
+    normalize_source_metadata_key,
     source_filters_match,
     source_metadata_component,
     source_metadata_value,
 )
-from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.microscopes.openhcs import FIELDS, OpenHCSMetadata
+from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
 
 SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR = "_source"
 SOURCE_SCHEMA_WORKSPACE_PIXEL_SIZE = 1.0
 SOURCE_SCHEMA_WORKSPACE_GRID_DIMENSIONS = [1, 1]
+SOURCE_SCHEMA_WORKSPACE_SINGLETON_AXIS_VALUE = "source"
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,7 +237,7 @@ class WellRowColumnMetadataProjection(ComponentProjection):
         return f"{row.strip().upper()}{int(column):02d}"
 
 
-class OrdinalWellProjection(ComponentProjection):
+class SourceSchemaSingletonWellProjection(ComponentProjection):
     component = AllComponents.WELL
     priority = 1000
     metadata_derived = False
@@ -242,7 +247,8 @@ class OrdinalWellProjection(ComponentProjection):
         metadata: Mapping[str, str],
         image_set_index: int,
     ) -> str | None:
-        return f"A{image_set_index + 1:02d}"
+        del metadata, image_set_index
+        return SOURCE_SCHEMA_WORKSPACE_SINGLETON_AXIS_VALUE
 
 
 class ImageNumberSiteProjection(ComponentProjection):
@@ -396,7 +402,10 @@ def materialize_source_schema_workspace(
     workspace_root.mkdir(parents=True, exist_ok=True)
 
     source_files = _source_files(source_root)
-    candidates = _source_candidates(source_root, source_files, schema)
+    candidates = (
+        *_source_candidates(source_root, source_files, schema),
+        *_image_plane_source_candidates(workspace_root, schema),
+    )
     stack_assignments, auxiliary_assignments = _partition_assignments(schema)
     stack_candidates = _matched_candidates_by_alias(
         candidates,
@@ -414,6 +423,7 @@ def materialize_source_schema_workspace(
     )
     primary_mappings, primary_source_metadata, component_values = _primary_workspace_mappings(
         workspace_root,
+        schema,
         image_sets,
         tuple(stack_assignments),
     )
@@ -501,6 +511,59 @@ def _source_candidates(
             )
         )
     return tuple(candidates)
+
+
+def _image_plane_source_candidates(
+    workspace_root: Path,
+    schema: PipelineImageSchema,
+) -> tuple[SourceSchemaCandidate, ...]:
+    if not schema.image_plane_sources:
+        return ()
+    candidates: list[SourceSchemaCandidate] = []
+    for index, source in enumerate(schema.image_plane_sources, start=1):
+        path = _materialized_image_plane_source_path(
+            source,
+            workspace_root=workspace_root,
+            source_index=index,
+        )
+        metadata = metadata_from_rules(source.uri, schema.metadata_rules)
+        candidates.append(
+            SourceSchemaCandidate(
+                path=path,
+                relative_path=source.uri,
+                metadata=metadata,
+            )
+        )
+    return tuple(candidates)
+
+
+def _materialized_image_plane_source_path(
+    source: ImagePlaneSource,
+    *,
+    workspace_root: Path,
+    source_index: int,
+) -> Path:
+    from urllib.parse import unquote, urlparse
+
+    parsed = urlparse(source.uri)
+    if parsed.scheme in ("", "file"):
+        return Path(unquote(parsed.path if parsed.scheme == "file" else source.uri))
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(
+            f"Unsupported embedded image-plane source URI scheme "
+            f"{parsed.scheme!r} for {source.uri!r}."
+        )
+    target_dir = (
+        workspace_root
+        / SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR
+        / "image_planes"
+        / f"{source_index:03d}"
+    )
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / Path(unquote(parsed.path)).name
+    with urllib.request.urlopen(source.uri) as response, target_path.open("wb") as handle:
+        shutil.copyfileobj(response, handle)
+    return target_path
 
 
 def _imported_metadata_rows(
@@ -793,6 +856,7 @@ def _projected_candidate_components(
 
 def _primary_workspace_mappings(
     workspace_root: Path,
+    schema: PipelineImageSchema,
     image_sets: tuple[ImageSetRecord, ...],
     stack_assignments: tuple[ImageAssignment, ...],
 ) -> tuple[
@@ -800,7 +864,7 @@ def _primary_workspace_mappings(
     Mapping[str, Mapping[str, str]],
     Mapping[AllComponents, Mapping[str, str | None]],
 ]:
-    parser = ImageXpressFilenameParser()
+    parser = SourceSchemaFilenameParser()
     channel_values = {
         str(index): assignment.alias
         for index, assignment in enumerate(stack_assignments, start=1)
@@ -809,17 +873,16 @@ def _primary_workspace_mappings(
     sites: dict[str, None] = {}
     primary_mappings: dict[str, str] = {}
     source_metadata: dict[str, Mapping[str, str]] = {}
+    site_indexes_by_well: dict[str, int] = {}
     for image_set in image_sets:
-        well = ComponentProjection.resolve(
-            AllComponents.WELL,
-            image_set.metadata,
-            image_set.index,
-        )
+        well = _workspace_well(schema, image_set)
+        site_index = site_indexes_by_well.get(well, 0)
         site = ComponentProjection.resolve(
             AllComponents.SITE,
             image_set.metadata,
-            image_set.index,
+            site_index,
         )
+        site_indexes_by_well[well] = site_index + 1
         site_component = _component_ordinal_or_label(site)
         wells[well] = None
         sites[str(site_component)] = None
@@ -856,6 +919,110 @@ def _primary_workspace_mappings(
         MappingProxyType(source_metadata),
         component_values,
     )
+
+
+def _workspace_well(
+    schema: PipelineImageSchema,
+    image_set: ImageSetRecord,
+) -> str:
+    grouping = schema.grouping
+    if grouping is None or not grouping.metadata_fields:
+        return ComponentProjection.resolve(
+            AllComponents.WELL,
+            image_set.metadata,
+            image_set.index,
+        )
+
+    group_metadata = _grouping_metadata(image_set.metadata, grouping.metadata_fields)
+    if _grouping_fields_project_to_well(grouping.metadata_fields):
+        projected = ComponentProjection.resolve_from_metadata(
+            AllComponents.WELL,
+            group_metadata,
+        )
+        if projected is not None:
+            return projected
+    return _grouping_axis_value(group_metadata, grouping.metadata_fields)
+
+
+def _grouping_metadata(
+    metadata: Mapping[str, str],
+    fields: tuple[str, ...],
+) -> Mapping[str, str]:
+    group_metadata: dict[str, str] = {}
+    for field in fields:
+        value = source_metadata_value(metadata, field)
+        if value is None:
+            raise ValueError(
+                f"Grouped source image set lacks metadata field {field!r}; "
+                f"available fields are {sorted(metadata)}."
+            )
+        group_metadata[field] = value
+    return MappingProxyType(group_metadata)
+
+
+def _grouping_fields_project_to_well(fields: tuple[str, ...]) -> bool:
+    if len(fields) == 1:
+        return source_metadata_component(fields[0]) is AllComponents.WELL
+    normalized_fields = {
+        normalize_source_metadata_key(field)
+        for field in fields
+    }
+    return (
+        len(fields) == 2
+        and bool(normalized_fields & {"wellrow", "row"})
+        and bool(normalized_fields & {"wellcolumn", "wellcol", "column", "col"})
+    )
+
+
+def _grouping_axis_value(
+    group_metadata: Mapping[str, str],
+    fields: tuple[str, ...],
+) -> str:
+    if len(fields) == 1:
+        return _source_schema_component_token(
+            _required_grouping_value(group_metadata, fields[0])
+        )
+    return "-".join(
+        (
+            _source_schema_component_token(field)
+            + "-"
+            + _source_schema_component_token(
+                _required_grouping_value(group_metadata, field)
+            )
+        )
+        for field in fields
+    )
+
+
+def _required_grouping_value(
+    group_metadata: Mapping[str, str],
+    field: str,
+) -> str:
+    value = group_metadata[field]
+    if not value:
+        raise ValueError(f"Grouping metadata field {field!r} cannot be empty.")
+    return value
+
+
+def _source_schema_component_token(value: str) -> str:
+    """Percent-encode component labels so parser delimiters remain unambiguous."""
+
+    encoded = "".join(
+        (
+            chr(byte)
+            if (
+                48 <= byte <= 57
+                or 65 <= byte <= 90
+                or 97 <= byte <= 122
+                or byte in (45, 46)
+            )
+            else f"%{byte:02X}"
+        )
+        for byte in str(value).encode("utf-8")
+    )
+    if not encoded:
+        raise ValueError("Source-schema component tokens cannot be empty.")
+    return encoded
 
 
 def _auxiliary_workspace_mappings(
@@ -933,7 +1100,7 @@ def _metadata_dict(
     return asdict(
         OpenHCSMetadata(
             microscope_handler_name=FIELDS.MICROSCOPE_TYPE,
-            source_filename_parser_name="ImageXpressFilenameParser",
+            source_filename_parser_name="SourceSchemaFilenameParser",
             grid_dimensions=SOURCE_SCHEMA_WORKSPACE_GRID_DIMENSIONS,
             pixel_size=SOURCE_SCHEMA_WORKSPACE_PIXEL_SIZE,
             image_files=list(image_files),

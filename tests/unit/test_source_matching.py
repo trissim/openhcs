@@ -7,6 +7,7 @@ from openhcs.core.source_bindings import (
     SourceFilterSubject,
 )
 from openhcs.core.source_matching import (
+    merge_source_metadata,
     source_filters_match,
     source_metadata_component,
 )
@@ -70,3 +71,24 @@ def test_source_metadata_component_matches_semantic_component_names(
     component: AllComponents,
 ):
     assert source_metadata_component(field) is component
+
+
+def test_merge_source_metadata_accepts_equivalent_absolute_paths(
+    tmp_path,
+):
+    root = tmp_path / "root"
+    leaf = root / "plate"
+    leaf.mkdir(parents=True)
+    equivalent = root / "other" / ".." / "plate"
+    metadata = {"Folder": str(equivalent)}
+
+    merge_source_metadata(metadata, {"Folder": str(leaf)}, path="image.tif")
+
+    assert metadata["Folder"] == str(leaf.resolve())
+
+
+def test_merge_source_metadata_rejects_distinct_values():
+    metadata = {"Well": "A01"}
+
+    with pytest.raises(RuntimeError):
+        merge_source_metadata(metadata, {"Well": "B01"}, path="image.tif")

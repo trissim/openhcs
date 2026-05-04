@@ -7,6 +7,7 @@ import numpy as np
 from typing import Tuple, Optional
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
@@ -99,13 +100,12 @@ def _clean(image: np.ndarray, iterations: int = 1) -> np.ndarray:
     return result
 
 
-def _convex_hull(image: np.ndarray) -> np.ndarray:
+def _convex_hull(image: np.ndarray, morphology) -> np.ndarray:
     """Compute the convex hull of a binary image."""
-    from skimage.morphology import convex_hull_image
     binary = _ensure_binary(image)
     if not np.any(binary):
         return np.zeros_like(image, dtype=np.float32)
-    return convex_hull_image(binary).astype(np.float32)
+    return morphology.convex_hull_image(binary).astype(np.float32)
 
 
 def _diag(image: np.ndarray, iterations: int = 1) -> np.ndarray:
@@ -315,6 +315,7 @@ def morph(
     custom_repeats: int = 2,
     rescale_values: bool = True,
     line_length: int = 3,
+    morphology_backend_provider: CellProfilerBackendProvider | None = None,
 ) -> np.ndarray:
     """
     Perform morphological operations on binary or grayscale images.
@@ -339,7 +340,15 @@ def morph(
     elif operation == MorphOperation.CLEAN:
         return _clean(image, iterations)
     elif operation == MorphOperation.CONVEX_HULL:
-        return _convex_hull(image)
+        from openhcs.processing.backends.cellprofiler.morphology import (
+            MorphologyBackendStrategy,
+        )
+
+        morphology = MorphologyBackendStrategy.for_callable(
+            morph,
+            backend_provider=morphology_backend_provider,
+        )
+        return _convex_hull(image, morphology)
     elif operation == MorphOperation.DIAG:
         return _diag(image, iterations)
     elif operation == MorphOperation.DISTANCE:

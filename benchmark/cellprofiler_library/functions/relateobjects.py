@@ -10,14 +10,18 @@ import numpy as np
 from typing import Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
-import scipy.ndimage
-import skimage.segmentation
-from benchmark.cellprofiler_compat.relationship_payload import (
-    CellProfilerRelationshipPayload,
-)
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.runtime_semantics import (
+    ParentChildRelationshipPayload,
+    aligned_dense_object_label_arrays,
+)
+from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler.relationships import (
+    ObjectRelationshipBackendStrategy,
+)
 from openhcs.processing.materialization import csv_materializer
+from ._enum import _coerce_function_enum
 
 
 class DistanceMethod(Enum):
@@ -53,12 +57,13 @@ def relate_objects(
     image: np.ndarray,
     parent_labels: np.ndarray,
     child_labels: np.ndarray,
-    calculate_distances: DistanceMethod = DistanceMethod.BOTH,
+    calculate_distances: DistanceMethod | str = DistanceMethod.BOTH,
     calculate_per_parent_means: bool = False,
     save_children_with_parents: bool = False,
+    relationship_backend_provider: CellProfilerBackendProvider | None = None,
 ) -> Tuple[
     np.ndarray,
-    CellProfilerRelationshipPayload,
+    ParentChildRelationshipPayload,
     RelationshipMeasurements,
 ]:
     """
@@ -77,15 +82,28 @@ def relate_objects(
         - child_labels with parent assignments encoded (H, W)
         - RelationshipMeasurements dataclass
     """
-    parent_labels = parent_labels.astype(np.int32)
-    child_labels = child_labels.astype(np.int32)
+    parent_labels, child_labels = aligned_dense_object_label_arrays(
+        parent_labels,
+        child_labels,
+    )
+    calculate_distances = _coerce_function_enum(
+        DistanceMethod,
+        calculate_distances,
+    )
     
     # Get object counts
     parent_count = int(parent_labels.max()) if parent_labels.max() > 0 else 0
     child_count = int(child_labels.max()) if child_labels.max() > 0 else 0
+    relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type(
+        backend_provider=relationship_backend_provider,
+    )
     
     # Relate children to parents based on maximum overlap
-    parents_of = _relate_children_to_parents(parent_labels, child_labels, child_count)
+    parents_of = relationship_backend.relate_children_to_parents(
+        parent_labels,
+        child_labels,
+        child_count,
+    )
     
     # Count children per parent
     child_counts_per_parent = np.zeros(parent_count, dtype=np.int32)
@@ -101,14 +119,14 @@ def relate_objects(
     mean_minimum_dist = np.nan
     
     if calculate_distances in (DistanceMethod.CENTROID, DistanceMethod.BOTH):
-        centroid_distances = _calculate_centroid_distances(
+        centroid_distances = relationship_backend.centroid_distances(
             parent_labels, child_labels, parents_of
         )
         valid_dists = centroid_distances[~np.isnan(centroid_distances)]
         mean_centroid_dist = float(np.mean(valid_dists)) if len(valid_dists) > 0 else np.nan
     
     if calculate_distances in (DistanceMethod.MINIMUM, DistanceMethod.BOTH):
-        minimum_distances = _calculate_minimum_distances(
+        minimum_distances = relationship_backend.minimum_distances(
             parent_labels, child_labels, parents_of
         )
         valid_dists = minimum_distances[~np.isnan(minimum_distances)]
@@ -117,10 +135,10 @@ def relate_objects(
     # Create output: child labels colored by parent assignment
     output_labels = np.zeros_like(child_labels)
     if save_children_with_parents:
-        # Only keep children that have parents
-        for child_idx in range(1, child_count + 1):
-            if parents_of[child_idx - 1] > 0:
-                output_labels[child_labels == child_idx] = child_idx
+        keep_child = np.zeros(child_count + 1, dtype=bool)
+        keep_child[1:] = parents_of > 0
+        child_index = np.asarray(child_labels, dtype=np.intp)
+        output_labels = np.where(keep_child[child_index], child_labels, 0)
     else:
         # Keep all children, encode parent relationship
         output_labels = child_labels.copy()
@@ -148,132 +166,9 @@ def relate_objects(
 
     return (
         output_labels.astype(np.float32),
-        CellProfilerRelationshipPayload(
+        ParentChildRelationshipPayload(
             parent_ids=related_parent_ids,
             child_ids=related_child_ids,
         ),
         measurements,
     )
-
-
-def _relate_children_to_parents(
-    parent_labels: np.ndarray,
-    child_labels: np.ndarray,
-    child_count: int
-) -> np.ndarray:
-    """
-    Determine parent for each child based on maximum overlap.
-    
-    Returns:
-        Array of length child_count with parent label for each child (0 if no parent)
-    """
-    parents_of = np.zeros(child_count, dtype=np.int32)
-    
-    if child_count == 0:
-        return parents_of
-    
-    for child_idx in range(1, child_count + 1):
-        child_mask = child_labels == child_idx
-        overlapping_parents = parent_labels[child_mask]
-        overlapping_parents = overlapping_parents[overlapping_parents > 0]
-        
-        if len(overlapping_parents) > 0:
-            # Assign to parent with maximum overlap
-            unique, counts = np.unique(overlapping_parents, return_counts=True)
-            parents_of[child_idx - 1] = unique[np.argmax(counts)]
-    
-    return parents_of
-
-
-def _calculate_centroid_distances(
-    parent_labels: np.ndarray,
-    child_labels: np.ndarray,
-    parents_of: np.ndarray
-) -> np.ndarray:
-    """
-    Calculate centroid-to-centroid distances between children and their parents.
-    """
-    child_count = len(parents_of)
-    distances = np.full(child_count, np.nan)
-    
-    if child_count == 0:
-        return distances
-    
-    # Get parent centroids
-    parent_count = int(parent_labels.max())
-    if parent_count == 0:
-        return distances
-    
-    parent_centroids = scipy.ndimage.center_of_mass(
-        np.ones_like(parent_labels),
-        parent_labels,
-        range(1, parent_count + 1)
-    )
-    parent_centroids = np.array(parent_centroids)
-    
-    # Get child centroids
-    child_centroids = scipy.ndimage.center_of_mass(
-        np.ones_like(child_labels),
-        child_labels,
-        range(1, child_count + 1)
-    )
-    child_centroids = np.array(child_centroids)
-    
-    # Calculate distances
-    for child_idx in range(child_count):
-        parent_idx = parents_of[child_idx]
-        if parent_idx > 0 and parent_idx <= parent_count:
-            child_center = child_centroids[child_idx]
-            parent_center = parent_centroids[parent_idx - 1]
-            distances[child_idx] = np.sqrt(np.sum((child_center - parent_center) ** 2))
-    
-    return distances
-
-
-def _calculate_minimum_distances(
-    parent_labels: np.ndarray,
-    child_labels: np.ndarray,
-    parents_of: np.ndarray
-) -> np.ndarray:
-    """
-    Calculate minimum distances from child centroids to parent perimeters.
-    """
-    child_count = len(parents_of)
-    distances = np.full(child_count, np.nan)
-    
-    if child_count == 0:
-        return distances
-    
-    parent_count = int(parent_labels.max())
-    if parent_count == 0:
-        return distances
-    
-    # Get child centroids
-    child_centroids = scipy.ndimage.center_of_mass(
-        np.ones_like(child_labels),
-        child_labels,
-        range(1, child_count + 1)
-    )
-    child_centroids = np.array(child_centroids)
-    
-    # Find parent perimeters
-    parent_perimeter = (
-        skimage.segmentation.find_boundaries(parent_labels, mode='inner') *
-        parent_labels
-    )
-    
-    # Calculate minimum distance for each child
-    for child_idx in range(child_count):
-        parent_idx = parents_of[child_idx]
-        if parent_idx > 0 and parent_idx <= parent_count:
-            child_center = child_centroids[child_idx]
-            
-            # Get perimeter points of this parent
-            perim_points = np.argwhere(parent_perimeter == parent_idx)
-            
-            if len(perim_points) > 0:
-                # Calculate distance to all perimeter points
-                dists = np.sqrt(np.sum((perim_points - child_center) ** 2, axis=1))
-                distances[child_idx] = np.min(dists)
-    
-    return distances

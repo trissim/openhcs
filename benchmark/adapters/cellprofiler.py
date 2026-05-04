@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from contextlib import ExitStack
 from dataclasses import dataclass
+from os import environ
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,10 @@ from benchmark.contracts.tool_adapter import (
     ToolNotInstalledError,
 )
 from openhcs.core.runtime_equivalence import RuntimeOutputSnapshot
+
+
+BENCHMARK_CACHE_DOMAINS = frozenset({"native_reference"})
+CELLPROFILER_EXECUTABLE_ENV = "CELLPROFILER_EXECUTABLE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +64,10 @@ class CellProfilerAdapter(ToolAdapter):
     name = "CellProfiler"
 
     def __init__(self, executable: str | Path | None = None) -> None:
-        self._configured_executable = Path(executable) if executable else None
+        configured_executable = executable or environ.get(CELLPROFILER_EXECUTABLE_ENV)
+        self._configured_executable = (
+            Path(configured_executable) if configured_executable else None
+        )
         self.version = "unknown"
 
     def validate_installation(self) -> None:
@@ -106,6 +114,8 @@ class CellProfilerAdapter(ToolAdapter):
             request.output_dir
             / f"{request.dataset_path.name}_{request.pipeline_name}_native_cellprofiler"
         )
+        if native_output_root.exists():
+            shutil.rmtree(native_output_root)
         native_output_root.mkdir(parents=True, exist_ok=True)
         command = (
             str(self._cellprofiler_executable()),
@@ -170,7 +180,8 @@ class CellProfilerAdapter(ToolAdapter):
         executable = shutil.which("cellprofiler")
         if executable is None:
             raise ToolNotInstalledError(
-                "CellProfiler executable not found in PATH."
+                "CellProfiler executable not configured and not found in PATH. "
+                f"Set {CELLPROFILER_EXECUTABLE_ENV} or pass an executable path."
             )
         return Path(executable)
 

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
 from benchmark.cellprofiler_library import canonical_module_name
+from benchmark.cellprofiler_compat.measurement_scope import (
+    CellProfilerMeasurementTargetScope as MeasurementTargetScope,
+)
 
 from .classify_objects_settings import ClassifyObjectsVariant
 from .grid_settings import DefineGridVariant, IdentifyObjectsInGridVariant
@@ -27,14 +29,6 @@ class ResolvedModuleFunction:
     """Typed raw-function selection for one generated module."""
 
     function_name: str
-
-
-class MeasurementTargetScope(str, Enum):
-    """Generic CellProfiler measurement target scope."""
-
-    IMAGE = "image"
-    OBJECT = "object"
-    BOTH = "both"
 
 
 class ModuleFunctionResolutionStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -89,18 +83,16 @@ class ScopedMeasurementFunctionResolutionStrategy(ModuleFunctionResolutionStrate
         *,
         default_function_name: str,
     ) -> ResolvedModuleFunction:
-        scope = _measurement_target_scope(
-            _scope_setting_value(
-                module,
-                _required_class_attr(
-                    type(self).scope_setting_name,
-                    "scope_setting_name",
-                ),
-                _required_class_attr(
-                    type(self).default_scope_value,
-                    "default_scope_value",
-                ),
-            )
+        scope = measurement_target_scope(
+            module,
+            setting=_required_class_attr(
+                type(self).scope_setting_name,
+                "scope_setting_name",
+            ),
+            default=_required_class_attr(
+                type(self).default_scope_value,
+                "default_scope_value",
+            ),
         )
         if scope is MeasurementTargetScope.IMAGE or not _setting_has_symbolic_values(
             module,
@@ -238,6 +230,16 @@ def _scope_setting_value(
         return required_setting_value(module, setting)
     except ValueError:
         return default
+
+
+def measurement_target_scope(
+    module: ModuleBlock,
+    *,
+    setting: SettingNameFamily,
+    default: str,
+) -> MeasurementTargetScope:
+    """Return a typed measurement target scope from a parsed module setting."""
+    return _measurement_target_scope(_scope_setting_value(module, setting, default))
 
 
 def _required_class_attr[T](value: T | None, name: str) -> T:

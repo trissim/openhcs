@@ -23,6 +23,25 @@ from openhcs.core.source_bindings import (
 
 
 @dataclass(frozen=True, slots=True)
+class ImagePlaneSource:
+    """One explicit CellProfiler image-plane source URI embedded in a pipeline."""
+
+    uri: str
+    series: str | None = None
+    index: str | None = None
+    channel: str | None = None
+
+    def __post_init__(self) -> None:
+        normalized_uri = self.uri.strip()
+        if not normalized_uri:
+            raise ValueError("ImagePlaneSource.uri cannot be empty.")
+        object.__setattr__(self, "uri", normalized_uri)
+        object.__setattr__(self, "series", _normalized_optional_text(self.series))
+        object.__setattr__(self, "index", _normalized_optional_text(self.index))
+        object.__setattr__(self, "channel", _normalized_optional_text(self.channel))
+
+
+@dataclass(frozen=True, slots=True)
 class ImagesRule:
     """One setup-module source universe rule."""
 
@@ -321,6 +340,7 @@ class PipelineImageSchema:
     """Pipeline-level image schema lowered from setup modules."""
 
     images_rule: ImagesRule | None = None
+    image_plane_sources: tuple[ImagePlaneSource, ...] = ()
     metadata_rules: tuple[MetadataExtractionRule, ...] = ()
     imported_metadata_tables: tuple[ImportedMetadataTable, ...] = ()
     assignments_by_alias: Mapping[str, ImageAssignment] = MappingProxyType({})
@@ -331,6 +351,11 @@ class PipelineImageSchema:
     grouping: GroupingPlan | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "image_plane_sources",
+            tuple(self.image_plane_sources),
+        )
         object.__setattr__(self, "metadata_rules", tuple(self.metadata_rules))
         object.__setattr__(
             self,
@@ -353,6 +378,12 @@ class PipelineImageSchema:
                     "PipelineImageSchema.imported_metadata_tables must "
                     "contain ImportedMetadataTable values, got "
                     f"{type(table).__name__}."
+                )
+        for source in self.image_plane_sources:
+            if not isinstance(source, ImagePlaneSource):
+                raise TypeError(
+                    "PipelineImageSchema.image_plane_sources must contain "
+                    f"ImagePlaneSource values, got {type(source).__name__}."
                 )
         for alias, assignment in self.assignments_by_alias.items():
             if alias != assignment.alias:
@@ -381,6 +412,7 @@ class PipelineImageSchema:
     def is_empty(self) -> bool:
         return (
             self.images_rule is None
+            and not self.image_plane_sources
             and not self.metadata_rules
             and not self.imported_metadata_tables
             and not self.assignments_by_alias
@@ -431,6 +463,7 @@ class PipelineImageSchemaBuilder:
 
     def __init__(self) -> None:
         self.images_rule: ImagesRule | None = None
+        self.image_plane_sources: list[ImagePlaneSource] = []
         self.metadata_rules: list[MetadataExtractionRule] = []
         self.imported_metadata_tables: list[ImportedMetadataTable] = []
         self.assignments_by_alias: dict[str, ImageAssignment] = {}
@@ -441,6 +474,7 @@ class PipelineImageSchemaBuilder:
     def build(self) -> PipelineImageSchema:
         return PipelineImageSchema(
             images_rule=self.images_rule,
+            image_plane_sources=tuple(self.image_plane_sources),
             metadata_rules=tuple(self.metadata_rules),
             imported_metadata_tables=tuple(self.imported_metadata_tables),
             assignments_by_alias=MappingProxyType(dict(self.assignments_by_alias)),
@@ -454,6 +488,10 @@ class PipelineImageSchemaBuilder:
     def add_metadata_rule(self, rule: MetadataExtractionRule) -> None:
         if rule not in self.metadata_rules:
             self.metadata_rules.append(rule)
+
+    def add_image_plane_source(self, source: ImagePlaneSource) -> None:
+        if source not in self.image_plane_sources:
+            self.image_plane_sources.append(source)
 
     def add_imported_metadata_table(self, table: ImportedMetadataTable) -> None:
         self.imported_metadata_tables.append(table)
@@ -554,6 +592,13 @@ class OrigColorLegacyImageAssignmentStrategy(LegacyImageAssignmentStrategy):
             ),
             origin=SourceBindingOrigin.STEP_INPUT,
         )
+
+
+def _normalized_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = str(value).strip()
+    return stripped or None
 
 
 def _is_public_export(name: str, value: object) -> bool:

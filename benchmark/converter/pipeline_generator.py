@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Any
 from openhcs.core.artifact_materialization_policy import (
     DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
 )
-from openhcs.core.artifacts import ArtifactSpec
+from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 
 from benchmark.cellprofiler_library import canonical_module_name
@@ -32,6 +32,7 @@ from .module_settings_binding import ModuleSettingsBindingStrategy
 from .parser import ModuleBlock
 from .processing_contract_resolution import resolve_processing_contract
 from .settings_binder import SettingsBinder, normalize_cellprofiler_setting_name
+from .setting_names import SettingNameFamily, setting_values, split_symbol_names
 from .symbol_table import (
     CellProfilerSymbolTable,
     ModuleArtifactContracts,
@@ -40,6 +41,51 @@ from .symbol_table import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+_INPUTLESS_ARTIFACT_ONLY_KINDS = frozenset(
+    {
+        ArtifactKind.MEASUREMENTS,
+        ArtifactKind.RELATIONSHIPS,
+    }
+)
+_SAVE_IMAGES_SOURCE_IMAGE_SETTING = SettingNameFamily("Select the image to save")
+
+
+def _is_inputless_artifact_only_contract(contract: ModuleArtifactContracts) -> bool:
+    """Return whether a step should execute once per axis, not per image channel."""
+    return (
+        not contract.inputs
+        and not contract.runtime_artifact_inputs
+        and bool(contract.outputs)
+        and all(spec.kind in _INPUTLESS_ARTIFACT_ONLY_KINDS for spec in contract.outputs)
+    )
+
+
+def _artifact_key(spec: ArtifactSpec) -> tuple[ArtifactKind, str]:
+    return (spec.kind, spec.name)
+
+
+def _has_materialized_output(contract: ModuleArtifactContracts) -> bool:
+    """Return whether any output is externally observable by artifact policy."""
+    return any(
+        spec.materialization is not None
+        or spec.kind in DEFAULT_ARTIFACT_MATERIALIZATION_RULES
+        for spec in contract.outputs
+    )
+
+
+def _save_images_required_artifacts(
+    skipped_modules: list[ModuleBlock],
+) -> set[tuple[ArtifactKind, str]]:
+    """Return image artifacts required by skipped CellProfiler SaveImages modules."""
+    return {
+        (ArtifactKind.IMAGE, image_name)
+        for module in skipped_modules
+        if module.name == "SaveImages"
+        for value in setting_values(module, _SAVE_IMAGES_SOURCE_IMAGE_SETTING)
+        for image_name in split_symbol_names(value)
+    }
 
 
 @dataclass
@@ -168,6 +214,7 @@ from openhcs.constants.input_source import InputSource
         source_cppipe: Path,
         modules: List[ModuleBlock],
         skipped_modules: Optional[List[ModuleBlock]] = None,
+        prune_dead_unmaterialized_artifact_steps: bool = False,
     ) -> GeneratedPipeline:
         """
         Generate pipeline using absorbed library (instant, no LLM).
@@ -223,13 +270,37 @@ from openhcs.constants.input_source import InputSource
             module.module_num: symbol_table.contract_for(module)
             for module in registry_modules
         }
+        infrastructure_contracts = tuple(
+            symbol_table.contract_for(module)
+            for module in skipped_modules
+        )
+        executable_modules = (
+            self._prune_dead_unmaterialized_artifact_steps(
+                registry_modules,
+                contracts_by_module,
+                externally_required_artifacts={
+                    _artifact_key(input_spec)
+                    for contract in infrastructure_contracts
+                    for input_spec in (
+                        *contract.inputs,
+                        *contract.runtime_artifact_inputs,
+                    )
+                }
+                | _save_images_required_artifacts(skipped_modules),
+            )
+            if prune_dead_unmaterialized_artifact_steps
+            else registry_modules
+        )
 
         # Add registry imports for available modules
         raw_function_bindings: dict[int, str] = {}
         runtime_function_bindings: dict[int, str] = {}
-        if registry_modules:
+        if executable_modules:
             imports += "# Absorbed CellProfiler functions (dynamically loaded)\n"
-            imports += "from benchmark.cellprofiler_library import require_function\n\n"
+            imports += (
+                "from openhcs.processing.backends.cellprofiler import "
+                "require_cellprofiler_function\n\n"
+            )
             imports += (
                 "from benchmark.cellprofiler_compat import (\n"
                 "    CellProfilerModuleExecutor,\n"
@@ -244,7 +315,7 @@ from openhcs.constants.input_source import InputSource
 
             # Generate function assignments
             func_assignments = []
-            for module in registry_modules:
+            for module in executable_modules:
                 resolved_function = ModuleFunctionResolutionStrategy.for_module(
                     module.name
                 ).resolve(
@@ -264,7 +335,7 @@ from openhcs.constants.input_source import InputSource
                 else:
                     runtime_function_bindings[module.module_num] = binding_name
                 func_assignments.append(
-                    f'{binding_name} = require_function("{module.name}", '
+                    f'{binding_name} = require_cellprofiler_function("{module.name}", '
                     f'function_name="{func_name}")'
                 )
                 func_assignments.append(
@@ -275,9 +346,9 @@ from openhcs.constants.input_source import InputSource
                 )
             imports += "\n".join(func_assignments) + "\n\n"
 
-        imports += self._generate_artifact_contracts(symbol_table, registry_modules)
+        imports += self._generate_artifact_contracts(symbol_table, executable_modules)
         imports += self._generate_runtime_wrappers(
-            registry_modules,
+            executable_modules,
             raw_function_bindings,
             runtime_function_bindings,
             contracts_by_module,
@@ -285,7 +356,7 @@ from openhcs.constants.input_source import InputSource
 
         # Generate steps with bound settings
         steps = self._generate_steps_from_registry(
-            registry_modules,
+            executable_modules,
             runtime_function_bindings,
             contracts_by_module,
         )
@@ -297,11 +368,11 @@ from openhcs.constants.input_source import InputSource
             name=pipeline_name,
             code=code,
             source_cppipe=str(source_cppipe),
-            converted_modules=[m.name for m in registry_modules],
+            converted_modules=[m.name for m in executable_modules],
             failed_modules=[m.name for m in missing_modules],
             artifact_contracts=tuple(
                 contracts_by_module[module.module_num]
-                for module in registry_modules
+                for module in executable_modules
             ),
             source_schema=symbol_table.source_schema,
         )
@@ -312,6 +383,53 @@ from openhcs.constants.input_source import InputSource
         "z_projection": ("VariableComponents.Z_INDEX",),
         "channel_operation": ("VariableComponents.CHANNEL",),
     }
+
+    def _prune_dead_unmaterialized_artifact_steps(
+        self,
+        modules: list[ModuleBlock],
+        artifact_contracts: dict[int, ModuleArtifactContracts],
+        *,
+        externally_required_artifacts: set[tuple[ArtifactKind, str]] | None = None,
+    ) -> list[ModuleBlock]:
+        """Remove artifact-producing steps whose outputs are neither consumed nor materialized."""
+        live_artifacts = {
+            _artifact_key(output)
+            for contract in artifact_contracts.values()
+            for output in contract.outputs
+            if (
+                output.materialization is not None
+                or output.kind in DEFAULT_ARTIFACT_MATERIALIZATION_RULES
+            )
+        }
+        if externally_required_artifacts:
+            live_artifacts.update(externally_required_artifacts)
+        live_module_nums: set[int] = set()
+
+        for module in reversed(modules):
+            contract = artifact_contracts[module.module_num]
+            output_keys = {_artifact_key(output) for output in contract.outputs}
+            keep = (
+                not contract.outputs
+                or _has_materialized_output(contract)
+                or bool(output_keys & live_artifacts)
+            )
+            if not keep:
+                continue
+            live_module_nums.add(module.module_num)
+            live_artifacts.update(
+                _artifact_key(input_spec)
+                for input_spec in contract.runtime_artifact_inputs
+            )
+
+        pruned = [module for module in modules if module.module_num in live_module_nums]
+        skipped = [module for module in modules if module.module_num not in live_module_nums]
+        if skipped:
+            logger.info(
+                "Pruned %d dead unmaterialized artifact step(s): %s",
+                len(skipped),
+                [module.name for module in skipped],
+            )
+        return pruned
 
     def _generate_steps_from_registry(
         self,
@@ -414,6 +532,11 @@ from openhcs.constants.input_source import InputSource
         contract: ModuleArtifactContracts,
     ) -> tuple[tuple[str, ...], str | None]:
         """Derive native stack/group semantics for one converted step."""
+        if canonical_module_name(contract.module_name) == "TrackObjects":
+            return (
+                "VariableComponents.SITE",
+                "VariableComponents.CHANNEL",
+            ), "GroupBy.NONE"
         source_bindings = contract.source_bindings
         if not source_bindings.is_empty:
             if source_bindings.requires_step_input_channel_stack:
@@ -425,7 +548,9 @@ from openhcs.constants.input_source import InputSource
                 ), "GroupBy.NONE"
             return ("VariableComponents.SITE",), None
         if contract.runtime_artifact_inputs:
-            return ("VariableComponents.CHANNEL",), "GroupBy.SITE"
+            return ("VariableComponents.SITE",), "GroupBy.NONE"
+        if _is_inputless_artifact_only_contract(contract):
+            return ("VariableComponents.SITE",), "GroupBy.NONE"
         variable_components = list(
             self.CATEGORY_TO_VARIABLE_COMPONENTS.get(
                 category,

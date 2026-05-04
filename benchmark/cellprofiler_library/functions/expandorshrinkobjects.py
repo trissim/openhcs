@@ -5,10 +5,16 @@ Original: expand_or_shrink_objects
 
 import numpy as np
 from enum import Enum
+from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_semantics import dense_object_label_id_domain
+from openhcs.core.runtime_values import ObjectLabelPayload
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import segmentation_mask_rois
+from openhcs.processing.backends.analysis.region_properties import (
+    LabelRegionPropertiesBackendStrategy,
+)
 
 
 class ExpandShrinkMode(Enum):
@@ -23,21 +29,16 @@ class ExpandShrinkMode(Enum):
 
 def _expand_defined_pixels(labels: np.ndarray, iterations: int) -> np.ndarray:
     """Expand labeled objects by a defined number of pixels."""
-    from scipy.ndimage import distance_transform_edt, maximum_filter
+    from scipy.ndimage import distance_transform_edt
     
     if iterations <= 0:
         return labels.copy()
-    
+
     result = labels.copy()
-    for _ in range(iterations):
-        # Create a mask of the current labels
-        mask = result > 0
-        # Dilate by finding nearest label for each background pixel within 1 pixel
-        distances, indices = distance_transform_edt(~mask, return_indices=True)
-        # Only expand by 1 pixel at a time
-        expand_mask = (distances > 0) & (distances <= 1)
-        result[expand_mask] = result[indices[0][expand_mask], indices[1][expand_mask]]
-    
+    background = labels == 0
+    distances, indices = distance_transform_edt(background, return_indices=True)
+    expand_mask = background & (distances <= iterations)
+    result[expand_mask] = labels[indices[0][expand_mask], indices[1][expand_mask]]
     return result
 
 
@@ -60,43 +61,62 @@ def _expand_until_touching(labels: np.ndarray) -> np.ndarray:
 
 def _shrink_defined_pixels(labels: np.ndarray, iterations: int, fill: bool) -> np.ndarray:
     """Shrink labeled objects by a defined number of pixels."""
-    from scipy.ndimage import binary_erosion, generate_binary_structure
-    
     if iterations <= 0:
         return labels.copy()
-    
-    result = np.zeros_like(labels)
-    struct = generate_binary_structure(2, 1)  # 4-connectivity
-    
-    for label_id in range(1, labels.max() + 1):
-        obj_mask = labels == label_id
-        eroded = binary_erosion(obj_mask, structure=struct, iterations=iterations)
-        
-        if fill and not eroded.any():
-            # If object disappeared, keep a single pixel at centroid
-            coords = np.where(obj_mask)
-            if len(coords[0]) > 0:
-                cy, cx = int(np.mean(coords[0])), int(np.mean(coords[1]))
-                eroded[cy, cx] = True
-        
-        result[eroded] = label_id
-    
+
+    original = labels.astype(np.int32, copy=False)
+    result = original.copy()
+    for _ in range(iterations):
+        same_neighbors = np.zeros(result.shape, dtype=bool)
+        center = result[1:-1, 1:-1]
+        same_neighbors[1:-1, 1:-1] = (
+            (center > 0)
+            & (center == result[:-2, 1:-1])
+            & (center == result[2:, 1:-1])
+            & (center == result[1:-1, :-2])
+            & (center == result[1:-1, 2:])
+        )
+        result = np.where(same_neighbors, result, 0).astype(np.int32, copy=False)
+
+    if fill:
+        _restore_eroded_objects_to_centroids(original, result)
+
     return result
+
+
+def _restore_eroded_objects_to_centroids(
+    original: np.ndarray,
+    eroded: np.ndarray,
+) -> None:
+    """Preserve one centroid pixel for labels fully removed by shrinking."""
+    region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+        original.astype(np.int32, copy=False)
+    )
+    if region_props.label.size == 0:
+        return
+    remaining_ids = set(int(label_id) for label_id in np.unique(eroded) if label_id > 0)
+    for index, label_id in enumerate(region_props.label):
+        label_int = int(label_id)
+        if label_int in remaining_ids:
+            continue
+        cy = int(region_props.centroid_y[index])
+        cx = int(region_props.centroid_x[index])
+        eroded[cy, cx] = label_int
 
 
 def _shrink_to_point(labels: np.ndarray, fill: bool) -> np.ndarray:
     """Shrink each labeled object to a single point at its centroid."""
-    from skimage.measure import regionprops
-    
     result = np.zeros_like(labels)
-    
-    props = regionprops(labels.astype(np.int32))
-    for prop in props:
-        cy, cx = int(prop.centroid[0]), int(prop.centroid[1])
+    region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+        labels.astype(np.int32, copy=False)
+    )
+    for index, label_id in enumerate(region_props.label):
+        cy = int(region_props.centroid_y[index])
+        cx = int(region_props.centroid_x[index])
         # Ensure centroid is within image bounds
         cy = max(0, min(labels.shape[0] - 1, cy))
         cx = max(0, min(labels.shape[1] - 1, cx))
-        result[cy, cx] = prop.label
+        result[cy, cx] = int(label_id)
     
     return result
 
@@ -161,8 +181,8 @@ def _skeletonize_labels(labels: np.ndarray) -> np.ndarray:
 @special_outputs(("labels", segmentation_mask_rois()))
 def expand_or_shrink_objects(
     image: np.ndarray,
-    labels: np.ndarray,
-    mode: ExpandShrinkMode = ExpandShrinkMode.EXPAND_DEFINED_PIXELS,
+    labels: np.ndarray | ObjectLabelPayload,
+    mode: ExpandShrinkMode | str = ExpandShrinkMode.EXPAND_DEFINED_PIXELS,
     iterations: int = 1,
     fill_holes: bool = True,
 ) -> tuple:
@@ -179,7 +199,8 @@ def expand_or_shrink_objects(
     Returns:
         Tuple of (image, modified_labels)
     """
-    labels_int = labels.astype(np.int32)
+    mode = _coerce_function_enum(ExpandShrinkMode, mode)
+    labels_int = np.asarray(labels).astype(np.int32)
     
     if mode == ExpandShrinkMode.EXPAND_DEFINED_PIXELS:
         result_labels = _expand_defined_pixels(labels_int, iterations)
@@ -197,5 +218,9 @@ def expand_or_shrink_objects(
         result_labels = _skeletonize_labels(labels_int)
     else:
         result_labels = labels_int.copy()
-    
-    return image, result_labels.astype(np.float32)
+    object_ids = dense_object_label_id_domain(result_labels)
+
+    return image, ObjectLabelPayload(
+        labels=result_labels.astype(np.float32),
+        declared_object_ids=object_ids,
+    )

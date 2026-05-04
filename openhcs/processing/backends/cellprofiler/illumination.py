@@ -1,0 +1,861 @@
+"""Illumination backends for CellProfiler-compatible processing."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+import numpy as np
+from metaclass_registry import AutoRegisterMeta
+from numba import njit, prange
+
+from openhcs.constants.constants import MemoryType
+from openhcs.processing.backends.cellprofiler._backend import (
+    CellProfilerBackendProvider,
+    CellProfilerBackendStrategyMixin,
+    cellprofiler_backend_key,
+)
+
+
+class ConvexHullSmoothingBackendStrategy(
+    CellProfilerBackendStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Convex-hull illumination smoothing keyed by OpenHCS memory/provider."""
+
+    __registry_key__ = "backend_key"
+    __skip_if_no_key__ = True
+
+    @abstractmethod
+    def smooth_background_plane(
+        self,
+        pixel_data: np.ndarray,
+        *,
+        mask: np.ndarray | None,
+        filter_size: float,
+        morphology: object,
+    ) -> np.ndarray:
+        """Return a smoothed illumination background plane."""
+
+
+class RankMedianSmoothingBackendStrategy(
+    CellProfilerBackendStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Rank-median illumination smoothing keyed by OpenHCS memory/provider."""
+
+    __registry_key__ = "backend_key"
+    __skip_if_no_key__ = True
+
+    @abstractmethod
+    def smooth_background_plane(
+        self,
+        pixel_data: np.ndarray,
+        *,
+        mask: np.ndarray | None,
+        radius: int,
+        morphology: object,
+    ) -> np.ndarray:
+        """Return a rank-median smoothed illumination background plane."""
+
+
+class NumbaNumpyRankMedianSmoothingBackendStrategy(
+    RankMedianSmoothingBackendStrategy,
+):
+    """NumPy-memory rank median matching skimage rank median border semantics."""
+
+    backend_key = cellprofiler_backend_key(
+        MemoryType.NUMPY,
+        CellProfilerBackendProvider.NUMBA,
+    )
+    memory_type = MemoryType.NUMPY
+    backend_provider = CellProfilerBackendProvider.NUMBA
+    is_default_backend = True
+
+    def smooth_background_plane(
+        self,
+        pixel_data: np.ndarray,
+        *,
+        mask: np.ndarray | None,
+        radius: int,
+        morphology: object,
+    ) -> np.ndarray:
+        image = np.asarray(pixel_data, dtype=np.float32)
+        if image.ndim != 2:
+            raise NotImplementedError(
+                "Rank-median illumination smoothing currently supports 2-D "
+                f"NumPy planes, got shape {image.shape!r}."
+            )
+        if mask is not None and np.asarray(mask).shape != image.shape:
+            raise ValueError(
+                "Rank-median illumination mask must match the image shape; got "
+                f"mask {np.asarray(mask).shape!r} for image {image.shape!r}."
+            )
+        footprint = np.asarray(morphology.disk_footprint(radius), dtype=np.bool_)
+        row_offsets_y, row_radii_x = _rank_median_disk_rows(footprint)
+        scaled = (image * 65535.0).astype(np.uint16)
+        mask_array = (
+            np.ones(image.shape, dtype=np.bool_)
+            if mask is None
+            else np.asarray(mask, dtype=np.bool_)
+        )
+        result = _rank_median_uint16_2d_sliding_histogram_numba(
+            scaled,
+            mask_array,
+            row_offsets_y,
+            row_radii_x,
+        )
+        return result.astype(np.float32) / 65535.0
+
+
+class NativeNumpyRankMedianSmoothingBackendStrategy(
+    RankMedianSmoothingBackendStrategy,
+):
+    """Explicit skimage rank-median reference backend for NumPy planes."""
+
+    backend_key = cellprofiler_backend_key(
+        MemoryType.NUMPY,
+        CellProfilerBackendProvider.NATIVE,
+    )
+    memory_type = MemoryType.NUMPY
+    backend_provider = CellProfilerBackendProvider.NATIVE
+    is_default_backend = False
+
+    def smooth_background_plane(
+        self,
+        pixel_data: np.ndarray,
+        *,
+        mask: np.ndarray | None,
+        radius: int,
+        morphology: object,
+    ) -> np.ndarray:
+        del mask
+        import skimage.filters
+
+        image = np.asarray(pixel_data, dtype=np.float32)
+        footprint = np.asarray(morphology.disk_footprint(radius), dtype=bool)
+        scaled = (image * 65535.0).astype(np.uint16)
+        result = skimage.filters.median(
+            scaled,
+            footprint,
+            behavior="rank",
+        )
+        return result.astype(np.float32) / 65535.0
+
+
+class LegacyFastNumpyConvexHullSmoothingBackendStrategy(
+    ConvexHullSmoothingBackendStrategy,
+):
+    """Fast CP3-compatible convex-hull smoothing for NumPy planes."""
+
+    backend_key = cellprofiler_backend_key(
+        MemoryType.NUMPY,
+        CellProfilerBackendProvider.LEGACY_FAST,
+    )
+    memory_type = MemoryType.NUMPY
+    backend_provider = CellProfilerBackendProvider.LEGACY_FAST
+    is_default_backend = False
+
+    def smooth_background_plane(
+        self,
+        pixel_data: np.ndarray,
+        *,
+        mask: np.ndarray | None,
+        filter_size: float,
+        morphology: object,
+    ) -> np.ndarray:
+        del morphology
+        from scipy.ndimage import grey_dilation, grey_erosion, maximum_filter
+
+        image = np.asarray(pixel_data, dtype=np.float32)
+        if image.ndim != 2:
+            raise NotImplementedError(
+                "Legacy-fast convex-hull smoothing currently supports 2-D "
+                f"NumPy planes, got shape {image.shape!r}."
+            )
+        result = grey_dilation(
+            maximum_filter(
+                grey_erosion(image, size=3),
+                size=max(1, int(filter_size)),
+            ),
+            size=3,
+        )
+        if mask is not None:
+            result = np.asarray(result, dtype=np.float32)
+            result[~np.asarray(mask, dtype=bool)] = 0
+        return result.astype(np.float32, copy=False)
+
+
+class ExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
+    ConvexHullSmoothingBackendStrategy,
+):
+    """Numba-accelerated exact level-set convex-hull reconstruction."""
+
+    backend_key = cellprofiler_backend_key(
+        MemoryType.NUMPY,
+        CellProfilerBackendProvider.EXACT,
+    )
+    memory_type = MemoryType.NUMPY
+    backend_provider = CellProfilerBackendProvider.EXACT
+    is_default_backend = False
+
+    def smooth_background_plane(
+        self,
+        pixel_data: np.ndarray,
+        *,
+        mask: np.ndarray | None,
+        filter_size: float,
+        morphology: object,
+    ) -> np.ndarray:
+        del filter_size, morphology
+        image = np.asarray(pixel_data, dtype=np.float32)
+        if image.ndim != 2:
+            raise NotImplementedError(
+                "Exact convex-hull smoothing currently supports 2-D NumPy "
+                f"planes, got shape {image.shape!r}."
+            )
+        valid_mask = (
+            np.ones(image.shape, dtype=bool)
+            if mask is None
+            else np.asarray(mask, dtype=bool)
+        )
+        if valid_mask.shape != image.shape:
+            raise ValueError(
+                "Convex-hull smoothing requires a mask matching the 2-D "
+                f"image plane, got mask {valid_mask.shape!r} for image "
+                f"{image.shape!r}."
+            )
+        if not np.any(valid_mask):
+            return np.zeros(image.shape, dtype=np.float32)
+
+        valid_values = image[valid_mask]
+        thresholds = np.linspace(
+            float(np.min(valid_values)),
+            float(np.max(valid_values)),
+            256,
+            dtype=np.float32,
+        )[1:]
+        return _exact_level_set_convex_hull_smoothing_numba(
+            np.ascontiguousarray(image, dtype=np.float32),
+            np.ascontiguousarray(valid_mask, dtype=np.bool_),
+            np.ascontiguousarray(thresholds, dtype=np.float32),
+        )
+
+
+class NumbaExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
+    ExactLevelSetNumpyConvexHullSmoothingBackendStrategy,
+):
+    """Named alias for the accelerated exact NumPy provider."""
+
+    backend_key = cellprofiler_backend_key(
+        MemoryType.NUMPY,
+        CellProfilerBackendProvider.NUMBA_EXACT,
+    )
+    memory_type = MemoryType.NUMPY
+    backend_provider = CellProfilerBackendProvider.NUMBA_EXACT
+    is_default_backend = True
+
+
+class NativeExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
+    ConvexHullSmoothingBackendStrategy,
+):
+    """Reference exact level-set convex-hull reconstruction for NumPy planes."""
+
+    backend_key = cellprofiler_backend_key(
+        MemoryType.NUMPY,
+        CellProfilerBackendProvider.NATIVE_EXACT,
+    )
+    memory_type = MemoryType.NUMPY
+    backend_provider = CellProfilerBackendProvider.NATIVE_EXACT
+    is_default_backend = False
+
+    def smooth_background_plane(
+        self,
+        pixel_data: np.ndarray,
+        *,
+        mask: np.ndarray | None,
+        filter_size: float,
+        morphology: object,
+    ) -> np.ndarray:
+        del filter_size
+        return _native_exact_level_set_convex_hull_smoothing(
+            np.asarray(pixel_data, dtype=np.float32),
+            None if mask is None else np.asarray(mask, dtype=bool),
+            morphology,
+        )
+
+
+def _native_exact_level_set_convex_hull_smoothing(
+    image: np.ndarray,
+    mask: np.ndarray | None,
+    morphology: object,
+) -> np.ndarray:
+    if image.ndim != 2:
+        raise NotImplementedError(
+            "Native exact convex-hull smoothing currently supports 2-D NumPy "
+            f"planes, got shape {image.shape!r}."
+        )
+    valid_mask = (
+        np.ones(image.shape, dtype=bool)
+        if mask is None
+        else np.asarray(mask, dtype=bool)
+    )
+    if valid_mask.shape != image.shape:
+        raise ValueError(
+            "Convex-hull smoothing requires a mask matching the 2-D image "
+            f"plane, got mask {valid_mask.shape!r} for image {image.shape!r}."
+        )
+    if not np.any(valid_mask):
+        return np.zeros(image.shape, dtype=np.float32)
+
+    valid_values = image[valid_mask]
+    minimum = float(np.min(valid_values))
+    maximum = float(np.max(valid_values))
+    output = np.full(image.shape, minimum, dtype=np.float32)
+    output[~valid_mask] = 0
+    if maximum <= minimum:
+        return output
+
+    for threshold in np.linspace(minimum, maximum, 256, dtype=np.float32)[1:]:
+        level_mask = valid_mask & (image >= float(threshold))
+        if not np.any(level_mask):
+            continue
+        output[morphology.convex_hull_image(level_mask) & valid_mask] = threshold
+    return output
+
+
+@njit(cache=True)
+def _exact_level_set_convex_hull_smoothing_numba(
+    image: np.ndarray,
+    valid_mask: np.ndarray,
+    thresholds: np.ndarray,
+) -> np.ndarray:
+    height, width = image.shape
+    minimum = np.float32(0.0)
+    maximum = np.float32(0.0)
+    found_valid = False
+    for y in range(height):
+        for x in range(width):
+            if not valid_mask[y, x]:
+                continue
+            value = image[y, x]
+            if not found_valid:
+                minimum = value
+                maximum = value
+                found_valid = True
+            else:
+                if value < minimum:
+                    minimum = value
+                if value > maximum:
+                    maximum = value
+
+    output = np.empty((height, width), dtype=np.float32)
+    for y in range(height):
+        for x in range(width):
+            output[y, x] = minimum if valid_mask[y, x] else np.float32(0.0)
+    if (not found_valid) or maximum <= minimum:
+        return output
+
+    row_count2 = height * 2 + 1
+    min_col_by_row = np.empty(row_count2, dtype=np.int64)
+    max_col_by_row = np.empty(row_count2, dtype=np.int64)
+    point_capacity = max(2, row_count2 * 2)
+    point_x = np.empty(point_capacity, dtype=np.int64)
+    point_y = np.empty(point_capacity, dtype=np.int64)
+    hull_x = np.empty(point_capacity * 2, dtype=np.int64)
+    hull_y = np.empty(point_capacity * 2, dtype=np.int64)
+    for level_index in range(thresholds.size):
+        threshold = thresholds[level_index]
+        point_count = _collect_diamond_extreme_points(
+            image,
+            valid_mask,
+            threshold,
+            min_col_by_row,
+            max_col_by_row,
+            point_x,
+            point_y,
+        )
+        if point_count == 0:
+            continue
+        hull_count = _monotone_chain_hull(
+            point_x,
+            point_y,
+            point_count,
+            hull_x,
+            hull_y,
+        )
+        _paint_convex_hull(
+            output,
+            valid_mask,
+            threshold,
+            hull_x,
+            hull_y,
+            hull_count,
+        )
+    return output
+
+
+@njit(cache=True)
+def _collect_diamond_extreme_points(
+    image: np.ndarray,
+    valid_mask: np.ndarray,
+    threshold: np.float32,
+    min_col_by_row: np.ndarray,
+    max_col_by_row: np.ndarray,
+    point_x: np.ndarray,
+    point_y: np.ndarray,
+) -> int:
+    height, width = image.shape
+    row_count2 = height * 2 + 1
+    for row_index in range(row_count2):
+        min_col_by_row[row_index] = 9223372036854775807
+        max_col_by_row[row_index] = -9223372036854775807
+
+    for y in range(height):
+        for x in range(width):
+            if valid_mask[y, x] and image[y, x] >= threshold:
+                _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y - 1, 2 * x)
+                _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y + 1, 2 * x)
+                _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y, 2 * x - 1)
+                _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y, 2 * x + 1)
+
+    point_count = 0
+    for row_index in range(row_count2):
+        max_col = max_col_by_row[row_index]
+        if max_col < -9223372036854775800:
+            continue
+        row2 = row_index - 1
+        min_col = min_col_by_row[row_index]
+        point_x[point_count] = row2
+        point_y[point_count] = min_col
+        point_count += 1
+        if max_col != min_col:
+            point_x[point_count] = row2
+            point_y[point_count] = max_col
+            point_count += 1
+    return point_count
+
+
+@njit(cache=True)
+def _add_diamond_vertex(
+    min_col_by_row: np.ndarray,
+    max_col_by_row: np.ndarray,
+    row2: int,
+    col2: int,
+) -> None:
+    row_index = row2 + 1
+    if col2 < min_col_by_row[row_index]:
+        min_col_by_row[row_index] = col2
+    if col2 > max_col_by_row[row_index]:
+        max_col_by_row[row_index] = col2
+
+
+@njit(cache=True)
+def _cross_points(
+    ax: int,
+    ay: int,
+    bx: int,
+    by: int,
+    cx: int,
+    cy: int,
+) -> int:
+    return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+
+
+@njit(cache=True)
+def _monotone_chain_hull(
+    point_x: np.ndarray,
+    point_y: np.ndarray,
+    point_count: int,
+    hull_x: np.ndarray,
+    hull_y: np.ndarray,
+) -> int:
+    if point_count <= 1:
+        if point_count == 1:
+            hull_x[0] = point_x[0]
+            hull_y[0] = point_y[0]
+        return point_count
+
+    hull_count = 0
+    for index in range(point_count):
+        px = point_x[index]
+        py = point_y[index]
+        while hull_count >= 2 and _cross_points(
+            hull_x[hull_count - 2],
+            hull_y[hull_count - 2],
+            hull_x[hull_count - 1],
+            hull_y[hull_count - 1],
+            px,
+            py,
+        ) <= 0:
+            hull_count -= 1
+        hull_x[hull_count] = px
+        hull_y[hull_count] = py
+        hull_count += 1
+
+    lower_count = hull_count
+    for index in range(point_count - 2, -1, -1):
+        px = point_x[index]
+        py = point_y[index]
+        while hull_count > lower_count and _cross_points(
+            hull_x[hull_count - 2],
+            hull_y[hull_count - 2],
+            hull_x[hull_count - 1],
+            hull_y[hull_count - 1],
+            px,
+            py,
+        ) <= 0:
+            hull_count -= 1
+        hull_x[hull_count] = px
+        hull_y[hull_count] = py
+        hull_count += 1
+
+    if hull_count > 1:
+        hull_count -= 1
+    return hull_count
+
+
+@njit(cache=True)
+def _paint_convex_hull(
+    output: np.ndarray,
+    valid_mask: np.ndarray,
+    threshold: np.float32,
+    hull_x: np.ndarray,
+    hull_y: np.ndarray,
+    hull_count: int,
+) -> None:
+    if hull_count <= 0:
+        return
+    if hull_count == 1:
+        if hull_x[0] % 2 != 0 or hull_y[0] % 2 != 0:
+            return
+        y = hull_x[0] // 2
+        x = hull_y[0] // 2
+        if (
+            y >= 0
+            and y < valid_mask.shape[0]
+            and x >= 0
+            and x < valid_mask.shape[1]
+            and valid_mask[y, x]
+        ):
+            output[y, x] = threshold
+        return
+
+    min_row2 = hull_x[0]
+    max_row2 = hull_x[0]
+    min_col2 = hull_y[0]
+    max_col2 = hull_y[0]
+    for index in range(1, hull_count):
+        row2 = hull_x[index]
+        col2 = hull_y[index]
+        if row2 < min_row2:
+            min_row2 = row2
+        if row2 > max_row2:
+            max_row2 = row2
+        if col2 < min_col2:
+            min_col2 = col2
+        if col2 > max_col2:
+            max_col2 = col2
+
+    if hull_count == 2:
+        _paint_line_hull(
+            output,
+            valid_mask,
+            threshold,
+            hull_x[0],
+            hull_y[0],
+            hull_x[1],
+            hull_y[1],
+            min_row2,
+            max_row2,
+            min_col2,
+            max_col2,
+        )
+        return
+
+    area2 = 0
+    for index in range(hull_count):
+        next_index = 0 if index == hull_count - 1 else index + 1
+        area2 += hull_x[index] * hull_y[next_index]
+        area2 -= hull_x[next_index] * hull_y[index]
+    positive_orientation = area2 >= 0
+
+    image_height, image_width = output.shape
+    min_y = max(0, _ceil_div2(min_row2))
+    max_y = min(image_height - 1, _floor_div2(max_row2))
+    min_x = max(0, _ceil_div2(min_col2))
+    max_x = min(image_width - 1, _floor_div2(max_col2))
+
+    for y in range(min_y, max_y + 1):
+        query_row2 = y * 2
+        for x in range(min_x, max_x + 1):
+            if not valid_mask[y, x]:
+                continue
+            query_col2 = x * 2
+            inside = True
+            for index in range(hull_count):
+                next_index = 0 if index == hull_count - 1 else index + 1
+                cross = _cross_points(
+                    hull_x[index],
+                    hull_y[index],
+                    hull_x[next_index],
+                    hull_y[next_index],
+                    query_row2,
+                    query_col2,
+                )
+                if positive_orientation:
+                    if cross < 0:
+                        inside = False
+                        break
+                elif cross > 0:
+                    inside = False
+                    break
+            if inside:
+                output[y, x] = threshold
+
+
+@njit(cache=True)
+def _ceil_div2(value: int) -> int:
+    if value >= 0:
+        return (value + 1) // 2
+    return value // 2
+
+
+@njit(cache=True)
+def _floor_div2(value: int) -> int:
+    if value >= 0:
+        return value // 2
+    return -((-value + 1) // 2)
+
+
+@njit(cache=True)
+def _paint_line_hull(
+    output: np.ndarray,
+    valid_mask: np.ndarray,
+    threshold: np.float32,
+    x0: int,
+    y0: int,
+    x1: int,
+    y1: int,
+    min_row2: int,
+    max_row2: int,
+    min_col2: int,
+    max_col2: int,
+) -> None:
+    dx = x1 - x0
+    dy = y1 - y0
+    length2 = dx * dx + dy * dy
+    if length2 == 0:
+        if valid_mask[y0, x0]:
+            output[y0, x0] = threshold
+        return
+    image_height, image_width = output.shape
+    min_y = max(0, _ceil_div2(min_row2))
+    max_y = min(image_height - 1, _floor_div2(max_row2))
+    min_x = max(0, _ceil_div2(min_col2))
+    max_x = min(image_width - 1, _floor_div2(max_col2))
+    for y in range(min_y, max_y + 1):
+        query_row2 = y * 2
+        for x in range(min_x, max_x + 1):
+            if not valid_mask[y, x]:
+                continue
+            query_col2 = x * 2
+            dot = (query_row2 - x0) * dx + (query_col2 - y0) * dy
+            if dot < 0 or dot > length2:
+                continue
+            cross = dx * (query_col2 - y0) - dy * (query_row2 - x0)
+            if cross == 0:
+                output[y, x] = threshold
+
+
+def _rank_median_footprint_offsets(
+    footprint: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    center_y = footprint.shape[0] // 2
+    center_x = footprint.shape[1] // 2
+    y, x = np.nonzero(footprint)
+    return (
+        (y - center_y).astype(np.int64, copy=False),
+        (x - center_x).astype(np.int64, copy=False),
+    )
+
+
+def _rank_median_disk_rows(
+    footprint: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Collapse a dense disk footprint into per-row horizontal radii."""
+    center_y = footprint.shape[0] // 2
+    center_x = footprint.shape[1] // 2
+    rows: list[int] = []
+    radii: list[int] = []
+    for y in range(footprint.shape[0]):
+        xs = np.flatnonzero(footprint[y])
+        if xs.size == 0:
+            continue
+        rows.append(y - center_y)
+        radii.append(int(np.max(np.abs(xs - center_x))))
+    return (
+        np.asarray(rows, dtype=np.int64),
+        np.asarray(radii, dtype=np.int64),
+    )
+
+
+@njit(cache=True, parallel=True)
+def _rank_median_uint16_2d_sliding_histogram_numba(
+    image: np.ndarray,
+    mask: np.ndarray,
+    row_offsets_y: np.ndarray,
+    row_radii_x: np.ndarray,
+) -> np.ndarray:
+    height, width = image.shape
+    output = np.empty((height, width), dtype=np.uint16)
+    histogram_size = 65536
+    for y in prange(height):
+        tree = np.zeros(histogram_size + 1, dtype=np.int64)
+        count = 0
+
+        for row_index in range(row_offsets_y.shape[0]):
+            yy = y + row_offsets_y[row_index]
+            if yy < 0 or yy >= height:
+                continue
+            radius_x = row_radii_x[row_index]
+            right = radius_x
+            if right >= width:
+                right = width - 1
+            for xx in range(0, right + 1):
+                value = image[yy, xx] if mask[yy, xx] else np.uint16(0)
+                _fenwick_add_uint16(tree, value, 1)
+                count += 1
+
+        if count == 0:
+            output[y, 0] = np.uint16(0)
+        else:
+            output[y, 0] = _fenwick_select_uint16(tree, count // 2)
+
+        for x in range(1, width):
+            for row_index in range(row_offsets_y.shape[0]):
+                yy = y + row_offsets_y[row_index]
+                if yy < 0 or yy >= height:
+                    continue
+                radius_x = row_radii_x[row_index]
+
+                remove_x = x - 1 - radius_x
+                if remove_x >= 0 and remove_x < width:
+                    value = (
+                        image[yy, remove_x]
+                        if mask[yy, remove_x]
+                        else np.uint16(0)
+                    )
+                    _fenwick_add_uint16(tree, value, -1)
+                    count -= 1
+
+                add_x = x + radius_x
+                if add_x >= 0 and add_x < width:
+                    value = image[yy, add_x] if mask[yy, add_x] else np.uint16(0)
+                    _fenwick_add_uint16(tree, value, 1)
+                    count += 1
+
+            if count == 0:
+                output[y, x] = np.uint16(0)
+            else:
+                output[y, x] = _fenwick_select_uint16(tree, count // 2)
+    return output
+
+
+@njit(cache=True)
+def _fenwick_add_uint16(tree: np.ndarray, value: np.uint16, delta: int) -> None:
+    index = int(value) + 1
+    while index < tree.shape[0]:
+        tree[index] += delta
+        index += index & -index
+
+
+@njit(cache=True)
+def _fenwick_select_uint16(tree: np.ndarray, kth: int) -> np.uint16:
+    index = 0
+    bit = 32768
+    target = kth + 1
+    while bit != 0:
+        next_index = index + bit
+        if next_index < tree.shape[0] and tree[next_index] < target:
+            index = next_index
+            target -= tree[next_index]
+        bit >>= 1
+    return np.uint16(index)
+
+
+@njit(cache=True, parallel=True)
+def _rank_median_uint16_2d_numba(
+    image: np.ndarray,
+    mask: np.ndarray,
+    offsets_y: np.ndarray,
+    offsets_x: np.ndarray,
+) -> np.ndarray:
+    height, width = image.shape
+    output = np.empty((height, width), dtype=np.uint16)
+    footprint_size = offsets_y.shape[0]
+    for y in prange(height):
+        values = np.empty(footprint_size, dtype=np.uint16)
+        for x in range(width):
+            count = 0
+            for offset_index in range(footprint_size):
+                yy = y + offsets_y[offset_index]
+                xx = x + offsets_x[offset_index]
+                if 0 <= yy < height and 0 <= xx < width:
+                    values[count] = image[yy, xx] if mask[yy, xx] else 0
+                    count += 1
+            output[y, x] = _select_uint16(values, count, count // 2)
+    return output
+
+
+@njit(cache=True)
+def _select_uint16(values: np.ndarray, count: int, kth: int) -> np.uint16:
+    left = 0
+    right = count - 1
+    while True:
+        if left == right:
+            return values[left]
+        pivot_index = (left + right) // 2
+        pivot_index = _partition_uint16(values, left, right, pivot_index)
+        if kth == pivot_index:
+            return values[kth]
+        if kth < pivot_index:
+            right = pivot_index - 1
+        else:
+            left = pivot_index + 1
+
+
+@njit(cache=True)
+def _partition_uint16(
+    values: np.ndarray,
+    left: int,
+    right: int,
+    pivot_index: int,
+) -> int:
+    pivot_value = values[pivot_index]
+    values[pivot_index] = values[right]
+    values[right] = pivot_value
+    store_index = left
+    for index in range(left, right):
+        if values[index] < pivot_value:
+            current = values[store_index]
+            values[store_index] = values[index]
+            values[index] = current
+            store_index += 1
+    current = values[right]
+    values[right] = values[store_index]
+    values[store_index] = current
+    return store_index
+
+
+__all__ = [
+    "ConvexHullSmoothingBackendStrategy",
+    "ExactLevelSetNumpyConvexHullSmoothingBackendStrategy",
+    "LegacyFastNumpyConvexHullSmoothingBackendStrategy",
+    "NativeExactLevelSetNumpyConvexHullSmoothingBackendStrategy",
+    "NativeNumpyRankMedianSmoothingBackendStrategy",
+    "NumbaExactLevelSetNumpyConvexHullSmoothingBackendStrategy",
+    "NumbaNumpyRankMedianSmoothingBackendStrategy",
+    "RankMedianSmoothingBackendStrategy",
+]

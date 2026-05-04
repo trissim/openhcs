@@ -23,8 +23,9 @@ class StructuringElement(str, Enum):
 class StructuringElementFactory(ABC, metaclass=AutoRegisterMeta):
     """Create one skimage structuring element for a closed enum case."""
 
-    __registry_key__ = "structuring_element"
+    __registry_key__ = "structuring_element_label"
     __skip_if_no_key__ = True
+    structuring_element_label: ClassVar[str | None] = None
     structuring_element: ClassVar[StructuringElement | None] = None
 
     @classmethod
@@ -32,7 +33,7 @@ class StructuringElementFactory(ABC, metaclass=AutoRegisterMeta):
         cls,
         structuring_element: StructuringElement,
     ) -> "StructuringElementFactory":
-        return cls.__registry__[structuring_element]()
+        return cls.__registry__[structuring_element.value]()
 
     @abstractmethod
     def build(self, size: int) -> np.ndarray:
@@ -41,6 +42,7 @@ class StructuringElementFactory(ABC, metaclass=AutoRegisterMeta):
 
 class DiskStructuringElementFactory(StructuringElementFactory):
     structuring_element = StructuringElement.DISK
+    structuring_element_label = structuring_element.value
 
     def build(self, size: int) -> np.ndarray:
         from skimage.morphology import disk
@@ -50,6 +52,7 @@ class DiskStructuringElementFactory(StructuringElementFactory):
 
 class SquareStructuringElementFactory(StructuringElementFactory):
     structuring_element = StructuringElement.SQUARE
+    structuring_element_label = structuring_element.value
 
     def build(self, size: int) -> np.ndarray:
         from skimage.morphology import square
@@ -59,6 +62,7 @@ class SquareStructuringElementFactory(StructuringElementFactory):
 
 class DiamondStructuringElementFactory(StructuringElementFactory):
     structuring_element = StructuringElement.DIAMOND
+    structuring_element_label = structuring_element.value
 
     def build(self, size: int) -> np.ndarray:
         from skimage.morphology import diamond
@@ -68,6 +72,7 @@ class DiamondStructuringElementFactory(StructuringElementFactory):
 
 class OctagonStructuringElementFactory(StructuringElementFactory):
     structuring_element = StructuringElement.OCTAGON
+    structuring_element_label = structuring_element.value
 
     def build(self, size: int) -> np.ndarray:
         from skimage.morphology import octagon
@@ -77,6 +82,7 @@ class OctagonStructuringElementFactory(StructuringElementFactory):
 
 class StarStructuringElementFactory(StructuringElementFactory):
     structuring_element = StructuringElement.STAR
+    structuring_element_label = structuring_element.value
 
     def build(self, size: int) -> np.ndarray:
         from skimage.morphology import star

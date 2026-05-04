@@ -7,6 +7,9 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
+from openhcs.processing.backends.analysis.region_properties import (
+    LabelRegionPropertiesBackendStrategy,
+)
 
 
 @dataclass
@@ -48,7 +51,7 @@ def convert_image_to_objects(
     Returns:
         Tuple of (original image, conversion stats, label image)
     """
-    from skimage.measure import label, regionprops
+    from skimage.measure import label
     
     # Work with a copy to avoid modifying input
     working_image = image.copy()
@@ -71,13 +74,12 @@ def convert_image_to_objects(
     labels = labels.astype(np.int32)
     
     # Calculate statistics
-    props = regionprops(labels)
-    object_count = len(props)
+    props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(labels)
+    object_count = int(props.label.size)
     
     if object_count > 0:
-        areas = [p.area for p in props]
-        mean_area = float(np.mean(areas))
-        total_area = int(np.sum(areas))
+        mean_area = float(np.mean(props.area))
+        total_area = int(np.sum(props.area))
     else:
         mean_area = 0.0
         total_area = 0

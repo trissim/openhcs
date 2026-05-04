@@ -8,9 +8,14 @@ min/max, standard deviation, inversion, log transform, and logical operations.
 """
 
 import numpy as np
-from typing import Tuple
+from typing import Any, Tuple
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import (
+    image_payload_data,
+    image_payload_mask,
+    with_image_payload_data,
+)
 
 
 class MathOperation(Enum):
@@ -35,7 +40,75 @@ class MathOperation(Enum):
 
 
 BINARY_OUTPUT_OPS = [MathOperation.AND, MathOperation.OR, MathOperation.NOT, MathOperation.EQUALS]
-SINGLE_IMAGE_OPS = [MathOperation.INVERT, MathOperation.LOG_TRANSFORM, MathOperation.LOG_TRANSFORM_LEGACY, MathOperation.NOT, MathOperation.NONE]
+SINGLE_IMAGE_OPS = [MathOperation.INVERT, MathOperation.COMPLEMENT, MathOperation.LOG_TRANSFORM, MathOperation.LOG_TRANSFORM_LEGACY, MathOperation.NOT, MathOperation.NONE]
+
+
+_CELLPROFILER_IMAGE_MATH_OPERATIONS = {
+    "add": MathOperation.ADD,
+    "subtract": MathOperation.SUBTRACT,
+    "absolute_difference": MathOperation.DIFFERENCE,
+    "difference": MathOperation.DIFFERENCE,
+    "multiply": MathOperation.MULTIPLY,
+    "divide": MathOperation.DIVIDE,
+    "average": MathOperation.AVERAGE,
+    "minimum": MathOperation.MINIMUM,
+    "maximum": MathOperation.MAXIMUM,
+    "standard_deviation": MathOperation.STDEV,
+    "stdev": MathOperation.STDEV,
+    "invert": MathOperation.INVERT,
+    "complement": MathOperation.COMPLEMENT,
+    "log_transform": MathOperation.LOG_TRANSFORM,
+    "log_transform_base_2": MathOperation.LOG_TRANSFORM,
+    "log_transform_base2": MathOperation.LOG_TRANSFORM,
+    "log_transform_legacy": MathOperation.LOG_TRANSFORM_LEGACY,
+    "none": MathOperation.NONE,
+    "or": MathOperation.OR,
+    "and": MathOperation.AND,
+    "not": MathOperation.NOT,
+    "equals": MathOperation.EQUALS,
+}
+
+
+def _coerce_math_operation(value: MathOperation | str) -> MathOperation:
+    if isinstance(value, MathOperation):
+        return value
+    normalized = "_".join(str(value).strip().lower().replace("-", " ").split())
+    try:
+        return _CELLPROFILER_IMAGE_MATH_OPERATIONS[normalized]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported ImageMath operation {value!r}.") from exc
+
+
+def _apply_image_mask(pixel_data: np.ndarray, mask: Any | None) -> np.ndarray:
+    """Apply an image-validity mask using CellProfiler's output pixel semantics."""
+    if mask is None:
+        return pixel_data
+
+    mask_array = np.asarray(mask, dtype=bool)
+    if mask_array.shape == pixel_data.shape:
+        return pixel_data * mask_array
+
+    if pixel_data.ndim == 2:
+        if mask_array.ndim == 3 and mask_array.shape[0] == 1:
+            mask_array = mask_array[0]
+        if mask_array.shape == pixel_data.shape:
+            return pixel_data * mask_array
+
+    if pixel_data.ndim == 3:
+        if mask_array.ndim == 2 and mask_array.shape == pixel_data.shape[:2]:
+            return pixel_data * mask_array[:, :, np.newaxis]
+        if mask_array.ndim == 2 and mask_array.shape == pixel_data.shape[1:]:
+            return pixel_data * mask_array[np.newaxis, :, :]
+        if mask_array.ndim == 3 and mask_array.shape[:2] == pixel_data.shape[:2] and pixel_data.shape[2] in (3, 4):
+            return pixel_data * mask_array[:, :, :1]
+
+    if pixel_data.ndim == 4:
+        if mask_array.ndim == 2 and mask_array.shape == pixel_data.shape[1:3]:
+            return pixel_data * mask_array[np.newaxis, :, :, np.newaxis]
+        if mask_array.ndim == 3 and mask_array.shape == pixel_data.shape[:3]:
+            return pixel_data * mask_array[:, :, :, np.newaxis]
+
+    return pixel_data * mask_array
 
 
 @numpy
@@ -49,6 +122,7 @@ def image_math(
     truncate_low: bool = True,
     truncate_high: bool = True,
     replace_nan: bool = True,
+    ignore_masks: bool = False,
 ) -> np.ndarray:
     """
     Perform mathematical operations on image intensities.
@@ -66,11 +140,17 @@ def image_math(
         truncate_low: Set values less than 0 to 0.
         truncate_high: Set values greater than 1 to 1.
         replace_nan: Replace NaN values with 0.
+        ignore_masks: Drop any input image mask instead of preserving it.
     
     Returns:
         Processed image of shape (1, H, W).
     """
     import skimage.util
+
+    operation = _coerce_math_operation(operation)
+    source_payload = image
+    source_mask = None if ignore_masks else image_payload_mask(source_payload)
+    image = image_payload_data(image)
     
     # Handle input dimensions
     if image.ndim == 2:
@@ -152,7 +232,7 @@ def image_math(
         pixel_array = np.array(pixel_data)
         output_pixel_data = np.std(pixel_array, axis=0)
     
-    elif operation == MathOperation.INVERT:
+    elif operation in (MathOperation.INVERT, MathOperation.COMPLEMENT):
         output_pixel_data = skimage.util.invert(output_pixel_data)
     
     elif operation == MathOperation.NOT:
@@ -204,5 +284,11 @@ def image_math(
     # Ensure output is (1, H, W)
     if output_pixel_data.ndim == 2:
         output_pixel_data = output_pixel_data[np.newaxis, :, :]
-    
-    return output_pixel_data.astype(np.float32)
+
+    if not ignore_masks:
+        output_pixel_data = _apply_image_mask(output_pixel_data, source_mask)
+
+    output = output_pixel_data.astype(np.float32)
+    if ignore_masks:
+        return output
+    return with_image_payload_data(source_payload, output, mask=source_mask)

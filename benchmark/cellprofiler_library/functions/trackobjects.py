@@ -13,6 +13,15 @@ from dataclasses import dataclass, field
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.runtime_artifact_queries import (
+    MEASUREMENT_FEATURE_NAME_FIELD,
+    MEASUREMENT_MEASUREMENT_VALUE_FIELD,
+    MEASUREMENT_OBJECT_LABEL_FIELD,
+)
+from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler.tracking import (
+    ObjectTrackingBackendStrategy,
+)
 from openhcs.processing.materialization import csv_materializer
 
 
@@ -57,79 +66,25 @@ class ObjectTrackingData:
 
 def _centers_of_labels(labels: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """Calculate centers of labeled objects"""
-    from scipy.ndimage import center_of_mass
-    
-    if labels.max() == 0:
-        return np.array([]), np.array([])
-    
-    n_labels = labels.max()
-    centers = center_of_mass(np.ones_like(labels), labels, range(1, n_labels + 1))
-    
-    if len(centers) == 0:
-        return np.array([]), np.array([])
-    
-    centers = np.array(centers)
-    return centers[:, 0], centers[:, 1]  # i (y), j (x)
+    return ObjectTrackingBackendStrategy.for_memory_type().label_centers(labels)
 
 
 def _track_by_overlap(
     current_labels: np.ndarray,
     old_labels: Optional[np.ndarray],
     old_object_numbers: np.ndarray,
-    max_object_number: int
+    max_object_number: int,
+    backend_provider: CellProfilerBackendProvider | None = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """Track objects by maximum overlap between frames"""
-    from scipy.sparse import coo_matrix
-    
-    i, j = _centers_of_labels(current_labels)
-    cur_count = int(current_labels.max()) if current_labels.max() > 0 else 0
-    
-    if old_labels is None or cur_count == 0:
-        # First frame or no objects
-        new_labels = np.arange(1, cur_count + 1) + max_object_number
-        return new_labels, np.zeros(cur_count, int), np.zeros(cur_count, int), max_object_number + cur_count
-    
-    old_count = int(old_labels.max()) if old_labels.max() > 0 else 0
-    
-    if old_count == 0:
-        new_labels = np.arange(1, cur_count + 1) + max_object_number
-        return new_labels, np.zeros(cur_count, int), np.zeros(cur_count, int), max_object_number + cur_count
-    
-    # Calculate overlap
-    mask = (current_labels > 0) & (old_labels > 0)
-    if not np.any(mask):
-        new_labels = np.arange(1, cur_count + 1) + max_object_number
-        return new_labels, np.zeros(cur_count, int), np.zeros(cur_count, int), max_object_number + cur_count
-    
-    cur = current_labels[mask]
-    old = old_labels[mask]
-    
-    histogram = coo_matrix(
-        (np.ones(len(cur)), (cur, old)),
-        shape=(cur_count + 1, old_count + 1)
-    ).toarray()
-    
-    old_of_new = np.argmax(histogram, 1)[1:]  # Best old match for each new
-    new_of_old = np.argmax(histogram, 0)[1:]  # Best new match for each old
-    
-    # Assign labels
-    new_labels = np.zeros(cur_count, int)
-    parent_object_numbers = np.zeros(cur_count, int)
-    parent_image_numbers = np.zeros(cur_count, int)
-    
-    for new_idx in range(cur_count):
-        old_idx = old_of_new[new_idx]
-        if old_idx > 0 and new_of_old[old_idx - 1] == new_idx + 1:
-            # Mutual best match
-            new_labels[new_idx] = old_object_numbers[old_idx - 1]
-            parent_object_numbers[new_idx] = old_idx
-            parent_image_numbers[new_idx] = 1  # Previous frame
-        else:
-            # New object
-            max_object_number += 1
-            new_labels[new_idx] = max_object_number
-    
-    return new_labels, parent_object_numbers, parent_image_numbers, max_object_number
+    return ObjectTrackingBackendStrategy.for_memory_type(
+        backend_provider=backend_provider,
+    ).track_by_overlap(
+        current_labels,
+        old_labels,
+        old_object_numbers,
+        max_object_number,
+    )
 
 
 def _track_by_distance(
@@ -137,63 +92,38 @@ def _track_by_distance(
     old_labels: Optional[np.ndarray],
     old_object_numbers: np.ndarray,
     max_object_number: int,
-    pixel_radius: int
+    pixel_radius: int,
+    backend_provider: CellProfilerBackendProvider | None = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """Track objects by minimum distance between centroids"""
-    from scipy.ndimage import distance_transform_edt
-    
-    i, j = _centers_of_labels(current_labels)
-    cur_count = len(i)
-    
-    if old_labels is None or cur_count == 0:
-        new_labels = np.arange(1, cur_count + 1) + max_object_number if cur_count > 0 else np.array([], int)
-        return new_labels, np.zeros(cur_count, int), np.zeros(cur_count, int), max_object_number + cur_count
-    
-    old_i, old_j = _centers_of_labels(old_labels)
-    old_count = len(old_i)
-    
-    if old_count == 0:
-        new_labels = np.arange(1, cur_count + 1) + max_object_number
-        return new_labels, np.zeros(cur_count, int), np.zeros(cur_count, int), max_object_number + cur_count
-    
-    # Calculate distances between all pairs
-    new_labels = np.zeros(cur_count, int)
-    parent_object_numbers = np.zeros(cur_count, int)
-    parent_image_numbers = np.zeros(cur_count, int)
-    
-    # Simple nearest neighbor matching
-    for new_idx in range(cur_count):
-        min_dist = pixel_radius + 1
-        best_old = -1
-        for old_idx in range(old_count):
-            dist = np.sqrt((i[new_idx] - old_i[old_idx])**2 + (j[new_idx] - old_j[old_idx])**2)
-            if dist < min_dist:
-                min_dist = dist
-                best_old = old_idx
-        
-        if best_old >= 0 and min_dist <= pixel_radius:
-            new_labels[new_idx] = old_object_numbers[best_old]
-            parent_object_numbers[new_idx] = best_old + 1
-            parent_image_numbers[new_idx] = 1
-        else:
-            max_object_number += 1
-            new_labels[new_idx] = max_object_number
-    
-    return new_labels, parent_object_numbers, parent_image_numbers, max_object_number
+    return ObjectTrackingBackendStrategy.for_memory_type(
+        backend_provider=backend_provider,
+    ).track_by_distance(
+        current_labels,
+        old_labels,
+        old_object_numbers,
+        max_object_number,
+        pixel_radius,
+    )
 
 
 @numpy
 @special_inputs("labels")
 @special_outputs(
     ("tracking_results", csv_materializer(
-        fields=["slice_index", "object_count", "new_object_count", 
-                "lost_object_count", "split_count", "merge_count"],
+        fields=[
+            "image_number",
+            MEASUREMENT_OBJECT_LABEL_FIELD,
+            MEASUREMENT_FEATURE_NAME_FIELD,
+            MEASUREMENT_MEASUREMENT_VALUE_FIELD,
+        ],
         analysis_type="tracking"
     ))
 )
 def track_objects(
     image: np.ndarray,
     labels: np.ndarray,
+    object_name: str = "Objects",
     tracking_method: str = "overlap",
     pixel_radius: int = 50,
     movement_model: str = "both",
@@ -215,8 +145,9 @@ def track_objects(
     minimum_lifetime: int = 1,
     use_maximum_lifetime: bool = False,
     maximum_lifetime: int = 100,
+    tracking_backend_provider: CellProfilerBackendProvider | None = None,
     _tracking_state: Optional[Dict[str, Any]] = None
-) -> Tuple[np.ndarray, TrackingResult]:
+) -> Tuple[np.ndarray, list[dict[str, Any]]]:
     """
     Track objects across sequential frames.
     
@@ -252,85 +183,356 @@ def track_objects(
     Returns:
         Tuple of (image, TrackingResult)
     """
-    # Handle state initialization
+    label_frames = _label_frames(labels)
     if _tracking_state is None:
-        _tracking_state = {
-            'old_labels': None,
-            'old_object_numbers': np.array([], int),
-            'max_object_number': 0,
-            'old_coordinates': (np.array([]), np.array([])),
-            'old_distances': np.array([]),
-            'orig_coordinates': (np.array([]), np.array([])),
-            'old_ages': np.array([], int)
-        }
-    
-    # Process each slice
-    if image.ndim == 3:
-        current_image = image[0]
-        current_labels = labels[0] if labels.ndim == 3 else labels
-    else:
-        current_image = image
-        current_labels = labels
-    
-    # Get tracking state
-    old_labels = _tracking_state.get('old_labels')
-    old_object_numbers = _tracking_state.get('old_object_numbers', np.array([], int))
-    max_object_number = _tracking_state.get('max_object_number', 0)
-    
-    # Perform tracking based on method
+        _tracking_state = _initial_tracking_state()
+
     method = tracking_method.lower()
-    
-    if method == 'overlap':
-        new_labels, parent_obj_nums, parent_img_nums, max_object_number = _track_by_overlap(
-            current_labels, old_labels, old_object_numbers, max_object_number
+    frame_results: list[
+        tuple[int, list[dict[str, Any]], int, int, int, int]
+    ] = []
+
+    for frame_index, current_labels in enumerate(label_frames):
+        image_number = frame_index + 1
+        old_labels = _tracking_state.get("old_labels")
+        old_object_numbers = _tracking_state.get(
+            "old_object_numbers",
+            np.array([], int),
         )
-    elif method == 'distance':
-        new_labels, parent_obj_nums, parent_img_nums, max_object_number = _track_by_distance(
-            current_labels, old_labels, old_object_numbers, max_object_number, pixel_radius
+        max_object_number = int(_tracking_state.get("max_object_number", 0))
+
+        if method == "overlap":
+            new_labels, parent_obj_nums, parent_img_nums, max_object_number = (
+                _track_by_overlap(
+                    current_labels,
+                    old_labels,
+                    old_object_numbers,
+                    max_object_number,
+                    tracking_backend_provider,
+                )
+            )
+        elif method == "distance":
+            new_labels, parent_obj_nums, parent_img_nums, max_object_number = (
+                _track_by_distance(
+                    current_labels,
+                    old_labels,
+                    old_object_numbers,
+                    max_object_number,
+                    pixel_radius,
+                    tracking_backend_provider,
+                )
+            )
+        else:
+            raise NotImplementedError(
+                f"TrackObjects tracking method {tracking_method!r} is not implemented."
+            )
+
+        parent_img_nums = np.where(parent_obj_nums > 0, image_number - 1, 0)
+        object_rows = _tracking_object_rows(
+            current_labels,
+            image_number=image_number,
+            track_labels=new_labels,
+            parent_object_numbers=parent_obj_nums,
+            parent_image_numbers=parent_img_nums,
+            previous_object_states=_tracking_state["track_states"],
+            feature_suffix=str(int(pixel_radius)),
+            tracking_backend_provider=tracking_backend_provider,
         )
-    else:
-        # Default to overlap for unsupported methods
-        new_labels, parent_obj_nums, parent_img_nums, max_object_number = _track_by_overlap(
-            current_labels, old_labels, old_object_numbers, max_object_number
+
+        new_object_count = int(np.sum(parent_obj_nums == 0))
+        lost_object_count, split_count, merge_count = _tracking_transition_counts(
+            old_object_numbers,
+            new_labels,
         )
-    
-    # Calculate statistics
-    n_objects = len(new_labels)
-    new_object_count = int(np.sum(parent_obj_nums == 0))
-    
-    if old_labels is not None:
-        old_count = int(old_labels.max()) if old_labels.max() > 0 else 0
-        # Count objects that weren't matched
-        matched_old = set(parent_obj_nums[parent_obj_nums > 0])
-        lost_object_count = old_count - len(matched_old)
-    else:
-        lost_object_count = 0
-    
-    # Count splits (parents with multiple children)
-    if len(parent_obj_nums) > 0 and np.any(parent_obj_nums > 0):
-        parent_counts = np.bincount(parent_obj_nums[parent_obj_nums > 0])
-        split_count = int(np.sum(parent_counts > 1))
-    else:
-        split_count = 0
-    
-    merge_count = 0  # Would need more complex logic for merges
-    
-    # Update state for next frame
-    _tracking_state['old_labels'] = current_labels.copy()
-    _tracking_state['old_object_numbers'] = new_labels.copy()
-    _tracking_state['max_object_number'] = max_object_number
-    
-    # Create result
-    result = TrackingResult(
-        slice_index=0,
-        object_count=n_objects,
-        new_object_count=new_object_count,
-        lost_object_count=lost_object_count,
-        split_count=split_count,
-        merge_count=merge_count
-    )
-    
-    # Return original image (tracking doesn't modify the image)
+        frame_results.append(
+            (
+                image_number,
+                object_rows,
+                new_object_count,
+                lost_object_count,
+                split_count,
+                merge_count,
+            )
+        )
+
+        _tracking_state["old_labels"] = current_labels.copy()
+        _tracking_state["old_object_numbers"] = new_labels.copy()
+        _tracking_state["max_object_number"] = max_object_number
+
+    _apply_final_age_measurements(frame_results, feature_suffix=str(int(pixel_radius)))
+
+    rows: list[dict[str, Any]] = []
+    for (
+        image_number,
+        object_rows,
+        new_object_count,
+        lost_object_count,
+        split_count,
+        merge_count,
+    ) in frame_results:
+        rows.extend(object_rows)
+        rows.extend(
+            _tracking_image_rows(
+                image_number=image_number,
+                object_rows=object_rows,
+                new_object_count=new_object_count,
+                lost_object_count=lost_object_count,
+                split_count=split_count,
+                merge_count=merge_count,
+                feature_suffix=str(int(pixel_radius)),
+                object_name=object_name,
+            )
+        )
+
     if image.ndim == 2:
-        return image[np.newaxis, ...], result
-    return image, result
+        return image[np.newaxis, ...], rows
+    return image, rows
+
+
+def _initial_tracking_state() -> Dict[str, Any]:
+    return {
+        "old_labels": None,
+        "old_object_numbers": np.array([], int),
+        "max_object_number": 0,
+        "track_states": {},
+    }
+
+
+def _label_frames(labels: np.ndarray) -> np.ndarray:
+    label_array = np.asarray(labels)
+    if label_array.ndim == 2:
+        return label_array[np.newaxis, ...]
+    if label_array.ndim == 3:
+        return label_array
+    if label_array.ndim == 4 and label_array.shape[1] == 1:
+        return label_array[:, 0]
+    raise NotImplementedError(
+        f"TrackObjects expects 2-D labels or a site stack of 2-D labels, "
+        f"got shape {label_array.shape!r}."
+    )
+
+
+def _tracking_object_rows(
+    labels: np.ndarray,
+    *,
+    image_number: int,
+    track_labels: np.ndarray,
+    parent_object_numbers: np.ndarray,
+    parent_image_numbers: np.ndarray,
+    previous_object_states: Dict[int, Dict[str, Any]],
+    feature_suffix: str,
+    tracking_backend_provider: CellProfilerBackendProvider | None = None,
+) -> list[dict[str, Any]]:
+    y_centers, x_centers = ObjectTrackingBackendStrategy.for_memory_type(
+        backend_provider=tracking_backend_provider,
+    ).label_centers(labels)
+    next_object_states: Dict[int, Dict[str, Any]] = {}
+    rows: list[dict[str, Any]] = []
+    for object_index, track_label in enumerate(track_labels):
+        object_number = object_index + 1
+        track_id = int(track_label)
+        y = float(y_centers[object_index])
+        x = float(x_centers[object_index])
+        parent_object_number = int(parent_object_numbers[object_index])
+        previous_state = (
+            previous_object_states.get(parent_object_number)
+            if parent_object_number > 0
+            else None
+        )
+        if previous_state is None:
+            origin = (y, x)
+            previous = (y, x)
+            integrated_distance = 0.0
+            lifetime = 1
+        else:
+            origin = previous_state["origin"]
+            previous = previous_state["previous"]
+            integrated_distance = float(previous_state["integrated_distance"])
+            lifetime = int(previous_state["lifetime"]) + 1
+
+        trajectory_y = y - float(previous[0])
+        trajectory_x = x - float(previous[1])
+        distance_traveled = float(np.hypot(trajectory_y, trajectory_x))
+        integrated_distance += distance_traveled
+        displacement = float(np.hypot(y - float(origin[0]), x - float(origin[1])))
+        linearity = (
+            displacement / integrated_distance
+            if integrated_distance > 0.0
+            else float("nan")
+        )
+        next_object_states[object_number] = {
+            "origin": origin,
+            "previous": (y, x),
+            "integrated_distance": integrated_distance,
+            "lifetime": lifetime,
+        }
+        measurements = {
+            f"TrackObjects_Displacement_{feature_suffix}": displacement,
+            f"TrackObjects_DistanceTraveled_{feature_suffix}": distance_traveled,
+            f"TrackObjects_FinalAge_{feature_suffix}": float("nan"),
+            f"TrackObjects_IntegratedDistance_{feature_suffix}": integrated_distance,
+            f"TrackObjects_Label_{feature_suffix}": track_id,
+            f"TrackObjects_Lifetime_{feature_suffix}": lifetime,
+            f"TrackObjects_Linearity_{feature_suffix}": linearity,
+            f"TrackObjects_ParentImageNumber_{feature_suffix}": float(
+                parent_image_numbers[object_index]
+            ),
+            f"TrackObjects_ParentObjectNumber_{feature_suffix}": int(
+                parent_object_numbers[object_index]
+            ),
+            f"TrackObjects_TrajectoryX_{feature_suffix}": trajectory_x,
+            f"TrackObjects_TrajectoryY_{feature_suffix}": trajectory_y,
+        }
+        for feature_name, value in measurements.items():
+            rows.append(
+                {
+                    "image_number": image_number,
+                    MEASUREMENT_OBJECT_LABEL_FIELD: object_number,
+                    MEASUREMENT_FEATURE_NAME_FIELD: feature_name,
+                    MEASUREMENT_MEASUREMENT_VALUE_FIELD: value,
+                }
+            )
+    previous_object_states.clear()
+    previous_object_states.update(next_object_states)
+    return rows
+
+
+def _tracking_transition_counts(
+    previous_track_labels: np.ndarray,
+    current_track_labels: np.ndarray,
+) -> tuple[int, int, int]:
+    previous_counts = _positive_value_counts(previous_track_labels)
+    current_counts = _positive_value_counts(current_track_labels)
+    track_labels = set(previous_counts) | set(current_counts)
+    lost_count = sum(
+        previous_counts[track_label]
+        for track_label in track_labels
+        if current_counts.get(track_label, 0) == 0
+    )
+    split_count = sum(1 for count in current_counts.values() if count > 1)
+    merge_count = sum(
+        previous_counts[track_label] - current_counts[track_label]
+        for track_label in track_labels
+        if 0 < current_counts.get(track_label, 0) < previous_counts.get(track_label, 0)
+    )
+    return int(lost_count), int(split_count), int(merge_count)
+
+
+def _positive_value_counts(values: np.ndarray) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    for value in np.asarray(values, dtype=int).ravel():
+        if value <= 0:
+            continue
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _apply_final_age_measurements(
+    frame_results: list[tuple[int, list[dict[str, Any]], int, int, int, int]],
+    *,
+    feature_suffix: str,
+) -> None:
+    label_feature = f"TrackObjects_Label_{feature_suffix}"
+    lifetime_feature = f"TrackObjects_Lifetime_{feature_suffix}"
+    final_age_feature = f"TrackObjects_FinalAge_{feature_suffix}"
+
+    labels_by_frame: dict[int, set[int]] = {}
+    object_values: dict[tuple[int, int], dict[str, Any]] = {}
+    final_age_rows: dict[tuple[int, int], dict[str, Any]] = {}
+    for image_number, object_rows, *_counts in frame_results:
+        for row in object_rows:
+            object_label = int(row[MEASUREMENT_OBJECT_LABEL_FIELD])
+            key = (image_number, object_label)
+            feature_name = str(row[MEASUREMENT_FEATURE_NAME_FIELD])
+            if feature_name == label_feature:
+                track_label = int(float(row[MEASUREMENT_MEASUREMENT_VALUE_FIELD]))
+                labels_by_frame.setdefault(image_number, set()).add(track_label)
+                object_values.setdefault(key, {})["track_label"] = track_label
+            elif feature_name == lifetime_feature:
+                object_values.setdefault(key, {})["lifetime"] = float(
+                    row[MEASUREMENT_MEASUREMENT_VALUE_FIELD]
+                )
+            elif feature_name == final_age_feature:
+                final_age_rows[key] = row
+
+    last_image_number = frame_results[-1][0] if frame_results else 0
+    for (image_number, object_label), values in object_values.items():
+        track_label = values.get("track_label")
+        lifetime = values.get("lifetime")
+        if track_label is None or lifetime is None:
+            continue
+        next_labels = labels_by_frame.get(image_number + 1, set())
+        if image_number != last_image_number and track_label in next_labels:
+            continue
+        final_age_rows[(image_number, object_label)][
+            MEASUREMENT_MEASUREMENT_VALUE_FIELD
+        ] = lifetime
+
+
+def _tracking_image_rows(
+    *,
+    image_number: int,
+    object_rows: list[dict[str, Any]],
+    new_object_count: int,
+    lost_object_count: int,
+    split_count: int,
+    merge_count: int,
+    feature_suffix: str,
+    object_name: str,
+) -> list[dict[str, Any]]:
+    rows = [
+        _image_measurement_row(
+            image_number,
+            f"TrackObjects_NewObjectCount_{object_name}_{feature_suffix}",
+            new_object_count,
+        ),
+        _image_measurement_row(
+            image_number,
+            f"TrackObjects_LostObjectCount_{object_name}_{feature_suffix}",
+            lost_object_count,
+        ),
+        _image_measurement_row(
+            image_number,
+            f"TrackObjects_SplitObjectCount_{object_name}_{feature_suffix}",
+            split_count,
+        ),
+        _image_measurement_row(
+            image_number,
+            f"TrackObjects_MergedObjectCount_{object_name}_{feature_suffix}",
+            merge_count,
+        ),
+    ]
+    values_by_feature: dict[str, list[float]] = {}
+    for row in object_rows:
+        value = float(row[MEASUREMENT_MEASUREMENT_VALUE_FIELD])
+        values_by_feature.setdefault(
+            str(row[MEASUREMENT_FEATURE_NAME_FIELD]),
+            [],
+        ).append(value)
+    for feature_name, values in values_by_feature.items():
+        finite_values = [value for value in values if np.isfinite(value)]
+        mean_value = (
+            float(np.mean(finite_values))
+            if finite_values
+            else float("nan")
+        )
+        rows.append(
+            _image_measurement_row(
+                image_number,
+                f"Mean_{object_name}_{feature_name}",
+                mean_value,
+            )
+        )
+    return rows
+
+
+def _image_measurement_row(
+    image_number: int,
+    feature_name: str,
+    value: Any,
+) -> dict[str, Any]:
+    return {
+        "image_number": image_number,
+        MEASUREMENT_FEATURE_NAME_FIELD: feature_name,
+        MEASUREMENT_MEASUREMENT_VALUE_FIELD: value,
+    }

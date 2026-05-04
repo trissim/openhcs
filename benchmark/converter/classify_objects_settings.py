@@ -62,15 +62,33 @@ def _single_measurement_kwargs(
     module: ModuleBlock,
     binder: SettingsBinder,
 ) -> dict[str, Any]:
+    measurement_features = setting_values(module, SINGLE_MEASUREMENT_FEATURE_SETTING)
+    if len(measurement_features) > 1:
+        return {
+            "classification_rules": tuple(
+                _single_measurement_rule_kwargs(module, binder, index)
+                for index in range(len(measurement_features))
+            ),
+        }
+    return _single_measurement_rule_kwargs(module, binder, 0)
+
+
+def _single_measurement_rule_kwargs(
+    module: ModuleBlock,
+    binder: SettingsBinder,
+    value_index: int,
+) -> dict[str, Any]:
     return {
-        "measurement_feature": _required_setting_value(
+        "measurement_feature": _indexed_required_setting_value(
             module,
             SINGLE_MEASUREMENT_FEATURE_SETTING,
+            value_index,
         ),
         "bin_choice": _bin_choice(
-            _first_setting_value(
+            _indexed_setting_value(
                 module,
                 "Select bin spacing",
+                value_index,
                 default="Evenly spaced bins",
             )
         ),
@@ -79,39 +97,46 @@ def _single_measurement_kwargs(
             binder,
             "Number of bins",
             default="3",
+            value_index=value_index,
         ),
         "low_threshold": _typed_setting_value(
             module,
             binder,
             "Lower threshold",
             default="0.0",
+            value_index=value_index,
         ),
         "high_threshold": _typed_setting_value(
             module,
             binder,
             "Upper threshold",
             default="1.0",
+            value_index=value_index,
         ),
         "wants_low_bin": _typed_setting_value(
             module,
             binder,
             "Use a bin for objects below the threshold?",
             default="No",
+            value_index=value_index,
         ),
         "wants_high_bin": _typed_setting_value(
             module,
             binder,
             "Use a bin for objects above the threshold?",
             default="No",
+            value_index=value_index,
         ),
-        "custom_thresholds": _first_setting_value(
+        "custom_thresholds": _indexed_setting_value(
             module,
             "Enter the custom thresholds separating the values between bins",
+            value_index,
             default="0,1",
         ),
         "bin_names": _optional_setting_value(
             module,
             "Enter the bin names separated by commas",
+            value_index=value_index,
         ),
     }
 
@@ -188,15 +213,22 @@ def _typed_setting_value(
     value_index: int = 0,
 ) -> Any:
     values = setting_values(module, setting_name)
-    value = values[value_index] if values else default
+    if not values:
+        value = default
+    elif value_index < len(values):
+        value = values[value_index]
+    else:
+        value = values[-1]
     return binder.parse_value(setting_name, value)
 
 
 def _optional_setting_value(
     module: ModuleBlock,
     setting_name: str,
+    *,
+    value_index: int = 0,
 ) -> str | None:
-    value = _first_setting_value(module, setting_name, default="")
+    value = _indexed_setting_value(module, setting_name, value_index, default="")
     return value or None
 
 
@@ -210,6 +242,17 @@ def _required_setting_value(
     return value
 
 
+def _indexed_required_setting_value(
+    module: ModuleBlock,
+    setting_name: str | SettingNameFamily,
+    value_index: int,
+) -> str:
+    value = _indexed_setting_value(module, setting_name, value_index, default="").strip()
+    if not value:
+        raise ValueError(f"ClassifyObjects requires setting {setting_name!r}.")
+    return value
+
+
 def _first_setting_value(
     module: ModuleBlock,
     setting_name: str | SettingNameFamily,
@@ -218,6 +261,21 @@ def _first_setting_value(
 ) -> str:
     values = setting_values(module, setting_name)
     return values[0] if values else default
+
+
+def _indexed_setting_value(
+    module: ModuleBlock,
+    setting_name: str | SettingNameFamily,
+    value_index: int,
+    *,
+    default: str,
+) -> str:
+    values = setting_values(module, setting_name)
+    if not values:
+        return default
+    if value_index < len(values):
+        return values[value_index]
+    return values[-1]
 
 
 def _last_setting_value(

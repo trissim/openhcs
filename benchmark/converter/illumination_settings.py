@@ -9,6 +9,7 @@ from benchmark.cellprofiler_library.functions.correctilluminationapply import (
     IlluminationCorrectionMethod,
 )
 from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
+    CalculationScope,
     FilterSizeMethod,
     IntensityChoice,
     RescaleOption,
@@ -32,6 +33,16 @@ def _enum_literal(enum_type: type[Enum]) -> SettingParser:
     return parse
 
 
+def _calculation_scope_literal(value: str) -> str:
+    cleaned = (
+        value.replace("\x00", "")
+        .replace("\ufeff", "")
+        .replace("ÿþ", "")
+        .replace("þÿ", "")
+    )
+    return _coerce_function_enum(CalculationScope, cleaned).value
+
+
 CORRECT_ILLUMINATION_CALCULATE_SETTINGS: tuple[SettingToKeywordBinding, ...] = (
     SettingToKeywordBinding(
         "Select how the illumination function is calculated",
@@ -53,6 +64,11 @@ CORRECT_ILLUMINATION_CALCULATE_SETTINGS: tuple[SettingToKeywordBinding, ...] = (
         "Rescale the illumination function?",
         "rescale_option",
         _enum_literal(RescaleOption),
+    ),
+    SettingToKeywordBinding(
+        "Calculate function for each image individually, or based on all images?",
+        "calculation_scope",
+        _calculation_scope_literal,
     ),
     SettingToKeywordBinding(
         "Smoothing method",

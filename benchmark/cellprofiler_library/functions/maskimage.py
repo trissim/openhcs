@@ -2,9 +2,16 @@
 
 import numpy as np
 from enum import Enum
+from dataclasses import replace
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.runtime_values import (
+    image_payload_data,
+    image_payload_mask,
+    image_payload_metadata,
+    image_payload_with_context,
+)
 
 from benchmark.cellprofiler_library.image_geometry import (
     aligned_image_mask_planes,
@@ -30,8 +37,12 @@ def mask_image(
 ) -> np.ndarray:
     """Mask an image using object labels or a binary/grayscale mask image."""
     mask_source = _coerce_mask_source(mask_source)
-    masked_planes = tuple(
-        _masked_plane(plane.image, plane.mask, invert_mask=invert_mask)
+    masked_plane_results = tuple(
+        _masked_plane(
+            plane.image,
+            plane.mask,
+            invert_mask=invert_mask,
+        )
         for plane in aligned_image_mask_planes(
             image,
             mask,
@@ -39,7 +50,19 @@ def mask_image(
             labels=mask_source is MaskSource.OBJECTS,
         )
     )
-    return restore_image_mask_planes(image, masked_planes)
+    masked_data = restore_image_mask_planes(
+        image_payload_data(image),
+        tuple(result[0] for result in masked_plane_results),
+    )
+    output_mask = restore_image_mask_planes(
+        image_payload_data(image),
+        tuple(result[1] for result in masked_plane_results),
+    )
+    return image_payload_with_context(
+        masked_data,
+        mask=output_mask,
+        metadata=replace(image_payload_metadata(image), mask_defines_border=True),
+    )
 
 
 def _masked_plane(
@@ -47,12 +70,19 @@ def _masked_plane(
     binary_mask: np.ndarray,
     *,
     invert_mask: bool,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     if invert_mask:
         binary_mask = ~binary_mask
-    masked = image.copy()
+    existing_mask = image_payload_mask(image)
+    if existing_mask is not None:
+        binary_mask = np.asarray(binary_mask, dtype=bool) & np.asarray(
+            existing_mask,
+            dtype=bool,
+        )
+    image_data = image_payload_data(image)
+    masked = image_data.copy()
     masked[~binary_mask] = 0
-    return masked
+    return masked, np.asarray(binary_mask, dtype=bool)
 
 
 def _coerce_mask_source(value: MaskSource | str) -> MaskSource:

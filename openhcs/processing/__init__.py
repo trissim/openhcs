@@ -72,4 +72,5 @@ __all__ = [
     "pos_gen",
     "assemblers",
     "analysis",
+    "cellprofiler",
 ]

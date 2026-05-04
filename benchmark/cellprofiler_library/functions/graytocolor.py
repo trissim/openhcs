@@ -318,7 +318,7 @@ def _declare_request_backed_gray_to_color_runner(
     helper: Callable[..., np.ndarray],
 ) -> None:
     class_name = f"{scheme_literal.replace(' ', '')}GrayToColorRunner"
-    type(
+    globals()[class_name] = type(
         class_name,
         (_RequestBackedGrayToColorSchemeRunner,),
         {

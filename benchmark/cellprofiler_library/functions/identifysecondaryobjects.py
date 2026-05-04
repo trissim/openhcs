@@ -12,7 +12,39 @@ from typing import ClassVar, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from metaclass_registry import AutoRegisterMeta
+from numba import njit
 from openhcs.core.memory import numpy
+from openhcs.core.runtime_values import (
+    ObjectLabelPayload,
+    image_payload_data,
+    image_payload_mask,
+)
+from openhcs.core.runtime_semantics import (
+    ParentChildRelationshipPayload,
+    object_label_parent_child_payload,
+)
+from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from benchmark.cellprofiler_library.functions.thresholding import (
+    CellProfilerAveragingMethod,
+    CellProfilerOtsuMethod,
+    CellProfilerThresholdAssignment,
+    CellProfilerThresholdMethod,
+    CellProfilerThresholdScope,
+    CellProfilerVarianceMethod,
+    cellprofiler_threshold,
+    cellprofiler_threshold_diagnostics,
+    normalize_cellprofiler_image,
+)
+from benchmark.cellprofiler_library.functions.watershed import (
+    cellprofiler_legacy_watershed,
+)
+from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
+from openhcs.processing.backends.cellprofiler.secondary import (
+    SecondaryDistanceTransformBackendStrategy,
+    SecondaryPropagationBackendStrategy,
+)
+from openhcs.processing.backends.cellprofiler.thresholding import threshold_primitives
 
 
 class SecondaryMethod(Enum):
@@ -45,54 +77,27 @@ class SecondaryObjectStats:
     total_area: int
     area_coverage_percent: float
     threshold_value: float
-
-
-def _fill_labeled_holes(labels: np.ndarray) -> np.ndarray:
-    """Fill holes in labeled objects."""
-    from scipy.ndimage import binary_fill_holes
-    
-    filled = np.zeros_like(labels)
-    for label_id in range(1, labels.max() + 1):
-        mask = labels == label_id
-        filled_mask = binary_fill_holes(mask)
-        filled[filled_mask] = label_id
-    return filled
+    original_threshold: float = 0.0
+    weighted_variance: float = 0.0
+    sum_of_entropies: float = 0.0
 
 
 def _propagate_labels(
     image: np.ndarray,
     labels: np.ndarray,
     mask: np.ndarray,
-    regularization: float
+    regularization: float,
+    backend_provider: CellProfilerBackendProvider | None = None,
 ) -> np.ndarray:
-    """Propagate labels using intensity-weighted distance.
-    
-    This is a simplified implementation of the propagation algorithm.
-    Uses watershed with modified distance metric.
-    """
-    from scipy.ndimage import distance_transform_edt
-    from skimage.segmentation import watershed
-    
-    if labels.max() == 0:
-        return labels.copy()
-    
-    # Compute gradient magnitude for edge detection
-    from scipy.ndimage import sobel
-    gradient = np.abs(sobel(image, axis=0)) + np.abs(sobel(image, axis=1))
-    
-    # Combine distance and gradient information
-    # Higher regularization = more weight on distance
-    distance = distance_transform_edt(labels == 0)
-    
-    if regularization > 0:
-        # Combine gradient and distance
-        combined = gradient + regularization * distance
-    else:
-        combined = gradient
-    
-    # Use watershed to propagate labels
-    result = watershed(combined, markers=labels, mask=mask)
-    
+    """Propagate labels using the configured explicit backend provider."""
+    return SecondaryPropagationBackendStrategy.for_memory_type(
+        backend_provider=backend_provider,
+    ).propagate(
+        image,
+        labels,
+        mask,
+        regularization,
+    )
     return result
 
 
@@ -100,50 +105,79 @@ def _propagate_labels(
 class SecondaryImageInputs:
     image: np.ndarray
     labels: np.ndarray
+    unedited_labels: np.ndarray
 
 
 @dataclass(frozen=True)
 class SecondaryThresholdResult:
     value: float
+    original_value: float
     mask: np.ndarray
+    weighted_variance: float = 0.0
+    sum_of_entropies: float = 0.0
 
 
 @dataclass(frozen=True)
 class SecondaryThresholdRequest:
     image: np.ndarray
+    image_mask: np.ndarray | None
     method: SecondaryMethod
-    threshold_method: ThresholdMethod
+    threshold_scope: CellProfilerThresholdScope
+    threshold_method: CellProfilerThresholdMethod | ThresholdMethod | str
     threshold_correction_factor: float
     threshold_min: float
     threshold_max: float
+    threshold_smoothing_scale: float
+    otsu_class_count: CellProfilerOtsuMethod
+    assign_middle_to_foreground: CellProfilerThresholdAssignment
+    log_transform: bool
+    adaptive_window_size: int
+    lower_outlier_fraction: float
+    upper_outlier_fraction: float
+    averaging_method: CellProfilerAveragingMethod
+    variance_method: CellProfilerVarianceMethod
+    number_of_deviations: float
+    manual_threshold: float
+
+
+def _parent_child_relationship(
+    parent_labels: np.ndarray,
+    child_labels: np.ndarray,
+) -> ParentChildRelationshipPayload:
+    return object_label_parent_child_payload(parent_labels, child_labels)
 
 
 @dataclass(frozen=True)
 class SecondarySegmentationRequest:
     image: np.ndarray
     labels: np.ndarray
+    unedited_labels: np.ndarray
     thresholded: np.ndarray
     distance_to_dilate: int
     regularization_factor: float
+    watershed_backend_provider: CellProfilerBackendProvider | None
+    distance_backend_provider: CellProfilerBackendProvider | None = None
+    propagation_backend_provider: CellProfilerBackendProvider | None = None
 
     @property
     def has_primary_objects(self) -> bool:
-        return self.labels.max() > 0
+        return self.unedited_labels.max() > 0
 
     @property
     def object_mask(self) -> np.ndarray:
-        return self.thresholded | (self.labels > 0)
+        return self.thresholded | (self.unedited_labels > 0)
 
 
 class ThresholdCalculator(ABC, metaclass=AutoRegisterMeta):
     """Threshold strategy for one closed CellProfiler threshold method."""
 
-    __registry_key__ = "method"
+    __registry_key__ = "method_label"
+    method_label: ClassVar[str | None] = None
     method: ClassVar[ThresholdMethod | None] = None
 
     @classmethod
     def for_method(cls, method: ThresholdMethod) -> "ThresholdCalculator":
-        return cls.__registry__[method]()
+        return cls.__registry__[method.value]()
 
     @abstractmethod
     def calculate(self, image: np.ndarray) -> float:
@@ -152,52 +186,46 @@ class ThresholdCalculator(ABC, metaclass=AutoRegisterMeta):
 
 class OtsuThresholdCalculator(ThresholdCalculator):
     method = ThresholdMethod.OTSU
+    method_label = method.value
 
     def calculate(self, image: np.ndarray) -> float:
-        from skimage.filters import threshold_otsu
-
-        return float(threshold_otsu(image))
+        return threshold_primitives().otsu_threshold(image)
 
 
 class LiThresholdCalculator(ThresholdCalculator):
     method = ThresholdMethod.LI
+    method_label = method.value
 
     def calculate(self, image: np.ndarray) -> float:
-        from skimage.filters import threshold_li
-
-        return float(threshold_li(image))
+        return threshold_primitives().li_threshold(image)
 
 
 class MinimumThresholdCalculator(ThresholdCalculator):
     method = ThresholdMethod.MINIMUM
+    method_label = method.value
 
     def calculate(self, image: np.ndarray) -> float:
-        from skimage.filters import threshold_minimum, threshold_otsu
-
-        try:
-            return float(threshold_minimum(image))
-        except RuntimeError:
-            return float(threshold_otsu(image))
+        return threshold_primitives().minimum_threshold(image)
 
 
 class TriangleThresholdCalculator(ThresholdCalculator):
     method = ThresholdMethod.TRIANGLE
+    method_label = method.value
 
     def calculate(self, image: np.ndarray) -> float:
-        from skimage.filters import threshold_triangle
-
-        return float(threshold_triangle(image))
+        return threshold_primitives().triangle_threshold(image)
 
 
 class SecondarySegmentationStrategy(ABC, metaclass=AutoRegisterMeta):
     """Segmentation strategy for one closed secondary-object method."""
 
-    __registry_key__ = "method"
+    __registry_key__ = "method_label"
+    method_label: ClassVar[str | None] = None
     method: ClassVar[SecondaryMethod | None] = None
 
     @classmethod
     def for_method(cls, method: SecondaryMethod) -> "SecondarySegmentationStrategy":
-        return cls.__registry__[method]()
+        return cls.__registry__[method.value]()
 
     def segment(self, request: SecondarySegmentationRequest) -> np.ndarray:
         if not request.has_primary_objects:
@@ -214,64 +242,81 @@ class SecondarySegmentationStrategy(ABC, metaclass=AutoRegisterMeta):
 
 class DistanceOnlySegmentationStrategy(SecondarySegmentationStrategy):
     method = SecondaryMethod.DISTANCE_N
+    method_label = method.value
 
     def _segment_non_empty(
         self,
         request: SecondarySegmentationRequest,
     ) -> np.ndarray:
-        from scipy.ndimage import distance_transform_edt
-
-        distances, indices = distance_transform_edt(
-            request.labels == 0,
-            return_indices=True,
+        return SecondaryDistanceTransformBackendStrategy.for_memory_type(
+            backend_provider=request.distance_backend_provider,
+        ).nearest_label_expansion(
+            request.unedited_labels,
+            float(request.distance_to_dilate),
         )
-        labels_out = np.zeros_like(request.labels)
-        dilate_mask = distances <= request.distance_to_dilate
-        labels_out[dilate_mask] = request.labels[
-            indices[0][dilate_mask],
-            indices[1][dilate_mask],
-        ]
-        return labels_out
 
 
 class DistanceMaskedSegmentationStrategy(SecondarySegmentationStrategy):
     method = SecondaryMethod.DISTANCE_B
+    method_label = method.value
 
     def _segment_non_empty(
         self,
         request: SecondarySegmentationRequest,
     ) -> np.ndarray:
-        from scipy.ndimage import distance_transform_edt
-
-        labels_out = _propagate_labels(
-            request.image,
-            request.labels,
-            request.object_mask,
-            1.0,
+        labels_out = (
+            _propagate_labels(
+                request.image,
+                request.unedited_labels,
+                request.thresholded,
+                1.0,
+            )
+            if request.propagation_backend_provider is None
+            else _propagate_labels(
+                request.image,
+                request.unedited_labels,
+                request.thresholded,
+                1.0,
+                backend_provider=request.propagation_backend_provider,
+            )
         )
-        distances = distance_transform_edt(request.labels == 0)
-        labels_out[distances > request.distance_to_dilate] = 0
+        distances = SecondaryDistanceTransformBackendStrategy.for_memory_type(
+            backend_provider=request.distance_backend_provider,
+        ).distance_to_foreground(request.labels)
+        labels_out[distances > _distance_limited_expansion_radius(request.distance_to_dilate)] = 0
         labels_out[request.labels > 0] = request.labels[request.labels > 0]
         return labels_out
 
 
 class PropagationSegmentationStrategy(SecondarySegmentationStrategy):
     method = SecondaryMethod.PROPAGATION
+    method_label = method.value
 
     def _segment_non_empty(
         self,
         request: SecondarySegmentationRequest,
     ) -> np.ndarray:
-        return _propagate_labels(
-            request.image,
-            request.labels,
-            request.object_mask,
-            request.regularization_factor,
+        return (
+            _propagate_labels(
+                request.image,
+                request.unedited_labels,
+                request.thresholded,
+                request.regularization_factor,
+            )
+            if request.propagation_backend_provider is None
+            else _propagate_labels(
+                request.image,
+                request.unedited_labels,
+                request.thresholded,
+                request.regularization_factor,
+                backend_provider=request.propagation_backend_provider,
+            )
         )
 
 
 class GradientWatershedSegmentationStrategy(SecondarySegmentationStrategy):
     method = SecondaryMethod.WATERSHED_GRADIENT
+    method_label = method.value
 
     def _segment_non_empty(
         self,
@@ -287,6 +332,7 @@ class GradientWatershedSegmentationStrategy(SecondarySegmentationStrategy):
 
 class ImageWatershedSegmentationStrategy(SecondarySegmentationStrategy):
     method = SecondaryMethod.WATERSHED_IMAGE
+    method_label = method.value
 
     def _segment_non_empty(
         self,
@@ -299,35 +345,128 @@ def _watershed_secondary_labels(
     request: SecondarySegmentationRequest,
     watershed_image: np.ndarray,
 ) -> np.ndarray:
-    from skimage.segmentation import watershed
-
-    return watershed(
+    return cellprofiler_legacy_watershed(
         watershed_image,
-        markers=request.labels,
+        markers=request.unedited_labels,
         mask=request.object_mask,
-        connectivity=2,
+        connectivity=np.ones((3, 3), bool),
+        backend_provider=request.watershed_backend_provider,
     )
 
 
 def _normalize_secondary_inputs(
     image: np.ndarray,
-    primary_labels: np.ndarray,
+    primary_labels: np.ndarray | ObjectLabelPayload,
 ) -> SecondaryImageInputs:
-    if image.ndim == 3 and image.shape[0] == 2:
-        return SecondaryImageInputs(
-            image=image[0].astype(np.float64),
-            labels=image[1].astype(np.int32),
+    if isinstance(primary_labels, ObjectLabelPayload):
+        final_labels = np.asarray(primary_labels.labels, dtype=np.int32)
+        unedited_labels = np.asarray(
+            primary_labels.labels_for_variant("unedited"),
+            dtype=np.int32,
         )
+        return SecondaryImageInputs(
+            image=image,
+            labels=final_labels,
+            unedited_labels=_secondary_seed_labels(final_labels, unedited_labels),
+        )
+    if image.ndim == 3 and image.shape[0] == 2:
+        labels = image[1].astype(np.int32)
+        return SecondaryImageInputs(
+            image=image[0],
+            labels=labels,
+            unedited_labels=labels,
+        )
+    labels = primary_labels.astype(np.int32)
     return SecondaryImageInputs(
-        image=image.astype(np.float64),
-        labels=primary_labels.astype(np.int32),
+        image=image,
+        labels=labels,
+        unedited_labels=labels,
     )
 
 
+def _secondary_seed_labels(
+    final_labels: np.ndarray,
+    unedited_labels: np.ndarray,
+) -> np.ndarray:
+    """Match CellProfiler's secondary-object seed contract.
+
+    CellProfiler seeds secondary segmentation from unedited primary labels, but
+    removes non-edge labels that were rejected from the final primary objects.
+    Edge-touching rejected labels remain so they can constrain propagated
+    secondary boundaries without becoming accepted parent objects.
+    """
+    labels_in = np.asarray(unedited_labels, dtype=np.int32).copy()
+    if labels_in.size == 0 or labels_in.max() <= 0:
+        return labels_in
+
+    final = np.asarray(final_labels, dtype=np.int32)
+    if final.shape != labels_in.shape:
+        aligned_final = np.zeros(labels_in.shape, dtype=final.dtype)
+        i_max = min(labels_in.shape[0], final.shape[0])
+        j_max = min(labels_in.shape[1], final.shape[1])
+        aligned_final[:i_max, :j_max] = final[:i_max, :j_max]
+        final = aligned_final
+
+    edge_labels = np.unique(
+        np.concatenate(
+            (
+                labels_in[0, :],
+                labels_in[-1, :],
+                labels_in[:, 0],
+                labels_in[:, -1],
+            )
+        )
+    )
+    is_touching_lookup = np.zeros(int(labels_in.max()) + 1, dtype=bool)
+    is_touching_lookup[edge_labels.astype(int)] = True
+    return _secondary_seed_label_remap_numba(
+        np.ascontiguousarray(labels_in, dtype=np.int32),
+        np.ascontiguousarray(final, dtype=np.int32),
+        is_touching_lookup,
+    )
+
+
+@njit(cache=True)
+def _secondary_seed_label_remap_numba(
+    unedited_labels: np.ndarray,
+    final_labels: np.ndarray,
+    is_touching_edge: np.ndarray,
+) -> np.ndarray:
+    max_unedited = int(unedited_labels.max())
+    max_final = int(final_labels.max())
+    accepted_mapping = np.zeros(max_unedited + 1, dtype=np.int32)
+
+    flat_unedited = unedited_labels.ravel()
+    flat_final = final_labels.ravel()
+    for index in range(flat_unedited.size):
+        unedited_label = int(flat_unedited[index])
+        final_label = int(flat_final[index])
+        if unedited_label > 0 and final_label > accepted_mapping[unedited_label]:
+            accepted_mapping[unedited_label] = final_label
+
+    edge_mapping = np.zeros(max_unedited + 1, dtype=np.int32)
+    next_edge_label = max_final + 1
+    for label in range(1, max_unedited + 1):
+        if accepted_mapping[label] == 0 and is_touching_edge[label]:
+            edge_mapping[label] = next_edge_label
+            next_edge_label += 1
+
+    output = np.zeros(unedited_labels.shape, dtype=np.int32)
+    output_flat = output.ravel()
+    for index in range(flat_unedited.size):
+        unedited_label = int(flat_unedited[index])
+        if unedited_label == 0:
+            continue
+        accepted_label = accepted_mapping[unedited_label]
+        if accepted_label > 0:
+            output_flat[index] = accepted_label
+        else:
+            output_flat[index] = edge_mapping[unedited_label]
+    return output
+
+
 def _normalize_intensity_image(image: np.ndarray) -> np.ndarray:
-    if image.max() > image.min():
-        return (image - image.min()) / (image.max() - image.min())
-    return image
+    return normalize_cellprofiler_image(image)
 
 
 def _threshold_secondary_objects(
@@ -336,21 +475,64 @@ def _threshold_secondary_objects(
     if not request.method.requires_threshold:
         return SecondaryThresholdResult(
             value=0.0,
-            mask=np.ones_like(request.image, dtype=bool),
+            original_value=0.0,
+            mask=(
+                np.ones_like(request.image, dtype=bool)
+                if request.image_mask is None
+                else np.asarray(request.image_mask, dtype=bool)
+            ),
         )
 
-    threshold_value = ThresholdCalculator.for_method(
-        request.threshold_method
-    ).calculate(request.image)
-    threshold_value = threshold_value * request.threshold_correction_factor
-    threshold_value = max(
-        request.threshold_min,
-        min(request.threshold_max, threshold_value),
+    thresholded, threshold_value, original_threshold = cellprofiler_threshold(
+        request.image,
+        use_advanced_settings=True,
+        threshold_scope=request.threshold_scope,
+        threshold_method=_coerce_threshold_method(request.threshold_method),
+        threshold_smoothing_scale=request.threshold_smoothing_scale,
+        threshold_correction_factor=request.threshold_correction_factor,
+        threshold_min=request.threshold_min,
+        threshold_max=request.threshold_max,
+        manual_threshold=request.manual_threshold,
+        otsu_class_count=request.otsu_class_count,
+        assign_middle_to_foreground=request.assign_middle_to_foreground,
+        log_transform=request.log_transform,
+        adaptive_window_size=request.adaptive_window_size,
+        lower_outlier_fraction=request.lower_outlier_fraction,
+        upper_outlier_fraction=request.upper_outlier_fraction,
+        averaging_method=request.averaging_method,
+        variance_method=request.variance_method,
+        number_of_deviations=request.number_of_deviations,
+        mask=request.image_mask,
+    )
+    diagnostics = cellprofiler_threshold_diagnostics(
+        request.image,
+        thresholded,
+        final_threshold=threshold_value,
+        original_threshold=original_threshold,
+        mask=request.image_mask,
     )
     return SecondaryThresholdResult(
         value=threshold_value,
-        mask=request.image > threshold_value,
+        original_value=diagnostics.original_threshold,
+        mask=thresholded,
+        weighted_variance=diagnostics.weighted_variance,
+        sum_of_entropies=diagnostics.sum_of_entropies,
     )
+
+
+def _coerce_threshold_method(
+    threshold_method: CellProfilerThresholdMethod | ThresholdMethod | str,
+) -> CellProfilerThresholdMethod:
+    if isinstance(threshold_method, CellProfilerThresholdMethod):
+        return threshold_method
+    if isinstance(threshold_method, str):
+        return _coerce_function_enum(CellProfilerThresholdMethod, threshold_method)
+    return {
+        ThresholdMethod.OTSU: CellProfilerThresholdMethod.OTSU,
+        ThresholdMethod.LI: CellProfilerThresholdMethod.LI,
+        ThresholdMethod.MINIMUM: CellProfilerThresholdMethod.MINIMUM_CROSS_ENTROPY,
+        ThresholdMethod.TRIANGLE: CellProfilerThresholdMethod.TRIANGLE,
+    }[threshold_method]
 
 
 def _postprocess_secondary_labels(
@@ -358,18 +540,73 @@ def _postprocess_secondary_labels(
     *,
     fill_holes: bool,
     discard_edge_objects: bool,
+    primary_labels: np.ndarray,
+    morphology: MorphologyBackendStrategy,
 ) -> np.ndarray:
     labels_out = labels
     if fill_holes and labels_out.max() > 0:
-        labels_out = _fill_labeled_holes(labels_out)
+        labels_out = morphology.fill_labeled_holes(labels_out)
+    labels_out = _filter_labels(labels_out, primary_labels)
     if discard_edge_objects and labels_out.max() > 0:
-        labels_out = _discard_edge_objects(labels_out)
+        labels_out = _discard_edge_objects(labels_out, morphology)
     return labels_out.astype(np.int32)
 
 
-def _discard_edge_objects(labels: np.ndarray) -> np.ndarray:
-    from skimage.measure import label as relabel
+def _filter_labels(labels_out: np.ndarray, primary_labels: np.ndarray) -> np.ndarray:
+    """Keep secondary labels associated with accepted primary labels."""
+    max_out = int(np.max(labels_out))
+    if max_out <= 0:
+        return labels_out.copy()
+    if primary_labels.shape != labels_out.shape:
+        aligned_primary = np.zeros(labels_out.shape, primary_labels.dtype)
+        i_max = min(labels_out.shape[0], primary_labels.shape[0])
+        j_max = min(labels_out.shape[1], primary_labels.shape[1])
+        aligned_primary[:i_max, :j_max] = primary_labels[:i_max, :j_max]
+    else:
+        aligned_primary = primary_labels
+    return _filter_labels_numba(
+        np.ascontiguousarray(labels_out, dtype=np.int32),
+        np.ascontiguousarray(aligned_primary, dtype=np.int32),
+        max_out,
+    )
 
+
+def _distance_limited_expansion_radius(distance_to_dilate: int) -> float:
+    """Convert CP's pixel-count expansion setting to a center-distance cutoff."""
+    if distance_to_dilate <= 0:
+        return 0.0
+    return float(distance_to_dilate) - 0.5
+
+
+@njit(cache=True)
+def _filter_labels_numba(
+    labels_out: np.ndarray,
+    aligned_primary: np.ndarray,
+    max_out: int,
+) -> np.ndarray:
+    lookup = np.zeros(max_out + 1, dtype=np.int32)
+    labels_flat = labels_out.ravel()
+    primary_flat = aligned_primary.ravel()
+    for index in range(labels_flat.size):
+        label = int(labels_flat[index])
+        if label <= 0:
+            continue
+        primary_label = int(primary_flat[index])
+        if primary_label > lookup[label]:
+            lookup[label] = primary_label
+    lookup[0] = 0
+
+    filtered = np.empty(labels_out.shape, dtype=np.int32)
+    filtered_flat = filtered.ravel()
+    for index in range(labels_flat.size):
+        filtered_flat[index] = lookup[int(labels_flat[index])]
+    return filtered
+
+
+def _discard_edge_objects(
+    labels: np.ndarray,
+    morphology: MorphologyBackendStrategy,
+) -> np.ndarray:
     edge_labels = np.unique(np.concatenate([
         labels[0, :],
         labels[-1, :],
@@ -383,7 +620,22 @@ def _discard_edge_objects(labels: np.ndarray) -> np.ndarray:
 
     if labels_out.max() == 0:
         return labels_out
-    return relabel(labels_out > 0).astype(np.int32)
+    relabeled, _count = morphology.connected_components(labels_out > 0, connectivity=2)
+    return relabeled.astype(np.int32, copy=False)
+
+
+def _secondary_label_area_statistics(labels: np.ndarray) -> tuple[int, float, float, int]:
+    areas = np.bincount(np.asarray(labels).ravel())[1:]
+    positive_areas = areas[areas > 0]
+    object_count = int(positive_areas.size)
+    if object_count == 0:
+        return 0, 0.0, 0.0, 0
+    return (
+        object_count,
+        float(np.mean(positive_areas)),
+        float(np.median(positive_areas)),
+        int(np.sum(positive_areas)),
+    )
 
 
 def _secondary_object_stats(
@@ -391,19 +643,13 @@ def _secondary_object_stats(
     *,
     image_shape: tuple[int, int],
     threshold_value: float,
+    original_threshold: float,
+    weighted_variance: float,
+    sum_of_entropies: float,
 ) -> SecondaryObjectStats:
-    from skimage.measure import regionprops
-
-    object_count = int(labels.max())
-    if object_count > 0:
-        areas = [p.area for p in regionprops(labels)]
-        mean_area = float(np.mean(areas))
-        median_area = float(np.median(areas))
-        total_area = int(np.sum(areas))
-    else:
-        mean_area = 0.0
-        median_area = 0.0
-        total_area = 0
+    object_count, mean_area, median_area, total_area = (
+        _secondary_label_area_statistics(labels)
+    )
 
     height, width = image_shape
     area_coverage = 100.0 * total_area / (height * width) if height * width else 0.0
@@ -415,6 +661,9 @@ def _secondary_object_stats(
         total_area=total_area,
         area_coverage_percent=area_coverage,
         threshold_value=float(threshold_value),
+        original_threshold=float(original_threshold),
+        weighted_variance=float(weighted_variance),
+        sum_of_entropies=float(sum_of_entropies),
     )
 
 
@@ -423,15 +672,40 @@ def identify_secondary_objects(
     image: np.ndarray,
     primary_labels: np.ndarray,
     method: SecondaryMethod = SecondaryMethod.PROPAGATION,
-    threshold_method: ThresholdMethod = ThresholdMethod.OTSU,
+    threshold_scope: CellProfilerThresholdScope = CellProfilerThresholdScope.GLOBAL,
+    threshold_method: CellProfilerThresholdMethod = CellProfilerThresholdMethod.OTSU,
+    threshold_smoothing_scale: float = 0.0,
     threshold_correction_factor: float = 1.0,
     threshold_min: float = 0.0,
     threshold_max: float = 1.0,
+    manual_threshold: float = 0.0,
+    otsu_class_count: CellProfilerOtsuMethod = CellProfilerOtsuMethod.TWO_CLASS,
+    assign_middle_to_foreground: CellProfilerThresholdAssignment = (
+        CellProfilerThresholdAssignment.FOREGROUND
+    ),
+    log_transform: bool = False,
+    adaptive_window_size: int = 10,
+    lower_outlier_fraction: float = 0.05,
+    upper_outlier_fraction: float = 0.05,
+    averaging_method: CellProfilerAveragingMethod = CellProfilerAveragingMethod.MEAN,
+    variance_method: CellProfilerVarianceMethod = (
+        CellProfilerVarianceMethod.STANDARD_DEVIATION
+    ),
+    number_of_deviations: float = 2.0,
     distance_to_dilate: int = 10,
     regularization_factor: float = 0.05,
     fill_holes: bool = True,
     discard_edge_objects: bool = False,
-) -> Tuple[np.ndarray, SecondaryObjectStats, np.ndarray]:
+    watershed_backend_provider: CellProfilerBackendProvider | None = None,
+    morphology_backend_provider: CellProfilerBackendProvider | None = None,
+    distance_backend_provider: CellProfilerBackendProvider | None = None,
+    propagation_backend_provider: CellProfilerBackendProvider | None = None,
+) -> Tuple[
+    np.ndarray,
+    SecondaryObjectStats,
+    ParentChildRelationshipPayload,
+    np.ndarray,
+]:
     """
     Identify secondary objects using primary objects as seeds.
     
@@ -450,38 +724,67 @@ def identify_secondary_objects(
         discard_edge_objects: Whether to discard objects touching image border
         
     Returns:
-        Tuple of (image, stats, secondary_labels)
+        Tuple of (image, stats, parent-child relationships, secondary_labels)
     """
-    inputs = _normalize_secondary_inputs(image, primary_labels)
+    method = _coerce_function_enum(SecondaryMethod, method)
+    morphology = MorphologyBackendStrategy.for_callable(
+        identify_secondary_objects,
+        backend_provider=morphology_backend_provider,
+    )
+    input_mask = image_payload_mask(image)
+    inputs = _normalize_secondary_inputs(image_payload_data(image), primary_labels)
     img = _normalize_intensity_image(inputs.image)
     threshold = _threshold_secondary_objects(
         SecondaryThresholdRequest(
             image=img,
+            image_mask=input_mask,
             method=method,
+            threshold_scope=threshold_scope,
             threshold_method=threshold_method,
+            threshold_smoothing_scale=threshold_smoothing_scale,
             threshold_correction_factor=threshold_correction_factor,
             threshold_min=threshold_min,
             threshold_max=threshold_max,
+            manual_threshold=manual_threshold,
+            otsu_class_count=otsu_class_count,
+            assign_middle_to_foreground=assign_middle_to_foreground,
+            log_transform=log_transform,
+            adaptive_window_size=adaptive_window_size,
+            lower_outlier_fraction=lower_outlier_fraction,
+            upper_outlier_fraction=upper_outlier_fraction,
+            averaging_method=averaging_method,
+            variance_method=variance_method,
+            number_of_deviations=number_of_deviations,
         )
     )
     labels_out = SecondarySegmentationStrategy.for_method(method).segment(
         SecondarySegmentationRequest(
             image=img,
             labels=inputs.labels,
+            unedited_labels=inputs.unedited_labels,
             thresholded=threshold.mask,
             distance_to_dilate=distance_to_dilate,
             regularization_factor=regularization_factor,
+            watershed_backend_provider=watershed_backend_provider,
+            distance_backend_provider=distance_backend_provider,
+            propagation_backend_provider=propagation_backend_provider,
         )
     )
     labels_out = _postprocess_secondary_labels(
         labels_out,
         fill_holes=fill_holes,
         discard_edge_objects=discard_edge_objects,
+        primary_labels=inputs.labels,
+        morphology=morphology,
     )
     stats = _secondary_object_stats(
         labels_out,
         image_shape=img.shape,
         threshold_value=threshold.value,
+        original_threshold=threshold.original_value,
+        weighted_variance=threshold.weighted_variance,
+        sum_of_entropies=threshold.sum_of_entropies,
     )
+    relationships = _parent_child_relationship(inputs.labels, labels_out)
     
-    return img.astype(np.float32), stats, labels_out
+    return img.astype(np.float32), stats, relationships, labels_out

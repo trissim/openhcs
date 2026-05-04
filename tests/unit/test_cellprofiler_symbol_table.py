@@ -5,12 +5,14 @@ import pytest
 from benchmark.converter.parser import CPPipeParser, ModuleBlock, ModuleSetting
 from benchmark.converter.pipeline_generator import PipelineGenerator
 from benchmark.converter.runtime_pipeline import partition_cppipe_modules
+from benchmark.converter.overlay_outlines_settings import overlay_outlines_bound_kwargs
 from benchmark.converter.symbol_table import (
     CellProfilerSymbolKind,
     CellProfilerSymbolTable,
 )
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
+from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
 
 
 def _module(
@@ -127,11 +129,23 @@ def test_cellprofiler_symbol_table_compiles_object_measurement_graph():
         for binding in primary_contract.source_bindings.groups[0].bindings
     ) == ("OrigBlue",)
     assert primary_contract.runtime_artifact_inputs == ()
-    assert primary_contract.outputs[0].kind is ArtifactKind.OBJECT_LABELS
+    assert [spec.kind for spec in primary_contract.outputs] == [
+        ArtifactKind.MEASUREMENTS,
+        ArtifactKind.OBJECT_LABELS,
+    ]
     assert isinstance(primary_contract.module_contract, ModuleArtifactContract)
 
     secondary_contract = table.contracts_by_module_num[2]
-    assert [spec.name for spec in secondary_contract.outputs] == ["Cells"]
+    assert [spec.name for spec in secondary_contract.outputs] == [
+        "IdentifySecondaryObjects_2_measurements",
+        "Nuclei_Cells_relationships",
+        "Cells",
+    ]
+    assert [spec.kind for spec in secondary_contract.outputs] == [
+        ArtifactKind.MEASUREMENTS,
+        ArtifactKind.RELATIONSHIPS,
+        ArtifactKind.OBJECT_LABELS,
+    ]
 
     measure_contract = table.contracts_by_module_num[4]
     assert tuple(
@@ -157,6 +171,44 @@ def test_cellprofiler_symbol_table_fails_for_unknown_object_input():
 
     with pytest.raises(ValueError, match="unknown objects symbol 'MissingObjects'"):
         CellProfilerSymbolTable.compile(modules)
+
+
+def test_measure_object_neighbors_declares_retained_image_outputs():
+    modules = [
+        _identify_primary(),
+        _module_with_records(
+            2,
+            "MeasureObjectNeighbors",
+            [
+                ("Select objects to measure", "Nuclei"),
+                ("Select neighboring objects to measure", "Nuclei"),
+                (
+                    "Retain the image of objects colored by numbers of neighbors?",
+                    "Yes",
+                ),
+                ("Name the output image", "ColorNeighbors"),
+                ("Select colormap", "hot"),
+                (
+                    "Retain the image of objects colored by percent of touching pixels?",
+                    "No",
+                ),
+                ("Name the output image", "PercentTouching"),
+                ("Select colormap", "Default"),
+            ],
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[2]
+
+    assert [spec.name for spec in contract.outputs] == [
+        "ColorNeighbors",
+        "MeasureObjectNeighbors_2_measurements",
+    ]
+    assert [spec.kind for spec in contract.outputs] == [
+        ArtifactKind.IMAGE,
+        ArtifactKind.MEASUREMENTS,
+    ]
 
 
 def test_cellprofiler_symbol_table_accepts_declared_source_object_inputs():
@@ -251,12 +303,18 @@ def test_cellprofiler_symbol_table_compiles_filterobjects_relabel_rows():
         "MyFilteredObjects",
         "FilteredCells",
         "FilteredCytoplasm",
+        parent_child_relationship_artifact_name("MyObjects", "MyFilteredObjects"),
+        parent_child_relationship_artifact_name("Cells", "FilteredCells"),
+        parent_child_relationship_artifact_name("Cytoplasm", "FilteredCytoplasm"),
     ]
     assert [spec.kind for spec in contract.outputs] == [
         ArtifactKind.MEASUREMENTS,
         ArtifactKind.OBJECT_LABELS,
         ArtifactKind.OBJECT_LABELS,
         ArtifactKind.OBJECT_LABELS,
+        ArtifactKind.RELATIONSHIPS,
+        ArtifactKind.RELATIONSHIPS,
+        ArtifactKind.RELATIONSHIPS,
     ]
 
 
@@ -301,6 +359,8 @@ def test_cellprofiler_symbol_table_compiles_filterobjects_outline_outputs():
         "FilterObjects_3_measurements",
         "MyFilteredObjects",
         "FilteredCells",
+        parent_child_relationship_artifact_name("MyObjects", "MyFilteredObjects"),
+        parent_child_relationship_artifact_name("Cells", "FilteredCells"),
         "FilteredObjects",
         "OutlinesFilteredCells",
     ]
@@ -308,6 +368,8 @@ def test_cellprofiler_symbol_table_compiles_filterobjects_outline_outputs():
         ArtifactKind.MEASUREMENTS,
         ArtifactKind.OBJECT_LABELS,
         ArtifactKind.OBJECT_LABELS,
+        ArtifactKind.RELATIONSHIPS,
+        ArtifactKind.RELATIONSHIPS,
         ArtifactKind.IMAGE,
         ArtifactKind.IMAGE,
     ]
@@ -354,6 +416,114 @@ def test_cellprofiler_symbol_table_compiles_filterobjects_enclosing_input():
         "Tiles",
     ]
     assert [spec.name for spec in contract.inputs] == ["Cells", "Tiles"]
+
+
+def test_filterobjects_uses_prior_enclosing_relationship_when_available():
+    modules = [
+        _module(
+            1,
+            "IdentifyPrimaryObjects",
+            {
+                "Select the input image": "OrigBlue",
+                "Name the primary objects to be identified": "Cells",
+            },
+        ),
+        _module(
+            2,
+            "IdentifyPrimaryObjects",
+            {
+                "Select the input image": "OrigBlue",
+                "Name the primary objects to be identified": "Tiles",
+            },
+        ),
+        _module(
+            3,
+            "RelateObjects",
+            {
+                "Parent objects": "Tiles",
+                "Child objects": "Cells",
+            },
+        ),
+        _module(
+            4,
+            "FilterObjects",
+            {
+                "Select the objects to filter": "Cells",
+                "Name the output objects": "OneCellPerTile",
+                "Select the filtering mode": "Measurements",
+                "Select the filtering method": "Maximal per object",
+                "Select the objects that contain the filtered objects": "Tiles",
+                "Assign overlapping child to": "Both parents",
+                "Select the measurement to filter by": "AreaShape_Area",
+            },
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[4]
+
+    assert [spec.name for spec in contract.runtime_artifact_inputs] == [
+        "Cells",
+        "Tiles",
+        parent_child_relationship_artifact_name("Tiles", "Cells"),
+    ]
+    assert [spec.kind for spec in contract.runtime_artifact_inputs] == [
+        ArtifactKind.OBJECT_LABELS,
+        ArtifactKind.OBJECT_LABELS,
+        ArtifactKind.RELATIONSHIPS,
+    ]
+
+
+def test_filterobjects_children_count_rule_uses_prior_relationship_input():
+    modules = [
+        _module(
+            1,
+            "IdentifyPrimaryObjects",
+            {
+                "Select the input image": "OrigBlue",
+                "Name the primary objects to be identified": "Nuclei",
+            },
+        ),
+        _module(
+            2,
+            "IdentifyPrimaryObjects",
+            {
+                "Select the input image": "OrigGreen",
+                "Name the primary objects to be identified": "PH3",
+            },
+        ),
+        _module(
+            3,
+            "RelateObjects",
+            {
+                "Parent objects": "Nuclei",
+                "Child objects": "PH3",
+            },
+        ),
+        _module(
+            4,
+            "FilterObjects",
+            {
+                "Select the objects to filter": "Nuclei",
+                "Name the output objects": "PH3PosNuclei",
+                "Select the filtering mode": "Measurements",
+                "Select the filtering method": "Limits",
+                "Select the measurement to filter by": "Children_PH3_Count",
+            },
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[4]
+
+    assert [spec.name for spec in contract.runtime_artifact_inputs] == [
+        "Nuclei",
+        parent_child_relationship_artifact_name("Nuclei", "PH3"),
+    ]
+    assert [spec.kind for spec in contract.runtime_artifact_inputs] == [
+        ArtifactKind.OBJECT_LABELS,
+        ArtifactKind.RELATIONSHIPS,
+    ]
 
 
 def test_cellprofiler_symbol_table_fails_for_kind_conflict():
@@ -476,8 +646,8 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
     assert "ModuleArtifactContract(" in generated.code
     assert "source_bindings=StepSourceBindingsConfig(" in generated.code
     assert "runtime_artifact_inputs=(ArtifactSpec('Nuclei'" in generated.code
-    assert "identify_primary_objects_1 = require_function" in generated.code
-    assert "identify_secondary_objects_2 = require_function" in generated.code
+    assert "identify_primary_objects_1 = require_cellprofiler_function" in generated.code
+    assert "identify_secondary_objects_2 = require_cellprofiler_function" in generated.code
     assert "CellProfilerModuleExecutor" in generated.code
     assert "cellprofiler_runtime_adapter_factory" in generated.code
     assert "@artifact_outputs(*CELLPROFILER_MODULE_CONTRACTS[1]" in generated.code
@@ -531,15 +701,15 @@ def test_pipeline_generator_resolves_object_measurement_function_variants():
     )
 
     assert (
-        'measure_texture_objects_2 = require_function("MeasureTexture", '
+        'measure_texture_objects_2 = require_cellprofiler_function("MeasureTexture", '
         'function_name="measure_texture_objects")'
     ) in generated.code
     assert (
-        'measure_colocalization_objects_3 = require_function('
+        'measure_colocalization_objects_3 = require_cellprofiler_function('
         '"MeasureColocalization", function_name="measure_colocalization_objects")'
     ) in generated.code
     assert (
-        'measure_granularity_objects_4 = require_function('
+        'measure_granularity_objects_4 = require_cellprofiler_function('
         '"MeasureGranularity", function_name="measure_granularity_objects")'
     ) in generated.code
 
@@ -579,7 +749,7 @@ def test_pipeline_generator_canonicalizes_legacy_measure_correlation_module():
         "Nuclei",
     ]
     assert (
-        'measure_colocalization_objects_2 = require_function('
+        'measure_colocalization_objects_2 = require_cellprofiler_function('
         '"MeasureCorrelation", function_name="measure_colocalization_objects")'
     ) in generated.code
     assert "module_name='MeasureColocalization'" in generated.code
@@ -620,7 +790,7 @@ def test_measure_image_area_occupied_alias_compiles_binary_contract():
         "MeasureImageAreaOccupied_1_measurements",
     ]
     assert (
-        'measure_image_area_occupied_1 = require_function('
+        'measure_image_area_occupied_1 = require_cellprofiler_function('
         '"MeasureImageAreaOccupied", '
         'function_name="measure_image_area_occupied")'
     ) in generated.code
@@ -663,7 +833,7 @@ def test_measure_image_area_occupied_resolves_object_variant():
         "MeasureImageAreaOccupied_2_measurements",
     ]
     assert (
-        'measure_image_area_occupied_2 = require_function('
+        'measure_image_area_occupied_2 = require_cellprofiler_function('
         '"MeasureImageAreaOccupied", '
         'function_name="measure_image_area_occupied")'
     ) in generated.code
@@ -739,12 +909,52 @@ def test_align_compiles_two_image_contract():
     assert [spec.name for spec in contract.outputs] == [
         "AlignedImage1",
         "AlignedImage2",
+        "Align_1_measurements",
     ]
     assert (
-        'align_1 = require_function("Align", function_name="align")'
+        'align_1 = require_cellprofiler_function("Align", function_name="align")'
         in generated.code
     )
     assert "'crop_mode': 'Keep size'" in generated.code
+
+
+def test_align_compiles_additional_similar_image_contract():
+    module = _module_with_records(
+        1,
+        "Align",
+        [
+            ("Select the alignment method", "Mutual Information"),
+            ("Crop mode", "Keep size"),
+            ("Select the first input image", "Image1"),
+            ("Name the first output image", "AlignedImage1"),
+            ("Select the second input image", "Image2"),
+            ("Name the second output image", "AlignedImage2"),
+            ("Select the additional image", "CombinedImage"),
+            ("Name the output image", "AlignedCombined"),
+            ("Select how the alignment is to be applied", "Similarly"),
+        ],
+    )
+
+    table = CellProfilerSymbolTable.compile([module])
+    contract = table.contracts_by_module_num[1]
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="align",
+        source_cppipe=Path("source.pipeline"),
+        modules=[module],
+    )
+
+    assert [spec.name for spec in contract.inputs] == [
+        "Image1",
+        "Image2",
+        "CombinedImage",
+    ]
+    assert [spec.name for spec in contract.outputs] == [
+        "AlignedImage1",
+        "AlignedImage2",
+        "AlignedCombined",
+        "Align_1_measurements",
+    ]
+    assert "'additional_alignment_modes': ('Similarly',)" in generated.code
 
 
 def test_unmix_colors_compiles_escaped_multi_output_rows():
@@ -840,7 +1050,7 @@ def test_pipeline_generator_uses_image_variant_without_object_measurement_inputs
 
     assert [spec.name for spec in contract.inputs] == ["OrigBlue", "OrigGreen"]
     assert (
-        'measure_colocalization_1 = require_function('
+        'measure_colocalization_1 = require_cellprofiler_function('
         '"MeasureColocalization", function_name="measure_colocalization")'
     ) in generated.code
 
@@ -889,6 +1099,9 @@ def test_pipeline_generator_binds_correct_illumination_settings_as_literals():
                     "Select how the illumination function is calculated": "Background",
                     "Block size": "40",
                     "Rescale the illumination function?": "No",
+                    "Calculate function for each image individually, or based on all images?": (
+                        "All: First cycle"
+                    ),
                     "Smoothing method": "Convex Hull",
                     "Method to calculate smoothing filter size": "Manually",
                     "Smoothing filter size": "10",
@@ -913,6 +1126,7 @@ def test_pipeline_generator_binds_correct_illumination_settings_as_literals():
     assert "'intensity_choice': 'background'" in generated.code
     assert "'block_size': 40" in generated.code
     assert "'rescale_option': 'no'" in generated.code
+    assert "'calculation_scope': 'all_first_cycle'" in generated.code
     assert "'smoothing_method': 'convex_hull'" in generated.code
     assert "'filter_size_method': 'manually'" in generated.code
     assert "'manual_filter_size': 10" in generated.code
@@ -1023,6 +1237,74 @@ def test_cellprofiler_symbol_table_compiles_singular_aliases_and_image_artifacts
     assert granularity_contract.outputs[0].kind is ArtifactKind.MEASUREMENTS
 
 
+def test_correct_illumination_apply_contract_preserves_repeated_pairs() -> None:
+    modules = [
+        _module_with_records(
+            1,
+            "CorrectIlluminationApply",
+            [
+                ("Select the input image", "OrigRed"),
+                ("Name the output image", "CorrRed"),
+                ("Select the illumination function", "IllumRed"),
+                ("Select how the illumination function is applied", "Subtract"),
+                ("Select the input image", "OrigBlue"),
+                ("Name the output image", "CorrBlue"),
+                ("Select the illumination function", "IllumBlue"),
+                ("Select how the illumination function is applied", "Subtract"),
+                ("Select the input image", "OrigGreen"),
+                ("Name the output image", "CorrGreen"),
+                ("Select the illumination function", "IllumGreen"),
+                ("Select how the illumination function is applied", "Subtract"),
+            ],
+        )
+    ]
+
+    contract = CellProfilerSymbolTable.compile(modules).contracts_by_module_num[1]
+
+    assert [spec.name for spec in contract.inputs] == [
+        "OrigRed",
+        "IllumRed",
+        "OrigBlue",
+        "IllumBlue",
+        "OrigGreen",
+        "IllumGreen",
+    ]
+    assert [spec.name for spec in contract.outputs] == [
+        "CorrRed",
+        "CorrBlue",
+        "CorrGreen",
+    ]
+
+
+def test_correct_illumination_apply_contract_preserves_same_artifact_roles() -> None:
+    modules = [
+        _module_with_records(
+            1,
+            "CorrectIlluminationCalculate",
+            [
+                ("Select the input image", "OrigGreen"),
+                ("Name the output image", "IllumGreen"),
+            ],
+        ),
+        _module_with_records(
+            2,
+            "CorrectIlluminationApply",
+            [
+                ("Select the input image", "IllumGreen"),
+                ("Name the output image", "CorrGreen"),
+                ("Select the illumination function", "IllumGreen"),
+                ("Select how the illumination function is applied", "Divide"),
+            ],
+        ),
+    ]
+
+    contract = CellProfilerSymbolTable.compile(modules).contracts_by_module_num[2]
+
+    assert [spec.name for spec in contract.inputs] == ["IllumGreen", "IllumGreen"]
+    assert [spec.name for spec in contract.runtime_artifact_inputs] == ["IllumGreen"]
+    assert [spec.name for spec in contract.outputs] == ["CorrGreen"]
+
+
 def test_overlay_outlines_accepts_image_outline_rows() -> None:
     module = _module_with_records(
         1,
@@ -1089,6 +1371,33 @@ def test_overlay_outlines_accepts_mixed_image_and_object_rows() -> None:
     assert [(spec.name, spec.kind) for spec in contract.runtime_artifact_inputs] == [
         ("Nuclei", ArtifactKind.OBJECT_LABELS),
     ]
+
+
+def test_overlay_outlines_preserves_color_before_object_rows() -> None:
+    module = _module_with_records(
+        1,
+        "OverlayOutlines",
+        [
+            ("Display outlines on a blank image?", "No"),
+            ("Select image on which to display outlines", "DNA"),
+            ("Name the output image", "OrigOverlay"),
+            ("Outline display mode", "Color"),
+            ("Select method to determine brightness of outlines", "Max of image"),
+            ("How to outline", "Thick"),
+            ("Select outline color", "#0080FF"),
+            ("Select objects to display", "Cells"),
+            ("Select outline color", "blue"),
+            ("Select objects to display", "Nuclei"),
+            ("Select outline color", "yellow"),
+            ("Select objects to display", "PH3"),
+        ],
+    )
+
+    assert overlay_outlines_bound_kwargs(module)["outline_colors"] == (
+        "#0080FF",
+        "blue",
+        "yellow",
+    )
 
 
 def test_color_to_gray_combine_contract_ignores_dormant_split_outputs() -> None:
@@ -1232,6 +1541,31 @@ def test_cellprofiler_symbol_table_infers_special_output_only_contract():
     assert [spec.kind for spec in contract.outputs] == [ArtifactKind.MEASUREMENTS]
 
 
+def test_generated_inputless_measurement_only_step_disables_default_grouping():
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="calculate_math_measurement_only",
+        source_cppipe=Path("source.pipeline"),
+        modules=[
+            _module(
+                1,
+                "CalculateMath",
+                {
+                    "Name the output measurement": "Ratio",
+                    "Operation": "Divide",
+                    "Select the numerator measurement": "AreaOccupied_Nuclei",
+                    "Select the denominator measurement": "AreaOccupied_Cells",
+                    "Select the numerator objects": "None",
+                    "Select the denominator objects": "None",
+                },
+            )
+        ],
+    )
+
+    assert "name=\"CalculateMath\"" in generated.code
+    assert "variable_components=[VariableComponents.SITE]" in generated.code
+    assert "group_by=GroupBy.NONE," in generated.code
+
+
 def test_cellprofiler_symbol_table_infers_mask_objects_contract():
     modules = [
         _identify_primary(),
@@ -1257,10 +1591,12 @@ def test_cellprofiler_symbol_table_infers_mask_objects_contract():
     ) == ("OrigBlue",)
     assert [spec.name for spec in contract.outputs] == [
         "MaskObjects_2_measurements",
+        "Nuclei_MaskedNuclei_relationships",
         "MaskedNuclei",
     ]
     assert [spec.kind for spec in contract.outputs] == [
         ArtifactKind.MEASUREMENTS,
+        ArtifactKind.RELATIONSHIPS,
         ArtifactKind.OBJECT_LABELS,
     ]
 
@@ -1357,12 +1693,75 @@ def test_classifyobjects_alias_compiles_variant_contract_and_settings():
         "ClassifyObjects_2_measurements"
     ]
     assert (
-        'classify_objects_single_measurement_2 = require_function('
+        'classify_objects_single_measurement_2 = require_cellprofiler_function('
         '"ClassifyObjects", function_name="classify_objects_single_measurement")'
     ) in generated.code
     assert "'measurement_feature': 'Math_Ratio'" in generated.code
     assert "'bin_choice': 'custom'" in generated.code
     assert "'custom_thresholds': '0.25,0.75'" in generated.code
+
+
+def test_classifyobjects_repeated_single_measurement_rows_are_bound_as_rules():
+    modules = [
+        _identify_primary(),
+        _module_with_records(
+            2,
+            "ClassifyObjects",
+            [
+                (
+                    "Make each classification decision on how many measurements?",
+                    "Single measurement",
+                ),
+                ("Select the object to be classified", "Nuclei"),
+                ("Select the measurement to classify by", "AreaShape_Area"),
+                ("Select bin spacing", "Custom-defined bins"),
+                ("Number of bins", "1"),
+                ("Lower threshold", "0"),
+                ("Use a bin for objects below the threshold?", "No"),
+                ("Upper threshold", "1"),
+                ("Use a bin for objects above the threshold?", "No"),
+                (
+                    "Enter the custom thresholds separating the values between bins",
+                    "0,5,75,1300",
+                ),
+                ("Give each bin a name?", "Yes"),
+                ("Enter the bin names separated by commas", "Tiny,Small,Large"),
+                ("Retain an image of the classified objects?", "No"),
+                ("Name the output image", "Do not use"),
+                ("Select the object to be classified", "Nuclei"),
+                (
+                    "Select the measurement to classify by",
+                    "Intensity_MeanIntensity_DNA",
+                ),
+                ("Select bin spacing", "Custom-defined bins"),
+                ("Number of bins", "3"),
+                ("Lower threshold", "0"),
+                ("Use a bin for objects below the threshold?", "Yes"),
+                ("Upper threshold", "1"),
+                ("Use a bin for objects above the threshold?", "Yes"),
+                (
+                    "Enter the custom thresholds separating the values between bins",
+                    "0.05",
+                ),
+                ("Give each bin a name?", "Yes"),
+                ("Enter the bin names separated by commas", "White,Red"),
+                ("Retain an image of the classified objects?", "No"),
+                ("Name the output image", "ClassifiedNuclei"),
+            ],
+        ),
+    ]
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="classify_repeated",
+        source_cppipe=Path("source.cppipe"),
+        modules=modules,
+    )
+
+    assert "'classification_rules': (" in generated.code
+    assert "'measurement_feature': 'AreaShape_Area'" in generated.code
+    assert "'measurement_feature': 'Intensity_MeanIntensity_DNA'" in generated.code
+    assert "'bin_names': 'Tiny,Small,Large'" in generated.code
+    assert "'bin_names': 'White,Red'" in generated.code
 
 
 def test_grid_variants_do_not_treat_shape_choices_as_object_symbols():
@@ -1407,19 +1806,24 @@ def test_grid_variants_do_not_treat_shape_choices_as_object_symbols():
 
     assert [spec.name for spec in define_grid.inputs] == ["OrigBlue", "Nuclei"]
     assert [spec.name for spec in define_grid.outputs] == [
-        "DefineGrid_2_measurements"
+        "Grid"
     ]
-    assert [spec.name for spec in identify_grid.inputs] == ["Nuclei"]
+    assert [spec.kind for spec in define_grid.outputs] == [ArtifactKind.SPATIAL_GRID]
+    assert [spec.name for spec in identify_grid.inputs] == ["Grid", "Nuclei"]
+    assert [spec.kind for spec in identify_grid.inputs] == [
+        ArtifactKind.SPATIAL_GRID,
+        ArtifactKind.OBJECT_LABELS,
+    ]
     assert [spec.name for spec in identify_grid.outputs] == [
         "IdentifyObjectsInGrid_3_measurements",
         "GridObjects",
     ]
     assert (
-        'define_grid_automatic_2 = require_function('
+        'define_grid_automatic_2 = require_cellprofiler_function('
         '"DefineGrid", function_name="define_grid_automatic")'
     ) in generated.code
     assert (
-        'identify_objects_in_grid_with_guides_3 = require_function('
+        'identify_objects_in_grid_with_guides_3 = require_cellprofiler_function('
         '"IdentifyObjectsInGrid", '
         'function_name="identify_objects_in_grid_with_guides")'
     ) in generated.code
@@ -1457,6 +1861,7 @@ def test_mask_and_worm_output_object_names_are_declared_generically():
 
     assert [spec.name for spec in table.contracts_by_module_num[2].outputs] == [
         "MaskObjects_2_measurements",
+        "Nuclei_MaskedNuclei_relationships",
         "MaskedNuclei",
     ]
     assert [spec.name for spec in table.contracts_by_module_num[3].outputs] == [

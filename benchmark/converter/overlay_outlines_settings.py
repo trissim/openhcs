@@ -222,10 +222,9 @@ def _ordered_overlay_rows(module: ModuleBlock) -> tuple[OverlayOutlineRow, ...]:
         module.iter_settings(),
         start_name=OVERLAY_OBJECTS_SETTING,
     )
-    return tuple(
-        OverlayOutlineRow.from_block(module, block)
-        for block in object_blocks
-    )
+    if object_blocks:
+        return _mapping_overlay_rows(module)
+    return ()
 
 
 def _mapping_overlay_rows(module: ModuleBlock) -> tuple[OverlayOutlineRow, ...]:

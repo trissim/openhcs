@@ -6,12 +6,13 @@ defines the location of a grid that can be used by modules downstream.
 """
 
 import numpy as np
-from typing import Tuple, Optional
-from dataclasses import dataclass
+from typing import Tuple
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
+from openhcs.core.runtime_semantics import SpatialGridOrdering
+from openhcs.core.runtime_values import SpatialGrid
 from openhcs.processing.materialization import csv_materializer
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 
@@ -33,18 +34,7 @@ class GridMode(Enum):
     MANUAL = "manual"
 
 
-@dataclass
-class GridInfo:
-    """Grid definition information."""
-    slice_index: int
-    rows: int
-    columns: int
-    x_spacing: float
-    y_spacing: float
-    x_location_of_lowest_x_spot: float
-    y_location_of_lowest_y_spot: float
-    total_width: float
-    total_height: float
+GridInfo = SpatialGrid
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -70,7 +60,7 @@ def define_grid_manual(
     second_spot_col: int = 12,
     origin: GridOrigin = GridOrigin.TOP_LEFT,
     ordering: GridOrdering = GridOrdering.BY_ROWS,
-) -> Tuple[np.ndarray, GridInfo]:
+) -> Tuple[np.ndarray, SpatialGrid]:
     """Define a grid manually based on two cell coordinates.
     
     Args:
@@ -93,7 +83,6 @@ def define_grid_manual(
     """
     origin = _coerce_function_enum(GridOrigin, origin)
     ordering = _coerce_function_enum(GridOrdering, ordering)
-    del ordering
 
     # Convert to canonical row/column (0-indexed from top-left)
     def canonical_row_col(row, col):
@@ -129,16 +118,18 @@ def define_grid_manual(
     total_width = abs(x_spacing) * grid_columns
     total_height = abs(y_spacing) * grid_rows
     
-    grid_info = GridInfo(
+    grid_info = SpatialGrid(
+        name="grid_info",
         slice_index=0,
         rows=grid_rows,
         columns=grid_columns,
         x_spacing=abs(x_spacing),
         y_spacing=abs(y_spacing),
-        x_location_of_lowest_x_spot=x_location_of_lowest_x_spot,
-        y_location_of_lowest_y_spot=y_location_of_lowest_y_spot,
+        x_origin=x_location_of_lowest_x_spot,
+        y_origin=y_location_of_lowest_y_spot,
         total_width=total_width,
-        total_height=total_height
+        total_height=total_height,
+        ordering=SpatialGridOrdering(ordering.value),
     )
     
     return image, grid_info
@@ -161,7 +152,7 @@ def define_grid_automatic(
     grid_columns: int = 12,
     origin: GridOrigin = GridOrigin.TOP_LEFT,
     ordering: GridOrdering = GridOrdering.BY_ROWS,
-) -> Tuple[np.ndarray, GridInfo]:
+) -> Tuple[np.ndarray, SpatialGrid]:
     """Define a grid automatically based on previously identified objects.
     
     The left-most, right-most, top-most, and bottom-most objects are used
@@ -183,7 +174,6 @@ def define_grid_automatic(
     del center_of_mass, find_objects
     origin = _coerce_function_enum(GridOrigin, origin)
     ordering = _coerce_function_enum(GridOrdering, ordering)
-    del ordering
     
     # Find centroids of all labeled objects
     unique_labels = np.unique(labels)
@@ -248,23 +238,25 @@ def define_grid_automatic(
         y_spacing = (second_y - first_y) / max(grid_rows - 1, 1)
     
     # Calculate origin location
-    x_location_of_lowest_x_spot = first_x - first_col_c * x_spacing
-    y_location_of_lowest_y_spot = first_y - first_row_c * y_spacing
+    x_location_of_lowest_x_spot = np.floor(first_x - first_col_c * x_spacing)
+    y_location_of_lowest_y_spot = np.floor(first_y - first_row_c * y_spacing)
     
     # Calculate total dimensions
     total_width = abs(x_spacing) * grid_columns
     total_height = abs(y_spacing) * grid_rows
     
-    grid_info = GridInfo(
+    grid_info = SpatialGrid(
+        name="grid_info",
         slice_index=0,
         rows=grid_rows,
         columns=grid_columns,
         x_spacing=abs(x_spacing),
         y_spacing=abs(y_spacing),
-        x_location_of_lowest_x_spot=x_location_of_lowest_x_spot,
-        y_location_of_lowest_y_spot=y_location_of_lowest_y_spot,
+        x_origin=x_location_of_lowest_x_spot,
+        y_origin=y_location_of_lowest_y_spot,
         total_width=total_width,
-        total_height=total_height
+        total_height=total_height,
+        ordering=SpatialGridOrdering(ordering.value),
     )
     
     return image, grid_info

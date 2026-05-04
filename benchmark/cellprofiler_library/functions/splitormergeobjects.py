@@ -12,6 +12,7 @@ from typing import Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
@@ -59,11 +60,8 @@ def _relabel_consecutive(labels: np.ndarray) -> np.ndarray:
     return label_map[labels]
 
 
-def _compute_convex_hull_labels(labels: np.ndarray) -> np.ndarray:
+def _compute_convex_hull_labels(labels: np.ndarray, morphology) -> np.ndarray:
     """Compute convex hull for each label and fill it."""
-    from scipy.spatial import ConvexHull
-    from skimage.draw import polygon
-    
     output = np.zeros_like(labels)
     unique_labels = np.unique(labels)
     unique_labels = unique_labels[unique_labels > 0]
@@ -76,15 +74,13 @@ def _compute_convex_hull_labels(labels: np.ndarray) -> np.ndarray:
             # Can't form convex hull with less than 3 points
             output[mask] = label_id
             continue
-        
-        try:
-            hull = ConvexHull(coords)
-            hull_points = coords[hull.vertices]
-            rr, cc = polygon(hull_points[:, 0], hull_points[:, 1], labels.shape)
-            output[rr, cc] = label_id
-        except Exception:
-            # If convex hull fails, just use original mask
-            output[mask] = label_id
+
+        min_row = int(coords[:, 0].min())
+        max_row = int(coords[:, 0].max()) + 1
+        min_col = int(coords[:, 1].min())
+        max_col = int(coords[:, 1].max()) + 1
+        hull = morphology.convex_hull_image(mask[min_row:max_row, min_col:max_col])
+        output[min_row:max_row, min_col:max_col][hull] = label_id
     
     return output
 
@@ -164,7 +160,8 @@ def _filter_using_image(
 def _merge_by_parent(
     labels: np.ndarray,
     parent_labels: np.ndarray,
-    output_type: OutputObjectType = OutputObjectType.DISCONNECTED
+    output_type: OutputObjectType = OutputObjectType.DISCONNECTED,
+    morphology=None,
 ) -> np.ndarray:
     """Merge child objects that share the same parent."""
     from skimage.measure import regionprops
@@ -190,7 +187,9 @@ def _merge_by_parent(
             output_labels[child_mask] = prop.label
     
     if output_type == OutputObjectType.CONVEX_HULL:
-        output_labels = _compute_convex_hull_labels(output_labels)
+        if morphology is None:
+            raise ValueError("morphology backend is required for convex-hull merging")
+        output_labels = _compute_convex_hull_labels(output_labels, morphology)
     
     return _relabel_consecutive(output_labels)
 
@@ -225,6 +224,7 @@ def split_or_merge_objects(
     minimum_intensity_fraction: float = 0.9,
     intensity_method: IntensityMethod = IntensityMethod.CENTROIDS,
     parent_labels: Optional[np.ndarray] = None,
+    morphology_backend_provider: CellProfilerBackendProvider | None = None,
 ) -> Tuple[np.ndarray, SplitOrMergeStats, np.ndarray]:
     """
     Split or merge objects based on various criteria.
@@ -260,15 +260,25 @@ def split_or_merge_objects(
             )
         else:  # PER_PARENT
             if parent_labels is None:
-                # If no parent labels provided, use the image as a fallback
-                # In practice, parent_labels should be provided via special_inputs
-                output_labels = labels.copy()
-            else:
-                output_labels = _merge_by_parent(
-                    labels,
-                    parent_labels,
-                    output_object_type
+                raise ValueError(
+                    "parent_labels are required when merge_method is PER_PARENT"
                 )
+            morphology = None
+            if output_object_type == OutputObjectType.CONVEX_HULL:
+                from openhcs.processing.backends.cellprofiler.morphology import (
+                    MorphologyBackendStrategy,
+                )
+
+                morphology = MorphologyBackendStrategy.for_callable(
+                    split_or_merge_objects,
+                    backend_provider=morphology_backend_provider,
+                )
+            output_labels = _merge_by_parent(
+                labels,
+                parent_labels,
+                output_object_type,
+                morphology,
+            )
     
     output_count = len(np.unique(output_labels)) - (1 if 0 in output_labels else 0)
     

@@ -185,10 +185,12 @@ def _get_available_filename_parsers():
     # Import parsers only when needed to avoid circular imports
     from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
     from openhcs.microscopes.opera_phenix import OperaPhenixFilenameParser
+    from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
     return {
         "ImageXpressFilenameParser": ImageXpressFilenameParser,
         "OperaPhenixFilenameParser": OperaPhenixFilenameParser,
+        "SourceSchemaFilenameParser": SourceSchemaFilenameParser,
         # Add other parsers to this dictionary as they are implemented/imported.
         # Example: "MyOtherParser": MyOtherParser,
     }

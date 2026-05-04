@@ -9,6 +9,12 @@ import numpy as np
 from typing import Tuple
 from dataclasses import dataclass
 from openhcs.core.memory import numpy
+from openhcs.core.runtime_semantics import (
+    ParentChildRelationshipPayload,
+    object_label_parent_child_payload,
+)
+from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler.outlines import ObjectOutlineBackendStrategy
 
 
 @dataclass
@@ -20,22 +26,44 @@ class TertiaryObjectStats:
     secondary_parent_count: int
 
 
-def _outline(labels: np.ndarray) -> np.ndarray:
+def _outline(
+    labels: np.ndarray,
+    *,
+    outline_backend_provider: CellProfilerBackendProvider | None,
+) -> np.ndarray:
     """Find outline pixels of labeled objects.
 
     An outline pixel is a labeled pixel that has at least one neighbor
     with a different label (including background).
     """
-    from scipy.ndimage import maximum_filter, minimum_filter
-    
-    # A pixel is on the outline if the max in its neighborhood differs from min
-    max_labels = maximum_filter(labels, size=3, mode='constant', cval=0)
-    min_labels = minimum_filter(labels, size=3, mode='constant', cval=0)
-    
-    outline_mask = (max_labels != min_labels) & (labels > 0)
-    result = np.zeros_like(labels)
-    result[outline_mask] = labels[outline_mask]
-    return result
+    return ObjectOutlineBackendStrategy.for_memory_type(
+        backend_provider=outline_backend_provider,
+    ).outline(labels)
+
+
+def _positive_label_count(labels: np.ndarray) -> int:
+    return int(np.count_nonzero(np.bincount(np.asarray(labels).ravel())[1:]))
+
+
+def _positive_label_mean_area(labels: np.ndarray) -> tuple[int, float]:
+    areas = np.bincount(np.asarray(labels).ravel())[1:]
+    positive_areas = areas[areas > 0]
+    if positive_areas.size == 0:
+        return 0, 0.0
+    return int(positive_areas.size), float(np.mean(positive_areas))
+
+
+def _parent_child_relationship(
+    parent_labels: np.ndarray,
+    child_labels: np.ndarray,
+    *,
+    parent_context_labels: np.ndarray | None = None,
+) -> ParentChildRelationshipPayload:
+    return object_label_parent_child_payload(
+        parent_labels,
+        child_labels,
+        child_region_labels=parent_context_labels,
+    )
 
 
 @numpy
@@ -44,7 +72,14 @@ def identify_tertiary_objects(
     primary_labels: np.ndarray,
     secondary_labels: np.ndarray,
     shrink_primary: bool = True,
-) -> Tuple[np.ndarray, TertiaryObjectStats, np.ndarray]:
+    outline_backend_provider: CellProfilerBackendProvider | None = None,
+) -> Tuple[
+    np.ndarray,
+    ParentChildRelationshipPayload,
+    ParentChildRelationshipPayload,
+    TertiaryObjectStats,
+    np.ndarray,
+]:
     """
     Identify tertiary objects by subtracting primary objects from secondary objects.
     
@@ -61,6 +96,8 @@ def identify_tertiary_objects(
     Returns:
         Tuple of:
         - Original image (passed through)
+        - Secondary-parent to tertiary-child relationships
+        - Primary-parent to tertiary-child relationships
         - TertiaryObjectStats dataclass with measurements
         - Tertiary label image (ring-shaped objects)
 
@@ -71,8 +108,6 @@ def identify_tertiary_objects(
         'Name the tertiary objects to be identified' -> (pipeline-handled)
         'Shrink smaller object prior to subtraction?' -> shrink_primary
     """
-    from skimage.measure import regionprops
-    
     # Handle 3D input - process slice by slice or take first slice
     if image.ndim == 3:
         # For FLEXIBLE contract, we process the first slice as reference
@@ -94,7 +129,10 @@ def identify_tertiary_objects(
         )
     
     # Find outlines of primary objects
-    primary_outline = _outline(primary_labels)
+    primary_outline = _outline(
+        primary_labels,
+        outline_backend_provider=outline_backend_provider,
+    )
     
     # Create tertiary labels by subtracting primary from secondary
     tertiary_labels = secondary_labels.copy()
@@ -127,14 +165,11 @@ def identify_tertiary_objects(
         )
         tertiary_labels[first_row, first_col] = missing_label
     
-    # Compute measurements
-    props = regionprops(tertiary_labels.astype(np.int32))
-    object_count = len(props)
-    mean_area = np.mean([p.area for p in props]) if props else 0.0
+    object_count, mean_area = _positive_label_mean_area(tertiary_labels)
     
     # Count unique parent objects
-    primary_parent_count = len(np.unique(primary_labels)) - (1 if 0 in primary_labels else 0)
-    secondary_parent_count = len(np.unique(secondary_labels)) - (1 if 0 in secondary_labels else 0)
+    primary_parent_count = _positive_label_count(primary_labels)
+    secondary_parent_count = _positive_label_count(secondary_labels)
     
     stats = TertiaryObjectStats(
         slice_index=0,
@@ -150,4 +185,14 @@ def identify_tertiary_objects(
     else:
         tertiary_labels_out = tertiary_labels
     
-    return image, stats, tertiary_labels_out
+    return (
+        image,
+        _parent_child_relationship(secondary_labels, tertiary_labels),
+        _parent_child_relationship(
+            primary_labels,
+            tertiary_labels,
+            parent_context_labels=secondary_labels,
+        ),
+        stats,
+        tertiary_labels_out,
+    )

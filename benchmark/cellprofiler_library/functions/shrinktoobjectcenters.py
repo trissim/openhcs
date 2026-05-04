@@ -15,6 +15,9 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
+from openhcs.processing.backends.analysis.region_properties import (
+    LabelRegionPropertiesBackendStrategy,
+)
 from dataclasses import dataclass
 from typing import Tuple
 
@@ -52,28 +55,27 @@ def shrink_to_object_centers(
             - CentroidStats dataclass with object count
             - Centroid label image (H, W) with single-pixel objects
     """
-    from skimage.measure import regionprops
-    
-    # Get region properties to find centroids
-    props = regionprops(labels.astype(np.int32))
+    region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+        labels.astype(np.int32, copy=False)
+    )
     
     # Create output label image with same shape as input
     output_labels = np.zeros_like(labels, dtype=np.int32)
     
     # Place each object's label at its centroid location
-    for region in props:
-        # Get centroid coordinates (row, col for 2D)
-        centroid = region.centroid
-        # Convert to integer indices
-        centroid_int = tuple(int(round(c)) for c in centroid)
+    for index, label_id in enumerate(region_props.label):
+        centroid_int = (
+            int(round(float(region_props.centroid_y[index]))),
+            int(round(float(region_props.centroid_x[index]))),
+        )
         
         # Ensure centroid is within image bounds
         if all(0 <= centroid_int[i] < labels.shape[i] for i in range(len(centroid_int))):
-            output_labels[centroid_int] = region.label
+            output_labels[centroid_int] = int(label_id)
     
     stats = CentroidStats(
         slice_index=0,
-        object_count=len(props)
+        object_count=int(region_props.label.size)
     )
     
     return image, stats, output_labels

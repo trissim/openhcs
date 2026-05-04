@@ -38,6 +38,14 @@ class ArtifactSettingRole(Enum):
         ArtifactSettingDirection.OUTPUT,
         ArtifactKind.OBJECT_LABELS,
     )
+    INPUT_SPATIAL_GRID = (
+        ArtifactSettingDirection.INPUT,
+        ArtifactKind.SPATIAL_GRID,
+    )
+    OUTPUT_SPATIAL_GRID = (
+        ArtifactSettingDirection.OUTPUT,
+        ArtifactKind.SPATIAL_GRID,
+    )
 
     def __init__(
         self,
@@ -167,6 +175,18 @@ class OutputObjectsSettingClassifier(ArtifactSettingClassifier):
         return None
 
 
+class OutputSpatialGridSettingClassifier(ArtifactSettingClassifier):
+    """Classify named spatial-grid definitions."""
+
+    classifier_name = "output_spatial_grid"
+    priority = 25
+
+    def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
+        if _normalized_setting(setting.name) == "name_the_grid":
+            return ArtifactSettingRole.OUTPUT_SPATIAL_GRID
+        return None
+
+
 class InputImageSettingClassifier(ArtifactSettingClassifier):
     """Classify source or produced image name inputs."""
 
@@ -213,6 +233,18 @@ class InputObjectsSettingClassifier(ArtifactSettingClassifier):
         return ArtifactSettingRole.INPUT_OBJECTS
 
 
+class InputSpatialGridSettingClassifier(ArtifactSettingClassifier):
+    """Classify named spatial-grid inputs."""
+
+    classifier_name = "input_spatial_grid"
+    priority = 35
+
+    def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
+        if _normalized_setting(setting.name) == "select_the_defined_grid":
+            return ArtifactSettingRole.INPUT_SPATIAL_GRID
+        return None
+
+
 class SpecialOutputKindClassifier(ABC, metaclass=AutoRegisterMeta):
     """Nominal classifier for function-declared special output specs."""
 
@@ -255,6 +287,19 @@ class MaterializationOptionSpecialOutputKindClassifier(SpecialOutputKindClassifi
             )
         if any(isinstance(option, option_type) for option in materialization.outputs):
             return output_kind
+        return None
+
+
+class SpatialGridSpecialOutputKindClassifier(SpecialOutputKindClassifier):
+    """Classify special outputs that carry grid geometry, not measurement rows."""
+
+    classifier_name = "spatial_grid"
+    priority = 5
+
+    def classify(self, spec: object) -> ArtifactKind | None:
+        normalized = _normalized_setting(_special_output_name(spec))
+        if normalized in {"grid_info", "grid_definition", "spatial_grid"}:
+            return ArtifactKind.SPATIAL_GRID
         return None
 
 
@@ -359,9 +404,12 @@ def _iter_module_settings(module: ModuleBlock) -> tuple[ModuleSetting, ...]:
 
 def function_special_outputs(module_name: str) -> tuple[FunctionSpecialOutput, ...]:
     """Return function-declared auxiliary outputs with semantic artifact kinds."""
-    from benchmark.cellprofiler_library import require_function
+    from openhcs.processing.backends.cellprofiler import require_cellprofiler_function
 
-    raw_outputs = vars(require_function(module_name)).get("__special_outputs__", ())
+    raw_outputs = vars(require_cellprofiler_function(module_name)).get(
+        "__special_outputs__",
+        (),
+    )
     if not isinstance(raw_outputs, tuple):
         raise TypeError(
             f"{module_name}.__special_outputs__ must be a tuple, "

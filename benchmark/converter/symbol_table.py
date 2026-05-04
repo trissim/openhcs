@@ -32,6 +32,7 @@ from openhcs.core.artifacts import (
 )
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
+from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
 from openhcs.core.source_bindings import (
     ComponentSelector,
     EMPTY_SOURCE_BINDINGS,
@@ -79,6 +80,7 @@ from .artifact_semantics import (
 from .cppipe_module_roles import INFRASTRUCTURE_MODULE_NAMES
 from .filter_objects_settings import (
     FilterObjectsOutputRole,
+    filter_objects_child_count_object_names,
     filter_objects_plan,
 )
 from .gray_to_color_settings import GrayToColorInputNameResolver
@@ -118,6 +120,7 @@ class CellProfilerSymbolKind(str, Enum):
     OBJECTS = "objects"
     MEASUREMENTS = "measurements"
     RELATIONSHIPS = "relationships"
+    SPATIAL_GRID = "spatial_grid"
 
     @property
     def artifact_kind(self) -> ArtifactKind:
@@ -126,6 +129,7 @@ class CellProfilerSymbolKind(str, Enum):
             CellProfilerSymbolKind.OBJECTS: ArtifactKind.OBJECT_LABELS,
             CellProfilerSymbolKind.MEASUREMENTS: ArtifactKind.MEASUREMENTS,
             CellProfilerSymbolKind.RELATIONSHIPS: ArtifactKind.RELATIONSHIPS,
+            CellProfilerSymbolKind.SPATIAL_GRID: ArtifactKind.SPATIAL_GRID,
         }[self]
 
 
@@ -214,8 +218,11 @@ class ModuleArtifactContracts:
         """
         return tuple(
             symbol.artifact_spec()
-            for symbol in self.input_symbols
-            if not symbol.is_external_source
+            for symbol in _unique_symbols(
+                symbol
+                for symbol in self.input_symbols
+                if not symbol.is_external_source
+            )
         )
 
     @property
@@ -298,6 +305,12 @@ OUTPUT_IMAGE_SETTING = SettingNameFamily(
     "Name the output image",
     aliases=("Name the output image file",),
 )
+NEIGHBOR_COUNT_IMAGE_SETTING = SettingNameFamily(
+    "Retain the image of objects colored by numbers of neighbors?"
+)
+PERCENT_TOUCHING_IMAGE_SETTING = SettingNameFamily(
+    "Retain the image of objects colored by percent of touching pixels?"
+)
 OUTPUT_OBJECTS_SETTING = SettingNameFamily(
     "Name the output objects",
     aliases=("Name the objects to be identified", "Object"),
@@ -342,7 +355,7 @@ class _SymbolTableBuilder:
         self,
         symbols: Iterable[CellProfilerSymbol],
     ) -> StepSourceBindingsConfig:
-        external_symbols = tuple(symbols)
+        external_symbols = _unique_symbols(symbols)
         if not external_symbols:
             return EMPTY_SOURCE_BINDINGS
         bindings = tuple(
@@ -407,6 +420,15 @@ class _SymbolTableBuilder:
                 "produces it."
             )
         return symbol
+
+    def optional(
+        self,
+        name: str,
+        kind: CellProfilerSymbolKind,
+    ) -> CellProfilerSymbol | None:
+        """Return a previously declared symbol if it exists."""
+        normalized_name = _normalize_symbol_name(name)
+        return self._symbols.get(CellProfilerSymbolKey(normalized_name, kind))
 
     def declare(
         self,
@@ -693,7 +715,12 @@ def _identify_primary_objects(
         CellProfilerSymbolKind.OBJECTS,
         module,
     )
-    return _contracts(module, builder, inputs=[image], outputs=[objects])
+    measurements = builder.declare(
+        _measurement_name(module),
+        CellProfilerSymbolKind.MEASUREMENTS,
+        module,
+    )
+    return _contracts(module, builder, inputs=[image], outputs=[measurements, objects])
 
 
 def _identify_secondary_objects(
@@ -715,11 +742,21 @@ def _identify_secondary_objects(
         CellProfilerSymbolKind.OBJECTS,
         module,
     )
+    measurements = builder.declare(
+        _measurement_name(module),
+        CellProfilerSymbolKind.MEASUREMENTS,
+        module,
+    )
+    relationship = builder.declare(
+        _relationship_name(input_objects.name, output_objects.name),
+        CellProfilerSymbolKind.RELATIONSHIPS,
+        module,
+    )
     return _contracts(
         module,
         builder,
         inputs=[input_objects, image],
-        outputs=[output_objects],
+        outputs=[measurements, relationship, output_objects],
     )
 
 
@@ -742,7 +779,27 @@ def _identify_tertiary_objects(
         CellProfilerSymbolKind.OBJECTS,
         module,
     )
-    return _contracts(module, builder, inputs=[larger, smaller], outputs=[output])
+    larger_relationship = builder.declare(
+        _relationship_name(larger.name, output.name),
+        CellProfilerSymbolKind.RELATIONSHIPS,
+        module,
+    )
+    smaller_relationship = builder.declare(
+        _relationship_name(smaller.name, output.name),
+        CellProfilerSymbolKind.RELATIONSHIPS,
+        module,
+    )
+    measurements = builder.declare(
+        _measurement_name(module),
+        CellProfilerSymbolKind.MEASUREMENTS,
+        module,
+    )
+    return _contracts(
+        module,
+        builder,
+        inputs=[larger, smaller],
+        outputs=[larger_relationship, smaller_relationship, measurements, output],
+    )
 
 
 def _crop(
@@ -996,11 +1053,57 @@ def _measure_object_neighbors(
         CellProfilerSymbolKind.MEASUREMENTS,
         module,
     )
+    image_outputs = [
+        builder.declare(name, CellProfilerSymbolKind.IMAGE, module)
+        for name in _measure_object_neighbors_output_image_names(module)
+    ]
     return _contracts(
         module,
         builder,
         inputs=[measured, neighbors],
-        outputs=[measurements],
+        outputs=[*image_outputs, measurements],
+    )
+
+
+def _measure_object_neighbors_output_image_names(module: ModuleBlock) -> tuple[str, ...]:
+    output_names = module.get_setting_values("Name the output image")
+    outputs: list[str] = []
+    if _setting_bool(module, NEIGHBOR_COUNT_IMAGE_SETTING):
+        outputs.append(_indexed_output_image_name(module, output_names, 0))
+    if _setting_bool(module, PERCENT_TOUCHING_IMAGE_SETTING):
+        outputs.append(_indexed_output_image_name(module, output_names, 1))
+    return tuple(outputs)
+
+
+def _indexed_output_image_name(
+    module: ModuleBlock,
+    output_names: tuple[str, ...],
+    index: int,
+) -> str:
+    try:
+        return _normalize_symbol_name(output_names[index])
+    except IndexError as exc:
+        raise ValueError(
+            f"Module {module.name}({module.module_num}) requested retained "
+            f"neighbor image {index + 1} but did not provide an output image name."
+        ) from exc
+
+
+def _setting_bool(
+    module: ModuleBlock,
+    setting: str | SettingNameFamily,
+) -> bool:
+    value = optional_setting_value(module, setting)
+    if value is None:
+        return False
+    normalized = value.strip().lower()
+    if normalized in {"yes", "true", "1"}:
+        return True
+    if normalized in {"no", "false", "0"}:
+        return False
+    raise ValueError(
+        f"Unsupported boolean setting {value!r} in module "
+        f"{module.name}({module.module_num})."
     )
 
 
@@ -1139,16 +1242,16 @@ def _define_grid(
         retain_setting="Retain an image of the grid?",
         output_setting=OUTPUT_IMAGE_SETTING,
     )
-    measurements = builder.declare(
-        _measurement_name(module),
-        CellProfilerSymbolKind.MEASUREMENTS,
+    grid = builder.declare(
+        _setting(module, "Name the grid"),
+        CellProfilerSymbolKind.SPATIAL_GRID,
         module,
     )
     return _contracts(
         module,
         builder,
         inputs=[*images, *objects],
-        outputs=[*retained_images, measurements],
+        outputs=[*retained_images, grid],
     )
 
 
@@ -1161,6 +1264,20 @@ def _filter_objects(
         builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
         for name in plan.input_object_names
     ]
+    if plan.enclosing_object_name is not None:
+        relationship = builder.optional(
+            _relationship_name(plan.enclosing_object_name, plan.input_object_name),
+            CellProfilerSymbolKind.RELATIONSHIPS,
+        )
+        if relationship is not None:
+            inputs.append(relationship)
+    for child_object_name in filter_objects_child_count_object_names(module):
+        relationship = builder.optional(
+            _relationship_name(plan.input_object_name, child_object_name),
+            CellProfilerSymbolKind.RELATIONSHIPS,
+        )
+        if relationship is not None:
+            inputs.append(relationship)
     outputs: list[CellProfilerSymbol] = []
     for output in plan.outputs:
         if output.role is FilterObjectsOutputRole.MEASUREMENTS:
@@ -1228,6 +1345,17 @@ class FilterObjectsOutlineImageOutputStrategy(
         return CellProfilerSymbolKind.IMAGE
 
 
+class FilterObjectsRelationshipsOutputStrategy(
+    FilterObjectsOutputSymbolKindStrategy
+):
+    """Map relabeled object lineage to directed relationship artifacts."""
+
+    role = FilterObjectsOutputRole.RELATIONSHIPS
+
+    def symbol_kind(self) -> CellProfilerSymbolKind:
+        return CellProfilerSymbolKind.RELATIONSHIPS
+
+
 def _unmix_colors(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
@@ -1264,26 +1392,56 @@ def _correct_illumination_apply(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
 ) -> ModuleArtifactContracts:
-    image = builder.require(
-        _setting(module, "Select the input image"),
-        CellProfilerSymbolKind.IMAGE,
-        module,
-    )
-    illumination = builder.require(
-        _setting(module, "Select the illumination function"),
-        CellProfilerSymbolKind.IMAGE,
-        module,
-    )
-    output = builder.declare(
-        _setting(module, OUTPUT_IMAGE_SETTING),
-        CellProfilerSymbolKind.IMAGE,
-        module,
-    )
+    image_names = setting_values(module, INPUT_IMAGE_SETTING)
+    illumination_names = setting_values(module, "Select the illumination function")
+    output_names = setting_values(module, OUTPUT_IMAGE_SETTING)
+    if not image_names or not illumination_names or not output_names:
+        raise ValueError(
+            f"Module {module.name}({module.module_num}) requires image, "
+            "illumination-function, and output-image settings."
+        )
+    if len({len(image_names), len(illumination_names), len(output_names)}) != 1:
+        raise ValueError(
+            f"Module {module.name}({module.module_num}) has mismatched "
+            "CorrectIlluminationApply pair settings: "
+            f"{len(image_names)} images, {len(illumination_names)} functions, "
+            f"{len(output_names)} outputs."
+        )
+    inputs: list[CellProfilerSymbol] = []
+    outputs: list[CellProfilerSymbol] = []
+    for image_name, illumination_name, output_name in zip(
+        image_names,
+        illumination_names,
+        output_names,
+        strict=True,
+    ):
+        inputs.append(
+            builder.require(
+                image_name,
+                CellProfilerSymbolKind.IMAGE,
+                module,
+            )
+        )
+        inputs.append(
+            builder.require(
+                illumination_name,
+                CellProfilerSymbolKind.IMAGE,
+                module,
+            )
+        )
+        outputs.append(
+            builder.declare(
+                output_name,
+                CellProfilerSymbolKind.IMAGE,
+                module,
+            )
+        )
     return _contracts(
         module,
         builder,
-        inputs=[image, illumination],
-        outputs=[output],
+        inputs=inputs,
+        outputs=outputs,
+        preserve_duplicate_inputs=True,
     )
 
 
@@ -1300,6 +1458,13 @@ def _align(
         builder.declare(name, CellProfilerSymbolKind.IMAGE, module)
         for name in image_plan.output_names
     ]
+    outputs.append(
+        builder.declare(
+            _measurement_name(module),
+            CellProfilerSymbolKind.MEASUREMENTS,
+            module,
+        )
+    )
     return _contracts(module, builder, inputs=inputs, outputs=outputs)
 
 
@@ -1614,6 +1779,7 @@ class SemanticSettingsContractPattern(InferredModuleContractPattern):
         outputs = _semantic_output_symbols(
             builder,
             module,
+            tuple(inputs),
             tuple(
                 symbol
                 for symbol in setting_symbols
@@ -1769,6 +1935,7 @@ for _module_names, _builder_function in _FUNCTION_BACKED_MODULE_BUILDER_SPECS:
 def _semantic_output_symbols(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
+    inputs: tuple[CellProfilerSymbol, ...],
     setting_outputs: tuple[ArtifactSettingSymbol, ...],
     special_outputs: tuple[FunctionSpecialOutput, ...],
 ) -> tuple[CellProfilerSymbol, ...]:
@@ -1799,6 +1966,8 @@ def _semantic_output_symbols(
             module,
             special,
             output_names,
+            inputs,
+            setting_outputs,
             measurement_output_count=measurement_output_count,
         )
         outputs.append(
@@ -1862,9 +2031,15 @@ def _special_output_name(
     module: ModuleBlock,
     special: FunctionSpecialOutput,
     output_names: dict[ArtifactKind, list[str]],
+    inputs: tuple[CellProfilerSymbol, ...],
+    setting_outputs: tuple[ArtifactSettingSymbol, ...],
     *,
     measurement_output_count: int,
 ) -> str:
+    if special.kind is ArtifactKind.RELATIONSHIPS:
+        relationship_name = _relationship_output_name(inputs, setting_outputs)
+        if relationship_name is not None:
+            return relationship_name
     names = output_names.get(special.kind)
     if names:
         return names.pop(0)
@@ -1875,6 +2050,25 @@ def _special_output_name(
     return special.name
 
 
+def _relationship_output_name(
+    inputs: tuple[CellProfilerSymbol, ...],
+    setting_outputs: tuple[ArtifactSettingSymbol, ...],
+) -> str | None:
+    object_inputs = tuple(
+        symbol for symbol in inputs if symbol.kind is CellProfilerSymbolKind.OBJECTS
+    )
+    object_outputs = tuple(
+        symbol.name
+        for symbol in setting_outputs
+        if symbol.role.artifact_kind is ArtifactKind.OBJECT_LABELS
+    )
+    if object_inputs and len(object_outputs) == 1:
+        return _relationship_name(object_inputs[0].name, object_outputs[0])
+    if len(object_inputs) == 2 and not object_outputs:
+        return _relationship_name(object_inputs[0].name, object_inputs[1].name)
+    return None
+
+
 def _symbol_kind_for_artifact_kind(kind: ArtifactKind) -> CellProfilerSymbolKind:
     try:
         return {
@@ -1882,6 +2076,7 @@ def _symbol_kind_for_artifact_kind(kind: ArtifactKind) -> CellProfilerSymbolKind
             ArtifactKind.OBJECT_LABELS: CellProfilerSymbolKind.OBJECTS,
             ArtifactKind.MEASUREMENTS: CellProfilerSymbolKind.MEASUREMENTS,
             ArtifactKind.RELATIONSHIPS: CellProfilerSymbolKind.RELATIONSHIPS,
+            ArtifactKind.SPATIAL_GRID: CellProfilerSymbolKind.SPATIAL_GRID,
         }[kind]
     except KeyError as exc:
         raise ValueError(
@@ -1896,8 +2091,9 @@ def _contracts(
     *,
     inputs: Iterable[CellProfilerSymbol] = (),
     outputs: Iterable[CellProfilerSymbol] = (),
+    preserve_duplicate_inputs: bool = False,
 ) -> ModuleArtifactContracts:
-    input_symbols = _unique_symbols(inputs)
+    input_symbols = tuple(inputs) if preserve_duplicate_inputs else _unique_symbols(inputs)
     return ModuleArtifactContracts(
         module_name=module.name,
         module_num=module.module_num,
@@ -1997,4 +2193,4 @@ def _measurement_name(module: ModuleBlock) -> str:
 
 
 def _relationship_name(parent: str, child: str) -> str:
-    return f"{parent}_{child}_relationships"
+    return parent_child_relationship_artifact_name(parent, child)

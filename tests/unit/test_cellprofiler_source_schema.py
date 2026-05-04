@@ -7,7 +7,7 @@ from benchmark.converter.source_schema import compile_image_schema
 from benchmark.converter.symbol_table import CellProfilerSymbolTable
 from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
-from openhcs.core.pipeline_image_schema import PipelineImageSchema
+from openhcs.core.pipeline_image_schema import ImagePlaneSource, PipelineImageSchema
 from openhcs.core.source_bindings import (
     ComponentSelector,
     MetadataSource,
@@ -125,6 +125,72 @@ def test_cppipe_parser_supports_indented_legacy_pipeline_modules(tmp_path: Path)
     )
 
 
+def test_cppipe_parser_extracts_embedded_image_plane_sources(tmp_path: Path) -> None:
+    cppipe_path = tmp_path / "url_planes.cppipe"
+    cppipe_path.write_text(
+        "\n".join(
+            [
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "Version:3",
+                "HasImagePlaneDetails:True",
+                "",
+                "Images:[module_num:1|enabled:True]",
+                "    Filter images?:Images only",
+                "",
+                '"Version":"1","PlaneCount":"2"',
+                '"URL","Series","Index","Channel"',
+                '"https://example.invalid/A_D.TIF",,,',
+                '"file:/tmp/A_F.TIF","0","1","2"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parser = CPPipeParser()
+    modules = parser.parse(cppipe_path)
+
+    assert parser.image_plane_sources == (
+        {
+            "uri": "https://example.invalid/A_D.TIF",
+            "series": None,
+            "index": None,
+            "channel": None,
+        },
+        {
+            "uri": "file:/tmp/A_F.TIF",
+            "series": "0",
+            "index": "1",
+            "channel": "2",
+        },
+    )
+    assert modules[0].metadata["image_plane_sources"] == parser.image_plane_sources
+
+
+def test_compile_image_schema_carries_embedded_image_plane_sources() -> None:
+    images_module = _module_with_records(
+        1,
+        "Images",
+        [
+            ("Filter images?", "Images only"),
+            ("Select the rule criteria", "and (extension does isimage)"),
+        ],
+    )
+    images_module.metadata["image_plane_sources"] = (
+        {
+            "uri": "https://example.invalid/A_D.TIF",
+            "series": None,
+            "index": None,
+            "channel": None,
+        },
+    )
+
+    schema = compile_image_schema([images_module])
+
+    assert schema.image_plane_sources == (
+        ImagePlaneSource(uri="https://example.invalid/A_D.TIF"),
+    )
+
+
 def test_compile_image_schema_lowers_images_module_to_source_universe_filters():
     images_module = _module_with_records(
         1,
@@ -145,6 +211,24 @@ def test_compile_image_schema_lowers_images_module_to_source_universe_filters():
         is SourceFilterMatchType.CONTAINS_REGEX
     )
     assert schema.images_rule.filters[1].value == "A01"
+
+
+def test_compile_image_schema_does_not_conjoin_images_module_disjunctions():
+    images_module = _module_with_records(
+        1,
+        "Images",
+        [
+            ("Filter images?", "Images only"),
+            (
+                "Select the rule criteria",
+                'or (extension does isimage) (file does endwith ".npy")',
+            ),
+        ],
+    )
+
+    schema = compile_image_schema([images_module])
+
+    assert schema.images_rule is None
 
 
 def test_compile_image_schema_lowers_names_and_types_to_typed_selectors():
@@ -250,6 +334,66 @@ def test_compile_image_schema_lowers_object_loads_to_source_artifacts():
         ComponentSelector(AllComponents.CHANNEL, "3"),
     )
     assert schema.assignment_for_alias("IgnoredImageAlias") is None
+
+
+def test_compile_image_schema_ignores_disabled_metadata_module():
+    metadata_module = _module_with_records(
+        1,
+        "Metadata",
+        [
+            ("Extract metadata?", "No"),
+            ("Metadata extraction method", "Extract from file/folder names"),
+            ("Metadata source", "File name"),
+            (
+                "Regular expression to extract from file name",
+                r"^(?P<Well>[A-P][0-9]{2})_s(?P<Site>[0-9])",
+            ),
+            ("Select the filtering criteria", 'and (file does contain "")'),
+        ],
+    )
+
+    schema = compile_image_schema([metadata_module])
+
+    assert schema.metadata_rules == ()
+
+
+def test_compile_image_schema_uses_disabled_metadata_regex_for_ordered_image_sets():
+    metadata_module = _module_with_records(
+        1,
+        "Metadata",
+        [
+            ("Extract metadata?", "No"),
+            ("Metadata extraction method", "Extract from file/folder names"),
+            ("Metadata source", "File name"),
+            (
+                "Regular expression to extract from file name",
+                r"^(?P<Plate>.*)_(?P<Well>[A-P][0-9]{2})_s(?P<Site>[0-9])_w(?P<ChannelNumber>[0-9])",
+            ),
+            ("Select the filtering criteria", 'and (file does contain "")'),
+        ],
+    )
+    names_and_types_module = _module_with_records(
+        2,
+        "NamesAndTypes",
+        [
+            ("Assignments count", "2"),
+            ("Image set matching method", "Order"),
+            ("Select the rule criteria", 'and (file does contain "Ch1")'),
+            ("Name to assign these images", "BF_image"),
+            ("Select the image type", "Grayscale image"),
+            ("Select the rule criteria", 'and (file does contain "Ch6")'),
+            ("Name to assign these images", "DF_image"),
+            ("Select the image type", "Grayscale image"),
+        ],
+    )
+
+    schema = compile_image_schema([metadata_module, names_and_types_module])
+
+    assert schema.match_plan is not None
+    assert schema.match_plan.method is SourceBindingMatchMethod.ORDER
+    assert len(schema.metadata_rules) == 1
+    assert schema.metadata_rules[0].source is MetadataSource.FILE_NAME
+    assert "(?P<Well>" in schema.metadata_rules[0].pattern
 
 
 def test_compile_image_schema_treats_binary_masks_as_stack_images():

@@ -52,6 +52,9 @@ GRAY_TO_COLOR_CMYK_WEIGHT_SETTINGS = (
     "Relative weight for the yellow image",
     "Relative weight for the brightness image",
 )
+GRAY_TO_COLOR_RESCALE_SETTING = "Rescale intensity"
+GRAY_TO_COLOR_CURRENT_RESCALE_DEFAULT = "Yes"
+GRAY_TO_COLOR_REVISION_3_UPGRADED_RESCALE_DEFAULT = "No"
 
 
 def coerce_gray_to_color_scheme(
@@ -72,6 +75,16 @@ def gray_to_color_scheme(module: ModuleBlock) -> GrayToColorScheme:
     return coerce_gray_to_color_scheme(
         module.get_setting("Select a color scheme", GrayToColorScheme.RGB.value)
     )
+
+
+def gray_to_color_rescale_default(module: ModuleBlock) -> str:
+    """Return the CP-upgraded default for a missing GrayToColor rescale setting."""
+    if (
+        module.variable_revision_number is not None
+        and module.variable_revision_number <= 3
+    ):
+        return GRAY_TO_COLOR_REVISION_3_UPGRADED_RESCALE_DEFAULT
+    return GRAY_TO_COLOR_CURRENT_RESCALE_DEFAULT
 
 
 class GrayToColorInputNameResolver(ABC, metaclass=AutoRegisterMeta):

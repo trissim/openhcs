@@ -108,13 +108,14 @@ class MathCalculationRequest:
 class MathOperationStrategy(ABC, metaclass=AutoRegisterMeta):
     """Nominal strategy for the closed CalculateMath operation family."""
 
-    __registry_key__ = "operation"
+    __registry_key__ = "operation_label"
     __skip_if_no_key__ = True
+    operation_label: ClassVar[str | None] = None
     operation: ClassVar[MathOperation]
 
     @classmethod
     def for_operation(cls, operation: MathOperation) -> "MathOperationStrategy":
-        return cls.__registry__[operation]()
+        return cls.__registry__[operation.value]()
 
     @abstractmethod
     def apply(self, request: MathCalculationRequest) -> Any:
@@ -123,6 +124,7 @@ class MathOperationStrategy(ABC, metaclass=AutoRegisterMeta):
 
 class NoneOperationStrategy(MathOperationStrategy):
     operation = MathOperation.NONE
+    operation_label = operation.value
 
     def apply(self, request: MathCalculationRequest) -> Any:
         return request.operand1.transformed
@@ -130,6 +132,7 @@ class NoneOperationStrategy(MathOperationStrategy):
 
 class AddOperationStrategy(MathOperationStrategy):
     operation = MathOperation.ADD
+    operation_label = operation.value
 
     def apply(self, request: MathCalculationRequest) -> Any:
         return request.operand1.transformed + request.operand2.transformed
@@ -137,6 +140,7 @@ class AddOperationStrategy(MathOperationStrategy):
 
 class SubtractOperationStrategy(MathOperationStrategy):
     operation = MathOperation.SUBTRACT
+    operation_label = operation.value
 
     def apply(self, request: MathCalculationRequest) -> Any:
         return request.operand1.transformed - request.operand2.transformed
@@ -144,6 +148,7 @@ class SubtractOperationStrategy(MathOperationStrategy):
 
 class MultiplyOperationStrategy(MathOperationStrategy):
     operation = MathOperation.MULTIPLY
+    operation_label = operation.value
 
     def apply(self, request: MathCalculationRequest) -> Any:
         return request.operand1.transformed * request.operand2.transformed
@@ -151,6 +156,7 @@ class MultiplyOperationStrategy(MathOperationStrategy):
 
 class DivideOperationStrategy(MathOperationStrategy):
     operation = MathOperation.DIVIDE
+    operation_label = operation.value
 
     def apply(self, request: MathCalculationRequest) -> Any:
         denominator = request.operand2.transformed
@@ -164,13 +170,14 @@ class DivideOperationStrategy(MathOperationStrategy):
 class RoundingStrategy(ABC, metaclass=AutoRegisterMeta):
     """Nominal strategy for the closed CalculateMath rounding family."""
 
-    __registry_key__ = "rounding"
+    __registry_key__ = "rounding_label"
     __skip_if_no_key__ = True
+    rounding_label: ClassVar[str | None] = None
     rounding: ClassVar[RoundingMethod]
 
     @classmethod
     def for_rounding(cls, rounding: RoundingMethod) -> "RoundingStrategy":
-        return cls.__registry__[rounding]()
+        return cls.__registry__[rounding.value]()
 
     @abstractmethod
     def apply(self, value: Any, request: MathCalculationRequest) -> Any:
@@ -179,6 +186,7 @@ class RoundingStrategy(ABC, metaclass=AutoRegisterMeta):
 
 class NotRoundedStrategy(RoundingStrategy):
     rounding = RoundingMethod.NOT_ROUNDED
+    rounding_label = rounding.value
 
     def apply(self, value: Any, request: MathCalculationRequest) -> Any:
         del request
@@ -187,6 +195,7 @@ class NotRoundedStrategy(RoundingStrategy):
 
 class DecimalPlacesRoundingStrategy(RoundingStrategy):
     rounding = RoundingMethod.DECIMAL_PLACES
+    rounding_label = rounding.value
 
     def apply(self, value: Any, request: MathCalculationRequest) -> Any:
         return np.around(value, request.rounding_digits)
@@ -194,6 +203,7 @@ class DecimalPlacesRoundingStrategy(RoundingStrategy):
 
 class FloorRoundingStrategy(RoundingStrategy):
     rounding = RoundingMethod.FLOOR
+    rounding_label = rounding.value
 
     def apply(self, value: Any, request: MathCalculationRequest) -> Any:
         del request
@@ -202,6 +212,7 @@ class FloorRoundingStrategy(RoundingStrategy):
 
 class CeilingRoundingStrategy(RoundingStrategy):
     rounding = RoundingMethod.CEILING
+    rounding_label = rounding.value
 
     def apply(self, value: Any, request: MathCalculationRequest) -> Any:
         del request

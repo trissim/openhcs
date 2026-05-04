@@ -81,9 +81,11 @@ class SettingToKeywordBinding:
 
 class SettingsBinder:
     """Bind parsed .cppipe setting strings to typed Python kwargs."""
-    
+
     BOOL_TRUE = {"yes", "true", "1", "on"}
     BOOL_FALSE = {"no", "false", "0", "off"}
+    GENERIC_BOOL_TRUE = {"yes", "true", "on"}
+    GENERIC_BOOL_FALSE = {"no", "false", "off"}
 
     SKIP_SETTINGS = {
         "show_window",
@@ -143,9 +145,9 @@ class SettingsBinder:
         """Parse one CellProfiler setting value into a Python value."""
         value = value.strip()
 
-        if value.lower() in self.BOOL_TRUE:
+        if value.lower() in self.GENERIC_BOOL_TRUE:
             return True
-        if value.lower() in self.BOOL_FALSE:
+        if value.lower() in self.GENERIC_BOOL_FALSE:
             return False
 
         normalized_key = normalize_cellprofiler_setting_name(key)

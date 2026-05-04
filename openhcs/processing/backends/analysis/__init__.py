@@ -11,36 +11,18 @@ Doctrinal Clauses:
 - Clause 273 — Memory Backend Restrictions: GPU-only implementations are marked
 """
 
-# Import DXF mask pipeline
-try:
-    from openhcs.processing.backends.analysis.dxf_mask_pipeline import \
-        dxf_mask_pipeline
-except ImportError:
-    pass
-
-# Import focus analyzer
-try:
-    from openhcs.processing.backends.analysis.focus_analyzer import \
-        FocusAnalyzer
-except ImportError:
-    pass
-
-# Import simple cell counting
-try:
-    from openhcs.processing.backends.analysis.count_cells_simple import \
-        count_cells_simple, ThresholdMethod, Foreground
-except ImportError:
-    pass
+from openhcs.processing.backends.analysis.region_properties import (
+    AnalysisBackendProvider,
+    DenseLabelRegionProperties,
+    LabelRegionPropertiesBackendStrategy,
+    NumbaNumpyLabelRegionPropertiesBackendStrategy,
+    label_region_properties_backend,
+)
 
 __all__ = [
-    # DXF mask pipeline
-    "dxf_mask_pipeline",
-
-    # Focus analyzer
-    "FocusAnalyzer",
-
-    # Simple cell counting
-    "count_cells_simple",
-    "ThresholdMethod",
-    "Foreground",
+    "AnalysisBackendProvider",
+    "DenseLabelRegionProperties",
+    "LabelRegionPropertiesBackendStrategy",
+    "NumbaNumpyLabelRegionPropertiesBackendStrategy",
+    "label_region_properties_backend",
 ]

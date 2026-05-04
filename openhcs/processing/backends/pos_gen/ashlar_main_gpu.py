@@ -80,8 +80,14 @@ def _get_window(shape):
 
 # Precompute Laplacian kernel for whitening (equivalent to skimage.restoration.uft.laplacian)
 _laplace_kernel_gpu = None
-if cp:
-    _laplace_kernel_gpu = cp.array([[0, -1, 0], [-1, 4, -1], [0, -1, 0]], dtype=cp.float32)
+
+
+def _get_laplace_kernel_gpu():
+    """Allocate the Laplacian kernel after a CUDA device is available."""
+    global _laplace_kernel_gpu
+    if _laplace_kernel_gpu is None:
+        _laplace_kernel_gpu = cp.array([[0, -1, 0], [-1, 4, -1], [0, -1, 0]], dtype=cp.float32)
+    return _laplace_kernel_gpu
 
 
 def whiten_gpu(img, sigma):
@@ -108,7 +114,7 @@ def whiten_gpu(img, sigma):
         # Pure Laplacian convolution (high-pass filter)
         # Equivalent to scipy.ndimage.convolve(img, _laplace_kernel)
         from cupyx.scipy import ndimage as cp_ndimage
-        output = cp_ndimage.convolve(img, _laplace_kernel_gpu, mode='reflect')
+        output = cp_ndimage.convolve(img, _get_laplace_kernel_gpu(), mode='reflect')
     else:
         # Gaussian-Laplacian (LoG filter)
         # Equivalent to scipy.ndimage.gaussian_laplace(img, sigma)

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from benchmark.cellprofiler_library import require_function
+from openhcs.processing.backends.cellprofiler import require_cellprofiler_function
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
@@ -50,7 +50,7 @@ def resolve_processing_contract(
         )
 
     callable_contract = _callable_processing_contract(
-        require_function(module_name, function_name=function_name)
+        require_cellprofiler_function(module_name, function_name=function_name)
     )
     if callable_contract is not None:
         return ResolvedProcessingContract(

@@ -69,7 +69,7 @@ def color_to_gray_plan(module: ModuleBlock, binder: SettingsBinder) -> ColorToGr
     output_names = _output_image_names(module, mode, image_type, binder)
     channel_indices = ColorToGrayImageTypeSettingsStrategy.for_image_type(
         image_type
-    ).channel_indices(module, mode)
+    ).channel_indices(module, mode, binder)
     return ColorToGrayPlan(
         input_image_name=input_image_name,
         output_image_names=output_names,
@@ -150,6 +150,7 @@ class ColorToGrayImageTypeSettingsStrategy(ABC, metaclass=AutoRegisterMeta):
         self,
         module: ModuleBlock,
         mode: ColorToGrayConversionMethod,
+        binder: SettingsBinder,
     ) -> tuple[int, ...]:
         """Return input channel indices for this image type."""
 
@@ -176,9 +177,16 @@ class FixedChannelColorToGraySettingsStrategy(ColorToGrayImageTypeSettingsStrate
         self,
         module: ModuleBlock,
         mode: ColorToGrayConversionMethod,
+        binder: SettingsBinder,
     ) -> tuple[int, ...]:
-        del module, mode
-        return (0, 1, 2)
+        if mode is ColorToGrayConversionMethod.COMBINE:
+            del module, binder
+            return (0, 1, 2)
+        return tuple(
+            index
+            for index, flag in enumerate(self.output_flags)
+            if _truthy(module, flag, binder)
+        )
 
 
 class RgbColorToGraySettingsStrategy(FixedChannelColorToGraySettingsStrategy):
@@ -222,7 +230,9 @@ class ChannelsColorToGraySettingsStrategy(ColorToGrayImageTypeSettingsStrategy):
         self,
         module: ModuleBlock,
         mode: ColorToGrayConversionMethod,
+        binder: SettingsBinder,
     ) -> tuple[int, ...]:
+        del binder
         channel_numbers = setting_values(module, "Channel number")
         if not channel_numbers:
             return (0,)

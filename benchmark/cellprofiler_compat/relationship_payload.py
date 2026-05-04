@@ -1,13 +1,8 @@
-"""Typed relationship payloads emitted by absorbed CellProfiler modules."""
+"""Compatibility alias for generic OpenHCS parent-child id payloads."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from openhcs.core.runtime_semantics import ParentChildRelationshipPayload
 
 
-@dataclass(frozen=True, slots=True)
-class CellProfilerRelationshipPayload:
-    """Parent-child relationship ids emitted by absorbed modules."""
-
-    parent_ids: tuple[int, ...]
-    child_ids: tuple[int, ...]
+CellProfilerRelationshipPayload = ParentChildRelationshipPayload

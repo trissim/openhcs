@@ -12,8 +12,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.backends.cellprofiler._backend import BackendProviderInput
+from openhcs.processing.backends.cellprofiler.image_quality import image_quality_backend
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.processing.backends.cellprofiler.thresholding import threshold_primitives
 from openhcs.processing.materialization import csv_materializer
+from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 
 
 class ThresholdMethod(Enum):
@@ -130,71 +134,65 @@ def _calculate_local_focus_score(pixel_data: np.ndarray, scale: int) -> float:
     return 0.0
 
 
-def _calculate_correlation(pixel_data: np.ndarray, scale: int) -> float:
-    """Calculate Haralick correlation texture measure."""
-    from skimage.feature import graycomatrix, graycoprops
-    
+def _calculate_correlation(
+    pixel_data: np.ndarray,
+    scale: int,
+    *,
+    backend_provider: BackendProviderInput | None = None,
+) -> float:
+    """Calculate CellProfiler's Haralick H3 image-quality correlation."""
     if pixel_data.size == 0:
         return 0.0
-    
-    # Normalize and quantize image for GLCM
-    img_min, img_max = pixel_data.min(), pixel_data.max()
-    if img_max == img_min:
-        return 0.0
-    
-    # Quantize to 256 levels
-    quantized = ((pixel_data - img_min) / (img_max - img_min) * 255).astype(np.uint8)
-    
-    # Calculate GLCM at the given scale
-    try:
-        glcm = graycomatrix(quantized, distances=[scale], angles=[0], 
-                           levels=256, symmetric=True, normed=True)
-        correlation = graycoprops(glcm, 'correlation')[0, 0]
-        return float(correlation) if np.isfinite(correlation) else 0.0
-    except Exception:
-        return 0.0
+
+    return image_quality_backend(
+        backend_provider=backend_provider,
+    ).haralick_h3(pixel_data, scale=scale)
 
 
-def _calculate_power_spectrum_slope(pixel_data: np.ndarray) -> float:
-    """Calculate the slope of the log-log power spectrum."""
+def _calculate_power_spectrum_slope(
+    pixel_data: np.ndarray,
+    *,
+    backend_provider: BackendProviderInput | None = None,
+) -> float:
+    """Calculate CellProfiler's log-log radial power spectrum slope."""
     if pixel_data.size == 0 or len(np.unique(pixel_data)) <= 1:
         return 0.0
-    
-    # Compute 2D FFT
-    fft = np.fft.fft2(pixel_data)
-    fft_shift = np.fft.fftshift(fft)
-    power_spectrum = np.abs(fft_shift) ** 2
-    
-    # Compute radial average
-    center = np.array(power_spectrum.shape) // 2
-    y, x = np.ogrid[:power_spectrum.shape[0], :power_spectrum.shape[1]]
-    r = np.sqrt((x - center[1])**2 + (y - center[0])**2).astype(int)
-    
-    max_r = min(center)
-    radial_sum = np.bincount(r.ravel(), power_spectrum.ravel())
-    radial_count = np.bincount(r.ravel())
-    
-    with np.errstate(divide='ignore', invalid='ignore'):
-        radial_mean = radial_sum / radial_count
-    
-    # Fit log-log slope
-    radii = np.arange(1, min(len(radial_mean), max_r))
-    power = radial_mean[1:len(radii)+1]
-    
-    valid = (radii > 0) & (power > 0) & np.isfinite(power)
-    if np.sum(valid) < 2:
+
+    import scipy.linalg
+
+    radii, magnitude, power = _cellprofiler_radial_power_spectrum(
+        pixel_data,
+        backend_provider=backend_provider,
+    )
+    if np.sum(magnitude) <= 0:
         return 0.0
-    
-    log_radii = np.log(radii[valid])
-    log_power = np.log(power[valid])
-    
-    # Linear regression
-    try:
-        A = np.vstack([log_radii, np.ones(len(log_radii))]).T
-        slope, _ = np.linalg.lstsq(A, log_power, rcond=None)[0]
-        return float(slope) if np.isfinite(slope) else 0.0
-    except Exception:
+
+    valid = magnitude > 0
+    radii = radii[valid].reshape((-1, 1))
+    power = power[valid].reshape((-1, 1))
+    if radii.shape[0] <= 1:
         return 0.0
+
+    idx = np.isfinite(np.log(power))
+    design = np.hstack(
+        (
+            np.log(radii)[idx][:, np.newaxis],
+            np.ones(radii.shape)[idx][:, np.newaxis],
+        )
+    )
+    slope = scipy.linalg.lstsq(design, np.log(power)[idx][:, np.newaxis])[0][0]
+    slope_value = float(np.asarray(slope).ravel()[0])
+    return slope_value if np.isfinite(slope_value) else 0.0
+
+
+def _cellprofiler_radial_power_spectrum(
+    pixel_data: np.ndarray,
+    *,
+    backend_provider: BackendProviderInput | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    return image_quality_backend(
+        backend_provider=backend_provider,
+    ).radial_power_spectrum(pixel_data)
 
 
 def _calculate_saturation(pixel_data: np.ndarray) -> Tuple[float, float]:
@@ -245,33 +243,28 @@ def _calculate_intensity_metrics(pixel_data: np.ndarray) -> dict:
 
 def _calculate_threshold(pixel_data: np.ndarray, method: ThresholdMethod) -> float:
     """Calculate automatic threshold using specified method."""
-    from skimage.filters import (
-        threshold_otsu, threshold_li, threshold_triangle,
-        threshold_isodata, threshold_minimum, threshold_mean, threshold_yen
-    )
-    
     if pixel_data.size == 0 or len(np.unique(pixel_data)) <= 1:
         return 0.0
-    
-    try:
-        if method == ThresholdMethod.OTSU:
-            return float(threshold_otsu(pixel_data))
-        elif method == ThresholdMethod.LI:
-            return float(threshold_li(pixel_data))
-        elif method == ThresholdMethod.TRIANGLE:
-            return float(threshold_triangle(pixel_data))
-        elif method == ThresholdMethod.ISODATA:
-            return float(threshold_isodata(pixel_data))
-        elif method == ThresholdMethod.MINIMUM:
-            return float(threshold_minimum(pixel_data))
-        elif method == ThresholdMethod.MEAN:
-            return float(threshold_mean(pixel_data))
-        elif method == ThresholdMethod.YEN:
-            return float(threshold_yen(pixel_data))
-        else:
-            return float(threshold_otsu(pixel_data))
-    except Exception:
-        return 0.0
+
+    method = _coerce_function_enum(ThresholdMethod, method)
+    primitives = threshold_primitives()
+    values = pixel_data.astype(np.float32, copy=False)
+
+    if method == ThresholdMethod.OTSU:
+        return primitives.weighted_otsu_threshold(values)
+    if method == ThresholdMethod.LI:
+        return primitives.li_threshold(values)
+    if method == ThresholdMethod.TRIANGLE:
+        return primitives.triangle_threshold(values)
+    if method == ThresholdMethod.ISODATA:
+        return primitives.isodata_threshold(values)
+    if method == ThresholdMethod.MINIMUM:
+        return primitives.minimum_threshold(values)
+    if method == ThresholdMethod.MEAN:
+        return primitives.mean_threshold(values)
+    if method == ThresholdMethod.YEN:
+        return primitives.yen_threshold(values)
+    raise NotImplementedError(f"Threshold method {method} not supported.")
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -291,6 +284,7 @@ def measure_image_quality(
     calculate_threshold: bool = True,
     blur_scale: int = 20,
     threshold_method: ThresholdMethod = ThresholdMethod.OTSU,
+    backend_provider: BackendProviderInput | None = None,
 ) -> Tuple[np.ndarray, ImageQualityMetrics]:
     """
     Measure image quality metrics including blur, saturation, intensity, and threshold.
@@ -312,15 +306,21 @@ def measure_image_quality(
     """
     metrics = ImageQualityMetrics(slice_index=0)
     
-    # Ensure float image
-    pixel_data = image.astype(np.float64)
+    pixel_data = np.asarray(image, dtype=np.float32)
     
     # Calculate blur metrics
     if calculate_blur:
         metrics.focus_score = _calculate_focus_score(pixel_data)
         metrics.local_focus_score = _calculate_local_focus_score(pixel_data, blur_scale)
-        metrics.correlation = _calculate_correlation(pixel_data, blur_scale)
-        metrics.power_log_log_slope = _calculate_power_spectrum_slope(pixel_data)
+        metrics.correlation = _calculate_correlation(
+            pixel_data,
+            blur_scale,
+            backend_provider=backend_provider,
+        )
+        metrics.power_log_log_slope = _calculate_power_spectrum_slope(
+            pixel_data,
+            backend_provider=backend_provider,
+        )
     
     # Calculate saturation metrics
     if calculate_saturation:

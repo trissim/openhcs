@@ -10,14 +10,37 @@ import numpy as np
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
+from collections.abc import Sequence
 from typing import ClassVar, Optional, Tuple
 
-from benchmark.cellprofiler_compat.measurement_lookup import (
-    measurement_values_for_feature,
-)
 from metaclass_registry import AutoRegisterMeta
+from numba import njit
+from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.runtime_values import MeasurementTable
+from openhcs.core.runtime_artifact_queries import (
+    MeasurementFeatureQuery,
+    measurement_feature_candidates,
+    measurement_object_label,
+    measurement_row_mapping,
+    measurement_rows,
+    measurement_table_object_id_field,
+    measurement_values_for_feature,
+    normalize_measurement_token,
+)
+from openhcs.core.runtime_semantics import (
+    ObjectShapeMeasurementFeature,
+    ParentChildRelationshipPayload,
+    aligned_dense_object_label_arrays,
+    project_dense_object_label_stack,
+)
+from openhcs.core.runtime_values import MeasurementTable, ObjectRelationship
+from openhcs.processing.backends.analysis.region_properties import (
+    LabelRegionPropertiesBackendStrategy,
+)
+from openhcs.processing.backends.cellprofiler.relationships import (
+    ObjectRelationshipBackendStrategy,
+)
+from openhcs.processing.backends.cellprofiler.shape import form_factor_values
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
@@ -79,6 +102,11 @@ class FilterObjectsSelectionRequest:
     measurement_use_maximum: tuple[bool, ...]
     measurement_tables: tuple[MeasurementTable, ...]
     enclosing_labels: np.ndarray | None
+    parent_child_relationship: ObjectRelationship | ParentChildRelationshipPayload | None
+    parent_child_relationships: tuple[
+        ObjectRelationship | ParentChildRelationshipPayload,
+        ...,
+    ]
     per_object_assignment: PerObjectAssignment
     min_value: float | None
     max_value: float | None
@@ -106,8 +134,9 @@ class FilterSelectionKey:
 class FilterSelectionStrategy(ABC, metaclass=AutoRegisterMeta):
     """Nominal retained-object selection for each FilterObjects behavior."""
 
-    __registry_key__ = "selection_key"
+    __registry_key__ = "selection_label"
     __skip_if_no_key__ = True
+    selection_label: ClassVar[str | None] = None
     selection_key: ClassVar[FilterSelectionKey | None] = None
 
     @classmethod
@@ -118,7 +147,7 @@ class FilterSelectionStrategy(ABC, metaclass=AutoRegisterMeta):
     ) -> "FilterSelectionStrategy":
         requested_key = FilterSelectionKey(mode, method)
         for key in requested_key.lookup_candidates():
-            strategy_type = cls.__registry__.get(key)
+            strategy_type = cls.__registry__.get(key.label)
             if strategy_type is not None:
                 return strategy_type()
         raise ValueError(
@@ -137,6 +166,7 @@ class BorderFilterSelectionStrategy(FilterSelectionStrategy):
     """Remove primary objects touching the image border."""
 
     selection_key = FilterSelectionKey(FilterMode.BORDER)
+    selection_label = selection_key.label
 
     def indexes_to_keep(
         self,
@@ -149,6 +179,7 @@ class LimitsFilterSelectionStrategy(FilterSelectionStrategy):
     """Keep objects whose measurement falls within configured limits."""
 
     selection_key = FilterSelectionKey(FilterMode.MEASUREMENTS, FilterMethod.LIMITS)
+    selection_label = selection_key.label
 
     def indexes_to_keep(
         self,
@@ -190,6 +221,7 @@ class MinimalFilterSelectionStrategy(ExtremumFilterSelectionStrategy):
     """Keep the object with the minimum measurement value."""
 
     selection_key = FilterSelectionKey(FilterMode.MEASUREMENTS, FilterMethod.MINIMAL)
+    selection_label = selection_key.label
     keep_max = False
 
 
@@ -197,6 +229,7 @@ class MaximalFilterSelectionStrategy(ExtremumFilterSelectionStrategy):
     """Keep the object with the maximum measurement value."""
 
     selection_key = FilterSelectionKey(FilterMode.MEASUREMENTS, FilterMethod.MAXIMAL)
+    selection_label = selection_key.label
     keep_max = True
 
 
@@ -222,6 +255,7 @@ class PerObjectFilterSelectionStrategy(FilterSelectionStrategy):
                 measurement_values=values,
                 child_count=request.num_objects_pre,
                 keep_max=selection_key.method is FilterMethod.MAXIMAL_PER_OBJECT,
+                parent_child_relationship=request.parent_child_relationship,
             )
         )
 
@@ -233,6 +267,7 @@ class MinimalPerObjectFilterSelectionStrategy(PerObjectFilterSelectionStrategy):
         FilterMode.MEASUREMENTS,
         FilterMethod.MINIMAL_PER_OBJECT,
     )
+    selection_label = selection_key.label
 
 
 class MaximalPerObjectFilterSelectionStrategy(PerObjectFilterSelectionStrategy):
@@ -242,6 +277,7 @@ class MaximalPerObjectFilterSelectionStrategy(PerObjectFilterSelectionStrategy):
         FilterMode.MEASUREMENTS,
         FilterMethod.MAXIMAL_PER_OBJECT,
     )
+    selection_label = selection_key.label
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +289,7 @@ class PerObjectAssignmentRequest:
     measurement_values: np.ndarray
     child_count: int
     keep_max: bool
+    parent_child_relationship: ObjectRelationship | ParentChildRelationshipPayload | None = None
 
     def __post_init__(self) -> None:
         if self.child_labels.shape != self.enclosing_labels.shape:
@@ -266,8 +303,9 @@ class PerObjectAssignmentRequest:
 class PerObjectAssignmentStrategy(ABC, metaclass=AutoRegisterMeta):
     """Nominal parent-assignment strategy for per-object filtering."""
 
-    __registry_key__ = "assignment"
+    __registry_key__ = "assignment_label"
     __skip_if_no_key__ = True
+    assignment_label: ClassVar[str | None] = None
     assignment: ClassVar[PerObjectAssignment | None] = None
 
     @classmethod
@@ -275,7 +313,7 @@ class PerObjectAssignmentStrategy(ABC, metaclass=AutoRegisterMeta):
         cls,
         assignment: PerObjectAssignment,
     ) -> "PerObjectAssignmentStrategy":
-        strategy_type = cls.__registry__.get(assignment)
+        strategy_type = cls.__registry__.get(assignment.value)
         if strategy_type is None:
             raise ValueError(
                 f"Unsupported FilterObjects per-object assignment "
@@ -284,7 +322,10 @@ class PerObjectAssignmentStrategy(ABC, metaclass=AutoRegisterMeta):
         return strategy_type()
 
     def indexes_to_keep(self, request: PerObjectAssignmentRequest) -> list[int]:
-        parent_children = self.parent_children(request)
+        parent_children = (
+            _parent_children_from_relationship(request.parent_child_relationship)
+            or self.parent_children(request)
+        )
         return _best_child_indexes_by_parent(
             parent_children,
             request.measurement_values,
@@ -303,6 +344,15 @@ class BothParentsAssignmentStrategy(PerObjectAssignmentStrategy):
     """Assign an overlapping child as a candidate for every touched parent."""
 
     assignment = PerObjectAssignment.BOTH_PARENTS
+    assignment_label = assignment.value
+
+    def indexes_to_keep(self, request: PerObjectAssignmentRequest) -> list[int]:
+        return _best_child_indexes_both_parents(
+            request.child_labels,
+            request.enclosing_labels,
+            request.measurement_values,
+            request.keep_max,
+        )
 
     def parent_children(
         self,
@@ -318,6 +368,24 @@ class ParentWithMostOverlapAssignmentStrategy(PerObjectAssignmentStrategy):
     """Assign each child only to its most-overlapped enclosing parent."""
 
     assignment = PerObjectAssignment.PARENT_WITH_MOST_OVERLAP
+    assignment_label = assignment.value
+
+    def indexes_to_keep(self, request: PerObjectAssignmentRequest) -> list[int]:
+        parent_children = _parent_children_from_relationship(
+            request.parent_child_relationship
+        )
+        if parent_children:
+            return _best_child_indexes_by_parent(
+                parent_children,
+                request.measurement_values,
+                request.keep_max,
+            )
+        return _best_child_indexes_parent_with_most_overlap(
+            request.child_labels,
+            request.enclosing_labels,
+            request.measurement_values,
+            request.keep_max,
+        )
 
     def parent_children(
         self,
@@ -359,6 +427,13 @@ def filter_objects(
     measurement_use_maximum: tuple[bool, ...] = (),
     measurement_tables: tuple[MeasurementTable, ...] = (),
     enclosing_object_labels: Optional[np.ndarray] = None,
+    parent_child_relationship: Optional[
+        ObjectRelationship | ParentChildRelationshipPayload
+    ] = None,
+    parent_child_relationships: tuple[
+        ObjectRelationship | ParentChildRelationshipPayload,
+        ...,
+    ] = (),
     per_object_assignment: PerObjectAssignment = PerObjectAssignment.BOTH_PARENTS,
     min_value: Optional[float] = None,
     max_value: Optional[float] = None,
@@ -366,7 +441,12 @@ def filter_objects(
     use_maximum: bool = True,
     additional_object_count: int = 0,
     outline_object_indices: tuple[int, ...] = (),
-) -> tuple[np.ndarray, FilterObjectsStats, np.ndarray, ...]:
+) -> tuple[
+    np.ndarray,
+    FilterObjectsStats,
+    np.ndarray | ParentChildRelationshipPayload,
+    ...,
+]:
     """
     Filter objects based on measurements or border touching.
     
@@ -386,10 +466,20 @@ def filter_objects(
     
     Returns:
         Tuple of (image, stats, filtered primary labels, additional relabeled
-        objects, outline images).
+        objects, parent-child relationships, outline images).
     """
-    if not object_labels:
+    if object_labels is None:
+        object_labels = ()
+    elif isinstance(object_labels, np.ndarray):
+        object_labels = (object_labels,)
+    if len(object_labels) == 0:
         raise ValueError("FilterObjects requires at least one object label input.")
+    mode = _coerce_function_enum(FilterMode, mode)
+    filter_method = _coerce_function_enum(FilterMethod, filter_method)
+    per_object_assignment = _coerce_function_enum(
+        PerObjectAssignment,
+        per_object_assignment,
+    )
     if additional_object_count != len(object_labels) - 1:
         raise ValueError(
             "FilterObjects additional_object_count must match additional object "
@@ -397,6 +487,11 @@ def filter_objects(
         )
     labels = _label_plane(object_labels[0])
     labels = labels.astype(np.int32)
+    additional_label_planes = tuple(
+        _aligned_label_plane(labels, value)
+        for value in object_labels[1:]
+    )
+    input_label_planes = (labels, *additional_label_planes)
     max_label = labels.max()
     
     if max_label == 0:
@@ -407,12 +502,17 @@ def filter_objects(
         )
         relabeled_objects = (
             labels,
-            *(_label_plane(value) for value in object_labels[1:]),
+            *additional_label_planes,
+        )
+        relationships = _object_transform_relationships(
+            input_label_planes,
+            relabeled_objects,
         )
         return (
             image,
             stats,
             *relabeled_objects,
+            *relationships,
             *_outline_images(relabeled_objects, outline_object_indices),
         )
     
@@ -436,10 +536,14 @@ def filter_objects(
             measurement_use_minimum=measurement_use_minimum,
             measurement_use_maximum=measurement_use_maximum,
             measurement_tables=measurement_tables,
-            enclosing_labels=(
-                None
-                if enclosing_object_labels is None
-                else _label_plane(enclosing_object_labels).astype(np.int32)
+            enclosing_labels=_optional_aligned_label_plane(
+                labels,
+                enclosing_object_labels,
+            ),
+            parent_child_relationship=parent_child_relationship,
+            parent_child_relationships=_relationship_tuple(
+                parent_child_relationship,
+                parent_child_relationships,
             ),
             per_object_assignment=per_object_assignment,
             min_value=min_value,
@@ -460,9 +564,13 @@ def filter_objects(
     relabeled_objects = (
         filtered_labels,
         *(
-            _relabel_overlapping_objects(_label_plane(additional), filtered_labels)
-            for additional in object_labels[1:]
+            _relabel_overlapping_objects(additional, filtered_labels)
+            for additional in additional_label_planes
         ),
+    )
+    relationships = _object_transform_relationships(
+        input_label_planes,
+        relabeled_objects,
     )
     
     stats = FilterObjectsStats.from_counts(
@@ -474,6 +582,7 @@ def filter_objects(
         image,
         stats,
         *relabeled_objects,
+        *relationships,
         *_outline_images(relabeled_objects, outline_object_indices),
     )
 
@@ -590,6 +699,200 @@ def _overlap_label_pairs(
     )
 
 
+def _best_child_indexes_both_parents(
+    child_labels: np.ndarray,
+    enclosing_labels: np.ndarray,
+    measurement_values: np.ndarray,
+    keep_max: bool,
+) -> list[int]:
+    return _selected_labels_to_list(
+        _best_child_selected_mask_both_parents_numba(
+            np.ascontiguousarray(child_labels, dtype=np.int32),
+            np.ascontiguousarray(enclosing_labels, dtype=np.int32),
+            np.ascontiguousarray(measurement_values, dtype=np.float64),
+            bool(keep_max),
+        )
+    )
+
+
+@njit(cache=True)
+def _best_child_selected_mask_both_parents_numba(
+    child_labels: np.ndarray,
+    enclosing_labels: np.ndarray,
+    measurement_values: np.ndarray,
+    keep_max: bool,
+) -> np.ndarray:
+    max_child = int(np.max(child_labels))
+    max_parent = int(np.max(enclosing_labels))
+    selected = np.zeros(max_child + 1, dtype=np.bool_)
+    if max_child <= 0 or max_parent <= 0:
+        return selected
+
+    best_child_by_parent = np.zeros(max_parent + 1, dtype=np.int32)
+    best_value_by_parent = np.empty(max_parent + 1, dtype=np.float64)
+    height, width = child_labels.shape
+    for row in range(height):
+        for col in range(width):
+            child_id = int(child_labels[row, col])
+            parent_id = int(enclosing_labels[row, col])
+            if child_id <= 0 or parent_id <= 0:
+                continue
+            value_index = child_id - 1
+            if value_index < 0 or value_index >= measurement_values.size:
+                continue
+            value = float(measurement_values[value_index])
+            if not np.isfinite(value):
+                continue
+
+            best_child = int(best_child_by_parent[parent_id])
+            if best_child == 0:
+                best_child_by_parent[parent_id] = child_id
+                best_value_by_parent[parent_id] = value
+            else:
+                best_value = float(best_value_by_parent[parent_id])
+                if keep_max:
+                    # CellProfiler delegates this path to
+                    # scipy.ndimage.maximum_position, which uses the last
+                    # maximal pixel within each enclosing label.
+                    if value >= best_value:
+                        best_child_by_parent[parent_id] = child_id
+                        best_value_by_parent[parent_id] = value
+                else:
+                    # scipy.ndimage.minimum_position keeps the first minimal
+                    # pixel, so equal values do not replace the current child.
+                    if value < best_value:
+                        best_child_by_parent[parent_id] = child_id
+                        best_value_by_parent[parent_id] = value
+
+    for parent_id in range(1, max_parent + 1):
+        child_id = int(best_child_by_parent[parent_id])
+        if child_id > 0:
+            selected[child_id] = True
+    return selected
+
+
+def _best_child_indexes_parent_with_most_overlap(
+    child_labels: np.ndarray,
+    enclosing_labels: np.ndarray,
+    measurement_values: np.ndarray,
+    keep_max: bool,
+) -> list[int]:
+    max_child = int(np.max(child_labels))
+    if max_child <= 0:
+        return []
+    child_ids, parent_ids, overlap_counts = _unique_overlap_counts(
+        child_labels,
+        enclosing_labels,
+    )
+    if child_ids.size == 0:
+        return []
+    return _selected_labels_to_list(
+        _best_child_selected_mask_parent_with_most_overlap_numba(
+            np.ascontiguousarray(child_ids, dtype=np.int32),
+            np.ascontiguousarray(parent_ids, dtype=np.int32),
+            np.ascontiguousarray(overlap_counts, dtype=np.int64),
+            np.ascontiguousarray(measurement_values, dtype=np.float64),
+            max_child,
+            bool(keep_max),
+        )
+    )
+
+
+def _unique_overlap_counts(
+    child_labels: np.ndarray,
+    enclosing_labels: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    child_array = np.asarray(child_labels, dtype=np.int64)
+    parent_array = np.asarray(enclosing_labels, dtype=np.int64)
+    max_parent = int(parent_array.max())
+    overlap_mask = (child_array > 0) & (parent_array > 0)
+    if not np.any(overlap_mask):
+        empty = np.array([], dtype=np.int64)
+        return empty, empty, empty
+    encoded_pairs = child_array[overlap_mask] * (max_parent + 1) + parent_array[
+        overlap_mask
+    ]
+    unique_pairs, overlap_counts = np.unique(encoded_pairs, return_counts=True)
+    return (
+        unique_pairs // (max_parent + 1),
+        unique_pairs % (max_parent + 1),
+        overlap_counts,
+    )
+
+
+@njit(cache=True)
+def _best_child_selected_mask_parent_with_most_overlap_numba(
+    child_ids: np.ndarray,
+    parent_ids: np.ndarray,
+    overlap_counts: np.ndarray,
+    measurement_values: np.ndarray,
+    max_child: int,
+    keep_max: bool,
+) -> np.ndarray:
+    selected = np.zeros(max_child + 1, dtype=np.bool_)
+    if child_ids.size == 0:
+        return selected
+
+    max_parent = int(np.max(parent_ids))
+    best_parent_by_child = np.zeros(max_child + 1, dtype=np.int32)
+    best_overlap_by_child = np.zeros(max_child + 1, dtype=np.int64)
+    for index in range(child_ids.size):
+        child_id = int(child_ids[index])
+        parent_id = int(parent_ids[index])
+        overlap_count = int(overlap_counts[index])
+        best_parent = int(best_parent_by_child[child_id])
+        best_overlap = int(best_overlap_by_child[child_id])
+        if (
+            best_parent == 0
+            or overlap_count > best_overlap
+            or (overlap_count == best_overlap and parent_id < best_parent)
+        ):
+            best_parent_by_child[child_id] = parent_id
+            best_overlap_by_child[child_id] = overlap_count
+
+    best_child_by_parent = np.zeros(max_parent + 1, dtype=np.int32)
+    best_value_by_parent = np.empty(max_parent + 1, dtype=np.float64)
+    for child_id in range(1, max_child + 1):
+        parent_id = int(best_parent_by_child[child_id])
+        if parent_id <= 0:
+            continue
+        value_index = child_id - 1
+        if value_index < 0 or value_index >= measurement_values.size:
+            continue
+        value = float(measurement_values[value_index])
+        if not np.isfinite(value):
+            continue
+
+        best_child = int(best_child_by_parent[parent_id])
+        if best_child == 0:
+            best_child_by_parent[parent_id] = child_id
+            best_value_by_parent[parent_id] = value
+        else:
+            best_value = float(best_value_by_parent[parent_id])
+            if keep_max:
+                if value > best_value or (
+                    value == best_value and child_id < best_child
+                ):
+                    best_child_by_parent[parent_id] = child_id
+                    best_value_by_parent[parent_id] = value
+            else:
+                if value < best_value or (
+                    value == best_value and child_id < best_child
+                ):
+                    best_child_by_parent[parent_id] = child_id
+                    best_value_by_parent[parent_id] = value
+
+    for parent_id in range(1, max_parent + 1):
+        child_id = int(best_child_by_parent[parent_id])
+        if child_id > 0:
+            selected[child_id] = True
+    return selected
+
+
+def _selected_labels_to_list(selected: np.ndarray) -> list[int]:
+    return np.flatnonzero(np.asarray(selected, dtype=bool)).astype(int).tolist()
+
+
 def _best_child_indexes_by_parent(
     parent_children: dict[int, set[int]],
     measurement_values: np.ndarray,
@@ -621,6 +924,39 @@ def _best_child_indexes_by_parent(
     return sorted(selected)
 
 
+def _parent_children_from_relationship(
+    relationship: ObjectRelationship | ParentChildRelationshipPayload | None,
+) -> dict[int, set[int]]:
+    if relationship is None:
+        return {}
+    if isinstance(relationship, ObjectRelationship):
+        parent_ids = relationship.source_ids
+        child_ids = relationship.target_ids
+    elif isinstance(relationship, ParentChildRelationshipPayload):
+        parent_ids = relationship.parent_ids
+        child_ids = relationship.child_ids
+    else:
+        raise TypeError(
+            "FilterObjects parent_child_relationship must be "
+            "ObjectRelationship or ParentChildRelationshipPayload, got "
+            f"{type(relationship).__name__}."
+        )
+
+    parent_children: dict[int, set[int]] = {}
+    for parent_id, child_id in zip(
+        _relationship_ids(parent_ids),
+        _relationship_ids(child_ids),
+        strict=True,
+    ):
+        if parent_id > 0 and child_id > 0:
+            parent_children.setdefault(parent_id, set()).add(child_id)
+    return parent_children
+
+
+def _relationship_ids(values: object) -> tuple[int, ...]:
+    return tuple(int(value) for value in np.asarray(values).reshape(-1))
+
+
 def _measurement_value_for_child(
     measurement_values: np.ndarray,
     child_id: int,
@@ -637,11 +973,7 @@ def _keep_matching_measurement_rules(
     _validate_measurement_rule_lengths(request)
     hits = np.ones(request.num_objects_pre, dtype=bool)
     for index, feature_name in enumerate(request.measurement_features):
-        values = measurement_values_for_feature(
-            request.measurement_tables,
-            feature_name,
-            object_count=request.num_objects_pre,
-        )
+        values = _selection_measurement_values(request, feature_name)
         keep_indexes = _keep_within_limits(
             values,
             request.measurement_min_values[index],
@@ -661,18 +993,152 @@ def _first_measurement_values(request: FilterObjectsSelectionRequest) -> np.ndar
     if request.measurement_values is not None:
         return request.measurement_values
     if request.measurement_features:
-        return measurement_values_for_feature(
-            request.measurement_tables,
-            request.measurement_features[0],
-            object_count=request.num_objects_pre,
-        )
+        return _selection_measurement_values(request, request.measurement_features[0])
     return _area_measurement_values(request.labels)
 
 
-def _area_measurement_values(labels: np.ndarray) -> np.ndarray:
-    from skimage.measure import regionprops
+def _selection_measurement_values(
+    request: FilterObjectsSelectionRequest,
+    feature_name: str,
+) -> np.ndarray:
+    relationship_values = _relationship_child_count_values_or_none(
+        request,
+        feature_name,
+    )
+    if relationship_values is not None:
+        return relationship_values
+    table_values = _measurement_table_values_or_none(request, feature_name)
+    if table_values is not None:
+        return table_values
+    derived_values = _derived_measurement_values(feature_name, request.labels)
+    if derived_values is not None:
+        return derived_values
+    return measurement_values_for_feature(
+        request.measurement_tables,
+        feature_name,
+        object_count=request.num_objects_pre,
+    )
 
-    return np.array([prop.area for prop in regionprops(labels)])
+
+_CHILD_COUNT_FEATURE_PREFIX = "Children_"
+_CHILD_COUNT_FEATURE_SUFFIX = "_Count"
+
+
+def _relationship_tuple(
+    relationship: ObjectRelationship | ParentChildRelationshipPayload | None,
+    relationships: Sequence[ObjectRelationship | ParentChildRelationshipPayload],
+) -> tuple[ObjectRelationship | ParentChildRelationshipPayload, ...]:
+    ordered = (*(() if relationship is None else (relationship,)), *tuple(relationships))
+    unique: list[ObjectRelationship | ParentChildRelationshipPayload] = []
+    seen: set[tuple[str, str] | int] = set()
+    for value in ordered:
+        key: tuple[str, str] | int
+        if isinstance(value, ObjectRelationship):
+            key = (value.source.name, value.target.name)
+        else:
+            key = id(value)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(value)
+    return tuple(unique)
+
+
+def _relationship_child_count_values_or_none(
+    request: FilterObjectsSelectionRequest,
+    feature_name: str,
+) -> np.ndarray | None:
+    child_name = _child_count_feature_child_name(feature_name)
+    if child_name is None:
+        return None
+    for relationship in request.parent_child_relationships:
+        parent_ids = _relationship_parent_ids_for_child(relationship, child_name)
+        if parent_ids is None:
+            continue
+        counts = np.zeros(request.num_objects_pre, dtype=float)
+        for parent_id in parent_ids:
+            if 1 <= parent_id <= request.num_objects_pre:
+                counts[parent_id - 1] += 1.0
+        return counts
+    return None
+
+
+def _child_count_feature_child_name(feature_name: str) -> str | None:
+    if not feature_name.startswith(_CHILD_COUNT_FEATURE_PREFIX):
+        return None
+    if not feature_name.endswith(_CHILD_COUNT_FEATURE_SUFFIX):
+        return None
+    child_name = feature_name[
+        len(_CHILD_COUNT_FEATURE_PREFIX) : -len(_CHILD_COUNT_FEATURE_SUFFIX)
+    ]
+    return child_name or None
+
+
+def _relationship_parent_ids_for_child(
+    relationship: ObjectRelationship | ParentChildRelationshipPayload,
+    child_name: str,
+) -> tuple[int, ...] | None:
+    if isinstance(relationship, ObjectRelationship):
+        if relationship.target.name != child_name:
+            return None
+        return _relationship_ids(relationship.source_ids)
+    return _relationship_ids(relationship.parent_ids)
+
+
+def _measurement_table_values_or_none(
+    request: FilterObjectsSelectionRequest,
+    feature_name: str,
+) -> np.ndarray | None:
+    if not request.measurement_tables:
+        return None
+    query = MeasurementFeatureQuery(feature_name)
+    values_by_label: dict[int, float] = {}
+    positional_values: list[float] = []
+    for table in request.measurement_tables:
+        for row in measurement_rows((table,)):
+            value = query.row_value(row)
+            if value is None:
+                continue
+            object_label = measurement_object_label(
+                measurement_row_mapping(row),
+                object_id_field=measurement_table_object_id_field(table),
+            )
+            if object_label is None:
+                positional_values.append(float(value))
+            else:
+                values_by_label[object_label] = float(value)
+    if values_by_label:
+        return np.array(
+            [
+                values_by_label.get(index, np.nan)
+                for index in range(1, request.num_objects_pre + 1)
+            ]
+        )
+    if positional_values:
+        return np.array(positional_values[: request.num_objects_pre])
+    return None
+
+
+def _derived_measurement_values(
+    feature_name: str,
+    labels: np.ndarray,
+) -> np.ndarray | None:
+    """Return derived values when an upstream measurement table is unavailable."""
+    form_factor_token = normalize_measurement_token(
+        ObjectShapeMeasurementFeature.FORM_FACTOR.value,
+    )
+    if form_factor_token not in measurement_feature_candidates(feature_name):
+        return None
+    label_ids = np.arange(1, int(labels.max()) + 1, dtype=np.int32)
+    if label_ids.size == 0:
+        return np.array([], dtype=float)
+    return form_factor_values(labels.astype(np.int32, copy=False), label_ids)
+
+
+def _area_measurement_values(labels: np.ndarray) -> np.ndarray:
+    return LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+        labels.astype(np.int32, copy=False)
+    ).area
 
 
 def _validate_measurement_rule_lengths(
@@ -692,9 +1158,28 @@ def _validate_measurement_rule_lengths(
 
 def _label_plane(labels: np.ndarray) -> np.ndarray:
     """Return the label plane FilterObjects should operate on."""
-    if labels.ndim == 3 and labels.shape[0] == 1:
-        return labels[0]
-    return labels
+    return project_dense_object_label_stack(labels)
+
+
+def _aligned_label_plane(
+    reference_labels: np.ndarray,
+    labels: np.ndarray,
+) -> np.ndarray:
+    """Return labels aligned to the primary FilterObjects label geometry."""
+    _aligned_reference, aligned_labels = aligned_dense_object_label_arrays(
+        reference_labels,
+        labels,
+    )
+    return aligned_labels.astype(np.int32, copy=False)
+
+
+def _optional_aligned_label_plane(
+    reference_labels: np.ndarray,
+    labels: np.ndarray | None,
+) -> np.ndarray | None:
+    if labels is None:
+        return None
+    return _aligned_label_plane(reference_labels, labels)
 
 
 def _relabel_overlapping_objects(
@@ -716,6 +1201,26 @@ def _relabel_overlapping_objects(
     for new_idx, old_idx in enumerate(retained_source_labels, start=1):
         mapping[int(old_idx)] = new_idx
     return mapping[labels]
+
+
+def _object_transform_relationships(
+    input_label_planes: tuple[np.ndarray, ...],
+    relabeled_objects: tuple[np.ndarray, ...],
+) -> tuple[ParentChildRelationshipPayload, ...]:
+    if len(input_label_planes) != len(relabeled_objects):
+        raise ValueError(
+            "Object transform relationship derivation requires aligned input "
+            "and output label planes."
+        )
+    relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type()
+    return tuple(
+        relationship_backend.parent_child_payload_from_labels(input_labels, output_labels)
+        for input_labels, output_labels in zip(
+            input_label_planes,
+            relabeled_objects,
+            strict=True,
+        )
+    )
 
 
 def _outline_images(
@@ -774,8 +1279,6 @@ def filter_objects_by_size(
     Returns:
         Tuple of (image, stats, filtered_labels)
     """
-    from skimage.measure import regionprops
-    
     labels = labels.astype(np.int32)
     max_label = labels.max()
     
@@ -786,10 +1289,12 @@ def filter_objects_by_size(
         )
         return image, stats, labels
     
-    # Compute area for each object
-    props = regionprops(labels)
-    areas = np.array([p.area for p in props])
-    num_objects_pre = len(props)
+    # Compute area for each object through the shared dense-label backend.
+    region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+        labels
+    )
+    areas = region_props.area
+    num_objects_pre = len(region_props.label)
     
     # Filter by area limits
     indexes_to_keep = _keep_within_limits(

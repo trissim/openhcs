@@ -2,6 +2,8 @@
 
 import numpy as np
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import image_payload_data, with_image_payload_data
+from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 from .structuring_elements import StructuringElement, build_structuring_element
@@ -12,6 +14,7 @@ def closing(
     image: np.ndarray,
     structuring_element: StructuringElement = StructuringElement.DISK,
     size: int = 3,
+    morphology_backend_provider: CellProfilerBackendProvider | None = None,
 ) -> np.ndarray:
     """
     Apply morphological closing to an image.
@@ -28,10 +31,20 @@ def closing(
     Returns:
         Morphologically closed image with shape (H, W)
     """
-    from skimage.morphology import closing as skimage_closing
+    from openhcs.processing.backends.cellprofiler.morphology import (
+        MorphologyBackendStrategy,
+    )
 
-    result = skimage_closing(
-        image,
+    pixel_data = image_payload_data(image)
+    morphology = MorphologyBackendStrategy.for_callable(
+        closing,
+        backend_provider=morphology_backend_provider,
+    )
+    result = morphology.grayscale_closing(
+        pixel_data,
         build_structuring_element(structuring_element, size),
     )
-    return result.astype(image.dtype)
+    return with_image_payload_data(
+        image,
+        result.astype(pixel_data.dtype, copy=False),
+    )

@@ -363,9 +363,12 @@ def _draw_object_labels(
     )
     if not np.any(boundaries):
         return output
-    marked = np.array(output, copy=True)
-    marked[boundaries] = outline_color
-    return marked
+    return skimage.segmentation.mark_boundaries(
+        output,
+        labels_2d,
+        color=outline_color,
+        mode=line_mode.skimage_mode,
+    )
 
 
 def _draw_outline_image(

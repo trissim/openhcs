@@ -63,11 +63,13 @@ class RuntimeArtifactExecutionObservation:
     def from_contexts(
         cls,
         execution_contexts: Mapping[object, object],
-        output_root: Path,
+        output_root: Path | None = None,
     ) -> "RuntimeArtifactExecutionObservation":
         return cls(
             records_by_axis=runtime_records_by_axis(execution_contexts),
-            exports=RuntimeExportObservation.from_output_root(output_root),
+            exports=RuntimeExportObservation.from_output_roots(
+                _runtime_output_roots(execution_contexts, output_root),
+            ),
         )
 
     def __post_init__(self) -> None:
@@ -109,6 +111,43 @@ def runtime_records_by_axis(
         )
         records_by_axis[str(axis_id)] = tuple(store.values())
     return MappingProxyType(records_by_axis)
+
+
+def runtime_output_roots(
+    execution_contexts: Mapping[object, object],
+    explicit_output_root: Path | None = None,
+) -> tuple[Path, ...]:
+    """Return authoritative runtime output roots for compiled contexts."""
+    return _runtime_output_roots(execution_contexts, explicit_output_root)
+
+
+def _runtime_output_roots(
+    execution_contexts: Mapping[object, object],
+    explicit_output_root: Path | None,
+) -> tuple[Path, ...]:
+    roots: list[Path] = []
+    for context in execution_contexts.values():
+        step_plans = getattr(context, "step_plans", None)
+        if not step_plans:
+            continue
+        for plan in step_plans.values():
+            output_plate_root = getattr(plan, "output_plate_root", None)
+            if output_plate_root is not None:
+                roots.append(Path(output_plate_root))
+            materialized_output = getattr(plan, "materialized_output", None)
+            materialized_plate_root = getattr(
+                materialized_output,
+                "plate_root",
+                None,
+            )
+            if materialized_plate_root is not None:
+                roots.append(Path(materialized_plate_root))
+
+    if roots:
+        return tuple(dict.fromkeys(roots))
+    if explicit_output_root is None:
+        return ()
+    return (Path(explicit_output_root),)
 
 
 def runtime_artifact_execution_failures(

@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from benchmark.adapters.cellprofiler import CellProfilerAdapter
+from benchmark.adapters.cellprofiler import (
+    CELLPROFILER_EXECUTABLE_ENV,
+    CellProfilerAdapter,
+)
 from benchmark.contracts.tool_adapter import ToolNotInstalledError
 
 
@@ -17,6 +20,35 @@ def test_cellprofiler_adapter_requires_executable(monkeypatch) -> None:
 
     with pytest.raises(ToolNotInstalledError, match="CellProfiler executable"):
         CellProfilerAdapter().validate_installation()
+
+
+def test_cellprofiler_adapter_accepts_executable_env(monkeypatch) -> None:
+    commands: list[tuple[str, ...]] = []
+    monkeypatch.setenv(CELLPROFILER_EXECUTABLE_ENV, "/opt/cellprofiler/bin/cellprofiler")
+
+    def _run(
+        command,
+        *,
+        capture_output: bool,
+        text: bool,
+        timeout: float | None,
+        check: bool,
+    ):
+        commands.append(tuple(command))
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="CellProfiler 4.2.8.1\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("benchmark.adapters.cellprofiler.subprocess.run", _run)
+
+    adapter = CellProfilerAdapter()
+    adapter.validate_installation()
+
+    assert adapter.version == "CellProfiler 4.2.8.1"
+    assert commands == [("/opt/cellprofiler/bin/cellprofiler", "--version")]
 
 
 def test_cellprofiler_adapter_runs_cppipe_headless(

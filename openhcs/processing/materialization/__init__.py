@@ -8,6 +8,7 @@ from openhcs.processing.materialization.core import (
     Output,
     PathHelper,
     materialize,
+    tabular_field_names_from_materialization,
 )
 from openhcs.processing.materialization.options import (
     CsvOptions,
@@ -21,13 +22,13 @@ from openhcs.processing.materialization.presets import (
     csv_materializer,
     csv_only,
     json_and_csv,
+    json_materializer,
     json_only,
     roi_zip,
     segmentation_mask_rois,
     text_only,
     tiff_stack,
 )
-
 __all__ = [
     "MaterializationFormat",
     "WriteMode",
@@ -44,6 +45,7 @@ __all__ = [
     "TiffStackOptions",
     "TextOptions",
     "csv_materializer",
+    "json_materializer",
     "json_only",
     "csv_only",
     "json_and_csv",
@@ -51,4 +53,5 @@ __all__ = [
     "segmentation_mask_rois",
     "tiff_stack",
     "text_only",
+    "tabular_field_names_from_materialization",
 ]

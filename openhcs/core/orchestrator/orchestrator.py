@@ -380,9 +380,9 @@ def _execute_single_axis_static(
         # Handle visualization if requested
         if visualizer:
             step_plan = frozen_context.step_plans[step_index]
-            if step_plan["visualize"]:
-                output_dir = step_plan["output_dir"]
-                write_backend = step_plan["write_backend"]
+            if step_plan.visualize:
+                output_dir = step_plan.output_dir
+                write_backend = step_plan.write_backend
                 if output_dir:
                     logger.debug(
                         f"Visualizing output for step {step_index} from path {output_dir} (backend: {write_backend}) for axis {axis_id}"
@@ -1477,13 +1477,15 @@ class PipelineOrchestrator:
                     results_dirs = set()
                     for context in compiled_contexts.values():
                         for step_plan in context.step_plans.values():
-                            if "analysis_results_dir" in step_plan:
+                            if step_plan.analysis_results_dir is not None:
+                                results_dirs.add(Path(step_plan.analysis_results_dir))
+                            materialized_output = step_plan.materialized_output
+                            if (
+                                materialized_output is not None
+                                and materialized_output.analysis_results_dir is not None
+                            ):
                                 results_dirs.add(
-                                    Path(step_plan["analysis_results_dir"])
-                                )
-                            if "materialized_analysis_results_dir" in step_plan:
-                                results_dirs.add(
-                                    Path(step_plan["materialized_analysis_results_dir"])
+                                    Path(materialized_output.analysis_results_dir)
                                 )
 
                     if results_dirs:

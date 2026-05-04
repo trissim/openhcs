@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
+
 from .parser import ModuleBlock, ModuleSetting
 from .setting_names import (
     SettingNameFamily,
@@ -38,6 +40,8 @@ FILTER_OBJECTS_MAIN_OUTLINE_SETTING = (
     "Retain the outlines of filtered objects for use later in the pipeline "
     "(for example, in SaveImages)?"
 )
+_CHILD_COUNT_FEATURE_PREFIX = "Children_"
+_CHILD_COUNT_FEATURE_SUFFIX = "_Count"
 FILTER_OBJECTS_OUTLINE_IMAGE_SETTING = "Name the outline image"
 FILTER_OBJECTS_ADDITIONAL_INPUT_SETTING = "Select additional object to relabel"
 FILTER_OBJECTS_ADDITIONAL_OUTPUT_SETTING = "Name the relabeled objects"
@@ -53,6 +57,7 @@ class FilterObjectsOutputRole(str, Enum):
 
     MEASUREMENTS = "measurements"
     FILTERED_OBJECTS = "filtered_objects"
+    RELATIONSHIPS = "relationships"
     OUTLINE_IMAGE = "outline_image"
 
 
@@ -202,22 +207,33 @@ class FilterObjectsPlan(FilterObjectsObjectPair):
 
     @property
     def outputs(self) -> tuple[FilterObjectsOutput, ...]:
-        object_outputs = (
-            FilterObjectsOutput(
-                FilterObjectsOutputRole.FILTERED_OBJECTS,
-                self.output_object_name,
-            ),
+        object_pairs = (
+            (self.input_object_name, self.output_object_name),
             *(
-                FilterObjectsOutput(
-                    FilterObjectsOutputRole.FILTERED_OBJECTS,
-                    row.output_object_name,
-                )
+                (row.input_object_name, row.output_object_name)
                 for row in self.additional_rows
             ),
+        )
+        object_outputs = tuple(
+            FilterObjectsOutput(
+                FilterObjectsOutputRole.FILTERED_OBJECTS,
+                output_object_name,
+            )
+            for _input_object_name, output_object_name in object_pairs
         )
         outline_outputs = tuple(
             FilterObjectsOutput(FilterObjectsOutputRole.OUTLINE_IMAGE, name)
             for name in self.outline_image_names
+        )
+        relationship_outputs = tuple(
+            FilterObjectsOutput(
+                FilterObjectsOutputRole.RELATIONSHIPS,
+                parent_child_relationship_artifact_name(
+                    input_object_name,
+                    output_object_name,
+                ),
+            )
+            for input_object_name, output_object_name in object_pairs
         )
         return (
             FilterObjectsOutput(
@@ -225,6 +241,7 @@ class FilterObjectsPlan(FilterObjectsObjectPair):
                 "",
             ),
             *object_outputs,
+            *relationship_outputs,
             *outline_outputs,
         )
 
@@ -356,6 +373,28 @@ def filter_objects_measurement_rules(
             for block in blocks
         )
     return _mapping_measurement_rules(module)
+
+
+def filter_objects_child_count_object_names(module: ModuleBlock) -> tuple[str, ...]:
+    """Return child object names needed by Children_<object>_Count rules."""
+    child_names = tuple(
+        child_name
+        for rule in filter_objects_measurement_rules(module)
+        for child_name in (_child_count_object_name(rule.feature_name),)
+        if child_name is not None
+    )
+    return tuple(dict.fromkeys(child_names))
+
+
+def _child_count_object_name(feature_name: str) -> str | None:
+    if not feature_name.startswith(_CHILD_COUNT_FEATURE_PREFIX):
+        return None
+    if not feature_name.endswith(_CHILD_COUNT_FEATURE_SUFFIX):
+        return None
+    child_name = feature_name[
+        len(_CHILD_COUNT_FEATURE_PREFIX) : -len(_CHILD_COUNT_FEATURE_SUFFIX)
+    ]
+    return child_name or None
 
 
 def _mapping_measurement_rules(

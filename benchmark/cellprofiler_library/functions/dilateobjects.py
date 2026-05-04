@@ -14,6 +14,9 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
+from openhcs.processing.backends.analysis.region_properties import (
+    LabelRegionPropertiesBackendStrategy,
+)
 
 
 class StructuringElementShape(Enum):
@@ -66,12 +69,14 @@ def dilate_objects(
     """
     from scipy.ndimage import grey_dilation, maximum_filter
     from skimage.morphology import disk, square, diamond, octagon
-    from skimage.measure import regionprops
     
     # Measure original areas
-    props_before = regionprops(labels.astype(np.int32))
-    areas_before = [p.area for p in props_before]
-    mean_area_before = float(np.mean(areas_before)) if areas_before else 0.0
+    props_before = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+        labels.astype(np.int32, copy=False)
+    )
+    mean_area_before = (
+        float(np.mean(props_before.area)) if props_before.label.size else 0.0
+    )
     
     # Create structuring element based on shape
     if structuring_element_shape == StructuringElementShape.DISK:
@@ -91,13 +96,16 @@ def dilate_objects(
     dilated_labels = grey_dilation(labels.astype(np.int32), footprint=selem)
     
     # Measure dilated areas
-    props_after = regionprops(dilated_labels)
-    areas_after = [p.area for p in props_after]
-    mean_area_after = float(np.mean(areas_after)) if areas_after else 0.0
+    props_after = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+        dilated_labels.astype(np.int32, copy=False)
+    )
+    mean_area_after = (
+        float(np.mean(props_after.area)) if props_after.label.size else 0.0
+    )
     
     stats = DilationStats(
         slice_index=0,
-        object_count=len(props_after),
+        object_count=int(props_after.label.size),
         mean_area_before=mean_area_before,
         mean_area_after=mean_area_after
     )

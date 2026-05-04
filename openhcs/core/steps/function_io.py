@@ -9,6 +9,10 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from openhcs.constants.constants import Backend, LOADABLE_IMAGE_EXTENSIONS
 from openhcs.core.image_file_serialization import prepare_disk_image_payloads
+from openhcs.core.runtime_values import (
+    image_payload_metadata_from_source,
+    image_payload_with_context,
+)
 
 if TYPE_CHECKING:
     from openhcs.core.context.processing_context import ProcessingContext
@@ -214,6 +218,18 @@ def bulk_preload_step_images(
         )
     else:
         raw_images = filemanager.load_batch(full_file_paths, read_backend)
+    raw_images = [
+        image_payload_with_context(
+            image,
+            metadata=image_payload_metadata_from_source(
+                image,
+                source_path=file_path,
+                read_backend=read_backend,
+                filemanager=filemanager,
+            ),
+        )
+        for image, file_path in zip(raw_images, full_file_paths)
+    ]
 
     filemanager.ensure_directory(str(step_input_dir), Backend.MEMORY.value)
     for file_path in full_file_paths:

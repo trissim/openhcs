@@ -84,7 +84,7 @@
   },
   "CorrectIlluminationCalculate": {
     "function_name": "correct_illumination_calculate",
-    "contract": "pure_2d",
+    "contract": "flexible",
     "category": "image_operation",
     "confidence": 1.0,
     "reasoning": "CorrectIlluminationCalculate is designed to calculate an illumination correction function (a 'background' or 'shading' map) for a single channel. It does not require volumetric 3D data (Z-stacks) to function, nor does it compare or combine multiple channels. It processes individual images (or stacks of sites to calculate a mean/median model) to determine spatial intensity variations.",
@@ -699,10 +699,10 @@
   },
   "TrackObjects": {
     "function_name": "track_objects",
-    "contract": "pure_2d",
+    "contract": "pure_3d",
     "category": "image_operation",
     "confidence": 1.0,
-    "reasoning": "TrackObjects is a single-channel operation that processes frames sequentially over time. It does not require a Z-stack (Z_INDEX) or multiple channels (CHANNEL) to be stacked in the first dimension of the input array. In OpenHCS, time-lapse is handled via sequential_components, making the default image_operation (grouping by SITE) the correct category.",
+    "reasoning": "TrackObjects consumes the full per-site label stack so it can preserve tracking state across frames and emit increasing image_number values. Slice-by-slice PURE_2D execution restarts state for every frame and is semantically wrong.",
     "validated": true
   },
   "UnmixColors": {

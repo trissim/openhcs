@@ -11,7 +11,16 @@ from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.runtime_semantics import (
+    ParentChildRelationshipPayload,
+)
+from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler.relationships import (
+    ObjectRelationshipBackendStrategy,
+)
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
+
+from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 
 
 class MaskChoice(Enum):
@@ -46,6 +55,7 @@ class MaskObjectsStats:
         fields=["slice_index", "original_object_count", "remaining_object_count", "objects_removed"],
         analysis_type="mask_objects"
     )),
+    "object_relationships",
     ("masked_labels", segmentation_mask_rois())
 )
 def mask_objects(
@@ -56,7 +66,8 @@ def mask_objects(
     overlap_fraction: float = 0.5,
     numbering: NumberingChoice = NumberingChoice.RENUMBER,
     invert_mask: bool = False,
-) -> Tuple[np.ndarray, MaskObjectsStats, np.ndarray]:
+    relationship_backend_provider: CellProfilerBackendProvider | None = None,
+) -> Tuple[np.ndarray, MaskObjectsStats, ParentChildRelationshipPayload, np.ndarray]:
     """
     Mask objects based on a binary mask or masking objects.
     
@@ -74,9 +85,12 @@ def mask_objects(
         invert_mask: If True, use the inverse of the mask
     
     Returns:
-        Tuple of (image, stats, masked_labels)
+        Tuple of (image, stats, parent-child relationship, masked_labels)
     """
     import scipy.ndimage as ndi
+
+    overlap_handling = _coerce_function_enum(OverlapHandling, overlap_handling)
+    numbering = _coerce_function_enum(NumberingChoice, numbering)
     
     # Handle mask - convert label image to binary if needed
     if mask.max() > 1:
@@ -99,7 +113,8 @@ def mask_objects(
             remaining_object_count=0,
             objects_removed=0
         )
-        return image, stats, masked_labels
+        relationships = ParentChildRelationshipPayload(parent_ids=(), child_ids=())
+        return image, stats, relationships, masked_labels
     
     # Resize mask to match labels if needed
     if binary_mask.shape != labels.shape:
@@ -173,5 +188,12 @@ def mask_objects(
         remaining_object_count=remaining_count,
         objects_removed=nobjects - remaining_count
     )
-    
-    return image, stats, masked_labels
+    relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type(
+        backend_provider=relationship_backend_provider,
+    )
+    relationships = relationship_backend.parent_child_payload_from_labels(
+        labels,
+        masked_labels,
+    )
+
+    return image, stats, relationships, masked_labels

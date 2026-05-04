@@ -11,12 +11,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+import pandas as pd
+
 from openhcs.processing.materialization.constants import MaterializationFormat, WriteMode
 from openhcs.processing.materialization.options import (
     CsvOptions,
     FileOutputOptions,
     JsonOptions,
     ROIOptions,
+    SourceOptions,
+    TabularExtractionOptions,
     TextOptions,
     TiffStackOptions,
 )
@@ -48,8 +52,8 @@ def _resolve_source(value: Any, source: Optional[str]) -> Any:
     return cur
 
 
-def _select_payload(data: Any, options: Any) -> Any:
-    return _resolve_source(data, getattr(options, "source", None))
+def _select_payload(data: Any, options: SourceOptions) -> Any:
+    return _resolve_source(data, options.source)
 
 
 def _is_empty(value: Any) -> bool:
@@ -201,45 +205,43 @@ def writer_for(
     return decorator
 
 
-def _wants_tabular(options: Any) -> bool:
+def _wants_tabular(options: TabularExtractionOptions) -> bool:
     return bool(
-        getattr(options, "fields", None)
-        or getattr(options, "row_field", None)
-        or getattr(options, "row_unpacker", None)
-        or getattr(options, "row_columns", None)
+        options.fields
+        or options.row_field
+        or options.row_unpacker
+        or options.row_columns
     )
 
 
-def _build_tabular_rows(data: Any, options: Any) -> list[dict[str, Any]]:
-    # pandas support (optional): treat DataFrame as rows.
-    try:
-        import pandas as pd
-
-        if isinstance(data, pd.DataFrame):
-            return data.to_dict(orient="records")
-        if isinstance(data, pd.Series):
-            return [data.to_dict()]
-    except ImportError:
-        pass
+def _build_tabular_rows(
+    data: Any,
+    options: TabularExtractionOptions,
+) -> list[dict[str, Any]]:
+    if isinstance(data, pd.DataFrame):
+        return data.to_dict(orient="records")
+    if isinstance(data, pd.Series):
+        return [data.to_dict()]
 
     items = _as_sequence(data)
     rows: list[dict[str, Any]] = []
 
     for idx, item in enumerate(items):
-        base_row = extract_fields(item, getattr(options, "fields", None))
-        if "slice_index" not in base_row:
+        field_names = options.fields
+        base_row = extract_fields(item, field_names)
+        if "slice_index" not in base_row and (
+            not field_names or "slice_index" in field_names
+        ):
             base_row["slice_index"] = idx
 
-        row_unpacker = getattr(options, "row_unpacker", None)
-        if row_unpacker:
-            for exp_row in row_unpacker(item):
+        if options.row_unpacker:
+            for exp_row in options.row_unpacker(item):
                 rows.append({**base_row, **exp_row})
             continue
 
-        row_field = getattr(options, "row_field", None)
-        if row_field:
-            array_data = getattr(item, row_field)
-            rows.extend(expand_array_field(array_data, base_row, getattr(options, "row_columns", {}) or {}))
+        if options.row_field:
+            array_data = getattr(item, options.row_field)
+            rows.extend(expand_array_field(array_data, base_row, options.row_columns))
             continue
 
         if array_fields := discover_array_fields(item):
@@ -254,18 +256,13 @@ def _build_tabular_rows(data: Any, options: Any) -> list[dict[str, Any]]:
 
 
 def _render_csv(data: Any, options: CsvOptions) -> str:
-    try:
-        import pandas as pd
+    if isinstance(data, pd.DataFrame):
+        return data.to_csv(index=False)
 
-        if isinstance(data, pd.DataFrame):
-            return data.to_csv(index=False)
-
-        rows = _build_tabular_rows(data, options)
-        if not rows and options.fields:
-            return pd.DataFrame(columns=options.fields).to_csv(index=False)
-        return pd.DataFrame(rows).to_csv(index=False)
-    except ImportError:
-        raise ImportError("CSV materialization requires pandas")
+    rows = _build_tabular_rows(data, options)
+    if not rows and options.fields:
+        return pd.DataFrame(columns=options.fields).to_csv(index=False)
+    return pd.DataFrame(rows).to_csv(index=False)
 
 
 def _render_json(data: Any, options: JsonOptions) -> str:
@@ -281,9 +278,9 @@ def _render_json(data: Any, options: JsonOptions) -> str:
         seq = _as_sequence(data)
         if len(seq) == 1 and seq[0] is data:
             # single element (non-list input)
-            payload = extract_fields(data, getattr(options, "fields", None))
+            payload = extract_fields(data, options.fields)
         else:
-            payload = [extract_fields(item, getattr(options, "fields", None)) for item in seq]
+            payload = [extract_fields(item, options.fields) for item in seq]
 
     if options.wrap_list and isinstance(payload, list):
         payload = {"total_items": len(payload), "results": payload}
@@ -468,6 +465,44 @@ class MaterializationSpec:
     ) -> "MaterializationSpec":
         # Rebuild via the normal constructor to keep validation behavior.
         return cls(*outputs, allowed_backends=allowed_backends, primary=primary)
+
+    def tabular_field_names(self) -> tuple[str, ...]:
+        """Return declared tabular field names from the primary writer first."""
+        return tabular_field_names_from_options(self.outputs, primary=self.primary)
+
+
+def tabular_field_names_from_options(
+    options: Sequence[Any],
+    *,
+    primary: int = 0,
+) -> tuple[str, ...]:
+    """Return declared tabular fields from writer options, primary first."""
+    if not options:
+        return ()
+    output_tuple = tuple(options)
+    ordered_options = (
+        output_tuple[primary : primary + 1]
+        + output_tuple[:primary]
+        + output_tuple[primary + 1 :]
+    )
+    for output_options in ordered_options:
+        if (
+            isinstance(output_options, TabularExtractionOptions)
+            and output_options.fields
+        ):
+            return tuple(output_options.fields)
+    return ()
+
+
+def tabular_field_names_from_materialization(
+    materialization: MaterializationSpec | None,
+) -> tuple[str, ...]:
+    """Return declared tabular fields from a materialization spec."""
+    if materialization is None:
+        return ()
+    if not isinstance(materialization, MaterializationSpec):
+        return ()
+    return materialization.tabular_field_names()
 
 
 def _normalize_backends(backends: Sequence[str] | str) -> list[str]:

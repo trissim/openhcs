@@ -3,6 +3,8 @@ Converted from CellProfiler: CorrectIlluminationCalculate
 Calculates an illumination correction function to correct uneven illumination/lighting/shading.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -12,7 +14,14 @@ import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import (
+    image_payload_data,
+    image_payload_mask,
+    image_payload_metadata,
+    image_payload_with_context,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.materialization import csv_materializer
 
@@ -53,6 +62,12 @@ class SplineBgMode(Enum):
     GRAY = "gray"
 
 
+class CalculationScope(Enum):
+    EACH = "each"
+    ALL_FIRST_CYCLE = "all_first_cycle"
+    ALL_ACROSS_CYCLES = "all_across_cycles"
+
+
 @dataclass
 class IlluminationStats:
     slice_index: int
@@ -79,8 +94,9 @@ class SmoothingFilterSizeRequest:
 class SmoothingFilterSizeStrategy(ABC, metaclass=AutoRegisterMeta):
     """Nominal filter-size derivation for one closed CellProfiler mode."""
 
-    __registry_key__ = "method"
+    __registry_key__ = "method_label"
     __skip_if_no_key__ = True
+    method_label: ClassVar[str | None] = None
     method: ClassVar[FilterSizeMethod | None] = None
 
     @classmethod
@@ -88,7 +104,7 @@ class SmoothingFilterSizeStrategy(ABC, metaclass=AutoRegisterMeta):
         cls,
         method: FilterSizeMethod,
     ) -> "SmoothingFilterSizeStrategy":
-        return cls.__registry__[method]()
+        return cls.__registry__[method.value]()
 
     @abstractmethod
     def calculate(self, request: SmoothingFilterSizeRequest) -> float:
@@ -97,6 +113,7 @@ class SmoothingFilterSizeStrategy(ABC, metaclass=AutoRegisterMeta):
 
 class ManualSmoothingFilterSizeStrategy(SmoothingFilterSizeStrategy):
     method = FilterSizeMethod.MANUALLY
+    method_label = method.value
 
     def calculate(self, request: SmoothingFilterSizeRequest) -> float:
         return float(request.manual_filter_size)
@@ -104,6 +121,7 @@ class ManualSmoothingFilterSizeStrategy(SmoothingFilterSizeStrategy):
 
 class ObjectWidthSmoothingFilterSizeStrategy(SmoothingFilterSizeStrategy):
     method = FilterSizeMethod.OBJECT_SIZE
+    method_label = method.value
 
     def calculate(self, request: SmoothingFilterSizeRequest) -> float:
         return request.object_width * 2.35 / 3.5
@@ -111,9 +129,10 @@ class ObjectWidthSmoothingFilterSizeStrategy(SmoothingFilterSizeStrategy):
 
 class AutomaticSmoothingFilterSizeStrategy(SmoothingFilterSizeStrategy):
     method = FilterSizeMethod.AUTOMATIC
+    method_label = method.value
 
     def calculate(self, request: SmoothingFilterSizeRequest) -> float:
-        return min(30.0, float(max(request.image_shape)) / 40.0)
+        return min(30.0, float(np.max(request.image_shape)) / 40.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +150,9 @@ class SmoothingPlaneRequest:
     spline_max_iterations: int
     spline_convergence: float
     automatic_splines: bool
+    morphology: MorphologyBackendStrategy
+    convex_hull_backend_provider: CellProfilerBackendProvider | None
+    rank_median_backend_provider: CellProfilerBackendProvider | None
 
     @property
     def sigma(self) -> float:
@@ -140,13 +162,14 @@ class SmoothingPlaneRequest:
 class SmoothingPlaneStrategy(ABC, metaclass=AutoRegisterMeta):
     """Nominal smoothing implementation for one closed CellProfiler mode."""
 
-    __registry_key__ = "method"
+    __registry_key__ = "method_label"
     __skip_if_no_key__ = True
+    method_label: ClassVar[str | None] = None
     method: ClassVar[SmoothingMethod | None] = None
 
     @classmethod
     def for_method(cls, method: SmoothingMethod) -> "SmoothingPlaneStrategy":
-        return cls.__registry__[method]()
+        return cls.__registry__[method.value]()
 
     @abstractmethod
     def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
@@ -155,6 +178,7 @@ class SmoothingPlaneStrategy(ABC, metaclass=AutoRegisterMeta):
 
 class NoSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method = SmoothingMethod.NONE
+    method_label = method.value
 
     def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
         return request.pixel_data
@@ -162,6 +186,7 @@ class NoSmoothingPlaneStrategy(SmoothingPlaneStrategy):
 
 class FitPolynomialSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method = SmoothingMethod.FIT_POLYNOMIAL
+    method_label = method.value
 
     def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
         pixel_data = request.pixel_data
@@ -204,6 +229,7 @@ class FitPolynomialSmoothingPlaneStrategy(SmoothingPlaneStrategy):
 
 class GaussianFilterSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method = SmoothingMethod.GAUSSIAN_FILTER
+    method_label = method.value
 
     def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
         return _masked_gaussian_filter(
@@ -215,21 +241,27 @@ class GaussianFilterSmoothingPlaneStrategy(SmoothingPlaneStrategy):
 
 class MedianFilterSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method = SmoothingMethod.MEDIAN_FILTER
+    method_label = method.value
 
     def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
-        from skimage.filters import median
-        from skimage.morphology import disk
+        from openhcs.processing.backends.cellprofiler.illumination import (
+            RankMedianSmoothingBackendStrategy,
+        )
 
         filter_sigma = max(1, int(request.sigma + 0.5))
-        scaled = (request.pixel_data * 65535).astype(np.uint16)
-        if request.mask is not None:
-            scaled = scaled * request.mask.astype(np.uint16)
-        result = median(scaled, disk(filter_sigma))
-        return result.astype(np.float32) / 65535.0
+        return RankMedianSmoothingBackendStrategy.for_memory_type(
+            backend_provider=request.rank_median_backend_provider,
+        ).smooth_background_plane(
+            request.pixel_data,
+            mask=request.mask,
+            radius=filter_sigma,
+            morphology=request.morphology,
+        )
 
 
 class AverageSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method = SmoothingMethod.TO_AVERAGE
+    method_label = method.value
 
     def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
         if request.mask is not None:
@@ -245,17 +277,26 @@ class AverageSmoothingPlaneStrategy(SmoothingPlaneStrategy):
 
 class ConvexHullSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method = SmoothingMethod.CONVEX_HULL
+    method_label = method.value
 
     def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
-        from scipy.ndimage import grey_dilation, grey_erosion, maximum_filter
+        from openhcs.processing.backends.cellprofiler.illumination import (
+            ConvexHullSmoothingBackendStrategy,
+        )
 
-        eroded = grey_erosion(request.pixel_data, size=3)
-        hull_approx = maximum_filter(eroded, size=int(request.filter_size))
-        return grey_dilation(hull_approx, size=3)
+        return ConvexHullSmoothingBackendStrategy.for_memory_type(
+            backend_provider=request.convex_hull_backend_provider,
+        ).smooth_background_plane(
+            request.pixel_data,
+            mask=request.mask,
+            filter_size=request.filter_size,
+            morphology=request.morphology,
+        )
 
 
 class SplinesSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method = SmoothingMethod.SPLINES
+    method_label = method.value
 
     def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
         from scipy.interpolate import RectBivariateSpline
@@ -325,25 +366,168 @@ def _masked_gaussian_filter(
     return smoothed / np.maximum(mask_smoothed, 1e-10)
 
 
+def _blockwise_background_minimum(
+    pixel_data: np.ndarray,
+    mask: np.ndarray | None,
+    block_size: int,
+    morphology: MorphologyBackendStrategy,
+) -> np.ndarray:
+    from scipy.ndimage import minimum
+
+    labels, indexes = morphology.block_labels(pixel_data.shape[:2], block_size)
+    labels = labels.copy()
+    if mask is not None:
+        labels[~mask] = -1
+
+    valid = labels != -1
+    result = np.zeros(pixel_data.shape, dtype=pixel_data.dtype)
+    if not np.any(valid):
+        return result
+
+    if pixel_data.ndim == 2:
+        minima = morphology.fix_labeled_result(minimum(pixel_data, labels, indexes))
+        result[valid] = minima[labels[valid]]
+        return result
+
+    for channel in range(pixel_data.shape[2]):
+        minima = morphology.fix_labeled_result(
+            minimum(pixel_data[:, :, channel], labels, indexes)
+        )
+        result[valid, channel] = minima[labels[valid]]
+    return result
+
+
 def _preprocess_for_averaging(
     pixel_data: np.ndarray,
     mask: np.ndarray | None,
     intensity_choice: IntensityChoice,
+    smoothing_method: SmoothingMethod,
     block_size: int,
+    morphology: MorphologyBackendStrategy,
 ) -> np.ndarray:
     """Create a version of the image appropriate for averaging."""
-    if intensity_choice == IntensityChoice.REGULAR:
+    if (
+        intensity_choice == IntensityChoice.REGULAR
+        or smoothing_method == SmoothingMethod.SPLINES
+    ):
         result = pixel_data.copy()
         if mask is not None:
             result[~mask] = 0
         return result
     else:  # BACKGROUND
-        from scipy.ndimage import minimum_filter
-        # Find minimum in blocks
-        result = minimum_filter(pixel_data, size=block_size)
-        if mask is not None:
-            result[~mask] = 0
-        return result
+        return _blockwise_background_minimum(
+            pixel_data,
+            mask,
+            block_size,
+            morphology,
+        )
+
+
+def _calculation_scope_uses_all_images(calculation_scope: CalculationScope) -> bool:
+    return calculation_scope in {
+        CalculationScope.ALL_FIRST_CYCLE,
+        CalculationScope.ALL_ACROSS_CYCLES,
+    }
+
+
+def _is_multi_image_stack(
+    pixel_data: np.ndarray,
+    calculation_scope: CalculationScope | None = None,
+) -> bool:
+    del calculation_scope
+    return pixel_data.ndim >= 3
+
+
+def _spatial_image_shape(
+    pixel_data: np.ndarray,
+    calculation_scope: CalculationScope,
+) -> tuple[int, ...]:
+    if (
+        _calculation_scope_uses_all_images(calculation_scope)
+        and _is_multi_image_stack(pixel_data, calculation_scope)
+    ):
+        return tuple(pixel_data.shape[1:])
+    return tuple(pixel_data.shape)
+
+
+def _illumination_average_image(
+    pixel_data: np.ndarray,
+    mask: np.ndarray | None,
+    intensity_choice: IntensityChoice,
+    smoothing_method: SmoothingMethod,
+    block_size: int,
+    morphology: MorphologyBackendStrategy,
+    calculation_scope: CalculationScope,
+) -> np.ndarray:
+    if not (
+        _calculation_scope_uses_all_images(calculation_scope)
+        and _is_multi_image_stack(pixel_data, calculation_scope)
+    ):
+        return _preprocess_for_averaging(
+            pixel_data,
+            mask,
+            intensity_choice,
+            smoothing_method,
+            block_size,
+            morphology,
+        )
+
+    if pixel_data.shape[0] == 0:
+        raise ValueError("All-image illumination calculation requires at least one image.")
+
+    averaged_inputs = [
+        _preprocess_for_averaging(
+            np.asarray(slice_data),
+            _mask_for_stack_slice(mask, slice_index),
+            intensity_choice,
+            smoothing_method,
+            block_size,
+            morphology,
+        )
+        for slice_index, slice_data in enumerate(pixel_data)
+    ]
+    return np.mean(np.stack(averaged_inputs, axis=0), axis=0)
+
+
+def _normalized_illumination_mask(
+    mask: object | None,
+    pixel_data: np.ndarray,
+) -> np.ndarray | None:
+    """Return a mask aligned with the illumination input data."""
+    if mask is None:
+        return None
+    mask_array = np.asarray(mask, dtype=bool)
+    if mask_array.shape == pixel_data.shape:
+        return mask_array
+    if mask_array.shape == pixel_data.shape[-mask_array.ndim :]:
+        return mask_array
+    if pixel_data.ndim == 2 and mask_array.ndim == 3 and mask_array.shape[0] == 1:
+        return mask_array[0]
+    return mask_array
+
+
+def _mask_for_stack_slice(
+    mask: np.ndarray | None,
+    slice_index: int,
+) -> np.ndarray | None:
+    if mask is None:
+        return None
+    if mask.ndim >= 3 and slice_index < mask.shape[0]:
+        return np.asarray(mask[slice_index], dtype=bool)
+    return mask
+
+
+def _output_mask_for_illumination(
+    mask: np.ndarray | None,
+    illumination: np.ndarray,
+) -> np.ndarray | None:
+    if mask is None:
+        return None
+    if mask.shape == illumination.shape:
+        return mask
+    if illumination.ndim == 2 and mask.ndim >= 3:
+        return np.any(mask, axis=0)
+    return mask
 
 
 def _apply_dilation(
@@ -397,7 +581,85 @@ def _apply_scaling(
     return result / robust_minimum
 
 
-@numpy(contract=ProcessingContract.PURE_2D)
+def _calculate_illumination_from_pixels(
+    pixel_data: np.ndarray,
+    *,
+    mask: np.ndarray | None,
+    intensity_choice: IntensityChoice,
+    dilate_objects: bool,
+    object_dilation_radius: int,
+    block_size: int,
+    rescale_option: RescaleOption,
+    smoothing_method: SmoothingMethod,
+    filter_size_method: FilterSizeMethod,
+    object_width: int,
+    manual_filter_size: int,
+    automatic_splines: bool,
+    spline_bg_mode: SplineBgMode,
+    spline_points: int,
+    spline_threshold: float,
+    spline_rescale: float,
+    spline_max_iterations: int,
+    spline_convergence: float,
+    calculation_scope: CalculationScope,
+    morphology: MorphologyBackendStrategy,
+    convex_hull_backend_provider: CellProfilerBackendProvider | None,
+    rank_median_backend_provider: CellProfilerBackendProvider | None,
+    slice_index: int = 0,
+) -> tuple[np.ndarray, IlluminationStats]:
+    filter_size = SmoothingFilterSizeStrategy.for_method(
+        filter_size_method,
+    ).calculate(
+        SmoothingFilterSizeRequest(
+            image_shape=_spatial_image_shape(pixel_data, calculation_scope),
+            object_width=object_width,
+            manual_filter_size=manual_filter_size,
+        )
+    )
+
+    avg_image = _illumination_average_image(
+        pixel_data,
+        mask,
+        intensity_choice,
+        smoothing_method,
+        block_size,
+        morphology,
+        calculation_scope,
+    )
+    dilated_image = _apply_dilation(avg_image, mask, dilate_objects, object_dilation_radius)
+    smoothing_request = SmoothingPlaneRequest(
+        pixel_data=dilated_image,
+        mask=mask,
+        smoothing_method=smoothing_method,
+        filter_size=filter_size,
+        spline_bg_mode=spline_bg_mode,
+        spline_points=spline_points,
+        spline_threshold=spline_threshold,
+        spline_rescale=spline_rescale,
+        spline_max_iterations=spline_max_iterations,
+        spline_convergence=spline_convergence,
+        automatic_splines=automatic_splines,
+        morphology=morphology,
+        convex_hull_backend_provider=convex_hull_backend_provider,
+        rank_median_backend_provider=rank_median_backend_provider,
+    )
+    smoothed_image = SmoothingPlaneStrategy.for_method(smoothing_method).smooth(
+        smoothing_request
+    )
+
+    output_image = _apply_scaling(smoothed_image, mask, rescale_option).astype(np.float32)
+    stats = IlluminationStats(
+        slice_index=slice_index,
+        min_value=float(np.min(output_image)),
+        max_value=float(np.max(output_image)),
+        mean_value=float(np.mean(output_image)),
+        calculation_type=intensity_choice.value,
+        smoothing_method=smoothing_method.value
+    )
+    return output_image, stats
+
+
+@numpy(contract=ProcessingContract.FLEXIBLE)
 @special_outputs(("illumination_stats", csv_materializer(
     fields=["slice_index", "min_value", "max_value", "mean_value", "calculation_type", "smoothing_method"],
     analysis_type="illumination_correction"
@@ -420,6 +682,9 @@ def correct_illumination_calculate(
     spline_rescale: float = 2.0,
     spline_max_iterations: int = 40,
     spline_convergence: float = 0.001,
+    calculation_scope: CalculationScope | str = CalculationScope.EACH,
+    convex_hull_backend_provider: CellProfilerBackendProvider | None = None,
+    rank_median_backend_provider: CellProfilerBackendProvider | None = None,
 ) -> tuple[np.ndarray, IlluminationStats]:
     """
     Calculate an illumination correction function.
@@ -445,6 +710,12 @@ def correct_illumination_calculate(
         spline_rescale: Image resampling factor for splines
         spline_max_iterations: Maximum iterations for spline fitting
         spline_convergence: Convergence criterion for splines
+        calculation_scope: Calculate each image independently or from all images
+        convex_hull_backend_provider: Optional OpenHCS CellProfiler illumination
+            backend provider. ``None`` uses the registered default provider.
+        rank_median_backend_provider: Optional OpenHCS CellProfiler rank-median
+            smoothing backend provider. ``None`` uses the registered default
+            provider.
     
     Returns:
         Tuple of (illumination_function, stats)
@@ -454,51 +725,78 @@ def correct_illumination_calculate(
     smoothing_method = _coerce_function_enum(SmoothingMethod, smoothing_method)
     filter_size_method = _coerce_function_enum(FilterSizeMethod, filter_size_method)
     spline_bg_mode = _coerce_function_enum(SplineBgMode, spline_bg_mode)
+    calculation_scope = _coerce_function_enum(CalculationScope, calculation_scope)
+    from openhcs.processing.backends.cellprofiler.morphology import (
+        MorphologyBackendStrategy,
+    )
 
-    mask: np.ndarray | None = None
+    morphology = MorphologyBackendStrategy.for_callable(
+        correct_illumination_calculate,
+    )
 
-    filter_size = SmoothingFilterSizeStrategy.for_method(
-        filter_size_method,
-    ).calculate(
-        SmoothingFilterSizeRequest(
-            image_shape=image.shape,
-            object_width=object_width,
-            manual_filter_size=manual_filter_size,
+    pixel_data = np.asarray(image_payload_data(image))
+    mask = _normalized_illumination_mask(image_payload_mask(image), pixel_data)
+    metadata = image_payload_metadata(image)
+    common_kwargs = {
+        "intensity_choice": intensity_choice,
+        "dilate_objects": dilate_objects,
+        "object_dilation_radius": object_dilation_radius,
+        "block_size": block_size,
+        "rescale_option": rescale_option,
+        "smoothing_method": smoothing_method,
+        "filter_size_method": filter_size_method,
+        "object_width": object_width,
+        "manual_filter_size": manual_filter_size,
+        "automatic_splines": automatic_splines,
+        "spline_bg_mode": spline_bg_mode,
+        "spline_points": spline_points,
+        "spline_threshold": spline_threshold,
+        "spline_rescale": spline_rescale,
+        "spline_max_iterations": spline_max_iterations,
+        "spline_convergence": spline_convergence,
+        "morphology": morphology,
+        "convex_hull_backend_provider": convex_hull_backend_provider,
+        "rank_median_backend_provider": rank_median_backend_provider,
+    }
+
+    if (
+        _is_multi_image_stack(pixel_data, calculation_scope)
+        and not _calculation_scope_uses_all_images(calculation_scope)
+    ):
+        slice_results = [
+            _calculate_illumination_from_pixels(
+                np.asarray(slice_data),
+                mask=_mask_for_stack_slice(mask, slice_index),
+                calculation_scope=CalculationScope.EACH,
+                slice_index=slice_index,
+                **common_kwargs,
+            )
+            for slice_index, slice_data in enumerate(pixel_data)
+        ]
+        illumination_stack = np.stack(
+            [result[0] for result in slice_results],
+            axis=0,
+        ).astype(np.float32)
+        return (
+            image_payload_with_context(
+                illumination_stack,
+                mask=_output_mask_for_illumination(mask, illumination_stack),
+                metadata=metadata,
+            ),
+            [result[1] for result in slice_results],
         )
-    )
 
-    avg_image = _preprocess_for_averaging(image, mask, intensity_choice, block_size)
-    dilated_image = _apply_dilation(avg_image, mask, dilate_objects, object_dilation_radius)
-    smoothing_request = SmoothingPlaneRequest(
-        pixel_data=dilated_image,
+    illumination, stats = _calculate_illumination_from_pixels(
+        pixel_data,
         mask=mask,
-        smoothing_method=smoothing_method,
-        filter_size=filter_size,
-        spline_bg_mode=spline_bg_mode,
-        spline_points=spline_points,
-        spline_threshold=spline_threshold,
-        spline_rescale=spline_rescale,
-        spline_max_iterations=spline_max_iterations,
-        spline_convergence=spline_convergence,
-        automatic_splines=automatic_splines,
+        calculation_scope=calculation_scope,
+        **common_kwargs,
     )
-    smoothed_image = SmoothingPlaneStrategy.for_method(smoothing_method).smooth(
-        smoothing_request
+    return (
+        image_payload_with_context(
+            illumination,
+            mask=_output_mask_for_illumination(mask, illumination),
+            metadata=metadata,
+        ),
+        stats,
     )
-
-    output_image = _apply_scaling(smoothed_image, mask, rescale_option)
-    
-    # Ensure output is float32
-    output_image = output_image.astype(np.float32)
-    
-    # Calculate statistics
-    stats = IlluminationStats(
-        slice_index=0,
-        min_value=float(np.min(output_image)),
-        max_value=float(np.max(output_image)),
-        mean_value=float(np.mean(output_image)),
-        calculation_type=intensity_choice.value,
-        smoothing_method=smoothing_method.value
-    )
-    
-    return output_image, stats

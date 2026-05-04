@@ -10,6 +10,7 @@ import numpy as np
 
 from openhcs.core.image_shapes import is_color_image_slice, is_color_image_stack
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import image_payload_data, with_image_payload_data
 
 
 class ImageChannelType(Enum):
@@ -42,8 +43,12 @@ def color_to_gray(
     resolved_mode = _coerce_enum(ColorToGrayMode, mode, "mode")
     resolved_image_type = _coerce_enum(ImageChannelType, image_type, "image_type")
     if resolved_mode is ColorToGrayMode.COMBINE:
-        return _combine_colortogray(image, channel_indices, contributions)
-    return _split_colortogray(image, resolved_image_type, channel_indices)
+        output = _combine_colortogray(image, channel_indices, contributions)
+        return with_image_payload_data(image, output)
+    return tuple(
+        with_image_payload_data(image, output)
+        for output in _split_colortogray(image, resolved_image_type, channel_indices)
+    )
 
 
 def _combine_colortogray(
@@ -51,10 +56,11 @@ def _combine_colortogray(
     channel_indices: tuple[int, ...],
     contributions: tuple[float, ...],
 ) -> np.ndarray:
+    image_data = image_payload_data(image)
     if len(channel_indices) != len(contributions):
         raise ValueError("channel_indices and contributions must have same length.")
     weights = _normalized_weights(contributions)
-    color_stack = _as_nhwc_color_stack(image)
+    color_stack = _as_nhwc_color_stack(image_data)
     result = np.zeros(color_stack.shape[:3], dtype=np.float32)
     for channel_index, weight in zip(channel_indices, weights, strict=True):
         if channel_index >= color_stack.shape[-1]:
@@ -63,7 +69,7 @@ def _combine_colortogray(
                 f"with {color_stack.shape[-1]} channels."
             )
         result += color_stack[..., channel_index].astype(np.float32) * weight
-    return _restore_singleton_slice_shape(image, result)
+    return _restore_singleton_slice_shape(image_data, result)
 
 
 def _split_colortogray(
@@ -71,14 +77,15 @@ def _split_colortogray(
     image_type: ImageChannelType,
     channel_indices: tuple[int, ...],
 ) -> tuple[np.ndarray, ...]:
-    color_stack = _as_nhwc_color_stack(image).astype(np.float32)
+    image_data = image_payload_data(image)
+    color_stack = _as_nhwc_color_stack(image_data).astype(np.float32)
     source_stack = (
         _rgb_to_hsv(color_stack)
         if image_type is ImageChannelType.HSV
         else color_stack
     )
     return tuple(
-        _restore_singleton_slice_shape(image, _channel(source_stack, index))
+        _restore_singleton_slice_shape(image_data, _channel(source_stack, index))
         for index in channel_indices
     )
 

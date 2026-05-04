@@ -16,11 +16,7 @@ import pandas as pd
 from openhcs.constants.constants import Backend
 from pathlib import Path
 
-try:
-    import MTM
-except ImportError:
-    MTM = None
-    logging.warning("MTM (Multi-Template-Matching) not available. Install with: pip install Multi-Template-Matching")
+import MTM
 
 from openhcs.core.memory import numpy as numpy_func
 from openhcs.core.pipeline.function_contracts import artifact_outputs
@@ -155,9 +151,6 @@ def multi_template_crop_reference_channel(
     ValueError
         If template image cannot be loaded, reference_channel is invalid, or input dimensions are invalid
     """
-
-    if MTM is None:
-        raise ImportError("MTM library not available. Install with: pip install Multi-Template-Matching")
 
     # Debug: Check input type and convert if necessary
     logging.debug(f"MTM input type: {type(image_stack)}, shape: {getattr(image_stack, 'shape', 'no shape attr')}")
@@ -481,9 +474,6 @@ def multi_template_crop(
     ValueError
         If template image cannot be loaded or input dimensions are invalid
     """
-    
-    if MTM is None:
-        raise ImportError("MTM library not available. Install with: pip install Multi-Template-Matching")
     
     # DETAILED DEBUG: Trace the exact issue
     logging.error(f"MTM DEBUG: Input type: {type(image_stack)}")

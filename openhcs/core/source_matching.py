@@ -327,12 +327,33 @@ def merge_source_metadata(
     for key, value in additions.items():
         existing = target.get(key)
         normalized_value = str(value)
-        if existing is not None and str(existing) != normalized_value:
+        if (
+            existing is not None
+            and str(existing) != normalized_value
+            and not _path_metadata_values_equivalent(str(existing), normalized_value)
+        ):
             raise RuntimeError(
                 f"Conflicting metadata field '{key}' while parsing source candidate "
                 f"{path!r}: {existing!r} != {normalized_value!r}."
             )
-        target[key] = normalized_value
+        target[key] = _canonical_path_metadata_value(normalized_value)
+
+
+def _path_metadata_values_equivalent(left: str, right: str) -> bool:
+    left_path = Path(left)
+    right_path = Path(right)
+    return (
+        left_path.is_absolute()
+        and right_path.is_absolute()
+        and left_path.resolve(strict=False) == right_path.resolve(strict=False)
+    )
+
+
+def _canonical_path_metadata_value(value: str) -> str:
+    path = Path(value)
+    if path.is_absolute():
+        return str(path.resolve(strict=False))
+    return value
 
 
 def source_metadata_value(

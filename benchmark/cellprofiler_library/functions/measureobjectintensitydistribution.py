@@ -1,11 +1,20 @@
 """Converted from CellProfiler: MeasureObjectIntensityDistribution"""
 
 import numpy as np
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Any
 from dataclasses import dataclass, field
 from enum import Enum
+from numba import njit
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler.intensity_distribution import (
+    radial_distribution_backend,
+)
+from openhcs.processing.backends.cellprofiler.shape import shape_measurement_backend
+from openhcs.processing.backends.cellprofiler.zernike import (
+    intensity_zernike_moments,
+)
 from openhcs.processing.materialization import csv_materializer
 
 
@@ -46,7 +55,16 @@ class ZernikeMeasurement:
 @special_inputs("labels")
 @special_outputs(
     ("radial_measurements", csv_materializer(
-        fields=["object_label", "bin_index", "bin_count", "frac_at_d", "mean_frac", "radial_cv"],
+        fields=[
+            "object_label",
+            "bin_index",
+            "bin_count",
+            "frac_at_d",
+            "mean_frac",
+            "radial_cv",
+            "feature_name",
+            "result_value",
+        ],
         analysis_type="radial_distribution"
     ))
 )
@@ -59,13 +77,15 @@ def measure_object_intensity_distribution(
     wants_zernikes: ZernikeMode = ZernikeMode.NONE,
     zernike_degree: int = 9,
     center_choice: CenterChoice = CenterChoice.SELF,
-) -> Tuple[np.ndarray, List[RadialDistributionMeasurement]]:
+    radial_distribution_backend_provider: CellProfilerBackendProvider | None = None,
+    zernike_backend_provider: CellProfilerBackendProvider | None = None,
+) -> Tuple[np.ndarray, List[Any]]:
     """
     Measure the spatial distribution of intensities within each object.
-    
+
     Measures intensity distribution from each object's center to its boundary
     within a set of bins (rings).
-    
+
     Args:
         image: Input grayscale image, shape (D, H, W) or (H, W)
         labels: Object labels, same spatial shape as image
@@ -75,15 +95,10 @@ def measure_object_intensity_distribution(
         wants_zernikes: Whether to calculate Zernike moments
         zernike_degree: Maximum Zernike radial moment
         center_choice: How to determine object centers
-    
+
     Returns:
         Tuple of (original image, list of measurements)
     """
-    from scipy import ndimage as ndi
-    from scipy import sparse
-    from skimage.morphology import erosion, disk
-    from skimage.measure import regionprops, label as sklabel
-    
     # Handle dimensionality
     if image.ndim == 3:
         # Process first slice for now (2D module)
@@ -96,7 +111,8 @@ def measure_object_intensity_distribution(
         img_2d = image
         labels_2d = labels
     
-    measurements = []
+    wants_zernikes = _coerce_zernike_mode(wants_zernikes)
+    measurements: list[Any] = []
     
     nobjects = int(np.max(labels_2d))
     if nobjects == 0:
@@ -113,158 +129,178 @@ def measure_object_intensity_distribution(
     d_from_center, center_labels = _compute_distance_from_centers(
         labels_2d, centers_i, centers_j, nobjects
     )
-    
-    good_mask = labels_2d > 0
-    
-    # Compute normalized distance
-    normalized_distance = np.zeros(labels_2d.shape, dtype=np.float64)
-    if wants_scaled:
-        total_distance = d_from_center + d_to_edge
-        normalized_distance[good_mask] = d_from_center[good_mask] / (
-            total_distance[good_mask] + 0.001
-        )
-    else:
-        normalized_distance[good_mask] = d_from_center[good_mask] / maximum_radius
-    
-    # Assign pixels to bins
-    bin_indexes = (normalized_distance * bin_count).astype(int)
-    bin_indexes[bin_indexes > bin_count] = bin_count
-    
-    ngood_pixels = np.sum(good_mask)
-    good_labels = labels_2d[good_mask]
-    
-    # Build sparse histogram of intensities per object per bin
-    labels_and_bins = (good_labels - 1, bin_indexes[good_mask])
-    
-    histogram = sparse.coo_matrix(
-        (img_2d[good_mask], labels_and_bins),
-        shape=(nobjects, bin_count + 1)
-    ).toarray()
-    
-    sum_by_object = np.sum(histogram, axis=1, keepdims=True)
-    sum_by_object[sum_by_object == 0] = 1  # Avoid division by zero
-    fraction_at_distance = histogram / sum_by_object
-    
-    # Count pixels per object per bin
-    number_at_distance = sparse.coo_matrix(
-        (np.ones(ngood_pixels), labels_and_bins),
-        shape=(nobjects, bin_count + 1)
-    ).toarray()
-    
-    object_mask = number_at_distance > 0
-    
-    sum_pixels_by_object = np.sum(number_at_distance, axis=1, keepdims=True)
-    sum_pixels_by_object[sum_pixels_by_object == 0] = 1
-    fraction_at_bin = number_at_distance / sum_pixels_by_object
-    
-    mean_pixel_fraction = fraction_at_distance / (fraction_at_bin + np.finfo(float).eps)
-    
-    # Compute radial CV (coefficient of variation across 8 wedges)
-    i_grid, j_grid = np.mgrid[0:labels_2d.shape[0], 0:labels_2d.shape[1]]
-    
-    i_center_map = np.zeros(labels_2d.shape)
-    j_center_map = np.zeros(labels_2d.shape)
-    for obj_idx in range(nobjects):
-        obj_mask = labels_2d == (obj_idx + 1)
-        i_center_map[obj_mask] = centers_i[obj_idx]
-        j_center_map[obj_mask] = centers_j[obj_idx]
-    
-    # Compute wedge index (8 wedges based on position relative to center)
-    imask = (i_grid[good_mask] > i_center_map[good_mask]).astype(int)
-    jmask = (j_grid[good_mask] > j_center_map[good_mask]).astype(int)
-    absmask = (np.abs(i_grid[good_mask] - i_center_map[good_mask]) > 
-               np.abs(j_grid[good_mask] - j_center_map[good_mask])).astype(int)
-    radial_index = imask + jmask * 2 + absmask * 4
-    
-    # Compute measurements for each bin
-    n_bins = bin_count if wants_scaled else bin_count + 1
-    
-    for bin_idx in range(n_bins):
-        bin_mask = good_mask & (bin_indexes == bin_idx)
-        bin_pixels = np.sum(bin_mask)
-        
-        if bin_pixels == 0:
-            # Add zero measurements for all objects
-            for obj_idx in range(nobjects):
-                measurements.append(RadialDistributionMeasurement(
-                    object_label=obj_idx + 1,
-                    bin_index=bin_idx + 1,
-                    bin_count=bin_count,
-                    frac_at_d=0.0,
-                    mean_frac=0.0,
-                    radial_cv=0.0
-                ))
-            continue
-        
-        bin_labels = labels_2d[bin_mask]
-        bin_radial_index = radial_index[bin_indexes[good_mask] == bin_idx]
-        
-        # Compute radial CV for this bin
-        labels_and_radii = (bin_labels - 1, bin_radial_index)
-        
-        radial_values = sparse.coo_matrix(
-            (img_2d[bin_mask], labels_and_radii),
-            shape=(nobjects, 8)
-        ).toarray()
-        
-        pixel_count = sparse.coo_matrix(
-            (np.ones(bin_pixels), labels_and_radii),
-            shape=(nobjects, 8)
-        ).toarray()
-        
-        with np.errstate(divide='ignore', invalid='ignore'):
-            radial_means = np.where(pixel_count > 0, radial_values / pixel_count, 0)
-            radial_cv = np.std(radial_means, axis=1) / (np.mean(radial_means, axis=1) + np.finfo(float).eps)
-            radial_cv[np.sum(pixel_count > 0, axis=1) == 0] = 0
-        
-        # Store measurements for each object
+
+    radial_arrays = radial_distribution_backend(
+        backend_provider=radial_distribution_backend_provider,
+    ).measure(
+        img_2d,
+        labels_2d,
+        d_to_edge,
+        d_from_center,
+        center_labels,
+        centers_i,
+        centers_j,
+        bin_count=bin_count,
+        wants_scaled=wants_scaled,
+        maximum_radius=maximum_radius,
+    )
+
+    def append_bin_measurements(bin_idx: int, radial_cv: np.ndarray) -> None:
+        # Missing label IDs inside the dense object domain carry no radial
+        # fraction; CP-style exports keep RadialCV at zero but mark
+        # FracAtD/MeanFrac as NaN.
         for obj_idx in range(nobjects):
+            frac_at_d = (
+                float(radial_arrays.fraction_at_distance[obj_idx, bin_idx])
+                if radial_arrays.object_has_pixels[obj_idx]
+                else np.nan
+            )
+            mean_frac = (
+                float(radial_arrays.mean_pixel_fraction[obj_idx, bin_idx])
+                if radial_arrays.object_has_pixels[obj_idx]
+                else np.nan
+            )
             measurements.append(RadialDistributionMeasurement(
                 object_label=obj_idx + 1,
                 bin_index=bin_idx + 1,
                 bin_count=bin_count,
-                frac_at_d=float(fraction_at_distance[obj_idx, bin_idx]),
-                mean_frac=float(mean_pixel_fraction[obj_idx, bin_idx]),
+                frac_at_d=frac_at_d,
+                mean_frac=mean_frac,
                 radial_cv=float(radial_cv[obj_idx])
             ))
     
+    for bin_idx in range(radial_arrays.n_bins):
+        append_bin_measurements(
+            bin_idx,
+            radial_arrays.radial_cv_by_bin[bin_idx],
+        )
+
+    if wants_zernikes != ZernikeMode.NONE:
+        measurements.extend(
+            _zernike_measurement_rows(
+                img_2d,
+                labels_2d,
+                wants_zernikes=wants_zernikes,
+                zernike_degree=zernike_degree,
+                backend_provider=zernike_backend_provider,
+            )
+        )
+
     return image, measurements
+
+
+def _coerce_zernike_mode(value: ZernikeMode | str) -> ZernikeMode:
+    if isinstance(value, ZernikeMode):
+        return value
+    normalized = str(value).strip().lower().replace(" ", "_")
+    for mode in ZernikeMode:
+        if normalized in {mode.name.lower(), mode.value}:
+            return mode
+    raise ValueError(f"Unknown Zernike mode: {value!r}.")
+
+
+def _zernike_measurement_rows(
+    image: np.ndarray,
+    labels: np.ndarray,
+    *,
+    wants_zernikes: ZernikeMode,
+    zernike_degree: int,
+    backend_provider: CellProfilerBackendProvider | None = None,
+) -> list[dict[str, Any]]:
+    """Return CellProfiler-compatible long-form Zernike measurement rows."""
+    labels_int = labels.astype(np.int32, copy=False)
+    object_count = int(labels_int.max()) if labels_int.size else 0
+    if object_count <= 0:
+        return []
+
+    object_ids = np.arange(1, object_count + 1, dtype=np.int32)
+    zernike_indexes, magnitudes, phases = intensity_zernike_moments(
+        image,
+        labels_int,
+        object_ids,
+        max_order=int(zernike_degree),
+        backend_provider=backend_provider,
+    )
+    if len(zernike_indexes) == 0:
+        return []
+
+    rows: list[dict[str, Any]] = []
+
+    for index, (n, m) in enumerate(zernike_indexes):
+        for object_label, magnitude in zip(
+            object_ids,
+            magnitudes[:, index],
+            strict=True,
+        ):
+            rows.append(
+                {
+                    "object_label": int(object_label),
+                    "feature_name": f"ZernikeMagnitude_{int(n)}_{int(m)}",
+                    "result_value": float(magnitude),
+                }
+            )
+
+        if wants_zernikes == ZernikeMode.MAGNITUDES_AND_PHASE:
+            for object_label, phase in zip(
+                object_ids,
+                phases[:, index],
+                strict=True,
+            ):
+                rows.append(
+                    {
+                        "object_label": int(object_label),
+                        "feature_name": f"ZernikePhase_{int(n)}_{int(m)}",
+                        "result_value": float(phase),
+                    }
+                )
+
+    return rows
+
+
+def _empty_zernike_measurement_rows(
+    object_count: int,
+    zernike_indexes: list[tuple[int, int]],
+    *,
+    wants_zernikes: ZernikeMode,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for n, m in zernike_indexes:
+        for object_label in range(1, object_count + 1):
+            rows.append(
+                {
+                    "object_label": object_label,
+                    "feature_name": f"ZernikeMagnitude_{int(n)}_{int(m)}",
+                    "result_value": np.nan,
+                }
+            )
+        if wants_zernikes == ZernikeMode.MAGNITUDES_AND_PHASE:
+            for object_label in range(1, object_count + 1):
+                rows.append(
+                    {
+                        "object_label": object_label,
+                        "feature_name": f"ZernikePhase_{int(n)}_{int(m)}",
+                        "result_value": np.nan,
+                    }
+                )
+    return rows
 
 
 def _distance_to_edge(labels: np.ndarray) -> np.ndarray:
     """Compute distance to edge for each labeled pixel."""
-    from scipy import ndimage as ndi
-    
-    d_to_edge = np.zeros(labels.shape, dtype=np.float64)
-    
-    for obj_label in range(1, int(np.max(labels)) + 1):
-        obj_mask = labels == obj_label
-        if np.sum(obj_mask) == 0:
-            continue
-        # Distance transform from background
-        dist = ndi.distance_transform_edt(obj_mask)
-        d_to_edge[obj_mask] = dist[obj_mask]
-    
-    return d_to_edge
+    return shape_measurement_backend().distance_to_edge(labels)
 
 
 def _find_object_centers(labels: np.ndarray, d_to_edge: np.ndarray, nobjects: int):
     """Find the center of each object (point farthest from edge)."""
-    centers_i = np.zeros(nobjects, dtype=np.float64)
-    centers_j = np.zeros(nobjects, dtype=np.float64)
-    
-    for obj_idx in range(nobjects):
-        obj_mask = labels == (obj_idx + 1)
-        if np.sum(obj_mask) == 0:
-            continue
-        
-        # Find point with maximum distance to edge
-        obj_distances = d_to_edge.copy()
-        obj_distances[~obj_mask] = -1
-        max_idx = np.argmax(obj_distances)
-        centers_i[obj_idx], centers_j[obj_idx] = np.unravel_index(max_idx, labels.shape)
-    
-    return centers_i, centers_j
+    if nobjects <= 0:
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+    indexes = np.arange(1, nobjects + 1, dtype=np.int32)
+    centers_i, centers_j = shape_measurement_backend().maximum_position_of_labels(
+        d_to_edge,
+        labels.astype(np.int32, copy=False),
+        indexes,
+    )
+    return centers_i.astype(np.float64), centers_j.astype(np.float64)
 
 
 def _compute_distance_from_centers(
@@ -274,23 +310,55 @@ def _compute_distance_from_centers(
     nobjects: int
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Compute distance from center for each pixel."""
-    from scipy import ndimage as ndi
-    
-    d_from_center = np.zeros(labels.shape, dtype=np.float64)
-    center_labels = np.zeros(labels.shape, dtype=np.int32)
-    
-    i_grid, j_grid = np.mgrid[0:labels.shape[0], 0:labels.shape[1]]
-    
-    for obj_idx in range(nobjects):
-        obj_mask = labels == (obj_idx + 1)
-        if np.sum(obj_mask) == 0:
-            continue
-        
-        ci, cj = centers_i[obj_idx], centers_j[obj_idx]
-        
-        # Euclidean distance from center
-        dist = np.sqrt((i_grid - ci)**2 + (j_grid - cj)**2)
-        d_from_center[obj_mask] = dist[obj_mask]
-        center_labels[obj_mask] = obj_idx + 1
-    
+    labels_int = labels.astype(np.int32, copy=False)
+    if nobjects <= 0:
+        return (
+            np.zeros(labels.shape, dtype=np.float64),
+            np.zeros(labels.shape, dtype=np.int32),
+        )
+
+    return _compute_distance_from_centers_numba(
+        np.ascontiguousarray(labels_int),
+        np.ascontiguousarray(centers_i, dtype=np.float64),
+        np.ascontiguousarray(centers_j, dtype=np.float64),
+        int(nobjects),
+    )
+
+
+@njit(cache=True)
+def _compute_distance_from_centers_numba(
+    labels: np.ndarray,
+    centers_i: np.ndarray,
+    centers_j: np.ndarray,
+    nobjects: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    height, width = labels.shape
+    d_from_center = np.zeros((height, width), dtype=np.float64)
+    center_labels = np.zeros((height, width), dtype=np.int32)
+    center_valid = np.zeros(nobjects + 1, dtype=np.bool_)
+
+    for label_id in range(1, nobjects + 1):
+        center_i = int(centers_i[label_id - 1])
+        center_j = int(centers_j[label_id - 1])
+        if (
+            center_i >= 0
+            and center_i < height
+            and center_j >= 0
+            and center_j < width
+            and labels[center_i, center_j] == label_id
+        ):
+            center_valid[label_id] = True
+
+    for y in range(height):
+        for x in range(width):
+            label_id = labels[y, x]
+            if label_id <= 0 or label_id > nobjects or not center_valid[label_id]:
+                continue
+            center_i = centers_i[label_id - 1]
+            center_j = centers_j[label_id - 1]
+            dy = float(y) - center_i
+            dx = float(x) - center_j
+            d_from_center[y, x] = np.sqrt(dy * dy + dx * dx)
+            center_labels[y, x] = label_id
+
     return d_from_center, center_labels

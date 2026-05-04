@@ -47,8 +47,8 @@ class RegistryService:
                     continue
 
                 # Get functions from this registry (with caching)
-                logger.debug(f"🎯 REGISTRY SERVICE: Calling _load_or_discover_functions for {registry_instance.library_name}")
-                functions = registry_instance._load_or_discover_functions()
+                logger.debug(f"🎯 REGISTRY SERVICE: Calling load_or_discover_functions for {registry_instance.library_name}")
+                functions = registry_instance.load_or_discover_functions()
                 logger.debug(f"🎯 REGISTRY SERVICE: Retrieved {len(functions)} {registry_instance.library_name} functions")
 
                 # Use composite keys to prevent function name collisions between backends

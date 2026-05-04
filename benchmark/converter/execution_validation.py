@@ -14,12 +14,20 @@ from openhcs.core.runtime_execution_validation import (
 )
 from openhcs.core.runtime_exports import (
     RuntimeExportExpectation,
+    RuntimeImageExportBitDepth,
+    RuntimeImageExportSpec,
     artifact_kind_exports_as_table,
 )
 
 from benchmark.converter.runtime_pipeline import (
     DirectPipelineExecution,
     PreparedGeneratedPipeline,
+)
+from benchmark.converter.setting_names import (
+    SettingNameFamily,
+    optional_setting_value,
+    setting_values,
+    split_symbol_names,
 )
 
 
@@ -28,6 +36,18 @@ class CPPipeInfrastructureFeature(Enum):
 
     EXPORT_TO_SPREADSHEET = "ExportToSpreadsheet"
     SAVE_IMAGES = "SaveImages"
+
+
+SAVE_IMAGES_SOURCE_IMAGE_SETTING = SettingNameFamily("Select the image to save")
+SAVE_IMAGES_BIT_DEPTH_SETTING = SettingNameFamily("Image bit depth")
+SAVE_IMAGES_FILE_FORMAT_SETTING = SettingNameFamily("Saved file format")
+
+SAVE_IMAGES_BIT_DEPTHS = {
+    "8-bit integer": RuntimeImageExportBitDepth.UINT8,
+    "16-bit integer": RuntimeImageExportBitDepth.UINT16,
+    "32-bit floating point": RuntimeImageExportBitDepth.FLOAT32,
+    "raw": RuntimeImageExportBitDepth.NATIVE,
+}
 
 
 class CPPipeExecutionValidationError(RuntimeError):
@@ -78,6 +98,7 @@ def _runtime_expectation(
         exports=_runtime_exports(
             _infrastructure_features(prepared),
             artifact_kinds,
+            _image_export_specs(prepared),
         ),
     )
 
@@ -103,9 +124,26 @@ def _output_specs(
     )
 
 
+def _image_export_specs(
+    prepared: PreparedGeneratedPipeline,
+) -> tuple[RuntimeImageExportSpec, ...]:
+    return tuple(
+        RuntimeImageExportSpec(
+            artifact_name=image_name,
+            bit_depth=_save_images_bit_depth(module),
+            file_format=optional_setting_value(module, SAVE_IMAGES_FILE_FORMAT_SETTING),
+        )
+        for module in prepared.infrastructure_modules
+        if module.name == CPPipeInfrastructureFeature.SAVE_IMAGES.value
+        for value in setting_values(module, SAVE_IMAGES_SOURCE_IMAGE_SETTING)
+        for image_name in split_symbol_names(value)
+    )
+
+
 def _runtime_exports(
     infrastructure_features: frozenset[CPPipeInfrastructureFeature],
     artifact_kinds: frozenset[ArtifactKind],
+    image_export_specs: tuple[RuntimeImageExportSpec, ...],
 ) -> RuntimeExportExpectation:
     return RuntimeExportExpectation.from_flags(
         table_exports=(
@@ -118,7 +156,21 @@ def _runtime_exports(
             for kind in artifact_kinds
             if artifact_kind_exports_as_table(kind)
         ),
+        image_export_specs=image_export_specs,
     )
+
+
+def _save_images_bit_depth(module: object) -> RuntimeImageExportBitDepth:
+    value = optional_setting_value(module, SAVE_IMAGES_BIT_DEPTH_SETTING)
+    if value is None:
+        return RuntimeImageExportBitDepth.NATIVE
+    try:
+        return SAVE_IMAGES_BIT_DEPTHS[value.strip().lower()]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported SaveImages bit depth {value!r} in module "
+            f"{getattr(module, 'module_num', '?')}."
+        ) from exc
 
 
 def _execution_failures(

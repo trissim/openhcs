@@ -25,13 +25,14 @@ class ImageMode(Enum):
 class ImageModeRenderer(ABC, metaclass=AutoRegisterMeta):
     """Render object labels for one closed ImageMode case."""
 
-    __registry_key__ = "image_mode"
+    __registry_key__ = "image_mode_label"
     __skip_if_no_key__ = True
+    image_mode_label: ClassVar[str | None] = None
     image_mode: ClassVar[ImageMode | None] = None
 
     @classmethod
     def for_image_mode(cls, image_mode: ImageMode) -> "ImageModeRenderer":
-        return cls.__registry__[image_mode]()
+        return cls.__registry__[image_mode.value]()
 
     @abstractmethod
     def render(
@@ -45,6 +46,7 @@ class ImageModeRenderer(ABC, metaclass=AutoRegisterMeta):
 
 class BinaryImageModeRenderer(ImageModeRenderer):
     image_mode = ImageMode.BINARY
+    image_mode_label = image_mode.value
 
     def render(
         self,
@@ -58,6 +60,7 @@ class BinaryImageModeRenderer(ImageModeRenderer):
 
 class GrayscaleImageModeRenderer(ImageModeRenderer):
     image_mode = ImageMode.GRAYSCALE
+    image_mode_label = image_mode.value
 
     def render(
         self,
@@ -74,6 +77,7 @@ class GrayscaleImageModeRenderer(ImageModeRenderer):
 
 class ColorImageModeRenderer(ImageModeRenderer):
     image_mode = ImageMode.COLOR
+    image_mode_label = image_mode.value
 
     def render(
         self,
@@ -98,6 +102,7 @@ class ColorImageModeRenderer(ImageModeRenderer):
 
 class Uint16ImageModeRenderer(ImageModeRenderer):
     image_mode = ImageMode.UINT16
+    image_mode_label = image_mode.value
 
     def render(
         self,
@@ -111,13 +116,9 @@ class Uint16ImageModeRenderer(ImageModeRenderer):
 
 def _get_colormap(colormap_name: str, num_labels: int) -> np.ndarray:
     """Generate colors for labels using matplotlib colormap."""
-    try:
-        from matplotlib import colormaps
-        cmap = colormaps.get_cmap(colormap_name)
-    except (ImportError, ValueError):
-        # Fallback to random colors if matplotlib not available or invalid colormap
-        np.random.seed(42)
-        return np.random.rand(num_labels + 1, 3)
+    from matplotlib import colormaps
+
+    cmap = colormaps.get_cmap(colormap_name)
     
     colors = np.zeros((num_labels + 1, 3))
     for i in range(1, num_labels + 1):

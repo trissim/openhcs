@@ -10,7 +10,7 @@ from benchmark.cellprofiler_compat import (
     CellProfilerRelationshipPayload,
     CellProfilerRuntimeAdapter,
 )
-from benchmark.cellprofiler_compat.measurement_lookup import (
+from openhcs.core.runtime_artifact_queries import (
     measurement_values_for_label_slices,
     measurement_values_for_feature,
 )
@@ -40,7 +40,15 @@ from openhcs.core.source_bindings import (
     StepSourceBindingsConfig,
 )
 from openhcs.core.runtime_stores import RuntimeValueStore
-from openhcs.core.runtime_values import FieldSpec, MeasurementTable, RuntimeArrayPayload
+from openhcs.core.runtime_values import (
+    FieldSpec,
+    ImagePayloadMetadata,
+    MeasurementTable,
+    RuntimeArrayPayload,
+    SpatialGrid,
+    image_payload_metadata,
+    image_payload_with_context,
+)
 from openhcs.constants.constants import AllComponents
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -218,6 +226,28 @@ def test_cellprofiler_adapter_adds_and_reads_objects_through_runtime_store():
     assert objects.source_image_name == DNA_IMAGE
     assert objects.dimensions == ("y", "x")
     assert filemanager.saved[("memory", "/memory/Nuclei.pkl")] is labels
+
+
+def test_cellprofiler_adapter_adds_and_reads_spatial_grid_artifacts():
+    adapter, filemanager = _adapter({"Grid": _plan("Grid", ArtifactKind.SPATIAL_GRID)})
+    grid = SpatialGrid(
+        name="grid_info",
+        rows=30,
+        columns=30,
+        x_spacing=55.0,
+        y_spacing=55.0,
+        x_origin=27.0,
+        y_origin=27.0,
+    )
+
+    adapter.add_spatial_grid("Grid", grid)
+    stored = adapter.get_spatial_grid("Grid")
+
+    assert stored.name == "Grid"
+    assert stored.rows == 30
+    assert stored.columns == 30
+    assert stored.x_origin == 27.0
+    assert filemanager.saved[("memory", "/memory/Grid.pkl")]["rows"] == 30
 
 
 def test_cellprofiler_adapter_replaces_existing_payload_with_latest_binding():
@@ -462,6 +492,60 @@ def test_cellprofiler_adapter_resolves_step_input_channel_selector_from_current_
 
     assert resolved.shape == (2, 2)
     np.testing.assert_array_equal(resolved, fallback_stack[0])
+
+
+def test_cellprofiler_adapter_preserves_step_input_image_metadata():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias=DNA_IMAGE,
+                        selector=SourceSelector(
+                            components=(
+                                ComponentSelector(AllComponents.CHANNEL, "1"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=(
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s001_w2_z001_t001.tif",
+        )
+    )
+    filemanager = FileManagerStub()
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+    fallback_stack = image_payload_with_context(
+        np.stack(
+            [
+                np.full((2, 2), 1.0, dtype=np.float32),
+                np.full((2, 2), 2.0, dtype=np.float32),
+            ]
+        ),
+        metadata=ImagePayloadMetadata(
+            channel_intensity_scales=(65535.0, 255.0),
+            channel_source_dtypes=("uint16", "uint8"),
+        ),
+    )
+
+    resolved = adapter.resolve_source_image(DNA_IMAGE, fallback_stack)
+
+    np.testing.assert_array_equal(resolved, np.asarray(fallback_stack)[0])
+    metadata = image_payload_metadata(resolved)
+    assert metadata.intensity_scale == 65535.0
+    assert metadata.source_dtype == "uint16"
 
 
 def test_cellprofiler_adapter_resolves_source_metadata_from_runtime_context():
@@ -1089,6 +1173,106 @@ def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan(tmp
     assert filemanager.loaded_batches == []
 
 
+def test_cellprofiler_adapter_order_match_returns_all_current_image_sets():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="BF_image",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        selector=SourceSelector(
+                            filters=(
+                                SourceFilterClause(
+                                    SourceFilterSubject.FILE,
+                                    SourceFilterMatchType.CONTAINS,
+                                    "Ch1",
+                                ),
+                            ),
+                        ),
+                    ),
+                    NamedSourceBinding(
+                        alias="DF_image",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        selector=SourceSelector(
+                            filters=(
+                                SourceFilterClause(
+                                    SourceFilterSubject.FILE,
+                                    SourceFilterMatchType.CONTAINS,
+                                    "Ch6",
+                                ),
+                            ),
+                        ),
+                    ),
+                    NamedSourceBinding(
+                        alias="Marker_image",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        selector=SourceSelector(
+                            filters=(
+                                SourceFilterClause(
+                                    SourceFilterSubject.FILE,
+                                    SourceFilterMatchType.CONTAINS,
+                                    "Ch7",
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+    source_paths = (
+        "/plate/images/Ch1_1.tif",
+        "/plate/images/Ch1_2.tif",
+        "/plate/images/Ch6_1.tif",
+        "/plate/images/Ch6_2.tif",
+        "/plate/images/Ch7_1.tif",
+        "/plate/images/Ch7_2.tif",
+    )
+    filemanager = FileManagerStub()
+    for index, path in enumerate(source_paths):
+        filemanager.saved[("memory", path)] = np.full((2, 2), index, dtype=np.float32)
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=source_paths,
+        step_input_dir="/plate/images",
+        pipeline_input_files=source_paths,
+        pipeline_input_backend="memory",
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+    current_stack = np.stack(
+        tuple(filemanager.saved[("memory", path)] for path in source_paths)
+    )
+
+    resolved = adapter.resolve_source_image("BF_image", current_stack)
+
+    assert resolved.shape == (2, 2, 2)
+    np.testing.assert_array_equal(
+        resolved,
+        np.stack(
+            (
+                filemanager.saved[("memory", "/plate/images/Ch1_1.tif")],
+                filemanager.saved[("memory", "/plate/images/Ch1_2.tif")],
+            )
+        ),
+    )
+    assert filemanager.loaded_batches == [
+        (
+            ("/plate/images/Ch1_1.tif", "/plate/images/Ch1_2.tif"),
+            "memory",
+            {},
+        )
+    ]
+
+
 def test_cellprofiler_adapter_uses_virtual_workspace_source_provenance_for_order_matching():
     source_bindings = StepSourceBindingsConfig(
         groups=(
@@ -1237,6 +1421,64 @@ def test_cellprofiler_adapter_resolves_single_alias_order_source_from_current_sc
     assert filemanager.loaded_batches == [
         ((expected_source,), "memory", {}),
     ]
+
+
+def test_cellprofiler_adapter_attaches_source_metadata_to_pipeline_start_image():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="RawData",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        selector=SourceSelector(
+                            filters=(
+                                SourceFilterClause(
+                                    SourceFilterSubject.FILE,
+                                    SourceFilterMatchType.CONTAINS,
+                                    ".png",
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+    filemanager = FileManagerStub()
+    expected_source = "/real/fat_orig.png"
+    expected = np.full((2, 2), 31, dtype=np.uint16)
+    filemanager.saved[("memory", expected_source)] = expected
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=("A01_s001_w1_z001_t001.png",),
+        step_input_dir="/workspace",
+        step_input_source_paths={
+            "A01_s001_w1_z001_t001.png": expected_source,
+        },
+        pipeline_input_files=(expected_source,),
+        pipeline_input_backend="memory",
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+
+    resolved = adapter.resolve_source_image(
+        "RawData",
+        np.full((2, 2), 1.0, dtype=np.float32),
+    )
+
+    np.testing.assert_array_equal(resolved, expected)
+    metadata = image_payload_metadata(resolved)
+    assert metadata.intensity_scale == 65535.0
+    assert metadata.source_dtype == "uint16"
+    assert metadata.source_path == expected_source
 
 
 def test_cellprofiler_module_executor_records_object_output_through_adapter():
@@ -1435,8 +1677,18 @@ def test_cellprofiler_module_executor_measures_each_declared_image_for_single_ob
     np.testing.assert_array_equal(result, np.stack((dna, ph3)))
     assert seen == [(3.0, 1), (9.0, 1)]
     assert measurements.rows == [
-        {"mean": 3.0, "label": 1, "object_name": NUCLEI},
-        {"mean": 9.0, "label": 1, "object_name": NUCLEI},
+        {
+            "mean": 3.0,
+            "label": 1,
+            "object_name": NUCLEI,
+            "source_image_name": DNA_IMAGE,
+        },
+        {
+            "mean": 9.0,
+            "label": 1,
+            "object_name": NUCLEI,
+            "source_image_name": "PH3",
+        },
     ]
     assert measurements.object_name == NUCLEI
     assert measurements.source_image_name is None
@@ -1483,7 +1735,7 @@ def test_cellprofiler_module_executor_keeps_coupled_measurement_images_composed(
     assert seen == [((2, 4, 5), (4, 5))]
     assert measurements.rows == [{"object_count": 1, "object_name": NUCLEI}]
     assert measurements.object_name == NUCLEI
-    assert measurements.source_image_name is None
+    assert measurements.source_image_name == f"{DNA_IMAGE}__PH3"
 
 
 def test_cellprofiler_module_executor_combines_multi_object_measurements():
@@ -1739,6 +1991,119 @@ def test_calculate_math_records_object_indexed_measurements():
     )
 
 
+def test_calculate_math_resolves_image_scoped_measurements_via_core_query():
+    adapter, _filemanager = _adapter(
+        {
+            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    adapter.add_measurements(
+        "PriorMeasurements",
+        [
+            {
+                "slice_index": 0,
+                "area_occupied": 17809.0,
+                "source_image_name": "ColocalizedRegion",
+            },
+            {
+                "slice_index": 0,
+                "area_occupied": 30324.0,
+                "source_image_name": "Objects1",
+            },
+        ],
+    )
+    executor = _executor(
+        CALCULATE_MATH,
+        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        inputs=(),
+    )
+
+    executor.run(
+        get_function(CALCULATE_MATH),
+        np.zeros((2, 2), dtype=np.float32),
+        cellprofiler_runtime=adapter,
+        output_name="Stain1Colocalized",
+        operation="Divide",
+        operand1_feature="AreaOccupied_AreaOccupied_ColocalizedRegion",
+        operand2_feature="AreaOccupied_AreaOccupied_Objects1",
+        operand1_object_name=None,
+        operand2_object_name=None,
+        dtype_config=DtypeConfig(),
+    )
+    measurements = adapter.get_measurements(MEASUREMENTS)
+
+    assert measurements.object_name is None
+    assert len(measurements.rows) == 1
+    row = measurements.rows[0]
+    assert row.feature_name == "Math_Stain1Colocalized"
+    assert row.operand1_value == 17809.0
+    assert row.operand2_value == 30324.0
+    assert row.result_value == pytest.approx(17809.0 / 30324.0)
+
+
+def test_calculate_math_aligns_image_scoped_measurements_by_slice():
+    adapter, _filemanager = _adapter(
+        {
+            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    adapter.add_measurements(
+        "PriorMeasurements",
+        [
+            {
+                "slice_index": 0,
+                "area_occupied": 10.0,
+                "source_image_name": "ColocalizedRegion",
+            },
+            {
+                "slice_index": 1,
+                "area_occupied": 15.0,
+                "source_image_name": "ColocalizedRegion",
+            },
+            {
+                "slice_index": 0,
+                "area_occupied": 20.0,
+                "source_image_name": "Objects1",
+            },
+            {
+                "slice_index": 1,
+                "area_occupied": 30.0,
+                "source_image_name": "Objects1",
+            },
+        ],
+    )
+    executor = _executor(
+        CALCULATE_MATH,
+        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        inputs=(),
+    )
+
+    result = executor.run(
+        get_function(CALCULATE_MATH),
+        np.zeros((2, 2, 2), dtype=np.float32),
+        cellprofiler_runtime=adapter,
+        output_name="Stain1Colocalized",
+        operation="Divide",
+        operand1_feature="AreaOccupied_AreaOccupied_ColocalizedRegion",
+        operand2_feature="AreaOccupied_AreaOccupied_Objects1",
+        operand1_object_name=None,
+        operand2_object_name=None,
+        dtype_config=DtypeConfig(),
+    )
+    measurements = adapter.get_measurements(MEASUREMENTS)
+
+    np.testing.assert_array_equal(result, np.zeros((2, 2, 2), dtype=np.float32))
+    assert measurements.object_name is None
+    assert [row.slice_index for row in measurements.rows] == [0, 1]
+    assert [row.object_label for row in measurements.rows] == [None, None]
+    np.testing.assert_allclose(
+        [row.result_value for row in measurements.rows],
+        [0.5, 0.5],
+    )
+
+
 def test_classify_objects_binds_runtime_measurement_values():
     adapter, _filemanager = _adapter(
         {
@@ -1788,8 +2153,123 @@ def test_classify_objects_binds_runtime_measurement_values():
     measurements = adapter.get_measurements(MEASUREMENTS)
 
     np.testing.assert_array_equal(result, np.zeros((3, 3), dtype=np.float32))
-    assert measurements.object_name == NUCLEI
-    assert measurements.rows[0].total_objects == 2
+    assert measurements.object_name is None
+    summary_rows = [row for row in measurements.rows if "slice_index" in row]
+    object_rows = [row for row in measurements.rows if row.get("object_name") == NUCLEI]
+    assert {
+        (row["feature_name"], row["result_value"])
+        for row in summary_rows
+        if row["feature_name"].endswith("NumObjectsPerBin")
+    } == {
+        ("Classify_Bin_1_NumObjectsPerBin", 1),
+        ("Classify_Bin_2_NumObjectsPerBin", 1),
+    }
+    assert {
+        (row["object_label"], row["feature_name"], row["result_value"])
+        for row in object_rows
+    } == {
+        (1, "Classify_Bin_1", 1),
+        (1, "Classify_Bin_2", 0),
+        (2, "Classify_Bin_1", 0),
+        (2, "Classify_Bin_2", 1),
+    }
+
+
+def test_classify_objects_binds_repeated_single_measurement_rules():
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    labels = np.array([[1, 2], [0, 0]], dtype=np.int32)
+    adapter.add_objects(NUCLEI, labels)
+    adapter.add_measurements(
+        "PriorMeasurements",
+        [
+            {
+                "object_name": NUCLEI,
+                "object_label": 1,
+                "feature_name": "AreaShape_Area",
+                "result_value": 4.0,
+            },
+            {
+                "object_name": NUCLEI,
+                "object_label": 2,
+                "feature_name": "AreaShape_Area",
+                "result_value": 12.0,
+            },
+            {
+                "object_name": NUCLEI,
+                "object_label": 1,
+                "feature_name": "Intensity_MeanIntensity_DNA",
+                "result_value": 0.02,
+            },
+            {
+                "object_name": NUCLEI,
+                "object_label": 2,
+                "feature_name": "Intensity_MeanIntensity_DNA",
+                "result_value": 0.2,
+            },
+        ],
+        object_name=NUCLEI,
+    )
+    executor = _executor(
+        "ClassifyObjectsSingleMeasurement",
+        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        runtime_artifact_inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+    )
+
+    executor.run(
+        get_function("ClassifyObjects"),
+        np.zeros((3, 3), dtype=np.float32),
+        cellprofiler_runtime=adapter,
+        classification_rules=(
+            {
+                "measurement_feature": "AreaShape_Area",
+                "bin_choice": "custom",
+                "custom_thresholds": "0,5,20",
+                "bin_names": "Small,Large",
+            },
+            {
+                "measurement_feature": "Intensity_MeanIntensity_DNA",
+                "bin_choice": "custom",
+                "custom_thresholds": "0.05",
+                "wants_low_bin": True,
+                "wants_high_bin": True,
+                "bin_names": "White,Red",
+            },
+        ),
+        dtype_config=DtypeConfig(),
+    )
+    rows = adapter.get_measurements(MEASUREMENTS).rows
+
+    assert {
+        (row["feature_name"], row["result_value"])
+        for row in rows
+        if row.get("feature_name", "").endswith("NumObjectsPerBin")
+    } == {
+        ("Classify_Small_NumObjectsPerBin", 1),
+        ("Classify_Large_NumObjectsPerBin", 1),
+        ("Classify_White_NumObjectsPerBin", 1),
+        ("Classify_Red_NumObjectsPerBin", 1),
+    }
+    assert {
+        (row["object_label"], row["feature_name"], row["result_value"])
+        for row in rows
+        if row.get("object_name") == NUCLEI
+    } == {
+        (1, "Classify_Small", 1),
+        (1, "Classify_Large", 0),
+        (1, "Classify_White", 1),
+        (1, "Classify_Red", 0),
+        (2, "Classify_Small", 0),
+        (2, "Classify_Large", 1),
+        (2, "Classify_White", 0),
+        (2, "Classify_Red", 1),
+    }
 
 
 def test_classify_objects_slices_runtime_measurements_with_label_stack():
@@ -1841,8 +2321,30 @@ def test_classify_objects_slices_runtime_measurements_with_label_stack():
     measurements = adapter.get_measurements(MEASUREMENTS)
 
     assert result.shape == (2, 2)
-    assert measurements.rows[0].total_objects == 2
-    assert measurements.rows[1].total_objects == 2
+    summary_rows = [
+        row
+        for row in measurements.rows
+        if row.get("feature_name", "").endswith("NumObjectsPerBin")
+    ]
+    assert {
+        (row["slice_index"], row["feature_name"], row["result_value"])
+        for row in summary_rows
+    } == {
+        (0, "Classify_Bin_1_NumObjectsPerBin", 2),
+        (0, "Classify_Bin_2_NumObjectsPerBin", 0),
+        (1, "Classify_Bin_1_NumObjectsPerBin", 0),
+        (1, "Classify_Bin_2_NumObjectsPerBin", 2),
+    }
+    assert {
+        (row["object_label"], row["feature_name"], row["result_value"])
+        for row in measurements.rows
+        if row.get("object_name") == NUCLEI and row["result_value"] == 1
+    } == {
+        (1, "Classify_Bin_1", 1),
+        (2, "Classify_Bin_1", 1),
+        (3, "Classify_Bin_2", 1),
+        (4, "Classify_Bin_2", 1),
+    }
 
 
 def test_cellprofiler_module_executor_preserves_main_stack_for_measurements():
@@ -1935,10 +2437,30 @@ def test_cellprofiler_module_executor_measures_each_declared_image_and_object():
     np.testing.assert_array_equal(result, np.stack((dna, ph3)))
     assert seen == [(3.0, 1), (3.0, 2), (9.0, 1), (9.0, 2)]
     assert measurements.rows == [
-        {"mean": 3.0, "label": 1, "object_name": NUCLEI},
-        {"mean": 3.0, "label": 2, "object_name": CELLS},
-        {"mean": 9.0, "label": 1, "object_name": NUCLEI},
-        {"mean": 9.0, "label": 2, "object_name": CELLS},
+        {
+            "mean": 3.0,
+            "label": 1,
+            "object_name": NUCLEI,
+            "source_image_name": DNA_IMAGE,
+        },
+        {
+            "mean": 3.0,
+            "label": 2,
+            "object_name": CELLS,
+            "source_image_name": DNA_IMAGE,
+        },
+        {
+            "mean": 9.0,
+            "label": 1,
+            "object_name": NUCLEI,
+            "source_image_name": "PH3",
+        },
+        {
+            "mean": 9.0,
+            "label": 2,
+            "object_name": CELLS,
+            "source_image_name": "PH3",
+        },
     ]
     assert measurements.source_image_name is None
 
@@ -2035,9 +2557,11 @@ def test_cellprofiler_module_executor_records_relationship_and_measurement_outpu
     assert relationship.target.name == NUCLEI
     assert relationship.source_ids == (1, 1)
     assert relationship.target_ids == (1, 2)
-    assert measurements.object_name == CELLS
+    assert measurements.object_name is None
     assert measurements.rows == [
         {"mean_children_per_parent": 2.0},
-        {"object_label": 1, "Children_Nuclei_Count": 2},
+        {"object_name": CELLS, "object_label": 1, "Children_Nuclei_Count": 2},
+        {"object_name": NUCLEI, "object_label": 1, "Parent_Cells": 1},
+        {"object_name": NUCLEI, "object_label": 2, "Parent_Cells": 1},
     ]
     assert adapter.measurement_tables_for_object(CELLS) == (measurements,)

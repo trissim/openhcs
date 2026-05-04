@@ -7,6 +7,7 @@ import numpy as np
 from typing import Tuple, Literal
 from dataclasses import dataclass
 from openhcs.core.memory.decorators import numpy
+from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
@@ -17,6 +18,33 @@ class WatershedStats:
     slice_index: int
     object_count: int
     mean_area: float
+
+
+def cellprofiler_legacy_watershed(
+    image: np.ndarray,
+    *,
+    markers: np.ndarray,
+    mask: np.ndarray,
+    connectivity: int | np.ndarray = 1,
+    backend_provider: CellProfilerBackendProvider | None = None,
+) -> np.ndarray:
+    """Run CellProfiler 4.2/skimage 0.18 watershed semantics.
+
+    Newer scikit-image raises a queued neighbor's priority to at least the
+    source pixel priority. CellProfiler 4.2 did not, and that changes basin
+    ownership for tied/near-tied object boundaries by a few pixels.
+    """
+    from openhcs.processing.backends.cellprofiler.watershed import (
+        cellprofiler_legacy_watershed as _cellprofiler_legacy_watershed,
+    )
+
+    return _cellprofiler_legacy_watershed(
+        image,
+        markers=markers,
+        mask=mask,
+        connectivity=connectivity,
+        backend_provider=backend_provider,
+    )
 
 
 @numpy(contract=ProcessingContract.PURE_2D)

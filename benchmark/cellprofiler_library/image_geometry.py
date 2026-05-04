@@ -80,6 +80,28 @@ def aligned_image_mask_planes(
     """Align a mask payload to each image plane using CellProfiler slice rules."""
     image_planes = payload_slices_for_alignment(image)
     mask_planes = payload_slices_for_alignment(mask)
+    if len(image_planes) == 1 and len(mask_planes) > 1:
+        image_plane = image_planes[0]
+        geometry = CellProfilerPlaneGeometry.from_image_plane(image_plane)
+        projected_mask = np.any(
+            np.stack(
+                tuple(
+                    geometry.binary_mask(
+                        mask_plane,
+                        threshold=threshold,
+                        labels=labels,
+                    )
+                    for mask_plane in mask_planes
+                )
+            ),
+            axis=0,
+        )
+        return (
+            CellProfilerImageMaskPlane(
+                image=image_plane,
+                mask=projected_mask,
+            ),
+        )
     if len(mask_planes) not in {1, len(image_planes)}:
         raise ValueError(
             "CellProfiler mask payload must have one plane or match image plane "

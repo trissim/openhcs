@@ -8,6 +8,10 @@ from typing import Optional, Sequence, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.processing.backends.analysis.region_properties import (
+    LabelRegionPropertiesBackendStrategy,
+    binary_area_and_perimeter_2d,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer
@@ -62,6 +66,7 @@ class AreaOccupiedMeasurement:
     area_occupied: float
     perimeter: float
     total_area: float
+    source_image_name: str | None = None
 
     @classmethod
     def from_area(
@@ -71,12 +76,14 @@ class AreaOccupiedMeasurement:
         perimeter: float,
         total_area: float,
         slice_index: int = 0,
+        source_image_name: str | None = None,
     ) -> "AreaOccupiedMeasurement":
         return cls(
             slice_index=slice_index,
             area_occupied=area_occupied,
             perimeter=perimeter,
             total_area=total_area,
+            source_image_name=source_image_name,
         )
 
 
@@ -86,12 +93,14 @@ def _area_occupied_measurement(
     total_area: float,
     *,
     slice_index: int = 0,
+    source_image_name: str | None = None,
 ) -> AreaOccupiedMeasurement:
     return AreaOccupiedMeasurement.from_area(
         area_occupied=area_occupied,
         perimeter=perimeter_value,
         total_area=total_area,
         slice_index=slice_index,
+        source_image_name=source_image_name,
     )
 
 
@@ -132,6 +141,7 @@ def measure_image_area_occupied(
             output_image, measurement = _measure_binary_image(
                 binary_images[binary_index],
                 slice_index=row_index,
+                source_image_name=row.input_name,
             )
             binary_index += 1
         else:
@@ -140,6 +150,7 @@ def measure_image_area_occupied(
                 _reference_image_for_labels(image, labels),
                 labels,
                 slice_index=row_index,
+                source_image_name=row.input_name,
             )
             object_index += 1
         measurements.append(measurement)
@@ -158,6 +169,7 @@ def measure_image_area_occupied(
 )))
 def measure_image_area_occupied_binary(
     image: np.ndarray,
+    source_image_name: str | None = None,
 ) -> Tuple[np.ndarray, AreaOccupiedMeasurement]:
     """
     Measure area occupied by foreground in a binary image.
@@ -168,7 +180,7 @@ def measure_image_area_occupied_binary(
     Returns:
         Tuple of (original image, AreaOccupiedMeasurement)
     """
-    return _measure_binary_image(image)
+    return _measure_binary_image(image, source_image_name=source_image_name)
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -180,6 +192,7 @@ def measure_image_area_occupied_binary(
 def measure_image_area_occupied_objects(
     image: np.ndarray,
     labels: np.ndarray,
+    source_image_name: str | None = None,
 ) -> Tuple[np.ndarray, AreaOccupiedMeasurement]:
     """
     Measure area occupied by labeled objects.
@@ -191,7 +204,7 @@ def measure_image_area_occupied_objects(
     Returns:
         Tuple of (original image, AreaOccupiedMeasurement)
     """
-    return _measure_object_labels(image, labels)
+    return _measure_object_labels(image, labels, source_image_name=source_image_name)
 
 
 def _area_occupied_runtime_rows(
@@ -247,19 +260,16 @@ def _measure_binary_image(
     image: np.ndarray,
     *,
     slice_index: int = 0,
+    source_image_name: str | None = None,
 ) -> tuple[np.ndarray, AreaOccupiedMeasurement]:
-    from skimage.measure import perimeter as measure_perimeter
-
     binary_mask = image > 0
-    area_occupied = float(np.sum(binary_mask))
-    perimeter_value = (
-        float(measure_perimeter(binary_mask)) if area_occupied > 0 else 0.0
-    )
+    area_occupied, perimeter_value = binary_area_and_perimeter_2d(binary_mask)
     measurement = _area_occupied_measurement(
         area_occupied,
         perimeter_value,
         float(np.prod(image.shape)),
         slice_index=slice_index,
+        source_image_name=source_image_name,
     )
     return image, measurement
 
@@ -269,6 +279,7 @@ def _measure_object_labels(
     labels: np.ndarray,
     *,
     slice_index: int = 0,
+    source_image_name: str | None = None,
 ) -> tuple[np.ndarray, AreaOccupiedMeasurement]:
     area_occupied, perimeter_value = _label_area_and_perimeter(labels)
     measurement = _area_occupied_measurement(
@@ -276,6 +287,7 @@ def _measure_object_labels(
         perimeter_value,
         float(np.prod(labels.shape)),
         slice_index=slice_index,
+        source_image_name=source_image_name,
     )
     object_region_mask = (labels > 0).astype(getattr(image, "dtype", labels.dtype))
     return object_region_mask, measurement
@@ -295,15 +307,14 @@ def _label_area_and_perimeter(labels: np.ndarray) -> tuple[float, float]:
 
 
 def _label_plane_area_and_perimeter(labels: np.ndarray) -> tuple[float, float]:
-    from skimage.measure import regionprops
-
-    region_properties = regionprops(labels.astype(np.int32))
-    area_occupied = float(np.sum([region.area for region in region_properties]))
+    labels_array = labels.astype(np.int32, copy=False)
+    region_properties = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+        labels_array
+    )
+    area_occupied = float(np.sum(region_properties.area))
     if area_occupied == 0:
         return area_occupied, 0.0
-    return area_occupied, float(
-        np.sum([np.round(region.perimeter) for region in region_properties])
-    )
+    return area_occupied, float(np.sum(np.round(region_properties.perimeter)))
 
 
 def _reference_image_for_labels(image: np.ndarray, labels: np.ndarray) -> np.ndarray:
@@ -452,18 +463,13 @@ def measure_image_volume_occupied_objects(
     Returns:
         Tuple of (original image, VolumeOccupiedMeasurement)
     """
-    from skimage.measure import regionprops
-    
-    # Get region properties
-    region_properties = regionprops(labels.astype(np.int32))
-    
-    # Calculate volume occupied (sum of all object volumes)
-    volume_occupied = float(np.sum([region.area for region in region_properties]))
+    labels_array = labels.astype(np.int32, copy=False)
+    volume_occupied = float(np.count_nonzero(labels_array))
     
     # Calculate surface area
     if volume_occupied > 0:
         surface_area_value = _compute_surface_area(
-            labels.astype(np.int32), spacing=spacing
+            labels_array, spacing=spacing
         )
     else:
         surface_area_value = 0.0

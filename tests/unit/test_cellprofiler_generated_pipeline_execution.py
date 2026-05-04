@@ -1,7 +1,9 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import imageio.v3 as imageio
 import numpy as np
+import tifffile
 
 from benchmark.cellprofiler_compat import cellprofiler_runtime_adapter_factory
 from benchmark.converter.parser import ModuleBlock
@@ -14,6 +16,7 @@ from openhcs.core.artifacts import (
 from openhcs.core.config import DtypeConfig
 from openhcs.core.runtime_adapters import runtime_adapter_spec_from_callable
 from openhcs.core.runtime_stores import RuntimeValueStore
+from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
 from openhcs.core.source_bindings import (
     ComponentSelector,
     CompiledSourceBindingPlan,
@@ -24,13 +27,19 @@ from openhcs.core.source_bindings import (
     StepSourceBindingsConfig,
 )
 from openhcs.core.runtime_adapters import runtime_adapter
+from openhcs.core.runtime_values import (
+    ImagePayloadMetadata,
+    ObjectLabelSet,
+    ObjectRelationship,
+    image_payload_with_context,
+)
 from openhcs.core.steps.function_runtime import (
     FunctionExecutionRequest,
     _execute_function_core,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
-from openhcs.constants.constants import AllComponents
+from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
 
 
 AXIS_ID = "A01"
@@ -56,6 +65,10 @@ FILTER_OBJECTS = "FilterObjects"
 FILTERED_NUCLEI = "FilteredNuclei"
 FILTERED_CELLS = "FilteredCells"
 UNTANGLE_WORMS = "UntangleWorms"
+
+
+def _object_labels(record):
+    return ObjectLabelSet.from_runtime_value(record.value).labels
 
 
 class MemoryBackend:
@@ -109,11 +122,18 @@ def _module(module_num: int, name: str, settings: dict[str, str]) -> ModuleBlock
     return ModuleBlock(name=name, module_num=module_num, settings=settings)
 
 
-def _generated_pipeline(modules: list[ModuleBlock]) -> GeneratedPipeline:
+def _generated_pipeline(
+    modules: list[ModuleBlock],
+    *,
+    prune_dead_unmaterialized_artifact_steps: bool = False,
+) -> GeneratedPipeline:
     return PipelineGenerator().generate_from_registry(
         pipeline_name="cellprofiler_generated_runtime_smoke",
         source_cppipe=Path("cellprofiler_generated_runtime_smoke.cppipe"),
         modules=modules,
+        prune_dead_unmaterialized_artifact_steps=(
+            prune_dead_unmaterialized_artifact_steps
+        ),
     )
 
 
@@ -151,6 +171,18 @@ def test_generator_scopes_artifact_managed_wrappers_to_pattern_group():
     )
 
 
+def test_generator_scopes_runtime_artifact_only_step_once_per_axis():
+    generated = _generated_pipeline(_measurement_pipeline_modules())
+    namespace = _pipeline_namespace(generated)
+    measurement_step = namespace["pipeline_steps"][1]
+
+    assert measurement_step.name == MEASURE_OBJECT_SIZE_SHAPE
+    assert measurement_step.processing_config.variable_components == [
+        VariableComponents.SITE
+    ]
+    assert measurement_step.processing_config.group_by is GroupBy.NONE
+
+
 def test_generator_binds_canonical_morphology_alias_structuring_element():
     generated = _generated_pipeline(
         [
@@ -182,7 +214,7 @@ def test_generator_binds_canonical_morphology_alias_structuring_element():
         ]
     )
 
-    assert 'erode_image_3 = require_function("Erosion", function_name="erode_image")' in (
+    assert 'erode_image_3 = require_cellprofiler_function("Erosion", function_name="erode_image")' in (
         generated.code
     )
     assert "'structuring_element': 'disk'" in generated.code
@@ -525,7 +557,7 @@ def test_generated_cellprofiler_pipeline_executes_runtime_artifact_flow():
     )
 
     assert len(nuclei_records) == 1
-    assert nuclei_records[0].value.data.max() == 2
+    assert _object_labels(nuclei_records[0]).max() == 2
     assert len(measurement_records) == 1
     assert measurement_records[0].value.schema.object_name == NUCLEI
     assert len(measurement_records[0].value.data) == 2
@@ -577,6 +609,47 @@ def test_generated_cellprofiler_pipeline_executes_runtime_image_artifact_flow():
     assert overlay_image_records[0].value.data.shape[-1] == 3
 
 
+def test_generator_prunes_dead_unmaterialized_image_artifacts_when_requested():
+    generated = _generated_pipeline(
+        _image_artifact_pipeline_modules(),
+        prune_dead_unmaterialized_artifact_steps=True,
+    )
+
+    assert 'name="IdentifyPrimaryObjects"' in generated.code
+    assert 'name="ConvertObjectsToImage"' not in generated.code
+    assert 'name="Opening"' not in generated.code
+    assert 'name="OverlayOutlines"' not in generated.code
+    assert [contract.module_name for contract in generated.artifact_contracts] == [
+        IDENTIFY_PRIMARY_OBJECTS
+    ]
+
+
+def test_generator_keeps_unmaterialized_image_artifacts_required_by_saveimages():
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cellprofiler_generated_runtime_smoke",
+        source_cppipe=Path("cellprofiler_generated_runtime_smoke.cppipe"),
+        modules=_image_artifact_pipeline_modules(),
+        skipped_modules=[
+            _module(
+                5,
+                "SaveImages",
+                {"Select the image to save": OVERLAY_IMAGE},
+            )
+        ],
+        prune_dead_unmaterialized_artifact_steps=True,
+    )
+
+    assert 'name="ConvertObjectsToImage"' in generated.code
+    assert 'name="Opening"' in generated.code
+    assert 'name="OverlayOutlines"' in generated.code
+    assert [contract.module_name for contract in generated.artifact_contracts] == [
+        IDENTIFY_PRIMARY_OBJECTS,
+        CONVERT_OBJECTS_TO_IMAGE,
+        OPENING,
+        OVERLAY_OUTLINES,
+    ]
+
+
 def test_generated_cellprofiler_pipeline_executes_gray_to_color_module():
     generated = _generated_pipeline(_gray_to_color_pipeline_modules())
     namespace = _pipeline_namespace(generated)
@@ -607,6 +680,65 @@ def test_generated_cellprofiler_pipeline_executes_gray_to_color_module():
     assert color_image_records[0].value.schema.source_image_name == SOURCE_IMAGE
     assert color_image_records[0].value.data.shape == (64, 64, 3)
     assert image.shape == color_image_records[0].value.data.shape
+
+
+def test_identify_primary_objects_uses_runtime_image_intensity_scale():
+    from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
+        UnclumpMethod,
+        WatershedMethod,
+        identify_primary_objects,
+    )
+    from benchmark.cellprofiler_library.functions.thresholding import (
+        CellProfilerThresholdMethod as ThresholdMethod,
+    )
+
+    image = np.full((16, 16), 128, dtype=np.uint16)
+    image[4:12, 4:12] = 512
+    source_scaled_image = image_payload_with_context(
+        image,
+        metadata=ImagePayloadMetadata(
+            intensity_scale=4095.0,
+            source_dtype="uint16",
+        ),
+    )
+
+    _raw_image, stats, labels = identify_primary_objects(
+        source_scaled_image,
+        min_diameter=2,
+        max_diameter=20,
+        exclude_size=False,
+        exclude_border_objects=False,
+        unclump_method=UnclumpMethod.NONE,
+        watershed_method=WatershedMethod.NONE,
+        use_advanced_settings=True,
+        threshold_method=ThresholdMethod.OTSU,
+        threshold_smoothing_scale=0.0,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert stats.object_count == 1
+    assert labels.labels[8, 8] == 1
+
+
+def test_runtime_image_metadata_uses_declared_tiff_intensity_scale(tmp_path):
+    from openhcs.core.runtime_values import image_payload_metadata_from_source
+
+    path = tmp_path / "source_12bit.tif"
+    image = np.array([[0, 4095]], dtype=np.uint16)
+    tifffile.imwrite(
+        path,
+        image,
+        extratags=(
+            (280, "H", 1, 0, False),
+            (281, "H", 1, 4095, False),
+        ),
+    )
+    readback = imageio.imread(path)
+
+    metadata = image_payload_metadata_from_source(readback, source_path=str(path))
+
+    assert metadata.source_dtype == "uint16"
+    assert metadata.intensity_scale == 4095.0
 
 
 def test_runtime_adapter_receives_step_input_source_binding_context():
@@ -745,10 +877,17 @@ def test_generated_cellprofiler_pipeline_executes_generic_mask_objects_contract(
         kind=ArtifactKind.MEASUREMENTS,
         axis_id=AXIS_ID,
     )
+    relationship_records = context.runtime_value_store.find(
+        name=f"{NUCLEI}_{MASKED_NUCLEI}_relationships",
+        kind=ArtifactKind.RELATIONSHIPS,
+        axis_id=AXIS_ID,
+    )
 
     assert len(masked_records) == 1
-    assert masked_records[0].value.data.max() > 0
+    assert _object_labels(masked_records[0]).max() > 0
     assert len(measurement_records) == 1
+    assert len(relationship_records) == 1
+    assert relationship_records[0].value.schema.relationship is not None
 
 
 def test_generated_cellprofiler_pipeline_executes_filterobjects_relabel_outputs():
@@ -786,12 +925,21 @@ def test_generated_cellprofiler_pipeline_executes_filterobjects_relabel_outputs(
         kind=ArtifactKind.MEASUREMENTS,
         axis_id=AXIS_ID,
     )
+    relationship_records = context.runtime_value_store.find(
+        name=parent_child_relationship_artifact_name(NUCLEI, FILTERED_NUCLEI),
+        kind=ArtifactKind.RELATIONSHIPS,
+        axis_id=AXIS_ID,
+    )
 
     assert len(filtered_nuclei_records) == 1
-    assert filtered_nuclei_records[0].value.data.max() > 0
+    assert _object_labels(filtered_nuclei_records[0]).max() > 0
     assert len(filtered_cells_records) == 1
-    assert filtered_cells_records[0].value.data.max() > 0
+    assert _object_labels(filtered_cells_records[0]).max() > 0
     assert len(measurement_records) == 1
+    assert len(relationship_records) == 1
+    relationship = ObjectRelationship.from_runtime_value(relationship_records[0].value)
+    assert relationship.source_ids
+    assert relationship.target_ids
 
 
 def test_generated_cellprofiler_pipeline_filters_objects_by_prior_measurements():
@@ -819,6 +967,15 @@ def test_generated_cellprofiler_pipeline_filters_objects_by_prior_measurements()
         kind=ArtifactKind.OBJECT_LABELS,
         axis_id=AXIS_ID,
     )
+    relationship_records = context.runtime_value_store.find(
+        name=parent_child_relationship_artifact_name(NUCLEI, FILTERED_NUCLEI),
+        kind=ArtifactKind.RELATIONSHIPS,
+        axis_id=AXIS_ID,
+    )
 
     assert len(filtered_records) == 1
-    assert filtered_records[0].value.data.max() == 0
+    assert _object_labels(filtered_records[0]).max() == 0
+    assert len(relationship_records) == 1
+    relationship = ObjectRelationship.from_runtime_value(relationship_records[0].value)
+    assert tuple(relationship.source_ids) == ()
+    assert tuple(relationship.target_ids) == ()

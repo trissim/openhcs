@@ -106,5 +106,7 @@ _COLOR_BY_NAME: dict[str, tuple[float, float, float]] = {
     "red": (1.0, 0.0, 0.0),
     "green": (0.0, 1.0, 0.0),
     "blue": (0.0, 0.0, 1.0),
+    "cyan": (0.0, 1.0, 1.0),
+    "magenta": (1.0, 0.0, 1.0),
     "yellow": (1.0, 1.0, 0.0),
 }

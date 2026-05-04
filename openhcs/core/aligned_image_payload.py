@@ -19,6 +19,13 @@ from openhcs.core.image_shapes import (
 )
 from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.memory import MEMORY_TYPE_NUMPY, convert_memory, detect_memory_type
+from openhcs.core.runtime_values import (
+    compose_image_payload_metadata,
+    image_payload_metadata,
+    image_payload_data,
+    image_payload_mask,
+    image_payload_with_context,
+)
 
 
 class ImagePayloadExecutionMode(Enum):
@@ -189,20 +196,78 @@ def compose_aligned_image_payload(
 
 def payload_slices_for_alignment(payload: Any) -> tuple[Any, ...]:
     """Return payload slices used for multi-source alignment."""
-    if hasattr(payload, "ndim") and payload.ndim == 2:
+    data = image_payload_data(payload)
+    mask = image_payload_mask(payload)
+    metadata = image_payload_metadata(payload)
+    if hasattr(data, "ndim") and data.ndim == 2:
         return (payload,)
-    if is_color_image_slice(payload):
+    if is_color_image_slice(data):
         return (payload,)
-    if is_grayscale_image_stack(payload) or is_color_image_stack(payload):
-        memory_type = detect_memory_type(payload)
+    if is_grayscale_image_stack(data) or is_color_image_stack(data):
+        memory_type = detect_memory_type(data)
         return tuple(
-            ImageStackLayout.for_stack(payload).unstack(
-                array=payload,
-                memory_type=memory_type,
-                gpu_id=0,
+            _payload_slice(data_slice, mask, metadata, index)
+            for index, data_slice in enumerate(
+                ImageStackLayout.for_stack(data).unstack(
+                    array=data,
+                    memory_type=memory_type,
+                    gpu_id=0,
+                )
             )
         )
     return (payload,)
+
+
+def _payload_slice(
+    data_slice: Any,
+    mask: Any | None,
+    metadata: Any,
+    index: int,
+) -> Any:
+    return image_payload_with_context(
+        data=data_slice,
+        mask=None if mask is None else _mask_slice_for_payload(mask, index),
+        metadata=metadata.for_channel(index),
+    )
+
+
+def _mask_slice_for_payload(mask: Any, index: int) -> Any:
+    if not hasattr(mask, "ndim"):
+        return mask
+    if mask.ndim == 3:
+        return mask[index]
+    return mask
+
+
+def _combine_payload_masks(image_payloads: tuple[Any, ...]) -> Any | None:
+    masks = tuple(
+        image_payload_mask(payload)
+        for payload in image_payloads
+        if image_payload_mask(payload) is not None
+    )
+    if not masks:
+        return None
+    combined = np.asarray(masks[0], dtype=bool)
+    for mask in masks[1:]:
+        combined = np.logical_and(combined, np.asarray(mask, dtype=bool))
+    return combined
+
+
+def _compose_unmasked_image_bundle(
+    image_payloads: tuple[Any, ...],
+) -> Any:
+    memory_type = detect_memory_type(image_payloads[0])
+    if _is_homogeneous_image_bundle(image_payloads):
+        return ImageStackLayout.for_slices(image_payloads).stack(
+            slices=image_payloads,
+            memory_type=memory_type,
+            gpu_id=0,
+        )
+    return ImageBundleLayout.for_slices(image_payloads).stack(
+        slices=image_payloads,
+        memory_type=memory_type,
+        gpu_id=0,
+    )
 
 
 def aligned_payload_slice(
@@ -247,18 +312,11 @@ def compose_one_image_bundle(
     image_payloads: tuple[Any, ...],
 ) -> Any:
     """Stack same-slice image payloads into one multi-image bundle."""
-    memory_type = detect_memory_type(image_payloads[0])
-    if _is_homogeneous_image_bundle(image_payloads):
-        return ImageStackLayout.for_slices(image_payloads).stack(
-            slices=image_payloads,
-            memory_type=memory_type,
-            gpu_id=0,
-        )
-    return ImageBundleLayout.for_slices(image_payloads).stack(
-        slices=image_payloads,
-        memory_type=memory_type,
-        gpu_id=0,
-    )
+    unmasked_payloads = tuple(image_payload_data(payload) for payload in image_payloads)
+    composed = _compose_unmasked_image_bundle(unmasked_payloads)
+    mask = _combine_payload_masks(image_payloads)
+    metadata = compose_image_payload_metadata(image_payloads)
+    return image_payload_with_context(composed, mask=mask, metadata=metadata)
 
 
 def payload_slice_count(payload: Any) -> int:
@@ -267,10 +325,12 @@ def payload_slice_count(payload: Any) -> int:
 
 
 def _is_bundle_image_slice(value: Any) -> bool:
-    return is_grayscale_image_slice(value) or is_color_image_slice(value)
+    data = image_payload_data(value)
+    return is_grayscale_image_slice(data) or is_color_image_slice(data)
 
 
 def _is_homogeneous_image_bundle(slices: Sequence[Any]) -> bool:
+    slices = tuple(image_payload_data(slice_data) for slice_data in slices)
     return (
         all(is_grayscale_image_slice(slice_data) for slice_data in slices)
         or all(is_color_image_slice(slice_data) for slice_data in slices)
@@ -278,6 +338,7 @@ def _is_homogeneous_image_bundle(slices: Sequence[Any]) -> bool:
 
 
 def _as_numpy_slice(slice_data: Any, gpu_id: int) -> np.ndarray:
+    slice_data = image_payload_data(slice_data)
     source_type = detect_memory_type(slice_data)
     if source_type == MEMORY_TYPE_NUMPY:
         return slice_data

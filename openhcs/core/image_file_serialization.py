@@ -9,6 +9,12 @@ from typing import Any, ClassVar, Sequence
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.image_shapes import (
+    is_color_image_stack,
+    is_grayscale_image_stack,
+)
+from openhcs.core.runtime_values import image_payload_data
+
 
 class ImageFileSerializationFormat(ABC, metaclass=AutoRegisterMeta):
     """Nominal family for preparing image arrays for concrete file formats."""
@@ -37,7 +43,7 @@ class NativeImageFileSerializationFormat(ImageFileSerializationFormat):
     format_key = "native"
 
     def prepare(self, payload: Any) -> Any:
-        return payload
+        return image_payload_data(payload)
 
 
 class EightBitRasterImageFileSerializationFormat(ImageFileSerializationFormat):
@@ -47,7 +53,7 @@ class EightBitRasterImageFileSerializationFormat(ImageFileSerializationFormat):
     suffixes = (".bmp", ".gif", ".jpeg", ".jpg")
 
     def prepare(self, payload: Any) -> Any:
-        return image_payload_as_uint8(payload)
+        return image_payload_as_uint8(collapse_singleton_image_stack(payload))
 
 
 class PngImageFileSerializationFormat(ImageFileSerializationFormat):
@@ -57,7 +63,7 @@ class PngImageFileSerializationFormat(ImageFileSerializationFormat):
     suffixes = (".png",)
 
     def prepare(self, payload: Any) -> Any:
-        array = np.asarray(payload)
+        array = collapse_singleton_image_stack(payload)
         if array.dtype == np.uint8 or array.dtype == np.uint16:
             return array
         return image_payload_as_uint8(array)
@@ -107,9 +113,9 @@ class NumericImagePayloadUint8Strategy(ImagePayloadUint8Strategy):
     strategy_key = "numeric"
 
     def prepare(self, array: np.ndarray) -> np.ndarray:
-        values = array.astype(np.float64, copy=False)
+        values = _uint8_conversion_values(array)
         if _is_unit_interval(values):
-            values = values * 255.0
+            values = values * _scale_value(values, 255.0)
 
         sanitized = np.nan_to_num(values, nan=0.0, posinf=255.0, neginf=0.0)
         return np.rint(np.clip(sanitized, 0.0, 255.0)).astype(np.uint8)
@@ -139,8 +145,19 @@ def prepare_disk_image_payloads(
 
 def image_payload_as_uint8(payload: Any) -> np.ndarray:
     """Convert numeric image payloads to uint8 using explicit file semantics."""
-    array = np.asarray(payload)
+    array = np.asarray(image_payload_data(payload))
     return ImagePayloadUint8Strategy.for_dtype(array.dtype).prepare(array)
+
+
+def collapse_singleton_image_stack(payload: Any) -> np.ndarray:
+    """Return single-plane image stacks as the exported image plane."""
+    array = np.asarray(image_payload_data(payload))
+    if (
+        (is_grayscale_image_stack(array) or is_color_image_stack(array))
+        and array.shape[0] == 1
+    ):
+        return array[0]
+    return array
 
 
 def _is_unit_interval(values: np.ndarray) -> bool:
@@ -148,3 +165,15 @@ def _is_unit_interval(values: np.ndarray) -> bool:
     if finite_values.size == 0:
         return True
     return float(finite_values.min()) >= 0.0 and float(finite_values.max()) <= 1.0
+
+
+def _uint8_conversion_values(array: np.ndarray) -> np.ndarray:
+    if np.issubdtype(array.dtype, np.floating):
+        return array.astype(array.dtype, copy=False)
+    return array.astype(np.float64, copy=False)
+
+
+def _scale_value(values: np.ndarray, value: float) -> Any:
+    if np.issubdtype(values.dtype, np.floating):
+        return values.dtype.type(value)
+    return value

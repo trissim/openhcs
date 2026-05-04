@@ -26,6 +26,17 @@ def _coerce_function_enum(enum_type: type[_EnumT], value: _EnumT | str) -> _Enum
     for member in enum_type:
         if normalized_value in _member_literals(enum_type, member):
             return member
+    prefix_matches = [
+        member
+        for member in enum_type
+        if any(
+            normalized_value.startswith(candidate)
+            or candidate.startswith(normalized_value)
+            for candidate in _member_literals(enum_type, member)
+        )
+    ]
+    if len(prefix_matches) == 1:
+        return prefix_matches[0]
     raise ValueError(
         f"{enum_type.__name__} cannot be coerced from {value!r}."
     )

@@ -69,6 +69,10 @@ DEFAULT_ARTIFACT_MATERIALIZATION_RULES: dict[
         ArtifactKind.TABLE,
         _csv_spec,
     ),
+    ArtifactKind.SPATIAL_GRID: ArtifactMaterializationRule(
+        ArtifactKind.SPATIAL_GRID,
+        _json_spec,
+    ),
     ArtifactKind.METADATA: ArtifactMaterializationRule(
         ArtifactKind.METADATA,
         _json_spec,

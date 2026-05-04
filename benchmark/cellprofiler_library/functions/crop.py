@@ -6,7 +6,7 @@ Original: crop, measure_area_retained_after_cropping, measure_original_image_are
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
@@ -21,6 +21,13 @@ from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.core.runtime_semantics import coerce_enum
+from openhcs.core.runtime_values import (
+    ImagePayloadMetadata,
+    image_payload_with_context,
+    MaskedImagePayload,
+    image_payload_data,
+    image_payload_metadata,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
 
@@ -67,16 +74,26 @@ class CropMaskRequest:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CropSpatialBounds:
+    """Spatial context for a crop output in the parent image domain."""
+
+    offset_yx: tuple[int, int]
+    output_shape_yx: tuple[int, int]
+    first_last_yx: tuple[int, int, int, int] | None
+
+
 class CropShapeMaskStrategy(ABC, metaclass=AutoRegisterMeta):
     """Nominal strategy family for CellProfiler Crop shape modes."""
 
-    __registry_key__ = "crop_shape"
+    __registry_key__ = "crop_shape_label"
     __skip_if_no_key__ = True
+    crop_shape_label: ClassVar[str | None] = None
     crop_shape: ClassVar[CropShape | None] = None
 
     @classmethod
     def for_shape(cls, crop_shape: CropShape) -> "CropShapeMaskStrategy":
-        strategy_type = cls.__registry__.get(crop_shape)
+        strategy_type = cls.__registry__.get(crop_shape.value)
         if strategy_type is None:
             raise NotImplementedError(
                 f"Unsupported CellProfiler Crop shape {crop_shape.value!r}."
@@ -92,6 +109,7 @@ class PreviousCroppingMaskStrategy(CropShapeMaskStrategy):
     """Use the prior Crop sidecar mask."""
 
     crop_shape = CropShape.CROPPING
+    crop_shape_label = crop_shape.value
 
     def mask(self, request: CropMaskRequest) -> np.ndarray:
         if request.mask_plane is None:
@@ -103,6 +121,7 @@ class ImageMaskCropMaskStrategy(CropShapeMaskStrategy):
     """Use a supplied image mask."""
 
     crop_shape = CropShape.IMAGE
+    crop_shape_label = crop_shape.value
 
     def mask(self, request: CropMaskRequest) -> np.ndarray:
         if request.mask_plane is None:
@@ -114,12 +133,13 @@ class ObjectMaskCropMaskStrategy(CropShapeMaskStrategy):
     """Use supplied object labels as the crop mask."""
 
     crop_shape = CropShape.OBJECTS
+    crop_shape_label = crop_shape.value
 
     def mask(self, request: CropMaskRequest) -> np.ndarray:
         if request.cropping_labels is None:
             raise ValueError("Crop object-mask mode requires cropping_labels.")
         return _validate_crop_mask(
-            np.asarray(request.cropping_labels) > 0,
+            _object_label_crop_mask(request.cropping_labels, request.orig_image_pixels),
             request.orig_image_pixels,
         )
 
@@ -128,6 +148,7 @@ class RectangleCropMaskStrategy(CropShapeMaskStrategy):
     """Build a rectangular coordinate crop mask."""
 
     crop_shape = CropShape.RECTANGLE
+    crop_shape_label = crop_shape.value
 
     def mask(self, request: CropMaskRequest) -> np.ndarray:
         _require_coordinate_cropping(request)
@@ -149,6 +170,7 @@ class EllipseCropMaskStrategy(CropShapeMaskStrategy):
     """Build an elliptical coordinate crop mask."""
 
     crop_shape = CropShape.ELLIPSE
+    crop_shape_label = crop_shape.value
 
     def mask(self, request: CropMaskRequest) -> np.ndarray:
         _require_coordinate_cropping(request)
@@ -277,6 +299,74 @@ def _get_cropped_image_pixels(
     return cropped_pixel_data
 
 
+def _crop_spatial_bounds(
+    cropping: np.ndarray,
+    removal_method: RemovalMethod,
+) -> CropSpatialBounds:
+    """Return crop bounds in parent-image coordinates."""
+    input_shape = tuple(int(value) for value in cropping.shape[:2])
+    if not removal_method.removes_empty_rows_or_columns:
+        return CropSpatialBounds(
+            offset_yx=(0, 0),
+            output_shape_yx=input_shape,
+            first_last_yx=(0, input_shape[0] - 1, 0, input_shape[1] - 1),
+        )
+
+    row_indexes = np.flatnonzero(np.sum(cropping, axis=1) > 0)
+    column_indexes = np.flatnonzero(np.sum(cropping, axis=0) > 0)
+    if row_indexes.size == 0 or column_indexes.size == 0:
+        return CropSpatialBounds(
+            offset_yx=(0, 0),
+            output_shape_yx=(0, 0),
+            first_last_yx=None,
+        )
+
+    first_row = int(row_indexes[0])
+    last_row = int(row_indexes[-1])
+    first_column = int(column_indexes[0])
+    last_column = int(column_indexes[-1])
+    if removal_method.removes_internal_empty_rows_or_columns:
+        output_shape = (int(row_indexes.size), int(column_indexes.size))
+    else:
+        output_shape = (
+            last_row - first_row + 1,
+            last_column - first_column + 1,
+        )
+    return CropSpatialBounds(
+        offset_yx=(first_row, first_column),
+        output_shape_yx=output_shape,
+        first_last_yx=(first_row, last_row, first_column, last_column),
+    )
+
+
+def _crop_output_metadata(
+    metadata: ImagePayloadMetadata,
+    *,
+    input_shape_yx: tuple[int, int],
+    bounds: CropSpatialBounds,
+) -> ImagePayloadMetadata:
+    """Return image metadata with exact crop-local physical edge context."""
+    if bounds.first_last_yx is None:
+        physical_edges = (False, False, False, False)
+    else:
+        first_row, last_row, first_column, last_column = bounds.first_last_yx
+        top_edge, bottom_edge, left_edge, right_edge = (
+            metadata.physical_border_edges_for_shape(input_shape_yx)
+        )
+        physical_edges = (
+            top_edge and first_row == 0,
+            bottom_edge and last_row == input_shape_yx[0] - 1,
+            left_edge and first_column == 0,
+            right_edge and last_column == input_shape_yx[1] - 1,
+        )
+    return metadata.with_spatial_crop(
+        input_shape_yx=input_shape_yx,
+        output_shape_yx=bounds.output_shape_yx,
+        offset_yx=bounds.offset_yx,
+        physical_border_edges_yx=physical_edges,
+    )
+
+
 @numpy
 @special_outputs(
     (
@@ -305,7 +395,9 @@ def crop(
     cropping_labels: Any | None = None,
 ) -> tuple[np.ndarray, np.ndarray, CropMeasurement]:
     """Crop an image and return its CellProfiler crop_mask sidecar."""
-    orig_image_pixels, mask_plane = _split_crop_input(image)
+    input_pixels = image_payload_data(image)
+    input_metadata = image_payload_metadata(image)
+    orig_image_pixels, mask_plane = _split_crop_input(input_pixels)
     request = CropMaskRequest(
         orig_image_pixels=orig_image_pixels,
         mask_plane=mask_plane,
@@ -331,6 +423,13 @@ def crop(
         cropped_mask,
         removal_method,
     )
+    input_shape_yx = tuple(int(value) for value in orig_image_pixels.shape[:2])
+    crop_bounds = _crop_spatial_bounds(cropping, removal_method)
+    output_metadata = _crop_output_metadata(
+        input_metadata,
+        input_shape_yx=input_shape_yx,
+        bounds=crop_bounds,
+    )
 
     original_area = int(np.prod(orig_image_pixels.shape[:2]))
     area_retained = int(np.sum(cropping))
@@ -340,7 +439,18 @@ def crop(
         area_retained=area_retained,
         fraction_retained=area_retained / original_area if original_area else 0.0,
     )
-    return cropped_pixel_data, cropping, measurements
+    output_mask = cropped_mask
+    if not removal_method.removes_empty_rows_or_columns:
+        output_metadata = replace(output_metadata, mask_defines_border=False)
+    return (
+        image_payload_with_context(
+            cropped_pixel_data,
+            mask=output_mask,
+            metadata=output_metadata,
+        ),
+        cropping,
+        measurements,
+    )
 
 
 def _split_crop_input(image: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
@@ -368,6 +478,17 @@ def _validate_crop_mask(
             f"got mask {crop_mask.shape!r} for image {image.shape[:2]!r}."
         )
     return crop_mask
+
+
+def _object_label_crop_mask(labels: Any, image: np.ndarray) -> np.ndarray:
+    """Return a 2-D foreground mask from dense object-label planes."""
+    label_array = np.asarray(labels)
+    image_shape = tuple(np.asarray(image).shape[:2])
+    if label_array.shape == image_shape:
+        return label_array > 0
+    if label_array.ndim > 2 and tuple(label_array.shape[-2:]) == image_shape:
+        return np.any(label_array > 0, axis=tuple(range(label_array.ndim - 2)))
+    return label_array > 0
 
 
 def _rectangle_pair(

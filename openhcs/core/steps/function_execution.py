@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import traceback
 from typing import Any, Mapping, Sequence
 
@@ -93,6 +94,7 @@ class FunctionStepExecutor:
 
     def run(self) -> None:
         plan = self.plan
+        step_started_at = time.perf_counter()
         self._log_execution_start()
 
         patterns_by_axis = self._detect_patterns()
@@ -104,18 +106,31 @@ class FunctionStepExecutor:
         grouped_patterns = self._prepare_groups(patterns_by_axis)
         total_groups = self._count_pattern_groups(grouped_patterns)
         self._preload_inputs_if_needed(grouped_patterns)
+        execution_started_at = time.perf_counter()
         self._execute_pattern_groups(
             grouped_patterns,
             total_groups,
         )
+        execution_elapsed = time.perf_counter() - execution_started_at
 
-        logger.info("Completed step '%s' for axis %s.", plan.step_name, plan.axis_id)
-        finalize_function_step_outputs(self.context, plan)
         logger.info(
-            "FunctionStep %s (%s) completed for axis %s.",
+            "Completed step '%s' for axis %s in %.3fs.",
+            plan.step_name,
+            plan.axis_id,
+            execution_elapsed,
+        )
+        finalization_started_at = time.perf_counter()
+        finalize_function_step_outputs(self.context, plan)
+        finalization_elapsed = time.perf_counter() - finalization_started_at
+        logger.info(
+            "FunctionStep %s (%s) completed for axis %s in %.3fs "
+            "(execute=%.3fs, finalize=%.3fs).",
             plan.step_index,
             plan.step_name,
             plan.axis_id,
+            time.perf_counter() - step_started_at,
+            execution_elapsed,
+            finalization_elapsed,
         )
 
     def _log_execution_start(self) -> None:

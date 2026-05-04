@@ -61,6 +61,17 @@ class ModuleBlock:
         """Get a setting value by key."""
         return self.settings.get(key, default)
 
+    @property
+    def variable_revision_number(self) -> int | None:
+        """Return the CellProfiler module schema revision when declared."""
+        value = self.metadata.get("variable_revision_number")
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
     def get_setting_values(self, key: str) -> tuple[str, ...]:
         """Get all values for a setting key in .cppipe order."""
         normalized_key = key.strip()
@@ -108,6 +119,10 @@ class CPPipeParser:
         r'^    ([^:]+):(.*)$'
     )
 
+    IMAGE_PLANE_DETAILS_PATTERN = re.compile(
+        r'^"Version":"(?P<version>[^"]+)","PlaneCount":"(?P<count>\d+)"$'
+    )
+
     # Older .pipeline resources store module settings without indentation.
     UNINDENTED_SETTING_PATTERN = re.compile(
         r'^([^:]+):(.*)$'
@@ -123,6 +138,7 @@ class CPPipeParser:
         self.cppipe_path = Path(cppipe_path) if cppipe_path else None
         self.modules: List[ModuleBlock] = []
         self.header: Dict[str, str] = {}
+        self.image_plane_sources: tuple[dict[str, str | None], ...] = ()
     
     def parse(self, cppipe_path: Optional[Path] = None) -> List[ModuleBlock]:
         """
@@ -148,17 +164,10 @@ class CPPipeParser:
         
         self.modules = []
         self.header = {}
+        self.image_plane_sources = ()
         current_module: Optional[ModuleBlock] = None
         
         for line in lines:
-            # Skip comments
-            if line.strip().startswith('#'):
-                continue
-            
-            # Skip empty lines
-            if not line.strip():
-                continue
-            
             # Check for module header
             header_match = self.MODULE_HEADER_PATTERN.match(line)
             if header_match:
@@ -178,11 +187,32 @@ class CPPipeParser:
                     metadata=metadata
                 )
                 continue
+
+            # Indented module settings are authoritative even when the setting
+            # label itself starts with "#", e.g. CellProfiler's "# of deviations".
+            setting_match = self.SETTING_PATTERN.match(line)
+            if setting_match and current_module:
+                if self._has_setting_name(setting_match):
+                    setting = ModuleSetting(
+                        name=setting_match.group(1),
+                        value=setting_match.group(2),
+                    )
+                    current_module.setting_records.append(setting)
+                    current_module.settings[setting.name] = setting.value
+                continue
+
+            # Skip comments
+            if line.strip().startswith('#'):
+                continue
+
+            # Skip empty lines
+            if not line.strip():
+                continue
             
             # Check for setting line. Real CellProfiler corpora include both
             # indented .cppipe settings and unindented legacy .pipeline settings.
-            setting_match = self._setting_match(line, current_module)
-            if setting_match and current_module:
+            setting_match = self.UNINDENTED_SETTING_PATTERN.match(line)
+            if self._has_setting_name(setting_match) and current_module:
                 setting = ModuleSetting(
                     name=setting_match.group(1),
                     value=setting_match.group(2),
@@ -200,6 +230,11 @@ class CPPipeParser:
         # Don't forget the last module
         if current_module:
             self.modules.append(current_module)
+
+        self.image_plane_sources = self._parse_image_plane_sources(lines)
+        if self.image_plane_sources:
+            for module in self.modules:
+                module.metadata["image_plane_sources"] = self.image_plane_sources
         
         logger.info(f"Parsed {len(self.modules)} modules from {path.name}")
         return self.modules
@@ -234,6 +269,55 @@ class CPPipeParser:
             value = match.group(2).strip().strip("'")
             metadata[key] = value
         return metadata
+
+    def _parse_image_plane_sources(
+        self,
+        lines: list[str],
+    ) -> tuple[dict[str, str | None], ...]:
+        """Parse CellProfiler's optional embedded image-plane details table."""
+
+        for index, line in enumerate(lines):
+            version_match = self.IMAGE_PLANE_DETAILS_PATTERN.match(line.strip())
+            if version_match is None:
+                continue
+            header_index = index + 1
+            if header_index >= len(lines):
+                return ()
+            header = self._csv_image_plane_row(lines[header_index])
+            if not header or header[0] != "URL":
+                return ()
+            plane_sources: list[dict[str, str | None]] = []
+            expected_count = int(version_match.group("count"))
+            for row_line in lines[header_index + 1 :]:
+                if not row_line.strip():
+                    continue
+                row = self._csv_image_plane_row(row_line)
+                if not row:
+                    continue
+                values = {
+                    name: (value.strip() or None)
+                    for name, value in zip(header, row, strict=False)
+                }
+                uri = values.get("URL")
+                if not uri:
+                    continue
+                plane_sources.append(
+                    {
+                        "uri": uri,
+                        "series": values.get("Series"),
+                        "index": values.get("Index"),
+                        "channel": values.get("Channel"),
+                    }
+                )
+                if len(plane_sources) == expected_count:
+                    break
+            return tuple(plane_sources)
+        return ()
+
+    def _csv_image_plane_row(self, line: str) -> list[str]:
+        import csv
+
+        return next(csv.reader([line]))
     
     def get_module_by_name(self, name: str) -> Optional[ModuleBlock]:
         """Get a module by name (case-insensitive)."""

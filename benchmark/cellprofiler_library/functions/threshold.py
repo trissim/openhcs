@@ -10,6 +10,8 @@ from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.runtime_values import image_payload_data
+from openhcs.processing.backends.cellprofiler.thresholding import threshold_primitives
 from openhcs.processing.materialization import csv_materializer
 
 
@@ -61,15 +63,10 @@ def _get_global_threshold(
     upper_outlier_fraction: float,
     averaging_method: AveragingMethod,
     variance_method: VarianceMethod,
-    number_of_deviations: int,
+    number_of_deviations: float,
 ) -> float:
     """Calculate global threshold using specified method."""
-    from skimage.filters import (
-        threshold_otsu,
-        threshold_li,
-        threshold_triangle,
-        threshold_isodata,
-    )
+    primitives = threshold_primitives()
     
     # Apply mask if provided
     if mask is not None:
@@ -87,16 +84,20 @@ def _get_global_threshold(
         data = data[data > 0]
         if len(data) == 0:
             return 0.0
-        data = np.log(data)
-    
+        data, conversion = primitives.log_transform(data)
+    else:
+        conversion = None
+
     if threshold_method == ThresholdMethod.OTSU:
-        thresh = threshold_otsu(data)
-    elif threshold_method == ThresholdMethod.LI or threshold_method == ThresholdMethod.MINIMUM_CROSS_ENTROPY:
-        thresh = threshold_li(data)
+        thresh = primitives.otsu_threshold(data)
+    elif threshold_method == ThresholdMethod.MINIMUM_CROSS_ENTROPY:
+        thresh = primitives.minimum_cross_entropy_threshold(data)
+    elif threshold_method == ThresholdMethod.LI:
+        thresh = primitives.li_threshold(data)
     elif threshold_method == ThresholdMethod.TRIANGLE:
-        thresh = threshold_triangle(data)
+        thresh = primitives.triangle_threshold(data)
     elif threshold_method == ThresholdMethod.ISODATA:
-        thresh = threshold_isodata(data)
+        thresh = primitives.isodata_threshold(data)
     elif threshold_method == ThresholdMethod.ROBUST_BACKGROUND:
         # Robust background method
         sorted_data = np.sort(data)
@@ -113,22 +114,21 @@ def _get_global_threshold(
         elif averaging_method == AveragingMethod.MEDIAN:
             center = np.median(trimmed)
         else:  # MODE
-            hist, bin_edges = np.histogram(trimmed, bins=256)
-            center = bin_edges[np.argmax(hist)]
+            center = primitives.binned_mode(trimmed)
         
         if variance_method == VarianceMethod.STANDARD_DEVIATION:
             spread = np.std(trimmed)
         else:  # MEDIAN_ABSOLUTE_DEVIATION
-            spread = np.median(np.abs(trimmed - np.median(trimmed))) * 1.4826
-        
+            spread = primitives.mad(trimmed) * 1.4826
+
         thresh = center + number_of_deviations * spread
     else:
-        thresh = threshold_otsu(data)
-    
+        thresh = primitives.otsu_threshold(data)
+
     # Reverse log transform if applied
-    if log_transform:
-        thresh = np.exp(thresh)
-    
+    if conversion is not None:
+        thresh = primitives.inverse_log_transform(thresh, conversion)
+
     return float(thresh)
 
 
@@ -142,7 +142,7 @@ def _get_adaptive_threshold(
     upper_outlier_fraction: float,
     averaging_method: AveragingMethod,
     variance_method: VarianceMethod,
-    number_of_deviations: int,
+    number_of_deviations: float,
 ) -> np.ndarray:
     """Calculate adaptive (local) threshold."""
     from scipy.ndimage import uniform_filter
@@ -230,7 +230,7 @@ def threshold(
     upper_outlier_fraction: float = 0.05,
     averaging_method: AveragingMethod = AveragingMethod.MEAN,
     variance_method: VarianceMethod = VarianceMethod.STANDARD_DEVIATION,
-    number_of_deviations: int = 2,
+    number_of_deviations: float = 2.0,
     predefined_threshold: Optional[float] = None,
     automatic: bool = False,
 ) -> Tuple[np.ndarray, ThresholdResult]:
@@ -272,6 +272,10 @@ def threshold(
     Returns:
         Tuple of (binary_mask, ThresholdResult)
     """
+    image = np.asarray(image_payload_data(image), dtype=np.float32)
+    if mask is not None:
+        mask = np.asarray(image_payload_data(mask))
+
     guide_threshold = 0.0
     
     # Handle predefined threshold

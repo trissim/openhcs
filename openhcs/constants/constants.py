@@ -160,10 +160,15 @@ def _create_enums():
     Caching provides ~20x speedup on subsequent runs and in subprocesses.
     """
     import os
-    import traceback
-    logger.info(f"🔧 _create_enums() CALLED in process {os.getpid()}")
-    logger.info(f"🔧 _create_enums() cache_info: {_create_enums.cache_info()}")
-    logger.info(f"🔧 _create_enums() STACK TRACE:\n{''.join(traceback.format_stack())}")
+    logger.debug("_create_enums() called in process %s", os.getpid())
+    logger.debug("_create_enums() cache_info: %s", _create_enums.cache_info())
+    if logger.isEnabledFor(logging.DEBUG):
+        import traceback
+
+        logger.debug(
+            "_create_enums() stack trace:\n%s",
+            "".join(traceback.format_stack()),
+        )
 
     # Try to load from persistent cache first
     cache_manager = _get_component_enum_cache_manager()
@@ -192,7 +197,10 @@ def _create_enums():
                 sc.__module__ = __name__
                 sc.__qualname__ = 'SequentialComponents'
 
-                logger.info(f"🔧 _create_enums() LOADED FROM CACHE in process {os.getpid()}")
+                logger.debug(
+                    "_create_enums() loaded from cache in process %s",
+                    os.getpid(),
+                )
                 return all_components, vc, GroupBy, sc
         except Exception as e:
             logger.debug(f"Cache load failed for component enums: {e}")
@@ -242,10 +250,19 @@ def _create_enums():
         except Exception as e:
             logger.debug(f"Failed to save component enum cache: {e}")
 
-    logger.info(f"🔧 _create_enums() RETURNING in process {os.getpid()}: "
-               f"AllComponents={id(all_components)}, VariableComponents={id(vc)}, GroupBy={id(GroupBy)}, "
-               f"SequentialComponents={id(sc)}")
-    logger.info(f"🔧 _create_enums() cache_info after return: {_create_enums.cache_info()}")
+    logger.debug(
+        "_create_enums() returning in process %s: AllComponents=%s, "
+        "VariableComponents=%s, GroupBy=%s, SequentialComponents=%s",
+        os.getpid(),
+        id(all_components),
+        id(vc),
+        id(GroupBy),
+        id(sc),
+    )
+    logger.debug(
+        "_create_enums() cache_info after return: %s",
+        _create_enums.cache_info(),
+    )
     return all_components, vc, GroupBy, sc
 
 
@@ -256,10 +273,8 @@ def _create_streaming_components():
     This enum includes both filename components (from parser) and virtual components
     (from execution/location context) for streaming visualization.
     """
-    import logging
     import os
-    logger = logging.getLogger(__name__)
-    logger.info(f"🔧 _create_streaming_components() CALLED in process {os.getpid()}")
+    logger.debug("_create_streaming_components() called in process %s", os.getpid())
 
     # Import AllComponents (triggers lazy creation if needed)
     from openhcs.constants import AllComponents
@@ -272,7 +287,10 @@ def _create_streaming_components():
     streaming_components.__module__ = __name__
     streaming_components.__qualname__ = 'StreamingComponents'
 
-    logger.info(f"🔧 _create_streaming_components() RETURNING: StreamingComponents={id(streaming_components)}")
+    logger.debug(
+        "_create_streaming_components() returning: StreamingComponents=%s",
+        id(streaming_components),
+    )
     return streaming_components
 
 
@@ -288,10 +306,12 @@ def __getattr__(name):
             return globals()[name]
 
         # Create all enums at once and store in globals
-        import logging
         import os
-        logger = logging.getLogger(__name__)
-        logger.info(f"🔧 ENUM CREATION: Creating {name} in process {os.getpid()}")
+        logger.debug(
+            "Creating dynamic component enum %s in process %s",
+            name,
+            os.getpid(),
+        )
 
         all_components, vc, gb, sc = _create_enums()
         globals()['AllComponents'] = all_components
@@ -299,10 +319,21 @@ def __getattr__(name):
         globals()['GroupBy'] = gb
         globals()['SequentialComponents'] = sc
 
-        logger.info(f"🔧 ENUM CREATION: Created enums in process {os.getpid()}: "
-                   f"AllComponents={id(all_components)}, VariableComponents={id(vc)}, GroupBy={id(gb)}, "
-                   f"SequentialComponents={id(sc)}")
-        logger.info(f"🔧 ENUM CREATION: VariableComponents.__module__={vc.__module__}, __qualname__={vc.__qualname__}")
+        logger.debug(
+            "Created dynamic component enums in process %s: "
+            "AllComponents=%s, VariableComponents=%s, GroupBy=%s, "
+            "SequentialComponents=%s",
+            os.getpid(),
+            id(all_components),
+            id(vc),
+            id(gb),
+            id(sc),
+        )
+        logger.debug(
+            "VariableComponents.__module__=%s, __qualname__=%s",
+            vc.__module__,
+            vc.__qualname__,
+        )
 
         return globals()[name]
 
@@ -311,16 +342,20 @@ def __getattr__(name):
         if name in globals():
             return globals()[name]
 
-        import logging
         import os
-        logger = logging.getLogger(__name__)
-        logger.info(f"🔧 ENUM CREATION: Creating StreamingComponents in process {os.getpid()}")
+        logger.debug(
+            "Creating StreamingComponents in process %s",
+            os.getpid(),
+        )
 
         streaming_components = _create_streaming_components()
         globals()['StreamingComponents'] = streaming_components
 
-        logger.info(f"🔧 ENUM CREATION: Created StreamingComponents in process {os.getpid()}: "
-                   f"StreamingComponents={id(streaming_components)}")
+        logger.debug(
+            "Created StreamingComponents in process %s: StreamingComponents=%s",
+            os.getpid(),
+            id(streaming_components),
+        )
 
         return globals()[name]
 
