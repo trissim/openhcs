@@ -9,7 +9,7 @@
 [submodule "external/arraybridge"]
 	path = external/arraybridge
 	url = https://github.com/OpenHCSDev/arraybridge.git
-	branch = main
+	branch = benchmark-platform
 [submodule "external/metaclass-registry"]
 	path = external/metaclass-registry
 	url = https://github.com/OpenHCSDev/metaclass-registry.git
@@ -25,7 +25,7 @@
 [submodule "external/PolyStore"]
 	path = external/PolyStore
 	url = https://github.com/OpenHCSDev/PolyStore.git
-	branch = main
+	branch = cellprofiler-raster-image-formats
 [submodule "external/pyqt-reactive"]
 	path = external/pyqt-reactive
 	url = https://github.com/OpenHCSDev/PyQT-reactive.git
