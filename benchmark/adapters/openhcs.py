@@ -76,6 +76,7 @@ _RUNTIME_EXECUTION_CACHE_IGNORED_PARAM_KEYS = frozenset(
         "runtime_execution_cache_manifest",
         "runtime_execution_cache_key",
         "reuse_runtime_execution_cache",
+        "raise_on_equivalence_failure",
     }
 )
 _RUNTIME_EXECUTION_CACHE_HELPER_KEYS = frozenset({"legacy_source_tree"})
@@ -140,6 +141,10 @@ class OpenHCSRunRequest:
     @property
     def compare_image_outputs(self) -> bool:
         return bool(self.pipeline_params.get("compare_image_outputs", True))
+
+    @property
+    def raise_on_equivalence_failure(self) -> bool:
+        return bool(self.pipeline_params.get("raise_on_equivalence_failure", True))
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,6 +383,7 @@ class OpenHCSAdapter(ToolAdapter):
                 )
         equivalence_reference = request.equivalence_reference_output_dir
         equivalence_report = None
+        equivalence_failure_message = None
         if equivalence_reference is not None:
             if not equivalence_reference.exists():
                 raise ToolExecutionError(
@@ -423,7 +429,7 @@ class OpenHCSAdapter(ToolAdapter):
                         ),
                     )
             if not equivalence_report.is_equivalent:
-                raise ToolExecutionError(
+                equivalence_failure_message = (
                     "Converted CellProfiler output did not match semantic "
                     f"reference output {equivalence_reference}:\n"
                     + "\n".join(
@@ -431,6 +437,8 @@ class OpenHCSAdapter(ToolAdapter):
                         for message in equivalence_report.failure_messages()
                     )
                 )
+                if request.raise_on_equivalence_failure:
+                    raise ToolExecutionError(equivalence_failure_message)
 
         metric_results = self._metric_results(request.metrics)
         output_plate_root.mkdir(parents=True, exist_ok=True)
@@ -469,8 +477,8 @@ class OpenHCSAdapter(ToolAdapter):
             pipeline_name=request.pipeline_name,
             metrics=metric_results,
             output_path=execution_output_root,
-            success=True,
-            error_message=None,
+            success=equivalence_failure_message is None,
+            error_message=equivalence_failure_message,
             provenance=provenance,
         )
 
