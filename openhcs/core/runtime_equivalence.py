@@ -79,9 +79,13 @@ from openhcs.core.equivalence.cells import (
 )
 from openhcs.core.equivalence.tables import (
     CSV_HEADER_CONTEXT_STOPWORDS as _CSV_HEADER_CONTEXT_STOPWORDS,
+    IMAGE_IDENTITY_FIELDS as _IMAGE_IDENTITY_FIELDS,
     MEASUREMENT_IDENTITY_FIELDS as _MEASUREMENT_IDENTITY_FIELDS,
     RuntimeTableSnapshot,
     aggregate_measurement_table_key,
+    axis_scoped_measurement_row_identity,
+    is_static_wide_measurement_table,
+    is_wide_measurement_table,
     measurement_table_cell_payload,
 )
 from openhcs.core.equivalence.images import RuntimeImageSnapshot
@@ -281,6 +285,15 @@ _RuntimeRowLongFormProjector = Callable[
 class _RuntimeRowProjection(Generic[_RuntimeRowProjectionValueT]):
     records: _RuntimeRowProjectionRecords[_RuntimeRowProjectionValueT]
     long_form: bool = False
+
+
+def _runtime_row_projection(
+    records: Iterable[_RuntimeRowProjectionRecord[_RuntimeRowProjectionValueT]] = (),
+    *,
+    long_form: bool = False,
+) -> _RuntimeRowProjection[_RuntimeRowProjectionValueT]:
+    """Build a row projection through one normalized record boundary."""
+    return _RuntimeRowProjection(tuple(records), long_form=long_form)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1737,7 +1750,7 @@ def _record_static_wide_measurement_table_snapshot(
         return True
 
     first_row = dict(zip(table.header, table.rows[0], strict=True))
-    if not _is_wide_measurement_table(first_row, policy.measurement_dialect):
+    if not is_wide_measurement_table(first_row):
         return False
 
     first_subject = _measurement_subject_from_export_row(table.path, first_row)
@@ -1902,7 +1915,7 @@ def _record_static_wide_runtime_measurement_table(
         return True
 
     first_mapping = measurement_row_mapping(all_rows[0])
-    if not _is_wide_measurement_table(first_mapping, policy.measurement_dialect):
+    if not is_wide_measurement_table(first_mapping):
         return False
     header = tuple(first_mapping)
     for row in all_rows[1:]:
@@ -2169,7 +2182,7 @@ def _record_row_aggregate_input_value(
     if numeric_value is None:
         return row_identity
     if row_identity is None:
-        row_identity = _axis_scoped_measurement_row_identity(
+        row_identity = axis_scoped_measurement_row_identity(
             context.row_mapping,
             context.axis_key,
         )
@@ -2307,40 +2320,6 @@ def _parts_contain_adjacent_image_number(parts: tuple[str, ...]) -> bool:
     return any(
         parts[index] == "image" and parts[index + 1] == "number"
         for index in range(len(parts) - 1)
-    )
-
-
-def _measurement_row_image_identity_key(
-    row: Mapping[str, object],
-) -> tuple[tuple[str, object], ...]:
-    """Return the image identity carried by a measurement row."""
-    identity_values: list[tuple[str, object]] = []
-    for field_name, value in row.items():
-        normalized_field_name = _normalize_identifier(field_name)
-        if normalized_field_name not in _IMAGE_IDENTITY_FIELDS:
-            continue
-        if value is None or not str(value).strip():
-            continue
-        identity_values.append(
-            (
-                normalized_field_name,
-                measurement_table_cell_payload(value),
-            )
-        )
-    return sorted_tuple(identity_values)
-
-
-def _axis_scoped_measurement_row_identity(
-    row: Mapping[str, object],
-    axis_key: object | None,
-) -> tuple[tuple[str, object], ...]:
-    """Return row identity scoped by runtime axis for local image numbering."""
-    row_identity = _measurement_row_image_identity_key(row)
-    if axis_key is None:
-        return row_identity
-    return (
-        ("_runtime_axis", measurement_table_cell_payload(axis_key)),
-        *row_identity,
     )
 
 
@@ -2515,7 +2494,10 @@ def _static_wide_measurement_facts_from_table_snapshot(
         return ()
 
     first_row = dict(zip(table.header, table.rows[0], strict=True))
-    if not _is_static_wide_measurement_table(first_row, policy.measurement_dialect):
+    if not is_static_wide_measurement_table(
+        first_row,
+        _measurement_qualifier_field_names(policy.measurement_dialect),
+    ):
         return None
 
     subject = _measurement_subject_from_export_row(table.path, first_row)
@@ -2597,36 +2579,6 @@ def _static_wide_measurement_facts_from_table_snapshot(
             )
         )
     return tuple(facts)
-
-
-def _is_static_wide_measurement_table(
-    row: Mapping[str, object],
-    dialect: RuntimeMeasurementDialect,
-) -> bool:
-    normalized_fields = {_normalize_identifier(field_name) for field_name in row}
-    if normalized_fields & frozenset(_MEASUREMENT_FEATURE_NAME_FIELDS):
-        return False
-    if normalized_fields & frozenset(_MEASUREMENT_VALUE_FIELDS):
-        return False
-    if normalized_fields & _measurement_qualifier_field_names(dialect):
-        return False
-    return (
-        MEASUREMENT_OBJECT_NAME_FIELD not in normalized_fields
-        and MEASUREMENT_SOURCE_IMAGE_NAME_FIELD not in normalized_fields
-    )
-
-
-def _is_wide_measurement_table(
-    row: Mapping[str, object],
-    dialect: RuntimeMeasurementDialect,
-) -> bool:
-    """Return whether a table encodes measurements as feature columns."""
-    normalized_fields = {_normalize_identifier(field_name) for field_name in row}
-    if normalized_fields & frozenset(_MEASUREMENT_FEATURE_NAME_FIELDS):
-        return False
-    if normalized_fields & frozenset(_MEASUREMENT_VALUE_FIELDS):
-        return False
-    return True
 
 
 def _wide_measurement_table_needs_row_derivation(
@@ -2784,7 +2736,7 @@ class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
         """Project one runtime row through shared schema/key/padding caches."""
         context = self.context
         if _is_metadata_map_row(context.subject, context.row):
-            return _RuntimeRowProjection(())
+            return _runtime_row_projection()
 
         header = tuple(context.row)
         row_schema = _runtime_measurement_row_schema_cached(context, header)
@@ -2819,9 +2771,9 @@ class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
             context.required_keys is not None
             and long_form_fact[0] not in context.required_keys
         ):
-            return _RuntimeRowProjection((), long_form=True)
-        return _RuntimeRowProjection(
-            tuple(
+            return _runtime_row_projection(long_form=True)
+        return _runtime_row_projection(
+            (
                 ((context.subject, context.source_name, ()), key, value)
                 for key, value in self.long_form_projector(long_form_fact)
                 if context.required_keys is None or key in context.required_keys
@@ -2849,8 +2801,8 @@ class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
                     padding_group_presence,
                 )
             )
-        return _RuntimeRowProjection(
-            tuple(
+        return _runtime_row_projection(
+            (
                 (padding_group, key, value)
                 for padding_group, key, value in records
                 if padding_group_presence.get(padding_group, True)
@@ -5401,7 +5353,6 @@ _MEASUREMENT_QUALIFIER_FIELDS = (
 )
 _MEASUREMENT_QUALIFIER_FIELD_SET = frozenset(_MEASUREMENT_QUALIFIER_FIELDS)
 _OBJECT_IDENTITY_FIELDS = frozenset(MEASUREMENT_OBJECT_ID_FIELDS)
-_IMAGE_IDENTITY_FIELDS = frozenset({"image_number", "image_id", "slice_index"})
 _NON_MEASUREMENT_FIELD_PREFIXES = (
     "channel_",
     "execution_time_",
