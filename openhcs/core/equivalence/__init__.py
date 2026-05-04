@@ -36,6 +36,26 @@ from openhcs.core.equivalence.cells import (
 from openhcs.core.equivalence.images import RuntimeImageSnapshot
 from openhcs.core.equivalence.outputs import RuntimeOutputSnapshot
 from openhcs.core.equivalence.tables import RuntimeTableSnapshot
+from openhcs.core.equivalence.measurement_rows import (
+    IMAGE_IDENTITY_FIELDS,
+    axis_scoped_measurement_row_identity,
+    measurement_qualifier_field_names,
+    measurement_row_image_identity_key,
+    measurement_row_qualifiers,
+    measurement_row_qualifiers_from_indexed_values_cached,
+    measurement_row_qualifiers_from_values,
+    row_qualifier_applies_to_field,
+    row_qualifier_columns,
+    row_qualifier_values,
+)
+from openhcs.core.equivalence.measurement_facts import (
+    RuntimeMeasurementFact,
+    RuntimeMeasurementFactCounters,
+    RuntimeMeasurementFacts,
+    RuntimeRequiredMeasurementKeys,
+    record_measurement_facts,
+    spatial_grid_measurement_facts,
+)
 from openhcs.core.equivalence.comparison import (
     runtime_image_differences,
     runtime_table_differences,

@@ -52,7 +52,6 @@ CSV_HEADER_CONTEXT_STOPWORDS = frozenset(
 RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS = frozenset(
     {"image_id", "image_number", "slice_index"}
 )
-IMAGE_IDENTITY_FIELDS = frozenset({"image_number", "image_id", "slice_index"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,40 +235,6 @@ def measurement_table_cell_payload(value: object) -> object:
             tuple(measurement_table_cell_payload(item) for item in value),
         )
     return (type(value).__name__, repr(value))
-
-
-def measurement_row_image_identity_key(
-    row: Mapping[str, object],
-) -> tuple[tuple[str, object], ...]:
-    """Return the image identity carried by a measurement row."""
-    identity_values: list[tuple[str, object]] = []
-    for field_name, value in row.items():
-        normalized_field_name = normalize_runtime_identifier(field_name)
-        if normalized_field_name not in IMAGE_IDENTITY_FIELDS:
-            continue
-        if value is None or not str(value).strip():
-            continue
-        identity_values.append(
-            (
-                normalized_field_name,
-                measurement_table_cell_payload(value),
-            )
-        )
-    return sorted_tuple(identity_values)
-
-
-def axis_scoped_measurement_row_identity(
-    row: Mapping[str, object],
-    axis_key: object | None,
-) -> tuple[tuple[str, object], ...]:
-    """Return row identity scoped by runtime axis for local image numbering."""
-    row_identity = measurement_row_image_identity_key(row)
-    if axis_key is None:
-        return row_identity
-    return (
-        ("_runtime_axis", measurement_table_cell_payload(axis_key)),
-        *row_identity,
-    )
 
 
 def is_static_wide_measurement_table(
