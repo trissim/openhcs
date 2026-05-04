@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from contextlib import ExitStack
@@ -29,6 +30,7 @@ BENCHMARK_CACHE_DOMAINS = frozenset({"native_reference"})
 CELLPROFILER_EXECUTABLE_ENV = "CELLPROFILER_EXECUTABLE"
 PYTHONHASHSEED_ENV = "PYTHONHASHSEED"
 DETERMINISTIC_PYTHONHASHSEED = "0"
+NATIVE_CELLPROFILER_SUCCESS_MARKER = ".cellprofiler_benchmark_reference.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,10 +121,7 @@ class CellProfilerAdapter(ToolAdapter):
         )
         with phase_timing.phase(BenchmarkPhase.RESOLVE_SOURCE):
             source = resolve_cppipe_source(request.cppipe_source)
-        native_output_root = (
-            request.output_dir
-            / f"{request.dataset_path.name}_{request.pipeline_name}_native_cellprofiler"
-        )
+        native_output_root = native_cellprofiler_output_root(request)
         if native_output_root.exists():
             shutil.rmtree(native_output_root)
         native_output_root.mkdir(parents=True, exist_ok=True)
@@ -158,6 +157,12 @@ class CellProfilerAdapter(ToolAdapter):
                         timeout=request.timeout_seconds,
                         check=False,
                     )
+            except subprocess.TimeoutExpired as exc:
+                raise ToolExecutionError(
+                    "Native CellProfiler execution timed out "
+                    f"after {request.timeout_seconds}s:\n"
+                    + " ".join(command)
+                ) from exc
             except FileNotFoundError as exc:
                 raise ToolNotInstalledError(
                     f"CellProfiler executable not found: {command[0]}"
@@ -181,6 +186,7 @@ class CellProfilerAdapter(ToolAdapter):
         }
         if source.reference_url is not None:
             provenance["cppipe_reference_url"] = source.reference_url
+        _write_native_reference_success_marker(native_output_root, provenance)
         return BenchmarkResult(
             tool_name=self.name,
             dataset_id=request.dataset_id,
@@ -224,3 +230,46 @@ def _subprocess_output(result: subprocess.CompletedProcess[str]) -> str:
     stdout = (result.stdout or "").strip()
     stderr = (result.stderr or "").strip()
     return "\n".join(part for part in (stdout, stderr) if part)
+
+
+def native_cellprofiler_output_root(request: CellProfilerRunRequest) -> Path:
+    """Return the output directory owned by one native CellProfiler run."""
+    return (
+        request.output_dir
+        / f"{request.dataset_path.name}_{request.pipeline_name}_native_cellprofiler"
+    )
+
+
+def native_cellprofiler_reference_is_complete(reference_output_dir: Path) -> bool:
+    """Return whether a native reference was explicitly marked successful."""
+    return (Path(reference_output_dir) / NATIVE_CELLPROFILER_SUCCESS_MARKER).is_file()
+
+
+def native_cellprofiler_reference_provenance(
+    reference_output_dir: Path,
+) -> dict[str, Any]:
+    """Load successful native-reference provenance, if present."""
+    marker = Path(reference_output_dir) / NATIVE_CELLPROFILER_SUCCESS_MARKER
+    if not marker.is_file():
+        return {}
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    provenance = payload.get("provenance")
+    return dict(provenance) if isinstance(provenance, dict) else {}
+
+
+def _write_native_reference_success_marker(
+    reference_output_dir: Path,
+    provenance: dict[str, Any],
+) -> None:
+    marker = reference_output_dir / NATIVE_CELLPROFILER_SUCCESS_MARKER
+    marker.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "provenance": provenance,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )

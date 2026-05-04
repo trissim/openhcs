@@ -38,7 +38,7 @@ def record_measurement_facts(
     for key, value in facts:
         if required_keys is not None and key not in required_keys:
             continue
-        values_by_feature.setdefault(key, Counter()).update((value,))
+        values_by_feature.setdefault(key, Counter())[value] += 1
 
 
 def spatial_grid_measurement_facts(
@@ -67,4 +67,3 @@ def spatial_grid_measurement_facts(
         )
         for field_name, field_value in fields
     )
-

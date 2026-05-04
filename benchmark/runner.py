@@ -11,7 +11,10 @@ from pathlib import Path
 from tokenize import open as tokenize_open
 from typing import Any, Iterable, Mapping
 
-from benchmark.adapters.cellprofiler import CellProfilerAdapter
+from benchmark.adapters.cellprofiler import (
+    CellProfilerAdapter,
+    native_cellprofiler_reference_provenance,
+)
 from benchmark.adapters.openhcs import OpenHCSAdapter
 from benchmark.contracts.dataset import DatasetSpec
 from benchmark.contracts.tool_adapter import BenchmarkResult, ToolAdapter
@@ -40,6 +43,7 @@ _EXECUTION_CACHE_IGNORED_PARAM_KEYS = frozenset(
         "runtime_execution_cache_manifest",
         "runtime_execution_cache_key",
         "reuse_runtime_execution_cache",
+        "cache_candidate_measurement_snapshot",
     }
 )
 _TREE_METADATA_CHUNK_SIZE = 1024 * 1024
@@ -181,6 +185,7 @@ def run_cellprofiler_cppipe_parity(
     pipeline_params: Mapping[str, Any] | None = None,
     output_root: Path | None = None,
     equivalence_reference_output_dir: Path | None = None,
+    native_cellprofiler_output_dir: Path | None = None,
     reuse_openhcs_cache: bool = True,
     cellprofiler_adapter: ToolAdapter | None = None,
     openhcs_adapter: ToolAdapter | None = None,
@@ -214,7 +219,11 @@ def run_cellprofiler_cppipe_parity(
             pipeline_name=resolved_pipeline_name,
             pipeline_params=base_params,
             metrics=metric_collectors,
-            output_dir=resolved_output_root / f"{native_adapter.name}_{run_slug}",
+            output_dir=(
+                Path(native_cellprofiler_output_dir)
+                if native_cellprofiler_output_dir is not None
+                else resolved_output_root / f"{native_adapter.name}_{run_slug}"
+            ),
         )
     else:
         native_result = _cached_cellprofiler_reference_result(
@@ -270,6 +279,7 @@ def _cached_cellprofiler_reference_result(
         provenance={
             "pipeline_source": "native_cppipe",
             "reused_reference_output": True,
+            **native_cellprofiler_reference_provenance(resolved_reference),
         },
     )
 

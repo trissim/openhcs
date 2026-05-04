@@ -2042,13 +2042,12 @@ def _static_wide_runtime_measurement_row_facts(
             and not isinstance(value, Mapping)
         ):
             continue
-        cell_facts = _cell_measurement_facts(key, value, context.policy)
-        if context.input_keys is not None:
-            cell_facts = tuple(
-                (cell_key, cell_value)
-                for cell_key, cell_value in cell_facts
-                if cell_key in context.input_keys
-            )
+        cell_facts = _cell_measurement_facts_for_required_keys(
+            key,
+            value,
+            context.policy,
+            required_keys=context.input_keys,
+        )
         row_fact_records.extend(
             (padding_group, cell_key, cell_value)
             for cell_key, cell_value in cell_facts
@@ -3471,6 +3470,33 @@ def _cell_measurement_facts(
             for name, nested_value in value.items()
         )
     return ((key, _cell_signature(str(value), policy)),)
+
+
+def _cell_measurement_facts_for_required_keys(
+    key: RuntimeMeasurementFeatureKey,
+    value: object,
+    policy: RuntimeEquivalencePolicy,
+    *,
+    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None,
+) -> _RuntimeMeasurementFacts:
+    if required_keys is None:
+        return _cell_measurement_facts(key, value, policy)
+    if not isinstance(value, Mapping):
+        if key not in required_keys:
+            return ()
+        return ((key, _cell_signature(str(value), policy)),)
+
+    facts: list[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature]] = []
+    for name, nested_value in value.items():
+        nested_key = _runtime_measurement_feature_key(
+            key.subject,
+            f"{key.feature_name}_{_canonical_measurement_feature_name(str(name), policy)}",
+            key.statistic,
+            source_name=key.source_name,
+        )
+        if nested_key in required_keys:
+            facts.append((nested_key, _cell_signature(str(nested_value), policy)))
+    return tuple(facts)
 
 
 def _measurement_feature_key_for_field(

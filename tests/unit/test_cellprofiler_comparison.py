@@ -10,10 +10,13 @@ from benchmark.cellprofiler_comparison import (
     comparison_observation_from_result,
     load_comparison_cases,
     load_observations_jsonl,
+    _discard_openhcs_benchmark_tree,
     write_observations_csv,
     write_phase_timing_csv,
     write_summary_csv,
 )
+import pytest
+from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.contracts.tool_adapter import BenchmarkResult
 from benchmark.runner import CellProfilerCompatibilityResult
 
@@ -102,11 +105,13 @@ def test_comparison_writers_emit_raw_phase_and_summary_tables(
     assert observation_rows[0]["difference_count"] == "4"
     assert observation_rows[0]["openhcs_error_message"] == "semantic mismatch"
     assert observation_rows[0]["parity_accuracy"] == "0.0"
+    assert observation_rows[0]["total_phase_speedup"] == "6.0"
     assert {row["phase"] for row in phase_rows} == {
         "EXECUTE_NATIVE_CP",
         "EXECUTE_OPENHCS",
     }
     assert summary_rows[0]["median_speedup"] == "6.0"
+    assert summary_rows[0]["median_total_phase_speedup"] == "6.0"
     assert summary_rows[0]["speedup_target"] == "5.0"
     assert summary_rows[0]["meets_speedup_target"] == "True"
     assert summary_rows[0]["equivalent_count"] == "0"
@@ -148,6 +153,36 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
             cellprofiler_timeout_seconds=120.0,
         ),
     )
+
+
+def test_discard_openhcs_benchmark_tree_requires_marker_and_suite_containment(
+    tmp_path: Path,
+) -> None:
+    suite_root = tmp_path / "suite"
+    marked_tree = suite_root / "tool_outputs" / "OpenHCS_case"
+    nested_output = marked_tree / "nested" / "result"
+    nested_output.mkdir(parents=True)
+    (marked_tree / ".openhcs_benchmark_cache.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+
+    _discard_openhcs_benchmark_tree(nested_output, suite_output_root=suite_root)
+
+    assert not marked_tree.exists()
+
+
+def test_discard_openhcs_benchmark_tree_refuses_unmarked_directory(
+    tmp_path: Path,
+) -> None:
+    suite_root = tmp_path / "suite"
+    unmarked = suite_root / "tool_outputs" / "OpenHCS_case"
+    unmarked.mkdir(parents=True)
+
+    with pytest.raises(ToolExecutionError):
+        _discard_openhcs_benchmark_tree(unmarked, suite_output_root=suite_root)
+
+    assert unmarked.exists()
 
 
 def _benchmark_result(

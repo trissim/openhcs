@@ -76,6 +76,7 @@ _RUNTIME_EXECUTION_CACHE_IGNORED_PARAM_KEYS = frozenset(
         "runtime_execution_cache_manifest",
         "runtime_execution_cache_key",
         "reuse_runtime_execution_cache",
+        "cache_candidate_measurement_snapshot",
         "raise_on_equivalence_failure",
     }
 )
@@ -145,6 +146,12 @@ class OpenHCSRunRequest:
     @property
     def raise_on_equivalence_failure(self) -> bool:
         return bool(self.pipeline_params.get("raise_on_equivalence_failure", True))
+
+    @property
+    def cache_candidate_measurement_snapshot(self) -> bool:
+        return bool(
+            self.pipeline_params.get("cache_candidate_measurement_snapshot", True)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -611,17 +618,22 @@ class OpenHCSAdapter(ToolAdapter):
             required_measurement_keys=required_measurement_keys,
             candidate_observation_fingerprint=candidate_observation_fingerprint,
         )
-        candidate_measurements = _load_or_create_measurement_snapshot(
-            cache_root,
-            prefix=_RUNTIME_CANDIDATE_MEASUREMENT_SNAPSHOT_PREFIX,
-            cache_key=candidate_key,
-            create=lambda: RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        def candidate_create() -> RuntimeMeasurementSnapshot:
+            return RuntimeMeasurementSnapshot.from_artifact_execution_observation(
                 validation.observation,
                 policy=policy,
                 known_source_names=known_source_names,
                 required_measurement_keys=required_measurement_keys,
-            ),
-        )
+            )
+        if request.cache_candidate_measurement_snapshot:
+            candidate_measurements = _load_or_create_measurement_snapshot(
+                cache_root,
+                prefix=_RUNTIME_CANDIDATE_MEASUREMENT_SNAPSHOT_PREFIX,
+                cache_key=candidate_key,
+                create=candidate_create,
+            )
+        else:
+            candidate_measurements = candidate_create()
         if reference_measurements.is_empty and candidate_measurements.is_empty:
             logger.info(
                 "Semantic measurement projection was empty; falling back to "

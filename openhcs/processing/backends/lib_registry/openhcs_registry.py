@@ -65,17 +65,7 @@ class OpenHCSRegistry(LibraryRegistryBase):
             if "__pycache__" in module_name:
                 continue
 
-            try:
-                # Try to import the module to ensure it's valid
-                importlib.import_module(module_name)
-                modules.append(module_name)
-            except Exception as e:
-                # Optional backend modules can fail during import when the
-                # package is installed but the required runtime is unavailable
-                # (for example CuPy without a CUDA device). Registry discovery
-                # must skip those modules without breaking unrelated pipelines.
-                logger.debug(f"Skipping module {module_name}: {e}")
-                continue
+            modules.append(module_name)
 
         return modules
 

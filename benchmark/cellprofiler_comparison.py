@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import platform
+import shutil
 import statistics
 import sys
 import time
@@ -17,6 +18,8 @@ from typing import Any
 from nominal_refactor_advisor.record_algebra import product_record
 
 from benchmark.contracts.tool_adapter import BenchmarkResult
+from benchmark.contracts.tool_adapter import ToolExecutionError
+from benchmark.adapters.cellprofiler import native_cellprofiler_reference_is_complete
 from benchmark.metrics.time import TimeMetric
 from benchmark.runner import CellProfilerCompatibilityResult
 from benchmark.runner import run_cellprofiler_cppipe_parity
@@ -33,7 +36,10 @@ NUMERIC_ABS_TOLERANCE_FIELD = "numeric_abs_tolerance"
 NUMERIC_REL_TOLERANCE_FIELD = "numeric_rel_tolerance"
 NATIVE_EXECUTION_SECONDS_FIELD = "native_execution_seconds"
 OPENHCS_EXECUTION_SECONDS_FIELD = "openhcs_execution_seconds"
+NATIVE_TOTAL_PHASE_SECONDS_FIELD = "native_total_phase_seconds"
+OPENHCS_TOTAL_PHASE_SECONDS_FIELD = "openhcs_total_phase_seconds"
 SPEEDUP_FIELD = "speedup"
+TOTAL_PHASE_SPEEDUP_FIELD = "total_phase_speedup"
 SPEEDUP_TARGET_FIELD = "speedup_target"
 MEETS_SPEEDUP_TARGET_FIELD = "meets_speedup_target"
 PARITY_ACCURACY_FIELD = "parity_accuracy"
@@ -50,9 +56,13 @@ N_FIELD = "n"
 EQUIVALENT_COUNT_FIELD = "equivalent_count"
 MEDIAN_NATIVE_EXECUTION_SECONDS_FIELD = "median_native_execution_seconds"
 MEDIAN_OPENHCS_EXECUTION_SECONDS_FIELD = "median_openhcs_execution_seconds"
+MEDIAN_NATIVE_TOTAL_PHASE_SECONDS_FIELD = "median_native_total_phase_seconds"
+MEDIAN_OPENHCS_TOTAL_PHASE_SECONDS_FIELD = "median_openhcs_total_phase_seconds"
 MEDIAN_SPEEDUP_FIELD = "median_speedup"
+MEDIAN_TOTAL_PHASE_SPEEDUP_FIELD = "median_total_phase_speedup"
 MIN_PARITY_ACCURACY_FIELD = "min_parity_accuracy"
 DEFAULT_SPEEDUP_TARGET = 5.0
+OPENHCS_BENCHMARK_CACHE_MARKER = ".openhcs_benchmark_cache.json"
 CsvRow = Mapping[str, object]
 CsvRowBuilder = Callable[
     [Sequence["CellProfilerComparisonObservation"]],
@@ -97,6 +107,14 @@ ToolExecutionSummary = product_record(
 
 
 @dataclass(frozen=True, slots=True)
+class NativeReferenceLocation:
+    """Resolved native CellProfiler reference location for a benchmark case."""
+
+    output_dir: Path | None
+    reference_output_dir: Path | None
+
+
+@dataclass(frozen=True, slots=True)
 class CellProfilerComparisonObservation:
     """Serializable observation for one case/repetition."""
 
@@ -122,12 +140,21 @@ class CellProfilerComparisonObservation:
         return native_seconds / openhcs_seconds
 
     @property
+    def total_phase_speedup(self) -> float | None:
+        native_seconds = self.native_cellprofiler.total_metric_seconds
+        openhcs_seconds = self.openhcs.total_metric_seconds
+        if native_seconds is None or openhcs_seconds is None or openhcs_seconds <= 0:
+            return None
+        return native_seconds / openhcs_seconds
+
+    @property
     def parity_accuracy(self) -> float:
         return 1.0 if self.equivalent else 0.0
 
     def as_payload(self) -> dict[str, object]:
         payload = asdict(self)
         payload["speedup"] = self.speedup
+        payload["total_phase_speedup"] = self.total_phase_speedup
         payload["parity_accuracy"] = self.parity_accuracy
         return payload
 
@@ -181,6 +208,9 @@ def run_comparison_suite(
     repeats: int = 1,
     reuse_openhcs_cache: bool = True,
     speedup_target: float = DEFAULT_SPEEDUP_TARGET,
+    native_reference_root: Path | None = None,
+    discard_openhcs_outputs: bool = False,
+    continue_on_error: bool = False,
 ) -> tuple[CellProfilerComparisonObservation, ...]:
     """Run all cases and write raw benchmark observations."""
     if repeats < 1:
@@ -191,13 +221,25 @@ def run_comparison_suite(
     observations: list[CellProfilerComparisonObservation] = []
     for repetition in range(1, repeats + 1):
         for case in cases:
-            result = _run_comparison_case(
-                case,
-                output_root=output_root,
-                suite_id=suite_id,
-                repetition=repetition,
-                reuse_openhcs_cache=reuse_openhcs_cache,
-            )
+            try:
+                result = _run_comparison_case(
+                    case,
+                    output_root=output_root,
+                    suite_id=suite_id,
+                    repetition=repetition,
+                    reuse_openhcs_cache=reuse_openhcs_cache,
+                    native_reference_root=native_reference_root,
+                    discard_openhcs_outputs=discard_openhcs_outputs,
+                )
+            except Exception as exc:
+                if not continue_on_error:
+                    raise
+                result = _failed_comparison_observation(
+                    case,
+                    suite_id=suite_id,
+                    repetition=repetition,
+                    error=exc,
+                )
             observations.append(result)
             append_observations_jsonl(
                 output_root / "observations.jsonl",
@@ -214,6 +256,9 @@ def run_comparison_suite(
                 output_root / "suite_metadata.json",
                 suite_id=suite_id,
                 speedup_target=speedup_target,
+                native_reference_root=native_reference_root,
+                discard_openhcs_outputs=discard_openhcs_outputs,
+                continue_on_error=continue_on_error,
             )
     return tuple(observations)
 
@@ -319,6 +364,9 @@ def _summary_csv_rows(
         median_speedup = _median_present(
             observation.speedup for observation in case_observations
         )
+        median_total_phase_speedup = _median_present(
+            observation.total_phase_speedup for observation in case_observations
+        )
         yield {
             CASE_NAME_FIELD: case_name,
             N_FIELD: len(case_observations),
@@ -333,10 +381,21 @@ def _summary_csv_rows(
                 observation.openhcs.execution_seconds
                 for observation in case_observations
             ),
+            MEDIAN_NATIVE_TOTAL_PHASE_SECONDS_FIELD: _median_present(
+                observation.native_cellprofiler.total_metric_seconds
+                for observation in case_observations
+            ),
+            MEDIAN_OPENHCS_TOTAL_PHASE_SECONDS_FIELD: _median_present(
+                observation.openhcs.total_metric_seconds
+                for observation in case_observations
+            ),
             MEDIAN_SPEEDUP_FIELD: median_speedup,
+            MEDIAN_TOTAL_PHASE_SPEEDUP_FIELD: median_total_phase_speedup,
             SPEEDUP_TARGET_FIELD: speedup_target,
             MEETS_SPEEDUP_TARGET_FIELD: (
                 median_speedup is not None and median_speedup >= speedup_target
+                and median_total_phase_speedup is not None
+                and median_total_phase_speedup >= speedup_target
             ),
             MIN_PARITY_ACCURACY_FIELD: min(
                 observation.parity_accuracy for observation in case_observations
@@ -356,7 +415,10 @@ _OBSERVATION_TABLE = CsvTableSpec(
         NUMERIC_REL_TOLERANCE_FIELD,
         NATIVE_EXECUTION_SECONDS_FIELD,
         OPENHCS_EXECUTION_SECONDS_FIELD,
+        NATIVE_TOTAL_PHASE_SECONDS_FIELD,
+        OPENHCS_TOTAL_PHASE_SECONDS_FIELD,
         SPEEDUP_FIELD,
+        TOTAL_PHASE_SPEEDUP_FIELD,
         PARITY_ACCURACY_FIELD,
         NATIVE_CACHED_FIELD,
         OPENHCS_CACHED_FIELD,
@@ -386,7 +448,10 @@ def _summary_table(speedup_target: float) -> CsvTableSpec:
             EQUIVALENT_COUNT_FIELD,
             MEDIAN_NATIVE_EXECUTION_SECONDS_FIELD,
             MEDIAN_OPENHCS_EXECUTION_SECONDS_FIELD,
+            MEDIAN_NATIVE_TOTAL_PHASE_SECONDS_FIELD,
+            MEDIAN_OPENHCS_TOTAL_PHASE_SECONDS_FIELD,
             MEDIAN_SPEEDUP_FIELD,
+            MEDIAN_TOTAL_PHASE_SPEEDUP_FIELD,
             SPEEDUP_TARGET_FIELD,
             MEETS_SPEEDUP_TARGET_FIELD,
             MIN_PARITY_ACCURACY_FIELD,
@@ -403,6 +468,9 @@ def write_suite_metadata(
     *,
     suite_id: str,
     speedup_target: float = DEFAULT_SPEEDUP_TARGET,
+    native_reference_root: Path | None = None,
+    discard_openhcs_outputs: bool = False,
+    continue_on_error: bool = False,
 ) -> None:
     """Write reproducibility metadata for the benchmark suite."""
     payload = {
@@ -412,6 +480,11 @@ def write_suite_metadata(
         "python": sys.version,
         "platform": platform.platform(),
         "processor": platform.processor(),
+        "native_reference_root": (
+            str(native_reference_root) if native_reference_root is not None else None
+        ),
+        "discard_openhcs_outputs": discard_openhcs_outputs,
+        "continue_on_error": continue_on_error,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
@@ -424,10 +497,14 @@ def _run_comparison_case(
     suite_id: str,
     repetition: int,
     reuse_openhcs_cache: bool,
+    native_reference_root: Path | None,
+    discard_openhcs_outputs: bool,
 ) -> CellProfilerComparisonObservation:
+    native_reference = _native_reference_location(case, native_reference_root)
     pipeline_params: dict[str, object] = {
         "compare_image_outputs": not case.value_only,
         "raise_on_equivalence_failure": False,
+        "cache_candidate_measurement_snapshot": not discard_openhcs_outputs,
     }
     if case.cellprofiler_timeout_seconds is not None:
         pipeline_params["cellprofiler_timeout_seconds"] = (
@@ -442,14 +519,90 @@ def _run_comparison_case(
         microscope_type=case.microscope_type,
         pipeline_params=pipeline_params,
         output_root=output_root / "tool_outputs",
-        equivalence_reference_output_dir=case.equivalence_reference_output_dir,
+        equivalence_reference_output_dir=native_reference.reference_output_dir,
+        native_cellprofiler_output_dir=native_reference.output_dir,
         reuse_openhcs_cache=reuse_openhcs_cache,
     )
-    return comparison_observation_from_result(
+    observation = comparison_observation_from_result(
         result,
         case=case,
         suite_id=suite_id,
         repetition=repetition,
+    )
+    if discard_openhcs_outputs:
+        _discard_openhcs_benchmark_tree(
+            Path(observation.openhcs.output_path),
+            suite_output_root=output_root,
+        )
+    return observation
+
+
+def _native_reference_location(
+    case: CellProfilerComparisonCase,
+    native_reference_root: Path | None,
+) -> NativeReferenceLocation:
+    if case.equivalence_reference_output_dir is not None:
+        return NativeReferenceLocation(
+            output_dir=None,
+            reference_output_dir=case.equivalence_reference_output_dir,
+        )
+    if native_reference_root is None:
+        return NativeReferenceLocation(output_dir=None, reference_output_dir=None)
+    native_output_dir = Path(native_reference_root) / _benchmark_path_slug(
+        f"{case.resolved_dataset_id}_{case.name}"
+    )
+    expected_reference = (
+        native_output_dir
+        / f"{case.dataset_path.name}_{case.name}_native_cellprofiler"
+    )
+    if native_cellprofiler_reference_is_complete(expected_reference):
+        return NativeReferenceLocation(
+            output_dir=native_output_dir,
+            reference_output_dir=expected_reference,
+        )
+    return NativeReferenceLocation(
+        output_dir=native_output_dir,
+        reference_output_dir=None,
+    )
+
+
+def _failed_comparison_observation(
+    case: CellProfilerComparisonCase,
+    *,
+    suite_id: str,
+    repetition: int,
+    error: Exception,
+) -> CellProfilerComparisonObservation:
+    return CellProfilerComparisonObservation(
+        suite_id=suite_id,
+        case_name=case.name,
+        repetition=repetition,
+        dataset_id=case.resolved_dataset_id,
+        cppipe_path=str(case.cppipe_path),
+        equivalent=False,
+        difference_count=None,
+        numeric_abs_tolerance=1e-6,
+        numeric_rel_tolerance=1e-6,
+        native_cellprofiler=ToolExecutionSummary(
+            "CellProfiler",
+            False,
+            "",
+            None,
+            None,
+            False,
+            f"{type(error).__name__}: {error}",
+            {},
+        ),
+        openhcs=ToolExecutionSummary(
+            "OpenHCS",
+            False,
+            "",
+            None,
+            None,
+            False,
+            "skipped after benchmark case failure",
+            {},
+        ),
     )
 
 
@@ -495,14 +648,15 @@ def _tool_execution_summary(
 ) -> ToolExecutionSummary:
     phase_seconds = _phase_seconds(result)
     metric_seconds = result.metrics.get("execution_time_seconds")
+    total_phase_seconds = sum(phase_seconds.values()) if phase_seconds else None
     return ToolExecutionSummary(
         tool=result.tool_name,
         success=result.success,
         output_path=str(result.output_path),
         execution_seconds=phase_seconds.get(execution_phase),
-        total_metric_seconds=(
-            float(metric_seconds) if metric_seconds is not None else None
-        ),
+        total_metric_seconds=total_phase_seconds
+        if total_phase_seconds is not None
+        else (float(metric_seconds) if metric_seconds is not None else None),
         cached=bool(cached) if cached is not None else _result_is_cached(result),
         error_message=result.error_message,
         phase_seconds=phase_seconds,
@@ -554,7 +708,12 @@ def _observation_csv_row(
             observation.native_cellprofiler.execution_seconds
         ),
         OPENHCS_EXECUTION_SECONDS_FIELD: observation.openhcs.execution_seconds,
+        NATIVE_TOTAL_PHASE_SECONDS_FIELD: (
+            observation.native_cellprofiler.total_metric_seconds
+        ),
+        OPENHCS_TOTAL_PHASE_SECONDS_FIELD: observation.openhcs.total_metric_seconds,
         SPEEDUP_FIELD: observation.speedup,
+        TOTAL_PHASE_SPEEDUP_FIELD: observation.total_phase_speedup,
         PARITY_ACCURACY_FIELD: observation.parity_accuracy,
         NATIVE_CACHED_FIELD: observation.native_cellprofiler.cached,
         OPENHCS_CACHED_FIELD: observation.openhcs.cached,
@@ -570,3 +729,51 @@ def _median_present(values: Iterable[float | None]) -> float | None:
     if not present:
         return None
     return statistics.median(present)
+
+
+def _benchmark_path_slug(value: str) -> str:
+    return "".join(char if char.isalnum() or char in "._-" else "_" for char in value)
+
+
+def _discard_openhcs_benchmark_tree(
+    output_path: Path,
+    *,
+    suite_output_root: Path,
+) -> None:
+    """Delete one OpenHCS output tree only when benchmark ownership is proven."""
+    target = _marked_openhcs_output_tree(Path(output_path), suite_output_root)
+    suite_root = Path(suite_output_root).resolve()
+    if not target.exists():
+        return
+    if not target.is_dir():
+        raise NotADirectoryError(f"OpenHCS discard target is not a directory: {target}")
+    if target == Path(".").resolve() or target == suite_root or target.parent == target:
+        raise ToolExecutionError(f"Refusing unsafe OpenHCS discard target: {target}")
+    try:
+        target.relative_to(suite_root)
+    except ValueError as exc:
+        raise ToolExecutionError(
+            "Refusing OpenHCS discard target outside suite output root: "
+            f"{target} not under {suite_root}"
+        ) from exc
+    shutil.rmtree(target)
+
+
+def _marked_openhcs_output_tree(output_path: Path, suite_output_root: Path) -> Path:
+    """Find the benchmark-owned OpenHCS tree containing an output path."""
+    suite_root = Path(suite_output_root).resolve()
+    start = Path(output_path).resolve()
+    candidates = (start, *start.parents)
+    for candidate in candidates:
+        if candidate == suite_root:
+            break
+        try:
+            candidate.relative_to(suite_root)
+        except ValueError:
+            break
+        if (candidate / OPENHCS_BENCHMARK_CACHE_MARKER).is_file():
+            return candidate
+    raise ToolExecutionError(
+        "Refusing to discard OpenHCS output because no benchmark cache marker "
+        f"was found between {start} and {suite_root}."
+    )

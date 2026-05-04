@@ -7,9 +7,13 @@ Follows OpenHCS generic solution principle - automatically adapts to new registr
 
 import logging
 from typing import Dict, List, Optional, Type
+from os import environ
+
+from openhcs.constants import MemoryType
 from .unified_registry import LibraryRegistryBase, FunctionMetadata, LIBRARY_REGISTRIES
 
 logger = logging.getLogger(__name__)
+CPU_ONLY_ENV = "OPENHCS_CPU_ONLY"
 
 
 class RegistryService:
@@ -40,6 +44,15 @@ class RegistryService:
         for registry_class in registry_classes:
             try:
                 registry_instance = registry_class()
+
+                if _cpu_only_mode_enabled() and not _registry_supports_cpu_only(
+                    registry_instance
+                ):
+                    logger.info(
+                        "CPU-only registry discovery skipping %s",
+                        registry_instance.library_name,
+                    )
+                    continue
 
                 # Skip if library not available
                 if not registry_instance.is_library_available():
@@ -78,3 +91,12 @@ class RegistryService:
 FunctionRegistryService = RegistryService
 get_all_functions_with_metadata = RegistryService.get_all_functions_with_metadata
 clear_metadata_cache = RegistryService.clear_metadata_cache
+
+
+def _cpu_only_mode_enabled() -> bool:
+    return environ.get(CPU_ONLY_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _registry_supports_cpu_only(registry: LibraryRegistryBase) -> bool:
+    memory_type = registry.get_memory_type()
+    return memory_type is None or memory_type == MemoryType.NUMPY.value
