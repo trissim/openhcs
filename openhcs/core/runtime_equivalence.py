@@ -135,12 +135,16 @@ _RuntimeMeasurementIndexedQualifier = tuple[
     RuntimeMeasurementRowQualifier,
     tuple[int | None, ...],
 ]
-_RuntimeMeasurementRowSchema = tuple[
-    tuple[int, ...],
-    dict[int, tuple[_RuntimeMeasurementIndexedQualifier, ...]],
-    tuple[int, ...],
-    tuple[int, ...],
-]
+
+
+@dataclass(frozen=True, slots=True)
+class _RuntimeMeasurementRowSchema:
+    feature_indexes: tuple[int, ...]
+    qualifiers_by_index: dict[int, tuple[_RuntimeMeasurementIndexedQualifier, ...]]
+    long_form_feature_indexes: tuple[int, ...]
+    long_form_value_indexes: tuple[int, ...]
+
+
 _RuntimeMeasurementQualifierCacheKey = tuple[
     RuntimeMeasurementRowQualifier,
     tuple[str | None, ...],
@@ -152,6 +156,11 @@ _RuntimeMeasurementRowSubjectSchema = tuple[
     tuple[int, ...],
 ]
 _ContextualMeasurementPaddingGroup = tuple[str, tuple[str, ...], str | None]
+_RuntimeMeasurementPaddingGroup = tuple[
+    RuntimeMeasurementSubjectKey,
+    str | None,
+    tuple[str, ...],
+]
 _RuntimeMeasurementRowSchemaCache = dict[tuple[str, ...], _RuntimeMeasurementRowSchema]
 _RuntimeMeasurementFeatureKeyCache = dict[
     tuple[RuntimeMeasurementSubjectKey, str | None, str, tuple[str, ...]],
@@ -167,12 +176,17 @@ _RuntimeMeasurementQualifierRenderCache = dict[
 ]
 _RuntimeMeasurementPaddingGroupCache = dict[
     tuple[str, RuntimeMeasurementFeatureKey],
-    tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
+    _RuntimeMeasurementPaddingGroup,
 ]
 _RuntimeMeasurementIndexedQualifierCache = dict[
     tuple[_RuntimeMeasurementIndexedQualifier, ...],
     tuple[str, ...],
 ]
+_RuntimeRowQualifierResolutionCache = dict[
+    tuple[_RuntimeMeasurementIndexedQualifier, ...],
+    tuple[str, ...],
+]
+_RuntimeMeasurementPaddingGroupPresence = dict[_RuntimeMeasurementPaddingGroup, bool]
 _StaticWideRuntimeKeyCache = dict[
     tuple[RuntimeMeasurementSubjectKey, str | None, int, tuple[str, ...]],
     RuntimeMeasurementFeatureKey | None,
@@ -191,9 +205,25 @@ _AggregateMeanKeyCache = dict[
 ]
 _RuntimeRowProjectionValueT = TypeVar("_RuntimeRowProjectionValueT")
 _RuntimeRowProjectionRecord = tuple[
-    tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
+    _RuntimeMeasurementPaddingGroup,
     RuntimeMeasurementFeatureKey,
     _RuntimeRowProjectionValueT,
+]
+_RuntimeProjectedCell = tuple[
+    RuntimeMeasurementFeatureKey,
+    _RuntimeRowProjectionValueT,
+]
+_RuntimeRowValueProjector = Callable[
+    [
+        RuntimeMeasurementFeatureKey,
+        object,
+        RuntimeEquivalencePolicy,
+    ],
+    tuple[_RuntimeProjectedCell[_RuntimeRowProjectionValueT], ...],
+]
+_RuntimeRowLongFormProjector = Callable[
+    [tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature]],
+    tuple[_RuntimeProjectedCell[_RuntimeRowProjectionValueT], ...],
 ]
 
 
@@ -2817,170 +2847,111 @@ def _measurement_facts_from_runtime_table(
     return tuple(facts)
 
 
-def _runtime_row_projection_cached(
-    context: _RuntimeRowProjectionContext,
-    *,
-    value_projector: Callable[
-        [
-            RuntimeMeasurementFeatureKey,
-            object,
-            RuntimeEquivalencePolicy,
-        ],
-        tuple[tuple[RuntimeMeasurementFeatureKey, _RuntimeRowProjectionValueT], ...],
-    ],
-    long_form_projector: Callable[
-        [tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature]],
-        tuple[tuple[RuntimeMeasurementFeatureKey, _RuntimeRowProjectionValueT], ...],
-    ],
-) -> _RuntimeRowProjection[_RuntimeRowProjectionValueT]:
-    """Project one runtime row through shared schema/key/padding caches."""
-    row = context.row
-    subject = context.subject
-    policy = context.policy
-    if _is_metadata_map_row(subject, row):
-        return _RuntimeRowProjection(())
+@dataclass(frozen=True, slots=True)
+class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
+    context: _RuntimeRowProjectionContext
+    value_projector: _RuntimeRowValueProjector[_RuntimeRowProjectionValueT]
+    long_form_projector: _RuntimeRowLongFormProjector[_RuntimeRowProjectionValueT]
 
-    header = tuple(row)
-    cached_schema = context.schema_cache.get(header)
-    if cached_schema is None:
-        normalized_fields = tuple(_normalize_identifier(field) for field in header)
-        aggregate_reference_indexes = frozenset(
-            index
-            for index, field_name in enumerate(header)
-            if _is_aggregate_image_number_reference_measurement_field(field_name)
-        )
-        normalized_field_indexes = {
-            field_name: index
-            for index, field_name in enumerate(normalized_fields)
-        }
-        feature_indexes = tuple(
-            index
-            for index, field_name in enumerate(normalized_fields)
-            if not _is_normalized_measurement_identity_field(
-                field_name,
-                policy.measurement_dialect,
-            )
-            and index not in aggregate_reference_indexes
-        )
-        qualifier_indexes = {
-            qualifier: tuple(
-                normalized_field_indexes.get(field_name)
-                for field_name in qualifier.field_names
-            )
-            for qualifier in policy.measurement_dialect.row_qualifiers
-        }
-        qualifiers_by_index = {
-            index: tuple(
-                (qualifier, qualifier_indexes[qualifier])
-                for qualifier in policy.measurement_dialect.row_qualifiers
-                if _row_qualifier_applies_to_field(
-                    qualifier,
-                    tuple(
-                        part
-                        for part in normalized_fields[index].split("_")
-                        if part
-                    ),
-                )
-            )
-                for index in feature_indexes
-        }
-        long_form_feature_indexes = _field_indexes_for_names(
-            normalized_field_indexes,
-            _MEASUREMENT_FEATURE_NAME_FIELDS,
-        )
-        long_form_value_indexes = _field_indexes_for_names(
-            normalized_field_indexes,
-            _MEASUREMENT_VALUE_FIELDS,
-        )
-        cached_schema = (
-            feature_indexes,
-            qualifiers_by_index,
-            long_form_feature_indexes,
-            long_form_value_indexes,
-        )
-        context.schema_cache[header] = cached_schema
+    def project(self) -> _RuntimeRowProjection[_RuntimeRowProjectionValueT]:
+        """Project one runtime row through shared schema/key/padding caches."""
+        context = self.context
+        if _is_metadata_map_row(context.subject, context.row):
+            return _RuntimeRowProjection(())
 
-    (
-        feature_indexes,
-        qualifiers_by_index,
-        long_form_feature_indexes,
-        long_form_value_indexes,
-    ) = cached_schema
-    row_values = tuple(row.get(field_name) for field_name in header)
-    long_form_fact = (
-        _long_form_measurement_fact_cached(
+        header = tuple(context.row)
+        row_schema = _runtime_measurement_row_schema_cached(context, header)
+        row_values = tuple(context.row.get(field_name) for field_name in header)
+        long_form_projection = self._long_form_projection(row_schema, row_values)
+        if long_form_projection is not None:
+            return long_form_projection
+        return self._wide_projection(header, row_schema, row_values)
+
+    def _long_form_projection(
+        self,
+        row_schema: _RuntimeMeasurementRowSchema,
+        row_values: tuple[object, ...],
+    ) -> _RuntimeRowProjection[_RuntimeRowProjectionValueT] | None:
+        context = self.context
+        if (
+            not row_schema.long_form_feature_indexes
+            or not row_schema.long_form_value_indexes
+        ):
+            return None
+        long_form_fact = _long_form_measurement_fact_cached(
             _CachedLongFormMeasurementContext.from_runtime_row_projection(
                 context,
                 row_values,
-                long_form_feature_indexes,
-                long_form_value_indexes,
+                row_schema.long_form_feature_indexes,
+                row_schema.long_form_value_indexes,
             )
         )
-        if long_form_feature_indexes and long_form_value_indexes
-        else None
-    )
-    if long_form_fact is not None:
-        if context.required_keys is not None and long_form_fact[0] not in context.required_keys:
+        if long_form_fact is None:
+            return None
+        if (
+            context.required_keys is not None
+            and long_form_fact[0] not in context.required_keys
+        ):
             return _RuntimeRowProjection((), long_form=True)
         return _RuntimeRowProjection(
             tuple(
-                ((subject, context.source_name, ()), key, value)
-                for key, value in long_form_projector(long_form_fact)
+                ((context.subject, context.source_name, ()), key, value)
+                for key, value in self.long_form_projector(long_form_fact)
                 if context.required_keys is None or key in context.required_keys
             ),
             long_form=True,
         )
 
-    records: list[_RuntimeRowProjectionRecord[_RuntimeRowProjectionValueT]] = []
-    padding_group_presence: dict[
-        tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
-        bool,
-    ] = {}
-    row_qualifier_cache: dict[
-        tuple[_RuntimeMeasurementIndexedQualifier, ...],
-        tuple[str, ...],
-    ] = {}
-    for index in feature_indexes:
+    def _wide_projection(
+        self,
+        header: tuple[str, ...],
+        row_schema: _RuntimeMeasurementRowSchema,
+        row_values: tuple[object, ...],
+    ) -> _RuntimeRowProjection[_RuntimeRowProjectionValueT]:
+        records: list[_RuntimeRowProjectionRecord[_RuntimeRowProjectionValueT]] = []
+        padding_group_presence: _RuntimeMeasurementPaddingGroupPresence = {}
+        row_qualifier_cache: _RuntimeRowQualifierResolutionCache = {}
+        for index in row_schema.feature_indexes:
+            records.extend(
+                self._wide_projection_records_for_index(
+                    header,
+                    row_schema,
+                    row_values,
+                    index,
+                    row_qualifier_cache,
+                    padding_group_presence,
+                )
+            )
+        return _RuntimeRowProjection(
+            tuple(
+                (padding_group, key, value)
+                for padding_group, key, value in records
+                if padding_group_presence.get(padding_group, True)
+            )
+        )
+
+    def _wide_projection_records_for_index(
+        self,
+        header: tuple[str, ...],
+        row_schema: _RuntimeMeasurementRowSchema,
+        row_values: tuple[object, ...],
+        index: int,
+        row_qualifier_cache: _RuntimeRowQualifierResolutionCache,
+        padding_group_presence: _RuntimeMeasurementPaddingGroupPresence,
+    ) -> tuple[_RuntimeRowProjectionRecord[_RuntimeRowProjectionValueT], ...]:
+        context = self.context
         field_name = header[index]
         value = row_values[index]
-        indexed_qualifiers = qualifiers_by_index[index]
-        if not indexed_qualifiers:
-            qualifiers = ()
-        else:
-            qualifiers = row_qualifier_cache.get(indexed_qualifiers)
-            if qualifiers is None:
-                qualifiers = _measurement_row_qualifiers_from_indexed_values_cached(
-                    row_values,
-                    indexed_qualifiers,
-                    context.qualifier_render_cache,
-                )
-                row_qualifier_cache[indexed_qualifiers] = qualifiers
-        cache_key = (subject, context.source_name, field_name, qualifiers)
-        key = context.key_cache.get(cache_key, _CACHE_MISS)
-        if key is _CACHE_MISS:
-            key = _measurement_feature_key_from_source_context(
-                _MeasurementFeatureKeySourceContext(
-                    field_name,
-                    subject,
-                    policy,
-                    qualifiers,
-                    context.source_name,
-                    context.known_source_names,
-                )
-            )
-            context.key_cache[cache_key] = key
+        qualifiers = self._qualifiers_for_index(
+            row_schema,
+            row_values,
+            index,
+            row_qualifier_cache,
+        )
+        key = self._feature_key(field_name, qualifiers)
         if key is None:
-            continue
-        padding_group_cache_key = (field_name, key)
-        padding_group = context.padding_group_cache.get(padding_group_cache_key)
-        if padding_group is None:
-            padding_group = _runtime_measurement_padding_group(
-                context.table_padding_group,
-                field_name,
-                key,
-                policy.measurement_dialect,
-            )
-            context.padding_group_cache[padding_group_cache_key] = padding_group
+            return ()
+        padding_group = self._padding_group(field_name, key)
         padding_group_presence[padding_group] = (
             padding_group_presence.get(padding_group, False)
             or _measurement_value_is_present(value)
@@ -2990,26 +2961,156 @@ def _runtime_row_projection_cached(
             and key not in context.required_keys
             and not isinstance(value, Mapping)
         ):
-            continue
-        projected_values = value_projector(key, value, policy)
+            return ()
+        projected_values = self.value_projector(key, value, context.policy)
         if context.required_keys is not None:
             projected_values = tuple(
                 (cell_key, cell_value)
                 for cell_key, cell_value in projected_values
                 if cell_key in context.required_keys
             )
-        records.extend(
+        return tuple(
             (padding_group, cell_key, cell_value)
             for cell_key, cell_value in projected_values
         )
 
-    return _RuntimeRowProjection(
-        tuple(
-            (padding_group, key, value)
-            for padding_group, key, value in records
-            if padding_group_presence.get(padding_group, True)
-        )
+    def _qualifiers_for_index(
+        self,
+        row_schema: _RuntimeMeasurementRowSchema,
+        row_values: tuple[object, ...],
+        index: int,
+        row_qualifier_cache: _RuntimeRowQualifierResolutionCache,
+    ) -> tuple[str, ...]:
+        indexed_qualifiers = row_schema.qualifiers_by_index[index]
+        if not indexed_qualifiers:
+            return ()
+        qualifiers = row_qualifier_cache.get(indexed_qualifiers)
+        if qualifiers is None:
+            qualifiers = _measurement_row_qualifiers_from_indexed_values_cached(
+                row_values,
+                indexed_qualifiers,
+                self.context.qualifier_render_cache,
+            )
+            row_qualifier_cache[indexed_qualifiers] = qualifiers
+        return qualifiers
+
+    def _feature_key(
+        self,
+        field_name: str,
+        qualifiers: tuple[str, ...],
+    ) -> RuntimeMeasurementFeatureKey | None:
+        context = self.context
+        cache_key = (context.subject, context.source_name, field_name, qualifiers)
+        key = context.key_cache.get(cache_key, _CACHE_MISS)
+        if key is _CACHE_MISS:
+            key = _measurement_feature_key_from_source_context(
+                _MeasurementFeatureKeySourceContext(
+                    field_name,
+                    context.subject,
+                    context.policy,
+                    qualifiers,
+                    context.source_name,
+                    context.known_source_names,
+                )
+            )
+            context.key_cache[cache_key] = key
+        return key
+
+    def _padding_group(
+        self,
+        field_name: str,
+        key: RuntimeMeasurementFeatureKey,
+    ) -> _RuntimeMeasurementPaddingGroup:
+        context = self.context
+        cache_key = (field_name, key)
+        padding_group = context.padding_group_cache.get(cache_key)
+        if padding_group is None:
+            padding_group = _runtime_measurement_padding_group(
+                context.table_padding_group,
+                field_name,
+                key,
+                context.policy.measurement_dialect,
+            )
+            context.padding_group_cache[cache_key] = padding_group
+        return padding_group
+
+
+def _runtime_row_projection_cached(
+    context: _RuntimeRowProjectionContext,
+    *,
+    value_projector: _RuntimeRowValueProjector[_RuntimeRowProjectionValueT],
+    long_form_projector: _RuntimeRowLongFormProjector[_RuntimeRowProjectionValueT],
+) -> _RuntimeRowProjection[_RuntimeRowProjectionValueT]:
+    return _RuntimeRowProjectionEngine(
+        context,
+        value_projector,
+        long_form_projector,
+    ).project()
+
+
+def _runtime_measurement_row_schema_cached(
+    context: _RuntimeRowProjectionContext,
+    header: tuple[str, ...],
+) -> _RuntimeMeasurementRowSchema:
+    cached_schema = context.schema_cache.get(header)
+    if cached_schema is not None:
+        return cached_schema
+
+    normalized_fields = tuple(_normalize_identifier(field) for field in header)
+    aggregate_reference_indexes = frozenset(
+        index
+        for index, field_name in enumerate(header)
+        if _is_aggregate_image_number_reference_measurement_field(field_name)
     )
+    normalized_field_indexes = {
+        field_name: index
+        for index, field_name in enumerate(normalized_fields)
+    }
+    feature_indexes = tuple(
+        index
+        for index, field_name in enumerate(normalized_fields)
+        if not _is_normalized_measurement_identity_field(
+            field_name,
+            context.policy.measurement_dialect,
+        )
+        and index not in aggregate_reference_indexes
+    )
+    qualifier_indexes = {
+        qualifier: tuple(
+            normalized_field_indexes.get(field_name)
+            for field_name in qualifier.field_names
+        )
+        for qualifier in context.policy.measurement_dialect.row_qualifiers
+    }
+    qualifiers_by_index = {
+        index: tuple(
+            (qualifier, qualifier_indexes[qualifier])
+            for qualifier in context.policy.measurement_dialect.row_qualifiers
+            if _row_qualifier_applies_to_field(
+                qualifier,
+                tuple(
+                    part
+                    for part in normalized_fields[index].split("_")
+                    if part
+                ),
+            )
+        )
+        for index in feature_indexes
+    }
+    cached_schema = _RuntimeMeasurementRowSchema(
+        feature_indexes,
+        qualifiers_by_index,
+        _field_indexes_for_names(
+            normalized_field_indexes,
+            _MEASUREMENT_FEATURE_NAME_FIELDS,
+        ),
+        _field_indexes_for_names(
+            normalized_field_indexes,
+            _MEASUREMENT_VALUE_FIELDS,
+        ),
+    )
+    context.schema_cache[header] = cached_schema
+    return cached_schema
 
 
 def _measurement_facts_from_runtime_row_cached(
